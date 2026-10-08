@@ -336,6 +336,7 @@ fn shell(script: &str, timeout_ms: u64) -> StartRequest {
         timeout_ms,
         stdin: false,
         tag: None,
+        kill_tree: false,
     }
 }
 

@@ -86,6 +86,7 @@ class Commands:
         tag: str | None = None,
         secrets: Mapping[str, str | SecretRef] | None = None,
         max_output_bytes: int = COMMAND_OUTPUT_MAX_BYTES,
+        kill_tree: bool = False,
     ) -> CommandResult: ...
 
     @overload
@@ -105,6 +106,7 @@ class Commands:
         tag: str | None = None,
         secrets: Mapping[str, str | SecretRef] | None = None,
         max_output_bytes: int = COMMAND_OUTPUT_MAX_BYTES,
+        kill_tree: bool = False,
     ) -> CommandHandle: ...
 
     @overload
@@ -124,6 +126,7 @@ class Commands:
         tag: str | None = None,
         secrets: Mapping[str, str | SecretRef] | None = None,
         max_output_bytes: int = COMMAND_OUTPUT_MAX_BYTES,
+        kill_tree: bool = False,
     ) -> CommandResult | CommandHandle: ...
 
     def run(
@@ -142,6 +145,7 @@ class Commands:
         tag: str | None = None,
         secrets: Mapping[str, str | SecretRef] | None = None,
         max_output_bytes: int = COMMAND_OUTPUT_MAX_BYTES,
+        kill_tree: bool = False,
     ) -> CommandResult | CommandHandle:
         """Ejecuta `cmd` con `/bin/bash -l -c` como `user` (uid 1000 por defecto).
 
@@ -160,6 +164,14 @@ class Commands:
         `output_truncated`. Un stream abierto cuenta como actividad para la
         política de idle del MicroVM. `request_timeout` acota los unarios que
         el handle haga después (`kill`, `send_stdin`, `close_stdin`).
+
+        `kill_tree=True` hace que el timeout y `kill()` alcancen también a los
+        descendientes que salieron del grupo del proceso (`setsid`, un doble
+        fork): el agente lo hace *child subreaper* de ellos, manda el SIGTERM
+        del timeout a todo el árbol y, tras la gracia, congela y mata a los
+        que queden; el fin del comando llega cuando ya no queda ninguno. Con
+        `False` (por defecto) sólo se señala el grupo, como en E2B. Lo que el
+        comando deja vivo al terminar por sí mismo no se toca.
 
         Coste y activación
         -------------------
@@ -187,7 +199,14 @@ class Commands:
         validate_max_output_bytes(max_output_bytes)
         envs = self._sandbox._secret_envs(envs, secrets)
         request = build_start_request(
-            cmd, envs=envs, user=user, cwd=cwd, stdin=stdin, timeout=timeout, tag=tag
+            cmd,
+            envs=envs,
+            user=user,
+            cwd=cwd,
+            stdin=stdin,
+            timeout=timeout,
+            tag=tag,
+            kill_tree=kill_tree,
         )
         deadline = stream_deadline(timeout)
         with self._sandbox._instrumentation.span(
@@ -251,8 +270,9 @@ class Commands:
         return [process_info_from_proto(info) for info in response.processes]
 
     def kill(self, pid: int, *, request_timeout: float | None = None) -> bool:
-        """SIGKILL al grupo del proceso (o de la PTY). False si el pid no
-        existe o ya terminó."""
+        """SIGKILL al grupo del proceso (o de la PTY) y, si se lanzó con
+        `kill_tree=True`, antes a todo su árbol. False si el pid no existe o
+        ya terminó."""
         request = process_pb2.SendSignalRequest(pid=validate_pid(pid), signal=SIGKILL)
         try:
             self._sandbox._process_call(

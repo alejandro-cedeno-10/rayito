@@ -19,7 +19,9 @@ use crate::process::cwd::{resolve_cwd, validate_cwd};
 use crate::process::env::build_child_env;
 use crate::process::identity::{ProcessIdentity, UserPolicy, resolve_username};
 use crate::process::ports::{LookupError, UserLookup};
-use crate::process::{ProcessConfigInfo, ProcessError, SpawnSpec, StdinMode, sandbox_limits};
+use crate::process::{
+    KillScope, ProcessConfigInfo, ProcessError, SpawnSpec, StdinMode, sandbox_limits,
+};
 use crate::run_payload::RunDefaults;
 
 pub const DEFAULT_PTY_COLS: u16 = 80;
@@ -178,6 +180,7 @@ pub fn plan_pty(
             identity,
             stdin: StdinMode::Pipe,
             limits: sandbox_limits(defaults),
+            kill_scope: KillScope::Group,
         },
         size,
         config: ProcessConfigInfo {

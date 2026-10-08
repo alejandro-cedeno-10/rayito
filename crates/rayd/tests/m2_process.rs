@@ -241,6 +241,7 @@ fn shell(script: &str) -> StartRequest {
         timeout_ms: 0,
         stdin: false,
         tag: None,
+        kill_tree: false,
     }
 }
 
@@ -1062,4 +1063,142 @@ async fn a_sighup_ignored_by_the_parent_does_not_reach_the_child() {
         collected.stdout_text().is_empty(),
         "the shell must die from its own SIGHUP before it can print"
     );
+}
+
+/// A daemon that leaves the process's group and session (`setsid`) and
+/// whose parent exits at once, so it is orphaned: what an agent's shell
+/// tool leaves behind. Its pid is the first line of stdout; its own stdio
+/// is detached so the stream can end while it lives.
+const DAEMONISED_SLEEP: &str =
+    "setsid sh -c 'sleep 600 >/dev/null 2>&1 </dev/null & echo $!'; sleep 30";
+/// The same daemon, ignoring `SIGTERM` (an ignored disposition survives
+/// `fork` and `exec`).
+const DAEMONISED_TERM_IGNORER: &str =
+    "setsid sh -c \"trap '' TERM; sleep 600 >/dev/null 2>&1 </dev/null & echo \\$!\"; sleep 30";
+/// How long a killed member may stay visible before its reaper takes it.
+const MEMBER_GONE_BUDGET: Duration = Duration::from_secs(2);
+
+fn kill_tree(script: &str, timeout_ms: u64) -> StartRequest {
+    StartRequest {
+        timeout_ms,
+        kill_tree: true,
+        ..shell(script)
+    }
+}
+
+/// Whether `pid` is a live process (not gone and not a zombie).
+fn alive(pid: u32) -> bool {
+    std::fs::read_to_string(format!("/proc/{pid}/stat"))
+        .ok()
+        .and_then(|stat| {
+            stat.rsplit_once(')')
+                .map(|(_, rest)| rest.trim_start().to_owned())
+        })
+        .is_some_and(|rest| !rest.starts_with('Z'))
+}
+
+async fn gone_within(pid: u32, budget: Duration) -> bool {
+    let deadline = Instant::now() + budget;
+    while alive(pid) {
+        if Instant::now() >= deadline {
+            return false;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    true
+}
+
+fn daemon_pid(collected: &Collected) -> u32 {
+    collected
+        .stdout_text()
+        .lines()
+        .next()
+        .and_then(|line| line.trim().parse().ok())
+        .expect("the script prints the daemon's pid")
+}
+
+/// Reads stdout until the first full line: the daemon's pid.
+async fn first_line_pid(stream: &mut Streaming<ProcessEvent>) -> u32 {
+    let mut text = String::new();
+    while !text.contains('\n') {
+        let event = stream.message().await.unwrap().expect("output before end");
+        if let Some(process_event::Event::Data(data)) = event.event
+            && let Some(data_event::Output::Stdout(bytes)) = data.output
+        {
+            text.push_str(&String::from_utf8_lossy(&bytes));
+        }
+    }
+    text.lines().next().unwrap().trim().parse().unwrap()
+}
+
+#[tokio::test]
+async fn kill_tree_timeout_reaches_a_daemon_outside_the_group() {
+    let harness = harness().await;
+    let started = Instant::now();
+    let mut stream = harness
+        .start(kill_tree(DAEMONISED_SLEEP, 300))
+        .await
+        .unwrap();
+    let collected = collect(&mut stream).await;
+    let daemon = daemon_pid(&collected);
+    assert_eq!(collected.end().status, "timeout");
+    assert!(
+        gone_within(daemon, MEMBER_GONE_BUDGET).await,
+        "the daemon outlived the timeout"
+    );
+    // Every member died on SIGTERM, so the grace ended early.
+    assert!(
+        started.elapsed() < Duration::from_secs(4),
+        "{:?}",
+        started.elapsed()
+    );
+}
+
+#[tokio::test]
+async fn kill_tree_timeout_escalates_to_sigkill_for_a_daemon_ignoring_sigterm() {
+    let harness = harness().await;
+    let started = Instant::now();
+    let mut stream = harness
+        .start(kill_tree(DAEMONISED_TERM_IGNORER, 300))
+        .await
+        .unwrap();
+    let collected = collect(&mut stream).await;
+    let daemon = daemon_pid(&collected);
+    let elapsed = started.elapsed();
+    assert_eq!(collected.end().status, "timeout");
+    assert!(elapsed >= Duration::from_secs(5), "{elapsed:?}");
+    assert!(gone_within(daemon, MEMBER_GONE_BUDGET).await);
+}
+
+#[tokio::test]
+async fn kill_tree_sigkill_freezes_and_kills_the_daemon_first() {
+    let harness = harness().await;
+    let mut stream = harness.start(kill_tree(DAEMONISED_SLEEP, 0)).await.unwrap();
+    let pid = first_pid(&mut stream).await;
+    let daemon = first_line_pid(&mut stream).await;
+    assert!(alive(daemon));
+    harness.send_signal(pid, SIGKILL).await.unwrap();
+    let mut collected = Collected {
+        pid,
+        ..Collected::default()
+    };
+    collect_rest(&mut stream, &mut collected).await;
+    assert_eq!(collected.end().status, "signaled");
+    assert!(gone_within(daemon, MEMBER_GONE_BUDGET).await);
+}
+
+#[tokio::test]
+async fn without_kill_tree_a_timeout_reaches_only_the_group() {
+    let harness = harness().await;
+    let mut request = shell(DAEMONISED_SLEEP);
+    request.timeout_ms = 300;
+    let mut stream = harness.start(request).await.unwrap();
+    let collected = collect(&mut stream).await;
+    let daemon = daemon_pid(&collected);
+    let survived = alive(daemon);
+    let _ = nix::sys::signal::kill(
+        nix::unistd::Pid::from_raw(i32::try_from(daemon).unwrap()),
+        Signal::SIGKILL,
+    );
+    assert!(survived, "the default scope is the process group");
 }

@@ -8,7 +8,6 @@
 
 import { describe, expect, test, vi } from "vitest";
 import { AgentLimits, AgentModel, AgentSpec } from "../../src/agent/domain.js";
-import { stopTreeCommand } from "../../src/agent/stream.js";
 import { InvalidArgumentError, TimeoutError } from "../../src/errors.js";
 import {
   ALLOWED_SPAN_ATTRIBUTES,
@@ -17,7 +16,6 @@ import {
 } from "../../src/otel.js";
 import { Agent } from "../../src/sandbox/agent.js";
 import {
-  FAKE_PID,
   FAKE_SESSION_ID,
   FakeAgentRuntime,
   FakeCommandHandle,
@@ -190,10 +188,10 @@ describe("sbx.agent.run", () => {
     expect((last as { reason: string }).reason).toBe("busy");
   });
 
-  test("abort() para el árbol de procesos y luego mata el handle", async () => {
+  test("abort() mata el handle de una ejecución con killTree", async () => {
     const handle = new FakeCommandHandle({ lines: [line({ event: "step_started", index: 1 })] });
     const sandbox = new FakeSandbox({
-      commands: new FakeCommands({ handles: [handle], foregroundResults: [undefined] }),
+      commands: new FakeCommands({ handles: [handle] }),
       files: new FakeFilesystem(),
       gateways: { bedrock: gatewayStatus() },
     });
@@ -202,9 +200,8 @@ describe("sbx.agent.run", () => {
     const stream = await agent.stream("hola", { spec: spec(), runtime });
     await stream.abort();
     expect(handle.killed).toBe(true);
-    expect(sandbox.commands.calls.slice(1).map((call) => call.cmd)).toEqual([
-      stopTreeCommand(FAKE_PID),
-    ]);
+    expect(sandbox.commands.calls).toHaveLength(1);
+    expect(sandbox.commands.calls[0]?.options).toMatchObject({ killTree: true });
     await expect(stream.result()).rejects.toMatchObject({ reason: "aborted" });
   });
 
@@ -315,7 +312,7 @@ describe("sbx.agent.run", () => {
       reason: "token_budget",
     },
   ])(
-    "un límite del SDK ($reason) para el runtime y su árbol de procesos",
+    "un límite del SDK ($reason) mata el handle de una ejecución con killTree",
     async ({ limits, lines, reason }) => {
       const handle = new FakeCommandHandle({
         lines: [...lines, line({ event: "step_started", index: 3 })],
@@ -333,9 +330,8 @@ describe("sbx.agent.run", () => {
       }
       expect(events.at(-1)).toMatchObject({ type: "agent_failed", reason });
       expect(handle.killed).toBe(true);
-      expect(sandbox.commands.calls.slice(1).map((call) => call.cmd)).toEqual([
-        stopTreeCommand(FAKE_PID),
-      ]);
+      expect(sandbox.commands.calls).toHaveLength(1);
+      expect(sandbox.commands.calls[0]?.options).toMatchObject({ killTree: true });
     },
   );
 
@@ -349,11 +345,5 @@ describe("sbx.agent.run", () => {
     await expect(
       agent.run("hola", { spec: spec(), runtime: new FakeAgentRuntime() }),
     ).rejects.toMatchObject({ reason: "timeout" });
-  });
-
-  test("stopTreeCommand rechaza pids que nunca debe señalar", () => {
-    for (const pid of [0, 1, -5, 1.5]) {
-      expect(() => stopTreeCommand(pid)).toThrow(InvalidArgumentError);
-    }
   });
 });

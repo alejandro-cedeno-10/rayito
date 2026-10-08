@@ -234,23 +234,22 @@ class _RunCall:
     envs: Mapping[str, str] | None
     timeout: float | None
     tag: str | None
+    kill_tree: bool
 
 
 class FakeCommands:
     """`sandbox.commands` de doble: entrega los `FakeCommandHandle` que el
     test precargó en `handles` (una ejecución en background, en orden) y
-    registra cada llamada en `calls`. Una llamada en foreground (el `abort`
-    con elegancia) consume `foreground_results` en vez de `handles`."""
+    registra cada llamada en `calls`. Una llamada en foreground devuelve
+    `None`."""
 
     def __init__(
         self,
         *,
         handles: list[FakeCommandHandle] | None = None,
-        foreground_results: list[Exception | None] | None = None,
         is_async: bool = False,
     ) -> None:
         self._handles = list(handles or [])
-        self._foreground_results = list(foreground_results or [])
         self.calls: list[_RunCall] = []
         self._is_async = is_async
 
@@ -264,29 +263,18 @@ class FakeCommands:
         timeout: float | None = None,
         max_output_bytes: int | None = None,
         tag: str | None = None,
+        kill_tree: bool = False,
     ) -> Any:
-        self.calls.append(_RunCall(cmd, background, envs, timeout, tag))
+        self.calls.append(_RunCall(cmd, background, envs, timeout, tag, kill_tree))
         if self._is_async:
             return self._async_run(background)
         return self._sync_run(background)
 
     def _sync_run(self, background: bool) -> Any:
-        if not background:
-            if self._foreground_results:
-                failure = self._foreground_results.pop(0)
-                if failure is not None:
-                    raise failure
-            return None
-        return self._handles.pop(0)
+        return self._handles.pop(0) if background else None
 
     async def _async_run(self, background: bool) -> Any:
-        if not background:
-            if self._foreground_results:
-                failure = self._foreground_results.pop(0)
-                if failure is not None:
-                    raise failure
-            return None
-        return self._handles.pop(0)
+        return self._sync_run(background)
 
 
 class FakeFilesystem:

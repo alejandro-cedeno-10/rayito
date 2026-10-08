@@ -47,6 +47,14 @@ message StartRequest {
   bool stdin = 4;
   // Etiqueta libre del cliente para localizar el proceso en List.
   optional string tag = 5;
+  // false (default): el timeout y SendSignal llegan sólo al grupo del
+  // proceso. true: el proceso es *child subreaper* de sus descendientes, y
+  // el timeout (SIGTERM a todo el árbol y SIGKILL tras la gracia) y
+  // SendSignal alcanzan también a los que salieron del grupo con setsid o un
+  // doble fork; un SIGKILL congela el árbol antes de matarlo. El EndEvent de
+  // un timeout llega cuando ya no queda nada del árbol. Un rayd anterior
+  // ignora el campo.
+  bool kill_tree = 6;
 }
 
 message ConnectRequest {

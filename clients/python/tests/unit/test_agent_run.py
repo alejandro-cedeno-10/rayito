@@ -12,13 +12,11 @@ import pytest
 
 from rayito._agent._domain import AgentLimits, AgentModel, AgentSpec
 from rayito._agent._runtime import WarmupStep
-from rayito._agent._stream_base import stop_tree_command
 from rayito._otel import ALLOWED_SPAN_ATTRIBUTES, instrumentation_for
 from rayito.exceptions import AgentException, InvalidArgumentException, TimeoutException
 from rayito.sandbox_sync.agent import Agent
 
 from .fake_agent import (
-    FAKE_PID,
     FAKE_SESSION_ID,
     FakeAgentRuntime,
     FakeCommandHandle,
@@ -168,10 +166,10 @@ def test_stream_never_raises_for_an_agent_failure() -> None:
     assert events[-1].reason == "busy"
 
 
-def test_abort_stops_the_process_tree_then_kills_the_handle() -> None:
+def test_abort_kills_the_handle_of_a_kill_tree_run() -> None:
     handle = FakeCommandHandle(lines=[_line(event="step_started", index=1)])
     sandbox = FakeSandbox(
-        commands=FakeCommands(handles=[handle], foreground_results=[None]),
+        commands=FakeCommands(handles=[handle]),
         files=FakeFilesystem(),
         gateways={"bedrock": gateway_status()},
     )
@@ -180,7 +178,8 @@ def test_abort_stops_the_process_tree_then_kills_the_handle() -> None:
     stream = agent.stream("hola", spec=_spec(), runtime=runtime)
     stream.abort()
     assert handle.killed is True
-    assert [call.cmd for call in sandbox.commands.calls[1:]] == [stop_tree_command(FAKE_PID)]
+    assert len(sandbox.commands.calls) == 1, "rayd para el árbol: no hace falta otra orden"
+    assert sandbox.commands.calls[0].kill_tree is True
     with pytest.raises(AgentException) as excinfo:
         stream.result()
     assert excinfo.value.reason == "aborted"
@@ -296,7 +295,7 @@ def test_span_attributes_are_a_subset_of_the_allowed_list() -> None:
         ),
     ],
 )
-def test_sdk_limit_stops_the_runtime_and_its_process_tree(
+def test_sdk_limit_kills_the_handle_of_a_kill_tree_run(
     limits: AgentLimits, lines: list[bytes], reason: str
 ) -> None:
     handle = FakeCommandHandle(lines=[*lines, _line(event="step_started", index=3)])
@@ -311,13 +310,8 @@ def test_sdk_limit_stops_the_runtime_and_its_process_tree(
     assert events[-1].type == "agent_failed"
     assert events[-1].reason == reason
     assert handle.killed is True
-    assert [call.cmd for call in sandbox.commands.calls[1:]] == [stop_tree_command(FAKE_PID)]
-
-
-def test_stop_tree_command_rejects_pids_it_must_never_signal() -> None:
-    for pid in (0, 1, -5, True):
-        with pytest.raises(InvalidArgumentException):
-            stop_tree_command(pid)
+    assert len(sandbox.commands.calls) == 1, "rayd para el árbol: no hace falta otra orden"
+    assert sandbox.commands.calls[0].kill_tree is True
 
 
 def test_timeout_reported_by_the_end_event_becomes_timeout() -> None:

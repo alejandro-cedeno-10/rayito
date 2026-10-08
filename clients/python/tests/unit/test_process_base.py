@@ -57,6 +57,7 @@ def test_start_request_wraps_the_command_in_a_login_shell() -> None:
     assert list(request.process.args) == ["-l", "-c", "echo hola"]
     assert request.timeout_ms == int(DEFAULT_COMMAND_TIMEOUT_SECONDS * 1000)
     assert request.stdin is False
+    assert request.kill_tree is False
     assert not request.HasField("user")
     assert not request.HasField("tag")
     assert not request.process.HasField("cwd")
@@ -72,6 +73,7 @@ def test_start_request_carries_every_option() -> None:
         stdin=True,
         timeout=2.5,
         tag="m2",
+        kill_tree=True,
     )
     assert dict(request.process.envs) == {"FOO": "bar"}
     assert request.user.username == "root"
@@ -79,6 +81,7 @@ def test_start_request_carries_every_option() -> None:
     assert request.stdin is True
     assert request.timeout_ms == 2500
     assert request.tag == "m2"
+    assert request.kill_tree is True
 
 
 def test_start_request_omits_empty_user_and_cwd_and_disables_timeout() -> None:

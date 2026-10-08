@@ -104,6 +104,18 @@ segundo plano (recibes un handle y sigues).
 manda `SIGTERM` al grupo del proceso, `SIGKILL` 5 s después, y lanza
 `TimeoutException`. Una pausa no consume ese plazo.
 
+Lo que el comando saque de su grupo (`setsid`, `nohup ... &` con un doble
+fork, un servidor que se demoniza) no recibe esas señales. Con
+`kill_tree=True` (TypeScript: `killTree: true`) sí: el agente hace al proceso
+*child subreaper* de sus descendientes, de modo que siguen colgando de él
+aunque su padre salga; el `SIGTERM` del timeout llega a todo el árbol y, tras
+los 5 s de gracia, el agente congela (`SIGSTOP`) y mata (`SIGKILL`) a los que
+queden. El fin del comando no llega hasta que no queda ninguno (si todos
+salen antes, la gracia acaba antes). `kill()` hace lo mismo sin gracia: congela
+el árbol, lo mata y después mata el grupo. Lo que un comando deja vivo al
+terminar por sí mismo no se toca, con o sin `kill_tree`; nunca se señala un
+proceso ajeno al árbol.
+
 Para ver la salida mientras llega, pasa callbacks:
 
 === "Python"
@@ -275,6 +287,7 @@ con `output_truncated`.
 | `timeout` | `timeoutMs` | 60 s / 60 000 ms | límite en el servidor; `None` / `0` sin límite |
 | `request_timeout` | `requestTimeoutMs` | el del sandbox (60 s) | plazo de cada llamada al agente |
 | `tag` | `tag` | — | etiqueta libre que devuelve `commands.list()` |
+| `kill_tree` | `killTree` | `False` | el timeout y `kill()` alcanzan también a los descendientes que salieron del grupo (ver [Primer plano](#primer-plano)) |
 | `secrets` | `secrets` | — | [secretos](../secrets.md) como variables de entorno (opcional, con coste) |
 | `max_output_bytes` | `maxOutputBytes` | 64 MiB | tope de la salida guardada por descriptor; ver [Salida guardada](#salida-guardada) |
 | — | `signal` | — | `AbortSignal` que cancela la llamada |
@@ -320,8 +333,8 @@ parar no agota la memoria de tu proceso; las PTY usan el mismo tope.
 
 Los demás métodos: `commands.list()` (una lista de `ProcessInfo` con `pid`,
 `cmd`, `args`, `envs`, `cwd`, `tag` y `kind`, que incluye las PTY),
-`commands.kill(pid)` (`SIGKILL` al grupo; `False` si el proceso ya no
-existe), `commands.send_stdin(pid, data)`, `commands.close_stdin(pid)` y
+`commands.kill(pid)` (`SIGKILL` al grupo, y antes a todo el árbol si se
+lanzó con `kill_tree`; `False` si el proceso ya no existe), `commands.send_stdin(pid, data)`, `commands.close_stdin(pid)` y
 `commands.connect(pid)` (TypeScript: `sendStdin`, `closeStdin`).
 
 ## Errores y solución de problemas

@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 use super::context::{ContextId, ContextRegistry, DEFAULT_CONTEXT_ID};
 use super::protocol::SidecarOp;
 use crate::process::env::build_child_env;
-use crate::process::{ProcessIdentity, ResourceLimits, SpawnSpec, StdinMode};
+use crate::process::{KillScope, ProcessIdentity, ResourceLimits, SpawnSpec, StdinMode};
 
 /// `/validate` executes this in the default context so Lambda samples the
 /// pandas, matplotlib and chart-extractor pages for prefetch. It is the
@@ -91,6 +91,7 @@ pub fn sidecar_spawn_spec(identity: &ProcessIdentity, config: &SidecarConfig) ->
         identity: identity.clone(),
         stdin: StdinMode::Pipe,
         limits: ResourceLimits::default(),
+        kill_scope: KillScope::Group,
     }
 }
 

@@ -5,13 +5,17 @@
 //!
 //! The same table backs `rayd_core::code::KernelProcesses`: the kernel
 //! pids the sidecar reports are checked against it before they are
-//! recorded and again before their group is signalled, the only other
-//! place `rayd` acts on a pid it did not spawn.
+//! recorded and again before their group is signalled, and
+//! `rayd_core::process::MemberSignaller`: a member of a `KillScope::Tree`
+//! process's tree is signalled only if its pid still names the same
+//! process. Those are the only other places `rayd` acts on a pid it did
+//! not spawn.
 
 use std::fs;
 
 use rayd_core::code::{KernelPidRejection, KernelProcess, KernelProcesses, ProcessFacts};
 use rayd_core::orphans::{ProcEntry, ProcessTable};
+use rayd_core::process::MemberSignaller;
 
 use super::signal_process_group;
 
@@ -62,6 +66,29 @@ impl ProcessTable for ProcfsProcessTable {
 
     #[cfg(not(unix))]
     fn reap(&self, _pid: i32) {}
+}
+
+impl MemberSignaller for ProcfsProcessTable {
+    /// The identity check and the signal are two steps, but the walk that
+    /// calls this stops each member before it kills it, and a stopped
+    /// process cannot exit (and free its pid) by itself in between.
+    #[cfg(unix)]
+    fn signal_member(&self, member: &ProcEntry, signal: i32) -> bool {
+        use nix::sys::signal::{Signal, kill};
+        use nix::unistd::Pid;
+        let current = self.entry(member.pid);
+        let same =
+            current.is_some_and(|entry| !entry.zombie && entry.start_ticks == member.start_ticks);
+        let Ok(signal) = Signal::try_from(signal) else {
+            return false;
+        };
+        same && kill(Pid::from_raw(member.pid), signal).is_ok()
+    }
+
+    #[cfg(not(unix))]
+    fn signal_member(&self, _member: &ProcEntry, _signal: i32) -> bool {
+        false
+    }
 }
 
 impl KernelProcesses for ProcfsProcessTable {

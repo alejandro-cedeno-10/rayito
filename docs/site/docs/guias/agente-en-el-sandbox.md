@@ -398,11 +398,8 @@ consume lo que quede y devuelve el `AgentResult` (o lanza), `abort()`,
     ```
 
 `abort()` (Python, también desde otro hilo), cancelar la tarea `asyncio`
-o un `AbortSignal` piden primero al runtime que pare con elegancia y
-después matan el proceso y todo lo que lanzó (OpenCode y deepagents corren
-cada orden de su shell en una sesión propia, fuera del grupo del proceso,
-así que el SDK congela y mata ese árbol antes). El resultado es
-`reason="aborted"`.
+o un `AbortSignal` matan el proceso del runtime y todo lo que lanzó. El
+resultado es `reason="aborted"`.
 
 Un sandbox corre una sola ejecución del agente a la vez: un segundo `run()`
 mientras otro sigue en curso termina con `reason="busy"`.
@@ -418,13 +415,33 @@ Al superar `max_steps` o `max_total_tokens` el SDK para el runtime igual
 que `abort()` y espera a que termine: el stream acaba con ese `reason` y el
 siguiente `run()` no lo encuentra ocupado (`busy`).
 
-!!! warning "El timeout no alcanza a lo que lanzó el shell del agente"
-    `timeout_seconds` / `timeoutMs` lo impone `rayd` matando el grupo del
-    proceso: el runtime muere y el stream acaba con `reason="timeout"`, pero
-    una orden que su herramienta de shell siga corriendo (en su propia
-    sesión) sobrevive hasta terminar y, mientras viva, el siguiente `run()`
-    puede encontrar el agente `busy`. `rayd` no mata ese árbol: si te
-    importa, corta antes con `abort()`, que sí lo hace.
+### Qué garantizan el timeout y `abort()`
+
+OpenCode y deepagents corren cada orden de su herramienta de shell en una
+sesión propia (`setsid`), fuera del grupo del proceso del runtime, y una
+orden puede además demonizarse (un servidor de desarrollo, un `nohup ... &`).
+Por eso cada ejecución arranca como un comando con `kill_tree`
+([Comandos](comandos.md#primer-plano)): `rayd` hace al runtime *child
+subreaper* de todo lo que lance, así que ningún descendiente se le escapa
+aunque su padre salga.
+
+- **Timeout** (`timeout_seconds` / `timeoutMs`): `rayd` manda `SIGTERM` al
+  runtime y a todos sus descendientes; si a los 5 s queda alguno, congela
+  (`SIGSTOP`) el árbol entero y lo mata (`SIGKILL`). El stream acaba con
+  `reason="timeout"` sólo cuando ya no queda ninguno, así que el siguiente
+  `run()` no encuentra el agente `busy`.
+- **`abort()`** y los límites del SDK (`max_steps`, `max_total_tokens`):
+  `rayd` congela el árbol, mata a los descendientes y después al runtime, sin
+  gracia.
+- Sólo se señalan procesos del árbol de esa ejecución: nada del resto del
+  sandbox (otros comandos, la PTY, el kernel de `run_code`).
+- Una ejecución que termina por sí misma (`Done` o un fallo del runtime) no
+  mata lo que dejó corriendo: si el agente arrancó un servidor a propósito,
+  sigue vivo.
+- Con una imagen cuyo `rayd` sea anterior a esta función, el timeout y
+  `abort()` sólo alcanzan al grupo del runtime: lo que la herramienta de
+  shell lanzó en su propia sesión sobrevive. Reconstruye la imagen con la
+  versión de Rayito del SDK.
 
 Los `reason` posibles están en
 [Errores](../referencia/errores.md#agentexception-agenterror). Ningún mensaje

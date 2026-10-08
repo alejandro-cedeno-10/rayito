@@ -15,7 +15,9 @@ use rayd_core::code::{
     KernelSidecar, ProcessFacts, SIDECAR_PROTOCOL_VERSION, SidecarEvent, SidecarEventSink,
     SidecarExitSink, SidecarIoError, SidecarLink, SidecarState,
 };
-use rayd_core::process::{Pid, ProcessIdentity, ResourceLimits, SpawnError, SpawnSpec, StdinMode};
+use rayd_core::process::{
+    KillScope, Pid, ProcessIdentity, ResourceLimits, SpawnError, SpawnSpec, StdinMode,
+};
 use rayd_core::session::{RunHookInput, SandboxSession};
 use tokio::sync::mpsc;
 
@@ -247,6 +249,7 @@ fn spawn_spec() -> SpawnSpec {
         },
         stdin: StdinMode::Pipe,
         limits: ResourceLimits::default(),
+        kill_scope: KillScope::Group,
     }
 }
 

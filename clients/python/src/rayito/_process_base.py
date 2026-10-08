@@ -71,10 +71,13 @@ def build_start_request(
     stdin: bool = False,
     timeout: float | None = DEFAULT_COMMAND_TIMEOUT_SECONDS,
     tag: str | None = None,
+    kill_tree: bool = False,
 ) -> process_pb2.StartRequest:
     """`ProcessConfig{cmd:"/bin/bash", args:["-l","-c", cmd]}` con el
     `timeout_ms` que impone el servidor. `user=""` y `cwd=""` se omiten como
-    si fueran `None`; el servidor resuelve los defaults del `/run` payload."""
+    si fueran `None`; el servidor resuelve los defaults del `/run` payload.
+    `kill_tree` lleva el timeout y `kill()` a todo el árbol del proceso
+    (`StartRequest.kill_tree`)."""
     if not isinstance(cmd, str) or not cmd.strip():
         raise InvalidArgumentException("cmd no puede estar vacío")
     config = process_pb2.ProcessConfig(cmd=SHELL, args=[*SHELL_ARGS, cmd])
@@ -83,7 +86,10 @@ def build_start_request(
     if cwd:
         config.cwd = cwd
     request = process_pb2.StartRequest(
-        process=config, timeout_ms=timeout_to_ms(timeout), stdin=bool(stdin)
+        process=config,
+        timeout_ms=timeout_to_ms(timeout),
+        stdin=bool(stdin),
+        kill_tree=bool(kill_tree),
     )
     if user:
         request.user.username = user

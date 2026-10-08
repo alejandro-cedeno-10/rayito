@@ -34,31 +34,6 @@ export const AGENT_RUN_TAG = "rayito-agent-run";
  * (`LimitTracker`): el runtime sigue vivo y hay que pararlo. */
 export const SDK_LIMIT_REASONS: ReadonlySet<string> = new Set(["max_steps", "token_budget"]);
 
-/** Plazo de la orden de `stopTreeCommand`. */
-export const AGENT_STOP_TREE_TIMEOUT_MS = 30_000;
-
-/**
- * Congela (`SIGSTOP`) el proceso del runtime y, de padres a hijos, cada
- * descendiente suyo, y luego mata (`SIGKILL`) a los descendientes. Hace
- * falta porque OpenCode y deepagents lanzan cada orden de su herramienta de
- * shell en una sesión propia (`setsid`): el `SIGKILL` de `rayd` al grupo del
- * proceso no las alcanza y, sin esto, un `sleep` o un servidor lanzado por el
- * agente sobreviviría a `abort()` y a los límites del SDK (medido con
- * `make local-e2e`, `agents.local.test.ts`). El propio runtime queda
- * congelado para el `kill()` del handle. Corre como el mismo `user` que el
- * agente, así que no puede tocar procesos ajenos.
- */
-export function stopTreeCommand(pid: number): string {
-  if (!Number.isSafeInteger(pid) || pid <= 1) {
-    throw new InvalidArgumentError("pid de agente no válido");
-  }
-  return (
-    't() { local c; for c in $(pgrep -P "$1"); do ' +
-    'kill -STOP "$c" 2>/dev/null; t "$c"; kill -KILL "$c" 2>/dev/null; done; }; ' +
-    `kill -STOP ${pid} 2>/dev/null; t ${pid}; true`
-  );
-}
-
 /** Si `event` es el `AgentFailed` con el que el SDK corta una ejecución que
  * el runtime aún no terminó. */
 export function isSdkLimitFailure(event: AgentEvent): boolean {
@@ -337,23 +312,17 @@ export class AgentStream implements AsyncIterable<AgentEvent> {
     await this.#stop();
   }
 
-  /** Para el runtime y todo lo que lanzó: `stopTreeCommand` y el `kill()` del handle. Sirve a
-   * `abort()` y a un límite del SDK (`max_steps`, `token_budget`), que sin
-   * esto dejaría al runtime trabajando (y gastando tokens) en segundo plano. */
+  /** Para el runtime y todo lo que lanzó con el `kill()` del handle: la
+   * ejecución arranca con `killTree: true`, así que `rayd` congela y mata
+   * también lo que la herramienta de shell del agente sacó de su grupo
+   * (`setsid`, doble fork) antes de matar el runtime. Sirve a `abort()` y a
+   * un límite del SDK (`max_steps`, `token_budget`), que sin esto dejaría al
+   * runtime trabajando (y gastando tokens) en segundo plano. */
   async #stop(): Promise<void> {
     if (this.#stopped) {
       return;
     }
     this.#stopped = true;
-    try {
-      await this.#sandbox.commands.run(stopTreeCommand(this.#handle.pid), {
-        timeoutMs: AGENT_STOP_TREE_TIMEOUT_MS,
-      });
-    } catch (error) {
-      if (!(error instanceof SandboxError)) {
-        throw error;
-      }
-    }
     await this.#handle.kill();
   }
 

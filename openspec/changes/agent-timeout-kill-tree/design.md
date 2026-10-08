@@ -1,0 +1,20 @@
+## Context
+
+`rayd` spawns every command as its own group leader and enforces `timeout_ms` with `killpg(SIGTERM)` and, 5 s later, `killpg(SIGKILL)`. `SendSignal` is a `killpg` too. A descendant that calls `setsid` (OpenCode's and deepagents' shell tool do, for every command) or whose parent exits (a daemon) is outside that group; once its parent dies it re-parents to PID 1 and no `ppid` link leads back to the command. `rayd` is PID 1 in the MicroVM and reaps orphans through `ChildRegistry` without ever calling `waitpid(-1)`.
+
+## Decisions
+
+1. **Opt-in per process, not a new default.** `StartRequest.kill_tree` turns the tree scope on. Plain commands keep E2B's group semantics; the agent turns it on for every run. A public `kill_tree`/`killTree` option on `commands.run` is the seam the agent uses, and is useful on its own for dev servers.
+2. **Child subreaper, not cgroups.** cgroup v2 is not guaranteed in the MicroVM image nor in the local Docker guest, and needs privileges `rayd` may not keep. `PR_SET_CHILD_SUBREAPER` needs none, is set in the existing `pre_exec` plan (async-signal-safe, one `prctl`), survives `execve`, and makes orphaned descendants re-parent to the root instead of PID 1, so the tree is a plain `ppid` walk over `/proc` while the root lives. Only Linux has it; elsewhere the walk reaches what `ppid` links reach.
+3. **Members are (pid, start time).** The walk reuses `orphans::ProcEntry` and the `/proc` adapter. `MemberSignaller::signal_member` re-reads the entry and signals only if the pid still names the same, non-zombie process. The kill pass stops (`SIGSTOP`) each member before killing it, and a stopped process cannot exit and free its pid in between, so a recycled pid is never signalled.
+4. **Freeze, then kill, in bounded passes.** `ProcessTree::kill` stops the root first (no new children), then, pass after pass, every descendant it has not stopped yet, until a pass finds none or `MAX_FREEZE_PASSES` (16) is reached; then `SIGKILL`s every stopped descendant. The root is left stopped for the caller's `killpg`, so `SendSignal` still answers `NOT_FOUND` exactly as before.
+5. **TERM before the group, and remembered members.** On timeout the tree gets `SIGTERM` before the group: once the root dies its children re-parent away, so the walk must see them first. Every member signalled is remembered and is an anchor of later walks, so the `SIGKILL` after the grace still reaches members (and their children) re-parented to PID 1 after the root exited on `SIGTERM`.
+6. **Grace ends early; the end waits for the tree.** During the 5 s grace (`KILL_GRACE`) the timeout task checks every `TREE_SETTLE_POLL` (100 ms) whether the root was reaped and no remembered member is alive; if so it skips the `SIGKILL`. The supervisor of a tree process whose end reason is `Timeout` waits for the task to settle the tree before sending the `EndEvent`, so the SDK never sees the end of a timed-out run while a member is alive, and the next run does not find the lock taken.
+7. **No reaping here.** Killed members become zombies of the root or of PID 1; the existing orphan reaper (`ChildRegistry::sweep_orphans`) reaps them on `SIGCHLD`. No new `waitpid` call is added.
+8. **Natural exit is untouched.** A tree process that ends by itself keeps whatever it left running; the scope only changes what a timeout or a signal reaches.
+9. **The client-side walk goes.** With `rayd` owning the guarantee, `stop_tree_command`/`stopTreeCommand` (a `pgrep -P` walk run as a second command) is removed instead of kept as a fallback: one place enforces it, and that place also sees daemons re-parented away from the runtime. With a `rayd` that predates the field, `abort()` reaches only the runtime's group; the agent guide says so.
+
+## Risks
+
+- A runtime that is itself a subreaper adopts orphaned zombies it never `wait`s for until the run ends. They hold only a pid each and are reaped by PID 1 when the root dies.
+- A process forked between the last freeze pass and the kill, or by a member after the root died and before the `SIGKILL`, can escape. Both windows are bounded by a fork racing a `SIGSTOP`.

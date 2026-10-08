@@ -85,6 +85,16 @@ export interface CommandOptions extends RequestOptions {
   readonly timeoutMs?: number | undefined;
   readonly tag?: string | undefined;
   /**
+   * `true` hace que el timeout y `kill()` alcancen también a los
+   * descendientes que salieron del grupo del proceso (`setsid`, un doble
+   * fork): el agente lo hace *child subreaper* de ellos, manda el SIGTERM del
+   * timeout a todo el árbol y, tras la gracia, congela y mata a los que
+   * queden; el fin del comando llega cuando ya no queda ninguno. Con `false`
+   * (por defecto) sólo se señala el grupo, como en E2B. Lo que el comando
+   * deja vivo al terminar por sí mismo no se toca.
+   */
+  readonly killTree?: boolean | undefined;
+  /**
    * Tope de la salida guardada por descriptor (la del resultado y la del
    * handle), en bytes: `COMMAND_OUTPUT_MAX_BYTES` (64 MiB) por defecto. Lo
    * más antiguo se descarta y `truncated` lo indica; `0` no guarda nada.
@@ -129,12 +139,14 @@ export interface StartRequestInput {
   readonly stdin?: boolean | undefined;
   readonly timeoutMs?: number | undefined;
   readonly tag?: string | undefined;
+  readonly killTree?: boolean | undefined;
 }
 
 /**
  * `ProcessConfig{cmd:"/bin/bash", args:["-l","-c", cmd]}` con el `timeout_ms`
  * que impone el servidor. `user=""` y `cwd=""` se omiten; el servidor resuelve
- * los defaults del `/run` payload.
+ * los defaults del `/run` payload. `killTree` lleva el timeout y `kill()` a
+ * todo el árbol del proceso (`StartRequest.kill_tree`).
  */
 export function buildStartRequest(cmd: string, input: StartRequestInput = {}): StartRequest {
   if (typeof cmd !== "string" || cmd.trim().length === 0) {
@@ -151,6 +163,7 @@ export function buildStartRequest(cmd: string, input: StartRequestInput = {}): S
     process: config,
     timeoutMs: BigInt(timeoutToMs(input.timeoutMs ?? DEFAULT_COMMAND_TIMEOUT_MS)),
     stdin: Boolean(input.stdin),
+    killTree: Boolean(input.killTree),
   });
   if (input.user) {
     request.user = create(UserSchema, { username: input.user });
@@ -739,7 +752,8 @@ export class Commands {
     return response.processes.map(processInfoFromProto);
   }
 
-  /** `SendSignal(pid, SIGKILL)`; `false` cuando el pid no existe. */
+  /** `SendSignal(pid, SIGKILL)`: al grupo y, si se lanzó con `killTree`, antes a todo
+   * su árbol; `false` cuando el pid no existe. */
   async kill(pid: number, options: RequestOptions = {}): Promise<boolean> {
     const request = create(SendSignalRequestSchema, { pid: validatePid(pid), signal: SIGKILL });
     try {
