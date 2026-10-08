@@ -369,13 +369,19 @@ const DAEMON_GATEWAY_SECRET_VALUE = "Bearer local-sin-modelo";
 /**
  * Un `AgentRuntime` de doble sin modelo: su script deja un `sleep` en una
  * sesión propia cuyo padre sale enseguida (un demonio, como el que deja una
- * herramienta de shell) y luego espera para siempre.
+ * herramienta de shell) y luego espera para siempre. Su configuración es un
+ * JSON vacío: `sbx.agent` escribe al menos un fichero.
  */
 function daemonRuntime(seconds: number): AgentRuntime {
   const daemon = `sleep ${seconds} >/dev/null 2>&1 </dev/null &`;
   return {
     name: "daemon",
-    buildConfig: () => ({ files: [], configSha256: `daemon-${seconds}` }),
+    buildConfig: (_spec, { workdir }) => ({
+      files: [
+        { path: `${workdir}/.rayito/agent/daemon.json`, data: new TextEncoder().encode("{}") },
+      ],
+      configSha256: `daemon-${seconds}`,
+    }),
     command: () => ({
       script: `setsid sh -c ${shellQuote(daemon)}; exec sleep infinity`,
       stdin: new Uint8Array(),

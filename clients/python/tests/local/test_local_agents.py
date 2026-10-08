@@ -61,6 +61,7 @@ from rayito._agent._events import AgentEvent
 from rayito._agent._runtime import (
     RunCommand,
     RunRequest,
+    RuntimeFile,
     RuntimeFiles,
     RuntimeState,
     TemplateStep,
@@ -393,7 +394,8 @@ DAEMON_GATEWAY_SECRET_VALUE: Final = "Bearer local-sin-modelo"
 class DaemonRuntime:
     """Un `AgentRuntime` de doble sin modelo: su script deja un `sleep` en
     una sesión propia cuyo padre sale enseguida (un demonio, como el que
-    deja una herramienta de shell) y luego espera para siempre."""
+    deja una herramienta de shell) y luego espera para siempre. Su
+    configuración es un JSON vacío: `sbx.agent` escribe al menos un fichero."""
 
     seconds: int
     name: str = "daemon"
@@ -401,7 +403,8 @@ class DaemonRuntime:
     def build_config(
         self, spec: AgentSpec, *, gateway_urls: Mapping[str, str], workdir: str
     ) -> RuntimeFiles:
-        return RuntimeFiles(files=(), config_sha256=f"daemon-{self.seconds}")
+        config = RuntimeFile(f"{workdir}/.rayito/agent/daemon.json", b"{}")
+        return RuntimeFiles(files=(config,), config_sha256=f"daemon-{self.seconds}")
 
     def command(self, request: RunRequest) -> RunCommand:
         daemon = f"sleep {self.seconds} >/dev/null 2>&1 </dev/null &"
