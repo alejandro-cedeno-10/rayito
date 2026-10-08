@@ -81,6 +81,12 @@ COMPATIBILITY: tuple[CompatibilityRow, ...] = (
         "0.9: connect() recupera sbx.gateways desde ConfigureStatus y el arranque rápido del "
         "agente sin la opción D se validan con el rayd del tag rayd-v0.9.0",
     ),
+    CompatibilityRow(
+        "0.10",
+        "0.10.0",
+        "0.10: el timeout y abort() del agente paran todo el árbol de procesos (kill_tree) "
+        "y los proveedores del agente se validan con el rayd del tag rayd-v0.10.0",
+    ),
 )
 
 

@@ -6,6 +6,8 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-10-08
+
 ### Añadido
 
 - **Más proveedores para el modelo del agente** (`ai-agent-providers`).
@@ -31,6 +33,12 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   ChatGPT, Claude Pro/Max, Copilot, SuperGrok) no se admiten; la guía
   "Proveedores del agente" explica por qué. Construir un preset no llama a
   AWS.
+
+### Changed
+
+- `rayito doctor` conoce la serie 0.10: la tabla de compatibilidad
+  (`rayito.cli._compat.COMPATIBILITY` y `docs/site/docs/limits.md`) exige
+  el `rayd` del tag `rayd-v0.10.0` para el SDK 0.10.
 
 ### Fixed
 
@@ -1526,7 +1534,8 @@ Pasos manuales, fuera de CI, antes del primer tag (pasos canónicos en
 
 Builds internos de los hitos M1-M5, nunca publicados.
 
-[Unreleased]: https://github.com/alejandro-cedeno-10/rayito/compare/python-v0.9.1...HEAD
+[Unreleased]: https://github.com/alejandro-cedeno-10/rayito/compare/python-v0.10.0...HEAD
+[0.10.0]: https://github.com/alejandro-cedeno-10/rayito/compare/python-v0.9.1...python-v0.10.0
 [0.9.1]: https://github.com/alejandro-cedeno-10/rayito/compare/python-v0.9.0...python-v0.9.1
 [0.9.0]: https://github.com/alejandro-cedeno-10/rayito/compare/python-v0.8.0...python-v0.9.0
 [0.8.0]: https://github.com/alejandro-cedeno-10/rayito/compare/python-v0.7.1...python-v0.8.0
