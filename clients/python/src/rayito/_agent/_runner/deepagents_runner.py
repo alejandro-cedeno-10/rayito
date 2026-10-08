@@ -336,7 +336,13 @@ def build_model(config: Mapping[str, Any], model_id: str) -> Any:
     (la cabecera que inyecta `azure_openai_gateway`) y no en
     `Authorization`, que Azure leería como token de Entra; y siempre la
     Responses API, porque con `chat/completions` el cliente de Azure
-    reescribe la ruta a `/deployments/<modelo>/…`, fuera de la allowlist."""
+    reescribe la ruta a `/deployments/<modelo>/…`, fuera de la allowlist.
+
+    Con Chat Completions, `ChatOpenAI` va con `stream_usage=True`
+    (`stream_options.include_usage`): sin él, una API compatible con OpenAI
+    no manda el uso en streaming, los pasos llegan con 0 tokens y
+    `AgentLimits.max_total_tokens` no corta nunca. Medido contra Bedrock
+    (`/openai/v1` y `bedrock-mantle`) y un proxy de LiteLLM."""
     provider = config["provider"]
     base_url = config["base_url"]
     placeholder = config["credential_placeholder"]
@@ -350,7 +356,9 @@ def build_model(config: Mapping[str, Any], model_id: str) -> Any:
         return module.ChatAnthropic(model=model_id, base_url=base_url, api_key=placeholder)
     if provider == "openai-compatible":
         module = importlib.import_module("langchain_openai")
-        return module.ChatOpenAI(model=model_id, base_url=base_url, api_key=placeholder)
+        return module.ChatOpenAI(
+            model=model_id, base_url=base_url, api_key=placeholder, stream_usage=True
+        )
     if provider == "openai":
         module = importlib.import_module("langchain_openai")
         return module.ChatOpenAI(
