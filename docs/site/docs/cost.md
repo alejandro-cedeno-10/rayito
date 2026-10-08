@@ -172,6 +172,16 @@ de esta sección son **List**: aún no se han contrastado con una factura real
 medidos sí son reales. En la factura aparecen como
 uso de AWS Marketplace.
 
+Con los demás proveedores
+([Proveedores del agente](guias/agente-proveedores.md)) el modelo lo
+factura el proveedor por tokens, con sus propios precios; Rayito sólo añade
+las lecturas de Secrets Manager de la pasarela. En las APIs al estilo de
+OpenAI (OpenAI, Azure OpenAI, xAI, OpenRouter, Groq, Mistral, DeepSeek,
+LiteLLM) la pasarela no puede limitar el modelo, así que el tope de gasto
+tiene que estar en el proveedor: presupuesto por proyecto, límite de crédito
+por clave o presupuesto de la clave virtual de LiteLLM
+([Límites del lado del proveedor](guias/agente-proveedores.md#limites-del-lado-del-proveedor)).
+
 ### Precios del modelo (Bedrock, us-east-1, consultado 2026-10-06)
 
 | Modelo | Perfil | Entrada /1M tok | Salida /1M tok | Escritura de caché (5 min) | Lectura de caché |

@@ -263,7 +263,14 @@ elijas). Construirlas no llama a AWS: el coste y la activación son los de
 | `anthropic_gateway(secret)` | `anthropicGateway(secret)` | `https://api.anthropic.com` | `x-api-key` | `POST /v1/messages` |
 | `openai_compatible_gateway(secret, upstream=, base_path=)` | `openaiCompatibleGateway(secret, { upstream, basePath })` | el `upstream` que pases | `authorization` (`Bearer <clave>`) | `POST <base_path>/chat/completions` |
 
-Las tres aceptan además `rate_per_minute=`/`ratePerMinute`. `secret` es el
+OpenAI, Gemini, Azure OpenAI, OpenRouter, Groq, Mistral, DeepSeek, xAI y un
+proxy de LiteLLM propio tienen su preset (`openai_gateway`,
+`gemini_gateway`, `litellm_gateway`…): ver
+[Proveedores del agente](../guias/agente-proveedores.md). En las APIs al
+estilo de OpenAI el modelo va en el cuerpo y la pasarela no puede
+limitarlo: pon el tope de gasto en el proveedor.
+
+Todas aceptan además `rate_per_minute=`/`ratePerMinute`. `secret` es el
 nombre del secreto (o un `SecretRef`), nunca el valor.
 
 === "Python"
