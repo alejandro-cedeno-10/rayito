@@ -17,8 +17,14 @@ versionado [SemVer](https://semver.org/lang/es/).
   `deepseekGateway`, `xaiGateway` y `litellmGateway({ upstream,
   basePath: "/v1" })`. OpenCode usa los proveedores nativos `openai`,
   `google` y `azure` a través de la pasarela; deepagents construye
-  `ChatOpenAI(use_responses_api=True)` o `ChatGoogleGenerativeAI`, y con
-  `"azure"` lanza `UnimplementedError`. `gen_ai.provider.name` vale
+  `ChatOpenAI(use_responses_api=True)`, `ChatGoogleGenerativeAI` o
+  `AzureChatOpenAI` (Responses API, clave en `api-key`). El
+  `opencode.json` declara el paquete del AI SDK de cada proveedor
+  (`@ai-sdk/openai`, `@ai-sdk/google`, `@ai-sdk/azure`, todos dentro del
+  binario fijado), Azure apunta a `/openai/v1` y
+  `OPENCODE_EXPERIMENTAL_WEBSOCKETS` queda apagado; la prueba de humo de
+  `AgentTemplate` importa también `langchain_openai` y
+  `langchain_google_genai`. `gen_ai.provider.name` vale
   `gcp.gemini` y `azure.ai.openai` para los nuevos. En las APIs al estilo
   de OpenAI la pasarela no puede limitar el modelo: fija el tope de gasto
   en el proveedor (SECURITY.md T29). Las suscripciones de consumo (plan de

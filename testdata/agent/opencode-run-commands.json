@@ -10,6 +10,7 @@
       "OPENCODE_DISABLE_DEFAULT_PLUGINS": "1",
       "OPENCODE_PURE": "1",
       "OPENCODE_DISABLE_CLAUDE_CODE": "1",
+      "OPENCODE_EXPERIMENTAL_WEBSOCKETS": "0",
       "AWS_BEARER_TOKEN_BEDROCK": "placeholder-not-a-secret",
       "AWS_REGION": "us-east-1"
     }
@@ -25,6 +26,7 @@
       "OPENCODE_DISABLE_DEFAULT_PLUGINS": "1",
       "OPENCODE_PURE": "1",
       "OPENCODE_DISABLE_CLAUDE_CODE": "1",
+      "OPENCODE_EXPERIMENTAL_WEBSOCKETS": "0",
       "AWS_BEARER_TOKEN_BEDROCK": "placeholder-not-a-secret",
       "AWS_REGION": "us-east-1"
     }

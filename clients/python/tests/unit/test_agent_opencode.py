@@ -84,10 +84,30 @@ def _openai_spec() -> AgentSpec:
     )
 
 
+def _native_spec(provider: str, model_id: str, small_model: str) -> AgentSpec:
+    return AgentSpec(
+        model=AgentModel(provider=provider, id=model_id, gateway="openai"),  # type: ignore[arg-type]
+        small_model=small_model,
+        agents={"revisor": SubAgent(description="Revisa cambios", instructions="Revisa el diff.")},
+    )
+
+
+def _litellm_spec() -> AgentSpec:
+    return AgentSpec(
+        model=AgentModel(
+            provider="openai-compatible", id="modelo-litellm", gateway="openai", base_path="/v1"
+        )
+    )
+
+
 CONFIG_CASES = {
     "bedrock": _bedrock_spec,
     "anthropic": _anthropic_spec,
     "openai-compatible": _openai_spec,
+    "openai": lambda: _native_spec("openai", "gpt-5", "gpt-5-mini"),
+    "google": lambda: _native_spec("google", "gemini-2.5-pro", "gemini-2.5-flash"),
+    "azure": lambda: _native_spec("azure", "mi-despliegue", "mi-despliegue-mini"),
+    "litellm": _litellm_spec,
 }
 
 

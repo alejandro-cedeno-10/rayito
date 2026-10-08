@@ -87,21 +87,32 @@ OPENCODE_PROVIDER_IDS: Final[Mapping[str, str]] = {
     "azure": "azure",
 }
 #: Lo que cada paquete nativo de OpenCode espera en `baseURL` delante de su
-#: ruta: `@ai-sdk/openai` añade `/responses`, `@ai-sdk/google`
-#: `/models/<m>:streamGenerateContent` y `@ai-sdk/azure` `/v1/responses`.
-#: Con `baseURL` hacia la pasarela, `@ai-sdk/azure` no necesita
-#: `resourceName` (`testdata/agent/provider-catalogue.json`).
+#: ruta: `@ai-sdk/openai` y `@ai-sdk/azure` añaden `/responses` y
+#: `@ai-sdk/google` `/models/<m>:streamGenerateContent`. Con `baseURL`
+#: hacia la pasarela, `@ai-sdk/azure` no necesita `resourceName` ni añade
+#: `api-version` (`testdata/agent/provider-catalogue.json`; medido con el
+#: binario fijado en docs/research/2026-10-provider-runtimes-spike.md).
 OPENCODE_NATIVE_BASE_PATHS: Final[Mapping[str, str]] = {
     "openai": "/v1",
     "google": "/v1beta",
-    "azure": "/openai",
+    "azure": "/openai/v1",
+}
+#: El paquete del AI SDK de cada proveedor nativo, explícito para no
+#: depender del catálogo de models.dev (`OPENCODE_DISABLE_MODELS_FETCH`):
+#: los tres van empaquetados en el binario de OpenCode fijado.
+OPENCODE_NATIVE_NPM: Final[Mapping[str, str]] = {
+    "openai": "@ai-sdk/openai",
+    "google": "@ai-sdk/google",
+    "azure": "@ai-sdk/azure",
 }
 #: Prefijo de ruta de la Messages API que el SDK de Anthropic añade a
 #: `baseURL`.
 ANTHROPIC_BASE_PATH: Final = "/v1"
 #: Las cinco variables de la plantilla (docs/research/2026-10-agent-spike.md)
 #: más `OPENCODE_DISABLE_CLAUDE_CODE` (F11): sin descargas, sin
-#: autoactualización y sin leer `.claude/`.
+#: autoactualización y sin leer `.claude/`. `OPENCODE_EXPERIMENTAL_WEBSOCKETS`
+#: apagado de forma explícita: con él, el proveedor `openai` abriría un
+#: WebSocket hacia la Responses API que la pasarela no reenvía.
 OPENCODE_FLAG_ENVS: Final[Mapping[str, str]] = {
     "OPENCODE_DISABLE_AUTOUPDATE": "1",
     "OPENCODE_DISABLE_MODELS_FETCH": "1",
@@ -109,6 +120,7 @@ OPENCODE_FLAG_ENVS: Final[Mapping[str, str]] = {
     "OPENCODE_DISABLE_DEFAULT_PLUGINS": "1",
     "OPENCODE_PURE": "1",
     "OPENCODE_DISABLE_CLAUDE_CODE": "1",
+    "OPENCODE_EXPERIMENTAL_WEBSOCKETS": "0",
 }
 #: Un `sessionID` de OpenCode (`ses_…`): sólo así se mete en un comando.
 _SESSION_ID_PATTERN: Final = re.compile(r"[A-Za-z0-9_-]{1,128}")
@@ -179,6 +191,7 @@ def _provider(spec: AgentSpec, gateway_url: str) -> dict[str, object]:
     native_base_path = OPENCODE_NATIVE_BASE_PATHS.get(model.provider)
     if native_base_path is not None:
         return {
+            "npm": OPENCODE_NATIVE_NPM[model.provider],
             "options": {
                 "baseURL": _join_url(gateway_url, native_base_path),
                 "apiKey": MODEL_CREDENTIAL_PLACEHOLDER,

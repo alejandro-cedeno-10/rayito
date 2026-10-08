@@ -65,6 +65,10 @@ MODEL_ERROR_MODULES: Final = (
     "langchain_openai",
     "openai",
 )
+#: `api-version` que `AzureChatOpenAI` exige y que la API v1 de Azure
+#: OpenAI acepta (learn.microsoft.com/azure/ai-foundry/openai/api-version-lifecycle,
+#: consultado el 2026-10-07: la v1 ya no necesita versiones con fecha).
+AZURE_OPENAI_V1_API_VERSION: Final = "v1"
 #: El nodo del modelo en los grafos de `langchain.agents.create_agent`.
 MODEL_NODE: Final = "model"
 #: El nodo de herramientas en esos mismos grafos.
@@ -327,7 +331,12 @@ class Translator:
 
 def build_model(config: Mapping[str, Any], model_id: str) -> Any:
     """El chat model de LangChain para el proveedor, siempre contra la
-    pasarela (`base_url`) y con el marcador como credencial."""
+    pasarela (`base_url`) y con el marcador como credencial. Con Azure,
+    `AzureChatOpenAI` y no `ChatOpenAI`: sólo así la clave va en `api-key`
+    (la cabecera que inyecta `azure_openai_gateway`) y no en
+    `Authorization`, que Azure leería como token de Entra; y siempre la
+    Responses API, porque con `chat/completions` el cliente de Azure
+    reescribe la ruta a `/deployments/<modelo>/…`, fuera de la allowlist."""
     provider = config["provider"]
     base_url = config["base_url"]
     placeholder = config["credential_placeholder"]
@@ -351,6 +360,15 @@ def build_model(config: Mapping[str, Any], model_id: str) -> Any:
         module = importlib.import_module("langchain_google_genai")
         return module.ChatGoogleGenerativeAI(
             model=model_id, base_url=base_url, google_api_key=placeholder
+        )
+    if provider == "azure":
+        module = importlib.import_module("langchain_openai")
+        return module.AzureChatOpenAI(
+            model=model_id,
+            base_url=base_url,
+            api_key=placeholder,
+            api_version=AZURE_OPENAI_V1_API_VERSION,
+            use_responses_api=True,
         )
     raise RunnerError("protocol_error", "unknown_provider")
 

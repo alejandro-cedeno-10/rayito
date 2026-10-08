@@ -66,7 +66,7 @@ from rayito._limits import (
     DEFAULT_AGENT_WORKDIR,
     MODEL_CREDENTIAL_PLACEHOLDER,
 )
-from rayito.exceptions import InvalidArgumentException, UnimplementedError
+from rayito.exceptions import InvalidArgumentException
 
 #: Estado de deepagents dentro de `AGENT_STATE_DIR`: configuración y sesiones.
 DEEPAGENTS_STATE_DIR: Final = f"{AGENT_STATE_DIR}/deepagents"
@@ -122,13 +122,16 @@ RUNNER_FAILURE_REASONS: Final[tuple[str, ...]] = (
 #: `pkg.mod:build`: un módulo importable desde el directorio de trabajo y
 #: una función que recibe un `RunnerContext` y devuelve un grafo compilado.
 #: Lo que la clase de LangChain espera en `base_url` con los proveedores
-#: nativos: `ChatOpenAI` añade `/responses` y `ChatGoogleGenerativeAI`
-#: (`google-genai`) añade `/v1beta/models/...` por su cuenta. Con
-#: `"openai-compatible"` se usa `AgentModel.base_path`.
-DEEPAGENTS_NATIVE_BASE_PATHS: Final[Mapping[str, str]] = {"openai": "/v1", "google": ""}
-#: Proveedores que el runner aún no sabe hablar a través de la pasarela
-#: (`testdata/agent/provider-catalogue.json`).
-DEEPAGENTS_UNSUPPORTED_PROVIDERS: Final[tuple[str, ...]] = ("azure",)
+#: nativos: `ChatOpenAI` y `AzureChatOpenAI` añaden `/responses` y
+#: `ChatGoogleGenerativeAI` (`google-genai`) añade `/v1beta/models/...`
+#: por su cuenta (`testdata/agent/provider-catalogue.json`, comprobado
+#: contra una pasarela falsa en docs/research/2026-10-provider-runtimes-spike.md).
+#: Con `"openai-compatible"` se usa `AgentModel.base_path`.
+DEEPAGENTS_NATIVE_BASE_PATHS: Final[Mapping[str, str]] = {
+    "openai": "/v1",
+    "google": "",
+    "azure": "/openai/v1",
+}
 _ENTRYPOINT_PATTERN: Final = re.compile(r"[A-Za-z_][A-Za-z0-9_.]*:[A-Za-z_][A-Za-z0-9_]*")
 _SESSION_ID_PATTERN: Final = re.compile(r"rda_[0-9a-f]{32}")
 _USAGE_KEYS: Final = ("input", "output", "reasoning", "cache_read", "cache_write")
@@ -178,12 +181,6 @@ def build_deepagents_config(
             "AgentSpec.raw_config es configuración de OpenCode; deepagents no la admite"
         )
     model = spec.model
-    if model.provider in DEEPAGENTS_UNSUPPORTED_PROVIDERS:
-        raise UnimplementedError(
-            f"deepagents con AgentModel(provider={model.provider!r})",
-            "AzureChatOpenAI y ChatOpenAI mandan una cabecera que Azure lee como "
-            "credencial y la pasarela aún no puede quitarla; usa runtime='opencode'",
-        )
     base_path = DEEPAGENTS_NATIVE_BASE_PATHS.get(model.provider, model.base_path)
     base_url = gateway_urls[model.gateway].rstrip("/") + base_path
     subagents: list[dict[str, object]] = []

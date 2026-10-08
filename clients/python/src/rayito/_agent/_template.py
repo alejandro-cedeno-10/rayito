@@ -60,6 +60,12 @@ RIPGREP_BINARY_PATH: Final = f"{AGENT_BIN_DIR}/rg"
 DEEPAGENTS_VENV_DIR: Final = f"{AGENT_INSTALL_DIR}/deepagents"
 DEEPAGENTS_PYTHON_PATH: Final = f"{DEEPAGENTS_VENV_DIR}/bin/python"
 DEEPAGENTS_REQUIREMENTS_NAME: Final = "requirements-deepagents.txt"
+#: Lo que el build importa como prueba de humo del venv: deepagents y las
+#: clases de modelo de cada proveedor (`langchain_openai` para OpenAI,
+#: xAI, Azure y las APIs compatibles; `langchain_google_genai` para Gemini).
+DEEPAGENTS_SMOKE_MODULES: Final = (
+    "deepagents, langchain_aws, langchain_anthropic, langchain_openai, langchain_google_genai"
+)
 PREFETCH_SCRIPT_NAME: Final = "rayito-agent-prefetch"
 PREFETCH_SCRIPT_PATH: Final = f"{AGENT_BIN_DIR}/{PREFETCH_SCRIPT_NAME}"
 MANIFEST_CONTEXT_NAME: Final = "rayito-agent.json"
@@ -141,7 +147,7 @@ def _smoke_test(runtimes: Sequence[str]) -> str:
         checks += ["su user -c 'opencode --version'", "su user -c 'rg --version'"]
     if "deepagents" in runtimes:
         checks.append(
-            f"su user -c \"{DEEPAGENTS_PYTHON_PATH} -c 'import deepagents, langchain_aws'\""
+            f"su user -c \"{DEEPAGENTS_PYTHON_PATH} -c 'import {DEEPAGENTS_SMOKE_MODULES}'\""
         )
         checks.append(f"su user -c 'test -r {DEEPAGENTS_RUNNER_PATH}'")
     return " && ".join(checks)

@@ -19,7 +19,6 @@ from rayito._agent._domain import MODEL_PROVIDERS
 from rayito._agent._opencode import OPENCODE_CONFIG_PATH, OpenCodeRuntime
 from rayito._agent._telemetry import start_attributes
 from rayito._secret_gateway._domain import is_safe_request_path
-from rayito.exceptions import UnimplementedError
 
 CATALOGUE: dict[str, Any] = json.loads(
     (Path(__file__).parents[4] / "testdata" / "agent" / "provider-catalogue.json").read_text(
@@ -147,6 +146,7 @@ def test_opencode_native_provider_goes_through_the_gateway(provider: str) -> Non
     assert config["model"] == f"{provider_id}/modelo-a"
     assert config["provider"] == {
         provider_id: {
+            "npm": entry["opencode_npm"],
             "options": {
                 "baseURL": GATEWAY_URL + entry["opencode_base_path"],
                 "apiKey": PLACEHOLDER,
@@ -191,12 +191,7 @@ def test_raw_config_cannot_bring_another_provider(key: str, value: object) -> No
 def test_deepagents_native_provider(provider: str) -> None:
     entry = CATALOGUE["model_providers"][provider]
     runtime = DeepAgents()
-    if entry["deepagents"] == "unimplemented":
-        with pytest.raises(UnimplementedError):
-            runtime.build_config(
-                _spec(provider), gateway_urls={"modelo": GATEWAY_URL}, workdir="/home/user"
-            )
-        return
+    assert entry["deepagents"] == "supported"
     files = runtime.build_config(
         _spec(provider), gateway_urls={"modelo": GATEWAY_URL}, workdir="/home/user"
     )
@@ -221,3 +216,17 @@ def test_building_presets_creates_no_aws_client(monkeypatch: pytest.MonkeyPatch)
     for entry in CATALOGUE["presets"]:
         _build(entry)
     assert calls == []
+
+
+def test_deepagents_class_matches_the_runner_vectors() -> None:
+    """La clase de LangChain que el catálogo promete por proveedor es la que
+    crea el runner (`testdata/agent/deepagents-models.json`)."""
+    vectors = json.loads(
+        (Path(__file__).parents[4] / "testdata" / "agent" / "deepagents-models.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    classes = {case["provider"]: case["class"] for case in vectors["cases"]}
+    for provider, entry in CATALOGUE["model_providers"].items():
+        if "deepagents_class" in entry:
+            assert classes[provider] == entry["deepagents_class"]

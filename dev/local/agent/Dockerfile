@@ -67,4 +67,4 @@ ENV OPENCODE_DISABLE_AUTOUPDATE=1 \
 
 RUN su user -c "opencode --version" \
     && su user -c "rg --version" \
-    && su user -c "/opt/agents/deepagents/bin/python -c 'import deepagents, langchain_aws'"
+    && su user -c "/opt/agents/deepagents/bin/python -c 'import deepagents, langchain_aws, langchain_anthropic, langchain_openai, langchain_google_genai'"

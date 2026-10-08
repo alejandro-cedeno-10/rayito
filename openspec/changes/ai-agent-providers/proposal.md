@@ -30,8 +30,8 @@ app's OAuth client, or their terms forbid automated third-party use.
   `azure` providers with `baseURL` pointing at the gateway and the
   placeholder key; the deepagents runner builds `ChatOpenAI(...,
   use_responses_api=True)` and `ChatGoogleGenerativeAI(base_url=...)`.
-  deepagents with `azure` raises `UnimplementedError` until the gateway can
-  strip a header.
+  deepagents with `azure` builds `AzureChatOpenAI` (Responses API, key in
+  `api-key`).
 - `gen_ai.provider.name` maps `google` to `gcp.gemini` and `azure` to
   `azure.ai.openai`.
 - `testdata/agent/provider-catalogue.json` is the single source of truth

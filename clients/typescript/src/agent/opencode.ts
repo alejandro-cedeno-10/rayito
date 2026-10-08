@@ -69,17 +69,34 @@ export const OPENCODE_PROVIDER_IDS: Readonly<Record<string, string>> = Object.fr
 });
 /**
  * Lo que cada paquete nativo de OpenCode espera en `baseURL` delante de su
- * ruta: `@ai-sdk/openai` añade `/responses`, `@ai-sdk/google`
- * `/models/<m>:streamGenerateContent` y `@ai-sdk/azure` `/v1/responses`.
+ * ruta: `@ai-sdk/openai` y `@ai-sdk/azure` añaden `/responses` y
+ * `@ai-sdk/google` `/models/<m>:streamGenerateContent`. Con `baseURL`
+ * hacia la pasarela, `@ai-sdk/azure` no necesita `resourceName` ni añade
+ * `api-version` (medido con el binario fijado en
+ * docs/research/2026-10-provider-runtimes-spike.md).
  */
 export const OPENCODE_NATIVE_BASE_PATHS: Readonly<Record<string, string>> = Object.freeze({
   openai: "/v1",
   google: "/v1beta",
-  azure: "/openai",
+  azure: "/openai/v1",
+});
+/**
+ * El paquete del AI SDK de cada proveedor nativo, explícito para no
+ * depender del catálogo de models.dev (`OPENCODE_DISABLE_MODELS_FETCH`):
+ * los tres van empaquetados en el binario de OpenCode fijado.
+ */
+export const OPENCODE_NATIVE_NPM: Readonly<Record<string, string>> = Object.freeze({
+  openai: "@ai-sdk/openai",
+  google: "@ai-sdk/google",
+  azure: "@ai-sdk/azure",
 });
 /** Prefijo de la Messages API que el SDK de Anthropic añade a `baseURL`. */
 export const ANTHROPIC_BASE_PATH = "/v1";
-/** Las cinco variables de la plantilla más `OPENCODE_DISABLE_CLAUDE_CODE`. */
+/**
+ * Las cinco variables de la plantilla más `OPENCODE_DISABLE_CLAUDE_CODE` y
+ * `OPENCODE_EXPERIMENTAL_WEBSOCKETS` apagado de forma explícita: con él, el
+ * proveedor `openai` abriría un WebSocket que la pasarela no reenvía.
+ */
 export const OPENCODE_FLAG_ENVS: Readonly<Record<string, string>> = Object.freeze({
   OPENCODE_DISABLE_AUTOUPDATE: "1",
   OPENCODE_DISABLE_MODELS_FETCH: "1",
@@ -87,6 +104,7 @@ export const OPENCODE_FLAG_ENVS: Readonly<Record<string, string>> = Object.freez
   OPENCODE_DISABLE_DEFAULT_PLUGINS: "1",
   OPENCODE_PURE: "1",
   OPENCODE_DISABLE_CLAUDE_CODE: "1",
+  OPENCODE_EXPERIMENTAL_WEBSOCKETS: "0",
 });
 const SESSION_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
 const UTF8 = new TextEncoder();
@@ -173,6 +191,7 @@ function provider(spec: AgentSpec, gatewayUrl: string): Record<string, unknown> 
   const nativeBasePath = OPENCODE_NATIVE_BASE_PATHS[model.provider];
   if (nativeBasePath !== undefined) {
     return {
+      npm: OPENCODE_NATIVE_NPM[model.provider],
       options: {
         baseURL: joinUrl(gatewayUrl, nativeBasePath),
         apiKey: MODEL_CREDENTIAL_PLACEHOLDER,

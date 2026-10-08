@@ -1,0 +1,5 @@
+{
+  "opencode_json": "{\n  \"$schema\": \"https://opencode.ai/config.json\",\n  \"agent\": {\n    \"build\": {\n      \"permission\": {\n        \"*\": \"allow\",\n        \"question\": \"deny\",\n        \"webfetch\": \"deny\",\n        \"websearch\": \"deny\"\n      }\n    },\n    \"revisor\": {\n      \"description\": \"Revisa cambios\",\n      \"mode\": \"subagent\",\n      \"prompt\": \"Revisa el diff.\"\n    }\n  },\n  \"autoupdate\": false,\n  \"enabled_providers\": [\n    \"openai\"\n  ],\n  \"model\": \"openai/gpt-5\",\n  \"provider\": {\n    \"openai\": {\n      \"models\": {\n        \"gpt-5\": {},\n        \"gpt-5-mini\": {}\n      },\n      \"npm\": \"@ai-sdk/openai\",\n      \"options\": {\n        \"apiKey\": \"placeholder-not-a-secret\",\n        \"baseURL\": \"http://127.0.0.1:18003/v1\"\n      }\n    }\n  },\n  \"share\": \"disabled\",\n  \"small_model\": \"openai/gpt-5-mini\",\n  \"snapshot\": false\n}\n",
+  "agents_md": null,
+  "config_sha256": "a715b02a89b1ab697ad5f26ec8ab8f5e1ccdd807cbb8e8205dcc4eb8644e3ea4"
+}

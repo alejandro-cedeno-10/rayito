@@ -1,0 +1,5 @@
+{
+  "opencode_json": "{\n  \"$schema\": \"https://opencode.ai/config.json\",\n  \"agent\": {\n    \"build\": {\n      \"permission\": {\n        \"*\": \"allow\",\n        \"question\": \"deny\",\n        \"webfetch\": \"deny\",\n        \"websearch\": \"deny\"\n      }\n    }\n  },\n  \"autoupdate\": false,\n  \"enabled_providers\": [\n    \"rayito-openai\"\n  ],\n  \"model\": \"rayito-openai/modelo-litellm\",\n  \"provider\": {\n    \"rayito-openai\": {\n      \"models\": {\n        \"modelo-litellm\": {}\n      },\n      \"npm\": \"@ai-sdk/openai-compatible\",\n      \"options\": {\n        \"apiKey\": \"placeholder-not-a-secret\",\n        \"baseURL\": \"http://127.0.0.1:18003/v1\"\n      }\n    }\n  },\n  \"share\": \"disabled\",\n  \"small_model\": \"rayito-openai/modelo-litellm\",\n  \"snapshot\": false\n}\n",
+  "agents_md": null,
+  "config_sha256": "eeaf5aed579bf0caef1d1e98909b3a0122248b0d6fc16f3329d3da48f62f0e2e"
+}
