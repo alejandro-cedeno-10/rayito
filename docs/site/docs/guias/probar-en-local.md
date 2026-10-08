@@ -134,6 +134,46 @@ no y nunca la imprimen. El modelo y su región se cambian con
 Claude Haiku 4.5 en us-east-1). Un test marcado como fallo esperado
 recuerda que el timeout aún no mata lo que lanzó el shell del agente.
 
+### Otros proveedores sin claves de terceros
+
+`test_local_agent_providers.py` prueba de verdad los caminos al estilo de
+OpenAI de los [proveedores del agente](agente-proveedores.md) con lo
+que ya tienes en AWS, sin cuentas en OpenAI ni en otros proveedores:
+
+| Ruta | Pasarela y `AgentModel` | Qué comprueba |
+|---|---|---|
+| `bedrock-chat` | `openai_compatible_gateway` hacia `bedrock-runtime` (`/openai/v1`), gpt-oss-120b | herramientas, sesión, egress cerrado, clave ilegible |
+| `mantle-chat` | `openai_compatible_gateway` hacia `bedrock-mantle` (`/v1`) | lo mismo |
+| `mantle-responses` | `provider="openai"` (Responses API) hacia `bedrock-mantle` | una vuelta sin herramientas con uso de tokens |
+| `litellm` | `litellm_gateway` hacia un proxy de LiteLLM local delante de Bedrock | herramientas, sesión, egress cerrado, clave ilegible |
+
+Las tres primeras usan la misma clave de `make local-bedrock-key`. La de
+LiteLLM la crea `make local-litellm-up` (`dev/local/agent/litellm.sh`):
+arranca LiteLLM, fijado por digest, en la red del entorno con el nombre
+`litellm` y sin puertos en el host; le da un certificado de una CA de
+prueba que añade al almacén del sistema del guest (con el que `rayd`
+verifica el upstream de la pasarela; como `rayd` lo lee al arrancar,
+reinicia el guest, así que no lo lances con un sandbox vivo), y deja la
+clave maestra en el tmpfs del runner. LiteLLM habla con Bedrock con las credenciales temporales de tu
+sesión, que sólo viajan como variables de entorno del contenedor; cuando
+caduquen, repite `make local-litellm-up`.
+
+```bash
+make local-agent-up
+AWS_PROFILE=<tu-perfil> make local-bedrock-key
+AWS_PROFILE=<tu-perfil> make local-litellm-up
+make local-e2e LOCAL_E2E_ARGS="-k providers"
+make local-litellm-down
+```
+
+`bedrock-mantle` se aparta de la API de OpenAI en dos puntos (medido el
+2026-10-07): el `response.output_item.done` de una llamada a herramienta
+llega con `id: null` y rechaza un mensaje de asistente reenviado sin `id`
+ni `status`. Por eso `mantle-responses` sólo prueba una vuelta sin
+herramientas; contra la API de OpenAI el camino completo no está probado
+de verdad. OpenAI, Gemini, Azure OpenAI, OpenRouter, Groq, Mistral,
+DeepSeek y xAI sólo los cubren los tests unitarios contra un upstream falso.
+
 ## Cómo funciona por dentro
 
 Los tests (`clients/python/tests/local/` y `clients/typescript/tests/local/`)
