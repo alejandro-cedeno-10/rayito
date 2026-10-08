@@ -12,7 +12,7 @@ if [ "${1:-}" = "smoke" ]; then
   uv run --no-sync pytest tests/local/test_local_agent_providers_smoke.py -m local -p no:cacheprovider -v "$@" || status=1
   exit "$status"
 fi
-uv run --no-sync pytest tests/local/test_local_agent_providers.py -m local -p no:cacheprovider -v "$@" || status=1
+uv run --no-sync pytest tests/local/test_local_agent_providers_fake.py -m local -p no:cacheprovider -v "$@" || status=1
 cd /src/clients/typescript
 pnpm exec vitest run --project local --no-file-parallelism tests/local/agent-providers.local.test.ts || status=1
 exit "$status"

@@ -49,7 +49,7 @@ from .providers import (
     provider_box,
     secret_value_for,
 )
-from .test_local_agent_providers import FAKE_UPSTREAM_ADMIN_VAR
+from .test_local_agent_providers_fake import FAKE_UPSTREAM_ADMIN_VAR
 
 pytestmark = pytest.mark.local
 
