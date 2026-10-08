@@ -35,3 +35,8 @@
 - [x] 6.2 OpenCode: explicit `npm`, Azure `baseURL` `/openai/v1`, `OPENCODE_EXPERIMENTAL_WEBSOCKETS=0`
 - [x] 6.3 deepagents: `AzureChatOpenAI` for `azure`; template smoke test imports `langchain_openai` and `langchain_google_genai`
 - [x] 6.4 Golden files `testdata/agent/opencode-config/{openai,google,azure,litellm}.json` and `testdata/agent/deepagents-models.json`, both SDKs
+
+## 7. Live check fixes
+
+- [x] 7.1 `ChatOpenAI(stream_usage=True)` for `openai-compatible` in the deepagents runner (TypeScript copy, `deepagents-models.json`, template vectors)
+- [x] 7.2 Live check with the egress closed: Bedrock `/openai/v1`, `bedrock-mantle` (Chat Completions and Responses) and LiteLLM, OpenCode and deepagents

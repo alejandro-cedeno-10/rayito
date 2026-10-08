@@ -15,7 +15,7 @@
         "deepagents": {
           "requirements_sha256": "b73cb891e585c59f532eed1bfe5cf2d903ab4585d50249ae6d3e3246a205a8a3"
         },
-        "runner_sha256": "bf752ab546d959748d3530580d92a2d8b0cc5d1e347d1d61ca2e6687a937a3b5",
+        "runner_sha256": "c382cba54449b9c29cc5da96ac8cdcd435c822c057c2a23c97a01ab753f770fe",
         "prefetch_paths": [
           "/opt/agents/bin/opencode",
           "/opt/agents/bin/rg"
@@ -72,7 +72,7 @@
         "deepagents": {
           "requirements_sha256": "b73cb891e585c59f532eed1bfe5cf2d903ab4585d50249ae6d3e3246a205a8a3"
         },
-        "runner_sha256": "bf752ab546d959748d3530580d92a2d8b0cc5d1e347d1d61ca2e6687a937a3b5",
+        "runner_sha256": "c382cba54449b9c29cc5da96ac8cdcd435c822c057c2a23c97a01ab753f770fe",
         "prefetch_paths": []
       },
       "startCmd": "/opt/agents/bin/rayito-agent-prefetch /opt/agents/rayito-agent.json 30 2",

@@ -84,6 +84,14 @@ gateway with a placeholder key. Phase 1 covers only static API keys.
 8. **Zero cost.** Building any preset creates no AWS client and loads no
    optional peer; a test in each SDK checks it.
 
+9. **deepagents streams usage from Chat Completions.** With
+   `openai-compatible`, `ChatOpenAI` gets `stream_usage=True`
+   (`stream_options.include_usage`): otherwise an OpenAI-compatible API
+   sends no usage when streaming, every step reports 0 tokens and
+   `AgentLimits.max_total_tokens` never trips. The Responses API already
+   reports usage. Found by the live check with the egress closed (Amazon
+   Bedrock's OpenAI-compatible endpoints and a LiteLLM proxy).
+
 ## Risks
 
 - Paths and headers were checked against a fake gateway, not the real
