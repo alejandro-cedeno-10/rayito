@@ -1,4 +1,4 @@
-.PHONY: proto build test agent-runner-test test-python test-typescript test-sidecar test-e2e test-e2e-typescript test-bench lint lint-typescript limits fmt image-zip image-publish dev-hooks dev-run clean test-scripts bench-cold-start image-zip-slim image-publish-slim docs wheel image-publish-caps image-prune infra-lint sbom image-zip-poly image-publish-poly image-zip-efs image-publish-caps-efs require-bucket release-pr docs-examples local-guest-context local-up local-e2e local-agent-up local-bedrock-key local-down licenses require-cargo-about image-licenses
+.PHONY: proto build test agent-runner-test test-python test-typescript test-sidecar test-e2e test-e2e-typescript test-bench lint lint-typescript limits fmt image-zip image-publish dev-hooks dev-run clean test-scripts bench-cold-start image-zip-slim image-publish-slim docs wheel image-publish-caps image-prune infra-lint sbom image-zip-poly image-publish-poly image-zip-efs image-publish-caps-efs require-bucket release-pr docs-examples local-guest-context local-up local-e2e local-agent-up local-bedrock-key local-litellm-up local-litellm-down local-down licenses require-cargo-about image-licenses
 
 TARGET        := aarch64-unknown-linux-musl
 # Directorio de compilación efectivo (respeta CARGO_TARGET_DIR) y CARGO_HOME:
@@ -428,6 +428,17 @@ local-agent-up:
 local-bedrock-key:
 	$(PY) python $(LOCAL_DIR)/agent/mint_bedrock_key.py \
 	  | $(LOCAL_COMPOSE) exec -T runner sh -c 'umask 077 && cat > "$$RAYITO_LOCAL_BEDROCK_KEY_FILE"'
+
+# Un proxy de LiteLLM delante de Bedrock para la ruta `litellm` de
+# test_local_agent_providers.py (dev/local/agent/litellm.sh): HTTPS con una
+# CA de prueba que sólo confía el guest, sin puertos en el host, con las
+# credenciales temporales de tu sesión (AWS_PROFILE) sólo como variables de
+# entorno del contenedor. `local-down` no lo borra: usa `local-litellm-down`.
+local-litellm-up:
+	bash $(LOCAL_DIR)/agent/litellm.sh up
+
+local-litellm-down:
+	bash $(LOCAL_DIR)/agent/litellm.sh down
 
 local-down:
 	$(LOCAL_COMPOSE) down --volumes --remove-orphans

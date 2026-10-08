@@ -102,6 +102,12 @@ services:
       # Modelo y región de esos tests (vacío: Claude Haiku 4.5, us-east-1).
       RAYITO_E2E_BEDROCK_MODEL: ${RAYITO_E2E_BEDROCK_MODEL:-}
       RAYITO_E2E_BEDROCK_REGION: ${RAYITO_E2E_BEDROCK_REGION:-}
+      # El proxy de LiteLLM de `make local-litellm-up` (dev/local/agent/litellm.sh)
+      # y dónde deja su clave: sin el fichero, la ruta `litellm` de
+      # test_local_agent_providers.py se salta.
+      RAYITO_LOCAL_LITELLM_URL: https://litellm:4000
+      RAYITO_LOCAL_LITELLM_KEY_FILE: /tmp/rayito-local-litellm-key
+      RAYITO_LOCAL_LITELLM_MODEL: ${RAYITO_LOCAL_LITELLM_MODEL:-}
     volumes:
       - ../..:/src:ro
       - venv:/opt/rayito/venv
