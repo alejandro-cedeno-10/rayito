@@ -110,7 +110,9 @@ código y reconexión en Python, Python async y TypeScript.
 
 `sbx.agent` corre un agente de código ([OpenCode](https://github.com/anomalyco/opencode)
 o deepagents) dentro del propio sandbox. El agente llama a su modelo
-(Bedrock, Anthropic o un endpoint compatible con OpenAI) sólo a través de
+(Bedrock, Anthropic, OpenAI, Gemini, Azure OpenAI, OpenRouter, Groq,
+Mistral, DeepSeek, xAI, tu proxy de LiteLLM o cualquier endpoint compatible
+con OpenAI; ver [Proveedores del agente](guias/agente-proveedores.md)) sólo a través de
 la [pasarela de secretos](funciones-opcionales/pasarela-de-secretos.md):
 usa la credencial, pero nunca puede leerla. Basta un `Sandbox.create()`
 normal sobre la imagen `rayito-agent`

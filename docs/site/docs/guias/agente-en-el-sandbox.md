@@ -189,7 +189,10 @@ Los nombres de `agents` y `mcp` son de 1 a 64 caracteres `[a-z0-9_-]`.
 `AgentSpec` no tiene ningún campo para claves: la credencial sólo llega por
 la pasarela.
 
-Otros proveedores: cambia el preset y `AgentModel.provider`.
+Otros proveedores: cambia el preset y `AgentModel.provider` (`bedrock`,
+`anthropic`, `openai`, `google`, `azure` u `openai-compatible`). La tabla
+completa, con el secreto y el `AgentModel` de cada uno, está en
+[Proveedores del agente](agente-proveedores.md#configurar-cada-proveedor).
 
 === "Python"
 
