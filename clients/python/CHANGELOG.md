@@ -32,6 +32,12 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   "Proveedores del agente" explica por qué. Construir un preset no llama a
   AWS.
 
+### Changed
+
+- `rayito doctor` conoce la serie 0.10: la tabla de compatibilidad
+  (`rayito.cli._compat.COMPATIBILITY` y `docs/site/docs/limits.md`) exige
+  el `rayd` del tag `rayd-v0.10.0` para el SDK 0.10.
+
 ### Fixed
 
 - **El timeout y `abort()` de `sbx.agent` paran también lo que lanzó la
