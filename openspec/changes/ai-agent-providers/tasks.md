@@ -35,3 +35,10 @@
 - [x] 6.2 OpenCode: explicit `npm`, Azure `baseURL` `/openai/v1`, `OPENCODE_EXPERIMENTAL_WEBSOCKETS=0`
 - [x] 6.3 deepagents: `AzureChatOpenAI` for `azure`; template smoke test imports `langchain_openai` and `langchain_google_genai`
 - [x] 6.4 Golden files `testdata/agent/opencode-config/{openai,google,azure,litellm}.json` and `testdata/agent/deepagents-models.json`, both SDKs
+
+## 7. Local integration verification (agent-provider-local-e2e)
+
+- [x] 7.1 Fake HTTPS upstream in the Docker + Floci harness (`dev/local/providers/`): one-shot CA trusted only by `rayd`, aliases for the nine catalogue hosts, minimal Chat Completions, Responses and Gemini streaming shapes, request log for the tests
+- [x] 7.2 Local e2e in both SDKs: every preset with OpenCode and deepagents, egress closed; the real key header reaches the upstream, the placeholder never leaves, a non-allowed path gets 403 and the agent completes a turn; wired into the `local-e2e` workflow
+- [x] 7.3 Optional real-API smoke test, skipped unless `RAYITO_SMOKE_<PRESET>_SECRET` is set, capped with `AgentLimits(max_total_tokens=...)` below 0.01 USD per provider
+- [x] 7.4 Fix found by 7.2: deepagents venv ships `socksio` so httpx accepts the sandbox's `ALL_PROXY=socks5h://...`

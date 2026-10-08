@@ -1,4 +1,4 @@
-.PHONY: proto build test agent-runner-test test-python test-typescript test-sidecar test-e2e test-e2e-typescript test-bench lint lint-typescript limits fmt image-zip image-publish dev-hooks dev-run clean test-scripts bench-cold-start image-zip-slim image-publish-slim docs wheel image-publish-caps image-prune infra-lint sbom image-zip-poly image-publish-poly image-zip-efs image-publish-caps-efs require-bucket release-pr docs-examples local-guest-context local-up local-e2e local-agent-up local-bedrock-key local-down licenses require-cargo-about image-licenses
+.PHONY: proto build test agent-runner-test test-python test-typescript test-sidecar test-e2e test-e2e-typescript test-bench lint lint-typescript limits fmt image-zip image-publish dev-hooks dev-run clean test-scripts bench-cold-start image-zip-slim image-publish-slim docs wheel image-publish-caps image-prune infra-lint sbom image-zip-poly image-publish-poly image-zip-efs image-publish-caps-efs require-bucket release-pr docs-examples local-guest-context local-up local-e2e local-agent-up local-bedrock-key local-providers-up local-providers-e2e local-providers-smoke local-down licenses require-cargo-about image-licenses
 
 TARGET        := aarch64-unknown-linux-musl
 # Directorio de compilación efectivo (respeta CARGO_TARGET_DIR) y CARGO_HOME:
@@ -429,8 +429,30 @@ local-bedrock-key:
 	$(PY) python $(LOCAL_DIR)/agent/mint_bedrock_key.py \
 	  | $(LOCAL_COMPOSE) exec -T runner sh -c 'umask 077 && cat > "$$RAYITO_LOCAL_BEDROCK_KEY_FILE"'
 
+# Proveedores de modelo del agente sin claves (docs/site/docs/guias/probar-en-local.md):
+# `local-providers-up` añade a la variante de agentes el upstream HTTPS falso
+# de dev/local/providers (los nueve presets de pasarela) y
+# `local-providers-e2e` corre sus tests en los dos SDK. `local-providers-smoke`
+# es la prueba de humo opcional contra las APIs reales: va sobre
+# `local-agent-up` (sin el falso) y sólo prueba los presets cuya clave
+# exportes como RAYITO_SMOKE_<PRESET>_SECRET; las variables pasan al runner
+# por nombre, nunca por valor en la línea de órdenes.
+LOCAL_PROVIDERS_COMPOSE := $(LOCAL_AGENT_COMPOSE) -f $(LOCAL_DIR)/providers/compose.yaml
+SMOKE_PRESETS := OPENAI GEMINI AZURE_OPENAI OPENROUTER GROQ MISTRAL DEEPSEEK XAI LITELLM
+SMOKE_ENV := $(foreach preset,$(SMOKE_PRESETS),-e RAYITO_SMOKE_$(preset)_SECRET -e RAYITO_SMOKE_$(preset)_MODEL) \
+  -e RAYITO_SMOKE_AZURE_OPENAI_RESOURCE -e RAYITO_SMOKE_LITELLM_UPSTREAM
+
+local-providers-up:
+	$(LOCAL_PROVIDERS_COMPOSE) up -d --build --wait
+
+local-providers-e2e:
+	$(LOCAL_COMPOSE) exec -T runner bash $(LOCAL_DIR)/providers/run-e2e.sh $(LOCAL_E2E_ARGS)
+
+local-providers-smoke:
+	$(LOCAL_COMPOSE) exec -T $(SMOKE_ENV) runner bash $(LOCAL_DIR)/providers/run-e2e.sh smoke $(LOCAL_E2E_ARGS)
+
 local-down:
-	$(LOCAL_COMPOSE) down --volumes --remove-orphans
+	$(LOCAL_PROVIDERS_COMPOSE) down --volumes --remove-orphans
 
 # Wheel + sdist del SDK Python con las comprobaciones de release.yml
 # (contenido de la wheel y `twine check`); no publica nada.
