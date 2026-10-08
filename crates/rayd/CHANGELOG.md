@@ -10,6 +10,8 @@ imagen `rayito-base` y como asset de la GitHub Release del tag `rayd-v*`.
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-10-08
+
 ### Fixed
 
 - **El timeout y `SendSignal` de un proceso con `StartRequest.kill_tree`
@@ -775,7 +777,8 @@ Un proceso por MicroVM, como root, estático musl, con gRPC h2c (`tonic`) en
 Builds internos de los hitos M1-M5, publicados sólo como versiones de imagen
 de la cuenta de desarrollo.
 
-[Unreleased]: https://github.com/alejandro-cedeno-10/rayito/compare/rayd-v0.9.1...HEAD
+[Unreleased]: https://github.com/alejandro-cedeno-10/rayito/compare/rayd-v0.10.0...HEAD
+[0.10.0]: https://github.com/alejandro-cedeno-10/rayito/compare/rayd-v0.9.1...rayd-v0.10.0
 [0.9.1]: https://github.com/alejandro-cedeno-10/rayito/compare/rayd-v0.9.0...rayd-v0.9.1
 [0.9.0]: https://github.com/alejandro-cedeno-10/rayito/compare/rayd-v0.8.0...rayd-v0.9.0
 [0.8.0]: https://github.com/alejandro-cedeno-10/rayito/compare/rayd-v0.7.1...rayd-v0.8.0
