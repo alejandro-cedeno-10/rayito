@@ -188,7 +188,7 @@ El secreto guarda la clave tal cual, sin `Bearer`. Es el único preset no Bedroc
 
 ### Azure OpenAI
 
-El secreto guarda la clave tal cual (cabecera `api-key`). El `id` es el nombre del despliegue. Crea sólo los despliegues que necesites y limita su cuota (TPM). Sólo con OpenCode. Referencia: [learn.microsoft.com](https://learn.microsoft.com/en-us/azure/ai-foundry/openai/api-version-lifecycle).
+El secreto guarda la clave tal cual (cabecera `api-key`). El `id` es el nombre del despliegue. Crea sólo los despliegues que necesites y limita su cuota (TPM). Funciona con OpenCode y con deepagents. Referencia: [learn.microsoft.com](https://learn.microsoft.com/en-us/azure/ai-foundry/openai/api-version-lifecycle).
 
 === "Python"
 

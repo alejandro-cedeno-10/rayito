@@ -174,6 +174,73 @@ herramientas; contra la API de OpenAI el camino completo no está probado
 de verdad. OpenAI, Gemini, Azure OpenAI, OpenRouter, Groq, Mistral,
 DeepSeek y xAI sólo los cubren los tests unitarios contra un upstream falso.
 
+## Proveedores de modelo sin claves
+
+Los tests de proveedores (`test_local_agent_providers_fake.py` y
+`agent-providers.local.test.ts`) prueban los nueve presets de
+[proveedores del agente](agente-proveedores.md) (OpenAI, Gemini, Azure
+OpenAI, OpenRouter, Groq, Mistral, DeepSeek, xAI y LiteLLM) con OpenCode y
+con deepagents, sin claves reales ni Internet. `make local-providers-up`
+añade a la variante de agentes un upstream HTTPS falso
+(`dev/local/providers/fake_upstream.py`): en la red interna `providers`
+responde a los nombres de los nueve proveedores, con una CA de un solo uso
+en la que sólo confía `rayd` (`SSL_CERT_FILE` del guest), y contesta lo
+mínimo válido de Chat Completions, Responses y Gemini. Por preset y runtime,
+con el egress cerrado, los tests comprueban que:
+
+- el agente completa una vuelta por la pasarela;
+- al upstream llega el valor del secreto en la cabecera del preset
+  (`authorization`, `x-goog-api-key` o `api-key`), y el marcador que ven
+  los runtimes no sale nunca, ni en cabeceras ni en el cuerpo;
+- sólo llegan rutas de la allowlist, y una ruta fuera de ella recibe 403
+  de `rayd` sin llegar al upstream.
+
+CI los corre en `local-e2e` después de `make local-e2e`.
+
+```bash
+make local-up
+make local-providers-up
+make local-providers-e2e
+make local-down
+```
+
+### Prueba de humo contra las APIs reales
+
+`test_local_agent_providers_smoke.py` hace una vuelta corta de cada runtime
+contra la API real de cada proveedor cuya clave exportes. Va sobre
+`make local-agent-up`, sin el upstream falso.
+
+!!! info "Coste y activación"
+    - **Por defecto**: apagada. Cada preset se salta si no exportas
+      `RAYITO_SMOKE_<PRESET>_SECRET` (`OPENAI`, `GEMINI`, `AZURE_OPENAI`,
+      `OPENROUTER`, `GROQ`, `MISTRAL`, `DEEPSEEK`, `XAI` o `LITELLM`).
+    - **Activa**: `make local-providers-smoke` con, por preset, la clave en
+      `RAYITO_SMOKE_<PRESET>_SECRET` (sin `Bearer`) y el modelo en
+      `RAYITO_SMOKE_<PRESET>_MODEL`; Azure pide además
+      `RAYITO_SMOKE_AZURE_OPENAI_RESOURCE` y LiteLLM
+      `RAYITO_SMOKE_LITELLM_UPSTREAM`. Las variables pasan al runner por
+      nombre, nunca por valor en la línea de órdenes.
+    - **Recursos y llamadas AWS**: ninguno. La clave vive en el Secrets
+      Manager de Floci; `rayd` hace por la pasarela una o dos llamadas al
+      proveedor por runtime.
+    - **Coste aproximado**: cada ejecución lleva
+      `AgentLimits(max_total_tokens=20000)` y un prompt sin herramientas.
+      Con un modelo de hasta 0,20 USD por millón de tokens de entrada, los
+      dos runtimes juntos quedan por debajo de 0,01 USD por proveedor. Elige
+      el modelo más barato de tu cuenta.
+    - **IAM**: ninguno en AWS. La clave sólo necesita llamar al modelo;
+      ponle un límite de gasto en el proveedor.
+    - **Cómo apagarla**: no exportes las variables, o `make local-down`.
+    - **Ejemplo**:
+
+        ```bash
+        make local-up
+        make local-agent-up
+        export RAYITO_SMOKE_GROQ_SECRET=<tu-clave> RAYITO_SMOKE_GROQ_MODEL=<modelo-barato>
+        make local-providers-smoke
+        make local-down
+        ```
+
 ## Cómo funciona por dentro
 
 Los tests (`clients/python/tests/local/` y `clients/typescript/tests/local/`)
@@ -210,6 +277,7 @@ se saltan.
 | Eventos y webhooks | la pila, los webhooks, `create(events=)` y los tres Lambdas ejecutados en proceso, con una entrega firmada a un receptor local | la suscripción de CloudWatch Logs y la entrega HTTPS con su filtro SSRF |
 | Proxy de AWS (JWE, 403, keepalives) | no | sí |
 | `sbx.agent` (OpenCode, deepagents) por la pasarela | sí, con `make local-agent-up` y una clave de Bedrock: deny-all de egress real, herramientas, sesión, aborto, límites, eventos | el primer `exec` y la memoria en un MicroVM |
+| Presets de proveedor (`openai_gateway`…`litellm_gateway`) | sí, con `make local-providers-up`: la cabecera que llega al upstream, el marcador que no sale, el 403 fuera de la allowlist y una vuelta de cada runtime contra un upstream falso | la respuesta real de cada API (prueba de humo opcional con tu clave) |
 | Bloqueo de IMDS, egress, montajes S3 | no: necesitan privilegios en el guest (salvo el egress con `make local-agent-up`) | sí |
 | Persistencia y transferencias prefirmadas | no: `rayd` usa IMDS y exige HTTPS | sí |
 | Coste, cuotas, tiempos de arranque | no | sí |
