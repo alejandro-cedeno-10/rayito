@@ -12,7 +12,18 @@ actualizar. El detalle completo, cambio a cambio, está en el
 
 <div class="grid cards" markdown>
 
--   :material-tag:{ .lg .middle } **0.9.1** · 2026-10-07 · actual
+-   :material-tag:{ .lg .middle } **0.10.0** · 2026-10-08 · actual
+
+    ---
+
+    El agente puede usar OpenAI, Gemini, Azure OpenAI, OpenRouter, Groq,
+    Mistral, DeepSeek, xAI o tu proxy de LiteLLM; el timeout y `abort()`
+    paran todo lo que lanzó; y deepagents funciona fuera de Bedrock y
+    cuenta sus tokens. Sin cambios que rompan.
+
+    [:octicons-arrow-right-24: Novedades de 0.10.0](0.10.0.md)
+
+-   :material-tag:{ .lg .middle } **0.9.1** · 2026-10-07
 
     ---
 
@@ -92,7 +103,7 @@ actualizar. El detalle completo, cambio a cambio, está en el
     ```python
     import rayito
 
-    print(rayito.__version__)  # "0.9.0"
+    print(rayito.__version__)  # "0.10.0"
     ```
 
 === "TypeScript"
@@ -100,7 +111,7 @@ actualizar. El detalle completo, cambio a cambio, está en el
     ```ts
     import { VERSION } from "rayito";
 
-    console.log(VERSION); // "0.9.0"
+    console.log(VERSION); // "0.10.0"
     ```
 
 === "CLI"
@@ -130,15 +141,19 @@ imagen publicada con un `rayd` de esa serie:
 
 Después, republica tu imagen sobre el `rayd` nuevo si quieres usar lo que
 corre dentro del sandbox (por ejemplo `volumes=`, `mounts=`, `events=` o
-`gateways=`, el endurecimiento de `rayd` 0.7.0 o los avisos de licencia
-de `rayd` 0.7.1 en `/usr/share/doc/rayd/`):
-[Imágenes](../images.md#publicar-las-tres). Desde 0.9, `rayito doctor`
-exige el `rayd` del tag `rayd-v0.9.0`, y el agente de IA (`sbx.agent`)
+`gateways=`, el endurecimiento de `rayd` 0.7.0, los avisos de licencia
+de `rayd` 0.7.1 en `/usr/share/doc/rayd/` o el timeout del agente que
+para todo su árbol de procesos de `rayd` 0.10.0):
+[Imágenes](../images.md#publicar-las-tres). Desde 0.10, `rayito doctor`
+exige el `rayd` del tag `rayd-v0.10.0`, y el agente de IA (`sbx.agent`)
 necesita además una imagen con su runtime, construida con
-[`AgentTemplate`](../funciones-opcionales/templates-de-agente.md). Sin
+[`AgentTemplate`](../funciones-opcionales/templates-de-agente.md)
+(reconstrúyela en 0.10.0: lleva las correcciones de deepagents). Sin
 republicar, el SDK nuevo sigue funcionando con tu imagen actual, y cada
 función que necesita el `rayd` nuevo falla cerrada con
 `UnimplementedError` y termina el sandbox que acaba de lanzar. Al pasar de
+0.9.x a 0.10.0 no hay cambios que rompan
+([Cómo actualizar desde 0.9.x](0.10.0.md#como-actualizar-desde-09x)); de
 0.8.x a 0.9.0, revisa los
 [cambios que rompen](0.9.0.md#como-actualizar-desde-08x) (opción D del
 agente, `GatewayException`/`GatewayError` y, en Python, `AWS_REGION`); de

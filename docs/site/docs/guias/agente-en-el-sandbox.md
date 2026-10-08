@@ -1,11 +1,13 @@
 ---
 title: Agente en el sandbox
-description: Correr un agente de código (OpenCode o deepagents) dentro del sandbox, llamando a un modelo en Bedrock, Anthropic o un endpoint compatible con OpenAI sólo a través de la pasarela de secretos.
+description: Correr un agente de código (OpenCode o deepagents) dentro del sandbox, llamando a un modelo en Bedrock, Anthropic, OpenAI, Gemini, Azure OpenAI, OpenRouter, Groq, Mistral, DeepSeek, xAI, LiteLLM o un endpoint compatible con OpenAI sólo a través de la pasarela de secretos.
 ---
 
 # Agente en el sandbox
 
-<small>Desde 0.8.0 ([Novedades de 0.8.0](../novedades/0.8.0.md)).</small>
+<small>Desde 0.8.0 ([Novedades de 0.8.0](../novedades/0.8.0.md)). Más
+proveedores de modelo y el timeout que para todo el árbol de procesos,
+desde 0.10.0 ([Novedades de 0.10.0](../novedades/0.10.0.md)).</small>
 
 `sbx.agent` corre un agente de código ([OpenCode](https://github.com/anomalyco/opencode))
 **dentro** del propio sandbox. El agente ve el mismo filesystem, los mismos
@@ -42,8 +44,10 @@ construye la `SecretGateway` con el `allow=` ya restringido:
 | `openai_compatible_gateway(secret, *, upstream, base_path="", rate_per_minute=0)` / `openaiCompatibleGateway(secret, { upstream, basePath, ratePerMinute })` | el `upstream` que pases | `authorization` | `POST <base_path>/chat/completions` |
 
 OpenAI, Gemini, Azure OpenAI, OpenRouter, Groq, Mistral, DeepSeek, xAI y un
-proxy de LiteLLM tienen su propio preset: ver
-[Proveedores del agente](agente-proveedores.md).
+proxy de LiteLLM tienen su propio preset desde 0.10.0: ver
+[Proveedores del agente](agente-proveedores.md), que también dice cuál
+elegir, cuáles se han probado con un modelo real y qué suscripciones no se
+admiten.
 
 `secret` es el nombre de un secreto (o un `SecretRef`). `bedrock_gateway`
 nunca abre `/model/*`: eso dejaría llamar desde dentro del sandbox a
@@ -176,7 +180,7 @@ de 8 h, [`persist=`](#mas-de-8-h-parado-persist).
 
 | Campo (Python / TypeScript) | Por defecto | Qué hace |
 |---|---|---|
-| `model` | obligatorio | `AgentModel(provider, id, gateway, region=None, base_path="", prompt_caching=True)` (TS: `new AgentModel({ provider, id, gateway, region, basePath, promptCaching })`). `provider` es `bedrock`, `anthropic` u `openai-compatible`; `region` es obligatoria en Bedrock; `base_path` sólo con `openai-compatible` |
+| `model` | obligatorio | `AgentModel(provider, id, gateway, region=None, base_path="", prompt_caching=True)` (TS: `new AgentModel({ provider, id, gateway, region, basePath, promptCaching })`). `provider` es `bedrock`, `anthropic`, `openai` (también xAI), `google` (Gemini), `azure` (Azure OpenAI) u `openai-compatible`; `region` es obligatoria en Bedrock; `base_path` sólo con `openai-compatible` |
 | `small_model` / `smallModel` | el mismo `model.id` | modelo para las tareas auxiliares del runtime (títulos, resúmenes) |
 | `instructions` | ninguna | instrucciones de sistema del agente |
 | `permissions` | `AgentPermissions(default="allow")` | ver [Permisos](#permisos-no-son-una-frontera-de-seguridad) |
@@ -193,6 +197,10 @@ Otros proveedores: cambia el preset y `AgentModel.provider` (`bedrock`,
 `anthropic`, `openai`, `google`, `azure` u `openai-compatible`). La tabla
 completa, con el secreto y el `AgentModel` de cada uno, está en
 [Proveedores del agente](agente-proveedores.md#configurar-cada-proveedor).
+Si no sabes cuál usar, [¿Cuál elijo?](agente-proveedores.md#cual-elijo).
+En las APIs al estilo de OpenAI la pasarela no puede limitar el modelo:
+fija el tope de gasto en el proveedor
+([Límites del lado del proveedor](agente-proveedores.md#limites-del-lado-del-proveedor)).
 
 === "Python"
 
@@ -417,6 +425,8 @@ siguiente `run()` no lo encuentra ocupado (`busy`).
 
 ### Qué garantizan el timeout y `abort()`
 
+<small>Desde 0.10.0, con una imagen de `rayd` 0.10.0.</small>
+
 OpenCode y deepagents corren cada orden de su herramienta de shell en una
 sesión propia (`setsid`), fuera del grupo del proceso del runtime, y una
 orden puede además demonizarse (un servidor de desarrollo, un `nohup ... &`).
@@ -438,10 +448,12 @@ aunque su padre salga.
 - Una ejecución que termina por sí misma (`Done` o un fallo del runtime) no
   mata lo que dejó corriendo: si el agente arrancó un servidor a propósito,
   sigue vivo.
-- Con una imagen cuyo `rayd` sea anterior a esta función, el timeout y
+- Con una imagen cuyo `rayd` sea anterior a 0.10.0, el timeout y
   `abort()` sólo alcanzan al grupo del runtime: lo que la herramienta de
-  shell lanzó en su propia sesión sobrevive. Reconstruye la imagen con la
-  versión de Rayito del SDK.
+  shell lanzó en su propia sesión sobrevive y el siguiente `run()` puede
+  encontrar el agente `busy`. Reconstruye la imagen con `AgentTemplate` de
+  la versión de tu SDK; `rayito doctor` da FAIL en `compatibility` si el
+  `rayd` de la imagen es anterior a la serie del SDK.
 
 Los `reason` posibles están en
 [Errores](../referencia/errores.md#agentexception-agenterror). Ningún mensaje
@@ -892,6 +904,14 @@ forma `rda_<32 hex>`.
     }
     ```
 
+deepagents admite los mismos proveedores que OpenCode. Desde 0.10.0 la
+imagen del agente lleva `socksio` (sin él, cualquier modelo que no fuera de
+Bedrock fallaba al arrancar con `AgentFailed` e `ImportError`) y, con
+`provider="openai-compatible"`, el runner pide el uso de tokens en
+streaming, así que `result.usage` y `max_total_tokens` funcionan también
+ahí. Las dos cosas necesitan una imagen construida con `AgentTemplate` de
+0.10.0.
+
 Si tu `build` no pasa `ctx.middleware` al grafo, se pierden los permisos de
 `AgentSpec`. Con un prompt corto, deepagents no llega al mínimo de la caché
 de prompts de Haiku (ver [Arranque rápido](#arranque-rapido)).
@@ -921,6 +941,7 @@ de cualquier llamada.
 
 ## Ver también
 
+- [Proveedores del agente](agente-proveedores.md)
 - [Templates de agente](../funciones-opcionales/templates-de-agente.md)
 - [Pool: calentamiento](../pool.md#calentamiento-warmup)
 - [Precios (MicroVMs, pool, agentes)](../cost.md#coste-de-un-agente-vm-frente-a-modelo)

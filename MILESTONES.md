@@ -1807,6 +1807,47 @@ imagen desechable propia:
 
 ---
 
+## 0.10.0 — Proveedores del agente y timeout que para todo el árbol (2026-10-08)
+
+Publicada el 2026-10-08 en PyPI, npm y la GitHub Release `rayd-v0.10.0`.
+Dos cambios OpenSpec archivados (2026-10-08): `ai-agent-providers` y
+`agent-timeout-kill-tree`. Sigue abierto `m15-custom-domain` (ver 0.7.0).
+
+- **Más proveedores para el modelo del agente** (#168, #171, #172):
+  `AgentModel.provider` admite `openai`, `google` y `azure`, y hay nueve
+  presets de pasarela (OpenAI, Gemini, Azure OpenAI, OpenRouter, Groq,
+  Mistral, DeepSeek, xAI y LiteLLM). Las suscripciones de consumo se
+  documentan como no admitidas.
+- **El timeout y `abort()` del agente paran todo su árbol** (#177):
+  `StartRequest.kill_tree` hace al proceso *child subreaper* y `rayd`
+  congela y mata a todos sus descendientes; `commands.run(kill_tree=)`.
+- **deepagents fuera de Bedrock** (#173: `socksio` en el venv) y **uso de
+  tokens con las APIs compatibles con OpenAI** (#174:
+  `ChatOpenAI(stream_usage=True)`).
+- Verificación de los presets en local: los nueve contra un upstream HTTPS
+  falso con los dos runtimes y los dos SDK (#175), y comprobación real
+  contra la API compatible con OpenAI de Bedrock y LiteLLM delante de
+  Bedrock (#176). OpenAI, Gemini, Azure OpenAI, OpenRouter, Groq, Mistral,
+  DeepSeek y xAI no se han probado con una clave real.
+- Fila 0.10 de compatibilidad en `rayito doctor` (#178).
+
+**Aceptación de la release (2026-10-08, cuenta de pruebas, us-east-1)**,
+sobre `main` en `049f69e` (el árbol de la release salvo la fila de
+compatibilidad y las versiones), con `rayd` compilado en la VM Linux e
+imágenes desechables propias de cada ejecución:
+
+- Python: la regresión completa en verde sobre imágenes base, caps y poly
+  propias.
+- TypeScript y funciones opcionales: en verde, sin errores del producto.
+- Agente: OpenCode y deepagents, desde Python y TypeScript, sobre una
+  imagen de `AgentTemplate` propia, en verde.
+- Auditoría de fugas desde `python-v0.9.1`: nada que limpiar.
+- Limpieza: sólo se borró lo creado por cada ejecución; el inventario
+  final no tiene nada de los prefijos de la release y quedan `rayito-base`
+  y `rayito-m0-iam`.
+
+---
+
 ## Orden de trabajo dentro de cada hito
 
 1. Escribir el test de aceptación primero. Debe fallar.

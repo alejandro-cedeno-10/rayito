@@ -5,6 +5,8 @@ description: Qué proveedores de modelo puede usar sbx.agent a través de la pas
 
 # Proveedores del agente
 
+<small>Desde 0.10.0 ([Novedades de 0.10.0](../novedades/0.10.0.md)).</small>
+
 El agente de [`sbx.agent`](agente-en-el-sandbox.md) llama a su modelo sólo a
 través de la [pasarela de secretos](../funciones-opcionales/pasarela-de-secretos.md):
 la clave vive en Secrets Manager, `rayd` la inyecta en la cabecera y el
@@ -12,6 +14,27 @@ runtime (OpenCode o deepagents) sólo ve un marcador. Además de Bedrock,
 Anthropic y `openai_compatible_gateway`, hay un preset por proveedor con
 clave de API estática. Cada preset fija el `upstream`, la cabecera y las
 rutas permitidas, y se combina con un `AgentModel`.
+
+Todo se configura en tres pasos: guardas la clave en Secrets Manager, pasas
+el preset en `gateways=` al crear el sandbox y apuntas el `AgentModel` a esa
+pasarela ([ejemplo](#ejemplo)).
+
+## ¿Cuál elijo?
+
+| Tu situación | Elige |
+|---|---|
+| Ya trabajas en AWS y quieres una sola factura | **Bedrock** ([`bedrock_gateway`](agente-en-el-sandbox.md#1-el-secreto-y-la-pasarela)): la pasarela limita también qué modelos se llaman, y es la ruta más probada |
+| Tienes clave de OpenAI | **OpenAI** |
+| Tu organización usa Azure | **Azure OpenAI**: el modelo es un despliegue de tu recurso, con su cuota |
+| Quieres Gemini | **Gemini**: como en Bedrock, la pasarela limita los modelos |
+| Quieres probar muchos modelos con una sola clave | **OpenRouter** |
+| Buscas velocidad o precio bajo | **Groq**, **DeepSeek** o **Mistral** |
+| Tienes clave de xAI (Grok) | **xAI** |
+| Ya tienes un proxy de LiteLLM, o quieres modelos locales | **LiteLLM**: claves virtuales con presupuesto y cualquier modelo que sirva el proxy |
+| Tienes una suscripción de consumo (ChatGPT, Claude Pro/Max, Copilot, SuperGrok) | no se admite: [Proveedores no admitidos](#proveedores-no-admitidos) |
+
+Si dudas, empieza por Bedrock o por LiteLLM delante de Bedrock: son las
+rutas probadas con un modelo real ([Qué se ha probado](#que-se-ha-probado)).
 
 ## Catálogo
 
@@ -399,6 +422,22 @@ Fija el tope en el proveedor:
 
 `rate_per_minute` también ayuda: limita las peticiones que pasan por la
 pasarela, las haga el agente o cualquier otro código del sandbox.
+
+## Qué se ha probado
+
+| Ruta | Cómo se probó |
+|---|---|
+| Bedrock (`bedrock_gateway`), OpenCode y deepagents | con modelo real, en AWS real (MicroVMs), desde Python y TypeScript, en la aceptación de cada release |
+| API compatible con OpenAI de Bedrock (`bedrock-runtime` `/openai/v1` y `bedrock-mantle`) por `openai_compatible_gateway` | con modelo real, en el [entorno local](probar-en-local.md#otros-proveedores-sin-claves-de-terceros) con el egress cerrado: herramientas, sesión y uso de tokens |
+| `provider="openai"` (Responses API) contra `bedrock-mantle` | con modelo real, en local, una vuelta sin herramientas |
+| LiteLLM (`litellm_gateway`) delante de Bedrock | con modelo real, en local: herramientas, sesión y uso de tokens |
+| OpenAI, Gemini, Azure OpenAI, OpenRouter, Groq, Mistral, DeepSeek y xAI | sólo contra un [upstream falso](probar-en-local.md#proveedores-de-modelo-sin-claves): cada preset con OpenCode y deepagents, desde Python y TypeScript, completa una vuelta, la clave llega en su cabecera, el marcador nunca sale y una ruta fuera de la lista recibe 403 |
+
+Las ocho últimas no se han probado con una clave real del proveedor. Con
+una clave tuya, la
+[prueba de humo](probar-en-local.md#prueba-de-humo-contra-las-apis-reales)
+hace una vuelta corta contra la API real por menos de 0,01 USD por
+proveedor.
 
 ## Proveedores no admitidos
 

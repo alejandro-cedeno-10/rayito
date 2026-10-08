@@ -6,7 +6,7 @@
 ## Requirements
 
 ### Requirement: Agent specs are validated before any call
-Both SDKs SHALL provide `AgentModel`, `AgentPermissions`, `SubAgent`, `McpLocal`, `McpRemote`, `AgentSpec` and `AgentLimits` as immutable values validated at construction, raising `InvalidArgumentException` / `InvalidArgumentError` without any network call. `AgentModel.provider` SHALL be one of `bedrock`, `anthropic` or `openai-compatible`; `region` SHALL be required for `bedrock`; `base_path` SHALL be `""` or an absolute path without a trailing `/` and only accepted for `openai-compatible`. `gateway` (and `McpRemote.gateway`) SHALL follow the gateway route-name rule. No type SHALL carry a credential or header field. `AgentSpec.raw_config` SHALL reject, naming the key, any top-level key in `RESERVED_CONFIG_KEYS` (`provider`, `autoupdate`, `share`, `enabled_providers`, `model`, `small_model`, `mcp`, `agent`, `permission`, `instructions`). `AgentSpec.require_gateways(available)` SHALL raise naming the first missing gateway among the model's and every `McpRemote`'s. Both SDKs SHALL pass the shared vectors in `testdata/agent/domain-vectors.json`.
+Both SDKs SHALL provide `AgentModel`, `AgentPermissions`, `SubAgent`, `McpLocal`, `McpRemote`, `AgentSpec` and `AgentLimits` as immutable values validated at construction, raising `InvalidArgumentException` / `InvalidArgumentError` without any network call. `AgentModel.provider` SHALL be one of `bedrock`, `anthropic`, `openai-compatible`, `openai`, `google` or `azure`, and SHALL never name a consumer subscription; `region` SHALL be required for `bedrock`; `base_path` SHALL be `""` or an absolute path without a trailing `/` and only accepted for `openai-compatible`. `gateway` (and `McpRemote.gateway`) SHALL follow the gateway route-name rule. No type SHALL carry a credential or header field. `AgentSpec.raw_config` SHALL reject, naming the key, any top-level key in `RESERVED_CONFIG_KEYS` (`provider`, `autoupdate`, `share`, `enabled_providers`, `model`, `small_model`, `mcp`, `agent`, `permission`, `instructions`, `plugin`). `AgentSpec.require_gateways(available)` SHALL raise naming the first missing gateway among the model's and every `McpRemote`'s. Both SDKs SHALL pass the shared vectors in `testdata/agent/domain-vectors.json` and `testdata/agent/provider-catalogue.json`.
 
 #### Scenario: Bedrock without a region
 - **WHEN** a caller builds `AgentModel(provider="bedrock", id="m", gateway="bedrock")`
@@ -19,6 +19,10 @@ Both SDKs SHALL provide `AgentModel`, `AgentPermissions`, `SubAgent`, `McpLocal`
 #### Scenario: a missing gateway
 - **WHEN** a spec's model uses gateway `bedrock`, one `McpRemote` uses `docs-mcp`, and the sandbox only has `bedrock`
 - **THEN** `require_gateways` raises `InvalidArgumentException` naming `'docs-mcp'`
+
+#### Scenario: a refused provider
+- **WHEN** a caller builds `AgentModel(provider="chatgpt-plan", id="m", gateway="modelo")`
+- **THEN** it raises `InvalidArgumentException`
 
 ### Requirement: Agent permissions are headless and deny the hanging tools
 `AgentPermissions` SHALL accept only the actions `allow` and `deny`, for `default`, for a tool and for each argument pattern of a tool; `ask` SHALL raise `InvalidArgumentException` explaining that the run has nobody to answer. `effective_tools()` SHALL return `DEFAULT_DENIED_TOOLS` (`question`, `webfetch`, `websearch`) set to `deny`, overridden by the caller's entries.
@@ -50,7 +54,7 @@ Events SHALL be a union discriminated by `type`, one of `text_delta`, `text`, `r
 - **THEN** it is an `AgentException` and a `SandboxException` with `reason="token_budget"`, `session_id="ses_1"`, that `usage`, and message `el agente superó su presupuesto de tokens (x)`
 
 ### Requirement: Gateway presets allow only the chosen model paths
-`bedrock_gateway(secret, region=, models=)` SHALL return a `SecretGateway` with upstream `https://bedrock-runtime.<region>.amazonaws.com`, the single header `authorization`, and for each distinct model exactly `POST /model/<id>/converse-stream` and `POST /model/<id>/converse` with the id percent-encoded (`:` as `%3A`); every rule SHALL pass `is_safe_request_path`, and a model id containing `/` SHALL raise `InvalidArgumentException`. `anthropic_gateway(secret)` SHALL allow only `POST /v1/messages` on `https://api.anthropic.com` with `x-api-key`. `openai_compatible_gateway(secret, upstream=, base_path=)` SHALL allow only `POST <base_path>/chat/completions` with `authorization`. Building a preset SHALL make no AWS call.
+`bedrock_gateway(secret, region=, models=)` SHALL return a `SecretGateway` with upstream `https://bedrock-runtime.<region>.amazonaws.com`, the single header `authorization`, and for each distinct model exactly `POST /model/<id>/converse-stream` and `POST /model/<id>/converse` with the id percent-encoded (`:` as `%3A`); every rule SHALL pass `is_safe_request_path`, and a model id containing `/` SHALL raise `InvalidArgumentException`. `anthropic_gateway(secret)` SHALL allow only `POST /v1/messages` on `https://api.anthropic.com` with `x-api-key`. `openai_compatible_gateway(secret, upstream=, base_path=)` SHALL allow only `POST <base_path>/chat/completions` with `authorization`. Both SDKs SHALL also provide, with exactly the upstream, headers and rules of `testdata/agent/provider-catalogue.json`: `openai_gateway(secret)` (`https://api.openai.com`, `authorization`, `POST /v1/responses` and `POST /v1/chat/completions`); `gemini_gateway(secret, models=)` (`https://generativelanguage.googleapis.com`, `x-goog-api-key`, for each distinct model `POST /v1beta/models/<id>:streamGenerateContent` and `POST /v1beta/models/<id>:generateContent`, rejecting an empty list and any id containing `/`); `azure_openai_gateway(secret, resource=)` (`https://<resource>.openai.azure.com`, `api-key`, `POST /openai/v1/responses` and `POST /openai/v1/chat/completions`, rejecting a `resource` that is not a 1-63 character DNS label of `[a-z0-9-]` without a leading or trailing hyphen); `openrouter_gateway(secret)` (`https://openrouter.ai`, `POST /api/v1/chat/completions`), `groq_gateway(secret)` (`https://api.groq.com`, `POST /openai/v1/chat/completions`), `mistral_gateway(secret)` (`https://api.mistral.ai`, `POST /v1/chat/completions`), `deepseek_gateway(secret)` (`https://api.deepseek.com`, `POST /chat/completions`) and `xai_gateway(secret)` (`https://api.x.ai`, `POST /v1/responses` and `POST /v1/chat/completions`), all with `authorization`; and `litellm_gateway(secret, upstream=, base_path="/v1")` (`authorization`, `POST <base_path>/chat/completions` and `POST <base_path>/responses`, rejecting an upstream that is not `https://host` and a `base_path` that `AgentModel.base_path` would reject). Every preset SHALL accept `rate_per_minute`. The OpenAI-style presets cannot restrict the model, which travels in the body; their docstrings SHALL say so and point to provider-side limits. Building a preset SHALL make no AWS call and load no optional peer.
 
 #### Scenario: Bedrock rules match what the clients send
 - **WHEN** `bedrock_gateway("k", region="us-east-1", models=["us.anthropic.claude-haiku-4-5-20251001-v1:0"])` is built
@@ -59,6 +63,18 @@ Events SHALL be a union discriminated by `type`, one of `text_delta`, `text`, `r
 #### Scenario: an ARN cannot be allowed
 - **WHEN** a model id is an inference-profile ARN
 - **THEN** `bedrock_gateway` raises `InvalidArgumentException`
+
+#### Scenario: Gemini rules carry the model
+- **WHEN** `gemini_gateway("k", models=["gemini-2.5-flash"])` is built
+- **THEN** `allow` is `[("POST", "/v1beta/models/gemini-2.5-flash:streamGenerateContent"), ("POST", "/v1beta/models/gemini-2.5-flash:generateContent")]`
+
+#### Scenario: an invalid Azure resource
+- **WHEN** `azure_openai_gateway("k", resource="a.b")` is built
+- **THEN** it raises `InvalidArgumentException`
+
+#### Scenario: LiteLLM over plain http
+- **WHEN** `litellm_gateway("k", upstream="http://litellm.example.com")` is built
+- **THEN** it raises `InvalidArgumentException`
 
 ### Requirement: The AgentRuntime port resolves by name or by object
 Both SDKs SHALL define a pure `AgentRuntime` port (`build_config`/`buildConfig`, `command`, `new_state`/`newState`, `parse_line`/`parseLine`, `finish`, `template_steps`/`templateSteps`, `warmup_steps`/`warmupSteps`) and a `nombre -> AgentRuntime` registry. `warmup_steps()`/`warmupSteps()` SHALL take no argument. `runtime=`/`runtime` SHALL accept either a registered name or any object that implements the port. An unregistered name SHALL raise `UnimplementedError`/`UnimplementedError` naming the runtime, never a raw `KeyError`/`undefined` access; any other value SHALL raise `InvalidArgumentException`/`InvalidArgumentError`.
@@ -112,7 +128,7 @@ The runner SHALL write one `{"v":1,"type":…}` line per event on a private dupl
 - **THEN** they produce the events, ignored-line count and `Done` of `rayito-protocol-v1-expected.json`
 
 ### Requirement: The runner builds the model through the gateway and enforces permissions
-The runner SHALL build `ChatBedrockConverse(endpoint_url=<gateway>)`, `ChatAnthropic(base_url=<gateway>, api_key=<placeholder>)` or `ChatOpenAI(base_url=<gateway + base_path>, api_key=<placeholder>)`, and never read a credential. Without an entry point it SHALL build `create_deep_agent(model, system_prompt=instructions, subagents, backend=LocalShellBackend(root_dir=workdir, virtual_mode=False), middleware=ctx.middleware)`; with one it SHALL import `module` from the workdir and call `function(RunnerContext(model, instructions, subagents, backend, middleware, workdir))`. `virtual_mode=False` makes the file tools take absolute paths as they are, the same paths the shell tool and OpenCode see (with the default virtual mode `/home/user/x` would land in `<workdir>/home/user/x`). `ctx.middleware` SHALL contain a `wrap_tool_call` middleware that answers a denied call with an error `ToolMessage`, mapping `read→read_file`, `edit→write_file,edit_file,delete`, `list→ls`, `glob`, `grep`, `bash→execute`, `task`, `todowrite→write_todos`; `bash` patterns match the command with `fnmatchcase`, the last match winning. deepagents' prompt-caching middlewares SHALL stay on by default and SHALL be removed when `prompt_caching` is false. Every subagent in `subagents` SHALL carry that middleware, built from its own permissions or, when it has none, from the main agent's; `subagents` SHALL also include an explicit `general-purpose` subagent (deepagents' `GENERAL_PURPOSE_SUBAGENT`) with the main agent's rules, so that `task` cannot bypass them. Token usage of subagent model calls SHALL be added to the next main-agent `step_finished`.
+The runner SHALL build `ChatBedrockConverse(endpoint_url=<gateway>)`, `ChatAnthropic(base_url=<gateway>, api_key=<placeholder>)`, `ChatOpenAI(base_url=<gateway + base_path>, api_key=<placeholder>)` for `openai-compatible`, `ChatOpenAI(base_url=<gateway>/v1, api_key=<placeholder>, use_responses_api=True)` for `openai`, `ChatGoogleGenerativeAI(base_url=<gateway>, google_api_key=<placeholder>)` for `google` or `AzureChatOpenAI(base_url=<gateway>/openai/v1, api_key=<placeholder>, api_version="v1", use_responses_api=True)` for `azure` (the key travels in `api-key`, never in `Authorization`), exactly as `testdata/agent/deepagents-models.json` lists, and never read a credential. Without an entry point it SHALL build `create_deep_agent(model, system_prompt=instructions, subagents, backend=LocalShellBackend(root_dir=workdir, virtual_mode=False), middleware=ctx.middleware)`; with one it SHALL import `module` from the workdir and call `function(RunnerContext(model, instructions, subagents, backend, middleware, workdir))`. `virtual_mode=False` makes the file tools take absolute paths as they are, the same paths the shell tool and OpenCode see (with the default virtual mode `/home/user/x` would land in `<workdir>/home/user/x`). `ctx.middleware` SHALL contain a `wrap_tool_call` middleware that answers a denied call with an error `ToolMessage`, mapping `read→read_file`, `edit→write_file,edit_file,delete`, `list→ls`, `glob`, `grep`, `bash→execute`, `task`, `todowrite→write_todos`; `bash` patterns match the command with `fnmatchcase`, the last match winning. deepagents' prompt-caching middlewares SHALL stay on by default and SHALL be removed when `prompt_caching` is false. Every subagent in `subagents` SHALL carry that middleware, built from its own permissions or, when it has none, from the main agent's; `subagents` SHALL also include an explicit `general-purpose` subagent (deepagents' `GENERAL_PURPOSE_SUBAGENT`) with the main agent's rules, so that `task` cannot bypass them. Token usage of subagent model calls SHALL be added to the next main-agent `step_finished`.
 
 #### Scenario: a denied command
 - **WHEN** the permissions deny `bash` except `git *` and the model calls `execute` with `rm -rf x`
@@ -122,6 +138,10 @@ The runner SHALL build `ChatBedrockConverse(endpoint_url=<gateway>)`, `ChatAnthr
 - **WHEN** the permissions deny `bash` and the model calls `task` with `subagent_type` `general-purpose`, whose model then calls `execute`
 - **THEN** the command is not run
 
+#### Scenario: deepagents with Azure
+- **WHEN** `sbx.agent.run()` runs with `runtime="deepagents"` and `AgentModel(provider="azure", ...)`
+- **THEN** the runner builds `AzureChatOpenAI` against `<gateway>/openai/v1` with the Responses API, and its requests reach `POST /openai/v1/responses` with only the `api-key` placeholder header
+
 ### Requirement: deepagents sessions live in the sandbox
 The runner SHALL generate session ids `rda_<uuid4 hex>`, emit them in a `session` line before any other event, and store the history as `messages_to_dict` JSON in `sessions/<id>.json`, written atomically with mode 0600. A session id that does not match the pattern, or a missing session file, SHALL end the run with `agent_failed` (`runtime_error`, `invalid_session_id` / `session_not_found`) without touching other paths.
 
@@ -130,7 +150,7 @@ The runner SHALL generate session ids `rda_<uuid4 hex>`, emit them in a `session
 - **THEN** the graph receives the first run's messages followed by the new prompt
 
 ### Requirement: sbx.agent is lazy, enforces the SDK's own limits and aborts by stopping the process tree
-`Sandbox.agent`/`AsyncSandbox.agent`/`Sandbox.agent` (TypeScript) SHALL be constructed with the sandbox and SHALL make no RPC until `run()`, `stream()` or `prepare()` is called. `run()` and `stream()` SHALL NOT accept an `attach` option. `run()` SHALL raise `AgentException`/`AgentError` when the run fails; `stream()` SHALL return an iterable (`AgentStream`) that never raises for an agent failure — its last event is `Done` or `AgentFailed` — and SHALL raise only for a sandbox or transport error. The SDK SHALL enforce `AgentLimits.max_steps`/`maxSteps` when a `StepStarted` index exceeds it and `AgentLimits.max_total_tokens`/`maxTotalTokens` after any `StepFinished` whose accumulated usage exceeds it, independent of what the runtime itself enforces. The runtime's configuration SHALL be written with `files.write_files`/`files.writeFiles` only when its sha256 differs from the last one applied to that `Agent`/`AsyncAgent` instance. `AgentStream.abort()` SHALL run `stop_tree_command(pid)`/`stopTreeCommand(pid)` (which stops the runtime process and stops and kills every descendant of it, including those that started their own session), before killing the underlying command handle, and the stream's final event SHALL be `AgentFailed(reason="aborted")`. When the SDK ends a run for `max_steps` or `token_budget`, it SHALL stop the runtime the same way and consume the handle until its end event before the stream ends, so the run lock is free for the next run. When the handle ends with the command's timeout end status (which `wait()` reports as `TimeoutException`/`TimeoutError`), the final event SHALL be `AgentFailed(reason="timeout")`.
+`Sandbox.agent`/`AsyncSandbox.agent`/`Sandbox.agent` (TypeScript) SHALL be constructed with the sandbox and SHALL make no RPC until `run()`, `stream()` or `prepare()` is called. `run()` and `stream()` SHALL NOT accept an `attach` option. `run()` SHALL raise `AgentException`/`AgentError` when the run fails; `stream()` SHALL return an iterable (`AgentStream`) that never raises for an agent failure — its last event is `Done` or `AgentFailed` — and SHALL raise only for a sandbox or transport error. The SDK SHALL enforce `AgentLimits.max_steps`/`maxSteps` when a `StepStarted` index exceeds it and `AgentLimits.max_total_tokens`/`maxTotalTokens` after any `StepFinished` whose accumulated usage exceeds it, independent of what the runtime itself enforces. The runtime's configuration SHALL be written with `files.write_files`/`files.writeFiles` only when its sha256 differs from the last one applied to that `Agent`/`AsyncAgent` instance. Every run SHALL start its command with `kill_tree=True`/`killTree: true`, so `rayd` stops and kills every descendant of the runtime, including those that started their own session or were daemonised, on the run's timeout and on a `SIGKILL`. `AgentStream.abort()` SHALL kill the underlying command handle, with no other command run in the sandbox, and the stream's final event SHALL be `AgentFailed(reason="aborted")`. When the SDK ends a run for `max_steps` or `token_budget`, it SHALL kill the handle the same way and consume it until its end event before the stream ends, so the run lock is free for the next run. When the handle ends with the command's timeout end status (which `wait()` reports as `TimeoutException`/`TimeoutError`), the final event SHALL be `AgentFailed(reason="timeout")`.
 
 #### Scenario: touching sbx.agent makes no call
 - **WHEN** `sbx.agent` is read right after `Sandbox.create()`/`connect()`
@@ -146,15 +166,19 @@ The runner SHALL generate session ids `rda_<uuid4 hex>`, emit them in a `session
 
 #### Scenario: abort stops the process tree, then kills the handle
 - **WHEN** `stream.abort()` is called
-- **THEN** `stop_tree_command(pid)` is the only command run in the sandbox before the handle is killed, and `stream.result()` raises `AgentException`/`rejects` with `reason="aborted"`
+- **THEN** the run's command was started with `kill_tree`, the handle is killed, no other command is run in the sandbox, and `stream.result()` raises `AgentException`/`rejects` with `reason="aborted"`
 
 #### Scenario: an SDK limit stops the runtime and its process tree
 - **WHEN** the stream ends with `AgentFailed(reason="max_steps")` or `AgentFailed(reason="token_budget")`
-- **THEN** `stop_tree_command(pid)` ran and the handle was killed and consumed to its end before the stream ended
+- **THEN** the handle of the `kill_tree` run was killed and consumed to its end before the stream ended, and no other command was run
 
 #### Scenario: a timeout reported only by the end event is a timeout
 - **WHEN** the command handle ends without raising while iterating and its `wait()` raises `TimeoutException`/`TimeoutError`
 - **THEN** the stream's final event is `AgentFailed(reason="timeout")`
+
+#### Scenario: a timeout leaves nothing the runtime daemonised
+- **WHEN** a run whose runtime daemonises a process (`setsid` and a parent that exits) reaches `AgentLimits.timeout_seconds`/`timeoutMs`
+- **THEN** the stream's final event is `AgentFailed(reason="timeout")` and, when it arrives, the daemonised process is no longer alive
 
 ### Requirement: The OpenCode adapter execs opencode run directly, headless and byte-identical across SDKs
 
@@ -187,3 +211,14 @@ same spec (`testdata/agent/`).
 - **THEN** the script equals `testdata/agent/opencode-run-commands.json`,
   its last line is `exec 'opencode' 'run' …`, and it contains neither
   `--attach` nor `curl`
+
+### Requirement: OpenCode reaches the native providers only through the gateway
+For `openai`, `google` and `azure`, the OpenCode adapter SHALL write the provider ids `openai`, `google` and `azure` with `options.baseURL` set to the gateway URL plus `/v1`, `/v1beta` and `/openai/v1` respectively, `npm` set to `@ai-sdk/openai`, `@ai-sdk/google` and `@ai-sdk/azure` (bundled in the pinned binary), `options.apiKey` set to the placeholder, and a `models` map with the main, small and subagent model ids; `enabled_providers` SHALL contain only that id. The adapter SHALL never write an `auth.json`, nor an `auth` or `plugin` key, so a consumer-subscription login cannot be used. `gen_ai.provider.name` SHALL be `openai`, `gcp.gemini` and `azure.ai.openai` for those providers. Every run SHALL set `OPENCODE_EXPERIMENTAL_WEBSOCKETS=0`, so the `openai` provider never opens a WebSocket the gateway does not forward. The golden files `testdata/agent/opencode-config/<provider>.json` SHALL match byte for byte in both SDKs.
+
+#### Scenario: OpenAI through the gateway
+- **WHEN** the spec's model is `AgentModel(provider="openai", id="m", gateway="modelo")` and the gateway is at `http://127.0.0.1:18005`
+- **THEN** `opencode.json` has `provider.openai.options.baseURL` = `http://127.0.0.1:18005/v1` and `apiKey` = `placeholder-not-a-secret`
+
+#### Scenario: no subscription credential
+- **WHEN** the adapter builds the files for any provider
+- **THEN** the only file is `opencode.json` (plus `AGENTS.md` with instructions) and it has no `auth` or `plugin` key
