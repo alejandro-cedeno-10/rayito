@@ -2,8 +2,8 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Transform: AWS::Serverless-2016-10-31
 Description: >-
-  E2B-compatible code sandboxes on AWS Lambda MicroVMs with the open-source
-  Rayito SDK. Builds the sandbox image from the signed Rayito release
+  Code sandboxes on AWS Lambda MicroVMs with the open-source Rayito
+  sandbox SDK. Builds the sandbox image from the signed Rayito release
   artifact and creates the least-privilege IAM the SDK caller needs.
   Optional: a second image with OS capabilities, the base for an in-sandbox
   coding agent that calls Amazon Bedrock through a secrets gateway.

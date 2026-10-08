@@ -1,6 +1,6 @@
-# E2B-compatible code sandboxes on AWS Lambda MicroVMs
+# Code sandboxes on AWS Lambda MicroVMs with a sandbox SDK
 
-This pattern deploys an AWS Lambda MicroVM image that turns each MicroVM into a code sandbox you drive from TypeScript or Python with [Rayito](https://alejandro-cedeno-10.github.io/rayito/), an open-source (Apache-2.0) SDK with the same API as the E2B SDK. A short TypeScript client creates a sandbox, runs stateful Python code and shell commands, reads and writes files, and terminates it. Code written for the E2B SDK runs unchanged after a one-line import swap. Everything stays in your AWS account: no third-party service and no API key.
+This pattern deploys an AWS Lambda MicroVM image that turns each MicroVM into a code sandbox you drive from TypeScript or Python with [Rayito](https://alejandro-cedeno-10.github.io/rayito/), an open-source (Apache-2.0) sandbox SDK. A short TypeScript client creates a sandbox, runs stateful Python code and shell commands, reads and writes files, and terminates it, in seconds and with a few lines of code. The same SDK is published for Python (`pip install rayito`) with matching sync and async APIs. Everything stays in your AWS account: no third-party service and no API key.
 
 An optional part builds a second image with a coding agent (OpenCode) that calls a model in Amazon Bedrock. The model credential, a short-term Bedrock API key in AWS Secrets Manager, reaches Bedrock only through a secrets gateway inside the sandbox, so code in the sandbox can use the key but cannot read it.
 
@@ -27,12 +27,12 @@ Important: this application uses various AWS services and there are costs associ
     ```
 1. Change directory to the pattern directory:
     ```bash
-    cd serverless-patterns/lambda-microvms-e2b-sandbox/typescript/sam
+    cd serverless-patterns/lambda-microvms-sandbox-sdk/typescript/sam
     ```
 1. Set the Region, a stack name and a globally unique name for a new S3 bucket. The stack name prefixes every image and IAM resource it creates:
     ```bash
     export AWS_REGION=us-east-1
-    export STACK_NAME=e2b-sandbox
+    export STACK_NAME=sandbox-sdk
     export ARTIFACT_BUCKET=amzn-s3-demo-bucket   # replace with a unique bucket name
     ```
 1. Download the sandbox image artifact of the Rayito release, check its signature and checksum, and upload it to a new bucket. The zip holds the in-guest agent (`rayd`) and its Dockerfile; Lambda builds the image from it in your account.
@@ -71,7 +71,7 @@ Important: this application uses various AWS services and there are costs associ
 
 The stack creates only AWS resources:
 
-* An `AWS::Lambda::MicrovmImage` built on the AWS managed Amazon Linux 2023 base image (`al2023-1`) from `rayito-image.zip`. The zip contains `rayd`, a small agent that serves the MicroVM lifecycle hooks on port 9000 (`/ready`, `/validate`, `/run`, `/suspend`, `/resume`, `/terminate`) and a gRPC API for processes, files and a Python (Jupyter) kernel. Lambda boots the image, waits for `/ready`, checks it with `/validate`, and snapshots it, so every sandbox starts from a warm snapshot: `Sandbox.create()` returns in under 10 seconds with the Python kernel ready.
+* An `AWS::Lambda::MicrovmImage` built on the AWS managed Amazon Linux 2023 base image (`al2023-1`) from `rayito-image.zip`. The zip contains `rayd`, a small static agent written in Rust that serves the MicroVM lifecycle hooks on port 9000 (`/ready`, `/validate`, `/run`, `/suspend`, `/resume`, `/terminate`) and a gRPC API for processes, files and a Python (Jupyter) kernel. Lambda boots the image, waits for `/ready`, checks it with `/validate`, and snapshots it, so every sandbox starts from a warm snapshot: `Sandbox.create()` returns in under 10 seconds with the Python kernel ready.
 * An IAM build role that Lambda assumes to read the artifact and write build logs, and an Amazon CloudWatch Logs log group with 7-day retention for each image.
 * `SandboxLauncherPolicy`, a customer managed policy with the runtime actions only: run, get, suspend, resume and terminate MicroVMs of this stack's images, mint their auth tokens, and pass the AWS managed network connectors. It cannot change an image.
 
@@ -99,16 +99,6 @@ With `EnableAgent=true` the stack also builds `<stack>-base-caps`, the same arti
     files.read: hello from the MicroVM
     files.list: hello.py, out.txt
     done in 10044 ms; terminating microvm-00000000-0000-0000-0000-000000000001
-    ```
-1. Run the same kind of program written for the E2B SDK. `src/e2b-swap.ts` only changes the import line from `@e2b/code-interpreter` to `rayito/e2b`:
-    ```bash
-    npm run e2b
-    ```
-    Expected output:
-    ```text
-    runCode: 45
-    commands.run: hello from E2B code
-    files.read: same API
     ```
 1. Check that no sandbox is left running (the list must not show a `RUNNING` MicroVM of your images):
     ```bash
@@ -149,7 +139,7 @@ The commands above work with administrator credentials. To run the client with l
 
 | Script | Policies (stack outputs) |
 |---|---|
-| `npm run sandbox`, `npm run e2b` | `SandboxLauncherPolicyArn` |
+| `npm run sandbox` | `SandboxLauncherPolicyArn` |
 | `npm run build-agent-image` | `AgentImageBuilderPolicyArn` |
 | `npm run agent` | `SandboxLauncherPolicyArn`, `AgentImageBuilderPolicyArn` (stores the key in Secrets Manager) and `ModelInvokePolicyArn` (the short-term Bedrock API key carries the permissions of the identity that mints it) |
 
@@ -182,6 +172,8 @@ A service that only creates sandboxes needs `SandboxLauncherPolicyArn` alone: it
 Sandboxes are billed only while they run or are suspended: a 2 GB sandbox costs about $0.13 per hour in us-east-1, so the test run above costs well under one cent. Each image version is billed for snapshot storage, with a minimum of one week per version: about $0.04 for `<stack>-base` and the same for `<stack>-base-caps`, and about $0.06 for `<stack>-agent`. The optional agent part also pays for the Bedrock tokens it uses (a few cents with Claude Haiku 4.5) and for the secret ($0.40 per month, pro-rated). See [AWS Lambda pricing](https://aws.amazon.com/lambda/pricing/).
 
 ----
+This folder is the copy of the pattern submitted to aws-samples/serverless-patterns in [#3336](https://github.com/aws-samples/serverless-patterns/pull/3336), as `lambda-microvms-sandbox-sdk/typescript/sam`. The upstream copy ends with the Amazon copyright footer of `_pattern-model`; the E2B import-swap client of the first draft was left out of the submission and removed here.
+
 The files of this pattern (this folder, except `_submission/`) are licensed under MIT-0, the license of the serverless-patterns repository, unlike the rest of the Rayito repository (Apache-2.0).
 
 SPDX-License-Identifier: MIT-0
