@@ -9,9 +9,14 @@ export const DEEPAGENTS_REQUIREMENTS = `# Pines del venv de deepagents de la pla
 # Amazon Bedrock (langchain-aws) y por APIs compatibles con OpenAI
 # (langchain-openai, ai-agent-deepagents). Generado para CPython 3.12 en
 # Linux arm64 (glibc 2.34, la de al2023-minimal) y sólo wheels, con los pines
-# anteriores como restricción (-c) para no mover lo que ya estaba:
+# anteriores como restricción (-c) para no mover lo que ya estaba. \`socksio\`
+# es el extra \`socks\` de httpx/httpx2: \`rayd\` exporta
+# \`ALL_PROXY=socks5h://...\` en el sandbox y, sin él, httpx falla al crear el
+# cliente (ImportError) en cada modelo que no es de Bedrock (OpenAI, Azure,
+# Gemini, Anthropic y compatibles), aunque su URL sea la pasarela en
+# loopback y quede fuera del proxy por \`NO_PROXY\`:
 #
-#   printf 'deepagents>=0.7,<0.8\\nlangchain-aws\\nlangchain-openai\\n' > req.in
+#   printf 'deepagents>=0.7,<0.8\\nlangchain-aws\\nlangchain-openai\\nsocksio\\n' > req.in
 #   uv pip compile req.in --python-version 3.12 \\
 #     --python-platform aarch64-manylinux_2_34 --generate-hashes \\
 #     --only-binary :all: --no-header -c pines-anteriores.txt
@@ -1245,6 +1250,12 @@ sniffio==1.3.1 \\
     #   google-genai
     #   langsmith
     #   openai
+socksio==1.0.0 \\
+    --hash=sha256:95dc1f15f9b34e8d7b16f06d74b8ccf48f609af32ab33c608d08761c5dcbb1f3 \\
+    --hash=sha256:f88beb3da5b5c38b9890469de67d0cb0f9d494b78b106ca1845f96c10b91c4ac
+    # via
+    #   httpx
+    #   httpx2
 tenacity==9.1.4 \\
     --hash=sha256:6095a360c919085f28c6527de529e76a06ad89b23659fa881ae0649b867a9d55 \\
     --hash=sha256:adb31d4c263f2bd041081ab33b498309a57c77f9acf2db65aadf0898179cf93a

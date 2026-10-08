@@ -32,6 +32,17 @@ versionado [SemVer](https://semver.org/lang/es/).
   "Proveedores del agente" explica por qué. Construir un preset no llama a
   AWS.
 
+### Fixed
+
+- **deepagents con modelos que no son de Bedrock**: el venv de
+  `AgentTemplate` (y del guest local) lleva `socksio`, el extra `socks` de
+  httpx. `rayd` exporta `ALL_PROXY=socks5h://...` en el sandbox y, sin él,
+  httpx fallaba al crear el cliente (`AgentFailed` con `ImportError`) con
+  OpenAI, xAI, Azure OpenAI, Gemini, Anthropic y las APIs compatibles con
+  OpenAI, aunque el modelo se llame por la pasarela en loopback. Cambia el
+  sha256 de `requirements-deepagents.txt`: reconstruye la plantilla de
+  agente.
+
 ## [0.9.1] - 2026-10-07
 
 ### Fixed

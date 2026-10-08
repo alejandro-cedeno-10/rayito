@@ -72,6 +72,12 @@ describe("AgentTemplate", () => {
     expect(sha).toBe(AGENT_DEEPAGENTS_REQUIREMENTS_SHA256);
   });
 
+  test("the requirements include the socks extra of httpx", () => {
+    // `rayd` exporta `ALL_PROXY=socks5h://...` en el sandbox: sin `socksio`,
+    // httpx no crea el cliente de ningún modelo que no sea de Bedrock.
+    expect(DEEPAGENTS_REQUIREMENTS).toContain("\nsocksio==");
+  });
+
   test("validation", () => {
     const bad: unknown[] = [
       { memoryMib: 1024 },

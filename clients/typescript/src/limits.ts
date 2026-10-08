@@ -151,4 +151,4 @@ export const DEFAULT_WARMUP_STEP_TIMEOUT_SECONDS = 120 as const;
 export const AGENT_PREFETCH_RESTORE_JUMP_SECONDS = 30 as const;
 export const AGENT_PREFETCH_INTERVAL_SECONDS = 2 as const;
 export const AGENT_DEEPAGENTS_REQUIREMENTS_SHA256 =
-  "edd561e5f3d91ab3b4784809dfa0f7a8eb0d6f3d8a4ccb1a57dcdf63982bacaa" as const;
+  "b73cb891e585c59f532eed1bfe5cf2d903ab4585d50249ae6d3e3246a205a8a3" as const;
