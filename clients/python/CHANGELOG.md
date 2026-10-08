@@ -34,6 +34,16 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
 
 ### Fixed
 
+- **deepagents cuenta los tokens de los modelos compatibles con OpenAI.**
+  Con `"openai-compatible"`, `ChatOpenAI` no pedía el uso en streaming
+  (`stream_options.include_usage`): cada paso llegaba con 0 tokens,
+  `result.usage` quedaba a cero y `AgentLimits.max_total_tokens` no cortaba nunca. El
+  runner crea ahora `ChatOpenAI(stream_usage=True)`. Medido de verdad, con
+  el egress cerrado, contra la Chat Completions compatible con OpenAI de
+  Amazon Bedrock (`bedrock-runtime` `/openai/v1` y `bedrock-mantle`) y un
+  proxy de LiteLLM; la Responses API (`"openai"`, `"azure"`) ya mandaba el
+  uso.
+
 - **deepagents con modelos que no son de Bedrock**: el venv de
   `AgentTemplate` (y del guest local) lleva `socksio`, el extra `socks` de
   httpx. `rayd` exporta `ALL_PROXY=socks5h://...` en el sandbox y, sin él,

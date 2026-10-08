@@ -5,7 +5,7 @@
   "cases": [
     {"provider": "bedrock", "module": "langchain_aws", "class": "ChatBedrockConverse", "kwargs": {"model": "m", "region_name": "us-east-1", "endpoint_url": "http://gw"}},
     {"provider": "anthropic", "module": "langchain_anthropic", "class": "ChatAnthropic", "kwargs": {"model": "m", "base_url": "http://gw", "api_key": "placeholder-not-a-secret"}},
-    {"provider": "openai-compatible", "module": "langchain_openai", "class": "ChatOpenAI", "kwargs": {"model": "m", "base_url": "http://gw", "api_key": "placeholder-not-a-secret"}},
+    {"provider": "openai-compatible", "module": "langchain_openai", "class": "ChatOpenAI", "kwargs": {"model": "m", "base_url": "http://gw", "api_key": "placeholder-not-a-secret", "stream_usage": true}},
     {"provider": "openai", "module": "langchain_openai", "class": "ChatOpenAI", "kwargs": {"model": "m", "base_url": "http://gw", "api_key": "placeholder-not-a-secret", "use_responses_api": true}},
     {"provider": "google", "module": "langchain_google_genai", "class": "ChatGoogleGenerativeAI", "kwargs": {"model": "m", "base_url": "http://gw", "google_api_key": "placeholder-not-a-secret"}},
     {"provider": "azure", "module": "langchain_openai", "class": "AzureChatOpenAI", "kwargs": {"model": "m", "base_url": "http://gw", "api_key": "placeholder-not-a-secret", "api_version": "v1", "use_responses_api": true}}
