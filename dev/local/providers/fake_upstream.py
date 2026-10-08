@@ -386,7 +386,8 @@ class AdminHandler(BaseHTTPRequestHandler):
 
 def main() -> None:
     cert, key = make_certificates(catalogue_hosts())
-    context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
     context.load_cert_chain(cert, key)
     upstream = ThreadingHTTPServer(("0.0.0.0", HTTPS_PORT), UpstreamHandler)
     upstream.socket = context.wrap_socket(upstream.socket, server_side=True)
