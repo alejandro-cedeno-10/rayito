@@ -1,0 +1,5 @@
+{
+  "opencode_json": "{\n  \"$schema\": \"https://opencode.ai/config.json\",\n  \"agent\": {\n    \"build\": {\n      \"permission\": {\n        \"*\": \"allow\",\n        \"question\": \"deny\",\n        \"webfetch\": \"deny\",\n        \"websearch\": \"deny\"\n      }\n    },\n    \"revisor\": {\n      \"description\": \"Revisa cambios\",\n      \"mode\": \"subagent\",\n      \"prompt\": \"Revisa el diff.\"\n    }\n  },\n  \"autoupdate\": false,\n  \"enabled_providers\": [\n    \"google\"\n  ],\n  \"model\": \"google/gemini-2.5-pro\",\n  \"provider\": {\n    \"google\": {\n      \"models\": {\n        \"gemini-2.5-flash\": {},\n        \"gemini-2.5-pro\": {}\n      },\n      \"npm\": \"@ai-sdk/google\",\n      \"options\": {\n        \"apiKey\": \"placeholder-not-a-secret\",\n        \"baseURL\": \"http://127.0.0.1:18003/v1beta\"\n      }\n    }\n  },\n  \"share\": \"disabled\",\n  \"small_model\": \"google/gemini-2.5-flash\",\n  \"snapshot\": false\n}\n",
+  "agents_md": null,
+  "config_sha256": "3e6cf1d0de769d8342d4e98900794dda0e8c49f81dcab8f6664ba51f3311bb09"
+}

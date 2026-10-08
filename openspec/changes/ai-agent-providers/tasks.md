@@ -12,7 +12,7 @@
 ## 3. Runtime mapping
 
 - [x] 3.1 OpenCode adapter: native `openai`, `google`, `azure` providers through the gateway (both SDKs)
-- [x] 3.2 deepagents: `ChatOpenAI(use_responses_api=True)` and `ChatGoogleGenerativeAI`; `azure` raises `UnimplementedError`
+- [x] 3.2 deepagents: `ChatOpenAI(use_responses_api=True)`, `ChatGoogleGenerativeAI` and `AzureChatOpenAI` (Responses API)
 - [x] 3.3 `gen_ai.provider.name` for the new providers
 
 ## 4. Tests
@@ -28,3 +28,10 @@
 - [x] 5.3 ADR-025 note in ARCHITECTURE.md
 - [x] 5.4 CHANGELOG `[Unreleased]` in both SDKs
 
+
+## 6. Runtime adapters (agent-provider-runtimes)
+
+- [x] 6.1 Spike: the pinned OpenCode binary bundles `@ai-sdk/openai`, `@ai-sdk/google`, `@ai-sdk/azure`, `@ai-sdk/xai` and runs offline against a fake gateway
+- [x] 6.2 OpenCode: explicit `npm`, Azure `baseURL` `/openai/v1`, `OPENCODE_EXPERIMENTAL_WEBSOCKETS=0`
+- [x] 6.3 deepagents: `AzureChatOpenAI` for `azure`; template smoke test imports `langchain_openai` and `langchain_google_genai`
+- [x] 6.4 Golden files `testdata/agent/opencode-config/{openai,google,azure,litellm}.json` and `testdata/agent/deepagents-models.json`, both SDKs

@@ -19,7 +19,7 @@ rutas permitidas, y se combina con un `AgentModel`.
 |---|---|---|---|---|---|
 | OpenAI | `openai_gateway(secret)` / `openaiGateway(secret)` | `https://api.openai.com` | `authorization` (`Bearer sk-…`) | `POST /v1/responses`, `POST /v1/chat/completions` | `provider="openai"` |
 | Gemini (AI Studio) | `gemini_gateway(secret, models=[…])` / `geminiGateway(secret, { models })` | `https://generativelanguage.googleapis.com` | `x-goog-api-key` (la clave tal cual) | por modelo: `POST /v1beta/models/<m>:streamGenerateContent` y `:generateContent` | `provider="google"` |
-| Azure OpenAI v1 | `azure_openai_gateway(secret, resource="…")` / `azureOpenaiGateway(secret, { resource })` | `https://<resource>.openai.azure.com` | `api-key` (la clave tal cual) | `POST /openai/v1/responses`, `POST /openai/v1/chat/completions` | `provider="azure"` (sólo OpenCode) |
+| Azure OpenAI v1 | `azure_openai_gateway(secret, resource="…")` / `azureOpenaiGateway(secret, { resource })` | `https://<resource>.openai.azure.com` | `api-key` (la clave tal cual) | `POST /openai/v1/responses`, `POST /openai/v1/chat/completions` | `provider="azure"` |
 | OpenRouter | `openrouter_gateway(secret)` / `openrouterGateway(secret)` | `https://openrouter.ai` | `authorization` (`Bearer …`) | `POST /api/v1/chat/completions` | `provider="openai-compatible"`, `base_path="/api/v1"` |
 | Groq | `groq_gateway(secret)` / `groqGateway(secret)` | `https://api.groq.com` | `authorization` (`Bearer …`) | `POST /openai/v1/chat/completions` | `provider="openai-compatible"`, `base_path="/openai/v1"` |
 | Mistral | `mistral_gateway(secret)` / `mistralGateway(secret)` | `https://api.mistral.ai` | `authorization` (`Bearer …`) | `POST /v1/chat/completions` | `provider="openai-compatible"`, `base_path="/v1"` |
@@ -39,10 +39,9 @@ Notas por proveedor:
   modelo que no esté en la lista.
 - **Azure OpenAI.** `resource` es el subdominio del recurso (1-63
   caracteres `[a-z0-9-]`, sin guion al principio ni al final). El `id` del
-  `AgentModel` es el nombre del despliegue. Con deepagents todavía no
-  funciona (`UnimplementedError`): sus clientes mandan una cabecera que
-  Azure leería como credencial y la pasarela aún no sabe quitarla. Usa
-  OpenCode.
+  `AgentModel` es el nombre del despliegue. Los dos runtimes usan la
+  Responses API (`/openai/v1/responses`) con la clave en `api-key`:
+  OpenCode con `@ai-sdk/azure` y deepagents con `AzureChatOpenAI`.
 - **xAI** usa el proveedor `openai`: OpenCode y deepagents le hablan con la
   Responses API como a OpenAI, contra otro upstream.
 - **LiteLLM.** El proxy tiene que estar detrás de HTTPS y ser alcanzable

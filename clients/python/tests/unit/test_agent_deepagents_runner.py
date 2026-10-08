@@ -17,6 +17,7 @@ from typing import Any
 
 import pytest
 
+from rayito._agent._domain import MODEL_PROVIDERS
 from rayito._agent._runner import deepagents_runner as runner
 from rayito._limits import AGENT_PROTOCOL_VERSION, MAX_TOOL_OUTPUT_PREVIEW_BYTES
 
@@ -94,7 +95,11 @@ def stubs(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
 
     _module("langchain_aws", ChatBedrockConverse=_model("ChatBedrockConverse"))
     _module("langchain_anthropic", ChatAnthropic=_model("ChatAnthropic"))
-    _module("langchain_openai", ChatOpenAI=_model("ChatOpenAI"))
+    _module(
+        "langchain_openai",
+        ChatOpenAI=_model("ChatOpenAI"),
+        AzureChatOpenAI=_model("AzureChatOpenAI"),
+    )
     _module("langchain_google_genai", ChatGoogleGenerativeAI=_model("ChatGoogleGenerativeAI"))
     _module("langchain")
     _module("langchain.agents")
@@ -301,46 +306,22 @@ def test_reasoning_only_when_requested(stubs: dict[str, Any], tmp_path: Path) ->
     assert {"v": 1, "type": "reasoning", "text": "pienso"} in events
 
 
-@pytest.mark.parametrize(
-    ("provider", "cls", "expected"),
-    [
-        (
-            "anthropic",
-            "ChatAnthropic",
-            {"model": "m", "base_url": "http://gw", "api_key": "placeholder-not-a-secret"},
-        ),
-        (
-            "openai-compatible",
-            "ChatOpenAI",
-            {"model": "m", "base_url": "http://gw", "api_key": "placeholder-not-a-secret"},
-        ),
-        (
-            "openai",
-            "ChatOpenAI",
-            {
-                "model": "m",
-                "base_url": "http://gw",
-                "api_key": "placeholder-not-a-secret",
-                "use_responses_api": True,
-            },
-        ),
-        (
-            "google",
-            "ChatGoogleGenerativeAI",
-            {"model": "m", "base_url": "http://gw", "google_api_key": "placeholder-not-a-secret"},
-        ),
-    ],
+MODEL_VECTORS: dict[str, Any] = json.loads(
+    (Path(__file__).parents[4] / "testdata" / "agent" / "deepagents-models.json").read_text(
+        encoding="utf-8"
+    )
 )
-def test_models_go_through_the_gateway(
-    stubs: dict[str, Any], provider: str, cls: str, expected: dict[str, Any]
-) -> None:
-    config = {
-        "provider": provider,
-        "base_url": "http://gw",
-        "credential_placeholder": "placeholder-not-a-secret",
-    }
-    runner.build_model(config, "m")
-    assert stubs["models"] == [(cls, expected)]
+
+
+@pytest.mark.parametrize("case", MODEL_VECTORS["cases"], ids=lambda case: str(case["provider"]))
+def test_models_go_through_the_gateway(stubs: dict[str, Any], case: dict[str, Any]) -> None:
+    config = {**MODEL_VECTORS["config"], "provider": case["provider"]}
+    runner.build_model(config, MODEL_VECTORS["model_id"])
+    assert stubs["models"] == [(case["class"], case["kwargs"])]
+
+
+def test_model_vectors_cover_every_provider() -> None:
+    assert sorted(case["provider"] for case in MODEL_VECTORS["cases"]) == sorted(MODEL_PROVIDERS)
 
 
 def test_prompt_caching_off_replaces_deepagents_helper(

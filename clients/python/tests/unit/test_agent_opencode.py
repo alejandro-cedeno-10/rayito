@@ -23,7 +23,10 @@ from rayito import (
 )
 from rayito._agent._opencode import (
     OPENCODE_CONFIG_PATH,
+    OPENCODE_FLAG_ENVS,
     OPENCODE_INSTRUCTIONS_PATH,
+    OPENCODE_NATIVE_BASE_PATHS,
+    OPENCODE_NATIVE_NPM,
     OpenCodeRuntime,
     OpenCodeState,
 )
@@ -84,10 +87,30 @@ def _openai_spec() -> AgentSpec:
     )
 
 
+def _native_spec(provider: str, model_id: str, small_model: str) -> AgentSpec:
+    return AgentSpec(
+        model=AgentModel(provider=provider, id=model_id, gateway="openai"),  # type: ignore[arg-type]
+        small_model=small_model,
+        agents={"revisor": SubAgent(description="Revisa cambios", instructions="Revisa el diff.")},
+    )
+
+
+def _litellm_spec() -> AgentSpec:
+    return AgentSpec(
+        model=AgentModel(
+            provider="openai-compatible", id="modelo-litellm", gateway="openai", base_path="/v1"
+        )
+    )
+
+
 CONFIG_CASES = {
     "bedrock": _bedrock_spec,
     "anthropic": _anthropic_spec,
     "openai-compatible": _openai_spec,
+    "openai": lambda: _native_spec("openai", "gpt-5", "gpt-5-mini"),
+    "google": lambda: _native_spec("google", "gemini-2.5-pro", "gemini-2.5-flash"),
+    "azure": lambda: _native_spec("azure", "mi-despliegue", "mi-despliegue-mini"),
+    "litellm": _litellm_spec,
 }
 
 
@@ -248,3 +271,13 @@ def test_warmup_steps() -> None:
 
 def test_registry_resolves_opencode() -> None:
     assert isinstance(resolve_runtime("opencode"), OpenCodeRuntime)
+
+
+def test_native_provider_maps_share_keys() -> None:
+    assert set(OPENCODE_NATIVE_BASE_PATHS) == set(OPENCODE_NATIVE_NPM)
+
+
+def test_dev_dockerfile_env_matches_flag_envs() -> None:
+    dockerfile = (TESTDATA.parents[1] / "dev" / "local" / "agent" / "Dockerfile").read_text()
+    for name, value in OPENCODE_FLAG_ENVS.items():
+        assert f"{name}={value}" in dockerfile

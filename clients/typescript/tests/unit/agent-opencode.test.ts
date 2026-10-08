@@ -8,9 +8,12 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
+import type { ModelProvider } from "../../src/agent/domain.js";
 import {
   OPENCODE_CONFIG_PATH,
   OPENCODE_INSTRUCTIONS_PATH,
+  OPENCODE_NATIVE_BASE_PATHS,
+  OPENCODE_NATIVE_NPM,
   OpenCodeRuntime,
   type OpenCodeState,
 } from "../../src/agent/opencode.js";
@@ -52,7 +55,29 @@ function bedrockSpec(): AgentSpec {
   });
 }
 
+function nativeSpec(provider: ModelProvider, id: string, smallModel: string): AgentSpec {
+  return new AgentSpec({
+    model: new AgentModel({ provider, id, gateway: "openai" }),
+    smallModel,
+    agents: {
+      revisor: new SubAgent({ description: "Revisa cambios", instructions: "Revisa el diff." }),
+    },
+  });
+}
+
 const CONFIG_CASES: Record<string, () => AgentSpec> = {
+  openai: () => nativeSpec("openai", "gpt-5", "gpt-5-mini"),
+  google: () => nativeSpec("google", "gemini-2.5-pro", "gemini-2.5-flash"),
+  azure: () => nativeSpec("azure", "mi-despliegue", "mi-despliegue-mini"),
+  litellm: () =>
+    new AgentSpec({
+      model: new AgentModel({
+        provider: "openai-compatible",
+        id: "modelo-litellm",
+        gateway: "openai",
+        basePath: "/v1",
+      }),
+    }),
   bedrock: bedrockSpec,
   anthropic: () =>
     new AgentSpec({
@@ -236,4 +261,10 @@ describe("OpenCode events", () => {
     expect(runtime.templateSteps()).toEqual([]);
     expect(resolveRuntime("opencode")).toBeInstanceOf(OpenCodeRuntime);
   });
+});
+
+test("los mapas de proveedores nativos comparten claves", () => {
+  expect(Object.keys(OPENCODE_NATIVE_NPM).sort()).toEqual(
+    Object.keys(OPENCODE_NATIVE_BASE_PATHS).sort(),
+  );
 });

@@ -41,20 +41,32 @@ gateway with a placeholder key. Phase 1 covers only static API keys.
    per virtual key in LiteLLM, deployments and quota in Azure). A body
    `model` allowlist in `rayd` is a possible later change, out of scope.
 5. **Runtime mapping.**
-   - OpenCode: native providers `openai`, `google`, `azure` with
-     `options.baseURL = <gateway> + /v1 | /v1beta | /openai` (each AI SDK
-     package appends its own operation path; `@ai-sdk/azure` appends
-     `/v1/<op>` and needs no `resourceName` when `baseURL` is set) and
-     `apiKey` = placeholder; `models` lists the main, small and subagent
-     models because models fetch is disabled.
+   - OpenCode: native providers `openai`, `google`, `azure` with an
+     explicit `npm` (`@ai-sdk/openai`, `@ai-sdk/google`, `@ai-sdk/azure`,
+     all bundled in the pinned binary), `options.baseURL = <gateway> + /v1 |
+     /v1beta | /openai/v1` (each AI SDK package appends its own operation
+     path; with `baseURL` set `@ai-sdk/azure` needs no `resourceName` and
+     sends no `api-version`) and `apiKey` = placeholder; `models` lists the
+     main, small and subagent models because models fetch is disabled.
+     `OPENCODE_EXPERIMENTAL_WEBSOCKETS=0`: the Responses WebSocket transport
+     would bypass the HTTP-only gateway.
    - deepagents: `openai` → `ChatOpenAI(base_url=<gw>/v1,
      use_responses_api=True)`; `google` →
      `ChatGoogleGenerativeAI(base_url=<gw>, google_api_key=placeholder)`
-     (`google-genai` adds `/v1beta`). Both packages are already in the
-     pinned venv. `azure` raises `UnimplementedError`: `AzureChatOpenAI`
-     needs an `api-version` and `ChatOpenAI` sends `Authorization`, which
-     Azure would read as an Entra token; it waits for a `strip_headers`
-     gateway option.
+     (`google-genai` adds `/v1beta`); `azure` →
+     `AzureChatOpenAI(base_url=<gw>/openai/v1, api_version="v1",
+     use_responses_api=True)`. `ChatOpenAI` would send the key as
+     `Authorization`, which Azure reads as an Entra token, while the Azure
+     client sends only `api-key`; with `chat/completions` it would rewrite
+     the path to `/deployments/<model>/…`, outside the allowlist, hence
+     always the Responses API. All three packages are already in the pinned
+     venv, and the template smoke test imports them.
+   - The wiring was measured with the pinned OpenCode binary and the pinned
+     LangChain packages against a fake gateway
+     (`docs/research/2026-10-provider-runtimes-spike.md`); the first
+     OpenCode Azure mapping (`/openai`) produced `/openai/responses` and
+     was corrected.
+
 6. **Refused and deferred.** ChatGPT plan through OpenCode's built-in
    OAuth (Codex client id, `chatgpt.com/backend-api`, refresh token in the
    sandbox): refused. ChatGPT plan through the public "Sign in with
@@ -74,6 +86,8 @@ gateway with a placeholder key. Phase 1 covers only static API keys.
 
 ## Risks
 
-- The OpenCode and LangChain wiring for `openai`, `google` and `azure`
-  follows the packages' source; a live check against each provider with
-  the egress closed is a follow-up (cheap smoke, opt-in, outside CI).
+- Paths and headers were checked against a fake gateway, not the real
+  providers; a live check against each provider with the egress closed is
+  a follow-up (cheap smoke, opt-in, outside CI). Azure accepting
+  `api-version=v1` on the v1 routes follows Microsoft's v1 docs and the
+  AI SDK's former default, not a live call.

@@ -175,8 +175,10 @@
     "openai": {
       "otel_provider": "openai",
       "opencode_provider_id": "openai",
+      "opencode_npm": "@ai-sdk/openai",
       "opencode_base_path": "/v1",
       "deepagents": "supported",
+      "deepagents_class": "ChatOpenAI",
       "deepagents_base_path": "/v1",
       "opencode_operation": "/responses",
       "deepagents_operation": "/responses"
@@ -184,8 +186,10 @@
     "google": {
       "otel_provider": "gcp.gemini",
       "opencode_provider_id": "google",
+      "opencode_npm": "@ai-sdk/google",
       "opencode_base_path": "/v1beta",
       "deepagents": "supported",
+      "deepagents_class": "ChatGoogleGenerativeAI",
       "deepagents_base_path": "",
       "opencode_operation": "/models/{model}:streamGenerateContent",
       "deepagents_operation": "/v1beta/models/{model}:streamGenerateContent"
@@ -193,9 +197,13 @@
     "azure": {
       "otel_provider": "azure.ai.openai",
       "opencode_provider_id": "azure",
-      "opencode_base_path": "/openai",
-      "opencode_operation": "/v1/responses",
-      "deepagents": "unimplemented"
+      "opencode_npm": "@ai-sdk/azure",
+      "opencode_base_path": "/openai/v1",
+      "deepagents": "supported",
+      "deepagents_class": "AzureChatOpenAI",
+      "deepagents_base_path": "/openai/v1",
+      "opencode_operation": "/responses",
+      "deepagents_operation": "/responses"
     }
   },
   "refused": [

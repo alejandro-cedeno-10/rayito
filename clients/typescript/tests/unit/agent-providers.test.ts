@@ -9,11 +9,11 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, test, vi } from "vitest";
+import { DEEPAGENTS_RUNNER_SOURCE } from "../../src/agent/assets/deepagents-runner.js";
 import { DeepAgents } from "../../src/agent/deepagents.js";
 import { MODEL_PROVIDERS, type ModelProvider } from "../../src/agent/domain.js";
 import { OPENCODE_CONFIG_PATH, OpenCodeRuntime } from "../../src/agent/opencode.js";
 import { startAttributes } from "../../src/agent/telemetry.js";
-import { UnimplementedError } from "../../src/errors.js";
 import * as rayito from "../../src/index.js";
 import {
   AgentModel,
@@ -45,8 +45,10 @@ interface InvalidEntry {
 interface ProviderEntry {
   readonly otel_provider: string;
   readonly opencode_provider_id: string;
+  readonly opencode_npm?: string;
   readonly opencode_base_path?: string;
-  readonly deepagents: "supported" | "unimplemented";
+  readonly deepagents: "supported";
+  readonly deepagents_class?: string;
   readonly deepagents_base_path?: string;
   readonly opencode_operation?: string;
   readonly deepagents_operation?: string;
@@ -242,6 +244,7 @@ describe("model providers", () => {
     expect(config.plugin).toBeUndefined();
     expect(config.provider).toEqual({
       [id]: {
+        npm: entry.opencode_npm,
         options: {
           baseURL: GATEWAY_URL + entry.opencode_base_path,
           apiKey: PLACEHOLDER,
@@ -276,10 +279,7 @@ describe("model providers", () => {
       gatewayUrls: { modelo: GATEWAY_URL },
       workdir: "/home/user",
     };
-    if (entry.deepagents === "unimplemented") {
-      expect(() => runtime.buildConfig(spec(provider), options)).toThrow(UnimplementedError);
-      return;
-    }
+    expect(entry.deepagents).toBe("supported");
     const files = runtime.buildConfig(spec(provider), options);
     const config = JSON.parse(new TextDecoder().decode(files.files[0]?.data)) as Record<
       string,
@@ -289,4 +289,39 @@ describe("model providers", () => {
     expect(config.base_url).toBe(GATEWAY_URL + (entry.deepagents_base_path ?? ""));
     expect(config.credential_placeholder).toBe(PLACEHOLDER);
   });
+});
+
+describe("deepagents model vectors", () => {
+  const vectors = JSON.parse(
+    readFileSync(
+      join(
+        import.meta.dirname,
+        "..",
+        "..",
+        "..",
+        "..",
+        "testdata",
+        "agent",
+        "deepagents-models.json",
+      ),
+      "utf8",
+    ),
+  ) as { cases: { provider: string; class: string }[] };
+
+  test("cover every provider and match the catalogue", () => {
+    expect(vectors.cases.map((c) => c.provider).sort()).toEqual([...MODEL_PROVIDERS].sort());
+    for (const c of vectors.cases) {
+      const entry = CATALOGUE.model_providers[c.provider] as ProviderEntry;
+      if (entry.deepagents_class !== undefined) {
+        expect(c.class).toBe(entry.deepagents_class);
+      }
+    }
+  });
+
+  test.each(vectors.cases.map((c) => [c.provider, c.class]))(
+    "the shipped runner builds %s with %s",
+    (_provider, cls) => {
+      expect(DEEPAGENTS_RUNNER_SOURCE).toContain(`module.${cls}(`);
+    },
+  );
 });

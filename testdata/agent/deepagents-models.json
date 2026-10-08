@@ -1,0 +1,13 @@
+{
+  "_comment": "Vectores del constructor de modelos del runner de deepagents (build_model): para cada AgentModel.provider, la clase de LangChain y los kwargs exactos con los que se crea, siempre contra la pasarela (base_url) y con el marcador como credencial. Lo comprueban el test del runner (Python) y el de TypeScript contra provider-catalogue.json (deepagents_class). Medido contra una pasarela falsa en docs/research/2026-10-provider-runtimes-spike.md.",
+  "config": {"base_url": "http://gw", "credential_placeholder": "placeholder-not-a-secret", "region": "us-east-1"},
+  "model_id": "m",
+  "cases": [
+    {"provider": "bedrock", "module": "langchain_aws", "class": "ChatBedrockConverse", "kwargs": {"model": "m", "region_name": "us-east-1", "endpoint_url": "http://gw"}},
+    {"provider": "anthropic", "module": "langchain_anthropic", "class": "ChatAnthropic", "kwargs": {"model": "m", "base_url": "http://gw", "api_key": "placeholder-not-a-secret"}},
+    {"provider": "openai-compatible", "module": "langchain_openai", "class": "ChatOpenAI", "kwargs": {"model": "m", "base_url": "http://gw", "api_key": "placeholder-not-a-secret"}},
+    {"provider": "openai", "module": "langchain_openai", "class": "ChatOpenAI", "kwargs": {"model": "m", "base_url": "http://gw", "api_key": "placeholder-not-a-secret", "use_responses_api": true}},
+    {"provider": "google", "module": "langchain_google_genai", "class": "ChatGoogleGenerativeAI", "kwargs": {"model": "m", "base_url": "http://gw", "google_api_key": "placeholder-not-a-secret"}},
+    {"provider": "azure", "module": "langchain_openai", "class": "AzureChatOpenAI", "kwargs": {"model": "m", "base_url": "http://gw", "api_key": "placeholder-not-a-secret", "api_version": "v1", "use_responses_api": true}}
+  ]
+}

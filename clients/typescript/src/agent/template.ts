@@ -38,6 +38,13 @@ import { OPENCODE_FLAG_ENVS } from "./opencode.js";
 
 /** Nombre por defecto de la imagen que construye `AgentTemplate`. */
 export const DEFAULT_AGENT_TEMPLATE_NAME = "rayito-agent";
+/**
+ * Lo que el build importa como prueba de humo del venv: deepagents y las
+ * clases de modelo de cada proveedor (`langchain_openai` para OpenAI, xAI,
+ * Azure y las APIs compatibles; `langchain_google_genai` para Gemini).
+ */
+export const DEEPAGENTS_SMOKE_MODULES =
+  "deepagents, langchain_aws, langchain_anthropic, langchain_openai, langchain_google_genai";
 /** Imagen base: la variante con capabilities, la única donde `rayd` aplica
  * el deny-all de egress que el agente necesita. */
 export const DEFAULT_AGENT_TEMPLATE_BASE = "rayito-base-caps";
@@ -125,7 +132,7 @@ function smokeTest(runtimes: readonly AgentTemplateRuntime[]): string {
     checks.push("su user -c 'opencode --version'", "su user -c 'rg --version'");
   }
   if (runtimes.includes("deepagents")) {
-    checks.push(`su user -c "${DEEPAGENTS_PYTHON_PATH} -c 'import deepagents, langchain_aws'"`);
+    checks.push(`su user -c "${DEEPAGENTS_PYTHON_PATH} -c 'import ${DEEPAGENTS_SMOKE_MODULES}'"`);
     checks.push(`su user -c 'test -r ${DEEPAGENTS_RUNNER_PATH}'`);
   }
   return checks.join(" && ");
