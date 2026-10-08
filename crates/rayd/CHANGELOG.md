@@ -10,6 +10,21 @@ imagen `rayito-base` y como asset de la GitHub Release del tag `rayd-v*`.
 
 ## [Unreleased]
 
+### Fixed
+
+- **El timeout y `SendSignal` de un proceso con `StartRequest.kill_tree`
+  alcanzan a todo su árbol.** Hasta ahora sólo llegaban al grupo del
+  proceso (`killpg`), y un descendiente que hiciera `setsid` o se
+  demonizara sobrevivía: es lo que dejaba vivas las órdenes de la
+  herramienta de shell de un agente tras su timeout. Con el campo (nuevo,
+  `false` por defecto) el proceso es *child subreaper* de sus descendientes;
+  el timeout manda `SIGTERM` a todos antes que al grupo, acaba la gracia en
+  cuanto no queda ninguno y, si queda alguno, lo congela (`SIGSTOP`) y lo
+  mata (`SIGKILL`), también a los que ya colgaban de PID 1; el `EndEvent`
+  llega después. Un `SIGKILL` congela el árbol en pasadas acotadas antes de
+  matarlo. Cada miembro se identifica por pid y hora de arranque, y nada
+  fuera del árbol recibe señales ni se cosecha fuera del reaper de PID 1.
+
 ## [0.9.1] - 2026-10-07
 
 Sin cambios en el agente: versión en paso con los SDK 0.9.1 (la idle por

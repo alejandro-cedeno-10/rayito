@@ -34,6 +34,20 @@ versionado [SemVer](https://semver.org/lang/es/).
 
 ### Fixed
 
+- **El timeout y `abort()` de `sbx.agent` paran también lo que lanzó la
+  herramienta de shell del agente.** OpenCode y deepagents corren cada orden
+  en una sesión propia (`setsid`), fuera del grupo del runtime, y el timeout
+  sólo mataba ese grupo: un `sleep` o un servidor lanzado por el agente
+  sobrevivía y el siguiente `run()` encontraba el agente `busy`. Cada
+  ejecución arranca ahora con `killTree: true` y `rayd` congela y mata todo
+  su árbol (también lo demonizado); el stream acaba con `reason: "timeout"`
+  cuando ya no queda nada. `abort()` y los límites del SDK sólo matan el
+  handle: desaparece la orden `pgrep` que corría antes como segundo comando.
+  `commands.run()` acepta `killTree` para lo mismo en
+  cualquier comando. Necesita el `rayd` de esta versión: con uno anterior el
+  campo se ignora y el timeout y `abort()` sólo alcanzan al grupo del
+  runtime; reconstruye la imagen.
+
 - **deepagents cuenta los tokens de los modelos compatibles con OpenAI.**
   Con `"openai-compatible"`, `ChatOpenAI` no pedía el uso en streaming
   (`stream_options.include_usage`): cada paso llegaba con 0 tokens,

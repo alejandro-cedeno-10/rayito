@@ -12,8 +12,8 @@ use std::time::Duration;
 
 use bytes::Bytes;
 use rayd_core::process::{
-    Pid, ProcessConfigInfo, ProcessEnd, ProcessError, ProcessEvent as DomainEvent, ProcessKind,
-    ProcessSummary, SpawnError, SpawnInput, StdinMode,
+    KillScope, Pid, ProcessConfigInfo, ProcessEnd, ProcessError, ProcessEvent as DomainEvent,
+    ProcessKind, ProcessSummary, SpawnError, SpawnInput, StdinMode,
 };
 use rayito_proto::v1::process_service_server::ProcessService;
 use rayito_proto::v1::{
@@ -159,6 +159,7 @@ fn spawn_input(request: StartRequest) -> SpawnInput {
         timeout: (request.timeout_ms > 0).then(|| Duration::from_millis(request.timeout_ms)),
         stdin: StdinMode::from_flag(request.stdin),
         tag: request.tag,
+        kill_scope: KillScope::from_flag(request.kill_tree),
     }
 }
 
@@ -293,6 +294,7 @@ mod tests {
             timeout_ms: 2_000,
             stdin: true,
             tag: Some("m2".to_owned()),
+            kill_tree: true,
         };
         let input = spawn_input(request);
         assert_eq!(input.config.cmd, "/bin/bash");
@@ -302,10 +304,12 @@ mod tests {
         assert_eq!(input.timeout, Some(Duration::from_millis(2_000)));
         assert_eq!(input.stdin, StdinMode::Pipe);
         assert_eq!(input.tag.as_deref(), Some("m2"));
+        assert_eq!(input.kill_scope, KillScope::Tree);
         let bare = spawn_input(StartRequest::default());
         assert_eq!(bare.config.cmd, "");
         assert_eq!(bare.timeout, None);
         assert_eq!(bare.stdin, StdinMode::Null);
+        assert_eq!(bare.kill_scope, KillScope::Group);
     }
 
     #[test]

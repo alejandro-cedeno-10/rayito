@@ -126,6 +126,7 @@ impl<B: PtySpawner> PtyManager<B> {
                 timeout,
                 control.clone(),
                 self.group_signaller(),
+                None,
             )
         });
         self.runtimes().insert(

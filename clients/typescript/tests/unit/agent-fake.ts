@@ -235,25 +235,14 @@ interface RunCall {
 export class FakeCommands {
   readonly calls: RunCall[] = [];
   readonly #handles: FakeCommandHandle[];
-  readonly #foregroundResults: (Error | undefined)[];
 
-  constructor(
-    options: {
-      readonly handles?: readonly FakeCommandHandle[];
-      readonly foregroundResults?: readonly (Error | undefined)[];
-    } = {},
-  ) {
+  constructor(options: { readonly handles?: readonly FakeCommandHandle[] } = {}) {
     this.#handles = [...(options.handles ?? [])];
-    this.#foregroundResults = [...(options.foregroundResults ?? [])];
   }
 
   async run(cmd: string, options?: Record<string, unknown>): Promise<unknown> {
     this.calls.push({ cmd, options });
     if (options?.background !== true) {
-      const failure = this.#foregroundResults.shift();
-      if (failure !== undefined) {
-        throw failure;
-      }
       return undefined;
     }
     const handle = this.#handles.shift();

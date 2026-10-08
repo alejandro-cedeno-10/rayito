@@ -10,9 +10,9 @@ use std::time::Duration;
 
 use bytes::Bytes;
 use rayd_core::process::{
-    EndReason, Pid, ProcessEnd, ProcessError, ProcessEvent, ProcessKind, ProcessRegistry,
-    ProcessSummary, RegistryLimits, SpawnInput, SpawnSpec, UserLookup, UserPolicy, end_from_wait,
-    plan_spawn, validate_signal,
+    EndReason, KillScope, MemberSignaller, Pid, ProcessEnd, ProcessError, ProcessEvent,
+    ProcessKind, ProcessRegistry, ProcessSummary, RegistryLimits, SpawnInput, SpawnSpec,
+    UserLookup, UserPolicy, end_from_wait, plan_spawn, validate_signal,
 };
 use rayd_core::process::{OutputBudget, OutputStream, SpawnedChild, StdinMode};
 use rayd_core::session::SandboxSession;
@@ -21,8 +21,8 @@ use tokio::task::{AbortHandle, JoinHandle};
 
 use super::child::{ChildIo, ChildReader, ChildWriter, Spawner};
 use super::runtime::{
-    GroupSignaller, ProcessControl, SharedRegistry, deliver_end, ensure_directory, fan_out,
-    lock_registry, mark_ended, signal_error, spawn_timeout_task,
+    GroupSignaller, ProcessControl, SharedRegistry, TreeTarget, deliver_end, ensure_directory,
+    fan_out, lock_registry, mark_ended, signal_error, spawn_timeout_task,
 };
 use super::subscriber::{DEFAULT_STALL_TIMEOUT, SubscriberSink, SubscriberStream};
 use crate::adapters::SpawnPlatform;
@@ -61,16 +61,24 @@ pub fn shared_registry_with_budget(limits: RegistryLimits, budget: OutputBudget)
 
 type SharedStdin = Arc<tokio::sync::Mutex<Option<ChildWriter>>>;
 
+/// The child's output pipes, handed from the spawn to its supervisor.
+struct Pipes {
+    stdout: Option<ChildReader>,
+    stderr: Option<ChildReader>,
+}
+
 struct ProcessRuntime {
     stdin: SharedStdin,
     control: Arc<ProcessControl>,
     timeout_task: Option<AbortHandle>,
+    tree: Option<Arc<TreeTarget>>,
 }
 
 pub struct ProcessManager<S: Spawner> {
     session: Arc<SandboxSession>,
     spawner: S,
     lookup: Arc<dyn UserLookup>,
+    tree_port: Arc<dyn MemberSignaller>,
     policy: UserPolicy,
     settings: ManagerSettings,
     registry: SharedRegistry,
@@ -82,6 +90,7 @@ impl<S: Spawner> ProcessManager<S> {
         session: Arc<SandboxSession>,
         spawner: S,
         lookup: Arc<dyn UserLookup>,
+        tree_port: Arc<dyn MemberSignaller>,
         policy: UserPolicy,
         registry: SharedRegistry,
         settings: ManagerSettings,
@@ -90,6 +99,7 @@ impl<S: Spawner> ProcessManager<S> {
             session,
             spawner,
             lookup,
+            tree_port,
             policy,
             settings,
             registry,
@@ -173,6 +183,10 @@ impl<S: Spawner> ProcessManager<S> {
         let stdin = Arc::new(tokio::sync::Mutex::new(child.take_stdin()));
         let stdout = child.take_stdout();
         let stderr = child.take_stderr();
+        let tree = match spec.kill_scope {
+            KillScope::Tree => TreeTarget::for_root(self.tree_port.clone(), pid),
+            KillScope::Group => None,
+        };
         let timeout_task = input.timeout.map(|timeout| {
             spawn_timeout_task(
                 self.session.clone(),
@@ -180,20 +194,27 @@ impl<S: Spawner> ProcessManager<S> {
                 timeout,
                 control.clone(),
                 self.group_signaller(),
+                tree.clone(),
             )
         });
+        let settles_tree = tree.is_some();
         self.runtimes().insert(
             pid,
             ProcessRuntime {
                 stdin,
                 control: control.clone(),
                 timeout_task,
+                tree,
             },
         );
-        tokio::spawn(
-            self.clone()
-                .supervise(pid, child, stdout, stderr, control, started_at),
-        );
+        tokio::spawn(self.clone().supervise(
+            pid,
+            child,
+            Pipes { stdout, stderr },
+            control,
+            settles_tree,
+            started_at,
+        ));
         tracing::info!(
             pid = pid.0,
             live_processes = lock_registry(&self.registry).live_count(),
@@ -242,14 +263,20 @@ impl<S: Spawner> ProcessManager<S> {
     }
 
     /// Works on both kinds (E2B's `commands.kill(pid)` also kills a PTY);
-    /// the end reason is recorded on the entry that owns the pid.
+    /// the end reason is recorded on the entry that owns the pid. A
+    /// `KillScope::Tree` process's descendants take the signal first (a
+    /// `SIGKILL` freezes them before killing them), then its group.
     pub fn send_signal(&self, pid: Pid, signal: i32) -> Result<(), ProcessError> {
         let signal = validate_signal(signal)?;
         if !lock_registry(&self.registry).is_live(pid) {
             return Err(ProcessError::NotFound { pid });
         }
-        if let Some(runtime) = self.runtimes().get(&pid) {
+        let tree = self.runtimes().get(&pid).and_then(|runtime| {
             runtime.control.record(EndReason::Signal);
+            runtime.tree.clone()
+        });
+        if let Some(tree) = tree {
+            tree.signal(pid, signal);
         }
         self.spawner
             .signal_group(pid, signal)
@@ -301,14 +328,17 @@ impl<S: Spawner> ProcessManager<S> {
         self: Arc<Self>,
         pid: Pid,
         mut child: S::Child,
-        stdout: Option<ChildReader>,
-        stderr: Option<ChildReader>,
+        pipes: Pipes,
         control: Arc<ProcessControl>,
+        settles_tree: bool,
         started_at: Duration,
     ) {
-        self.pump_output(pid, stdout, stderr).await;
+        self.pump_output(pid, pipes.stdout, pipes.stderr).await;
         let outcome = child.wait().await;
         control.mark_reaped();
+        if settles_tree && control.reason() == EndReason::Timeout {
+            control.tree_settled().await;
+        }
         let end = match outcome {
             Ok(outcome) => end_from_wait(outcome, control.reason()),
             Err(error) => {
@@ -419,6 +449,7 @@ pub fn platform_manager(
         session,
         platform.spawner,
         platform.lookup,
+        platform.tree,
         policy,
         registry,
         settings,

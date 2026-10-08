@@ -1,13 +1,15 @@
 //! `fork`/`exec` adapter. On Linux the child gets its own process group, a
 //! from-scratch environment, resource limits, the privilege drop and every
 //! descriptor above stdio marked close-on-exec, all in one `pre_exec`
-//! (design D3). Off Linux every spawn answers `Unsupported` so the gRPC
-//! surface still routes and the domain tests still run.
+//! (design D3); a `KillScope::Tree` child also becomes a child subreaper
+//! there (`rayd_core::process::tree`). Off Linux every spawn answers
+//! `Unsupported` so the gRPC surface still routes and the domain tests
+//! still run.
 
 use std::fmt;
 use std::sync::Arc;
 
-use rayd_core::process::UserLookup;
+use rayd_core::process::{MemberSignaller, UserLookup};
 
 /// Whether `rayd` can `setuid` to the requested identity (started as root,
 /// the image) or must keep its own (developer machine, CI).
@@ -39,6 +41,8 @@ pub struct SpawnPlatform {
     pub spawner: PlatformSpawner,
     pub lookup: Arc<dyn UserLookup>,
     pub identity_switch: IdentitySwitch,
+    /// What reaches the descendants of a `KillScope::Tree` process.
+    pub tree: Arc<dyn MemberSignaller>,
 }
 
 #[cfg(unix)]
@@ -80,11 +84,11 @@ mod unix {
     use tokio::process::{Child, Command};
 
     use super::{IdentitySwitch, SpawnPlatform};
-    use crate::adapters::ChildRegistry;
     use crate::adapters::exec_posture::{
         FIRST_NON_STDIO_FD, fallback_descriptor_ceiling, reset_signal_dispositions,
         seal_descriptors_from,
     };
+    use crate::adapters::{ChildRegistry, ProcfsProcessTable};
     use crate::process::child::{ChildIo, ChildReader, ChildWriter, WaitFuture};
 
     #[must_use]
@@ -94,12 +98,14 @@ mod unix {
                 spawner: TokioProcessSpawner::new(IdentitySwitch::Enforce),
                 lookup: Arc::new(NixUserLookup),
                 identity_switch: IdentitySwitch::Enforce,
+                tree: Arc::new(ProcfsProcessTable),
             }
         } else {
             SpawnPlatform {
                 spawner: TokioProcessSpawner::new(IdentitySwitch::KeepCurrent),
                 lookup: Arc::new(CurrentUserLookup),
                 identity_switch: IdentitySwitch::KeepCurrent,
+                tree: Arc::new(ProcfsProcessTable),
             }
         }
     }
@@ -239,14 +245,18 @@ mod unix {
     /// `Kill`. Shared by the three launchers of user code (processes, PTY
     /// shells and the kernel sidecar, which receives nothing but its three
     /// pipes) so all of them get the same posture; only the sandbox's own
-    /// processes and PTYs carry a CPU budget. The seal and the signal reset
-    /// themselves live in `exec_posture`, which the internal launchers
-    /// (the `mountpoint` probe, `mount_s3`) apply too.
+    /// processes and PTYs carry a CPU budget, and only a process started
+    /// with `KillScope::Tree` becomes a child subreaper (`prctl(2)`
+    /// `PR_SET_CHILD_SUBREAPER`, which `execve` keeps), so its orphaned
+    /// descendants re-parent to it instead of to PID 1. The seal and the
+    /// signal reset themselves live in `exec_posture`, which the internal
+    /// launchers (the `mountpoint` probe, `mount_s3`) apply too.
     pub(crate) struct PreExecPlan {
         limits: [(Resource, rlim_t, rlim_t); 3],
         cpu: Option<(rlim_t, rlim_t)>,
         identity: Option<(Vec<Gid>, Gid, Uid)>,
         descriptor_ceiling: RawFd,
+        subreaper: bool,
     }
 
     impl PreExecPlan {
@@ -275,6 +285,7 @@ mod unix {
                 cpu,
                 identity,
                 descriptor_ceiling: fallback_descriptor_ceiling(),
+                subreaper: spec.kill_scope.needs_subreaper(),
             })
         }
 
@@ -299,9 +310,24 @@ mod unix {
                 setgid(*gid).map_err(io_error)?;
                 setuid(*uid).map_err(io_error)?;
             }
+            if self.subreaper {
+                become_child_subreaper()?;
+            }
             seal_descriptors_from(FIRST_NON_STDIO_FD, self.descriptor_ceiling);
             reset_signal_dispositions()
         }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn become_child_subreaper() -> io::Result<()> {
+        nix::sys::prctl::set_child_subreaper(true).map_err(io_error)
+    }
+
+    /// Only Linux has child subreapers; elsewhere the tree is as far as
+    /// `ppid` links reach while every parent lives.
+    #[cfg(not(target_os = "linux"))]
+    fn become_child_subreaper() -> io::Result<()> {
+        Ok(())
     }
 
     fn limit_plan(resource: Resource, desired: u64) -> io::Result<(Resource, rlim_t, rlim_t)> {
@@ -391,6 +417,7 @@ mod unsupported {
     };
 
     use super::{IdentitySwitch, SpawnPlatform};
+    use crate::adapters::ProcfsProcessTable;
     use crate::process::child::{ChildIo, ChildReader, ChildWriter, WaitFuture};
 
     #[must_use]
@@ -399,6 +426,7 @@ mod unsupported {
             spawner: UnsupportedSpawner,
             lookup: Arc::new(UnsupportedLookup),
             identity_switch: IdentitySwitch::KeepCurrent,
+            tree: Arc::new(ProcfsProcessTable),
         }
     }
 

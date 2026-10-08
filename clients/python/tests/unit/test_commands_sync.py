@@ -145,9 +145,12 @@ def test_options_reach_the_agent(sandbox: Sandbox, fake_rayd: RaydEndpoint) -> N
     assert sandbox.commands.run("whoami", user="user").stdout == "user\n"
     assert sandbox.commands.run("pwd", cwd="/tmp").stdout == "/tmp\n"
     assert sandbox.commands.run("env", envs={"FOO": "bar"}).stdout == "FOO=bar\n"
-    handle = sandbox.commands.run("sleep 5", background=True, timeout=None, tag="m2", stdin=True)
+    handle = sandbox.commands.run(
+        "sleep 5", background=True, timeout=None, tag="m2", stdin=True, kill_tree=True
+    )
     request = fake_rayd.process.start_requests[-1]
     assert (request.timeout_ms, request.stdin, request.tag) == (0, True, "m2")
+    assert request.kill_tree is True
     assert handle.kill() is True
 
 

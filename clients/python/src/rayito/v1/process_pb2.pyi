@@ -37,18 +37,20 @@ class ProcessConfig(_message.Message):
     def __init__(self, cmd: _Optional[str] = ..., args: _Optional[_Iterable[str]] = ..., envs: _Optional[_Mapping[str, str]] = ..., cwd: _Optional[str] = ...) -> None: ...
 
 class StartRequest(_message.Message):
-    __slots__ = ("process", "user", "timeout_ms", "stdin", "tag")
+    __slots__ = ("process", "user", "timeout_ms", "stdin", "tag", "kill_tree")
     PROCESS_FIELD_NUMBER: _ClassVar[int]
     USER_FIELD_NUMBER: _ClassVar[int]
     TIMEOUT_MS_FIELD_NUMBER: _ClassVar[int]
     STDIN_FIELD_NUMBER: _ClassVar[int]
     TAG_FIELD_NUMBER: _ClassVar[int]
+    KILL_TREE_FIELD_NUMBER: _ClassVar[int]
     process: ProcessConfig
     user: _common_pb2.User
     timeout_ms: int
     stdin: bool
     tag: str
-    def __init__(self, process: _Optional[_Union[ProcessConfig, _Mapping]] = ..., user: _Optional[_Union[_common_pb2.User, _Mapping]] = ..., timeout_ms: _Optional[int] = ..., stdin: _Optional[bool] = ..., tag: _Optional[str] = ...) -> None: ...
+    kill_tree: bool
+    def __init__(self, process: _Optional[_Union[ProcessConfig, _Mapping]] = ..., user: _Optional[_Union[_common_pb2.User, _Mapping]] = ..., timeout_ms: _Optional[int] = ..., stdin: _Optional[bool] = ..., tag: _Optional[str] = ..., kill_tree: _Optional[bool] = ...) -> None: ...
 
 class ConnectRequest(_message.Message):
     __slots__ = ("pid", "from_seq")

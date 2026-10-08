@@ -11,12 +11,10 @@ import pytest
 
 from rayito._agent._domain import AgentLimits, AgentModel, AgentSpec
 from rayito._agent._runtime import WarmupStep
-from rayito._agent._stream_base import stop_tree_command
 from rayito.exceptions import AgentException, InvalidArgumentException, TimeoutException
 from rayito.sandbox_async.agent import AsyncAgent
 
 from .fake_agent import (
-    FAKE_PID,
     FAKE_SESSION_ID,
     FakeAgentRuntime,
     FakeAsyncCommandHandle,
@@ -131,10 +129,10 @@ async def test_stream_never_raises_for_an_agent_failure() -> None:
     assert events[-1].reason == "busy"
 
 
-async def test_abort_stops_the_process_tree_then_kills_the_handle() -> None:
+async def test_abort_kills_the_handle_of_a_kill_tree_run() -> None:
     handle = FakeAsyncCommandHandle(lines=[_line(event="step_started", index=1)])
     sandbox = FakeSandbox(
-        commands=FakeCommands(handles=[handle], foreground_results=[None], is_async=True),
+        commands=FakeCommands(handles=[handle], is_async=True),
         files=FakeFilesystem(is_async=True),
         gateways={"bedrock": gateway_status()},
     )
@@ -143,7 +141,8 @@ async def test_abort_stops_the_process_tree_then_kills_the_handle() -> None:
     stream = await agent.stream("hola", spec=_spec(), runtime=runtime)
     await stream.abort()
     assert handle.killed is True
-    assert [call.cmd for call in sandbox.commands.calls[1:]] == [stop_tree_command(FAKE_PID)]
+    assert len(sandbox.commands.calls) == 1, "rayd para el árbol: no hace falta otra orden"
+    assert sandbox.commands.calls[0].kill_tree is True
     with pytest.raises(AgentException) as excinfo:
         await stream.result()
     assert excinfo.value.reason == "aborted"
@@ -201,7 +200,7 @@ async def test_prepare_fires_warmup_steps_in_the_background_and_returns_immediat
         ),
     ],
 )
-async def test_sdk_limit_stops_the_runtime_and_its_process_tree(
+async def test_sdk_limit_kills_the_handle_of_a_kill_tree_run(
     limits: AgentLimits, lines: list[bytes], reason: str
 ) -> None:
     handle = FakeAsyncCommandHandle(lines=[*lines, _line(event="step_started", index=3)])
@@ -216,7 +215,8 @@ async def test_sdk_limit_stops_the_runtime_and_its_process_tree(
     assert events[-1].type == "agent_failed"
     assert events[-1].reason == reason
     assert handle.killed is True
-    assert [call.cmd for call in sandbox.commands.calls[1:]] == [stop_tree_command(FAKE_PID)]
+    assert len(sandbox.commands.calls) == 1, "rayd para el árbol: no hace falta otra orden"
+    assert sandbox.commands.calls[0].kill_tree is True
 
 
 async def test_timeout_reported_by_the_end_event_becomes_timeout() -> None:

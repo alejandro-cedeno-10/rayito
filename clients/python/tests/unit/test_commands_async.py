@@ -157,12 +157,18 @@ async def test_async_callbacks_and_options(sandbox: AsyncSandbox, fake_rayd: Ray
     out: list[str] = []
     err: list[str] = []
     await sandbox.commands.run(
-        "err b", envs={"A": "1"}, cwd="/tmp", on_stdout=out.append, on_stderr=err.append
+        "err b",
+        envs={"A": "1"},
+        cwd="/tmp",
+        on_stdout=out.append,
+        on_stderr=err.append,
+        kill_tree=True,
     )
     assert (out, err) == ([], ["b\n"])
     request = fake_rayd.process.start_requests[-1]
     assert dict(request.process.envs) == {"A": "1"}
     assert request.process.cwd == "/tmp"
+    assert request.kill_tree is True
 
 
 async def test_async_wait_awaits_async_callbacks(

@@ -11,6 +11,7 @@ use super::error::ProcessError;
 use super::identity::{ProcessIdentity, UserPolicy, resolve_username};
 use super::limits::{ResourceLimits, StdinMode};
 use super::ports::{LookupError, UserLookup};
+use super::tree::KillScope;
 use crate::run_payload::RunDefaults;
 
 /// The `ProcessConfig` of the request, kept verbatim for `List`.
@@ -30,6 +31,8 @@ pub struct SpawnInput {
     pub timeout: Option<Duration>,
     pub stdin: StdinMode,
     pub tag: Option<String>,
+    /// What its timeout and its `SIGKILL` reach (`StartRequest.kill_tree`).
+    pub kill_scope: KillScope,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -41,6 +44,8 @@ pub struct SpawnSpec {
     pub identity: ProcessIdentity,
     pub stdin: StdinMode,
     pub limits: ResourceLimits,
+    /// `Tree` makes the child a subreaper of its descendants (`tree`).
+    pub kill_scope: KillScope,
 }
 
 /// `egress_env` is the local proxy's variables (empty until it runs),
@@ -74,6 +79,7 @@ pub fn plan_spawn(
         identity,
         stdin: input.stdin,
         limits: sandbox_limits(defaults),
+        kill_scope: input.kill_scope,
     })
 }
 

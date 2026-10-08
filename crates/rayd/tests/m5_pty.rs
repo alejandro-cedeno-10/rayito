@@ -235,6 +235,7 @@ fn shell_process(script: &str) -> StartRequest {
         timeout_ms: 0,
         stdin: true,
         tag: None,
+        kill_tree: false,
     }
 }
 

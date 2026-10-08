@@ -154,6 +154,7 @@ export class Agent {
         timeoutMs: limits.timeoutMs,
         maxOutputBytes: limits.maxOutputBytes,
         tag: AGENT_RUN_TAG,
+        killTree: true,
         signal: options.signal,
       })) as AgentCommandHandle;
       await handle.sendStdin(runCommand.stdin);

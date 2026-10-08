@@ -35,6 +35,7 @@ describe("pure helpers", () => {
       stdin: true,
       timeoutMs: 1500,
       tag: "t",
+      killTree: true,
     });
     expect(request.process?.cmd).toBe("/bin/bash");
     expect(request.process?.args).toEqual(["-l", "-c", "echo hola"]);
@@ -44,8 +45,10 @@ describe("pure helpers", () => {
     expect(request.stdin).toBe(true);
     expect(request.timeoutMs).toBe(1500n);
     expect(request.tag).toBe("t");
+    expect(request.killTree).toBe(true);
     const bare = buildStartRequest("ls");
     expect(bare.timeoutMs).toBe(60_000n);
+    expect(bare.killTree).toBe(false);
     expect(bare.user).toBeUndefined();
     expect(bare.process?.cwd).toBeUndefined();
     expect(() => buildStartRequest("   ")).toThrow(InvalidArgumentError);

@@ -82,6 +82,7 @@ class AsyncCommands:
         tag: str | None = None,
         secrets: Mapping[str, str | SecretRef] | None = None,
         max_output_bytes: int = COMMAND_OUTPUT_MAX_BYTES,
+        kill_tree: bool = False,
     ) -> CommandResult: ...
 
     @overload
@@ -101,6 +102,7 @@ class AsyncCommands:
         tag: str | None = None,
         secrets: Mapping[str, str | SecretRef] | None = None,
         max_output_bytes: int = COMMAND_OUTPUT_MAX_BYTES,
+        kill_tree: bool = False,
     ) -> AsyncCommandHandle: ...
 
     @overload
@@ -120,6 +122,7 @@ class AsyncCommands:
         tag: str | None = None,
         secrets: Mapping[str, str | SecretRef] | None = None,
         max_output_bytes: int = COMMAND_OUTPUT_MAX_BYTES,
+        kill_tree: bool = False,
     ) -> CommandResult | AsyncCommandHandle: ...
 
     async def run(
@@ -138,12 +141,20 @@ class AsyncCommands:
         tag: str | None = None,
         secrets: Mapping[str, str | SecretRef] | None = None,
         max_output_bytes: int = COMMAND_OUTPUT_MAX_BYTES,
+        kill_tree: bool = False,
     ) -> CommandResult | AsyncCommandHandle:
         """Misma semántica que `Commands.run`; los callbacks corren en el loop."""
         validate_max_output_bytes(max_output_bytes)
         envs = await self._sandbox._secret_envs(envs, secrets)
         request = build_start_request(
-            cmd, envs=envs, user=user, cwd=cwd, stdin=stdin, timeout=timeout, tag=tag
+            cmd,
+            envs=envs,
+            user=user,
+            cwd=cwd,
+            stdin=stdin,
+            timeout=timeout,
+            tag=tag,
+            kill_tree=kill_tree,
         )
         deadline = stream_deadline(timeout)
         with self._sandbox._instrumentation.span(

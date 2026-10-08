@@ -19,7 +19,6 @@ from rayito._agent._runtime import AgentRuntime, RuntimeState
 from rayito._agent._runtimes import resolve_runtime
 from rayito._agent._stream_base import (
     AGENT_RUN_TAG,
-    AGENT_STOP_TREE_TIMEOUT_SECONDS,
     AgentSandbox,
     ConfigCache,
     LimitTracker,
@@ -27,7 +26,6 @@ from rayito._agent._stream_base import (
     build_run_request,
     gateway_urls_for,
     is_sdk_limit_failure,
-    stop_tree_command,
 )
 from rayito._agent._telemetry import done_attributes, failure_attributes, start_attributes
 from rayito._limits import DEFAULT_AGENT_WORKDIR
@@ -164,6 +162,7 @@ class Agent:
                 timeout=limits.timeout_seconds,
                 max_output_bytes=limits.max_output_bytes,
                 tag=AGENT_RUN_TAG,
+                kill_tree=True,
             )
             handle.send_stdin(run_command.stdin)
             handle.close_stdin()
@@ -264,19 +263,16 @@ class AgentStream:
         self._stop()
 
     def _stop(self) -> None:
-        """Para el runtime y todo lo que lanzó: `stop_tree_command` y el `kill()` del
-        handle. Sirve a `abort()` y a un límite del SDK (`max_steps`,
-        `token_budget`), que sin esto dejaría al runtime trabajando (y
-        gastando tokens) en segundo plano."""
+        """Para el runtime y todo lo que lanzó con el `kill()` del handle:
+        la ejecución arranca con `kill_tree=True`, así que `rayd` congela y
+        mata también lo que la herramienta de shell del agente sacó de su
+        grupo (`setsid`, doble fork) antes de matar el runtime. Sirve a
+        `abort()` y a un límite del SDK (`max_steps`, `token_budget`), que
+        sin esto dejaría al runtime trabajando (y gastando tokens) en
+        segundo plano."""
         if self._stopped:
             return
         self._stopped = True
-        try:
-            self._sandbox.commands.run(
-                stop_tree_command(self._handle.pid), timeout=AGENT_STOP_TREE_TIMEOUT_SECONDS
-            )
-        except SandboxException:
-            logger.warning("no se pudieron parar los procesos lanzados por el agente")
         self._handle.kill()
 
     def result(self) -> AgentResult:

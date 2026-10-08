@@ -4,9 +4,13 @@
  * el guest de `dev/local/agent/compose.yaml` (`make local-agent-up`), con
  * Claude en Amazon Bedrock y `bedrockGateway` como única salida. Por runtime:
  * herramientas, continuación de la sesión, `abort()`, los límites de
- * `AgentLimits` sin dejar procesos vivos, el stream de eventos, la credencial
+ * `AgentLimits` sin dejar procesos vivos (tampoco los que su herramienta de
+ * shell lanzó en una sesión propia), el stream de eventos, la credencial
  * ilegible desde el sandbox, el egress directo cerrado mientras el modelo
- * responde y la telemetría apagada por defecto.
+ * responde y la telemetría apagada por defecto. Sin modelo, con un runtime de
+ * doble cuyo script deja un demonio (`setsid` y un padre que sale), comprueba
+ * además que el timeout y `abort()` de `sbx.agent` lo paran: esos tests sólo
+ * usan Floci y el guest, y corren también sin la clave.
  *
  * Además de `RAYITO_LOCAL_GUEST`, necesita la clave de Bedrock de corta
  * duración en el fichero de `RAYITO_LOCAL_BEDROCK_KEY_FILE`
@@ -22,7 +26,9 @@ import {
   type AgentEvent,
   AgentLimits,
   AgentModel,
+  type AgentRuntime,
   AgentSpec,
+  agentFailed,
   bedrockGateway,
   CommandExitError,
   EgressEnforcement,
@@ -113,6 +119,30 @@ async function waitUntil(predicate: () => Promise<boolean>): Promise<boolean> {
   return false;
 }
 
+/** (exit, stdout) de una orden como `user`, sin lanzar por un exit distinto de cero. */
+async function shIn(target: Sandbox, cmd: string): Promise<{ exitCode: number; stdout: string }> {
+  try {
+    return await target.commands.run(cmd, { timeoutMs: AGENT_TIMEOUT_MS });
+  } catch (error) {
+    if (error instanceof CommandExitError) {
+      return error;
+    }
+    throw error;
+  }
+}
+
+async function runningIn(target: Sandbox, pattern: string): Promise<boolean> {
+  return (await shIn(target, `pgrep -u user -f ${shellQuote(pattern)}`)).exitCode === 0;
+}
+
+async function collect(stream: AsyncIterable<AgentEvent>): Promise<AgentEvent[]> {
+  const events: AgentEvent[] = [];
+  for await (const event of stream) {
+    events.push(event);
+  }
+  return events;
+}
+
 describe.skipIf(!localEnabled() || bedrockKey() === undefined)(
   "sbx.agent contra Bedrock por la pasarela",
   () => {
@@ -130,32 +160,16 @@ describe.skipIf(!localEnabled() || bedrockKey() === undefined)(
     let secretName: string;
     let sandbox: Sandbox;
 
-    /** (exit, stdout) sin lanzar por un exit distinto de cero. */
-    async function sh(cmd: string): Promise<{ exitCode: number; stdout: string }> {
-      try {
-        return await sandbox.commands.run(cmd, { timeoutMs: AGENT_TIMEOUT_MS });
-      } catch (error) {
-        if (error instanceof CommandExitError) {
-          return error;
-        }
-        throw error;
-      }
+    function sh(cmd: string): Promise<{ exitCode: number; stdout: string }> {
+      return shIn(sandbox, cmd);
     }
 
-    async function running(pattern: string): Promise<boolean> {
-      return (await sh(`pgrep -u user -f ${shellQuote(pattern)}`)).exitCode === 0;
+    function running(pattern: string): Promise<boolean> {
+      return runningIn(sandbox, pattern);
     }
 
     function gone(pattern: string): Promise<boolean> {
       return waitUntil(async () => !(await running(pattern)));
-    }
-
-    async function collect(stream: AsyncIterable<AgentEvent>): Promise<AgentEvent[]> {
-      const events: AgentEvent[] = [];
-      for await (const event of stream) {
-        events.push(event);
-      }
-      return events;
     }
 
     beforeAll(async () => {
@@ -261,7 +275,7 @@ describe.skipIf(!localEnabled() || bedrockKey() === undefined)(
     );
 
     it.each(RUNTIMES)(
-      "%s: el timeout para el agente",
+      "%s: el timeout para el agente y lo que lanzó su herramienta de shell",
       async (runtime) => {
         const seconds = TIMEOUT_SLEEP_SECONDS[runtime];
         const stream = await sandbox.agent.stream(sleepPrompt(seconds), {
@@ -273,23 +287,9 @@ describe.skipIf(!localEnabled() || bedrockKey() === undefined)(
         await stream.close();
         expect(events.at(-1)).toMatchObject({ type: "agent_failed", reason: "timeout" });
         expect(await gone(RUNTIME_PATTERNS[runtime])).toBe(true);
+        expect(await gone(sleepPattern(seconds))).toBe(true);
       },
       AGENT_TIMEOUT_MS,
-    );
-
-    /**
-     * El timeout lo impone `rayd` con `SIGKILL` al grupo del proceso y la
-     * herramienta de shell del agente corre en una sesión propia: hasta que
-     * `rayd` mate el árbol, su `sleep` sobrevive (espejo del `xfail` de Python).
-     */
-    it.fails.each(RUNTIMES)(
-      "%s: el timeout también para lo que lanzó su herramienta de shell",
-      async (runtime) => {
-        const pattern = sleepPattern(TIMEOUT_SLEEP_SECONDS[runtime]);
-        const alive = await running(pattern);
-        await sh(`pkill -KILL -u user -f ${shellQuote(pattern)}`);
-        expect(alive).toBe(false);
-      },
     );
 
     it.each(
@@ -357,3 +357,112 @@ describe.skipIf(!localEnabled() || bedrockKey() === undefined)(
     );
   },
 );
+
+/** El `sleep` que deja el runtime de doble, distinto por test (y del suite de Python). */
+const DAEMON_TIMEOUT_SLEEP_SECONDS = 3051;
+const DAEMON_ABORT_SLEEP_SECONDS = 3052;
+/** Timeout de una ejecución del runtime de doble: el script nunca acaba solo. */
+const DAEMON_RUN_TIMEOUT_MS = 3_000;
+/** El runtime de doble no llama al modelo: la pasarela sólo tiene que existir. */
+const DAEMON_GATEWAY_SECRET_VALUE = "Bearer local-sin-modelo";
+
+/**
+ * Un `AgentRuntime` de doble sin modelo: su script deja un `sleep` en una
+ * sesión propia cuyo padre sale enseguida (un demonio, como el que deja una
+ * herramienta de shell) y luego espera para siempre.
+ */
+function daemonRuntime(seconds: number): AgentRuntime {
+  const daemon = `sleep ${seconds} >/dev/null 2>&1 </dev/null &`;
+  return {
+    name: "daemon",
+    buildConfig: () => ({ files: [], configSha256: `daemon-${seconds}` }),
+    command: () => ({
+      script: `setsid sh -c ${shellQuote(daemon)}; exec sleep infinity`,
+      stdin: new Uint8Array(),
+    }),
+    newState: () => ({}),
+    parseLine: () => [],
+    finish: (_state, exitCode) => agentFailed("runtime_error", { exitCode }),
+    templateSteps: () => [],
+    warmupSteps: () => [],
+  };
+}
+
+describe.skipIf(!localEnabled())("sbx.agent para lo que su runtime dejó como demonio", () => {
+  const spec = new AgentSpec({
+    model: new AgentModel({
+      provider: "bedrock",
+      id: BEDROCK_MODEL,
+      gateway: GATEWAY_NAME,
+      region: BEDROCK_REGION,
+    }),
+  });
+  let harness: LocalHarness;
+  let store: SecretStore;
+  let secretName: string;
+  let sandbox: Sandbox;
+
+  beforeAll(async () => {
+    harness = await localHarness();
+    store = new SecretStore({ region: harness.settings.region });
+    secretName = `local-agents-daemon-ts-${randomBytes(4).toString("hex")}`;
+    await store.create(secretName, DAEMON_GATEWAY_SECRET_VALUE);
+    sandbox = await createLocalSandbox(harness, {
+      gateways: {
+        [GATEWAY_NAME]: bedrockGateway(secretName, {
+          region: BEDROCK_REGION,
+          models: [BEDROCK_MODEL],
+        }),
+      },
+      secretCache: new SecretCache({ store }),
+    });
+  }, AGENT_TIMEOUT_MS);
+
+  afterAll(async () => {
+    if (sandbox !== undefined) {
+      await killQuietly(sandbox);
+    }
+    if (store !== undefined) {
+      await store.destroy(secretName);
+    }
+    if (harness !== undefined) {
+      await releaseGuest(harness);
+    }
+  });
+
+  it(
+    "el timeout para el demonio antes de terminar el stream",
+    async () => {
+      const pattern = sleepPattern(DAEMON_TIMEOUT_SLEEP_SECONDS);
+      const stream = await sandbox.agent.stream("sin modelo", {
+        spec,
+        runtime: daemonRuntime(DAEMON_TIMEOUT_SLEEP_SECONDS),
+        limits: new AgentLimits({ timeoutMs: DAEMON_RUN_TIMEOUT_MS }),
+      });
+      expect(await waitUntil(() => runningIn(sandbox, pattern))).toBe(true);
+      const events = await collect(stream);
+      await stream.close();
+      expect(events.at(-1)).toMatchObject({ type: "agent_failed", reason: "timeout" });
+      expect(await runningIn(sandbox, pattern), "el fin llegó con el demonio vivo").toBe(false);
+    },
+    AGENT_TIMEOUT_MS,
+  );
+
+  it(
+    "abort() para el demonio",
+    async () => {
+      const pattern = sleepPattern(DAEMON_ABORT_SLEEP_SECONDS);
+      const stream = await sandbox.agent.stream("sin modelo", {
+        spec,
+        runtime: daemonRuntime(DAEMON_ABORT_SLEEP_SECONDS),
+      });
+      expect(await waitUntil(() => runningIn(sandbox, pattern))).toBe(true);
+      await stream.abort();
+      const events = await collect(stream);
+      await stream.close();
+      expect(events.at(-1)).toMatchObject({ type: "agent_failed", reason: "aborted" });
+      expect(await runningIn(sandbox, pattern), "abort() dejó el demonio vivo").toBe(false);
+    },
+    AGENT_TIMEOUT_MS,
+  );
+});
