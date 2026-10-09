@@ -174,6 +174,6 @@ Sandboxes are billed only while they run or are suspended: a 2 GB sandbox costs 
 ----
 This folder is the copy of the pattern submitted to aws-samples/serverless-patterns in [#3336](https://github.com/aws-samples/serverless-patterns/pull/3336), as `lambda-microvms-sandbox-sdk/typescript/sam`. The upstream copy ends with the Amazon copyright footer of `_pattern-model`; the E2B import-swap client of the first draft was left out of the submission and removed here.
 
-The files of this pattern (this folder, except `_submission/`) are licensed under MIT-0, the license of the serverless-patterns repository, unlike the rest of the Rayito repository (Apache-2.0).
+The files of this pattern (this folder) are licensed under MIT-0, the license of the serverless-patterns repository, unlike the rest of the Rayito repository (Apache-2.0).
 
 SPDX-License-Identifier: MIT-0
