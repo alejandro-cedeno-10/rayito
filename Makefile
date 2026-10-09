@@ -433,7 +433,8 @@ local-bedrock-key:
 # `local-providers-up` añade a la variante de agentes el upstream HTTPS falso
 # de dev/local/providers (los nueve presets de pasarela) y
 # `local-providers-e2e` corre sus tests en los dos SDK. `local-providers-smoke`
-# es la prueba de humo opcional contra las APIs reales: va sobre
+# es la prueba de humo opcional contra las APIs reales, también en los dos
+# SDK: va sobre
 # `local-agent-up` (sin el falso) y sólo prueba los presets cuya clave
 # exportes como RAYITO_SMOKE_<PRESET>_SECRET; las variables pasan al runner
 # por nombre, nunca por valor en la línea de órdenes.
