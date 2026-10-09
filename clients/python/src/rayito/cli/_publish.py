@@ -52,6 +52,15 @@ numerically and every other key exactly.
 There is no default bucket: ``--bucket`` or ``RAYITO_BUCKET`` name the
 artifact bucket of the account that publishes.
 
+``--artifact-run-id RUN_ID`` scopes the artifact key to one run:
+``rayito/images/runs/<RUN_ID>/rayd-<sha>.zip`` instead of the shared
+content-addressed ``rayito/images/rayd-<sha>.zip``. Two acceptance runs that
+publish the same commit would otherwise share one object, and the first run
+to clean up would delete the artifact the other run's image still points at.
+The summary always says whether this invocation uploaded the object
+(``artifactUploaded``), so a cleanup deletes only what its own run uploaded.
+Without the flag the key, and everything else, is unchanged.
+
 ``--sizes 512mb,4gb`` (m15-sizes-catalog) publishes one extra image per
 named size from the *same* artifact, named ``<image_name>-<size>``
 (``apply_size_suffix``/``_sizing.SIZE_NAMES``), each with its own
@@ -84,6 +93,7 @@ is; pass ``--force`` to rebuild it without the variables.
 from __future__ import annotations
 
 import hashlib
+import re
 import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
@@ -127,6 +137,13 @@ ALL_OS_CAPABILITIES = "ALL"
 OS_CAPABILITY_CHOICES = (ALL_OS_CAPABILITIES,)
 BUILD_ROLE_OUTPUT_KEY = "BuildRoleArn"
 S3_KEY_PREFIX = "rayito/images"
+#: Segmento de las claves de `--artifact-run-id`: queda bajo `S3_KEY_PREFIX`,
+#: así que los permisos `rayito/images/*` de `infra/iam.yaml` y
+#: `infra/templates.yaml` las cubren sin cambios.
+RUN_SCOPED_KEY_SEGMENT = "runs"
+#: Un id de ejecución es un único segmento de clave S3: letras, dígitos y
+#: guiones, sin `/` ni `..`, de 1 a 64 caracteres.
+RUN_ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]{0,63}")
 HOOKS_PORT = 9000
 MANAGED_BASE_IMAGE_NAME = "al2023-1"
 # Nombre de la variable de imagen que `--sizes` hornea: información
@@ -210,6 +227,8 @@ class PublishSettings:
     # m15-efs-volumes: `--with-efs`, checked against the artifact's marker
     # by `require_matching_variant`.
     with_efs: bool = False
+    # `--artifact-run-id`: `None` keeps the shared content-addressed key.
+    artifact_run_id: str | None = None
 
     @property
     def log_group(self) -> str:
@@ -248,19 +267,48 @@ def without_metadata(response: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in response.items() if key != "ResponseMetadata"}
 
 
-def artifact_key(payload: bytes) -> str:
-    return f"{S3_KEY_PREFIX}/rayd-{hashlib.sha256(payload).hexdigest()[:12]}.zip"
+def validate_run_id(run_id: str) -> str:
+    """`run_id` tal cual si es un segmento de clave válido
+    (`RUN_ID_PATTERN`); si no, `ValueError`."""
+    if not RUN_ID_PATTERN.fullmatch(run_id):
+        raise ValueError(
+            f"--artifact-run-id inválido: {run_id!r} (letras, dígitos y guiones, "
+            "de 1 a 64, empezando por letra o dígito)"
+        )
+    return run_id
 
 
-def upload_artifact(clients: PublishClients, settings: PublishSettings, emit: Emitter) -> str:
+def artifact_key(payload: bytes, run_id: str | None = None) -> str:
+    """La clave S3 del zip: por contenido (`rayd-<12 hex del sha256>.zip`)
+    bajo `S3_KEY_PREFIX`, y con `run_id` además bajo
+    `runs/<run_id>/`, para que el objeto sea sólo de esa ejecución."""
+    prefix = S3_KEY_PREFIX
+    if run_id is not None:
+        prefix = f"{prefix}/{RUN_SCOPED_KEY_SEGMENT}/{validate_run_id(run_id)}"
+    return f"{prefix}/rayd-{hashlib.sha256(payload).hexdigest()[:12]}.zip"
+
+
+@dataclass(frozen=True)
+class UploadedArtifact:
+    """Dónde quedó el zip y si esta invocación lo subió (`False`: ya
+    existía y se reutilizó), para que una limpieza borre sólo lo suyo."""
+
+    uri: str
+    uploaded: bool
+
+
+def upload_artifact(
+    clients: PublishClients, settings: PublishSettings, emit: Emitter
+) -> UploadedArtifact:
     payload = settings.artifact.read_bytes()
-    key = artifact_key(payload)
+    key = artifact_key(payload, settings.artifact_run_id)
     uri = f"s3://{settings.bucket}/{key}"
-    if upload_if_absent(clients, settings.bucket, key, payload):
+    uploaded = upload_if_absent(clients, settings.bucket, key, payload)
+    if uploaded:
         emit(f"uploaded {uri} ({len(payload)} bytes)")
     else:
         emit(f"artifact already in S3, skipping upload: {uri}")
-    return uri
+    return UploadedArtifact(uri, uploaded)
 
 
 def build_role_arn(clients: PublishClients, settings: PublishSettings) -> str:
@@ -372,7 +420,7 @@ def print_recent_logs(
 def publish_summary(
     arn: str,
     version: str,
-    artifact_uri: str,
+    artifact: UploadedArtifact,
     build_seconds: float | None,
     build: dict[str, Any],
     gate: VersionGate | None = None,
@@ -380,7 +428,8 @@ def publish_summary(
     summary: dict[str, Any] = {
         "imageArn": arn,
         "imageVersion": version,
-        "artifact": artifact_uri,
+        "artifact": artifact.uri,
+        "artifactUploaded": artifact.uploaded,
         "buildSeconds": None if build_seconds is None else round(build_seconds, 1),
         "buildState": build.get("buildState"),
         "chipsetGeneration": build.get("chipsetGeneration"),
@@ -457,12 +506,12 @@ def progress_emitter(json_output: bool) -> Emitter:
 
 @dataclass(frozen=True)
 class PreparedBuild:
-    """Lo común a reusar-o-construir: `arn` y `artifact_uri` no cambian
+    """Lo común a reusar-o-construir: `arn` y `artifact` no cambian
     entre comprobar si hay una versión que reutilizar y, si no la hay,
     pedir una nueva con la misma `desired`."""
 
     arn: str
-    artifact_uri: str
+    artifact: UploadedArtifact
     desired: dict[str, Any]
 
 
@@ -472,8 +521,8 @@ def prepare_build(
     """Sube el artefacto (si hace falta) y arma la configuración deseada;
     no decide si hay que construir, eso es `reusable_version`."""
     arn = image_arn(clients, settings.image_name)
-    artifact_uri = upload_artifact(clients, settings, emit)
-    return PreparedBuild(arn, artifact_uri, desired_configuration(clients, settings, artifact_uri))
+    artifact = upload_artifact(clients, settings, emit)
+    return PreparedBuild(arn, artifact, desired_configuration(clients, settings, artifact.uri))
 
 
 def reusable_version(
@@ -500,7 +549,7 @@ def reusable_summary(
         "and config; reusing"
     )
     build = latest_build(clients, prepared.arn, existing)
-    return publish_summary(prepared.arn, existing, prepared.artifact_uri, None, build)
+    return publish_summary(prepared.arn, existing, prepared.artifact, None, build)
 
 
 def finalize_build(
@@ -508,7 +557,7 @@ def finalize_build(
     settings: PublishSettings,
     arn: str,
     version: str,
-    artifact_uri: str,
+    artifact: UploadedArtifact,
     started: float,
     sleep: Sleeper,
     emit: Emitter,
@@ -520,7 +569,7 @@ def finalize_build(
     gate = wait_for_gate(clients, arn, version, settings.timeout_seconds, emit, sleep)
     build_seconds = time.monotonic() - started
     build = latest_build(clients, arn, version)
-    summary = publish_summary(arn, version, artifact_uri, build_seconds, build, gate)
+    summary = publish_summary(arn, version, artifact, build_seconds, build, gate)
     if not gate.launchable:
         emit(
             f"{settings.image_name}: build did not become launchable: "
@@ -544,9 +593,7 @@ def build_or_reuse(
         return reused
     started = time.monotonic()
     arn, version = submit_build(clients, settings, prepared.arn, prepared.desired, emit)
-    return finalize_build(
-        clients, settings, arn, version, prepared.artifact_uri, started, sleep, emit
-    )
+    return finalize_build(clients, settings, arn, version, prepared.artifact, started, sleep, emit)
 
 
 def publish(
@@ -610,7 +657,7 @@ def publish_sizes(
     summaries: dict[str, dict[str, Any]] = {}
     for wave_start in range(0, len(size_names), MAX_CONCURRENT_IMAGE_BUILDS_Q83):
         wave = size_names[wave_start : wave_start + MAX_CONCURRENT_IMAGE_BUILDS_Q83]
-        pending: list[tuple[str, PublishSettings, str, str, str, float]] = []
+        pending: list[tuple[str, PublishSettings, str, str, UploadedArtifact, float]] = []
         for size_name in wave:
             settings = sized_settings(base_settings, size_name)
             prepared = prepare_build(clients, settings, emit)
@@ -620,10 +667,10 @@ def publish_sizes(
                 continue
             started = time.monotonic()
             arn, version = submit_build(clients, settings, prepared.arn, prepared.desired, emit)
-            pending.append((size_name, settings, arn, version, prepared.artifact_uri, started))
-        for size_name, settings, arn, version, artifact_uri, started in pending:
+            pending.append((size_name, settings, arn, version, prepared.artifact, started))
+        for size_name, settings, arn, version, artifact, started in pending:
             summaries[size_name] = finalize_build(
-                clients, settings, arn, version, artifact_uri, started, sleep, emit
+                clients, settings, arn, version, artifact, started, sleep, emit
             )
     return summaries
 

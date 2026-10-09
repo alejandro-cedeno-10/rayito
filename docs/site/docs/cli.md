@@ -71,7 +71,8 @@ rayito image publish --artifact image/rayito-image.zip --base-image-version 1 \
     --bucket <bucket> [--variant full|slim|poly] [--image-name N] \
     [--os-capabilities ALL] [--build-role-arn ARN | --stack-name rayito-m0-iam] \
     [--memory-mib 2048] [--timeout-seconds 1800] [--force] \
-    [--sizes 512mb,1gb,4gb,8gb] [--env K=V]... [--with-efs]
+    [--sizes 512mb,1gb,4gb,8gb] [--env K=V]... [--with-efs] \
+    [--artifact-run-id RUN_ID]
 ```
 
 `--with-efs` publica la imagen con `amazon-efs-utils` que necesita
@@ -96,6 +97,9 @@ Reproduce el pipeline de `make image-publish`:
    sólo si se pasa `--with-efs`.
 2. Sube el zip a `s3://<bucket>/rayito/images/rayd-<12 hex del sha256>.zip`,
    salvo que la clave ya exista (clave por contenido: mismo zip, misma clave).
+   Con `--artifact-run-id RUN_ID` la clave es
+   `rayito/images/runs/<RUN_ID>/rayd-<12 hex del sha256>.zip`: el objeto es
+   sólo de esa ejecución (ver más abajo).
 3. Toma el build role de `--build-role-arn` o de la salida `BuildRoleArn` del
    stack `--stack-name`.
 4. Si ya hay una versión `SUCCESSFUL`/`ACTIVE` construida desde ese zip con
@@ -111,6 +115,19 @@ Reproduce el pipeline de `make image-publish`:
 6. Imprime el resumen del `snapshotBuild` y, en la última línea,
    `RAYITO_TEMPLATE=<arn>`. Si el build falla, imprime los `stateReason` y la
    cola de los build logs del grupo `/rayito/<imagen>` y sale con 1.
+
+`--artifact-run-id` es para quien publica imágenes desechables en paralelo
+(la aceptación de una release, el e2e): dos ejecuciones del mismo commit
+compartirían la clave por contenido, y la limpieza de la primera borraría el
+zip al que todavía apunta la imagen de la segunda. `RUN_ID` es un único
+segmento de clave (letras, dígitos y guiones, de 1 a 64, empezando por letra
+o dígito); otro valor es un error de uso (2) antes de llamar a AWS. La clave
+sigue bajo `rayito/images/`, así que los permisos de abajo no cambian. El
+resumen de `--json` dice en `artifactUploaded` si esta invocación subió el
+objeto (`true`) o ya existía (`false`): una limpieza borra sólo los objetos
+que su ejecución subió. Con `--sizes`, la raíz (el baseline) es la que sube;
+los tamaños reutilizan ese objeto y dicen `false`. Sin el flag la clave es
+la compartida de siempre.
 
 `--bucket` se resuelve del flag o de `RAYITO_BUCKET`; sin ninguno de los dos
 es un error de uso (2). La biblioteca no trae ningún bucket por defecto: el

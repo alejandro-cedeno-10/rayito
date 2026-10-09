@@ -206,9 +206,15 @@ make local-down
 
 ### Prueba de humo contra las APIs reales
 
-`test_local_agent_providers_smoke.py` hace una vuelta corta de cada runtime
-contra la API real de cada proveedor cuya clave exportes. Va sobre
-`make local-agent-up`, sin el upstream falso.
+`test_local_agent_providers_smoke.py` (Python) y
+`agent-providers-smoke.local.test.ts` (TypeScript) hacen una vuelta corta de
+cada runtime contra la API real de cada proveedor cuya clave exportes, con el
+egress del sandbox cerrado: el agente responde con texto y el uso de tokens
+de entrada y de salida es mayor que cero. Los dos leen los presets del mismo
+catálogo (`testdata/agent/provider-catalogue.json`), y
+`make local-providers-smoke` corre primero el de Python y después el de
+TypeScript. Va sobre `make local-agent-up`, sin el upstream falso: con él
+levantado, los dos se saltan.
 
 !!! info "Coste y activación"
     - **Por defecto**: apagada. Cada preset se salta si no exportas
@@ -224,10 +230,12 @@ contra la API real de cada proveedor cuya clave exportes. Va sobre
       Manager de Floci; `rayd` hace por la pasarela una o dos llamadas al
       proveedor por runtime.
     - **Coste aproximado**: cada ejecución lleva
-      `AgentLimits(max_total_tokens=20000)` y un prompt sin herramientas.
+      `AgentLimits(max_total_tokens=20000)` (`maxTotalTokens: 20_000` en
+      TypeScript) y un prompt sin herramientas.
       Con un modelo de hasta 0,20 USD por millón de tokens de entrada, los
-      dos runtimes juntos quedan por debajo de 0,01 USD por proveedor. Elige
-      el modelo más barato de tu cuenta.
+      dos runtimes juntos quedan por debajo de 0,01 USD por proveedor y SDK
+      (menos de 0,02 USD con los dos SDK). Elige el modelo más barato de tu
+      cuenta.
     - **IAM**: ninguno en AWS. La clave sólo necesita llamar al modelo;
       ponle un límite de gasto en el proveedor.
     - **Cómo apagarla**: no exportes las variables, o `make local-down`.

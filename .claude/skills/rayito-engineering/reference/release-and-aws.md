@@ -71,6 +71,13 @@ Al terminar:
   cero, salvo lo que se quiera dejar a propósito, que se explica.
 - La última versión de una imagen solo se puede borrar borrando la imagen.
   Usa imágenes desechables para no tocar las que ya existían.
+- Publica las imágenes desechables con un id de ejecución
+  (`RAYITO_E2E_RUN_ID=<id> make image-publish*` o `rayito image publish
+  --artifact-run-id <id>`): el zip va a `rayito/images/runs/<id>/` y la
+  limpieza borra solo ese prefijo. Sin id, borra solo los zips cuyo resumen
+  `--json` dijo `artifactUploaded: true`; nunca un
+  `rayito/images/rayd-<sha>.zip` que la publicación encontró ya subido,
+  porque puede ser el de otra ejecución del mismo commit.
 
 ## Coste
 
