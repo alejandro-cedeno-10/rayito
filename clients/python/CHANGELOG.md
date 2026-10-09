@@ -6,6 +6,17 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
 
 ## [Unreleased]
 
+### Añadido
+
+- **`rayito image publish --artifact-run-id RUN_ID`** (`run-scoped-artifact-keys`).
+  Sube el zip a `rayito/images/runs/<RUN_ID>/rayd-<sha>.zip` en vez de a la
+  clave compartida por contenido, para que dos ejecuciones del mismo commit
+  (aceptación, e2e en paralelo) no compartan el artefacto y la limpieza de
+  una no borre el de la otra. El resumen `--json` añade `artifactUploaded`
+  (si esta invocación subió el objeto). `make image-publish*` pasa el flag
+  cuando hay `RAYITO_E2E_RUN_ID` o `ARTIFACT_RUN_ID`. Sin el flag, nada
+  cambia.
+
 ## [0.10.0] - 2026-10-08
 
 ### Añadido

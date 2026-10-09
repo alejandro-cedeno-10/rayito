@@ -5,13 +5,15 @@ fixture `sandbox` (los logs sólo con `RAYITO_EXECUTION_ROLE_ARN`),
 `doctor --launch` y `doctor` contra la fixture, `image publish` por la vía
 del reuse (sin build, sólo si `image/rayito-image.zip` es el artefacto de
 una versión ACTIVE y hay `RAYITO_BUCKET`) y `sandbox kill` de la fixture.
+Si la imagen se publicó con `--artifact-run-id` (aceptación con claves por
+ejecución), `RAYITO_E2E_RUN_ID` lleva ese mismo id para que el reuse busque
+el zip en la clave de la ejecución y no suba nada.
 Mismos guardrails que todo e2e (`conftest.py`): la fixture nace con 900 s y
 el doctor mata su sandbox de 300 s en un `finally`.
 """
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import re
@@ -25,7 +27,7 @@ from typer.testing import CliRunner
 from rayito import Sandbox
 from rayito._aws import LambdaMicrovmsControlPlane
 from rayito._limits import TERMINAL_STATES
-from rayito.cli import _checks
+from rayito.cli import _checks, _publish
 from rayito.cli._session import resolve_session
 from rayito.cli.app import app
 from rayito.exceptions import SandboxNotFoundException
@@ -35,6 +37,7 @@ from .conftest import EXECUTION_ROLE_VAR, E2ESettings
 pytestmark = pytest.mark.e2e
 
 BUCKET_VAR = "RAYITO_BUCKET"
+RUN_ID_VAR = "RAYITO_E2E_RUN_ID"
 REPO_ROOT = Path(__file__).resolve().parents[4]
 ARTIFACT = REPO_ROOT / "image" / "rayito-image.zip"
 TERMINATE_VISIBLE_TIMEOUT_SECONDS = 30.0
@@ -182,8 +185,22 @@ def test_iam_simulation_sees_the_organizations_decision() -> None:
     assert results and results[0]["action"] == "s3:CreateBucket"
 
 
-def artifact_key_basename(path: Path) -> str:
-    return f"rayd-{hashlib.sha256(path.read_bytes()).hexdigest()[:12]}.zip"
+def run_id() -> str | None:
+    return os.environ.get(RUN_ID_VAR) or None
+
+
+def active_artifact_uris(template_arn: str) -> set[str]:
+    """Las URIs completas de `codeArtifact` de las versiones ACTIVE (`image
+    list` sólo muestra el nombre del zip, que no distingue una clave por
+    ejecución de la compartida)."""
+    microvms = resolve_session(None, None).microvms
+    paginator = microvms.get_paginator("list_microvm_image_versions")
+    return {
+        str(item["codeArtifact"]["uri"])
+        for page in paginator.paginate(imageIdentifier=template_arn)
+        for item in page["items"]
+        if item.get("status") == "ACTIVE" and "codeArtifact" in item
+    }
 
 
 def test_image_publish_reuses_the_current_version(template_arn: str) -> None:
@@ -191,10 +208,12 @@ def test_image_publish_reuses_the_current_version(template_arn: str) -> None:
         pytest.skip(f"sin {ARTIFACT} o sin {BUCKET_VAR}")
     code, versions, stderr = invoke_json("image", "list", template_arn)
     assert code == 0, stderr
-    basename = artifact_key_basename(ARTIFACT)
-    matching = [v for v in versions if v["artifact"] == basename and v["status"] == "ACTIVE"]
-    if not matching:
-        pytest.skip(f"{ARTIFACT.name} ({basename}) no es el artefacto de ninguna versión ACTIVE")
+    current_run = run_id()
+    key = _publish.artifact_key(ARTIFACT.read_bytes(), current_run)
+    expected_uri = f"s3://{bucket()}/{key}"
+    if expected_uri not in active_artifact_uris(template_arn):
+        pytest.skip(f"{key} no es el artefacto de ninguna versión ACTIVE ({RUN_ID_VAR}?)")
+    run_id_args = ["--artifact-run-id", current_run] if current_run else []
     started = time.perf_counter()
     code, stdout, stderr = invoke(
         "image",
@@ -207,10 +226,12 @@ def test_image_publish_reuses_the_current_version(template_arn: str) -> None:
         str(bucket()),
         "--image-name",
         template_arn.rsplit(":", 1)[-1],
+        *run_id_args,
     )
     print(f"\nimage publish (reuse) {time.perf_counter() - started:.1f} s:\n{stdout}")
     assert code == 0, stderr
     assert "already built from this artifact and config; reusing" in stdout
+    assert f"artifact already in S3, skipping upload: {expected_uri}" in stdout
     assert stdout.rstrip().endswith(f"RAYITO_TEMPLATE={template_arn}")
     code, after, stderr = invoke_json("image", "list", template_arn)
     assert code == 0 and len(after) == len(versions)

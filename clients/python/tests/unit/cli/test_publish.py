@@ -9,6 +9,7 @@ resuelve del flag o de `RAYITO_BUCKET`."""
 
 from __future__ import annotations
 
+import hashlib
 import json
 from datetime import UTC, datetime
 from pathlib import Path
@@ -551,9 +552,9 @@ def test_upload_skipped_when_key_exists(
     key = _publish.artifact_key(artifact.read_bytes())
     stubbed_clients.s3.add_response("head_object", {}, {"Bucket": "bucket", "Key": key})
     lines: list[str] = []
-    uri = _publish.upload_artifact(clients, settings(artifact=artifact), lines.append)
-    assert uri == f"s3://bucket/{key}"
-    assert lines == [f"artifact already in S3, skipping upload: {uri}"]
+    uploaded = _publish.upload_artifact(clients, settings(artifact=artifact), lines.append)
+    assert uploaded == _publish.UploadedArtifact(f"s3://bucket/{key}", uploaded=False)
+    assert lines == [f"artifact already in S3, skipping upload: {uploaded.uri}"]
 
 
 def test_upload_proceeds_when_head_is_forbidden_without_list_bucket(
@@ -572,9 +573,84 @@ def test_upload_proceeds_when_head_is_forbidden_without_list_bucket(
     )
     stubbed_clients.s3.add_response("put_object", {}, {"Bucket": "bucket", "Key": key, "Body": ANY})
     lines: list[str] = []
-    uri = _publish.upload_artifact(clients, settings(artifact=artifact), lines.append)
-    assert uri == f"s3://bucket/{key}"
-    assert lines == [f"uploaded {uri} ({len(artifact.read_bytes())} bytes)"]
+    uploaded = _publish.upload_artifact(clients, settings(artifact=artifact), lines.append)
+    assert uploaded == _publish.UploadedArtifact(f"s3://bucket/{key}", uploaded=True)
+    assert lines == [f"uploaded {uploaded.uri} ({len(artifact.read_bytes())} bytes)"]
+
+
+def test_default_key_is_content_addressed_and_shared() -> None:
+    """Sin id de ejecución la clave es la de siempre: por contenido, sin
+    segmento de ejecución."""
+    payload = b"zip"
+    digest = hashlib.sha256(payload).hexdigest()[:12]
+    assert _publish.artifact_key(payload) == f"rayito/images/rayd-{digest}.zip"
+
+
+def test_run_id_scopes_the_key_under_the_same_prefix() -> None:
+    """Con id de ejecución la clave queda bajo `rayito/images/runs/<id>/`:
+    otra ejecución del mismo commit no comparte el objeto, y los permisos
+    `rayito/images/*` siguen cubriéndola."""
+    payload = b"zip"
+    digest = hashlib.sha256(payload).hexdigest()[:12]
+    key = _publish.artifact_key(payload, "acc-0a1b")
+    assert key == f"rayito/images/runs/acc-0a1b/rayd-{digest}.zip"
+    assert key.startswith(f"{_publish.S3_KEY_PREFIX}/")
+
+
+@pytest.mark.parametrize("run_id", ["", "a/b", "..", "-lead", "a" * 65, "ñ"])
+def test_invalid_run_id_is_rejected(run_id: str) -> None:
+    with pytest.raises(ValueError, match="--artifact-run-id"):
+        _publish.artifact_key(b"zip", run_id)
+
+
+def test_run_scoped_upload_reports_it_uploaded(
+    clients: Clients, stubbed_clients: Stubs, artifact: Path
+) -> None:
+    key = _publish.artifact_key(artifact.read_bytes(), "run-1")
+    stub_head_object_missing(stubbed_clients, "bucket", key)
+    stubbed_clients.s3.add_response("put_object", {}, {"Bucket": "bucket", "Key": key, "Body": ANY})
+    uploaded = _publish.upload_artifact(
+        clients, settings(artifact=artifact, artifact_run_id="run-1"), lambda _: None
+    )
+    assert uploaded == _publish.UploadedArtifact(f"s3://bucket/{key}", uploaded=True)
+
+
+def test_cli_run_id_reaches_the_key_and_the_summary(
+    runner: CliRunner, clients: Clients, stubbed_clients: Stubs, artifact: Path
+) -> None:
+    """`--artifact-run-id` llega a la clave y el resumen JSON dice si esta
+    invocación subió el objeto (`artifactUploaded`), que es lo que una
+    limpieza consulta antes de borrarlo."""
+    key = _publish.artifact_key(artifact.read_bytes(), "run-1")
+    stubbed_clients.s3.add_response("head_object", {}, {"Bucket": "bucket", "Key": key})
+    stubbed_clients.microvms.add_response(
+        "get_microvm_image", image_response(), {"imageIdentifier": IMAGE_ARN}
+    )
+    stubbed_clients.microvms.add_response(
+        "list_microvm_image_versions",
+        {"items": [version_item(3, artifact_uri=f"s3://bucket/{key}", base_image_version="1.0")]},
+        {"imageIdentifier": IMAGE_ARN},
+    )
+    stub_latest_build(stubbed_clients, "3.0")
+    result = runner.invoke(
+        app,
+        ["--json", *publish_args(artifact, "--bucket", "bucket", "--artifact-run-id", "run-1")],
+        obj=clients,
+    )
+    assert result.exit_code == 0, result.stderr
+    summary = json.loads(result.stdout)
+    assert summary["artifact"] == f"s3://bucket/{key}"
+    assert summary["artifactUploaded"] is False
+
+
+def test_cli_rejects_an_invalid_run_id_before_any_aws_call(
+    runner: CliRunner, clients: Clients, artifact: Path
+) -> None:
+    result = runner.invoke(
+        app, publish_args(artifact, "--bucket", "bucket", "--artifact-run-id", "a/b"), obj=clients
+    )
+    assert result.exit_code == 2
+    assert "--artifact-run-id" in result.stderr
 
 
 def test_build_role_from_stack_output(clients: Clients, stubbed_clients: Stubs) -> None:

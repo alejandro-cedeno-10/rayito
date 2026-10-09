@@ -35,6 +35,7 @@ from rayito.cli._publish import (
     publish,
     publish_with_sizes,
     require_efs_combination,
+    validate_run_id,
 )
 from rayito.cli._session import Clients, clients_of, json_mode
 
@@ -81,6 +82,22 @@ def validate_efs_combination(with_efs: bool, variant: str, os_capabilities: str 
         require_efs_combination(variant, os_capabilities)
     except ValueError as exc:
         raise typer.BadParameter(str(exc), param_hint="--with-efs") from exc
+
+
+ARTIFACT_RUN_ID_HELP = (
+    "Sube el zip a rayito/images/runs/<RUN_ID>/ en vez de la clave compartida, "
+    "para que la limpieza de una ejecución (aceptación, e2e) no borre el artefacto "
+    "de otra; el resumen JSON dice si se subió (artifactUploaded)."
+)
+
+
+def validate_artifact_run_id(value: str | None) -> str | None:
+    if value is None:
+        return None
+    try:
+        return validate_run_id(value)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--artifact-run-id") from exc
 
 
 def validate_os_capabilities(value: str | None) -> str | None:
@@ -243,6 +260,9 @@ def publish_command(
         ),
     ] = [],  # noqa: B006
     with_efs: Annotated[bool, typer.Option("--with-efs", help=WITH_EFS_HELP)] = False,
+    artifact_run_id: Annotated[
+        str | None, typer.Option("--artifact-run-id", help=ARTIFACT_RUN_ID_HELP)
+    ] = None,
 ) -> None:
     """Publica la imagen: sube el zip y espera a que la versión sea lanzable.
 
@@ -251,7 +271,9 @@ def publish_command(
     `--sizes` publica, además, una imagen por tamaño desde el mismo
     artefacto y lo informa todo en un único bloque de salida: un documento
     JSON, o un `RAYITO_TEMPLATE=` del baseline seguido de un
-    `RAYITO_TEMPLATE_<SIZE>=` por tamaño. Sin `--sizes`, sólo el baseline."""
+    `RAYITO_TEMPLATE_<SIZE>=` por tamaño. Sin `--sizes`, sólo el baseline.
+    Con `--artifact-run-id`, la clave del zip es de esa ejecución."""
+    run_id = validate_artifact_run_id(artifact_run_id)
     size_names = validate_sizes(sizes)
     validate_baseline_memory_mib(memory_mib, size_names)
     environment_variables = parse_environment_assignments(env)
@@ -271,6 +293,7 @@ def publish_command(
         os_capabilities=capabilities,
         environment_variables=environment_variables,
         with_efs=with_efs,
+        artifact_run_id=run_id,
     )
     code = (
         publish_with_sizes(clients_of(ctx), settings, size_names, json_output=json_mode(ctx))
@@ -481,6 +504,9 @@ def zip_command(
         ),
     ] = None,
     with_efs: Annotated[bool, typer.Option("--with-efs", help=WITH_EFS_HELP)] = False,
+    artifact_run_id: Annotated[
+        str | None, typer.Option("--artifact-run-id", help=ARTIFACT_RUN_ID_HELP)
+    ] = None,
 ) -> None:
     """Zip determinista del directorio de la imagen (sin tests, cachés ni locks)."""
     validate_variant(variant)

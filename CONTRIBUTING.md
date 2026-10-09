@@ -345,6 +345,16 @@ make test-e2e-typescript
 Los módulos de `clients/python/tests/e2e/` y `clients/typescript/tests/e2e/`
 documentan en su cabecera las variables propias de cada uno.
 
+Si publicas imágenes desechables para una ejecución (aceptación, o dos e2e
+en paralelo sobre el mismo commit), exporta antes un id propio,
+`RAYITO_E2E_RUN_ID=<id>` (letras, dígitos y guiones): `make image-publish*`
+pasa `--artifact-run-id <id>` y el zip va a `rayito/images/runs/<id>/` en vez
+de a la clave compartida `rayito/images/rayd-<sha>.zip`, y el e2e de la CLI
+reutiliza esa misma clave. Al limpiar, borra sólo `rayito/images/runs/<id>/`
+o, sin id, sólo los artefactos cuyo resumen de `rayito --json image publish`
+dijo `artifactUploaded: true`: un objeto que la publicación encontró ya
+subido puede ser el de otra ejecución.
+
 Los e2e de `s3-mounts` (`test_m15_s3_mounts.py`, `m15-s3-mounts.e2e.test.ts`)
 y de `rayd-otlp` (`test_m15_rayd_otlp.py`, `m15-rayd-otlp.e2e.test.ts`)
 necesitan además que el rol de `RAYITO_EXECUTION_ROLE_ARN` lleve adjunta la
