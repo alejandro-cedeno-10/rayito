@@ -60,7 +60,7 @@ getrandom = "=0.4.3"
 # S3 persistence (ADR-009): the only TLS client in the binary. `sigv4a`,
 # `sso` and `credentials-process` stay out; the trust store is the OS bundle.
 aws-config = { version = "=1.12.0", default-features = false, features = ["rt-tokio", "default-https-client"] }
-aws-sdk-s3 = { version = "=1.150.0", default-features = false, features = ["rt-tokio", "default-https-client", "http-1x"] }
+aws-sdk-s3 = { version = "=1.151.0", default-features = false, features = ["rt-tokio", "default-https-client", "http-1x"] }
 # m15-rayd-otlp (ADR-021) rule for direct dependencies: only crates
 # `aws-config`/`aws-sdk-s3`/`hyper` already pull in transitively, pinned to
 # the exact version `Cargo.lock` already resolves, so none of these adds a
