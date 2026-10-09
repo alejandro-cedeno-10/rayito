@@ -10,7 +10,7 @@
 # pydantic is pinned here too because the vendored `e2b_charts` extractor
 # (`src/rayito_kernel_sidecar/_vendor/e2b_charts`) imports it and is not
 # otherwise declared as a dependency anywhere.
-ipykernel==7.3.0
+ipykernel==7.4.0
 ipython==9.17.1
 jupyter_client==8.10.0
 pyzmq==27.2.0
