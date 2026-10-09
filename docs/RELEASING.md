@@ -337,7 +337,14 @@ cargo publish --dry-run -p rayito-proto
    no haya actualizado falla aquí, no en la release).
 3. e2e verde contra AWS real sobre la imagen que la release requiere
    (`e2e.yml` con `template_version`, o `make test-e2e` local), con el coste
-   anotado en el PR (≈ $0,03 por pasada).
+   anotado en el PR (≈ $0,03 por pasada). Las imágenes desechables de la
+   aceptación se publican con un id de ejecución (`RAYITO_E2E_RUN_ID=<id>`
+   antes de `make image-publish*`, o `rayito image publish
+   --artifact-run-id <id>`), así su zip va a `rayito/images/runs/<id>/` y
+   no se comparte con otra ejecución del mismo commit. La limpieza borra
+   sólo ese prefijo, o sólo los artefactos con `artifactUploaded: true` en
+   el resumen `--json` de su publicación; nunca la clave compartida
+   `rayito/images/rayd-<sha>.zip` que la ejecución encontró ya subida.
 4. Fusionar el PR: release-please crea los tres tags y las tres releases.
 5. Comprobar que `release.yml` corrió una vez por tag (o lanzarlo a mano
    desde cada tag, §1) y verificar lo publicado con `docs/site/docs/verify.md`;

@@ -30,6 +30,12 @@ PUBLISH_ARGS  ?=
 # montar ningún bucket (MountException(code="not_allowed")).
 MOUNT_BUCKETS ?=
 MOUNT_ENV      = $(if $(strip $(MOUNT_BUCKETS)),--env RAYITO_ALLOWED_MOUNT_BUCKETS=$(strip $(MOUNT_BUCKETS)))
+# image-publish* ARTIFACT_RUN_ID=<id> (por defecto RAYITO_E2E_RUN_ID) sube el
+# zip a rayito/images/runs/<id>/ (`--artifact-run-id`): la aceptación y el
+# e2e no comparten el artefacto con otra ejecución del mismo commit, y su
+# limpieza sólo borra lo suyo. Sin él, la clave compartida por contenido.
+ARTIFACT_RUN_ID ?= $(RAYITO_E2E_RUN_ID)
+RUN_ID_ARG      = $(if $(strip $(ARTIFACT_RUN_ID)),--artifact-run-id $(strip $(ARTIFACT_RUN_ID)))
 PRUNE_ARGS    ?= --keep 5
 EGRESS_TEMPLATE := infra/egress-connector.yaml
 CI_OIDC_TEMPLATE := infra/ci-oidc-role.yaml
@@ -247,10 +253,10 @@ require-bucket:
 # AWS_REGION; PUBLISH_ARGS admite p. ej. `--force` o `--image-name`.
 # Equivale a `rayito image publish ...` (scripts/publish_image.py es un shim).
 image-publish: require-bucket image-zip
-	$(PY) python scripts/publish_image.py --artifact $(IMAGE_ZIP) --bucket $(BUCKET) --base-image-version $(BASE_IMAGE_VERSION) $(PUBLISH_ARGS)
+	$(PY) python scripts/publish_image.py --artifact $(IMAGE_ZIP) --bucket $(BUCKET) --base-image-version $(BASE_IMAGE_VERSION) $(RUN_ID_ARG) $(PUBLISH_ARGS)
 
 image-publish-slim: require-bucket image-zip-slim
-	$(PY) python scripts/publish_image.py --artifact $(IMAGE_ZIP_SLIM) --variant slim --bucket $(BUCKET) --base-image-version $(BASE_IMAGE_VERSION) $(PUBLISH_ARGS)
+	$(PY) python scripts/publish_image.py --artifact $(IMAGE_ZIP_SLIM) --variant slim --bucket $(BUCKET) --base-image-version $(BASE_IMAGE_VERSION) $(RUN_ID_ARG) $(PUBLISH_ARGS)
 
 # Variante poly (M7, Deno en M9): mismo Dockerfile, marcador `kernels_variant`
 # sólo dentro del zip; la capa condicional instala el kernel bash y Deno
@@ -263,14 +269,14 @@ image-zip-poly: build image-licenses
 	python scripts/image_zip.py image $(IMAGE_ZIP_POLY) --variant poly
 
 image-publish-poly: require-bucket image-zip-poly
-	$(PY) python scripts/publish_image.py --artifact $(IMAGE_ZIP_POLY) --variant poly --bucket $(BUCKET) --base-image-version $(BASE_IMAGE_VERSION) $(PUBLISH_ARGS)
+	$(PY) python scripts/publish_image.py --artifact $(IMAGE_ZIP_POLY) --variant poly --bucket $(BUCKET) --base-image-version $(BASE_IMAGE_VERSION) $(RUN_ID_ARG) $(PUBLISH_ARGS)
 
 # Variante con capabilities (mismo zip que image-publish, imagen aparte
 # `rayito-base-caps` con additionalOsCapabilities ALL): rayd instala en el
 # arranque la ruta de política (`ip rule uidrange` + blackhole) que bloquea
 # IMDS para todo uid distinto de 0.
 image-publish-caps: require-bucket image-zip
-	$(PY) python scripts/publish_image.py --artifact $(IMAGE_ZIP) --os-capabilities ALL --image-name rayito-base-caps --bucket $(BUCKET) --base-image-version $(BASE_IMAGE_VERSION) $(MOUNT_ENV) $(PUBLISH_ARGS)
+	$(PY) python scripts/publish_image.py --artifact $(IMAGE_ZIP) --os-capabilities ALL --image-name rayito-base-caps --bucket $(BUCKET) --base-image-version $(BASE_IMAGE_VERSION) $(MOUNT_ENV) $(RUN_ID_ARG) $(PUBLISH_ARGS)
 
 # Variante caps con amazon-efs-utils (m15-efs-volumes, `volumes=`): mismo
 # Dockerfile, marcador `efs_variant` sólo dentro del zip (`--with-efs`); la capa
@@ -283,7 +289,7 @@ image-zip-efs: build image-licenses
 	python scripts/image_zip.py image $(IMAGE_ZIP_EFS) --with-efs
 
 image-publish-caps-efs: require-bucket image-zip-efs
-	$(PY) python scripts/publish_image.py --artifact $(IMAGE_ZIP_EFS) --with-efs --os-capabilities ALL --bucket $(BUCKET) --base-image-version $(BASE_IMAGE_VERSION) $(MOUNT_ENV) $(PUBLISH_ARGS)
+	$(PY) python scripts/publish_image.py --artifact $(IMAGE_ZIP_EFS) --with-efs --os-capabilities ALL --bucket $(BUCKET) --base-image-version $(BASE_IMAGE_VERSION) $(MOUNT_ENV) $(RUN_ID_ARG) $(PUBLISH_ARGS)
 
 # Borra versiones antiguas de rayito-base de una en una (espera a que la
 # imagen salga de UPDATING/DELETING entre borrados). Primero `--dry-run`.
