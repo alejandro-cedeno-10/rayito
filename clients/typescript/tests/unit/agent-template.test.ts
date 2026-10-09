@@ -21,7 +21,10 @@ import {
 } from "../../src/index.js";
 import {
   AGENT_DEEPAGENTS_REQUIREMENTS_SHA256,
+  AGENT_KERNEL_WARMUP_MARKER_PATH,
   AGENT_OPENCODE_SHA256,
+  AGENT_PREFETCH_BUILD_MARKER_PATH,
+  AGENT_PREFETCH_BUILD_TIMEOUT_SECONDS,
   AGENT_RIPGREP_SHA256,
   AGENT_TEMPLATE_MANIFEST_SCHEMA,
 } from "../../src/limits.js";
@@ -30,10 +33,15 @@ const TESTDATA = join(import.meta.dirname, "..", "..", "..", "..", "testdata", "
 
 interface TemplateCase {
   readonly name: string;
-  readonly options: { runtimes?: AgentTemplateRuntime[]; prefetch?: boolean };
+  readonly options: {
+    runtimes?: AgentTemplateRuntime[];
+    prefetch?: boolean;
+    kernelWarmup?: boolean;
+  };
   readonly dockerfile: string;
   readonly manifest: unknown;
   readonly startCmd: string | null;
+  readonly readyCmd: string | null;
   readonly contextFiles: string[];
 }
 
@@ -59,6 +67,7 @@ describe("AgentTemplate", () => {
       expect(template.toDockerfile(), c.name).toBe(c.dockerfile);
       expect(template.manifest(), c.name).toEqual(c.manifest);
       expect(template.toTemplate().spec.start?.startCmd ?? null, c.name).toBe(c.startCmd);
+      expect(template.toTemplate().spec.start?.readyCmd ?? null, c.name).toBe(c.readyCmd);
       expect(Object.keys(template.contextFiles()).sort(), c.name).toEqual(c.contextFiles);
     }
   });
@@ -90,6 +99,19 @@ describe("AgentTemplate", () => {
     for (const options of bad) {
       expect(() => new AgentTemplate(options as never)).toThrow(InvalidArgumentError);
     }
+  });
+
+  test("the kernel warm-up is off by default", () => {
+    const marker = `> ${AGENT_KERNEL_WARMUP_MARKER_PATH}`;
+    expect(new AgentTemplate().toDockerfile()).toContain(marker);
+    expect(new AgentTemplate({ kernelWarmup: true }).toDockerfile()).not.toContain(marker);
+  });
+
+  test("the build snapshot waits for the prefetch warm", () => {
+    const start = new AgentTemplate().toTemplate().spec.start;
+    expect(start?.startCmd.endsWith(` ${AGENT_PREFETCH_BUILD_MARKER_PATH}`)).toBe(true);
+    expect(start?.readyCmd).toBe(`test -e ${AGENT_PREFETCH_BUILD_MARKER_PATH}`);
+    expect(start?.readyPoll?.timeoutSeconds).toBe(AGENT_PREFETCH_BUILD_TIMEOUT_SECONDS);
   });
 
   test("prefetch off has no startCmd nor script", () => {

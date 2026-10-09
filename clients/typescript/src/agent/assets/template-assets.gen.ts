@@ -1918,12 +1918,20 @@ export const PREFETCH_SCRIPT = `#!/bin/bash
 # que la lectura secuencial del demonio le adelanta páginas en vez de
 # quitárselas. Sin /proc/diskstats legible (fuera de Linux) no espera.
 #
-# Uso: rayito-agent-prefetch MANIFIESTO SALTO INTERVALO
+# Antes del snapshot (en el build), con un cuarto argumento, lee una vez los
+# ficheros de \`prefetch_paths\` sin esperar a que el guest se calme y crea ese
+# fichero de marca; el \`ready_cmd\` de la plantilla espera a la marca, así
+# que el snapshot de memoria ya lleva esas páginas (AWS_API_NOTES, Q156).
+# No importa deepagents ahí: sus módulos inflarían el snapshot de memoria
+# para el runtime que no es el de por defecto.
+#
+# Uso: rayito-agent-prefetch MANIFIESTO SALTO INTERVALO [MARCA_DE_BUILD]
 set -u
 
 manifest="$1"
 jump="$2"
 interval="$3"
+build_marker="\${4:-}"
 
 DISKSTATS=/proc/diskstats
 # Segundos entre muestras de E/S en curso.
@@ -1958,8 +1966,7 @@ settle() {
   done
 }
 
-prefetch() {
-  settle
+read_paths() {
   python3 -c '
 import json, sys
 with open(sys.argv[1], encoding="utf-8") as handle:
@@ -1969,11 +1976,25 @@ for path in manifest.get("prefetch_paths", []):
 ' "$manifest" 2>/dev/null | while IFS= read -r path; do
     nice -n 19 cat -- "$path" >/dev/null 2>&1
   done
+}
+
+import_deepagents() {
   if [ -x /opt/agents/deepagents/bin/python ]; then
     nice -n 19 /opt/agents/deepagents/bin/python -c 'import deepagents, langchain_aws' \\
       >/dev/null 2>&1
   fi
 }
+
+prefetch() {
+  settle
+  read_paths
+  import_deepagents
+}
+
+if [ -n "$build_marker" ]; then
+  read_paths
+  : > "$build_marker"
+fi
 
 last="$(date +%s)"
 while true; do

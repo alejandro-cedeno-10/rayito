@@ -263,7 +263,7 @@ tiempos (**List**), porque Cost Explorer llega un día tarde.
 | Plaza de pool ociosa sin agente (base) | ≈ **$0,60/mes** (tabla de arriba) |
 | Plaza de pool con calentamiento (opción C, [Pool](pool.md#calentamiento-warmup)) | ≈ **$0,64/mes** |
 | Sandbox pausado entre turnos (opción B) | un ciclo suspend/resume de ≈ 0,92–1,2 GB ≈ **$0,005–0,006** + ≈ $0,0001/h guardado |
-| Versión de imagen `rayito-agent` | código 2,10 GB + memoria 0,92 GB + disco 0,04 GB ≈ 3,1 GB × $0,08/GB-mes × 7/30 ≈ **$0,057/semana** (mínimo una semana; [Templates de agente](funciones-opcionales/templates-de-agente.md)) |
+| Versión de imagen `rayito-agent` | código 2,10 GB + memoria 0,86 GB + disco 0,03 GB ≈ 3,0 GB × $0,08/GB-mes × 7/30 ≈ **$0,056/semana** (mínimo una semana; [Templates de agente](funciones-opcionales/templates-de-agente.md)) |
 
 Coste medido por escenario (VM + modelo, una respuesta corta de Claude
 Haiku 4.5 sin herramientas, p50 de n=5):

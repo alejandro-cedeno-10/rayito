@@ -152,3 +152,10 @@ export const AGENT_PREFETCH_RESTORE_JUMP_SECONDS = 30 as const;
 export const AGENT_PREFETCH_INTERVAL_SECONDS = 2 as const;
 export const AGENT_DEEPAGENTS_REQUIREMENTS_SHA256 =
   "b73cb891e585c59f532eed1bfe5cf2d903ab4585d50249ae6d3e3246a205a8a3" as const;
+
+export const AGENT_KERNEL_WARMUP_MARKER_PATH =
+  "/opt/rayito/sidecar/ipython/startup/warmup_variant" as const;
+export const AGENT_KERNEL_WARMUP_SLIM_VALUE = "slim" as const;
+
+export const AGENT_PREFETCH_BUILD_MARKER_PATH = "/tmp/rayito-agent-prefetch.ready" as const;
+export const AGENT_PREFETCH_BUILD_TIMEOUT_SECONDS = 300 as const;

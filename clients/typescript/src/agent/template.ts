@@ -18,9 +18,13 @@ import { join } from "node:path";
 import { InvalidArgumentError } from "../errors.js";
 import {
   AGENT_DEEPAGENTS_REQUIREMENTS_SHA256,
+  AGENT_KERNEL_WARMUP_MARKER_PATH,
+  AGENT_KERNEL_WARMUP_SLIM_VALUE,
   AGENT_MIN_MEMORY_MIB,
   AGENT_OPENCODE_SHA256,
   AGENT_OPENCODE_VERSION,
+  AGENT_PREFETCH_BUILD_MARKER_PATH,
+  AGENT_PREFETCH_BUILD_TIMEOUT_SECONDS,
   AGENT_PREFETCH_INTERVAL_SECONDS,
   AGENT_PREFETCH_RESTORE_JUMP_SECONDS,
   AGENT_PROTOCOL_VERSION,
@@ -31,6 +35,7 @@ import {
 } from "../limits.js";
 import type { BuildInfo, BuildOptions } from "../templates/build.js";
 import { Template } from "../templates/dsl.js";
+import { type ReadyCommand, waitForFile } from "../templates/ready-cmds.js";
 import { DEEPAGENTS_RUNNER_SHA256, DEEPAGENTS_RUNNER_SOURCE } from "./assets/deepagents-runner.js";
 import { DEEPAGENTS_REQUIREMENTS, PREFETCH_SCRIPT } from "./assets/template-assets.gen.js";
 import { DEEPAGENTS_RUNNER_PATH } from "./deepagents.js";
@@ -77,6 +82,7 @@ export interface AgentTemplateOptions {
   readonly base?: string | undefined;
   readonly runtimes?: readonly AgentTemplateRuntime[] | undefined;
   readonly prefetch?: boolean | undefined;
+  readonly kernelWarmup?: boolean | undefined;
   readonly memoryMib?: number | undefined;
   readonly baseVersion?: string | undefined;
 }
@@ -138,11 +144,31 @@ function smokeTest(runtimes: readonly AgentTemplateRuntime[]): string {
   return checks.join(" && ");
 }
 
-/** El `startCmd` del demonio de precarga, con sus tres argumentos. */
+/** Apaga el calentamiento del kernel de `runCode` (el marcador que lee
+ * `0004_warmup.py` del sidecar, el mismo que escribe `image_zip.py
+ * --variant slim`). */
+function slimKernelCmd(): string {
+  return (
+    `printf '%s\\n' ${AGENT_KERNEL_WARMUP_SLIM_VALUE} > ${AGENT_KERNEL_WARMUP_MARKER_PATH}` +
+    ` && chmod 0644 ${AGENT_KERNEL_WARMUP_MARKER_PATH}`
+  );
+}
+
+/** El `startCmd` del demonio de precarga, con sus cuatro argumentos: el
+ * cuarto le hace precargar una vez antes del snapshot del build. */
 export function prefetchStartCmd(): string {
   return (
     `${PREFETCH_SCRIPT_PATH} ${AGENT_TEMPLATE_MANIFEST_PATH}` +
-    ` ${AGENT_PREFETCH_RESTORE_JUMP_SECONDS} ${AGENT_PREFETCH_INTERVAL_SECONDS}`
+    ` ${AGENT_PREFETCH_RESTORE_JUMP_SECONDS} ${AGENT_PREFETCH_INTERVAL_SECONDS}` +
+    ` ${AGENT_PREFETCH_BUILD_MARKER_PATH}`
+  );
+}
+
+/** El `readyCmd` que retiene el snapshot del build hasta que el demonio
+ * terminó su precarga inicial. */
+export function prefetchReadyCmd(): ReadyCommand {
+  return waitForFile(AGENT_PREFETCH_BUILD_MARKER_PATH).timeout(
+    AGENT_PREFETCH_BUILD_TIMEOUT_SECONDS,
   );
 }
 
@@ -169,8 +195,16 @@ function sortKeys(value: unknown): unknown {
  *
  * `runtimes` elige qué se instala (`"opencode"`, `"deepagents"`);
  * `prefetch: true` hornea el demonio que precarga los binarios en la caché
- * de páginas tras cada restauración del snapshot. `memoryMib` por debajo de
- * `AGENT_MIN_MEMORY_MIB` (2048) es `InvalidArgumentError`.
+ * de páginas tras cada restauración del snapshot. `kernelWarmup: false`
+ * (por defecto) apaga el calentamiento del kernel de `runCode` (numpy,
+ * pandas, matplotlib, scipy y scikit-learn importados en cada arranque del
+ * kernel, también en la rotación que `Sandbox.create()` espera): medido en
+ * AWS (`AWS_API_NOTES.md` Q155), `create()` vuelve 4,4 s antes (p50) y el
+ * snapshot de memoria pesa 248 MB menos, con el mismo primer token del
+ * agente; a cambio, la primera celda de `runCode` que importe ese stack paga
+ * la importación. `kernelWarmup: true` deja el kernel como en la imagen
+ * base. `memoryMib` por debajo de `AGENT_MIN_MEMORY_MIB` (2048) es
+ * `InvalidArgumentError`.
  *
  * Coste y activación
  * -------------------
@@ -178,11 +212,12 @@ function sortKeys(value: unknown): unknown {
  * Recursos y llamadas AWS: los de `Template.build` (un build de imagen,
  *   `s3:PutObject` del contexto, una versión de imagen nueva); nada si no se
  *   construye.
- * Coste aproximado: build de 271–320 s (medido en AWS, 2026-10-07); la
- *   versión almacenada ≈ 3,1 GB (código 2,10 + memoria 0,92 + disco 0,04) por
- *   $0,08/GB-mes, con el mínimo de una semana ≈ $0,057/semana (≈ $0,25/mes)
- *   por versión, y cada lanzamiento lee el snapshot de memoria (≈ 0,92 GB por
- *   $0,00155/GB ≈ $0,0014). Estimación con precios de lista de Lambda
+ * Coste aproximado: build de 260–320 s (medido en AWS, 2026-10-07 y
+ *   2026-10-09); la versión almacenada ≈ 3,0 GB (código 2,10 + memoria 0,86 +
+ *   disco 0,03; memoria 0,92 con `kernelWarmup: true`) por $0,08/GB-mes, con
+ *   el mínimo de una semana ≈ $0,056/semana (≈ $0,24/mes) por versión, y cada
+ *   lanzamiento lee el snapshot de memoria (≈ 0,86 GB por $0,00155/GB ≈
+ *   $0,0013). Estimación con precios de lista de Lambda
  *   MicroVMs, us-east-1, consultados 2026-10-06
  *   (https://aws.amazon.com/lambda/pricing/).
  * IAM: la política `RayitoTemplateBuilder` (la misma que `Template.build`).
@@ -195,6 +230,7 @@ export class AgentTemplate {
   readonly base: string;
   readonly runtimes: readonly AgentTemplateRuntime[];
   readonly prefetch: boolean;
+  readonly kernelWarmup: boolean;
   readonly memoryMib: number;
   readonly baseVersion: string | undefined;
 
@@ -233,6 +269,7 @@ export class AgentTemplate {
     this.base = base;
     this.runtimes = Object.freeze(runtimes);
     this.prefetch = options.prefetch ?? true;
+    this.kernelWarmup = options.kernelWarmup ?? false;
     this.memoryMib = memoryMib;
     this.baseVersion = options.baseVersion;
   }
@@ -294,10 +331,13 @@ export class AgentTemplate {
         ` && chmod -R a+rX,go-w ${AGENT_INSTALL_DIR}` +
         (executables.length > 0 ? ` && chmod 0755 ${executables.join(" ")}` : ""),
     );
+    if (!this.kernelWarmup) {
+      tpl = tpl.runCmd(slimKernelCmd());
+    }
     tpl = tpl.setEnvs({ ...OPENCODE_FLAG_ENVS });
     tpl = tpl.runCmd(smokeTest(this.runtimes));
     if (this.prefetch) {
-      tpl = tpl.setStartCmd(prefetchStartCmd());
+      tpl = tpl.setStartCmd(prefetchStartCmd(), prefetchReadyCmd());
     }
     return tpl;
   }

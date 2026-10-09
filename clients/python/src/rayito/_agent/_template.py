@@ -27,9 +27,13 @@ from rayito._agent._opencode import OPENCODE_FLAG_ENVS
 from rayito._images import DEFAULT_BUILD_TIMEOUT_SECONDS
 from rayito._limits import (
     AGENT_DEEPAGENTS_REQUIREMENTS_SHA256,
+    AGENT_KERNEL_WARMUP_MARKER_PATH,
+    AGENT_KERNEL_WARMUP_SLIM_VALUE,
     AGENT_MIN_MEMORY_MIB,
     AGENT_OPENCODE_SHA256,
     AGENT_OPENCODE_VERSION,
+    AGENT_PREFETCH_BUILD_MARKER_PATH,
+    AGENT_PREFETCH_BUILD_TIMEOUT_SECONDS,
     AGENT_PREFETCH_INTERVAL_SECONDS,
     AGENT_PREFETCH_RESTORE_JUMP_SECONDS,
     AGENT_PROTOCOL_VERSION,
@@ -39,6 +43,7 @@ from rayito._limits import (
     AGENT_TEMPLATE_MANIFEST_SCHEMA,
 )
 from rayito._templates._dsl import AsyncTemplate, Template
+from rayito._templates._ready_cmds import ReadyCommand, wait_for_file
 from rayito.exceptions import InvalidArgumentException
 
 if TYPE_CHECKING:
@@ -153,11 +158,31 @@ def _smoke_test(runtimes: Sequence[str]) -> str:
     return " && ".join(checks)
 
 
+def _slim_kernel_cmd() -> str:
+    """Apaga el calentamiento del kernel de `run_code` (el marcador que lee
+    `0004_warmup.py` del sidecar, el mismo que escribe `image_zip.py
+    --variant slim`)."""
+    return (
+        f"printf '%s\\n' {AGENT_KERNEL_WARMUP_SLIM_VALUE} > {AGENT_KERNEL_WARMUP_MARKER_PATH}"
+        f" && chmod 0644 {AGENT_KERNEL_WARMUP_MARKER_PATH}"
+    )
+
+
 def prefetch_start_cmd() -> str:
-    """El `start_cmd` del demonio de precarga, con sus tres argumentos."""
+    """El `start_cmd` del demonio de precarga, con sus cuatro argumentos: el
+    cuarto le hace precargar una vez antes del snapshot del build."""
     return (
         f"{PREFETCH_SCRIPT_PATH} {AGENT_TEMPLATE_MANIFEST_PATH}"
         f" {AGENT_PREFETCH_RESTORE_JUMP_SECONDS} {AGENT_PREFETCH_INTERVAL_SECONDS}"
+        f" {AGENT_PREFETCH_BUILD_MARKER_PATH}"
+    )
+
+
+def prefetch_ready_cmd() -> ReadyCommand:
+    """El `ready_cmd` que retiene el snapshot del build hasta que el demonio
+    terminó su precarga inicial."""
+    return wait_for_file(AGENT_PREFETCH_BUILD_MARKER_PATH).timeout(
+        AGENT_PREFETCH_BUILD_TIMEOUT_SECONDS
     )
 
 
@@ -167,9 +192,16 @@ class AgentTemplate:
 
     `runtimes` elige qué se instala (`"opencode"`, `"deepagents"`);
     `prefetch=True` hornea el demonio que precarga los binarios en la caché
-    de páginas tras cada restauración del snapshot. `memory_mib` por debajo
-    de `AGENT_MIN_MEMORY_MIB` (2048, el RSS medido de OpenCode) es
-    `InvalidArgumentException`.
+    de páginas tras cada restauración del snapshot. `kernel_warmup=False`
+    (por defecto) apaga el calentamiento del kernel de `run_code` (numpy,
+    pandas, matplotlib, scipy y scikit-learn importados en cada arranque del
+    kernel, también en la rotación que `create()` espera): medido en AWS
+    (`AWS_API_NOTES.md` Q155), `create()` vuelve 4,4 s antes (p50) y el
+    snapshot de memoria pesa 248 MB menos, con el mismo primer token del
+    agente; a cambio, la primera celda de `run_code` que importe ese stack
+    paga la importación. `kernel_warmup=True` deja el kernel como en la
+    imagen base. `memory_mib` por debajo de `AGENT_MIN_MEMORY_MIB` (2048,
+    el RSS medido de OpenCode) es `InvalidArgumentException`.
 
     Coste y activación
     -------------------
@@ -178,11 +210,12 @@ class AgentTemplate:
     Recursos y llamadas AWS: los de `Template.build` (un build de imagen,
         `s3:PutObject` del contexto, una versión de imagen nueva); nada si
         no se construye.
-    Coste aproximado: build de 271-320 s (medido en AWS, 2026-10-07); la
-        versión almacenada ≈ 3,1 GB (código 2,10 + memoria 0,92 + disco
-        0,04) por $0,08/GB-mes, con el mínimo de una semana ≈
-        $0,057/semana (≈ $0,25/mes) por versión, y cada lanzamiento lee el
-        snapshot de memoria (≈ 0,92 GB por $0,00155/GB ≈ $0,0014).
+    Coste aproximado: build de 260-320 s (medido en AWS, 2026-10-07 y
+        2026-10-09); la versión almacenada ≈ 3,0 GB (código 2,10 + memoria
+        0,86 + disco 0,03; memoria 0,92 con `kernel_warmup=True`) por
+        $0,08/GB-mes, con el mínimo de una semana ≈ $0,056/semana
+        (≈ $0,24/mes) por versión, y cada lanzamiento lee el snapshot de
+        memoria (≈ 0,86 GB por $0,00155/GB ≈ $0,0013).
         Estimación con precios de lista de Lambda MicroVMs, us-east-1,
         consultados 2026-10-06 (https://aws.amazon.com/lambda/pricing/).
     IAM: la política `RayitoTemplateBuilder` (la misma que `Template.build`).
@@ -195,6 +228,7 @@ class AgentTemplate:
     base: str = DEFAULT_AGENT_TEMPLATE_BASE
     runtimes: tuple[str, ...] = AGENT_TEMPLATE_RUNTIMES
     prefetch: bool = True
+    kernel_warmup: bool = False
     memory_mib: int = AGENT_MIN_MEMORY_MIB
     base_version: str | None = None
 
@@ -277,10 +311,12 @@ class AgentTemplate:
             f" && chmod -R a+rX,go-w {AGENT_INSTALL_DIR}"
             + (f" && chmod 0755 {' '.join(executables)}" if executables else "")
         )
+        if not self.kernel_warmup:
+            tpl = tpl.run_cmd(_slim_kernel_cmd())
         tpl = tpl.set_envs(dict(OPENCODE_FLAG_ENVS))
         tpl = tpl.run_cmd(_smoke_test(self.runtimes))
         if self.prefetch:
-            tpl = tpl.set_start_cmd(prefetch_start_cmd())
+            tpl = tpl.set_start_cmd(prefetch_start_cmd(), prefetch_ready_cmd())
         return tpl
 
     def to_dockerfile(self) -> str:
@@ -361,6 +397,7 @@ __all__ = [
     "AgentTemplate",
     "AsyncAgentTemplate",
     "deepagents_requirements",
+    "prefetch_ready_cmd",
     "prefetch_script",
     "prefetch_start_cmd",
 ]

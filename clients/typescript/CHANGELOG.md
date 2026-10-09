@@ -6,6 +6,22 @@ versionado [SemVer](https://semver.org/lang/es/).
 
 ## [Unreleased]
 
+### Cambiado
+
+- **`AgentTemplate` arranca antes** (`ai-agent-first-start`). Dos cambios en
+  la imagen que construye, medidos en AWS real (`AWS_API_NOTES.md` Q155 y
+  Q156): `kernelWarmup: false` por defecto (opción nueva) escribe el
+  marcador `slim` del sidecar, así que el kernel de `runCode` ya no importa
+  numpy, pandas, matplotlib, scipy y scikit-learn en cada arranque, y el
+  demonio de prefetch lee una vez los binarios de OpenCode y ripgrep antes
+  del snapshot del build, con un `ready_cmd` que lo espera, para que el
+  snapshot de memoria ya los lleve. `create()` vuelve antes (6,4 s frente a
+  19,1 s de mediana en la misma tanda) y el snapshot de memoria pesa 62 MB
+  menos; el primer token mejora poco y con mucha dispersión (20,9 s frente a
+  23,7 s de mediana). Las imágenes ya construidas no cambian; en una imagen
+  nueva, la primera celda de `runCode` que importe el stack científico paga
+  la importación (`kernelWarmup: true` lo evita).
+
 ## [0.10.0] - 2026-10-08
 
 ### Añadido

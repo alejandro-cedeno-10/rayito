@@ -570,10 +570,11 @@ mismo. Riesgos y mitigaciones en
 
 ## Arranque rápido
 
-Todo lo de esta sección es **opcional**. El primer `exec` de OpenCode tras
-`create()` es lento porque lee el binario desde el disco de la VM recién
-restaurada (Q142): el primer token de una VM nueva llega en ≈ 13–28 s
-según la tanda (tabla de abajo). **Para la mayoría de los casos no hace
+Todo lo de esta sección es **opcional**. Una VM recién restaurada lee
+despacio cada página de código la primera vez, durante una ventana que va
+de unos 10 a más de 20 s según la tanda (Q142, Q155): el primer `exec` de
+OpenCode tras `create()` paga esa lectura, y el primer token de una VM
+nueva llega en ≈ 12–24 s de mediana según la tanda (tablas de abajo). **Para la mayoría de los casos no hace
 falta ningún pool**: ese coste se paga una vez por conversación, y los
 turnos siguientes van sobre la misma VM.
 
@@ -783,7 +784,7 @@ ejemplo). Los importes de cada una están en
 
 | Opción | Qué hace | Cuándo usarla | Coste por encima de la VM |
 |---|---|---|---|
-| **A. Prefetch** | `AgentTemplate(prefetch=True)` (por defecto) hornea un demonio que, tras cada restauración del snapshot, trae el binario a la caché de páginas; en cualquier imagen, `sbx.agent.prepare()` hace lo mismo a mano | siempre que construyas la imagen con `AgentTemplate`; acorta la primera vuelta de cada VM nueva | ≈ $0 |
+| **A. Prefetch** | `AgentTemplate(prefetch=True)` (por defecto) hornea el binario de OpenCode en el snapshot de memoria y un demonio que, tras cada restauración, lo trae a la caché de páginas; además, la plantilla no calienta el kernel de `run_code` (`kernel_warmup=False`). En cualquier imagen, `sbx.agent.prepare()` hace el calentamiento a mano | siempre que construyas la imagen con `AgentTemplate`; acorta la primera vuelta de cada VM nueva | ≈ $0: el snapshot de memoria queda por debajo del de antes |
 | **B. `pause()` entre turnos** | la VM se suspende con todo en memoria y `connect()` (o cualquier llamada, con auto-resume) la reanuda | **el caso general**: una conversación de menos de 8 h desde `create()` | un ciclo suspend/resume por pausa + almacenamiento mientras está pausada |
 | **C. Pool con `warmup`** | `PoolConfig(warmup=agent_pool_warmup("opencode"))` corre el binario en cada plaza antes de aparcarla | sólo si llegan muchas conversaciones **nuevas** y el primer mensaje tiene que ser rápido | un poco más que una plaza de pool base, por plaza ociosa y mes |
 | **Sin pool** | `Sandbox.create(...)` y `sbx.agent.run(...)`, sin calentamiento | conversaciones nuevas cuyo primer mensaje puede tardar lo de una VM nueva | nada además de la VM |
@@ -824,6 +825,40 @@ cómputo hasta la respuesta) y su modelo; el desglose por escenario está en
       de caché; [Precios](../cost.md#coste-de-la-vm-con-fast-start)). Tras
       `create()`, su primer token llega en 7,5 s de mediana frente a 5,0 s
       de OpenCode en la misma imagen.
+
+!!! success "Medido en AWS real (2026-10-09, us-east-1, Claude Haiku 4.5, n=6)"
+    Misma prueba, con cada fase cronometrada (`AWS_API_NOTES.md` Q155 y
+    Q156; imágenes intercaladas, tras dos lanzamientos desechables por
+    versión). Con n=6, la última columna es el máximo:
+
+    | Tanda | Imagen de `AgentTemplate` | `create()` p50 | Primer token p50 | Primer token máx. | Snapshot de memoria |
+    |---|---|---|---|---|---|
+    | 1 | la de antes (kernel calentado) | 12,0 s | 16,4 s | 23,1 s | 920 MB |
+    | 1 | sin calentar el kernel | 7,65 s | 16,3 s | 28,8 s | 671 MB |
+    | 2 | sin calentar el kernel | 8,8 s | 15,6 s | 21,2 s | 671 MB |
+    | 2 | sin calentar el kernel, con el binario y deepagents horneados (prueba) | 6,3 s | 12,4 s | 13,6 s | 1 030 MB |
+    | 3 | la de antes (kernel calentado; n=4) | 19,1 s | 23,7 s | 27,0 s | 920 MB |
+    | 3 | **la de ahora**: sin calentar el kernel, con el binario horneado | 6,4 s | 20,9 s | 34,9 s | 858 MB |
+
+    - **Dónde se va el tiempo**: en el cliente, resolver el ARN de un
+      nombre de imagen ≈ 1 s (sólo el primer `create()` del proceso; pasa el
+      ARN para ahorrártelo), `run-microvm` ≈ 0,5 s, el secreto de la
+      pasarela ≈ 0,35 s, `Configure` ≈ 0,7 s y escribir la configuración
+      de OpenCode ≈ 0,2 s. OpenCode arranca en ≈ 1,3 s con la caché
+      caliente, y una segunda vuelta en la misma VM da el primer token en
+      ≈ 3 s. El resto es la ventana lenta tras restaurar.
+    - **Quitar el calentamiento del kernel** adelanta `create()` (4,4 s de
+      mediana en la tanda 1, 12,7 s en la 3) pero, por sí solo, no el
+      primer token: el primer `exec` de OpenCode paga la ventana que antes
+      pagaba el kernel.
+    - **Hornear el binario en el snapshot** adelantó la mediana del primer
+      token frente al control de su misma tanda (−3,2 s en la 2, −2,8 s en
+      la 3), pero la dispersión es grande y la ventana lenta cambia mucho
+      de una tanda a otra (la imagen de antes pasó de 16,4 s a 23,7 s): con
+      n=6 no es una mejora garantizada. Lo seguro es que `create()` vuelve
+      antes y que el snapshot de memoria pesa 62 MB menos que antes.
+    - **Leer nada más restaurar**, sin esperar a que el guest se calme,
+      sigue sin servir: `create()` 15–26 s.
 
 !!! warning "Los primeros lanzamientos de una versión nueva son lentos"
     Justo después de publicar una versión de imagen, sus primeros
