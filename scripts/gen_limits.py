@@ -184,6 +184,29 @@ GROUPS: tuple[tuple[str, ...], ...] = (
         "agentPrefetchIntervalSeconds",
         "agentDeepagentsRequirementsSha256",
     ),
+    (
+        # ai-agent-first-start: the agent template turns the kernel
+        # warm-up off by writing `agentKernelWarmupSlimValue` to the marker
+        # the sidecar's startup reads (`kernel-sidecar/ipython/startup/
+        # 0004_warmup.py`, copied to /opt/rayito/sidecar/ by image/Dockerfile;
+        # the same marker `image_zip.py --variant slim` writes). Measured on
+        # AWS (AWS_API_NOTES Q155): `create()` p50 -4.4 s and memory
+        # snapshot -248 MB. Not AWS properties.
+        "agentKernelWarmupMarkerPath",
+        "agentKernelWarmupSlimValue",
+    ),
+    (
+        # ai-agent-first-start: before the build snapshot the prefetch
+        # daemon (its fourth argument) reads what it prefetches after a
+        # restore and then creates `agentPrefetchBuildMarkerPath`; the
+        # template's `ready_cmd` waits for that file for at most
+        # `agentPrefetchBuildTimeoutSeconds` (under the 600 s
+        # `readyTimeoutInSeconds` of the image hooks), so the memory
+        # snapshot already holds those pages (AWS_API_NOTES Q156). Not AWS
+        # properties.
+        "agentPrefetchBuildMarkerPath",
+        "agentPrefetchBuildTimeoutSeconds",
+    ),
 )
 
 PYTHON_HEADER = '''"""Límites y cuotas de Lambda MicroVMs que el SDK valida en cliente.

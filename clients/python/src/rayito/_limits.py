@@ -156,3 +156,9 @@ AGENT_PREFETCH_INTERVAL_SECONDS: Final = 2
 AGENT_DEEPAGENTS_REQUIREMENTS_SHA256: Final = (
     "b73cb891e585c59f532eed1bfe5cf2d903ab4585d50249ae6d3e3246a205a8a3"
 )
+
+AGENT_KERNEL_WARMUP_MARKER_PATH: Final = "/opt/rayito/sidecar/ipython/startup/warmup_variant"
+AGENT_KERNEL_WARMUP_SLIM_VALUE: Final = "slim"
+
+AGENT_PREFETCH_BUILD_MARKER_PATH: Final = "/tmp/rayito-agent-prefetch.ready"
+AGENT_PREFETCH_BUILD_TIMEOUT_SECONDS: Final = 300

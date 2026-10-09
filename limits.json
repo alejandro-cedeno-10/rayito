@@ -114,5 +114,9 @@
   "defaultWarmupStepTimeoutSeconds": 120,
   "agentPrefetchRestoreJumpSeconds": 30,
   "agentPrefetchIntervalSeconds": 2,
-  "agentDeepagentsRequirementsSha256": "b73cb891e585c59f532eed1bfe5cf2d903ab4585d50249ae6d3e3246a205a8a3"
+  "agentDeepagentsRequirementsSha256": "b73cb891e585c59f532eed1bfe5cf2d903ab4585d50249ae6d3e3246a205a8a3",
+  "agentKernelWarmupMarkerPath": "/opt/rayito/sidecar/ipython/startup/warmup_variant",
+  "agentKernelWarmupSlimValue": "slim",
+  "agentPrefetchBuildMarkerPath": "/tmp/rayito-agent-prefetch.ready",
+  "agentPrefetchBuildTimeoutSeconds": 300
 }

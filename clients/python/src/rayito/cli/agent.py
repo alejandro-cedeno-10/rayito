@@ -1,6 +1,7 @@
 """`rayito agent template build` (`ai-agent-fast-start`): construye la
 imagen de `AgentTemplate` con los runtimes del agente de IA. Mismas banderas
-que `rayito template build` más `--no-deepagents` y `--no-prefetch`; sin
+que `rayito template build` más `--no-deepagents`, `--no-prefetch` y
+`--kernel-warmup`; sin
 fichero de spec, porque la receta es la del SDK."""
 
 from __future__ import annotations
@@ -29,12 +30,23 @@ agent_app.add_typer(agent_template_app, name="template")
 
 
 def agent_template_of(
-    *, name: str, base: str, memory_mb: int, deepagents: bool, prefetch: bool
+    *,
+    name: str,
+    base: str,
+    memory_mb: int,
+    deepagents: bool,
+    prefetch: bool,
+    kernel_warmup: bool,
 ) -> AgentTemplate:
     """La `AgentTemplate` que piden las banderas de la CLI."""
     runtimes = tuple(r for r in AGENT_TEMPLATE_RUNTIMES if deepagents or r != "deepagents")
     return AgentTemplate(
-        name=name, base=base, runtimes=runtimes, prefetch=prefetch, memory_mib=memory_mb
+        name=name,
+        base=base,
+        runtimes=runtimes,
+        prefetch=prefetch,
+        kernel_warmup=kernel_warmup,
+        memory_mib=memory_mb,
     )
 
 
@@ -56,6 +68,16 @@ def build_command(
         bool,
         typer.Option("--prefetch/--no-prefetch", help="Hornea el demonio de precarga."),
     ] = True,
+    kernel_warmup: Annotated[
+        bool,
+        typer.Option(
+            "--kernel-warmup/--no-kernel-warmup",
+            help=(
+                "Mantiene el calentamiento del kernel de run_code (numpy, pandas...). "
+                "Apagado por defecto: create() vuelve antes y el snapshot pesa menos."
+            ),
+        ),
+    ] = False,
     force: Annotated[
         bool, typer.Option("--force", help="Reconstruye aunque nada cambiara.")
     ] = False,
@@ -66,14 +88,19 @@ def build_command(
     """Construye la imagen --name con OpenCode, ripgrep y (salvo
     --no-deepagents) deepagents, todo fijado por hash.
 
-    Cada versión nueva cuesta almacenamiento de snapshot (≈ 3,1 GB, mínimo una
-    semana: ≈ $0,057/semana); las versiones se borran con `rayito image`.
+    Cada versión nueva cuesta almacenamiento de snapshot (≈ 3,0 GB, mínimo una
+    semana: ≈ $0,056/semana); las versiones se borran con `rayito image`.
     """
     clients = clients_of(ctx)
     emit_json_mode = json_mode(ctx)
     try:
         template = agent_template_of(
-            name=name, base=base, memory_mb=memory_mb, deepagents=deepagents, prefetch=prefetch
+            name=name,
+            base=base,
+            memory_mb=memory_mb,
+            deepagents=deepagents,
+            prefetch=prefetch,
+            kernel_warmup=kernel_warmup,
         )
         info = template.build(
             bucket=bucket,

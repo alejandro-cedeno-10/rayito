@@ -31,6 +31,7 @@ y el prefetch. El ejemplo los escribe para que se vean:
         base="rayito-base-caps",
         runtimes=("opencode", "deepagents"),
         prefetch=True,
+        kernel_warmup=False,
         memory_mib=2048,
     ).build(bucket="amzn-s3-demo-bucket", on_build_logs=print)
     print(info)
@@ -57,6 +58,7 @@ y el prefetch. El ejemplo los escribe para que se vean:
       base: "rayito-base-caps",
       runtimes: ["opencode", "deepagents"],
       prefetch: true,
+      kernelWarmup: false,
       memoryMib: 2048,
     }).build({ bucket: "amzn-s3-demo-bucket" });
     console.log(info);
@@ -75,6 +77,7 @@ y el prefetch. El ejemplo los escribe para que se vean:
 | `base_version` / `baseVersion` | — | la última | versión de la imagen base |
 | `runtimes` | `--deepagents` / `--no-deepagents` | `("opencode", "deepagents")` | qué se instala; la CLI siempre instala OpenCode |
 | `prefetch` | `--prefetch` / `--no-prefetch` | `True` | hornea el demonio de [prefetch](#prefetch) |
+| `kernel_warmup` / `kernelWarmup` | `--kernel-warmup` / `--no-kernel-warmup` | `False` | deja el [calentamiento del kernel](#kernel-de-run_code-sin-calentar) de `run_code` como en la imagen base |
 | `memory_mib` / `memoryMib` | `--memory-mb` | 2048 (mínimo) | memoria de la imagen |
 
 `build()` acepta `bucket` (obligatorio), `force`, `timeout` (segundos;
@@ -97,14 +100,15 @@ documenta que el guest ve más memoria que la configurada).
       necesita salida a Internet para GitHub y PyPI; el sandbox que arranca
       desde la imagen resultante, no).
     - **Almacenamiento de la versión**: tres snapshots medidos, código
-      2,10 GB + memoria 0,92 GB + disco 0,04 GB ≈ **3,1 GB** × $0,08/GB-mes,
+      2,10 GB + memoria 0,86 GB + disco 0,03 GB ≈ **3,0 GB** × $0,08/GB-mes,
       con el mínimo de una semana por versión de imagen ⇒ ≈
-      **$0,057/semana** (≈ $0,25/mes) por versión. Asume que el
+      **$0,056/semana** (≈ $0,24/mes) por versión (medido 2026-10-09, Q156;
+      con `kernel_warmup=True` la memoria vuelve a 0,92 GB). Asume que el
       almacenamiento es la suma de los tres snapshots. Precios de lista,
       us-east-1, consultados 2026-10-06: ver
       [Precios](../cost.md#coste-de-la-vm-con-fast-start).
-    - **Lanzamiento**: lectura del snapshot de memoria (0,92 GB)
-      ≈ **$0,0014**, igual que cualquier otra imagen.
+    - **Lanzamiento**: lectura del snapshot de memoria (0,86 GB)
+      ≈ **$0,0013**.
     - **IAM**: `RayitoTemplateBuilder`, la misma política que
       [Templates declarativos](templates.md) (pila `templates`).
     - **Cómo apagarla**: no construyas el template; borra sus versiones
@@ -133,8 +137,14 @@ compara con él.
 
 ## Prefetch
 
-Con `prefetch=True` (por defecto), el template añade un `start_cmd` que,
-desde el arranque, detecta si la VM viene de restaurar un snapshot (un
+Con `prefetch=True` (por defecto), el template añade un `start_cmd` que
+hace dos cosas. En el build, antes del snapshot, lee una vez los binarios
+de OpenCode y ripgrep, y el `ready_cmd` del template retiene el snapshot
+hasta que termina: así el snapshot de memoria ya lleva esas páginas y el
+primer `exec` tras `create()` no las lee del disco de código. Los módulos
+de deepagents no se hornean (inflarían el snapshot para el runtime que no
+es el de por defecto). Y desde el arranque detecta si la VM viene de
+restaurar un snapshot (un
 salto de reloj mayor que `AGENT_PREFETCH_RESTORE_JUMP_SECONDS`). Entonces
 espera a que el guest lleve 1 s seguido sin E/S en curso (como mucho 60 s)
 y precalienta con prioridad baja (`nice -n 19`) el binario de OpenCode y,
@@ -166,11 +176,42 @@ Cuándo conviene cada opción de arranque rápido:
     lentos (`create()` de 26 a 65 s): no midas justo después del build.
     Detalle en `AWS_API_NOTES.md` Q146 y Q150.
 
-## `--no-deepagents`, `--no-prefetch`
+!!! success "Medido en AWS real (2026-10-09, n=6, `AWS_API_NOTES.md` Q156)"
+    Con el binario horneado en el snapshot y el kernel sin calentar, el
+    snapshot de memoria pesa 858 MB (62 MB menos que antes) y `create()`
+    vuelve en 6,4 s de mediana frente a 19,1 s de la imagen de antes en la
+    misma tanda. El primer token adelantó su mediana 2,8 s (20,9 s frente
+    a 23,7 s) y, en otra tanda con deepagents también horneado, 3,2 s, pero
+    con mucha dispersión: la ventana lenta tras restaurar cambia mucho de
+    una tanda a otra.
+
+## Kernel de `run_code` sin calentar
+
+La imagen base calienta el kernel de `run_code` cada vez que arranca,
+también en la rotación que `create()` espera: importa numpy, pandas,
+matplotlib, scipy y scikit-learn para que la primera celda que los use
+sea rápida. Un sandbox de agente rara vez lo necesita, así que
+`AgentTemplate` lo apaga por defecto (`kernel_warmup=False`): escribe el
+mismo marcador `slim` que `rayito image zip --variant slim`. `run_code`
+sigue funcionando igual; sólo la primera celda que importe ese stack paga
+la importación. Con `kernel_warmup=True` (`--kernel-warmup`) el kernel queda
+como en la imagen base.
+
+!!! success "Medido en AWS real (2026-10-09, n=6, `AWS_API_NOTES.md` Q155)"
+    Sin el calentamiento, `create()` vuelve 4,4 s antes (p50 7,65 s frente
+    a 12,0 s) y el snapshot de memoria pesa 248 MB menos (671 MB frente a
+    920 MB), así que cada lanzamiento lee menos y la versión cuesta menos
+    de almacenar. Por sí solo no adelanta el primer token (16,3 s frente a
+    16,4 s): el primer `exec` de OpenCode paga la ventana lenta tras la
+    restauración que antes pagaba el kernel. Lo que sí lo adelanta es
+    hornear el binario en el snapshot ([Prefetch](#prefetch)).
+
+## `--no-deepagents`, `--no-prefetch`, `--kernel-warmup`
 
 ```bash
 rayito agent template build --bucket amzn-s3-demo-bucket --no-deepagents   # sólo OpenCode: salta el venv (~409 MB menos)
 rayito agent template build --bucket amzn-s3-demo-bucket --no-prefetch      # sin el start_cmd: el primer exec paga siempre el coste de disco
+rayito agent template build --bucket amzn-s3-demo-bucket --kernel-warmup    # kernel de run_code calentado, como en la imagen base
 ```
 
 ## Ver también

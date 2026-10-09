@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import subprocess
 import time
 from pathlib import Path
@@ -20,12 +21,17 @@ from rayito import AgentTemplate, AsyncAgentTemplate, Template
 from rayito._agent import _template
 from rayito._limits import (
     AGENT_DEEPAGENTS_REQUIREMENTS_SHA256,
+    AGENT_KERNEL_WARMUP_MARKER_PATH,
+    AGENT_KERNEL_WARMUP_SLIM_VALUE,
     AGENT_OPENCODE_SHA256,
     AGENT_OPENCODE_VERSION,
+    AGENT_PREFETCH_BUILD_MARKER_PATH,
+    AGENT_PREFETCH_BUILD_TIMEOUT_SECONDS,
     AGENT_RIPGREP_SHA256,
     AGENT_TEMPLATE_MANIFEST_SCHEMA,
 )
 from rayito._templates._dsl import AsyncTemplate
+from rayito.cli._artifact import WARMUP_MARKER_ENTRY
 from rayito.exceptions import InvalidArgumentException
 
 SENTINEL = object()
@@ -36,8 +42,16 @@ VECTORS = json.loads(
 )["cases"]
 
 
+def _snake_case(name: str) -> str:
+    return re.sub(r"(?<!^)(?=[A-Z])", "_", name).lower()
+
+
 def _from_options(options: dict[str, Any]) -> AgentTemplate:
-    kwargs: dict[str, Any] = {k: tuple(v) if isinstance(v, list) else v for k, v in options.items()}
+    """Las opciones del vector (en camelCase, las de TypeScript) como
+    argumentos de `AgentTemplate`."""
+    kwargs: dict[str, Any] = {
+        _snake_case(k): tuple(v) if isinstance(v, list) else v for k, v in options.items()
+    }
     return AgentTemplate(**kwargs)
 
 
@@ -48,6 +62,7 @@ def test_shared_vectors(case: dict[str, Any]) -> None:
     assert template.manifest() == case["manifest"]
     start = template.to_template().spec.start
     assert (start.start_cmd if start else None) == case["startCmd"]
+    assert (start.ready_cmd if start else None) == case["readyCmd"]
     assert sorted(template.context_files()) == case["contextFiles"]
 
 
@@ -85,6 +100,29 @@ def test_manifest_schema_and_prefetch_paths() -> None:
     assert manifest["prefetch_paths"] == ["/opt/agents/bin/opencode", "/opt/agents/bin/rg"]
     only = AgentTemplate(runtimes=("opencode",)).manifest()
     assert only["deepagents"] is None
+
+
+def test_kernel_warmup_is_off_by_default() -> None:
+    """Por defecto la plantilla escribe el marcador `slim` que lee el
+    arranque del kernel; `kernel_warmup=True` no lo toca."""
+    marker = f"> {AGENT_KERNEL_WARMUP_MARKER_PATH}"
+    assert marker in AgentTemplate().to_dockerfile()
+    assert marker not in AgentTemplate(kernel_warmup=True).to_dockerfile()
+
+
+def test_kernel_warmup_marker_is_the_one_the_sidecar_reads() -> None:
+    """El marcador está donde `image/Dockerfile` copia el sidecar y con el
+    nombre y el valor que lee `0004_warmup.py` (los mismos que escribe
+    `image_zip.py --variant slim`)."""
+    repo = Path(__file__).parents[4]
+    dockerfile = (repo / "image" / "Dockerfile").read_text(encoding="utf-8")
+    assert "COPY kernel-sidecar/ /opt/rayito/sidecar/" in dockerfile
+    relative = WARMUP_MARKER_ENTRY.removeprefix("kernel-sidecar/")
+    assert f"/opt/rayito/sidecar/{relative}" == AGENT_KERNEL_WARMUP_MARKER_PATH
+    startup = (repo / "kernel-sidecar" / "ipython" / "startup" / "0004_warmup.py").read_text(
+        encoding="utf-8"
+    )
+    assert f'== "{AGENT_KERNEL_WARMUP_SLIM_VALUE}"' in startup
 
 
 def test_prefetch_off_has_no_start_cmd_nor_script() -> None:
@@ -155,7 +193,9 @@ async def test_async_build_uses_async_template(monkeypatch: pytest.MonkeyPatch) 
     assert seen["files"] == ["rayito-agent.json"]
 
 
-def _start_prefetch(tmp_path: Path, diskstats: Path) -> tuple[subprocess.Popen[bytes], Path, Path]:
+def _start_prefetch(
+    tmp_path: Path, diskstats: Path, *extra: str
+) -> tuple[subprocess.Popen[bytes], Path, Path]:
     """El demonio con `date` y `nice` falsos y `/proc/diskstats` cambiado por
     `diskstats`: el `date` falso salta 100 s a la tercera llamada."""
     script = tmp_path / "prefetch"
@@ -184,7 +224,7 @@ def _start_prefetch(tmp_path: Path, diskstats: Path) -> tuple[subprocess.Popen[b
     for tool in ("date", "nice"):
         (fakebin / tool).chmod(0o755)
     proc = subprocess.Popen(
-        [str(script), str(manifest), "30", "0"],
+        [str(script), str(manifest), "30", "0", *extra],
         env={"PATH": f"{fakebin}:/usr/bin:/bin"},
     )
     return proc, reads, target
@@ -210,6 +250,31 @@ def test_prefetch_script_detects_a_clock_jump(tmp_path: Path) -> None:
         proc.kill()
         proc.wait()
     assert reads.read_text().splitlines()[0] == str(target)
+
+
+def test_prefetch_warms_before_the_build_snapshot_and_marks_it(tmp_path: Path) -> None:
+    """Con el cuarto argumento (el build, antes del snapshot) lee en el acto,
+    sin esperar a que el guest se calme ni a un salto de reloj, y después
+    crea la marca que espera el `ready_cmd` de la plantilla."""
+    diskstats = tmp_path / "diskstats"
+    diskstats.write_text(_diskstats(3))
+    marker = tmp_path / "ready"
+    proc, reads, target = _start_prefetch(tmp_path, diskstats, str(marker))
+    try:
+        assert _wait_for(marker, 10)
+    finally:
+        proc.kill()
+        proc.wait()
+    assert reads.read_text().splitlines() == [str(target)]
+
+
+def test_template_waits_for_the_build_warm_before_the_snapshot() -> None:
+    start = AgentTemplate().to_template().spec.start
+    assert start is not None
+    assert start.start_cmd.endswith(f" {AGENT_PREFETCH_BUILD_MARKER_PATH}")
+    assert start.ready_cmd == f"test -e {AGENT_PREFETCH_BUILD_MARKER_PATH}"
+    assert start.ready_poll is not None
+    assert start.ready_poll.timeout_seconds == AGENT_PREFETCH_BUILD_TIMEOUT_SECONDS
 
 
 def test_prefetch_waits_until_the_guest_has_no_io_in_flight(tmp_path: Path) -> None:
@@ -258,12 +323,14 @@ def test_cli_maps_flags(monkeypatch: pytest.MonkeyPatch) -> None:
             "amzn-s3-demo-bucket",
             "--no-deepagents",
             "--no-prefetch",
+            "--kernel-warmup",
         ],
     )
 
     assert result.exit_code == 0, result.output
     assert built[0].runtimes == ("opencode",)
     assert built[0].prefetch is False
+    assert built[0].kernel_warmup is True
     assert "template_id=rayito-agent" in result.output
 
 
