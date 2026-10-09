@@ -4,6 +4,14 @@ Todos los cambios notables del paquete `rayito` (SDK TypeScript). El formato
 sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y el
 versionado [SemVer](https://semver.org/lang/es/).
 
+## [0.11.0](https://github.com/alejandro-cedeno-10/rayito/compare/typescript-v0.10.0...typescript-v0.11.0) (2026-10-09)
+
+
+### Changed
+
+* **agent:** faster first start for AgentTemplate images ([abcdf4a](https://github.com/alejandro-cedeno-10/rayito/commit/abcdf4a25bdb1e7d179b369484e3246de6742b80))
+* **agent:** faster first start for AgentTemplate images ([3bc9372](https://github.com/alejandro-cedeno-10/rayito/commit/3bc937288eeaac7cdf50e39e49f18cd8cff84f1a))
+
 ## [Unreleased]
 
 ### Cambiado

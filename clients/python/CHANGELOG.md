@@ -4,6 +4,20 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
 [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y el versionado
 [SemVer](https://semver.org/lang/es/).
 
+## [0.11.0](https://github.com/alejandro-cedeno-10/rayito/compare/python-v0.10.0...python-v0.11.0) (2026-10-09)
+
+
+### Added
+
+* **cli:** run-scoped artifact keys for image publish ([48f8c09](https://github.com/alejandro-cedeno-10/rayito/commit/48f8c0979dabd0620aee4505a15c2a04a0cbc696))
+* **cli:** run-scoped artifact keys for image publish ([6b92424](https://github.com/alejandro-cedeno-10/rayito/commit/6b9242411e5e47034977ef54e5ebacbcf63ab415))
+
+
+### Changed
+
+* **agent:** faster first start for AgentTemplate images ([abcdf4a](https://github.com/alejandro-cedeno-10/rayito/commit/abcdf4a25bdb1e7d179b369484e3246de6742b80))
+* **agent:** faster first start for AgentTemplate images ([3bc9372](https://github.com/alejandro-cedeno-10/rayito/commit/3bc937288eeaac7cdf50e39e49f18cd8cff84f1a))
+
 ## [Unreleased]
 
 ### Añadido
