@@ -36,9 +36,13 @@ versionado [SemVer](https://semver.org/lang/es/).
   snapshot de memoria ya los lleve. `create()` vuelve antes (6,4 s frente a
   19,1 s de mediana en la misma tanda) y el snapshot de memoria pesa 62 MB
   menos; el primer token mejora poco y con mucha dispersión (20,9 s frente a
-  23,7 s de mediana). Las imágenes ya construidas no cambian; en una imagen
-  nueva, la primera celda de `runCode` que importe el stack científico paga
-  la importación (`kernelWarmup: true` lo evita).
+  23,7 s de mediana). Las imágenes ya construidas no cambian.
+- **Cambio de comportamiento: `AgentTemplate` ya no precalienta el kernel de
+  `runCode`** (`kernelWarmup: false` por defecto). En una imagen construida
+  con 0.11, la primera celda de `runCode` que importe numpy, pandas,
+  matplotlib, scipy o scikit-learn paga esa importación. Para
+  volver al comportamiento de 0.10, construye la imagen con
+  `new AgentTemplate({ ..., kernelWarmup: true })`.
 
 ## [0.10.0] - 2026-10-08
 
