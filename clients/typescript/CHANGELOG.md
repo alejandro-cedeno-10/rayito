@@ -24,6 +24,8 @@ versionado [SemVer](https://semver.org/lang/es/).
   `@aws-sdk/client-cost-explorer`). Guía:
   [Panel de gestión](https://alejandro-cedeno-10.github.io/rayito/funciones-opcionales/panel-de-gestion/).
 
+## [0.11.0] - 2026-10-13
+
 ### Cambiado
 
 - **`AgentTemplate` arranca antes** (`ai-agent-first-start`). Dos cambios en
@@ -43,6 +45,20 @@ versionado [SemVer](https://semver.org/lang/es/).
   matplotlib, scipy o scikit-learn paga esa importación. Para
   volver al comportamiento de 0.10, construye la imagen con
   `new AgentTemplate({ ..., kernelWarmup: true })`.
+
+### Corregido
+
+- **`pool.take()` y `pool.close()` ya no dejan que Node salga mientras
+  esperan.** Todos los temporizadores del pool, y los de los calentamientos
+  en vuelo, iban sin referencia (`unref()`): con el pool vacío o con un
+  relleno en marcha, un script cuyo único trabajo pendiente era
+  `await pool.take({ waitMs })` o `await pool.close()` salía con la promesa
+  sin resolver (aviso `unsettled top-level await`, código 13) y dejaba
+  vivos los MicroVM que se estaban calentando. Ahora `take()` y `close()`
+  retienen el proceso con un intervalo con referencia mientras corren; los
+  temporizadores del barrido y del backoff siguen sin ella, así que un pool
+  ocioso sigue sin mantener vivo el proceso. Encontrado en la aceptación de
+  0.11.0 en AWS real.
 
 ## [0.10.0] - 2026-10-08
 
@@ -1291,7 +1307,8 @@ AWS real en M6 (`MILESTONES.md`), en camelCase y milisegundos, sólo async.
 
 Builds internos de los hitos M1-M5, nunca publicados.
 
-[Unreleased]: https://github.com/alejandro-cedeno-10/rayito/compare/typescript-v0.10.0...HEAD
+[Unreleased]: https://github.com/alejandro-cedeno-10/rayito/compare/typescript-v0.11.0...HEAD
+[0.11.0]: https://github.com/alejandro-cedeno-10/rayito/compare/typescript-v0.10.0...typescript-v0.11.0
 [0.10.0]: https://github.com/alejandro-cedeno-10/rayito/compare/typescript-v0.9.1...typescript-v0.10.0
 [0.9.1]: https://github.com/alejandro-cedeno-10/rayito/compare/typescript-v0.9.0...typescript-v0.9.1
 [0.9.0]: https://github.com/alejandro-cedeno-10/rayito/compare/typescript-v0.8.0...typescript-v0.9.0
