@@ -15,6 +15,7 @@ import rayito
 
 DEFERRED_MODULE_PREFIXES = (
     "rayito._agent",
+    "rayito._dashboard",
     "rayito._lifecycle_events._aws",
     "rayito.sandbox_sync.agent",
     "rayito.sandbox_async.agent",
