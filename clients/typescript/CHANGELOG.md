@@ -6,6 +6,24 @@ versionado [SemVer](https://semver.org/lang/es/).
 
 ## [Unreleased]
 
+### Añadido
+
+- **Servicios del panel de gestión** (`dashboard`, ADR-026, fase 1): `Quotas`
+  (cuotas aplicadas de Lambda MicroVMs, memoria asignada contra la cuota de la
+  región y avisos al 80 % y al 95 %), `UsageCost` (coste facturado por Cost
+  Explorer por tipo de uso, con caché local de 24 h, y coste estimado por
+  sandbox, siempre rotulados) y `Fleet` (sandboxes con la memoria de su
+  imagen, imágenes y versiones, historial de eventos y acciones masivas con
+  una cola que respeta los TPS).
+  Apagados por defecto: construirlos no llama a AWS, Cost Explorer ($0,01 por
+  petición) sólo se toca con `UsageCost.billed()` y las acciones exigen
+  `allowActions: true`. Nueva excepción `DashboardError` y constantes
+  nuevas en `limits.json` (catálogo de cuotas, umbrales, TTL y precios de
+  cómputo). Los clientes de Service Quotas y Cost Explorer son
+  peers opcionales (`@aws-sdk/client-service-quotas`,
+  `@aws-sdk/client-cost-explorer`). Guía:
+  [Panel de gestión](https://alejandro-cedeno-10.github.io/rayito/funciones-opcionales/panel-de-gestion/).
+
 ### Cambiado
 
 - **`AgentTemplate` arranca antes** (`ai-agent-first-start`). Dos cambios en

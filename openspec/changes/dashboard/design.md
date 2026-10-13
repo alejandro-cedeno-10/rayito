@@ -11,10 +11,13 @@ and $0.01 per request. The Python CLI is the only CLI.
 ## Decisions
 
 - **D1 — Hexagonal core.** Ports `SandboxInventory`, `ImageCatalog`,
-  `UsageCost`, `Quotas`, `EventsHistory`, `Actions` (`Protocol` in Python,
-  `interface` in TypeScript). One adapter per AWS API (`lambda-microvms`,
-  Cost Explorer, Service Quotas, CloudWatch Logs, DynamoDB) with lazy
-  imports. The domain imports no `boto3`, HTTP or generated proto code.
+  `CostSource`, `QuotaSource`, `EventsHistory`, `Actions` (`Protocol` in
+  Python, `interface` in TypeScript); the public SDK services are `Quotas`,
+  `UsageCost` and `Fleet` (with `Async*` twins in Python), which compose the
+  ports. `SandboxInventory` and `Actions` are structural subsets of
+  `ControlPlane` (no new adapter) and `LifecycleEvents.get_events` is the
+  `EventsHistory`. One adapter per AWS API (`lambda-microvms`, Cost Explorer,
+  Service Quotas, CloudWatch Logs, DynamoDB) with lazy imports. The domain imports no `boto3`, HTTP or generated proto code.
   Adapters translate SDK errors to own exceptions by code, never by text.
 - **D2 — One versioned API, one SPA.** `/api/v1/sandboxes`, `/images`,
   `/quotas`, `/cost`, `/events` and `POST /api/v1/sandboxes/{id}/kill|

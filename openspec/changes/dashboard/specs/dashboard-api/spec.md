@@ -31,3 +31,15 @@ Warning thresholds, cache TTLs, TPS, page sizes and polling intervals SHALL be d
 #### Scenario: generated limits are current
 - **WHEN** `gen_limits.py --check` runs
 - **THEN** it exits 0
+
+### Requirement: The SDK fleet service is read-only by default
+`Fleet` SHALL refuse every action (kill, suspend, resume) unless it was constructed with `allow_actions=True` (`allowActions: true` in TypeScript), SHALL validate the action and the sandbox ids before any AWS call, SHALL queue the calls at or below the lower of the `apiTps` limit and the applied quota rate, and SHALL report a per-sandbox failure by AWS code only, without stopping the queue.
+
+#### Scenario: actions refused without the option
+- **WHEN** a bulk action is requested on a `Fleet` built without `allow_actions=True`
+- **THEN** it raises before any AWS call
+
+#### Scenario: a failure does not stop the queue
+- **WHEN** one sandbox of a bulk kill fails with an AWS error
+- **THEN** the others are still attempted and the failed one reports only its AWS code
+
