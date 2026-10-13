@@ -26,6 +26,18 @@ versionado [SemVer](https://semver.org/lang/es/).
   volver al comportamiento de 0.10, construye la imagen con
   `new AgentTemplate({ ..., kernelWarmup: true })`.
 
+### Corregido
+
+- **`pool.take({ waitMs })` ya no deja que Node salga mientras espera una
+  plaza.** Todos los temporizadores del pool iban sin referencia (`unref()`),
+  también el de esa espera: si el pool estaba vacío y el relleno dormía entre
+  dos operaciones de red, un script cuyo único trabajo pendiente era ese `await` salía
+  con la promesa sin resolver (aviso `unsettled top-level await`, código 13)
+  y dejaba en marcha el MicroVM que se estaba calentando. La espera de
+  `take()` lleva ahora referencia; los temporizadores del barrido y del
+  backoff siguen sin ella, así que un pool ocioso sigue sin mantener vivo el
+  proceso. Encontrado en la aceptación de 0.11.0 en AWS real.
+
 ## [0.10.0] - 2026-10-08
 
 ### Añadido
