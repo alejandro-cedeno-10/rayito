@@ -16,17 +16,17 @@ credenciales.
 [Empezar (≈ 15 min)](primeros-pasos/index.md){ .md-button .md-button--primary }
 [Migrar desde E2B](migrar-desde-e2b/index.md){ .md-button }
 
-!!! tip "Nuevo en 0.10"
-    El agente del sandbox puede usar **más proveedores de modelo**: OpenAI,
-    Gemini, Azure OpenAI, OpenRouter, Groq, Mistral, DeepSeek, xAI o tu
-    propio proxy de LiteLLM, cada uno con un preset listo. Además, el
-    timeout y `abort()` del agente **paran todo lo que lanzó**, y
-    deepagents funciona con modelos que no son de Bedrock y cuenta sus
-    tokens. Sin cambios que rompan.
-    [Novedades de 0.10.0](novedades/0.10.0.md) ·
-    [Proveedores del agente](guias/agente-proveedores.md) ·
-    [0.9.1](novedades/0.9.1.md) ·
-    [0.9.0](novedades/0.9.0.md)
+!!! tip "Nuevo en 0.11"
+    Las imágenes del agente **arrancan antes**: `AgentTemplate` ya no
+    calienta el kernel de `run_code` y mete los binarios del agente en el
+    snapshot, así que `create()` vuelve en unos 6 s. Si usas numpy o pandas
+    en `run_code` de esa imagen, mira cómo volver a lo de antes. Además,
+    claves de artefacto por ejecución al publicar imágenes, y el pool de
+    TypeScript ya no deja salir a Node mientras espera.
+    [Novedades de 0.11.0](novedades/0.11.0.md) ·
+    [Templates de agente](funciones-opcionales/templates-de-agente.md) ·
+    [0.10.0](novedades/0.10.0.md) ·
+    [0.9.1](novedades/0.9.1.md)
 
 ## Empieza en tres pasos
 
