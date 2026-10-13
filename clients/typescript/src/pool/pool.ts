@@ -13,8 +13,9 @@
  * plaza; sin plaza (o con la plaza muerta) cae a un `create()` normal. Un
  * sweeper recicla las plazas que se acercan al muro de 8 h y reconcilia con
  * `listMicrovms`. Los temporizadores del sweeper y del backoff van con
- * `unref()`: un pool ocioso no mantiene vivo el proceso; un calentamiento en
- * vuelo (un fetch pendiente) sí. Todas las llamadas a AWS pasan por el plano
+ * `unref()`: un pool ocioso no mantiene vivo el proceso; un `take({ waitMs })`
+ * que espera una plaza, sí (su temporizador lleva referencia), aunque el
+ * relleno esté dormido entre sondeos. Todas las llamadas a AWS pasan por el plano
  * de control compartido y sus token buckets.
  *
  * Custodia del secreto (SECURITY.md T14): el sha256 del token viaja en el
@@ -388,7 +389,7 @@ export class SandboxPool implements AsyncDisposable {
     let record = await this.#popReady();
     while (record === undefined && waitMs > 0) {
       const remaining = deadline - this.#monotonic();
-      if (remaining <= 0 || !(await this.#waitForWake(remaining))) {
+      if (remaining <= 0 || !(await this.#waitForWake(remaining, { keepAlive: true }))) {
         break;
       }
       this.#requireOpen();
@@ -595,8 +596,14 @@ export class SandboxPool implements AsyncDisposable {
     this.#notifyAll();
   }
 
-  /** Resuelve `true` al ser despertado y `false` si venció el plazo (temporizador sin referencia). */
-  #waitForWake(ms: number): Promise<boolean> {
+  /**
+   * Resuelve `true` al ser despertado y `false` si venció el plazo. El
+   * temporizador va sin referencia salvo con `keepAlive`: la espera de un
+   * `take({ waitMs })` tiene a alguien esperando su resultado, y sin una
+   * referencia Node saldría con la promesa pendiente mientras el relleno
+   * duerme entre sondeos.
+   */
+  #waitForWake(ms: number, options: { readonly keepAlive?: boolean } = {}): Promise<boolean> {
     return new Promise((resolve) => {
       const finish = (woken: boolean) => {
         this.#wakers.delete(waker);
@@ -604,7 +611,7 @@ export class SandboxPool implements AsyncDisposable {
         resolve(woken);
       };
       const waker = () => finish(true);
-      const timer = this.#timer(() => finish(false), ms);
+      const timer = this.#timer(() => finish(false), ms, options.keepAlive === true);
       this.#wakers.add(waker);
     });
   }
@@ -615,7 +622,7 @@ export class SandboxPool implements AsyncDisposable {
     }
   }
 
-  #timer(callback: () => void, ms: number): ReturnType<typeof setTimeout> {
+  #timer(callback: () => void, ms: number, keepAlive = false): ReturnType<typeof setTimeout> {
     const timer = setTimeout(
       () => {
         this.#timers.delete(timer);
@@ -623,7 +630,9 @@ export class SandboxPool implements AsyncDisposable {
       },
       Math.max(0, Math.min(ms, 2_147_483_647)),
     );
-    timer.unref();
+    if (!keepAlive) {
+      timer.unref();
+    }
     this.#timers.add(timer);
     return timer;
   }
