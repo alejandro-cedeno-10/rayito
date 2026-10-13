@@ -13,9 +13,11 @@
  * plaza; sin plaza (o con la plaza muerta) cae a un `create()` normal. Un
  * sweeper recicla las plazas que se acercan al muro de 8 h y reconcilia con
  * `listMicrovms`. Los temporizadores del sweeper y del backoff van con
- * `unref()`: un pool ocioso no mantiene vivo el proceso; un `take({ waitMs })`
- * que espera una plaza, sí (su temporizador lleva referencia), aunque el
- * relleno esté dormido entre sondeos. Todas las llamadas a AWS pasan por el plano
+ * `unref()`: un pool ocioso no mantiene vivo el proceso. Mientras alguien
+ * espera a `take()` o a `close()`, en cambio, el pool retiene el proceso con
+ * un intervalo con referencia: los calentamientos en vuelo también esperan
+ * con temporizadores sin referencia, y sin él Node saldría con la promesa
+ * pendiente. Todas las llamadas a AWS pasan por el plano
  * de control compartido y sus token buckets.
  *
  * Custodia del secreto (SECURITY.md T14): el sha256 del token viaja en el
@@ -84,6 +86,13 @@ export const SETTLE_CELL = "pass";
 export const SETTLE_GRACE_MS = 300;
 export const SETTLE_ATTEMPTS = 3;
 const MS_PER_SECOND = 1000;
+/**
+ * Periodo del intervalo vacío que mantiene vivo el proceso mientras alguien
+ * espera a `take()` o `close()`. El valor no importa: lo que retiene el bucle
+ * de eventos es la referencia del temporizador (doc de Node, "Timers",
+ * `timeout.ref()`, consultada 2026-10-13); uno largo apenas despierta.
+ */
+const KEEP_ALIVE_INTERVAL_MS = 60_000;
 
 export interface SandboxPoolOptions extends ControlPlaneOptions {
   readonly backend?: PoolBackend | undefined;
@@ -312,6 +321,10 @@ export class SandboxPool implements AsyncDisposable {
    * aparcadas para que otro pool las recupere. Idempotente.
    */
   async close(options: CloseOptions = {}): Promise<void> {
+    await this.#keepingProcessAlive(() => this.#close(options));
+  }
+
+  async #close(options: CloseOptions): Promise<void> {
     const drain = options.drain ?? true;
     if (!drain && !this.#backend.persistent) {
       throw new InvalidArgumentError(
@@ -346,6 +359,10 @@ export class SandboxPool implements AsyncDisposable {
    * o con una plaza muerta, un `create()` normal.
    */
   async take(options: TakeOptions = {}): Promise<Sandbox> {
+    return this.#keepingProcessAlive(() => this.#take(options));
+  }
+
+  async #take(options: TakeOptions): Promise<Sandbox> {
     this.#requireOpen();
     // Pura (ninguna llamada a AWS): una forma inválida falla antes de
     // reclamar ninguna plaza.
@@ -389,7 +406,7 @@ export class SandboxPool implements AsyncDisposable {
     let record = await this.#popReady();
     while (record === undefined && waitMs > 0) {
       const remaining = deadline - this.#monotonic();
-      if (remaining <= 0 || !(await this.#waitForWake(remaining, { keepAlive: true }))) {
+      if (remaining <= 0 || !(await this.#waitForWake(remaining))) {
         break;
       }
       this.#requireOpen();
@@ -596,14 +613,8 @@ export class SandboxPool implements AsyncDisposable {
     this.#notifyAll();
   }
 
-  /**
-   * Resuelve `true` al ser despertado y `false` si venció el plazo. El
-   * temporizador va sin referencia salvo con `keepAlive`: la espera de un
-   * `take({ waitMs })` tiene a alguien esperando su resultado, y sin una
-   * referencia Node saldría con la promesa pendiente mientras el relleno
-   * duerme entre sondeos.
-   */
-  #waitForWake(ms: number, options: { readonly keepAlive?: boolean } = {}): Promise<boolean> {
+  /** Resuelve `true` al ser despertado y `false` si venció el plazo (temporizador sin referencia). */
+  #waitForWake(ms: number): Promise<boolean> {
     return new Promise((resolve) => {
       const finish = (woken: boolean) => {
         this.#wakers.delete(waker);
@@ -611,7 +622,7 @@ export class SandboxPool implements AsyncDisposable {
         resolve(woken);
       };
       const waker = () => finish(true);
-      const timer = this.#timer(() => finish(false), ms, options.keepAlive === true);
+      const timer = this.#timer(() => finish(false), ms);
       this.#wakers.add(waker);
     });
   }
@@ -622,7 +633,7 @@ export class SandboxPool implements AsyncDisposable {
     }
   }
 
-  #timer(callback: () => void, ms: number, keepAlive = false): ReturnType<typeof setTimeout> {
+  #timer(callback: () => void, ms: number): ReturnType<typeof setTimeout> {
     const timer = setTimeout(
       () => {
         this.#timers.delete(timer);
@@ -630,11 +641,22 @@ export class SandboxPool implements AsyncDisposable {
       },
       Math.max(0, Math.min(ms, 2_147_483_647)),
     );
-    if (!keepAlive) {
-      timer.unref();
-    }
+    timer.unref();
     this.#timers.add(timer);
     return timer;
+  }
+
+  /**
+   * Corre `work` con un intervalo con referencia: quien espera su resultado
+   * no pierde el proceso aunque todo lo demás del pool duerma sin referencia.
+   */
+  async #keepingProcessAlive<T>(work: () => Promise<T>): Promise<T> {
+    const keepAlive = setInterval(() => undefined, KEEP_ALIVE_INTERVAL_MS);
+    try {
+      return await work();
+    } finally {
+      clearInterval(keepAlive);
+    }
   }
 
   #clearTimer(timer: ReturnType<typeof setTimeout>): void {
