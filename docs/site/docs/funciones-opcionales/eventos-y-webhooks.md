@@ -227,6 +227,15 @@ y relanza el error: nunca devuelve un sandbox que no vaya a emitir eventos.
     `created` y `killed` no tienen ese problema. Para el estado real, usa
     `get_info()`/`list()` o `killed`.
 
+!!! warning "Justo después del primer despliegue"
+    El deliverer lee el stream de la tabla desde lo más reciente
+    (`StartingPosition: LATEST`) y su *event source mapping* tarda unos
+    minutos en empezar a leer tras crear la pila. Los eventos de ese rato se
+    guardan (`get_events` los devuelve) pero pueden no llegar a tus webhooks.
+    Si vas a probar la entrega nada más desplegar, espera a que el mapping
+    esté `Enabled` (`aws lambda list-event-source-mappings --function-name
+    <deliverer>`) y un minuto más (`AWS_API_NOTES.md` Q157).
+
 ## Verificar la firma en tu receptor
 
 Cada entrega es un `POST` con un cuerpo JSON y cinco cabeceras: las cuatro

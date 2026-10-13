@@ -100,7 +100,7 @@ cuenta. La forma más corta es publicar el `rayito-image.zip` firmado de la
 === "Desde la release (recomendado)"
 
     ```bash
-    RAYD_VERSION=0.10.0     # la misma versión que tu SDK: python -c "import rayito; print(rayito.__version__)"
+    RAYD_VERSION=0.11.0     # la misma versión que tu SDK: python -c "import rayito; print(rayito.__version__)"
     BASE=https://github.com/alejandro-cedeno-10/rayito/releases/download/rayd-v${RAYD_VERSION}
     curl -fsSLO "$BASE/rayito-image.zip"
     curl -fsSLO "$BASE/rayito-image.zip.sigstore.json"    # su firma de Sigstore
@@ -210,8 +210,8 @@ OK   bucket          s3://amzn-s3-demo-bucket accesible en us-east-1
 OK   image-gate      rayito-base 1.0 lanzable
 OK   sandboxes       ningún MicroVM RUNNING de rayito-base
 OK   token           token acuñado por create() para microvm-00000000-0000-0000-0000-000000000001
-OK   agent           rayd 0.10.0 agent_ready, kernel_ready=True, imds_blocked=False
-OK   compatibility   SDK 0.10.0, agent_version 0.10.0; imagen 1.0 (contador de builds, informativo)
+OK   agent           rayd 0.11.0 agent_ready, kernel_ready=True, imds_blocked=False
+OK   compatibility   SDK 0.11.0, agent_version 0.11.0; imagen 1.0 (contador de builds, informativo)
 
 SDK   rayd mínimo  Estado  Nota
 0.1   0.1.0                M6: imds_blocked, hook_anomalies y metadata exigen el rayd del tag rayd-v0.1.0
@@ -230,8 +230,10 @@ SDK   rayd mínimo  Estado  Nota
                            rayd del tag rayd-v0.8.0
 0.9   0.9.0                0.9: connect() recupera sbx.gateways desde ConfigureStatus y el arranque rápido del agente
                            sin la opción D se validan con el rayd del tag rayd-v0.9.0
-0.10  0.10.0       OK      0.10: el timeout y abort() del agente paran todo el árbol de procesos (kill_tree) y los
+0.10  0.10.0               0.10: el timeout y abort() del agente paran todo el árbol de procesos (kill_tree) y los
                            proveedores del agente se validan con el rayd del tag rayd-v0.10.0
+0.11  0.11.0       OK      0.11: el arranque rápido de AgentTemplate (kernel_warmup=False por defecto) y las claves de
+                           artefacto por ejecución se validan con el rayd del tag rayd-v0.11.0
 
 rayito doctor: 9 OK, 1 WARN, 0 FAIL, 0 SKIP
 sandbox de --launch terminado: microvm-00000000-0000-0000-0000-000000000001

@@ -12,7 +12,19 @@ actualizar. El detalle completo, cambio a cambio, está en el
 
 <div class="grid cards" markdown>
 
--   :material-tag:{ .lg .middle } **0.10.0** · 2026-10-08 · actual
+-   :material-tag:{ .lg .middle } **0.11.0** · 2026-10-13 · actual
+
+    ---
+
+    Las imágenes de `AgentTemplate` arrancan antes (`create()` en unos 6 s):
+    el kernel de `run_code` ya no se calienta por defecto, un cambio de
+    comportamiento con vuelta atrás (`kernel_warmup=True`). Claves de
+    artefacto por ejecución al publicar imágenes, y el pool de TypeScript
+    ya no deja salir a Node. Sin cambios que rompan la API.
+
+    [:octicons-arrow-right-24: Novedades de 0.11.0](0.11.0.md)
+
+-   :material-tag:{ .lg .middle } **0.10.0** · 2026-10-08
 
     ---
 
@@ -103,7 +115,7 @@ actualizar. El detalle completo, cambio a cambio, está en el
     ```python
     import rayito
 
-    print(rayito.__version__)  # "0.10.0"
+    print(rayito.__version__)  # "0.11.0"
     ```
 
 === "TypeScript"
@@ -111,7 +123,7 @@ actualizar. El detalle completo, cambio a cambio, está en el
     ```ts
     import { VERSION } from "rayito";
 
-    console.log(VERSION); // "0.10.0"
+    console.log(VERSION); // "0.11.0"
     ```
 
 === "CLI"
@@ -144,15 +156,18 @@ corre dentro del sandbox (por ejemplo `volumes=`, `mounts=`, `events=` o
 `gateways=`, el endurecimiento de `rayd` 0.7.0, los avisos de licencia
 de `rayd` 0.7.1 en `/usr/share/doc/rayd/` o el timeout del agente que
 para todo su árbol de procesos de `rayd` 0.10.0):
-[Imágenes](../images.md#publicar-las-tres). Desde 0.10, `rayito doctor`
-exige el `rayd` del tag `rayd-v0.10.0`, y el agente de IA (`sbx.agent`)
+[Imágenes](../images.md#publicar-las-tres). Desde 0.11, `rayito doctor`
+exige el `rayd` del tag `rayd-v0.11.0`, y el agente de IA (`sbx.agent`)
 necesita además una imagen con su runtime, construida con
 [`AgentTemplate`](../funciones-opcionales/templates-de-agente.md)
-(reconstrúyela en 0.10.0: lleva las correcciones de deepagents). Sin
+(reconstrúyela en 0.11.0 para que arranque antes; si usas el stack
+científico en `run_code`, con `kernel_warmup=True`). Sin
 republicar, el SDK nuevo sigue funcionando con tu imagen actual, y cada
 función que necesita el `rayd` nuevo falla cerrada con
 `UnimplementedError` y termina el sandbox que acaba de lanzar. Al pasar de
-0.9.x a 0.10.0 no hay cambios que rompan
+0.10.x a 0.11.0 no hay cambios que rompan la API, pero sí un
+[cambio de comportamiento en `AgentTemplate`](0.11.0.md#si-usas-run_code-con-el-stack-cientifico);
+de 0.9.x a 0.10.0 no hay cambios que rompan
 ([Cómo actualizar desde 0.9.x](0.10.0.md#como-actualizar-desde-09x)); de
 0.8.x a 0.9.0, revisa los
 [cambios que rompen](0.9.0.md#como-actualizar-desde-08x) (opción D del
