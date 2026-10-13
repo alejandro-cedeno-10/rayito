@@ -87,6 +87,12 @@ COMPATIBILITY: tuple[CompatibilityRow, ...] = (
         "0.10: el timeout y abort() del agente paran todo el árbol de procesos (kill_tree) "
         "y los proveedores del agente se validan con el rayd del tag rayd-v0.10.0",
     ),
+    CompatibilityRow(
+        "0.11",
+        "0.11.0",
+        "0.11: el arranque rápido de AgentTemplate (kernel_warmup=False por defecto) y las "
+        "claves de artefacto por ejecución se validan con el rayd del tag rayd-v0.11.0",
+    ),
 )
 
 

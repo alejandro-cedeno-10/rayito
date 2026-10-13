@@ -10,6 +10,10 @@ imagen `rayito-base` y como asset de la GitHub Release del tag `rayd-v*`.
 
 ## [Unreleased]
 
+Sin cambios en el agente: versión en paso con los SDK 0.11.0 (el arranque
+rápido de `AgentTemplate` y las claves de artefacto por ejecución son del SDK
+y de la CLI). El SDK 0.11 se valida con el `rayd` del tag `rayd-v0.11.0`.
+
 ## [0.10.0] - 2026-10-08
 
 ### Fixed
