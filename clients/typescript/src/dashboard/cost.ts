@@ -20,6 +20,7 @@ import {
   foldBilledCost,
   type Granularity,
   MEMORY_COUNTED_STATES,
+  MS_PER_SECOND,
   TtlCache,
 } from "./domain.js";
 import { InventoryReader } from "./inventory.js";
@@ -28,8 +29,11 @@ import type { CostSource, ManagementPlane } from "./ports.js";
 
 type Credentials = AwsClientSettings["credentials"];
 
-const MS_PER_SECOND = 1000;
 const MS_PER_DAY = 86_400_000;
+/** Longitud de `AAAA-MM-DD` y de su prefijo `AAAA-MM-` en una fecha ISO 8601. */
+const ISO_DATE_LENGTH = "YYYY-MM-DD".length;
+const ISO_MONTH_PREFIX_LENGTH = "YYYY-MM-".length;
+const FIRST_DAY_OF_MONTH = "01";
 const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
 export interface UsageCostOptions {
@@ -58,7 +62,7 @@ export interface BilledOptions {
 }
 
 function isoDate(value: Date): string {
-  return value.toISOString().slice(0, 10);
+  return value.toISOString().slice(0, ISO_DATE_LENGTH);
 }
 
 function asDate(value: Date | string, name: string): string {
@@ -167,7 +171,9 @@ export class UsageCost {
   #window(start: Date | string | undefined, end: Date | string | undefined): [string, string] {
     const today = this.#now();
     const windowStart =
-      start === undefined ? `${isoDate(today).slice(0, 8)}01` : asDate(start, "start");
+      start === undefined
+        ? `${isoDate(today).slice(0, ISO_MONTH_PREFIX_LENGTH)}${FIRST_DAY_OF_MONTH}`
+        : asDate(start, "start");
     const windowEnd =
       end === undefined ? isoDate(new Date(today.getTime() + MS_PER_DAY)) : asDate(end, "end");
     if (windowStart >= windowEnd) {
