@@ -9,11 +9,13 @@
  * `testdata/dashboard/`.
  */
 
+import { InvalidArgumentError } from "../errors.js";
 import {
   API_TPS,
   BASELINE_MIB_PER_VCPU,
   COMPUTE_PRICE_USD_PER_GB_SECOND,
   COMPUTE_PRICE_USD_PER_VCPU_SECOND,
+  COST_CACHE_MAX_ENTRIES,
   LARGE_QUOTA_REGIONS,
   QUOTA_CRITICAL_FRACTION,
   QUOTA_DEFAULTS,
@@ -33,6 +35,13 @@ export type BulkOutcome = "done" | "unchanged" | "failed";
 export type Granularity = "DAILY" | "MONTHLY";
 
 export const RUNNING_STATE = "RUNNING";
+/**
+ * Código de un fallo masivo que no trae código de AWS; igual en Python y
+ * TypeScript para que la API JSON dé el mismo valor en las dos fases.
+ */
+export const UNKNOWN_FAILURE_CODE = "UnknownError";
+export const QUOTA_EXCEEDED_CODE = "ServiceQuotaExceededException";
+export const CAPACITY_CODE = "InsufficientCapacityException";
 /**
  * Estados cuya memoria cuenta contra la cuota por región: `RUNNING` más los
  * suspendidos (`SUSPENDING` y `SUSPENDED`), `AWS_API_NOTES.md` §11.
@@ -538,16 +547,25 @@ export function buildCostEstimate(items: Iterable<SandboxCostEstimate>): CostEst
 }
 
 /**
- * Caché en memoria con caducidad, con reloj inyectable (milisegundos).
+ * Caché en memoria con caducidad y tope de entradas, con reloj inyectable
+ * (milisegundos). Cada `put` descarta las caducadas y, si aun así se pasa de
+ * `maxEntries`, las más antiguas: un servidor de larga vida no crece con
+ * cada ventana de consulta distinta.
  */
 export class TtlCache<K, V> {
   readonly #ttlMs: number;
   readonly #now: () => number;
+  readonly #maxEntries: number;
   readonly #entries = new Map<K, { readonly storedAt: number; readonly value: V }>();
 
-  constructor(ttlMs: number, now: () => number) {
+  constructor(ttlMs: number, now: () => number, maxEntries: number = COST_CACHE_MAX_ENTRIES) {
     this.#ttlMs = ttlMs;
     this.#now = now;
+    this.#maxEntries = maxEntries;
+  }
+
+  get size(): number {
+    return this.#entries.size;
   }
 
   get(key: K): V | undefined {
@@ -555,7 +573,7 @@ export class TtlCache<K, V> {
     if (entry === undefined) {
       return undefined;
     }
-    if (this.#now() - entry.storedAt >= this.#ttlMs) {
+    if (this.#expired(entry.storedAt)) {
       this.#entries.delete(key);
       return undefined;
     }
@@ -563,7 +581,23 @@ export class TtlCache<K, V> {
   }
 
   put(key: K, value: V): void {
+    this.#entries.delete(key);
+    for (const [stored, entry] of this.#entries) {
+      if (this.#expired(entry.storedAt)) {
+        this.#entries.delete(stored);
+      }
+    }
     this.#entries.set(key, { storedAt: this.#now(), value });
+    for (const oldest of this.#entries.keys()) {
+      if (this.#entries.size <= this.#maxEntries) {
+        break;
+      }
+      this.#entries.delete(oldest);
+    }
+  }
+
+  #expired(storedAt: number): boolean {
+    return this.#now() - storedAt >= this.#ttlMs;
   }
 }
 
@@ -628,7 +662,13 @@ export function bulkRate(action: BulkAction, appliedRate: number | undefined): n
   if (apiRate === undefined) {
     throw new RangeError(`apiTps no define ${operation}`);
   }
-  return appliedRate === undefined ? apiRate : Math.min(apiRate, appliedRate);
+  if (appliedRate === undefined) {
+    return apiRate;
+  }
+  if (!(appliedRate > 0)) {
+    throw new InvalidArgumentError(`appliedRate: debe ser mayor que 0 (recibido ${appliedRate})`);
+  }
+  return Math.min(apiRate, appliedRate);
 }
 
 export function planBulk(

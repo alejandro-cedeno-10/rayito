@@ -25,6 +25,7 @@ from rayito._limits import (
     BASELINE_MIB_PER_VCPU,
     COMPUTE_PRICE_USD_PER_GB_SECOND,
     COMPUTE_PRICE_USD_PER_VCPU_SECOND,
+    COST_CACHE_MAX_ENTRIES,
     LARGE_QUOTA_REGIONS,
     QUOTA_CRITICAL_FRACTION,
     QUOTA_DEFAULTS,
@@ -36,6 +37,7 @@ from rayito._limits import (
     QUOTA_WARNING_FRACTION,
     SUSPENDED_STATES,
 )
+from rayito.exceptions import InvalidArgumentException
 
 QuotaLevel = Literal["ok", "warning", "critical"]
 WarningKind = Literal["memory_high", "memory_critical", "below_default", "not_listed"]
@@ -47,6 +49,11 @@ Granularity = Literal["DAILY", "MONTHLY"]
 #: suspendidos (`SUSPENDING` y `SUSPENDED`), AWS_API_NOTES.md §11.
 MEMORY_COUNTED_STATES: Final = frozenset({"RUNNING"}) | SUSPENDED_STATES
 RUNNING_STATE: Final = "RUNNING"
+#: Código de un fallo masivo que no trae código de AWS; igual en Python y
+#: TypeScript para que la API JSON dé el mismo valor en las dos fases.
+UNKNOWN_FAILURE_CODE: Final = "UnknownError"
+QUOTA_EXCEEDED_CODE: Final = "ServiceQuotaExceededException"
+CAPACITY_CODE: Final = "InsufficientCapacityException"
 MIB_PER_GB: Final = 1024
 PERCENT: Final = 100
 
@@ -480,12 +487,21 @@ def build_cost_estimate(items: Iterable[SandboxCostEstimate]) -> CostEstimate:
 
 
 class TtlCache(Generic[K, V]):
-    """Caché en memoria con caducidad, con reloj inyectable. Segura entre
-    hilos: los servicios síncronos pueden compartirla."""
+    """Caché en memoria con caducidad y tope de entradas, con reloj
+    inyectable. Cada `put` descarta las caducadas y, si aun así se pasa de
+    `max_entries`, las más antiguas: un servidor de larga vida no crece con
+    cada ventana de consulta distinta. Segura entre hilos: los servicios
+    síncronos pueden compartirla."""
 
-    def __init__(self, ttl_seconds: float, clock: Callable[[], float]) -> None:
+    def __init__(
+        self,
+        ttl_seconds: float,
+        clock: Callable[[], float],
+        max_entries: int = COST_CACHE_MAX_ENTRIES,
+    ) -> None:
         self._ttl = ttl_seconds
         self._clock = clock
+        self._max_entries = max_entries
         self._entries: dict[K, tuple[float, V]] = {}
         self._lock = threading.Lock()
 
@@ -495,14 +511,25 @@ class TtlCache(Generic[K, V]):
             if entry is None:
                 return None
             stored_at, value = entry
-            if self._clock() - stored_at >= self._ttl:
+            if self._expired(stored_at):
                 del self._entries[key]
                 return None
             return value
 
     def put(self, key: K, value: V) -> None:
         with self._lock:
+            self._entries.pop(key, None)
+            self._entries = {k: e for k, e in self._entries.items() if not self._expired(e[0])}
             self._entries[key] = (self._clock(), value)
+            while len(self._entries) > self._max_entries:
+                del self._entries[next(iter(self._entries))]
+
+    def __len__(self) -> int:
+        with self._lock:
+            return len(self._entries)
+
+    def _expired(self, stored_at: float) -> bool:
+        return self._clock() - stored_at >= self._ttl
 
 
 # ------------------------------------------------------------- views and bulk
@@ -562,9 +589,16 @@ class BulkPlan:
 def bulk_rate(action: BulkAction, applied_rate: float | None) -> float:
     """El ritmo de la cola: la cuota aplicada si es menor que la de `apiTps`
     (una cuenta nueva parte reducida); si es mayor, la de `apiTps`, que es lo
-    que respeta el plano de control del SDK."""
+    que respeta el plano de control del SDK. Una cuota no positiva (o NaN)
+    no admite ninguna cola: `InvalidArgumentException`."""
     default = float(API_TPS[BULK_OPERATIONS[action]])
-    return default if applied_rate is None else min(default, applied_rate)
+    if applied_rate is None:
+        return default
+    if not applied_rate > 0:
+        raise InvalidArgumentException(
+            f"applied_rate: debe ser mayor que 0 (recibido {applied_rate})"
+        )
+    return min(default, applied_rate)
 
 
 def plan_bulk(action: BulkAction, count: int, applied_rate: float | None = None) -> BulkPlan:

@@ -14,7 +14,13 @@ import {
   type Sleeper,
   TokenBucket,
 } from "../aws/control-plane.js";
-import { AuthenticationError, InvalidArgumentError, SandboxError } from "../errors.js";
+import {
+  AuthenticationError,
+  CapacityError,
+  InvalidArgumentError,
+  QuotaExceededError,
+  SandboxError,
+} from "../errors.js";
 import type { EventRecord } from "../lifecycle-events/domain.js";
 import { DEFAULT_GET_EVENTS_LIMIT } from "../lifecycle-events/domain.js";
 import { MICROVM_ID_MAX_LENGTH, MICROVM_ID_MIN_LENGTH } from "../limits.js";
@@ -27,10 +33,13 @@ import {
   type BulkPlan,
   type BulkProgress,
   BulkResult,
+  CAPACITY_CODE,
   type ImageSummary,
   type ImageVersionSummary,
   planBulk,
+  QUOTA_EXCEEDED_CODE,
   type SandboxView,
+  UNKNOWN_FAILURE_CODE,
 } from "./domain.js";
 import { InventoryReader } from "./inventory.js";
 import { LazyPlane } from "./plane.js";
@@ -223,8 +232,14 @@ export class Fleet {
       }[action]();
       return { sandboxId, outcome: changed ? "done" : "unchanged" };
     } catch (error) {
+      if (error instanceof QuotaExceededError) {
+        return { sandboxId, outcome: "failed", code: QUOTA_EXCEEDED_CODE };
+      }
+      if (error instanceof CapacityError) {
+        return { sandboxId, outcome: "failed", code: CAPACITY_CODE };
+      }
       if (error instanceof SandboxError || error instanceof AuthenticationError) {
-        return { sandboxId, outcome: "failed", code: error.awsCode ?? error.constructor.name };
+        return { sandboxId, outcome: "failed", code: error.awsCode ?? UNKNOWN_FAILURE_CODE };
       }
       throw error;
     }

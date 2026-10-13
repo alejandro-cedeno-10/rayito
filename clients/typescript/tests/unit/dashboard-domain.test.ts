@@ -21,6 +21,7 @@ import {
   quotaDefault,
   TtlCache,
 } from "../../src/dashboard/domain.js";
+import { InvalidArgumentError } from "../../src/errors.js";
 import { QUOTA_DEFAULTS, QUOTA_NAMES } from "../../src/limits.js";
 import { loadVectors } from "./fake/dashboard.js";
 
@@ -79,6 +80,9 @@ const BULK_VECTORS = loadVectors<{
     estimatedSeconds: number;
   }>;
 }>("bulk-plan-vectors.json").cases;
+const INVALID_RATES = loadVectors<{ invalidRates: number[] }>(
+  "bulk-plan-vectors.json",
+).invalidRates;
 
 function appliedFor(testCase: QuotaCase): AppliedQuota[] {
   return Object.keys(QUOTA_NAMES)
@@ -219,7 +223,27 @@ describe("bulk plan vectors", () => {
   );
 });
 
+describe("bulk plan with an invalid rate", () => {
+  it.each(INVALID_RATES)("rejects %s", (rate) => {
+    expect(() => planBulk("suspend", 10, rate)).toThrow(InvalidArgumentError);
+  });
+});
+
 describe("TtlCache", () => {
+  it("prunes expired entries on put and caps the size", () => {
+    let now = 0;
+    const cache = new TtlCache<string, number>(10_000, () => now, 3);
+    cache.put("old", 0);
+    now = 10_000;
+    for (let n = 0; n < 5; n += 1) {
+      cache.put(`k${n}`, n);
+    }
+    expect(cache.size).toBe(3);
+    expect(cache.get("old")).toBeUndefined();
+    expect(cache.get("k0")).toBeUndefined();
+    expect(cache.get("k4")).toBe(4);
+  });
+
   it("expires entries after the ttl", () => {
     let now = 0;
     const cache = new TtlCache<string, number>(10_000, () => now);

@@ -17,6 +17,9 @@ from rayito._aws import LazyClient, TokenBucket
 from rayito._dashboard._aws import LambdaMicrovmsImageCatalog
 from rayito._dashboard._domain import (
     BULK_OPERATIONS,
+    CAPACITY_CODE,
+    QUOTA_EXCEEDED_CODE,
+    UNKNOWN_FAILURE_CODE,
     BulkAction,
     BulkItemResult,
     BulkPlan,
@@ -33,7 +36,13 @@ from rayito._dashboard._ports import EventsHistory, ImageCatalog, ManagementPlan
 from rayito._lifecycle_events._domain import DEFAULT_GET_EVENTS_LIMIT, EventRecord
 from rayito._limits import MICROVM_ID_MAX_LENGTH, MICROVM_ID_MIN_LENGTH
 from rayito._size_catalog import DEFAULT_SIZE_CATALOG, SizeCatalog
-from rayito.exceptions import AuthenticationException, InvalidArgumentException, SandboxException
+from rayito.exceptions import (
+    AuthenticationException,
+    CapacityException,
+    InvalidArgumentException,
+    QuotaExceededException,
+    SandboxException,
+)
 
 BulkProgressCallback = Callable[[BulkProgress], None]
 
@@ -169,8 +178,12 @@ class Fleet:
         }
         try:
             changed = operations[action](sandbox_id)
+        except QuotaExceededException:
+            return BulkItemResult(sandbox_id, "failed", QUOTA_EXCEEDED_CODE)
+        except CapacityException:
+            return BulkItemResult(sandbox_id, "failed", CAPACITY_CODE)
         except (SandboxException, AuthenticationException) as exc:
-            code = getattr(exc, "aws_code", None) or type(exc).__name__
+            code = getattr(exc, "aws_code", None) or UNKNOWN_FAILURE_CODE
             return BulkItemResult(sandbox_id, "failed", code)
         return BulkItemResult(sandbox_id, "done" if changed else "unchanged")
 

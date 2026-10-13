@@ -197,6 +197,7 @@ GROUPS: tuple[tuple[str, ...], ...] = (
         "quotaWarningFraction",
         "quotaCriticalFraction",
         "costCacheTtlSeconds",
+        "costCacheMaxEntries",
         "costExplorerRegion",
         "costExplorerServiceName",
         "computePriceUsdPerVcpuSecond",

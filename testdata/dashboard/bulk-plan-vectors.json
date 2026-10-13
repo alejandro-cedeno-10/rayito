@@ -8,5 +8,6 @@
     { "action": "kill", "count": 100, "appliedRate": 4, "tps": 4, "estimatedSeconds": 25 },
     { "action": "resume", "count": 10, "appliedRate": null, "tps": 5, "estimatedSeconds": 2 },
     { "action": "resume", "count": 0, "appliedRate": null, "tps": 5, "estimatedSeconds": 0 }
-  ]
+  ],
+  "invalidRates": [0, -1, -0.5]
 }

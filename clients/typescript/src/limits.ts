@@ -238,6 +238,7 @@ export const QUOTA_OPERATIONS: Readonly<Record<string, string>> = {
 export const QUOTA_WARNING_FRACTION = 0.8 as const;
 export const QUOTA_CRITICAL_FRACTION = 0.95 as const;
 export const COST_CACHE_TTL_SECONDS = 86400 as const;
+export const COST_CACHE_MAX_ENTRIES = 64 as const;
 export const COST_EXPLORER_REGION = "us-east-1" as const;
 export const COST_EXPLORER_SERVICE_NAME = "AWS Lambda" as const;
 export const COMPUTE_PRICE_USD_PER_VCPU_SECOND = 0.0000276944 as const;

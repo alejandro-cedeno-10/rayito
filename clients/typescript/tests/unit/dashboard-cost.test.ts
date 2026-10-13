@@ -18,7 +18,7 @@ import { AuthenticationError, DashboardError, InvalidArgumentError } from "../..
 import { COST_CACHE_TTL_SECONDS } from "../../src/limits.js";
 import { ConventionCatalog } from "../../src/sizing/catalog.js";
 import { IMAGE_ARN } from "./fake/control-plane.js";
-import { FakeCostSource, FakePlane, listItem, NOW } from "./fake/dashboard.js";
+import { awsSdkError, FakeCostSource, FakePlane, listItem, NOW } from "./fake/dashboard.js";
 
 const RESULT: CostQueryResult = {
   periods: [
@@ -237,7 +237,7 @@ describe("Cost Explorer adapter", () => {
     ["AccessDeniedException", AuthenticationError],
     ["DataUnavailableException", DashboardError],
   ] as const)("maps %s by code", async (code, expected) => {
-    const failure = Object.assign(new Error("cuenta secreta"), { name: code });
+    const failure = awsSdkError("cuenta secreta", code);
     const source = costExplorerSource(async () => async () => {
       throw failure;
     });
@@ -245,5 +245,18 @@ describe("Cost Explorer adapter", () => {
     expect(error).toBeInstanceOf(expected);
     expect((error as Error).message).not.toContain("secreta");
     expect((error as { awsCode?: string }).awsCode).toBe(code);
+  });
+
+  it("a missing peer keeps its install hint and a non-AWS bug is not mislabelled", async () => {
+    const missing = new InvalidArgumentError("instala @aws-sdk/client-cost-explorer");
+    const noPeer = costExplorerSource(async () => {
+      throw missing;
+    });
+    await expect(noPeer.getCostAndUsage(QUERY)).rejects.toBe(missing);
+    const bug = new TypeError("bug");
+    const buggy = costExplorerSource(async () => async () => {
+      throw bug;
+    });
+    await expect(buggy.getCostAndUsage(QUERY)).rejects.toBe(bug);
   });
 });

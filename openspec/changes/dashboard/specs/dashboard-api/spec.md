@@ -43,3 +43,15 @@ Warning thresholds, cache TTLs, TPS, page sizes and polling intervals SHALL be d
 - **WHEN** one sandbox of a bulk kill fails with an AWS error
 - **THEN** the others are still attempted and the failed one reports only its AWS code
 
+#### Scenario: quota and capacity failures are per-sandbox too
+- **WHEN** a bulk resume hits `ServiceQuotaExceededException` or `InsufficientCapacityException` on one sandbox
+- **THEN** that sandbox is `failed` with that code and the rest of the queue still runs
+
+#### Scenario: a failure without an AWS code reports one neutral code
+- **WHEN** a sandbox fails with an error that carries no AWS code
+- **THEN** it reports `UnknownError` in both SDKs
+
+#### Scenario: a non-positive applied rate is refused
+- **WHEN** a bulk plan is requested with an applied rate of 0 or less
+- **THEN** it raises `InvalidArgumentException` (`InvalidArgumentError`) before any call
+

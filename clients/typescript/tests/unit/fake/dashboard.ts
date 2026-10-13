@@ -62,6 +62,13 @@ export function listItem(
   });
 }
 
+/** Un error con la forma de los del SDK de AWS v3: `name` es el código y lleva `$metadata`. */
+export function awsSdkError(message: string, code: string): Error {
+  const error = Object.assign(new Error(message), { name: code });
+  Object.defineProperty(error, "$metadata", { value: {} });
+  return error;
+}
+
 /** Una excepción de AWS con código, para las acciones que fallan. */
 export class RaisingError extends SandboxError {
   constructor(code: string) {

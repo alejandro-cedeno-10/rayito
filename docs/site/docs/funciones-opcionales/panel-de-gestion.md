@@ -37,7 +37,7 @@ lees tus propios datos con tus credenciales.
       aceptación en AWS real). Cost Explorer cobra **$0,01 por petición**
       ([precios](https://aws.amazon.com/aws-cost-management/aws-cost-explorer/pricing/)):
       `billed()` hace una por ventana (una por página si hubiera más) y la
-      caché local la conserva 24 h, así que un mes con el panel abierto ronda
+      caché local la conserva 24 h (con un tope de entradas), así que un mes con el panel abierto ronda
       las 30 peticiones, ≈ $0,30. Las acciones no se facturan por la llamada;
       suspender escribe un snapshot ($0,0038/GB).
     - **IAM**: `servicequotas:ListServiceQuotas`, `lambda:ListMicrovms`,
@@ -301,7 +301,10 @@ las acciones masivas.
 - **Acciones masivas**: matar (`kill`), suspender (`suspend`) y reanudar
   (`resume`), de uno en uno y al ritmo de la cuota de TPS de su operación.
   Un fallo de un sandbox no detiene a los demás: queda `failed` con el
-  **código** de AWS (nunca su mensaje). Una acción sobre un sandbox que ya
+  **código** de AWS (nunca su mensaje): `ServiceQuotaExceededException` o
+  `InsufficientCapacityException` si la cuenta se queda sin cuota o sin
+  capacidad, y `UnknownError` si el error no trae código. Una cuota
+  aplicada no positiva en `applied_rate` es `InvalidArgumentException`. Una acción sobre un sandbox que ya
   no necesita nada (por ejemplo, suspender uno que no está `RUNNING`) queda
   `unchanged`. Un id repetido se aplica una sola vez.
 

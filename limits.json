@@ -204,6 +204,7 @@
   "quotaWarningFraction": 0.8,
   "quotaCriticalFraction": 0.95,
   "costCacheTtlSeconds": 86400,
+  "costCacheMaxEntries": 64,
   "costExplorerRegion": "us-east-1",
   "costExplorerServiceName": "AWS Lambda",
   "computePriceUsdPerVcpuSecond": 0.0000276944,

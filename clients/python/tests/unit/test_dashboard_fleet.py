@@ -17,7 +17,13 @@ from rayito._dashboard._domain import BulkProgress
 from rayito._dashboard._fleet import Fleet
 from rayito._dashboard._fleet_async import AsyncFleet
 from rayito._lifecycle_events._domain import EventRecord
-from rayito.exceptions import AuthenticationException, InvalidArgumentException
+from rayito.exceptions import (
+    AuthenticationException,
+    CapacityException,
+    InvalidArgumentException,
+    QuotaExceededException,
+    SandboxException,
+)
 
 from .conftest import IMAGE_ARN, FakeClock, no_retry_client
 from .fake_dashboard import (
@@ -147,6 +153,34 @@ def test_a_failure_does_not_stop_the_queue_and_only_the_code_is_reported() -> No
     ]
     assert "secreto" not in repr(result)
     assert "mensaje" not in repr(result)
+
+
+def test_quota_and_capacity_failures_do_not_stop_the_queue() -> None:
+    plane = running_fleet(4)
+    plane.fail[("resume_microvm", sandbox_id(2))] = QuotaExceededException(
+        "cuota", quota_code="L-1"
+    )
+    plane.fail[("resume_microvm", sandbox_id(3))] = CapacityException("sin capacidad")
+
+    result = fleet(plane, allow_actions=True).run_bulk(
+        "resume", [sandbox_id(n) for n in range(1, 5)]
+    )
+
+    assert [(r.outcome, r.code) for r in result.items] == [
+        ("done", None),
+        ("failed", "ServiceQuotaExceededException"),
+        ("failed", "InsufficientCapacityException"),
+        ("done", None),
+    ]
+
+
+def test_a_failure_without_an_aws_code_uses_the_language_neutral_code() -> None:
+    plane = running_fleet(1)
+    plane.fail[("terminate_microvm", sandbox_id(1))] = SandboxException("x")
+
+    result = fleet(plane, allow_actions=True).run_bulk("kill", [sandbox_id(1)])
+
+    assert result.items[0].code == "UnknownError"
 
 
 def test_bulk_validates_before_any_call_and_dedupes_ids() -> None:

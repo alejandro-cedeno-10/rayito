@@ -62,6 +62,31 @@ export interface Sender {
 /** Entrega el cliente en la primera llamada, nunca al construir el adaptador. */
 export type SenderProvider = () => Promise<Sender>;
 
+/** Un error del SDK de AWS v3 lleva `$metadata` o `$fault`; un bug propio, no. */
+function isAwsSdkError(error: unknown): boolean {
+  return typeof error === "object" && error !== null && ("$metadata" in error || "$fault" in error);
+}
+
+/**
+ * Memoiza la construcción del cliente: una promesa compartida entre llamadas
+ * y, si falla (p. ej. falta el peer), la siguiente llamada reintenta.
+ */
+function memoizedClient<T>(build: () => Promise<T>): () => Promise<T> {
+  let pending: Promise<T> | undefined;
+  return () => {
+    if (pending === undefined) {
+      const current = build();
+      current.catch(() => {
+        if (pending === current) {
+          pending = undefined;
+        }
+      });
+      pending = current;
+    }
+    return pending;
+  };
+}
+
 /**
  * Lanza un error propio con sólo el código de AWS: ni el mensaje ni `cause`
  * guardan el error original del SDK (`sanitizeAwsError` sin mensaje).
@@ -70,6 +95,9 @@ export async function dashboardCall<T>(operation: string, invoke: () => Promise<
   try {
     return await invoke();
   } catch (error) {
+    if (!isAwsSdkError(error)) {
+      throw error;
+    }
     const cause = sanitizeAwsError(error, { includeMessage: false });
     const code = awsCode(error);
     const message = `${operation}: AWS respondió ${cause.name}`;
@@ -139,23 +167,27 @@ export type QuotaPager = (input: { ServiceCode: string; NextToken?: string }) =>
  */
 export function serviceQuotasSource(pager: () => Promise<QuotaPager>): QuotaSource {
   return {
-    listAppliedQuotas: () =>
-      dashboardCall("Quotas.listServiceQuotas", async () => listMicrovmQuotas(await pager())),
+    listAppliedQuotas: async () => {
+      const send = await pager();
+      return dashboardCall("Quotas.listServiceQuotas", () => listMicrovmQuotas(send));
+    },
   };
 }
 
 /** El adaptador real: importa el peer `@aws-sdk/client-service-quotas` en la primera llamada. */
 export function sdkServiceQuotasSource(region: string, credentials: Credentials): QuotaSource {
-  return serviceQuotasSource(async () => {
-    const { sdk, send } = await loadOptionalSdkClient<ServiceQuotasModule>(
-      SERVICE_QUOTAS_PEER,
-      "cuotas del panel de gestión (Quotas)",
-      (module) => module.ServiceQuotasClient,
-      region,
-      credentials,
-    );
-    return (input) => send<QuotaPage>(new sdk.ListServiceQuotasCommand(input));
-  });
+  return serviceQuotasSource(
+    memoizedClient(async () => {
+      const { sdk, send } = await loadOptionalSdkClient<ServiceQuotasModule>(
+        SERVICE_QUOTAS_PEER,
+        "cuotas del panel de gestión (Quotas)",
+        (module) => module.ServiceQuotasClient,
+        region,
+        credentials,
+      );
+      return (input) => send<QuotaPage>(new sdk.ListServiceQuotasCommand(input));
+    }),
+  );
 }
 
 interface CostMetric {
@@ -249,10 +281,10 @@ export type CostPager = (input: Record<string, unknown>) => Promise<CostPage>;
  */
 export function costExplorerSource(pager: () => Promise<CostPager>): CostSource {
   return {
-    getCostAndUsage: (query) =>
-      dashboardCall("UsageCost.getCostAndUsage", async () =>
-        queryCostAndUsage(await pager(), query),
-      ),
+    getCostAndUsage: async (query) => {
+      const send = await pager();
+      return dashboardCall("UsageCost.getCostAndUsage", () => queryCostAndUsage(send, query));
+    },
   };
 }
 
@@ -261,16 +293,18 @@ export function costExplorerSource(pager: () => Promise<CostPager>): CostSource 
  * primera llamada y habla con us-east-1, donde vive el servicio.
  */
 export function sdkCostExplorerSource(credentials: Credentials): CostSource {
-  return costExplorerSource(async () => {
-    const { sdk, send } = await loadOptionalSdkClient<CostExplorerModule>(
-      COST_EXPLORER_PEER,
-      "coste facturado del panel de gestión (UsageCost.billed)",
-      (module) => module.CostExplorerClient,
-      COST_EXPLORER_REGION,
-      credentials,
-    );
-    return (input) => send<CostPage>(new sdk.GetCostAndUsageCommand(input));
-  });
+  return costExplorerSource(
+    memoizedClient(async () => {
+      const { sdk, send } = await loadOptionalSdkClient<CostExplorerModule>(
+        COST_EXPLORER_PEER,
+        "coste facturado del panel de gestión (UsageCost.billed)",
+        (module) => module.CostExplorerClient,
+        COST_EXPLORER_REGION,
+        credentials,
+      );
+      return (input) => send<CostPage>(new sdk.GetCostAndUsageCommand(input));
+    }),
+  );
 }
 
 interface ImageRow {

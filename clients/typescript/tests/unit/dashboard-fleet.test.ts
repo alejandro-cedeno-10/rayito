@@ -14,11 +14,19 @@ import {
 } from "../../src/dashboard/aws.js";
 import type { BulkProgress } from "../../src/dashboard/domain.js";
 import { Fleet, type FleetOptions } from "../../src/dashboard/fleet.js";
-import { AuthenticationError, DashboardError, InvalidArgumentError } from "../../src/errors.js";
+import {
+  AuthenticationError,
+  CapacityError,
+  DashboardError,
+  InvalidArgumentError,
+  QuotaExceededError,
+  SandboxError,
+} from "../../src/errors.js";
 import type { EventRecord } from "../../src/lifecycle-events/domain.js";
 import { ConventionCatalog } from "../../src/sizing/catalog.js";
 import { IMAGE_ARN } from "./fake/control-plane.js";
 import {
+  awsSdkError,
   FakeClock,
   FakeEvents,
   FakeImageCatalog,
@@ -185,6 +193,34 @@ describe("Fleet bulk actions", () => {
     expect(JSON.stringify(result)).not.toContain("mensaje");
   });
 
+  it("quota and capacity failures do not stop the queue", async () => {
+    const plane = runningFleet(4);
+    plane.fail.set(
+      `resumeMicrovm:${sandboxId(2)}`,
+      new QuotaExceededError("cuota", { quotaCode: "L-1" }),
+    );
+    plane.fail.set(`resumeMicrovm:${sandboxId(3)}`, new CapacityError("sin capacidad"));
+
+    const result = await fleet(plane, { allowActions: true }).runBulk(
+      "resume",
+      [1, 2, 3, 4].map(sandboxId),
+    );
+
+    expect(result.items.map((r) => [r.outcome, r.code])).toEqual([
+      ["done", undefined],
+      ["failed", "ServiceQuotaExceededException"],
+      ["failed", "InsufficientCapacityException"],
+      ["done", undefined],
+    ]);
+  });
+
+  it("a failure without an AWS code uses the language-neutral code", async () => {
+    const plane = runningFleet(1);
+    plane.fail.set(`terminateMicrovm:${sandboxId(1)}`, new SandboxError("x"));
+    const result = await fleet(plane, { allowActions: true }).runBulk("kill", [sandboxId(1)]);
+    expect(result.items[0]?.code).toBe("UnknownError");
+  });
+
   it("an unexpected error is not swallowed", async () => {
     const plane = runningFleet(1);
     plane.fail.set(`terminateMicrovm:${sandboxId(1)}`, new TypeError("bug"));
@@ -282,7 +318,7 @@ describe("image catalog adapter", () => {
   it("maps errors by code through the catalog class", async () => {
     const failing: Sender = {
       send: async () => {
-        throw Object.assign(new Error("arn:aws:... secreto"), { name: "ValidationException" });
+        throw awsSdkError("arn:aws:... secreto", "ValidationException");
       },
     };
     const catalog = new LambdaMicrovmsImageCatalog(() => failing);

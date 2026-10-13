@@ -28,6 +28,7 @@ from rayito._dashboard._domain import (
     quota_default,
 )
 from rayito._limits import QUOTA_DEFAULTS, QUOTA_NAMES
+from rayito.exceptions import InvalidArgumentException
 
 from .conftest import FakeClock
 
@@ -179,6 +180,25 @@ def test_bulk_plan_vectors(case: dict[str, Any]) -> None:
     plan = plan_bulk(case["action"], case["count"], case["appliedRate"])
     assert plan.tps == case["tps"]
     assert plan.estimated_seconds == pytest.approx(case["estimatedSeconds"])
+
+
+@pytest.mark.parametrize("rate", load("bulk-plan-vectors.json")["invalidRates"])
+def test_bulk_plan_rejects_a_non_positive_applied_rate(rate: float) -> None:
+    with pytest.raises(InvalidArgumentException):
+        plan_bulk("suspend", 10, rate)
+
+
+def test_ttl_cache_prunes_expired_entries_and_caps_the_size() -> None:
+    clock = FakeClock()
+    cache: TtlCache[str, int] = TtlCache(10, clock, max_entries=3)
+    cache.put("old", 0)
+    clock.advance(10)
+    for n in range(5):
+        cache.put(f"k{n}", n)
+    assert len(cache) == 3
+    assert cache.get("old") is None
+    assert cache.get("k0") is None
+    assert cache.get("k4") == 4
 
 
 def test_ttl_cache_expires_entries_after_the_ttl() -> None:

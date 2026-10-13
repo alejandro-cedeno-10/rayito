@@ -7,12 +7,18 @@
 import { describe, expect, it } from "vitest";
 import { listMicrovmQuotas, type QuotaPage, serviceQuotasSource } from "../../src/dashboard/aws.js";
 import { Quotas } from "../../src/dashboard/quotas.js";
-import { AuthenticationError, DashboardError, RateLimitError } from "../../src/errors.js";
+import {
+  AuthenticationError,
+  DashboardError,
+  InvalidArgumentError,
+  RateLimitError,
+} from "../../src/errors.js";
 import { QUOTA_NAMES } from "../../src/limits.js";
 import { ConventionCatalog } from "../../src/sizing/catalog.js";
 import { IMAGE_ARN, REGION } from "./fake/control-plane.js";
 import {
   appliedDefaults,
+  awsSdkError,
   FakePlane,
   FakeQuotaSource,
   listItem,
@@ -142,7 +148,7 @@ describe("Service Quotas adapter", () => {
     ["TooManyRequestsException", RateLimitError],
     ["ServiceException", DashboardError],
   ] as const)("maps %s by code and never repeats the AWS message", async (code, expected) => {
-    const failure = Object.assign(new Error("arn:aws:... secreto"), { name: code });
+    const failure = awsSdkError("arn:aws:... secreto", code);
     const source = serviceQuotasSource(async () => async () => {
       throw failure;
     });
@@ -151,6 +157,19 @@ describe("Service Quotas adapter", () => {
     expect((error as Error).message).toContain(code);
     expect((error as Error).message).not.toContain("secreto");
     expect((error as { awsCode?: string }).awsCode).toBe(code);
+  });
+
+  it("a missing peer keeps its install hint and a non-AWS bug is not mislabelled", async () => {
+    const missing = new InvalidArgumentError("instala @aws-sdk/client-service-quotas");
+    const noPeer = serviceQuotasSource(async () => {
+      throw missing;
+    });
+    await expect(noPeer.listAppliedQuotas()).rejects.toBe(missing);
+    const bug = new TypeError("bug");
+    const buggy = serviceQuotasSource(async () => async () => {
+      throw bug;
+    });
+    await expect(buggy.listAppliedQuotas()).rejects.toBe(bug);
   });
 
   it("the catalog names carry no account data", () => {
