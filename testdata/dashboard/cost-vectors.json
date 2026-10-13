@@ -1,0 +1,80 @@
+{
+  "description": "Cost vectors shared by the Python and TypeScript SDKs. `billed` folds Cost Explorer periods into MicroVM usage-type lines (other Lambda usage types are dropped, a region prefix is accepted); `estimates` are the baseline compute price of a sandbox of `memoryMiB` active `seconds` (AWS_API_NOTES.md section 12: 2 GB costs $0.1261/h), compared to six decimals.",
+  "billed": [
+    {
+      "name": "two periods are summed per usage type and other Lambda usage is dropped",
+      "periods": [
+        {
+          "start": "2026-10-01",
+          "end": "2026-11-01",
+          "estimated": false,
+          "groups": [
+            { "usageType": "Lambda-MicroVM-Memory-GB-Second-ARM", "costUsd": 0.5, "quantity": 100, "unit": "GB-Seconds" },
+            { "usageType": "Lambda-MicroVM-vCPU-Second-ARM", "costUsd": 0.25, "quantity": 50, "unit": "vCPU-Seconds" },
+            { "usageType": "Request", "costUsd": 9, "quantity": 9000000, "unit": "Requests" }
+          ]
+        },
+        {
+          "start": "2026-11-01",
+          "end": "2026-11-02",
+          "estimated": true,
+          "groups": [
+            { "usageType": "Lambda-MicroVM-Memory-GB-Second-ARM", "costUsd": 0.25, "quantity": 50, "unit": "GB-Seconds" },
+            { "usageType": "Lambda-MicroVM-Snapshot-Storage-GB-Hour", "costUsd": 0.125, "quantity": 12.5, "unit": "GB-Hours" }
+          ]
+        }
+      ],
+      "expected": {
+        "lines": [
+          { "usageType": "Lambda-MicroVM-Memory-GB-Second-ARM", "component": "memory", "quantity": 150, "unit": "GB-Seconds", "costUsd": 0.75 },
+          { "usageType": "Lambda-MicroVM-Snapshot-Storage-GB-Hour", "component": "snapshot-storage", "quantity": 12.5, "unit": "GB-Hours", "costUsd": 0.125 },
+          { "usageType": "Lambda-MicroVM-vCPU-Second-ARM", "component": "vcpu", "quantity": 50, "unit": "vCPU-Seconds", "costUsd": 0.25 }
+        ],
+        "totalUsd": 1.125,
+        "partial": true
+      }
+    },
+    {
+      "name": "a regional prefix and an unknown MicroVM usage type",
+      "periods": [
+        {
+          "start": "2026-10-01",
+          "end": "2026-10-02",
+          "estimated": false,
+          "groups": [
+            { "usageType": "EUW1-Lambda-MicroVM-Snapshot-Read-GB", "costUsd": 0.5, "quantity": 2, "unit": "GB" },
+            { "usageType": "Lambda-MicroVM-Brand-New-Thing", "costUsd": 0.25, "quantity": 1, "unit": "Units" }
+          ]
+        }
+      ],
+      "expected": {
+        "lines": [
+          { "usageType": "EUW1-Lambda-MicroVM-Snapshot-Read-GB", "component": "snapshot-read", "quantity": 2, "unit": "GB", "costUsd": 0.5 },
+          { "usageType": "Lambda-MicroVM-Brand-New-Thing", "component": "other", "quantity": 1, "unit": "Units", "costUsd": 0.25 }
+        ],
+        "totalUsd": 0.75,
+        "partial": false
+      }
+    },
+    {
+      "name": "no MicroVM usage",
+      "periods": [
+        {
+          "start": "2026-10-01",
+          "end": "2026-10-02",
+          "estimated": false,
+          "groups": [{ "usageType": "Duration", "costUsd": 1, "quantity": 10, "unit": "GB-Seconds" }]
+        }
+      ],
+      "expected": { "lines": [], "totalUsd": 0, "partial": false }
+    }
+  ],
+  "estimates": [
+    { "memoryMiB": 512, "seconds": 3600, "usd": 0.031525 },
+    { "memoryMiB": 1024, "seconds": 3600, "usd": 0.06305 },
+    { "memoryMiB": 2048, "seconds": 3600, "usd": 0.1261 },
+    { "memoryMiB": 4096, "seconds": 3600, "usd": 0.2522 },
+    { "memoryMiB": 8192, "seconds": 3600, "usd": 0.5044 },
+    { "memoryMiB": 2048, "seconds": 0, "usd": 0 }
+  ]
+}

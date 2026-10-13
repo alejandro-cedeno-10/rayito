@@ -12,7 +12,8 @@ al pasar la opción o instanciar la clase. Cada docstring lleva su bloque
 [Templates declarativos](../../funciones-opcionales/templates.md),
 [Pilas opcionales](../../funciones-opcionales/pilas-opcionales.md),
 [Volúmenes EFS](../../funciones-opcionales/volumenes-efs.md) (experimental),
-[Dominio propio](../../funciones-opcionales/dominio-propio.md) (experimental) y
+[Dominio propio](../../funciones-opcionales/dominio-propio.md) (experimental),
+[Panel de gestión](../../funciones-opcionales/panel-de-gestion.md) y
 [Funciones opcionales](../../optional-features.md).
 
 ## Pilas opcionales
@@ -153,3 +154,49 @@ verificar aún de punta a punta en AWS real.
 ::: rayito.AsyncCustomDomain
 
 ::: rayito.CustomDomainRoute
+
+## Panel de gestión { #panel-de-gestion }
+
+::: rayito.Quotas
+
+::: rayito.AsyncQuotas
+
+::: rayito.QuotaReport
+
+::: rayito.QuotaEntry
+
+::: rayito.QuotaWarning
+
+::: rayito.MemoryUsage
+
+::: rayito.TpsLimit
+
+::: rayito.UsageCost
+
+::: rayito.AsyncUsageCost
+
+::: rayito.BilledCost
+
+::: rayito.BilledLine
+
+::: rayito.CostEstimate
+
+::: rayito.SandboxCostEstimate
+
+::: rayito.Fleet
+
+::: rayito.AsyncFleet
+
+::: rayito.SandboxView
+
+::: rayito.ImageSummary
+
+::: rayito.ImageVersionSummary
+
+::: rayito.BulkPlan
+
+::: rayito.BulkProgress
+
+::: rayito.BulkItemResult
+
+::: rayito.BulkResult

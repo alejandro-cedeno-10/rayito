@@ -8,6 +8,25 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
 
 ### Añadido
 
+- **Servicios del panel de gestión** (`dashboard`, ADR-026, fase 1): `Quotas`
+  (cuotas aplicadas de Lambda MicroVMs, memoria asignada contra la cuota de la
+  región y avisos al 80 % y al 95 %), `UsageCost` (coste facturado por Cost
+  Explorer por tipo de uso, con caché local de 24 h, y coste estimado por
+  sandbox, siempre rotulados) y `Fleet` (sandboxes con la memoria de su
+  imagen, imágenes y versiones, historial de eventos y acciones masivas con
+  una cola que respeta los TPS), cada uno con su versión `Async*`.
+  Apagados por defecto: construirlos no llama a AWS, Cost Explorer ($0,01 por
+  petición) sólo se toca con `UsageCost.billed()` y las acciones exigen
+  `allow_actions=True`. Nueva excepción `DashboardException` y constantes
+  nuevas en `limits.json` (catálogo de cuotas, umbrales, TTL y precios de
+  cómputo). `rayito doctor` y `rayito image list` reutilizan los lectores de
+  cuotas e imágenes. Guía:
+  [Panel de gestión](https://alejandro-cedeno-10.github.io/rayito/funciones-opcionales/panel-de-gestion/).
+
+## [0.11.0] - 2026-10-13
+
+### Añadido
+
 - **`rayito image publish --artifact-run-id RUN_ID`** (`run-scoped-artifact-keys`).
   Sube el zip a `rayito/images/runs/<RUN_ID>/rayd-<sha>.zip` en vez de a la
   clave compartida por contenido, para que dos ejecuciones del mismo commit
@@ -30,9 +49,17 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   memoria ya los lleve. `create()` vuelve antes (6,4 s frente a 19,1 s de
   mediana en la misma tanda) y el snapshot de memoria pesa 62 MB menos; el
   primer token mejora poco y con mucha dispersión (20,9 s frente a 23,7 s de
-  mediana). Las imágenes ya construidas no cambian; en una imagen nueva, la
-  primera celda de `run_code` que importe el stack científico paga la
-  importación (`kernel_warmup=True` lo evita).
+  mediana). Las imágenes ya construidas no cambian.
+- **Cambio de comportamiento: `AgentTemplate` ya no precalienta el kernel de
+  `run_code`** (`kernel_warmup=False` por defecto). En una imagen construida
+  con 0.11, la primera celda de `run_code` que importe numpy, pandas,
+  matplotlib, scipy o scikit-learn paga esa importación. Para
+  volver al comportamiento de 0.10, construye la imagen con
+  `AgentTemplate(..., kernel_warmup=True)` o
+  `rayito agent template build --kernel-warmup`.
+- `rayito doctor` conoce la serie 0.11: la tabla de compatibilidad
+  (`rayito.cli._compat.COMPATIBILITY` y `docs/site/docs/limits.md`) exige
+  el `rayd` del tag `rayd-v0.11.0` para el SDK 0.11.
 
 ## [0.10.0] - 2026-10-08
 
@@ -1562,7 +1589,8 @@ Pasos manuales, fuera de CI, antes del primer tag (pasos canónicos en
 
 Builds internos de los hitos M1-M5, nunca publicados.
 
-[Unreleased]: https://github.com/alejandro-cedeno-10/rayito/compare/python-v0.10.0...HEAD
+[Unreleased]: https://github.com/alejandro-cedeno-10/rayito/compare/python-v0.11.0...HEAD
+[0.11.0]: https://github.com/alejandro-cedeno-10/rayito/compare/python-v0.10.0...python-v0.11.0
 [0.10.0]: https://github.com/alejandro-cedeno-10/rayito/compare/python-v0.9.1...python-v0.10.0
 [0.9.1]: https://github.com/alejandro-cedeno-10/rayito/compare/python-v0.9.0...python-v0.9.1
 [0.9.0]: https://github.com/alejandro-cedeno-10/rayito/compare/python-v0.8.0...python-v0.9.0

@@ -122,6 +122,27 @@ export {
   type DeployCustomDomainOptions,
   type RegisterRouteOptions,
 } from "./custom-domain/service.js";
+export { type BilledOptions, UsageCost, type UsageCostOptions } from "./dashboard/cost.js";
+export {
+  type BilledCost,
+  type BilledLine,
+  type BulkItemResult,
+  type BulkPlan,
+  type BulkProgress,
+  BulkResult,
+  type CostEstimate,
+  type ImageSummary,
+  type ImageVersionSummary,
+  type MemoryUsage,
+  QuotaEntry,
+  QuotaReport,
+  type QuotaWarning,
+  type SandboxCostEstimate,
+  type SandboxView,
+  type TpsLimit,
+} from "./dashboard/domain.js";
+export { Fleet, type FleetOptions } from "./dashboard/fleet.js";
+export { Quotas, type QuotasOptions } from "./dashboard/quotas.js";
 export {
   AgentError,
   type AgentErrorOptions,
@@ -131,6 +152,7 @@ export {
   CapacityError,
   CommandExitError,
   CustomDomainError,
+  DashboardError,
   DiskFullError,
   FileNotFoundError,
   FileUploadError,

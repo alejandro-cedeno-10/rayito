@@ -1,0 +1,5 @@
+[
+  { "name": "class Quotas", "pattern": "^(export )?declare class Quotas\\b" },
+  { "name": "class UsageCost", "pattern": "^(export )?declare class UsageCost\\b" },
+  { "name": "class Fleet", "pattern": "^(export )?declare class Fleet\\b" }
+]

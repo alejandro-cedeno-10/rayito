@@ -542,3 +542,14 @@ def isolated_transfer_env(monkeypatch: pytest.MonkeyPatch) -> None:
     los corre: con él, `files.write`/`files.read` grandes irían por S3."""
     for name in TRANSFER_ENV_VARS:
         monkeypatch.delenv(name, raising=False)
+
+
+@pytest.fixture
+def clean_catalog() -> Iterator[None]:
+    """`DEFAULT_SIZE_CATALOG` cachea por proceso: cada test que lo use parte
+    vacío (los servicios del panel lo comparten por defecto)."""
+    from rayito._size_catalog import DEFAULT_SIZE_CATALOG
+
+    DEFAULT_SIZE_CATALOG._cache.clear()
+    yield
+    DEFAULT_SIZE_CATALOG._cache.clear()

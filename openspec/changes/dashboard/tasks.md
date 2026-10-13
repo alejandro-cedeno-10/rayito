@@ -11,11 +11,11 @@
 
 ## 2. Phase 1: domain, ports, SDK services
 
-- [ ] 2.1 Constants in `limits.json` and `gen_limits.py` (thresholds, TTLs, TPS, page sizes)
-- [ ] 2.2 Pure domain and the six ports (Python and TypeScript)
-- [ ] 2.3 `Quotas` and `UsageCost` services, Python sync and async plus TypeScript, with fakes and parity tests
-- [ ] 2.4 Adapters with lazy imports; errors mapped by code
-- [ ] 2.5 Zero-cost golden trace test in both SDKs
+- [x] 2.1 Constants in `limits.json` and `gen_limits.py` (quota catalog, thresholds, cache TTL, compute prices; page sizes and polling intervals arrive with the server in 3.x)
+- [x] 2.2 Pure domain and the six ports (Python and TypeScript)
+- [x] 2.3 `Quotas` and `UsageCost` services, Python sync and async plus TypeScript, with fakes and parity tests
+- [x] 2.4 Adapters with lazy imports; errors mapped by code
+- [x] 2.5 Zero-cost golden trace test in both SDKs
 
 ## 3. Phase 1: local dashboard
 

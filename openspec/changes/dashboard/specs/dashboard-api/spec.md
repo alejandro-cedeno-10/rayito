@@ -31,3 +31,27 @@ Warning thresholds, cache TTLs, TPS, page sizes and polling intervals SHALL be d
 #### Scenario: generated limits are current
 - **WHEN** `gen_limits.py --check` runs
 - **THEN** it exits 0
+
+### Requirement: The SDK fleet service is read-only by default
+`Fleet` SHALL refuse every action (kill, suspend, resume) unless it was constructed with `allow_actions=True` (`allowActions: true` in TypeScript), SHALL validate the action and the sandbox ids before any AWS call, SHALL queue the calls at or below the lower of the `apiTps` limit and the applied quota rate, and SHALL report a per-sandbox failure by AWS code only, without stopping the queue.
+
+#### Scenario: actions refused without the option
+- **WHEN** a bulk action is requested on a `Fleet` built without `allow_actions=True`
+- **THEN** it raises before any AWS call
+
+#### Scenario: a failure does not stop the queue
+- **WHEN** one sandbox of a bulk kill fails with an AWS error
+- **THEN** the others are still attempted and the failed one reports only its AWS code
+
+#### Scenario: quota and capacity failures are per-sandbox too
+- **WHEN** a bulk resume hits `ServiceQuotaExceededException` or `InsufficientCapacityException` on one sandbox
+- **THEN** that sandbox is `failed` with that code and the rest of the queue still runs
+
+#### Scenario: a failure without an AWS code reports one neutral code
+- **WHEN** a sandbox fails with an error that carries no AWS code
+- **THEN** it reports `UnknownError` in both SDKs
+
+#### Scenario: a non-positive applied rate is refused
+- **WHEN** a bulk plan is requested with an applied rate of 0 or less
+- **THEN** it raises `InvalidArgumentException` (`InvalidArgumentError`) before any call
+

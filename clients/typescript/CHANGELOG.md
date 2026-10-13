@@ -6,6 +6,26 @@ versionado [SemVer](https://semver.org/lang/es/).
 
 ## [Unreleased]
 
+### Añadido
+
+- **Servicios del panel de gestión** (`dashboard`, ADR-026, fase 1): `Quotas`
+  (cuotas aplicadas de Lambda MicroVMs, memoria asignada contra la cuota de la
+  región y avisos al 80 % y al 95 %), `UsageCost` (coste facturado por Cost
+  Explorer por tipo de uso, con caché local de 24 h, y coste estimado por
+  sandbox, siempre rotulados) y `Fleet` (sandboxes con la memoria de su
+  imagen, imágenes y versiones, historial de eventos y acciones masivas con
+  una cola que respeta los TPS).
+  Apagados por defecto: construirlos no llama a AWS, Cost Explorer ($0,01 por
+  petición) sólo se toca con `UsageCost.billed()` y las acciones exigen
+  `allowActions: true`. Nueva excepción `DashboardError` y constantes
+  nuevas en `limits.json` (catálogo de cuotas, umbrales, TTL y precios de
+  cómputo). Los clientes de Service Quotas y Cost Explorer son
+  peers opcionales (`@aws-sdk/client-service-quotas`,
+  `@aws-sdk/client-cost-explorer`). Guía:
+  [Panel de gestión](https://alejandro-cedeno-10.github.io/rayito/funciones-opcionales/panel-de-gestion/).
+
+## [0.11.0] - 2026-10-13
+
 ### Cambiado
 
 - **`AgentTemplate` arranca antes** (`ai-agent-first-start`). Dos cambios en
@@ -18,9 +38,27 @@ versionado [SemVer](https://semver.org/lang/es/).
   snapshot de memoria ya los lleve. `create()` vuelve antes (6,4 s frente a
   19,1 s de mediana en la misma tanda) y el snapshot de memoria pesa 62 MB
   menos; el primer token mejora poco y con mucha dispersión (20,9 s frente a
-  23,7 s de mediana). Las imágenes ya construidas no cambian; en una imagen
-  nueva, la primera celda de `runCode` que importe el stack científico paga
-  la importación (`kernelWarmup: true` lo evita).
+  23,7 s de mediana). Las imágenes ya construidas no cambian.
+- **Cambio de comportamiento: `AgentTemplate` ya no precalienta el kernel de
+  `runCode`** (`kernelWarmup: false` por defecto). En una imagen construida
+  con 0.11, la primera celda de `runCode` que importe numpy, pandas,
+  matplotlib, scipy o scikit-learn paga esa importación. Para
+  volver al comportamiento de 0.10, construye la imagen con
+  `new AgentTemplate({ ..., kernelWarmup: true })`.
+
+### Corregido
+
+- **`pool.take()` y `pool.close()` ya no dejan que Node salga mientras
+  esperan.** Todos los temporizadores del pool, y los de los calentamientos
+  en vuelo, iban sin referencia (`unref()`): con el pool vacío o con un
+  relleno en marcha, un script cuyo único trabajo pendiente era
+  `await pool.take({ waitMs })` o `await pool.close()` salía con la promesa
+  sin resolver (aviso `unsettled top-level await`, código 13) y dejaba
+  vivos los MicroVM que se estaban calentando. Ahora `take()` y `close()`
+  retienen el proceso con un intervalo con referencia mientras corren; los
+  temporizadores del barrido y del backoff siguen sin ella, así que un pool
+  ocioso sigue sin mantener vivo el proceso. Encontrado en la aceptación de
+  0.11.0 en AWS real.
 
 ## [0.10.0] - 2026-10-08
 
@@ -1269,7 +1307,8 @@ AWS real en M6 (`MILESTONES.md`), en camelCase y milisegundos, sólo async.
 
 Builds internos de los hitos M1-M5, nunca publicados.
 
-[Unreleased]: https://github.com/alejandro-cedeno-10/rayito/compare/typescript-v0.10.0...HEAD
+[Unreleased]: https://github.com/alejandro-cedeno-10/rayito/compare/typescript-v0.11.0...HEAD
+[0.11.0]: https://github.com/alejandro-cedeno-10/rayito/compare/typescript-v0.10.0...typescript-v0.11.0
 [0.10.0]: https://github.com/alejandro-cedeno-10/rayito/compare/typescript-v0.9.1...typescript-v0.10.0
 [0.9.1]: https://github.com/alejandro-cedeno-10/rayito/compare/typescript-v0.9.0...typescript-v0.9.1
 [0.9.0]: https://github.com/alejandro-cedeno-10/rayito/compare/typescript-v0.8.0...typescript-v0.9.0

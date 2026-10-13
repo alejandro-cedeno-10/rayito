@@ -607,6 +607,42 @@ describe("SandboxPool", () => {
     }
   });
 
+  test("take() and close() keep the Node process alive while they wait", async () => {
+    const { plane, pool: make } = rig();
+    plane.hold("RunMicrovm", 1);
+    const pool = await make(1).start();
+    await waitUntil(() => plane.callsTo("RunMicrovm").length === 1, 15_000, "calentamiento");
+    const intervals: ReturnType<typeof setInterval>[] = [];
+    const realSetInterval = globalThis.setInterval;
+    const spy = vi.spyOn(globalThis, "setInterval").mockImplementation(((
+      callback: () => void,
+      ms?: number,
+    ) => {
+      const interval = realSetInterval(callback, ms);
+      intervals.push(interval);
+      return interval;
+    }) as typeof setInterval);
+    try {
+      const taking = pool.take({ waitMs: 5000 });
+      await waitUntil(() => intervals.length > 0, 2000, "espera del take");
+      expect(intervals.every((interval) => interval.hasRef())).toBe(true);
+      plane.release("RunMicrovm");
+      const sandbox = await taking;
+      await sandbox.kill();
+      intervals.length = 0;
+      plane.hold("RunMicrovm", 1);
+      await waitUntil(() => plane.callsTo("RunMicrovm").length === 2, 15_000, "relleno");
+      const closing = pool.close();
+      await waitUntil(() => intervals.length > 0, 2000, "espera del close");
+      expect(intervals.every((interval) => interval.hasRef())).toBe(true);
+      plane.release("RunMicrovm");
+      await closing;
+    } finally {
+      spy.mockRestore();
+      plane.release("RunMicrovm");
+    }
+  });
+
   test("slot lost at take falls back", async () => {
     const { plane, pool: make } = rig();
     const pool = await make(1).start();
