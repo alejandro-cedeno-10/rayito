@@ -20,6 +20,7 @@ import json
 import re
 import sys
 from collections.abc import Iterable
+from decimal import Decimal
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -30,7 +31,14 @@ LINE_WIDTH = 100
 INDENT = "    "
 TS_INDENT = "  "
 
-SET_KEYS = frozenset({"terminalStates", "suspendedStates", "managedNetworkConnectors"})
+SET_KEYS = frozenset(
+    {
+        "terminalStates",
+        "suspendedStates",
+        "managedNetworkConnectors",
+        "largeQuotaRegions",
+    }
+)
 GROUPS: tuple[tuple[str, ...], ...] = (
     (
         "maxDurationSeconds",
@@ -172,6 +180,30 @@ GROUPS: tuple[tuple[str, ...], ...] = (
         "defaultWarmupStepTimeoutSeconds",
     ),
     (
+        # dashboard (ADR-026): Service Quotas catalog of the Lambda MicroVMs
+        # quotas the panel shows (code -> name, default, kind, operation;
+        # AWS_API_NOTES.md §11, defaults per region class), the warning
+        # fractions of allocated memory against the quota, the Cost Explorer
+        # cache TTL and the documented compute prices that back the
+        # per-sandbox estimate (AWS_API_NOTES.md §12, us-east-1 ARM). Not AWS
+        # properties except the catalog and the prices.
+        "largeQuotaRegions",
+        "quotaServiceCode",
+        "quotaNames",
+        "quotaDefaults",
+        "quotaLargeRegionDefaults",
+        "quotaKinds",
+        "quotaOperations",
+        "quotaWarningFraction",
+        "quotaCriticalFraction",
+        "costCacheTtlSeconds",
+        "costExplorerRegion",
+        "costExplorerServiceName",
+        "computePriceUsdPerVcpuSecond",
+        "computePriceUsdPerGbSecond",
+        "baselineMibPerVcpu",
+    ),
+    (
         # ai-agent-fast-start (design.md §6, option A): the prefetch daemon
         # of the agent template wakes every `agentPrefetchIntervalSeconds`
         # and treats a wall-clock jump above
@@ -266,13 +298,35 @@ def quoted(value: str) -> str:
     return json.dumps(value, ensure_ascii=False)
 
 
+def float_literal(value: float) -> str:
+    """Plain decimal notation (``0.0000276944``), never ``2.76944e-05``."""
+    text = format(Decimal(repr(value)), "f")
+    return text if "." in text else f"{text}.0"
+
+
+def scalar_kind(value: object) -> str:
+    if isinstance(value, str):
+        return "str"
+    return "float" if isinstance(value, float) else "int"
+
+
+def dict_value_kind(values: Iterable[object]) -> str:
+    """``int``, ``float`` or ``str``: the one scalar type a dict holds."""
+    kinds = {scalar_kind(value) for value in values}
+    if len(kinds) != 1:
+        raise SystemExit(f"limits.json: un dict mezcla tipos de valor {sorted(kinds)}")
+    return kinds.pop()
+
+
 # --------------------------------------------------------------------- python
 
 
 def python_scalar(value: object) -> str:
     if isinstance(value, bool):
         return "True" if value else "False"
-    if isinstance(value, int | float):
+    if isinstance(value, float):
+        return float_literal(value)
+    if isinstance(value, int):
         return repr(value)
     if isinstance(value, str):
         return quoted(value)
@@ -311,7 +365,10 @@ def python_line(key: str, value: object) -> str:
         items = [
             f"{quoted(item)}: {python_scalar(value[item])}" for item in sorted(value)
         ]
-        return python_collection(f"{name}: Final[dict[str, int]] = ", items, "{", "}")
+        kind = dict_value_kind(value.values())
+        return python_collection(
+            f"{name}: Final[dict[str, {kind}]] = ", items, "{", "}"
+        )
     if isinstance(value, list):
         if key in SET_KEYS:
             return python_frozenset(name, [str(item) for item in value])
@@ -338,7 +395,9 @@ def render_python(limits: dict[str, object]) -> str:
 def ts_scalar(value: object) -> str:
     if isinstance(value, bool):
         return "true" if value else "false"
-    if isinstance(value, int | float):
+    if isinstance(value, float):
+        return float_literal(value)
+    if isinstance(value, int):
         return repr(value)
     if isinstance(value, str):
         return quoted(value)
@@ -356,11 +415,17 @@ def ts_collection(
     return f"{prefix}{opening}\n{body}{closing}{suffix}"
 
 
+def ts_key(key: str) -> str:
+    """Biome's ``useQuoteProps``: quote only the keys that are not identifiers."""
+    return key if re.fullmatch(r"[A-Za-z_$][A-Za-z0-9_$]*", key) else quoted(key)
+
+
 def ts_line(key: str, value: object) -> str:
     name = constant_name(key)
     if isinstance(value, dict):
-        items = [f"{item}: {ts_scalar(value[item])}" for item in sorted(value)]
-        prefix = f"export const {name}: Readonly<Record<string, number>> = "
+        items = [f"{ts_key(item)}: {ts_scalar(value[item])}" for item in sorted(value)]
+        ts_type = "string" if dict_value_kind(value.values()) == "str" else "number"
+        prefix = f"export const {name}: Readonly<Record<string, {ts_type}>> = "
         return ts_collection(prefix, items, "{", "}", ";")
     if isinstance(value, list):
         if key in SET_KEYS:
