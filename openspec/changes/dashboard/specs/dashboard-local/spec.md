@@ -12,7 +12,11 @@ The command SHALL bind to `127.0.0.1` on a random port, use the user's AWS crede
 - **THEN** it is rejected and no AWS call is made
 
 ### Requirement: The local server defends against browser attacks
-The server SHALL check `Host` and `Origin`, protect state-changing requests with a CSRF token, and require a random session token delivered in the start URL.
+The server SHALL check `Host` and `Origin`, protect state-changing requests with a CSRF token, and deliver a one-time token in the start URL that the server swaps for an `HttpOnly`, `SameSite=Strict`, `Path=/` cookie before redirecting to a clean URL, with `Referrer-Policy: no-referrer`. The printed start URL SHALL be the only place the token is shown and it SHALL NOT be logged.
+
+#### Scenario: start token is single use
+- **WHEN** the start URL token is presented a second time
+- **THEN** it is rejected
 
 #### Scenario: rebinding and cross-origin requests are rejected
 - **WHEN** a request arrives with a foreign `Host` or `Origin`, or without the session token

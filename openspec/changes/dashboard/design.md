@@ -28,7 +28,9 @@ and $0.01 per request. The Python CLI is the only CLI.
   available). Bulk actions show progress. Actions are idempotent upstream.
 - **D4 — Quotas.** The panel shows allocated memory (RUNNING plus SUSPENDED)
   against the per-region quota, warns at named thresholds in `limits.json`,
-  shows the applied TPS per operation and links to the quota-increase flow.
+  shows the applied TPS per operation and links to the quota-increase flow in the console. Filing the request from
+  the panel is out of scope: it would be a write action
+  (`servicequotas:RequestServiceQuotaIncrease`).
   If Service Quotas does not publish utilization for MicroVMs, the panel
   computes it by counting VMs and image memory (to measure on AWS).
 - **D5 — Cost.** Billed cost comes from Cost Explorer grouped by usage type,
@@ -36,22 +38,54 @@ and $0.01 per request. The Python CLI is the only CLI.
   sandbox cost is an estimate (active hours times size price) and is always
   labelled "estimated" next to the billed total.
 - **D6 — Local security (phase 1).** Loopback bind, random port, `Host` and
-  `Origin` checks and CSRF protection reusing the `cli/_proxy.py` approach,
-  a random session token in the start URL. Never display or log tokens, JWE,
-  `envs`, `runHookPayload` or secret values.
+  `Origin` checks and CSRF protection reusing the `cli/_proxy.py` approach.
+  The start URL carries a one-time token. The first request swaps it for an
+  `HttpOnly`, `SameSite=Strict`, `Path=/` session cookie and redirects to a
+  clean URL; the token is then invalid, so history and `Referer` leak
+  nothing. Every response sends `Referrer-Policy: no-referrer`. The printed
+  start URL is the single deliberate exception to "never display tokens"; the
+  token is never written to logs. Never display or log JWE, `envs`,
+  `runHookPayload` or secret values.
 - **D7 — In-account stack (phase 2), testable under restrictive org
   policies.** The SPA and API are served from one Lambda Function URL created
   by CloudFormation (direct `lambda:CreateFunction` and S3 bucket or
   CloudFront creation may be denied by policy, CloudFormation-created
-  Lambdas work). Authentication is IAM auth or a Cognito JWT, chosen after
-  verifying which works in the test account; this is an explicit task, not
-  assumed. CloudFront plus S3 is an optional variant documented as untested
-  where blocked. Two Lambda roles (read, actions) with least privilege; an
-  audit row in DynamoDB per action with the caller subject, action, resource
-  and time, written with a conditional put and no delete permission. Required
-  tags pass through `deploy --tag`.
-- **D8 — Metadata.** Without `metadata-index`, metadata costs O(n) probes;
-  the panel says so and offers to enable the index.
+  Lambdas work). A Function URL supports only two auth types, and a browser
+  navigation cannot sign with SigV4, so there are two real variants:
+  - **(a) Default: `AuthType NONE` plus handler-side Cognito JWT.** The
+    static shell (HTML, JS, CSS) is the only unauthenticated route. Every
+    `/api/v1/*` request is validated by the handler before any routing or AWS
+    call: issuer, audience, expiry, signature against the JWKS and
+    `token_use`. Login uses the Cognito Hosted UI with the authorization-code
+    flow and PKCE; the SPA sends the token in the `Authorization` header.
+  - **(b) Optional: `AuthType AWS_IAM`.** The SPA obtains credentials from a
+    Cognito identity pool and signs its fetches with SigV4; the shell still
+    needs an unauthenticated way to load, so this variant needs an extra
+    front (documented, untested where blocked).
+  Which one works in the test account is verified in task 5.1; variant (a) is
+  the working assumption, not a given.
+  *Roles.* One function has exactly one execution role, so the function runs
+  with a read-only role and an actions role is reached with `sts:AssumeRole`
+  only after the handler checks the caller's Cognito group claim. The actions
+  role trusts only the function role, with a session name carrying the caller
+  subject. An audit row in DynamoDB per action (caller subject, action,
+  resource, time) is written with a conditional put and no delete
+  permission. Required tags pass through `deploy --tag`.
+  *Cost Explorer.* Access is a stack parameter, off by default;
+  `ce:GetCostAndUsage` is granted to the read role only when it is on.
+  *Browser defences.* Function URL CORS allows only its own origin; `Origin`
+  is checked on every `POST`; the token travels in `Authorization`, never in
+  a cookie, so no CSRF token is needed; every response, SPA included, sends a
+  restrictive `Content-Security-Policy`, `X-Frame-Options: DENY` with
+  `frame-ancestors 'none'`, and `Referrer-Policy: no-referrer`.
+  CloudFront plus S3 is an optional variant documented as untested where
+  blocked.
+- **D8 — Metadata.** The panel shows only the sandbox `metadata` field, read
+  from `metadata-index` or from a Health probe. Without the index it costs
+  O(n) probes; the panel says so and offers to enable the index. The per
+  sandbox JWE needed for the probe is minted, kept in memory, cached per
+  sandbox and never serialised to the API or logs. `envs` and the raw
+  `runHookPayload` are never read into the domain model.
 - **D9 — No magic numbers.** Warning thresholds, cache TTLs, TPS, page sizes
   and polling intervals are named constants in `limits.json`, generated by
   `gen_limits.py` into `_limits.py` and `limits.ts`.
@@ -64,14 +98,13 @@ and $0.01 per request. The Python CLI is the only CLI.
 - Undocumented `ListMicrovms`/`ListMicrovmImages` TPS: conservative token
   bucket and caching until measured.
 - Cost Explorer lag and per-request price: cache and clear labelling.
-- Data-plane actions (extend timeout, live metrics) need an auth token and a
-  running VM; excluded from the first cut.
+- Data-plane actions (extend timeout, live metrics) need a running VM and a
+  JWE beyond the in-memory Health probe of D8; excluded from the first cut.
 - Phase 2 attack surface: security review against `SECURITY.md` before
   publishing each phase.
 
 ## Open Questions
 
 - Function URL with IAM auth versus Cognito JWT in the test account.
-- Whether Service Quotas exposes MicroVM utilization and allows increase
-  requests with the dashboard role.
+- Whether Service Quotas exposes MicroVM utilization.
 - Multi-region view: one region at a time versus bounded concurrency.

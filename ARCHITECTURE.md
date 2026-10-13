@@ -2634,14 +2634,19 @@ para el estado y las pilas opcionales; este ADR lo extiende a una interfaz.
    pila no hay ninguna llamada ni recurso (regla de funciones con coste,
    ADR-014). Un test de cero llamadas lo comprueba en cada SDK. La caja
    "Coste y activación", la fila de `optional-features.md` y
-   `cost-declarations/dashboard.json` son obligatorias. Las llamadas a Cost
+   `clients/typescript/scripts/cost-declarations/dashboard.json` son obligatorias. Las llamadas a Cost
    Explorer ($0,01 por petición) sólo ocurren con el coste activado y con
-   caché.
+   caché; en la fase 2 es un parámetro de la pila apagado por defecto y
+   `ce:GetCostAndUsage` sólo se concede con él activo.
 4. **Sólo lectura por defecto.** Las acciones (matar, suspender, reanudar)
    exigen una opción explícita (`--allow-actions`, o el rol de acciones de la
    pila), confirmación en la UI y una cola que respete los TPS de la
-   plataforma (suspender, 2 TPS). El panel no muestra ni registra jamás JWE,
-   tokens, `envs`, `runHookPayload` ni valores de secretos.
+   plataforma (suspender, 2 TPS). El panel muestra sólo el campo `metadata` de
+   un sandbox; el JWE de la sonda se queda en memoria y nunca se serializa.
+   No muestra ni registra jamás JWE, tokens, `envs`, `runHookPayload` ni
+   valores de secretos (la URL de inicio impresa en la fase 1 es la única
+   excepción deliberada, con token de un solo uso). Pedir un aumento de cuota
+   es un enlace a la consola, no una acción del panel.
 5. **Una sola API y una sola SPA.** Los puertos del núcleo son
    `SandboxInventory`, `ImageCatalog`, `UsageCost`, `Quotas`,
    `EventsHistory` y `Actions`, con un adaptador por API de AWS e imports
@@ -2654,10 +2659,19 @@ para el estado y las pilas opcionales; este ADR lo extiende a una interfaz.
    Python (sync y async) y TypeScript con la misma superficie. El servidor
    del panel vive en la CLI de Python, que sigue siendo la única CLI.
 7. **Seguridad.** Fase 1: loopback, comprobación de `Host`/`Origin` y
-   defensa de CSRF como `cli/_proxy.py`, más un token de sesión aleatorio.
-   Fase 2: autenticación delante de la API (IAM o JWT de Cognito, a
-   verificar en la cuenta de pruebas), roles de lectura y de acciones
-   separados, mínimo privilegio y una fila de auditoría en DynamoDB por
+   defensa de CSRF como `cli/_proxy.py`, más un token de inicio de un solo
+   uso que el servidor cambia por una cookie `HttpOnly` `SameSite=Strict` y
+   una URL limpia. Fase 2: una Function URL sólo admite `AWS_IAM` o `NONE` y
+   un navegador no firma con SigV4, así que la variante por defecto es
+   `NONE` con validación del JWT de Cognito en el manejador (emisor,
+   audiencia, caducidad, firma JWKS, `token_use`) antes de cualquier ruta o
+   llamada a AWS, y la shell estática como única ruta sin autenticar; `AWS_IAM`
+   con identity pool y SigV4 es la variante opcional (a verificar en la
+   cuenta de pruebas). Una función tiene un solo rol: corre con un rol de
+   sólo lectura y asume por `sts:AssumeRole` el rol de acciones tras
+   comprobar el grupo del llamante. CORS propio, `Origin` en cada `POST`,
+   token en `Authorization` y cabeceras CSP, `frame-ancestors 'none'` y
+   `Referrer-Policy` en toda respuesta. Una fila de auditoría en DynamoDB por
    acción, porque CloudTrail sólo vería la identidad de la Lambda.
 
 **Fases.** 0: este ADR y el cambio OpenSpec `dashboard`. 1: `rayito

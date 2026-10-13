@@ -27,14 +27,14 @@
 
 ## 4. Phase 1: docs and acceptance
 
-- [ ] 4.1 Spanish docs: guide, API reference, security page, "Coste y activación" box, `optional-features.md` row, `cost-declarations/dashboard.json`, nav
+- [ ] 4.1 Spanish docs: guide, API reference, security page, "Coste y activación" box, `optional-features.md` row, `clients/typescript/scripts/cost-declarations/dashboard.json`, nav
 - [ ] 4.2 `check_docs_examples.py`, `mkdocs --strict`, all gates
 - [ ] 4.3 Acceptance in real AWS and cleanup of the run's resources only
 
 ## 5. Phase 2: in-account stack
 
-- [ ] 5.1 Verify in the test account: Function URL IAM auth versus Cognito JWT
-- [ ] 5.2 `infra/dashboard.yaml` (Lambda Function URL serving SPA and API, DynamoDB cache and audit, read and actions roles), `cfn-lint`
+- [ ] 5.1 Verify in the test account: Function URL `AuthType NONE` with handler-side Cognito JWT versus `AWS_IAM` with identity pool and SigV4
+- [ ] 5.2 `infra/dashboard.yaml` (Lambda Function URL serving SPA and API, DynamoDB cache and audit, read-only function role plus an actions role assumed after the group check, Cost Explorer stack parameter off by default, security headers and CORS), `cfn-lint`
 - [ ] 5.3 `OptionalStacks` component and `rayito stack deploy|status|destroy dashboard`
 - [ ] 5.4 Lambda handler over the same services; shared contract tests
 - [ ] 5.5 Audit rows per action; security review
