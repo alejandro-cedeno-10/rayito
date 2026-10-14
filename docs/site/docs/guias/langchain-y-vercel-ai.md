@@ -72,6 +72,8 @@ estándar de AWS (`AWS_PROFILE`, `AWS_REGION`).
 ## Ver también
 
 - [Servidor MCP](../mcp.md)
+- [Agente en el sandbox](agente-en-el-sandbox.md): el bucle del agente
+  corriendo dentro del sandbox
 - [Ejecutar código](ejecutar-codigo.md)
 - [Seguridad](../security.md): qué puede hacer el código del modelo dentro
   del sandbox

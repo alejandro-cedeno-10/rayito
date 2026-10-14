@@ -24,6 +24,21 @@ No hace falta ningún pool ni ningún calentamiento: el
 opción. Si la conversación puede quedarse parada más de 8 h, la opción es
 [`persist=`](#mas-de-8-h-parado-persist).
 
+!!! note "Antes de empezar (una vez por cuenta y región, ≈ 15 min)"
+    1. [Configurar AWS](../primeros-pasos/configurar-aws.md) hecho, con
+       `rayito-base-caps` publicada (≈ 10 min).
+    2. La imagen `rayito-agent`:
+       `rayito agent template build --bucket <tu-bucket>` (≈ 5 min,
+       ≈ $0,056/semana por versión;
+       [Templates de agente](../funciones-opcionales/templates-de-agente.md)).
+       Quien la construye necesita `RayitoTemplateBuilder`
+       (`rayito stack deploy templates`) o ser administrador.
+    3. La clave del modelo en Secrets Manager (≈ $0,40/mes) y
+       `RayitoSecretsReader` para quien llama al SDK
+       (`rayito stack deploy secrets-access`).
+    4. Acceso al modelo en tu proveedor
+       ([Proveedores del agente](agente-proveedores.md)).
+
 El sandbox necesita una imagen con el runtime instalado (OpenCode en
 `/opt/agents`). Si `opencode` no está en el `PATH`, la ejecución falla con
 `reason="runtime_missing"`. `AgentTemplate` construye esa imagen (OpenCode,
