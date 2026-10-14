@@ -1,0 +1,402 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/rayito/dashboard/api-v1.schema.json",
+  "title": "Rayito dashboard API v1",
+  "description": "Response documents of /api/v1. Every shell (local server, in-account handler) must return documents that validate against the definition named after its route.",
+  "$defs": {
+    "isoTime": {"type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?(Z|[+-]\\d{2}:\\d{2})$"},
+    "nullableNumber": {"type": ["number", "null"]},
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["error"],
+      "properties": {
+        "error": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["code", "message"],
+          "properties": {
+            "code": {
+              "enum": [
+                "invalid_argument", "invalid_json", "confirmation_required", "unauthorized",
+                "forbidden", "csrf_failed", "actions_disabled", "cost_explorer_disabled",
+                "aws_access_denied", "not_found", "method_not_allowed", "payload_too_large",
+                "unsupported_media_type", "misdirected_request", "aws_throttled",
+                "internal_error", "aws_error", "jobs_busy"
+              ]
+            },
+            "message": {"type": "string"},
+            "awsCode": {"type": "string"}
+          }
+        }
+      }
+    },
+    "costExplorer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "requestPriceUsd", "cacheTtlSeconds"],
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "requestPriceUsd": {"type": "number"},
+        "cacheTtlSeconds": {"type": "number"}
+      }
+    },
+    "meta": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "apiVersion", "rayitoVersion", "region", "deployment", "allowActions", "costExplorer",
+        "eventsConfigured", "logsAvailable", "pollIntervalSeconds", "jobPollIntervalSeconds",
+        "bulkMaxSandboxes", "theme"
+      ],
+      "properties": {
+        "apiVersion": {"const": "v1"},
+        "rayitoVersion": {"type": "string"},
+        "region": {"type": "string"},
+        "deployment": {"enum": ["local", "stack"]},
+        "allowActions": {"type": "boolean"},
+        "costExplorer": {"$ref": "#/$defs/costExplorer"},
+        "eventsConfigured": {"type": "boolean"},
+        "logsAvailable": {"type": "boolean"},
+        "pollIntervalSeconds": {"type": "number"},
+        "jobPollIntervalSeconds": {"type": "number"},
+        "bulkMaxSandboxes": {"type": "integer"},
+        "theme": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "logo"],
+          "properties": {"name": {"type": "string"}, "logo": {"type": "boolean"}}
+        }
+      }
+    },
+    "sandbox": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sandboxId", "state", "image", "imageArn", "imageVersion", "startedAt", "memoryMib"],
+      "properties": {
+        "sandboxId": {"type": "string"},
+        "state": {"type": "string"},
+        "image": {"type": "string"},
+        "imageArn": {"type": "string"},
+        "imageVersion": {"type": "string"},
+        "startedAt": {"$ref": "#/$defs/isoTime"},
+        "memoryMib": {"type": ["integer", "null"]}
+      }
+    },
+    "sandboxes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sandboxes"],
+      "properties": {"sandboxes": {"type": "array", "items": {"$ref": "#/$defs/sandbox"}}}
+    },
+    "images": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["images"],
+      "properties": {
+        "images": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "imageArn", "state", "latestActiveVersion", "latestFailedVersion", "createdAt"],
+            "properties": {
+              "name": {"type": "string"},
+              "imageArn": {"type": "string"},
+              "state": {"type": "string"},
+              "latestActiveVersion": {"type": ["string", "null"]},
+              "latestFailedVersion": {"type": ["string", "null"]},
+              "createdAt": {"$ref": "#/$defs/isoTime"}
+            }
+          }
+        }
+      }
+    },
+    "imageVersions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["image", "versions"],
+      "properties": {
+        "image": {"type": "string"},
+        "versions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["imageVersion", "state", "status", "baseImageVersion", "artifact", "memoryMib", "createdAt"],
+            "properties": {
+              "imageVersion": {"type": "string"},
+              "state": {"type": "string"},
+              "status": {"type": "string"},
+              "baseImageVersion": {"type": ["string", "null"]},
+              "artifact": {"type": ["string", "null"]},
+              "memoryMib": {"type": ["integer", "null"]},
+              "createdAt": {"$ref": "#/$defs/isoTime"}
+            }
+          }
+        }
+      }
+    },
+    "quotas": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["region", "entries", "memory", "tps", "warnings", "thresholds"],
+      "properties": {
+        "region": {"type": "string"},
+        "entries": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["code", "name", "kind", "operation", "default", "value", "adjustable", "belowDefault", "increaseUrl"],
+            "properties": {
+              "code": {"type": "string"},
+              "name": {"type": "string"},
+              "kind": {"enum": ["memory-gb", "rate", "burst", "count"]},
+              "operation": {"type": ["string", "null"]},
+              "default": {"type": "number"},
+              "value": {"$ref": "#/$defs/nullableNumber"},
+              "adjustable": {"type": "boolean"},
+              "belowDefault": {"type": "boolean"},
+              "increaseUrl": {"type": "string"}
+            }
+          }
+        },
+        "memory": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["allocatedGb", "quotaGb", "fraction", "level", "sandboxes", "unresolved"],
+          "properties": {
+            "allocatedGb": {"type": "number"},
+            "quotaGb": {"$ref": "#/$defs/nullableNumber"},
+            "fraction": {"$ref": "#/$defs/nullableNumber"},
+            "level": {"enum": ["ok", "warning", "critical"]},
+            "sandboxes": {"type": "integer"},
+            "unresolved": {"type": "integer"}
+          }
+        },
+        "tps": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["operation", "rate", "burst"],
+            "properties": {
+              "operation": {"type": "string"},
+              "rate": {"$ref": "#/$defs/nullableNumber"},
+              "burst": {"$ref": "#/$defs/nullableNumber"}
+            }
+          }
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind", "code", "message", "increaseUrl"],
+            "properties": {
+              "kind": {"enum": ["memory_high", "memory_critical", "below_default", "not_listed"]},
+              "code": {"type": "string"},
+              "message": {"type": "string"},
+              "increaseUrl": {"type": "string"}
+            }
+          }
+        },
+        "thresholds": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["warning", "critical"],
+          "properties": {"warning": {"type": "number"}, "critical": {"type": "number"}}
+        }
+      }
+    },
+    "estimated": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["label", "pricingRegion", "basis", "totalUsd", "items"],
+      "properties": {
+        "label": {"const": "estimated"},
+        "pricingRegion": {"type": "string"},
+        "basis": {"type": "string"},
+        "totalUsd": {"type": "number"},
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["sandboxId", "state", "memoryMib", "activeSeconds", "costUsd"],
+            "properties": {
+              "sandboxId": {"type": "string"},
+              "state": {"type": "string"},
+              "memoryMib": {"type": ["integer", "null"]},
+              "activeSeconds": {"$ref": "#/$defs/nullableNumber"},
+              "costUsd": {"$ref": "#/$defs/nullableNumber"}
+            }
+          }
+        }
+      }
+    },
+    "billed": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["label", "start", "end", "region", "totalUsd", "partial", "requests", "fetchedAt", "lines"],
+      "properties": {
+        "label": {"const": "billed"},
+        "start": {"type": "string"},
+        "end": {"type": "string"},
+        "region": {"type": ["string", "null"]},
+        "totalUsd": {"type": "number"},
+        "partial": {"type": "boolean"},
+        "requests": {"type": "integer"},
+        "fetchedAt": {"$ref": "#/$defs/isoTime"},
+        "lines": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["usageType", "component", "quantity", "unit", "costUsd"],
+            "properties": {
+              "usageType": {"type": "string"},
+              "component": {"type": "string"},
+              "quantity": {"type": "number"},
+              "unit": {"type": "string"},
+              "costUsd": {"type": "number"}
+            }
+          }
+        }
+      }
+    },
+    "cost": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["estimated", "billed", "costExplorer"],
+      "properties": {
+        "estimated": {"$ref": "#/$defs/estimated"},
+        "billed": {"oneOf": [{"$ref": "#/$defs/billed"}, {"type": "null"}]},
+        "costExplorer": {"$ref": "#/$defs/costExplorer"}
+      }
+    },
+    "events": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["configured", "events"],
+      "properties": {
+        "configured": {"type": "boolean"},
+        "events": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["eventId", "sandboxId", "type", "killReason", "generation", "occurredAt", "imageArn", "imageVersion"],
+            "properties": {
+              "eventId": {"type": "string"},
+              "sandboxId": {"type": "string"},
+              "type": {"type": "string"},
+              "killReason": {"type": ["string", "null"]},
+              "generation": {"type": "integer"},
+              "occurredAt": {"$ref": "#/$defs/isoTime"},
+              "imageArn": {"type": "string"},
+              "imageVersion": {"type": "string"}
+            }
+          }
+        }
+      }
+    },
+    "logs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sandboxId", "truncated", "fallback", "lines"],
+      "properties": {
+        "sandboxId": {"type": "string"},
+        "truncated": {"type": "boolean"},
+        "fallback": {"type": "boolean"},
+        "lines": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["timestamp", "message", "stream"],
+            "properties": {
+              "timestamp": {"type": "string"},
+              "message": {"type": "string"},
+              "stream": {"type": "string"}
+            }
+          }
+        }
+      }
+    },
+    "plan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["action", "operation", "count", "tps", "estimatedSeconds"],
+      "properties": {
+        "action": {"enum": ["kill", "suspend", "resume"]},
+        "operation": {"type": "string"},
+        "count": {"type": "integer"},
+        "tps": {"type": "number"},
+        "estimatedSeconds": {"type": "number"}
+      }
+    },
+    "planDocument": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["plan"],
+      "properties": {"plan": {"$ref": "#/$defs/plan"}}
+    },
+    "job": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["jobId", "action", "status", "createdAt", "total", "completed", "counts", "plan", "items"],
+      "properties": {
+        "jobId": {"type": "string"},
+        "action": {"enum": ["kill", "suspend", "resume"]},
+        "status": {"enum": ["queued", "running", "finished"]},
+        "createdAt": {"$ref": "#/$defs/isoTime"},
+        "total": {"type": "integer"},
+        "completed": {"type": "integer"},
+        "counts": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["done", "unchanged", "failed"],
+          "properties": {
+            "done": {"type": "integer"},
+            "unchanged": {"type": "integer"},
+            "failed": {"type": "integer"}
+          }
+        },
+        "plan": {"$ref": "#/$defs/plan"},
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["sandboxId", "outcome", "code"],
+            "properties": {
+              "sandboxId": {"type": "string"},
+              "outcome": {"enum": ["done", "unchanged", "failed"]},
+              "code": {"type": ["string", "null"]}
+            }
+          }
+        }
+      }
+    },
+    "jobDocument": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["job"],
+      "properties": {"job": {"$ref": "#/$defs/job"}}
+    },
+    "jobsDocument": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["jobs"],
+      "properties": {"jobs": {"type": "array", "items": {"$ref": "#/$defs/job"}}}
+    },
+    "session": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["csrfToken"],
+      "properties": {"csrfToken": {"type": "string", "minLength": 1}}
+    }
+  }
+}

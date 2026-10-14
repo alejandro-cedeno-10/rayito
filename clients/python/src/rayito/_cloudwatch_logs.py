@@ -157,6 +157,34 @@ def iter_events(
         token = next_token
 
 
+def tail_events(logs: Any, group: str, stream: str, *, limit: int) -> list[dict[str, Any]]:
+    """Los últimos `limit` eventos del stream, en orden cronológico:
+    `get-log-events` desde el final, hacia atrás con `nextBackwardToken`
+    hasta juntar `limit` o hasta que el token se repite (principio del
+    stream)."""
+    chunks: list[list[dict[str, Any]]] = []
+    collected = 0
+    token: str | None = None
+    while collected < limit:
+        params: dict[str, Any] = {
+            "logGroupName": group,
+            "logStreamName": stream,
+            "startFromHead": False,
+            "limit": limit - collected,
+        }
+        if token is not None:
+            params["nextToken"] = token
+        page = logs.get_log_events(**params)
+        events = list(page.get("events", []))
+        chunks.insert(0, events)
+        collected += len(events)
+        next_token = page.get("nextBackwardToken")
+        if not events or not next_token or next_token == token:
+            break
+        token = next_token
+    return [event for chunk in chunks for event in chunk][-limit:]
+
+
 def parse_since(text: str, now: datetime | None = None) -> datetime:
     """`30m`, `2h`, `1d` (relativo a `now`) o una fecha ISO-8601; una fecha
     sin zona se interpreta en UTC."""
