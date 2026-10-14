@@ -28,6 +28,7 @@
 import { randomBytes } from "node:crypto";
 import { CloudWatchLogsClient } from "@aws-sdk/client-cloudwatch-logs";
 import { afterEach, describe, expect, test } from "vitest";
+import { SandboxNotFoundError } from "../../src/errors.js";
 import {
   BuildError,
   type BuildOptions,
@@ -36,7 +37,7 @@ import {
   Template,
 } from "../../src/index.js";
 import { NODE_PACKAGES, NPM_MISSING_EXIT_CODE } from "../../src/templates/dsl.js";
-import { e2eEnabled, useE2E } from "./helpers.js";
+import { e2eEnabled, useE2E, waitUntil } from "./helpers.js";
 import { BuiltImages } from "./image-cleanup.js";
 
 const BUCKET_VAR = "RAYITO_E2E_TEMPLATE_BUCKET";
@@ -50,6 +51,12 @@ const NPM_PROBE_PACKAGE = "left-pad@1.3.0";
 const INSTALL_WORKDIR = "/opt/install-probe";
 /** Usuario no root previo a `dnfInstall`: comprueba que el paso sube a root. */
 const NON_ROOT_USER = "1000";
+/** `delete-microvm-image` rechaza una imagen con MicroVMs en marcha: tras
+ * `kill()` se espera a `TERMINATED` antes del teardown (medido 2026-10-14:
+ * `ValidationException` "Cannot delete microvm image with running microvms"). */
+const TERMINATED_STATE = "TERMINATED";
+const TERMINATE_WAIT_MS = 180_000;
+const TERMINATE_POLL_MS = 5_000;
 const INSTALL_SANDBOX_TIMEOUT_MS = 300_000;
 
 /** `exactOptionalPropertyTypes` no deja pasar `region: undefined`
@@ -162,6 +169,23 @@ describe.runIf(e2eEnabled())("m15-templates (AWS real)", () => {
       ).toBe(0);
     } finally {
       await sandbox.kill().catch(() => undefined);
+      await waitUntil(
+        async () => {
+          try {
+            return (
+              (await e2e.controlPlane.getMicrovm(sandbox.sandboxId)).state === TERMINATED_STATE
+            );
+          } catch (error) {
+            if (error instanceof SandboxNotFoundError) {
+              return true;
+            }
+            throw error;
+          }
+        },
+        TERMINATE_WAIT_MS,
+        `${sandbox.sandboxId} terminado`,
+        TERMINATE_POLL_MS,
+      );
     }
   });
 

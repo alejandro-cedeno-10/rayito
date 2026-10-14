@@ -16,4 +16,4 @@
 
 ## 3. Acceptance
 
-- [ ] 3.1 Gates and e2e on AWS real.
+- [x] 3.1 Gates and e2e on AWS real (Python and TypeScript, `dnf_install`/`npm_install` and the missing-npm case).

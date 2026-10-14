@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import os
 import secrets as stdlib_secrets
+import time
 from collections.abc import Iterator
 
 import pytest
@@ -39,7 +40,7 @@ import pytest
 from rayito import BuildException, Sandbox, Template
 from rayito._aws import LambdaMicrovmsControlPlane
 from rayito._templates._dsl import NODE_PACKAGES, NPM_MISSING_EXIT_CODE
-from rayito.exceptions import InvalidArgumentException
+from rayito.exceptions import InvalidArgumentException, SandboxNotFoundException
 
 from .conftest import E2ESettings
 from .image_cleanup import BuiltImages
@@ -143,7 +144,25 @@ NPM_PROBE_PACKAGE = "left-pad@1.3.0"
 INSTALL_WORKDIR = "/opt/install-probe"
 #: Usuario no root previo a `dnf_install`: comprueba que el paso sube a root.
 NON_ROOT_USER = "1000"
+#: `delete-microvm-image` rechaza una imagen con MicroVMs en marcha: tras
+#: `kill()` se espera a `TERMINATED` antes del teardown (medido 2026-10-14:
+#: `ValidationException` "Cannot delete microvm image with running microvms").
+TERMINATED_STATE = "TERMINATED"
+TERMINATE_WAIT_SECONDS = 180.0
+TERMINATE_POLL_SECONDS = 5.0
 INSTALL_SANDBOX_TIMEOUT_SECONDS = 300
+
+
+def _wait_terminated(control_plane: LambdaMicrovmsControlPlane, sandbox_id: str) -> None:
+    deadline = time.monotonic() + TERMINATE_WAIT_SECONDS
+    while time.monotonic() < deadline:
+        try:
+            if control_plane.get_microvm(sandbox_id).state == TERMINATED_STATE:
+                return
+        except SandboxNotFoundException:
+            return
+        time.sleep(TERMINATE_POLL_SECONDS)
+    pytest.fail(f"{sandbox_id} sigue vivo tras {TERMINATE_WAIT_SECONDS} s")
 
 
 def test_dnf_and_npm_install_shortcuts_are_usable_in_a_sandbox(
@@ -177,6 +196,7 @@ def test_dnf_and_npm_install_shortcuts_are_usable_in_a_sandbox(
         assert sbx.commands.run(f"npm ls --prefix {INSTALL_WORKDIR} left-pad").exit_code == 0
     finally:
         sbx.kill()
+        _wait_terminated(control_plane, sbx.sandbox_id)
 
 
 def test_npm_install_without_node_fails_with_a_clear_step(
