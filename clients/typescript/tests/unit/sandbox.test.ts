@@ -436,7 +436,10 @@ describe("lifecycle", () => {
       resumeGeneration: 0,
       clockOffsetMs: 0,
       kernelStateLost: false,
+      imdsBlocked: false,
     });
+    rayd.health.imdsBlocked = true;
+    expect((await sandbox.getHealth()).imdsBlocked).toBe(true);
     const metrics = await sandbox.getMetrics();
     expect(metrics.memTotalBytes).toBe(2 * 1024 * 1024 * 1024);
     expect(metrics.cpuCount).toBe(1);

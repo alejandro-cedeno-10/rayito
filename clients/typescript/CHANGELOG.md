@@ -8,6 +8,10 @@ versionado [SemVer](https://semver.org/lang/es/).
 
 ### Añadido
 
+- **`SandboxHealth.imdsBlocked`**: `true` cuando `rayd` instaló y verificó el
+  bloqueo de IMDS para los uids del sandbox (imagen con capabilities), como
+  `Health.imds_blocked` de Python; `false` en la imagen por defecto y en un
+  agente anterior a M6.
 - **`sbx.metadata`**: los `metadata` de `create({ metadata })` tal como los
   devolvió el último `Health` (copia congelada), como `Sandbox.metadata` de
   Python.

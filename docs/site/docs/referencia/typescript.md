@@ -81,7 +81,7 @@ Reglas de nombres: [Python y TypeScript](index.md#python-y-typescript-como-se-co
 | `sbx.persist`, `sbx.lastRestore`, `sbx.transfer` | `persist`, `last_restore`, `transfer` | el `S3Prefix` enlazado, el último restore automático y el bucket de transferencias |
 | `await sbx.kill()` / `await using` | `kill()` / `with` | termina el MicroVM |
 | `sbx.close()` | `close()` | cierra las conexiones sin tocar el MicroVM |
-| `sbx.getInfo()`, `sbx.isRunning()`, `sbx.getHealth()` | `get_info()`, `is_running()`, `get_health()` | estado |
+| `sbx.getInfo()`, `sbx.isRunning()`, `sbx.getHealth()` | `get_info()`, `is_running()`, `get_health()` | estado; `SandboxHealth.imdsBlocked` (`imds_blocked`) es `true` sólo si `rayd` instaló y verificó el bloqueo de IMDS (imagen con capabilities) |
 | `sbx.connect({ timeoutMs })` | `connect(timeout=)` | reabre el handle y alarga el plazo |
 | `sbx.setTimeout(ms)` | `set_timeout(s)` | mueve el [plazo del servidor](../lifecycle.md) |
 | `sbx.pause()`, `sbx.resume()` | `pause()`, `resume()` | [Pausar y reanudar](../guias/pausar-reanudar.md) |

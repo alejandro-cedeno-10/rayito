@@ -13,12 +13,15 @@ import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { promisify } from "node:util";
 import { afterAll, describe, expect, test } from "vitest";
-import { NotFoundError, S3Prefix, Sandbox } from "../../src/index.js";
+import { NotFoundError, PersistenceError, S3Prefix, Sandbox } from "../../src/index.js";
 import { e2eEnabled, report, seconds, useE2E } from "./helpers.js";
 
 const CAPS_TEMPLATE_VAR = "RAYITO_TEMPLATE_CAPS";
 const BUCKET_VAR = "RAYITO_PERSIST_BUCKET";
 const PREFIX_VAR = "RAYITO_PERSIST_PREFIX";
+const DEFAULT_TEMPLATE_VAR = "RAYITO_TEMPLATE_DEFAULT";
+const DEFAULT_TEMPLATE_VERSION_VAR = "RAYITO_TEMPLATE_DEFAULT_VERSION";
+const NO_ROLE_BUDGET_MS = 5000;
 const BLOB_BYTES = 20 * 1024 * 1024;
 const SANDBOX_TIMEOUT_MS = 1_800_000;
 const PERSIST_TIMEOUT_MS = 300_000;
@@ -155,5 +158,28 @@ describe.skipIf(!enabled)("M7 persistence (TypeScript)", () => {
     const old = await context.controlPlane.getMicrovm(second.sandboxId);
     expect(["TERMINATING", "TERMINATED"]).toContain(old.state);
     await reborn.kill();
+  });
+
+  test("no role is permission_denied and imdsBlocked stays false", async () => {
+    const template = process.env[DEFAULT_TEMPLATE_VAR] || context.settings.template;
+    const sandbox = await Sandbox.create({
+      template: await context.controlPlane.resolveTemplateArn(template),
+      templateVersion: process.env[DEFAULT_TEMPLATE_VERSION_VAR] || undefined,
+      timeoutMs: SANDBOX_TIMEOUT_MS,
+      idle: null,
+      ingress: ["ALL_INGRESS"],
+      logging: "disabled",
+      controlPlane: context.controlPlane,
+    });
+    context.created.push(sandbox);
+    const started = performance.now();
+    const error = await sandbox.checkpointFiles({ target: fresh() }).catch((e: unknown) => e);
+    const elapsedMs = performance.now() - started;
+    report("default image without a role -> checkpointFiles", elapsedMs / 1000);
+    expect(error).toBeInstanceOf(PersistenceError);
+    expect((error as PersistenceError).code).toBe("permission_denied");
+    expect(elapsedMs).toBeLessThan(NO_ROLE_BUDGET_MS);
+    expect((await sandbox.getHealth()).imdsBlocked).toBe(false);
+    await sandbox.kill();
   });
 });
