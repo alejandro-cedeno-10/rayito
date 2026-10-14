@@ -50,9 +50,53 @@ def test_unsupported_base_sources_raise_before_any_io(method: str) -> None:
         getattr(Template(), method)("whatever")
 
 
-def test_apt_install_names_dnf_instead() -> None:
-    with pytest.raises(UnimplementedError, match="dnf"):
+def test_apt_install_names_dnf_install_instead() -> None:
+    with pytest.raises(UnimplementedError, match="dnf_install"):
         Template().apt_install("curl")
+
+
+def test_dnf_install_generates_a_quoted_dnf_step() -> None:
+    t = Template().from_base_image().dnf_install(["tree", "jq"])
+    assert t.spec.steps == (
+        RunStep("dnf install -y --setopt=install_weak_deps=False tree jq && dnf clean all"),
+    )
+
+
+def test_dnf_install_accepts_a_single_name_and_quotes_shell_metacharacters() -> None:
+    t = Template().dnf_install("tree; rm -rf /")
+    assert t.spec.steps == (
+        RunStep(
+            "dnf install -y --setopt=install_weak_deps=False 'tree; rm -rf /' && dnf clean all"
+        ),
+    )
+
+
+def test_npm_install_guards_on_npm_and_supports_global() -> None:
+    local = Template().npm_install(["left-pad@1.3.0"])
+    scoped = Template().npm_install("@scope/pkg", g=True)
+    (local_step,) = local.spec.steps
+    (scoped_step,) = scoped.spec.steps
+    assert isinstance(local_step, RunStep)
+    assert isinstance(scoped_step, RunStep)
+    assert local_step.cmd.startswith("command -v npm >/dev/null 2>&1 || { echo ")
+    assert "exit 127; } && npm install --no-audit --no-fund left-pad@1.3.0" in local_step.cmd
+    assert scoped_step.cmd.endswith("npm install --no-audit --no-fund -g @scope/pkg")
+    assert "dnf_install" in local_step.cmd
+
+
+@pytest.mark.parametrize("call", ["dnf_install", "npm_install"])
+@pytest.mark.parametrize("packages", [[], [" "], [""], ["--help"], "-y"])
+def test_install_shortcuts_reject_empty_and_option_like_names(
+    call: str, packages: str | list[str]
+) -> None:
+    with pytest.raises(InvalidArgumentException):
+        getattr(Template(), call)(packages)
+
+
+def test_install_shortcuts_exist_on_the_async_builder() -> None:
+    t = AsyncTemplate().from_base_image().dnf_install("tree").npm_install("left-pad")
+    assert isinstance(t, AsyncTemplate)
+    assert len(t.spec.steps) == 2
 
 
 @pytest.mark.parametrize(

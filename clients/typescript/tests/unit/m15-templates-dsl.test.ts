@@ -46,9 +46,45 @@ describe("templates/dsl", () => {
     },
   );
 
-  test("aptInstall names dnf instead", () => {
-    expect(() => new Template().aptInstall("curl")).toThrow(/dnf/);
+  test("aptInstall names dnfInstall instead", () => {
+    expect(() => new Template().aptInstall("curl")).toThrow(/dnfInstall/);
   });
+
+  test("dnfInstall generates a quoted dnf step", () => {
+    expect(new Template().fromBaseImage().dnfInstall(["tree", "jq"]).spec.steps).toEqual([
+      {
+        kind: "run",
+        cmd: "dnf install -y --setopt=install_weak_deps=False tree jq && dnf clean all",
+      },
+    ]);
+    expect(new Template().dnfInstall("tree; rm -rf /").spec.steps).toEqual([
+      {
+        kind: "run",
+        cmd: "dnf install -y --setopt=install_weak_deps=False 'tree; rm -rf /' && dnf clean all",
+      },
+    ]);
+  });
+
+  test("npmInstall guards on npm and supports global", () => {
+    const local = new Template().npmInstall(["left-pad@1.3.0"]).spec.steps[0];
+    const scoped = new Template().npmInstall("@scope/pkg", { g: true }).spec.steps[0];
+    expect(local).toMatchObject({ kind: "run" });
+    const localCmd = (local as { cmd: string }).cmd;
+    const scopedCmd = (scoped as { cmd: string }).cmd;
+    expect(localCmd.startsWith("command -v npm >/dev/null 2>&1 || { echo ")).toBe(true);
+    expect(localCmd).toContain("exit 127; } && npm install --no-audit --no-fund left-pad@1.3.0");
+    expect(localCmd).toContain("dnfInstall");
+    expect(scopedCmd.endsWith("npm install --no-audit --no-fund -g @scope/pkg")).toBe(true);
+  });
+
+  test.each(["dnfInstall", "npmInstall"] as const)(
+    "%s rejects empty and option-like names",
+    (method) => {
+      for (const packages of [[], [" "], [""], ["--help"], "-y"]) {
+        expect(() => new Template()[method](packages)).toThrow(InvalidArgumentError);
+      }
+    },
+  );
 
   test("invalid inputs raise before any I/O", () => {
     expect(() => new Template().copy("", "/dst")).toThrow(InvalidArgumentError);

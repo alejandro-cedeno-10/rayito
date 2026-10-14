@@ -36,7 +36,7 @@ from collections.abc import Iterator
 
 import pytest
 
-from rayito import BuildException, Template
+from rayito import BuildException, Sandbox, Template
 from rayito._aws import LambdaMicrovmsControlPlane
 from rayito.exceptions import InvalidArgumentException
 
@@ -133,3 +133,51 @@ def test_a_ready_cmd_that_never_succeeds_fails_the_build(
 def test_building_without_from_base_image_never_reaches_aws() -> None:
     with pytest.raises(InvalidArgumentException):
         Template.build(Template().pip_install(["pandas"]), "unused", bucket="unused")
+
+
+#: Paquete pequeño de los repos de AL2023 para comprobar `dnf_install`.
+DNF_PROBE_PACKAGE = "tree"
+#: Paquetes de Node.js de AL2023 para comprobar `npm_install` (la base no
+#: trae Node).
+NODE_PACKAGES = ["nodejs", "nodejs-npm"]
+NPM_PROBE_PACKAGE = "left-pad@1.3.0"
+INSTALL_SANDBOX_TIMEOUT_SECONDS = 300
+
+
+def test_dnf_and_npm_install_shortcuts_are_usable_in_a_sandbox(
+    e2e_settings: E2ESettings,
+    control_plane: LambdaMicrovmsControlPlane,
+    built_images: BuiltImages,
+) -> None:
+    t = (
+        Template()
+        .from_base_image(e2e_settings.template)
+        .dnf_install([DNF_PROBE_PACKAGE, *NODE_PACKAGES])
+        .npm_install(NPM_PROBE_PACKAGE)
+    )
+    name = built_images.track(_run_name("install"))
+    Template.build(t, name, bucket=_bucket(), region=e2e_settings.region)
+    sbx = Sandbox.create(
+        control_plane.resolve_template_arn(name),
+        timeout=INSTALL_SANDBOX_TIMEOUT_SECONDS,
+        idle=None,
+        execution_role_arn=e2e_settings.execution_role_arn,
+        logging=e2e_settings.logging,
+        control_plane=control_plane,
+    )
+    try:
+        assert sbx.commands.run(f"{DNF_PROBE_PACKAGE} --version").exit_code == 0
+        assert sbx.commands.run("node --version").exit_code == 0
+        assert sbx.commands.run("npm ls left-pad").exit_code == 0
+    finally:
+        sbx.kill()
+
+
+def test_npm_install_without_node_fails_with_a_clear_step(
+    e2e_settings: E2ESettings, built_images: BuiltImages
+) -> None:
+    t = Template().from_base_image(e2e_settings.template).npm_install(NPM_PROBE_PACKAGE)
+    name = built_images.track(_run_name("no-node"))
+    with pytest.raises(BuildException) as excinfo:
+        Template.build(t, name, bucket=_bucket(), region=e2e_settings.region)
+    assert excinfo.value.exit_code == 127

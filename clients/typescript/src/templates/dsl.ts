@@ -38,11 +38,62 @@ export { DEFAULT_BASE_IMAGE_NAME };
  * banderas que las capas de `image/Dockerfile`. */
 export const PIP_INSTALL_COMMAND = "python3 -m pip install --no-cache-dir --break-system-packages";
 
+/** `dnfInstall()`: la imagen base es Amazon Linux 2023; sin paquetes débiles
+ * para no inflar la capa (como las capas de `image/Dockerfile`). */
+export const DNF_INSTALL_COMMAND = "dnf install -y --setopt=install_weak_deps=False";
+export const DNF_CLEAN_COMMAND = "dnf clean all";
+
+/** `npmInstall()`: sin auditoría ni anuncios de financiación, que sólo añaden
+ * red y ruido al log de build. */
+export const NPM_INSTALL_COMMAND = "npm install --no-audit --no-fund";
+export const NPM_GLOBAL_FLAG = "-g";
+
+/** `rayito-base` (al2023-minimal) no trae Node.js ni npm: el paso falla con
+ * este mensaje y el código 127 (comando no encontrado) en vez de un
+ * `npm: not found` críptico. Se instala antes con
+ * `dnfInstall(["nodejs", "nodejs-npm"])`. */
+export const NPM_MISSING_EXIT_CODE = 127;
+export const NPM_MISSING_MESSAGE =
+  'npmInstall: la imagen no tiene npm; instala Node.js antes con dnfInstall(["nodejs", "nodejs-npm"])';
+
+const SHELL_SAFE = /^[\w@%+=:,./-]+$/;
+
+/** Mismo escape que `shlex.quote` de Python, para que ambos SDK generen el
+ * mismo paso. */
+const shellQuote = (value: string): string =>
+  SHELL_SAFE.test(value) ? value : `'${value.replaceAll("'", `'"'"'`)}'`;
+
+/** Valida y escapa nombres de paquete para una línea de shell: lista no
+ * vacía, sin nombres vacíos y sin nombres que empiecen por `-` (se leerían
+ * como opción del instalador). */
+const packageNames = (method: string, packages: string | readonly string[]): string => {
+  const names = typeof packages === "string" ? [packages] : [...packages];
+  if (names.length === 0) {
+    throw new InvalidArgumentError(`${method}: la lista de paquetes no puede ser vacía`);
+  }
+  for (const name of names) {
+    if (name.trim() === "") {
+      throw new InvalidArgumentError(`${method}: un nombre de paquete no puede ser vacío`);
+    }
+    if (name.startsWith("-")) {
+      throw new InvalidArgumentError(
+        `${method}: un nombre de paquete no puede empezar por '-': ${JSON.stringify(name)}`,
+      );
+    }
+  }
+  return names.map(shellQuote).join(" ");
+};
+
 const UNSUPPORTED_BASE_REASON = (method: string): string =>
   `Template.${method}() necesita inyectar rayd y sus hooks en la imagen de base; en 0.6 sólo ` +
   "fromBaseImage() sabe componer eso (siempre sobre un zip de codeArtifact ya publicado con " +
   "rayito image publish). Para una imagen externa, publícala primero con rayito image publish " +
   "sobre un Dockerfile `FROM <esa imagen>@sha256:...`.";
+
+export interface NpmInstallOptions {
+  /** Instalación global (`npm install -g`). */
+  readonly g?: boolean;
+}
 
 export interface SetStartCmdOptions {
   readonly user?: string;
@@ -156,10 +207,32 @@ export class Template {
     return this.runCmd(`${PIP_INSTALL_COMMAND}${args} ${names.join(" ")}`);
   }
 
+  /** Instala paquetes del sistema con `dnf` (Amazon Linux 2023), sin
+   * paquetes débiles y limpiando la caché en la misma capa. Cada nombre se
+   * escapa para el shell. */
+  dnfInstall(packages: string | readonly string[]): this {
+    const names = packageNames("dnfInstall", packages);
+    return this.runCmd(`${DNF_INSTALL_COMMAND} ${names} && ${DNF_CLEAN_COMMAND}`);
+  }
+
+  /** Instala paquetes con `npm`; `{ g: true }` los instala globalmente (misma
+   * forma que `npmInstall(packages, { g })` de E2B). La imagen necesita
+   * Node.js: `rayito-base` no lo trae, así que antes hay que llamar a
+   * `dnfInstall(["nodejs", "nodejs-npm"])`; sin npm el build falla con un
+   * mensaje que lo explica. */
+  npmInstall(packages: string | readonly string[], options: NpmInstallOptions = {}): this {
+    const names = packageNames("npmInstall", packages);
+    const flag = options.g ? ` ${NPM_GLOBAL_FLAG}` : "";
+    const guard =
+      `command -v npm >/dev/null 2>&1 || ` +
+      `{ echo ${shellQuote(NPM_MISSING_MESSAGE)} >&2; exit ${NPM_MISSING_EXIT_CODE}; }`;
+    return this.runCmd(`${guard} && ${NPM_INSTALL_COMMAND}${flag} ${names}`);
+  }
+
   aptInstall(..._args: unknown[]): never {
     throw new UnimplementedError(
       "Template.aptInstall",
-      "rayito-base es Amazon Linux 2023 (dnf, no apt): usa runCmd('dnf install -y ...')",
+      "rayito-base es Amazon Linux 2023 (dnf, no apt): usa dnfInstall([...])",
     );
   }
 

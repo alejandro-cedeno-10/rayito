@@ -28,7 +28,13 @@
 import { randomBytes } from "node:crypto";
 import { CloudWatchLogsClient } from "@aws-sdk/client-cloudwatch-logs";
 import { afterEach, describe, expect, test } from "vitest";
-import { BuildError, type BuildOptions, InvalidArgumentError, Template } from "../../src/index.js";
+import {
+  BuildError,
+  type BuildOptions,
+  InvalidArgumentError,
+  Sandbox,
+  Template,
+} from "../../src/index.js";
 import { e2eEnabled, useE2E } from "./helpers.js";
 import { BuiltImages } from "./image-cleanup.js";
 
@@ -36,6 +42,13 @@ const BUCKET_VAR = "RAYITO_E2E_TEMPLATE_BUCKET";
 /** Build (~115 s, Q85) + el plazo por defecto de un `readyCmd` crudo (60 s)
  * tras el cual `rayd` responde 500, con holgura para la cola de builds. */
 const READY_FAIL_BUDGET_MS = 600_000;
+/** Paquete pequeño de los repos de AL2023 para comprobar `dnfInstall`. */
+const DNF_PROBE_PACKAGE = "tree";
+/** Paquetes de Node.js de AL2023 para comprobar `npmInstall` (la base no trae Node). */
+const NODE_PACKAGES = ["nodejs", "nodejs-npm"];
+const NPM_PROBE_PACKAGE = "left-pad@1.3.0";
+const NPM_MISSING_EXIT_CODE = 127;
+const INSTALL_SANDBOX_TIMEOUT_MS = 300_000;
 
 /** `exactOptionalPropertyTypes` no deja pasar `region: undefined`
  * explícito: esto omite la clave del todo cuando no hay región. */
@@ -118,6 +131,41 @@ describe.runIf(e2eEnabled())("m15-templates (AWS real)", () => {
     }).catch((caught: unknown) => caught);
     expect(error).toBeInstanceOf(BuildError);
     expect((error as BuildError).reason).toBe("ready_server_error");
+  });
+
+  test("dnfInstall and npmInstall shortcuts are usable in a sandbox", async () => {
+    const t = new Template()
+      .fromBaseImage(e2e.settings.template)
+      .dnfInstall([DNF_PROBE_PACKAGE, ...NODE_PACKAGES])
+      .npmInstall(NPM_PROBE_PACKAGE);
+    const name = builtImages().track(runName("install"));
+    await Template.build(t, name, { bucket: bucket(), ...regionOption(e2e.settings.region) });
+    const sandbox = await Sandbox.create({
+      template: await e2e.controlPlane.resolveTemplateArn(name),
+      timeoutMs: INSTALL_SANDBOX_TIMEOUT_MS,
+      idle: null,
+      executionRoleArn: e2e.settings.executionRoleArn,
+      logging: e2e.settings.logging,
+      controlPlane: e2e.controlPlane,
+    });
+    try {
+      expect((await sandbox.commands.run(`${DNF_PROBE_PACKAGE} --version`)).exitCode).toBe(0);
+      expect((await sandbox.commands.run("node --version")).exitCode).toBe(0);
+      expect((await sandbox.commands.run("npm ls left-pad")).exitCode).toBe(0);
+    } finally {
+      await sandbox.kill().catch(() => undefined);
+    }
+  });
+
+  test("npmInstall without node fails with a clear step", async () => {
+    const t = new Template().fromBaseImage(e2e.settings.template).npmInstall(NPM_PROBE_PACKAGE);
+    const name = builtImages().track(runName("no-node"));
+    const error = await Template.build(t, name, {
+      bucket: bucket(),
+      ...regionOption(e2e.settings.region),
+    }).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(BuildError);
+    expect((error as BuildError).exitCode).toBe(NPM_MISSING_EXIT_CODE);
   });
 });
 

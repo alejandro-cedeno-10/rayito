@@ -11,7 +11,7 @@ en el cliente (investigación §3, `docs/research/2026-10-e2b-out-of-scope.md`).
     - **Por defecto**: apagado. Sin llamar a `Template.build()`/
       `build_in_background()` (TypeScript: `buildInBackground`), el SDK no
       construye ningún cliente de `lambda-microvms`/S3/Logs: el builder
-      (`Template()`, `copy()`, `pip_install()`, `to_dockerfile()`...) es
+      (`Template()`, `copy()`, `pip_install()`, `dnf_install()`, `npm_install()`, `to_dockerfile()`...) es
       puro.
     - **Activa**: `Template.build(t, "mi-template", bucket="...")` /
       `Template.build(t, "mi-template", { bucket: "..." })`.
@@ -124,7 +124,8 @@ prefijo de las imágenes que el builder nunca puede actualizar.
   inyectar `rayd` y sus hooks en una imagen externa no tiene todavía un
   camino soportado (`rayd` sólo existe ya instalado dentro de una imagen
   `rayito-*` publicada). `apt_install`/`aptInstall` también lanza:
-  `rayito-base` es Amazon Linux 2023 (`dnf`, no `apt`).
+  `rayito-base` es Amazon Linux 2023 (`dnf`, no `apt`): usa
+  `dnf_install`/`dnfInstall`.
 - **Sin streaming en vivo de los pasos.** El log de cada paso se relee
   **al terminar** el build (TPL-1/Q83: el grupo de logs recibe la salida
   completa de BuildKit de golpe, no en vivo), nunca durante.
@@ -241,6 +242,53 @@ código del sandbox podría leerlo. Para que el aviso pare un build en CI:
 
 Los mensajes nombran el template que pasaste, nunca un ARN ni el texto
 libre de AWS sin sanear.
+
+## Instalar paquetes
+
+Tres atajos añaden un paso `RUN` al Dockerfile del template, igual que
+`pip_install()`/`pipInstall()`. Los nombres se escapan para el shell y una
+lista vacía, un nombre vacío o uno que empiece por `-` lanza
+`InvalidArgumentException`/`InvalidArgumentError` antes de cualquier llamada
+a AWS.
+
+| Python | TypeScript | Qué hace |
+|---|---|---|
+| `dnf_install(paquetes)` | `dnfInstall(paquetes)` | `dnf install -y --setopt=install_weak_deps=False ... && dnf clean all` (Amazon Linux 2023) |
+| `npm_install(paquetes, g=False)` | `npmInstall(paquetes, { g: false })` | `npm install --no-audit --no-fund [-g] ...`; `g` es la misma opción que `npm_install(packages, g=False)` de E2B |
+| `pip_install(paquetes)` | `pipInstall(paquetes)` | `python3 -m pip install ...` |
+
+`rayito-base` no trae Node.js ni npm. Instálalos antes con `dnf_install`: si
+falta npm, el paso falla con el código 127 y un mensaje que lo explica, en
+vez de un `npm: not found` críptico.
+
+=== "Python"
+
+    ```python
+    from rayito import Template
+
+    t = (
+        Template()
+        .from_base_image("rayito-base")
+        .dnf_install(["tree", "nodejs", "nodejs-npm"])
+        .npm_install(["left-pad@1.3.0"])
+        .npm_install("typescript", g=True)
+    )
+    ```
+
+=== "TypeScript"
+
+    ```ts
+    import { Template } from "rayito";
+
+    const t = new Template()
+      .fromBaseImage("rayito-base")
+      .dnfInstall(["tree", "nodejs", "nodejs-npm"])
+      .npmInstall(["left-pad@1.3.0"])
+      .npmInstall("typescript", { g: true });
+    ```
+
+`apt_install`/`aptInstall` sigue lanzando `UnimplementedError`, y su mensaje
+apunta a `dnf_install`/`dnfInstall`.
 
 ## Ejemplo rápido
 
@@ -460,9 +508,9 @@ traduce a la nativa; el DSL es la misma clase en los dos.
 | E2B | Rayito nativo | Nota |
 |---|---|---|
 | `Template().from_image("python:3.12")`, `from_template`, `from_dockerfile`, `from_gcp_registry` | `Template().from_base_image("rayito-base")` | sólo se compone sobre una imagen `rayito-*` publicada; esos cuatro orígenes lanzan `UnimplementedError` |
-| `copy`, `run_cmd`, `pip_install`, `set_envs`, `set_user`, `skip_cache` | los mismos métodos | `skip_cache()` equivale a `force=True` |
+| `copy`, `run_cmd`, `pip_install`, `npm_install(packages, g=False)`, `set_envs`, `set_user`, `skip_cache` | los mismos métodos | `skip_cache()` equivale a `force=True`; `npm_install` necesita Node.js en la imagen (ver arriba) |
 | `set_workdir(path)` | `workdir(path)` | — |
-| `apt_install([...])` | `run_cmd("dnf install -y ...")` | `rayito-base` es Amazon Linux 2023; `apt_install` lanza `UnimplementedError` |
+| `apt_install([...])` | `dnf_install([...])` | `rayito-base` es Amazon Linux 2023; `apt_install` lanza `UnimplementedError` y apunta a `dnf_install` |
 | `set_start_cmd(cmd, wait_for_port(8000))` | igual, también `wait_for_url`/`wait_for_process`/`wait_for_file` | necesita una imagen base con `rayd` 0.6 |
 | `Template.build(t, alias="x", cpu_count=, memory_mb=, skip_cache=, on_build_logs=)` | `Template.build(t, "x", bucket=, memory_mb=, force=, on_build_logs=)` | el shim pide `bucket` en la llamada o en `E2B(bucket=...)`; `memory_mb` se redondea al tamaño siguiente y `cpu_count` se ignora, los dos con `RayitoCompatWarning` |
 | `Template.build_in_background(...)` + `Template.get_build_status(...)` | igual, con un `BuildHandle` | — |
