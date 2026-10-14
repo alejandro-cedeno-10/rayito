@@ -13,10 +13,9 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   `rayito-<variante>[-<talla>]` con la variante en `base`, `base-caps`,
   `base-caps-efs`, `base-poly` y `base-slim` y la talla del catálogo de
   tamaños. Una imagen propia que empieza por `rayito-` (por ejemplo
-  `rayito-mi-app-caps-efs`) o un ARN ya no se confunden con una variante
-  desconocida que rechaza `mounts=`, `volumes=` o `telemetry=` antes de
-  lanzar: la decisión pasa a `Health.features`, como con cualquier otro
-  nombre. `volumes=` (y `volume_mounts=` del shim) exige además
+  `rayito-mi-app-caps-efs`) ya no se interpreta como una variante conocida
+  que no es caps ni se rechaza antes de lanzar: la decisión pasa a
+  `Health.features`, como ya ocurría con un ARN. `volumes=` (y `volume_mounts=` del shim) exige además
   `rayito-base-caps-efs` cuando la variante se conoce: `rayito-base-caps` sin
   `amazon-efs-utils` lanza `UnimplementedError` antes de lanzar en lugar de
   después.

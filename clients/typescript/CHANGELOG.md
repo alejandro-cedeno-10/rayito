@@ -23,8 +23,9 @@ versionado [SemVer](https://semver.org/lang/es/).
   (`parity-image-variants`): `resolveImageVariant` sólo interpreta
   `rayito-<variante>[-<talla>]` con la variante en `base`, `base-caps`,
   `base-caps-efs`, `base-poly` y `base-slim`. Una imagen propia que empieza
-  por `rayito-` o un ARN pasan a decidirse con `Health.features` en lugar de
-  rechazar `mounts`, `volumes` o `telemetry` antes de lanzar. `volumes` exige
+  por `rayito-` (p. ej. `rayito-mi-app-caps-efs`) ya no se interpreta como una
+  variante conocida que no es caps ni se rechaza antes de lanzar: la decisión
+  pasa a `Health.features`, como ya ocurría con un ARN. `volumes` exige
   `rayito-base-caps-efs` cuando la variante se conoce.
 
 ## [0.11.0] - 2026-10-13

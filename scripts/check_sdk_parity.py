@@ -88,7 +88,10 @@ PYTHON_ONLY: Final[dict[str, dict[str, str]]] = {
         "SandboxQuery": "en TypeScript son los campos de `SandboxListOpts`",
         "Stderr": "alias de tipo de Python; en TypeScript es `string`",
         "Stdout": "alias de tipo de Python; en TypeScript es `string`",
-        "UploadTicket": "ticket de subida del shim de Python; en TypeScript no hay equivalente",
+        "UploadTicket": (
+            "el shim de TypeScript no re-exporta `UploadTicket` (existe en "
+            "`rayito`); `files.uploadUrl` del shim devuelve la URL"
+        ),
     },
 }
 

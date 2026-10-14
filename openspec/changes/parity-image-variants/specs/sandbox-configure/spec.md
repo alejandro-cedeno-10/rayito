@@ -21,13 +21,9 @@
 
 ## ADDED Requirements
 
-### Requirement: volumes require the EFS caps image variant when the variant is known
-`require_efs_for(feature, image_variant)` / `requireEfsFor(feature, imageVariant)` SHALL raise `UnimplementedError` before `run-microvm` when the variant is known and is not `base-caps-efs`, and SHALL do nothing when the variant is unknown. `volumes=` and the shim's `volume_mounts=` SHALL use it in place of the caps gate.
+### Requirement: the efs gate is a shared helper
+`require_efs_for(feature, image_variant)` / `requireEfsFor(feature, imageVariant)` SHALL raise `UnimplementedError` before `run-microvm` when the variant is known and is not `base-caps-efs`, and SHALL do nothing when the variant is unknown. `plan_volumes`/`planVolumes` and the shim's `volume_mounts=` use it in place of the caps gate; the `volumes=` behaviour itself is specified in `efs-volumes`.
 
-#### Scenario: the caps image without efs-utils is rejected for volumes
-- **WHEN** `volumes=` is set together with `template="rayito-base-caps"`
-- **THEN** `UnimplementedError` naming `base-caps-efs` is raised before `run-microvm` is called
-
-#### Scenario: an unknown image defers volumes to the agent
-- **WHEN** `volumes=` is set together with an ARN or a custom image name
-- **THEN** nothing is raised before launch and `Health.features.efs_volumes` decides after `/run`
+#### Scenario: the helper skips an unknown variant
+- **WHEN** `require_efs_for("volumes", None)` is called
+- **THEN** nothing is raised
