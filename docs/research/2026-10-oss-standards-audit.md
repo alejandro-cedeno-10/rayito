@@ -145,10 +145,8 @@ Result: **every MUST criterion can be answered Met or N/A.** The two
 caveats found on 2026-10-03 are cleared (see below). The SHOULD gap is
 `english`, and the SUGGESTED gap is `dynamic_analysis`; both may be Unmet at
 passing level. Register at <https://www.bestpractices.dev/en/projects/new>
-(maintainer only; nothing has been registered). The step-by-step checklist
-and the exact text to paste per criterion are in
-[`openssf-badge-answers.md`](openssf-badge-answers.md); the table below is
-the summary.
+(maintainer only; nothing has been registered). The table below is the
+summary.
 
 **Current state (re-checked 2026-10-05, after 0.7.0):**
 
@@ -309,7 +307,7 @@ chooser; mkdocs footer; trademark admonitions.
 2. ~~**Triage the 11 CodeQL alerts** (C1)~~ Done: 0 open CodeQL alerts
    (2026-10-05).
 3. ~~**Merge Dependabot #86** (C2)~~ Done. **Register the OpenSSF badge**
-   with [`openssf-badge-answers.md`](openssf-badge-answers.md).
+   (maintainer only).
 4. **SLSA build provenance for GitHub Release assets**: add
    `actions/attest-build-provenance` (with `attestations: write`) for `rayd`,
    `rayito-image.zip` and `rayd.cdx.json` in the `rayd` job, and document
