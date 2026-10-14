@@ -58,7 +58,7 @@ INTERNET_ARN = (
 
 def plan(volumes: Any, **overrides: Any) -> Any:
     kwargs: dict[str, Any] = {
-        "image_variant": "base-caps",
+        "image_variant": "base-caps-efs",
         "egress": [CONNECTOR],
         "execution_role_arn": ROLE,
         **overrides,
@@ -100,8 +100,13 @@ def test_a_non_caps_image_variant_is_rejected() -> None:
         plan({"/mnt/v": VOLUME}, image_variant="base")
 
 
-@pytest.mark.parametrize("variant", ["base-caps", "base-caps-efs", None])
-def test_caps_variants_and_unknown_images_pass(variant: str | None) -> None:
+def test_the_caps_image_without_efs_utils_is_rejected_before_launch() -> None:
+    with pytest.raises(UnimplementedError, match="base-caps-efs"):
+        plan({"/mnt/v": VOLUME}, image_variant="base-caps")
+
+
+@pytest.mark.parametrize("variant", ["base-caps-efs", None])
+def test_the_efs_variant_and_unknown_images_pass(variant: str | None) -> None:
     plan({"/mnt/v": VOLUME}, image_variant=variant)
 
 

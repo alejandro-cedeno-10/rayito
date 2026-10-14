@@ -6,6 +6,27 @@ versionado [SemVer](https://semver.org/lang/es/).
 
 ## [Unreleased]
 
+### Añadido
+
+- **`sbx.metadata`**: los `metadata` de `create({ metadata })` tal como los
+  devolvió el último `Health` (copia congelada), como `Sandbox.metadata` de
+  Python.
+- **`rayito/e2b` exporta** los tipos de gráficos (`Chart`, `LineChart`,
+  `ScatterChart`, `BarChart`, `PieChart`, `BoxAndWhiskerChart`, `SuperChart`,
+  `PointData`, `BarData`, `PieData`, `BoxAndWhiskerData`), `ChartType`,
+  `ScaleType`, `ProcessInfo`, `WriteEntry` y `WatchHandle`, los mismos nombres
+  que `rayito.e2b` en Python.
+
+### Cambiado
+
+- **La variante de imagen se reconoce con un catálogo cerrado**
+  (`parity-image-variants`): `resolveImageVariant` sólo interpreta
+  `rayito-<variante>[-<talla>]` con la variante en `base`, `base-caps`,
+  `base-caps-efs`, `base-poly` y `base-slim`. Una imagen propia que empieza
+  por `rayito-` o un ARN pasan a decidirse con `Health.features` en lugar de
+  rechazar `mounts`, `volumes` o `telemetry` antes de lanzar. `volumes` exige
+  `rayito-base-caps-efs` cuando la variante se conoce.
+
 ## [0.11.0] - 2026-10-13
 
 ### Cambiado

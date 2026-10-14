@@ -1461,6 +1461,16 @@ export class Sandbox implements AsyncDisposable {
     return this.#core.resumeGeneration;
   }
 
+  /**
+   * Los metadatos de `create({ metadata })` tal como los devolvió el último
+   * `Health`; inmutables durante la vida del sandbox, así que son definitivos
+   * desde el primer `agentReady` (vacíos sobre una imagen anterior a M6).
+   * Espejo de `Sandbox.metadata` de Python.
+   */
+  get metadata(): Readonly<Record<string, string>> {
+    return Object.freeze({ ...this.#core.metadata });
+  }
+
   /** El `S3Prefix` (con `name`) enlazado por `create({ persist })` o `connect(id, { persist })`. */
   get persist(): S3Prefix | undefined {
     return this.#persist;

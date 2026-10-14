@@ -3,28 +3,56 @@ necesitan el execution role dentro del guest."""
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+from typing import Any
+
 import pytest
 
-from rayito._role_policy import require_caps_for, resolve_image_variant
+from rayito._limits import OFFICIAL_IMAGE_VARIANTS
+from rayito._role_policy import (
+    CAPS_VARIANTS,
+    EFS_CAPS_VARIANT,
+    require_caps_for,
+    require_efs_for,
+    resolve_image_variant,
+)
 from rayito.exceptions import UnimplementedError
 
-
-@pytest.mark.parametrize(
-    ("template", "expected"),
-    [
-        ("rayito-base-caps", "base-caps"),
-        ("rayito-base-caps-4gb", "base-caps"),
-        ("rayito-base-caps-efs", "base-caps-efs"),
-        ("rayito-base-caps-efs-4gb", "base-caps-efs"),
-        ("rayito-base", "base"),
-        ("rayito-base-poly", "base-poly"),
-        (None, None),
-        ("arn:aws:lambda:us-east-1:123456789012:microvm-image:rayito-base-caps", None),
-        ("mi-imagen-propia", None),
-    ],
+#: Los mismos vectores que `clients/typescript/tests/unit/role-policy.test.ts`.
+VECTORS: dict[str, list[dict[str, Any]]] = json.loads(
+    (Path(__file__).resolve().parents[4] / "testdata/image-variants/vectors.json").read_text(
+        encoding="utf-8"
+    )
 )
-def test_resolve_image_variant(template: str | None, expected: str | None) -> None:
-    assert resolve_image_variant(template) == expected
+
+
+@pytest.mark.parametrize("vector", VECTORS["resolve"], ids=lambda v: str(v["template"]))
+def test_resolve_image_variant_matches_the_shared_vectors(vector: dict[str, Any]) -> None:
+    assert resolve_image_variant(vector["template"]) == vector["variant"]
+
+
+def test_the_catalogue_contains_the_caps_variants() -> None:
+    assert CAPS_VARIANTS.issubset(OFFICIAL_IMAGE_VARIANTS)
+
+
+@pytest.mark.parametrize("vector", VECTORS["requireCaps"], ids=lambda v: str(v["variant"]))
+def test_require_caps_for_matches_the_shared_vectors(vector: dict[str, Any]) -> None:
+    if vector["accepted"]:
+        require_caps_for("mounts=", vector["variant"])
+    else:
+        with pytest.raises(UnimplementedError, match="base-caps"):
+            require_caps_for("mounts=", vector["variant"])
+
+
+@pytest.mark.parametrize("vector", VECTORS["requireEfs"], ids=lambda v: str(v["variant"]))
+def test_require_efs_for_matches_the_shared_vectors(vector: dict[str, Any]) -> None:
+    if vector["accepted"]:
+        require_efs_for("volumes=", vector["variant"])
+    else:
+        with pytest.raises(UnimplementedError, match=EFS_CAPS_VARIANT) as excinfo:
+            require_efs_for("volumes=", vector["variant"])
+        assert excinfo.value.feature == "volumes="
 
 
 @pytest.mark.parametrize("variant", ["base-caps", "base-caps-efs"])

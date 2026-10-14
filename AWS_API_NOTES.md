@@ -1386,6 +1386,18 @@ más): $0 en reposo y por uso.
   true` para los dos tamaños; tres builds en 206 s (baseline primero, los
   dos tamaños en paralelo después).
 
+**Reconocimiento de la variante por nombre (decisión de diseño, no medida en
+AWS).** El nombre de una imagen no es una propiedad que AWS verifique: el SDK
+sólo lo usa para adelantar un rechazo. Reconoce el patrón oficial
+`rayito-<variante>[-<talla>]` con la variante en el catálogo cerrado de
+`limits.json` (`officialImageVariants`) y la talla en la lista de tamaños de
+esta sección; cualquier otro nombre, y cualquier ARN, queda como variante
+desconocida y la decisión se difiere a `Health.features`, que el agente
+anuncia tras `/run`. Leer la capacidad de la propia imagen (por ejemplo
+`additionalOsCapabilities` en `GetMicrovmImageVersion`) costaría una llamada y
+un permiso más, y que esa respuesta lo devuelva no está medido: queda como
+pregunta abierta para una Q futura.
+
 ## 25. Logs, DynamoDB de eventos y Scheduler (`m15-events-webhooks`)
 
 **CloudWatch Logs** (`infra/events-webhooks.yaml`): `AWS::Logs::SubscriptionFilter`
