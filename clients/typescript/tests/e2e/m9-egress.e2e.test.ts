@@ -550,7 +550,7 @@ describe.skipIf(!m9Enabled)(
         const offered = SOCKS_METHODS.exec(log);
         expect(offered?.[1]).toContain("02");
         expect(log).toContain(`username=${SOCKS_USERNAME} password_ok=True`);
-        expect(log).toContain(`atyp=03 host=${ALLOWED_HOST} port=443`);
+        expect(log).toContain(`atyp=03 host=${ALLOWED_HOST} port=${HTTPS_PORT}`);
         expect(
           await curlStatus(sandbox, `https://${ALLOWED_HOST}`, "--noproxy '*'"),
         ).toBeInstanceOf(CommandExitError);

@@ -24,6 +24,8 @@ import { e2eEnabled, report, seconds, TEMPLATE_VAR, useE2E } from "./helpers.js"
 
 const CAPS_TEMPLATE_VAR = "RAYITO_TEMPLATE_CAPS";
 const DEFAULT_TEMPLATE_VAR = "RAYITO_TEMPLATE_DEFAULT";
+const TEMPLATE_VERSION_VAR = "RAYITO_TEMPLATE_VERSION";
+const DEFAULT_TEMPLATE_VERSION_VAR = "RAYITO_TEMPLATE_DEFAULT_VERSION";
 const NOT_FOUND_BUDGET_MS = 5_000;
 const NO_ROLE_BUDGET_MS = 5_000;
 const BUCKET_VAR = "RAYITO_PERSIST_BUCKET";
@@ -193,6 +195,8 @@ describe.skipIf(!enabled)("M7 persistence (TypeScript)", () => {
     const defaultTemplate = process.env[DEFAULT_TEMPLATE_VAR] || process.env[TEMPLATE_VAR] || "";
     const sandbox = await Sandbox.create({
       template: await context.controlPlane.resolveTemplateArn(defaultTemplate),
+      templateVersion:
+        process.env[DEFAULT_TEMPLATE_VERSION_VAR] || process.env[TEMPLATE_VERSION_VAR] || undefined,
       timeoutMs: SANDBOX_TIMEOUT_MS,
       idle: null,
       ingress: ["ALL_INGRESS"],

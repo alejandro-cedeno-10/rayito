@@ -20,13 +20,13 @@ import { DEFAULT_TRANSPORT_SETTINGS, openTransport } from "../../src/transport/t
 /** El comando mínimo de `ProcessService.Start` con el que se provoca el rechazo. */
 const STRAY_COMMAND = "echo stray";
 
-export interface RawClients {
+interface RawClients {
   readonly health: Client<typeof HealthService>;
   readonly process: Client<typeof ProcessService>;
   close(): void;
 }
 
-export async function openRawClients(
+async function openRawClients(
   controlPlane: ControlPlane,
   sandboxId: string,
   accessToken: string | undefined,
@@ -46,16 +46,6 @@ export async function openRawClients(
     process: createClient(ProcessService, opened.transport),
     close: () => opened.sessionManager.abort(),
   };
-}
-
-/** Una llamada a `Health` por un canal ajeno: lo que dispara un auto-resume "extraviado". */
-export async function rawHealth(controlPlane: ControlPlane, sandboxId: string): Promise<void> {
-  const clients = await openRawClients(controlPlane, sandboxId, undefined);
-  try {
-    await clients.health.health({});
-  } finally {
-    clients.close();
-  }
 }
 
 /** `true` si un `Start` por un canal ajeno acaba en `FAILED_PRECONDITION sandbox_timeout`. */

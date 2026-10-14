@@ -576,7 +576,9 @@ def test_log_hygiene(
         ticket.wait(timeout=WAIT_SECONDS)
         link = created.files.download_url("m9/secret-dir/in.bin")
         assert http(link)[1] == b"hola"
-        rayd_lines = "\n".join(rayd_log_lines(control_plane, created))
+        rayd_log = rayd_log_lines(control_plane, created)
+        assert rayd_log, "sin eventos de rayd en CloudWatch"
+        rayd_lines = "\n".join(rayd_log)
         sdk_lines = "\n".join(
             record.getMessage() for record in caplog.records if record.name.startswith("rayito")
         )

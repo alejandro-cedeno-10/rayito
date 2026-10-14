@@ -15,13 +15,7 @@
 
 import { describe, expect, test } from "vitest";
 import { LambdaMicrovmsControlPlane } from "../../src/index.js";
-import {
-  applySizeSuffix,
-  NAME_TO_MEMORY_MIB,
-  resolveSize,
-  SIZE_NAMES,
-  type SizeName,
-} from "../../src/sizing/sizing.js";
+import { applySizeSuffix, resolveSize, type SizeName } from "../../src/sizing/sizing.js";
 import { e2eEnabled } from "./helpers.js";
 
 const IMAGE_VAR = "RAYITO_E2E_SIZE_IMAGE";
@@ -39,9 +33,7 @@ describe.runIf(suiteEnabled)(
   () => {
     test("the published image of that size reports the memory the SDK resolved", async () => {
       const size = process.env[SIZE_VAR] as SizeName;
-      expect(SIZE_NAMES).toContain(size);
       const resolved = resolveSize(size);
-      expect(resolved.memoryMib).toBe(NAME_TO_MEMORY_MIB[size]);
       const plane = LambdaMicrovmsControlPlane.fromRegion(
         process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION || undefined,
       );

@@ -13,12 +13,19 @@
 
 import { afterAll, describe, expect, test } from "vitest";
 import { InvalidArgumentError, type Sandbox, UnimplementedError } from "../../src/index.js";
-import { createTestSandbox, e2eEnabled, timed, useE2E } from "./helpers.js";
+import {
+  createTestSandbox,
+  e2eEnabled,
+  TEST_SANDBOX_TIMEOUT_MS,
+  timed,
+  useE2E,
+} from "./helpers.js";
 
 const POLY_TEMPLATE_VAR = "RAYITO_TEMPLATE_POLY";
 const POLY_IMAGE = "rayito-base-poly";
 const DENO_LANGUAGES = ["javascript", "typescript"] as const;
 const ESCAPE = "\u001b";
+const PAUSE_MAX_IDLE_SECONDS = 300;
 const ENDLESS_LOOP_TIMEOUT_MS = 2_000;
 const AWAITED_DELAY_MS = 200;
 
@@ -35,7 +42,7 @@ describe.skipIf(!polyEnabled)(`kernels poly (requiere RAYITO_E2E=1 y ${POLY_TEMP
   });
 
   test("bash, javascript and typescript cells, exclusive options, listing", async () => {
-    sandbox = await createTestSandbox(e2e, { timeoutMs: 900_000 });
+    sandbox = await createTestSandbox(e2e, { timeoutMs: TEST_SANDBOX_TIMEOUT_MS });
     const poly = sandbox;
     const [first] = await timed("m7 first bash cell (lazy kernel start)", () =>
       poly.runCode("echo hi", { language: "bash" }),
@@ -92,7 +99,7 @@ describe.skipIf(!polyEnabled)(`kernels poly (requiere RAYITO_E2E=1 y ${POLY_TEMP
   });
 
   test("deno outputs: stderr, html, thrown errors and top-level await", async () => {
-    const poly = await createTestSandbox(e2e, { timeoutMs: 900_000 });
+    const poly = await createTestSandbox(e2e, { timeoutMs: TEST_SANDBOX_TIMEOUT_MS });
     const errored = await poly.runCode("console.error('err')", { language: "typescript" });
     expect(errored.logs.stderr.join("")).toContain("err");
     const awaited = await poly.runCode(
@@ -105,7 +112,7 @@ describe.skipIf(!polyEnabled)(`kernels poly (requiere RAYITO_E2E=1 y ${POLY_TEMP
   });
 
   test("typescript context: envs, timeout of an endless loop and restart", async () => {
-    const poly = await createTestSandbox(e2e, { timeoutMs: 900_000 });
+    const poly = await createTestSandbox(e2e, { timeoutMs: TEST_SANDBOX_TIMEOUT_MS });
     const ctx = await poly.createCodeContext({ language: "typescript", envs: { K: "1" } });
     expect((await poly.runCode("Deno.env.get('K') === '1'", { context: ctx })).text).toBe("true");
     expect((await poly.runCode("let z = 5", { context: ctx })).error).toBeUndefined();
@@ -125,8 +132,8 @@ describe.skipIf(!polyEnabled)(`kernels poly (requiere RAYITO_E2E=1 y ${POLY_TEMP
 
   test("javascript state survives pause and resume", async () => {
     const poly = await createTestSandbox(e2e, {
-      timeoutMs: 900_000,
-      idle: { maxIdleSeconds: 300, autoResume: true },
+      timeoutMs: TEST_SANDBOX_TIMEOUT_MS,
+      idle: { maxIdleSeconds: PAUSE_MAX_IDLE_SECONDS, autoResume: true },
     });
     expect(
       (await poly.runCode("globalThis.kept = 42", { language: "javascript" })).error,

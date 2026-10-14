@@ -57,6 +57,8 @@ const MULTIPART_THRESHOLD_BYTES = 64 * MIB;
 const MULTIPART_FILE_COUNT = 100;
 const EXPIRING_TICKET_SECONDS = 5;
 const EXPIRY_WAIT_TIMEOUT_MS = 60_000;
+const UPLOAD_WAIT_TIMEOUT_MS = 300_000;
+const COMMAND_TIMEOUT_MS = 300_000;
 const EXPIRY_MIN_S = 3;
 const EXPIRY_MAX_S = 12;
 const EXPIRED_LINK_SECONDS = 1;
@@ -155,7 +157,7 @@ async function linkRates(
 }
 
 async function shellOutput(sandbox: Sandbox, command: string): Promise<string> {
-  const result = await sandbox.commands.run(command, { timeoutMs: 300_000 });
+  const result = await sandbox.commands.run(command, { timeoutMs: COMMAND_TIMEOUT_MS });
   return result.stdout.trim();
 }
 
@@ -258,7 +260,7 @@ describe.skipIf(!enabled)("M9 file transfer (TypeScript, real AWS)", () => {
     const started = performance.now();
     const response = await putTo(ticket, data);
     expect(response.status).toBe(200);
-    const entry = await ticket.wait({ timeoutMs: 300_000 });
+    const entry = await ticket.wait({ timeoutMs: UPLOAD_WAIT_TIMEOUT_MS });
     reportRate("uploadUrl 10 MiB: PUT + import", UPLOAD_BYTES, seconds(started));
     expect(entry.size).toBe(UPLOAD_BYTES);
     expect(await sha256InVm(sandbox, path)).toBe(sha256(data));
@@ -457,10 +459,10 @@ describe.skipIf(!enabled)("M9 file transfer (TypeScript, real AWS)", () => {
     }
   });
 
-  test("log hygiene: neither rayd nor the SDK log URLs, bucket, prefix or paths", async () => {
+  test("log hygiene: neither rayd nor the SDK log URLs, bucket, prefix or paths", async (ctx) => {
     const role = context.settings.executionRoleArn;
     if (role === undefined) {
-      console.log("[m9-transfer] omitido: exporta RAYITO_EXECUTION_ROLE_ARN (el rol de sólo logs)");
+      ctx.skip("exporta RAYITO_EXECUTION_ROLE_ARN (el rol de sólo logs)");
       return;
     }
     const sdkLines: string[] = [];
@@ -473,11 +475,13 @@ describe.skipIf(!enabled)("M9 file transfer (TypeScript, real AWS)", () => {
     });
     const ticket = await sandbox.files.uploadUrl(`${HOME}/m9/${SECRET_DIRECTORY}/in.bin`);
     expect((await putTo(ticket, new TextEncoder().encode("hola"))).status).toBe(200);
-    await ticket.wait({ timeoutMs: 300_000 });
+    await ticket.wait({ timeoutMs: UPLOAD_WAIT_TIMEOUT_MS });
     const link = remember(await sandbox.files.downloadUrl(`${HOME}/m9/${SECRET_DIRECTORY}/in.bin`));
     expect(await (await fetch(link.url)).text()).toBe("hola");
-    const rayd = (await rayitoLogLines(sandbox, context.settings.region)).join("\n");
-    console.log(`\n[m9-transfer] rayd log lines read: ${rayd.split("\n").length}`);
+    const raydLines = await rayitoLogLines(sandbox, context.settings.region);
+    console.log(`\n[m9-transfer] rayd log lines read: ${raydLines.length}`);
+    expect(raydLines.length, "sin eventos de rayd en CloudWatch").toBeGreaterThan(0);
+    const rayd = raydLines.join("\n");
     for (const text of [rayd, sdkLines.join("\n")]) {
       for (const forbidden of ["X-Amz-Signature", bucket, `${prefix}/`, SECRET_DIRECTORY]) {
         expect(text).not.toContain(forbidden);

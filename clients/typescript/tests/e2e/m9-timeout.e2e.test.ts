@@ -44,6 +44,8 @@ const SHORT_MAX_IDLE_SECONDS = 60;
 const IDLE_SLACK_MS = 60_000;
 const TRACKING_TOLERANCE_MS = 2_000;
 const TRACKED_TIMEOUTS_MS = [200_000, 90_000, 400_000] as const;
+const PAUSE_MODE_TIMEOUT_MS = 60_000;
+const PAUSE_MAX_IDLE_SECONDS = 300;
 const SHIM_TIMEOUT_MS = 30_000;
 const SHIM_EXTENDED_TIMEOUT_MS = 90_000;
 const SHIM_EXTEND_AFTER_MS = 5_000;
@@ -162,9 +164,9 @@ describe.skipIf(!e2eEnabled())("M9 server-enforced timeout (TypeScript)", () => 
 
   test("onTimeout pause with a live client suspends at the deadline and auto-resumes", async () => {
     const sandbox = await createTimeoutSandbox(context, {
-      timeoutMs: 60_000,
+      timeoutMs: PAUSE_MODE_TIMEOUT_MS,
       onTimeout: "pause",
-      idle: { maxIdleSeconds: 300, autoResume: true },
+      idle: { maxIdleSeconds: PAUSE_MAX_IDLE_SECONDS, autoResume: true },
     });
     await sandbox.runCode("x = 42");
     const deadline = (await sandbox.getHealth()).lifecycle?.deadline?.getTime() ?? Date.now();
@@ -219,7 +221,7 @@ describe.skipIf(!e2eEnabled())("M9 server-enforced timeout (TypeScript)", () => 
   });
   test("pause without autoResume: a stray request is refused and the VM suspends again", async () => {
     const sandbox = await createTimeoutSandbox(context, {
-      timeoutMs: 60_000,
+      timeoutMs: PAUSE_MODE_TIMEOUT_MS,
       onTimeout: "pause",
       idle: { maxIdleSeconds: SHORT_MAX_IDLE_SECONDS, autoResume: false },
     });
@@ -300,7 +302,7 @@ describe.skipIf(!e2eEnabled())("M9 server-enforced timeout (TypeScript)", () => 
 
     const paused = await ShimSandbox.create({
       ...shimOptions,
-      timeoutMs: 60_000,
+      timeoutMs: PAUSE_MODE_TIMEOUT_MS,
       lifecycle: { onTimeout: "pause", autoResume: true },
     });
     context.created.push(paused.native);
