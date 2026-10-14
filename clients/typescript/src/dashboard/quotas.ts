@@ -35,10 +35,13 @@ export interface QuotasOptions {
  *   `ListServiceQuotas` (código `lambda`, con el peer opcional
  *   `@aws-sdk/client-service-quotas`), `ListMicrovms` y, como mucho una vez
  *   por versión de imagen y proceso, `GetMicrovmImageVersion`.
- * Coste aproximado: $0. `GetMicrovmImageVersion` no factura ni tiene cuota
- *   propia (`AWS_API_NOTES.md` §24) y Service Quotas no cobra por consulta
- *   (a confirmar en la aceptación, tarea 1.1 del cambio `dashboard`);
- *   `ListMicrovms` cuenta contra un TPS no documentado.
+ * Coste aproximado: $0, sin ninguna llamada de pago. `GetMicrovmImageVersion`
+ *   no factura ni tiene cuota propia (`AWS_API_NOTES.md` §24 y §30); Service
+ *   Quotas no publica ninguna tarifa por consulta (guía de Service Quotas,
+ *   https://docs.aws.amazon.com/servicequotas/latest/userguide/intro.html,
+ *   consultada 2026-10-13); `ListMicrovms` cuenta contra un TPS no
+ *   documentado (a confirmar en la aceptación, tarea 1.1 del cambio
+ *   `dashboard`).
  * IAM: `servicequotas:ListServiceQuotas`, `lambda:ListMicrovms` y
  *   `lambda:GetMicrovmImageVersion`.
  * Cómo apagarla: no llames a `report()`; no deja recursos que borrar.
@@ -61,6 +64,10 @@ export class Quotas {
     this.#catalog = options.catalog ?? defaultSizeCatalog;
   }
 
+  /**
+   * Gratuita: sólo lecturas de Service Quotas y de Lambda MicroVMs, sin
+   * ninguna llamada de pago ni recursos nuevos.
+   */
   async report(): Promise<QuotaReport> {
     const plane = this.#plane.get();
     const applied = await this.#quotaSource(plane.region).listAppliedQuotas();

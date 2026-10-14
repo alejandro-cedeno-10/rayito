@@ -53,7 +53,13 @@ export interface FleetOptions {
   readonly controlPlane?: ManagementPlane | undefined;
   readonly images?: ImageCatalog | undefined;
   readonly events?: EventsHistory | undefined;
-  /** Las acciones masivas (`runBulk`) exigen `true`; por defecto, sólo lectura. */
+  /**
+   * Las acciones masivas (`runBulk`) exigen `true`; por defecto, sólo
+   * lectura. La llamada no factura, pero el efecto sí: `kill` deja de
+   * facturar cómputo; `suspend` escribe un snapshot ($0,0038/GB) y paga
+   * almacenamiento ($0,08/GB-mes); `resume` lee el snapshot ($0,00155/GB) y
+   * vuelve a facturar cómputo al precio de su tamaño.
+   */
   readonly allowActions?: boolean | undefined;
   readonly catalog?: SizeCatalog | undefined;
   /** Reloj monótono en segundos y espera de la cola (inyectables en tests). */
@@ -95,16 +101,25 @@ export type BulkProgressCallback = (progress: BulkProgress) => void;
  *   `allowActions: true`, `TerminateMicrovm`, `SuspendMicrovm` y
  *   `ResumeMicrovm` sobre los sandboxes que se indiquen; `events()` lee la
  *   tabla de la pila `events-webhooks` si se pasó `events`.
- * Coste aproximado: $0 las lecturas; las acciones no facturan por la llamada
- *   (terminar y suspender dejan de facturar cómputo; suspender escribe un
- *   snapshot, $0,0038/GB, us-east-1, `AWS_API_NOTES.md` §12, consultado
- *   2026-10-13).
+ * Coste aproximado: $0 las lecturas de sandboxes, imágenes y versiones.
+ *   `events()` es de pago, aunque mínimo: lee la tabla DynamoDB de
+ *   `events-webhooks` (lecturas bajo demanda,
+ *   https://aws.amazon.com/dynamodb/pricing/on-demand/), unas pocas por
+ *   consulta y sin sondeo. Las acciones (sólo con `allowActions: true`) no
+ *   facturan por la llamada, pero cambian lo que se factura (us-east-1,
+ *   `AWS_API_NOTES.md` §12, consultado 2026-10-13): `kill` deja de facturar
+ *   cómputo; `suspend` escribe un snapshot ($0,0038/GB) y, mientras dure,
+ *   paga almacenamiento ($0,08/GB-mes); `resume` lee el snapshot
+ *   ($0,00155/GB) y vuelve a facturar cómputo al precio de su tamaño (vCPU-s
+ *   y GB-s de §12, p. ej. $0,1261/h con 2 GB y 1 vCPU), así que reanudar
+ *   muchos sandboxes a la vez sube la factura.
  * IAM: `lambda:ListMicrovms`, `lambda:ListMicrovmImages`,
  *   `lambda:ListMicrovmImageVersions`, `lambda:GetMicrovmImageVersion`; con
  *   acciones, `lambda:TerminateMicrovm`, `lambda:SuspendMicrovm` y
  *   `lambda:ResumeMicrovm`.
  * Cómo apagarla: no llames a sus métodos; las acciones están apagadas salvo
- *   `allowActions: true` y no dejan recursos que borrar.
+ *   `allowActions: true` y no dejan recursos que borrar. `events()` no
+ *   consulta nada sin `events`.
  * Ejemplo:
  *   const fleet = new Fleet({ region: "us-east-1" });
  *   const running = await fleet.sandboxes({ states: ["RUNNING"] });
@@ -139,6 +154,8 @@ export class Fleet {
   /**
    * Los sandboxes con la memoria de su imagen. Sin `states`, los que no
    * están terminados; `image` filtra por nombre o ARN de imagen.
+   *
+   * Gratuita: `ListMicrovms` y `GetMicrovmImageVersion` no facturan.
    */
   async sandboxes(options: SandboxesOptions = {}): Promise<SandboxView[]> {
     const plane = this.#plane.get();
@@ -150,16 +167,28 @@ export class Fleet {
     });
   }
 
+  /** Las imágenes de la cuenta. Gratuita: `ListMicrovmImages` no factura. */
   images(options: { readonly nameFilter?: string | undefined } = {}): Promise<ImageSummary[]> {
     return this.#imageCatalog().listImages(options);
   }
 
-  /** Las versiones de `image` (nombre o ARN), la más nueva primero. */
+  /**
+   * Las versiones de `image` (nombre o ARN), la más nueva primero.
+   *
+   * Gratuita: `ListMicrovmImageVersions` no factura.
+   */
   async imageVersions(image: string): Promise<ImageVersionSummary[]> {
     const arn = await this.#plane.get().resolveTemplateArn(image);
     return this.#imageCatalog().listVersions(arn);
   }
 
+  /**
+   * El historial de eventos de ciclo de vida.
+   *
+   * De pago, aunque mínimo: lee la tabla DynamoDB de `events-webhooks`
+   * (lecturas bajo demanda, `AWS_API_NOTES.md` §25; un puñado por consulta,
+   * sin sondeo). Sin `events` no llama a nada y falla.
+   */
   async events(options: EventsOptions = {}): Promise<EventRecord[]> {
     if (this.#events === undefined) {
       throw new InvalidArgumentError(
@@ -178,6 +207,8 @@ export class Fleet {
   /**
    * Cuánto tardaría una acción masiva; `appliedRate` es la cuota de TPS
    * aplicada (`QuotaReport.appliedRate`).
+   *
+   * Gratuita: es un cálculo local, no llama a AWS.
    */
   planBulk(
     action: BulkAction,
@@ -194,6 +225,12 @@ export class Fleet {
    * detiene a los demás: queda `failed` con el código de AWS. Un id
    * repetido se aplica una sola vez. `onProgress` se llama tras cada
    * sandbox.
+   *
+   * Exige `allowActions: true`. La llamada no factura, pero el efecto sí
+   * (`AWS_API_NOTES.md` §12, us-east-1): `kill` deja de facturar cómputo;
+   * `suspend` escribe un snapshot ($0,0038/GB) y paga almacenamiento
+   * ($0,08/GB-mes) mientras esté suspendido; `resume` lee el snapshot
+   * ($0,00155/GB) y vuelve a facturar cómputo al precio de su tamaño.
    */
   async runBulk(
     action: BulkAction,

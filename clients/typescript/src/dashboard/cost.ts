@@ -42,7 +42,10 @@ export interface UsageCostOptions {
   readonly controlPlane?: ManagementPlane | undefined;
   readonly source?: CostSource | undefined;
   readonly catalog?: SizeCatalog | undefined;
-  /** Caducidad de la caché de `billed()`, en milisegundos (por defecto 24 h). */
+  /**
+   * Caducidad de la caché de `billed()`, en milisegundos (por defecto 24 h).
+   * Bajarla añade peticiones de pago a Cost Explorer ($0,01 cada una).
+   */
   readonly cacheTtlMs?: number | undefined;
   /** Reloj de pared (para fechas y `fetchedAt`); el de la caché es `monotonicMs`. */
   readonly now?: (() => Date) | undefined;
@@ -57,7 +60,7 @@ export interface BilledOptions {
   readonly granularity?: Granularity | undefined;
   /** Filtra por región de AWS; sin filtro, toda la cuenta. */
   readonly region?: string | undefined;
-  /** Ignora la caché local. */
+  /** Ignora la caché local. De pago: siempre hace una petición a Cost Explorer ($0,01). */
   readonly refresh?: boolean | undefined;
 }
 
@@ -87,15 +90,23 @@ function asDate(value: Date | string, name: string): string {
  *   us-east-1, donde vive Cost Explorer, con el peer opcional
  *   `@aws-sdk/client-cost-explorer`; `estimate()` hace `ListMicrovms` y
  *   `GetMicrovmImageVersion` (una por versión de imagen y proceso).
- * Coste aproximado: $0,01 por petición a Cost Explorer (us-east-1,
- *   consultado 2026-10-13,
- *   https://aws.amazon.com/aws-cost-management/aws-cost-explorer/pricing/);
- *   la caché local conserva cada ventana `COST_CACHE_TTL_SECONDS` (24 h),
- *   unas 30 peticiones al mes ≈ $0,30 con el panel abierto todo el mes.
- *   `estimate()` es gratuita.
+ * Coste aproximado: `billed()` es de pago: $0,01 por petición a Cost
+ *   Explorer (us-east-1, consultado 2026-10-13,
+ *   https://aws.amazon.com/aws-cost-management/aws-cost-explorer/pricing/).
+ *   La caché está en memoria, es de cada instancia (se pierde al terminar el
+ *   proceso o al crear otra `UsageCost`), guarda como mucho
+ *   `COST_CACHE_MAX_ENTRIES` ventanas y se indexa por inicio, fin,
+ *   granularidad y región: reutiliza una sola instancia para ahorrar. Con
+ *   una instancia de larga vida y `COST_CACHE_TTL_SECONDS` (24 h) salen unas
+ *   30 peticiones al mes ≈ $0,30; con una instancia nueva por llamada (un
+ *   cron, una Lambda, un script) cada `billed()` paga $0,01. `DAILY` sobre
+ *   ventanas largas puede necesitar varias páginas de pago. `estimate()` es
+ *   gratuita.
  * IAM: `ce:GetCostAndUsage` para `billed()`; `lambda:ListMicrovms` y
  *   `lambda:GetMicrovmImageVersion` para `estimate()`.
  * Cómo apagarla: no llames a `billed()`; no deja recursos que borrar.
+ * Opciones: `cacheTtlMs` baja o sube la caducidad de la caché de `billed()`;
+ *   bajarla añade peticiones de pago ($0,01 cada una).
  * Ejemplo:
  *   const cost = await new UsageCost().billed();
  *   console.log(cost.totalUsd, cost.partial);
@@ -125,6 +136,10 @@ export class UsageCost {
    * Explorer tiene unas 24 h de retraso, y `partial` avisa de que aún hay
    * periodos estimados por AWS. Una ventana ya leída se sirve de la caché
    * local hasta que caduca.
+   *
+   * De pago: cada fallo de caché hace una petición a Cost Explorer ($0,01,
+   * us-east-1, por página; consultado 2026-10-13), y `refresh: true`
+   * siempre la hace. Un acierto de caché es gratuito.
    */
   async billed(options: BilledOptions = {}): Promise<BilledCost> {
     const [start, end] = this.#window(options.start, options.end);
@@ -154,6 +169,9 @@ export class UsageCost {
    * La estimación por sandbox: el tiempo transcurrido desde el arranque de
    * cada `RUNNING` por el precio de cómputo baseline de su tamaño. Siempre
    * `estimated`: no incluye snapshots ni el consumo sobre el baseline.
+   *
+   * Gratuita: sólo lee Lambda MicroVMs (`ListMicrovms` y
+   * `GetMicrovmImageVersion`) y nunca usa Cost Explorer.
    */
   async estimate(): Promise<CostEstimate> {
     const plane = this.#plane.get();

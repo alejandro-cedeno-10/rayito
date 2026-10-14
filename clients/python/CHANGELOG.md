@@ -20,7 +20,7 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   `allow_actions=True`. Nueva excepción `DashboardException` y constantes
   nuevas en `limits.json` (catálogo de cuotas, umbrales, TTL y precios de
   cómputo). `rayito doctor` y `rayito image list` reutilizan los lectores de
-  cuotas e imágenes. Guía:
+  cuotas e imágenes. Cada clase, método y opción dice si es gratuito o de pago (`billed()` y `events()` son de pago; `resume` vuelve a facturar cómputo) con el mismo texto en ambos SDK. Guía:
   [Panel de gestión](https://alejandro-cedeno-10.github.io/rayito/funciones-opcionales/panel-de-gestion/).
 
 ## [0.11.0] - 2026-10-13

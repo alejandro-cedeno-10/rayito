@@ -21,7 +21,7 @@ versionado [SemVer](https://semver.org/lang/es/).
   nuevas en `limits.json` (catálogo de cuotas, umbrales, TTL y precios de
   cómputo). Los clientes de Service Quotas y Cost Explorer son
   peers opcionales (`@aws-sdk/client-service-quotas`,
-  `@aws-sdk/client-cost-explorer`). Guía:
+  `@aws-sdk/client-cost-explorer`). Cada clase, método y opción dice si es gratuito o de pago (`billed()` y `events()` son de pago; `resume` vuelve a facturar cómputo) con el mismo texto en ambos SDK. Guía:
   [Panel de gestión](https://alejandro-cedeno-10.github.io/rayito/funciones-opcionales/panel-de-gestion/).
 
 ## [0.11.0] - 2026-10-13

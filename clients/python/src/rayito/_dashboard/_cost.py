@@ -63,14 +63,22 @@ class UsageCost:
         us-east-1, donde vive Cost Explorer; `estimate()` hace
         `ListMicrovms` y `GetMicrovmImageVersion` (una por versión de
         imagen y proceso).
-    Coste aproximado: $0,01 por petición a Cost Explorer (us-east-1,
-        consultado 2026-10-13, https://aws.amazon.com/aws-cost-management/
-        aws-cost-explorer/pricing/); la caché local conserva cada ventana
-        `COST_CACHE_TTL_SECONDS` (24 h), unas 30 peticiones al mes ≈ $0,30
-        con el panel abierto todo el mes. `estimate()` es gratuita.
+    Coste aproximado: `billed()` es de pago: $0,01 por petición a Cost
+        Explorer (us-east-1, consultado 2026-10-13, https://aws.amazon.com/
+        aws-cost-management/aws-cost-explorer/pricing/). La caché está en
+        memoria, es de cada instancia (se pierde al terminar el proceso o
+        al crear otra `UsageCost`), guarda como mucho `COST_CACHE_MAX_ENTRIES`
+        ventanas y se indexa por inicio, fin, granularidad y región: reutiliza
+        una sola instancia para ahorrar. Con una instancia de larga vida y
+        `COST_CACHE_TTL_SECONDS` (24 h) salen unas 30 peticiones al mes ≈
+        $0,30; con una instancia nueva por llamada (un cron, una Lambda, un
+        script) cada `billed()` paga $0,01. `DAILY` sobre ventanas largas
+        puede necesitar varias páginas de pago. `estimate()` es gratuita.
     IAM: `ce:GetCostAndUsage` para `billed()`; `lambda:ListMicrovms` y
         `lambda:GetMicrovmImageVersion` para `estimate()`.
     Cómo apagarla: no llames a `billed()`; no deja recursos que borrar.
+    Opciones: `cache_ttl_seconds` baja o sube la caducidad de la caché de
+        `billed()`; bajarla añade peticiones de pago ($0,01 cada una).
     Ejemplo:
         cost = UsageCost().billed()
         print(cost.total_usd, cost.partial)
@@ -109,7 +117,11 @@ class UsageCost:
         por región de AWS (sin filtro, toda la cuenta). Cost Explorer tiene
         unas 24 h de retraso, y `partial` avisa de que aún hay periodos
         estimados por AWS. Una ventana ya leída se sirve de la caché local
-        hasta que caduca; `refresh=True` la ignora."""
+        hasta que caduca.
+
+        De pago: cada fallo de caché hace una petición a Cost Explorer
+        ($0,01, us-east-1, por página; consultado 2026-10-13), y
+        `refresh=True` siempre la hace. Un acierto de caché es gratuito."""
         window_start, window_end = self._window(start, end)
         key: CostKey = (window_start, window_end, granularity, region)
         cached = None if refresh else self._cache.get(key)
@@ -128,7 +140,10 @@ class UsageCost:
         """La estimación por sandbox: el tiempo transcurrido desde el arranque
         de cada `RUNNING` por el precio de cómputo baseline de su tamaño.
         Siempre `estimated`: no incluye snapshots ni el consumo sobre el
-        baseline."""
+        baseline.
+
+        Gratuita: sólo lee Lambda MicroVMs (`ListMicrovms` y
+        `GetMicrovmImageVersion`) y nunca usa Cost Explorer."""
         plane = self._plane.get()
         now = self._clock()
         views = InventoryReader(plane, self._catalog).views(states=MEMORY_COUNTED_STATES)

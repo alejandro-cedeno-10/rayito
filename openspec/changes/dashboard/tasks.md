@@ -16,6 +16,7 @@
 - [x] 2.3 `Quotas` and `UsageCost` services, Python sync and async plus TypeScript, with fakes and parity tests
 - [x] 2.4 Adapters with lazy imports; errors mapped by code
 - [x] 2.5 Zero-cost golden trace test in both SDKs
+- [x] 2.6 Cost clarity: every public SDK class, method and option says free or billable (price, source, trigger), with the same wording in Python and TypeScript, `resume` warning that compute bills again, async classes documented, and zero-cost tests in both SDKs
 
 ## 3. Phase 1: local dashboard
 

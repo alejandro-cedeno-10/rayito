@@ -33,13 +33,28 @@ lees tus propios datos con tus credenciales.
       y Cost Explorer son peers opcionales que se importan en la primera
       llamada. Detalle: `AWS_API_NOTES.md` §30.
     - **Coste aproximado** (us-east-1, consultado 2026-10-13): $0 las
-      lecturas de Lambda MicroVMs y de Service Quotas (a confirmar en la
-      aceptación en AWS real). Cost Explorer cobra **$0,01 por petición**
-      ([precios](https://aws.amazon.com/aws-cost-management/aws-cost-explorer/pricing/)):
-      `billed()` hace una por ventana (una por página si hubiera más) y la
-      caché local la conserva 24 h (con un tope de entradas), así que un mes con el panel abierto ronda
-      las 30 peticiones, ≈ $0,30. Las acciones no se facturan por la llamada;
-      suspender escribe un snapshot ($0,0038/GB).
+      lecturas de Lambda MicroVMs (`sandboxes`, `images`, `image_versions`),
+      `estimate()` y `Quotas.report()`; Service Quotas no publica ninguna
+      tarifa por consulta ([guía](https://docs.aws.amazon.com/servicequotas/latest/userguide/intro.html)),
+      y `plan_bulk` es un cálculo local. **De pago**: `UsageCost.billed()`
+      cobra **$0,01 por petición** a Cost Explorer
+      ([precios](https://aws.amazon.com/aws-cost-management/aws-cost-explorer/pricing/)),
+      una por ventana (una por página si hubiera más, y `DAILY` sobre
+      ventanas largas pagina) en cada fallo de caché, y `refresh=True`
+      siempre paga. La caché está en memoria, es de cada instancia (se pierde
+      al terminar el proceso o al crear otra `UsageCost`), guarda como mucho
+      64 ventanas y se indexa por inicio, fin, granularidad y región:
+      reutiliza una sola instancia y un mes ronda las 30 peticiones, ≈
+      $0,30; con una instancia nueva por llamada (cron, Lambda, script)
+      cada `billed()` paga $0,01. `Fleet.events()` también es de pago,
+      aunque mínimo: lecturas bajo demanda de DynamoDB sobre la tabla de
+      `events-webhooks`, sin sondeo. Las acciones no se facturan por la
+      llamada, pero cambian la factura (`AWS_API_NOTES.md` §12): `kill` deja
+      de facturar cómputo; `suspend` escribe un snapshot ($0,0038/GB) y paga
+      almacenamiento ($0,08/GB-mes) mientras esté suspendido; `resume` lee el
+      snapshot ($0,00155/GB) y **vuelve a facturar cómputo** al precio de su
+      tamaño ($0,1261/h con 2 GB y 1 vCPU), así que reanudar muchos sandboxes
+      a la vez sube la factura.
     - **IAM**: `servicequotas:ListServiceQuotas`, `lambda:ListMicrovms`,
       `lambda:GetMicrovmImageVersion`, `lambda:ListMicrovmImages` y
       `lambda:ListMicrovmImageVersions` para leer; `ce:GetCostAndUsage` sólo

@@ -14,6 +14,25 @@ from rayito._size_catalog import DEFAULT_SIZE_CATALOG, SizeCatalog
 
 
 class AsyncQuotas:
+    """El mismo contrato y el mismo coste que `Quotas`.
+
+    Coste y activación
+    -------------------
+    Activa: una llamada explícita a `report()`; construir `AsyncQuotas` no
+        llama a AWS.
+    Recursos y llamadas AWS: sólo lecturas, ninguna crea recursos:
+        `ListServiceQuotas`, `ListMicrovms` y `GetMicrovmImageVersion`.
+    Coste aproximado: $0, sin ninguna llamada de pago (AWS_API_NOTES.md §24
+        y §30; Service Quotas no publica tarifa por consulta, consultado
+        2026-10-13).
+    IAM: `servicequotas:ListServiceQuotas`, `lambda:ListMicrovms` y
+        `lambda:GetMicrovmImageVersion`.
+    Cómo apagarla: no llames a `report()`; no deja recursos que borrar.
+    Ejemplo:
+        report = await AsyncQuotas(region="us-east-1").report()
+        print(report.memory.level)
+    """
+
     def __init__(
         self,
         *,
@@ -32,4 +51,5 @@ class AsyncQuotas:
         )
 
     async def report(self) -> QuotaReport:
+        """Gratuita. Ver `Quotas.report`."""
         return await asyncio.to_thread(self._inner.report)

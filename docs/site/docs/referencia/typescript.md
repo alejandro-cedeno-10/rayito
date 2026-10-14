@@ -242,7 +242,7 @@ Apagadas por defecto; cada una carga su *peerDependency* sólo al activarse.
 | `AgentTemplate` (`build`) | como `Template` | [Templates de agente](../funciones-opcionales/templates-de-agente.md) |
 | `OptionalStacks` (`components`, `status`, `parameterChanges`, `deploy`, `destroy`) | `@aws-sdk/client-cloudformation` | [Pilas opcionales](../funciones-opcionales/pilas-opcionales.md) |
 | `Quotas` (`report`) | `@aws-sdk/client-service-quotas` | [Panel de gestión](../funciones-opcionales/panel-de-gestion.md) |
-| `UsageCost` (`billed`, `estimate`) | `@aws-sdk/client-cost-explorer` sólo para `billed` | [Panel de gestión](../funciones-opcionales/panel-de-gestion.md) |
+| `UsageCost` (`billed`: de pago, $0,01/petición; `estimate`: gratuita) | `@aws-sdk/client-cost-explorer` sólo para `billed` | [Panel de gestión](../funciones-opcionales/panel-de-gestion.md) |
 | `Fleet` (`sandboxes`, `images`, `imageVersions`, `events`, `planBulk`, `runBulk`) | ninguno propio: `events` usa los de `LifecycleEvents` | [Panel de gestión](../funciones-opcionales/panel-de-gestion.md) |
 
 ## Errores { #errores }

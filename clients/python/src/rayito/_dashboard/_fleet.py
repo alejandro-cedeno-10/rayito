@@ -59,16 +59,25 @@ class Fleet:
         `allow_actions=True`, `TerminateMicrovm`, `SuspendMicrovm` y
         `ResumeMicrovm` sobre los sandboxes que se indiquen; `events()` lee
         la tabla de la pila `events-webhooks` si se pasó `events=`.
-    Coste aproximado: $0 las lecturas; las acciones no facturan por la
-        llamada (terminar y suspender dejan de facturar cómputo; suspender
-        escribe un snapshot, $0,0038/GB, us-east-1, AWS_API_NOTES.md §12,
-        consultado 2026-10-13).
+    Coste aproximado: $0 las lecturas de sandboxes, imágenes y versiones.
+        `events()` es de pago, aunque mínimo: lee la tabla DynamoDB de
+        `events-webhooks` (lecturas bajo demanda, https://aws.amazon.com/
+        dynamodb/pricing/on-demand/), unas pocas por consulta y sin sondeo.
+        Las acciones (sólo con `allow_actions=True`) no facturan por la
+        llamada, pero cambian lo que se factura (us-east-1, AWS_API_NOTES.md
+        §12, consultado 2026-10-13): `kill` deja de facturar cómputo;
+        `suspend` escribe un snapshot ($0,0038/GB) y, mientras dure,
+        paga almacenamiento ($0,08/GB-mes); `resume` lee el snapshot
+        ($0,00155/GB) y vuelve a facturar cómputo al precio de su tamaño
+        (vCPU-s y GB-s de §12, p. ej. $0,1261/h con 2 GB y 1 vCPU), así que
+        reanudar muchos sandboxes a la vez sube la factura.
     IAM: `lambda:ListMicrovms`, `lambda:ListMicrovmImages`,
         `lambda:ListMicrovmImageVersions`, `lambda:GetMicrovmImageVersion`;
         con acciones, `lambda:TerminateMicrovm`, `lambda:SuspendMicrovm` y
         `lambda:ResumeMicrovm`.
     Cómo apagarla: no llames a sus métodos; las acciones están apagadas
-        salvo `allow_actions=True` y no dejan recursos que borrar.
+        salvo `allow_actions=True` y no dejan recursos que borrar. `events()`
+        no consulta nada sin `events=`.
     Ejemplo:
         fleet = Fleet(region="us-east-1")
         running = fleet.sandboxes(states={"RUNNING"})
@@ -104,16 +113,21 @@ class Fleet:
         self, *, states: Iterable[str] | None = None, image: str | None = None
     ) -> list[SandboxView]:
         """Los sandboxes con la memoria de su imagen. Sin `states`, los que no
-        están terminados; `image` filtra por nombre o ARN de imagen."""
+        están terminados; `image` filtra por nombre o ARN de imagen.
+
+        Gratuita: `ListMicrovms` y `GetMicrovmImageVersion` no facturan."""
         plane = self._plane.get()
         image_arn = None if image is None else plane.resolve_template_arn(image)
         return InventoryReader(plane, self._catalog).views(states=states, image_arn=image_arn)
 
     def images(self, *, name_filter: str | None = None) -> list[ImageSummary]:
+        """Las imágenes de la cuenta. Gratuita: `ListMicrovmImages` no factura."""
         return self._image_catalog().list_images(name_filter=name_filter)
 
     def image_versions(self, image: str) -> list[ImageVersionSummary]:
-        """Las versiones de `image` (nombre o ARN), la más nueva primero."""
+        """Las versiones de `image` (nombre o ARN), la más nueva primero.
+
+        Gratuita: `ListMicrovmImageVersions` no factura."""
         return self._image_catalog().list_versions(self._plane.get().resolve_template_arn(image))
 
     def events(
@@ -124,6 +138,11 @@ class Fleet:
         limit: int = DEFAULT_GET_EVENTS_LIMIT,
         order: str = "desc",
     ) -> list[EventRecord]:
+        """El historial de eventos de ciclo de vida.
+
+        De pago, aunque mínimo: lee la tabla DynamoDB de `events-webhooks`
+        (lecturas bajo demanda, AWS_API_NOTES.md §25; un puñado por consulta,
+        sin sondeo). Sin `events=` no llama a nada y falla."""
         if self._events is None:
             raise InvalidArgumentException(
                 "Fleet.events: no hay historial de eventos; pasa events=LifecycleEvents(...) "
@@ -135,7 +154,9 @@ class Fleet:
         self, action: BulkAction, count: int, *, applied_rate: float | None = None
     ) -> BulkPlan:
         """Cuánto tardaría una acción masiva; `applied_rate` es la cuota de
-        TPS aplicada (`QuotaReport.applied_rate`)."""
+        TPS aplicada (`QuotaReport.applied_rate`).
+
+        Gratuita: es un cálculo local, no llama a AWS."""
         _validate_action(action)
         return plan_bulk(action, count, applied_rate)
 
@@ -151,7 +172,13 @@ class Fleet:
         cuota de TPS de su operación (suspender, 2 TPS). Un fallo de un
         sandbox no detiene a los demás: queda `failed` con el código de AWS.
         Un id repetido se aplica una sola vez. `on_progress` se llama tras
-        cada sandbox, desde el hilo que ejecuta la cola."""
+        cada sandbox, desde el hilo que ejecuta la cola.
+
+        Exige `allow_actions=True`. La llamada no factura, pero el efecto sí
+        (AWS_API_NOTES.md §12, us-east-1): `kill` deja de facturar cómputo;
+        `suspend` escribe un snapshot ($0,0038/GB) y paga almacenamiento
+        ($0,08/GB-mes) mientras esté suspendido; `resume` lee el snapshot
+        ($0,00155/GB) y vuelve a facturar cómputo al precio de su tamaño."""
         if not self._allow_actions:
             raise InvalidArgumentException(
                 "Fleet.run_bulk: las acciones están desactivadas; crea Fleet(allow_actions=True)"
