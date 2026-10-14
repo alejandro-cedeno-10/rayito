@@ -41,6 +41,7 @@ las fechas en ISO 8601 UTC y los importes en USD.
 | `GET /api/v1/quotas` | | `entries[]` (cuotas con su `increaseUrl`), `memory` (asignada, cuota, fracción y `level`), `tps[]`, `warnings[]` y `thresholds` |
 | `GET /api/v1/cost` | `billed=true`, `start`, `end`, `region`, `refresh` | `estimated` siempre y `billed` sólo con `billed=true` |
 | `GET /api/v1/events` | `sandboxId`, `type` (repetible), `limit`, `order` | `configured` y `events[]` |
+| `GET /api/v1/accounts` | | `accounts[]` con el `name` de cada cuenta adicional de la vista multicuenta (`rayito dashboard --account`); vacío sin ella. Con `?account=NOMBRE` en cualquier otra ruta de lectura se pide esa cuenta (siempre de sólo lectura) |
 | `GET /api/v1/logs` | `sandboxId` (obligatorio), `limit` | las últimas `limit` líneas en orden cronológico, `lines[]` (`timestamp`, `message`, `stream`), `truncated` si hay anteriores y `fallback` si el stream esperado no existía y las líneas vienen de streams hallados por nombre (pueden no ser del sandbox) |
 
 El coste va en **dos** documentos que nunca se mezclan: `estimated` (con

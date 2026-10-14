@@ -1844,14 +1844,16 @@ Notas de contrato:
 - **Memoria contra la cuota**: se suman los `RUNNING`, `SUSPENDING` y
   `SUSPENDED` (§11) con el `minimumMemoryInMiB` de su versión de imagen
   (`GetMicrovmImageVersion`, §24, una llamada gratuita por versión y
-  proceso). **Pendiente de medir** (tarea 1.1): si la cuota de memoria cuenta
-  `minimumMemoryInMiB` o la memoria que ve el guest, si Service Quotas
-  publica la utilización de las cuotas de MicroVMs (`UsageMetric` figura en el
-  modelo de `ListServiceQuotas`, sin leer) y el TPS de `ListMicrovms` y de
-  `ListMicrovmImages`, que no están en la tabla de cuotas (§11).
+  proceso). Medido el 2026-10-14 (Q163 y Q164): Service Quotas **no publica la
+  utilización** de ninguna cuota de MicroVMs (`UsageMetric` viene vacío en las
+  26 cuotas), así que el uso se calcula siempre sumando sandboxes; y
+  `ListMicrovms` y `ListMicrovmImages` aceptan unas 5 llamadas por segundo y
+  no figuran en la tabla de cuotas. **Sigue pendiente de medir**: si la cuota
+  de memoria cuenta `minimumMemoryInMiB` o la memoria que ve el guest.
 - **Enlace de aumento de cuota**: `https://<región>.console.aws.amazon.com/servicequotas/home/services/lambda/quotas/<QuotaCode>`
   (URL de la consola, no un parámetro de API; sólo la partición `aws`).
-  Pendiente de confirmar en la aceptación. Pedir el aumento desde el SDK
+  Sigue sin confirmarse: el `QuotaCode` sí sale de `ListServiceQuotas`, pero
+  abrir la consola exige un navegador con sesión. Pedir el aumento desde el SDK
   (`servicequotas:RequestServiceQuotaIncrease`) queda fuera: sería una
   acción de escritura.
 - **Errores**: por código, nunca por texto. `AccessDeniedException` →
@@ -1860,3 +1862,118 @@ Notas de contrato:
   `RateLimitException`; el resto → `DashboardException` con `aws_code`. El
   mensaje sólo lleva el código: el de AWS puede nombrar recursos de la
   cuenta.
+
+### Medido en la aceptación del panel (2026-10-13)
+
+Aceptación en AWS real de las fases 1b, 2 y 3 (cambio OpenSpec `dashboard`,
+tareas 4.3, 5.7b y 6.5), sin identificadores de la cuenta.
+
+- **Q158 — El modelo `lambda-microvms` en una Lambda necesita también su
+  `paginators-1.json`.** El runtime de Lambda no trae el servicio
+  `lambda-microvms`: las pilas `dashboard`, `quota-alerts` y `events-webhooks`
+  empaquetan `service-2.json` junto al código. Sin el `paginators-1.json` al
+  lado, `get_paginator("list_microvms")` lanza `OperationNotPageableError`
+  y la comprobación de cuotas falla en la nube aunque pase en local (donde
+  botocore ya lo trae). Con los dos ficheros en el zip la función lista y
+  suma la memoria igual que el SDK.
+- **Q159 — Suspender es asíncrono y se ve a medias.** `SuspendMicrovm`
+  vuelve en ~1 s; `GetMicrovm` y `ListMicrovms` dan `SUSPENDING` unos 6 s y
+  `SUSPENDED` a los ~13 s. El panel cuenta `SUSPENDING` como memoria asignada
+  y sólo permite matarlo mientras tanto.
+- **Q160 — Aviso de cuota de punta a punta.** La Lambda de `quota-alerts`
+  (creada por CloudFormation) leyó la cuota de memoria de Service Quotas
+  (1024 GB) y los sandboxes (12 GB asignados con 6 suspendidos de 2 GB, el
+  1 %). Con `WarningPercent=1` publicó **un** mensaje en un tema SNS ajeno a
+  la pila (`TopicArn`), que llegó a una cola SQS suscrita con asunto y texto
+  en español; una segunda ejecución con el mismo nivel respondió
+  `notified: false` (la fila de estado guarda el nivel y evita repetir). Una
+  ejecución puede tardar unos segundos la primera vez por el arranque en frío.
+- **Q161 — `dashboard-cloudwatch`.** Un único `AWS::CloudWatch::Dashboard`
+  (medido con el nombre `rayito` que tenía entonces; el valor por defecto actual es el nombre de la pila; con `IncludeQuota=true`, seis widgets de
+  Logs Insights más la gráfica de la cuota de memoria) se crea y se borra con
+  `OptionalStacks` en Python y en TypeScript sin dejar nada. `GetDashboard`
+  devuelve el cuerpo JSON que imprime `rayito dashboard cloudwatch`.
+- **Q162 — Panel en tu cuenta (URL de función + Cognito).** Una Lambda
+  creada por CloudFormation con URL de función sirve la página y la API; la
+  API rechaza (401) sin token, con un token que no es JWT, con `alg=none`,
+  con la carga alterada, con la firma truncada y con el reloj vencido, y
+  responde 403 a un usuario sin el grupo de acciones que intenta una acción.
+  Con el grupo, la función asume el rol de acciones (sesión con el `sub` del
+  usuario) y escribe filas de auditoría `requested` y de resultado; el rol de
+  lectura no puede actuar.
+
+### Medido en la segunda aceptación del panel (2026-10-14)
+
+Aceptación en AWS real de lo que quedó sin probar: varias cuentas, métricas
+OTLP, la variante `AWS_IAM` y las mediciones de la fase 1 (cambio OpenSpec
+`dashboard`, tareas 1.1, 1.2, 5.1b y 6.7). Sin identificadores de cuenta;
+una sola región (us-east-1).
+
+- **Q163 — TPS de `ListMicrovms` y `ListMicrovmImages`.** Con
+  `scripts/measure/dashboard_apis.py` (reintentos de botocore apagados, llamadas
+  repartidas en el segundo, 5 s por escalón): 1, 2 y 5 llamadas por segundo salen
+  limpias (4,9 reales a 5/s) y a 10/s se rechaza una parte
+  (`ThrottlingException`; en una segunda medición de 10 s, el 38 % de las
+  llamadas). El límite es de la cuenta y no figura en Service Quotas. A ritmos
+  bajos aparece algún rechazo suelto (uno de cada 8 a 50 llamadas), así que el
+  script sólo da un escalón por saturado si se rechaza al menos el 10 % de sus
+  llamadas. Con los reintentos por defecto de boto3 el rechazo no se ve: la
+  primera ejecución ocultó el límite y devolvió una tasa lograda falsa de ~4/s.
+- **Q164 — Cuotas de MicroVMs en Service Quotas.** `ListServiceQuotas` de
+  `lambda` devuelve 26 cuotas de MicroVMs (tasas y ráfagas por operación,
+  memoria asignada, imágenes, versiones por imagen, builds concurrentes y
+  conexiones por tamaño). Ninguna publica métrica de utilización
+  (`UsageMetric` vacío), ni siquiera la de memoria asignada (1024 GB en
+  ARM_64).
+- **Q165 — Retraso de Cost Explorer.** Una lectura de 7 días de `AWS Lambda`
+  ($0,01 por petición, una sola página) devolvió los cinco usage types de
+  MicroVMs de §12 y datos del **día en curso** marcados `Estimated: true`: el
+  retraso observado fue de 0 días para la estimación y la factura firme llega
+  después. No se midieron usage types con prefijo de región porque la cuenta
+  no tiene consumo fuera de us-east-1.
+- **Q166 — `AssumeRole` hacia una segunda cuenta.** El rol de
+  `dashboard-read-role` confía en el rol SSO de la cuenta del panel (ARN con la
+  ruta `aws-reserved/sso.amazonaws.com/`, aceptado tal cual). Sin `ExternalId`
+  o con uno distinto, `AccessDenied`; con el correcto, las lecturas funcionan
+  y `rayito dashboard` lista la cuenta. El simulador de IAM da `implicitDeny`
+  para terminar, suspender, reanudar, lanzar, borrar imágenes, Cost Explorer,
+  logs y `AssumeRole`. Ojo con la prueba: `TerminateMicrovm` sobre un id
+  **inexistente** responde `ResourceNotFoundException` con o sin permiso (la
+  existencia se comprueba antes de autorizar); sobre un MicroVM real (aunque ya
+  terminado) responde `AccessDeniedException`.
+- **Q167 — Métricas OTLP y PromQL.** Con `interval_s=15` el primer lote llega en
+  segundos y las 7 métricas `rayito.sandbox.*` se consultan al instante por la
+  API HTTP de PromQL (`https://monitoring.<región>.amazonaws.com/api/v1/query`,
+  `query_range` y `labels`, firmadas con SigV4 de servicio `monitoring`). La
+  forma con el nombre **entre comillas** funciona
+  (`avg({"rayito.sandbox.cpu.used_pct"})`); sin comillas falla con un error de
+  sintaxis. Cada sandbox es una serie distinta por el atributo de recurso
+  `sandbox_id`. `GetMetricWidgetImage` no admite widgets PromQL (pide
+  `metrics`), así que la representación en la consola no se pudo capturar por
+  API; `PutDashboard` sí acepta el widget con `data.queries`. La consulta de
+  Logs Insights `SOURCE logGroups(namePrefix: [...])` se ejecuta con
+  `StartQuery` y devuelve resultados. La política de `otlp-export` adjunta a un
+  rol impide borrar la pila (`DELETE_FAILED`) hasta soltarla.
+- **Q168 — `Fn::Sub` no sustituye dentro de los valores de sus variables.** Un
+  `${AWS::Region}` literal dentro de una variable de `Fn::Sub` llega tal cual al
+  dashboard: los widgets de OTLP y de cuota se habían creado con
+  `"region": "${AWS::Region}"`. La plantilla usa ahora `Fn::Join` con
+  `Ref AWS::Region` y el test de la plantilla resuelve la expresión como
+  CloudFormation.
+- **Q169 — `AuthMode=aws-iam` de punta a punta.** La API, tras su propia
+  Function URL con `AuthType AWS_IAM`: una petición sin firma recibe `403`
+  (`AccessDeniedException`, cuerpo `{"Message":"Forbidden"}`) y **no ejecuta la
+  función** (sus ids de petición no aparecen en el log de la función, y los 7 de
+  las firmadas sí). El preflight `OPTIONS` sin firma responde `200` con las
+  cabeceras CORS sólo para el origen de la página (otro origen no recibe
+  `Access-Control-Allow-Origin`). Con las credenciales del identity pool (`GetId`
+  y `GetCredentialsForIdentity` con el token de identidad) y el token de acceso
+  en `X-Rayito-Token`: `200`; sin token, con un token basura o con el token de
+  identidad en su lugar: `401`; un lector que intenta matar: `403`
+  `forbidden`; un usuario del grupo de acciones: `202` y las dos filas de
+  auditoría. `requestContext.authorizer.iam.userArn` llega al evento (la
+  función lo exige y las peticiones firmadas pasan). Las credenciales del
+  identity pool son las mismas para todos los usuarios: la firma sólo prueba
+  «alguien con sesión de este pool», y el usuario lo decide el token. El
+  grupo de usuarios de la pila pide un correo como nombre de usuario.
+
