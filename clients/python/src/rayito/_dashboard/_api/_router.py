@@ -269,6 +269,7 @@ class DashboardApi:
 
         return [
             route(GET, "/meta", self._meta),
+            route(GET, "/accounts", self._accounts),
             route(GET, "/sandboxes", self._sandboxes),
             route(POST, f"/sandboxes/{SEGMENT}/{SEGMENT}", self._submit),
             route(GET, "/images", self._images),
@@ -314,6 +315,11 @@ class DashboardApi:
                 "theme": {"name": self._branding.name, "logo": self._branding.logo},
             }
         )
+
+    def _accounts(self, request: ApiRequest, match: re.Match[str]) -> ApiResponse:
+        """Sin vista multicuenta, ninguna cuenta adicional; `AccountsApi`
+        (`_accounts.py`) responde por encima con las que haya."""
+        return self._ok({"accounts": []})
 
     def _cost_explorer_json(self) -> dict[str, Any]:
         return {

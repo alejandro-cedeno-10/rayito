@@ -19,7 +19,7 @@ import typer.core
 
 from rayito.cli._console import translated_failures
 from rayito.cli.agent import agent_app
-from rayito.cli.dashboard import dashboard_command
+from rayito.cli.dashboard import dashboard_app
 from rayito.cli.doctor import doctor
 from rayito.cli.domain import domain_app
 from rayito.cli.events import events_app
@@ -57,7 +57,7 @@ app.add_typer(template_app, name="template")
 app.add_typer(domain_app, name="domain")
 app.add_typer(agent_app, name="agent")
 app.command("doctor")(doctor)
-app.command("dashboard")(dashboard_command)
+app.add_typer(dashboard_app, name="dashboard")
 
 
 @app.callback()

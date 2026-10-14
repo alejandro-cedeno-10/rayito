@@ -67,6 +67,17 @@ export const COMPONENT: StackComponent = {
       required: true,
     },
     {
+      name: "AuthMode",
+      description:
+        "Cómo se protege /api/v1: cognito-jwt (por defecto) deja una Function URL pública " +
+        "y la función valida el token de Cognito; aws-iam da a la API su propia Function " +
+        "URL con AuthType AWS_IAM, que rechaza lo que no venga firmado con SigV4 por un " +
+        "usuario con sesión, y una segunda función sin permisos sirve la página. Añade un " +
+        "identity pool de Cognito, una función, un rol y un parámetro de SSM, sin coste en " +
+        "reposo; cambiarlo en una pila existente cambia la dirección del panel.",
+      default: "cognito-jwt",
+    },
+    {
       name: "AllowActions",
       description:
         "true crea el rol de acciones (matar, suspender, reanudar), el grupo de Cognito " +
@@ -124,7 +135,8 @@ export const COMPONENT: StackComponent = {
     {
       name: "ReservedConcurrency",
       description:
-        "Opcional: concurrencia reservada de la función; acota lo que cuesta una " +
+        "Opcional: concurrencia reservada de cada función de la pila (dos con " +
+        "AuthMode=aws-iam: la cuenta reserva el doble del valor); acota lo que cuesta una " +
         "avalancha de peticiones sin autenticar.",
       default: "",
     },
@@ -150,6 +162,8 @@ export const COMPONENT: StackComponent = {
       "AWS::DynamoDB::Table (x2: auditoría y caché de coste, bajo demanda)",
       "AWS::IAM::Role (x1 de lectura; +1 de acciones con AllowActions=true)",
       "AWS::SSM::Parameter (Standard, sin coste; sólo con ThemeJson)",
+      "Con AuthMode=aws-iam, además: AWS::Lambda::Function + Url (la página), " +
+        "AWS::Cognito::IdentityPool, AWS::IAM::Role (x2) y AWS::SSM::Parameter (Standard)",
     ],
     idleMonthly:
       "~$0 en reposo: sin tráfico no hay invocaciones, y Lambda, DynamoDB bajo demanda " +
@@ -174,6 +188,10 @@ export const COMPONENT: StackComponent = {
         `${DASHBOARD_STACK_COST_MISSES_PER_DAY} al día UTC (tope de la pila): en el peor ` +
         `caso ${usdEs(COST_EXPLORER_WORST_DAY_USD, 2)} al día, unos ` +
         `${usdEs(COST_EXPLORER_WORST_MONTH_USD, 2)} al mes`,
+      "AuthMode=aws-iam: la API sólo la invoca quien firma con las credenciales del " +
+        "identity pool, así que el tráfico sin firma lo rechaza la Function URL sin " +
+        "ejecutar la función; la página sigue siendo pública (AuthType NONE) y factura " +
+        "como la Lambda de arriba; los identity pools de Cognito no facturan por sí mismos",
       "DynamoDB: una escritura por sandbox y acción (auditoría)",
       "SSM (sólo con tema o logo en parámetros Advanced): " +
         `${usdEs(SSM_API_INTERACTION_PRICE_USD_PER_TEN_THOUSAND, 2)} por cada ` +

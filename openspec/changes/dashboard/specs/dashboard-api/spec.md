@@ -66,3 +66,10 @@ An API error caused by AWS (including a validation rejection) SHALL carry the cl
 #### Scenario: the log fallback is visible
 - **WHEN** the expected stream is missing and a stream with the same suffix is read
 - **THEN** the response has `fallback: true` and the SPA shows a notice
+
+### Requirement: The API lists additional accounts and scopes reads by account
+`GET /api/v1/accounts` SHALL return `{"accounts": [{"name": ...}]}` and be empty unless the multi-account view was requested. When it was, `?account=<name>` on any read route SHALL answer for that account and omit the parameter from the delegated request; the account list SHALL contain only the labels the operator chose.
+
+#### Scenario: the list is empty by default
+- **WHEN** `GET /api/v1/accounts` is called on a panel started without `--account`
+- **THEN** it returns an empty list and validates against the schema

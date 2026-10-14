@@ -88,6 +88,7 @@ def _is_artifact_source(path: Path, source: Path) -> bool:
 BUNDLED_SERVICE_MODELS: dict[str, tuple[tuple[str, Path], ...]] = {
     "events-webhooks": (("lambda-microvms", REPO_ROOT / "docs" / "aws-api" / "service-2.json"),),
     "dashboard": (("lambda-microvms", REPO_ROOT / "docs" / "aws-api" / "service-2.json"),),
+    "quota-alerts": (("lambda-microvms", REPO_ROOT / "docs" / "aws-api" / "service-2.json"),),
 }
 MODELS_DIR_NAME = "models"
 SERVICE_MODEL_FILE_NAME = "service-2.json"
@@ -98,14 +99,15 @@ SERVICE_MODEL_FILE_NAME = "service-2.json"
 SERVICE_PAGINATORS_FILE_NAME = "paginators-1.json"
 
 #: Components whose Lambda imports the Python SDK itself (the `dashboard`
-#: stack serves the same API and services as `rayito dashboard`). Their zip
+#: stack serves the same API and services as `rayito dashboard`, and the
+#: `quota-alerts` check reuses its `Quotas` service). Their zip
 #: carries the SDK modules the Lambda sources import, transitively, copied
 #: verbatim from `clients/python/src/rayito/`; every package `__init__.py`
 #: is replaced by a docstring-only stub, so importing `rayito.x` never
 #: drags in the SDK's whole public surface (grpc, the proto code, the CLI).
 #: `tests/unit/test_dashboard_stack_bundle.py`-style checks import the
 #: handler from the extracted zip to prove the closure is complete.
-VENDORED_SDK_COMPONENTS = frozenset({"dashboard"})
+VENDORED_SDK_COMPONENTS = frozenset({"dashboard", "quota-alerts"})
 SDK_PACKAGE = "rayito"
 PYTHON_SDK_SOURCE = REPO_ROOT / "clients" / "python" / "src"
 PACKAGE_INIT = "__init__.py"

@@ -8,6 +8,21 @@ versionado [SemVer](https://semver.org/lang/es/).
 
 ### Añadido
 
+- **Panel: parámetro `AuthMode` del componente `dashboard`** (`aws-iam` pone la
+  API tras una Function URL con firma SigV4; por defecto `cognito-jwt`), espejo
+  del de Python con los mismos textos de coste.
+
+- e2e de sólo lectura de `Quotas`, `UsageCost` (el coste facturado sólo con
+  `RAYITO_E2E_BILLED_COST=1`) y `Fleet`.
+
+- **Coste a la vista en el panel (ADR-026)**: cada clase, método y opción del panel dice si es gratuito o de pago, y los textos de coste de los componentes `dashboard`, `dashboard-cloudwatch`, `dashboard-read-role` y `quota-alerts` son idénticos a los de Python (comprobado con un fichero de referencia común), con las cifras de `limits.ts`.
+
+- **Panel, fase 3 (ADR-026)**: componentes de `OptionalStacks` `dashboard-cloudwatch`,
+  `dashboard-read-role` y `quota-alerts` (`deploy("quota-alerts", { artifactBucket })`),
+  espejo de los de Python: las mismas plantillas, el mismo zip y los mismos
+  parámetros. Apagados hasta que los despliegas. Constantes nuevas en `limits.ts`.
+  El generador del dashboard y la vista multicuenta son de la CLI de Python.
+
 - **Pila `dashboard`** (el panel de gestión dentro de tu cuenta, ADR-026, fase
   2): componente de `OptionalStacks` (`deploy("dashboard", { artifactBucket })`),
   espejo del de Python: la misma plantilla, el mismo zip y los mismos parámetros
@@ -33,6 +48,19 @@ versionado [SemVer](https://semver.org/lang/es/).
   peers opcionales (`@aws-sdk/client-service-quotas`,
   `@aws-sdk/client-cost-explorer`). Cada clase, método y opción dice si es gratuito o de pago (`billed()` y `events()` son de pago; `resume` vuelve a facturar cómputo) con el mismo texto en ambos SDK. Guía:
   [Panel de gestión](https://alejandro-cedeno-10.github.io/rayito/funciones-opcionales/panel-de-gestion/).
+
+### Corregido
+
+- **Componente `dashboard-cloudwatch`**: con `IncludeOtlp` o `IncludeQuota` los
+  widgets añadidos se creaban con la región literal `${AWS::Region}`; la
+  plantilla (la misma que usa Python) resuelve ahora la región con `Fn::Join` y
+  `Ref AWS::Region`.
+
+### Cambiado
+
+- **Componente `dashboard-cloudwatch`**: `DashboardName` vacío (el valor por
+  defecto) usa el nombre de la pila en lugar del fijo `rayito`; una pila ya
+  desplegada conserva su nombre.
 
 ## [0.11.0] - 2026-10-13
 

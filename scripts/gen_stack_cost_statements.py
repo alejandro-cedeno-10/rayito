@@ -22,7 +22,12 @@ from rayito._stacks._registry import component_by_name
 REPO_ROOT = Path(__file__).resolve().parents[1]
 OUTPUT = REPO_ROOT / "testdata" / "stacks" / "cost-statements.json"
 #: Los componentes del panel cuyo texto de coste se mantiene idéntico en ambos SDK.
-DASHBOARD_COMPONENTS = ("dashboard",)
+DASHBOARD_COMPONENTS = (
+    "dashboard",
+    "dashboard-cloudwatch",
+    "dashboard-read-role",
+    "quota-alerts",
+)
 #: Su descripción cambia a propósito entre SDK (`artifact_bucket=` frente a
 #: `artifactBucket`), así que no entra en la comparación.
 SKIPPED_PARAMETERS = frozenset({"ArtifactBucket"})

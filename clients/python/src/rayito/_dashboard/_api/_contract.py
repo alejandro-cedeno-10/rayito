@@ -103,6 +103,18 @@ class ApiResponse:
     body: dict[str, Any]
 
 
+class ApiBackend(Protocol):
+    """Lo que una cáscara (el servidor local) necesita de la API: atender una
+    petición, saber si exige CSRF y cerrarse. `DashboardApi` y `AccountsApi`
+    lo cumplen."""
+
+    def handle(self, request: ApiRequest) -> ApiResponse: ...
+
+    def requires_csrf(self, request: ApiRequest) -> bool: ...
+
+    def close(self) -> None: ...
+
+
 @dataclass(frozen=True)
 class LogLine:
     timestamp: str

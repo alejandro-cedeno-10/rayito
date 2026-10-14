@@ -106,3 +106,18 @@ The feature SHALL ship the "Coste y activación" box, a row in `optional-feature
 #### Scenario: docs gates pass
 - **WHEN** `mkdocs build --strict` and the cost-declaration check run
 - **THEN** both pass
+
+### Requirement: The AWS_IAM variant is an explicit stack parameter
+The stack SHALL offer `AuthMode=aws-iam` as an explicit parameter whose default is `cognito-jwt`. With it, the API SHALL sit behind its own Function URL with `AuthType AWS_IAM` reached with credentials of a Cognito identity pool whose authenticated role may only invoke that function through its URL, and the page SHALL be served by a second function whose role cannot read MicroVMs, Service Quotas, the tables or the actions role. The API function SHALL still validate the Cognito access token (sent in `X-Rayito-Token`, because `Authorization` carries the signature) and SHALL refuse requests that did not arrive signed. No resource-based permission with a `*` principal SHALL exist on the API function.
+
+#### Scenario: an unsigned request is refused before the token is read
+- **WHEN** a request reaches the API function without `requestContext.authorizer.iam`
+- **THEN** it gets a 403 and no AWS call is made
+
+#### Scenario: the default stack is unchanged
+- **WHEN** the stack is deployed without `AuthMode`
+- **THEN** none of the identity pool, page function, page role or endpoint parameter exists and the Function URL is `AuthType NONE`
+
+#### Scenario: the browser signature equals botocore's
+- **WHEN** the page signs a GET and a POST request
+- **THEN** the signature equals the one `botocore` computes for the same request

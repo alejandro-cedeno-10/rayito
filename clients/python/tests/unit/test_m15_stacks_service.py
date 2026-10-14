@@ -411,3 +411,65 @@ async def test_async_parameter_changes_mirrors_the_sync_one() -> None:
         "secrets-access"
     )
     assert {c.name for c in changes} == {"SecretPrefix", "KmsKeyArn"}
+
+
+def test_quota_alerts_deploys_with_the_named_thresholds_and_no_topic_or_email_by_default() -> None:
+    fake = FakeStackProvisioner()
+    OptionalStacks(provisioner=fake).deploy("quota-alerts", artifact_bucket="bucket-a")
+    deployed = fake.stacks["rayito-quota-alerts"].parameters
+    assert (deployed["WarningPercent"], deployed["CriticalPercent"]) == ("80", "95")
+    assert deployed["TopicArn"] == "" and deployed["NotificationEmail"] == ""
+    assert deployed["ScheduleExpression"] == "rate(1 hour)"
+
+
+def test_redeploying_quota_alerts_keeps_the_thresholds_as_deployed() -> None:
+    fake = FakeStackProvisioner()
+    stacks = OptionalStacks(provisioner=fake)
+    stacks.deploy(
+        "quota-alerts",
+        parameters={"WarningPercent": "60", "NotificationEmail": "ops@example.com"},
+        artifact_bucket="bucket-a",
+    )
+    stacks.deploy("quota-alerts", parameters={"LogRetentionDays": "7"}, artifact_bucket="bucket-a")
+    assert {"WarningPercent", "CriticalPercent", "NotificationEmail"} <= set(
+        fake.sent_keep_previous
+    )
+    assert fake.stacks["rayito-quota-alerts"].parameters["WarningPercent"] == "60"
+
+
+@pytest.mark.parametrize(
+    "thresholds",
+    [
+        {"WarningPercent": "90", "CriticalPercent": "80"},
+        {"WarningPercent": "80", "CriticalPercent": "80"},
+        {"WarningPercent": "96"},
+    ],
+)
+def test_quota_alerts_rejects_thresholds_out_of_order_before_any_aws_call(
+    thresholds: dict[str, str],
+) -> None:
+    fake = FakeStackProvisioner()
+    with pytest.raises(InvalidArgumentException, match="CriticalPercent"):
+        OptionalStacks(provisioner=fake).deploy(
+            "quota-alerts", parameters=thresholds, artifact_bucket="bucket-a"
+        )
+    assert fake.stacks == {}
+
+
+def test_dashboard_read_role_needs_a_trusted_principal_and_hides_the_external_id() -> None:
+    component = component_by_name("dashboard-read-role")
+    assert component is not None
+    with pytest.raises(InvalidArgumentException):
+        OptionalStacks(provisioner=FakeStackProvisioner()).deploy("dashboard-read-role")
+    assert [p.name for p in component.parameters if p.no_echo] == ["ExternalId"]
+    assert component.artifacts == ()
+
+
+def test_dashboard_cloudwatch_has_no_code_and_its_extra_widgets_are_off_by_default() -> None:
+    fake = FakeStackProvisioner()
+    OptionalStacks(provisioner=fake).deploy("dashboard-cloudwatch")
+    deployed = fake.stacks["rayito-dashboard-cloudwatch"].parameters
+    assert deployed["IncludeOtlp"] == "false" and deployed["IncludeQuota"] == "false"
+    assert deployed["LogGroupPrefix"] == "/rayito/"
+    component = component_by_name("dashboard-cloudwatch")
+    assert component is not None and component.artifacts == ()

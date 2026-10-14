@@ -256,6 +256,11 @@ GROUPS: tuple[tuple[str, ...], ...] = (
         "dashboardStackLambdaTimeoutSeconds",
         "dashboardStackLambdaTimeoutMarginSeconds",
         "dashboardStackLambdaMemoryMib",
+        # The page function of `AuthMode=aws-iam` only serves static files.
+        "dashboardStackShellLambdaTimeoutSeconds",
+        "dashboardStackShellLambdaMemoryMib",
+        # How long a browser may cache the CORS preflight of the IAM API.
+        "dashboardStackApiCorsMaxAgeSeconds",
         # AWS properties the template pins: the CloudFormation parameter
         # value cap (ThemeJson `MaxLength`), the SSM Advanced parameter cap
         # (checked against the docs on 2026-10-13) and the Cognito access
@@ -283,6 +288,36 @@ GROUPS: tuple[tuple[str, ...], ...] = (
         "lambdaFreeTierGbSecondsPerMonth",
         "ssmAdvancedParameterPriceUsdPerMonth",
         "ssmApiInteractionPriceUsdPerTenThousand",
+    ),
+    (
+        # dashboard, phase 3 (ADR-026): the most accounts the local panel
+        # accepts through `--account` and the STS session it asks for (the
+        # default of `AssumeRole`, 1 hour; the roles' own maximum caps it),
+        # the session name CloudTrail shows in the target account, the
+        # custom metric the quota alerts publish and the CloudWatch dashboard
+        # plots (namespace and name, shared by the Lambda and the generator),
+        # and the schedule, timeout and memory of the alerts Lambda (pinned
+        # equal to the template defaults by
+        # `scripts/tests/test_quota_alerts_template.py`). Not AWS properties.
+        "dashboardAccountsMax",
+        "dashboardAccountLabelMaxChars",
+        "dashboardAssumeRoleSessionSeconds",
+        "dashboardAssumeRoleSessionName",
+        "quotaMetricNamespace",
+        "quotaMetricName",
+        "quotaAlertsScheduleExpression",
+        "quotaAlertsLambdaTimeoutSeconds",
+        "quotaAlertsLambdaMemoryMib",
+        # The CloudWatch prices the optional dashboard and alert stacks quote
+        # (https://aws.amazon.com/cloudwatch/pricing/, us-east-1, checked
+        # 2026-10-13): three free dashboards of up to 50 metrics each, then a
+        # monthly price per dashboard, Logs Insights per GB scanned and a
+        # custom metric per month. Not AWS properties of the API.
+        "cloudwatchFreeDashboards",
+        "cloudwatchFreeDashboardMetrics",
+        "cloudwatchDashboardPriceUsdPerMonth",
+        "cloudwatchLogsInsightsPriceUsdPerGb",
+        "cloudwatchCustomMetricPriceUsdPerMonth",
     ),
     (
         # ai-agent-fast-start (design.md §6, option A): the prefetch daemon
