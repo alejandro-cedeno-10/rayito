@@ -106,6 +106,15 @@ Guarda el código en `primer.py` y ejecútalo con `python primer.py`, o en
 Siguiente paso: [Primer sandbox](quickstart.md) recorre comandos, ficheros,
 código y reconexión en Python, Python async y TypeScript.
 
+## Un panel para ver y operar tus sandboxes
+
+`rayito dashboard` abre en tu navegador un panel local con los sandboxes,
+las cuotas, el coste y las imágenes de tu cuenta. Es de sólo lectura salvo
+que pases `--allow-actions`, y no hay servidor de terceros.
+[Recorrido paso a paso](funciones-opcionales/panel-de-gestion.md#recorrido)
+
+![Resumen del panel de gestión de Rayito](assets/panel/panel-overview.png){ loading=lazy }
+
 ## Un agente de código dentro del sandbox
 
 `sbx.agent` corre un agente de código ([OpenCode](https://github.com/anomalyco/opencode)
