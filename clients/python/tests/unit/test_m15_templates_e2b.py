@@ -88,3 +88,14 @@ def test_an_unknown_keyword_is_a_type_error() -> None:
 
 def test_the_dsl_is_still_the_native_one() -> None:
     assert isinstance(Template().from_base_image(), _dsl.Template)
+
+
+def test_the_shim_inherits_the_install_shortcuts_with_the_root_wrap() -> None:
+    from rayito._templates._instructions import RunStep, UserStep
+    from rayito.e2b import AsyncTemplate
+
+    for cls in (Template, AsyncTemplate):
+        t = cls().set_user("user").dnf_install("tree").npm_install()
+        assert isinstance(t, cls)
+        kinds = [type(step) for step in t.spec.steps]
+        assert kinds == [UserStep, UserStep, RunStep, UserStep, RunStep]

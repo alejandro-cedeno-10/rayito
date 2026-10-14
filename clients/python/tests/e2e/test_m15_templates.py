@@ -38,6 +38,7 @@ import pytest
 
 from rayito import BuildException, Sandbox, Template
 from rayito._aws import LambdaMicrovmsControlPlane
+from rayito._templates._dsl import NODE_PACKAGES, NPM_MISSING_EXIT_CODE
 from rayito.exceptions import InvalidArgumentException
 
 from .conftest import E2ESettings
@@ -137,10 +138,11 @@ def test_building_without_from_base_image_never_reaches_aws() -> None:
 
 #: Paquete pequeño de los repos de AL2023 para comprobar `dnf_install`.
 DNF_PROBE_PACKAGE = "tree"
-#: Paquetes de Node.js de AL2023 para comprobar `npm_install` (la base no
-#: trae Node).
-NODE_PACKAGES = ["nodejs", "nodejs-npm"]
 NPM_PROBE_PACKAGE = "left-pad@1.3.0"
+#: WORKDIR explícito: `npm ls --prefix` no depende del cwd del sandbox.
+INSTALL_WORKDIR = "/opt/install-probe"
+#: Usuario no root previo a `dnf_install`: comprueba que el paso sube a root.
+NON_ROOT_USER = "1000"
 INSTALL_SANDBOX_TIMEOUT_SECONDS = 300
 
 
@@ -152,7 +154,11 @@ def test_dnf_and_npm_install_shortcuts_are_usable_in_a_sandbox(
     t = (
         Template()
         .from_base_image(e2e_settings.template)
+        .set_user(NON_ROOT_USER)
         .dnf_install([DNF_PROBE_PACKAGE, *NODE_PACKAGES])
+        .set_user("root")
+        .run_cmd(f"mkdir -p {INSTALL_WORKDIR}")
+        .workdir(INSTALL_WORKDIR)
         .npm_install(NPM_PROBE_PACKAGE)
     )
     name = built_images.track(_run_name("install"))
@@ -168,7 +174,7 @@ def test_dnf_and_npm_install_shortcuts_are_usable_in_a_sandbox(
     try:
         assert sbx.commands.run(f"{DNF_PROBE_PACKAGE} --version").exit_code == 0
         assert sbx.commands.run("node --version").exit_code == 0
-        assert sbx.commands.run("npm ls left-pad").exit_code == 0
+        assert sbx.commands.run(f"npm ls --prefix {INSTALL_WORKDIR} left-pad").exit_code == 0
     finally:
         sbx.kill()
 
@@ -180,4 +186,4 @@ def test_npm_install_without_node_fails_with_a_clear_step(
     name = built_images.track(_run_name("no-node"))
     with pytest.raises(BuildException) as excinfo:
         Template.build(t, name, bucket=_bucket(), region=e2e_settings.region)
-    assert excinfo.value.exit_code == 127
+    assert excinfo.value.exit_code == NPM_MISSING_EXIT_CODE

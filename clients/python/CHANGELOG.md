@@ -8,11 +8,12 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
 
 ### Añadido
 
-- **`Template.dnf_install()` y `Template.npm_install(packages, g=False)`**
+- **`Template.dnf_install()` y `Template.npm_install(packages=None, g=False)`**
   (sync y async). Atajos del DSL para instalar paquetes del sistema con
   `dnf` (sin paquetes débiles) y paquetes Node con `npm`; los nombres se
   escapan para el shell y se rechazan las listas vacías y los nombres que
-  empiezan por `-`. `npm_install` falla con el código 127 y un mensaje claro
+  empiezan por `-`. `dnf_install` y `npm_install(g=True)` corren como root
+  aunque un `set_user()` previo dejara otro usuario. `npm_install` falla con el código 127 y un mensaje claro
   si la imagen no tiene Node.js. `apt_install` sigue lanzando
   `UnimplementedError`, ahora apuntando a `dnf_install`.
 

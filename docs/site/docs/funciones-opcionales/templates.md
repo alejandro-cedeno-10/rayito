@@ -253,13 +253,26 @@ a AWS.
 
 | Python | TypeScript | Qué hace |
 |---|---|---|
-| `dnf_install(paquetes)` | `dnfInstall(paquetes)` | `dnf install -y --setopt=install_weak_deps=False ... && dnf clean all` (Amazon Linux 2023) |
-| `npm_install(paquetes, g=False)` | `npmInstall(paquetes, { g: false })` | `npm install --no-audit --no-fund [-g] ...`; `g` es la misma opción que `npm_install(packages, g=False)` de E2B |
+| `dnf_install(paquetes)` | `dnfInstall(paquetes)` | `dnf install -y --setopt=install_weak_deps=0 ... && dnf clean all` (Amazon Linux 2023) |
+| `npm_install(paquetes=None, g=False)` | `npmInstall(paquetes?, { g: false })` | `npm install --no-audit --no-fund [-g] [...]`; sin paquetes ejecuta un `npm install` plano en el `WORKDIR` (el `package.json` copiado antes). Misma firma que E2B |
 | `pip_install(paquetes)` | `pipInstall(paquetes)` | `python3 -m pip install ...` |
 
-`rayito-base` no trae Node.js ni npm. Instálalos antes con `dnf_install`: si
-falta npm, el paso falla con el código 127 y un mensaje que lo explica, en
-vez de un `npm: not found` críptico.
+`dnf_install` y `npm_install(g=True)` corren siempre como root, como en E2B:
+si un `set_user()` previo dejó otro usuario, el paso se envuelve en
+`USER root` y vuelve a ese usuario después. Un `npm_install` local conserva
+el usuario actual y escribe en el `WORKDIR`.
+
+`rayito-base` no trae Node.js ni npm. Instálalos antes con
+`dnf_install(["nodejs20", "nodejs20-npm"])`: si falta npm, el paso falla con
+el código 127 y un mensaje que lo explica, en vez de un `npm: not found`
+críptico.
+
+!!! info "Medido sobre la imagen base"
+    Los nombres salen de instalar sobre la imagen base fijada por digest
+    (`docker run`, 2026-10-14): `nodejs20` trae Node 20.20.2 y `nodejs20-npm`
+    npm 10.8.2, con `node` y `npm` en el `PATH`. El paquete `nodejs` a secas
+    es Node 18, fuera de soporte. La bandera de `dnf` es
+    `install_weak_deps=0`: este `dnf` rechaza `False`.
 
 === "Python"
 
@@ -269,7 +282,7 @@ vez de un `npm: not found` críptico.
     t = (
         Template()
         .from_base_image("rayito-base")
-        .dnf_install(["tree", "nodejs", "nodejs-npm"])
+        .dnf_install(["tree", "nodejs20", "nodejs20-npm"])
         .npm_install(["left-pad@1.3.0"])
         .npm_install("typescript", g=True)
     )
@@ -282,7 +295,7 @@ vez de un `npm: not found` críptico.
 
     const t = new Template()
       .fromBaseImage("rayito-base")
-      .dnfInstall(["tree", "nodejs", "nodejs-npm"])
+      .dnfInstall(["tree", "nodejs20", "nodejs20-npm"])
       .npmInstall(["left-pad@1.3.0"])
       .npmInstall("typescript", { g: true });
     ```
@@ -508,7 +521,7 @@ traduce a la nativa; el DSL es la misma clase en los dos.
 | E2B | Rayito nativo | Nota |
 |---|---|---|
 | `Template().from_image("python:3.12")`, `from_template`, `from_dockerfile`, `from_gcp_registry` | `Template().from_base_image("rayito-base")` | sólo se compone sobre una imagen `rayito-*` publicada; esos cuatro orígenes lanzan `UnimplementedError` |
-| `copy`, `run_cmd`, `pip_install`, `npm_install(packages, g=False)`, `set_envs`, `set_user`, `skip_cache` | los mismos métodos | `skip_cache()` equivale a `force=True`; `npm_install` necesita Node.js en la imagen (ver arriba) |
+| `copy`, `run_cmd`, `pip_install`, `npm_install(packages=None, g=False)`, `set_envs`, `set_user`, `skip_cache` | los mismos métodos | `skip_cache()` equivale a `force=True`; `npm_install` necesita Node.js en la imagen (ver arriba) |
 | `set_workdir(path)` | `workdir(path)` | — |
 | `apt_install([...])` | `dnf_install([...])` | `rayito-base` es Amazon Linux 2023; `apt_install` lanza `UnimplementedError` y apunta a `dnf_install` |
 | `set_start_cmd(cmd, wait_for_port(8000))` | igual, también `wait_for_url`/`wait_for_process`/`wait_for_file` | necesita una imagen base con `rayd` 0.6 |

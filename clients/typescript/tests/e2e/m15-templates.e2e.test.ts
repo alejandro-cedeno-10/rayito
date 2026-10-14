@@ -35,6 +35,7 @@ import {
   Sandbox,
   Template,
 } from "../../src/index.js";
+import { NODE_PACKAGES, NPM_MISSING_EXIT_CODE } from "../../src/templates/dsl.js";
 import { e2eEnabled, useE2E } from "./helpers.js";
 import { BuiltImages } from "./image-cleanup.js";
 
@@ -44,10 +45,11 @@ const BUCKET_VAR = "RAYITO_E2E_TEMPLATE_BUCKET";
 const READY_FAIL_BUDGET_MS = 600_000;
 /** Paquete pequeño de los repos de AL2023 para comprobar `dnfInstall`. */
 const DNF_PROBE_PACKAGE = "tree";
-/** Paquetes de Node.js de AL2023 para comprobar `npmInstall` (la base no trae Node). */
-const NODE_PACKAGES = ["nodejs", "nodejs-npm"];
 const NPM_PROBE_PACKAGE = "left-pad@1.3.0";
-const NPM_MISSING_EXIT_CODE = 127;
+/** WORKDIR explícito: `npm ls --prefix` no depende del cwd del sandbox. */
+const INSTALL_WORKDIR = "/opt/install-probe";
+/** Usuario no root previo a `dnfInstall`: comprueba que el paso sube a root. */
+const NON_ROOT_USER = "1000";
 const INSTALL_SANDBOX_TIMEOUT_MS = 300_000;
 
 /** `exactOptionalPropertyTypes` no deja pasar `region: undefined`
@@ -136,7 +138,11 @@ describe.runIf(e2eEnabled())("m15-templates (AWS real)", () => {
   test("dnfInstall and npmInstall shortcuts are usable in a sandbox", async () => {
     const t = new Template()
       .fromBaseImage(e2e.settings.template)
+      .setUser(NON_ROOT_USER)
       .dnfInstall([DNF_PROBE_PACKAGE, ...NODE_PACKAGES])
+      .setUser("root")
+      .runCmd(`mkdir -p ${INSTALL_WORKDIR}`)
+      .workdir(INSTALL_WORKDIR)
       .npmInstall(NPM_PROBE_PACKAGE);
     const name = builtImages().track(runName("install"));
     await Template.build(t, name, { bucket: bucket(), ...regionOption(e2e.settings.region) });
@@ -151,7 +157,9 @@ describe.runIf(e2eEnabled())("m15-templates (AWS real)", () => {
     try {
       expect((await sandbox.commands.run(`${DNF_PROBE_PACKAGE} --version`)).exitCode).toBe(0);
       expect((await sandbox.commands.run("node --version")).exitCode).toBe(0);
-      expect((await sandbox.commands.run("npm ls left-pad")).exitCode).toBe(0);
+      expect(
+        (await sandbox.commands.run(`npm ls --prefix ${INSTALL_WORKDIR} left-pad`)).exitCode,
+      ).toBe(0);
     } finally {
       await sandbox.kill().catch(() => undefined);
     }
