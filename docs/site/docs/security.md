@@ -390,6 +390,59 @@ Los logs de un sandbox son lo que ese sandbox escribió y se muestran tal
 cual (como en `rayito sandbox logs`): si tu código imprime secretos, el panel
 los mostrará.
 
+## Panel de gestión en tu cuenta (la pila `dashboard`) { #panel-de-gestion-en-tu-cuenta }
+
+La pila `dashboard` ([guía](funciones-opcionales/panel-en-tu-cuenta.md)) publica
+una Function URL sin autenticación de AWS (`AuthType NONE`, porque un navegador
+no firma con SigV4), así que **cualquiera en Internet puede llamarla**: la
+protección es que la función valida la identidad antes de hacer nada. Es el
+resumen de **T32** de
+[`SECURITY.md`](https://github.com/alejandro-cedeno-10/rayito/blob/main/SECURITY.md).
+
+- **Identidad antes que nada.** Cada petición a `/api/v1` lleva un token de
+  acceso de Cognito en `Authorization`. Antes de enrutar o de llamar a AWS, la
+  función comprueba el formato y el tamaño, que el algoritmo sea `RS256` (`none`
+  y los demás se rechazan), la firma contra el JWKS del grupo (con la
+  biblioteca estándar, comparando el mensaje codificado entero), el emisor,
+  `token_use=access`, el `client_id`, la caducidad, `nbf` y `sub`. Sin token,
+  `401`. Si Cognito no se puede consultar, `503`, nunca «pasa». Sólo la página
+  estática y `/config.json` (el dominio del Hosted UI y el id del cliente,
+  públicos) no piden token.
+- **Dos roles.** La función corre con un rol de **sólo lectura**. Matar,
+  suspender y reanudar los hace un **rol de acciones** que sólo confía en el rol
+  de la función, que lo asume **después** de comprobar el grupo del usuario y
+  con su `sub` en el nombre de la sesión. Sin `AllowActions=true` ese rol no
+  existe.
+- **Auditoría que no se puede reescribir desde la aplicación.** Una fila por
+  sandbox y acción, escrita **antes** de ejecutar (si falla, la acción no
+  corre), con quién, qué, cuándo, id de petición e IP. Escrituras condicionales
+  y sin `UpdateItem` ni `DeleteItem` (la plantilla los deniega).
+- **Sin sesión ambiente.** El token va en la cabecera, en memoria, no en una
+  cookie: una web ajena no tiene nada que reutilizar. Cada `POST` comprueba
+  `Origin` y `application/json`, y la URL no habilita CORS.
+- **Tema y logo**: los mismos validadores que el panel local; uno inválido se
+  descarta y se sirve el de fábrica.
+- **Coste**: el coste facturado sólo con `EnableCostExplorer=true`. La caché de
+  24 h en DynamoDB no basta (su clave lleva la ventana y la región, que elige
+  quien pregunta), así que la función acepta sólo ventanas de meses completos
+  de los últimos {{dashboardStackCostLookbackMonths}} meses y regiones conocidas,
+  y gasta un presupuesto de {{dashboardStackCostMissesPerDay}} consultas de pago
+  por día UTC para toda la pila (no por usuario) que, agotado o sin poder
+  comprobarse, deja de facturar. `ReservedConcurrency` acota una avalancha de
+  peticiones sin autenticar.
+- **Acciones con identidad en vivo**: antes de asumir el rol de acciones, la
+  función comprueba en Cognito que el usuario sigue habilitado y en el grupo;
+  si Cognito no responde, no se actúa.
+- **Nada secreto en logs**: ni el token, ni `Authorization`, ni el cuerpo.
+
+Riesgo residual: un token de acceso ya emitido no se puede revocar (la función
+lo valida sin conexión): vale hasta que caduca ({{dashboardStackAccessTokenHours}}
+hora) aunque desactives al usuario, lo quites del grupo o cierres sus sesiones
+(`admin-user-global-sign-out` sólo impide renovarlo). Hasta entonces puede
+leer, pero no actuar, porque cada acción se comprueba en Cognito; quien
+administra la cuenta puede cambiar la tabla de auditoría; y la dirección es
+pública, así que lo que la protege es la validación del token, no la red.
+
 ## Agente de código dentro del sandbox
 
 Resumen de **T29** y **T30** de

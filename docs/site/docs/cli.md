@@ -493,7 +493,10 @@ región o credenciales. Guía completa en
 [Panel de gestión](funciones-opcionales/panel-de-gestion.md#panel-web-local),
 con el [recorrido paso a paso y capturas](funciones-opcionales/panel-de-gestion.md#recorrido)
 (el panel lo resume en su entrada **Ayuda**),
-defensas en [Seguridad](security.md#panel-de-gestion-local).
+defensas en [Seguridad](security.md#panel-de-gestion-local). Para tenerlo
+siempre disponible dentro de tu cuenta, con inicio de sesión y auditoría:
+`rayito stack deploy dashboard --artifact-bucket B`
+([Panel en tu cuenta](funciones-opcionales/panel-en-tu-cuenta.md)).
 
 ## `rayito doctor`
 
