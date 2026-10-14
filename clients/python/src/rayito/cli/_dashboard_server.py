@@ -33,7 +33,6 @@ from __future__ import annotations
 import hmac
 import http.cookies
 import http.server
-import importlib.resources
 import json
 import secrets
 import time
@@ -48,7 +47,9 @@ from rayito._dashboard._api._contract import (
     ApiRequest,
     ApiResponse,
 )
+from rayito._dashboard._api._headers import LOGO_HEADERS, content_security_policy, security_headers
 from rayito._dashboard._api._router import ApiError, DashboardApi, error_response
+from rayito._dashboard._api._static import INDEX_PATH, LOGO_PATH, load_static_files
 from rayito._dashboard._theme import Appearance
 from rayito._limits import (
     DASHBOARD_REQUEST_MAX_BODY_BYTES,
@@ -69,41 +70,10 @@ ADMITTED_FETCH_SITES: Final = frozenset({"same-origin", "none"})
 SESSION_PATH: Final = f"{API_PREFIX}/session"
 START_TOKEN_PARAM: Final = "token"
 JSON_TYPE: Final = "application/json"
-STATIC_PACKAGE: Final = "rayito._dashboard"
-STATIC_DIR: Final = "_static"
-INDEX_PATH: Final = "/"
-INDEX_FILE: Final = "index.html"
 HTTP_SEE_OTHER: Final = 303
 HTTP_NOT_FOUND: Final = 404
-THEME_CSS_PATH: Final = "/theme.css"
-LOGO_PATH: Final = "/theme/logo"
-CSS_CONTENT_TYPE: Final = "text/css; charset=utf-8"
-CONTENT_TYPES: Final[dict[str, str]] = {
-    ".html": "text/html; charset=utf-8",
-    ".css": CSS_CONTENT_TYPE,
-    ".js": "text/javascript; charset=utf-8",
-    ".svg": "image/svg+xml",
-}
-#: Sin `unsafe-inline` ni `unsafe-eval`: la SPA son módulos y hojas de
-#: estilo del propio origen.
-CONTENT_SECURITY_POLICY: Final = (
-    "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; "
-    "img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
-)
-SECURITY_HEADERS: Final[dict[str, str]] = {
-    "Content-Security-Policy": CONTENT_SECURITY_POLICY,
-    "X-Content-Type-Options": "nosniff",
-    "Referrer-Policy": "no-referrer",
-    "Cache-Control": "no-store",
-    "X-Frame-Options": "DENY",
-    "Cross-Origin-Resource-Policy": "same-origin",
-    "Cross-Origin-Opener-Policy": "same-origin",
-}
-#: El logo se sirve con su propia CSP, aún más cerrada: aunque alguien abra
-#: `/theme/logo` como documento, un SVG no ejecuta nada ni carga nada.
-LOGO_HEADERS: Final[dict[str, str]] = {
-    "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; sandbox",
-}
+CONTENT_SECURITY_POLICY: Final = content_security_policy()
+SECURITY_HEADERS: Final[dict[str, str]] = security_headers()
 ALLOWED_METHODS: Final = ("GET", "POST")
 #: Cada cuánto mira `serve_forever` si le piden parar: cuánto tarda Ctrl+C.
 SHUTDOWN_POLL_SECONDS: Final = 0.1
@@ -172,35 +142,6 @@ class SessionGuard:
 
     def session_cookie(self, value: str) -> str:
         return f"{self.cookie_name}={value}; HttpOnly; SameSite=Strict; Path=/"
-
-
-def load_static_files(appearance: Appearance | None = None) -> dict[str, tuple[bytes, str]]:
-    """La SPA del wheel más el aspecto: ruta URL → (bytes, tipo). Sólo lo que
-    hay bajo `_static/` y el tema validado, listado al arrancar: ninguna ruta
-    de la petición toca el sistema de ficheros. `/theme.css` existe siempre
-    (vacío sin tema de usuario) para que `index.html` lo enlace sin 404."""
-    look = appearance or Appearance()
-    root = importlib.resources.files(STATIC_PACKAGE) / STATIC_DIR
-    files: dict[str, tuple[bytes, str]] = {}
-
-    def walk(directory: Any, prefix: str) -> None:
-        for entry in directory.iterdir():
-            path = f"{prefix}{entry.name}"
-            if entry.is_dir():
-                walk(entry, f"{path}/")
-                continue
-            suffix = "." + entry.name.rsplit(".", 1)[-1]
-            content_type = CONTENT_TYPES.get(suffix)
-            if content_type is not None:
-                files[f"/{path}"] = (entry.read_bytes(), content_type)
-
-    walk(root, "")
-    if f"/{INDEX_FILE}" in files:
-        files[INDEX_PATH] = files[f"/{INDEX_FILE}"]
-    files[THEME_CSS_PATH] = (look.css.encode(), CSS_CONTENT_TYPE)
-    if look.logo is not None:
-        files[LOGO_PATH] = (look.logo.data, look.logo.content_type)
-    return files
 
 
 @dataclass(frozen=True)

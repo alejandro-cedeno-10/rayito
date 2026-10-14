@@ -1,9 +1,14 @@
-// Cliente de /api/v1. La sesión viaja en una cookie HttpOnly; las
-// peticiones POST y la consulta de coste facturado (que cuesta dinero) llevan
-// además el token CSRF que entrega /api/v1/session.
+// Cliente de /api/v1. En el servidor local la sesión viaja en una cookie
+// HttpOnly y las peticiones POST y la consulta de coste facturado (que cuesta
+// dinero) llevan además el token CSRF que entrega /api/v1/session. Servida por
+// la pila `dashboard`, cada petición lleva el token de acceso de Cognito en
+// `Authorization` (`auth.js`) y no hay cookie que proteger con CSRF.
+
+import { accessToken, confirmSession, isSignedInMode, renewAfterRejection } from "./auth.js";
 
 const API = "/api/v1";
 const CSRF_HEADER = "X-Rayito-CSRF";
+const HTTP_UNAUTHORIZED = 401;
 
 export class ApiFailure extends Error {
   constructor(status, code, message, awsCode) {
@@ -37,11 +42,28 @@ function query(params) {
   return text ? `?${text}` : "";
 }
 
-export async function get(path, params, { csrf = false } = {}) {
-  const headers = { Accept: "application/json" };
-  if (csrf) headers[CSRF_HEADER] = await token();
-  const response = await fetch(`${API}${path}${query(params)}`, { credentials: "same-origin", headers });
+/** Las cabeceras de identidad de la petición, según el modo. */
+async function identity({ csrf }) {
+  if (isSignedInMode()) return { Authorization: `Bearer ${await accessToken()}` };
+  return csrf ? { [CSRF_HEADER]: await token() } : {};
+}
+
+function settle(response) {
+  if (response.ok && isSignedInMode()) confirmSession();
   return parse(response);
+}
+
+async function send(url, init, { csrf }) {
+  const headers = { Accept: "application/json", ...init.headers, ...(await identity({ csrf })) };
+  const response = await fetch(url, { ...init, credentials: "same-origin", headers });
+  if (response.status !== HTTP_UNAUTHORIZED || !isSignedInMode()) return settle(response);
+  if (!(await renewAfterRejection())) return parse(response);
+  const retried = { ...init, credentials: "same-origin", headers: { ...headers, ...(await identity({ csrf })) } };
+  return settle(await fetch(url, retried));
+}
+
+export function get(path, params, { csrf = false } = {}) {
+  return send(`${API}${path}${query(params)}`, {}, { csrf });
 }
 
 async function token() {
@@ -49,19 +71,17 @@ async function token() {
   return csrfToken;
 }
 
-export async function post(path, body) {
-  const response = await fetch(`${API}${path}`, {
-    method: "POST",
-    credentials: "same-origin",
-    headers: { "Content-Type": "application/json", Accept: "application/json", [CSRF_HEADER]: await token() },
-    body: JSON.stringify(body ?? {}),
-  });
-  return parse(response);
+export function post(path, body) {
+  return send(
+    `${API}${path}`,
+    { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body ?? {}) },
+    { csrf: true },
+  );
 }
 
 export function describe(error) {
   if (error instanceof ApiFailure) {
     return error.awsCode ? `${error.message} (${error.awsCode})` : error.message;
   }
-  return "No se pudo contactar con el panel local.";
+  return "No se pudo contactar con el panel.";
 }

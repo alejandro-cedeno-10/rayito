@@ -11,6 +11,7 @@ IAM mínimo del SDK (`iam.yaml`) y las piezas opcionales de egress y de CI.
 | `metadata-index.yaml` | Opcional (M14, on-demand, $0 en reposo): tabla DynamoDB `PAY_PER_REQUEST` con TTL + políticas `RayitoIndexWriter` / `RayitoIndexReader` | Sólo si listas por metadatos con `index=DynamoDbIndex(...)` / `--index-table`, también sobre `SUSPENDED` ([Índice de metadatos](#índice-de-metadatos-inframetadata-indexyaml-m14)) |
 | `custom-domain.yaml` | Opcional (M15, experimental, $0 en reposo): distribución CloudFront con alias comodín + CloudFront Function de enrutado + KeyValueStore; sin Lambda ni IAM propio | Sólo si usas `CustomDomain` para exponer sandboxes en tu propio dominio ([Dominio propio](#dominio-propio-infracustom-domainyaml-m15)); `Sandbox.create(domain=)` sigue sin cablear, ver `ARCHITECTURE.md` ADR-024 |
 | `ci-oidc-role.yaml` | Proveedor OIDC de GitHub (opcional) + rol que asume `.github/workflows/e2e.yml` con sólo las acciones de MicroVM sobre las imágenes de test | Para correr la aceptación e2e desde GitHub Actions sin credenciales de larga duración (SECURITY.md T10, m7-supply-chain) |
+| `dashboard.yaml` | Opcional (ADR-026, fase 2, $0 en reposo): una Lambda con Function URL que sirve la página y la API del panel de gestión, grupo de usuarios de Cognito, tablas DynamoDB de auditoría y caché, rol de lectura y (con `AllowActions`) rol de acciones; sin CloudFront ni buckets | Sólo si quieres el panel de gestión dentro de tu cuenta ([Panel en tu cuenta](../docs/site/docs/funciones-opcionales/panel-en-tu-cuenta.md)) |
 | `events-webhooks.yaml` | Opcional (M15, m15-events-webhooks): secreto HMAC del stack, tabla DynamoDB, tres Lambdas (forwarder/deliverer/reconciliador), suscripción de CloudWatch Logs y regla de EventBridge Scheduler | Sólo si usas `events=LifecycleEvents(...)` / `LifecycleEvents` para eventos de ciclo de vida firmados y webhooks ([Eventos y webhooks](#eventos-y-webhooks-infraevents-webhooksyaml-m15)) |
 
 ## Egress allowlist (`egress-connector.yaml`)
@@ -562,6 +563,32 @@ código de la Function, mantenido en sincronía con
 incluye (`validate-template` + `cfn-lint`). `Sandbox.create(domain=)` sigue
 sin cablear a esta pila (`ARCHITECTURE.md` ADR-024); úsala hoy
 instanciando `CustomDomain` directamente.
+
+## Panel de gestión en tu cuenta (`infra/dashboard.yaml`, ADR-026)
+
+Plantilla **opcional**: la misma página y la misma API `/api/v1` que
+`rayito dashboard`, servidas desde una Lambda con Function URL. Nunca se
+despliega sola. Guía completa:
+[Panel en tu cuenta](../docs/site/docs/funciones-opcionales/panel-en-tu-cuenta.md).
+
+| Recurso / salida | Qué es |
+|---|---|
+| `DashboardUrl` | La Function URL (`AuthType NONE`; la función valida el token de Cognito antes de enrutar) |
+| `UserPool`, `UserPoolClient`, `UserPoolDomain` | Cognito: sin autoregistro, flujo de código con PKCE, sin secreto de cliente, tokens de acceso de 1 hora (no revocables antes de caducar; las acciones se comprueban en vivo contra Cognito) |
+| `ActionsGroup`, `ActionsRole` | Sólo con `AllowActions=true`: el grupo que puede actuar y el rol de acciones (confía únicamente en el rol de la función) |
+| `ReadRole` | El rol de ejecución, de sólo lectura; sólo añade a la tabla de auditoría y deniega explícitamente `UpdateItem`/`DeleteItem` |
+| `AuditTable` | DynamoDB bajo demanda: quién, qué y cuándo de cada acción |
+| `CacheTable` | DynamoDB bajo demanda con TTL: el coste facturado cacheado 24 h y el contador del presupuesto diario de consultas de pago (sólo con `EnableCostExplorer=true`) |
+| `ThemeParameter` | Sólo con `ThemeJson`: el tema en un parámetro de SSM |
+
+El zip de la función (`infra/lambdas/dashboard/`) lleva además los módulos
+del SDK que importa y la página, copiados tal cual por
+`scripts/gen_stack_assets.py` (cada `__init__.py` del SDK se sustituye por un
+resguardo, para no arrastrar gRPC ni la CLI) y el modelo de `lambda-microvms`
+bajo `models/`, igual que `events-webhooks`. No usa CloudFront ni crea buckets
+(la cuenta de pruebas lo deniega); las etiquetas obligatorias de la
+organización se pasan con `--tag`. Tests: `infra/lambdas/dashboard/tests/` y
+`scripts/tests/test_dashboard_template.py`; `make infra-lint` la incluye.
 
 ## Eventos y webhooks (`infra/events-webhooks.yaml`, M15)
 

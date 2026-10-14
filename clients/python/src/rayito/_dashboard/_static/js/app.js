@@ -3,6 +3,7 @@
 // crearse. Los colores, radios y fuentes son tokens CSS (`css/tokens.css`);
 // un tema de usuario los sobrescribe desde `/theme.css`.
 import { describe, get } from "./api.js";
+import { detectMode, isSignedInMode, signOut } from "./auth.js";
 import { h, icon } from "./dom.js";
 import { errorState } from "./states.js";
 import "./views/overview.js";
@@ -63,6 +64,7 @@ class RayitoApp extends HTMLElement {
 
   async #start() {
     try {
+      await detectMode();
       this.#meta = await get("/meta");
     } catch (error) {
       this.replaceChildren(h("main", { id: "main", class: "boot-error" }, errorState(describe(error), () => location.reload())));
@@ -103,6 +105,7 @@ class RayitoApp extends HTMLElement {
           h("nav", { class: "nav", "aria-label": "Secciones" }, ...ROUTES.map((route) => this.#link(route))),
           h("div", { class: "sidebar-foot" },
             this.#themeSwitch(),
+            isSignedInMode() ? h("button", { type: "button", class: "button small", onclick: signOut }, "Cerrar sesión") : null,
             h("p", { class: "muted version" }, `v${this.#meta.rayitoVersion}`))),
         h("div", { class: "content" },
           h("div", { class: "topbar" },

@@ -31,6 +31,7 @@ HTTP_MISDIRECTED: Final = 421
 HTTP_TOO_MANY_REQUESTS: Final = 429
 HTTP_INTERNAL_ERROR: Final = 500
 HTTP_BAD_GATEWAY: Final = 502
+HTTP_SERVICE_UNAVAILABLE: Final = 503
 
 #: Los `error.code` posibles: una lista cerrada que el esquema enumera.
 ERROR_CODES: Final[dict[str, int]] = {
@@ -52,6 +53,8 @@ ERROR_CODES: Final[dict[str, int]] = {
     "jobs_busy": HTTP_TOO_MANY_REQUESTS,
     "internal_error": HTTP_INTERNAL_ERROR,
     "aws_error": HTTP_BAD_GATEWAY,
+    "auth_unavailable": HTTP_SERVICE_UNAVAILABLE,
+    "audit_unavailable": HTTP_SERVICE_UNAVAILABLE,
 }
 
 ERROR_MESSAGES: Final[dict[str, str]] = {
@@ -76,6 +79,8 @@ ERROR_MESSAGES: Final[dict[str, str]] = {
     "internal_error": "error interno del panel",
     "aws_error": "AWS devolvió un error",
     "jobs_busy": "ya hay demasiadas acciones en cola: espera a que terminen",
+    "auth_unavailable": "no se pudo comprobar la identidad: reintenta en unos segundos",
+    "audit_unavailable": "no se pudo escribir el registro de auditoría: la acción no se ejecutó",
 }
 
 ACTION_NAMES: Final = ("kill", "suspend", "resume")

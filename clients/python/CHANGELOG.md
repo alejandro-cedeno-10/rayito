@@ -8,6 +8,24 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
 
 ### Añadido
 
+- **Pila `dashboard`** (el panel de gestión dentro de tu cuenta, ADR-026, fase
+  2): componente de `OptionalStacks`/`rayito stack deploy|status|destroy
+  dashboard`. Una Lambda con Function URL sirve la misma página y la misma API
+  `/api/v1` que `rayito dashboard`, con inicio de sesión de Cognito (el token se
+  valida en la función antes de enrutar), un rol de lectura y un rol de acciones
+  separados (`AllowActions=true`), una tabla de auditoría sólo de añadir
+  (escrita antes de cada acción; si falla, la acción no corre) y una caché del
+  coste facturado en DynamoDB (`EnableCostExplorer=true`). Tema propio por
+  `ThemeJson` o por un parámetro de SSM (`ThemeParameterName`, `LogoParameterName`),
+  con los mismos validadores que `--theme`. Sin CloudFront ni buckets de S3;
+  las etiquetas obligatorias se pasan con `--tag`. De sólo lectura y sin Cost
+  Explorer por defecto. Constantes nuevas en `limits.json` (`dashboardStack*`).
+  El coste facturado tiene tope aunque lo pida cualquier usuario con sesión
+  (ventanas de meses completos, regiones conocidas y un presupuesto diario de
+  consultas de pago para toda la pila); antes de cada acción la función
+  comprueba en Cognito que el usuario sigue habilitado y en el grupo, y la
+  página no entra en bucle de inicio de sesión tras un 401.
+
 - **`rayito dashboard`** (panel de gestión local, ADR-026, fase 1b): un
   servidor en `127.0.0.1` con una página sin compilación (módulos ES y web
   components, claro y oscuro) y la API JSON versionada `/api/v1` sobre

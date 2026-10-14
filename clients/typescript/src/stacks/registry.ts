@@ -6,6 +6,7 @@
  */
 
 import { COMPONENT as customDomain } from "./components/custom-domain.js";
+import { COMPONENT as dashboard } from "./components/dashboard.js";
 import { COMPONENT as efsVolumes } from "./components/efs-volumes.js";
 import { COMPONENT as eventsWebhooks } from "./components/events-webhooks.js";
 import { COMPONENT as metadataIndex } from "./components/metadata-index.js";
@@ -26,6 +27,7 @@ export const COMPONENTS: readonly StackComponent[] = [
   otlpExport,
   templates,
   customDomain,
+  dashboard,
 ];
 
 export function componentByName(name: string): StackComponent | undefined {

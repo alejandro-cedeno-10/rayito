@@ -345,10 +345,13 @@ class CostPeriod:
 @dataclass(frozen=True)
 class CostQueryResult:
     """Los periodos de una consulta y las peticiones que costó (cada página
-    de `GetCostAndUsage` se factura)."""
+    de `GetCostAndUsage` se factura). `fetched_at` sólo lo trae un resultado
+    servido de una caché ajena (la tabla de la pila `dashboard`): es cuándo
+    se leyó de verdad, y sin él se toma el instante de la consulta."""
 
     periods: tuple[CostPeriod, ...]
     requests: int
+    fetched_at: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -422,7 +425,7 @@ def fold_billed_cost(
         total_usd=sum(line.cost_usd for line in lines),
         partial=any(period.estimated for period in result.periods),
         requests=result.requests,
-        fetched_at=fetched_at,
+        fetched_at=result.fetched_at or fetched_at,
     )
 
 

@@ -371,11 +371,14 @@ export interface CostPeriod {
 
 /**
  * Los periodos de una consulta y las peticiones que costó (cada página de
- * `GetCostAndUsage` se factura).
+ * `GetCostAndUsage` se factura). `fetchedAt` sólo lo trae un resultado servido
+ * de una caché ajena (la tabla de la pila `dashboard`): es cuándo se leyó de
+ * verdad, y sin él se toma el instante de la consulta.
  */
 export interface CostQueryResult {
   readonly periods: readonly CostPeriod[];
   readonly requests: number;
+  readonly fetchedAt?: Date;
 }
 
 export interface BilledLine {
@@ -468,7 +471,7 @@ export function foldBilledCost(
     totalUsd: lines.reduce((sum, line) => sum + line.costUsd, 0),
     partial: result.periods.some((period) => period.estimated),
     requests: result.requests,
-    fetchedAt: window.fetchedAt,
+    fetchedAt: result.fetchedAt ?? window.fetchedAt,
     label: BILLED_LABEL,
   };
 }
