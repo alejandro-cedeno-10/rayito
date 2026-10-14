@@ -1848,6 +1848,54 @@ imágenes desechables propias de cada ejecución:
 
 ---
 
+## 0.11.0 — Arranque rápido del agente y claves de artefacto por ejecución (2026-10-13)
+
+Publicada el 2026-10-13 en PyPI, npm y la GitHub Release `rayd-v0.11.0`.
+Los dos cambios OpenSpec del ciclo ya estaban archivados al fusionarse
+(`ai-agent-first-start` y `run-scoped-artifact-keys`). Sigue abierto
+`m15-custom-domain` (ver 0.7.0).
+
+- **`AgentTemplate` arranca antes** (#192): `kernel_warmup=False` por
+  defecto (cambio de comportamiento, con `kernel_warmup=True` /
+  `--kernel-warmup` para volver al de 0.10) y los binarios de OpenCode y
+  ripgrep dentro del snapshot de memoria (Q155, Q156).
+- **Claves de artefacto por ejecución** (#189):
+  `rayito image publish --artifact-run-id` y `artifactUploaded` en el
+  resumen `--json`.
+- **El `SandboxPool` de TypeScript retiene el proceso** mientras `take()` o
+  `close()` esperan (#196, #197), encontrado en esta aceptación.
+- Prueba de humo de proveedores reales en el SDK TypeScript (#188), fila
+  0.11 de compatibilidad en `rayito doctor` (#193) y fuera los borradores
+  del patrón de Serverless Land (#187, #190). `rayd` no cambia.
+
+**Aceptación de la release (2026-10-13, cuenta de pruebas, us-east-1)**,
+sobre el árbol del PR de release, con `rayd` 0.11.0 compilado en la VM
+Linux e imágenes desechables propias de cada carril (Python, TypeScript y
+agente), publicadas con `--artifact-run-id` en paralelo:
+
+- Python: la regresión completa, corpus de E2B incluido, en verde (124
+  passed; los saltos son dominio propio, que la SCP de la cuenta impide, y
+  mediciones opcionales). TypeScript: en verde (17 ficheros, corpus de E2B
+  incluido). `rayito doctor --launch` 9 OK / 1 WARN / 0 FAIL.
+- Funciones opcionales en verde en los dos SDK: montajes S3 y exportación
+  OTLP (con un rol de ejecución propio que lleva las políticas de sus
+  pilas), índice de metadatos, pasarela de secretos, templates y volúmenes
+  EFS en la VPC compartida de la cuenta (sin tocarla). Eventos y webhooks:
+  las cuatro transiciones entregadas y firmadas a un receptor propio (Q157).
+  Sin opciones, un `create()` sólo llama a `lambda-microvms` y STS.
+- Agente: OpenCode y deepagents desde Python y TypeScript sobre una imagen
+  de `AgentTemplate` recién construida, con `bedrock_gateway` (Haiku) y
+  `openai_compatible_gateway` contra la API compatible con OpenAI de
+  Bedrock (gpt-oss), el timeout que mata todo el árbol, `connect()` desde
+  otro proceso y el pool con `warmup` (opción C). `create()` en 5,9 s de
+  mediana (n=6), en línea con Q156.
+- Encontrado y arreglado: el pool de TypeScript dejaba salir a Node (#196,
+  #197); repetidos en AWS el e2e del pool y la opción C.
+- Limpieza: sólo se borró lo creado por la ejecución; el inventario final
+  no tiene nada de los prefijos de la release.
+
+---
+
 ## Orden de trabajo dentro de cada hito
 
 1. Escribir el test de aceptación primero. Debe fallar.
