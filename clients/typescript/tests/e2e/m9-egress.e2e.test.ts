@@ -22,14 +22,17 @@
  * de la política, direcciones de proxy ni credenciales.
  */
 
+import { randomBytes } from "node:crypto";
 import { lookup } from "node:dns/promises";
 import { afterAll, describe, expect, test } from "vitest";
+import { Sandbox as ShimSandbox } from "../../src/e2b/index.js";
 import {
   ALL_TRAFFIC,
   CommandExitError,
   type CommandResult,
   type ControlPlane,
   EgressEnforcement,
+  type IdlePolicyInput,
   type NetworkPolicyInput,
   Sandbox,
   type SandboxInfo,
@@ -45,6 +48,7 @@ import {
   useE2E,
   waitUntil,
 } from "./helpers.js";
+import { rayitoLogLines } from "./logs.js";
 
 const CAPS_TEMPLATE_VAR = "RAYITO_TEMPLATE_CAPS";
 const CAPS_IMAGE = "rayito-base-caps";
@@ -52,6 +56,7 @@ const ALLOWED_HOST = "aws.amazon.com";
 const OTHER_HOST = "example.com";
 const RAW_TARGET = "1.1.1.1";
 const HTTPS_PORT = 443;
+const IMDS_ADDRESS = "169.254.169.254";
 const LOOPBACK_PORT = 8000;
 const COMMAND_TIMEOUT_MS = 60_000;
 const REFUSAL_BUDGET_S = 6;
@@ -59,6 +64,76 @@ const POLICY_SETTLE_BUDGET_S = 1;
 const LOOPBACK_READY_BUDGET_MS = 30_000;
 const TERMINATED_BUDGET_MS = 60_000;
 const PROBE_PATH = "/home/user/egress_probe.py";
+const PAUSE_IDLE: IdlePolicyInput = { maxIdleSeconds: 300, autoResume: true };
+const SOCKS_PORT = 1080;
+const SOCKS_USERNAME = "rayito-e2e";
+const SOCKS_PASSWORD_ENV = "RAYITO_E2E_SOCKS_PASSWORD";
+const SOCKS_PASSWORD_BYTES = 16;
+const SOCKS_SCRIPT = "/home/user/socks_recorder.py";
+const SOCKS_LOG = "/home/user/socks_recorder.log";
+const SOCKS_METHODS = /methods=([0-9a-f]+)/;
+const CURL_STATUS = "curl -sS -o /dev/null -w '%{http_code}' -m 15";
+const SHIM_LIFETIME_MS = 900_000;
+const SHIM_TIMEOUT_MS = 300_000;
+
+/**
+ * Un servidor SOCKS5 mínimo con usuario y contraseña (RFC 1929) que sólo
+ * graba lo que recibe (métodos ofrecidos, usuario, si la contraseña coincide
+ * y el destino) y responde "conexión no permitida": prueba el encadenado de
+ * `rayd` sin tocar internet. La contraseña llega por entorno, nunca por argv.
+ */
+const SOCKS_RECORDER = `import os, socket, sys
+address, port, log_path = sys.argv[1], int(sys.argv[2]), sys.argv[3]
+expected_password = os.environ["${SOCKS_PASSWORD_ENV}"].encode()
+
+
+def read_exact(conn, size):
+    data = b""
+    while len(data) < size:
+        chunk = conn.recv(size - len(data))
+        if not chunk:
+            raise EOFError
+        data += chunk
+    return data
+
+
+def record(line):
+    with open(log_path, "a") as log:
+        log.write(line + "\\n")
+
+
+def serve(conn):
+    version, count = read_exact(conn, 2)
+    methods = read_exact(conn, count)
+    record("methods=" + methods.hex())
+    conn.sendall(b"\\x05\\x02")
+    read_exact(conn, 1)
+    username = read_exact(conn, read_exact(conn, 1)[0]).decode()
+    password = read_exact(conn, read_exact(conn, 1)[0])
+    record(f"username={username} password_ok={password == expected_password}")
+    conn.sendall(b"\\x01\\x00")
+    _, command, _, atyp = read_exact(conn, 4)
+    if atyp == 3:
+        host = read_exact(conn, read_exact(conn, 1)[0]).decode()
+    elif atyp == 1:
+        host = socket.inet_ntop(socket.AF_INET, read_exact(conn, 4))
+    else:
+        host = socket.inet_ntop(socket.AF_INET6, read_exact(conn, 16))
+    target_port = int.from_bytes(read_exact(conn, 2), "big")
+    record(f"command={command:02x} atyp={atyp:02x} host={host} port={target_port}")
+    conn.sendall(b"\\x05\\x05\\x00\\x01" + bytes(6))
+
+
+listener = socket.create_server((address, port))
+while True:
+    conn, _ = listener.accept()
+    try:
+        serve(conn)
+    except (EOFError, OSError, ValueError):
+        record("aborted")
+    finally:
+        conn.close()
+`;
 
 /**
  * Sondas como uid 1000, cada una con su tiempo medido dentro del VM (sin el
@@ -177,6 +252,7 @@ interface EgressCreateOptions {
   readonly allowedPorts?: readonly number[];
   readonly keepOnFailure?: boolean;
   readonly controlPlane?: ControlPlane;
+  readonly idle?: IdlePolicyInput | null;
 }
 
 /** `create()` con los guardarraíles de `helpers.ts` más la política de egress; el sandbox entra en el barrido. */
@@ -188,7 +264,7 @@ async function createEgressSandbox(
   const sandbox = await Sandbox.create({
     template: context.templateArn,
     timeoutMs: TEST_SANDBOX_TIMEOUT_MS,
-    idle: null,
+    idle: options.idle ?? null,
     executionRoleArn: context.settings.executionRoleArn,
     ingress: ["ALL_INGRESS"],
     logging: context.settings.logging,
@@ -268,6 +344,32 @@ async function terminateAll(context: E2EContext, sandboxIds: readonly string[]):
       }
     }
   }
+}
+
+/** El comando con `curl` hacia `url`, mostrando sólo el código HTTP. */
+function curlStatus(sandbox: Sandbox, url: string, ...extra: string[]) {
+  return attempt(sandbox, [CURL_STATUS, ...extra, url].join(" "));
+}
+
+async function tcpOpen(sandbox: Sandbox, host: string, port = HTTPS_PORT): Promise<boolean> {
+  const outcome = await attempt(
+    sandbox,
+    `python3 -c "import socket; socket.create_connection(('${host}', ${port}), timeout=5).close()"`,
+  );
+  return !(outcome instanceof CommandExitError);
+}
+
+/** La dirección privada del VM (`scope global`, o `scope link` que no sea IMDS); nunca se imprime. */
+async function guestAddress(sandbox: Sandbox): Promise<string> {
+  for (const scope of ["global", "link"]) {
+    const listing = await attempt(sandbox, `ip -4 -o addr show scope ${scope}`);
+    for (const match of listing.stdout.matchAll(/inet (\d{1,3}(?:\.\d{1,3}){3})\//g)) {
+      if (match[1] !== IMDS_ADDRESS) {
+        return match[1] as string;
+      }
+    }
+  }
+  throw new Error("el VM no tiene una dirección IPv4 no loopback");
 }
 
 async function fetchLoopback(sandbox: Sandbox): Promise<number> {
@@ -396,6 +498,109 @@ describe.skipIf(!m9Enabled)(
       );
       expect((await sandbox.getNetwork()).denyOut).toEqual([ALL_TRAFFIC]);
       expect((await e2e.controlPlane.getMicrovm(sandbox.sandboxId)).state).toBe("RUNNING");
+    });
+
+    test("deny by IP with allow winning over deny", async () => {
+      const denied = await firstIpv4(OTHER_HOST);
+      const other = await firstIpv4(ALLOWED_HOST);
+      const sandbox = await createEgressSandbox(e2e, { network: { denyOut: [`${denied}/32`] } });
+      expect(await tcpOpen(sandbox, denied)).toBe(false);
+      expect(await tcpOpen(sandbox, other)).toBe(true);
+      await sandbox.updateNetwork({ denyOut: [`${denied}/24`], allowOut: [`${denied}/32`] });
+      expect(await tcpOpen(sandbox, denied)).toBe(true);
+      await sandbox.updateNetwork({ denyOut: [ALL_TRAFFIC], allowOut: [`${denied}/32`] });
+      expect(await tcpOpen(sandbox, denied)).toBe(true);
+      expect(await tcpOpen(sandbox, other)).toBe(false);
+    });
+
+    test("the policy survives pause and resume", async () => {
+      const denied = await firstIpv4(OTHER_HOST);
+      const allowed = await firstIpv4(ALLOWED_HOST);
+      const sandbox = await createEgressSandbox(e2e, {
+        network: { denyOut: [ALL_TRAFFIC], allowOut: [`${allowed}/32`] },
+        idle: PAUSE_IDLE,
+      });
+      const before = await sandbox.getNetwork();
+      expect(await sandbox.pause()).toBe(true);
+      await sandbox.resume();
+      expect((await sandbox.getHealth()).egressEnforcement).toBe(EgressEnforcement.GUEST_ROUTES);
+      expect(await sandbox.getNetwork()).toEqual(before);
+      expect(await tcpOpen(sandbox, allowed)).toBe(true);
+      expect(await tcpOpen(sandbox, denied)).toBe(false);
+    });
+
+    test("the egress proxy chain reaches the operator SOCKS5 without leaking it", async () => {
+      const password = randomBytes(SOCKS_PASSWORD_BYTES).toString("base64url");
+      const sandbox = await createEgressSandbox(e2e);
+      const address = await guestAddress(sandbox);
+      await sandbox.files.write(SOCKS_SCRIPT, SOCKS_RECORDER);
+      const recorder = await sandbox.commands.run(
+        `python3 ${SOCKS_SCRIPT} ${address} ${SOCKS_PORT} ${SOCKS_LOG}`,
+        { background: true, envs: { [SOCKS_PASSWORD_ENV]: password }, timeoutMs: 0 },
+      );
+      try {
+        const state = await sandbox.updateNetwork({
+          allowOut: [ALLOWED_HOST],
+          denyOut: [ALL_TRAFFIC],
+          egressProxy: { address: `${address}:${SOCKS_PORT}`, username: SOCKS_USERNAME, password },
+        });
+        expect(state.egressProxyConfigured).toBe(true);
+        await attempt(sandbox, `curl -sS -o /dev/null -m 15 https://${ALLOWED_HOST}`);
+        const log = await sandbox.files.read(SOCKS_LOG);
+        const offered = SOCKS_METHODS.exec(log);
+        expect(offered?.[1]).toContain("02");
+        expect(log).toContain(`username=${SOCKS_USERNAME} password_ok=True`);
+        expect(log).toContain(`atyp=03 host=${ALLOWED_HOST} port=443`);
+        expect(
+          await curlStatus(sandbox, `https://${ALLOWED_HOST}`, "--noproxy '*'"),
+        ).toBeInstanceOf(CommandExitError);
+      } finally {
+        await recorder.kill();
+      }
+      if (e2e.settings.executionRoleArn !== undefined) {
+        const lines = await rayitoLogLines(sandbox, e2e.settings.region);
+        note("líneas del log de rayd revisadas", String(lines.length));
+        expect(lines.length, "sin eventos de rayd en CloudWatch").toBeGreaterThan(0);
+        expect(lines.some((line) => line.includes(SOCKS_USERNAME) || line.includes(address))).toBe(
+          false,
+        );
+      }
+    });
+
+    test("the E2B shim maps allowInternetAccess, network and updateNetwork", async () => {
+      const other = await firstIpv4(OTHER_HOST);
+      const shimOptions = {
+        template: e2e.templateArn,
+        timeoutMs: SHIM_TIMEOUT_MS,
+        maxLifetimeMs: SHIM_LIFETIME_MS,
+        executionRoleArn: e2e.settings.executionRoleArn,
+        logging: e2e.settings.logging,
+        controlPlane: e2e.controlPlane,
+      };
+      const offline = await ShimSandbox.create({ ...shimOptions, allowInternetAccess: false });
+      e2e.created.push(offline.native);
+      await installProbe(offline.native);
+      expect(await probe(offline.native, `url https://${ALLOWED_HOST}`)).toBeInstanceOf(
+        CommandExitError,
+      );
+      await offline.kill();
+
+      const shim = await ShimSandbox.create({
+        ...shimOptions,
+        network: { allowOut: [ALLOWED_HOST], denyOut: ({ allTraffic }) => [allTraffic] },
+      });
+      e2e.created.push(shim.native);
+      const native = shim.native;
+      expect((await curlStatus(native, `https://${ALLOWED_HOST}`)).stdout.trim()).toBe("200");
+      expect((await curlStatus(native, `https://${OTHER_HOST}`)).stderr).toContain("403");
+      expect(await shim.updateNetwork({})).toBeUndefined();
+      expect(await tcpOpen(native, other)).toBe(true);
+      await ShimSandbox.updateNetwork(
+        shim.sandboxId,
+        { denyOut: [ALL_TRAFFIC] },
+        { accessToken: native.accessToken, controlPlane: e2e.controlPlane },
+      );
+      expect(await tcpOpen(native, other)).toBe(false);
     });
   },
 );
