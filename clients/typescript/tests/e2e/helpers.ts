@@ -15,6 +15,7 @@ import {
   type LoggingOption,
   type OutputChunk,
   Sandbox,
+  type SandboxInfo,
   SandboxNotFoundError,
   type TelemetryExport,
 } from "../../src/index.js";
@@ -290,18 +291,67 @@ export async function createTestSandbox(
 /**
  * `get-microvm` es eventualmente consistente (AWS_API_NOTES.md §6): justo
  * después de `terminate-microvm` puede seguir respondiendo `RUNNING`, así que
- * el estado terminal se sondea con plazo. Devuelve los segundos que tardó.
+ * el estado terminal se sondea con plazo (y un 404 cuenta como terminal). Devuelve los segundos que tardó.
  */
 export async function waitForTerminalState(
   sandboxId: string,
   controlPlane: ControlPlane,
 ): Promise<number> {
   const elapsed = await waitUntil(
-    async () => TERMINAL_STATES.has((await controlPlane.getMicrovm(sandboxId)).state),
+    async () => {
+      try {
+        return TERMINAL_STATES.has((await controlPlane.getMicrovm(sandboxId)).state);
+      } catch (error) {
+        if (error instanceof SandboxNotFoundError) {
+          return true;
+        }
+        throw error;
+      }
+    },
     TERMINATE_VISIBLE_MS,
     "TERMINATING|TERMINATED",
     TERMINATE_POLL_MS,
   );
   report(`${sandboxId}: terminate-microvm -> TERMINATING|TERMINATED`, elapsed);
   return elapsed;
+}
+
+export interface RecordingControlPlane {
+  readonly plane: ControlPlane;
+  readonly launched: string[];
+  readonly terminated: string[];
+}
+
+/**
+ * El plano real tras un `Proxy` que apunta qué MicroVMs se lanzaron y cuáles
+ * se terminaron. El resto de métodos se enlaza al plano real (sus campos
+ * privados no admiten otro `this`), así que un método nuevo de `ControlPlane`
+ * no rompe el test.
+ */
+export function recordingControlPlane(inner: ControlPlane): RecordingControlPlane {
+  const launched: string[] = [];
+  const terminated: string[] = [];
+  const runMicrovm: ControlPlane["runMicrovm"] = async (request) => {
+    const info: SandboxInfo = await inner.runMicrovm(request);
+    launched.push(info.sandboxId);
+    return info;
+  };
+  const terminateMicrovm: ControlPlane["terminateMicrovm"] = (sandboxId) => {
+    terminated.push(sandboxId);
+    return inner.terminateMicrovm(sandboxId);
+  };
+  const overrides: ReadonlyMap<PropertyKey, unknown> = new Map<PropertyKey, unknown>([
+    ["runMicrovm", runMicrovm],
+    ["terminateMicrovm", terminateMicrovm],
+  ]);
+  const plane = new Proxy(inner, {
+    get(target, property) {
+      if (overrides.has(property)) {
+        return overrides.get(property);
+      }
+      const value: unknown = Reflect.get(target, property, target);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+  return { plane, launched, terminated };
 }

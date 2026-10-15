@@ -16,7 +16,7 @@ import {
   type OutputMessage,
   type Sandbox,
 } from "../../src/index.js";
-import { createTestSandbox, e2eEnabled, report, seconds, useE2E } from "./helpers.js";
+import { createTestSandbox, e2eEnabled, HOME, report, seconds, useE2E } from "./helpers.js";
 
 const TIMEOUT_CELL_MS = 2000;
 const TIMEOUT_LATENCY_BUDGET_S = 8;
@@ -82,7 +82,7 @@ describe.skipIf(!e2eEnabled())("runCode through the TypeScript SDK (mirror of M4
     const isolated = await sbx.createCodeContext();
     expect(isolated.id).not.toBe(DEFAULT_CONTEXT);
     expect(isolated.language).toBe("python");
-    expect(isolated.cwd).toBe("/home/user");
+    expect(isolated.cwd).toBe(HOME);
     expect((await sbx.runCode("x", { context: isolated })).error?.name).toBe(NAME_ERROR);
     await sbx.runCode("y = 7", { context: isolated });
     expect((await sbx.runCode("y", { context: isolated.id })).text).toBe("7");

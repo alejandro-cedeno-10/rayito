@@ -27,6 +27,7 @@ import {
 import {
   type E2EContext,
   e2eEnabled,
+  recordingControlPlane,
   report,
   seconds,
   sleep,
@@ -114,14 +115,6 @@ async function waitForState(
     STATE_POLL_MS,
   );
   return last;
-}
-
-async function liveIds(context: E2EContext): Promise<Set<string>> {
-  const ids = new Set<string>();
-  for await (const item of context.controlPlane.listMicrovms({ imageArn: context.templateArn })) {
-    ids.add(item.sandboxId);
-  }
-  return ids;
 }
 
 async function remainingMs(sandbox: Sandbox): Promise<number> {
@@ -332,20 +325,17 @@ describe.skipIf(!e2eEnabled())("M9 server-enforced timeout (TypeScript)", () => 
     `older agent gate: the shim refuses a pre-0.3.0 image and the native SDK still works (requires ${PRE_M9_VERSION_VAR})`,
     async () => {
       const templateVersion = preM9Version as string;
-      const before = await liveIds(context);
+      const recording = recordingControlPlane(context.controlPlane);
       const refused = await ShimSandbox.create({
         template: context.templateArn,
         templateVersion,
         maxLifetimeMs: MAX_TEST_LIFETIME_MS,
         logging: "disabled",
-        controlPlane: context.controlPlane,
+        controlPlane: recording.plane,
       }).catch((error: unknown) => error);
       expect(refused).toBeInstanceOf(UnimplementedError);
-      for (const sandboxId of await liveIds(context)) {
-        if (!before.has(sandboxId)) {
-          await context.controlPlane.terminateMicrovm(sandboxId);
-          await waitForTerminalState(sandboxId, context.controlPlane);
-        }
+      for (const sandboxId of recording.launched) {
+        await waitForTerminalState(sandboxId, context.controlPlane);
       }
       const legacy = await Sandbox.create({
         template: context.templateArn,

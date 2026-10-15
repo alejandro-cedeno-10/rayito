@@ -16,7 +16,11 @@ const EGRESS_CONNECTOR_VAR = "RAYITO_EGRESS_CONNECTOR_ARN";
 const CPU_LIMIT_SECONDS = 2;
 const CPU_HARD_LIMIT_MARGIN_SECONDS = 5;
 const CPU_KILL_BUDGET_S = 8;
-const CPU_KILLED_EXIT_CODES = [128 + 24, 137];
+const SIGNAL_EXIT_BASE = 128;
+const SIGXCPU = 24;
+const SIGKILL = 9;
+const CPU_KILLED_EXIT_CODES = [SIGNAL_EXIT_BASE + SIGXCPU, SIGNAL_EXIT_BASE + SIGKILL];
+const POST_KILL_COMMAND = "sleep 3";
 const COMMAND_TIMEOUT_MS = 30_000;
 const EGRESS_REFUSAL_BUDGET_S = 10;
 const BUSY_LOOP = "python3 -c 'while True: pass'";
@@ -47,7 +51,9 @@ describe.skipIf(!e2eEnabled())("hardening options of create() (mirror of M6)", (
     report("cpuTimeLimit: busy loop killed", elapsed);
     expect(CPU_KILLED_EXIT_CODES).toContain((killed as CommandExitError).exitCode);
     expect(elapsed).toBeLessThanOrEqual(CPU_KILL_BUDGET_S);
-    expect((await sbx.commands.run("sleep 3", { timeoutMs: COMMAND_TIMEOUT_MS })).exitCode).toBe(0);
+    expect(
+      (await sbx.commands.run(POST_KILL_COMMAND, { timeoutMs: COMMAND_TIMEOUT_MS })).exitCode,
+    ).toBe(0);
     expect((await sbx.runCode(BUSY_KERNEL_CELL)).text).toBe(BUSY_KERNEL_RESULT);
   });
 

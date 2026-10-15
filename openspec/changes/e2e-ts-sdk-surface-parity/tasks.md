@@ -9,7 +9,7 @@
 
 - [x] 2.1 `transport.e2e.test.ts` (mirror of M1).
 - [x] 2.2 `processes.e2e.test.ts` (mirror of M2, 6 tests).
-- [x] 2.3 `filesystem.e2e.test.ts` (mirror of M3, 5 tests).
+- [x] 2.3 `filesystem.e2e.test.ts` (mirror of M3, 6 tests).
 - [x] 2.4 `code.e2e.test.ts` (mirror of M4, 5 tests).
 - [x] 2.5 `hardening.e2e.test.ts` (`cpuTimeLimit` and `egress`).
 

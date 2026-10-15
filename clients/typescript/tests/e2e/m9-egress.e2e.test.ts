@@ -36,7 +36,6 @@ import {
   type IdlePolicyInput,
   type NetworkPolicyInput,
   Sandbox,
-  type SandboxInfo,
   SandboxNotFoundError,
   UnimplementedError,
 } from "../../src/index.js";
@@ -44,9 +43,11 @@ import {
   createTestSandbox,
   type E2EContext,
   e2eEnabled,
+  recordingControlPlane,
   seconds,
   TEST_SANDBOX_TIMEOUT_MS,
   useE2E,
+  waitForTerminalState,
   waitUntil,
 } from "./helpers.js";
 import { rayitoLogLines } from "./logs.js";
@@ -63,7 +64,6 @@ const COMMAND_TIMEOUT_MS = 60_000;
 const REFUSAL_BUDGET_S = 6;
 const POLICY_SETTLE_BUDGET_S = 1;
 const LOOPBACK_READY_BUDGET_MS = 30_000;
-const TERMINATED_BUDGET_MS = 60_000;
 const PROBE_PATH = "/home/user/egress_probe.py";
 const PAUSE_IDLE: IdlePolicyInput = { maxIdleSeconds: 300, autoResume: true };
 const SOCKS_PORT = 1080;
@@ -207,46 +207,6 @@ function note(label: string, value: string): void {
   console.log(`\n[m9-egress] ${label}: ${value}`);
 }
 
-interface RecordingControlPlane {
-  readonly plane: ControlPlane;
-  readonly launched: string[];
-  readonly terminated: string[];
-}
-
-/**
- * El plano real tras un `Proxy` que apunta qué MicroVMs se lanzaron y cuáles
- * se terminaron. El resto de métodos se enlaza al plano real (sus campos
- * privados no admiten otro `this`), así que un método nuevo de `ControlPlane`
- * no rompe el test.
- */
-function recordingControlPlane(inner: ControlPlane): RecordingControlPlane {
-  const launched: string[] = [];
-  const terminated: string[] = [];
-  const runMicrovm: ControlPlane["runMicrovm"] = async (request) => {
-    const info: SandboxInfo = await inner.runMicrovm(request);
-    launched.push(info.sandboxId);
-    return info;
-  };
-  const terminateMicrovm: ControlPlane["terminateMicrovm"] = (sandboxId) => {
-    terminated.push(sandboxId);
-    return inner.terminateMicrovm(sandboxId);
-  };
-  const overrides: ReadonlyMap<PropertyKey, unknown> = new Map<PropertyKey, unknown>([
-    ["runMicrovm", runMicrovm],
-    ["terminateMicrovm", terminateMicrovm],
-  ]);
-  const plane = new Proxy(inner, {
-    get(target, property) {
-      if (overrides.has(property)) {
-        return overrides.get(property);
-      }
-      const value: unknown = Reflect.get(target, property, target);
-      return typeof value === "function" ? value.bind(target) : value;
-    },
-  });
-  return { plane, launched, terminated };
-}
-
 interface EgressCreateOptions {
   readonly network?: NetworkPolicyInput;
   readonly allowInternetAccess?: boolean;
@@ -314,25 +274,6 @@ async function secondsUntilTcp(
 async function firstIpv4(hostname: string): Promise<string> {
   const { address } = await lookup(hostname, { family: 4 });
   return address;
-}
-
-/** `TERMINATED` (o ya desaparecido) dentro del plazo de D19. */
-async function waitTerminated(context: E2EContext, sandboxId: string): Promise<number> {
-  return waitUntil(
-    async () => {
-      try {
-        return (await context.controlPlane.getMicrovm(sandboxId)).state === "TERMINATED";
-      } catch (error) {
-        if (error instanceof SandboxNotFoundError) {
-          return true;
-        }
-        throw error;
-      }
-    },
-    TERMINATED_BUDGET_MS,
-    `${sandboxId} TERMINATED`,
-    1_000,
-  );
 }
 
 /** Las opciones de `create()` del shim con los topes de este fichero y los guardarraíles de `helpers.ts`. */
@@ -640,7 +581,7 @@ describe.skipIf(!m9Enabled)(
         expect(recording.terminated).toContain(sandboxId);
         note(
           `${sandboxId} -> TERMINATED`,
-          `${(await waitTerminated(e2e, sandboxId)).toFixed(2)} s`,
+          `${(await waitForTerminalState(sandboxId, e2e.controlPlane)).toFixed(2)} s`,
         );
       },
     );
@@ -660,7 +601,10 @@ describe.skipIf(!m9Enabled)(
       expect(recording.launched).toHaveLength(1);
       const sandboxId = recording.launched[0] as string;
       expect(recording.terminated).toContain(sandboxId);
-      note(`${sandboxId} -> TERMINATED`, `${(await waitTerminated(e2e, sandboxId)).toFixed(2)} s`);
+      note(
+        `${sandboxId} -> TERMINATED`,
+        `${(await waitForTerminalState(sandboxId, e2e.controlPlane)).toFixed(2)} s`,
+      );
     });
 
     test("updateNetwork with restrictions is UnimplementedError; an open policy is accepted", async () => {
