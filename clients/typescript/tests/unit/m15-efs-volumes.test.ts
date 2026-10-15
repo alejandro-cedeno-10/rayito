@@ -285,8 +285,12 @@ describe("planVolumes", () => {
     expect(() => plan(VALID_VOLUME, "base", [CONNECTOR])).toThrow(UnimplementedError);
   });
 
+  test("the caps image without efs-utils is rejected before launch", () => {
+    expect(() => plan(VALID_VOLUME, "base-caps", [CONNECTOR])).toThrow(/base-caps-efs/);
+  });
+
   test("a well-formed request returns the validated volumes", () => {
-    for (const variant of ["base-caps", "base-caps-efs", undefined]) {
+    for (const variant of ["base-caps-efs", undefined]) {
       const request = plan(VALID_VOLUME, variant, [CONNECTOR]);
       expect([...request.volumes.keys()]).toEqual(["/mnt/v"]);
       expect(request.volumes.get("/mnt/v")).toBe(VALID_VOLUME["/mnt/v"]);
@@ -305,8 +309,8 @@ describe("planVolumes", () => {
   ] as const)(
     "a volume without its connector (%s) is rejected naming the alternative",
     (_, egress) => {
-      expect(() => plan(VALID_VOLUME, "base-caps", egress)).toThrow(InvalidArgumentError);
-      expect(() => plan(VALID_VOLUME, "base-caps", egress)).toThrow(VPC_GUIDE);
+      expect(() => plan(VALID_VOLUME, "base-caps-efs", egress)).toThrow(InvalidArgumentError);
+      expect(() => plan(VALID_VOLUME, "base-caps-efs", egress)).toThrow(VPC_GUIDE);
     },
   );
 
@@ -314,13 +318,13 @@ describe("planVolumes", () => {
     "INTERNET_EGRESS",
     "arn:aws:lambda:us-east-1:aws:network-connector:aws-network-connector:INTERNET_EGRESS",
   ])("a volume combined with %s is rejected before launch (Q131)", (internet) => {
-    expect(() => plan(VALID_VOLUME, "base-caps", [CONNECTOR, internet])).toThrow(
+    expect(() => plan(VALID_VOLUME, "base-caps-efs", [CONNECTOR, internet])).toThrow(
       /INTERNET_EGRESS.*NAT.*transit gateway/,
     );
   });
 
   test("a volume with two own connectors is rejected", () => {
-    expect(() => plan(VALID_VOLUME, "base-caps", [CONNECTOR, `${CONNECTOR}-b`])).toThrow(
+    expect(() => plan(VALID_VOLUME, "base-caps-efs", [CONNECTOR, `${CONNECTOR}-b`])).toThrow(
       /un solo conector/,
     );
   });

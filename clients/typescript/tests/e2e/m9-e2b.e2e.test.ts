@@ -27,7 +27,8 @@ import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { beforeAll, describe, expect, test } from "vitest";
-import { SandboxError } from "../../src/index.js";
+import { Sandbox as ShimSandbox } from "../../src/e2b/index.js";
+import { SandboxError, UnimplementedError } from "../../src/index.js";
 import { generateAccessToken } from "../../src/payload.js";
 import { type E2EContext, e2eEnabled, useE2E } from "./helpers.js";
 
@@ -38,6 +39,10 @@ const CAP_PRELOAD = pathToFileURL(join(PACKAGE_DIR, "tests", "e2e", "e2b-corpus-
 const CAP_CHECK = join(PACKAGE_DIR, "tests", "e2e", "e2b-corpus-cap-check.mjs");
 const CAP_CHECK_OK = "corpus-cap ok";
 const PROGRAMS = [
+  "hello-run-code",
+  "commands",
+  "files",
+  "contexts",
   "create-info-list",
   "get-host",
   "watch-dir",
@@ -49,6 +54,7 @@ const PROGRAMS = [
 ] as const;
 const DOCS_PREFIX = "// Sigue https://docs.e2b.dev/";
 const ALLOWED_IMPORT = /^(?:rayito\/e2b|node:[a-z/_]+)$/;
+const CORPUS_MAX_LIFETIME_MS = 900_000;
 const BUILD_TIMEOUT_MS = 300_000;
 const PROGRAM_BUDGET_MS = 600_000;
 const OUTPUT_TAIL_LINES = 40;
@@ -164,6 +170,28 @@ describe.skipIf(!e2eEnabled())("m9 e2b corpus (node)", () => {
     expect(run.code, tail(run.stderr)).toBe(0);
     expect(run.stdout.trim().startsWith(CAP_CHECK_OK), tail(run.stdout)).toBe(true);
     report("cap", run.stdout.trim());
+  });
+
+  test("fork is UnimplementedError on a live sandbox and leaves it usable", async () => {
+    const sbx = await ShimSandbox.create({
+      template: context.templateArn,
+      maxLifetimeMs: CORPUS_MAX_LIFETIME_MS,
+      executionRoleArn: context.settings.executionRoleArn,
+      logging: context.settings.logging,
+      controlPlane: context.controlPlane,
+    });
+    context.created.push(sbx.native);
+    try {
+      const failure = await sbx.fork().then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+      expect(failure).toBeInstanceOf(UnimplementedError);
+      expect((failure as UnimplementedError).feature).toBe("fork");
+      expect((await sbx.runCode("1 + 1")).text).toBe("2");
+    } finally {
+      await sbx.kill();
+    }
   });
 
   test.each(PROGRAMS)("corpus program %s", async (program) => {
