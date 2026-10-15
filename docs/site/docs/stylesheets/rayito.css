@@ -539,7 +539,7 @@ body {
 /* ------------------------------------------------------------------ */
 
 .md-typeset .rx-steps,
-.md-typeset ol.rx-steps {
+.md-typeset div.rx-steps {
   list-style: none;
   margin: 1.2rem 0;
   padding: 0;
@@ -548,7 +548,7 @@ body {
   counter-reset: rx-step;
 }
 
-.md-typeset .rx-steps > li {
+.md-typeset .rx-steps > .rx-step {
   counter-increment: rx-step;
   position: relative;
   margin: 0;
@@ -559,7 +559,7 @@ body {
   background-color: var(--rx-surface);
 }
 
-.md-typeset .rx-steps > li::before {
+.md-typeset .rx-steps > .rx-step::before {
   content: counter(rx-step);
   position: absolute;
   left: var(--rx-s4);
@@ -572,15 +572,15 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
-.md-typeset .rx-steps > li > :first-child {
+.md-typeset .rx-steps > .rx-step > :first-child {
   margin-top: 0;
 }
 
-.md-typeset .rx-steps > li > :last-child {
+.md-typeset .rx-steps > .rx-step > :last-child {
   margin-bottom: 0;
 }
 
-.md-typeset .rx-steps > li h3 {
+.md-typeset .rx-steps > .rx-step h3 {
   margin: 0 0 var(--rx-s2);
   font-family: var(--rx-font-display);
   font-size: var(--rx-fs-h3);
@@ -1084,22 +1084,22 @@ body {
   }
 }
 
-.rx-section .rx-steps > li {
+.rx-section .rx-steps > .rx-step {
   padding: var(--rx-s6);
   padding-top: 3.6rem;
 }
 
-.rx-section .rx-steps > li::before {
+.rx-section .rx-steps > .rx-step::before {
   left: var(--rx-s6);
   top: var(--rx-s4);
   font-size: 2rem;
 }
 
-.rx-section .rx-steps > li p {
+.rx-section .rx-steps > .rx-step p {
   color: var(--rx-ink-2);
 }
 
-.rx-section .rx-steps > li pre {
+.rx-section .rx-steps > .rx-step pre {
   margin-block: var(--rx-s3);
 }
 
@@ -1287,7 +1287,7 @@ body {
   }
 }
 
-[dir] .md-typeset .rx-steps > li {
+[dir] .md-typeset .rx-steps > .rx-step {
   margin-inline: 0;
 }
 
@@ -1316,4 +1316,25 @@ body {
   .rx-split--stack .rx-split__copy li {
     max-width: 62rem;
   }
+}
+
+.rx-split--stack {
+  gap: var(--rx-s2);
+}
+
+.rx-split--stack .rx-split__copy > :last-child {
+  margin-bottom: 0;
+}
+
+.rx-split--stack .rx-split__code .tabbed-set {
+  margin-top: 0;
+}
+
+/* Código ancho: se desplaza dentro de su caja en vez de recortarse. */
+
+.rx-home .highlight,
+.rx-home .highlight pre,
+.rx-home pre {
+  overflow-x: auto;
+  max-width: 100%;
 }

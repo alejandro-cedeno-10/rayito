@@ -15,8 +15,8 @@ hide:
 # Sandboxes para agentes de IA, en tu propia cuenta de AWS { .rx-hero__title }
 
 Cada sandbox es un MicroVM de AWS Lambda aislado por hardware. El SDK llama
-directamente a la API de AWS con tus credenciales: con tus credenciales: sin servidor de Rayito ni API key,
-y con la API de E2B.
+directamente a la API de AWS con tus credenciales: sin servidor de Rayito ni API key,
+y con la misma API que E2B.
 { .rx-hero__lead }
 
 <div class="rx-hero__actions" markdown>
@@ -129,10 +129,10 @@ aproxima en silencio.
 
 ## Empieza en tres pasos
 
-<ol class="rx-steps" markdown>
-<li class="rx-step" markdown>
+<div class="rx-steps" markdown>
+<div class="rx-step" markdown>
 
-<h3>Instala el SDK</h3>
+### Instala el SDK
 
 Python ≥ 3.11 o Node ≥ 20. La CLI (`rayito doctor`) se instala con pip.
 
@@ -151,26 +151,27 @@ Python ≥ 3.11 o Node ≥ 20. La CLI (`rayito doctor`) se instala con pip.
 
 [Instalación](primeros-pasos/instalacion.md)
 
-</li>
-<li class="rx-step" markdown>
+</div>
+<div class="rx-step" markdown>
 
-<h3>Prepara tu cuenta, una vez</h3>
+### Prepara tu cuenta, una vez
 
 Unos 15 minutos, casi todos esperando a que AWS construya la imagen: pila de
 IAM, un bucket y la imagen `rayito-base`. Luego, el diagnóstico te dice qué
 falta.
 
 ```bash
-export AWS_PROFILE=<tu-perfil> AWS_REGION=us-east-1
+export AWS_PROFILE=<tu-perfil>
+export AWS_REGION=us-east-1
 rayito doctor --template rayito-base
 ```
 
 [Configurar AWS](primeros-pasos/configurar-aws.md)
 
-</li>
-<li class="rx-step" markdown>
+</div>
+<div class="rx-step" markdown>
 
-<h3>Lanza tu primer sandbox</h3>
+### Lanza tu primer sandbox
 
 Guarda el código del inicio en `primer.py` (o `primer.ts`) y ejecútalo.
 
@@ -188,8 +189,8 @@ Guarda el código del inicio en `primer.py` (o `primer.ts`) y ejecútalo.
 
 [Primer sandbox](quickstart.md)
 
-</li>
-</ol>
+</div>
+</div>
 
 </div>
 
