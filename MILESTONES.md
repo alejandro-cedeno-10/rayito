@@ -1896,6 +1896,62 @@ agente), publicadas con `--artifact-run-id` en paralelo:
 
 ---
 
+## 0.12.0 — Panel de gestión, catálogo de variantes de imagen y atajos de plantilla (2026-10-15)
+
+Publicada el 2026-10-15 en PyPI, npm y la GitHub Release `rayd-v0.12.0`
+(firmas de cosign, attestations de PyPI y proveniencia de npm verificadas con
+`docs/site/docs/verify.md`). Los cambios OpenSpec `dashboard`,
+`template-install-shortcuts`, `e2e-ts-sdk-surface-parity` y
+`parity-image-variants` se archivaron tras esta aceptación. Sigue abierto
+`m15-custom-domain` (ver 0.7.0).
+
+- **Panel de gestión** (ADR-026, #194, #195, #202, #203, #204 y #220, fases
+  0 a 3): los servicios `Quotas`, `UsageCost` y `Fleet`, `rayito dashboard`
+  (panel local de sólo lectura por defecto), la pila `dashboard` con las
+  variantes de autenticación `cognito-jwt` y `aws-iam`, y los extras
+  opcionales: dashboard de CloudWatch, varias cuentas por roles de sólo
+  lectura y avisos de cuota. Todo lo que cuesta va apagado por defecto.
+- **Catálogo cerrado de variantes de imagen y comprobaciones de paridad**
+  (#206): `resolve_image_variant` sólo interpreta las variantes oficiales y
+  `scripts/check_sdk_parity.py` compara los dos SDK en `make lint` y en CI.
+- **`Template.dnf_install()` y `Template.npm_install()`** (#210), sync y
+  async, en Python y TypeScript.
+- **Paridad de los e2e de TypeScript con los de Python** (#205, #218, #222).
+- **Rediseño de la landing y del manual**, con la portada animada (#211,
+  #215), y una ruta de primeros pasos más clara (#207).
+- **Seguridad**: `rustls` 0.23.46 por RUSTSEC-2026-0346 a 0349 (#208).
+  Fila 0.12 de compatibilidad en `rayito doctor` y en `limits.md` (#223).
+
+**Aceptación de la release (2026-10-15, cuenta de pruebas, us-east-1)**,
+sobre el árbol del PR de release, con `rayd` 0.12.0 compilado en la VM Linux
+e imágenes desechables propias de cada carril (base, caps, poly y caps con
+EFS):
+
+- Python: la regresión completa, corpus de E2B incluido, en verde (129
+  passed o más; los saltos son dominio propio, que la SCP de la cuenta
+  impide, y mediciones opcionales). TypeScript: en verde (109 passed o más).
+  Los casos de agente de los dos SDK sobre una imagen de `AgentTemplate`
+  propia, en verde.
+- El presupuesto de la negativa de egress, que falló en la regresión, se
+  ensanchó y se repitió en AWS (#222).
+- Panel: la variante `aws-iam` de la pila `dashboard` verificada en AWS real
+  (2026-10-14), sin tocar la VPC compartida de la cuenta.
+- Sobre el árbol etiquetado (`rayd-v0.12.0`): el `rayito-image.zip` firmado de la release, publicado como imagen
+  `rayito-base` (ver abajo), lanza y `rayito doctor --launch` termina 8 OK /
+  1 WARN / 0 FAIL / 1 SKIP (el WARN es la simulación IAM orientativa y el
+  SKIP, el bucket que no se pasó).
+- Coste: sólo imágenes desechables, MicroVM-segundos y las pilas opcionales
+  de las pruebas, todo borrado al terminar; Cost Explorer llega con
+  retraso, así que la cifra facturada no está todavía.
+- Limpieza: sólo se borró lo creado por cada ejecución; el inventario
+  final no tiene nada de los prefijos de la release.
+
+**Imagen publicada (2026-10-15)**: `rayito-base` **36.0** desde el zip de la
+release `rayd-v0.12.0` (`rayito image publish --base-image-version 1`),
+`SUCCESSFUL` y `ACTIVE`. La 20.0 se queda como estaba.
+
+---
+
 ## Orden de trabajo dentro de cada hito
 
 1. Escribir el test de aceptación primero. Debe fallar.
