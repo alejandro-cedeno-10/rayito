@@ -308,7 +308,10 @@ cargo publish --dry-run -p rayito-proto
    `package.json`— y los `extra-files`: `src/rayito/_version.py`,
    `src/version.ts`, `Cargo.toml` y las entradas de rayd, rayd-core y
    rayito-proto en `Cargo.lock`). Además regenera `clients/python/uv.lock`,
-   convierte el `## [Unreleased]` escrito a mano durante el ciclo en
+   rehace los activos de las pilas con `scripts/gen_stack_assets.py` (los
+   zips de `dashboard` y `quota-alerts` empaquetan el SDK y con él su
+   versión, así que sin regenerarlos `gen_stack_assets.py --check` falla en
+   el PR de release), convierte el `## [Unreleased]` escrito a mano durante el ciclo en
    `## [x.y.z] - fecha` (descartando las notas que genera release-please),
    pone al día los enlaces de comparación del pie de cada CHANGELOG
    (`[Unreleased]: …/compare/<tag x.y.z>...HEAD` y
@@ -316,8 +319,10 @@ cargo publish --dry-run -p rayito-proto
    único commit firmado: el ruleset de `main` exige firmas y los commits que
    crea release-please por la API no lo están.
    - **Guarda**: antes de commitear, `git diff --name-only origin/main` debe
-     quedar dentro de manifiesto, ficheros de versión, lockfiles y
-     CHANGELOG; también aborta si release-please movió un fichero que la
+     quedar dentro de manifiesto, ficheros de versión, lockfiles,
+     CHANGELOG y los ficheros generados de las pilas (los directorios de
+     plantillas y artefactos de `clients/python/src/rayito/_stacks/` y
+     `clients/typescript/src/stacks/templates/`); también aborta si release-please movió un fichero que la
      configuración no explica, o si un fichero de versión que `main` no
      tocó desde la base de release-please no queda idéntico al de su rama
      (contraste de los actualizadores con los de release-please). En todos

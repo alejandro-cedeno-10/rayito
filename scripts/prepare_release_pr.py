@@ -30,6 +30,13 @@ quedan siempre a mano (lo aprendido en 0.3.0, 0.3.1, 0.3.2 y 0.5.1):
    desde la base de release-please debe quedar idéntico al de su rama; si
    no, aborta sin tocar el remoto.
 
+5. **Activos de las pilas**: los zips de `dashboard` y `quota-alerts`
+   empaquetan el código del SDK, que lleva la versión, así que subirla deja
+   `scripts/gen_stack_assets.py --check` en rojo. Tras mover las versiones se
+   ejecuta ese script y la guarda admite sus ficheros generados (los
+   directorios de plantillas y artefactos de las pilas de los dos SDK); ni
+   release-please ni nadie más puede cambiarlos por esa puerta.
+
 Uso (desde la raíz del repositorio, con la firma SSH configurada):
 
     python scripts/prepare_release_pr.py            # prepara, firma y sube
@@ -64,6 +71,15 @@ DEFAULT_CHANGELOG = "CHANGELOG.md"
 CARGO_LOCK = "Cargo.lock"
 UV_LOCK = "uv.lock"
 COMPAT_TABLE = "clients/python/src/rayito/cli/_compat.py"
+STACK_ASSETS_SCRIPT = "scripts/gen_stack_assets.py"
+#: Directorios cuyo contenido sólo escribe `gen_stack_assets.py`: las
+#: plantillas y los zips de las pilas del SDK de Python y las plantillas
+#: generadas del de TypeScript.
+STACK_ASSET_DIRS = (
+    "clients/python/src/rayito/_stacks/_templates/",
+    "clients/python/src/rayito/_stacks/_artifacts/",
+    "clients/typescript/src/stacks/templates/",
+)
 UNRELEASED = "## [Unreleased]\n"
 UNRELEASED_LINK = re.compile(
     r"^\[Unreleased\]: (?P<base>\S+)/compare/(?P<previous>\S+)\.\.\.HEAD$",
@@ -380,9 +396,18 @@ def has_compat_row(compat_source: str, version: str) -> bool:
     )
 
 
-def unexpected_paths(changed: set[str], allowed: frozenset[str]) -> list[str]:
-    """Rutas cambiadas que una release no debería tocar, ordenadas."""
-    return sorted(changed - allowed)
+def unexpected_paths(
+    changed: set[str],
+    allowed: frozenset[str],
+    allowed_dirs: tuple[str, ...] = (),
+) -> list[str]:
+    """Rutas cambiadas que una release no debería tocar, ordenadas: las que
+    no están en `allowed` ni cuelgan de uno de `allowed_dirs`."""
+    return sorted(
+        path
+        for path in changed - allowed
+        if not path.startswith(allowed_dirs)
+    )
 
 
 def parse_trailers(cli: list[str], env: str) -> list[str]:
@@ -456,6 +481,12 @@ def refresh_lockfile(package: Package) -> None:
     subprocess.run(list(command), cwd=package.path or ".", check=True)
 
 
+def regenerate_stack_assets() -> None:
+    """Rehace las plantillas y los zips de las pilas con la versión nueva ya
+    escrita en el árbol (el zip lleva el código del SDK)."""
+    subprocess.run([sys.executable, STACK_ASSETS_SCRIPT], check=True)
+
+
 # --- pasos -------------------------------------------------------------------
 
 
@@ -468,6 +499,7 @@ def apply_release(plan: ReleasePlan, manifest: dict, version: str, date: str) ->
             bump_version_file(path.read_text(encoding="utf-8"), entry, version),
             encoding="utf-8",
         )
+    regenerate_stack_assets()
     for package in plan.packages:
         if package.release_type in LOCK_COMMANDS:
             refresh_lockfile(package)
@@ -517,9 +549,9 @@ def check_bumps_match_release_please(plan: ReleasePlan) -> None:
 
 def check_release_scope(plan: ReleasePlan) -> list[str]:
     """La guarda: el commit sólo puede diferir de `origin/main` en versiones,
-    lockfiles y CHANGELOG. Devuelve las rutas a commitear."""
+    lockfiles, CHANGELOG y los activos generados de las pilas. Devuelve las rutas a commitear."""
     changed = changed_paths(MAIN_REF)
-    unexpected = unexpected_paths(changed, plan.allowed_paths)
+    unexpected = unexpected_paths(changed, plan.allowed_paths, STACK_ASSET_DIRS)
     if unexpected:
         raise ReleaseError(
             f"el commit de release cambiaría ficheros ajenos a la release respecto a "
