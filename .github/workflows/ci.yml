@@ -56,6 +56,8 @@ jobs:
           # vacío en PRs desde forks (scripts/check_hygiene.py, regla 13).
           RAYITO_HYGIENE_DENYLIST: ${{ secrets.RAYITO_HYGIENE_DENYLIST }}
         run: python3 scripts/check_hygiene.py
+      - name: dashboard screenshots carry no metadata and stay under the size limit
+        run: python3 scripts/check_dashboard_images.py
       - uses: bufbuild/buf-action@85aebf73123b5c15fd5528aaecbf9129cddf7fa7 # v1.6.0
         with:
           version: 1.73.0

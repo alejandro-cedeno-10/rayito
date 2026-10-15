@@ -192,6 +192,7 @@ lint:
 	@if command -v actionlint >/dev/null 2>&1; then actionlint -no-color; else echo "lint: actionlint no está en el PATH (release 1.7.12: https://github.com/rhysd/actionlint/releases); se omiten los workflows"; fi
 	python scripts/check_pins.py
 	python scripts/check_hygiene.py
+	python scripts/check_dashboard_images.py
 	uvx ruff==0.16.7 check scripts
 	python scripts/gen_limits.py --check
 	python scripts/check_sdk_parity.py

@@ -333,6 +333,63 @@ operador, o de otra si se usó `--allow-remote`— tiene el mismo acceso al
 sandbox que el operador. Un sandbox `SUSPENDED` con auto-resume se despierta con la
 primera petición que le llega (factura cómputo, como cualquier reanudación).
 
+## Panel de gestión local (`rayito dashboard`) { #panel-de-gestion-local }
+
+`rayito dashboard` ([guía](funciones-opcionales/panel-de-gestion.md#panel-web-local))
+sirve una página y una API JSON en `127.0.0.1` con **tus** credenciales de
+AWS. Cualquier web que abras en el mismo navegador podría intentar usarlas,
+así que el servidor acota el cuerpo (64 KiB como máximo, `413` si lo supera) y
+aplica después, en este orden y antes de interpretarlo:
+
+- **`Host` y `Origin`**: la misma lista que el proxy local
+  (`127.0.0.1`, `localhost` y `[::1]` con el puerto del panel). Un `Host`
+  ajeno es `421` (DNS rebinding); un `Origin` presente y ajeno, incluido
+  `null`, es `403`.
+- **Sesión**: la URL de arranque lleva un token de un solo uso (con
+  caducidad) que el servidor cambia por una cookie `HttpOnly`,
+  `SameSite=Strict`, `Path=/` y redirige a la URL limpia con
+  `Referrer-Policy: no-referrer`. El nombre de la cookie incluye el puerto,
+  porque las cookies no se aíslan por puerto. Sin la cookie no responde
+  nada, ni la página ni los ficheros estáticos.
+- **`Sec-Fetch-Site`**: en `/api/v1`, si el navegador manda la cabecera y no
+  vale `same-origin` ni `none`, la petición es `403`. Cubre lo que `Origin`
+  no ve: un `<img>` o una navegación desde la web que sirve un sandbox con
+  `rayito sandbox proxy` en `127.0.0.1:<otro puerto>` es `same-site`,
+  comparte el tarro de cookies y no manda `Origin`. Además, el proxy no
+  reenvía al sandbox las cookies `rayito_dashboard_*`.
+- **CSRF**: todo `POST` exige `Content-Type: application/json` (una web
+  ajena no lo puede mandar sin preflight) y la cabecera `X-Rayito-CSRF` con
+  el token de la sesión, que sólo se entrega a quien ya tiene la cookie. La
+  consulta de coste facturado (`GET /api/v1/cost?billed=true`) también exige
+  el token, porque aunque sea un `GET` cuesta dinero cada vez.
+- **Sólo lectura por defecto**: sin `--allow-actions` el servidor rechaza
+  cualquier acción con `403` antes de tocar AWS. Con la opción, cada acción
+  exige `"confirm": true`, se valida (ids, tope por petición) y entra en una
+  cola con un solo trabajador que respeta el TPS.
+- **Navegador**: CSP sin `unsafe-inline` ni `unsafe-eval` (la página son
+  módulos y hojas de estilo del propio origen), `nosniff`, `no-store`,
+  `X-Frame-Options: DENY` y `Cross-Origin-Resource-Policy: same-origin`. La
+  página escribe todo con `textContent`: ningún dato de AWS ni ninguna línea
+  de log se interpreta como HTML.
+- **Tema y logo de usuario**: se validan antes de arrancar (claves cerradas,
+  valores de color, longitud y fuente con gramática estricta, SVG sin código
+  ni referencias externas), el CSS lo genera el panel desde los valores
+  validados y se sirve del mismo origen bajo la misma CSP; el logo, además,
+  con una CSP propia (`default-src 'none'`, `sandbox`).
+- **Qué no sale**: ni tokens, JWE, `envs` o `runHookPayload` (no existen en
+  el modelo), ni el mensaje de AWS en los errores (sólo su código), ni la
+  URL con el token en ningún log. El servidor no registra peticiones.
+- **Coste**: el coste facturado (Cost Explorer, de pago) sólo se consulta
+  con `--cost-explorer`, al pulsar el botón y con el token CSRF.
+
+Riesgo residual: mientras el panel corre, cualquier proceso **de tu máquina**
+que lea la URL impresa (por ejemplo desde el historial del terminal antes de
+gastarla) o que obtenga la cookie tiene el mismo acceso que tú; el token se
+gasta en el primer uso. Con `--allow-actions` eso incluye matar sandboxes.
+Los logs de un sandbox son lo que ese sandbox escribió y se muestran tal
+cual (como en `rayito sandbox logs`): si tu código imprime secretos, el panel
+los mostrará.
+
 ## Agente de código dentro del sandbox
 
 Resumen de **T29** y **T30** de

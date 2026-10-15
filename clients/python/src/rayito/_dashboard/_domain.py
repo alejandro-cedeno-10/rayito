@@ -524,6 +524,10 @@ class TtlCache(Generic[K, V]):
             while len(self._entries) > self._max_entries:
                 del self._entries[next(iter(self._entries))]
 
+    def clear(self) -> None:
+        with self._lock:
+            self._entries.clear()
+
     def __len__(self) -> int:
         with self._lock:
             return len(self._entries)

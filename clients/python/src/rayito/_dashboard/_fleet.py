@@ -184,7 +184,7 @@ class Fleet:
                 "Fleet.run_bulk: las acciones están desactivadas; crea Fleet(allow_actions=True)"
             )
         _validate_action(action)
-        ids = _validated_ids(sandbox_ids)
+        ids = validated_sandbox_ids(sandbox_ids)
         plan = plan_bulk(action, len(ids), applied_rate)
         bucket = TokenBucket(plan.tps, clock=self._monotonic, sleep=self._sleep)
         results: list[BulkItemResult] = []
@@ -228,7 +228,7 @@ def _validate_action(action: str) -> None:
         raise InvalidArgumentException(f"action: {action!r} no es válida (admitidas: {admitted})")
 
 
-def _validated_ids(sandbox_ids: Iterable[str]) -> tuple[str, ...]:
+def validated_sandbox_ids(sandbox_ids: Iterable[str]) -> tuple[str, ...]:
     ids = tuple(dict.fromkeys(sandbox_ids))
     if not ids:
         raise InvalidArgumentException("sandbox_ids no puede estar vacío")

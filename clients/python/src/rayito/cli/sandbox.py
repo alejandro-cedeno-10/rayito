@@ -23,13 +23,7 @@ from typing import Annotated, Any, NoReturn
 import typer
 
 from rayito._authority import is_wildcard
-from rayito._index import DynamoDbIndex
-from rayito._limits import MICROVM_STATES, TERMINAL_STATES
-from rayito._models import SandboxInfo, SandboxListItem, SandboxMetrics
-from rayito._payload import generate_access_token
-from rayito.cli import _proxy
-from rayito.cli._console import EXIT_USAGE, age, echo, emit_json, fail, iso_utc, table
-from rayito.cli._logs import (
+from rayito._cloudwatch_logs import (
     DEFAULT_EVENT_LIMIT,
     FALLBACK_WARNING,
     LogsNotFound,
@@ -41,6 +35,12 @@ from rayito.cli._logs import (
     iter_events,
     parse_since,
 )
+from rayito._index import DynamoDbIndex
+from rayito._limits import MICROVM_STATES, TERMINAL_STATES
+from rayito._models import SandboxInfo, SandboxListItem, SandboxMetrics
+from rayito._payload import generate_access_token
+from rayito.cli import _proxy
+from rayito.cli._console import EXIT_USAGE, age, echo, emit_json, fail, iso_utc, table
 from rayito.cli._session import Clients, clients_of, json_mode
 from rayito.cli._terminal import EXIT_TIMEOUT, run_terminal
 from rayito.cli._tokens import (

@@ -188,8 +188,10 @@ GROUPS: tuple[tuple[str, ...], ...] = (
         # AWS_API_NOTES.md §11, defaults per region class), the warning
         # fractions of allocated memory against the quota, the Cost Explorer
         # cache TTL and the documented compute prices that back the
-        # per-sandbox estimate (AWS_API_NOTES.md §12, us-east-1 ARM). Not AWS
-        # properties except the catalog and the prices.
+        # per-sandbox estimate (AWS_API_NOTES.md §12, us-east-1 ARM), and the
+        # price of one paid Cost Explorer request (AWS Cost Explorer pricing
+        # page, checked 2026-10-13, AWS_API_NOTES.md §12). Not AWS properties
+        # except the catalog and the prices.
         "largeQuotaRegions",
         "quotaServiceCode",
         "quotaNames",
@@ -203,9 +205,36 @@ GROUPS: tuple[tuple[str, ...], ...] = (
         "costCacheMaxEntries",
         "costExplorerRegion",
         "costExplorerServiceName",
+        "costExplorerRequestPriceUsd",
         "computePriceUsdPerVcpuSecond",
         "computePriceUsdPerGbSecond",
+        "snapshotWritePriceUsdPerGb",
+        "snapshotReadPriceUsdPerGb",
+        "snapshotStoragePriceUsdPerGbMonth",
         "baselineMibPerVcpu",
+    ),
+    (
+        # dashboard, local shell (ADR-026, phase 1b): entropy and lifetime of
+        # the one-time start token, request body and socket timeouts of the
+        # loopback server, the read cache that keeps several open tabs from
+        # multiplying `ListMicrovms` calls, the polling interval the SPA
+        # receives from `/api/v1/meta`, the bulk-action and log bounds, and
+        # the size caps of a user theme file and logo. Not AWS properties.
+        "dashboardSessionTokenBytes",
+        "dashboardStartTokenTtlSeconds",
+        "dashboardRequestMaxBodyBytes",
+        "dashboardRequestTimeoutSeconds",
+        "dashboardReadCacheSeconds",
+        "dashboardPollIntervalSeconds",
+        "dashboardJobPollIntervalSeconds",
+        "dashboardBulkMaxSandboxes",
+        "dashboardJobsRetained",
+        "dashboardJobsActiveMax",
+        "dashboardEventsMaxLimit",
+        "dashboardLogsMaxLines",
+        "dashboardLogLineMaxChars",
+        "dashboardThemeMaxBytes",
+        "dashboardLogoMaxBytes",
     ),
     (
         # ai-agent-fast-start (design.md §6, option A): the prefetch daemon

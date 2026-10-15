@@ -210,6 +210,7 @@ nav:
           - Shim E2B: referencia/python/shim-e2b.md
       - TypeScript: referencia/typescript.md
       - CLI: cli.md
+      - API del panel de gestión: referencia/api-del-panel.md
       - Errores: referencia/errores.md
       - Variables de entorno: referencia/variables-de-entorno.md
       - Límites: limits.md
