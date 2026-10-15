@@ -77,7 +77,9 @@ plugins:
   - search:
       lang: es
   # Sirve las fuentes desde el propio sitio: sin peticiones a terceros.
-  # RAYITO_DOCS_PRIVACY=false lo apaga para compilar sin red.
+  # RAYITO_DOCS_PRIVACY=false lo apaga para compilar sin red. Sólo para
+  # vistas previas locales: nunca para publicar, porque la fuente de títulos
+  # (overrides/main.html) se pediría entonces a un tercero en tiempo de lectura.
   - privacy:
       enabled: !ENV [RAYITO_DOCS_PRIVACY, true]
   - mkdocstrings:

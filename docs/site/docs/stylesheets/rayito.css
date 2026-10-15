@@ -1304,3 +1304,16 @@ body {
 .rx-home {
   padding-top: 0;
 }
+
+/* Agente: código a ancho completo bajo el texto */
+
+@media screen and (min-width: 60em) {
+  .rx-split--stack {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .rx-split--stack .rx-split__copy p,
+  .rx-split--stack .rx-split__copy li {
+    max-width: 62rem;
+  }
+}

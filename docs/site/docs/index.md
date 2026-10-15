@@ -10,13 +10,13 @@ hide:
 <div class="rx-hero" markdown>
 <div class="rx-hero__copy" markdown>
 
-[Nuevo en 0.11: el agente arranca en unos 6 s](novedades/0.11.0.md){ .rx-pill }
+[Nuevo en 0.11: la imagen del agente de IA arranca en unos 6 s](novedades/0.11.0.md){ .rx-pill }
 
 # Sandboxes para agentes de IA, en tu propia cuenta de AWS { .rx-hero__title }
 
 Cada sandbox es un MicroVM de AWS Lambda aislado por hardware. El SDK llama
-directamente a la API de AWS con tus credenciales: sin servidor de Rayito,
-sin API key y con la API de E2B.
+directamente a la API de AWS con tus credenciales: con tus credenciales: sin servidor de Rayito ni API key,
+y con la API de E2B.
 { .rx-hero__lead }
 
 <div class="rx-hero__actions" markdown>
@@ -65,7 +65,7 @@ sin API key y con la API de E2B.
 </div>
 </div>
 
-<div class="rx-ruler" role="img" aria-label="Tiempos medidos: resume 0,38 s; pool.take 0,77 s; agente listo 2,3 s; kernel listo 5,2 s">
+<div class="rx-ruler" role="img" aria-label="Tiempos medidos: resume 0,38 s; pool.take 0,77 s; listo para comandos 2,3 s; kernel listo 5,2 s">
 <div class="rx-ruler__track">
 <span class="rx-ruler__tick" style="--at:0%"><span>0 s</span></span>
 <span class="rx-ruler__tick" style="--at:16.667%"><span>1 s</span></span>
@@ -76,10 +76,10 @@ sin API key y con la API de E2B.
 <span class="rx-ruler__tick" style="--at:100%"><span>6 s</span></span>
 <span class="rx-ruler__mark rx-ruler__mark--up" style="--at:6.3%; --i:0"><span class="rx-ruler__value">0,38 s</span><span class="rx-ruler__label"><code>resume()</code></span></span>
 <span class="rx-ruler__mark rx-ruler__mark--down" style="--at:12.8%; --i:1"><span class="rx-ruler__value">0,77 s</span><span class="rx-ruler__label"><code>pool.take()</code></span></span>
-<span class="rx-ruler__mark rx-ruler__mark--up" style="--at:38.3%; --i:2"><span class="rx-ruler__value">2,3 s</span><span class="rx-ruler__label">agente listo</span></span>
+<span class="rx-ruler__mark rx-ruler__mark--up" style="--at:38.3%; --i:2"><span class="rx-ruler__value">2,3 s</span><span class="rx-ruler__label">listo para comandos</span></span>
 <span class="rx-ruler__mark rx-ruler__mark--down rx-ruler__mark--end" style="--at:86.7%; --i:3"><span class="rx-ruler__value">5,2 s</span><span class="rx-ruler__label">kernel listo</span></span>
 </div>
-<p class="rx-ruler__note">Medianas medidas en AWS real (us-east-1, 2026-09). Detalle en <a href="cost.md#tiempos">Tiempos</a>.</p>
+<p class="rx-ruler__note">Medianas medidas en AWS real (us-east-1, 2026-09). Detalle en <a href="cost/#tiempos">Tiempos</a>.</p>
 </div>
 
 <div class="rx-hooks" markdown>
@@ -134,11 +134,20 @@ aproxima en silencio.
 
 <h3>Instala el SDK</h3>
 
-Python ≥ 3.11 o Node ≥ 20. La CLI es Python.
+Python ≥ 3.11 o Node ≥ 20. La CLI (`rayito doctor`) se instala con pip.
 
-```bash
-pip install "rayito[cli]"
-```
+=== "Python"
+
+    ```bash
+    pip install "rayito[cli]"
+    ```
+
+=== "TypeScript"
+
+    ```bash
+    pnpm add rayito
+    pip install "rayito[cli]"  # sólo para la CLI
+    ```
 
 [Instalación](primeros-pasos/instalacion.md)
 
@@ -163,12 +172,19 @@ rayito doctor --template rayito-base
 
 <h3>Lanza tu primer sandbox</h3>
 
-Comandos, ficheros, código y reconexión desde otro proceso, en Python,
-Python async y TypeScript.
+Guarda el código del inicio en `primer.py` (o `primer.ts`) y ejecútalo.
 
-```bash
-python primer.py
-```
+=== "Python"
+
+    ```bash
+    python primer.py
+    ```
+
+=== "TypeScript"
+
+    ```bash
+    npx tsx primer.ts
+    ```
 
 [Primer sandbox](quickstart.md)
 
@@ -177,7 +193,7 @@ python primer.py
 
 </div>
 
-<div class="rx-section rx-split" markdown>
+<div class="rx-section rx-split rx-split--stack" markdown>
 <div class="rx-split__copy" markdown>
 
 ## Un agente de código dentro del sandbox
@@ -406,56 +422,56 @@ us-east-1, precios de lista consultados el 2026-10-06.
 
 <div class="rx-incluye" markdown>
 
-## Qué incluye
+??? info "Qué incluye: todas las superficies"
 
-| Superficie | Qué hace | Guía |
-|---|---|---|
-| `Sandbox.create / connect / kill / list / get_info` | ciclo de vida del MicroVM, metadatos y plazos | [Ciclo de vida](guias/ciclo-de-vida.md) |
-| `pause()` / `resume()`, `IdlePolicy` | suspender y reanudar con todo el estado vivo | [Pausar y reanudar](guias/pausar-reanudar.md) |
-| `timeout`, `max_lifetime`, `on_timeout`, `set_timeout()` | un plazo que `rayd` impone aunque tu proceso muera | [Plazo del servidor](lifecycle.md) |
-| `sbx.commands` | procesos en primer y segundo plano, `stdin`, `kill`, reconexión | [Comandos](guias/comandos.md) |
-| `sbx.run_code` | kernel Jupyter con estado, resultados, logs, errores y gráficos | [Ejecutar código](guias/ejecutar-codigo.md) |
-| `run_code(language="bash" / "javascript" / "typescript")` | kernels bash y Deno en `rayito-base-poly` | [Lenguajes y kernels](kernels.md) |
-| `sbx.pty` | terminales reales con `resize` y reconexión | [Terminal (PTY)](guias/terminal-pty.md) |
-| `sbx.files` | leer, escribir, listar y vigilar; ficheros grandes y URLs firmadas por S3 | [Ficheros y S3](files.md) |
-| `sbx.get_host(port)` | acceso HTTP a un puerto del sandbox | [Puertos y host](guias/puertos-y-host.md) |
-| `network=`, `allow_internet_access=False` | política de salida a internet de E2B en `rayito-base-caps` | [Red saliente](network.md) |
-| `SandboxPool` | sandboxes en menos de un segundo desde un pool de suspendidos | [Pool](pool.md) |
-| `persist=`, `reincarnate()` | el `HOME` en S3, más allá de las 8 h | [Persistencia](persistence.md) |
-| `get_metrics_history()`, `Sandbox.paginate()` | historial de métricas y listado reanudable | [Métricas y listado](observability.md) |
-| `sbx.git` | la API git de E2B | [Git](git.md) |
-| `sbx.agent` | un agente de código (OpenCode o deepagents) dentro del sandbox, con el modelo tras la pasarela de secretos | [Agente en el sandbox](guias/agente-en-el-sandbox.md) |
-| `rayito.e2b`, `rayito/e2b` | el SDK de E2B 2.x cambiando sólo el import | [Migrar desde E2B](migrar-desde-e2b/index.md) |
-| `rayito-mcp` | un sandbox para Claude Code, Cursor o VS Code por MCP | [Servidor MCP](mcp.md) |
-| LangChain, Vercel AI SDK | Rayito como herramienta de un agente que corre fuera del sandbox | [LangChain y Vercel AI](guias/langchain-y-vercel-ai.md) |
-| `rayito` (CLI) | publicar la imagen, diagnosticar la cuenta, operar sandboxes y pilas | [CLI](cli.md) |
-| `make local-up`, `make local-e2e` | probar los SDK contra un `rayd` real y un AWS emulado, sin cuenta | [Probar en local](guias/probar-en-local.md) |
+    | Superficie | Qué hace | Guía |
+    |---|---|---|
+    | `Sandbox.create / connect / kill / list / get_info` | ciclo de vida del MicroVM, metadatos y plazos | [Ciclo de vida](guias/ciclo-de-vida.md) |
+    | `pause()` / `resume()`, `IdlePolicy` | suspender y reanudar con todo el estado vivo | [Pausar y reanudar](guias/pausar-reanudar.md) |
+    | `timeout`, `max_lifetime`, `on_timeout`, `set_timeout()` | un plazo que `rayd` impone aunque tu proceso muera | [Plazo del servidor](lifecycle.md) |
+    | `sbx.commands` | procesos en primer y segundo plano, `stdin`, `kill`, reconexión | [Comandos](guias/comandos.md) |
+    | `sbx.run_code` | kernel Jupyter con estado, resultados, logs, errores y gráficos | [Ejecutar código](guias/ejecutar-codigo.md) |
+    | `run_code(language="bash" / "javascript" / "typescript")` | kernels bash y Deno en `rayito-base-poly` | [Lenguajes y kernels](kernels.md) |
+    | `sbx.pty` | terminales reales con `resize` y reconexión | [Terminal (PTY)](guias/terminal-pty.md) |
+    | `sbx.files` | leer, escribir, listar y vigilar; ficheros grandes y URLs firmadas por S3 | [Ficheros y S3](files.md) |
+    | `sbx.get_host(port)` | acceso HTTP a un puerto del sandbox | [Puertos y host](guias/puertos-y-host.md) |
+    | `network=`, `allow_internet_access=False` | política de salida a internet de E2B en `rayito-base-caps` | [Red saliente](network.md) |
+    | `SandboxPool` | sandboxes en menos de un segundo desde un pool de suspendidos | [Pool](pool.md) |
+    | `persist=`, `reincarnate()` | el `HOME` en S3, más allá de las 8 h | [Persistencia](persistence.md) |
+    | `get_metrics_history()`, `Sandbox.paginate()` | historial de métricas y listado reanudable | [Métricas y listado](observability.md) |
+    | `sbx.git` | la API git de E2B | [Git](git.md) |
+    | `sbx.agent` | un agente de código (OpenCode o deepagents) dentro del sandbox, con el modelo tras la pasarela de secretos | [Agente en el sandbox](guias/agente-en-el-sandbox.md) |
+    | `rayito.e2b`, `rayito/e2b` | el SDK de E2B 2.x cambiando sólo el import | [Migrar desde E2B](migrar-desde-e2b/index.md) |
+    | `rayito-mcp` | un sandbox para Claude Code, Cursor o VS Code por MCP | [Servidor MCP](mcp.md) |
+    | LangChain, Vercel AI SDK | Rayito como herramienta de un agente que corre fuera del sandbox | [LangChain y Vercel AI](guias/langchain-y-vercel-ai.md) |
+    | `rayito` (CLI) | publicar la imagen, diagnosticar la cuenta, operar sandboxes y pilas | [CLI](cli.md) |
+    | `make local-up`, `make local-e2e` | probar los SDK contra un `rayd` real y un AWS emulado, sin cuenta | [Probar en local](guias/probar-en-local.md) |
 
-Funciones opcionales, todas apagadas por defecto hasta que pasas su opción
-(o, en las que son sólo de la CLI, ejecutas su orden):
+    Funciones opcionales, todas apagadas por defecto hasta que pasas su opción
+    (o, en las que son sólo de la CLI, ejecutas su orden):
 
-| Superficie | Qué hace | Guía |
-|---|---|---|
-| `secrets=`, `SecretStore` | secretos de AWS Secrets Manager como variables de entorno | [Secretos](secrets.md) |
-| `gateways=`, `SecretGateway` | usar un secreto desde el sandbox sin poder leerlo | [Pasarela de secretos](funciones-opcionales/pasarela-de-secretos.md) |
-| `mounts=`, `S3Mount` | un bucket S3 como carpeta del sandbox | [Montajes S3](funciones-opcionales/montajes-s3.md) |
-| `size=` | sandboxes de 512 MiB a 8 GiB desde imágenes por tamaño | [Tamaños](funciones-opcionales/tamanos.md) |
-| `events=`, `LifecycleEvents` | eventos de ciclo de vida y webhooks con la firma de E2B | [Eventos y webhooks](funciones-opcionales/eventos-y-webhooks.md) |
-| `telemetry=`, `TelemetryExport` | métricas del sandbox por OTLP a CloudWatch | [Exportación OTLP](funciones-opcionales/exportacion-otlp.md) |
-| `tracer_provider=` | spans OpenTelemetry del lado del SDK | [OpenTelemetry](funciones-opcionales/opentelemetry.md) |
-| `index=DynamoDbIndex(...)` | filtrar por metadatos también sandboxes en pausa | [Índice de metadatos](funciones-opcionales/indice-de-metadatos.md) |
-| `Template.build()` | imágenes desde el DSL `Template` de E2B | [Templates](funciones-opcionales/templates.md) |
-| `AgentTemplate`, `rayito agent template build` | la imagen `rayito-agent` con OpenCode, ripgrep y deepagents | [Templates de agente](funciones-opcionales/templates-de-agente.md) |
-| `PoolConfig(warmup=agent_pool_warmup(...))` | plazas del pool con el agente ya calentado (arranque rápido, opcional) | [Pool](pool.md#calentamiento-warmup) |
-| `OptionalStacks`, `rayito stack` | desplegar, consultar y borrar la infraestructura de cada función | [Pilas opcionales](funciones-opcionales/pilas-opcionales.md) |
-| `rayito sandbox proxy` | un puerto del sandbox en `http://127.0.0.1` de tu máquina | [Proxy local](funciones-opcionales/proxy-local.md) |
-| `volumes=`, `VolumeStore`, `EfsVolumes` (experimental) | un sistema de ficheros EFS compartido en vivo entre sandboxes, en tu VPC | [Volúmenes EFS](funciones-opcionales/volumenes-efs.md) |
-| `domain=`, `CustomDomain`, `rayito domain` (experimental) | una URL HTTPS bajo tu dominio para un puerto del sandbox | [Dominio propio](funciones-opcionales/dominio-propio.md) |
+    | Superficie | Qué hace | Guía |
+    |---|---|---|
+    | `secrets=`, `SecretStore` | secretos de AWS Secrets Manager como variables de entorno | [Secretos](secrets.md) |
+    | `gateways=`, `SecretGateway` | usar un secreto desde el sandbox sin poder leerlo | [Pasarela de secretos](funciones-opcionales/pasarela-de-secretos.md) |
+    | `mounts=`, `S3Mount` | un bucket S3 como carpeta del sandbox | [Montajes S3](funciones-opcionales/montajes-s3.md) |
+    | `size=` | sandboxes de 512 MiB a 8 GiB desde imágenes por tamaño | [Tamaños](funciones-opcionales/tamanos.md) |
+    | `events=`, `LifecycleEvents` | eventos de ciclo de vida y webhooks con la firma de E2B | [Eventos y webhooks](funciones-opcionales/eventos-y-webhooks.md) |
+    | `telemetry=`, `TelemetryExport` | métricas del sandbox por OTLP a CloudWatch | [Exportación OTLP](funciones-opcionales/exportacion-otlp.md) |
+    | `tracer_provider=` | spans OpenTelemetry del lado del SDK | [OpenTelemetry](funciones-opcionales/opentelemetry.md) |
+    | `index=DynamoDbIndex(...)` | filtrar por metadatos también sandboxes en pausa | [Índice de metadatos](funciones-opcionales/indice-de-metadatos.md) |
+    | `Template.build()` | imágenes desde el DSL `Template` de E2B | [Templates](funciones-opcionales/templates.md) |
+    | `AgentTemplate`, `rayito agent template build` | la imagen `rayito-agent` con OpenCode, ripgrep y deepagents | [Templates de agente](funciones-opcionales/templates-de-agente.md) |
+    | `PoolConfig(warmup=agent_pool_warmup(...))` | plazas del pool con el agente ya calentado (arranque rápido, opcional) | [Pool](pool.md#calentamiento-warmup) |
+    | `OptionalStacks`, `rayito stack` | desplegar, consultar y borrar la infraestructura de cada función | [Pilas opcionales](funciones-opcionales/pilas-opcionales.md) |
+    | `rayito sandbox proxy` | un puerto del sandbox en `http://127.0.0.1` de tu máquina | [Proxy local](funciones-opcionales/proxy-local.md) |
+    | `volumes=`, `VolumeStore`, `EfsVolumes` (experimental) | un sistema de ficheros EFS compartido en vivo entre sandboxes, en tu VPC | [Volúmenes EFS](funciones-opcionales/volumenes-efs.md) |
+    | `domain=`, `CustomDomain`, `rayito domain` (experimental) | una URL HTTPS bajo tu dominio para un puerto del sandbox | [Dominio propio](funciones-opcionales/dominio-propio.md) |
 
-Todo funciona igual en Python (sync y `asyncio`) y en TypeScript, con
-`snake_case` y segundos en Python y `camelCase` y milisegundos en TypeScript.
-Los números de [costes](cost.md) y [límites](limits.md) están medidos contra
-AWS real, nunca contra un simulador.
+    Todo funciona igual en Python (sync y `asyncio`) y en TypeScript, con
+    `snake_case` y segundos en Python y `camelCase` y milisegundos en TypeScript.
+    Los números de [costes](cost.md) y [límites](limits.md) están medidos contra
+    AWS real, nunca contra un simulador.
 
 </div>
 
