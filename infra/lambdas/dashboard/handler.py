@@ -9,11 +9,12 @@ from functools import cache
 from typing import Any
 
 from dashboard_stack.app import StackApp
+from dashboard_stack.shell import ShellApp
 from dashboard_stack.wiring import build_app
 
 
 @cache
-def application() -> StackApp:
+def application() -> StackApp | ShellApp:
     return build_app(os.environ)
 
 

@@ -6,6 +6,11 @@
 // el de refresco viven sólo en memoria de la pestaña; nunca se escriben en
 // `localStorage` ni en la URL, y el verificador y el `state` sólo duran el
 // viaje de ida y vuelta al Hosted UI (`sessionStorage`).
+//
+// Con `AuthMode=aws-iam` la configuración trae además un bloque `iam` (región,
+// proveedor, identity pool y URL de la API): la SPA canjea el token de
+// identidad por credenciales de AWS (`identity.js`) y firma con SigV4 las
+// llamadas a la API (`api.js`). El inicio de sesión es el mismo.
 
 const CONFIG_URL = "/config.json";
 const AUTHORIZE_PATH = "/oauth2/authorize";
@@ -24,6 +29,7 @@ const HTTP_NOT_FOUND = 404;
 
 let config = null;
 let tokens = null;
+let iam = null;
 
 function base64Url(bytes) {
   return btoa(String.fromCharCode(...bytes)).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
@@ -59,7 +65,13 @@ export async function detectMode() {
   if (!response.ok) throw new Error("No se pudo leer la configuración de inicio de sesión.");
   const document = await response.json();
   config = document.auth ?? null;
+  iam = config?.iam ?? null;
   return config !== null;
+}
+
+/** El bloque `iam` de la configuración, o `null` si la pila usa la variante por defecto. */
+export function iamSettings() {
+  return iam;
 }
 
 export function isSignedInMode() {
@@ -70,6 +82,7 @@ function remember(response) {
   const expiresInMs = response.expires_in * MS_PER_SECOND;
   tokens = {
     access: response.access_token,
+    id: response.id_token ?? tokens?.id ?? null,
     refresh: response.refresh_token ?? tokens?.refresh ?? null,
     expiresAt: Date.now() + expiresInMs,
   };
@@ -145,6 +158,12 @@ export async function accessToken() {
   const code = params.get("code");
   if (code !== null && (await redeemCode(code, params.get("state")))) return tokens.access;
   return signIn();
+}
+
+/** El token de identidad vigente (el que el identity pool canjea), renovándolo si hace falta. */
+export async function identityToken() {
+  await accessToken();
+  return tokens.id;
 }
 
 function setRejected(value) {

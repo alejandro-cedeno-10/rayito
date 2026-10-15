@@ -68,12 +68,22 @@ and $0.01 per request. The Python CLI is the only CLI.
     call: issuer, audience, expiry, signature against the JWKS and
     `token_use`. Login uses the Cognito Hosted UI with the authorization-code
     flow and PKCE; the SPA sends the token in the `Authorization` header.
-  - **(b) Optional: `AuthType AWS_IAM`.** The SPA obtains credentials from a
-    Cognito identity pool and signs its fetches with SigV4; the shell still
-    needs an unauthenticated way to load, so this variant needs an extra
-    front (documented, untested where blocked).
-  Which one works in the test account is verified in task 5.1; variant (a) is
-  the working assumption, not a given.
+  - **(b) Optional: `AuthType AWS_IAM` (`AuthMode=aws-iam`).** The SPA obtains
+    credentials from a Cognito identity pool and signs its fetches with SigV4.
+    The shell still needs an unauthenticated way to load, so the stack deploys
+    two functions from the same zip: the API function behind an `AWS_IAM`
+    Function URL (CORS for the page's origin only, no credentials, no
+    resource-based permission with a `*` principal) and a page function behind
+    a public URL whose role can only write logs and read the client list and
+    SSM parameters. Because the API URL is the identity pool's target and the
+    page URL is the Cognito callback, the page function reads the pool id and
+    the API URL from an SSM parameter at run time (an environment variable
+    would be a dependency cycle). The Cognito access token still travels, in
+    `X-Rayito-Token` (the `Authorization` header carries the signature), and
+    is validated as in (a), so groups, the live check and the audit are
+    unchanged.
+  Which one works in the test account is verified in task 5.1b; variant (a) is
+  the default and the working assumption, not a given.
   *Roles.* One function has exactly one execution role, so the function runs
   with a read-only role and an actions role is reached with `sts:AssumeRole`
   only after the handler checks the caller's Cognito group claim. The actions
@@ -102,6 +112,10 @@ and $0.01 per request. The Python CLI is the only CLI.
 - **D10 — Off by default.** No call and no peer import happens unless the
   command is run or the stack deployed. A golden-trace test per SDK proves
   zero billable calls, like `test_m15_zero_cost.py`.
+
+- **D11 — CloudWatch dashboard, one generator.** `rayito._dashboard._cloudwatch_board` (pure) builds the `DashboardBody`: five Logs Insights widgets (plus a text header) over `/rayito/*` (lines and errors per interval, lines per group, noisiest streams, recent errors), the OTLP charts (`chart` widgets with PromQL over the CPU, memory and disk `rayito.sandbox.*` gauges) with `--otlp`, and the quota chart (a `metric` widget over the custom metric of D13 with the named thresholds as annotations) with `--quota`. Widgets carry no `x`/`y`, so optional ones leave no gaps. `infra/dashboard-cloudwatch.yaml` embeds the same JSON in a `Fn::Sub` with `If` fragments, written by `scripts/gen_cloudwatch_template.py` between markers and checked by a test, so printing and deploying cannot diverge. Untested on real AWS: `SOURCE logGroups(namePrefix:)` inside a widget and the PromQL form (OTLP metrics are not in `ListMetrics`).
+- **D12 — Multi-account by assumed read roles, local only.** `--account NAME=ARN` (opt-in, capped in `limits.json`) builds one read-only `DashboardApi` per account over a session whose credentials come from `AssumeRole` (deferred refresh, so no STS call until used) and an `AccountsApi` wrapper that routes by `?account=`. The target account deploys `dashboard-read-role` (five reads, trusts one principal, optional `ExternalId`). Additional accounts get no actions, no Cost Explorer, no logs. The in-account stack does not include it yet (it would need its own role list parameter and a revocation story).
+- **D13 — Quota alerts.** `infra/quota-alerts.yaml`: a CloudFormation Lambda (bundles the SDK `Quotas` service like `dashboard`) on an EventBridge `rate(...)`; the level is stored in a one-row DynamoDB table and an SNS message goes out only when it rises; the state is saved after the publish. It also publishes `Rayito/Dashboard` `MemoryAllocatedFraction` (dimension `Region`), the one custom metric (about $0.30/month) that the CloudWatch dashboard plots. One stack per region.
 
 ## Risks / Trade-offs
 

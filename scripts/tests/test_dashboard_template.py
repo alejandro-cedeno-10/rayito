@@ -76,10 +76,11 @@ def test_it_creates_nothing_the_test_account_scp_denies() -> None:
     assert "S3Key" in function["Code"] and "ZipFile" not in function["Code"]
 
 
-def test_the_function_url_is_the_only_unauthenticated_door_and_says_so() -> None:
+def test_the_function_url_is_the_only_unauthenticated_door_by_default_and_says_so() -> None:
     url = resources()["FunctionUrl"]["Properties"]
-    assert url["AuthType"] == "NONE"
-    assert "Cors" not in url
+    assert url["AuthType"] == {"Fn::If": ["IamAuth", "AWS_IAM", "NONE"]}
+    assert url["Cors"]["Fn::If"][0] == "IamAuth"
+    assert url["Cors"]["Fn::If"][2] == {"Ref": "AWS::NoValue"}
     assert resources()["FunctionUrl"]["Type"] == "AWS::Lambda::Url"
 
 
@@ -244,3 +245,192 @@ def test_the_function_finds_the_spa_client_by_the_name_the_template_gives_it() -
     client_name = resources()["UserPoolClient"]["Properties"]["ClientName"]
     variables = resources()["DashboardFunction"]["Properties"]["Environment"]["Variables"]
     assert variables["RAYITO_DASHBOARD_CLIENT_NAME"] == client_name
+
+
+PAGE_ORIGIN = {
+    "Fn::Join": [
+        "",
+        [
+            "https://",
+            {
+                "Fn::Select": [
+                    2,
+                    {"Fn::Split": ["/", {"Fn::GetAtt": "ShellUrl.FunctionUrl"}]},
+                ]
+            },
+        ],
+    ]
+}
+IAM_RESOURCES = frozenset(
+    {
+        "IdentityPool",
+        "IdentityRole",
+        "IdentityPoolRoles",
+        "IamEndpointParameter",
+        "ShellLogGroup",
+        "ShellRole",
+        "ShellFunction",
+        "ShellUrl",
+        "ShellUrlInvokePermission",
+        "ShellUrlInvokeFunctionPermission",
+    }
+)
+
+
+def test_auth_mode_is_an_explicit_parameter_that_defaults_to_the_existing_behaviour() -> (
+    None
+):
+    parameter = template()["Parameters"]["AuthMode"]
+    assert parameter["Default"] == "cognito-jwt"
+    assert parameter["AllowedValues"] == ["cognito-jwt", "aws-iam"]
+    assert template()["Conditions"]["IamAuth"] == {
+        "Fn::Equals": [{"Ref": "AuthMode"}, "aws-iam"]
+    }
+
+
+def test_everything_the_iam_variant_adds_exists_only_with_it() -> None:
+    found = {
+        name
+        for name, resource in resources().items()
+        if resource.get("Condition") == "IamAuth"
+    }
+    assert found == IAM_RESOURCES
+    assert template()["Outputs"]["ApiUrl"]["Condition"] == "IamAuth"
+
+
+def test_the_api_url_with_iam_names_only_the_page_in_cors_and_never_allows_credentials() -> (
+    None
+):
+    _, cors, _ = resources()["FunctionUrl"]["Properties"]["Cors"]["Fn::If"]
+    assert cors["AllowOrigins"] == [PAGE_ORIGIN]
+    assert cors["MaxAge"] == LIMITS["dashboardStackApiCorsMaxAgeSeconds"]
+    assert "AllowCredentials" not in cors
+    assert set(cors["AllowMethods"]) == {"GET", "POST"}
+    assert set(cors["AllowHeaders"]) == {
+        "authorization",
+        "content-type",
+        "x-amz-content-sha256",
+        "x-amz-date",
+        "x-amz-security-token",
+        "x-rayito-token",
+    }
+
+
+def test_the_api_function_gets_no_public_permission_with_iam() -> None:
+    for name in ("UrlInvokePermission", "UrlInvokeFunctionPermission"):
+        assert resources()[name]["Condition"] == "JwtAuth"
+        assert resources()[name]["Properties"]["FunctionName"] == {
+            "Ref": "DashboardFunction"
+        }
+    for name in ("ShellUrlInvokePermission", "ShellUrlInvokeFunctionPermission"):
+        assert resources()[name]["Properties"]["FunctionName"] == {
+            "Ref": "ShellFunction"
+        }
+
+
+def test_the_page_url_is_public_and_is_the_cognito_callback_with_iam() -> None:
+    assert resources()["ShellUrl"]["Properties"]["AuthType"] == "NONE"
+    assert "Cors" not in resources()["ShellUrl"]["Properties"]
+    callbacks = resources()["UserPoolClient"]["Properties"]["CallbackURLs"]
+    assert callbacks == [
+        {
+            "Fn::If": [
+                "IamAuth",
+                {"Fn::GetAtt": "ShellUrl.FunctionUrl"},
+                {"Fn::GetAtt": "FunctionUrl.FunctionUrl"},
+            ]
+        }
+    ]
+    outputs = template()["Outputs"]["DashboardUrl"]["Value"]["Fn::If"]
+    assert outputs[1] == {"Fn::GetAtt": "ShellUrl.FunctionUrl"}
+
+
+def test_the_page_function_can_do_nothing_but_serve_the_page() -> None:
+    assert allowed_actions("ShellRole") == {
+        "logs:CreateLogStream",
+        "logs:PutLogEvents",
+        "cognito-idp:ListUserPoolClients",
+        "ssm:GetParameter",
+    }
+    for item in statements("ShellRole"):
+        assert item["Resource"] != "*"
+    function = resources()["ShellFunction"]["Properties"]
+    assert function["Role"] == {"Fn::GetAtt": "ShellRole.Arn"}
+    assert (
+        function["Environment"]["Variables"]["RAYITO_DASHBOARD_SURFACE"] == "iam-shell"
+    )
+    assert resources()["DashboardFunction"]["Properties"]["Environment"]["Variables"][
+        "RAYITO_DASHBOARD_SURFACE"
+    ] == {"Fn::If": ["IamAuth", "iam-api", "full"]}
+
+
+def test_the_page_function_limits_equal_limits_json() -> None:
+    function = resources()["ShellFunction"]["Properties"]
+    assert function["Timeout"] == LIMITS["dashboardStackShellLambdaTimeoutSeconds"]
+    assert function["MemorySize"] == LIMITS["dashboardStackShellLambdaMemoryMib"]
+
+
+def test_the_page_function_environment_names_what_its_handler_reads() -> None:
+    names = set(resources()["ShellFunction"]["Properties"]["Environment"]["Variables"])
+    config = (
+        REPO_ROOT / "infra/lambdas/dashboard/dashboard_stack/config.py"
+    ).read_text(encoding="utf-8")
+    for name in names:
+        assert f'ENV_PREFIX}}{name.removeprefix("RAYITO_DASHBOARD_")}"' in config, name
+
+
+def test_the_identity_pool_refuses_unauthenticated_identities_and_trusts_only_the_client() -> (
+    None
+):
+    pool = resources()["IdentityPool"]["Properties"]
+    assert pool["AllowUnauthenticatedIdentities"] is False
+    (provider,) = pool["CognitoIdentityProviders"]
+    assert provider["ClientId"] == {"Ref": "UserPoolClient"}
+    assert provider["ServerSideTokenCheck"] is True
+    roles = resources()["IdentityPoolRoles"]["Properties"]
+    assert set(roles["Roles"]) == {"authenticated"}
+
+
+def test_the_authenticated_role_can_only_invoke_the_api_function_through_its_url() -> (
+    None
+):
+    role = resources()["IdentityRole"]
+    (trust,) = role["Properties"]["AssumeRolePolicyDocument"]["Statement"]
+    assert trust["Principal"] == {"Federated": "cognito-identity.amazonaws.com"}
+    assert trust["Action"] == "sts:AssumeRoleWithWebIdentity"
+    assert trust["Condition"]["StringEquals"]["cognito-identity.amazonaws.com:aud"] == {
+        "Ref": "IdentityPool"
+    }
+    assert trust["Condition"]["ForAnyValue:StringLike"] == {
+        "cognito-identity.amazonaws.com:amr": "authenticated"
+    }
+    assert allowed_actions("IdentityRole") == {
+        "lambda:InvokeFunctionUrl",
+        "lambda:InvokeFunction",
+    }
+    for item in statements("IdentityRole"):
+        assert item["Resource"] == {"Fn::GetAtt": "DashboardFunction.Arn"}
+        assert item["Condition"]
+    url_statement = next(
+        item
+        for item in statements("IdentityRole")
+        if item["Action"] == "lambda:InvokeFunctionUrl"
+    )
+    assert url_statement["Condition"] == {
+        "StringEquals": {"lambda:FunctionUrlAuthType": "AWS_IAM"}
+    }
+
+
+def test_the_endpoint_parameter_holds_exactly_the_pool_and_the_api_address() -> None:
+    parameter = resources()["IamEndpointParameter"]["Properties"]
+    value = json.loads(
+        parameter["Value"]["Fn::Sub"]
+        .replace("${IdentityPool}", "pool")
+        .replace("${FunctionUrl.FunctionUrl}", "url")
+    )
+    assert value == {"identityPoolId": "pool", "apiUrl": "url"}
+    shell = resources()["ShellFunction"]["Properties"]["Environment"]["Variables"]
+    assert shell["RAYITO_DASHBOARD_IDENTITY_PARAMETER"] == {
+        "Fn::Sub": "/rayito/dashboard/${AWS::StackName}/iam-endpoint"
+    }
+    assert parameter["Name"] == shell["RAYITO_DASHBOARD_IDENTITY_PARAMETER"]

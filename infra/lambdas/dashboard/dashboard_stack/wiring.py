@@ -17,12 +17,20 @@ import boto3
 
 from dashboard_stack.actions import AssumedRoleActions
 from dashboard_stack.app import StackApp
-from dashboard_stack.appearance import LiveAppearance, load_appearance
+from dashboard_stack.appearance import LiveAppearance, load_appearance, read_parameter
 from dashboard_stack.audit import AuditLog
-from dashboard_stack.config import StackConfig
+from dashboard_stack.config import (
+    ENV_SURFACE,
+    SURFACE_FULL,
+    SURFACE_IAM_API,
+    SURFACE_IAM_SHELL,
+    ShellConfig,
+    StackConfig,
+)
 from dashboard_stack.cost_cache import DynamoCostCache
 from dashboard_stack.cost_guard import BudgetedCostSource, CostWindowGuard, DynamoMissBudget
 from dashboard_stack.directory import CognitoDirectory
+from dashboard_stack.identity import IamEndpointCache, parse_iam_endpoint
 from dashboard_stack.jobs import InlineJobs, JobLog
 from dashboard_stack.jwks import (
     ClientIdCache,
@@ -31,6 +39,7 @@ from dashboard_stack.jwks import (
     issuer_url,
     list_user_pool_client_ids,
 )
+from dashboard_stack.shell import ShellApp
 from dashboard_stack.tokens import TokenVerifier
 from rayito._aws import LambdaMicrovmsControlPlane
 from rayito._dashboard._api._router import DashboardApi
@@ -44,8 +53,38 @@ from rayito._limits import COST_EXPLORER_REGION
 JWKS_PATH = "/.well-known/jwks.json"
 
 
-def build_app(environ: Mapping[str, str]) -> StackApp:
-    config = StackConfig.from_environ(environ)
+def build_app(environ: Mapping[str, str]) -> StackApp | ShellApp:
+    """La aplicación de esta función según su `surface` (por defecto `full`)."""
+    surface = environ.get(ENV_SURFACE, SURFACE_FULL)
+    if surface == SURFACE_IAM_SHELL:
+        return build_shell_app(ShellConfig.from_environ(environ))
+    return build_stack_app(
+        StackConfig.from_environ(environ),
+        surface=SURFACE_IAM_API if surface == SURFACE_IAM_API else SURFACE_FULL,
+    )
+
+
+def build_shell_app(config: ShellConfig) -> ShellApp:
+    session = boto3.session.Session(region_name=config.region)
+    ssm = session.client("ssm", region_name=config.region)
+    cognito = session.client("cognito-idp", region_name=config.region)
+    return ShellApp(
+        config=config,
+        clients=ClientIdCache(
+            lambda: list_user_pool_client_ids(cognito, config.user_pool_id, config.client_name)
+        ),
+        endpoints=IamEndpointCache(
+            lambda: parse_iam_endpoint(
+                read_parameter(ssm, config.identity_parameter), config.region
+            )
+        ),
+        appearance=LiveAppearance(
+            lambda: load_appearance(ssm, config.theme_parameter, config.logo_parameter)
+        ),
+    )
+
+
+def build_stack_app(config: StackConfig, *, surface: str = SURFACE_FULL) -> StackApp:
     session = boto3.session.Session(region_name=config.region)
     log = JobLog()
     ssm = session.client("ssm", region_name=config.region)
@@ -113,6 +152,7 @@ def build_app(environ: Mapping[str, str]) -> StackApp:
         audit=AuditLog(session.client("dynamodb", region_name=config.region), config.audit_table),
         appearance=appearance,
         directory=CognitoDirectory(cognito, config.user_pool_id),
+        surface=surface,
     )
 
 

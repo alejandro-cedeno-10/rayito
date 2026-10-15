@@ -92,3 +92,10 @@ The page SHALL have a Help entry in the sidebar that lists the sections, says wh
 #### Scenario: a screenshot with metadata is committed
 - **WHEN** a dashboard image carries a text, EXIF or time chunk, is not a PNG, or exceeds the size limit
 - **THEN** `scripts/check_dashboard_images.py` exits 1 naming the file
+
+### Requirement: Extra accounts can come from the environment
+`rayito dashboard` SHALL read `--account` entries from `RAYITO_DASHBOARD_ACCOUNTS` (separated by whitespace), so the role ARN of a target account is built at run time and never has to be typed in the command or stored in a file.
+
+#### Scenario: accounts from the environment
+- **WHEN** `RAYITO_DASHBOARD_ACCOUNTS` holds two `NAME=ARN` entries and no `--account` is given
+- **THEN** the panel starts with two read-only accounts and prints neither the ARN nor the account id

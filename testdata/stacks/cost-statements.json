@@ -5,18 +5,21 @@
       "AWS::Cognito::UserPool + UserPoolClient + UserPoolDomain (+ UserPoolGroup con AllowActions=true)",
       "AWS::DynamoDB::Table (x2: auditoría y caché de coste, bajo demanda)",
       "AWS::IAM::Role (x1 de lectura; +1 de acciones con AllowActions=true)",
-      "AWS::SSM::Parameter (Standard, sin coste; sólo con ThemeJson)"
+      "AWS::SSM::Parameter (Standard, sin coste; sólo con ThemeJson)",
+      "Con AuthMode=aws-iam, además: AWS::Lambda::Function + Url (la página), AWS::Cognito::IdentityPool, AWS::IAM::Role (x2) y AWS::SSM::Parameter (Standard)"
     ],
     "idleMonthly": "~$0 en reposo: sin tráfico no hay invocaciones, y Lambda, DynamoDB bajo demanda y Cognito (capa gratuita de usuarios activos) sólo facturan por uso. Un parámetro SSM Advanced propio (tema o logo) cuesta $0,05 al mes aunque no haya tráfico",
     "perUse": [
       "Lambda: una invocación por petición de la SPA, que sondea cada 15 s con la pestaña abierta. Ejemplo: una pestaña abierta 8 h al día durante 30 días son unas 57600 invocaciones al mes, dentro de las 1000000 peticiones y los 400000 GB-s gratuitos al mes; pasada la capa gratuita, $0,20 por millón de peticiones más la duración. La Function URL es pública (AuthType NONE): el tráfico sin autenticar también factura invocaciones, así que fija ReservedConcurrency para acotarlo",
       "Cost Explorer (sólo con EnableCostExplorer=true): $0,01 por consulta, una cada 24 h por ventana gracias a la caché y, en total, como mucho 20 al día UTC (tope de la pila): en el peor caso $0,20 al día, unos $6,00 al mes",
+      "AuthMode=aws-iam: la API sólo la invoca quien firma con las credenciales del identity pool, así que el tráfico sin firma lo rechaza la Function URL sin ejecutar la función; la página sigue siendo pública (AuthType NONE) y factura como la Lambda de arriba; los identity pools de Cognito no facturan por sí mismos",
       "DynamoDB: una escritura por sandbox y acción (auditoría)",
       "SSM (sólo con tema o logo en parámetros Advanced): $0,05 por cada 10000 interacciones de API; la función relee cada 300 s por contenedor activo, hasta unas 17280 interacciones al mes ($0,09)"
     ],
     "removal": "destroy() borra todo lo que la pila creó, incluidas las filas de auditoría (expórtalas antes si las necesitas) y los usuarios de Cognito",
     "source": "AWS_API_NOTES.md §10; precios de Lambda, DynamoDB, Cognito, SSM Parameter Store y Cost Explorer us-east-1, 2026-10-13",
     "parameters": {
+      "AuthMode": "Cómo se protege /api/v1: cognito-jwt (por defecto) deja una Function URL pública y la función valida el token de Cognito; aws-iam da a la API su propia Function URL con AuthType AWS_IAM, que rechaza lo que no venga firmado con SigV4 por un usuario con sesión, y una segunda función sin permisos sirve la página. Añade un identity pool de Cognito, una función, un rol y un parámetro de SSM, sin coste en reposo; cambiarlo en una pila existente cambia la dirección del panel.",
       "AllowActions": "true crea el rol de acciones (matar, suspender, reanudar), el grupo de Cognito que puede usarlo y la auditoría; sin él el panel es de sólo lectura.",
       "EnableCostExplorer": "true permite consultar el coste facturado (ce:GetCostAndUsage, 0,01 USD por consulta, cacheada 24 h en la tabla de caché). Sólo se aceptan ventanas de meses completos de los últimos 13 meses y, en total, como mucho 20 consultas de pago por día UTC.",
       "ImageNamePrefix": "El rol de acciones sólo actúa sobre imágenes cuyo nombre empieza así.",
@@ -25,8 +28,66 @@
       "ThemeJson": "Opcional: tema de color propio en JSON (hasta 4096 bytes; formato de examples/dashboard-theme). La pila lo guarda en un parámetro de SSM.",
       "ThemeParameterName": "Opcional: nombre (con «/» inicial) de un parámetro de SSM tuyo con el tema JSON, para uno de más de 4096 bytes. Tiene prioridad sobre ThemeJson. Un parámetro Advanced cuesta $0,05 al mes más las interacciones de API (precios de SSM Parameter Store, 2026-10-13); la función lo relee cada 300 s.",
       "LogoParameterName": "Opcional: nombre (con «/» inicial) de un parámetro de SSM con un logo SVG (hasta 8192 bytes). Un parámetro Advanced cuesta $0,05 al mes más las interacciones de API (precios de SSM Parameter Store, 2026-10-13); la función lo relee cada 300 s.",
-      "ReservedConcurrency": "Opcional: concurrencia reservada de la función; acota lo que cuesta una avalancha de peticiones sin autenticar.",
+      "ReservedConcurrency": "Opcional: concurrencia reservada de cada función de la pila (dos con AuthMode=aws-iam: la cuenta reserva el doble del valor); acota lo que cuesta una avalancha de peticiones sin autenticar.",
       "LogRetentionDays": "Retención del log group de la función (días); nunca contiene tokens."
+    }
+  },
+  "dashboard-cloudwatch": {
+    "creates": [
+      "AWS::CloudWatch::Dashboard (1)"
+    ],
+    "idleMonthly": "$0 con los 3 dashboards gratuitos de la cuenta (hasta 50 métricas cada uno); 3 USD al mes por dashboard por encima de esos 3",
+    "perUse": [
+      "Logs Insights: cada widget de log ejecuta su consulta al abrir o refrescar el dashboard y se factura por GB escaneado (0,005 USD/GB); acota el intervalo",
+      "Gráficas OTLP (IncludeOtlp=true): las consultas PromQL hechas desde la consola, dashboards incluidos, no se facturan; la ingesta OTLP la factura telemetry="
+    ],
+    "removal": "destroy() borra el dashboard; no deja logs ni métricas",
+    "source": "https://aws.amazon.com/cloudwatch/pricing/ us-east-1, consultado 2026-10-13",
+    "parameters": {
+      "DashboardName": "Nombre del dashboard en CloudWatch (único por cuenta y región). Vacío usa el nombre de la pila, único en la región.",
+      "LogGroupPrefix": "Prefijo de los grupos de logs que consultan los widgets; conserva la barra final.",
+      "IncludeOtlp": "true añade gráficas de CPU, memoria y disco de las métricas OTLP de rayd (telemetry=); sin sandboxes que exporten no tienen datos.",
+      "IncludeQuota": "true añade la gráfica del uso de la cuota de memoria: grafica la métrica de la pila quota-alerts, así que está vacía hasta que esa pila corra en la región."
+    }
+  },
+  "dashboard-read-role": {
+    "creates": [
+      "AWS::IAM::Role (1, con una política en línea de sólo lectura)"
+    ],
+    "idleMonthly": "$0: IAM no factura",
+    "perUse": [
+      "Cada sesión del panel es un sts:AssumeRole (sin coste) y las lecturas son las mismas de rayito dashboard: ListMicrovms, ListMicrovmImages, Get/ListMicrovmImageVersion y ListServiceQuotas"
+    ],
+    "removal": "destroy() borra el rol; los accesos desde el panel dejan de funcionar al instante",
+    "source": "IAM no tiene precio propio (https://aws.amazon.com/iam/pricing/, 2026-10-13)",
+    "parameters": {
+      "TrustedPrincipalArn": "ARN del rol o usuario IAM, en la cuenta que ejecuta el panel, que puede asumir este rol (nunca la raíz de la cuenta).",
+      "ExternalId": "Opcional: si lo pones, el rol sólo se asume pasando este mismo valor (rayito dashboard --external-id).",
+      "MaxSessionSeconds": "Sesión más larga que se puede pedir (IAM admite de 1 a 12 horas); el panel pide 3600 s."
+    }
+  },
+  "quota-alerts": {
+    "creates": [
+      "AWS::Lambda::Function (1) + AWS::Logs::LogGroup",
+      "AWS::Events::Rule (1) + AWS::Lambda::Permission",
+      "AWS::SNS::Topic (sin TopicArn) + AWS::SNS::Subscription (con NotificationEmail)",
+      "AWS::DynamoDB::Table (1, bajo demanda, una fila de estado)",
+      "AWS::IAM::Role (1, sólo lectura más sns:Publish, una métrica y la fila de estado)"
+    ],
+    "idleMonthly": "~0,30 USD al mes: una métrica personalizada (Rayito/Dashboard/MemoryAllocatedFraction); Lambda, EventBridge, DynamoDB bajo demanda y SNS (correo) caben en sus capas gratuitas",
+    "perUse": [
+      "Una ejecución por programación (rate(1 hour) por defecto, ~720 al mes): ListMicrovms, ListServiceQuotas, un PutMetricData, una lectura y una escritura de DynamoDB",
+      "SNS: un mensaje por cruce de umbral, no por ejecución"
+    ],
+    "removal": "destroy() borra todo lo que la pila creó, incluido el tema SNS (no el de TopicArn) y las suscripciones; la métrica deja de actualizarse",
+    "source": "AWS_API_NOTES.md §10 y §11; precios de CloudWatch, Lambda, EventBridge, DynamoDB y SNS us-east-1, 2026-10-13",
+    "parameters": {
+      "ScheduleExpression": "Programación de EventBridge de la comprobación (rate(...) o cron(...)).",
+      "WarningPercent": "Porcentaje de la cuota de memoria que dispara el primer aviso.",
+      "CriticalPercent": "Porcentaje que dispara el aviso crítico; debe ser mayor que WarningPercent.",
+      "NotificationEmail": "Opcional: suscribe este correo al tema que crea la pila (hay que confirmar la suscripción). Se ignora con TopicArn.",
+      "TopicArn": "Opcional: publica en este tema SNS existente (misma cuenta y región) en vez de crear uno.",
+      "LogRetentionDays": "Retención del log group de la función (días)."
     }
   }
 }

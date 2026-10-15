@@ -52,6 +52,10 @@ export interface StackComponent {
    * todavía no tiene plantilla: `deploy`/`status`/`destroy` lanzan
    * `UnimplementedError` antes de tocar AWS. */
   readonly supported?: boolean;
+  /** Validación de coherencia entre parámetros que la plantilla no puede
+   * expresar (CloudFormation no compara números). Recibe los valores efectivos
+   * del despliegue y lanza `InvalidArgumentError`; corre antes de llamar a AWS. */
+  readonly validate?: (values: Readonly<Record<string, string>>) => void;
 }
 
 export function defaultStackName(component: StackComponent): string {
@@ -165,6 +169,10 @@ export function planParameters(
     throw new InvalidArgumentError(
       `faltan parámetros obligatorios para ${component.name}: ${missing.sort().join(", ")}`,
     );
+  }
+  if (component.validate !== undefined) {
+    const retained = Object.fromEntries(keepPrevious.map((name) => [name, previous?.[name] ?? ""]));
+    component.validate({ ...retained, ...values });
   }
   return { values, keepPrevious: keepPrevious.sort() };
 }

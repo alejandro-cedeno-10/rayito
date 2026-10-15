@@ -11,7 +11,10 @@ IAM mínimo del SDK (`iam.yaml`) y las piezas opcionales de egress y de CI.
 | `metadata-index.yaml` | Opcional (M14, on-demand, $0 en reposo): tabla DynamoDB `PAY_PER_REQUEST` con TTL + políticas `RayitoIndexWriter` / `RayitoIndexReader` | Sólo si listas por metadatos con `index=DynamoDbIndex(...)` / `--index-table`, también sobre `SUSPENDED` ([Índice de metadatos](#índice-de-metadatos-inframetadata-indexyaml-m14)) |
 | `custom-domain.yaml` | Opcional (M15, experimental, $0 en reposo): distribución CloudFront con alias comodín + CloudFront Function de enrutado + KeyValueStore; sin Lambda ni IAM propio | Sólo si usas `CustomDomain` para exponer sandboxes en tu propio dominio ([Dominio propio](#dominio-propio-infracustom-domainyaml-m15)); `Sandbox.create(domain=)` sigue sin cablear, ver `ARCHITECTURE.md` ADR-024 |
 | `ci-oidc-role.yaml` | Proveedor OIDC de GitHub (opcional) + rol que asume `.github/workflows/e2e.yml` con sólo las acciones de MicroVM sobre las imágenes de test | Para correr la aceptación e2e desde GitHub Actions sin credenciales de larga duración (SECURITY.md T10, m7-supply-chain) |
-| `dashboard.yaml` | Opcional (ADR-026, fase 2, $0 en reposo): una Lambda con Function URL que sirve la página y la API del panel de gestión, grupo de usuarios de Cognito, tablas DynamoDB de auditoría y caché, rol de lectura y (con `AllowActions`) rol de acciones; sin CloudFront ni buckets | Sólo si quieres el panel de gestión dentro de tu cuenta ([Panel en tu cuenta](../docs/site/docs/funciones-opcionales/panel-en-tu-cuenta.md)) |
+| `dashboard.yaml` | Opcional (ADR-026, fase 2, $0 en reposo): una Lambda con Function URL que sirve la página y la API del panel de gestión, grupo de usuarios de Cognito, tablas DynamoDB de auditoría y caché, rol de lectura y (con `AllowActions`) rol de acciones; sin CloudFront ni buckets; con `AuthMode=aws-iam`, la API detrás de una Function URL `AWS_IAM` (firma SigV4 con un identity pool de Cognito) y la página en otra función sin permisos | Sólo si quieres el panel de gestión dentro de tu cuenta ([Panel en tu cuenta](../docs/site/docs/funciones-opcionales/panel-en-tu-cuenta.md)) |
+| `dashboard-cloudwatch.yaml` | Opcional (ADR-026, fase 3, $0 con menos de 4 dashboards): un dashboard de CloudWatch con widgets de Logs Insights sobre `/rayito/*` (el `DashboardBody` lo genera `scripts/gen_cloudwatch_template.py`) | Sólo si quieres el dashboard en CloudWatch ([Panel: CloudWatch, cuentas y avisos](../docs/site/docs/funciones-opcionales/panel-extras.md)) |
+| `dashboard-read-role.yaml` | Opcional (fase 3, $0): un rol de IAM de sólo lectura en una cuenta destino, para `rayito dashboard --account` | Sólo en las cuentas que quieres ver desde el panel local |
+| `quota-alerts.yaml` | Opcional (fase 3, ≈ $0,30/mes): Lambda programada, regla de EventBridge, tema SNS y tabla de estado que avisan cuando la memoria asignada cruza un umbral de la cuota | Sólo si quieres avisos de cuota ([guía](../docs/site/docs/funciones-opcionales/panel-extras.md#avisos-de-cuota)) |
 | `events-webhooks.yaml` | Opcional (M15, m15-events-webhooks): secreto HMAC del stack, tabla DynamoDB, tres Lambdas (forwarder/deliverer/reconciliador), suscripción de CloudWatch Logs y regla de EventBridge Scheduler | Sólo si usas `events=LifecycleEvents(...)` / `LifecycleEvents` para eventos de ciclo de vida firmados y webhooks ([Eventos y webhooks](#eventos-y-webhooks-infraevents-webhooksyaml-m15)) |
 
 ## Egress allowlist (`egress-connector.yaml`)
@@ -589,6 +592,32 @@ bajo `models/`, igual que `events-webhooks`. No usa CloudFront ni crea buckets
 (la cuenta de pruebas lo deniega); las etiquetas obligatorias de la
 organización se pasan con `--tag`. Tests: `infra/lambdas/dashboard/tests/` y
 `scripts/tests/test_dashboard_template.py`; `make infra-lint` la incluye.
+
+## Panel de gestión, fase 3 (`dashboard-cloudwatch.yaml`, `dashboard-read-role.yaml`, `quota-alerts.yaml`, ADR-026)
+
+Tres plantillas **opcionales** e independientes; ninguna se despliega sola.
+Guía: [Panel: CloudWatch, cuentas y avisos](../docs/site/docs/funciones-opcionales/panel-extras.md).
+
+- `dashboard-cloudwatch.yaml`: un `AWS::CloudWatch::Dashboard`. Su
+  `DashboardBody` está entre los marcadores `GENERATED` y lo escribe
+  `scripts/gen_cloudwatch_template.py` desde el generador del SDK
+  (`rayito dashboard cloudwatch` imprime el mismo JSON); un test comprueba que no
+  hay deriva. Ejecútalo con `cd clients/python && uv run python
+  ../../scripts/gen_cloudwatch_template.py` y después `scripts/gen_stack_assets.py`.
+- `dashboard-read-role.yaml`: un rol de sólo lectura (las cinco lecturas del
+  panel) que se despliega **en la cuenta destino**, no en la del panel. Confía en
+  el rol o usuario que se le pasa (el patrón rechaza una raíz de cuenta) y
+  opcionalmente en un `ExternalId`.
+- `quota-alerts.yaml`: Lambda (código en `infra/lambdas/quota_alerts/`, con los
+  módulos del SDK que importa y el modelo de `lambda-microvms`, como `dashboard`),
+  regla de EventBridge, tema SNS (o el tuyo con `TopicArn`), tabla DynamoDB con
+  una fila de estado y rol. Publica una vez por cruce de umbral y el uso como
+  métrica `Rayito/Dashboard`. Una pila vigila una región.
+
+Tests: `scripts/tests/test_cloudwatch_template.py`,
+`test_dashboard_read_role_template.py`, `test_quota_alerts_template.py`,
+`test_quota_alerts_bundle.py` e `infra/lambdas/quota_alerts/tests/`;
+`make infra-lint` las incluye.
 
 ## Eventos y webhooks (`infra/events-webhooks.yaml`, M15)
 

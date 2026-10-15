@@ -390,6 +390,31 @@ Los logs de un sandbox son lo que ese sandbox escribió y se muestran tal
 cual (como en `rayito sandbox logs`): si tu código imprime secretos, el panel
 los mostrará.
 
+## Panel de gestión, fase 3: varias cuentas y avisos de cuota { #panel-fase-3 }
+
+Resumen de **T33** de
+[`SECURITY.md`](https://github.com/alejandro-cedeno-10/rayito/blob/main/SECURITY.md);
+la [guía](funciones-opcionales/panel-extras.md) tiene el uso.
+
+- **Roles de lectura, no de acciones.** `rayito dashboard --account` asume el
+  rol que creaste con `dashboard-read-role` en la cuenta destino: sólo cinco
+  lecturas (MicroVMs, imágenes, versiones y cuotas), nada de escritura, ni
+  Cost Explorer ni logs. Confía sólo en el rol o usuario que indicas (nunca en
+  una raíz de cuenta) y, con `ExternalId`, sólo si se presenta.
+- **Siempre de sólo lectura.** Las cuentas adicionales no tienen acciones
+  aunque arranques con `--allow-actions`; un `?account=` desconocido es un `400`
+  sin llamada a AWS.
+- **Sin ARN en la página.** La API y los mensajes sólo conocen la etiqueta que
+  elegiste; un rechazo de STS se muestra con su código y sin su mensaje.
+- **Sesión corta y visible.** La sesión asumida no se pide hasta usarla, dura
+  {{dashboardAssumeRoleSessionSeconds}} s y deja `rayito-dashboard` como nombre
+  de sesión en CloudTrail de la cuenta destino.
+- **Avisos de cuota**: la función sólo lee y escribe en su tema, su fila de
+  estado y su espacio de nombres de métricas; el mensaje no lleva ids ni
+  nombres, y un fallo de SNS no se da por enviado.
+- **Dashboard de CloudWatch**: el prefijo y los grupos se validan contra una
+  lista cerrada de caracteres antes de entrar en una consulta.
+
 ## Panel de gestión en tu cuenta (la pila `dashboard`) { #panel-de-gestion-en-tu-cuenta }
 
 La pila `dashboard` ([guía](funciones-opcionales/panel-en-tu-cuenta.md)) publica
