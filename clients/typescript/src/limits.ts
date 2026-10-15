@@ -118,6 +118,13 @@ export const METADATA_XATTR_PREFIX = "user.rayito." as const;
 export const COMPRESSION_OPT_IN_HEADER = "rayito-compress" as const;
 
 export const SUPPORTED_MEMORY_MIB = [512, 1024, 2048, 4096, 8192] as const;
+export const OFFICIAL_IMAGE_VARIANTS = [
+  "base",
+  "base-caps",
+  "base-caps-efs",
+  "base-poly",
+  "base-slim",
+] as const;
 export const GUEST_MEMORY_MULTIPLIER = 4 as const;
 export const RESERVED_PORTS = [8080, 9000] as const;
 

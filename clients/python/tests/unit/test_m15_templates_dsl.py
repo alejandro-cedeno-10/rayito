@@ -8,7 +8,14 @@ from __future__ import annotations
 import pytest
 
 from rayito import AsyncTemplate, Template, wait_for_port
-from rayito._templates._instructions import BASE_IMAGE_KIND, CopyStep, EnvStep, RunStep
+from rayito._templates._dsl import NODE_PACKAGES, NPM_MISSING_EXIT_CODE
+from rayito._templates._instructions import (
+    BASE_IMAGE_KIND,
+    CopyStep,
+    EnvStep,
+    RunStep,
+    UserStep,
+)
 from rayito.exceptions import InvalidArgumentException, UnimplementedError
 
 
@@ -50,9 +57,105 @@ def test_unsupported_base_sources_raise_before_any_io(method: str) -> None:
         getattr(Template(), method)("whatever")
 
 
-def test_apt_install_names_dnf_instead() -> None:
-    with pytest.raises(UnimplementedError, match="dnf"):
+def test_apt_install_names_dnf_install_instead() -> None:
+    with pytest.raises(UnimplementedError, match="dnf_install"):
         Template().apt_install("curl")
+
+
+def test_dnf_install_generates_a_quoted_dnf_step() -> None:
+    t = Template().from_base_image().dnf_install(["tree", "jq"])
+    assert t.spec.steps == (
+        RunStep("dnf install -y --setopt=install_weak_deps=0 tree jq && dnf clean all"),
+    )
+
+
+def test_dnf_install_accepts_a_single_name_and_quotes_shell_metacharacters() -> None:
+    t = Template().dnf_install("tree; rm -rf /")
+    assert t.spec.steps == (
+        RunStep("dnf install -y --setopt=install_weak_deps=0 'tree; rm -rf /' && dnf clean all"),
+    )
+
+
+def test_npm_install_guards_on_npm_and_supports_global() -> None:
+    local = Template().npm_install(["left-pad@1.3.0"])
+    scoped = Template().npm_install("@scope/pkg", g=True)
+    (local_step,) = local.spec.steps
+    (scoped_step,) = scoped.spec.steps
+    assert isinstance(local_step, RunStep)
+    assert isinstance(scoped_step, RunStep)
+    assert local_step.cmd.startswith("command -v npm >/dev/null 2>&1 || { echo ")
+    assert (
+        f"exit {NPM_MISSING_EXIT_CODE}; }} && npm install --no-audit --no-fund left-pad@1.3.0"
+        in local_step.cmd
+    )
+    assert scoped_step.cmd.endswith("npm install --no-audit --no-fund -g @scope/pkg")
+    assert "dnf_install" in local_step.cmd
+
+
+def test_npm_install_missing_message_names_the_measured_node_packages() -> None:
+    (step,) = Template().npm_install("left-pad").spec.steps
+    assert isinstance(step, RunStep)
+    assert NODE_PACKAGES == ("nodejs20", "nodejs20-npm")
+    assert '["nodejs20", "nodejs20-npm"]' in step.cmd
+
+
+def test_npm_install_without_packages_runs_a_plain_install_in_the_workdir() -> None:
+    (step,) = Template().npm_install().spec.steps
+    assert isinstance(step, RunStep)
+    assert step.cmd.endswith("&& npm install --no-audit --no-fund")
+
+
+def test_npm_install_accepts_g_positionally_like_e2b() -> None:
+    (step,) = Template().npm_install("typescript", True).spec.steps
+    assert isinstance(step, RunStep)
+    assert step.cmd.endswith("npm install --no-audit --no-fund -g typescript")
+
+
+def test_dnf_install_runs_as_root_and_restores_a_non_root_user() -> None:
+    t = Template().set_user("user").dnf_install("tree")
+    steps = t.spec.steps
+    assert steps[0] == UserStep("user")
+    assert steps[1] == UserStep("root")
+    assert isinstance(steps[2], RunStep)
+    assert steps[3] == UserStep("user")
+    assert len(steps) == 4
+
+
+@pytest.mark.parametrize("user", [None, "root", "0"])
+def test_dnf_install_does_not_wrap_when_already_root(user: str | None) -> None:
+    base = Template() if user is None else Template().set_user(user)
+    steps = base.dnf_install("tree").spec.steps
+    assert [type(step) for step in steps].count(UserStep) == (0 if user is None else 1)
+    assert isinstance(steps[-1], RunStep)
+
+
+def test_dnf_install_wraps_around_the_latest_user_only() -> None:
+    steps = Template().set_user("a").set_user("b").dnf_install("tree").spec.steps
+    assert steps[-3:] == (UserStep("root"), steps[-2], UserStep("b"))
+
+
+def test_npm_install_global_runs_as_root_but_local_keeps_the_user() -> None:
+    base = Template().set_user("user")
+    global_steps = base.npm_install("typescript", g=True).spec.steps
+    local_steps = base.npm_install("left-pad").spec.steps
+    assert global_steps[1] == UserStep("root")
+    assert global_steps[-1] == UserStep("user")
+    assert [type(step) for step in local_steps] == [UserStep, RunStep]
+
+
+@pytest.mark.parametrize("call", ["dnf_install", "npm_install"])
+@pytest.mark.parametrize("packages", [[], [" "], [""], ["--help"], "-y"])
+def test_install_shortcuts_reject_empty_and_option_like_names(
+    call: str, packages: str | list[str]
+) -> None:
+    with pytest.raises(InvalidArgumentException):
+        getattr(Template(), call)(packages)
+
+
+def test_install_shortcuts_exist_on_the_async_builder() -> None:
+    t = AsyncTemplate().from_base_image().dnf_install("tree").npm_install("left-pad")
+    assert isinstance(t, AsyncTemplate)
+    assert len(t.spec.steps) == 2
 
 
 @pytest.mark.parametrize(

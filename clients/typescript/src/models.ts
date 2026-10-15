@@ -497,6 +497,13 @@ export interface SandboxHealth {
   readonly resumeGeneration: number;
   readonly clockOffsetMs: number;
   readonly kernelStateLost: boolean;
+  /**
+   * `true` sólo cuando `rayd` instaló y verificó el bloqueo de IMDS para los
+   * uids del sandbox (imagen con capabilities); `false` en la imagen por
+   * defecto, en un agente anterior a M6 y mientras la verificación de `/run`
+   * no termina.
+   */
+  readonly imdsBlocked: boolean;
   readonly egressEnforcement: EgressEnforcement;
   readonly lifecycle: SandboxLifecycle | undefined;
   /** CPUs que ve el guest; 0 si no se pudieron leer o en un agente anterior a 0.3.0. */

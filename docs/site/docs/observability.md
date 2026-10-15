@@ -196,12 +196,26 @@ metadatos** (opcional, apagado por defecto, con coste de DynamoDB) guarda una
 copia de los `metadata` de cada sandbox en una tabla de tu cuenta, así
 puedes filtrar también los `SUSPENDED` sin sondear ni despertar ninguno.
 
-```python
-from rayito import DynamoDbIndex, Sandbox
+=== "Python"
 
-idx = DynamoDbIndex("rayito-sandboxes")
-paused = list(Sandbox.list(metadata={"user": "42"}, states=["SUSPENDED"], index=idx))
-```
+    ```python
+    from rayito import DynamoDbIndex, Sandbox
+
+    idx = DynamoDbIndex("rayito-sandboxes")
+    paused = list(Sandbox.list(metadata={"user": "42"}, states=["SUSPENDED"], index=idx))
+    ```
+
+=== "TypeScript"
+
+    ```ts
+    import { DynamoDbIndex, Sandbox } from "rayito";
+
+    const index = new DynamoDbIndex({ tableName: "rayito-sandboxes" });
+    const paused = [];
+    for await (const item of Sandbox.list({ metadata: { user: "42" }, states: ["SUSPENDED"], index })) {
+      paused.push(item);
+    }
+    ```
 
 Guía completa, reglas de la unión, coste e IAM:
 [Índice de metadatos](funciones-opcionales/indice-de-metadatos.md).

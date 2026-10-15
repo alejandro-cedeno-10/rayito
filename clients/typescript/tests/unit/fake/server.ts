@@ -68,6 +68,8 @@ export class FakeRayd {
   readonly server: http2.Http2Server;
   sessions = 0;
   requests = 0;
+  /** La ruta (`/rayito.v1.Servicio/Metodo`) de cada request recibida, en orden. */
+  readonly paths: string[] = [];
   /** Rutas (`/rayito.v1.Servicio/Metodo`) que nunca responden: para probar que un `signal` corta la llamada. */
   readonly held = new Set<string>();
   /**
@@ -181,6 +183,7 @@ export class FakeRayd {
     const server = http2.createServer((request, response) => {
       const current = rayd as FakeRayd;
       current.requests += 1;
+      current.paths.push(request.url ?? "");
       if (current.takeForbidden()) {
         response.writeHead(403, { "content-type": "text/plain" });
         response.end("Forbidden");
