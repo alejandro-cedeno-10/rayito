@@ -28,7 +28,7 @@ from rayito._configure_base import AgentFeatures
 from rayito._limits import EFS_VOLUMES_MAX_PER_SANDBOX
 from rayito._models import has_internet_connector
 from rayito._mount_path import validate_mount_paths
-from rayito._role_policy import require_caps_for
+from rayito._role_policy import require_efs_for
 from rayito._volumes._domain import EfsVolume, MountState, VolumeStatus
 from rayito.exceptions import InvalidArgumentException, UnimplementedError, VolumeMountException
 from rayito.v1 import configure_pb2, efs_volumes_pb2
@@ -162,12 +162,12 @@ def plan_volumes(
     execution_role_arn: str | None,
 ) -> VolumesRequest:
     """Valida `volumes=` por completo, sin I/O. El orden importa (forma,
-    rutas, caps, conector y rol) para que el primer error que vea el
+    rutas, imagen efs, conector y rol) para que el primer error que vea el
     llamante sea siempre el que puede corregir."""
     validate_volume_count(len(volumes))
     validate_volume_values(volumes.values())
     validate_mount_paths(volumes.keys())
-    require_caps_for(FEATURE, image_variant)
+    require_efs_for(FEATURE, image_variant)
     require_volume_connector(egress)
     require_execution_role(execution_role_arn)
     return VolumesRequest(volumes=dict(volumes))
@@ -178,11 +178,11 @@ def require_volume_mounts(
 ) -> None:
     """La parte de `plan_volumes` que el shim de E2B comprueba sin I/O sobre
     `volume_mounts=` antes de resolver ningún nombre: número, rutas y
-    variante caps."""
+    variante efs (`base-caps-efs`)."""
     resolved = tuple(paths)
     validate_volume_count(len(resolved), feature=feature)
     validate_mount_paths(resolved)
-    require_caps_for(feature, image_variant)
+    require_efs_for(feature, image_variant)
 
 
 def to_proto(volumes: Mapping[str, EfsVolume]) -> efs_volumes_pb2.EfsVolumesConfig:

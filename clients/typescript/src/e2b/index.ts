@@ -22,6 +22,21 @@
 import { Sandbox } from "./sandbox.js";
 
 export {
+  type BarChart,
+  type BarData,
+  type BoxAndWhiskerChart,
+  type BoxAndWhiskerData,
+  type Chart,
+  ChartType,
+  type LineChart,
+  type PieChart,
+  type PieData,
+  type PointData,
+  ScaleType,
+  type ScatterChart,
+  type SuperChart,
+} from "../charts.js";
+export {
   AuthenticationError,
   // m15-templates: el shim ya construye de verdad (./template.js), así que
   // BuildError/TemplateError pasan a ser las clases nativas (mismo patrón
@@ -60,9 +75,12 @@ export {
   FileType,
   type Logs,
   type OutputMessage,
+  type ProcessInfo,
   Result,
+  type WriteEntry,
 } from "../models.js";
 export type { CommandHandle } from "../sandbox/commands.js";
+export { WatchHandle } from "../sandbox/filesystem.js";
 export { Git } from "../sandbox/git.js";
 export type {
   GitBranches,

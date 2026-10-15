@@ -88,6 +88,7 @@
   "metadataXattrPrefix": "user.rayito.",
   "compressionOptInHeader": "rayito-compress",
   "supportedMemoryMiB": [512, 1024, 2048, 4096, 8192],
+  "officialImageVariants": ["base", "base-caps", "base-caps-efs", "base-poly", "base-slim"],
   "guestMemoryMultiplier": 4,
   "efsVolumesMaxPerSandbox": 4,
   "reservedPorts": [8080, 9000],

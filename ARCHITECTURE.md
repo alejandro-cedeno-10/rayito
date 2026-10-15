@@ -1885,7 +1885,7 @@ los demás ni al SDK sin usarlo.
 `mounts=` monta uno o más buckets S3 (o un prefijo suyo) en el guest con
 `mount-s3` (Mountpoint for Amazon S3), sólo sobre `rayito-base-caps` (o una
 variante derivada por tamaño): el execution role del sandbox necesita
-IMDS, que `rayito-base` no concede (ADR-012, `_role_policy.require_caps_for`).
+IMDS, que `rayito-base` no concede (ADR-012, `_role_policy.require_caps_for`; el nombre de la imagen sólo se interpreta si es un `rayito-<variante>[-<talla>]` oficial, el resto lo decide `Health.features`).
 
 **Dominio** (`rayd_core::s3_mount`, puro): `S3Mount{mount_path, bucket,
 prefix, read_only, allow_overwrite, allow_delete}`, `MountErrorClass`
