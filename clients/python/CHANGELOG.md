@@ -6,6 +6,8 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-10-15
+
 ### Añadido
 
 - **Panel: variante `AuthMode=aws-iam` de la pila `dashboard`** (opt-in, por
@@ -120,6 +122,11 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   `amazon-efs-utils` lanza `UnimplementedError` antes de lanzar en lugar de
   después.
 
+- **Pila `dashboard-cloudwatch`**: `DashboardName` vacío (el valor por defecto)
+  usa el nombre de la pila en lugar del fijo `rayito`, así que desplegar ya no
+  choca con un dashboard propio con ese nombre. Una pila ya desplegada conserva
+  su nombre (redesplegar reutiliza el valor anterior).
+
 ### Corregido
 
 - **Pila `dashboard-cloudwatch`**: con `IncludeOtlp` o `IncludeQuota` los widgets
@@ -132,13 +139,6 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
 - `scripts/measure/dashboard_apis.py`: sin los reintentos de botocore el
   throttling se ve (antes lo ocultaban y falseaban la tasa lograda), y un
   escalón sólo cuenta como saturado si se rechaza al menos el 10 % de sus llamadas.
-
-### Cambiado
-
-- **Pila `dashboard-cloudwatch`**: `DashboardName` vacío (el valor por defecto)
-  usa el nombre de la pila en lugar del fijo `rayito`, así que desplegar ya no
-  choca con un dashboard propio con ese nombre. Una pila ya desplegada conserva
-  su nombre (redesplegar reutiliza el valor anterior).
 
 ## [0.11.0] - 2026-10-13
 
@@ -1706,7 +1706,8 @@ Pasos manuales, fuera de CI, antes del primer tag (pasos canónicos en
 
 Builds internos de los hitos M1-M5, nunca publicados.
 
-[Unreleased]: https://github.com/alejandro-cedeno-10/rayito/compare/python-v0.11.0...HEAD
+[Unreleased]: https://github.com/alejandro-cedeno-10/rayito/compare/python-v0.12.0...HEAD
+[0.12.0]: https://github.com/alejandro-cedeno-10/rayito/compare/python-v0.11.0...python-v0.12.0
 [0.11.0]: https://github.com/alejandro-cedeno-10/rayito/compare/python-v0.10.0...python-v0.11.0
 [0.10.0]: https://github.com/alejandro-cedeno-10/rayito/compare/python-v0.9.1...python-v0.10.0
 [0.9.1]: https://github.com/alejandro-cedeno-10/rayito/compare/python-v0.9.0...python-v0.9.1

@@ -10,6 +10,8 @@ imagen `rayito-base` y como asset de la GitHub Release del tag `rayd-v*`.
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-10-15
+
 ### Security
 
 - **`rustls` 0.23.45 -> 0.23.46** (cliente HTTPS de las transferencias
@@ -790,7 +792,8 @@ Un proceso por MicroVM, como root, estático musl, con gRPC h2c (`tonic`) en
 Builds internos de los hitos M1-M5, publicados sólo como versiones de imagen
 de la cuenta de desarrollo.
 
-[Unreleased]: https://github.com/alejandro-cedeno-10/rayito/compare/rayd-v0.11.0...HEAD
+[Unreleased]: https://github.com/alejandro-cedeno-10/rayito/compare/rayd-v0.12.0...HEAD
+[0.12.0]: https://github.com/alejandro-cedeno-10/rayito/compare/rayd-v0.11.0...rayd-v0.12.0
 [0.11.0]: https://github.com/alejandro-cedeno-10/rayito/compare/rayd-v0.10.0...rayd-v0.11.0
 [0.10.0]: https://github.com/alejandro-cedeno-10/rayito/compare/rayd-v0.9.1...rayd-v0.10.0
 [0.9.1]: https://github.com/alejandro-cedeno-10/rayito/compare/rayd-v0.9.0...rayd-v0.9.1

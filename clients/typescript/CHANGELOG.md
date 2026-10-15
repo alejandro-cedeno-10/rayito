@@ -6,6 +6,8 @@ versionado [SemVer](https://semver.org/lang/es/).
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-10-15
+
 ### Añadido
 
 - **Cobertura e2e de la superficie del SDK**: nuevos tests contra AWS real
@@ -89,18 +91,16 @@ versionado [SemVer](https://semver.org/lang/es/).
   pasa a `Health.features`, como ya ocurría con un ARN. `volumes` exige
   `rayito-base-caps-efs` cuando la variante se conoce.
 
+- **Componente `dashboard-cloudwatch`**: `DashboardName` vacío (el valor por
+  defecto) usa el nombre de la pila en lugar del fijo `rayito`; una pila ya
+  desplegada conserva su nombre.
+
 ### Corregido
 
 - **Componente `dashboard-cloudwatch`**: con `IncludeOtlp` o `IncludeQuota` los
   widgets añadidos se creaban con la región literal `${AWS::Region}`; la
   plantilla (la misma que usa Python) resuelve ahora la región con `Fn::Join` y
   `Ref AWS::Region`.
-
-### Cambiado
-
-- **Componente `dashboard-cloudwatch`**: `DashboardName` vacío (el valor por
-  defecto) usa el nombre de la pila en lugar del fijo `rayito`; una pila ya
-  desplegada conserva su nombre.
 
 ## [0.11.0] - 2026-10-13
 
@@ -1385,7 +1385,8 @@ AWS real en M6 (`MILESTONES.md`), en camelCase y milisegundos, sólo async.
 
 Builds internos de los hitos M1-M5, nunca publicados.
 
-[Unreleased]: https://github.com/alejandro-cedeno-10/rayito/compare/typescript-v0.11.0...HEAD
+[Unreleased]: https://github.com/alejandro-cedeno-10/rayito/compare/typescript-v0.12.0...HEAD
+[0.12.0]: https://github.com/alejandro-cedeno-10/rayito/compare/typescript-v0.11.0...typescript-v0.12.0
 [0.11.0]: https://github.com/alejandro-cedeno-10/rayito/compare/typescript-v0.10.0...typescript-v0.11.0
 [0.10.0]: https://github.com/alejandro-cedeno-10/rayito/compare/typescript-v0.9.1...typescript-v0.10.0
 [0.9.1]: https://github.com/alejandro-cedeno-10/rayito/compare/typescript-v0.9.0...typescript-v0.9.1
