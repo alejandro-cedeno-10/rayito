@@ -1,6 +1,10 @@
 /**
  * Aceptación de `m9-e2b-v2-surface` en TypeScript contra AWS real
- * (`openspec/changes/m9-e2b-v2-surface/design.md` D23, tarea 11.5).
+ * (`openspec/changes/m9-e2b-v2-surface/design.md` D23, tarea 11.5). Sobre un
+ * sandbox vivo del shim también comprueba `getMetrics`, `setTimeout`, las
+ * puertas `UnimplementedError`, los metadatos tras pause y connect y el
+ * `NotFoundError` tras `kill` (espejo de los pasos 10 a 12 de
+ * `test_m6_e2b_compat.py`).
  *
  * `beforeAll` corre `pnpm build`; después cada programa de
  * `tests/e2e/e2b-corpus/*.mjs` se ejecuta con `node` como lo haría un usuario
@@ -23,14 +27,22 @@
  */
 
 import { execFileSync, spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { beforeAll, describe, expect, test } from "vitest";
 import { Sandbox as ShimSandbox } from "../../src/e2b/index.js";
-import { SandboxError, UnimplementedError } from "../../src/index.js";
+import { NotFoundError, SandboxError, UnimplementedError } from "../../src/index.js";
 import { generateAccessToken } from "../../src/payload.js";
-import { type E2EContext, e2eEnabled, useE2E } from "./helpers.js";
+import {
+  type E2EContext,
+  e2eEnabled,
+  seconds as elapsedSince,
+  report as reportSeconds,
+  useE2E,
+  waitUntil,
+} from "./helpers.js";
 
 const PACKAGE_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const CORPUS_DIR = join(PACKAGE_DIR, "tests", "e2e", "e2b-corpus");
@@ -55,6 +67,15 @@ const PROGRAMS = [
 const DOCS_PREFIX = "// Sigue https://docs.e2b.dev/";
 const ALLOWED_IMPORT = /^(?:rayito\/e2b|node:[a-z/_]+)$/;
 const CORPUS_MAX_LIFETIME_MS = 900_000;
+const SHIM_SET_TIMEOUT_MS = 600_000;
+const SHIM_PAUSE_BUDGET_MS = 30_000;
+const SHIM_GONE_BUDGET_MS = 120_000;
+const SHIM_GONE_POLL_MS = 1000;
+const POLY_IMAGE = "rayito-base-poly";
+const UNSUPPORTED_LANGUAGE = "r";
+const BASE_ONLY_LANGUAGE = "js";
+const METADATA_TRACK = "ts-e2e";
+const INITIAL_KERNEL_STATE = "x = 40";
 const BUILD_TIMEOUT_MS = 300_000;
 const PROGRAM_BUDGET_MS = 600_000;
 const OUTPUT_TAIL_LINES = 40;
@@ -129,6 +150,23 @@ async function sweepNew(context: E2EContext, before: ReadonlySet<string>): Promi
   return leftovers.length;
 }
 
+/** Un sandbox del shim de E2B con el tope de 900 s del corpus y los guardarraíles de `useE2E`. */
+async function createShim(
+  context: E2EContext,
+  extra: { readonly metadata?: Readonly<Record<string, string>> } = {},
+): Promise<ShimSandbox> {
+  const sbx = await ShimSandbox.create({
+    template: context.templateArn,
+    maxLifetimeMs: CORPUS_MAX_LIFETIME_MS,
+    executionRoleArn: context.settings.executionRoleArn,
+    logging: context.settings.logging,
+    controlPlane: context.controlPlane,
+    ...extra,
+  });
+  context.created.push(sbx.native);
+  return sbx;
+}
+
 function importedModules(source: string): string[] {
   return [...source.matchAll(/^import\s[^;]*?from\s+"([^"]+)";/gms)].map((match) => match[1] ?? "");
 }
@@ -173,14 +211,7 @@ describe.skipIf(!e2eEnabled())("m9 e2b corpus (node)", () => {
   });
 
   test("fork is UnimplementedError on a live sandbox and leaves it usable", async () => {
-    const sbx = await ShimSandbox.create({
-      template: context.templateArn,
-      maxLifetimeMs: CORPUS_MAX_LIFETIME_MS,
-      executionRoleArn: context.settings.executionRoleArn,
-      logging: context.settings.logging,
-      controlPlane: context.controlPlane,
-    });
-    context.created.push(sbx.native);
+    const sbx = await createShim(context);
     try {
       const failure = await sbx.fork().then(
         () => undefined,
@@ -192,6 +223,71 @@ describe.skipIf(!e2eEnabled())("m9 e2b corpus (node)", () => {
     } finally {
       await sbx.kill();
     }
+  });
+
+  describe("the shim on a live sandbox", () => {
+    const metadata = { track: METADATA_TRACK, run: randomUUID() };
+    let shim: ShimSandbox;
+
+    beforeAll(async () => {
+      shim = await createShim(context, { metadata });
+      await shim.runCode(INITIAL_KERNEL_STATE);
+    });
+
+    test("getMetrics, setTimeout and Unimplemented (snapshot, r, js on base)", async () => {
+      const series = await shim.getMetrics();
+      const latest = series.at(-1);
+      expect(latest?.memTotal).toBeGreaterThan(0);
+      expect(latest?.cpuCount).toBeGreaterThanOrEqual(1);
+      await shim.setTimeout(SHIM_SET_TIMEOUT_MS);
+      await expect(shim.createSnapshot()).rejects.toBeInstanceOf(UnimplementedError);
+      await expect(shim.runCode("1", { language: UNSUPPORTED_LANGUAGE })).rejects.toBeInstanceOf(
+        UnimplementedError,
+      );
+      const onBase = await shim
+        .runCode("1", { language: BASE_ONLY_LANGUAGE })
+        .catch((error: unknown) => error);
+      expect(onBase).toBeInstanceOf(UnimplementedError);
+      expect((onBase as UnimplementedError).message).toContain(POLY_IMAGE);
+    });
+
+    test("metadata survives pause and connect", async () => {
+      expect((await shim.getInfo()).metadata).toEqual(metadata);
+      const started = performance.now();
+      expect(await shim.betaPause()).toBe(true);
+      const pauseSeconds = elapsedSince(started);
+      reportSeconds("shim betaPause() -> SUSPENDED (pause_s)", pauseSeconds);
+      expect(pauseSeconds * 1000).toBeLessThan(SHIM_PAUSE_BUDGET_MS);
+      const again = await ShimSandbox.connect(shim.sandboxId, {
+        accessToken: shim.native.accessToken,
+        controlPlane: context.controlPlane,
+      });
+      try {
+        expect((await again.runCode("x + 2")).text).toBe("42");
+        expect((await again.getInfo()).metadata).toEqual(metadata);
+        expect(
+          (await ShimSandbox.getInfo(shim.sandboxId, { controlPlane: context.controlPlane }))
+            .metadata,
+        ).toEqual(metadata);
+      } finally {
+        again.native.close();
+      }
+    });
+
+    test("kill followed by getInfo is NotFoundError", async () => {
+      expect(await shim.kill()).toBe(true);
+      const elapsed = await waitUntil(
+        async () =>
+          ShimSandbox.getInfo(shim.sandboxId, { controlPlane: context.controlPlane }).then(
+            () => false,
+            (error: unknown) => error instanceof NotFoundError,
+          ),
+        SHIM_GONE_BUDGET_MS,
+        "getInfo -> NotFoundError",
+        SHIM_GONE_POLL_MS,
+      );
+      reportSeconds("kill() -> Sandbox.getInfo(id) NotFoundError", elapsed);
+    });
   });
 
   test.each(PROGRAMS)("corpus program %s", async (program) => {
