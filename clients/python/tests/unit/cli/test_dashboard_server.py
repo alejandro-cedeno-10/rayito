@@ -473,3 +473,35 @@ def test_the_csp_has_no_remote_sources_and_the_spa_links_the_theme_sheet() -> No
     assert "http" not in CONTENT_SECURITY_POLICY and "unsafe" not in CONTENT_SECURITY_POLICY
     html = (STATIC_ROOT / "index.html").read_text(encoding="utf-8")
     assert html.index("/css/tokens.css") < html.index("/theme.css")
+
+
+#: Longitudes de la hoja de estilos que no son valores de diseño: el borde de
+#: `1px` y el truco de `visually-hidden`. Los puntos de corte de `@media` (CSS
+#: no admite `var()` ahí) se documentan en la cabecera de la hoja.
+CSS_LENGTH = re.compile(r"-?\d*\.?\d+(?:rem|px|em)\b")
+CSS_NON_DESIGN_LENGTH = re.compile(r"\b1px\b|@media[^{]*")
+CSS_COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)
+
+
+def test_the_stylesheet_takes_every_design_size_from_a_token() -> None:
+    sheet = CSS_COMMENT.sub("", (STATIC_ROOT / "css" / "app.css").read_text(encoding="utf-8"))
+    offenders = [
+        line.strip()
+        for line in sheet.splitlines()
+        if CSS_LENGTH.search(CSS_NON_DESIGN_LENGTH.sub("", line))
+    ]
+    assert offenders == []
+
+
+CSS_UNITLESS_TYPE_VALUE = re.compile(r"(?:line-height|font-weight)\s*:\s*\d")
+
+
+def test_the_stylesheet_takes_every_line_height_and_font_weight_from_a_token() -> None:
+    sheet = CSS_COMMENT.sub("", (STATIC_ROOT / "css" / "app.css").read_text(encoding="utf-8"))
+    offenders = [
+        line.strip() for line in sheet.splitlines() if CSS_UNITLESS_TYPE_VALUE.search(line)
+    ]
+    assert offenders == []
+    tokens = (STATIC_ROOT / "css" / "tokens.css").read_text(encoding="utf-8")
+    for token in ("--leading-body", "--leading-heading", "--leading-stat", "--weight-medium"):
+        assert f"{token}:" in tokens

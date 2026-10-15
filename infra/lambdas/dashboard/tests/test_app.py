@@ -16,7 +16,7 @@ import pytest
 from dashboard_stack.app import MAX_JOB_SECONDS, ActionsUnavailable, StackApp
 from dashboard_stack.appearance import LiveAppearance
 from dashboard_stack.audit import AuditLog
-from dashboard_stack.config import StackConfig
+from dashboard_stack.config import SURFACE_FULL, StackConfig
 from dashboard_stack.jobs import InlineJobs, JobLog
 from dashboard_stack.tokens import AuthUnavailable, Caller, TokenVerifier, signing_key_from_jwk
 from stack_fakes import FakeControlPlane, FakeDynamo
@@ -105,6 +105,7 @@ class Rig:
                 cost_explorer=False,
                 theme_parameter=None,
                 logo_parameter=None,
+                allowed_origin=kwargs.get("allowed_origin"),
             ),
             verifier=TokenVerifier(
                 issuer=ISSUER, keys=OneKey(signer), clients=Clients(), clock=lambda: NOW
@@ -115,6 +116,7 @@ class Rig:
             audit=AuditLog(self.dynamo, "audit"),
             appearance=LiveAppearance(lambda: kwargs.get("appearance", Appearance())),
             directory=kwargs.get("directory"),
+            surface=kwargs.get("surface", SURFACE_FULL),
         )
 
     def call(
@@ -126,10 +128,12 @@ class Rig:
         body: Any = None,
         headers: Mapping[str, str] | None = None,
         post_ok: bool = True,
+        iam_arn: str | None = None,
+        token_header: str = "authorization",
     ) -> tuple[int, dict[str, str], Any]:
         sent = {name.lower(): value for name, value in (headers or {}).items()}
         if token is not None:
-            sent["authorization"] = f"Bearer {token}"
+            sent[token_header] = f"Bearer {token}" if token_header == "authorization" else token
         if method == "POST" and post_ok:
             sent.setdefault("origin", ORIGIN)
             sent.setdefault("content-type", "application/json")
@@ -144,6 +148,7 @@ class Rig:
                 "domainName": DOMAIN,
                 "requestId": "req-1",
                 "http": {"method": method, "sourceIp": "203.0.113.7"},
+                **({"authorizer": {"iam": {"userArn": iam_arn}}} if iam_arn else {}),
             },
         }
         response = self.app.respond(event)

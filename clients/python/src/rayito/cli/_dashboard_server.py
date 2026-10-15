@@ -44,11 +44,12 @@ from urllib.parse import parse_qs, unquote, urlsplit
 from rayito._dashboard._api._contract import (
     API_PREFIX,
     HTTP_OK,
+    ApiBackend,
     ApiRequest,
     ApiResponse,
 )
 from rayito._dashboard._api._headers import LOGO_HEADERS, content_security_policy, security_headers
-from rayito._dashboard._api._router import ApiError, DashboardApi, error_response
+from rayito._dashboard._api._router import ApiError, error_response
 from rayito._dashboard._api._static import INDEX_PATH, LOGO_PATH, load_static_files
 from rayito._dashboard._theme import Appearance
 from rayito._limits import (
@@ -172,7 +173,7 @@ class LocalApp:
 
     def __init__(
         self,
-        api: DashboardApi,
+        api: ApiBackend,
         access: ProxyAccess,
         guard: SessionGuard,
         static: Mapping[str, tuple[bytes, str]],
@@ -330,7 +331,7 @@ class LocalDashboard:
     azar), construye la lista de `Host`/`Origin` con ese puerto y sirve."""
 
     def __init__(
-        self, api: DashboardApi, *, port: int = 0, appearance: Appearance | None = None
+        self, api: ApiBackend, *, port: int = 0, appearance: Appearance | None = None
     ) -> None:
         self._api = api
         self._server = DashboardHttpServer((LOOPBACK, port), _Handler)

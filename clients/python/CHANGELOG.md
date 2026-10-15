@@ -8,6 +8,43 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
 
 ### Añadido
 
+- **Panel: variante `AuthMode=aws-iam` de la pila `dashboard`** (opt-in, por
+  defecto `cognito-jwt`): la API tiene su propia Function URL con `AuthType
+  AWS_IAM` (firma SigV4 con las credenciales de un identity pool de Cognito;
+  Lambda rechaza lo no firmado antes de ejecutar la función) y una segunda
+  función, sin permisos sobre MicroVMs, sirve la página. La SPA firma con
+  SigV4 (verificado contra `botocore`) y envía el token de Cognito en
+  `X-Rayito-Token`. Verificada en AWS real (2026-10-14).
+
+- **Panel: cuentas desde el entorno**: `rayito dashboard` lee `--account` de
+  `RAYITO_DASHBOARD_ACCOUNTS` (entradas `NOMBRE=ARN` separadas por espacios), para
+  armar el rol de la cuenta destino en tiempo de ejecución.
+
+- **Panel: guía para probar las gráficas OTLP** del dashboard de CloudWatch y
+  `scripts/measure/dashboard_apis.py` (TPS de `ListMicrovms` y
+  `ListMicrovmImages`, utilización de las cuotas de MicroVMs y retraso de Cost
+  Explorer; sólo lectura, el coste facturado tras `--billed`; no lo corre ninguna
+  puerta).
+
+- e2e de sólo lectura de `Quotas`, `UsageCost` (el coste facturado sólo con
+  `RAYITO_E2E_BILLED_COST=1`) y `Fleet`.
+
+- **Coste a la vista en el panel (ADR-026)**: la ayuda de `rayito dashboard` y de `rayito dashboard cloudwatch` dice qué es gratis y qué cuesta (Cost Explorer, DynamoDB de eventos, `resume` que vuelve a facturar cómputo, el dashboard de CloudWatch y la métrica de `--quota`), y los textos de coste de la pila salen de `limits.json`. Los avisos de cuota recuerdan el nivel más alto hasta que el uso vuelve a normal, así que un uso que oscila avisa una vez; `rayito sandbox proxy` quita la cookie del panel con cualquier separador.
+
+- **Panel, fase 3 (ADR-026), todo opcional y apagado por defecto**:
+  `rayito dashboard cloudwatch` imprime el JSON de un dashboard de CloudWatch
+  (Logs Insights sobre `/rayito/*`; `--otlp` y `--quota` añaden las métricas OTLP
+  y el uso de cuota) sin llamar a AWS, y la pila `dashboard-cloudwatch` lo
+  despliega; `rayito dashboard --account NOMBRE=ARN_DEL_ROL` (con
+  `--external-id`) añade al panel local otras cuentas, de sólo lectura, por roles
+  que asume, y la pila `dashboard-read-role` crea ese rol en la cuenta destino;
+  la pila `quota-alerts` (Lambda y regla de EventBridge) publica en SNS cuando la
+  memoria asignada cruza un umbral de la cuota, una vez por cruce, y publica el
+  uso como métrica. `rayito dashboard` pasa a ser un grupo (sin subcomando sigue
+  arrancando el panel local, con las mismas opciones). Ruta `GET /api/v1/accounts`
+  (siempre `[]` salvo con `--account`). Constantes nuevas en `limits.json`
+  (`dashboardAccountsMax`, `dashboardAssumeRole*`, `quotaMetric*`, `quotaAlerts*`).
+
 - **Pila `dashboard`** (el panel de gestión dentro de tu cuenta, ADR-026, fase
   2): componente de `OptionalStacks`/`rayito stack deploy|status|destroy
   dashboard`. Una Lambda con Function URL sirve la misma página y la misma API
@@ -79,6 +116,26 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   `rayito-base-caps-efs` cuando la variante se conoce: `rayito-base-caps` sin
   `amazon-efs-utils` lanza `UnimplementedError` antes de lanzar en lugar de
   después.
+
+### Corregido
+
+- **Pila `dashboard-cloudwatch`**: con `IncludeOtlp` o `IncludeQuota` los widgets
+  añadidos se creaban con la región literal `${AWS::Region}`, porque `Fn::Sub`
+  no sustituye dentro de los valores de sus variables. La plantilla resuelve
+  ahora la región con `Fn::Join` y `Ref AWS::Region`, y el test de la plantilla
+  la resuelve como CloudFormation.
+- **Panel multicuenta**: pedir una acción en una cuenta adicional decía «arranca
+  con --allow-actions»; ahora dice que las cuentas adicionales son de sólo lectura.
+- `scripts/measure/dashboard_apis.py`: sin los reintentos de botocore el
+  throttling se ve (antes lo ocultaban y falseaban la tasa lograda), y un
+  escalón sólo cuenta como saturado si se rechaza al menos el 10 % de sus llamadas.
+
+### Cambiado
+
+- **Pila `dashboard-cloudwatch`**: `DashboardName` vacío (el valor por defecto)
+  usa el nombre de la pila en lugar del fijo `rayito`, así que desplegar ya no
+  choca con un dashboard propio con ese nombre. Una pila ya desplegada conserva
+  su nombre (redesplegar reutiliza el valor anterior).
 
 ## [0.11.0] - 2026-10-13
 

@@ -11,10 +11,13 @@ from rayito._stacks._model import StackComponent
 from rayito._stacks.components import (
     custom_domain,
     dashboard,
+    dashboard_cloudwatch,
+    dashboard_read_role,
     efs_volumes,
     events_webhooks,
     metadata_index,
     otlp_export,
+    quota_alerts,
     s3_mounts,
     secrets_access,
     sizes_guard,
@@ -32,6 +35,9 @@ COMPONENTS: tuple[StackComponent, ...] = (
     templates.COMPONENT,
     custom_domain.COMPONENT,
     dashboard.COMPONENT,
+    dashboard_cloudwatch.COMPONENT,
+    dashboard_read_role.COMPONENT,
+    quota_alerts.COMPONENT,
 )
 
 _BY_NAME: dict[str, StackComponent] = {component.name: component for component in COMPONENTS}

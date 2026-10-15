@@ -2666,8 +2666,10 @@ para el estado y las pilas opcionales; este ADR lo extiende a una interfaz.
    `NONE` con validación del JWT de Cognito en el manejador (emisor,
    audiencia, caducidad, firma JWKS, `token_use`) antes de cualquier ruta o
    llamada a AWS, y la shell estática como única ruta sin autenticar; `AWS_IAM`
-   con identity pool y SigV4 es la variante opcional (a verificar en la
-   cuenta de pruebas). Una función tiene un solo rol: corre con un rol de
+   con identity pool y SigV4 es la variante opcional (`AuthMode=aws-iam`: dos
+   Function URL, la de la API con `AWS_IAM` y la de la página sin permisos,
+   con el token de Cognito en `X-Rayito-Token`; implementada y probada con
+   dobles, a verificar en la cuenta de pruebas). Una función tiene un solo rol: corre con un rol de
    sólo lectura y asume por `sts:AssumeRole` el rol de acciones tras
    comprobar el grupo del llamante. Sin CORS (la SPA se sirve desde el mismo
    origen, así que la Function URL no lo habilita), `Origin` propio en cada
@@ -2683,8 +2685,11 @@ dashboard` local con inventario, imágenes, cuotas, coste y acciones. 2: pila
 `dashboard` con la SPA y la API servidas desde una Lambda con Function URL
 (CloudFormation); CloudFront más S3 queda como variante opcional documentada
 como no probada donde las políticas de la organización lo impidan. 3
-(opcional): dashboard de CloudWatch generado, vista multi-cuenta y alertas de
-cuota.
+(opcional): dashboard de CloudWatch generado (`rayito dashboard cloudwatch` y la
+pila `dashboard-cloudwatch`), vista multi-cuenta del panel local por roles de
+lectura asumidos (`--account`, plantilla `dashboard-read-role` en la cuenta
+destino) y alertas de cuota (pila `quota-alerts`: Lambda, EventBridge y SNS).
+Cada una apagada por defecto y con su propia declaración de coste.
 
 **Consecuencias.** El no-objetivo de `SPEC.md` §4 pasa a excluir sólo el
 billing y un panel hospedado por Rayito. Hay más superficie que mantener y

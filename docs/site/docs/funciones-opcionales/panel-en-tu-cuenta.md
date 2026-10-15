@@ -13,12 +13,16 @@ lo que se crea es tuyo y `rayito stack destroy dashboard` lo borra.
       Desplegada, es de **sólo lectura** y sin consultas de coste facturado.
     - **Activa**: `rayito stack deploy dashboard --artifact-bucket <bucket>`.
       `--param AllowActions=true` crea además el rol de acciones y
-      `--param EnableCostExplorer=true` permite el coste facturado.
+      `--param EnableCostExplorer=true` permite el coste facturado y
+      `--param AuthMode=aws-iam` pone la API detrás de una Function URL que
+      exige firma SigV4 ([variante `AWS_IAM`](#variante-aws-iam)).
     - **Recursos y llamadas AWS**: una función Lambda con su Function URL y su
       log group; un grupo de usuarios de Cognito con su cliente y su dominio del
       Hosted UI (y, con acciones, un grupo); dos tablas DynamoDB bajo demanda
       (auditoría y caché de coste); un rol de lectura y, con acciones, un rol de
-      acciones; con `ThemeJson`, un parámetro de SSM. **No crea** distribuciones de
+      acciones; con `ThemeJson`, un parámetro de SSM. Con `AuthMode=aws-iam`,
+      además, una segunda función con su URL (la página), un identity pool de
+      Cognito, dos roles y un parámetro de SSM. **No crea** distribuciones de
       CloudFront ni buckets de S3.
     - **Coste aproximado**: ~$0 en reposo: sin tráfico no hay invocaciones, y
       Lambda, DynamoDB bajo demanda y Cognito sólo facturan por uso (los
@@ -33,6 +37,11 @@ lo que se crea es tuyo y `rayito stack destroy dashboard` lo borra.
         duración. La Function URL es **pública** (`AuthType NONE`): el tráfico
         sin autenticar también factura invocaciones, así que fija
         `ReservedConcurrency` para acotarlo.
+      - **`AuthMode=aws-iam`**: la API sólo la invoca quien firma con las
+        credenciales del identity pool: una petición sin firma la rechaza la
+        Function URL sin ejecutar la función. La página sigue siendo pública
+        (`AuthType NONE`) y factura como la Lambda de arriba. Los identity pools
+        de Cognito no facturan por sí mismos.
       - **DynamoDB**: una escritura por sandbox y acción (auditoría).
       - **Cost Explorer** (sólo con `EnableCostExplorer=true`): $0,01 por
         consulta, una cada 24 h por ventana gracias a la caché y, en total para
@@ -348,18 +357,131 @@ corrige.
 El detalle de amenazas y los riesgos que se aceptan está en
 [Seguridad](../security.md#panel-de-gestion-en-tu-cuenta).
 
+## Variante `AWS_IAM`: la API sólo responde a peticiones firmadas { #variante-aws-iam }
+
+!!! info "Coste y activación"
+    - **Por defecto**: apagada. Sin `AuthMode=aws-iam` la pila es la de arriba
+      (una Function URL pública que valida el token de Cognito).
+    - **Activa**: `rayito stack deploy dashboard --param AuthMode=aws-iam`.
+    - **Recursos y llamadas AWS**: en lugar de una sola función pública, dos
+      Function URL: la de la **API** (`AuthType AWS_IAM`) y la de la **página**
+      (`AuthType NONE`, una segunda función sin permisos sobre MicroVMs). Un
+      identity pool de Cognito, un rol para los usuarios con sesión, el rol de
+      la función de la página y un parámetro de SSM (Standard) con la dirección.
+      En el navegador, dos llamadas por sesión al servicio de identidades de
+      Cognito (`GetId` y `GetCredentialsForIdentity`, sin coste) cada hora.
+    - **Coste aproximado**: $0 en reposo y por las piezas nuevas (los identity
+      pools de Cognito no facturan por sí mismos, el parámetro es Standard); lo
+      que se factura es lo de siempre, invocaciones de Lambda
+      ([precios](https://aws.amazon.com/lambda/pricing/), 2026-10-13, us-east-1).
+      La mejora es de seguridad: una petición a la API sin firma de un usuario
+      con sesión la rechaza Lambda antes de ejecutar la función.
+    - **IAM**: quien despliega, lo mismo que en la pila por defecto
+      (`CAPABILITY_IAM`). El rol de los usuarios con sesión sólo puede
+      `lambda:InvokeFunctionUrl` y `lambda:InvokeFunction` (vía URL) sobre la
+      función de la API.
+    - **Cómo apagarla**: redespliega con `AuthMode=cognito-jwt` (cambia la
+      dirección del panel) o `rayito stack destroy dashboard`.
+    - **Ejemplo**: el de abajo.
+
+Qué cambia frente a la variante por defecto, y por qué hace falta tocar más
+piezas: una Function URL con `AWS_IAM` sólo atiende peticiones firmadas con
+SigV4, y un navegador no puede firmar **la navegación a la página**. Así que la
+pila separa las dos cosas:
+
+| Pieza | Función de la **página** | Función de la **API** |
+|---|---|---|
+| Function URL | `AuthType NONE` (pública) | `AuthType AWS_IAM` (Lambda rechaza lo no firmado) |
+| Qué sirve | la SPA y `/config.json`; `/api/v1` es 404 | sólo `/api/v1`; todo lo demás es 404 |
+| Permisos | logs, listar los clientes de Cognito y leer parámetros de SSM | los de lectura de la pila y, con acciones, el rol de acciones |
+| CORS | ninguno | sólo el origen de la página, sin credenciales |
+
+El flujo: el usuario inicia sesión en el Hosted UI de Cognito (igual que
+antes); la página canjea su token de identidad en el identity pool por
+credenciales temporales de AWS, y firma con **SigV4** cada llamada a la API,
+que además lleva el token de acceso de Cognito en la cabecera `X-Rayito-Token`
+(la cabecera `Authorization` la ocupa la firma). La función de la API exige las
+dos cosas: la firma que la Function URL ya comprobó y el token de Cognito
+validado entero como siempre, de modo que los grupos, la comprobación en vivo
+antes de actuar y la auditoría no cambian. Las credenciales sólo viven en la
+memoria de la pestaña y se renuevan solas. Para quien inicia sesión nada cambia:
+es la misma pantalla del Hosted UI de Cognito de siempre.
+
+![Pantalla de inicio de sesión de Cognito con los campos de correo y contraseña vacíos](../assets/panel/account-sign-in.png){ loading=lazy }
+
+=== "CLI"
+
+    ```bash
+    rayito stack deploy dashboard --artifact-bucket <bucket> \
+      --param AuthMode=aws-iam
+    rayito stack status dashboard   # DashboardUrl (la página) y ApiUrl (la API)
+    ```
+
+=== "Python"
+
+    ```python
+    from rayito import OptionalStacks
+
+    status = OptionalStacks().deploy(
+        "dashboard",
+        parameters={"AuthMode": "aws-iam"},
+        artifact_bucket="mi-bucket",
+    )
+    print(status.outputs["DashboardUrl"], status.outputs["ApiUrl"])
+    ```
+
+=== "TypeScript"
+
+    ```ts
+    import { OptionalStacks } from "rayito";
+
+    const status = await new OptionalStacks().deploy("dashboard", {
+      parameters: { AuthMode: "aws-iam" },
+      artifactBucket: "mi-bucket",
+    });
+    console.log(status.outputs.DashboardUrl, status.outputs.ApiUrl);
+    ```
+
+Lo que **no** cambia: el usuario abre `DashboardUrl` y entra con su usuario de
+Cognito; las acciones, la auditoría y el coste facturado funcionan igual.
+Límites a tener en cuenta:
+
+- La página es pública (`AuthType NONE`) en las dos variantes; lo que gana
+  `AuthMode=aws-iam` es que **la API** ya no es alcanzable sin una identidad de
+  IAM válida. No añade protección a la página estática, que no lleva datos.
+- No hay permiso basado en recurso sobre la función de la API (un principal
+  `*` ahí dejaría pasar peticiones firmadas de cualquier cuenta): sólo el rol
+  de los usuarios con sesión de **tu** cuenta, y el token de Cognito sigue
+  siendo obligatorio.
+- Un usuario con credenciales de IAM propias que pueda invocar la función
+  tampoco pasa sin un token de Cognito válido.
+- **Verificado en AWS real** (2026-10-14, Python y TypeScript): la Function URL
+  de la API rechaza con `403` la petición sin firma **sin ejecutar la
+  función** (su id de petición no aparece en el log de la función, y por tanto
+  no factura invocación); la petición previa de CORS (`OPTIONS`) responde `200`
+  con las cabeceras del origen de la página; las credenciales del identity pool
+  bastan para invocar la API; sin token de Cognito, con un token basura o con
+  el token de identidad en lugar del de acceso, la función responde `401`; un
+  lector recibe `403` al actuar y un usuario del grupo de acciones puede actuar
+  y deja su rastro en la auditoría. Las credenciales del identity pool son las
+  mismas para todos los usuarios: la firma prueba «alguien con sesión de este
+  pool» y el token decide quién es. El inicio de sesión es el mismo que en la
+  variante por defecto (la captura de [Recorrido](#recorrido) vale igual).
+  Detalle: `AWS_API_NOTES.md` §30, Q169.
+
 ## Parámetros
 
 | Parámetro | Por defecto | Qué hace |
 |---|---|---|
 | `ArtifactBucket` | (lo rellena `--artifact-bucket`) | Bucket del código de la función |
+| `AuthMode` | `cognito-jwt` | `aws-iam` da a la API su propia Function URL con firma SigV4 ([variante `AWS_IAM`](#variante-aws-iam)); cambiarlo en una pila existente cambia la dirección del panel |
 | `AllowActions` | `false` | `true` crea el rol de acciones, el grupo de Cognito y la auditoría |
 | `EnableCostExplorer` | `false` | **De pago**: `true` concede `ce:GetCostAndUsage` y la caché en DynamoDB ($0,01 por consulta, como mucho {{dashboardStackCostMissesPerDay}} al día) |
 | `ImageNamePrefix` | `rayito-` | El rol de acciones sólo actúa sobre imágenes con este prefijo |
 | `InitialUserEmail` | vacío | Crea este usuario de Cognito (y, con acciones, lo añade al grupo) |
 | `DomainPrefix` | vacío | Prefijo del dominio del Hosted UI (único en la región) |
 | `ThemeJson`, `ThemeParameterName`, `LogoParameterName` | vacío | [Tu paleta de colores](#tema); un parámetro `Advanced` cuesta $0,05 al mes más las interacciones de API |
-| `ReservedConcurrency` | vacío | Concurrencia reservada de la función; acota lo que factura el tráfico sin autenticar |
+| `ReservedConcurrency` | vacío | Concurrencia reservada de cada función de la pila (dos con `AuthMode=aws-iam`: la cuenta reserva el doble del valor); acota lo que factura el tráfico sin autenticar |
 | `LogRetentionDays` | `30` | Retención de los logs |
 
 Las etiquetas que exija tu organización se pasan con `--tag K=V` (o
@@ -410,12 +532,9 @@ Las etiquetas que exija tu organización se pasan con `--tag K=V` (o
 
 ## Variantes { #variantes }
 
-- **`AWS_IAM` en la Function URL con un identity pool de Cognito y SigV4**: un
-  navegador no firma con SigV4 por sí solo, así que exigiría un identity pool, un
-  rol de identidad por grupo y firmar cada petición en la página. No se
-  incluye: la variante por defecto (`NONE` con validación del JWT en la función)
-  ofrece la misma garantía de «ninguna llamada a AWS sin identidad validada»
-  con menos piezas.
+- **`AWS_IAM` en la Function URL con un identity pool de Cognito y SigV4**:
+  existe, detrás de un parámetro explícito; ver
+  [la sección siguiente](#variante-aws-iam).
 - **CloudFront + S3 para la página estática y la Function URL sólo para la
   API**: encaja si tu organización permite CloudFront y buckets de S3, y añade
   caché y un dominio propio con certificado. **No se incluye plantilla y no está

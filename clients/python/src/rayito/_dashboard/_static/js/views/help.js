@@ -48,9 +48,13 @@ class RayitoHelp extends View {
         h("h2", { id: "help-modes", class: "stat-label" }, "Qué está activado ahora"),
         status(meta),
         h("p", { class: "muted" }, "Sin acciones el panel sólo lee. Ninguna acción se lanza sin confirmación, y reanudar vuelve a facturar cómputo.")),
+      h("section", { class: "card", "aria-labelledby": "help-more" },
+        h("h2", { id: "help-more", class: "stat-label" }, "Varias cuentas y métricas"),
+        h("p", {}, "Si arrancaste el panel local con ", h("code", {}, "--account"), ", el selector de la esquina superior cambia de cuenta. Las cuentas adicionales son siempre de sólo lectura: las acciones se piden en la principal."),
+        h("p", {}, "La CPU, la memoria y el disco de los sandboxes que exportan OTLP se ven en el dashboard de CloudWatch: ", h("code", {}, "rayito dashboard cloudwatch --otlp"), ".")),
       h("section", { class: "card", "aria-labelledby": "help-docs" },
         h("h2", { id: "help-docs", class: "stat-label" }, "Guía completa con capturas"),
-        h("p", {}, "Cada paso, el tema propio, la pila en tu cuenta y las alertas, con imágenes."),
+        h("p", {}, "Cada paso, las varias cuentas, las gráficas OTLP, el tema propio, la pila en tu cuenta y las alertas, con imágenes."),
         h("p", {}, h("a", { class: "button primary", href: DOCS_GUIDE_URL, target: "_blank", rel: DOCS_LINK_REL }, "Abrir la guía paso a paso"))),
     ];
   }
