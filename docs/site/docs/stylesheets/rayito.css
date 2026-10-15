@@ -135,10 +135,16 @@
   --rx-bolt-flash-dur: 900ms;
   --rx-bolt-flash-delay: 250ms;
   --rx-bolt-zap-scale: 1.12;
+  --rx-logo-glow-opacity: 0.5;
+  --rx-logo-glow-mix: 70%;
+  --rx-label-step: 2;
+  /* Líneas del código del héroe con retardo propio; las posteriores comparten el último. */
+  --rx-line-max: 5;
   /* Regla: la escala llega a 6 s y esos 6 s se dibujan en 1,5 s. */
   --rx-ruler-max-s: 6;
   --rx-ruler-start: 200ms;
   --rx-ruler-draw: 1500ms;
+  --rx-ruler-line: 2px;
 }
 
 body {
@@ -180,14 +186,14 @@ body {
   inset: 0;
   z-index: -1;
   border-radius: 50%;
-  background: radial-gradient(closest-side, color-mix(in srgb, var(--rx-volt) 70%, transparent), transparent);
+  background: radial-gradient(closest-side, color-mix(in srgb, var(--rx-volt) var(--rx-logo-glow-mix), transparent), transparent);
   opacity: 0;
   pointer-events: none;
   transition: opacity var(--rx-dur-fast);
 }
 
 .md-header__button.md-logo:is(:hover, :focus-visible)::after {
-  opacity: 0.5;
+  opacity: var(--rx-logo-glow-opacity);
 }
 
 .md-header__title {
@@ -946,13 +952,16 @@ body {
     margin-top: 0;
   }
 
-  .rx-ruler__track::before {
+  .rx-ruler__track::before,
+  .rx-ruler__track::after {
     content: "";
     position: absolute;
-    left: 0;
-    right: 0;
+    inset-inline: 0;
     top: 50%;
-    height: 2px;
+    height: var(--rx-ruler-line);
+  }
+
+  .rx-ruler__track::before {
     background-color: var(--rx-line);
   }
 
@@ -1356,6 +1365,7 @@ body {
     100% { opacity: 1; transform: none; }
   }
 
+  /* Parpadeo de rayo: destello, caída casi a cero y segundo destello que se apaga. */
   @keyframes rx-bolt-flash {
     0% { opacity: 0; }
     8% { opacity: 1; }
@@ -1365,6 +1375,10 @@ body {
   }
 
   @keyframes rx-bolt-zap {
+    40% { transform: scale(var(--rx-bolt-zap-scale)); }
+  }
+
+  @keyframes rx-bolt-zap-hover {
     40% { transform: scale(var(--rx-bolt-zap-scale)); }
   }
 
@@ -1385,6 +1399,23 @@ body {
     animation: rx-rise var(--rx-dur-pop) var(--rx-ease-out) var(--rx-at-time) backwards;
   }
 
+  @media screen and (max-width: 59.99em) {
+    @supports (animation-timeline: view()) {
+      .rx-ruler__mark::after {
+        animation: rx-draw-x linear both;
+        animation-timeline: view();
+        animation-range: var(--rx-reveal-range);
+      }
+
+      .rx-ruler__value,
+      .rx-ruler__label {
+        animation: rx-rise linear both;
+        animation-timeline: view();
+        animation-range: var(--rx-reveal-range);
+      }
+    }
+  }
+
   @media screen and (min-width: 60em) {
     .rx-ruler__track::before {
       transform-origin: left center;
@@ -1392,11 +1423,6 @@ body {
     }
 
     .rx-ruler__track::after {
-      content: "";
-      position: absolute;
-      inset-inline: 0;
-      top: 50%;
-      height: 2px;
       background-color: var(--rx-volt);
       opacity: 0;
       transform-origin: left center;
@@ -1429,7 +1455,7 @@ body {
 
     .rx-ruler__value,
     .rx-ruler__label {
-      animation-delay: calc(var(--rx-at-time) + 2 * var(--rx-pop-stagger));
+      animation-delay: calc(var(--rx-at-time) + var(--rx-label-step) * var(--rx-pop-stagger));
     }
   }
 
@@ -1442,8 +1468,8 @@ body {
   }
 
   @media (hover: hover) {
-    .md-header__button.md-logo:is(:hover, :focus-visible) img {
-      animation: rx-bolt-zap var(--rx-dur-pop) var(--rx-ease-pop);
+    body:has(.md-header) .md-header__button.md-logo:is(:hover, :focus-visible) img {
+      animation: rx-bolt-zap-hover var(--rx-dur-pop) var(--rx-ease-pop);
     }
   }
 
@@ -1452,14 +1478,14 @@ body {
   }
 
   .rx-hero__code .tabbed-block > .highlight:last-child code > span {
-    animation: rx-fade-in var(--rx-dur-pop) var(--rx-ease-out) calc(var(--rx-hero-dur) + var(--rx-line-stagger) * var(--rx-line, 0)) backwards;
+    animation: rx-fade-in var(--rx-dur-pop) var(--rx-ease-out) calc(var(--rx-hero-dur) + var(--rx-line-stagger) * var(--rx-line, var(--rx-line-max))) backwards;
   }
 
+  .rx-hero__code code > span:first-child { --rx-line: 0; }
   .rx-hero__code code > span:nth-child(2) { --rx-line: 1; }
   .rx-hero__code code > span:nth-child(3) { --rx-line: 2; }
   .rx-hero__code code > span:nth-child(4) { --rx-line: 3; }
   .rx-hero__code code > span:nth-child(5) { --rx-line: 4; }
-  .rx-hero__code code > span:nth-child(n + 6) { --rx-line: 5; }
 
   @supports (animation-timeline: view()) {
     .rx-home :is(.rx-hook, .rx-feature, .rx-figure, .rx-steps > .rx-step) {
@@ -1471,7 +1497,9 @@ body {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  :is(.rx-home, .md-header) :is(*, *::before, *::after),
+  :is(.rx-home, .md-header) *,
+  :is(.rx-home, .md-header) *::before,
+  :is(.rx-home, .md-header) *::after,
   .md-typeset .grid.cards > ul > li,
   .md-typeset .md-button,
   .md-nav__link {
