@@ -21,6 +21,7 @@ import {
   type E2EContext,
   e2eEnabled,
   MAX_TEST_SANDBOX_TIMEOUT_MS,
+  msToSeconds,
   seconds,
   sleep,
   TEST_SANDBOX_TIMEOUT_MS,
@@ -88,9 +89,10 @@ function expectStrictlyAscending(values: readonly number[]): void {
 function deltasSeconds(samples: readonly SandboxMetrics[]): number[] {
   return samples
     .slice(1)
-    .map(
-      (later, index) =>
-        (later.timestamp.getTime() - (samples[index] as SandboxMetrics).timestamp.getTime()) / 1000,
+    .map((later, index) =>
+      msToSeconds(
+        later.timestamp.getTime() - (samples[index] as SandboxMetrics).timestamp.getTime(),
+      ),
     );
 }
 
@@ -107,7 +109,7 @@ function gapsOf(samples: readonly SandboxMetrics[]): Gap[] {
       startMs: earlier.timestamp.getTime(),
       endMs: later.timestamp.getTime(),
     };
-    return (gap.endMs - gap.startMs) / 1000 >= GAP_MIN_S ? [gap] : [];
+    return msToSeconds(gap.endMs - gap.startMs) >= GAP_MIN_S ? [gap] : [];
   });
 }
 
@@ -252,7 +254,7 @@ describe.skipIf(!e2eEnabled())("M9 observabilidad (TypeScript)", () => {
     );
     expect(found).toHaveLength(1);
     const [gap] = found as [Gap];
-    note("gap_s", ((gap.endMs - gap.startMs) / 1000).toFixed(1));
+    note("gap_s", msToSeconds(gap.endMs - gap.startMs).toFixed(1));
     expect(gap.startMs).toBeLessThanOrEqual(pausedAt + CLOCK_TOLERANCE_MS);
     expect(gap.endMs).toBeGreaterThanOrEqual(resumeCalledAt - CLOCK_TOLERANCE_MS);
     expect(Math.max(...history.map((sample) => sample.memCacheBytes))).toBeGreaterThan(0);

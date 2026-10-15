@@ -25,6 +25,7 @@ import {
   createTestSandbox,
   e2eEnabled,
   HOME,
+  msToSeconds,
   report,
   seconds,
   useE2E,
@@ -101,7 +102,7 @@ describe.skipIf(!e2eEnabled())("filesystem through the TypeScript SDK (mirror of
     const started = performance.now();
     const entries = await sbx.files.writeFiles(files);
     const elapsedMs = performance.now() - started;
-    report(`writeFiles x${BATCH_FILES} en un stream`, elapsedMs / 1000);
+    report(`writeFiles x${BATCH_FILES} en un stream`, msToSeconds(elapsedMs));
     expect(elapsedMs).toBeLessThanOrEqual(BATCH_BUDGET_MS);
     expect(entries.map((entry) => entry.name)).toEqual(
       files.map((file) => file.path.slice(file.path.lastIndexOf("/") + 1)),
