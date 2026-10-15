@@ -43,7 +43,7 @@ Each Python e2e test falls in one class, and only (a) is ported:
 |---|---|
 | `test_m1_hello` | `transport.e2e.test.ts`: anonymous Health ok and List `UNAUTHENTICATED`; forged JWE is a proxy 403 (`isProxyForbidden`); authenticated Resize on an unknown pid is `NOT_FOUND`; reconnect; kill |
 | `test_m2_processes` | `processes.e2e.test.ts` (6): envs/cwd and callbacks; background tag, list, kill 137, `sendStdin` without stdin; `connect` with `fromSeq` and unknown pid; 3 MB output and a 35 s sleep through the proxy; `getHost` 200/403; impostor token and metrics |
-| `test_m3_filesystem` | `filesystem.e2e.test.ts` (5): 50-file batch and 8 MB stream in at least 30 chunks; list types, symlink, remove; watch shell events and callback with entries; watch errors and timeout; recursive watch |
+| `test_m3_filesystem` | `filesystem.e2e.test.ts` (6): 50-file batch and 8 MB stream in at least 30 chunks; list types, symlink, remove; watch shell events; watch callback with entries; watch errors and timeout; recursive watch |
 | `test_m4_code` | `code.e2e.test.ts` (5): stderr and `onStdout`; timeout keeps state and silent cell; contexts, envs, per-run envs; restart/remove errors; `KernelDied` recovery |
 | `test_m6_hardening` (cpu, egress) | `hardening.e2e.test.ts` (2) |
 | `test_m6_e2b_compat` steps 10 to 12 | `m9-e2b.e2e.test.ts` (3, on one live shim sandbox) |
@@ -52,7 +52,16 @@ Each Python e2e test falls in one class, and only (a) is ported:
 | `test_m9_server_timeout::test_older_agent_gate` | `m9-timeout.e2e.test.ts` (1) |
 | `test_m9_egress` shim on base | `m9-egress.e2e.test.ts` (1) |
 
-### D4. Not decided here
+### D4. Image prerequisites
+
+Like their Python mirrors, the cases that need the M7 and M9 agent (bash and
+Deno kernels, the shim's lifecycle, an atomic write landing as one `write`
+watch event, `getInfo` metadata) require an image whose agent is 0.3.0 or
+later and, for `poly` and the egress policy, the `rayito-base-poly` and
+`rayito-base-caps` variants. On an older image they fail on the gate, not on
+the SDK, so run them against a current image.
+
+### D5. Not decided here
 
 A `check_e2e_parity.py` that fails when a Python e2e test has no
 `Paridad:` line is left for a follow-up: it needs the line in 35 Python

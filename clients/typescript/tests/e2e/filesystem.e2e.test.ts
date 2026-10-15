@@ -154,7 +154,7 @@ describe.skipIf(!e2eEnabled())("filesystem through the TypeScript SDK (mirror of
     expect(await sbx.files.exists(`${BASE}/big.bin`)).toBe(true);
   });
 
-  test("watchDir: shell events in order, then a callback with entries", async () => {
+  test("watchDir: shell events arrive in order and the handle stops cleanly", async () => {
     const handle = await sbx.files.watchDir(WATCH_DIR);
     await sbx.commands.run(
       `echo hola > ${WATCH_DIR}/a.txt; sleep 0.3; echo mas >> ${WATCH_DIR}/a.txt; sleep 0.3; rm ${WATCH_DIR}/a.txt`,
@@ -173,7 +173,9 @@ describe.skipIf(!e2eEnabled())("filesystem through the TypeScript SDK (mirror of
     await handle.stop();
     expect(handle.isRunning).toBe(false);
     expect(handle.getNewEvents()).toEqual([]);
+  });
 
+  test("watchDir: the callback gets an atomic write as one write with its entry, and chmod with the mode", async () => {
     const seen: FilesystemEvent[] = [];
     const withEntries = await sbx.files.watchDir(WATCH_DIR, {
       onEvent: (event) => seen.push(event),

@@ -26,5 +26,7 @@
 
 - [x] 4.1 Gates: `pnpm lint`, `typecheck`, `test`, `check_hygiene.py`,
       `openspec validate --strict`.
-- [ ] 4.2 Run the new and changed files on real AWS, with the inventory of
+- [x] 4.2 Run the new and changed files on real AWS, with the inventory of
       MicroVMs before and after, and clean up only what the run created.
+- [ ] 4.3 Run the cases that need an agent 0.3.0 or later, `rayito-base-poly`
+      and `rayito-base-caps` against a current image before archiving.
