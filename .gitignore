@@ -51,3 +51,7 @@ node_modules/
 # cada `make local-guest-context` y .cache guarda binarios y sondas locales.
 /dev/local/.guest-context/
 /dev/local/.cache/
+
+# Caché del plugin privacy de la documentación
+docs/site/.cache/
+/clients/python/.cache/

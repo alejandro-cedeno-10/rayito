@@ -5,6 +5,46 @@ Python async y TypeScript (las pestañas se sincronizan: elige tu lenguaje una
 vez), explica las opciones y termina con los errores habituales y las
 diferencias con E2B.
 
+<div class="grid cards rx-cards" markdown>
+
+-   :material-cube-outline:{ .lg .middle } **[Sandbox](#sandbox)**
+
+    ---
+
+    Ciclo de vida, pausa, pool y persistencia.
+
+-   :material-play-circle-outline:{ .lg .middle } **[Ejecutar](#ejecutar)**
+
+    ---
+
+    Comandos, código, kernels y terminal.
+
+-   :material-folder-network-outline:{ .lg .middle } **[Ficheros y red](#ficheros-y-red)**
+
+    ---
+
+    Ficheros, S3, salida a internet y puertos.
+
+-   :material-chart-line:{ .lg .middle } **[Observar y herramientas](#observar-y-herramientas)**
+
+    ---
+
+    Métricas, listado y git.
+
+-   :material-robot-outline:{ .lg .middle } **[Agentes](#agentes)**
+
+    ---
+
+    MCP, LangChain y el agente en el sandbox.
+
+-   :material-flask-outline:{ .lg .middle } **[Desarrollar y probar](#desarrollar-y-probar)**
+
+    ---
+
+    Probar en local, sin cuenta de AWS.
+
+</div>
+
 ## Sandbox
 
 | Guía | Para qué |
