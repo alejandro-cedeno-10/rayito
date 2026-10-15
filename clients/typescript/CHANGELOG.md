@@ -8,11 +8,39 @@ versionado [SemVer](https://semver.org/lang/es/).
 
 ### Añadido
 
+<<<<<<< HEAD
 - **Cobertura e2e de la superficie del SDK**: nuevos tests contra AWS real
   (`transport`, `processes`, `filesystem`, `code` y `hardening`, espejos de los
   bloques M1 a M4 de Python) y ampliaciones de `m9-e2b`, `poly`,
   `m9-transfer`, `m9-timeout` y `m9-egress`. Sólo tests: no cambia el SDK ni
   su API. Sin `RAYITO_E2E=1` se omiten sin llamar a AWS.
+=======
+- **Panel: parámetro `AuthMode` del componente `dashboard`** (`aws-iam` pone la
+  API tras una Function URL con firma SigV4; por defecto `cognito-jwt`), espejo
+  del de Python con los mismos textos de coste.
+
+- e2e de sólo lectura de `Quotas`, `UsageCost` (el coste facturado sólo con
+  `RAYITO_E2E_BILLED_COST=1`) y `Fleet`.
+
+- **Coste a la vista en el panel (ADR-026)**: cada clase, método y opción del panel dice si es gratuito o de pago, y los textos de coste de los componentes `dashboard`, `dashboard-cloudwatch`, `dashboard-read-role` y `quota-alerts` son idénticos a los de Python (comprobado con un fichero de referencia común), con las cifras de `limits.ts`.
+
+- **Panel, fase 3 (ADR-026)**: componentes de `OptionalStacks` `dashboard-cloudwatch`,
+  `dashboard-read-role` y `quota-alerts` (`deploy("quota-alerts", { artifactBucket })`),
+  espejo de los de Python: las mismas plantillas, el mismo zip y los mismos
+  parámetros. Apagados hasta que los despliegas. Constantes nuevas en `limits.ts`.
+  El generador del dashboard y la vista multicuenta son de la CLI de Python.
+
+- **Pila `dashboard`** (el panel de gestión dentro de tu cuenta, ADR-026, fase
+  2): componente de `OptionalStacks` (`deploy("dashboard", { artifactBucket })`),
+  espejo del de Python: la misma plantilla, el mismo zip y los mismos parámetros
+  (`AllowActions`, `EnableCostExplorer`, `ThemeJson`, `ThemeParameterName`...). De
+  sólo lectura y sin Cost Explorer por defecto. Constantes nuevas en `limits.ts`
+  (`DASHBOARD_STACK_*`). El coste facturado tiene tope aunque lo pida cualquier
+  usuario con sesión (ventanas de meses completos, regiones conocidas y un
+  presupuesto diario de consultas de pago para toda la pila) y las acciones se
+  comprueban en vivo en Cognito antes de ejecutarse.
+
+>>>>>>> origin/main
 - **Servicios del panel de gestión** (`dashboard`, ADR-026, fase 1): `Quotas`
   (cuotas aplicadas de Lambda MicroVMs, memoria asignada contra la cuota de la
   región y avisos al 80 % y al 95 %), `UsageCost` (coste facturado por Cost
@@ -59,6 +87,19 @@ versionado [SemVer](https://semver.org/lang/es/).
   variante conocida que no es caps ni se rechaza antes de lanzar: la decisión
   pasa a `Health.features`, como ya ocurría con un ARN. `volumes` exige
   `rayito-base-caps-efs` cuando la variante se conoce.
+
+### Corregido
+
+- **Componente `dashboard-cloudwatch`**: con `IncludeOtlp` o `IncludeQuota` los
+  widgets añadidos se creaban con la región literal `${AWS::Region}`; la
+  plantilla (la misma que usa Python) resuelve ahora la región con `Fn::Join` y
+  `Ref AWS::Region`.
+
+### Cambiado
+
+- **Componente `dashboard-cloudwatch`**: `DashboardName` vacío (el valor por
+  defecto) usa el nombre de la pila en lugar del fijo `rayito`; una pila ya
+  desplegada conserva su nombre.
 
 ## [0.11.0] - 2026-10-13
 

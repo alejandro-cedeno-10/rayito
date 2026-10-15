@@ -1,0 +1,788 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  Rayito (optional, ADR-026 phase 2): the management dashboard inside your own
+  account. One Lambda function behind a Function URL serves the same
+  single-page app and the same versioned /api/v1 as `rayito dashboard`, with
+  Cognito sign-in, a read-only execution role, an actions role that only that
+  execution role can assume (created only with AllowActions=true), an
+  append-only audit table and a cache table for the billed cost. Creates no
+  CloudFront distribution and no S3 bucket. Deploy it with
+  `rayito stack deploy dashboard`; delete the stack to remove everything it
+  created, including the audit rows (export them first if you need them).
+  With AuthMode=aws-iam the API sits behind its own Function URL that requires
+  an AWS SigV4 signature (Cognito identity pool credentials) and a second,
+  permissionless function serves the page.
+
+Parameters:
+  ArtifactBucket:
+    Type: String
+    MinLength: 3
+    Description: >-
+      S3 bucket `OptionalStacks.deploy(artifact_bucket=...)` already uploaded
+      the function code to (same value, so the template can reference it
+      alongside the key `StackArtifact` resolves).
+  ArtifactS3Key:
+    Type: String
+    MinLength: 1
+    Description: >-
+      rayito/stacks/<component>/<sha256>.zip, the function zip's key inside
+      the rayito/ namespace the IAM templates protect (filled by
+      `OptionalStacks.deploy`, never set by hand).
+  AuthMode:
+    Type: String
+    Default: cognito-jwt
+    AllowedValues: [cognito-jwt, aws-iam]
+    Description: >-
+      How /api/v1 is protected. "cognito-jwt" (the default): one public
+      Function URL (AuthType NONE) serves the page and the API, and the
+      function validates the Cognito token of every API request. "aws-iam":
+      the API has its own Function URL with AuthType AWS_IAM, so Lambda itself
+      rejects any request that is not signed with SigV4 by a signed-in user
+      (Cognito identity pool credentials) before the function runs; the
+      function still validates the Cognito token. A second, permissionless
+      function serves the page on a public URL (a browser cannot sign a page
+      navigation). It adds a Cognito identity pool, one function, one role and
+      one SSM parameter, all at no cost while idle. Changing this value on an
+      existing stack replaces its Function URL, so the dashboard address
+      changes.
+  AllowActions:
+    Type: String
+    Default: "false"
+    AllowedValues: ["false", "true"]
+    Description: >-
+      "true" creates the actions role (terminate, suspend and resume
+      sandboxes), the Cognito group allowed to use it and the audit
+      permissions; the dashboard is read-only without it.
+  EnableCostExplorer:
+    Type: String
+    Default: "false"
+    AllowedValues: ["false", "true"]
+    Description: >-
+      "true" lets the execution role call ce:GetCostAndUsage and use the cache
+      table. Every Cost Explorer request is billed ($0.01); results are cached
+      for 24 hours in the cache table. The function only accepts a month-aligned
+      window within the last 13 months and a supported region, and makes at
+      most 20 billed requests per UTC day in total (a counter in the cache
+      table), whoever asks.
+  ImageNamePrefix:
+    Type: String
+    Default: "rayito-"
+    Description: >-
+      The actions role may only act on sandboxes of images whose name starts
+      with this prefix. Use "" to allow every image of the account.
+  InitialUserEmail:
+    Type: String
+    Default: ""
+    AllowedPattern: "^$|^[^@\\s]+@[^@\\s]+$"
+    Description: >-
+      Optional. Creates this Cognito user (an invitation with a temporary
+      password is emailed) and, with AllowActions=true, adds it to the actions
+      group. Leave empty to create users yourself with `aws cognito-idp`.
+  DomainPrefix:
+    Type: String
+    Default: ""
+    AllowedPattern: "^$|^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$"
+    Description: >-
+      Optional prefix of the Cognito Hosted UI domain (lowercase, unique in
+      the region, without "aws", "amazon" or "cognito"). Empty derives one
+      from the stack name and id.
+  ThemeJson:
+    Type: String
+    Default: ""
+    MaxLength: 4096
+    Description: >-
+      Optional. A custom colour theme as JSON (the format of
+      examples/dashboard-theme/*.json: "version", "name", "tokens", "dark",
+      "light"), up to 4096 bytes. The stack stores it in an SSM parameter it
+      creates and the function validates it before serving it: unknown keys
+      and values that are not a colour, a length or a font list are rejected,
+      and the function falls back to the built-in theme. Ignored when
+      ThemeParameterName is set.
+  ThemeParameterName:
+    Type: String
+    Default: ""
+    AllowedPattern: "^$|^/[A-Za-z0-9_.\\-/]{1,1010}$"
+    Description: >-
+      Optional. Name (starting with "/") of an SSM parameter you manage that
+      holds the theme JSON, for a theme larger than 4096 bytes (an Advanced
+      parameter holds 8 KB) or one shared between stacks. The function role
+      may read only this parameter. Takes precedence over ThemeJson. An
+      Advanced parameter costs $0.05 per month plus API interactions (SSM
+      Parameter Store pricing); the function re-reads it every 300 seconds per
+      warm container.
+  LogoParameterName:
+    Type: String
+    Default: ""
+    AllowedPattern: "^$|^/[A-Za-z0-9_.\\-/]{1,1010}$"
+    Description: >-
+      Optional. Name (starting with "/") of an SSM parameter that holds an SVG
+      logo as text (at most 8 KB, an Advanced parameter). The function
+      validates it (no scripts, no external references) and serves it with a
+      CSP that executes nothing. An Advanced parameter costs $0.05 per month
+      plus API interactions (SSM Parameter Store pricing); the function
+      re-reads it every 300 seconds per warm container.
+  ReservedConcurrency:
+    Type: String
+    Default: ""
+    AllowedPattern: "^$|^[0-9]+$"
+    Description: >-
+      Optional. Reserved concurrent executions of each function of the stack
+      (two with AuthMode=aws-iam: the account reserves twice the value); caps
+      what a flood of unauthenticated requests can cost. Empty reserves nothing
+      (an account with the default concurrency quota cannot reserve any).
+  LogRetentionDays:
+    Type: Number
+    Default: 30
+    AllowedValues: [1, 3, 5, 7, 14, 30, 60, 90, 180, 365]
+    Description: Retention of the function's log group. It never holds tokens.
+
+Conditions:
+  IamAuth: !Equals [!Ref AuthMode, "aws-iam"]
+  JwtAuth: !Equals [!Ref AuthMode, "cognito-jwt"]
+  ActionsEnabled: !Equals [!Ref AllowActions, "true"]
+  CostExplorerEnabled: !Equals [!Ref EnableCostExplorer, "true"]
+  HasDomainPrefix: !Not [!Equals [!Ref DomainPrefix, ""]]
+  HasInitialUser: !Not [!Equals [!Ref InitialUserEmail, ""]]
+  InitialUserActs: !And
+    - !Condition HasInitialUser
+    - !Condition ActionsEnabled
+  HasThemeParameterName: !Not [!Equals [!Ref ThemeParameterName, ""]]
+  CreateThemeParameter: !And
+    - !Not [!Equals [!Ref ThemeJson, ""]]
+    - !Equals [!Ref ThemeParameterName, ""]
+  HasTheme: !Or
+    - !Condition HasThemeParameterName
+    - !Condition CreateThemeParameter
+  HasLogo: !Not [!Equals [!Ref LogoParameterName, ""]]
+  HasReservedConcurrency: !Not [!Equals [!Ref ReservedConcurrency, ""]]
+
+Resources:
+  # --- Sign-in (Cognito) -------------------------------------------------
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: !Sub ${AWS::StackName}-users
+      # Nobody signs themselves up: an administrator creates every user.
+      AdminCreateUserConfig:
+        AllowAdminCreateUserOnly: true
+      UsernameAttributes: [email]
+      AutoVerifiedAttributes: [email]
+      MfaConfiguration: OPTIONAL
+      EnabledMfas: [SOFTWARE_TOKEN_MFA]
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 12
+          RequireLowercase: true
+          RequireUppercase: true
+          RequireNumbers: true
+          RequireSymbols: false
+      AccountRecoverySetting:
+        RecoveryMechanisms:
+          - Name: verified_email
+            Priority: 1
+      DeletionProtection: INACTIVE
+
+  UserPoolDomain:
+    Type: AWS::Cognito::UserPoolDomain
+    Properties:
+      UserPoolId: !Ref UserPool
+      Domain: !If
+        - HasDomainPrefix
+        - !Ref DomainPrefix
+        - !Join
+          - "-"
+          - - !Ref AWS::StackName
+            - !Select [0, !Split ["-", !Select [2, !Split ["/", !Ref AWS::StackId]]]]
+
+  # The Function URL and this client reference each other's values (the
+  # client needs the URL as its callback, the function needs the client id),
+  # so the function finds this client by its name at run time (the env var
+  # RAYITO_DASHBOARD_CLIENT_NAME carries `ClientName`, which creates no
+  # dependency) instead of reading the id from an environment variable: that
+  # is the only way to keep the template free of a dependency cycle. The pool
+  # may hold other clients; only this one is the dashboard's audience.
+  UserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      UserPoolId: !Ref UserPool
+      ClientName: !Sub ${AWS::StackName}-spa
+      GenerateSecret: false
+      AllowedOAuthFlowsUserPoolClient: true
+      AllowedOAuthFlows: [code]
+      AllowedOAuthScopes: [openid]
+      SupportedIdentityProviders: [COGNITO]
+      # The page is the redirect target: the API function's URL has no page
+      # with AuthMode=aws-iam, so it is the page function's.
+      CallbackURLs: [!If [IamAuth, !GetAtt ShellUrl.FunctionUrl, !GetAtt FunctionUrl.FunctionUrl]]
+      LogoutURLs: [!If [IamAuth, !GetAtt ShellUrl.FunctionUrl, !GetAtt FunctionUrl.FunctionUrl]]
+      ExplicitAuthFlows: [ALLOW_REFRESH_TOKEN_AUTH]
+      PreventUserExistenceErrors: ENABLED
+      EnableTokenRevocation: true
+      TokenValidityUnits:
+        AccessToken: hours
+        IdToken: hours
+        RefreshToken: hours
+      # AccessTokenValidity is pinned equal to DASHBOARD_STACK_ACCESS_TOKEN_HOURS
+      # in limits.json (scripts/tests/test_dashboard_template.py): a token
+      # already issued stays valid that long.
+      AccessTokenValidity: 1
+      IdTokenValidity: 1
+      RefreshTokenValidity: 1
+
+  ActionsGroup:
+    Type: AWS::Cognito::UserPoolGroup
+    Condition: ActionsEnabled
+    Properties:
+      UserPoolId: !Ref UserPool
+      GroupName: rayito-dashboard-actions
+      Description: May terminate, suspend and resume sandboxes from the dashboard.
+
+  InitialUser:
+    Type: AWS::Cognito::UserPoolUser
+    Condition: HasInitialUser
+    Properties:
+      UserPoolId: !Ref UserPool
+      Username: !Ref InitialUserEmail
+      DesiredDeliveryMediums: [EMAIL]
+      UserAttributes:
+        - Name: email
+          Value: !Ref InitialUserEmail
+        - Name: email_verified
+          Value: "true"
+
+  InitialUserInActionsGroup:
+    Type: AWS::Cognito::UserPoolUserToGroupAttachment
+    Condition: InitialUserActs
+    Properties:
+      UserPoolId: !Ref UserPool
+      GroupName: !Ref ActionsGroup
+      Username: !Ref InitialUser
+
+  # --- Theme --------------------------------------------------------------
+  ThemeParameter:
+    Type: AWS::SSM::Parameter
+    Condition: CreateThemeParameter
+    Properties:
+      Type: String
+      Name: !Sub /rayito/dashboard/${AWS::StackName}/theme
+      Description: Custom theme of the Rayito dashboard (validated by the function).
+      Value: !Ref ThemeJson
+
+  # --- Tables -------------------------------------------------------------
+  CacheTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+      TimeToLiveSpecification:
+        AttributeName: expires_at
+        Enabled: true
+
+  AuditTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+        - AttributeName: sk
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+
+  # --- Function -----------------------------------------------------------
+  FunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      RetentionInDays: !Ref LogRetentionDays
+
+  # The function's only execution role: read-only on MicroVMs, Service
+  # Quotas and the pool. It can append (never change or delete) audit rows
+  # and, only when AllowActions is "true", assume the actions role.
+  ReadRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: dashboard-read
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: WriteOwnLogs
+                Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub ${FunctionLogGroup.Arn}:*
+              # `List*` operations authorize on "*" (AWS_API_NOTES.md §10).
+              - Sid: ListMicrovms
+                Effect: Allow
+                Action:
+                  - lambda:ListMicrovms
+                  - lambda:ListMicrovmImages
+                Resource: "*"
+              - Sid: ReadImageVersions
+                Effect: Allow
+                Action:
+                  - lambda:ListMicrovmImageVersions
+                  - lambda:GetMicrovmImageVersion
+                Resource: !Sub arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:microvm-image:*
+              - Sid: ReadQuotas
+                Effect: Allow
+                Action: servicequotas:ListServiceQuotas
+                Resource: "*"
+              - Sid: FindOwnClientId
+                Effect: Allow
+                Action: cognito-idp:ListUserPoolClients
+                Resource: !GetAtt UserPool.Arn
+              # An action does not wait for the access token to expire: before
+              # assuming the actions role the function asks Cognito whether
+              # the caller is still enabled and still in the actions group.
+              - !If
+                - ActionsEnabled
+                - Sid: CheckCallerBeforeActing
+                  Effect: Allow
+                  Action:
+                    - cognito-idp:AdminGetUser
+                    - cognito-idp:AdminListGroupsForUser
+                  Resource: !GetAtt UserPool.Arn
+                - !Ref AWS::NoValue
+              - !If
+                - HasTheme
+                - Sid: ReadThemeParameter
+                  Effect: Allow
+                  Action: ssm:GetParameter
+                  Resource: !Sub
+                    - arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${Name}
+                    - Name: !If
+                        - HasThemeParameterName
+                        - !Ref ThemeParameterName
+                        - !Ref ThemeParameter
+                - !Ref AWS::NoValue
+              - !If
+                - HasLogo
+                - Sid: ReadLogoParameter
+                  Effect: Allow
+                  Action: ssm:GetParameter
+                  Resource: !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${LogoParameterName}
+                - !Ref AWS::NoValue
+              - !If
+                - CostExplorerEnabled
+                - Sid: ReadBilledCost
+                  Effect: Allow
+                  Action: ce:GetCostAndUsage
+                  Resource: "*"
+                - !Ref AWS::NoValue
+              - !If
+                - CostExplorerEnabled
+                - Sid: CacheBilledCost
+                  Effect: Allow
+                  Action:
+                    - dynamodb:GetItem
+                    - dynamodb:PutItem
+                    - dynamodb:UpdateItem
+                  Resource: !GetAtt CacheTable.Arn
+                - !Ref AWS::NoValue
+              - !If
+                - ActionsEnabled
+                - Sid: AppendAuditRows
+                  Effect: Allow
+                  Action: dynamodb:PutItem
+                  Resource: !GetAtt AuditTable.Arn
+                - !Ref AWS::NoValue
+              # The log is append-only for the application itself, whatever
+              # else is ever attached to this role.
+              - Sid: NeverChangeAuditRows
+                Effect: Deny
+                Action:
+                  - dynamodb:UpdateItem
+                  - dynamodb:DeleteItem
+                  - dynamodb:BatchWriteItem
+                Resource: !GetAtt AuditTable.Arn
+
+  # Separate resource because the actions role trusts the execution role and
+  # this policy names the actions role: both inside the role would be a
+  # dependency cycle.
+  AssumeActionsRolePolicy:
+    Type: AWS::IAM::Policy
+    Condition: ActionsEnabled
+    Properties:
+      PolicyName: dashboard-assume-actions
+      Roles: [!Ref ReadRole]
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AssumeActionsRole
+            Effect: Allow
+            Action: sts:AssumeRole
+            Resource: !GetAtt ActionsRole.Arn
+
+  ActionsRole:
+    Type: AWS::IAM::Role
+    Condition: ActionsEnabled
+    Properties:
+      # Only the function's execution role, and only after the handler has
+      # checked the caller's group; the session name carries the caller's
+      # Cognito subject.
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { AWS: !GetAtt ReadRole.Arn }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: dashboard-actions
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: ActOnSandboxes
+                Effect: Allow
+                Action:
+                  - lambda:TerminateMicrovm
+                  - lambda:SuspendMicrovm
+                  - lambda:ResumeMicrovm
+                Resource: !Sub arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:microvm-image:${ImageNamePrefix}*
+
+  DashboardFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Description: Rayito management dashboard (SPA and /api/v1).
+      Runtime: python3.12
+      Architectures: [arm64]
+      Handler: handler.lambda_handler
+      Role: !GetAtt ReadRole.Arn
+      # Pinned equal to DASHBOARD_STACK_LAMBDA_TIMEOUT_SECONDS and
+      # DASHBOARD_STACK_LAMBDA_MEMORY_MIB in limits.json
+      # (scripts/tests/test_dashboard_template.py). A bulk action runs inside
+      # the request: 100 sandboxes at 2 TPS take 50 seconds.
+      Timeout: 300
+      MemorySize: 512
+      ReservedConcurrentExecutions: !If
+        - HasReservedConcurrency
+        - !Ref ReservedConcurrency
+        - !Ref AWS::NoValue
+      LoggingConfig:
+        LogGroup: !Ref FunctionLogGroup
+      Code:
+        S3Bucket: !Ref ArtifactBucket
+        S3Key: !Ref ArtifactS3Key
+      Environment:
+        Variables:
+          RAYITO_DASHBOARD_USER_POOL_ID: !Ref UserPool
+          RAYITO_DASHBOARD_CLIENT_NAME: !Sub ${AWS::StackName}-spa
+          RAYITO_DASHBOARD_COGNITO_DOMAIN: !Sub ${UserPoolDomain}.auth.${AWS::Region}.amazoncognito.com
+          RAYITO_DASHBOARD_AUDIT_TABLE: !Ref AuditTable
+          RAYITO_DASHBOARD_CACHE_TABLE: !Ref CacheTable
+          RAYITO_DASHBOARD_ACTIONS_ROLE_ARN: !If [ActionsEnabled, !GetAtt ActionsRole.Arn, ""]
+          RAYITO_DASHBOARD_COST_EXPLORER: !Ref EnableCostExplorer
+          RAYITO_DASHBOARD_THEME_PARAMETER: !If
+            - HasThemeParameterName
+            - !Ref ThemeParameterName
+            - !If [CreateThemeParameter, !Ref ThemeParameter, ""]
+          RAYITO_DASHBOARD_LOGO_PARAMETER: !Ref LogoParameterName
+          RAYITO_DASHBOARD_SURFACE: !If [IamAuth, iam-api, full]
+          # The page's origin (no trailing slash): the only Origin a POST to
+          # the API function accepts with AuthMode=aws-iam.
+          RAYITO_DASHBOARD_ALLOWED_ORIGIN: !If
+            - IamAuth
+            - !Join ["", ["https://", !Select [2, !Split ["/", !GetAtt ShellUrl.FunctionUrl]]]]
+            - ""
+          # The Lambda runtime's boto3 does not know `lambda-microvms`; its
+          # model ships in the zip under `models/`
+          # (`scripts/gen_stack_assets.py`), and botocore reads this before
+          # any client exists.
+          AWS_DATA_PATH: /var/task/models
+
+  # AuthMode=cognito-jwt: AuthType NONE, because a browser cannot sign a page
+  # navigation with SigV4. The handler validates the Cognito access token of
+  # every /api/v1 request before any routing or AWS call; the static shell
+  # and /config.json (public values) are the only unauthenticated routes. No
+  # `Cors` block: the SPA is served from this very origin, the URL cannot
+  # name itself in its own template, and the handler never emits
+  # `Access-Control-*` headers.
+  # AuthMode=aws-iam: this URL is the API only. Lambda rejects any request
+  # that is not signed with SigV4 by a principal allowed to invoke it (the
+  # identity pool's authenticated role, below) before the function runs. The
+  # page lives on another origin, so the URL carries a CORS block that names
+  # that page and nothing else; no cookie ever travels (`AllowCredentials`
+  # stays off) and the handler checks the page's origin again on every POST.
+  FunctionUrl:
+    Type: AWS::Lambda::Url
+    Properties:
+      AuthType: !If [IamAuth, AWS_IAM, NONE]
+      InvokeMode: BUFFERED
+      TargetFunctionArn: !GetAtt DashboardFunction.Arn
+      Cors: !If
+        - IamAuth
+        - AllowOrigins:
+            - !Join ["", ["https://", !Select [2, !Split ["/", !GetAtt ShellUrl.FunctionUrl]]]]
+          AllowMethods: [GET, POST]
+          AllowHeaders:
+            - authorization
+            - content-type
+            - x-amz-content-sha256
+            - x-amz-date
+            - x-amz-security-token
+            - x-rayito-token
+          # Pinned equal to DASHBOARD_STACK_API_CORS_MAX_AGE_SECONDS in
+          # limits.json (scripts/tests/test_dashboard_template.py).
+          MaxAge: 600
+        - !Ref AWS::NoValue
+
+  UrlInvokePermission:
+    Type: AWS::Lambda::Permission
+    Condition: JwtAuth
+    Properties:
+      Action: lambda:InvokeFunctionUrl
+      FunctionName: !Ref DashboardFunction
+      FunctionUrlAuthType: NONE
+      Principal: "*"
+
+  UrlInvokeFunctionPermission:
+    Type: AWS::Lambda::Permission
+    Condition: JwtAuth
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref DashboardFunction
+      InvokedViaFunctionUrl: true
+      Principal: "*"
+
+  # --- AuthMode=aws-iam only ----------------------------------------------
+  # The identity pool turns a signed-in user's Cognito identity token into
+  # temporary AWS credentials; the authenticated role may do exactly one
+  # thing with them: invoke the API function through its AWS_IAM Function
+  # URL. Unauthenticated identities are off. No resource-based permission is
+  # added to the API function (a "*" principal there would let any account's
+  # signed requests in): same-account callers need only this identity policy.
+  IdentityPool:
+    Type: AWS::Cognito::IdentityPool
+    Condition: IamAuth
+    Properties:
+      IdentityPoolName: !Sub ${AWS::StackName}-identity
+      AllowUnauthenticatedIdentities: false
+      CognitoIdentityProviders:
+        - ClientId: !Ref UserPoolClient
+          ProviderName: !GetAtt UserPool.ProviderName
+          ServerSideTokenCheck: true
+
+  IdentityRole:
+    Type: AWS::IAM::Role
+    Condition: IamAuth
+    Properties:
+      Description: Authenticated users of the Rayito dashboard identity pool.
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Federated: cognito-identity.amazonaws.com }
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                cognito-identity.amazonaws.com:aud: !Ref IdentityPool
+              ForAnyValue:StringLike:
+                cognito-identity.amazonaws.com:amr: authenticated
+      Policies:
+        - PolicyName: invoke-dashboard-api
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: InvokeApiFunctionUrl
+                Effect: Allow
+                Action: lambda:InvokeFunctionUrl
+                Resource: !GetAtt DashboardFunction.Arn
+                Condition:
+                  StringEquals:
+                    lambda:FunctionUrlAuthType: AWS_IAM
+              - Sid: InvokeApiFunctionViaUrl
+                Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource: !GetAtt DashboardFunction.Arn
+                Condition:
+                  Bool:
+                    lambda:InvokedViaFunctionUrl: "true"
+
+  IdentityPoolRoles:
+    Type: AWS::Cognito::IdentityPoolRoleAttachment
+    Condition: IamAuth
+    Properties:
+      IdentityPoolId: !Ref IdentityPool
+      Roles:
+        authenticated: !GetAtt IdentityRole.Arn
+
+  # The page function reads this at run time: the page URL is the Cognito
+  # callback, the identity pool references the client, so passing the pool id
+  # and the API URL through the function's environment would be a cycle.
+  IamEndpointParameter:
+    Type: AWS::SSM::Parameter
+    Condition: IamAuth
+    Properties:
+      Type: String
+      Name: !Sub /rayito/dashboard/${AWS::StackName}/iam-endpoint
+      Description: Identity pool and API address the Rayito dashboard page signs in with.
+      Value: !Sub '{"identityPoolId": "${IdentityPool}", "apiUrl": "${FunctionUrl.FunctionUrl}"}'
+
+  ShellLogGroup:
+    Type: AWS::Logs::LogGroup
+    Condition: IamAuth
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      RetentionInDays: !Ref LogRetentionDays
+
+  # The public function has no permission over MicroVMs, Service Quotas, the
+  # tables or the actions role: it can write its logs, list the pool's app
+  # clients (public ids, to publish the SPA's) and read the theme and the
+  # endpoint parameters.
+  ShellRole:
+    Type: AWS::IAM::Role
+    Condition: IamAuth
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: dashboard-shell
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: WriteOwnLogs
+                Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub ${ShellLogGroup.Arn}:*
+              - Sid: FindOwnClientId
+                Effect: Allow
+                Action: cognito-idp:ListUserPoolClients
+                Resource: !GetAtt UserPool.Arn
+              - Sid: ReadIamEndpointParameter
+                Effect: Allow
+                Action: ssm:GetParameter
+                Resource: !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/rayito/dashboard/${AWS::StackName}/iam-endpoint
+              - !If
+                - HasTheme
+                - Sid: ReadThemeParameter
+                  Effect: Allow
+                  Action: ssm:GetParameter
+                  Resource: !Sub
+                    - arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${Name}
+                    - Name: !If
+                        - HasThemeParameterName
+                        - !Ref ThemeParameterName
+                        - !Ref ThemeParameter
+                - !Ref AWS::NoValue
+              - !If
+                - HasLogo
+                - Sid: ReadLogoParameter
+                  Effect: Allow
+                  Action: ssm:GetParameter
+                  Resource: !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${LogoParameterName}
+                - !Ref AWS::NoValue
+
+  ShellFunction:
+    Type: AWS::Lambda::Function
+    Condition: IamAuth
+    Properties:
+      Description: Rayito management dashboard page (static files and sign-in settings only).
+      Runtime: python3.12
+      Architectures: [arm64]
+      Handler: handler.lambda_handler
+      Role: !GetAtt ShellRole.Arn
+      # Pinned equal to DASHBOARD_STACK_SHELL_LAMBDA_TIMEOUT_SECONDS and
+      # DASHBOARD_STACK_SHELL_LAMBDA_MEMORY_MIB in limits.json
+      # (scripts/tests/test_dashboard_template.py).
+      Timeout: 10
+      MemorySize: 256
+      ReservedConcurrentExecutions: !If
+        - HasReservedConcurrency
+        - !Ref ReservedConcurrency
+        - !Ref AWS::NoValue
+      LoggingConfig:
+        LogGroup: !Ref ShellLogGroup
+      Code:
+        S3Bucket: !Ref ArtifactBucket
+        S3Key: !Ref ArtifactS3Key
+      Environment:
+        Variables:
+          RAYITO_DASHBOARD_SURFACE: iam-shell
+          RAYITO_DASHBOARD_USER_POOL_ID: !Ref UserPool
+          RAYITO_DASHBOARD_CLIENT_NAME: !Sub ${AWS::StackName}-spa
+          RAYITO_DASHBOARD_COGNITO_DOMAIN: !Sub ${UserPoolDomain}.auth.${AWS::Region}.amazoncognito.com
+          RAYITO_DASHBOARD_IDENTITY_PARAMETER: !Sub /rayito/dashboard/${AWS::StackName}/iam-endpoint
+          RAYITO_DASHBOARD_THEME_PARAMETER: !If
+            - HasThemeParameterName
+            - !Ref ThemeParameterName
+            - !If [CreateThemeParameter, !Ref ThemeParameter, ""]
+          RAYITO_DASHBOARD_LOGO_PARAMETER: !Ref LogoParameterName
+
+  # The page's address: AuthType NONE, no CORS, the only public door.
+  ShellUrl:
+    Type: AWS::Lambda::Url
+    Condition: IamAuth
+    Properties:
+      AuthType: NONE
+      InvokeMode: BUFFERED
+      TargetFunctionArn: !GetAtt ShellFunction.Arn
+
+  ShellUrlInvokePermission:
+    Type: AWS::Lambda::Permission
+    Condition: IamAuth
+    Properties:
+      Action: lambda:InvokeFunctionUrl
+      FunctionName: !Ref ShellFunction
+      FunctionUrlAuthType: NONE
+      Principal: "*"
+
+  ShellUrlInvokeFunctionPermission:
+    Type: AWS::Lambda::Permission
+    Condition: IamAuth
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref ShellFunction
+      InvokedViaFunctionUrl: true
+      Principal: "*"
+
+Outputs:
+  DashboardUrl:
+    Description: The dashboard's address (sign in with a Cognito user).
+    Value: !If [IamAuth, !GetAtt ShellUrl.FunctionUrl, !GetAtt FunctionUrl.FunctionUrl]
+  ApiUrl:
+    Condition: IamAuth
+    Description: The API's Function URL, AuthType AWS_IAM (it only answers SigV4-signed requests).
+    Value: !GetAtt FunctionUrl.FunctionUrl
+  UserPoolId:
+    Description: Cognito user pool; create users here (`aws cognito-idp admin-create-user`).
+    Value: !Ref UserPool
+  ActionsGroupName:
+    Condition: ActionsEnabled
+    Description: Add a user to this group to let them run actions.
+    Value: !Ref ActionsGroup
+  AuditTableName:
+    Description: Append-only audit rows (partition AUDIT, sorted by time).
+    Value: !Ref AuditTable
+  ActionsRoleArn:
+    Condition: ActionsEnabled
+    Description: Role assumed per action after the group check.
+    Value: !GetAtt ActionsRole.Arn

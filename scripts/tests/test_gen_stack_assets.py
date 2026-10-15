@@ -95,6 +95,8 @@ def test_a_bundled_service_model_is_injected_from_its_single_source(
     _write(infra / "lambdas" / "widget" / "handlers" / "handler.py", "def handler(e, c): ...\n")
     model = tmp_path / "docs" / "service-2.json"
     _write(model, '{"metadata": {"apiVersion": "2025-01-01"}}')
+    paginators = tmp_path / "docs" / "paginators-1.json"
+    _write(paginators, '{"pagination": {}}')
     monkeypatch.setattr(gen_stack_assets, "INFRA_DIR", infra)
     monkeypatch.setattr(gen_stack_assets, "BUNDLED_SERVICE_MODELS", {"widget": (("svc", model),)})
 
@@ -102,6 +104,7 @@ def test_a_bundled_service_model_is_injected_from_its_single_source(
     assert archive_bytes is not None
     archive = zipfile.ZipFile(gen_stack_assets.io.BytesIO(archive_bytes))
     assert archive.read("models/svc/2025-01-01/service-2.json") == model.read_bytes()
+    assert archive.read("models/svc/2025-01-01/paginators-1.json") == paginators.read_bytes()
 
 
 def test_the_committed_events_webhooks_zip_bundles_the_lambda_microvms_model() -> None:
@@ -120,3 +123,32 @@ def test_the_committed_events_webhooks_zip_bundles_the_lambda_microvms_model() -
     assert not (
         gen_stack_assets.REPO_ROOT / "infra" / "lambdas" / "events_webhooks" / "models"
     ).exists(), "the model is injected at generation time, never vendored"
+
+
+def test_the_committed_dashboard_zip_lets_the_lambda_runtime_paginate_microvm_lists(
+    tmp_path: Path,
+) -> None:
+    """Sin `paginators-1.json` junto al modelo, el `boto3` del runtime conoce
+    las operaciones pero `get_paginator("list_microvms")` lanza
+    `OperationNotPageableError`: el cargador sólo ve lo que hay en el zip."""
+    from botocore.loaders import Loader
+
+    archive = zipfile.ZipFile(
+        gen_stack_assets.REPO_ROOT
+        / "clients"
+        / "python"
+        / "src"
+        / "rayito"
+        / "_stacks"
+        / "_artifacts"
+        / "dashboard.zip"
+    )
+    archive.extractall(tmp_path)
+    loader = Loader(
+        extra_search_paths=[str(tmp_path / gen_stack_assets.MODELS_DIR_NAME)],
+        include_default_search_paths=False,
+    )
+    pagination = loader.load_service_model("lambda-microvms", "paginators-1")["pagination"]
+    assert pagination["ListMicrovms"]["input_token"] == "nextToken"
+    assert "ListMicrovmImages" in pagination
+    assert "ListMicrovmImageVersions" in pagination

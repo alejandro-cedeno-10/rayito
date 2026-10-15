@@ -1,4 +1,4 @@
-"""`rayito.cli._logs` y `rayito sandbox logs`: stream exacto, recorrido de
+"""`rayito._cloudwatch_logs` y `rayito sandbox logs`: stream exacto, recorrido de
 respaldo acotado a 10 páginas, grupo inexistente, `--since` y la paginación
 de eventos que para en el token repetido y en `--limit`."""
 
@@ -11,7 +11,7 @@ from typing import Any
 import pytest
 from typer.testing import CliRunner
 
-from rayito.cli import _logs
+from rayito import _cloudwatch_logs as _logs
 from rayito.cli._session import Clients
 from rayito.cli.app import app
 
@@ -270,3 +270,21 @@ def test_sandbox_logs_warns_when_it_falls_back(
     result = runner.invoke(app, ["sandbox", "logs", "microvm-x"], obj=clients)
     assert result.exit_code == 0, result.stderr
     assert "aviso" in result.stderr and LATER in result.stderr
+
+
+def test_tail_events_walks_backwards_and_returns_the_newest_in_order(
+    stubbed_clients: Stubs,
+) -> None:
+    logs = stubbed_clients.clients["logs"]
+    base = {"logGroupName": GROUP, "logStreamName": EXACT, "startFromHead": False}
+    stubbed_clients.logs.add_response(
+        "get_log_events",
+        {"events": [{"timestamp": 3, "message": "c"}], "nextBackwardToken": "b1"},
+        {**base, "limit": 2},
+    )
+    stubbed_clients.logs.add_response(
+        "get_log_events",
+        {"events": [{"timestamp": 2, "message": "b"}], "nextBackwardToken": "b2"},
+        {**base, "limit": 1, "nextToken": "b1"},
+    )
+    assert [e["message"] for e in _logs.tail_events(logs, GROUP, EXACT, limit=2)] == ["b", "c"]

@@ -6,10 +6,14 @@
  */
 
 import { COMPONENT as customDomain } from "./components/custom-domain.js";
+import { COMPONENT as dashboard } from "./components/dashboard.js";
+import { COMPONENT as dashboardCloudwatch } from "./components/dashboard-cloudwatch.js";
+import { COMPONENT as dashboardReadRole } from "./components/dashboard-read-role.js";
 import { COMPONENT as efsVolumes } from "./components/efs-volumes.js";
 import { COMPONENT as eventsWebhooks } from "./components/events-webhooks.js";
 import { COMPONENT as metadataIndex } from "./components/metadata-index.js";
 import { COMPONENT as otlpExport } from "./components/otlp-export.js";
+import { COMPONENT as quotaAlerts } from "./components/quota-alerts.js";
 import { COMPONENT as s3Mounts } from "./components/s3-mounts.js";
 import { COMPONENT as secretsAccess } from "./components/secrets-access.js";
 import { COMPONENT as sizesGuard } from "./components/sizes-guard.js";
@@ -26,6 +30,10 @@ export const COMPONENTS: readonly StackComponent[] = [
   otlpExport,
   templates,
   customDomain,
+  dashboard,
+  dashboardCloudwatch,
+  dashboardReadRole,
+  quotaAlerts,
 ];
 
 export function componentByName(name: string): StackComponent | undefined {

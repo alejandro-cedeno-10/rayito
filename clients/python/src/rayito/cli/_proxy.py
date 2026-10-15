@@ -82,7 +82,9 @@ Contrato (research custom-domain opción D, AWS_API_NOTES.md §7):
 - **Cookies.** Las cookies no se aíslan por puerto (RFC 6265) y `same-site`
   ignora el puerto: lo que el guest sirva en `http://127.0.0.1:<puerto>`
   comparte tarro y "sitio" con cualquier otra app local, y el proxy le
-  reenvía tal cual las cookies que mande el navegador. Por eso el anuncio
+  reenvía las cookies que mande el navegador, salvo las de sesión de
+  `rayito dashboard` (`rayito_dashboard_<puerto>`), que quita para que el
+  guest nunca las vea ni las use contra el panel. Por eso el anuncio
   también ofrece `http://<id>.localhost:<puerto>`, con tarro propio.
 - `--port` y `--local-port` se validan (1..65535, `--port` nunca 9000)
   **antes** de tocar AWS; el socket local se reserva (`bind`) también antes
@@ -99,7 +101,7 @@ import socket
 import ssl
 import sys
 import threading
-from collections.abc import Awaitable, Callable, Iterable, Sequence
+from collections.abc import Awaitable, Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass
 
 from rayito._authority import http_authority, is_ipv6_literal, is_wildcard
@@ -163,6 +165,11 @@ PROXY_HEADER_PREFIX = "x-aws-proxy-"
 AUTH_HEADER_NAME = "X-aws-proxy-auth"
 PORT_HEADER_NAME = "X-aws-proxy-port"
 HOST_HEADER_NAME = "Host"
+COOKIE_HEADER_NAME = "Cookie"
+COOKIE_SEPARATOR = "; "
+COOKIE_PAIR_DELIMITER = ";"
+#: Prefijo de la cookie de sesión de `rayito dashboard` (`<prefijo><puerto>`).
+DASHBOARD_COOKIE_PREFIX = "rayito_dashboard_"
 CONNECTION_HEADER_NAME = "Connection"
 UPGRADE_HEADER_NAME = "Upgrade"
 ORIGIN_HEADER_NAME = "Origin"
@@ -316,8 +323,10 @@ def _allowed_origin(value: str) -> str:
     return origin
 
 
-def sandbox_localhost_name(sandbox_id: str) -> str | None:
-    """`<id>.localhost`, o `None` si el id no cabe en una etiqueta DNS."""
+def sandbox_localhost_name(sandbox_id: str | None) -> str | None:
+    """`<id>.localhost`, o `None` si no hay id o no cabe en una etiqueta DNS."""
+    if sandbox_id is None:
+        return None
     label = sandbox_id.lower()
     return f"{label}{LOCALHOST_SUFFIX}" if _DNS_LABEL.match(label) else None
 
@@ -326,7 +335,7 @@ def build_access(
     *,
     bind: str,
     local_port: int,
-    sandbox_id: str,
+    sandbox_id: str | None,
     allowed_hosts: Iterable[str] = (),
     allowed_origins: Iterable[str] = (),
 ) -> ProxyAccess:
@@ -478,16 +487,40 @@ def parse_http_head(raw: bytes) -> HttpHead:
     return HttpHead(request_line=request_line, headers=tuple(headers))
 
 
+def _with_cookies_filtered(
+    headers: Iterable[tuple[str, str]],
+) -> Iterator[tuple[str, str]]:
+    for name, value in headers:
+        if name.lower() != COOKIE_HEADER_NAME.lower():
+            yield name, value
+            continue
+        remaining = without_dashboard_cookies(value)
+        if remaining is not None:
+            yield name, remaining
+
+
+def without_dashboard_cookies(cookie_header: str) -> str | None:
+    """El valor de `Cookie` sin las cookies de sesión del panel local; `None`
+    si no queda ninguna (la cabecera entera se descarta)."""
+    kept = [
+        cookie.strip()
+        for cookie in cookie_header.split(COOKIE_PAIR_DELIMITER)
+        if cookie.strip() and not cookie.strip().startswith(DASHBOARD_COOKIE_PREFIX)
+    ]
+    return COOKIE_SEPARATOR.join(kept) if kept else None
+
+
 def rewrite_head(head: HttpHead, *, endpoint: str, jwe: str, port: int) -> bytes:
     """Cabecera reescrita hacia `<endpoint>:443` (AWS_API_NOTES.md §7): quita
     cualquier `x-aws-proxy-*` y `Host` que traiga el cliente, añade `Host`,
     `X-aws-proxy-auth` y `X-aws-proxy-port`, y fuerza `Connection: close`
     salvo en una petición `Upgrade`, donde `Connection`/`Upgrade` se dejan
-    intactas para que el handshake de WebSocket llegue igual."""
+    intactas para que el handshake de WebSocket llegue igual. Quita también
+    las cookies de sesión de `rayito dashboard`."""
     upgrade = head.is_upgrade()
     kept = [
         (name, value)
-        for name, value in head.headers
+        for name, value in _with_cookies_filtered(head.headers)
         if not name.lower().startswith(PROXY_HEADER_PREFIX)
         and name.lower() != HOST_HEADER_NAME.lower()
         and (upgrade or name.lower() != CONNECTION_HEADER_NAME.lower())

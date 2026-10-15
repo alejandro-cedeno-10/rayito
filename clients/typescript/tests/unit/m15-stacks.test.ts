@@ -248,6 +248,110 @@ describe("OptionalStacks redeploy keeps deployed parameters (UsePreviousValue)",
     });
   });
 
+  test("dashboard keeps AllowActions and EnableCostExplorer as deployed", async () => {
+    const fake = new FakeStackProvisioner();
+    const stacks = new OptionalStacks({ provisioner: fake });
+    await stacks.deploy("dashboard", {
+      parameters: { AllowActions: "true", EnableCostExplorer: "true" },
+      artifactBucket: "bucket-a",
+    });
+    await stacks.deploy("dashboard", {
+      parameters: { DomainPrefix: "tablero" },
+      artifactBucket: "bucket-a",
+    });
+    expect(fake.sentKeepPrevious).toEqual(
+      expect.arrayContaining(["AllowActions", "EnableCostExplorer", "ImageNamePrefix"]),
+    );
+    expect(fake.stacks.get("rayito-dashboard")?.parameters).toMatchObject({
+      AllowActions: "true",
+      EnableCostExplorer: "true",
+    });
+  });
+
+  test("dashboard is read-only and without billed cost queries by default", async () => {
+    const fake = new FakeStackProvisioner();
+    await new OptionalStacks({ provisioner: fake }).deploy("dashboard", {
+      artifactBucket: "bucket-a",
+    });
+    expect(fake.stacks.get("rayito-dashboard")?.parameters).toMatchObject({
+      AllowActions: "false",
+      EnableCostExplorer: "false",
+    });
+  });
+
+  test("quota-alerts deploys with the named thresholds and no topic or email by default", async () => {
+    const fake = new FakeStackProvisioner();
+    await new OptionalStacks({ provisioner: fake }).deploy("quota-alerts", {
+      artifactBucket: "bucket-a",
+    });
+    expect(fake.stacks.get("rayito-quota-alerts")?.parameters).toMatchObject({
+      WarningPercent: "80",
+      CriticalPercent: "95",
+      TopicArn: "",
+      NotificationEmail: "",
+      ScheduleExpression: "rate(1 hour)",
+    });
+  });
+
+  test("quota-alerts keeps the thresholds as deployed", async () => {
+    const fake = new FakeStackProvisioner();
+    const stacks = new OptionalStacks({ provisioner: fake });
+    await stacks.deploy("quota-alerts", {
+      parameters: { WarningPercent: "60", NotificationEmail: "ops@example.com" },
+      artifactBucket: "bucket-a",
+    });
+    await stacks.deploy("quota-alerts", {
+      parameters: { LogRetentionDays: "7" },
+      artifactBucket: "bucket-a",
+    });
+    expect(fake.sentKeepPrevious).toEqual(
+      expect.arrayContaining(["WarningPercent", "CriticalPercent", "NotificationEmail"]),
+    );
+    expect(fake.stacks.get("rayito-quota-alerts")?.parameters).toMatchObject({
+      WarningPercent: "60",
+    });
+  });
+
+  test.each([
+    { WarningPercent: "90", CriticalPercent: "80" },
+    { WarningPercent: "80", CriticalPercent: "80" },
+    { WarningPercent: "96" },
+  ])(
+    "quota-alerts rejects thresholds out of order before any AWS call (%j)",
+    async (parameters) => {
+      const fake = new FakeStackProvisioner();
+      await expect(
+        new OptionalStacks({ provisioner: fake }).deploy("quota-alerts", {
+          parameters,
+          artifactBucket: "bucket-a",
+        }),
+      ).rejects.toThrow(InvalidArgumentError);
+      expect(fake.stacks.size).toBe(0);
+    },
+  );
+
+  test("dashboard-read-role needs a trusted principal and hides the external id", async () => {
+    await expect(
+      new OptionalStacks({ provisioner: new FakeStackProvisioner() }).deploy("dashboard-read-role"),
+    ).rejects.toThrow(InvalidArgumentError);
+    const component = componentByName("dashboard-read-role");
+    expect((component?.parameters ?? []).filter((p) => p.noEcho).map((p) => p.name)).toEqual([
+      "ExternalId",
+    ]);
+    expect(component?.artifacts ?? []).toEqual([]);
+  });
+
+  test("dashboard-cloudwatch has no code and its extra widgets are off by default", async () => {
+    const fake = new FakeStackProvisioner();
+    await new OptionalStacks({ provisioner: fake }).deploy("dashboard-cloudwatch");
+    expect(fake.stacks.get("rayito-dashboard-cloudwatch")?.parameters).toMatchObject({
+      IncludeOtlp: "false",
+      IncludeQuota: "false",
+      LogGroupPrefix: "/rayito/",
+    });
+    expect(componentByName("dashboard-cloudwatch")?.artifacts ?? []).toEqual([]);
+  });
+
   test("secrets-access keeps KmsKeyArn", async () => {
     const fake = await redeploy("secrets-access", { KmsKeyArn: "arn:aws:kms:example" }, {});
     expect(fake.sentKeepPrevious).toContain("KmsKeyArn");

@@ -42,9 +42,23 @@ FEATURE_PAGES_0_6 = (
 )
 
 #: El panel de gestión (ADR-026, cambio `dashboard`): una fila para los tres
-#: servicios del SDK (`Quotas`, `UsageCost`, `Fleet`), todavía sin aceptar en
-#: AWS real, así que su estado no dice "disponible".
-FEATURE_PAGES_DASHBOARD = ("funciones-opcionales/panel-de-gestion.md",)
+#: servicios del SDK (`Quotas`, `UsageCost`, `Fleet`) y otra para la pila
+#: `dashboard` en la cuenta, todavía sin aceptar en AWS real, así que su
+#: estado no dice "disponible".
+FEATURE_PAGES_DASHBOARD = (
+    "funciones-opcionales/panel-de-gestion.md",
+    "funciones-opcionales/panel-en-tu-cuenta.md",
+)
+
+#: Fase 3 del panel (ADR-026): tres funciones opcionales en una misma guía,
+#: cada una con su fila y su ancla (dashboard de CloudWatch, vista multicuenta
+#: y avisos de cuota); todas pendientes de aceptación en AWS real.
+DASHBOARD_EXTRAS_PAGE = "funciones-opcionales/panel-extras.md"
+DASHBOARD_EXTRAS_ANCHORS = (
+    "dashboard-de-cloudwatch",
+    "varias-cuentas",
+    "avisos-de-cuota",
+)
 
 DOCSTRING_MARKER = "Coste y activación"
 
@@ -162,7 +176,10 @@ def test_optional_features_table_has_one_row_per_function() -> None:
     page = read(OPTIONAL_FEATURES_PAGE)
     rows = parse_markdown_table(page, EXPECTED_TABLE_HEADER)
     expected = (
-        len(FUNCTION_ANCHORS) + len(FEATURE_PAGES_0_6) + len(FEATURE_PAGES_DASHBOARD)
+        len(FUNCTION_ANCHORS)
+        + len(FEATURE_PAGES_0_6)
+        + len(FEATURE_PAGES_DASHBOARD)
+        + len(DASHBOARD_EXTRAS_ANCHORS)
     )
     assert len(rows) == expected, (
         f"se esperaban {expected} filas de funciones con coste, hay {len(rows)}"
@@ -171,6 +188,10 @@ def test_optional_features_table_has_one_row_per_function() -> None:
     for feature_page in (*FEATURE_PAGES_0_6, *FEATURE_PAGES_DASHBOARD):
         assert f"({feature_page})" in linked, (
             f"{OPTIONAL_FEATURES_PAGE}: ninguna fila de la tabla enlaza a {feature_page}"
+        )
+    for extra in DASHBOARD_EXTRAS_ANCHORS:
+        assert f"({DASHBOARD_EXTRAS_PAGE}#{extra})" in linked, (
+            f"{OPTIONAL_FEATURES_PAGE}: ninguna fila enlaza a {DASHBOARD_EXTRAS_PAGE}#{extra}"
         )
     for anchor in FUNCTION_ANCHORS:
         assert f'id="{anchor}"' in page, (

@@ -1,0 +1,148 @@
+/* Tokens de diseño del panel y sus dos temas de fábrica: «rayito-dark» (la base,
+   también con data-theme="dark") y «rayito-light» (data-theme="light", o el
+   del sistema cuando el tema es «Auto»). Todo color, radio, fuente y espacio de
+   `app.css` sale de aquí; un tema de usuario (`/theme.css`, que se carga después
+   y repite estos selectores) sólo cambia los valores. Los tokens que se pueden
+   cambiar están en la guía del panel, «Personalizar el tema». */
+:root {
+  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-6: 1.5rem;
+  --radius: 0.375rem;
+  --radius-sm: 0.125rem;
+  --radius-lg: 0.75rem;
+  --swatch-size: 0.6rem;
+  --nav-marker-width: 2px;
+  --dialog-viewport-margin: 2rem;
+  --heading-letter-spacing: -0.01em;
+  --label-letter-spacing: 0.04em;
+  --underline-offset: 0.2em;
+  --code-font-scale: 0.92em;
+  --radius-pill: 999px;
+  --segmented-inset: 2px;
+  --pill-height: 1.5rem;
+  --pill-dot-size: 0.4rem;
+  --meter-height: 0.5rem;
+  --alert-marker-width: 3px;
+  --dialog-shadow: 0 8px 24px;
+  --sidebar-width: 14rem;
+
+  /* rayito-dark */
+  --bg: #09090b;
+  --surface: #111113;
+  --surface-raised: #18181b;
+  --border: #27272a;
+  --border-strong: #71717a;
+  --fg: #fafafa;
+  --fg-muted: #a1a1aa;
+  --primary: #f59e0b;
+  --on-primary: #1c1100;
+  --accent: #fbbf24;
+  --accent-strong: #fcd34d;
+  --focus: #60a5fa;
+  --ok: #4ade80;
+  --warning: #fbbf24;
+  --critical: #f87171;
+  --info: #60a5fa;
+  --chart-1: #f59e0b;
+  --chart-2: #60a5fa;
+  --chart-3: #a78bfa;
+  color-scheme: dark;
+}
+
+/* rayito-light, a mano (data-theme="light") */
+:root[data-theme="light"] {
+  --bg: #ffffff;
+  --surface: #f6f6f8;
+  --surface-raised: #ffffff;
+  --border: #e4e4e7;
+  --border-strong: #71717a;
+  --fg: #18181b;
+  --fg-muted: #52525b;
+  --primary: #f59e0b;
+  --on-primary: #1c1100;
+  --accent: #9a3412;
+  --accent-strong: #7c2d12;
+  --focus: #1d4ed8;
+  --ok: #166534;
+  --warning: #92400e;
+  --critical: #b91c1c;
+  --info: #1d4ed8;
+  --chart-1: #b45309;
+  --chart-2: #2563eb;
+  --chart-3: #7c3aed;
+  color-scheme: light;
+}
+
+/* rayito-light, con el sistema (tema «Auto») */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --bg: #ffffff;
+    --surface: #f6f6f8;
+    --surface-raised: #ffffff;
+    --border: #e4e4e7;
+    --border-strong: #71717a;
+    --fg: #18181b;
+    --fg-muted: #52525b;
+    --primary: #f59e0b;
+    --on-primary: #1c1100;
+    --accent: #9a3412;
+    --accent-strong: #7c2d12;
+    --focus: #1d4ed8;
+    --ok: #166534;
+    --warning: #92400e;
+    --critical: #b91c1c;
+    --info: #1d4ed8;
+    --chart-1: #b45309;
+    --chart-2: #2563eb;
+    --chart-3: #7c3aed;
+    color-scheme: light;
+  }
+}
+
+/* Escala interna: no se cambia desde un tema de usuario. */
+:root {
+  --text-xs: 0.75rem;
+  --text-sm: 0.8125rem;
+  --text-md: 0.9375rem;
+  --text-lg: 1.125rem;
+  --text-xl: 1.5rem;
+  --text-stat: 1.875rem;
+  --leading-body: 1.5;
+  --leading-heading: 1.25;
+  --leading-stat: 1.2;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+  --weight-bold: 650;
+  --control-height: 2.125rem;
+  --icon-size: 1rem;
+  --focus-ring: 2px;
+  --pill-tint: 16%;
+  --scrim: rgba(0, 0, 0, 0.6);
+  --table-max-height: min(44rem, calc(100vh - 15rem));
+  --content-max-width: 84rem;
+  --stat-min-width: 12rem;
+  --chart-min-width: 20rem;
+  --menu-min-width: 11rem;
+  --dialog-max-width: 40rem;
+  --logo-max-height: 1.75rem;
+  --control-size: 1.75rem;
+  --icon-cell-width: 2.5rem;
+  --state-icon-size: 2rem;
+  --search-width: 18rem;
+  --card-min-width: 26rem;
+  --chart-height: 6rem;
+  --table-region-min-height: 8rem;
+  --dialog-list-max-height: 12rem;
+  --logs-max-height: 24rem;
+  --boot-error-max-width: 32rem;
+  --skip-link-offset: -4rem;
+  --transition: 0.15s;
+  --z-menu: 30;
+  --z-skip: 40;
+}

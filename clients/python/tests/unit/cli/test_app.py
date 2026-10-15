@@ -21,7 +21,6 @@ LIBRARY_MODULES = (
     "rayito.cli._artifact",
     "rayito.cli._publish",
     "rayito.cli._prune",
-    "rayito.cli._logs",
     "rayito.cli._checks",
     "rayito.cli._compat",
     "rayito.cli._session",

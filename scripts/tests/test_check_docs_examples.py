@@ -233,3 +233,34 @@ def test_the_real_site_cli_commands_exist() -> None:
     assert checker.check_cli(report) == 0
     assert report.problems == []
     assert report.checked["cli"] >= 100
+
+
+VALUE_TREE = checker.CliNode(
+    frozenset({"--region"}),
+    {
+        "dashboard": checker.CliNode(
+            frozenset({"--port", "--allow-actions"}),
+            {"cloudwatch": checker.CliNode(frozenset({"--otlp"}))},
+            frozenset({"--port"}),
+        )
+    },
+    frozenset({"--region"}),
+)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "rayito dashboard --port 8080 --allow-actions",
+        "rayito dashboard --port=8080",
+        "rayito --region us-east-1 dashboard cloudwatch --otlp",
+        "rayito dashboard --port 8080 cloudwatch",
+    ],
+)
+def test_the_value_of_an_option_is_not_taken_for_a_subcommand(command: str) -> None:
+    assert checker.cli_problems(command, VALUE_TREE) == []
+
+
+def test_a_flag_does_not_swallow_the_next_word() -> None:
+    problems = checker.cli_problems("rayito dashboard --allow-actions nope", VALUE_TREE)
+    assert problems == ["`rayito dashboard` no tiene el subcomando 'nope'"]

@@ -132,6 +132,11 @@ Todo funciona igual en Python (sync y `asyncio`) y en TypeScript.
   LangChain y Vercel AI ([LangChain y Vercel AI](https://alejandro-cedeno-10.github.io/rayito/guias/langchain-y-vercel-ai/)).
 - **CLI** `rayito`: publicar imágenes, `doctor`, operar sandboxes, pilas
   opcionales ([CLI](https://alejandro-cedeno-10.github.io/rayito/cli/)).
+- **Panel de gestión**: `rayito dashboard` abre un panel web local con los
+  sandboxes, las cuotas, el coste y las imágenes; acciones sólo con
+  `--allow-actions` ([recorrido paso a paso](https://alejandro-cedeno-10.github.io/rayito/funciones-opcionales/panel-de-gestion/#recorrido)).
+
+  ![Resumen del panel de gestión de Rayito](docs/site/docs/assets/panel/panel-overview.png)
 - **Probar en local** con Docker y Floci, sin cuenta de AWS
   ([Probar en local](https://alejandro-cedeno-10.github.io/rayito/guias/probar-en-local/)).
 - **Funciones opcionales, apagadas por defecto** (cada una cuesta algo en

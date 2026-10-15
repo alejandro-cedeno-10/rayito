@@ -55,3 +55,21 @@ Warning thresholds, cache TTLs, TPS, page sizes and polling intervals SHALL be d
 - **WHEN** a bulk plan is requested with an applied rate of 0 or less
 - **THEN** it raises `InvalidArgumentException` (`InvalidArgumentError`) before any call
 
+
+### Requirement: Error bodies carry AWS codes, never AWS messages
+An API error caused by AWS (including a validation rejection) SHALL carry the closed `code` and the AWS error code (`awsCode`) with a generic message, and SHALL NOT repeat the AWS message text. The `/logs` response SHALL flag `fallback` when the expected stream did not exist and the lines come from streams found by name.
+
+#### Scenario: an AWS validation message is not echoed
+- **WHEN** AWS rejects a request with a `ValidationException` whose message contains a resource ARN
+- **THEN** the body has `awsCode` and the generic message, and no part of the AWS message
+
+#### Scenario: the log fallback is visible
+- **WHEN** the expected stream is missing and a stream with the same suffix is read
+- **THEN** the response has `fallback: true` and the SPA shows a notice
+
+### Requirement: The API lists additional accounts and scopes reads by account
+`GET /api/v1/accounts` SHALL return `{"accounts": [{"name": ...}]}` and be empty unless the multi-account view was requested. When it was, `?account=<name>` on any read route SHALL answer for that account and omit the parameter from the delegated request; the account list SHALL contain only the labels the operator chose.
+
+#### Scenario: the list is empty by default
+- **WHEN** `GET /api/v1/accounts` is called on a panel started without `--account`
+- **THEN** it returns an empty list and validates against the schema
