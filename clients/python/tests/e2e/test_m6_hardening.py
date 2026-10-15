@@ -92,11 +92,13 @@ IMDS_PROBE = (
 )
 EGRESS_PROBE_TIMEOUT_SECONDS = 5
 """Plazo de cada intento de conexión de `urlopen` en la sonda de egress."""
-EGRESS_PROBE_ADDRESSES = 3
-"""Direcciones que puede devolver el DNS de `example.com`: `urlopen` prueba cada una
-con su propio plazo. Medido el 2026-10-15 con una allowlist que descarta todo salvo
-un CIDR ajeno: la negativa tardó de 10,2 a 11,7 s con dos direcciones, no los 5 s de un intento."""
+EGRESS_PROBE_ADDRESSES = 2
+"""Direcciones a las que resuelve `example.com`: `urlopen` prueba cada una con su
+propio plazo. Medido el 2026-10-15 (AWS_API_NOTES Q46): con el conector que descarta
+todo, la negativa tardó de 10,2 a 11,7 s, no los 5 s de un solo intento."""
 EGRESS_PROBE_STARTUP_SLACK_SECONDS = 5.0
+"""Margen para arrancar el intérprete y resolver el DNS dentro del sandbox; con él,
+el máximo medido (11,7 s) queda holgado bajo el presupuesto de 15 s."""
 EGRESS_REFUSAL_BUDGET_SECONDS = (
     EGRESS_PROBE_TIMEOUT_SECONDS * EGRESS_PROBE_ADDRESSES + EGRESS_PROBE_STARTUP_SLACK_SECONDS
 )
