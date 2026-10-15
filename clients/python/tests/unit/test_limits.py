@@ -14,7 +14,9 @@ import pytest
 from rayito import _limits
 
 LIMITS_JSON = Path(__file__).resolve().parents[4] / "limits.json"
-SET_KEYS = frozenset({"terminalStates", "suspendedStates", "managedNetworkConnectors"})
+SET_KEYS = frozenset(
+    {"terminalStates", "suspendedStates", "managedNetworkConnectors", "largeQuotaRegions"}
+)
 CONSTANT_NAME_OVERRIDES = {
     "s3BucketNameMin": "S3_BUCKET_NAME_MIN",
     "s3BucketNameMax": "S3_BUCKET_NAME_MAX",

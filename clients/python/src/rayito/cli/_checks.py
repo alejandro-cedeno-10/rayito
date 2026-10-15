@@ -18,6 +18,8 @@ from typing import Any, Literal
 from botocore.exceptions import ClientError
 
 from rayito._aws import ControlPlane, PortSpec
+from rayito._dashboard._aws import list_microvm_quotas
+from rayito._dashboard._domain import AppliedQuota, build_quota_entries
 from rayito._images import read_gate
 from rayito._limits import DEFAULT_PORT, SUPPORTED_REGIONS, TOKEN_TTL_MINUTES
 from rayito._models import SandboxHealth, SandboxInfo, SandboxListItem
@@ -60,35 +62,12 @@ MAX_RUNNING_BEFORE_FAIL = 10
 MAX_LISTED_IDS = 20
 ACCESS_DENIED = "AccessDeniedException"
 NOT_FOUND = "ResourceNotFoundException"
-LARGE_REGIONS = frozenset({"us-east-1", "us-east-2", "us-west-2", "ap-northeast-1"})
 ADVISORY_SUMMARY = "simulación orientativa: las comprobaciones 2, 5, 6 y 8 son las que cuentan"
 BUCKET_PERMISSIONS_HINT = (
     "publish necesita s3:ListBucket sobre el bucket y s3:GetObject/s3:PutObject "
     f"sobre {S3_KEY_PREFIX}/* (CallerPolicy de infra/iam.yaml)"
 )
 CAPS_IMAGE_SUFFIX = "-caps"
-
-QUOTA_DEFAULTS: dict[str, tuple[str, float]] = {
-    "L-CD1C0CC4": ("memoria ARM_64 (GB)", 400.0),
-    "L-535CA9B6": ("RunMicrovm rate", 5.0),
-    "L-91B95582": ("RunMicrovm burst", 5.0),
-    "L-118C44B3": ("ResumeMicrovm rate", 5.0),
-    "L-25EEC0A4": ("ResumeMicrovm burst", 5.0),
-    "L-90045317": ("SuspendMicrovm rate", 2.0),
-    "L-139F9A48": ("SuspendMicrovm burst", 2.0),
-    "L-74787B8A": ("TerminateMicrovm rate", 10.0),
-    "L-2CCA0501": ("TerminateMicrovm burst", 10.0),
-    "L-CE98C9E3": ("GetMicrovm rate", 100.0),
-    "L-C9C2110E": ("GetMicrovm burst", 100.0),
-    "L-7712260B": ("CreateMicrovmAuthToken rate", 50.0),
-    "L-D65D9F16": ("CreateMicrovmAuthToken burst", 50.0),
-    "L-B78D2ECC": ("CreateMicrovmShellAuthToken rate", 5.0),
-    "L-9A5E43A5": ("CreateMicrovmShellAuthToken burst", 5.0),
-    "L-72E0D058": ("builds concurrentes", 5.0),
-    "L-942E56BE": ("imágenes", 100.0),
-    "L-F8BECE9C": ("versiones por imagen", 50.0),
-}
-LARGE_REGION_QUOTA_DEFAULTS: dict[str, float] = {"L-CD1C0CC4": 1024.0, "L-72E0D058": 10.0}
 
 IMAGE_ACTIONS = (
     "lambda:RunMicrovm",
@@ -192,12 +171,6 @@ def policy_source_arn(clients: Clients, arn: str) -> str | None:
     return None
 
 
-def quota_default(code: str, region: str) -> float:
-    if region in LARGE_REGIONS and code in LARGE_REGION_QUOTA_DEFAULTS:
-        return LARGE_REGION_QUOTA_DEFAULTS[code]
-    return QUOTA_DEFAULTS[code][1]
-
-
 def check_credentials(clients: Clients, ctx: DoctorContext) -> CheckResult:
     identity = clients.sts.get_caller_identity()
     ctx.account = str(identity["Account"])
@@ -257,33 +230,26 @@ def check_managed_images(clients: Clients, ctx: DoctorContext) -> CheckResult:
     )
 
 
-def microvm_quotas(clients: Clients) -> list[dict[str, Any]]:
-    paginator = clients.quotas.get_paginator("list_service_quotas")
-    return [
-        {
-            "code": str(quota["QuotaCode"]),
-            "name": str(quota["QuotaName"]),
-            "value": float(quota["Value"]),
-            "adjustable": bool(quota.get("Adjustable", False)),
-        }
-        for page in paginator.paginate(ServiceCode="lambda")
-        for quota in page.get("Quotas", [])
-        if "microvm" in str(quota["QuotaName"]).lower()
-    ]
+def quota_row(quota: AppliedQuota) -> dict[str, Any]:
+    return {
+        "code": quota.code,
+        "name": quota.name,
+        "value": quota.value,
+        "adjustable": quota.adjustable,
+    }
 
 
 def check_quotas(clients: Clients, ctx: DoctorContext) -> CheckResult:
-    listed = microvm_quotas(clients)
+    applied = list_microvm_quotas(clients.quotas)
+    listed = [quota_row(quota) for quota in applied]
+    entries = build_quota_entries(applied, clients.region)
     by_code = {quota["code"]: quota for quota in listed}
-    below: list[dict[str, Any]] = []
-    missing: list[str] = []
-    for code, (short_name, _) in QUOTA_DEFAULTS.items():
-        expected = quota_default(code, clients.region)
-        quota = by_code.get(code)
-        if quota is None:
-            missing.append(f"{code} ({short_name})")
-        elif quota["value"] < expected:
-            below.append({**quota, "short_name": short_name, "default": expected})
+    below: list[dict[str, Any]] = [
+        {**by_code[entry.code], "short_name": entry.name, "default": float(entry.default)}
+        for entry in entries
+        if entry.below_default
+    ]
+    missing = [f"{entry.code} ({entry.name})" for entry in entries if entry.value is None]
     details: dict[str, Any] = {"quotas": listed, "below_default": below, "missing": missing}
     if below or missing:
         named = ", ".join(f"{q['short_name']} {q['value']:g} < {q['default']:g}" for q in below)

@@ -8,6 +8,21 @@ versionado [SemVer](https://semver.org/lang/es/).
 
 ### Añadido
 
+- **Servicios del panel de gestión** (`dashboard`, ADR-026, fase 1): `Quotas`
+  (cuotas aplicadas de Lambda MicroVMs, memoria asignada contra la cuota de la
+  región y avisos al 80 % y al 95 %), `UsageCost` (coste facturado por Cost
+  Explorer por tipo de uso, con caché local de 24 h, y coste estimado por
+  sandbox, siempre rotulados) y `Fleet` (sandboxes con la memoria de su
+  imagen, imágenes y versiones, historial de eventos y acciones masivas con
+  una cola que respeta los TPS).
+  Apagados por defecto: construirlos no llama a AWS, Cost Explorer ($0,01 por
+  petición) sólo se toca con `UsageCost.billed()` y las acciones exigen
+  `allowActions: true`. Nueva excepción `DashboardError` y constantes
+  nuevas en `limits.json` (catálogo de cuotas, umbrales, TTL y precios de
+  cómputo). Los clientes de Service Quotas y Cost Explorer son
+  peers opcionales (`@aws-sdk/client-service-quotas`,
+  `@aws-sdk/client-cost-explorer`). Cada clase, método y opción dice si es gratuito o de pago (`billed()` y `events()` son de pago; `resume` vuelve a facturar cómputo) con el mismo texto en ambos SDK. Guía:
+  [Panel de gestión](https://alejandro-cedeno-10.github.io/rayito/funciones-opcionales/panel-de-gestion/).
 - **`Template.dnfInstall()` y `Template.npmInstall(packages?, { g })`**.
   Atajos del DSL para instalar paquetes del sistema con `dnf` (sin paquetes
   débiles) y paquetes Node con `npm`; los nombres se escapan para el shell y

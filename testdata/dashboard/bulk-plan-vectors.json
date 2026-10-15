@@ -1,0 +1,13 @@
+{
+  "description": "Bulk action plan vectors shared by the Python and TypeScript SDKs: the queue runs at the lower of the API TPS in limits.json and the applied Service Quotas rate (suspend: 2 TPS).",
+  "cases": [
+    { "action": "suspend", "count": 100, "appliedRate": null, "tps": 2, "estimatedSeconds": 50 },
+    { "action": "suspend", "count": 100, "appliedRate": 1, "tps": 1, "estimatedSeconds": 100 },
+    { "action": "suspend", "count": 10, "appliedRate": 20, "tps": 2, "estimatedSeconds": 5 },
+    { "action": "kill", "count": 100, "appliedRate": null, "tps": 10, "estimatedSeconds": 10 },
+    { "action": "kill", "count": 100, "appliedRate": 4, "tps": 4, "estimatedSeconds": 25 },
+    { "action": "resume", "count": 10, "appliedRate": null, "tps": 5, "estimatedSeconds": 2 },
+    { "action": "resume", "count": 0, "appliedRate": null, "tps": 5, "estimatedSeconds": 0 }
+  ],
+  "invalidRates": [0, -1, -0.5]
+}

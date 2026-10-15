@@ -55,6 +55,7 @@ Nada de esto hace falta para empezar.
 | Pilas opcionales desde código ([Pilas opcionales](../funciones-opcionales/pilas-opcionales.md)) | (incluido: usa `boto3`) | `npm i @aws-sdk/client-cloudformation` |
 | Logs de un build fallido de `Template.build()` ([Templates](../funciones-opcionales/templates.md)) | (incluido: usa `boto3`) | `npm i @aws-sdk/client-cloudwatch-logs` |
 | Volúmenes EFS, experimental ([Volúmenes EFS](../funciones-opcionales/volumenes-efs.md)) | (incluido: usa `boto3`) | `npm i @aws-sdk/client-efs @aws-sdk/client-ec2` |
+| Cuotas y coste del panel de gestión ([Panel de gestión](../funciones-opcionales/panel-de-gestion.md)) | (incluido: usa `boto3`) | `npm i @aws-sdk/client-service-quotas @aws-sdk/client-cost-explorer` |
 | Dominio propio, experimental ([Dominio propio](../funciones-opcionales/dominio-propio.md)) | `pip install "rayito[custom-domain]"` | `npm i @aws-sdk/client-cloudformation @aws-sdk/client-cloudfront-keyvaluestore @aws-sdk/signature-v4a` |
 
 En TypeScript esos paquetes son *peerDependencies* opcionales: el SDK sólo
