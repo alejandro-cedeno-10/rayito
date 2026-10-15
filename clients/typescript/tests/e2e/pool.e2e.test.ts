@@ -16,9 +16,10 @@ import {
   SandboxNotFoundError,
   SandboxPool,
 } from "../../src/index.js";
-import { e2eEnabled, useE2E, waitUntil } from "./helpers.js";
+import { e2eEnabled, seconds, useE2E, waitUntil } from "./helpers.js";
 
 const TAKES = 5;
+const POOL_MAX_IDLE_SECONDS = 120;
 const POOL_TIMEOUT_MS = 900_000;
 const READY_BUDGET_MS = 90_000;
 const CELL_TIMEOUT_MS = 60_000;
@@ -38,7 +39,7 @@ describe.skipIf(!e2eEnabled())("m7 pool typescript sdk", () => {
       size: 2,
       template: context.templateArn,
       timeoutMs: POOL_TIMEOUT_MS,
-      idle: { maxIdleSeconds: 120, autoResume: true },
+      idle: { maxIdleSeconds: POOL_MAX_IDLE_SECONDS, autoResume: true },
       minRemainingMs: POOL_MIN_REMAINING_MS,
       fillConcurrency: 2,
       sweepIntervalMs: 10_000,
@@ -84,7 +85,7 @@ describe.skipIf(!e2eEnabled())("m7 pool typescript sdk", () => {
         const started = performance.now();
         const sandbox = await pool.take();
         const execution = await sandbox.runCode("1+1", { timeoutMs: CELL_TIMEOUT_MS });
-        const elapsed = (performance.now() - started) / 1000;
+        const elapsed = seconds(started);
         samples.push(elapsed);
         used.push(sandbox.sandboxId);
         console.log(
@@ -188,7 +189,7 @@ describe.skipIf(!e2eEnabled())("m7 pool typescript sdk", () => {
         const sandbox = await second.take();
         expect((await sandbox.runCode("1+1", { timeoutMs: CELL_TIMEOUT_MS })).text).toBe("2");
         console.log(
-          `\n[m7-pool-ts] take() recuperado -> primera celda: ${((performance.now() - started) / 1000).toFixed(3)} s`,
+          `\n[m7-pool-ts] take() recuperado -> primera celda: ${seconds(started).toFixed(3)} s`,
         );
         expect(sandbox.sandboxId).toBe(parked);
         await sandbox.kill();

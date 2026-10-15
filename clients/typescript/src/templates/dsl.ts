@@ -264,7 +264,7 @@ export class Template {
    * instala globalmente y, como en E2B, corre como root aunque un `setUser()`
    * previo haya dejado otro usuario. La imagen necesita Node.js:
    * `rayito-base` no lo trae, así que antes hay que llamar a
-   * `dnfInstall(["nodejs20", "nodejs20-npm"])`; sin npm el build falla con un
+   * `dnfInstall(NODE_PACKAGES)`; sin npm el build falla con un
    * mensaje que lo explica. */
   npmInstall(packages?: string | readonly string[], options: NpmInstallOptions = {}): this {
     const names = packages === undefined ? "" : ` ${packageNames("npmInstall", packages)}`;

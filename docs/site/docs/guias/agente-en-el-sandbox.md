@@ -24,9 +24,9 @@ No hace falta ningún pool ni ningún calentamiento: el
 opción. Si la conversación puede quedarse parada más de 8 h, la opción es
 [`persist=`](#mas-de-8-h-parado-persist).
 
-!!! note "Antes de empezar (una vez por cuenta y región, ≈ 15 min)"
-    1. [Configurar AWS](../primeros-pasos/configurar-aws.md) hecho, con
-       `rayito-base-caps` publicada (≈ 10 min).
+!!! note "Antes de empezar (una vez por cuenta y región, ≈ 20 min)"
+    1. [Configurar AWS](../primeros-pasos/configurar-aws.md) hecho (≈ 15 min)
+       y `rayito-base-caps` publicada (variante caps).
     2. La imagen `rayito-agent`:
        `rayito agent template build --bucket <tu-bucket>` (≈ 5 min,
        ≈ $0,056/semana por versión;
