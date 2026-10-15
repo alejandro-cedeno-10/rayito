@@ -8,6 +8,12 @@ versionado [SemVer](https://semver.org/lang/es/).
 
 ### Añadido
 
+- **Cobertura e2e de la superficie del SDK**: nuevos tests contra AWS real
+  (`transport`, `processes`, `filesystem`, `code` y `hardening`, espejos de los
+  bloques M1 a M4 de Python) y ampliaciones de `m9-e2b`, `poly`,
+  `m9-transfer`, `m9-timeout` y `m9-egress`. Sólo tests: no cambia el SDK ni
+  su API. Sin `RAYITO_E2E=1` se omiten sin llamar a AWS.
+
 - **Panel: parámetro `AuthMode` del componente `dashboard`** (`aws-iam` pone la
   API tras una Function URL con firma SigV4; por defecto `cognito-jwt`), espejo
   del de Python con los mismos textos de coste.

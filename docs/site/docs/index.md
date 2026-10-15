@@ -68,17 +68,17 @@ y con la misma API que E2B.
 <div class="rx-ruler">
 <div class="rx-ruler__figure" role="img" aria-label="Tiempos medidos: resume 0,38 s; pool.take 0,77 s; listo para comandos 2,3 s; kernel listo 5,2 s">
 <div class="rx-ruler__track">
-<span class="rx-ruler__tick" style="--at:0%"><span>0 s</span></span>
-<span class="rx-ruler__tick" style="--at:16.667%"><span>1 s</span></span>
-<span class="rx-ruler__tick" style="--at:33.333%"><span>2 s</span></span>
-<span class="rx-ruler__tick" style="--at:50%"><span>3 s</span></span>
-<span class="rx-ruler__tick" style="--at:66.667%"><span>4 s</span></span>
-<span class="rx-ruler__tick" style="--at:83.333%"><span>5 s</span></span>
-<span class="rx-ruler__tick" style="--at:100%"><span>6 s</span></span>
-<span class="rx-ruler__mark rx-ruler__mark--up" style="--at:6.3%; --i:0"><span class="rx-ruler__value">0,38 s</span><span class="rx-ruler__label"><code>resume()</code></span></span>
-<span class="rx-ruler__mark rx-ruler__mark--down" style="--at:12.8%; --i:1"><span class="rx-ruler__value">0,77 s</span><span class="rx-ruler__label"><code>pool.take()</code></span></span>
-<span class="rx-ruler__mark rx-ruler__mark--up" style="--at:38.3%; --i:2"><span class="rx-ruler__value">2,3 s</span><span class="rx-ruler__label">listo para comandos</span></span>
-<span class="rx-ruler__mark rx-ruler__mark--down rx-ruler__mark--end" style="--at:86.7%; --i:3"><span class="rx-ruler__value">5,2 s</span><span class="rx-ruler__label">kernel listo</span></span>
+<span class="rx-ruler__tick" style="--s:0"><span>0 s</span></span>
+<span class="rx-ruler__tick" style="--s:1"><span>1 s</span></span>
+<span class="rx-ruler__tick" style="--s:2"><span>2 s</span></span>
+<span class="rx-ruler__tick" style="--s:3"><span>3 s</span></span>
+<span class="rx-ruler__tick" style="--s:4"><span>4 s</span></span>
+<span class="rx-ruler__tick" style="--s:5"><span>5 s</span></span>
+<span class="rx-ruler__tick" style="--s:6"><span>6 s</span></span>
+<span class="rx-ruler__mark rx-ruler__mark--up" style="--s:0.38"><span class="rx-ruler__value">0,38 s</span><span class="rx-ruler__label"><code>resume()</code></span></span>
+<span class="rx-ruler__mark rx-ruler__mark--down" style="--s:0.77"><span class="rx-ruler__value">0,77 s</span><span class="rx-ruler__label"><code>pool.take()</code></span></span>
+<span class="rx-ruler__mark rx-ruler__mark--up" style="--s:2.3"><span class="rx-ruler__value">2,3 s</span><span class="rx-ruler__label">listo para comandos</span></span>
+<span class="rx-ruler__mark rx-ruler__mark--down rx-ruler__mark--end" style="--s:5.2"><span class="rx-ruler__value">5,2 s</span><span class="rx-ruler__label">kernel listo</span></span>
 </div>
 </div>
 <p class="rx-ruler__note">Medianas medidas en AWS real (us-east-1, 2026-09). Detalle en <a href="cost/#tiempos">Tiempos</a>.</p>

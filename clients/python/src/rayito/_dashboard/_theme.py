@@ -84,9 +84,13 @@ SCHEMES: Final = ("dark", "light")
 SECTION_SHARED: Final = "tokens"
 JSON_KEYS: Final = frozenset({"version", "name", SECTION_SHARED, *SCHEMES})
 
+#: Largo máximo de un nombre de familia en un token de fuente del tema; acota
+#: la expresión regular para que un tema no pueda colar un valor arbitrario.
 _FONT_NAME_MAX_CHARS: Final = 40
+#: Fuentes de reserva admitidas tras la primera en una pila `font-family`
+#: (ocho familias en total); mismo motivo que el límite anterior.
 _FONT_FALLBACKS_MAX: Final = 7
-_FONT_FAMILY = (
+_FONT_FAMILY: Final = (
     rf"(?:\"[A-Za-z0-9 _-]{{1,{_FONT_NAME_MAX_CHARS}}}\"|[A-Za-z0-9_-]{{1,{_FONT_NAME_MAX_CHARS}}})"
 )
 _NUMBER = r"\d{1,3}(?:\.\d{1,3})?"

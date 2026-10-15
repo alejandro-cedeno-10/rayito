@@ -3,8 +3,9 @@
  * TypeScript de `clients/python/tests/e2e/test_m9_server_timeout.py`
  * (design D12): `setTimeout` que acorta, `connect({ timeoutMs })` AT_LEAST,
  * el modo `pause` con un cliente vivo (suspensión y auto-resume con la regla
- * de 5 min), un stream abierto al vencer el plazo y `setTimeout` más allá del
- * tope. Exige la imagen 0.3.0 o posterior de `RAYITO_TEMPLATE`; todo sandbox nace con
+ * de 5 min), un stream abierto al vencer el plazo, `setTimeout` más allá del
+ * tope y la puerta de agente anterior a 0.3.0 (con
+ * `RAYITO_E2E_PRE_M9_TEMPLATE_VERSION`). Exige la imagen 0.3.0 o posterior de `RAYITO_TEMPLATE`; todo sandbox nace con
  * `maxLifetimeMs <= 900 000`, sin execution role (y por tanto con
  * `logging: "disabled"`: CloudWatch exige el rol), y el sweeper de `useE2E`
  * lo termina. Cada test imprime lo que necesitan las filas de
@@ -21,16 +22,19 @@ import {
   type SandboxInfo,
   SandboxNotFoundError,
   TimeoutError,
+  UnimplementedError,
 } from "../../src/index.js";
 import {
   type E2EContext,
   e2eEnabled,
   msToSeconds,
+  recordingControlPlane,
   report,
   seconds,
   secondsToMs,
   sleep,
   useE2E,
+  waitForTerminalState,
   waitUntil,
   withTimeout,
 } from "./helpers.js";
@@ -54,6 +58,9 @@ const SHIM_TIMEOUT_MS = 30_000;
 const SHIM_EXTENDED_TIMEOUT_MS = 90_000;
 const SHIM_EXTEND_AFTER_MS = 5_000;
 const SHIM_ALIVE_CHECK_AFTER_MS = 60_000;
+const PRE_M9_VERSION_VAR = "RAYITO_E2E_PRE_M9_TEMPLATE_VERSION";
+const LEGACY_TIMEOUT_MS = 300_000;
+const preM9Version = process.env[PRE_M9_VERSION_VAR];
 
 interface TimeoutLaunch {
   readonly timeoutMs: number;
@@ -318,4 +325,33 @@ describe.skipIf(!e2eEnabled())("M9 server-enforced timeout (TypeScript)", () => 
       await paused.kill();
     }
   });
+  test.skipIf(!preM9Version)(
+    `older agent gate: the shim refuses a pre-0.3.0 image and the native SDK still works (requires ${PRE_M9_VERSION_VAR})`,
+    async () => {
+      const templateVersion = preM9Version as string;
+      const recording = recordingControlPlane(context.controlPlane);
+      const refused = await ShimSandbox.create({
+        template: context.templateArn,
+        templateVersion,
+        maxLifetimeMs: MAX_TEST_LIFETIME_MS,
+        logging: "disabled",
+        controlPlane: recording.plane,
+      }).catch((error: unknown) => error);
+      expect(refused).toBeInstanceOf(UnimplementedError);
+      for (const sandboxId of recording.launched) {
+        await waitForTerminalState(sandboxId, context.controlPlane);
+      }
+      const legacy = await Sandbox.create({
+        template: context.templateArn,
+        templateVersion,
+        timeoutMs: LEGACY_TIMEOUT_MS,
+        idle: null,
+        logging: "disabled",
+        controlPlane: context.controlPlane,
+      });
+      context.created.push(legacy);
+      expect((await legacy.commands.run("echo ok")).stdout).toBe("ok\n");
+      expect((await legacy.getHealth()).lifecycle).toBeUndefined();
+    },
+  );
 });

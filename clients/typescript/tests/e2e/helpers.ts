@@ -9,14 +9,17 @@
 
 import { afterAll, beforeAll } from "vitest";
 import {
+  type ControlPlane,
   type IdlePolicyInput,
   LambdaMicrovmsControlPlane,
   type LoggingOption,
   type OutputChunk,
   Sandbox,
+  type SandboxInfo,
   SandboxNotFoundError,
   type TelemetryExport,
 } from "../../src/index.js";
+import { TERMINAL_STATES } from "../../src/limits.js";
 
 export const E2E_FLAG_VAR = "RAYITO_E2E";
 export const TEMPLATE_VAR = "RAYITO_TEMPLATE";
@@ -25,6 +28,9 @@ export const TEST_SANDBOX_TIMEOUT_MS = 900_000;
 export const MAX_TEST_SANDBOX_TIMEOUT_MS = 1_800_000;
 export const MAX_LIVE_TEST_SANDBOXES = 10;
 export const POLL_MS = 200;
+export const HOME = "/home/user";
+export const TERMINATE_VISIBLE_MS = 30_000;
+export const TERMINATE_POLL_MS = 500;
 
 export function e2eEnabled(): boolean {
   return process.env[E2E_FLAG_VAR] === "1" && Boolean(process.env[TEMPLATE_VAR]);
@@ -58,10 +64,12 @@ export function report(label: string, seconds: number): void {
 /** Milisegundos por segundo: la única conversión entre los `*Ms` y los segundos de los informes. */
 export const MS_PER_SECOND = 1000;
 
+/** Convierte milisegundos en segundos para los informes y los mensajes. */
 export function msToSeconds(ms: number): number {
   return ms / MS_PER_SECOND;
 }
 
+/** Convierte segundos (los de la API de AWS y de las políticas) en milisegundos. */
 export function secondsToMs(value: number): number {
   return value * MS_PER_SECOND;
 }
@@ -91,7 +99,7 @@ export async function waitUntil(
   const started = performance.now();
   while (!(await predicate())) {
     if (performance.now() - started >= budgetMs) {
-      throw new Error(`${what} no ocurrió en ${budgetMs / 1000} s`);
+      throw new Error(`${what} no ocurrió en ${msToSeconds(budgetMs)} s`);
     }
     await sleep(pollMs);
   }
@@ -135,7 +143,7 @@ export async function readUntil(
     const remaining = deadline - performance.now();
     if (remaining <= 0) {
       throw new Error(
-        `${String(needle)} no llegó en ${timeoutMs / 1000} s: ${JSON.stringify(buffer)}`,
+        `${String(needle)} no llegó en ${msToSeconds(timeoutMs)} s: ${JSON.stringify(buffer)}`,
       );
     }
     const result = await withTimeout(iterator.next(), remaining, String(needle));
@@ -262,6 +270,8 @@ export async function createTestSandbox(
     readonly timeoutMs?: number;
     readonly idle?: IdlePolicyInput | null;
     readonly telemetry?: TelemetryExport;
+    readonly cpuTimeLimit?: number;
+    readonly egress?: readonly string[];
   } = {},
 ): Promise<Sandbox> {
   const timeoutMs = options.timeoutMs ?? TEST_SANDBOX_TIMEOUT_MS;
@@ -278,6 +288,8 @@ export async function createTestSandbox(
     logging: context.settings.logging,
     controlPlane: context.controlPlane,
     ...(options.telemetry === undefined ? {} : { telemetry: options.telemetry }),
+    ...(options.cpuTimeLimit === undefined ? {} : { cpuTimeLimit: options.cpuTimeLimit }),
+    ...(options.egress === undefined ? {} : { egress: options.egress }),
   });
   const elapsed = seconds(started);
   context.created.push(sandbox);
@@ -287,4 +299,72 @@ export async function createTestSandbox(
     elapsed,
   );
   return sandbox;
+}
+
+/**
+ * `get-microvm` es eventualmente consistente (AWS_API_NOTES.md §6): justo
+ * después de `terminate-microvm` puede seguir respondiendo `RUNNING`, así que
+ * el estado terminal se sondea con plazo (y un 404 cuenta como terminal). Devuelve los segundos que tardó.
+ */
+export async function waitForTerminalState(
+  sandboxId: string,
+  controlPlane: ControlPlane,
+): Promise<number> {
+  const elapsed = await waitUntil(
+    async () => {
+      try {
+        return TERMINAL_STATES.has((await controlPlane.getMicrovm(sandboxId)).state);
+      } catch (error) {
+        if (error instanceof SandboxNotFoundError) {
+          return true;
+        }
+        throw error;
+      }
+    },
+    TERMINATE_VISIBLE_MS,
+    "TERMINATING|TERMINATED",
+    TERMINATE_POLL_MS,
+  );
+  report(`${sandboxId}: terminate-microvm -> TERMINATING|TERMINATED`, elapsed);
+  return elapsed;
+}
+
+export interface RecordingControlPlane {
+  readonly plane: ControlPlane;
+  readonly launched: string[];
+  readonly terminated: string[];
+}
+
+/**
+ * El plano real tras un `Proxy` que apunta qué MicroVMs se lanzaron y cuáles
+ * se terminaron. El resto de métodos se enlaza al plano real (sus campos
+ * privados no admiten otro `this`), así que un método nuevo de `ControlPlane`
+ * no rompe el test.
+ */
+export function recordingControlPlane(inner: ControlPlane): RecordingControlPlane {
+  const launched: string[] = [];
+  const terminated: string[] = [];
+  const runMicrovm: ControlPlane["runMicrovm"] = async (request) => {
+    const info: SandboxInfo = await inner.runMicrovm(request);
+    launched.push(info.sandboxId);
+    return info;
+  };
+  const terminateMicrovm: ControlPlane["terminateMicrovm"] = (sandboxId) => {
+    terminated.push(sandboxId);
+    return inner.terminateMicrovm(sandboxId);
+  };
+  const overrides: ReadonlyMap<PropertyKey, unknown> = new Map<PropertyKey, unknown>([
+    ["runMicrovm", runMicrovm],
+    ["terminateMicrovm", terminateMicrovm],
+  ]);
+  const plane = new Proxy(inner, {
+    get(target, property) {
+      if (overrides.has(property)) {
+        return overrides.get(property);
+      }
+      const value: unknown = Reflect.get(target, property, target);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+  return { plane, launched, terminated };
 }
