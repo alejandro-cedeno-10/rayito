@@ -10,6 +10,10 @@ Paridad:
       en un objeto. Mismo comportamiento y mismos códigos de error.
 - [ ] Exportado en `rayito/__init__.py` (`__all__`) y en `src/index.ts`.
       Si E2B tiene el nombre, también en `rayito.e2b` y `rayito/e2b`.
+      `python3 scripts/check_sdk_parity.py` (en `make lint` y en CI) lo
+      comprueba; una diferencia intencional entra en su lista de permitidos,
+      con el motivo, nunca para tapar un hueco. Añadir un valor exportado
+      obliga además a tocar `tests/unit/public-exports.test.ts`.
 - [ ] Shim E2B: nombres y semántica de E2B. Lo que AWS no puede dar lanza
       `UnimplementedError` con enlace a `e2b-compat.md`. Un kwarg de E2B que
       se ignora emite `RayitoCompatWarning` con el nombre, nunca el valor.
@@ -17,8 +21,9 @@ Paridad:
       (`code`, `reason`, `aws_code` ↔ `awsCode`) y el mapeo por código.
 - [ ] Constantes: el mismo valor con nombre equivalente (`*_SECONDS` ↔
       `*_MS`). Los límites compartidos, en `limits.json`.
-- [ ] Lógica pura compartida: vectores JSON comunes en las fixtures de los
-      dos SDKs (como `fixtures/charts`).
+- [ ] Lógica pura compartida: vectores JSON comunes que leen los tests de los
+      dos SDKs (como `fixtures/charts` o `testdata/image-variants/`), nunca
+      dos copias que puedan divergir.
 - [ ] Coste: bloque "Coste y activación" en los dos docstrings, y un test
       en cada SDK de que sin la opción no hay llamadas.
 - [ ] Docs: ejemplo con pestañas Python/TypeScript, la referencia Python
@@ -47,3 +52,26 @@ Un `except SandboxException` no debe tragarse una función ausente:
   el import, el shim es correcto.
 - Las extensiones de Rayito dentro del shim (`index`, `bucket`, `region`…)
   son opcionales y van apagadas por defecto, como en el SDK nativo.
+
+## Qué se prueba en cada sitio
+
+La paridad no es "el mismo número de tests". Cada comportamiento se prueba
+donde vive su código, una vez:
+
+| Qué | Dónde se prueba | Por qué |
+|---|---|---|
+| Comportamiento del guest y de `rayd` (sidecar, kernels, `Health`, límites del agente, hooks, formato de las líneas de evento) | **una vez**, en Python (`tests/e2e`, `tests/local`) y en las pruebas de `rayd` | No depende del SDK que lo llame: repetirlo en TypeScript sólo duplica coste de AWS |
+| CLI (`rayito ...`), MCP (`rayito.mcp`) y `sandbox proxy` | **sólo Python** | Son Python por diseño (`cli.md`: una CLI en TypeScript está fuera de alcance) |
+| Los duplicados síncrono/asíncrono de Python (`Sandbox` y `AsyncSandbox`) | **sólo Python** | TypeScript es sólo asíncrono: un caso por comportamiento, no uno por forma |
+| Todo lo demás: código propio del SDK (validación, planes, servicios, transporte, shim E2B, plantillas, pool, formas de clase) | **los dos SDK**, con unit tests y, si toca AWS, e2e | Es el único código que puede divergir |
+
+Reglas que salen de ahí:
+
+- Una función nueva de SDK lleva tests unitarios en Python **y** TypeScript.
+  Si usa AWS, un e2e en cada uno; si lo que se prueba es el guest, basta uno.
+- Un e2e de Python que prueba guest o `rayd` no necesita espejo en
+  TypeScript; dilo en la cabecera del test ("guest: se prueba una vez").
+- Una brecha real es un caso sobre código que sólo existe en TypeScript
+  (sus servicios, sus adaptadores, su shim) sin e2e: se cubre.
+- Contar casos entre los dos SDK no es una métrica de paridad: compara los
+  exports (`check_sdk_parity.py`), los vectores compartidos y esta tabla.
