@@ -42,9 +42,13 @@ FEATURE_PAGES_0_6 = (
 )
 
 #: El panel de gestión (ADR-026, cambio `dashboard`): una fila para los tres
-#: servicios del SDK (`Quotas`, `UsageCost`, `Fleet`), todavía sin aceptar en
-#: AWS real, así que su estado no dice "disponible".
-FEATURE_PAGES_DASHBOARD = ("funciones-opcionales/panel-de-gestion.md",)
+#: servicios del SDK (`Quotas`, `UsageCost`, `Fleet`) y otra para la pila
+#: `dashboard` en la cuenta, todavía sin aceptar en AWS real, así que su
+#: estado no dice "disponible".
+FEATURE_PAGES_DASHBOARD = (
+    "funciones-opcionales/panel-de-gestion.md",
+    "funciones-opcionales/panel-en-tu-cuenta.md",
+)
 
 DOCSTRING_MARKER = "Coste y activación"
 

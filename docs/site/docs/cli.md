@@ -18,6 +18,7 @@ opciones y variables de entorno.
 | [`rayito events`](#rayito-events) | `deploy`, `status`, `destroy`, `list`, `webhook add`, `webhook list`, `webhook remove` |
 | [`rayito template`](#rayito-template) | `build`, `status`, `logs` |
 | [`rayito agent`](#rayito-agent) | `template build` |
+| [`rayito dashboard`](#rayito-dashboard) | — |
 | [`rayito doctor`](#rayito-doctor) | — |
 
 El servidor MCP es otro ejecutable del mismo paquete, `rayito-mcp`
@@ -469,6 +470,33 @@ pool. El prefetch y los pools calientes son opcionales:
 [¿Qué uso?](guias/agente-en-el-sandbox.md#que-uso). Cada versión nueva cuesta
 almacenamiento de snapshot ([Precios](cost.md#cuanto-cuesta-con-ejemplos));
 las antiguas se borran con `rayito image prune --image-name <name>`.
+
+## `rayito dashboard`
+
+```bash
+rayito dashboard [--port N] [--allow-actions] [--cost-explorer]
+                 [--events-stack NOMBRE] [--log-group GRUPO]
+                 [--theme FICHERO] [--logo FICHERO] [--open]
+```
+
+El panel de gestión local: un servidor en `127.0.0.1` (puerto al azar salvo
+`--port`) con una página y la API `/api/v1` sobre tus credenciales de AWS,
+hasta que pulses Ctrl+C. Imprime **una sola vez** la URL de arranque con un
+token de un solo uso. Por defecto es de **sólo lectura**: `--allow-actions`
+habilita matar, suspender y reanudar con confirmación y una cola que respeta
+el TPS; `--cost-explorer` permite consultar el coste facturado (cada consulta
+cuesta $0,01); `--events-stack` activa la vista de eventos; `--theme` (`.json` o `.css`,
+ o `RAYITO_DASHBOARD_THEME`) y `--logo` (PNG o SVG, o `RAYITO_DASHBOARD_LOGO`)
+cambian la paleta y el logo, y se validan antes de abrir el puerto. No admite
+`--json`. Salida 0 al cerrar y 2 si el puerto es inválido u ocupado o falta
+región o credenciales. Guía completa en
+[Panel de gestión](funciones-opcionales/panel-de-gestion.md#panel-web-local),
+con el [recorrido paso a paso y capturas](funciones-opcionales/panel-de-gestion.md#recorrido)
+(el panel lo resume en su entrada **Ayuda**),
+defensas en [Seguridad](security.md#panel-de-gestion-local). Para tenerlo
+siempre disponible dentro de tu cuenta, con inicio de sesión y auditoría:
+`rayito stack deploy dashboard --artifact-bucket B`
+([Panel en tu cuenta](funciones-opcionales/panel-en-tu-cuenta.md)).
 
 ## `rayito doctor`
 

@@ -8,6 +8,16 @@ versionado [SemVer](https://semver.org/lang/es/).
 
 ### Añadido
 
+- **Pila `dashboard`** (el panel de gestión dentro de tu cuenta, ADR-026, fase
+  2): componente de `OptionalStacks` (`deploy("dashboard", { artifactBucket })`),
+  espejo del de Python: la misma plantilla, el mismo zip y los mismos parámetros
+  (`AllowActions`, `EnableCostExplorer`, `ThemeJson`, `ThemeParameterName`...). De
+  sólo lectura y sin Cost Explorer por defecto. Constantes nuevas en `limits.ts`
+  (`DASHBOARD_STACK_*`). El coste facturado tiene tope aunque lo pida cualquier
+  usuario con sesión (ventanas de meses completos, regiones conocidas y un
+  presupuesto diario de consultas de pago para toda la pila) y las acciones se
+  comprueban en vivo en Cognito antes de ejecutarse.
+
 - **Servicios del panel de gestión** (`dashboard`, ADR-026, fase 1): `Quotas`
   (cuotas aplicadas de Lambda MicroVMs, memoria asignada contra la cuota de la
   región y avisos al 80 % y al 95 %), `UsageCost` (coste facturado por Cost

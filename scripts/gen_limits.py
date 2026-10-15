@@ -188,8 +188,10 @@ GROUPS: tuple[tuple[str, ...], ...] = (
         # AWS_API_NOTES.md §11, defaults per region class), the warning
         # fractions of allocated memory against the quota, the Cost Explorer
         # cache TTL and the documented compute prices that back the
-        # per-sandbox estimate (AWS_API_NOTES.md §12, us-east-1 ARM). Not AWS
-        # properties except the catalog and the prices.
+        # per-sandbox estimate (AWS_API_NOTES.md §12, us-east-1 ARM), and the
+        # price of one paid Cost Explorer request (AWS Cost Explorer pricing
+        # page, checked 2026-10-13, AWS_API_NOTES.md §12). Not AWS properties
+        # except the catalog and the prices.
         "largeQuotaRegions",
         "quotaServiceCode",
         "quotaNames",
@@ -203,9 +205,87 @@ GROUPS: tuple[tuple[str, ...], ...] = (
         "costCacheMaxEntries",
         "costExplorerRegion",
         "costExplorerServiceName",
+        "costExplorerRequestPriceUsd",
         "computePriceUsdPerVcpuSecond",
         "computePriceUsdPerGbSecond",
+        "snapshotWritePriceUsdPerGb",
+        "snapshotReadPriceUsdPerGb",
+        "snapshotStoragePriceUsdPerGbMonth",
         "baselineMibPerVcpu",
+    ),
+    (
+        # dashboard, local shell (ADR-026, phase 1b): entropy and lifetime of
+        # the one-time start token, request body and socket timeouts of the
+        # loopback server, the read cache that keeps several open tabs from
+        # multiplying `ListMicrovms` calls, the polling interval the SPA
+        # receives from `/api/v1/meta`, the bulk-action and log bounds, and
+        # the size caps of a user theme file and logo. Not AWS properties.
+        "dashboardSessionTokenBytes",
+        "dashboardStartTokenTtlSeconds",
+        "dashboardRequestMaxBodyBytes",
+        "dashboardRequestTimeoutSeconds",
+        "dashboardReadCacheSeconds",
+        "dashboardPollIntervalSeconds",
+        "dashboardJobPollIntervalSeconds",
+        "dashboardBulkMaxSandboxes",
+        "dashboardJobsRetained",
+        "dashboardJobsActiveMax",
+        "dashboardEventsMaxLimit",
+        "dashboardLogsMaxLines",
+        "dashboardLogLineMaxChars",
+        "dashboardThemeMaxBytes",
+        "dashboardLogoMaxBytes",
+    ),
+    (
+        # dashboard, in-account stack (ADR-026, phase 2): the Cognito group
+        # that may run actions (the stack template and the handler read the
+        # same name), how long the handler keeps the JWKS and the user pool
+        # client id (and how soon it may refetch after an unknown `kid`),
+        # the bounds on that fetch, the clock leeway and the size cap of a
+        # bearer token, the STS session of the actions role, how often the handler
+        # re-reads the theme from SSM and the
+        # function's timeout and memory (pinned equal to the template
+        # defaults by `scripts/tests/test_dashboard_template.py`). Not AWS
+        # properties.
+        "dashboardStackActionsGroup",
+        "dashboardStackAuthCacheSeconds",
+        "dashboardStackJwksRefreshMinSeconds",
+        "dashboardStackJwksMaxBytes",
+        "dashboardStackHttpTimeoutSeconds",
+        "dashboardStackJwtLeewaySeconds",
+        "dashboardStackJwtMaxBytes",
+        "dashboardStackSessionSeconds",
+        "dashboardStackThemeRefreshSeconds",
+        "dashboardStackLambdaTimeoutSeconds",
+        "dashboardStackLambdaTimeoutMarginSeconds",
+        "dashboardStackLambdaMemoryMib",
+        # AWS properties the template pins: the CloudFormation parameter
+        # value cap (ThemeJson `MaxLength`), the SSM Advanced parameter cap
+        # (checked against the docs on 2026-10-13) and the Cognito access
+        # token validity. The cost lookback is the Cost Explorer history the
+        # handler accepts and the misses per UTC day are the paid
+        # `ce:GetCostAndUsage` queries it allows in total (each costs
+        # `costExplorerRequestPriceUsd`), so the worst day is bounded.
+        "dashboardStackThemeParameterMaxBytes",
+        "dashboardStackSsmAdvancedParameterMaxBytes",
+        "dashboardStackAccessTokenHours",
+        "dashboardStackCostLookbackMonths",
+        "dashboardStackCostMissesPerDay",
+        # The worked cost example of the stack (one tab open
+        # `dashboardStackCostExampleOpenHoursPerDay` hours a day for
+        # `dashboardStackCostExampleDaysPerMonth` days) and the public prices
+        # it quotes, checked on 2026-10-13: Lambda $0.20 per million requests
+        # with a monthly free tier of 1,000,000 requests and 400,000 GB-seconds
+        # (https://aws.amazon.com/lambda/pricing/) and SSM Parameter Store
+        # Advanced parameters at $0.05 per parameter-month plus $0.05 per
+        # 10,000 API interactions (https://aws.amazon.com/systems-manager/pricing/).
+        "dashboardStackCostExampleOpenHoursPerDay",
+        "dashboardStackCostExampleDaysPerMonth",
+        "lambdaRequestPriceUsdPerMillion",
+        "lambdaFreeTierRequestsPerMonth",
+        "lambdaFreeTierGbSecondsPerMonth",
+        "ssmAdvancedParameterPriceUsdPerMonth",
+        "ssmApiInteractionPriceUsdPerTenThousand",
     ),
     (
         # ai-agent-fast-start (design.md §6, option A): the prefetch daemon

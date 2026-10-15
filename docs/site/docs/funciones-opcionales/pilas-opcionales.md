@@ -37,6 +37,7 @@ CloudFormation.
 | `otlp-export` | 1 política IAM (`cloudwatch:PutMetricData`) | $0 | [Exportación OTLP](exportacion-otlp.md) |
 | `templates` | 1 política IAM para quien construye templates | $0 | [Templates](templates.md) |
 | `custom-domain` (experimental) | Distribución CloudFront, CloudFront Function de enrutado y KeyValueStore | $0 sin tráfico | [Dominio propio](dominio-propio.md) |
+| `dashboard` | Lambda con Function URL (la página y la API del panel), grupo de usuarios de Cognito con su cliente y dominio, 2 tablas DynamoDB (auditoría y caché), rol de lectura (y, con `AllowActions`, rol de acciones), log group; sin CloudFront ni buckets | ≈ $0 (todo bajo demanda) | [Panel en tu cuenta](panel-en-tu-cuenta.md) |
 | `efs-volumes` (experimental) | En una VPC existente: sistema de ficheros EFS cifrado, un mount target por subred, 2 grupos de seguridad nuevos, un conector de egress a la VPC, su rol y la política `RayitoEfsVolumeClient` | $0 con el sistema de ficheros vacío | [Volúmenes EFS en tu VPC](volumenes-efs-vpc.md) |
 
 `custom-domain` es experimental: la plantilla aún no se ha desplegado
@@ -59,6 +60,7 @@ Se pasan con `parameters={...}` (TypeScript: `{ parameters: {...} }`) o
 | `otlp-export` | ninguno | — |
 | `templates` | `ArtifactBucketArn`, `BuildRoleArn` (obligatorios), `ImageLogGroupPrefix`, `BaseImageBucketArn`, `ProtectedImageNamePrefix` | —, —, `/rayito`, vacío (el bucket de artefactos), `rayito-base` |
 | `custom-domain` | `PublicDomain`, `CertificateArn` (obligatorios, certificado ACM en us-east-1), `AlternateDomainNames` | —, —, vacío (alias comodín `*.<PublicDomain>`) |
+| `dashboard` | `ArtifactBucket` (lo rellena `artifact_bucket=`/`--artifact-bucket`), `AllowActions`, `EnableCostExplorer`, `ImageNamePrefix`, `InitialUserEmail`, `DomainPrefix`, `ThemeJson`, `ThemeParameterName`, `LogoParameterName`, `ReservedConcurrency`, `LogRetentionDays` | —, `false`, `false`, `rayito-`, vacío, vacío, vacío, vacío, vacío, vacío, `30` |
 | `efs-volumes` | `VpcId`, `SubnetIds` (obligatorios, de 1 a 3), `ConnectorName`, `AllowWrite`, `AccessPointArns`, `ReadOnlyAccessPointArns` | —, —, `rayito-efs`, `true`, vacío (cualquier access point del sistema de ficheros), vacío |
 
 `stacks.components()` devuelve este mismo catálogo (con la descripción de

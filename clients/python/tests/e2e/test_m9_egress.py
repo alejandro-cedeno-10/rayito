@@ -57,8 +57,8 @@ from rayito import (
     UnimplementedError,
 )
 from rayito._aws import ControlPlane, LambdaMicrovmsControlPlane
+from rayito._cloudwatch_logs import LogsNotFound, default_log_group, find_streams, iter_events
 from rayito._models import SandboxInfo
-from rayito.cli._logs import LogsNotFound, default_log_group, find_streams, iter_events
 from rayito.exceptions import CommandExitException, SandboxNotFoundException
 
 from .conftest import E2ESettings

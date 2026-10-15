@@ -1612,6 +1612,7 @@ otel = [
 [package.dev-dependencies]
 dev = [
     { name = "grpc-stubs" },
+    { name = "jsonschema" },
     { name = "mypy" },
     { name = "opentelemetry-sdk" },
     { name = "pytest" },
@@ -1642,6 +1643,7 @@ provides-extras = ["cli", "mcp", "otel", "custom-domain"]
 [package.metadata.requires-dev]
 dev = [
     { name = "grpc-stubs", specifier = ">=1.53" },
+    { name = "jsonschema", specifier = ">=4.23" },
     { name = "mypy", specifier = ">=1.14" },
     { name = "opentelemetry-sdk", specifier = ">=1.27,<2" },
     { name = "pytest", specifier = ">=8.3" },
