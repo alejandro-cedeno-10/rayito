@@ -50,6 +50,8 @@ const AGENT_TIMEOUT_MS = 240_000;
 const EGRESS_PROBE_TIMEOUT_SECONDS = 5;
 /** `curl -w` para una ruta fuera de `allow`: `rayd` responde 403 sin cuerpo (§28); un 403 de Bedrock trae JSON. */
 const GATEWAY_DENIED = "403 0";
+/** Variables que encenderían trazas hacia fuera (OTLP, LangSmith/LangChain). */
+const TELEMETRY_ENV_PREFIXES = ["OTEL_", "LANGSMITH_", "LANGCHAIN_TRACING", "LANGCHAIN_API_KEY"];
 
 const agentConfigured =
   Boolean(process.env[AGENT_TEMPLATE_VAR]) && Boolean(process.env[BEDROCK_SECRET_VAR]);
@@ -188,6 +190,30 @@ describe.runIf(e2eEnabled() && agentConfigured)("sbx.agent en AWS real (Bedrock)
     2 * AGENT_TIMEOUT_MS,
   );
 
+  it.each(RUNTIMES)(
+    "%s: la telemetría está apagada y la clave no se ve en el entorno del agente",
+    async (runtime) => {
+      const path = `${WORKDIR}/${runtime}-ts-env.txt`;
+      await sandbox.agent.run(
+        `Ejecuta exactamente \`env > ${path}\` con tu herramienta de shell. Responde sólo 'listo'.`,
+        { spec, runtime },
+      );
+      const envDump = await sandbox.files.read(path);
+      const names = envDump
+        .split("\n")
+        .filter((line) => line.includes("="))
+        .map((line) => line.split("=", 1)[0] ?? "");
+      expect(names.length).toBeGreaterThan(0);
+      const telemetry = names.filter((name) =>
+        TELEMETRY_ENV_PREFIXES.some((prefix) => name.startsWith(prefix)),
+      );
+      expect(telemetry).toEqual([]);
+      const inAgentEnv = envDump.includes(key);
+      expect(inAgentEnv).toBe(false);
+    },
+    AGENT_TIMEOUT_MS,
+  );
+
   it("la credencial no es legible desde el sandbox", async () => {
     const env = await sh("env");
     const inEnv = env.stdout.includes(key);
@@ -196,6 +222,7 @@ describe.runIf(e2eEnabled() && agentConfigured)("sbx.agent en AWS real (Bedrock)
     expect(rayd.exitCode).not.toBe(0);
     const inRaydEnviron = rayd.stdout.includes(key);
     expect(inRaydEnviron).toBe(false);
+    expect((await sh("head -c 16 /proc/1/mem")).exitCode).not.toBe(0);
     const needle = key.slice(0, Math.floor(key.length / 2));
     const files = await sh(
       `grep -rlsF ${shellQuote(needle)} / --exclude-dir=proc --exclude-dir=sys ` +

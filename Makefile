@@ -194,6 +194,7 @@ lint:
 	python scripts/check_hygiene.py
 	uvx ruff==0.16.7 check scripts
 	python scripts/gen_limits.py --check
+	python scripts/check_sdk_parity.py
 	python scripts/gen_agent_assets.py --check
 	python scripts/check_license.py
 	@if [ -f $(PYTHON_CLIENT)/pyproject.toml ]; then cd $(PYTHON_CLIENT) && uv run ruff check . && uv run ruff format --check . && uv run mypy src tests; fi

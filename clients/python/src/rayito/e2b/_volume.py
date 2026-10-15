@@ -183,7 +183,7 @@ def plan_volume_mounts(
     conector de egress (Q131), así que con volúmenes lanza sólo con ese
     conector, y `allow_internet_access=True` explícito se rechaza. Valida la
     forma (mapa no vacío, cada valor un `Volume`/`AsyncVolume` o un nombre
-    válido), las rutas y la variante caps, y devuelve el mapa tal cual: los
+    válido), las rutas y la variante efs, y devuelve el mapa tal cual: los
     nombres los resuelve `resolve_volume_mounts` en `_launch` (I/O). El rol
     y el conector los vuelve a exigir `Sandbox.create(volumes=)` nativo."""
     if store is None:
