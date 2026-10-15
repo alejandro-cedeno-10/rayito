@@ -31,8 +31,7 @@ const EGRESS_PROBE_STARTUP_SLACK_S = 5;
 const EGRESS_REFUSAL_BUDGET_S =
   EGRESS_PROBE_TIMEOUT_S * EGRESS_PROBE_ADDRESSES + EGRESS_PROBE_STARTUP_SLACK_S;
 const BUSY_LOOP = "python3 -c 'while True: pass'";
-const EGRESS_PROBE =
-  `python3 -c 'import urllib.request as u; u.urlopen("https://example.com", timeout=${EGRESS_PROBE_TIMEOUT_S}); print("egress ok")'`;
+const EGRESS_PROBE = `python3 -c 'import urllib.request as u; u.urlopen("https://example.com", timeout=${EGRESS_PROBE_TIMEOUT_S}); print("egress ok")'`;
 const BUSY_KERNEL_CELL = "sum(range(10**7))";
 const BUSY_KERNEL_RESULT = "49999995000000";
 const egressConnector = process.env[EGRESS_CONNECTOR_VAR];
