@@ -326,7 +326,8 @@ cargo publish --dry-run -p rayito-proto
      release-please movió un fichero que la configuración no explica, o si
      un fichero de versión que `main` no tocó desde la base de
      release-please no queda idéntico al de su rama (contraste de los
-     actualizadores con los de release-please). En todos los casos sale con código 2 sin commitear ni subir nada.
+     actualizadores con los de release-please). En todos los casos sale con
+     código 2 sin commitear ni subir nada.
    - **Trailers**: `RELEASE_PR_ARGS='--trailer "Co-Authored-By: …"'`
      (repetible) o la variable `RELEASE_PR_TRAILERS` (uno por línea) los
      añade al mensaje, antes del `Signed-off-by`, sin `--amend` posterior.
