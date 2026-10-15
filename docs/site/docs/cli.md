@@ -578,4 +578,7 @@ imprimen el comando `uv run --project clients/python …` y salen con 2.
   primitiva o quedan fuera por `SPEC.md` §4 ([Compatibilidad con E2B](e2b-compat.md)).
 - Envolver las herramientas de desarrollo (`bench_cold_start.py`,
   `hooks-sim.py`, `gen_limits.py`, `check_*.py`).
-- Una CLI en TypeScript ni completado de shell.
+- Completado de shell.
+- Una CLI en TypeScript, todavía: ADR-027 la planifica con la misma
+  superficie (ruta, opciones y valores por defecto) que esta página, así que
+  hoy `rayito` sólo existe en Python.

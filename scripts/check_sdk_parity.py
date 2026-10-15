@@ -30,14 +30,20 @@ se pudra. Antes de añadir una entrada, comprueba que la diferencia sea de
 verdad intencional (`docs/site/docs/e2b-compat.md`, `referencia/typescript.md`);
 si es un hueco, arréglalo.
 
+Con `--cli` se informa además de la CLI: cada comando de
+`testdata/cli/surface.json` (el golden de la CLI de Python, ADR-027) sale como
+pendiente en TypeScript, con la fase del cambio `typescript-cli-tools` que lo
+entrega. De momento es sólo un informe: no hace fallar el CI.
+
 Uso::
 
-    python3 scripts/check_sdk_parity.py [--root DIR]
+    python3 scripts/check_sdk_parity.py [--root DIR] [--cli]
 """
 
 from __future__ import annotations
 
 import ast
+import json
 import re
 import sys
 from pathlib import Path
@@ -55,6 +61,54 @@ SURFACES: Final = (
         TYPESCRIPT_SOURCE / "e2b" / "index.ts",
     ),
 )
+
+CLI_SURFACE: Final = Path("testdata/cli/surface.json")
+PATH_SEPARATOR: Final = " "
+ROOT_COMMAND: Final = "rayito"
+PENDING_LABEL: Final = "PENDIENTE"
+UNPLANNED_LABEL: Final = "SIN FASE"
+
+#: Fase del cambio OpenSpec `typescript-cli-tools` que entrega cada comando de
+#: la CLI en TypeScript. Una fase por línea, con las rutas de sus comandos.
+#: Un comando del golden que no figure aquí sale como `SIN FASE`.
+CLI_PHASES: Final[dict[int, tuple[str, ...]]] = {
+    1: (
+        "sandbox list",
+        "sandbox info",
+        "sandbox kill",
+        "sandbox logs",
+        "sandbox metrics",
+        "sandbox create",
+        "sandbox exec",
+        "stack list",
+        "stack status",
+        "stack deploy",
+        "stack destroy",
+        "image list",
+        "image sizes",
+    ),
+    2: ("doctor",),
+    3: (
+        "template build",
+        "template status",
+        "template logs",
+        "agent template build",
+        "events deploy",
+        "events status",
+        "events destroy",
+        "events list",
+        "events webhook add",
+        "events webhook list",
+        "events webhook remove",
+        "domain deploy",
+        "domain status",
+        "domain destroy",
+        "dashboard cloudwatch",
+    ),
+    4: ("sandbox connect", "sandbox proxy"),
+    5: ("image publish", "image prune", "image zip"),
+    8: ("dashboard",),
+}
 
 ASYNC_PREFIX: Final = "Async"
 EXCEPTION_SUFFIX: Final = "Exception"
@@ -270,19 +324,55 @@ def problems_for(root: Path) -> list[str]:
     return problems
 
 
-def parse_root(argv: list[str]) -> Path | None:
-    if not argv:
-        return Path(__file__).resolve().parent.parent
-    if len(argv) == 2 and argv[0] == "--root":
-        return Path(argv[1])
+def cli_leaf_commands(root: Path) -> list[str]:
+    """Rutas (`"sandbox list"`) de los comandos hoja del golden de la CLI."""
+    surface = json.loads((root / CLI_SURFACE).read_text(encoding="utf-8"))
+    return [
+        PATH_SEPARATOR.join(entry["path"])
+        for entry in surface["commands"]
+        if entry["path"] and not entry["group"]
+    ]
+
+
+def cli_phase_by_command() -> dict[str, int]:
+    return {
+        command: phase for phase, commands in CLI_PHASES.items() for command in commands
+    }
+
+
+def cli_report(root: Path) -> list[str]:
+    """Una línea por comando: pendiente con su fase, o sin fase asignada."""
+    phases = cli_phase_by_command()
+    lines = []
+    for command in cli_leaf_commands(root):
+        phase = phases.get(command)
+        status = UNPLANNED_LABEL if phase is None else f"{PENDING_LABEL} fase {phase}"
+        lines.append(f"{status} {ROOT_COMMAND} {command}")
+    return lines
+
+
+def parse_args(argv: list[str]) -> tuple[Path, bool] | None:
+    """`(raíz, con_cli)`, o `None` si los argumentos no son válidos."""
+    arguments = list(argv)
+    with_cli = "--cli" in arguments
+    if with_cli:
+        arguments.remove("--cli")
+    if not arguments:
+        return Path(__file__).resolve().parent.parent, with_cli
+    if len(arguments) == 2 and arguments[0] == "--root":
+        return Path(arguments[1]), with_cli
     return None
 
 
 def main(argv: list[str]) -> int:
-    root = parse_root(argv)
-    if root is None:
-        print("uso: check_sdk_parity.py [--root DIR]", file=sys.stderr)
+    parsed = parse_args(argv)
+    if parsed is None:
+        print("uso: check_sdk_parity.py [--root DIR] [--cli]", file=sys.stderr)
         return 2
+    root, with_cli = parsed
+    if with_cli:
+        for line in cli_report(root):
+            print(line)
     problems = problems_for(root)
     if problems:
         for problem in problems:

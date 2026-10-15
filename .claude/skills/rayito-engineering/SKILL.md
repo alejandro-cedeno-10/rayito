@@ -76,7 +76,9 @@ en `CLAUDE.md`; esta skill las concreta y añade el cómo. Detalle en:
   `scripts/check_sdk_parity.py` (en `make lint` y en CI) compara los dos
   lados contra una lista de diferencias intencionales con su motivo.
 - Qué se prueba en cada SDK: el guest y `rayd` se prueban una vez (Python);
-  la CLI, MCP, el proxy y los duplicados sync/async son sólo Python; todo lo
+  los duplicados sync/async son sólo Python; la CLI y MCP tienen cobertura en
+  los dos desde ADR-027 (golden de superficie en `testdata/cli/surface.json`,
+  y lo pendiente en TypeScript lo lista `check_sdk_parity.py --cli`); todo lo
   demás tiene cobertura en los dos. Detalle en
   [reference/parity-checklist.md](reference/parity-checklist.md).
 - Los tests nuevos se nombran por la función o el comportamiento

@@ -6,6 +6,7 @@ clase ``Async*`` sin gemela síncrona) falla nombrando el símbolo. Además, el
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -175,3 +176,59 @@ def test_main_reports_ok_and_failure(
     assert check_sdk_parity.main(["--root", str(tmp_path)]) == 1
     assert "KO" in capsys.readouterr().out
     assert check_sdk_parity.main(["--bogus"]) == 2
+
+
+def write_cli_surface(root: Path, commands: list[tuple[list[str], bool]]) -> None:
+    entries = [
+        {"path": path, "group": group, "parameters": []} for path, group in commands
+    ]
+    write(root, check_sdk_parity.CLI_SURFACE, json.dumps({"commands": entries}))
+
+
+def test_cli_report_marks_planned_commands_as_pending_with_their_phase(
+    tmp_path: Path,
+) -> None:
+    write_cli_surface(
+        tmp_path,
+        [
+            ([], True),
+            (["sandbox"], True),
+            (["sandbox", "list"], False),
+            (["doctor"], False),
+        ],
+    )
+    assert check_sdk_parity.cli_report(tmp_path) == [
+        "PENDIENTE fase 1 rayito sandbox list",
+        "PENDIENTE fase 2 rayito doctor",
+    ]
+
+
+def test_cli_report_flags_a_command_without_an_assigned_phase(tmp_path: Path) -> None:
+    write_cli_surface(tmp_path, [(["brand-new"], False)])
+    assert check_sdk_parity.cli_report(tmp_path) == ["SIN FASE rayito brand-new"]
+
+
+def test_every_command_of_the_real_golden_is_pending_and_planned() -> None:
+    lines = check_sdk_parity.cli_report(REPO_ROOT)
+    assert lines
+    assert all(line.startswith(check_sdk_parity.PENDING_LABEL) for line in lines)
+
+
+def test_cli_phases_do_not_repeat_a_command() -> None:
+    commands = [
+        c for commands in check_sdk_parity.CLI_PHASES.values() for c in commands
+    ]
+    assert len(commands) == len(set(commands))
+
+
+@pytest.mark.usefixtures("no_allowlists")
+def test_main_with_cli_prints_the_report_and_does_not_fail(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    build_tree(tmp_path)
+    write_cli_surface(tmp_path, [(["sandbox", "list"], False)])
+    assert check_sdk_parity.main(["--root", str(tmp_path), "--cli"]) == 0
+    assert capsys.readouterr().out.splitlines() == [
+        "PENDIENTE fase 1 rayito sandbox list",
+        "OK",
+    ]
