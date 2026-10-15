@@ -185,3 +185,4 @@ diverjan, y una release que suba un mínimo añade la fila en los dos sitios.
 | `0.9` | `0.9.0` | 0.9: connect() recupera sbx.gateways desde ConfigureStatus y el arranque rápido del agente sin la opción D se validan con el rayd del tag rayd-v0.9.0 |
 | `0.10` | `0.10.0` | 0.10: el timeout y abort() del agente paran todo el árbol de procesos (kill_tree) y los proveedores del agente se validan con el rayd del tag rayd-v0.10.0 |
 | `0.11` | `0.11.0` | 0.11: el arranque rápido de AgentTemplate (kernel_warmup=False por defecto) y las claves de artefacto por ejecución se validan con el rayd del tag rayd-v0.11.0 |
+| `0.12` | `0.12.0` | 0.12: el panel de gestión (rayito dashboard y la pila dashboard) se validan con el rayd del tag rayd-v0.12.0 |

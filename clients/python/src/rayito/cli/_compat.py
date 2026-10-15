@@ -93,6 +93,12 @@ COMPATIBILITY: tuple[CompatibilityRow, ...] = (
         "0.11: el arranque rápido de AgentTemplate (kernel_warmup=False por defecto) y las "
         "claves de artefacto por ejecución se validan con el rayd del tag rayd-v0.11.0",
     ),
+    CompatibilityRow(
+        "0.12",
+        "0.12.0",
+        "0.12: el panel de gestión (rayito dashboard y la pila dashboard) se "
+        "validan con el rayd del tag rayd-v0.12.0",
+    ),
 )
 
 
