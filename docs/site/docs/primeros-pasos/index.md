@@ -39,6 +39,7 @@ otro sitio.
 
 El paso 2 se hace una vez por cuenta y región (≈ 15 min). Lo que repite cada
 aplicación es instalar el SDK (paso 1) y escribir su código (paso 3).
+
 Cuando termines, las [Guías](../guias/index.md) explican cada función (entre
 ellas, [un agente de código dentro del sandbox](../guias/agente-en-el-sandbox.md))
 y la [Referencia](../referencia/index.md) da todos los parámetros.
