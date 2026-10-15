@@ -5,7 +5,7 @@
 
 import { describe, expect, test } from "vitest";
 import { InvalidArgumentError, UnimplementedError } from "../../src/errors.js";
-import { Template } from "../../src/templates/dsl.js";
+import { NODE_PACKAGES, NPM_MISSING_EXIT_CODE, Template } from "../../src/templates/dsl.js";
 import { waitForPort } from "../../src/templates/ready-cmds.js";
 
 describe("templates/dsl", () => {
@@ -46,9 +46,84 @@ describe("templates/dsl", () => {
     },
   );
 
-  test("aptInstall names dnf instead", () => {
-    expect(() => new Template().aptInstall("curl")).toThrow(/dnf/);
+  test("aptInstall names dnfInstall instead", () => {
+    expect(() => new Template().aptInstall("curl")).toThrow(/dnfInstall/);
   });
+
+  test("dnfInstall generates a quoted dnf step", () => {
+    expect(new Template().fromBaseImage().dnfInstall(["tree", "jq"]).spec.steps).toEqual([
+      {
+        kind: "run",
+        cmd: "dnf install -y --setopt=install_weak_deps=0 tree jq && dnf clean all",
+      },
+    ]);
+    expect(new Template().dnfInstall("tree; rm -rf /").spec.steps).toEqual([
+      {
+        kind: "run",
+        cmd: "dnf install -y --setopt=install_weak_deps=0 'tree; rm -rf /' && dnf clean all",
+      },
+    ]);
+  });
+
+  test("npmInstall guards on npm and supports global", () => {
+    const local = new Template().npmInstall(["left-pad@1.3.0"]).spec.steps[0];
+    const scoped = new Template().npmInstall("@scope/pkg", { g: true }).spec.steps[0];
+    expect(local).toMatchObject({ kind: "run" });
+    const localCmd = (local as { cmd: string }).cmd;
+    const scopedCmd = (scoped as { cmd: string }).cmd;
+    expect(localCmd.startsWith("command -v npm >/dev/null 2>&1 || { echo ")).toBe(true);
+    expect(localCmd).toContain(
+      `exit ${NPM_MISSING_EXIT_CODE}; } && npm install --no-audit --no-fund left-pad@1.3.0`,
+    );
+    expect(localCmd).toContain('dnfInstall(["nodejs20", "nodejs20-npm"])');
+    expect(NODE_PACKAGES).toEqual(["nodejs20", "nodejs20-npm"]);
+    expect(scopedCmd.endsWith("npm install --no-audit --no-fund -g @scope/pkg")).toBe(true);
+  });
+
+  test("npmInstall without packages runs a plain install in the workdir", () => {
+    const step = new Template().npmInstall().spec.steps[0] as { cmd: string };
+    expect(step.cmd.endsWith("&& npm install --no-audit --no-fund")).toBe(true);
+  });
+
+  test("dnfInstall runs as root and restores a non-root user", () => {
+    const steps = new Template().setUser("user").dnfInstall("tree").spec.steps;
+    expect(steps.map((s) => s.kind)).toEqual(["user", "user", "run", "user"]);
+    expect(steps[1]).toEqual({ kind: "user", user: "root" });
+    expect(steps[3]).toEqual({ kind: "user", user: "user" });
+  });
+
+  test.each([undefined, "root", "0"])("dnfInstall does not wrap when already root (%s)", (user) => {
+    const base = user === undefined ? new Template() : new Template().setUser(user);
+    const kinds = base.dnfInstall("tree").spec.steps.map((s) => s.kind);
+    expect(kinds.filter((k) => k === "user")).toHaveLength(user === undefined ? 0 : 1);
+    expect(kinds.at(-1)).toBe("run");
+  });
+
+  test("dnfInstall wraps around the latest user only", () => {
+    const steps = new Template().setUser("a").setUser("b").dnfInstall("tree").spec.steps;
+    expect(steps.slice(-3).map((s) => s.kind)).toEqual(["user", "run", "user"]);
+    expect(steps.at(-1)).toEqual({ kind: "user", user: "b" });
+  });
+
+  test("npmInstall global runs as root but local keeps the user", () => {
+    const base = new Template().setUser("user");
+    expect(base.npmInstall("typescript", { g: true }).spec.steps.map((s) => s.kind)).toEqual([
+      "user",
+      "user",
+      "run",
+      "user",
+    ]);
+    expect(base.npmInstall("left-pad").spec.steps.map((s) => s.kind)).toEqual(["user", "run"]);
+  });
+
+  test.each(["dnfInstall", "npmInstall"] as const)(
+    "%s rejects empty and option-like names",
+    (method) => {
+      for (const packages of [[], [" "], [""], ["--help"], "-y"]) {
+        expect(() => new Template()[method](packages)).toThrow(InvalidArgumentError);
+      }
+    },
+  );
 
   test("invalid inputs raise before any I/O", () => {
     expect(() => new Template().copy("", "/dst")).toThrow(InvalidArgumentError);

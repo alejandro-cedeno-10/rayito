@@ -8,6 +8,14 @@ versionado [SemVer](https://semver.org/lang/es/).
 
 ### Añadido
 
+- **`Template.dnfInstall()` y `Template.npmInstall(packages?, { g })`**.
+  Atajos del DSL para instalar paquetes del sistema con `dnf` (sin paquetes
+  débiles) y paquetes Node con `npm`; los nombres se escapan para el shell y
+  se rechazan las listas vacías y los nombres que empiezan por `-`.
+  `dnfInstall` y `npmInstall({ g: true })` corren como root aunque un
+  `setUser()` previo dejara otro usuario. `npmInstall` falla con el código 127 y un mensaje claro si la imagen no
+  tiene Node.js. `aptInstall` sigue lanzando `UnimplementedError`, ahora
+  apuntando a `dnfInstall`.
 - **`SandboxHealth.imdsBlocked`**: `true` cuando `rayd` instaló y verificó el
   bloqueo de IMDS para los uids del sandbox (imagen con capabilities), como
   `Health.imds_blocked` de Python; `false` en la imagen por defecto y en un
