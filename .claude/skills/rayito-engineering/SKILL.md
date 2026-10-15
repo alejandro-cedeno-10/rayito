@@ -14,6 +14,9 @@ en `CLAUDE.md`; esta skill las concreta y añade el cómo. Detalle en:
   de paridad Python / TypeScript / shim E2B, errores y docs.
 - [reference/release-and-aws.md](reference/release-and-aws.md): release,
   aceptación en AWS real, inventario y limpieza.
+- [reference/review-checklist.md](reference/review-checklist.md): checklist
+  de revisión (barrido seguro del diff, hexagonal y DDD, código limpio,
+  paridad, coste y gates), obligatoria antes de fusionar.
 
 ## Antes de escribir código
 
@@ -55,8 +58,9 @@ en `CLAUDE.md`; esta skill las concreta y añade el cómo. Detalle en:
 
 ## Nombres y estilo
 
-- Identificadores en inglés. Docstrings, TSDoc, comentarios, mensajes al
-  usuario y docs, en español.
+- Código en inglés: identificadores, clases, funciones, constantes y los
+  nombres de fichero y carpeta del código y de los tests. Docstrings, TSDoc,
+  comentarios, mensajes al usuario y docs (`docs/site`), en español.
 - Se comenta el porqué, no el qué. Nada de comentarios en línea dentro de una
   función: extrae un helper con nombre o cuéntalo en el docstring/TSDoc. Sin
   etiquetas de ticket en el código.
@@ -189,6 +193,14 @@ Las órdenes exactas están en [reference/gates.md](reference/gates.md).
   (`openspec archive <nombre> --yes`) solo después de la aceptación: AWS real
   si toca runtime, gates si no.
 - Las decisiones de arquitectura se escriben como ADR en `ARCHITECTURE.md`.
+
+## Revisión
+
+Toda revisión, y siempre antes de fusionar a `main`, sigue
+[reference/review-checklist.md](reference/review-checklist.md). Empieza por
+el barrido seguro del diff: si algo se filtró, para y avisa. Después vienen
+la arquitectura hexagonal y DDD, el código limpio (sin valores mágicos ni
+duplicación, y todo el código en inglés), la paridad, el coste y los gates.
 
 ## Git y PR
 
