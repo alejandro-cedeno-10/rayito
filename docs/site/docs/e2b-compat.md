@@ -447,11 +447,24 @@ La extensión de Rayito `index=DynamoDbIndex("rayito-sandboxes")` (TS
   on-demand); detalle, IAM y cómo apagarlo en
   [Funciones opcionales](optional-features.md#metadata-index).
 
-```python
-from rayito import DynamoDbIndex
-from rayito.e2b import Sandbox, SandboxQuery, SandboxState
+=== "Python"
 
-idx = DynamoDbIndex("rayito-sandboxes")
-query = SandboxQuery(metadata={"user": "42"}, state=[SandboxState.PAUSED])
-paused = Sandbox.list(query=query, index=idx).next_items()
-```
+    ```python
+    from rayito import DynamoDbIndex
+    from rayito.e2b import Sandbox, SandboxQuery, SandboxState
+
+    idx = DynamoDbIndex("rayito-sandboxes")
+    query = SandboxQuery(metadata={"user": "42"}, state=[SandboxState.PAUSED])
+    paused = Sandbox.list(query=query, index=idx).next_items()
+    ```
+
+=== "TypeScript"
+
+    ```ts
+    import { DynamoDbIndex } from "rayito";
+    import { Sandbox } from "rayito/e2b";
+
+    const index = new DynamoDbIndex({ tableName: "rayito-sandboxes" });
+    const paginator = Sandbox.list({ query: { metadata: { user: "42" }, state: ["paused"] }, index });
+    const paused = await paginator.nextItems();
+    ```

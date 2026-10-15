@@ -16,6 +16,29 @@ versionado [SemVer](https://semver.org/lang/es/).
   `setUser()` previo dejara otro usuario. `npmInstall` falla con el código 127 y un mensaje claro si la imagen no
   tiene Node.js. `aptInstall` sigue lanzando `UnimplementedError`, ahora
   apuntando a `dnfInstall`.
+- **`SandboxHealth.imdsBlocked`**: `true` cuando `rayd` instaló y verificó el
+  bloqueo de IMDS para los uids del sandbox (imagen con capabilities), como
+  `Health.imds_blocked` de Python; `false` en la imagen por defecto y en un
+  agente anterior a M6.
+- **`sbx.metadata`**: los `metadata` de `create({ metadata })` tal como los
+  devolvió el último `Health` (copia congelada), como `Sandbox.metadata` de
+  Python.
+- **`rayito/e2b` exporta** los tipos de gráficos (`Chart`, `LineChart`,
+  `ScatterChart`, `BarChart`, `PieChart`, `BoxAndWhiskerChart`, `SuperChart`,
+  `PointData`, `BarData`, `PieData`, `BoxAndWhiskerData`), `ChartType`,
+  `ScaleType`, `ProcessInfo`, `WriteEntry` y `WatchHandle`, los mismos nombres
+  que `rayito.e2b` en Python.
+
+### Cambiado
+
+- **La variante de imagen se reconoce con un catálogo cerrado**
+  (`parity-image-variants`): `resolveImageVariant` sólo interpreta
+  `rayito-<variante>[-<talla>]` con la variante en `base`, `base-caps`,
+  `base-caps-efs`, `base-poly` y `base-slim`. Una imagen propia que empieza
+  por `rayito-` (p. ej. `rayito-mi-app-caps-efs`) ya no se interpreta como una
+  variante conocida que no es caps ni se rechaza antes de lanzar: la decisión
+  pasa a `Health.features`, como ya ocurría con un ARN. `volumes` exige
+  `rayito-base-caps-efs` cuando la variante se conoce.
 
 ## [0.11.0] - 2026-10-13
 

@@ -254,13 +254,28 @@ de `create(envs=)` y las del comando (más las de `secrets=`, si lo usas).
 `tag=` pone una etiqueta libre al proceso para encontrarlo después en
 `commands.list()` (`ProcessInfo.tag`).
 
-```python
-from rayito import Sandbox
+=== "Python"
 
-with Sandbox.create(envs={"APP_ENV": "dev"}) as sbx:
-    out = sbx.commands.run("echo $APP_ENV $MODE; pwd", envs={"MODE": "test"}, cwd="/tmp")
-    print(out.stdout)  # "dev test\n/tmp\n"
-```
+    ```python
+    from rayito import Sandbox
+
+    with Sandbox.create(envs={"APP_ENV": "dev"}) as sbx:
+        out = sbx.commands.run("echo $APP_ENV $MODE; pwd", envs={"MODE": "test"}, cwd="/tmp")
+        print(out.stdout)  # "dev test\n/tmp\n"
+    ```
+
+=== "TypeScript"
+
+    ```ts
+    import { Sandbox } from "rayito";
+
+    await using sbx = await Sandbox.create({ envs: { APP_ENV: "dev" } });
+    const out = await sbx.commands.run("echo $APP_ENV $MODE; pwd", {
+      envs: { MODE: "test" },
+      cwd: "/tmp",
+    });
+    console.log(out.stdout); // "dev test\n/tmp\n"
+    ```
 
 `user="root"` sólo funciona si la imagen lo permite (`RAYITO_ALLOW_ROOT=1`
 en la imagen); por defecto todo corre como `user`.

@@ -417,15 +417,32 @@ lee un fichero `.py` que define una variable `template`.
 
 ## Un build que falla
 
-```python
-from rayito import BuildException, Template
+=== "Python"
 
-t = Template().from_base_image().pip_install(["no-existe-este-paquete"])
-try:
-    Template.build(t, "mi-template-rota", bucket="mi-bucket-de-artefactos")
-except BuildException as exc:
-    print(exc.step, exc.command, exc.exit_code)  # 1 'RUN pip install ...' 1
-```
+    ```python
+    from rayito import BuildException, Template
+
+    t = Template().from_base_image().pip_install(["no-existe-este-paquete"])
+    try:
+        Template.build(t, "mi-template-rota", bucket="mi-bucket-de-artefactos")
+    except BuildException as exc:
+        print(exc.step, exc.command, exc.exit_code)  # 1 'RUN pip install ...' 1
+    ```
+
+=== "TypeScript"
+
+    ```ts
+    import { BuildError, Template } from "rayito";
+
+    const t = new Template().fromBaseImage().pipInstall(["no-existe-este-paquete"]);
+    try {
+      await Template.build(t, "mi-template-rota", { bucket: "mi-bucket-de-artefactos" });
+    } catch (error) {
+      if (error instanceof BuildError) {
+        console.log(error.step, error.command, error.exitCode); // 1 'RUN pip install ...' 1
+      }
+    }
+    ```
 
 ## Build en segundo plano y logs
 

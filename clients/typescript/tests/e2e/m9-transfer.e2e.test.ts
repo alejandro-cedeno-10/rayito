@@ -24,8 +24,17 @@ import {
   S3Client,
 } from "@aws-sdk/client-s3";
 import { afterAll, describe, expect, test } from "vitest";
-import { type DownloadLink, Sandbox, type UploadTicket } from "../../src/index.js";
-import { e2eEnabled, useE2E } from "./helpers.js";
+import { Sandbox as ShimSandbox } from "../../src/e2b/index.js";
+import {
+  type DownloadLink,
+  InvalidArgumentError,
+  type Logger,
+  Sandbox,
+  TimeoutError,
+  type UploadTicket,
+} from "../../src/index.js";
+import { e2eEnabled, sleep, useE2E } from "./helpers.js";
+import { rayitoLogLines } from "./logs.js";
 
 const BUCKET_VAR = "RAYITO_E2E_TRANSFER_BUCKET";
 const PREFIX_VAR = "RAYITO_E2E_TRANSFER_PREFIX";
@@ -44,6 +53,26 @@ const MIN_S3_SPEEDUP = 10;
 const LINK_SHARE = 0.7;
 const MIN_GZIP_SPEEDUP = 3;
 const USER_UID = "1000";
+const MULTIPART_THRESHOLD_BYTES = 64 * MIB;
+const MULTIPART_FILE_COUNT = 100;
+const EXPIRING_TICKET_SECONDS = 5;
+const EXPIRY_WAIT_TIMEOUT_MS = 60_000;
+const UPLOAD_WAIT_TIMEOUT_MS = 300_000;
+const COMMAND_TIMEOUT_MS = 300_000;
+const EXPIRY_MIN_S = 3;
+const EXPIRY_MAX_S = 12;
+const EXPIRED_LINK_SECONDS = 1;
+const EXPIRED_LINK_SETTLE_MS = 3_000;
+const EXPIRED_STATUS = 403;
+const EXPIRED_BODY = "Request has expired";
+const SHIM_PAYLOAD_BYTES = 4096;
+const INVALID_SIGNATURE_EXPIRATION = -1;
+const TRANSFER_ENV_VARS = [
+  "RAYITO_TRANSFER_BUCKET",
+  "RAYITO_TRANSFER_PREFIX",
+  "RAYITO_TRANSFER_REGION",
+] as const;
+const SECRET_DIRECTORY = "secret-dir";
 
 const enabled = e2eEnabled() && Boolean(process.env[BUCKET_VAR]);
 
@@ -128,7 +157,7 @@ async function linkRates(
 }
 
 async function shellOutput(sandbox: Sandbox, command: string): Promise<string> {
-  const result = await sandbox.commands.run(command, { timeoutMs: 300_000 });
+  const result = await sandbox.commands.run(command, { timeoutMs: COMMAND_TIMEOUT_MS });
   return result.stdout.trim();
 }
 
@@ -150,22 +179,48 @@ describe.skipIf(!enabled)("M9 file transfer (TypeScript, real AWS)", () => {
     return s3;
   }
 
-  async function createStagedSandbox(): Promise<Sandbox> {
+  async function createStagedSandbox(
+    options: {
+      readonly multipartThresholdBytes?: number;
+      readonly executionRoleArn?: string;
+      readonly logger?: Logger;
+    } = {},
+  ): Promise<Sandbox> {
     const started = performance.now();
     const sandbox = await Sandbox.create({
       template: context.templateArn,
       timeoutMs: SANDBOX_TIMEOUT_MS,
       idle: null,
       ingress: ["ALL_INGRESS"],
-      logging: "disabled",
+      logging: options.executionRoleArn === undefined ? "disabled" : "cloudwatch",
       controlPlane: context.controlPlane,
-      transfer: { bucket, prefix, region: bucketRegion },
+      transfer: {
+        bucket,
+        prefix,
+        region: bucketRegion,
+        ...(options.multipartThresholdBytes === undefined
+          ? {}
+          : { multipartThresholdBytes: options.multipartThresholdBytes }),
+      },
+      ...(options.executionRoleArn === undefined
+        ? {}
+        : { executionRoleArn: options.executionRoleArn }),
+      ...(options.logger === undefined ? {} : { logger: options.logger }),
     });
     context.created.push(sandbox);
     context.bootTimings.set(sandbox.sandboxId, seconds(started));
     sandboxIds.push(sandbox.sandboxId);
-    expect(sandbox.info.executionRoleArn).toBeUndefined();
+    if (options.executionRoleArn === undefined) {
+      expect(sandbox.info.executionRoleArn).toBeUndefined();
+    }
     return sandbox;
+  }
+
+  async function openUploads(sandboxId: string): Promise<number> {
+    const listed = await s3Client().send(
+      new ListMultipartUploadsCommand({ Bucket: bucket, Prefix: `${prefix}/${sandboxId}/` }),
+    );
+    return (listed.Uploads ?? []).length;
   }
 
   function remember(link: DownloadLink): DownloadLink {
@@ -205,7 +260,7 @@ describe.skipIf(!enabled)("M9 file transfer (TypeScript, real AWS)", () => {
     const started = performance.now();
     const response = await putTo(ticket, data);
     expect(response.status).toBe(200);
-    const entry = await ticket.wait({ timeoutMs: 300_000 });
+    const entry = await ticket.wait({ timeoutMs: UPLOAD_WAIT_TIMEOUT_MS });
     reportRate("uploadUrl 10 MiB: PUT + import", UPLOAD_BYTES, seconds(started));
     expect(entry.size).toBe(UPLOAD_BYTES);
     expect(await sha256InVm(sandbox, path)).toBe(sha256(data));
@@ -326,5 +381,111 @@ describe.skipIf(!enabled)("M9 file transfer (TypeScript, real AWS)", () => {
     expect(listed.find((entry) => entry.path === path)?.metadata).toEqual({ owner: "alice" });
     await sandbox.files.write(path, "y");
     expect((await sandbox.files.getInfo(path)).metadata).toEqual({});
+  });
+  test("multipart export of 100 MB leaves no open upload behind", async () => {
+    const sandbox = await createStagedSandbox({
+      multipartThresholdBytes: MULTIPART_THRESHOLD_BYTES,
+    });
+    const path = `${HOME}/m9/parts.bin`;
+    await shellOutput(
+      sandbox,
+      `mkdir -p ${HOME}/m9 && dd if=/dev/urandom of=${path} bs=${MB} count=${MULTIPART_FILE_COUNT} status=none`,
+    );
+    const started = performance.now();
+    const link = remember(await sandbox.files.downloadUrl(path));
+    reportSeconds("multipart export 100 MB", seconds(started));
+    const body = new Uint8Array(await (await fetch(link.url)).arrayBuffer());
+    expect(sha256(body)).toBe(await sha256InVm(sandbox, path));
+    expect(await openUploads(sandbox.sandboxId)).toBe(0);
+  });
+
+  test("expiry: an unused upload ticket times out and an expired download link is refused", async () => {
+    const sandbox = await createStagedSandbox();
+    const ticket = await sandbox.files.uploadUrl(`${HOME}/m9/never.bin`, {
+      expiresIn: EXPIRING_TICKET_SECONDS,
+    });
+    const started = performance.now();
+    await expect(ticket.wait({ timeoutMs: EXPIRY_WAIT_TIMEOUT_MS })).rejects.toBeInstanceOf(
+      TimeoutError,
+    );
+    const elapsed = seconds(started);
+    reportSeconds("uploadUrl(expiresIn: 5) -> TimeoutError", elapsed);
+    expect(elapsed).toBeGreaterThanOrEqual(EXPIRY_MIN_S);
+    expect(elapsed).toBeLessThanOrEqual(EXPIRY_MAX_S);
+    await sandbox.files.write(`${HOME}/m9/short.txt`, "caduca");
+    const link = remember(
+      await sandbox.files.downloadUrl(`${HOME}/m9/short.txt`, { expiresIn: EXPIRED_LINK_SECONDS }),
+    );
+    await sleep(EXPIRED_LINK_SETTLE_MS);
+    const response = await fetch(link.url);
+    expect(response.status).toBe(EXPIRED_STATUS);
+    expect(await response.text()).toContain(EXPIRED_BODY);
+  });
+
+  test("the E2B shim hands out upload and download URLs", async () => {
+    const sandbox = await createStagedSandbox();
+    const saved = new Map(TRANSFER_ENV_VARS.map((name) => [name, process.env[name]]));
+    process.env.RAYITO_TRANSFER_BUCKET = bucket;
+    process.env.RAYITO_TRANSFER_PREFIX = prefix;
+    if (bucketRegion !== undefined) {
+      process.env.RAYITO_TRANSFER_REGION = bucketRegion;
+    }
+    try {
+      const shim = await ShimSandbox.connect(sandbox.sandboxId, {
+        accessToken: sandbox.accessToken,
+        controlPlane: context.controlPlane,
+      });
+      const path = `${HOME}/m9/e2b.bin`;
+      const data = new Uint8Array(randomBytes(SHIM_PAYLOAD_BYTES));
+      const url = await shim.uploadUrl(path);
+      expect((await putTo(url, data)).status).toBe(200);
+      expect(sha256(await shim.files.read(path, { format: "bytes" }))).toBe(sha256(data));
+      const download = await shim.downloadUrl(path);
+      downloadKeys.push(keyOf(download));
+      expect(sha256(new Uint8Array(await (await fetch(download)).arrayBuffer()))).toBe(
+        sha256(data),
+      );
+      await expect(
+        shim.uploadUrl(path, { useSignatureExpiration: INVALID_SIGNATURE_EXPIRATION }),
+      ).rejects.toBeInstanceOf(InvalidArgumentError);
+    } finally {
+      for (const [name, value] of saved) {
+        if (value === undefined) {
+          delete process.env[name];
+        } else {
+          process.env[name] = value;
+        }
+      }
+    }
+  });
+
+  test("log hygiene: neither rayd nor the SDK log URLs, bucket, prefix or paths", async (ctx) => {
+    const role = context.settings.executionRoleArn;
+    if (role === undefined) {
+      ctx.skip("exporta RAYITO_EXECUTION_ROLE_ARN (el rol de sólo logs)");
+      return;
+    }
+    const sdkLines: string[] = [];
+    const record = (message: string, fields?: Readonly<Record<string, unknown>>): void => {
+      sdkLines.push(fields === undefined ? message : `${message} ${JSON.stringify(fields)}`);
+    };
+    const sandbox = await createStagedSandbox({
+      executionRoleArn: role,
+      logger: { debug: record, info: record, warn: record, error: record },
+    });
+    const ticket = await sandbox.files.uploadUrl(`${HOME}/m9/${SECRET_DIRECTORY}/in.bin`);
+    expect((await putTo(ticket, new TextEncoder().encode("hola"))).status).toBe(200);
+    await ticket.wait({ timeoutMs: UPLOAD_WAIT_TIMEOUT_MS });
+    const link = remember(await sandbox.files.downloadUrl(`${HOME}/m9/${SECRET_DIRECTORY}/in.bin`));
+    expect(await (await fetch(link.url)).text()).toBe("hola");
+    const raydLines = await rayitoLogLines(sandbox, context.settings.region);
+    console.log(`\n[m9-transfer] rayd log lines read: ${raydLines.length}`);
+    expect(raydLines.length, "sin eventos de rayd en CloudWatch").toBeGreaterThan(0);
+    const rayd = raydLines.join("\n");
+    for (const text of [rayd, sdkLines.join("\n")]) {
+      for (const forbidden of ["X-Amz-Signature", bucket, `${prefix}/`, SECRET_DIRECTORY]) {
+        expect(text).not.toContain(forbidden);
+      }
+    }
   });
 });

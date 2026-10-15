@@ -17,6 +17,20 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   si la imagen no tiene Node.js. `apt_install` sigue lanzando
   `UnimplementedError`, ahora apuntando a `dnf_install`.
 
+### Cambiado
+
+- **La variante de imagen se reconoce con un catálogo cerrado**
+  (`parity-image-variants`). `resolve_image_variant` sólo interpreta
+  `rayito-<variante>[-<talla>]` con la variante en `base`, `base-caps`,
+  `base-caps-efs`, `base-poly` y `base-slim` y la talla del catálogo de
+  tamaños. Una imagen propia que empieza por `rayito-` (por ejemplo
+  `rayito-mi-app-caps-efs`) ya no se interpreta como una variante conocida
+  que no es caps ni se rechaza antes de lanzar: la decisión pasa a
+  `Health.features`, como ya ocurría con un ARN. `volumes=` (y `volume_mounts=` del shim) exige además
+  `rayito-base-caps-efs` cuando la variante se conoce: `rayito-base-caps` sin
+  `amazon-efs-utils` lanza `UnimplementedError` antes de lanzar en lugar de
+  después.
+
 ## [0.11.0] - 2026-10-13
 
 ### Añadido
