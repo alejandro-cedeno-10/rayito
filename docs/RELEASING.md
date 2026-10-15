@@ -311,10 +311,10 @@ cargo publish --dry-run -p rayito-proto
    rehace los activos de las pilas con `scripts/gen_stack_assets.py` (los
    zips de `dashboard` y `quota-alerts` empaquetan el SDK y con él su
    versión, así que sin regenerarlos `gen_stack_assets.py --check` falla en
-   el PR de release), convierte el `## [Unreleased]` escrito a mano durante el ciclo en
-   `## [x.y.z] - fecha` (descartando las notas que genera release-please),
-   pone al día los enlaces de comparación del pie de cada CHANGELOG
-   (`[Unreleased]: …/compare/<tag x.y.z>...HEAD` y
+   el PR de release), convierte el `## [Unreleased]` escrito a mano durante
+   el ciclo en `## [x.y.z] - fecha` (descartando las notas que genera
+   release-please), pone al día los enlaces de comparación del pie de cada
+   CHANGELOG (`[Unreleased]: …/compare/<tag x.y.z>...HEAD` y
    `[x.y.z]: …/compare/<tag anterior>...<tag x.y.z>`) y rehace el PR como un
    único commit firmado: el ruleset de `main` exige firmas y los commits que
    crea release-please por la API no lo están.
@@ -322,11 +322,11 @@ cargo publish --dry-run -p rayito-proto
      quedar dentro de manifiesto, ficheros de versión, lockfiles,
      CHANGELOG y los ficheros generados de las pilas (los directorios de
      plantillas y artefactos de `clients/python/src/rayito/_stacks/` y
-     `clients/typescript/src/stacks/templates/`); también aborta si release-please movió un fichero que la
-     configuración no explica, o si un fichero de versión que `main` no
-     tocó desde la base de release-please no queda idéntico al de su rama
-     (contraste de los actualizadores con los de release-please). En todos
-     los casos sale con código 2 sin commitear ni subir nada.
+     `clients/typescript/src/stacks/templates/`); también aborta si
+     release-please movió un fichero que la configuración no explica, o si
+     un fichero de versión que `main` no tocó desde la base de
+     release-please no queda idéntico al de su rama (contraste de los
+     actualizadores con los de release-please). En todos los casos sale con código 2 sin commitear ni subir nada.
    - **Trailers**: `RELEASE_PR_ARGS='--trailer "Co-Authored-By: …"'`
      (repetible) o la variable `RELEASE_PR_TRAILERS` (uno por línea) los
      añade al mensaje, antes del `Signed-off-by`, sin `--amend` posterior.

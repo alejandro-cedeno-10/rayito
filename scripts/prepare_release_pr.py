@@ -549,7 +549,8 @@ def check_bumps_match_release_please(plan: ReleasePlan) -> None:
 
 def check_release_scope(plan: ReleasePlan) -> list[str]:
     """La guarda: el commit sólo puede diferir de `origin/main` en versiones,
-    lockfiles, CHANGELOG y los activos generados de las pilas. Devuelve las rutas a commitear."""
+    lockfiles, CHANGELOG y los activos generados de las pilas. Devuelve las
+    rutas a commitear."""
     changed = changed_paths(MAIN_REF)
     unexpected = unexpected_paths(changed, plan.allowed_paths, STACK_ASSET_DIRS)
     if unexpected:
