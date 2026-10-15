@@ -2,8 +2,9 @@
 obligatoriedad) frente al golden `testdata/cli/surface.json`.
 
 El golden es el contrato que la CLI de TypeScript tiene que reproducir
-(ADR-027): el test de vitest compara su árbol de comandos con este mismo
-fichero y `scripts/check_sdk_parity.py --cli` informa de qué falta. Si cambias
+(ADR-027): hoy sólo lo comprueba este test de Python; a partir de la fase 1 un
+test de vitest comparará el árbol de comandos de TypeScript con este mismo
+fichero, y `scripts/check_sdk_parity.py --cli` informa de qué falta. Si cambias
 una opción, regenéralo con
 `RAYITO_UPDATE_CLI_SURFACE=1 uv run pytest tests/unit/cli/test_cli_surface.py`
 y revisa el diff: es la superficie pública.
@@ -21,7 +22,11 @@ import typer.main
 
 from rayito.cli.app import app
 
-GOLDEN: Final = Path(__file__).resolve().parents[5] / "testdata" / "cli" / "surface.json"
+REPO_ROOT_DEPTH: Final = 5
+GOLDEN: Final = (
+    Path(__file__).resolve().parents[REPO_ROOT_DEPTH] / "testdata" / "cli" / "surface.json"
+)
+DOCUMENTED_GROUPS: Final = ("image", "sandbox", "stack", "events", "template", "domain", "agent")
 UPDATE_ENV: Final = "RAYITO_UPDATE_CLI_SURFACE"
 JSON_INDENT: Final = 2
 
@@ -55,10 +60,15 @@ def describe_parameter(parameter: Any) -> dict[str, Any]:
 
 
 def describe_command(command: Any, path: tuple[str, ...]) -> list[dict[str, Any]]:
-    """Una entrada por comando hoja o grupo, en orden alfabético de ruta."""
+    """Una entrada por comando hoja o grupo, en orden alfabético de ruta.
+
+    `invoke_without_command` marca los grupos que también se ejecutan solos
+    (`rayito <grupo>` sin subcomando): para la paridad cuentan como comando.
+    """
     entry: dict[str, Any] = {
         "path": list(path),
         "group": isinstance(command, typer.core.TyperGroup),
+        "invoke_without_command": bool(getattr(command, "invoke_without_command", False)),
         "hidden": command.hidden,
         "parameters": [
             describe_parameter(parameter)
@@ -94,6 +104,6 @@ def test_cli_surface_matches_the_golden() -> None:
 
 def test_golden_lists_every_documented_group() -> None:
     paths = {tuple(entry["path"]) for entry in json.loads(GOLDEN.read_text("utf-8"))["commands"]}
-    for group in ("image", "sandbox", "stack", "events", "template", "domain", "agent"):
+    for group in DOCUMENTED_GROUPS:
         assert (group,) in paths
     assert ("doctor",) in paths

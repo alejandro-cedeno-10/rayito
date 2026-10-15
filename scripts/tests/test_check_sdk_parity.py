@@ -178,9 +178,19 @@ def test_main_reports_ok_and_failure(
     assert check_sdk_parity.main(["--bogus"]) == 2
 
 
-def write_cli_surface(root: Path, commands: list[tuple[list[str], bool]]) -> None:
+def write_cli_surface(
+    root: Path,
+    commands: list[tuple[list[str], bool]],
+    runnable_groups: tuple[str, ...] = (),
+) -> None:
     entries = [
-        {"path": path, "group": group, "parameters": []} for path, group in commands
+        {
+            "path": path,
+            "group": group,
+            "invoke_without_command": " ".join(path) in runnable_groups,
+            "parameters": [],
+        }
+        for path, group in commands
     ]
     write(root, check_sdk_parity.CLI_SURFACE, json.dumps({"commands": entries}))
 
@@ -201,6 +211,31 @@ def test_cli_report_marks_planned_commands_as_pending_with_their_phase(
         "PENDIENTE fase 1 rayito sandbox list",
         "PENDIENTE fase 2 rayito doctor",
     ]
+
+
+def test_cli_report_counts_a_group_that_runs_without_subcommand_as_a_command(
+    tmp_path: Path,
+) -> None:
+    write_cli_surface(
+        tmp_path,
+        [(["sandbox"], True), (["sandbox", "list"], False)],
+        runnable_groups=("sandbox",),
+    )
+    assert check_sdk_parity.cli_report(tmp_path) == [
+        "SIN FASE rayito sandbox",
+        "PENDIENTE fase 1 rayito sandbox list",
+    ]
+
+
+def test_cli_phases_missing_from_golden_names_the_stale_entries(tmp_path: Path) -> None:
+    write_cli_surface(tmp_path, [(["sandbox", "list"], False)])
+    missing = check_sdk_parity.cli_phases_missing_from_golden(tmp_path)
+    assert "sandbox list" not in missing
+    assert "doctor" in missing
+
+
+def test_every_cli_phase_command_exists_in_the_real_golden() -> None:
+    assert check_sdk_parity.cli_phases_missing_from_golden(REPO_ROOT) == []
 
 
 def test_cli_report_flags_a_command_without_an_assigned_phase(tmp_path: Path) -> None:

@@ -2724,7 +2724,7 @@ resuelve esto con un paquete aparte (`@e2b/cli`, ejecutable `e2b`).
    rutas, opciones, tipos, valores por defecto, `--json`, códigos de salida y
    traducción de errores de la de Python. El contrato es
    `testdata/cli/surface.json`, un golden que genera y comprueba un test de
-   pytest sobre el árbol de `typer`; vitest compara con él el árbol de
+   pytest sobre el árbol de `typer`; vitest comparará con él (fase 1) el árbol de
    comandos de TypeScript, y `scripts/check_sdk_parity.py --cli` lista lo que
    falta con la fase que lo entrega. Mientras dure la transición el informe
    no hace fallar el CI; cuando cierre la última fase se convierte en

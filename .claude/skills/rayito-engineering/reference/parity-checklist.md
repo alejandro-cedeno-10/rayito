@@ -61,7 +61,7 @@ donde vive su código, una vez:
 | Qué | Dónde se prueba | Por qué |
 |---|---|---|
 | Comportamiento del guest y de `rayd` (sidecar, kernels, `Health`, límites del agente, hooks, formato de las líneas de evento) | **una vez**, en Python (`tests/e2e`, `tests/local`) y en las pruebas de `rayd` | No depende del SDK que lo llame: repetirlo en TypeScript sólo duplica coste de AWS |
-| CLI (`rayito ...`), MCP (`rayito.mcp`) y `sandbox proxy` | **los dos SDK**, con un golden compartido | ADR-027: TypeScript también entrega `rayito` y `rayito-mcp`. La superficie de la CLI es `testdata/cli/surface.json`, que pytest genera y vitest compara; `python3 scripts/check_sdk_parity.py --cli` lista lo que falta en TypeScript. Hasta que cierren las fases, lo pendiente se prueba sólo en Python |
+| CLI (`rayito ...`), MCP (`rayito.mcp`) y `sandbox proxy` | **los dos SDK**, con un golden compartido | ADR-027: TypeScript también entrega `rayito` y `rayito-mcp`. La superficie de la CLI es `testdata/cli/surface.json`, que pytest genera y vitest comparará (fase 1); `python3 scripts/check_sdk_parity.py --cli` lista lo que falta en TypeScript. Hasta que cierren las fases, lo pendiente se prueba sólo en Python |
 | Los duplicados síncrono/asíncrono de Python (`Sandbox` y `AsyncSandbox`) | **sólo Python** | TypeScript es sólo asíncrono: un caso por comportamiento, no uno por forma |
 | Todo lo demás: código propio del SDK (validación, planes, servicios, transporte, shim E2B, plantillas, pool, formas de clase) | **los dos SDK**, con unit tests y, si toca AWS, e2e | Es el único código que puede divergir |
 

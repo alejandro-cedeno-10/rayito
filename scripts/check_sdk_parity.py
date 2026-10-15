@@ -47,7 +47,7 @@ import json
 import re
 import sys
 from pathlib import Path
-from typing import Final
+from typing import Any, Final
 
 PYTHON_SOURCE: Final = Path("clients/python/src/rayito")
 TYPESCRIPT_SOURCE: Final = Path("clients/typescript/src")
@@ -70,7 +70,8 @@ UNPLANNED_LABEL: Final = "SIN FASE"
 
 #: Fase del cambio OpenSpec `typescript-cli-tools` que entrega cada comando de
 #: la CLI en TypeScript. Una fase por línea, con las rutas de sus comandos.
-#: Un comando del golden que no figure aquí sale como `SIN FASE`.
+#: Un comando del golden que no figure aquí sale como `SIN FASE`; una entrada
+#: que no esté en el golden la delata un test.
 CLI_PHASES: Final[dict[int, tuple[str, ...]]] = {
     1: (
         "sandbox list",
@@ -103,11 +104,9 @@ CLI_PHASES: Final[dict[int, tuple[str, ...]]] = {
         "domain deploy",
         "domain status",
         "domain destroy",
-        "dashboard cloudwatch",
     ),
     4: ("sandbox connect", "sandbox proxy"),
     5: ("image publish", "image prune", "image zip"),
-    8: ("dashboard",),
 }
 
 ASYNC_PREFIX: Final = "Async"
@@ -325,13 +324,25 @@ def problems_for(root: Path) -> list[str]:
 
 
 def cli_leaf_commands(root: Path) -> list[str]:
-    """Rutas (`"sandbox list"`) de los comandos hoja del golden de la CLI."""
-    surface = json.loads((root / CLI_SURFACE).read_text(encoding="utf-8"))
+    """Rutas (`"sandbox list"`) de los comandos ejecutables del golden de la CLI.
+
+    Son las hojas y los grupos que también se ejecutan sin subcomando."""
     return [
         PATH_SEPARATOR.join(entry["path"])
-        for entry in surface["commands"]
-        if entry["path"] and not entry["group"]
+        for entry in cli_golden_entries(root)
+        if entry["path"] and (not entry["group"] or entry["invoke_without_command"])
     ]
+
+
+def cli_golden_entries(root: Path) -> list[dict[str, Any]]:
+    surface = json.loads((root / CLI_SURFACE).read_text(encoding="utf-8"))
+    return surface["commands"]
+
+
+def cli_phases_missing_from_golden(root: Path) -> list[str]:
+    """Comandos de `CLI_PHASES` que no existen en el golden (erratas u obsoletos)."""
+    known = {PATH_SEPARATOR.join(entry["path"]) for entry in cli_golden_entries(root)}
+    return [command for command in cli_phase_by_command() if command not in known]
 
 
 def cli_phase_by_command() -> dict[str, int]:

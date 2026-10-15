@@ -3,6 +3,7 @@
     {
       "path": [],
       "group": true,
+      "invoke_without_command": false,
       "hidden": false,
       "parameters": [
         {
@@ -64,6 +65,7 @@
         "agent"
       ],
       "group": true,
+      "invoke_without_command": false,
       "hidden": false,
       "parameters": []
     },
@@ -73,6 +75,7 @@
         "template"
       ],
       "group": true,
+      "invoke_without_command": false,
       "hidden": false,
       "parameters": []
     },
@@ -83,6 +86,7 @@
         "build"
       ],
       "group": false,
+      "invoke_without_command": false,
       "hidden": false,
       "parameters": [
         {
@@ -212,6 +216,7 @@
         "doctor"
       ],
       "group": false,
+      "invoke_without_command": false,
       "hidden": false,
       "parameters": [
         {
@@ -299,6 +304,7 @@
         "domain"
       ],
       "group": true,
+      "invoke_without_command": false,
       "hidden": false,
       "parameters": []
     },
@@ -308,6 +314,7 @@
         "deploy"
       ],
       "group": false,
+      "invoke_without_command": false,
       "hidden": false,
       "parameters": [
         {
@@ -383,6 +390,7 @@
         "destroy"
       ],
       "group": false,
+      "invoke_without_command": false,
       "hidden": false,
       "parameters": [
         {
@@ -419,6 +427,7 @@
         "status"
       ],
       "group": false,
+      "invoke_without_command": false,
       "hidden": false,
       "parameters": [
         {
@@ -441,6 +450,7 @@
         "events"
       ],
       "group": true,
+      "invoke_without_command": false,
       "hidden": false,
       "parameters": []
     },
@@ -450,6 +460,7 @@
         "deploy"
       ],
       "group": false,
+      "invoke_without_command": false,
       "hidden": false,
       "parameters": [
         {
@@ -538,6 +549,7 @@
         "destroy"
       ],
       "group": false,
+      "invoke_without_command": false,
       "hidden": false,
       "parameters": [
         {
@@ -574,6 +586,7 @@
         "list"
       ],
       "group": false,
+      "invoke_without_command": false,
       "hidden": false,
       "parameters": [
         {
@@ -649,6 +662,7 @@
         "status"
       ],
       "group": false,
+      "invoke_without_command": false,
       "hidden": false,
       "parameters": [
         {
@@ -672,6 +686,7 @@
         "webhook"
       ],
       "group": true,
+      "invoke_without_command": false,
       "hidden": false,
       "parameters": []
     },
@@ -682,6 +697,7 @@
         "add"
       ],
       "group": false,
+      "invoke_without_command": false,
       "hidden": false,
       "parameters": [
         {
@@ -743,6 +759,7 @@
         "list"
       ],
       "group": false,
+      "invoke_without_command": false,
       "hidden": false,
       "parameters": [
         {
@@ -767,6 +784,7 @@
         "remove"
       ],
       "group": false,
+      "invoke_without_command": false,
       "hidden": false,
       "parameters": [
         {
@@ -800,6 +818,7 @@
         "image"
       ],
       "group": true,
+      "invoke_without_command": false,
       "hidden": false,
       "parameters": []
     },
@@ -809,6 +828,7 @@
         "list"
       ],
       "group": false,
+      "invoke_without_command": false,
       "hidden": false,
       "parameters": [
         {
@@ -843,6 +863,7 @@
         "prune"
       ],
       "group": false,
+      "invoke_without_command": false,
       "hidden": false,
       "parameters": [
         {
@@ -905,6 +926,7 @@
         "publish"
       ],
       "group": false,
+      "invoke_without_command": false,
       "hidden": false,
       "parameters": [
         {
@@ -1110,6 +1132,7 @@
         "sizes"
       ],
       "group": false,
+      "invoke_without_command": false,
       "hidden": false,
       "parameters": [
         {
@@ -1146,6 +1169,7 @@
         "zip"
       ],
       "group": false,
+      "invoke_without_command": false,
       "hidden": false,
       "parameters": [
         {
@@ -1229,6 +1253,7 @@
         "sandbox"
       ],
       "group": true,
+      "invoke_without_command": false,
       "hidden": false,
       "parameters": []
     },
@@ -1238,6 +1263,7 @@
         "connect"
       ],
       "group": false,
+      "invoke_without_command": false,
       "hidden": false,
       "parameters": [
         {
@@ -1314,6 +1340,7 @@
         "create"
       ],
       "group": false,
+      "invoke_without_command": false,
       "hidden": false,
       "parameters": [
         {
@@ -1430,6 +1457,7 @@
         "exec"
       ],
       "group": false,
+      "invoke_without_command": false,
       "hidden": false,
       "parameters": [
         {
@@ -1544,6 +1572,7 @@
         "info"
       ],
       "group": false,
+      "invoke_without_command": false,
       "hidden": false,
       "parameters": [
         {
@@ -1578,6 +1607,7 @@
         "kill"
       ],
       "group": false,
+      "invoke_without_command": false,
       "hidden": false,
       "parameters": [
         {
@@ -1639,6 +1669,7 @@
         "list"
       ],
       "group": false,
+      "invoke_without_command": false,
       "hidden": false,
       "parameters": [
         {
@@ -1727,6 +1758,7 @@
         "logs"
       ],
       "group": false,
+      "invoke_without_command": false,
       "hidden": false,
       "parameters": [
         {
@@ -1787,6 +1819,7 @@
         "metrics"
       ],
       "group": false,
+      "invoke_without_command": false,
       "hidden": false,
       "parameters": [
         {
@@ -1848,6 +1881,7 @@
         "proxy"
       ],
       "group": false,
+      "invoke_without_command": false,
       "hidden": false,
       "parameters": [
         {
@@ -1959,6 +1993,7 @@
         "stack"
       ],
       "group": true,
+      "invoke_without_command": false,
       "hidden": false,
       "parameters": []
     },
@@ -1968,6 +2003,7 @@
         "deploy"
       ],
       "group": false,
+      "invoke_without_command": false,
       "hidden": false,
       "parameters": [
         {
@@ -2054,6 +2090,7 @@
         "destroy"
       ],
       "group": false,
+      "invoke_without_command": false,
       "hidden": false,
       "parameters": [
         {
@@ -2101,6 +2138,7 @@
         "list"
       ],
       "group": false,
+      "invoke_without_command": false,
       "hidden": false,
       "parameters": []
     },
@@ -2110,6 +2148,7 @@
         "status"
       ],
       "group": false,
+      "invoke_without_command": false,
       "hidden": false,
       "parameters": [
         {
@@ -2143,6 +2182,7 @@
         "template"
       ],
       "group": true,
+      "invoke_without_command": false,
       "hidden": false,
       "parameters": []
     },
@@ -2152,6 +2192,7 @@
         "build"
       ],
       "group": false,
+      "invoke_without_command": false,
       "hidden": false,
       "parameters": [
         {
@@ -2238,6 +2279,7 @@
         "logs"
       ],
       "group": false,
+      "invoke_without_command": false,
       "hidden": false,
       "parameters": [
         {
@@ -2272,6 +2314,7 @@
         "status"
       ],
       "group": false,
+      "invoke_without_command": false,
       "hidden": false,
       "parameters": [
         {
