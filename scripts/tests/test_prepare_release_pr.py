@@ -314,6 +314,7 @@ def repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.delenv(prp.TRAILERS_ENV, raising=False)
     monkeypatch.setattr(prp, "COMMIT_FLAGS", ("-s",))
     monkeypatch.setattr(prp, "refresh_lockfile", _fake_uv_lock)
+    monkeypatch.setattr(prp, "regenerate_stack_assets", _fake_stack_assets)
 
     origin, seed, work = tmp_path / "origin.git", tmp_path / "seed", tmp_path / "work"
     _run(tmp_path, "init", "--quiet", "--bare", str(origin))
@@ -353,6 +354,21 @@ def repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return work
 
 
+STACK_ASSET = "clients/python/src/rayito/_stacks/_artifacts/demo.zip"
+STACK_TEMPLATE = "clients/typescript/src/stacks/templates/demo.gen.ts"
+
+
+def _fake_stack_assets() -> None:
+    """Como `gen_stack_assets.py`: lo generado lleva la versión del árbol."""
+    version = json.loads(Path(prp.MANIFEST).read_text(encoding="utf-8"))[
+        "clients/python"
+    ]
+    for path in (STACK_ASSET, STACK_TEMPLATE):
+        target = Path(path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(f"generated for {version}\n", encoding="utf-8")
+
+
 def _fake_uv_lock(package: prp.Package) -> None:
     lock = Path(package.path) / prp.UV_LOCK
     version = json.loads(Path(prp.MANIFEST).read_text(encoding="utf-8"))[package.path]
@@ -384,7 +400,9 @@ def test_stale_release_branch_keeps_everything_merged_to_main(repo: Path) -> Non
     changed = set(
         _run(repo, "diff", "--name-only", "origin/main", release).splitlines()
     )
-    assert changed == set(_files(NEW)) - {prp.CONFIG, prp.COMPAT_TABLE, "README.md"}
+    assert changed == (
+        set(_files(NEW)) - {prp.CONFIG, prp.COMPAT_TABLE, "README.md"}
+    ) | {STACK_ASSET, STACK_TEMPLATE}
 
     show = lambda path: _run(repo, "show", f"{release}:{path}")
     assert show("openspec/changes/archive/2026-10-01-x/proposal.md") == "Archivado."
@@ -491,3 +509,88 @@ def test_a_bump_that_disagrees_with_release_please_aborts(
     assert "no coincide" in err
     assert "Cargo.toml" in err
     assert _remote_release(repo) == before
+
+
+def test_stack_assets_are_regenerated_after_the_bump_and_committed(
+    repo: Path,
+) -> None:
+    assert prp.main(["--date", DATE]) == 0
+    _run(repo, "fetch", "--quiet", "origin")
+    ref = f"origin/{prp.RELEASE_BRANCH}"
+    for path in (STACK_ASSET, STACK_TEMPLATE):
+        assert _run(repo, "show", f"{ref}:{path}") == f"generated for {NEW}"
+    changed = _run(repo, "diff", "--name-only", "origin/main", ref).splitlines()
+    assert {STACK_ASSET, STACK_TEMPLATE} <= set(changed)
+
+
+def test_dry_run_leaves_the_regenerated_stack_assets_in_the_tree(
+    repo: Path,
+) -> None:
+    assert prp.main(["--date", DATE, "--dry-run"]) == 0
+    assert Path(STACK_ASSET).read_text(encoding="utf-8") == f"generated for {NEW}\n"
+
+
+def test_a_stray_file_next_to_the_stack_assets_still_aborts(
+    repo: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def assets_and_stray() -> None:
+        _fake_stack_assets()
+        Path("clients/python/src/rayito/_stacks/loose.py").write_text(
+            "x = 1\n", encoding="utf-8"
+        )
+
+    monkeypatch.setattr(prp, "regenerate_stack_assets", assets_and_stray)
+    before = _remote_release(repo)
+    assert prp.main(["--date", DATE]) == prp.EXIT_ABORT
+    assert "clients/python/src/rayito/_stacks/loose.py" in capsys.readouterr().err
+    assert _remote_release(repo) == before
+
+
+def test_release_please_cannot_change_stack_assets(
+    repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _run(repo, "switch", "--quiet", "-c", "rp", f"origin/{prp.RELEASE_BRANCH}")
+    _write(repo, {STACK_ASSET: "from release-please\n"})
+    _commit(repo, "chore: release main")
+    _run(repo, "push", "--quiet", "--force", "origin", f"HEAD:{prp.RELEASE_BRANCH}")
+    _run(repo, "switch", "--quiet", "main")
+    before = _remote_release(repo)
+
+    assert prp.main(["--date", DATE]) == prp.EXIT_ABORT
+    assert STACK_ASSET in capsys.readouterr().err
+    assert _remote_release(repo) == before
+
+
+def test_stack_asset_directories_are_allowed_only_as_directories() -> None:
+    allowed = frozenset({"Cargo.lock"})
+    changed = {STACK_ASSET, STACK_TEMPLATE, "Cargo.lock", "clients/python/src/x.py"}
+    assert prp.unexpected_paths(changed, allowed, prp.STACK_ASSET_DIRS) == [
+        "clients/python/src/x.py"
+    ]
+    assert prp.unexpected_paths(changed, allowed) == sorted(
+        {STACK_ASSET, STACK_TEMPLATE, "clients/python/src/x.py"}
+    )
+
+
+def test_every_generated_stack_file_lives_in_an_allowed_directory() -> None:
+    import gen_stack_assets
+
+    generated = {
+        path.relative_to(REPO_ROOT).as_posix() for path in gen_stack_assets.renders()
+    }
+    assert generated
+    assert prp.unexpected_paths(generated, frozenset(), prp.STACK_ASSET_DIRS) == []
+
+
+def test_regeneration_runs_the_generator_with_the_current_interpreter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[list[str]] = []
+
+    def record(command: list[str], **kwargs: object) -> None:
+        assert kwargs == {"check": True}
+        calls.append(command)
+
+    monkeypatch.setattr(prp.subprocess, "run", record)
+    prp.regenerate_stack_assets()
+    assert calls == [[sys.executable, prp.STACK_ASSETS_SCRIPT]]
