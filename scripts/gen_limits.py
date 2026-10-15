@@ -130,10 +130,13 @@ GROUPS: tuple[tuple[str, ...], ...] = (
     (
         # M15 (Rayito 0.6, foundations): seed for sizes-catalog's
         # `_sizing.py`/`sizing.ts` (`supportedMemoryMiB`,
-        # `guestMemoryMultiplier`, Q87/Q88) and custom-domain's reserved
+        # `guestMemoryMultiplier`, Q87/Q88), the closed catalogue of official
+        # image variants `_role_policy.py`/`role-policy.ts` recognise by name
+        # (`officialImageVariants`) and custom-domain's reserved
         # ports (`reservedPorts`, denied as exposed ports by the SDK, the
         # CloudFront Function and the refresher).
         "supportedMemoryMiB",
+        "officialImageVariants",
         "guestMemoryMultiplier",
         "reservedPorts",
     ),

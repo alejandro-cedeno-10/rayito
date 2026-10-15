@@ -1,0 +1,41 @@
+{
+  "resolve": [
+    {"template": "rayito-base", "variant": "base"},
+    {"template": "rayito-base-slim", "variant": "base-slim"},
+    {"template": "rayito-base-poly", "variant": "base-poly"},
+    {"template": "rayito-base-poly-8gb", "variant": "base-poly"},
+    {"template": "rayito-base-caps", "variant": "base-caps"},
+    {"template": "rayito-base-caps-4gb", "variant": "base-caps"},
+    {"template": "rayito-base-caps-efs", "variant": "base-caps-efs"},
+    {"template": "rayito-base-caps-efs-4gb", "variant": "base-caps-efs"},
+    {"template": "rayito-base-2gb", "variant": "base"},
+    {"template": "rayito-accreg-ts-caps-efs", "variant": null},
+    {"template": "rayito-mybuild", "variant": null},
+    {"template": "rayito-base-caps-efs-3gb", "variant": null},
+    {"template": "rayito-base-caps-efs-4gb-extra", "variant": null},
+    {"template": "rayito-base-huge", "variant": null},
+    {"template": "rayito-", "variant": null},
+    {"template": "rayito", "variant": null},
+    {"template": "my-rayito-base", "variant": null},
+    {"template": "mi-imagen-propia", "variant": null},
+    {"template": "arn:aws:lambda:us-east-1:123456789012:microvm-image:rayito-base-caps", "variant": null},
+    {"template": "", "variant": null},
+    {"template": null, "variant": null}
+  ],
+  "requireCaps": [
+    {"variant": null, "accepted": true},
+    {"variant": "base-caps", "accepted": true},
+    {"variant": "base-caps-efs", "accepted": true},
+    {"variant": "base", "accepted": false},
+    {"variant": "base-poly", "accepted": false},
+    {"variant": "base-slim", "accepted": false}
+  ],
+  "requireEfs": [
+    {"variant": null, "accepted": true},
+    {"variant": "base-caps-efs", "accepted": true},
+    {"variant": "base-caps", "accepted": false},
+    {"variant": "base", "accepted": false},
+    {"variant": "base-poly", "accepted": false},
+    {"variant": "base-slim", "accepted": false}
+  ]
+}

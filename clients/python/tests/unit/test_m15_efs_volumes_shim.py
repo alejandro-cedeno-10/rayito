@@ -318,7 +318,7 @@ def test_sandbox_create_without_a_connector_makes_no_aws_call() -> None:
     api = FakeEfsApi()
     client = E2B(volume_store=store_with(api))
     with pytest.raises(InvalidArgumentException, match="volume_connector_arn"):
-        client.Sandbox.create("rayito-base-caps", volume_mounts={"/mnt/v": "datos"})
+        client.Sandbox.create("rayito-base-caps-efs", volume_mounts={"/mnt/v": "datos"})
     assert api.calls == []
 
 
