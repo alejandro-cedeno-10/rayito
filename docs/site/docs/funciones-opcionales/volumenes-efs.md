@@ -185,7 +185,7 @@ Lo que hace `create()`, en orden:
 
 1. **Antes de lanzar, sin red**: valida la petición (de 1 a 4 volúmenes,
    rutas bajo `/mnt/` o `/home/user/` sin solaparse, valores `EfsVolume`,
-   variante caps si el nombre de la imagen la revela, exactamente **un**
+   variante `base-caps-efs` si el nombre de la imagen la revela, exactamente **un**
    conector propio en `egress=` y `execution_role_arn=`). Cualquier fallo es
    `InvalidArgumentException`/`InvalidArgumentError` y no se lanza nada.
 2. **Antes de lanzar, con EFS**: si un volumen no trae `mount_target_ip`,
@@ -224,9 +224,12 @@ las IPs) en el sucesor.
 (`mount.efs` y `efs-proxy`, del paquete `amazon-efs-utils` de AL2023) y que
 corra con `additionalOsCapabilities: ["ALL"]` (`CAP_SYS_ADMIN`). Ninguna de las
 imágenes por defecto lo trae: `rayito-base`, `-slim`, `-caps` y `-poly` no
-cambian, y en ellas `Health.features.efs_volumes` sigue en `false` (un
-`create(volumes=...)` sobre ellas termina el sandbox y lanza
-`UnimplementedError`). La imagen con efs-utils es una variante aparte,
+cambian, y en ellas `Health.features.efs_volumes` sigue en `false` (con
+esos nombres oficiales, y con sus tallas, `create(volumes=...)` lanza
+`UnimplementedError` antes de lanzar, así que no se arranca ni se factura
+nada; sólo una imagen propia o un ARN se lanza y la decide después
+`Health.features.efs_volumes`; ver [Cómo reconoce el SDK la
+variante](../images.md#como-reconoce-el-sdk-la-variante)). La imagen con efs-utils es una variante aparte,
 `rayito-base-caps-efs`, que publicas tú:
 
 ```bash
@@ -420,7 +423,7 @@ necesita `execution_role_arn=` y la imagen con `amazon-efs-utils`. Sin
 |---|---|---|---|
 | `InvalidArgumentException` | `InvalidArgumentError` | `volumes=` vacío, con más de 4 volúmenes, con un valor que no es `EfsVolume`, con rutas solapadas o fuera de `/mnt/`·`/home/user/`, o sin `execution_role_arn=` | corrige la forma de la petición |
 | `InvalidArgumentException` | `InvalidArgumentError` | `volumes=` sin `egress=`, con `INTERNET_EGRESS` o con más de un conector | pasa sólo el `ConnectorArn` de la pila; internet, por tu VPC ([Internet y volúmenes](#internet-y-volumenes)) |
-| `UnimplementedError` | `UnimplementedError` | la imagen no trae `amazon-efs-utils` (`Health.features.efs_volumes` es `false`: el sandbox ya se terminó) o es una variante no-caps | publica y usa `rayito-base-caps-efs` ([Imagen con amazon-efs-utils](#imagen-con-amazon-efs-utils)) |
+| `UnimplementedError` | `UnimplementedError` | la imagen no trae `amazon-efs-utils` (`Health.features.efs_volumes` es `false`: el sandbox ya se terminó) o el nombre revela una variante distinta de `base-caps-efs` | publica y usa `rayito-base-caps-efs` ([Imagen con amazon-efs-utils](#imagen-con-amazon-efs-utils)) |
 | `VolumeMountException` (`code`) | `VolumeMountError` (`code`) | un volumen no montó: `iam_denied` (política del rol o access point fuera de `access_point_arns`), `network` (conector o grupo de seguridad), `not_found`, `tls`, `timeout`, `invalid_path` (la ruta es un enlace simbólico)… El sandbox ya se terminó (salvo `keep_on_failure`) | revisa el rol, el conector o la ruta según `code` |
 | `VolumeException` | `VolumeError` | el sistema de ficheros no tiene ningún mount target `available` (antes de lanzar) | despliega la pila o espera a que termine |
 | `VolumeException` | `VolumeError` | `VolumeStore.create/get/list/destroy` falló (IAM, límite de access points, sistema de ficheros no disponible) | revisa el permiso o el estado del sistema de ficheros |

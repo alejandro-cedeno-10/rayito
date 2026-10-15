@@ -70,6 +70,30 @@ def test_rewrite_head_strips_client_proxy_headers_sets_host_and_auth() -> None:
     assert rewritten.endswith("\r\n\r\n")
 
 
+def test_rewrite_head_hides_the_dashboard_session_cookies_from_the_guest() -> None:
+    request = head(
+        [
+            "GET / HTTP/1.1",
+            "Host: localhost:8000",
+            "Cookie: theme=dark; rayito_dashboard_54321=secret-session; lang=es",
+            "Cookie: rayito_dashboard_1=another",
+        ]
+    )
+    rewritten = _proxy.rewrite_head(request, endpoint="e.example", jwe="J", port=8080).decode(
+        "latin-1"
+    )
+
+    assert "rayito_dashboard_" not in rewritten
+    assert "secret-session" not in rewritten
+    assert "Cookie: theme=dark; lang=es\r\n" in rewritten
+    assert rewritten.count("Cookie:") == 1
+
+
+def test_the_dashboard_cookie_is_removed_even_without_a_space_after_the_semicolon() -> None:
+    assert _proxy.without_dashboard_cookies("a=1;rayito_dashboard_8080=x;b=2") == "a=1; b=2"
+    assert _proxy.without_dashboard_cookies("rayito_dashboard_8080=x;rayito_dashboard_1=y") is None
+
+
 def test_rewrite_head_keeps_upgrade_and_connection_intact() -> None:
     request = head(
         [

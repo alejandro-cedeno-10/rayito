@@ -118,6 +118,13 @@ export const METADATA_XATTR_PREFIX = "user.rayito." as const;
 export const COMPRESSION_OPT_IN_HEADER = "rayito-compress" as const;
 
 export const SUPPORTED_MEMORY_MIB = [512, 1024, 2048, 4096, 8192] as const;
+export const OFFICIAL_IMAGE_VARIANTS = [
+  "base",
+  "base-caps",
+  "base-caps-efs",
+  "base-poly",
+  "base-slim",
+] as const;
 export const GUEST_MEMORY_MULTIPLIER = 4 as const;
 export const RESERVED_PORTS = [8080, 9000] as const;
 
@@ -147,6 +154,166 @@ export const AGENT_RIPGREP_VERSION = "15.2.0" as const;
 export const AGENT_RIPGREP_SHA256 =
   "a740b91c82eaf9914cfedd353572f2791cbe0162c84101ee0951058f4dcbc90d" as const;
 export const DEFAULT_WARMUP_STEP_TIMEOUT_SECONDS = 120 as const;
+
+export const LARGE_QUOTA_REGIONS: ReadonlySet<string> = new Set([
+  "us-east-1",
+  "us-east-2",
+  "us-west-2",
+  "ap-northeast-1",
+]);
+export const QUOTA_SERVICE_CODE = "lambda" as const;
+export const QUOTA_NAMES: Readonly<Record<string, string>> = {
+  "L-118C44B3": "ResumeMicrovm rate",
+  "L-139F9A48": "SuspendMicrovm burst",
+  "L-25EEC0A4": "ResumeMicrovm burst",
+  "L-2CCA0501": "TerminateMicrovm burst",
+  "L-535CA9B6": "RunMicrovm rate",
+  "L-72E0D058": "builds concurrentes",
+  "L-74787B8A": "TerminateMicrovm rate",
+  "L-7712260B": "CreateMicrovmAuthToken rate",
+  "L-90045317": "SuspendMicrovm rate",
+  "L-91B95582": "RunMicrovm burst",
+  "L-942E56BE": "imágenes",
+  "L-9A5E43A5": "CreateMicrovmShellAuthToken burst",
+  "L-B78D2ECC": "CreateMicrovmShellAuthToken rate",
+  "L-C9C2110E": "GetMicrovm burst",
+  "L-CD1C0CC4": "memoria ARM_64 (GB)",
+  "L-CE98C9E3": "GetMicrovm rate",
+  "L-D65D9F16": "CreateMicrovmAuthToken burst",
+  "L-F8BECE9C": "versiones por imagen",
+};
+export const QUOTA_DEFAULTS: Readonly<Record<string, number>> = {
+  "L-118C44B3": 5,
+  "L-139F9A48": 2,
+  "L-25EEC0A4": 5,
+  "L-2CCA0501": 10,
+  "L-535CA9B6": 5,
+  "L-72E0D058": 5,
+  "L-74787B8A": 10,
+  "L-7712260B": 50,
+  "L-90045317": 2,
+  "L-91B95582": 5,
+  "L-942E56BE": 100,
+  "L-9A5E43A5": 5,
+  "L-B78D2ECC": 5,
+  "L-C9C2110E": 100,
+  "L-CD1C0CC4": 400,
+  "L-CE98C9E3": 100,
+  "L-D65D9F16": 50,
+  "L-F8BECE9C": 50,
+};
+export const QUOTA_LARGE_REGION_DEFAULTS: Readonly<Record<string, number>> = {
+  "L-72E0D058": 10,
+  "L-CD1C0CC4": 1024,
+};
+export const QUOTA_KINDS: Readonly<Record<string, string>> = {
+  "L-118C44B3": "rate",
+  "L-139F9A48": "burst",
+  "L-25EEC0A4": "burst",
+  "L-2CCA0501": "burst",
+  "L-535CA9B6": "rate",
+  "L-72E0D058": "count",
+  "L-74787B8A": "rate",
+  "L-7712260B": "rate",
+  "L-90045317": "rate",
+  "L-91B95582": "burst",
+  "L-942E56BE": "count",
+  "L-9A5E43A5": "burst",
+  "L-B78D2ECC": "rate",
+  "L-C9C2110E": "burst",
+  "L-CD1C0CC4": "memory-gb",
+  "L-CE98C9E3": "rate",
+  "L-D65D9F16": "burst",
+  "L-F8BECE9C": "count",
+};
+export const QUOTA_OPERATIONS: Readonly<Record<string, string>> = {
+  "L-118C44B3": "ResumeMicrovm",
+  "L-139F9A48": "SuspendMicrovm",
+  "L-25EEC0A4": "ResumeMicrovm",
+  "L-2CCA0501": "TerminateMicrovm",
+  "L-535CA9B6": "RunMicrovm",
+  "L-74787B8A": "TerminateMicrovm",
+  "L-7712260B": "CreateMicrovmAuthToken",
+  "L-90045317": "SuspendMicrovm",
+  "L-91B95582": "RunMicrovm",
+  "L-9A5E43A5": "CreateMicrovmShellAuthToken",
+  "L-B78D2ECC": "CreateMicrovmShellAuthToken",
+  "L-C9C2110E": "GetMicrovm",
+  "L-CE98C9E3": "GetMicrovm",
+  "L-D65D9F16": "CreateMicrovmAuthToken",
+};
+export const QUOTA_WARNING_FRACTION = 0.8 as const;
+export const QUOTA_CRITICAL_FRACTION = 0.95 as const;
+export const COST_CACHE_TTL_SECONDS = 86400 as const;
+export const COST_CACHE_MAX_ENTRIES = 64 as const;
+export const COST_EXPLORER_REGION = "us-east-1" as const;
+export const COST_EXPLORER_SERVICE_NAME = "AWS Lambda" as const;
+export const COST_EXPLORER_REQUEST_PRICE_USD = 0.01 as const;
+export const COMPUTE_PRICE_USD_PER_VCPU_SECOND = 0.0000276944 as const;
+export const COMPUTE_PRICE_USD_PER_GB_SECOND = 0.0000036667 as const;
+export const SNAPSHOT_WRITE_PRICE_USD_PER_GB = 0.0038 as const;
+export const SNAPSHOT_READ_PRICE_USD_PER_GB = 0.00155 as const;
+export const SNAPSHOT_STORAGE_PRICE_USD_PER_GB_MONTH = 0.08 as const;
+export const BASELINE_MIB_PER_VCPU = 2048 as const;
+
+export const DASHBOARD_SESSION_TOKEN_BYTES = 32 as const;
+export const DASHBOARD_START_TOKEN_TTL_SECONDS = 300 as const;
+export const DASHBOARD_REQUEST_MAX_BODY_BYTES = 65536 as const;
+export const DASHBOARD_REQUEST_TIMEOUT_SECONDS = 30 as const;
+export const DASHBOARD_READ_CACHE_SECONDS = 5 as const;
+export const DASHBOARD_POLL_INTERVAL_SECONDS = 15 as const;
+export const DASHBOARD_JOB_POLL_INTERVAL_SECONDS = 1 as const;
+export const DASHBOARD_BULK_MAX_SANDBOXES = 100 as const;
+export const DASHBOARD_JOBS_RETAINED = 20 as const;
+export const DASHBOARD_JOBS_ACTIVE_MAX = 5 as const;
+export const DASHBOARD_EVENTS_MAX_LIMIT = 500 as const;
+export const DASHBOARD_LOGS_MAX_LINES = 1000 as const;
+export const DASHBOARD_LOG_LINE_MAX_CHARS = 2000 as const;
+export const DASHBOARD_THEME_MAX_BYTES = 16384 as const;
+export const DASHBOARD_LOGO_MAX_BYTES = 262144 as const;
+
+export const DASHBOARD_STACK_ACTIONS_GROUP = "rayito-dashboard-actions" as const;
+export const DASHBOARD_STACK_AUTH_CACHE_SECONDS = 3600 as const;
+export const DASHBOARD_STACK_JWKS_REFRESH_MIN_SECONDS = 60 as const;
+export const DASHBOARD_STACK_JWKS_MAX_BYTES = 65536 as const;
+export const DASHBOARD_STACK_HTTP_TIMEOUT_SECONDS = 5 as const;
+export const DASHBOARD_STACK_JWT_LEEWAY_SECONDS = 30 as const;
+export const DASHBOARD_STACK_JWT_MAX_BYTES = 8192 as const;
+export const DASHBOARD_STACK_SESSION_SECONDS = 900 as const;
+export const DASHBOARD_STACK_THEME_REFRESH_SECONDS = 300 as const;
+export const DASHBOARD_STACK_LAMBDA_TIMEOUT_SECONDS = 300 as const;
+export const DASHBOARD_STACK_LAMBDA_TIMEOUT_MARGIN_SECONDS = 30 as const;
+export const DASHBOARD_STACK_LAMBDA_MEMORY_MIB = 512 as const;
+export const DASHBOARD_STACK_SHELL_LAMBDA_TIMEOUT_SECONDS = 10 as const;
+export const DASHBOARD_STACK_SHELL_LAMBDA_MEMORY_MIB = 256 as const;
+export const DASHBOARD_STACK_API_CORS_MAX_AGE_SECONDS = 600 as const;
+export const DASHBOARD_STACK_THEME_PARAMETER_MAX_BYTES = 4096 as const;
+export const DASHBOARD_STACK_SSM_ADVANCED_PARAMETER_MAX_BYTES = 8192 as const;
+export const DASHBOARD_STACK_ACCESS_TOKEN_HOURS = 1 as const;
+export const DASHBOARD_STACK_COST_LOOKBACK_MONTHS = 13 as const;
+export const DASHBOARD_STACK_COST_MISSES_PER_DAY = 20 as const;
+export const DASHBOARD_STACK_COST_EXAMPLE_OPEN_HOURS_PER_DAY = 8 as const;
+export const DASHBOARD_STACK_COST_EXAMPLE_DAYS_PER_MONTH = 30 as const;
+export const LAMBDA_REQUEST_PRICE_USD_PER_MILLION = 0.2 as const;
+export const LAMBDA_FREE_TIER_REQUESTS_PER_MONTH = 1000000 as const;
+export const LAMBDA_FREE_TIER_GB_SECONDS_PER_MONTH = 400000 as const;
+export const SSM_ADVANCED_PARAMETER_PRICE_USD_PER_MONTH = 0.05 as const;
+export const SSM_API_INTERACTION_PRICE_USD_PER_TEN_THOUSAND = 0.05 as const;
+
+export const DASHBOARD_ACCOUNTS_MAX = 10 as const;
+export const DASHBOARD_ACCOUNT_LABEL_MAX_CHARS = 32 as const;
+export const DASHBOARD_ASSUME_ROLE_SESSION_SECONDS = 3600 as const;
+export const DASHBOARD_ASSUME_ROLE_SESSION_NAME = "rayito-dashboard" as const;
+export const QUOTA_METRIC_NAMESPACE = "Rayito/Dashboard" as const;
+export const QUOTA_METRIC_NAME = "MemoryAllocatedFraction" as const;
+export const QUOTA_ALERTS_SCHEDULE_EXPRESSION = "rate(1 hour)" as const;
+export const QUOTA_ALERTS_LAMBDA_TIMEOUT_SECONDS = 120 as const;
+export const QUOTA_ALERTS_LAMBDA_MEMORY_MIB = 256 as const;
+export const CLOUDWATCH_FREE_DASHBOARDS = 3 as const;
+export const CLOUDWATCH_FREE_DASHBOARD_METRICS = 50 as const;
+export const CLOUDWATCH_DASHBOARD_PRICE_USD_PER_MONTH = 3 as const;
+export const CLOUDWATCH_LOGS_INSIGHTS_PRICE_USD_PER_GB = 0.005 as const;
+export const CLOUDWATCH_CUSTOM_METRIC_PRICE_USD_PER_MONTH = 0.3 as const;
 
 export const AGENT_PREFETCH_RESTORE_JUMP_SECONDS = 30 as const;
 export const AGENT_PREFETCH_INTERVAL_SECONDS = 2 as const;

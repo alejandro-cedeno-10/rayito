@@ -10,6 +10,11 @@ from typing import Annotated, Any
 
 import typer
 
+from rayito._dashboard._aws import (
+    artifact_basename,
+    list_image_summaries,
+    list_image_version_summaries,
+)
 from rayito._images import DEFAULT_BUILD_TIMEOUT_SECONDS, DEFAULT_MEMORY_MIB
 from rayito._sizing import (
     BASELINE_MEMORY_MIB,
@@ -305,45 +310,31 @@ def publish_command(
 
 
 def listed_images(clients: Clients, name_filter: str | None) -> list[dict[str, Any]]:
-    params: dict[str, Any] = {}
-    if name_filter:
-        params["nameFilter"] = name_filter
-    paginator = clients.microvms.get_paginator("list_microvm_images")
     return [
         {
-            "name": str(item["name"]),
-            "imageArn": str(item["imageArn"]),
-            "state": str(item["state"]),
-            "latestActiveImageVersion": item.get("latestActiveImageVersion"),
-            "latestFailedImageVersion": item.get("latestFailedImageVersion"),
-            "createdAt": item["createdAt"],
+            "name": image.name,
+            "imageArn": image.image_arn,
+            "state": image.state,
+            "latestActiveImageVersion": image.latest_active_version,
+            "latestFailedImageVersion": image.latest_failed_version,
+            "createdAt": image.created_at,
         }
-        for page in paginator.paginate(**params)
-        for item in page.get("items", [])
+        for image in list_image_summaries(clients.microvms, name_filter)
     ]
-
-
-def artifact_basename(item: dict[str, Any]) -> str | None:
-    uri = item.get("codeArtifact", {}).get("uri")
-    return None if uri is None else str(uri).rsplit("/", 1)[-1]
 
 
 def listed_versions(clients: Clients, arn: str) -> list[dict[str, Any]]:
-    paginator = clients.microvms.get_paginator("list_microvm_image_versions")
-    versions = [
+    return [
         {
-            "imageVersion": str(item["imageVersion"]),
-            "state": str(item["state"]),
-            "status": str(item["status"]),
-            "baseImageVersion": item.get("baseImageVersion"),
-            "artifact": artifact_basename(item),
-            "createdAt": item["createdAt"],
+            "imageVersion": version.image_version,
+            "state": version.state,
+            "status": version.status,
+            "baseImageVersion": version.base_image_version,
+            "artifact": version.artifact,
+            "createdAt": version.created_at,
         }
-        for page in paginator.paginate(imageIdentifier=arn)
-        for item in page.get("items", [])
+        for version in list_image_version_summaries(clients.microvms, arn)
     ]
-    versions.sort(key=lambda version: version["createdAt"], reverse=True)
-    return versions
 
 
 @image_app.command("list")

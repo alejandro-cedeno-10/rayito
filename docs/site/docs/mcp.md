@@ -234,3 +234,9 @@ En modo URL, arranca `python -m rayito.mcp --http` y conecta el Inspector a
   o desactívalo con `RAYITO_MCP_IDLE_SECONDS=0`.
 - **Sin autenticación en HTTP**, sin sandboxes por cliente, sin pools ni
   persistencia: cada proceso empieza vacío y termina destruyendo su sandbox.
+
+## Ver también
+
+- [Agente en el sandbox](guias/agente-en-el-sandbox.md): el bucle del agente
+  corriendo dentro del sandbox, en vez de en tu host MCP
+- [LangChain y Vercel AI](guias/langchain-y-vercel-ai.md)

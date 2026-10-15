@@ -1,0 +1,51 @@
+{
+  "version": 1,
+  "name": "aurora",
+  "tokens": {
+    "radius": "0.625rem",
+    "radius-lg": "1rem",
+    "font-sans": "\"Avenir Next\", \"Segoe UI\", system-ui, sans-serif"
+  },
+  "dark": {
+    "bg": "#110d1c",
+    "surface": "#171226",
+    "surface-raised": "#1e1832",
+    "border": "#32294d",
+    "border-strong": "#7a6e9e",
+    "fg": "#f1ecfa",
+    "fg-muted": "#b0a6c9",
+    "primary": "#a78bfa",
+    "on-primary": "#1a0b3b",
+    "accent": "#c4b5fd",
+    "accent-strong": "#ddd6fe",
+    "focus": "#93c5fd",
+    "ok": "#86efac",
+    "warning": "#fcd34d",
+    "critical": "#fca5a5",
+    "info": "#7dd3fc",
+    "chart-1": "#a78bfa",
+    "chart-2": "#38bdf8",
+    "chart-3": "#f472b6"
+  },
+  "light": {
+    "bg": "#faf8fe",
+    "surface": "#f0ebfa",
+    "surface-raised": "#ffffff",
+    "border": "#dcd3ee",
+    "border-strong": "#7a6e9e",
+    "fg": "#241a3d",
+    "fg-muted": "#51466f",
+    "primary": "#6d28d9",
+    "on-primary": "#ffffff",
+    "accent": "#6d28d9",
+    "accent-strong": "#5b21b6",
+    "focus": "#1d4ed8",
+    "ok": "#166534",
+    "warning": "#92400e",
+    "critical": "#b91c1c",
+    "info": "#0369a1",
+    "chart-1": "#6d28d9",
+    "chart-2": "#0369a1",
+    "chart-3": "#be185d"
+  }
+}

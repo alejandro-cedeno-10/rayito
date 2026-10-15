@@ -13,6 +13,7 @@ llamada explícita del SDK o de `rayito stack deploy`.
 
 from __future__ import annotations
 
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Final, Literal
 
@@ -88,6 +89,11 @@ class StackComponent:
     #: tocar AWS. Cada feature pasa esto a `True` en su propio cambio al
     #: añadir `infra/<component>.yaml` y su entrada en `_packaging.py`.
     supported: bool = True
+    #: Validación de coherencia entre parámetros que la plantilla no puede
+    #: expresar (CloudFormation no compara números). Recibe los valores
+    #: efectivos del despliegue y lanza `InvalidArgumentException`; corre
+    #: antes de llamar a AWS.
+    validate: Callable[[Mapping[str, str]], None] | None = None
 
     @property
     def default_stack_name(self) -> str:
@@ -202,6 +208,9 @@ def plan_parameters(
         raise InvalidArgumentException(
             f"faltan parámetros obligatorios para {component.name}: {sorted(missing)}"
         )
+    if component.validate is not None:
+        retained = {name: previous[name] for name in keep_previous if previous is not None}
+        component.validate({**retained, **values})
     return ParameterPlan(values=values, keep_previous=tuple(sorted(keep_previous)))
 
 

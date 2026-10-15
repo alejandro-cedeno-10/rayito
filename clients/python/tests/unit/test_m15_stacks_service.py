@@ -195,9 +195,11 @@ class _RecordingProvisioner(FakeStackProvisioner):
     """Records the parameters `create()` received (the shared fake does not)."""
 
     created_parameters: dict[str, str] | None = None
+    created_tags: dict[str, str] | None = None
 
     def create(self, component, *, stack_name, template_body, parameters, tags):  # type: ignore[no-untyped-def]
         self.created_parameters = dict(parameters)
+        self.created_tags = dict(tags)
         super().create(
             component,
             stack_name=stack_name,
@@ -307,6 +309,39 @@ def test_redeploying_metadata_index_keeps_table_name_and_protection() -> None:
     }
 
 
+def test_redeploying_dashboard_keeps_actions_and_cost_explorer_off_or_on_as_deployed() -> None:
+    """Redeploying the dashboard without repeating every `--param` must not
+    turn the actions role off (nor back on) or re-enable billed cost queries:
+    `AllowActions` and `EnableCostExplorer` keep their deployed value."""
+    fake = FakeStackProvisioner()
+    stacks = OptionalStacks(provisioner=fake)
+    stacks.deploy(
+        "dashboard",
+        parameters={"AllowActions": "true", "EnableCostExplorer": "true"},
+        artifact_bucket="bucket-a",
+    )
+    stacks.deploy("dashboard", parameters={"DomainPrefix": "tablero"}, artifact_bucket="bucket-a")
+    assert {"AllowActions", "EnableCostExplorer", "ImageNamePrefix"} <= set(fake.sent_keep_previous)
+    deployed = fake.stacks["rayito-dashboard"].parameters
+    assert deployed["AllowActions"] == "true" and deployed["EnableCostExplorer"] == "true"
+
+
+def test_dashboard_is_read_only_and_free_of_billed_cost_queries_by_default() -> None:
+    fake = FakeStackProvisioner()
+    OptionalStacks(provisioner=fake).deploy("dashboard", artifact_bucket="bucket-a")
+    deployed = fake.stacks["rayito-dashboard"].parameters
+    assert deployed["AllowActions"] == "false" and deployed["EnableCostExplorer"] == "false"
+
+
+def test_dashboard_passes_the_required_tags_through() -> None:
+    fake = _RecordingProvisioner()
+    OptionalStacks(provisioner=fake).deploy(
+        "dashboard", artifact_bucket="bucket-a", tags={"team": "plataforma"}
+    )
+    assert fake.created_tags is not None and fake.created_tags["team"] == "plataforma"
+    assert fake.created_tags["rayito:component"] == "dashboard"
+
+
 def test_redeploying_secrets_access_keeps_the_kms_key() -> None:
     fake = _redeploy("secrets-access", {"KmsKeyArn": "arn:aws:kms:example"}, {})
     assert "KmsKeyArn" in fake.sent_keep_previous
@@ -376,3 +411,65 @@ async def test_async_parameter_changes_mirrors_the_sync_one() -> None:
         "secrets-access"
     )
     assert {c.name for c in changes} == {"SecretPrefix", "KmsKeyArn"}
+
+
+def test_quota_alerts_deploys_with_the_named_thresholds_and_no_topic_or_email_by_default() -> None:
+    fake = FakeStackProvisioner()
+    OptionalStacks(provisioner=fake).deploy("quota-alerts", artifact_bucket="bucket-a")
+    deployed = fake.stacks["rayito-quota-alerts"].parameters
+    assert (deployed["WarningPercent"], deployed["CriticalPercent"]) == ("80", "95")
+    assert deployed["TopicArn"] == "" and deployed["NotificationEmail"] == ""
+    assert deployed["ScheduleExpression"] == "rate(1 hour)"
+
+
+def test_redeploying_quota_alerts_keeps_the_thresholds_as_deployed() -> None:
+    fake = FakeStackProvisioner()
+    stacks = OptionalStacks(provisioner=fake)
+    stacks.deploy(
+        "quota-alerts",
+        parameters={"WarningPercent": "60", "NotificationEmail": "ops@example.com"},
+        artifact_bucket="bucket-a",
+    )
+    stacks.deploy("quota-alerts", parameters={"LogRetentionDays": "7"}, artifact_bucket="bucket-a")
+    assert {"WarningPercent", "CriticalPercent", "NotificationEmail"} <= set(
+        fake.sent_keep_previous
+    )
+    assert fake.stacks["rayito-quota-alerts"].parameters["WarningPercent"] == "60"
+
+
+@pytest.mark.parametrize(
+    "thresholds",
+    [
+        {"WarningPercent": "90", "CriticalPercent": "80"},
+        {"WarningPercent": "80", "CriticalPercent": "80"},
+        {"WarningPercent": "96"},
+    ],
+)
+def test_quota_alerts_rejects_thresholds_out_of_order_before_any_aws_call(
+    thresholds: dict[str, str],
+) -> None:
+    fake = FakeStackProvisioner()
+    with pytest.raises(InvalidArgumentException, match="CriticalPercent"):
+        OptionalStacks(provisioner=fake).deploy(
+            "quota-alerts", parameters=thresholds, artifact_bucket="bucket-a"
+        )
+    assert fake.stacks == {}
+
+
+def test_dashboard_read_role_needs_a_trusted_principal_and_hides_the_external_id() -> None:
+    component = component_by_name("dashboard-read-role")
+    assert component is not None
+    with pytest.raises(InvalidArgumentException):
+        OptionalStacks(provisioner=FakeStackProvisioner()).deploy("dashboard-read-role")
+    assert [p.name for p in component.parameters if p.no_echo] == ["ExternalId"]
+    assert component.artifacts == ()
+
+
+def test_dashboard_cloudwatch_has_no_code_and_its_extra_widgets_are_off_by_default() -> None:
+    fake = FakeStackProvisioner()
+    OptionalStacks(provisioner=fake).deploy("dashboard-cloudwatch")
+    deployed = fake.stacks["rayito-dashboard-cloudwatch"].parameters
+    assert deployed["IncludeOtlp"] == "false" and deployed["IncludeQuota"] == "false"
+    assert deployed["LogGroupPrefix"] == "/rayito/"
+    component = component_by_name("dashboard-cloudwatch")
+    assert component is not None and component.artifacts == ()

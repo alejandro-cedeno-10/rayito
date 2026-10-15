@@ -5,6 +5,46 @@ Python async y TypeScript (las pestañas se sincronizan: elige tu lenguaje una
 vez), explica las opciones y termina con los errores habituales y las
 diferencias con E2B.
 
+<div class="grid cards rx-cards" markdown>
+
+-   :material-cube-outline:{ .lg .middle } **[Sandbox](#sandbox)**
+
+    ---
+
+    Ciclo de vida, pausa, pool y persistencia.
+
+-   :material-play-circle-outline:{ .lg .middle } **[Ejecutar](#ejecutar)**
+
+    ---
+
+    Comandos, código, kernels y terminal.
+
+-   :material-folder-network-outline:{ .lg .middle } **[Ficheros y red](#ficheros-y-red)**
+
+    ---
+
+    Ficheros, S3, salida a internet y puertos.
+
+-   :material-chart-line:{ .lg .middle } **[Observar y herramientas](#observar-y-herramientas)**
+
+    ---
+
+    Métricas, listado y git.
+
+-   :material-robot-outline:{ .lg .middle } **[Agentes](#agentes)**
+
+    ---
+
+    MCP, LangChain y el agente en el sandbox.
+
+-   :material-flask-outline:{ .lg .middle } **[Desarrollar y probar](#desarrollar-y-probar)**
+
+    ---
+
+    Probar en local, sin cuenta de AWS.
+
+</div>
+
 ## Sandbox
 
 | Guía | Para qué |
@@ -42,11 +82,18 @@ diferencias con E2B.
 
 ## Agentes
 
+¿Dónde corre el agente? **Fuera** (tu host MCP o tu app con LangChain/Vercel
+AI): el sandbox es su herramienta y basta `rayito-base`. **Dentro**
+(`sbx.agent`): el bucle entero corre en el sandbox; necesita la imagen
+`rayito-agent` y la pasarela de secretos.
+
 | Guía | Para qué |
 |---|---|
 | [Servidor MCP](../mcp.md) | un sandbox para Claude Code, Claude Desktop, Cursor o VS Code |
 | [LangChain y Vercel AI](langchain-y-vercel-ai.md) | Rayito como herramienta de un agente |
 | [Agente en el sandbox](agente-en-el-sandbox.md) | un agente de código (OpenCode o deepagents) **dentro** del sandbox con `sbx.agent.run()`, el modelo tras la pasarela de secretos; el arranque rápido, opcional |
+| [Proveedores del agente](agente-proveedores.md) | los proveedores de modelo que admite `sbx.agent` tras la pasarela de secretos, cómo configurar cada uno y cuáles no se admiten |
+| [Templates de agente](../funciones-opcionales/templates-de-agente.md) | `AgentTemplate`: la imagen `rayito-agent` con OpenCode, ripgrep y deepagents, sus pines y el coste de cada versión |
 
 ## Desarrollar y probar
 

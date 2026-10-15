@@ -37,6 +37,10 @@ CloudFormation.
 | `otlp-export` | 1 política IAM (`cloudwatch:PutMetricData`) | $0 | [Exportación OTLP](exportacion-otlp.md) |
 | `templates` | 1 política IAM para quien construye templates | $0 | [Templates](templates.md) |
 | `custom-domain` (experimental) | Distribución CloudFront, CloudFront Function de enrutado y KeyValueStore | $0 sin tráfico | [Dominio propio](dominio-propio.md) |
+| `dashboard` | Lambda con Function URL (la página y la API del panel), grupo de usuarios de Cognito con su cliente y dominio, 2 tablas DynamoDB (auditoría y caché), rol de lectura (y, con `AllowActions`, rol de acciones), log group; sin CloudFront ni buckets | ≈ $0 (todo bajo demanda) | [Panel en tu cuenta](panel-en-tu-cuenta.md) |
+| `dashboard-cloudwatch` | 1 dashboard de CloudWatch (logs de `/rayito/*`, métricas OTLP y uso de cuota opcionales) | $0 con menos de 4 dashboards | [Panel: CloudWatch, cuentas y avisos](panel-extras.md#dashboard-de-cloudwatch) |
+| `dashboard-read-role` | 1 rol de IAM de sólo lectura, en la cuenta destino de la vista multicuenta | $0 | [Panel: CloudWatch, cuentas y avisos](panel-extras.md#varias-cuentas) |
+| `quota-alerts` | Lambda programada con su regla de EventBridge, tema SNS, tabla DynamoDB de estado y rol | ≈ $0,30/mes (una métrica) | [Panel: CloudWatch, cuentas y avisos](panel-extras.md#avisos-de-cuota) |
 | `efs-volumes` (experimental) | En una VPC existente: sistema de ficheros EFS cifrado, un mount target por subred, 2 grupos de seguridad nuevos, un conector de egress a la VPC, su rol y la política `RayitoEfsVolumeClient` | $0 con el sistema de ficheros vacío | [Volúmenes EFS en tu VPC](volumenes-efs-vpc.md) |
 
 `custom-domain` es experimental: la plantilla aún no se ha desplegado
@@ -59,6 +63,10 @@ Se pasan con `parameters={...}` (TypeScript: `{ parameters: {...} }`) o
 | `otlp-export` | ninguno | — |
 | `templates` | `ArtifactBucketArn`, `BuildRoleArn` (obligatorios), `ImageLogGroupPrefix`, `BaseImageBucketArn`, `ProtectedImageNamePrefix` | —, —, `/rayito`, vacío (el bucket de artefactos), `rayito-base` |
 | `custom-domain` | `PublicDomain`, `CertificateArn` (obligatorios, certificado ACM en us-east-1), `AlternateDomainNames` | —, —, vacío (alias comodín `*.<PublicDomain>`) |
+| `dashboard` | `ArtifactBucket` (lo rellena `artifact_bucket=`/`--artifact-bucket`), `AllowActions`, `EnableCostExplorer`, `ImageNamePrefix`, `InitialUserEmail`, `DomainPrefix`, `ThemeJson`, `ThemeParameterName`, `LogoParameterName`, `ReservedConcurrency`, `LogRetentionDays` | —, `false`, `false`, `rayito-`, vacío, vacío, vacío, vacío, vacío, vacío, `30` |
+| `dashboard-cloudwatch` | `DashboardName`, `LogGroupPrefix`, `IncludeOtlp`, `IncludeQuota` | vacío (el nombre de la pila), `/rayito/`, `false`, `false` |
+| `dashboard-read-role` | `TrustedPrincipalArn` (obligatorio), `ExternalId`, `MaxSessionSeconds` | —, vacío, `3600` |
+| `quota-alerts` | `ArtifactBucket` (lo rellena `artifact_bucket=`/`--artifact-bucket`), `ScheduleExpression`, `WarningPercent`, `CriticalPercent`, `NotificationEmail`, `TopicArn`, `LogRetentionDays` | —, `rate(1 hour)`, `80`, `95`, vacío, vacío, `30` |
 | `efs-volumes` | `VpcId`, `SubnetIds` (obligatorios, de 1 a 3), `ConnectorName`, `AllowWrite`, `AccessPointArns`, `ReadOnlyAccessPointArns` | —, —, `rayito-efs`, `true`, vacío (cualquier access point del sistema de ficheros), vacío |
 
 `stacks.components()` devuelve este mismo catálogo (con la descripción de

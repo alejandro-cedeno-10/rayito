@@ -379,6 +379,15 @@ describe("lifecycle", () => {
     expect(Sandbox.coreOf(sandbox).paused).toBe(true);
   });
 
+  test("metadata is empty until a Health reports it and is a frozen copy afterwards", async () => {
+    const { sandbox } = await createTestSandbox();
+    expect(sandbox.metadata).toEqual({});
+    Sandbox.coreOf(sandbox).metadata = { user: "42" };
+    expect(sandbox.metadata).toEqual({ user: "42" });
+    expect(Object.isFrozen(sandbox.metadata)).toBe(true);
+    expect(sandbox.metadata).not.toBe(sandbox.metadata);
+  });
+
   test("pause with wait false returns right after suspend-microvm", async () => {
     const { sandbox, plane } = await createTestSandbox();
     plane.setStates(["RUNNING"]);
@@ -427,7 +436,10 @@ describe("lifecycle", () => {
       resumeGeneration: 0,
       clockOffsetMs: 0,
       kernelStateLost: false,
+      imdsBlocked: false,
     });
+    rayd.health.imdsBlocked = true;
+    expect((await sandbox.getHealth()).imdsBlocked).toBe(true);
     const metrics = await sandbox.getMetrics();
     expect(metrics.memTotalBytes).toBe(2 * 1024 * 1024 * 1024);
     expect(metrics.cpuCount).toBe(1);

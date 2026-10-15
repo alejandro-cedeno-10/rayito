@@ -24,6 +24,8 @@ otro sitio.
 
 ## La ruta recomendada
 
+<div class="rx-steps" markdown>
+
 1. [**Instalación**](instalacion.md): el SDK, la CLI y los extras
    opcionales.
 2. [**Configurar AWS**](configurar-aws.md): IAM, un bucket y la imagen
@@ -32,6 +34,11 @@ otro sitio.
    reconexión desde otro proceso.
 4. [**Conceptos**](../concepts.md): qué corre dónde, los tres relojes de un
    sandbox, los dos tokens y la reconexión.
+
+El paso 2 se hace una vez por cuenta y región (≈ 15 min). Lo que repite cada
+aplicación es instalar el SDK (paso 1) y escribir su código (paso 3).
+
+</div>
 
 Cuando termines, las [Guías](../guias/index.md) explican cada función (entre
 ellas, [un agente de código dentro del sandbox](../guias/agente-en-el-sandbox.md))

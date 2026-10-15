@@ -26,6 +26,12 @@ validation:
 theme:
   name: material
   language: es
+  custom_dir: overrides
+  logo: assets/rayito-bolt.svg
+  favicon: assets/rayito-bolt.svg
+  font:
+    text: Atkinson Hyperlegible Next
+    code: JetBrains Mono
   features:
     - navigation.instant
     - navigation.instant.progress
@@ -51,22 +57,34 @@ theme:
   palette:
     - media: "(prefers-color-scheme: light)"
       scheme: default
-      primary: amber
-      accent: deep orange
+      primary: custom
+      accent: custom
       toggle:
         icon: material/brightness-7
         name: Modo oscuro
     - media: "(prefers-color-scheme: dark)"
       scheme: slate
-      primary: amber
-      accent: deep orange
+      primary: custom
+      accent: custom
       toggle:
         icon: material/brightness-4
         name: Modo claro
 
+extra_css:
+  - stylesheets/rayito.css
+
+hooks:
+  - hooks/limits_macros.py
+
 plugins:
   - search:
       lang: es
+  # Sirve las fuentes desde el propio sitio: sin peticiones a terceros.
+  # RAYITO_DOCS_PRIVACY=false lo apaga para compilar sin red. Sólo para
+  # vistas previas locales: nunca para publicar, porque la fuente de títulos
+  # (overrides/main.html) se pediría entonces a un tercero en tiempo de lectura.
+  - privacy:
+      enabled: !ENV [RAYITO_DOCS_PRIVACY, true]
   - mkdocstrings:
       handlers:
         python:
@@ -178,6 +196,9 @@ nav:
           - Exportación OTLP: funciones-opcionales/exportacion-otlp.md
           - OpenTelemetry (SDK): funciones-opcionales/opentelemetry.md
           - Índice de metadatos: funciones-opcionales/indice-de-metadatos.md
+          - Panel de gestión (cuotas, coste y flota): funciones-opcionales/panel-de-gestion.md
+          - Panel en tu cuenta (la pila dashboard): funciones-opcionales/panel-en-tu-cuenta.md
+          - Panel, fase 3 (CloudWatch, varias cuentas, avisos): funciones-opcionales/panel-extras.md
       - Proxy local: funciones-opcionales/proxy-local.md
       - Experimental:
           - Dominio propio (experimental): funciones-opcionales/dominio-propio.md
@@ -209,6 +230,7 @@ nav:
           - Shim E2B: referencia/python/shim-e2b.md
       - TypeScript: referencia/typescript.md
       - CLI: cli.md
+      - API del panel de gestión: referencia/api-del-panel.md
       - Errores: referencia/errores.md
       - Variables de entorno: referencia/variables-de-entorno.md
       - Límites: limits.md

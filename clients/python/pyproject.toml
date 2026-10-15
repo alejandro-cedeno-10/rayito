@@ -62,6 +62,9 @@ dev = [
     # scripts/tests/test_iam_template.py parsea infra/iam.yaml (CI corre
     # scripts/tests con este entorno).
     "pyyaml>=6.0",
+    # Los tests de contrato del panel validan cada respuesta de /api/v1
+    # contra testdata/dashboard/api-v1.schema.json.
+    "jsonschema>=4.23",
 ]
 docs = [
     "mkdocs-material>=9.6",
@@ -125,6 +128,10 @@ module = [
     "tests.unit.fake_lifecycle",
 ]
 disallow_subclassing_any = false
+
+[[tool.mypy.overrides]]
+module = ["jsonschema", "jsonschema.*"]
+ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = ["boto3", "boto3.*", "botocore", "botocore.*"]

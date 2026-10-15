@@ -260,6 +260,7 @@ export function healthFromProto(response: HealthResponse): SandboxHealth {
     resumeGeneration: Number(response.resumeGeneration),
     clockOffsetMs: Number(response.clockOffsetMs),
     kernelStateLost: Boolean(response.kernelStateLost),
+    imdsBlocked: Boolean(response.imdsBlocked),
     egressEnforcement: enforcementFromProto(response.egressEnforcement),
     lifecycle: lifecycleFromProto(response.lifecycle),
     cpuCount: response.cpuCount,

@@ -17,6 +17,8 @@ from typer.testing import CliRunner
 
 from rayito import __version__ as SDK_VERSION
 from rayito._aws import PortSpec
+from rayito._dashboard._domain import quota_default
+from rayito._limits import QUOTA_DEFAULTS, QUOTA_NAMES
 from rayito._transport import TransportSettings
 from rayito.cli import _checks
 from rayito.cli._checks import CheckResult, CheckSpec, DoctorContext, run_check
@@ -264,15 +266,16 @@ def check(document: dict[str, Any], name: str) -> dict[str, Any]:
 
 def test_quota_defaults_codes_exist_in_measured_json() -> None:
     by_code = {quota["QuotaCode"]: quota for quota in measured_quotas()}
-    for code, (short_name, default) in _checks.QUOTA_DEFAULTS.items():
+    for code, default in QUOTA_DEFAULTS.items():
+        short_name = QUOTA_NAMES[code]
         assert code in by_code, f"{code} ({short_name}) no está en quotas.json"
         assert "microvm" in by_code[code]["QuotaName"].lower()
         assert by_code[code]["Adjustable"] is True
         assert by_code[code]["Value"] >= default
-    assert _checks.quota_default("L-CD1C0CC4", "us-east-1") == 1024.0
-    assert _checks.quota_default("L-CD1C0CC4", "eu-west-1") == 400.0
-    assert _checks.quota_default("L-72E0D058", "us-east-1") == 10.0
-    assert _checks.quota_default("L-535CA9B6", "us-east-1") == 5.0
+    assert quota_default("L-CD1C0CC4", "us-east-1") == 1024.0
+    assert quota_default("L-CD1C0CC4", "eu-west-1") == 400.0
+    assert quota_default("L-72E0D058", "us-east-1") == 10.0
+    assert quota_default("L-535CA9B6", "us-east-1") == 5.0
 
 
 def test_fresh_account_without_an_image(

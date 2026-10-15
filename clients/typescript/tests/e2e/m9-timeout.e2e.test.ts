@@ -12,6 +12,7 @@
  */
 
 import { describe, expect, test } from "vitest";
+import { Sandbox as ShimSandbox } from "../../src/e2b/index.js";
 import {
   type IdlePolicyInput,
   InvalidArgumentError,
@@ -26,10 +27,12 @@ import {
   e2eEnabled,
   report,
   seconds,
+  sleep,
   useE2E,
   waitUntil,
   withTimeout,
 } from "./helpers.js";
+import { rawStartIsSandboxTimeout } from "./raw-rpc.js";
 
 const MAX_TEST_LIFETIME_MS = 900_000;
 const TERMINATION_SLACK_MS = 45_000;
@@ -37,6 +40,16 @@ const SUSPEND_SLACK_MS = 15_000;
 const AUTO_RESUME_MIN_MS = 300_000;
 const DEADLINE_TOLERANCE_MS = 10_000;
 const STATE_POLL_MS = 1000;
+const SHORT_MAX_IDLE_SECONDS = 60;
+const IDLE_SLACK_MS = 60_000;
+const TRACKING_TOLERANCE_MS = 2_000;
+const TRACKED_TIMEOUTS_MS = [200_000, 90_000, 400_000] as const;
+const PAUSE_MODE_TIMEOUT_MS = 60_000;
+const PAUSE_MAX_IDLE_SECONDS = 300;
+const SHIM_TIMEOUT_MS = 30_000;
+const SHIM_EXTENDED_TIMEOUT_MS = 90_000;
+const SHIM_EXTEND_AFTER_MS = 5_000;
+const SHIM_ALIVE_CHECK_AFTER_MS = 60_000;
 
 interface TimeoutLaunch {
   readonly timeoutMs: number;
@@ -151,9 +164,9 @@ describe.skipIf(!e2eEnabled())("M9 server-enforced timeout (TypeScript)", () => 
 
   test("onTimeout pause with a live client suspends at the deadline and auto-resumes", async () => {
     const sandbox = await createTimeoutSandbox(context, {
-      timeoutMs: 60_000,
+      timeoutMs: PAUSE_MODE_TIMEOUT_MS,
       onTimeout: "pause",
-      idle: { maxIdleSeconds: 300, autoResume: true },
+      idle: { maxIdleSeconds: PAUSE_MAX_IDLE_SECONDS, autoResume: true },
     });
     await sandbox.runCode("x = 42");
     const deadline = (await sandbox.getHealth()).lifecycle?.deadline?.getTime() ?? Date.now();
@@ -205,5 +218,100 @@ describe.skipIf(!e2eEnabled())("M9 server-enforced timeout (TypeScript)", () => 
     expect((error as Error).message).toContain("maxLifetimeMs");
     expect((error as Error).message).toContain("28800");
     expect((await sandbox.getHealth()).lifecycle?.deadline?.getTime()).toBe(before);
+  });
+  test("pause without autoResume: a stray request is refused and the VM suspends again", async () => {
+    const sandbox = await createTimeoutSandbox(context, {
+      timeoutMs: PAUSE_MODE_TIMEOUT_MS,
+      onTimeout: "pause",
+      idle: { maxIdleSeconds: SHORT_MAX_IDLE_SECONDS, autoResume: false },
+    });
+    const token = sandbox.accessToken;
+    const deadline = (await sandbox.getHealth()).lifecycle?.deadline?.getTime() ?? Date.now();
+    await waitForState(
+      context,
+      sandbox.sandboxId,
+      "SUSPENDED",
+      Math.max(0, deadline - Date.now()) + SUSPEND_SLACK_MS,
+    );
+    sandbox.close();
+    expect(await rawStartIsSandboxTimeout(context.controlPlane, sandbox.sandboxId, token)).toBe(
+      true,
+    );
+    const strayAt = Date.now();
+    await waitForState(
+      context,
+      sandbox.sandboxId,
+      "SUSPENDED",
+      SHORT_MAX_IDLE_SECONDS * 1000 + IDLE_SLACK_MS,
+    );
+    report("stray request -> SUSPENDED again (s)", (Date.now() - strayAt) / 1000);
+    const reopened = await Sandbox.connect(sandbox.sandboxId, {
+      accessToken: token,
+      controlPlane: context.controlPlane,
+    });
+    try {
+      expect((await reopened.runCode("1 + 1")).text).toBe("2");
+    } finally {
+      reopened.close();
+    }
+  });
+
+  test("the lifecycle tracks every setTimeout", async () => {
+    const sandbox = await createTimeoutSandbox(context, { timeoutMs: 120_000 });
+    for (const timeoutMs of TRACKED_TIMEOUTS_MS) {
+      await sandbox.setTimeout(timeoutMs);
+      const expected = Date.now() + timeoutMs;
+      const lifecycle = (await sandbox.getHealth()).lifecycle;
+      expect(Math.abs((lifecycle?.deadline?.getTime() ?? 0) - expected)).toBeLessThan(
+        TRACKING_TOLERANCE_MS,
+      );
+      const info = await sandbox.getInfo();
+      expect(Math.abs(info.expiresAt.getTime() - expected)).toBeLessThan(TRACKING_TOLERANCE_MS);
+    }
+    expect((await sandbox.getHealth()).lifecycle?.extensions).toBe(TRACKED_TIMEOUTS_MS.length);
+  });
+
+  test("the E2B shim extends its deadline and maps lifecycle onTimeout pause", async () => {
+    const shimOptions = {
+      template: context.templateArn,
+      maxLifetimeMs: MAX_TEST_LIFETIME_MS,
+      logging: "disabled",
+      controlPlane: context.controlPlane,
+    } as const;
+    const shim = await ShimSandbox.create({ ...shimOptions, timeoutMs: SHIM_TIMEOUT_MS });
+    context.created.push(shim.native);
+    const createdAt = shim.native.launchInfo.startedAt.getTime();
+    await sleep(Math.max(0, SHIM_EXTEND_AFTER_MS - (Date.now() - createdAt)));
+    await shim.setTimeout(SHIM_EXTENDED_TIMEOUT_MS);
+    const extendedAt = Date.now();
+    await sleep(Math.max(0, SHIM_ALIVE_CHECK_AFTER_MS - (Date.now() - createdAt)));
+    expect((await shim.commands.run("echo alive")).stdout).toBe("alive\n");
+    shim.native.close();
+    const info = await waitForState(
+      context,
+      shim.sandboxId,
+      "TERMINATED",
+      SHIM_EXTENDED_TIMEOUT_MS +
+        TERMINATION_SLACK_MS +
+        SHIM_EXTEND_AFTER_MS -
+        (Date.now() - extendedAt),
+    );
+    const overrunMs =
+      (info?.terminatedAt?.getTime() ?? Date.now()) - (extendedAt + SHIM_EXTENDED_TIMEOUT_MS);
+    report(`${shim.sandboxId}: terminatedAt − deadline (overrun_s)`, overrunMs / 1000);
+
+    const paused = await ShimSandbox.create({
+      ...shimOptions,
+      timeoutMs: PAUSE_MODE_TIMEOUT_MS,
+      lifecycle: { onTimeout: "pause", autoResume: true },
+    });
+    context.created.push(paused.native);
+    try {
+      const lifecycle = (await paused.native.getHealth()).lifecycle;
+      expect([lifecycle?.onTimeout, lifecycle?.autoResume]).toEqual(["pause", true]);
+      expect(paused.native.launchInfo.idle?.autoResume).toBe(true);
+    } finally {
+      await paused.kill();
+    }
   });
 });

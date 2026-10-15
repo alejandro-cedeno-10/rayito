@@ -333,6 +333,141 @@ operador, o de otra si se usó `--allow-remote`— tiene el mismo acceso al
 sandbox que el operador. Un sandbox `SUSPENDED` con auto-resume se despierta con la
 primera petición que le llega (factura cómputo, como cualquier reanudación).
 
+## Panel de gestión local (`rayito dashboard`) { #panel-de-gestion-local }
+
+`rayito dashboard` ([guía](funciones-opcionales/panel-de-gestion.md#panel-web-local))
+sirve una página y una API JSON en `127.0.0.1` con **tus** credenciales de
+AWS. Cualquier web que abras en el mismo navegador podría intentar usarlas,
+así que el servidor acota el cuerpo (64 KiB como máximo, `413` si lo supera) y
+aplica después, en este orden y antes de interpretarlo:
+
+- **`Host` y `Origin`**: la misma lista que el proxy local
+  (`127.0.0.1`, `localhost` y `[::1]` con el puerto del panel). Un `Host`
+  ajeno es `421` (DNS rebinding); un `Origin` presente y ajeno, incluido
+  `null`, es `403`.
+- **Sesión**: la URL de arranque lleva un token de un solo uso (con
+  caducidad) que el servidor cambia por una cookie `HttpOnly`,
+  `SameSite=Strict`, `Path=/` y redirige a la URL limpia con
+  `Referrer-Policy: no-referrer`. El nombre de la cookie incluye el puerto,
+  porque las cookies no se aíslan por puerto. Sin la cookie no responde
+  nada, ni la página ni los ficheros estáticos.
+- **`Sec-Fetch-Site`**: en `/api/v1`, si el navegador manda la cabecera y no
+  vale `same-origin` ni `none`, la petición es `403`. Cubre lo que `Origin`
+  no ve: un `<img>` o una navegación desde la web que sirve un sandbox con
+  `rayito sandbox proxy` en `127.0.0.1:<otro puerto>` es `same-site`,
+  comparte el tarro de cookies y no manda `Origin`. Además, el proxy no
+  reenvía al sandbox las cookies `rayito_dashboard_*`.
+- **CSRF**: todo `POST` exige `Content-Type: application/json` (una web
+  ajena no lo puede mandar sin preflight) y la cabecera `X-Rayito-CSRF` con
+  el token de la sesión, que sólo se entrega a quien ya tiene la cookie. La
+  consulta de coste facturado (`GET /api/v1/cost?billed=true`) también exige
+  el token, porque aunque sea un `GET` cuesta dinero cada vez.
+- **Sólo lectura por defecto**: sin `--allow-actions` el servidor rechaza
+  cualquier acción con `403` antes de tocar AWS. Con la opción, cada acción
+  exige `"confirm": true`, se valida (ids, tope por petición) y entra en una
+  cola con un solo trabajador que respeta el TPS.
+- **Navegador**: CSP sin `unsafe-inline` ni `unsafe-eval` (la página son
+  módulos y hojas de estilo del propio origen), `nosniff`, `no-store`,
+  `X-Frame-Options: DENY` y `Cross-Origin-Resource-Policy: same-origin`. La
+  página escribe todo con `textContent`: ningún dato de AWS ni ninguna línea
+  de log se interpreta como HTML.
+- **Tema y logo de usuario**: se validan antes de arrancar (claves cerradas,
+  valores de color, longitud y fuente con gramática estricta, SVG sin código
+  ni referencias externas), el CSS lo genera el panel desde los valores
+  validados y se sirve del mismo origen bajo la misma CSP; el logo, además,
+  con una CSP propia (`default-src 'none'`, `sandbox`).
+- **Qué no sale**: ni tokens, JWE, `envs` o `runHookPayload` (no existen en
+  el modelo), ni el mensaje de AWS en los errores (sólo su código), ni la
+  URL con el token en ningún log. El servidor no registra peticiones.
+- **Coste**: el coste facturado (Cost Explorer, de pago) sólo se consulta
+  con `--cost-explorer`, al pulsar el botón y con el token CSRF.
+
+Riesgo residual: mientras el panel corre, cualquier proceso **de tu máquina**
+que lea la URL impresa (por ejemplo desde el historial del terminal antes de
+gastarla) o que obtenga la cookie tiene el mismo acceso que tú; el token se
+gasta en el primer uso. Con `--allow-actions` eso incluye matar sandboxes.
+Los logs de un sandbox son lo que ese sandbox escribió y se muestran tal
+cual (como en `rayito sandbox logs`): si tu código imprime secretos, el panel
+los mostrará.
+
+## Panel de gestión, fase 3: varias cuentas y avisos de cuota { #panel-fase-3 }
+
+Resumen de **T33** de
+[`SECURITY.md`](https://github.com/alejandro-cedeno-10/rayito/blob/main/SECURITY.md);
+la [guía](funciones-opcionales/panel-extras.md) tiene el uso.
+
+- **Roles de lectura, no de acciones.** `rayito dashboard --account` asume el
+  rol que creaste con `dashboard-read-role` en la cuenta destino: sólo cinco
+  lecturas (MicroVMs, imágenes, versiones y cuotas), nada de escritura, ni
+  Cost Explorer ni logs. Confía sólo en el rol o usuario que indicas (nunca en
+  una raíz de cuenta) y, con `ExternalId`, sólo si se presenta.
+- **Siempre de sólo lectura.** Las cuentas adicionales no tienen acciones
+  aunque arranques con `--allow-actions`; un `?account=` desconocido es un `400`
+  sin llamada a AWS.
+- **Sin ARN en la página.** La API y los mensajes sólo conocen la etiqueta que
+  elegiste; un rechazo de STS se muestra con su código y sin su mensaje.
+- **Sesión corta y visible.** La sesión asumida no se pide hasta usarla, dura
+  {{dashboardAssumeRoleSessionSeconds}} s y deja `rayito-dashboard` como nombre
+  de sesión en CloudTrail de la cuenta destino.
+- **Avisos de cuota**: la función sólo lee y escribe en su tema, su fila de
+  estado y su espacio de nombres de métricas; el mensaje no lleva ids ni
+  nombres, y un fallo de SNS no se da por enviado.
+- **Dashboard de CloudWatch**: el prefijo y los grupos se validan contra una
+  lista cerrada de caracteres antes de entrar en una consulta.
+
+## Panel de gestión en tu cuenta (la pila `dashboard`) { #panel-de-gestion-en-tu-cuenta }
+
+La pila `dashboard` ([guía](funciones-opcionales/panel-en-tu-cuenta.md)) publica
+una Function URL sin autenticación de AWS (`AuthType NONE`, porque un navegador
+no firma con SigV4), así que **cualquiera en Internet puede llamarla**: la
+protección es que la función valida la identidad antes de hacer nada. Es el
+resumen de **T32** de
+[`SECURITY.md`](https://github.com/alejandro-cedeno-10/rayito/blob/main/SECURITY.md).
+
+- **Identidad antes que nada.** Cada petición a `/api/v1` lleva un token de
+  acceso de Cognito en `Authorization`. Antes de enrutar o de llamar a AWS, la
+  función comprueba el formato y el tamaño, que el algoritmo sea `RS256` (`none`
+  y los demás se rechazan), la firma contra el JWKS del grupo (con la
+  biblioteca estándar, comparando el mensaje codificado entero), el emisor,
+  `token_use=access`, el `client_id`, la caducidad, `nbf` y `sub`. Sin token,
+  `401`. Si Cognito no se puede consultar, `503`, nunca «pasa». Sólo la página
+  estática y `/config.json` (el dominio del Hosted UI y el id del cliente,
+  públicos) no piden token.
+- **Dos roles.** La función corre con un rol de **sólo lectura**. Matar,
+  suspender y reanudar los hace un **rol de acciones** que sólo confía en el rol
+  de la función, que lo asume **después** de comprobar el grupo del usuario y
+  con su `sub` en el nombre de la sesión. Sin `AllowActions=true` ese rol no
+  existe.
+- **Auditoría que no se puede reescribir desde la aplicación.** Una fila por
+  sandbox y acción, escrita **antes** de ejecutar (si falla, la acción no
+  corre), con quién, qué, cuándo, id de petición e IP. Escrituras condicionales
+  y sin `UpdateItem` ni `DeleteItem` (la plantilla los deniega).
+- **Sin sesión ambiente.** El token va en la cabecera, en memoria, no en una
+  cookie: una web ajena no tiene nada que reutilizar. Cada `POST` comprueba
+  `Origin` y `application/json`, y la URL no habilita CORS.
+- **Tema y logo**: los mismos validadores que el panel local; uno inválido se
+  descarta y se sirve el de fábrica.
+- **Coste**: el coste facturado sólo con `EnableCostExplorer=true`. La caché de
+  24 h en DynamoDB no basta (su clave lleva la ventana y la región, que elige
+  quien pregunta), así que la función acepta sólo ventanas de meses completos
+  de los últimos {{dashboardStackCostLookbackMonths}} meses y regiones conocidas,
+  y gasta un presupuesto de {{dashboardStackCostMissesPerDay}} consultas de pago
+  por día UTC para toda la pila (no por usuario) que, agotado o sin poder
+  comprobarse, deja de facturar. `ReservedConcurrency` acota una avalancha de
+  peticiones sin autenticar.
+- **Acciones con identidad en vivo**: antes de asumir el rol de acciones, la
+  función comprueba en Cognito que el usuario sigue habilitado y en el grupo;
+  si Cognito no responde, no se actúa.
+- **Nada secreto en logs**: ni el token, ni `Authorization`, ni el cuerpo.
+
+Riesgo residual: un token de acceso ya emitido no se puede revocar (la función
+lo valida sin conexión): vale hasta que caduca ({{dashboardStackAccessTokenHours}}
+hora) aunque desactives al usuario, lo quites del grupo o cierres sus sesiones
+(`admin-user-global-sign-out` sólo impide renovarlo). Hasta entonces puede
+leer, pero no actuar, porque cada acción se comprueba en Cognito; quien
+administra la cuenta puede cambiar la tabla de auditoría; y la dirección es
+pública, así que lo que la protege es la validación del token, no la red.
+
 ## Agente de código dentro del sandbox
 
 Resumen de **T29** y **T30** de
