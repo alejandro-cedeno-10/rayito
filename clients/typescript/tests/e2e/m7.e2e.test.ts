@@ -191,7 +191,7 @@ describe.skipIf(!enabled)("M7 persistence (TypeScript)", () => {
     }
   });
 
-  test("a sandbox without a role is permission_denied", async () => {
+  test("no role is permission_denied and imdsBlocked stays false", async () => {
     const defaultTemplate = process.env[DEFAULT_TEMPLATE_VAR] || process.env[TEMPLATE_VAR] || "";
     const sandbox = await Sandbox.create({
       template: await context.controlPlane.resolveTemplateArn(defaultTemplate),
@@ -215,6 +215,7 @@ describe.skipIf(!enabled)("M7 persistence (TypeScript)", () => {
       expect((failure as PersistenceError).code).toBe("permission_denied");
       report("default image without a role -> checkpointFiles (s)", elapsed);
       expect(elapsed * 1000).toBeLessThan(NO_ROLE_BUDGET_MS);
+      expect((await sandbox.getHealth()).imdsBlocked).toBe(false);
     } finally {
       await killQuietly(sandbox);
     }

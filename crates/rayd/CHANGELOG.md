@@ -10,6 +10,13 @@ imagen `rayito-base` y como asset de la GitHub Release del tag `rayd-v*`.
 
 ## [Unreleased]
 
+### Security
+
+- **`rustls` 0.23.45 -> 0.23.46** (cliente HTTPS de las transferencias
+  prefirmadas de S3). Cierra RUSTSEC-2026-0346, RUSTSEC-2026-0347,
+  RUSTSEC-2026-0348 y RUSTSEC-2026-0349, que hacían fallar `cargo deny`.
+  Sólo cambian `Cargo.toml` (el pin exacto del workspace) y `Cargo.lock`.
+
 ## [0.11.0] - 2026-10-13
 
 Sin cambios en el agente: versión en paso con los SDK 0.11.0 (el arranque

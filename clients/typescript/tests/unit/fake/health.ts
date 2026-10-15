@@ -42,6 +42,7 @@ export class FakeHealth {
   resumeGeneration = 0;
   clockOffsetMs = 0;
   kernelStateLost = false;
+  imdsBlocked = false;
   uptimeMs = 12_345;
   egressEnforcement: EgressEnforcement = EgressEnforcement.NONE;
   /** `undefined` es un agente anterior a 0.3.0; `FakeLifecycleService.setTimeout` lo mueve. */
@@ -99,6 +100,7 @@ export class FakeHealth {
       resumeGeneration: BigInt(this.resumeGeneration),
       clockOffsetMs: BigInt(this.clockOffsetMs),
       kernelStateLost: this.kernelStateLost,
+      imdsBlocked: this.imdsBlocked,
       egressEnforcement: this.egressEnforcement,
       ...(this.lifecycle === undefined ? {} : { lifecycle: this.lifecycle }),
       cpuCount: this.cpuCount,
