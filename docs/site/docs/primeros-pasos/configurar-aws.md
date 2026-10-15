@@ -1,9 +1,22 @@
 # Configurar AWS
 
-Antes del primer sandbox, tu cuenta necesita tres cosas: permisos (una pila
-de IAM), un bucket para los artefactos de la imagen y la imagen
-`rayito-base` publicada. Se hace **una vez por cuenta y región**, en unos
+Antes del primer sandbox, tu cuenta necesita permisos (una pila de IAM), un
+bucket para los artefactos de la imagen y la imagen `rayito-base` publicada.
+Son seis pasos y casi todos se hacen **una vez por cuenta y región**, en unos
 15 minutos (casi todo es esperar a que AWS construya la imagen).
+
+| Paso | Una vez por | Tiempo | Coste |
+|---|---|---|---|
+| 1. Credenciales y región | máquina | 1 min | — |
+| 2. Un bucket | cuenta y región | 1 min | céntimos |
+| 3. La pila de IAM `rayito-m0-iam` | cuenta y región | 2 min | gratis |
+| 4. Publicar `rayito-base` | cuenta, región y versión de `rayd` | ≈ 10 min | ≈ $0,037/semana por versión |
+| 5. `RAYITO_TEMPLATE` | entorno de tu app | — | — |
+| 6. `rayito doctor --launch` | cuando quieras | 1 min | ≈ $0,002 |
+
+Después, cada aplicación sólo instala el SDK (`pip install rayito` o
+`pnpm add rayito`) y escribe su código; no hay ningún servidor de Rayito que
+desplegar.
 
 !!! info "Todo queda en tu cuenta"
     Rayito no tiene servidor ni API key. Lo que creas aquí son recursos tuyos:
@@ -37,8 +50,8 @@ El zip de la imagen se sube a un bucket tuyo, bajo el prefijo `rayito/`.
 Créalo en la **misma región** que los sandboxes:
 
 ```bash
-aws s3 mb s3://amzn-s3-demo-bucket --region us-east-1
 export RAYITO_BUCKET=amzn-s3-demo-bucket
+aws s3 mb "s3://$RAYITO_BUCKET" --region "$AWS_REGION"
 ```
 
 Sustituye `amzn-s3-demo-bucket` por un nombre único tuyo. `RAYITO_BUCKET`
@@ -57,7 +70,7 @@ dos juntas). Descarga la plantilla del repositorio y despliégala:
 curl -fsSLO https://raw.githubusercontent.com/alejandro-cedeno-10/rayito/main/infra/iam.yaml
 aws cloudformation deploy --stack-name rayito-m0-iam \
   --template-file iam.yaml --capabilities CAPABILITY_NAMED_IAM \
-  --parameter-overrides ArtifactBucket=amzn-s3-demo-bucket LogGroupPrefix=/rayito
+  --parameter-overrides ArtifactBucket="$RAYITO_BUCKET" LogGroupPrefix=/rayito
 ```
 
 Asigna a cada identidad sólo lo que hace:
@@ -83,6 +96,9 @@ aws iam attach-user-policy --user-name <tu-usuario> --policy-arn "$(policy_arn C
 aws iam attach-role-policy --role-name <tu-rol> --policy-arn "$(policy_arn SandboxLauncherPolicyArn)"
 ```
 
+Si ya tienes permisos de administración, puedes saltarte la asignación a tu
+usuario; hazla siempre para el rol de tu servicio.
+
 Con IAM Identity Center (SSO) no se asigna a un usuario: añade la política
 al *permission set* de tu acceso desde la consola de Identity Center.
 
@@ -100,7 +116,7 @@ cuenta. La forma más corta es publicar el `rayito-image.zip` firmado de la
 === "Desde la release (recomendado)"
 
     ```bash
-    RAYD_VERSION=0.11.0     # la misma versión que tu SDK: python -c "import rayito; print(rayito.__version__)"
+    RAYD_VERSION=0.11.0     # la misma versión que tu SDK: python -c "import rayito; print(rayito.__version__)"  (TypeScript: npm ls rayito)
     BASE=https://github.com/alejandro-cedeno-10/rayito/releases/download/rayd-v${RAYD_VERSION}
     curl -fsSLO "$BASE/rayito-image.zip"
     curl -fsSLO "$BASE/rayito-image.zip.sigstore.json"    # su firma de Sigstore
@@ -135,7 +151,7 @@ cuenta. La forma más corta es publicar el `rayito-image.zip` firmado de la
 
     ```bash
     git clone https://github.com/alejandro-cedeno-10/rayito.git && cd rayito
-    make image-publish BUCKET=amzn-s3-demo-bucket
+    make image-publish BUCKET="$RAYITO_BUCKET"
     ```
 
     Compila `rayd` para `aarch64-unknown-linux-musl`: necesitas Linux o WSL2
@@ -194,7 +210,7 @@ con `--launch` crea uno efímero de 300 s y lo mata al terminar:
 rayito doctor --template rayito-base --launch     # --launch: un sandbox efímero (≈ $0,002)
 ```
 
-Una salida típica en una cuenta recién preparada (con el SDK 0.9.0):
+Una salida típica en una cuenta recién preparada (con el SDK 0.11.0):
 
 <!-- noqa: example: salida de consola, no es código -->
 ```text

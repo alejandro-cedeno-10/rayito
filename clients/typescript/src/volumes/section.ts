@@ -30,7 +30,7 @@ import {
 import { EFS_VOLUMES_MAX_PER_SANDBOX } from "../limits.js";
 import { hasInternetConnector } from "../models.js";
 import { validateMountPaths } from "../mount-path.js";
-import { EFS_CAPS_VARIANT, requireCapsFor } from "../role-policy.js";
+import { EFS_CAPS_VARIANT, requireEfsFor } from "../role-policy.js";
 import { EfsVolume, type MountState, type VolumeStatus } from "./domain.js";
 
 export const SECTION_NAME = "efs_volumes";
@@ -144,7 +144,7 @@ export interface VolumesRequest {
 
 /**
  * Valida `volumes` por completo, sin I/O. El orden importa (forma, tope,
- * rutas, caps, conector y execution role) para que el primer error que vea
+ * rutas, imagen efs, conector y execution role) para que el primer error que vea
  * el llamante sea siempre el que puede corregir. Espejo de `plan_volumes`.
  */
 export function planVolumes(
@@ -168,7 +168,7 @@ export function planVolumes(
     validated.set(path, value);
   }
   validateMountPaths([...validated.keys()]);
-  requireCapsFor("volumes", options.imageVariant);
+  requireEfsFor("volumes", options.imageVariant);
   requireVolumeConnector(options.egress);
   if (!options.executionRoleArn) {
     throw new InvalidArgumentError(

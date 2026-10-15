@@ -1885,7 +1885,7 @@ los demás ni al SDK sin usarlo.
 `mounts=` monta uno o más buckets S3 (o un prefijo suyo) en el guest con
 `mount-s3` (Mountpoint for Amazon S3), sólo sobre `rayito-base-caps` (o una
 variante derivada por tamaño): el execution role del sandbox necesita
-IMDS, que `rayito-base` no concede (ADR-012, `_role_policy.require_caps_for`).
+IMDS, que `rayito-base` no concede (ADR-012, `_role_policy.require_caps_for`; el nombre de la imagen sólo se interpreta si es un `rayito-<variante>[-<talla>]` oficial, el resto lo decide `Health.features`).
 
 **Dominio** (`rayd_core::s3_mount`, puro): `S3Mount{mount_path, bucket,
 prefix, read_only, allow_overwrite, allow_delete}`, `MountErrorClass`
@@ -2604,3 +2604,98 @@ suscripciones de consumo (plan de ChatGPT, Claude Pro/Max, Copilot,
 SuperGrok) se rechazan o aplazan; los motivos están en
 `docs/site/docs/guias/agente-proveedores.md`. Sin cambio en `rayd` ni en el
 `.proto`.
+
+## ADR-026 — Panel de gestión opcional en la cuenta del cliente
+
+**Contexto.** `SPEC.md` §4 listaba "Billing, dashboard o cualquier superficie
+de producto SaaS" como no-objetivo. Los usuarios que operan flotas de
+MicroVMs echan en falta una vista de lo que ya existe en su cuenta:
+sandboxes vivos, imágenes y versiones, cuotas reales de Lambda MicroVMs
+(memoria por región, TPS), coste y eventos. `rayito sandbox list|info|kill`,
+`rayito doctor` y las pilas `metadata-index` y `events-webhooks` ya aportan
+los datos, pero no una superficie única. La frase literal del no-objetivo
+excluía un panel aunque fuera del propio usuario; lo que se quiere seguir
+excluyendo es un producto hospedado por Rayito. ADR-014 ya separa ambas cosas
+para el estado y las pilas opcionales; este ADR lo extiende a una interfaz.
+
+**Decisión.** Se permite un panel de gestión **opcional** con estas reglas:
+
+1. **Sólo en la cuenta del cliente.** El panel corre en la máquina del
+   usuario (fase 1, `rayito dashboard` en `127.0.0.1`) o en una pila
+   `OptionalStack` desplegada en su cuenta (fase 2, componente `dashboard`,
+   ADR-016). Rayito no opera ningún servidor, base de datos ni endpoint de
+   panel, y ninguna telemetría del panel sale de la cuenta.
+2. **Sin facturación propia.** El panel no cobra, no mide uso para cobrar ni
+   gestiona planes. El coste que muestra viene de Cost Explorer del propio
+   usuario (facturado, con retraso de 24 h y caché) o es una estimación
+   rotulada como tal (horas activas por precio del tamaño); nunca se presenta
+   la estimación como factura.
+3. **Apagado por defecto.** Sin invocar `rayito dashboard` o desplegar la
+   pila no hay ninguna llamada ni recurso (regla de funciones con coste,
+   ADR-014). Un test de cero llamadas lo comprueba en cada SDK. La caja
+   "Coste y activación", la fila de `optional-features.md` y
+   `clients/typescript/scripts/cost-declarations/dashboard.json` son obligatorias. Las llamadas a Cost
+   Explorer ($0,01 por petición) sólo ocurren con el coste activado y con
+   caché; en la fase 2 es un parámetro de la pila apagado por defecto y
+   `ce:GetCostAndUsage` sólo se concede con él activo.
+4. **Sólo lectura por defecto.** Las acciones (matar, suspender, reanudar)
+   exigen una opción explícita (`--allow-actions`, o el rol de acciones de la
+   pila), confirmación en la UI y una cola que respete los TPS de la
+   plataforma (suspender, 2 TPS). El panel muestra sólo el campo `metadata` de
+   un sandbox; el JWE de la sonda se queda en memoria y nunca se serializa.
+   No muestra ni registra jamás JWE, tokens, `envs`, `runHookPayload` ni
+   valores de secretos (la URL de inicio impresa en la fase 1 es la única
+   excepción deliberada, con token de un solo uso). Pedir un aumento de cuota
+   es un enlace a la consola, no una acción del panel.
+5. **Una sola API y una sola SPA.** Los puertos del núcleo son
+   `SandboxInventory`, `ImageCatalog`, `UsageCost`, `Quotas`,
+   `EventsHistory` y `Actions`, con un adaptador por API de AWS e imports
+   perezosos (`_optional.py`, `loadOptionalPeer`). El dominio es puro. La API
+   JSON versionada (`/api/v1/...`) y la SPA sin paso de build (módulos ES,
+   componentes web, tokens de la web de docs, claro y oscuro) son las mismas
+   en la fase 1 y la fase 2; el servidor local y la Lambda son dos cáscaras
+   de entrada sobre los mismos servicios.
+6. **Paridad de SDK en los servicios.** `Quotas` y `UsageCost` se ofrecen en
+   Python (sync y async) y TypeScript con la misma superficie. El servidor
+   del panel vive en la CLI de Python, que sigue siendo la única CLI.
+7. **Seguridad.** Fase 1: loopback, comprobación de `Host`/`Origin` y
+   defensa de CSRF como `cli/_proxy.py`, más un token de inicio de un solo
+   uso que el servidor cambia por una cookie `HttpOnly` `SameSite=Strict` y
+   una URL limpia. Fase 2: una Function URL sólo admite `AWS_IAM` o `NONE` y
+   un navegador no firma con SigV4, así que la variante por defecto es
+   `NONE` con validación del JWT de Cognito en el manejador (emisor,
+   audiencia, caducidad, firma JWKS, `token_use`) antes de cualquier ruta o
+   llamada a AWS, y la shell estática como única ruta sin autenticar; `AWS_IAM`
+   con identity pool y SigV4 es la variante opcional (a verificar en la
+   cuenta de pruebas). Una función tiene un solo rol: corre con un rol de
+   sólo lectura y asume por `sts:AssumeRole` el rol de acciones tras
+   comprobar el grupo del llamante. CORS propio, `Origin` en cada `POST`,
+   token en `Authorization` y cabeceras CSP, `frame-ancestors 'none'` y
+   `Referrer-Policy` en toda respuesta. Una fila de auditoría en DynamoDB por
+   acción, porque CloudTrail sólo vería la identidad de la Lambda.
+
+**Fases.** 0: este ADR y el cambio OpenSpec `dashboard`. 1: `rayito
+dashboard` local con inventario, imágenes, cuotas, coste y acciones. 2: pila
+`dashboard` con la SPA y la API servidas desde una Lambda con Function URL
+(CloudFormation); CloudFront más S3 queda como variante opcional documentada
+como no probada donde las políticas de la organización lo impidan. 3
+(opcional): dashboard de CloudWatch generado, vista multi-cuenta y alertas de
+cuota.
+
+**Consecuencias.** El no-objetivo de `SPEC.md` §4 pasa a excluir sólo el
+billing y un panel hospedado por Rayito. Hay más superficie que mantener y
+asegurar: cada fase pasa revisión de `SECURITY.md` antes de publicarse.
+`list-microvms` sigue siendo la fuente de verdad del estado; sin
+`metadata-index` la metadata cuesta O(n) sondas y el panel lo dice. La
+utilización de las cuotas de MicroVMs en Service Quotas y los TPS de las
+operaciones de lista no están documentados: se miden en AWS real antes de
+cerrar cada fase.
+
+**Alternativas descartadas.** Un panel hospedado por Rayito: contradice
+ADR-014 regla 1. Sólo un dashboard de CloudWatch: no hay métricas nativas de
+MicroVMs ni acciones. Un panel sin API versionada (SPA acoplada a la CLI):
+obligaría a rehacerlo en la fase 2. Amplify Hosting: añade una pieza sin
+ventaja sobre S3 y Lambda.
+
+**Reversible.** `rayito stack destroy dashboard` borra la pila; el comando
+local no deja estado. Sin ellos el SDK queda exactamente como antes.

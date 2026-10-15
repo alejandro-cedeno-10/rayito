@@ -92,6 +92,8 @@ jobs:
       - run: uvx ruff==0.16.7 check scripts
       - name: limits.json renders _limits.py and limits.ts without drift
         run: python3 scripts/gen_limits.py --check
+      - name: Python __all__ and TypeScript exports agree (rayito, rayito.e2b), up to the commented allowlist
+        run: python3 scripts/check_sdk_parity.py
       - name: the TypeScript copy of the deepagents runner matches the Python one
         run: python3 scripts/gen_agent_assets.py --check
       - name: infra/*.yaml renders the SDKs' stack templates/artifacts without drift

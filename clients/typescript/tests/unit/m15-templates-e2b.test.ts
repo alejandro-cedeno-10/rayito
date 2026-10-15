@@ -74,4 +74,10 @@ describe("e2b Template shim", () => {
     expect(resolveMemoryMb(1024)).toBe(1024);
     expect(resolveMemoryMb(undefined)).toBeUndefined();
   });
+
+  test("the shim inherits the install shortcuts with the root wrap", () => {
+    const t = new Template().setUser("user").dnfInstall("tree").npmInstall();
+    expect(t).toBeInstanceOf(Template);
+    expect(t.spec.steps.map((step) => step.kind)).toEqual(["user", "user", "run", "user", "run"]);
+  });
 });

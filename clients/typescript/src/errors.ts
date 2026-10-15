@@ -488,6 +488,13 @@ export class StackError extends SandboxError {
  */
 export class WebhookError extends SandboxError {}
 
+/**
+ * Una llamada de lectura del panel de gestión (Service Quotas, Cost Explorer,
+ * imágenes) falló con un código de AWS sin error propio; `awsCode` lo lleva
+ * y el mensaje nunca repite el de AWS. Espejo de `DashboardException`.
+ */
+export class DashboardError extends SandboxError {}
+
 /** `CustomDomain` (m15-custom-domain) falló. */
 export class CustomDomainError extends SandboxError {}
 

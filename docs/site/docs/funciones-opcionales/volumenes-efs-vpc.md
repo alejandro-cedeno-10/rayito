@@ -237,13 +237,26 @@ cuando el montaje exista.
 
 El shim usa el mismo `VolumeStore`:
 
-```python
-from rayito import EfsVolumes
-from rayito.e2b import E2B
+=== "Python"
 
-client = E2B(volume_store=EfsVolumes(region="us-east-1").volume_store())
-vol = client.Volume.create("datos-agente-7")
-```
+    ```python
+    from rayito import EfsVolumes
+    from rayito.e2b import E2B
+
+    client = E2B(volume_store=EfsVolumes(region="us-east-1").volume_store())
+    vol = client.Volume.create("datos-agente-7")
+    ```
+
+=== "TypeScript"
+
+    ```ts
+    import { EfsVolumes } from "rayito";
+    import { E2B } from "rayito/e2b";
+
+    const efs = new EfsVolumes({ region: "us-east-1" });
+    const client = new E2B({ volumeStore: await efs.volumeStore() });
+    const vol = await client.Volume.create("datos-agente-7");
+    ```
 
 ## Qué crea y por qué es seguro
 

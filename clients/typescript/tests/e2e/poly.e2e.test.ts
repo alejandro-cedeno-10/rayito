@@ -13,12 +13,21 @@
 
 import { afterAll, describe, expect, test } from "vitest";
 import { InvalidArgumentError, type Sandbox, UnimplementedError } from "../../src/index.js";
-import { createTestSandbox, e2eEnabled, timed, useE2E } from "./helpers.js";
+import {
+  createTestSandbox,
+  e2eEnabled,
+  TEST_SANDBOX_TIMEOUT_MS,
+  timed,
+  useE2E,
+} from "./helpers.js";
 
 const POLY_TEMPLATE_VAR = "RAYITO_TEMPLATE_POLY";
 const POLY_IMAGE = "rayito-base-poly";
 const DENO_LANGUAGES = ["javascript", "typescript"] as const;
 const ESCAPE = "\u001b";
+const PAUSE_MAX_IDLE_SECONDS = 300;
+const ENDLESS_LOOP_TIMEOUT_MS = 2_000;
+const AWAITED_DELAY_MS = 200;
 
 const polyEnabled = e2eEnabled() && Boolean(process.env[POLY_TEMPLATE_VAR]);
 
@@ -33,7 +42,7 @@ describe.skipIf(!polyEnabled)(`kernels poly (requiere RAYITO_E2E=1 y ${POLY_TEMP
   });
 
   test("bash, javascript and typescript cells, exclusive options, listing", async () => {
-    sandbox = await createTestSandbox(e2e, { timeoutMs: 900_000 });
+    sandbox = await createTestSandbox(e2e, { timeoutMs: TEST_SANDBOX_TIMEOUT_MS });
     const poly = sandbox;
     const [first] = await timed("m7 first bash cell (lazy kernel start)", () =>
       poly.runCode("echo hi", { language: "bash" }),
@@ -87,6 +96,56 @@ describe.skipIf(!polyEnabled)(`kernels poly (requiere RAYITO_E2E=1 y ${POLY_TEMP
     expect(listed.find((item) => item.id === "default-javascript")?.language).toBe("javascript");
     expect(listed.find((item) => item.id === ctx.id)?.language).toBe("typescript");
     expect((await poly.runCode("1 + 1")).text).toBe("2");
+  });
+
+  test("deno outputs: stderr, html, thrown errors and top-level await", async () => {
+    const poly = await createTestSandbox(e2e, { timeoutMs: TEST_SANDBOX_TIMEOUT_MS });
+    const errored = await poly.runCode("console.error('err')", { language: "typescript" });
+    expect(errored.logs.stderr.join("")).toContain("err");
+    const awaited = await poly.runCode(
+      `await new Promise((r) => setTimeout(() => r(7), ${AWAITED_DELAY_MS}))`,
+      { language: "typescript" },
+    );
+    expect(awaited.error).toBeUndefined();
+    expect(awaited.text).toBe("7");
+    expect(awaited.text).not.toContain(ESCAPE);
+  });
+
+  test("typescript context: envs, timeout of an endless loop and restart", async () => {
+    const poly = await createTestSandbox(e2e, { timeoutMs: TEST_SANDBOX_TIMEOUT_MS });
+    const ctx = await poly.createCodeContext({ language: "typescript", envs: { K: "1" } });
+    expect((await poly.runCode("Deno.env.get('K') === '1'", { context: ctx })).text).toBe("true");
+    expect((await poly.runCode("let z = 5", { context: ctx })).error).toBeUndefined();
+    const [timedOut] = await timed(
+      `typescript endless loop with timeout ${ENDLESS_LOOP_TIMEOUT_MS} ms returned after`,
+      () => poly.runCode("while (true) {}", { context: ctx, timeoutMs: ENDLESS_LOOP_TIMEOUT_MS }),
+    );
+    expect(timedOut.error?.name).toBe("ExecutionTimeout");
+    expect((await poly.runCode("1 + 1", { context: ctx })).text).toBe("2");
+    expect((await poly.runCode("let w = 9", { context: ctx })).error).toBeUndefined();
+    await poly.restartCodeContext(ctx);
+    const cleared = await poly.runCode("w", { context: ctx });
+    expect(cleared.error?.name).toBe("ReferenceError");
+    expect((await poly.listCodeContexts()).map((item) => item.id)).toContain(ctx.id);
+    await poly.removeCodeContext(ctx);
+  });
+
+  test("javascript state survives pause and resume", async () => {
+    const poly = await createTestSandbox(e2e, {
+      timeoutMs: TEST_SANDBOX_TIMEOUT_MS,
+      idle: { maxIdleSeconds: PAUSE_MAX_IDLE_SECONDS, autoResume: true },
+    });
+    expect(
+      (await poly.runCode("globalThis.kept = 42", { language: "javascript" })).error,
+    ).toBeUndefined();
+    const generation = (await poly.getHealth()).resumeGeneration;
+    const [paused] = await timed("pause() -> SUSPENDED", () => poly.pause());
+    expect(paused).toBe(true);
+    await timed("resume() -> kernel_ready", () => poly.resume());
+    expect((await poly.runCode("kept", { language: "javascript" })).text).toBe("42");
+    const health = await poly.getHealth();
+    expect(health.kernelStateLost).toBe(false);
+    expect(health.resumeGeneration).toBeGreaterThan(generation);
   });
 });
 
