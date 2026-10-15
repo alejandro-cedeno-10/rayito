@@ -14,7 +14,8 @@
  * Con `RAYITO_TEMPLATE` (`rayito-base`, sin `CAP_NET_ADMIN`):
  * `create({ allowInternetAccess: false })` rechaza con `UnimplementedError`
  * tras terminar el MicroVM, también con `keepOnFailure`, y `updateNetwork`
- * con restricciones es `UnimplementedError`.
+ * con restricciones es `UnimplementedError`; el shim de E2B con
+ * `allowInternetAccess: false` también falla cerrado.
  *
  * Las dos suites se omiten sin `RAYITO_TEMPLATE_CAPS`: su presencia es la
  * señal de que las dos imágenes son de M9 (con un `rayito-base` anterior a 0.3.0,
@@ -334,6 +335,18 @@ async function waitTerminated(context: E2EContext, sandboxId: string): Promise<n
   );
 }
 
+/** Las opciones de `create()` del shim con los topes de este fichero y los guardarraíles de `helpers.ts`. */
+function shimCreateOptions(context: E2EContext) {
+  return {
+    template: context.templateArn,
+    timeoutMs: SHIM_TIMEOUT_MS,
+    maxLifetimeMs: SHIM_LIFETIME_MS,
+    executionRoleArn: context.settings.executionRoleArn,
+    logging: context.settings.logging,
+    controlPlane: context.controlPlane,
+  };
+}
+
 async function terminateAll(context: E2EContext, sandboxIds: readonly string[]): Promise<void> {
   for (const sandboxId of sandboxIds) {
     try {
@@ -569,14 +582,7 @@ describe.skipIf(!m9Enabled)(
 
     test("the E2B shim maps allowInternetAccess, network and updateNetwork", async () => {
       const other = await firstIpv4(OTHER_HOST);
-      const shimOptions = {
-        template: e2e.templateArn,
-        timeoutMs: SHIM_TIMEOUT_MS,
-        maxLifetimeMs: SHIM_LIFETIME_MS,
-        executionRoleArn: e2e.settings.executionRoleArn,
-        logging: e2e.settings.logging,
-        controlPlane: e2e.controlPlane,
-      };
+      const shimOptions = shimCreateOptions(e2e);
       const offline = await ShimSandbox.create({ ...shimOptions, allowInternetAccess: false });
       e2e.created.push(offline.native);
       await installProbe(offline.native);
@@ -638,6 +644,24 @@ describe.skipIf(!m9Enabled)(
         );
       },
     );
+
+    test("the E2B shim with allowInternetAccess false fails closed and terminates the MicroVM", async () => {
+      const recording = recordingControlPlane(e2e.controlPlane);
+      const error = await ShimSandbox.create({
+        ...shimCreateOptions(e2e),
+        controlPlane: recording.plane,
+        allowInternetAccess: false,
+      }).catch((caught: unknown) => caught);
+      launched.push(...recording.launched);
+
+      expect(error).toBeInstanceOf(UnimplementedError);
+      expect((error as UnimplementedError).feature).toBe("allowInternetAccess: false");
+      expect((error as UnimplementedError).reason).toContain(CAPS_IMAGE);
+      expect(recording.launched).toHaveLength(1);
+      const sandboxId = recording.launched[0] as string;
+      expect(recording.terminated).toContain(sandboxId);
+      note(`${sandboxId} -> TERMINATED`, `${(await waitTerminated(e2e, sandboxId)).toFixed(2)} s`);
+    });
 
     test("updateNetwork with restrictions is UnimplementedError; an open policy is accepted", async () => {
       const sandbox = await createTestSandbox(e2e);

@@ -9,6 +9,7 @@
 
 import { afterAll, beforeAll } from "vitest";
 import {
+  type ControlPlane,
   type IdlePolicyInput,
   LambdaMicrovmsControlPlane,
   type LoggingOption,
@@ -17,6 +18,7 @@ import {
   SandboxNotFoundError,
   type TelemetryExport,
 } from "../../src/index.js";
+import { TERMINAL_STATES } from "../../src/limits.js";
 
 export const E2E_FLAG_VAR = "RAYITO_E2E";
 export const TEMPLATE_VAR = "RAYITO_TEMPLATE";
@@ -25,6 +27,9 @@ export const TEST_SANDBOX_TIMEOUT_MS = 900_000;
 export const MAX_TEST_SANDBOX_TIMEOUT_MS = 1_800_000;
 export const MAX_LIVE_TEST_SANDBOXES = 10;
 export const POLL_MS = 200;
+export const HOME = "/home/user";
+export const TERMINATE_VISIBLE_MS = 30_000;
+export const TERMINATE_POLL_MS = 500;
 
 export function e2eEnabled(): boolean {
   return process.env[E2E_FLAG_VAR] === "1" && Boolean(process.env[TEMPLATE_VAR]);
@@ -251,6 +256,8 @@ export async function createTestSandbox(
     readonly timeoutMs?: number;
     readonly idle?: IdlePolicyInput | null;
     readonly telemetry?: TelemetryExport;
+    readonly cpuTimeLimit?: number;
+    readonly egress?: readonly string[];
   } = {},
 ): Promise<Sandbox> {
   const timeoutMs = options.timeoutMs ?? TEST_SANDBOX_TIMEOUT_MS;
@@ -267,6 +274,8 @@ export async function createTestSandbox(
     logging: context.settings.logging,
     controlPlane: context.controlPlane,
     ...(options.telemetry === undefined ? {} : { telemetry: options.telemetry }),
+    ...(options.cpuTimeLimit === undefined ? {} : { cpuTimeLimit: options.cpuTimeLimit }),
+    ...(options.egress === undefined ? {} : { egress: options.egress }),
   });
   const elapsed = seconds(started);
   context.created.push(sandbox);
@@ -276,4 +285,23 @@ export async function createTestSandbox(
     elapsed,
   );
   return sandbox;
+}
+
+/**
+ * `get-microvm` es eventualmente consistente (AWS_API_NOTES.md §6): justo
+ * después de `terminate-microvm` puede seguir respondiendo `RUNNING`, así que
+ * el estado terminal se sondea con plazo. Devuelve los segundos que tardó.
+ */
+export async function waitForTerminalState(
+  sandboxId: string,
+  controlPlane: ControlPlane,
+): Promise<number> {
+  const elapsed = await waitUntil(
+    async () => TERMINAL_STATES.has((await controlPlane.getMicrovm(sandboxId)).state),
+    TERMINATE_VISIBLE_MS,
+    "TERMINATING|TERMINATED",
+    TERMINATE_POLL_MS,
+  );
+  report(`${sandboxId}: terminate-microvm -> TERMINATING|TERMINATED`, elapsed);
+  return elapsed;
 }

@@ -8,6 +8,11 @@ versionado [SemVer](https://semver.org/lang/es/).
 
 ### Añadido
 
+- **Cobertura e2e de la superficie del SDK**: nuevos tests contra AWS real
+  (`transport`, `processes`, `filesystem`, `code` y `hardening`, espejos de los
+  bloques M1 a M4 de Python) y ampliaciones de `m9-e2b`, `poly`,
+  `m9-transfer`, `m9-timeout` y `m9-egress`. Sólo tests: no cambia el SDK ni
+  su API. Sin `RAYITO_E2E=1` se omiten sin llamar a AWS.
 - **Servicios del panel de gestión** (`dashboard`, ADR-026, fase 1): `Quotas`
   (cuotas aplicadas de Lambda MicroVMs, memoria asignada contra la cuota de la
   región y avisos al 80 % y al 95 %), `UsageCost` (coste facturado por Cost
