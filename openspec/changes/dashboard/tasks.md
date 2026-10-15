@@ -38,13 +38,17 @@
 
 ## 5. Phase 2: in-account stack
 
-- [ ] 5.1 Verify in the test account: Function URL `AuthType NONE` with handler-side Cognito JWT versus `AWS_IAM` with identity pool and SigV4
-- [ ] 5.2 `infra/dashboard.yaml` (Lambda Function URL serving SPA and API, DynamoDB cache and audit, read-only function role plus an actions role assumed after the group check, Cost Explorer stack parameter off by default, security headers and CORS), `cfn-lint`
-- [ ] 5.3 `OptionalStacks` component and `rayito stack deploy|status|destroy dashboard`; the theme (JSON text) enters as a stack or SSM parameter and goes through `parse_theme`/`parse_logo` (3.3b)
-- [ ] 5.4 Lambda handler over the same services; shared contract tests
-- [ ] 5.5 Audit rows per action; security review
-- [ ] 5.6 Optional CloudFront plus S3 variant, documented untested if blocked
-- [ ] 5.7 Docs and acceptance
+- [ ] 5.1 Verify in the test account: Function URL `AuthType NONE` with handler-side Cognito JWT versus `AWS_IAM` with identity pool and SigV4 (not run yet: needs AWS access; the default variant was chosen by design, see ADR-026 rule 7)
+- [x] 5.2 `infra/dashboard.yaml` (Lambda Function URL serving SPA and API, DynamoDB cache and audit, read-only function role plus an actions role assumed after the group check, Cost Explorer stack parameter off by default, security headers and CORS), `cfn-lint`
+- [x] 5.3 `OptionalStacks` component and `rayito stack deploy|status|destroy dashboard`; the theme (JSON text) enters as a stack or SSM parameter and goes through `parse_theme`/`parse_logo` (3.3b)
+- [x] 5.4 Lambda handler over the same services; shared contract tests
+- [x] 5.5 Audit rows per action; security review
+- [x] 5.6 Optional CloudFront plus S3 variant, documented untested (no template: the test account denies both)
+- [x] 5.7a Docs: guide, security page and `SECURITY.md` T32, `optional-features.md` rows, `infra/README.md`
+- [x] 5.7c Review fixes: bounded billed-cost windows, regions and daily budget; docs and T32 on token revocation plus a live Cognito check before actions; SPA keeps the refresh token and does not loop on 401; SPA client found by name and `/config.json` 5xx surfaced; pinned `limits.json` values
+- [x] 5.7d Cost clarity and review fixes: Lambda price and worked example, public Function URL warning and `ReservedConcurrency`, Cost Explorer worst case in dollars, SSM Advanced parameter cost, jobs longer than the function timeout refused before the audit, a single owner for the read-cache invalidation, and a Python and TypeScript parity test of the stack cost text
+- [x] 5.7e Screenshot privacy review: the in-account captures re-rendered from the panel over invented demo data, and the stack reports `meta.deployment: stack` so the shared Help view shows stack hints instead of CLI flags
+- [ ] 5.7b Acceptance in real AWS (deploy, sign in, read, act, audit rows, destroy) and cleanup of the run's resources only
 
 ## 6. Phase 3 (optional)
 

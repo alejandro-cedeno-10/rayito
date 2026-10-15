@@ -12,7 +12,8 @@ lees tus propios datos con tus credenciales.
     TypeScript, con la misma superficie) y el **panel web local**
     (`rayito dashboard`, sólo CLI de Python), que se construye encima de
     ellos: [salta al panel](#panel-web-local). La pila opcional `dashboard`
-    en tu cuenta (fase 2 del cambio OpenSpec `dashboard`) todavía no existe.
+    en tu cuenta (fase 2) tiene su propia página:
+    [Panel en tu cuenta](panel-en-tu-cuenta.md).
 
 !!! info "Coste y activación"
     - **Por defecto**: apagado. Construir `Quotas`, `UsageCost` o `Fleet` no
@@ -647,12 +648,12 @@ panel en `/theme/logo` y, además, con su propia CSP (`default-src 'none'`,
 En el repositorio hay un ejemplo con una paleta inventada:
 `examples/dashboard-theme/` (`aurora.json`, `aurora.css` y `aurora-logo.svg`).
 
-!!! note "Para la pila de la fase 2"
-    El mismo mecanismo se reutilizará en el panel desplegado: el texto del tema
-    (JSON) llegará como parámetro de la pila (o de SSM) y pasará por las
-    mismas funciones de validación (`parse_theme`, `parse_logo`) antes de
-    servirse en `/theme.css` y `/theme/logo`. Las claves y el formato no
-    cambian.
+!!! note "El mismo tema en la pila"
+    El panel desplegado en tu cuenta ([Panel en tu cuenta](panel-en-tu-cuenta.md#tema))
+    usa el mismo formato: el texto del tema (JSON) llega como parámetro de la pila
+    (`ThemeJson`) o de SSM (`ThemeParameterName`) y pasa por las mismas
+    funciones de validación (`parse_theme`, `parse_logo`) antes de servirse en
+    `/theme.css` y `/theme/logo`. Las claves y el formato no cambian.
 
 ### Seguridad
 
@@ -728,6 +729,7 @@ Los errores se traducen por **código** de AWS y el mensaje sólo lo lleva a
 - [Funciones opcionales y su coste](../optional-features.md)
 - [Límites](../limits.md): cuotas y TPS de Lambda MicroVMs
 - [Precios](../cost.md): de dónde salen los precios del cómputo
+- [Panel en tu cuenta (la pila `dashboard`)](panel-en-tu-cuenta.md)
 - [Eventos y webhooks](eventos-y-webhooks.md)
 - [API JSON del panel](../referencia/api-del-panel.md)
 - [`rayito dashboard` en la CLI](../cli.md#rayito-dashboard)

@@ -1,0 +1,32 @@
+{
+  "dashboard": {
+    "creates": [
+      "AWS::Lambda::Function (1) + AWS::Lambda::Url + AWS::Logs::LogGroup",
+      "AWS::Cognito::UserPool + UserPoolClient + UserPoolDomain (+ UserPoolGroup con AllowActions=true)",
+      "AWS::DynamoDB::Table (x2: auditoría y caché de coste, bajo demanda)",
+      "AWS::IAM::Role (x1 de lectura; +1 de acciones con AllowActions=true)",
+      "AWS::SSM::Parameter (Standard, sin coste; sólo con ThemeJson)"
+    ],
+    "idleMonthly": "~$0 en reposo: sin tráfico no hay invocaciones, y Lambda, DynamoDB bajo demanda y Cognito (capa gratuita de usuarios activos) sólo facturan por uso. Un parámetro SSM Advanced propio (tema o logo) cuesta $0,05 al mes aunque no haya tráfico",
+    "perUse": [
+      "Lambda: una invocación por petición de la SPA, que sondea cada 15 s con la pestaña abierta. Ejemplo: una pestaña abierta 8 h al día durante 30 días son unas 57600 invocaciones al mes, dentro de las 1000000 peticiones y los 400000 GB-s gratuitos al mes; pasada la capa gratuita, $0,20 por millón de peticiones más la duración. La Function URL es pública (AuthType NONE): el tráfico sin autenticar también factura invocaciones, así que fija ReservedConcurrency para acotarlo",
+      "Cost Explorer (sólo con EnableCostExplorer=true): $0,01 por consulta, una cada 24 h por ventana gracias a la caché y, en total, como mucho 20 al día UTC (tope de la pila): en el peor caso $0,20 al día, unos $6,00 al mes",
+      "DynamoDB: una escritura por sandbox y acción (auditoría)",
+      "SSM (sólo con tema o logo en parámetros Advanced): $0,05 por cada 10000 interacciones de API; la función relee cada 300 s por contenedor activo, hasta unas 17280 interacciones al mes ($0,09)"
+    ],
+    "removal": "destroy() borra todo lo que la pila creó, incluidas las filas de auditoría (expórtalas antes si las necesitas) y los usuarios de Cognito",
+    "source": "AWS_API_NOTES.md §10; precios de Lambda, DynamoDB, Cognito, SSM Parameter Store y Cost Explorer us-east-1, 2026-10-13",
+    "parameters": {
+      "AllowActions": "true crea el rol de acciones (matar, suspender, reanudar), el grupo de Cognito que puede usarlo y la auditoría; sin él el panel es de sólo lectura.",
+      "EnableCostExplorer": "true permite consultar el coste facturado (ce:GetCostAndUsage, 0,01 USD por consulta, cacheada 24 h en la tabla de caché). Sólo se aceptan ventanas de meses completos de los últimos 13 meses y, en total, como mucho 20 consultas de pago por día UTC.",
+      "ImageNamePrefix": "El rol de acciones sólo actúa sobre imágenes cuyo nombre empieza así.",
+      "InitialUserEmail": "Opcional: crea este usuario de Cognito (invitación por correo) y, con AllowActions=true, lo añade al grupo de acciones.",
+      "DomainPrefix": "Opcional: prefijo del dominio del Hosted UI de Cognito (único en la región).",
+      "ThemeJson": "Opcional: tema de color propio en JSON (hasta 4096 bytes; formato de examples/dashboard-theme). La pila lo guarda en un parámetro de SSM.",
+      "ThemeParameterName": "Opcional: nombre (con «/» inicial) de un parámetro de SSM tuyo con el tema JSON, para uno de más de 4096 bytes. Tiene prioridad sobre ThemeJson. Un parámetro Advanced cuesta $0,05 al mes más las interacciones de API (precios de SSM Parameter Store, 2026-10-13); la función lo relee cada 300 s.",
+      "LogoParameterName": "Opcional: nombre (con «/» inicial) de un parámetro de SSM con un logo SVG (hasta 8192 bytes). Un parámetro Advanced cuesta $0,05 al mes más las interacciones de API (precios de SSM Parameter Store, 2026-10-13); la función lo relee cada 300 s.",
+      "ReservedConcurrency": "Opcional: concurrencia reservada de la función; acota lo que cuesta una avalancha de peticiones sin autenticar.",
+      "LogRetentionDays": "Retención del log group de la función (días); nunca contiene tokens."
+    }
+  }
+}

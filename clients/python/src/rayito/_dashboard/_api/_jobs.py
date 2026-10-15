@@ -13,7 +13,7 @@ from collections import OrderedDict
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any, Final, Literal
+from typing import Any, Final, Literal, Protocol
 
 from rayito._dashboard._api._contract import iso_utc
 from rayito._dashboard._api._serialize import plan_json
@@ -78,6 +78,38 @@ def job_json(job: BulkJob) -> dict[str, Any]:
             for item in job.items
         ],
     }
+
+
+def abort_unreached(job: BulkJob) -> None:
+    """Marca como fallidos, con `ABORTED_CODE`, los sandboxes que un trabajo
+    interrumpido no llegó a tocar."""
+    reached = {item.sandbox_id for item in job.items}
+    job.items.extend(
+        BulkItemResult(sandbox_id, "failed", ABORTED_CODE)
+        for sandbox_id in job.sandbox_ids
+        if sandbox_id not in reached
+    )
+
+
+class JobQueue(Protocol):
+    """Lo que `DashboardApi` pide a la cola de acciones: encolar, consultar
+    por id, listar y cerrar. `BulkJobs` (hilo trabajador, el servidor local)
+    y la cola síncrona de la Lambda de la pila lo cumplen."""
+
+    def submit(
+        self,
+        action: BulkAction,
+        sandbox_ids: Iterable[str],
+        *,
+        plan: BulkPlan,
+        applied_rate: float | None,
+    ) -> dict[str, Any]: ...
+
+    def get(self, job_id: str) -> dict[str, Any] | None: ...
+
+    def snapshots(self) -> list[dict[str, Any]]: ...
+
+    def close(self) -> None: ...
 
 
 class BulkJobs:
@@ -193,9 +225,4 @@ class BulkJobs:
 
     def _abort(self, job: BulkJob) -> None:
         with self._lock:
-            reached = {item.sandbox_id for item in job.items}
-            job.items.extend(
-                BulkItemResult(sandbox_id, "failed", ABORTED_CODE)
-                for sandbox_id in job.sandbox_ids
-                if sandbox_id not in reached
-            )
+            abort_unreached(job)

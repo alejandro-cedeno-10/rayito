@@ -2669,10 +2669,14 @@ para el estado y las pilas opcionales; este ADR lo extiende a una interfaz.
    con identity pool y SigV4 es la variante opcional (a verificar en la
    cuenta de pruebas). Una función tiene un solo rol: corre con un rol de
    sólo lectura y asume por `sts:AssumeRole` el rol de acciones tras
-   comprobar el grupo del llamante. CORS propio, `Origin` en cada `POST`,
-   token en `Authorization` y cabeceras CSP, `frame-ancestors 'none'` y
+   comprobar el grupo del llamante. Sin CORS (la SPA se sirve desde el mismo
+   origen, así que la Function URL no lo habilita), `Origin` propio en cada
+   `POST`, token en `Authorization` y cabeceras CSP, `frame-ancestors 'none'` y
    `Referrer-Policy` en toda respuesta. Una fila de auditoría en DynamoDB por
-   acción, porque CloudTrail sólo vería la identidad de la Lambda.
+   acción, escrita antes de ejecutarla (si no se puede escribir, la acción no
+   corre), porque CloudTrail sólo vería la identidad de la Lambda. El tema de
+   usuario entra por un parámetro de la pila (`ThemeJson`) o de SSM y pasa por
+   los mismos validadores que `--theme`.
 
 **Fases.** 0: este ADR y el cambio OpenSpec `dashboard`. 1: `rayito
 dashboard` local con inventario, imágenes, cuotas, coste y acciones. 2: pila

@@ -16,6 +16,7 @@ from pathlib import Path
 import pytest
 
 from rayito._dashboard._api._contract import API_PREFIX
+from rayito._dashboard._api._static import load_static_files
 from rayito._dashboard._theme import PNG_SIGNATURE, Appearance, parse_logo, parse_theme
 from rayito._limits import DASHBOARD_REQUEST_MAX_BODY_BYTES, DASHBOARD_START_TOKEN_TTL_SECONDS
 from rayito.cli._dashboard_server import (
@@ -23,7 +24,6 @@ from rayito.cli._dashboard_server import (
     CSRF_HEADER,
     LOOPBACK,
     SessionGuard,
-    load_static_files,
 )
 
 from ..conftest import FakeClock
@@ -32,6 +32,7 @@ from ..fake_dashboard import FakePlane, list_item, sandbox_id
 
 pytestmark = pytest.mark.usefixtures("clean_catalog")
 
+AUTH_MODULE = "auth.js"
 STATIC_ROOT = Path(__file__).resolve().parents[3] / "src" / "rayito" / "_dashboard" / "_static"
 JSON_HEADERS = {"Content-Type": "application/json"}
 FORBIDDEN_JS = (
@@ -387,8 +388,21 @@ def test_the_spa_uses_nothing_the_csp_blocks_or_that_could_inject_html() -> None
 def test_the_spa_never_reads_or_stores_secrets() -> None:
     for path in STATIC_ROOT.rglob("*.js"):
         text = path.read_text(encoding="utf-8").lower()
-        assert "sessionstorage" not in text
         assert "document.cookie" not in text
+        if path.name != AUTH_MODULE:
+            assert "sessionstorage" not in text
+
+
+def test_the_sign_in_flow_keeps_tokens_in_memory_and_only_the_pkce_round_trip_in_the_tab() -> None:
+    """`auth.js` (pila `dashboard`) guarda el verificador PKCE y el `state` el
+    tiempo del viaje al Hosted UI y una marca sin valor («ya se intentó renovar»)
+    contra el bucle de redirecciones; los tokens, nunca fuera de la memoria."""
+    text = (STATIC_ROOT / "js" / AUTH_MODULE).read_text(encoding="utf-8")
+    assert "localStorage." not in text
+    assert text.count("sessionStorage.setItem") == 2
+    assert "sessionStorage.setItem(FLOW_KEY" in text
+    assert 'sessionStorage.setItem(REJECTED_KEY, "1")' in text
+    assert not re.search(r"sessionStorage\.setItem\([^)]*(?:tokens|access|refresh)", text)
 
 
 # ---------------------------------------------------------------------- logs

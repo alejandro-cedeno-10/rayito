@@ -34,7 +34,7 @@ from rayito._dashboard._api._contract import (
     ApiResponse,
     LogsSource,
 )
-from rayito._dashboard._api._jobs import BulkJobs, JobsBusy
+from rayito._dashboard._api._jobs import BulkJobs, JobQueue, JobsBusy
 from rayito._dashboard._api._serialize import (
     billed_json,
     estimate_json,
@@ -49,6 +49,7 @@ from rayito._dashboard._cost import UsageCost
 from rayito._dashboard._domain import (
     BULK_OPERATIONS,
     BulkAction,
+    BulkPlan,
     QuotaReport,
     TtlCache,
 )
@@ -82,6 +83,10 @@ T = TypeVar("T")
 Handler = Callable[[ApiRequest, re.Match[str]], ApiResponse]
 
 SEGMENT: Final = r"([^/]+)"
+SANDBOX_ACTION_PATTERN: Final = re.compile(
+    re.escape(API_PREFIX) + f"/sandboxes/{SEGMENT}/{SEGMENT}"
+)
+BULK_ACTION_PATTERN: Final = re.compile(re.escape(API_PREFIX) + "/actions")
 GET: Final = "GET"
 POST: Final = "POST"
 COST_SUFFIX: Final = "/cost"
@@ -132,6 +137,53 @@ def translate(exc: Exception) -> ApiError:
 
 
 @dataclass(frozen=True)
+class ActionTargets:
+    """Qué pide una petición de acción ya validada: la acción, los ids
+    (únicos y con su longitud comprobada) y la confirmación presente."""
+
+    action: BulkAction
+    sandbox_ids: tuple[str, ...]
+
+
+def is_action_route(method: str, path: str) -> bool:
+    """`True` para `POST /sandboxes/<id>/<acción>` y `POST /actions`: las dos
+    rutas que ejecutan algo sobre un sandbox."""
+    return method == POST and (
+        SANDBOX_ACTION_PATTERN.fullmatch(path) is not None
+        or BULK_ACTION_PATTERN.fullmatch(path) is not None
+    )
+
+
+def action_targets(request: ApiRequest) -> ActionTargets | None:
+    """Los objetivos de `POST /sandboxes/<id>/<acción>` y de `POST /actions`,
+    o `None` si la petición no es una de esas dos rutas. Lanza el mismo
+    `ApiError` que la ruta; una cáscara que necesita saber qué se va a tocar
+    antes de ejecutarlo (la auditoría de la pila `dashboard`) lo llama antes
+    de delegar."""
+    if not is_action_route(request.method, request.path):
+        return None
+    single = SANDBOX_ACTION_PATTERN.fullmatch(request.path)
+    if single is not None:
+        return _targets(_action(single.group(2)), [single.group(1)], request)
+    body = _json_body(request)
+    ids = body.get("sandboxIds")
+    if not isinstance(ids, list) or not all(isinstance(item, str) for item in ids):
+        raise ApiError("invalid_argument", "sandboxIds: se esperaba una lista de ids")
+    return _targets(_action(body.get("action")), ids, request)
+
+
+def _targets(action: BulkAction, ids: list[str], request: ApiRequest) -> ActionTargets:
+    if _json_body(request).get("confirm") is not True:
+        raise ApiError("confirmation_required")
+    if len(ids) > DASHBOARD_BULK_MAX_SANDBOXES:
+        raise ApiError(
+            "invalid_argument",
+            f"sandboxIds: como mucho {DASHBOARD_BULK_MAX_SANDBOXES} ids por acción",
+        )
+    return ActionTargets(action, validated_sandbox_ids(ids))
+
+
+@dataclass(frozen=True)
 class Route:
     method: str
     pattern: re.Pattern[str]
@@ -148,7 +200,7 @@ class DashboardApi:
         quotas: Quotas,
         cost: UsageCost,
         region: str,
-        jobs: BulkJobs | None = None,
+        jobs: JobQueue | None = None,
         logs: LogsSource | None = None,
         events_configured: bool = False,
         cost_explorer: bool = False,
@@ -170,7 +222,7 @@ class DashboardApi:
         self._routes = self._build_routes()
 
     @property
-    def jobs(self) -> BulkJobs:
+    def jobs(self) -> JobQueue:
         return self._jobs
 
     def invalidate(self) -> None:
@@ -218,7 +270,7 @@ class DashboardApi:
         return [
             route(GET, "/meta", self._meta),
             route(GET, "/sandboxes", self._sandboxes),
-            route(POST, f"/sandboxes/{SEGMENT}/{SEGMENT}", self._sandbox_action),
+            route(POST, f"/sandboxes/{SEGMENT}/{SEGMENT}", self._submit),
             route(GET, "/images", self._images),
             route(GET, "/images/versions", self._image_versions),
             route(GET, "/quotas", self._quotas_report),
@@ -228,7 +280,7 @@ class DashboardApi:
             route(GET, "/actions", self._list_jobs),
             route(GET, "/actions/plan", self._plan),
             route(GET, f"/actions/{SEGMENT}", self._job),
-            route(POST, "/actions", self._bulk_action),
+            route(POST, "/actions", self._submit),
         ]
 
     def _cached(self, key: str, load: Callable[[], T]) -> T:
@@ -368,43 +420,33 @@ class DashboardApi:
     def _plan(self, request: ApiRequest, match: re.Match[str]) -> ApiResponse:
         action = _action(_required(request.query, "action"))
         count = _bounded_int(request.query, "count", MIN_QUERY_LIMIT, DASHBOARD_BULK_MAX_SANDBOXES)
-        plan = self._fleet.plan_bulk(action, count, applied_rate=self._applied_rate(action))
-        return self._ok({"plan": plan_json(plan)})
+        return self._ok({"plan": plan_json(self.plan_for(action, count))})
 
-    def _sandbox_action(self, request: ApiRequest, match: re.Match[str]) -> ApiResponse:
-        self._require_actions()
-        action = _action(match.group(2))
-        return self._submit(action, [match.group(1)], request)
+    def plan_for(self, action: BulkAction, count: int) -> BulkPlan:
+        """Cuánto tardaría una acción masiva sobre `count` sandboxes con la
+        cuota de TPS aplicada. Es un cálculo local más la lectura de cuotas
+        (gratuita); la cáscara de la pila lo usa para rechazar antes de
+        auditar un trabajo que no cabe en el tiempo de la función."""
+        return self._fleet.plan_bulk(action, count, applied_rate=self._applied_rate(action))
 
-    def _bulk_action(self, request: ApiRequest, match: re.Match[str]) -> ApiResponse:
+    def _submit(self, request: ApiRequest, match: re.Match[str]) -> ApiResponse:
         self._require_actions()
-        body = _json_body(request)
-        ids = body.get("sandboxIds")
-        if not isinstance(ids, list) or not all(isinstance(item, str) for item in ids):
-            raise ApiError("invalid_argument", "sandboxIds: se esperaba una lista de ids")
-        action = _action(body.get("action"))
-        return self._submit(action, ids, request)
+        targets = action_targets(request)
+        if targets is None:
+            raise ApiError("not_found")
+        rate = self._applied_rate(targets.action)
+        plan = self._fleet.plan_bulk(targets.action, len(targets.sandbox_ids), applied_rate=rate)
+        try:
+            job = self._jobs.submit(
+                targets.action, targets.sandbox_ids, plan=plan, applied_rate=rate
+            )
+        except JobsBusy:
+            raise ApiError("jobs_busy") from None
+        return self._ok({"job": job}, HTTP_ACCEPTED)
 
     def _require_actions(self) -> None:
         if not self._fleet.allow_actions:
             raise ApiError("actions_disabled")
-
-    def _submit(self, action: BulkAction, ids: list[str], request: ApiRequest) -> ApiResponse:
-        if _json_body(request).get("confirm") is not True:
-            raise ApiError("confirmation_required")
-        if len(ids) > DASHBOARD_BULK_MAX_SANDBOXES:
-            raise ApiError(
-                "invalid_argument",
-                f"sandboxIds: como mucho {DASHBOARD_BULK_MAX_SANDBOXES} ids por acción",
-            )
-        unique = validated_sandbox_ids(ids)
-        rate = self._applied_rate(action)
-        plan = self._fleet.plan_bulk(action, len(unique), applied_rate=rate)
-        try:
-            job = self._jobs.submit(action, unique, plan=plan, applied_rate=rate)
-        except JobsBusy:
-            raise ApiError("jobs_busy") from None
-        return self._ok({"job": job}, HTTP_ACCEPTED)
 
     def _applied_rate(self, action: BulkAction) -> float | None:
         """La cuota de TPS aplicada de la operación, o `None` (el ritmo por
@@ -463,4 +505,11 @@ def _json_body(request: ApiRequest) -> dict[str, Any]:
     return cast(dict[str, Any], body)
 
 
-__all__ = ["ApiError", "DashboardApi", "error_response", "translate"]
+__all__ = [
+    "ActionTargets",
+    "ApiError",
+    "DashboardApi",
+    "action_targets",
+    "error_response",
+    "translate",
+]

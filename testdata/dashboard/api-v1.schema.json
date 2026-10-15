@@ -22,7 +22,7 @@
                 "forbidden", "csrf_failed", "actions_disabled", "cost_explorer_disabled",
                 "aws_access_denied", "not_found", "method_not_allowed", "payload_too_large",
                 "unsupported_media_type", "misdirected_request", "aws_throttled",
-                "internal_error", "aws_error", "jobs_busy"
+                "internal_error", "aws_error", "jobs_busy", "auth_unavailable", "audit_unavailable"
               ]
             },
             "message": {"type": "string"},

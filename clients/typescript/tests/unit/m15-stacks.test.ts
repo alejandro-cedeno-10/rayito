@@ -248,6 +248,37 @@ describe("OptionalStacks redeploy keeps deployed parameters (UsePreviousValue)",
     });
   });
 
+  test("dashboard keeps AllowActions and EnableCostExplorer as deployed", async () => {
+    const fake = new FakeStackProvisioner();
+    const stacks = new OptionalStacks({ provisioner: fake });
+    await stacks.deploy("dashboard", {
+      parameters: { AllowActions: "true", EnableCostExplorer: "true" },
+      artifactBucket: "bucket-a",
+    });
+    await stacks.deploy("dashboard", {
+      parameters: { DomainPrefix: "tablero" },
+      artifactBucket: "bucket-a",
+    });
+    expect(fake.sentKeepPrevious).toEqual(
+      expect.arrayContaining(["AllowActions", "EnableCostExplorer", "ImageNamePrefix"]),
+    );
+    expect(fake.stacks.get("rayito-dashboard")?.parameters).toMatchObject({
+      AllowActions: "true",
+      EnableCostExplorer: "true",
+    });
+  });
+
+  test("dashboard is read-only and without billed cost queries by default", async () => {
+    const fake = new FakeStackProvisioner();
+    await new OptionalStacks({ provisioner: fake }).deploy("dashboard", {
+      artifactBucket: "bucket-a",
+    });
+    expect(fake.stacks.get("rayito-dashboard")?.parameters).toMatchObject({
+      AllowActions: "false",
+      EnableCostExplorer: "false",
+    });
+  });
+
   test("secrets-access keeps KmsKeyArn", async () => {
     const fake = await redeploy("secrets-access", { KmsKeyArn: "arn:aws:kms:example" }, {});
     expect(fake.sentKeepPrevious).toContain("KmsKeyArn");
