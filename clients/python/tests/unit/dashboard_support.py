@@ -28,7 +28,7 @@ from rayito._dashboard._cost import UsageCost
 from rayito._dashboard._domain import CostGroup, CostPeriod, CostQueryResult
 from rayito._dashboard._fleet import Fleet
 from rayito._dashboard._quotas import Quotas
-from rayito._dashboard._theme import Appearance
+from rayito._dashboard._theme import Appearance, Branding
 from rayito.cli._dashboard_server import CSRF_HEADER, LocalDashboard
 
 from .conftest import FakeClock
@@ -89,6 +89,7 @@ class Rig:
         events: FakeEvents | None = None,
         logs: FakeLogs | None = None,
         quota_source: FakeQuotaSource | None = None,
+        branding: Branding | None = None,
     ) -> None:
         self.clock = FakeClock()
         self.plane = plane
@@ -117,6 +118,7 @@ class Rig:
             events_configured=events is not None,
             cost_explorer=cost_explorer,
             monotonic=self.clock,
+            branding=branding,
         )
 
     def wait_for_job(self, client: Any, job_id: str) -> dict[str, Any]:

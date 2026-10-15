@@ -468,3 +468,12 @@ def test_an_unexpected_failure_is_an_internal_error_with_no_detail(connect: Conn
 
 def test_the_api_object_is_the_one_both_shells_wrap() -> None:
     assert isinstance(Rig(three_sandboxes()).api, DashboardApi)
+
+
+def test_there_are_no_additional_accounts_without_the_multi_account_view(
+    connect: Connect,
+) -> None:
+    status, body = connect(Rig(three_sandboxes())).call("GET", "/accounts")
+    assert status == 200
+    validate(body, "accounts")
+    assert body == {"accounts": []}

@@ -3,7 +3,7 @@
  * espejo de `clients/python/tests/e2e/test_m9_transfer.py`: `fetch` PUT y GET
  * de `uploadUrl`/`downloadUrl`, `files.uploadUrl` + `wait()`, la barrera de
  * lectura tras la subida, 200 MB de `writeFiles`/`read` por S3 frente a la
- * línea base gRPC, `gzip` y metadatos. Imagen M9 por defecto, sin execution
+ * línea base gRPC, `gzip`, metadatos y los topes de tamaño (`maxBytes` y formulario POST). Imagen M9 por defecto, sin execution
  * role. Variables: `RAYITO_E2E=1`, `RAYITO_TEMPLATE`,
  * `RAYITO_E2E_TRANSFER_BUCKET` (p. ej. `amzn-s3-demo-bucket`),
  * `RAYITO_E2E_TRANSFER_PREFIX` (por defecto `rayito-transfer`) y, si el
@@ -20,6 +20,7 @@ import {
   GetObjectCommand,
   HeadObjectCommand,
   ListMultipartUploadsCommand,
+  ListObjectsV2Command,
   PutObjectCommand,
   S3Client,
 } from "@aws-sdk/client-s3";
@@ -67,6 +68,14 @@ const EXPIRED_STATUS = 403;
 const EXPIRED_BODY = "Request has expired";
 const SHIM_PAYLOAD_BYTES = 4096;
 const INVALID_SIGNATURE_EXPIRATION = -1;
+const CAPPED_UPLOAD_BYTES = 2 * MIB;
+const FORM_CAP_BYTES = 1024;
+const FORM_OVERSIZED_BYTES = 2048;
+const FORM_SMALL_BYTES = 512;
+const FORM_REJECTED_STATUS = 400;
+const FORM_ACCEPTED_STATUSES = [200, 204];
+const TOO_LARGE_CODE = "too_large";
+const ENTITY_TOO_LARGE = "EntityTooLarge";
 const TRANSFER_ENV_VARS = [
   "RAYITO_TRANSFER_BUCKET",
   "RAYITO_TRANSFER_PREFIX",
@@ -154,6 +163,16 @@ async function linkRates(
   const get = reportRate("S3 -> developer link GET", bytes, seconds(started));
   await s3.send(new DeleteObjectCommand({ Bucket: bucket, Key: key }));
   return [put, get];
+}
+
+/** Envía `data` como el campo `file` de un formulario POST prefirmado, tras sus campos. */
+async function postForm(ticket: UploadTicket, data: Uint8Array): Promise<Response> {
+  const form = new FormData();
+  for (const [name, value] of Object.entries(ticket.fields)) {
+    form.append(name, value);
+  }
+  form.append("file", new Blob([data]), "f");
+  return fetch(ticket.url, { method: "POST", body: form });
 }
 
 async function shellOutput(sandbox: Sandbox, command: string): Promise<string> {
@@ -267,6 +286,37 @@ describe.skipIf(!enabled)("M9 file transfer (TypeScript, real AWS)", () => {
     expect(await shellOutput(sandbox, `stat -c %u ${path}`)).toBe(USER_UID);
     expect(await objectExists(s3Client(), bucket, keyOf(ticket.url))).toBe(false);
     expect((await ticket.status()).phase).toBe("done");
+  });
+
+  test("size caps: maxBytes gives too_large and form gives EntityTooLarge", async () => {
+    const sandbox = await createStagedSandbox();
+    const capped = await sandbox.files.uploadUrl(`${HOME}/m9/capped.bin`, { maxBytes: MIB });
+    expect((await putTo(capped, new Uint8Array(randomBytes(CAPPED_UPLOAD_BYTES)))).status).toBe(
+      200,
+    );
+    const failure = await capped
+      .wait({ timeoutMs: UPLOAD_WAIT_TIMEOUT_MS })
+      .catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(InvalidArgumentError);
+    expect((failure as Error).message.startsWith(TOO_LARGE_CODE)).toBe(true);
+    expect(await sandbox.files.exists(`${HOME}/m9/capped.bin`)).toBe(false);
+    const staged = await s3Client().send(
+      new ListObjectsV2Command({ Bucket: bucket, Prefix: `${prefix}/${sandbox.sandboxId}/` }),
+    );
+    expect(staged.Contents ?? []).toEqual([]);
+
+    const form = await sandbox.files.uploadUrl(`${HOME}/m9/form.bin`, {
+      form: true,
+      maxBytes: FORM_CAP_BYTES,
+    });
+    const oversized = await postForm(form, new Uint8Array(randomBytes(FORM_OVERSIZED_BYTES)));
+    expect(oversized.status).toBe(FORM_REJECTED_STATUS);
+    expect(await oversized.text()).toContain(ENTITY_TOO_LARGE);
+    const small = new Uint8Array(randomBytes(FORM_SMALL_BYTES));
+    expect(FORM_ACCEPTED_STATUSES).toContain((await postForm(form, small)).status);
+    expect((await form.wait({ timeoutMs: UPLOAD_WAIT_TIMEOUT_MS })).size).toBe(FORM_SMALL_BYTES);
+    const stored = await sandbox.files.read(`${HOME}/m9/form.bin`, { format: "bytes" });
+    expect(sha256(stored)).toBe(sha256(small));
   });
 
   test("barrier: sandbox.uploadUrl + PUT, then files.read and commands.run without wait()", async () => {

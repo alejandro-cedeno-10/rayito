@@ -111,8 +111,8 @@ jobs:
           uv run ruff check .
           uv run ruff format --check .
           uv run mypy src tests
-      - name: scripts/ and Lambda unit tests (bench, check_auditable, check_license, shims, events-webhooks and dashboard handlers)
-        run: cd clients/python && uv run pytest ../../scripts/tests ../../infra/lambdas/events_webhooks/tests ../../infra/lambdas/dashboard/tests -p no:cacheprovider
+      - name: scripts/ and Lambda unit tests (bench, check_auditable, check_license, shims, events-webhooks, dashboard and quota-alerts handlers)
+        run: cd clients/python && uv run pytest ../../scripts/tests ../../infra/lambdas/events_webhooks/tests ../../infra/lambdas/dashboard/tests ../../infra/lambdas/quota_alerts/tests -p no:cacheprovider
       - name: Python wheel build and content checks
         run: |
           (cd clients/python && uv build)

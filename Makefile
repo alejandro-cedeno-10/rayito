@@ -45,6 +45,9 @@ METADATA_INDEX_TEMPLATE := infra/metadata-index.yaml
 CUSTOM_DOMAIN_TEMPLATE := infra/custom-domain.yaml
 EVENTS_WEBHOOKS_TEMPLATE := infra/events-webhooks.yaml
 DASHBOARD_TEMPLATE := infra/dashboard.yaml
+DASHBOARD_CLOUDWATCH_TEMPLATE := infra/dashboard-cloudwatch.yaml
+DASHBOARD_READ_ROLE_TEMPLATE := infra/dashboard-read-role.yaml
+QUOTA_ALERTS_TEMPLATE := infra/quota-alerts.yaml
 EFS_VOLUMES_TEMPLATE := infra/efs-volumes.yaml
 SBOM          := crates/rayd/rayd.cdx.json
 # Avisos de terceros de rayd (openspec third-party-licenses): cargo-about
@@ -174,7 +177,7 @@ release-pr:
 # entorno del SDK, sin red. La lógica de los shims se prueba en
 # clients/python/tests/unit/cli.
 test-scripts:
-	cd $(PYTHON_CLIENT) && uv run pytest ../../scripts/tests ../../infra/lambdas/events_webhooks/tests ../../infra/lambdas/dashboard/tests -p no:cacheprovider
+	cd $(PYTHON_CLIENT) && uv run pytest ../../scripts/tests ../../infra/lambdas/events_webhooks/tests ../../infra/lambdas/dashboard/tests ../../infra/lambdas/quota_alerts/tests -p no:cacheprovider
 
 # Cliente TypeScript (clients/typescript): pnpm con lockfile congelado; se
 # omite si el paquete no existe todavía.
@@ -318,10 +321,13 @@ infra-lint:
 	aws cloudformation validate-template --template-body file://$(EVENTS_WEBHOOKS_TEMPLATE) >/dev/null && echo "validate-template ok: $(EVENTS_WEBHOOKS_TEMPLATE)"
 	aws cloudformation validate-template --template-body file://$(EFS_VOLUMES_TEMPLATE) >/dev/null && echo "validate-template ok: $(EFS_VOLUMES_TEMPLATE)"
 	aws cloudformation validate-template --template-body file://$(DASHBOARD_TEMPLATE) >/dev/null && echo "validate-template ok: $(DASHBOARD_TEMPLATE)"
+	aws cloudformation validate-template --template-body file://$(DASHBOARD_CLOUDWATCH_TEMPLATE) >/dev/null && echo "validate-template ok: $(DASHBOARD_CLOUDWATCH_TEMPLATE)"
+	aws cloudformation validate-template --template-body file://$(DASHBOARD_READ_ROLE_TEMPLATE) >/dev/null && echo "validate-template ok: $(DASHBOARD_READ_ROLE_TEMPLATE)"
+	aws cloudformation validate-template --template-body file://$(QUOTA_ALERTS_TEMPLATE) >/dev/null && echo "validate-template ok: $(QUOTA_ALERTS_TEMPLATE)"
 	tools="$$(mktemp -d)" && trap 'rm -rf "$$tools"' EXIT && \
 	  $(call hashed-tool,cfn-lint,"$$tools") && \
 	  "$$tools/bin/cfn-lint" --version && \
-	  "$$tools/bin/cfn-lint" -- $(EGRESS_TEMPLATE) $(CI_OIDC_TEMPLATE) $(IAM_TEMPLATE) $(SECRETS_TEMPLATE) $(METADATA_INDEX_TEMPLATE) $(CUSTOM_DOMAIN_TEMPLATE) $(EVENTS_WEBHOOKS_TEMPLATE) $(EFS_VOLUMES_TEMPLATE) $(DASHBOARD_TEMPLATE)
+	  "$$tools/bin/cfn-lint" -- $(EGRESS_TEMPLATE) $(CI_OIDC_TEMPLATE) $(IAM_TEMPLATE) $(SECRETS_TEMPLATE) $(METADATA_INDEX_TEMPLATE) $(CUSTOM_DOMAIN_TEMPLATE) $(EVENTS_WEBHOOKS_TEMPLATE) $(EFS_VOLUMES_TEMPLATE) $(DASHBOARD_TEMPLATE) $(DASHBOARD_CLOUDWATCH_TEMPLATE) $(DASHBOARD_READ_ROLE_TEMPLATE) $(QUOTA_ALERTS_TEMPLATE)
 
 # Aceptación contra AWS real (~$0.03 por sandbox). Se niega a correr sin las
 # dos variables; RAYITO_EXECUTION_ROLE_ARN activa los logs de runtime.

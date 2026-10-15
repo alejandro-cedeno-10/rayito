@@ -18,6 +18,13 @@ primeros toca AWS):
    resultado después.
 5. Todo lo demás lo resuelve `DashboardApi` con el rol de sólo lectura.
 
+Con `AuthMode=aws-iam` (`SURFACE_IAM_API`) esta misma clase corre en la
+función de la API, que sólo sirve `/api/v1` (la página la sirve otra función,
+`shell.py`): la Function URL ya exigió la firma SigV4 y la función lo
+comprueba otra vez (`requestContext.authorizer.iam`), el token de Cognito viaja
+en `X-Rayito-Token` (la cabecera `Authorization` la ocupa la firma) y el
+`Origin` de un `POST` debe ser el de la página, no el propio.
+
 Toda respuesta lleva las cabeceras de seguridad (`_headers.py`). Nunca se
 registra el token, la cabecera `Authorization` ni el cuerpo: sólo códigos.
 """
@@ -35,7 +42,7 @@ from urllib.parse import parse_qs, unquote
 
 from dashboard_stack.appearance import LiveAppearance
 from dashboard_stack.audit import AuditLog, AuditUnavailable
-from dashboard_stack.config import StackConfig
+from dashboard_stack.config import SURFACE_FULL, SURFACE_IAM_API, StackConfig
 from dashboard_stack.tokens import (
     AuthUnavailable,
     Caller,
@@ -76,6 +83,7 @@ JSON_CONTENT_TYPE: Final = "application/json; charset=utf-8"
 CONFIG_PATH: Final = "/config.json"
 META_PATH: Final = f"{API_PREFIX}/meta"
 BEARER_SCHEME: Final = "bearer"
+IAM_TOKEN_HEADER: Final = "x-rayito-token"
 COGNITO_SCOPE: Final = "openid"
 #: Dos años, el valor habitual de HSTS para un origen que sólo sirve HTTPS.
 HSTS_VALUE: Final = "max-age=63072000; includeSubDomains"
@@ -84,6 +92,7 @@ UNAUTHORIZED_NO_TOKEN: Final = "falta el token: inicia sesión en el panel"
 UNAUTHORIZED_BAD_TOKEN: Final = "token no válido o caducado: vuelve a iniciar sesión"
 FORBIDDEN_ORIGIN: Final = "origen no admitido"
 FORBIDDEN_GROUP: Final = "la cuenta no pertenece al grupo de acciones"
+FORBIDDEN_UNSIGNED: Final = "la petición no llegó firmada por una identidad de IAM"
 #: Lo máximo que puede durar un trabajo dentro de una petición: el tiempo de la
 #: función menos un margen para la auditoría y la respuesta.
 MAX_JOB_SECONDS: Final = (
@@ -117,6 +126,9 @@ class Incoming:
     domain: str
     request_id: str
     source_ip: str
+    #: El ARN de la identidad que firmó la petición (SigV4) cuando la Function
+    #: URL es `AWS_IAM`; `None` si la URL no firma o la petición no llegó firmada.
+    iam_arn: str | None = None
 
 
 def incoming_from_event(event: Mapping[str, Any]) -> Incoming:
@@ -134,7 +146,15 @@ def incoming_from_event(event: Mapping[str, Any]) -> Incoming:
         domain=str(context.get("domainName", "")),
         request_id=str(context.get("requestId", "")),
         source_ip=str(http.get("sourceIp", UNKNOWN_SOURCE_IP)),
+        iam_arn=_iam_arn(context),
     )
+
+
+def _iam_arn(context: Mapping[str, Any]) -> str | None:
+    authorizer = context.get("authorizer")
+    iam = authorizer.get("iam") if isinstance(authorizer, Mapping) else None
+    arn = iam.get("userArn") if isinstance(iam, Mapping) else None
+    return arn if isinstance(arn, str) and arn else None
 
 
 @dataclass(frozen=True)
@@ -153,6 +173,29 @@ def json_reply(response: ApiResponse) -> Reply:
     )
 
 
+def lambda_response(reply: Reply, headers: Mapping[str, str]) -> dict[str, Any]:
+    """`Reply` al formato de respuesta de la Function URL; las cabeceras de
+    seguridad van debajo de las propias de la respuesta."""
+    return {
+        "statusCode": reply.status,
+        "headers": {"Content-Type": reply.content_type, **headers, **reply.headers},
+        "body": reply.body.decode("utf-8"),
+        "isBase64Encoded": False,
+    }
+
+
+def error_reply(error: Exception, request: Incoming) -> Reply:
+    """El error de una petición como respuesta JSON, sin detalle de los
+    inesperados (sólo el tipo, en el log)."""
+    if isinstance(error, ApiError):
+        return json_reply(error_response(error))
+    if isinstance(error, AuthUnavailable):
+        logger.warning("dashboard auth: %s no disponible", error)
+        return json_reply(error_response(ApiError("auth_unavailable")))
+    logger.warning("dashboard %s: %s", request.method, type(error).__name__)
+    return json_reply(error_response(ApiError("internal_error")))
+
+
 class StackApp:
     def __init__(
         self,
@@ -167,7 +210,9 @@ class StackApp:
         directory: CallerDirectory | None = None,
         actions_group: str = DASHBOARD_STACK_ACTIONS_GROUP,
         clock: Callable[[], float] = time.time,
+        surface: str = SURFACE_FULL,
     ) -> None:
+        self._surface = surface
         self._config = config
         self._verifier = verifier
         self._clients = clients
@@ -187,24 +232,15 @@ class StackApp:
         request = incoming_from_event(event)
         try:
             reply = self._route(request)
-        except ApiError as error:
-            reply = json_reply(error_response(error))
-        except AuthUnavailable as unavailable:
-            logger.warning("dashboard auth: %s no disponible", unavailable)
-            reply = json_reply(error_response(ApiError("auth_unavailable")))
-        except Exception as exc:
-            logger.warning("dashboard %s: %s", request.method, type(exc).__name__)
-            reply = json_reply(error_response(ApiError("internal_error")))
-        return {
-            "statusCode": reply.status,
-            "headers": {"Content-Type": reply.content_type, **self._headers, **reply.headers},
-            "body": reply.body.decode("utf-8"),
-            "isBase64Encoded": False,
-        }
+        except Exception as error:
+            reply = error_reply(error, request)
+        return lambda_response(reply, self._headers)
 
     def _route(self, request: Incoming) -> Reply:
         if request.path == API_PREFIX or request.path.startswith(f"{API_PREFIX}/"):
             return self._api(request)
+        if self._surface == SURFACE_IAM_API:
+            raise ApiError("not_found")
         return self._shell(request)
 
     def _shell(self, request: Incoming) -> Reply:
@@ -235,6 +271,8 @@ class StackApp:
     def _api(self, request: Incoming) -> Reply:
         if request.method not in ALLOWED_METHODS:
             raise ApiError("method_not_allowed")
+        if self._surface == SURFACE_IAM_API and request.iam_arn is None:
+            raise ApiError("forbidden", FORBIDDEN_UNSIGNED)
         if request.method == POST:
             self._check_post(request)
         caller = self._authenticate(request)
@@ -250,7 +288,8 @@ class StackApp:
         return json_reply(response)
 
     def _check_post(self, request: Incoming) -> None:
-        if request.headers.get("origin") != f"https://{request.domain}":
+        expected_origin = self._config.allowed_origin or f"https://{request.domain}"
+        if request.headers.get("origin") != expected_origin:
             raise ApiError("forbidden", FORBIDDEN_ORIGIN)
         content_type = request.headers.get("content-type", "").split(";")[0].strip().lower()
         if content_type != JSON_TYPE:
@@ -259,14 +298,20 @@ class StackApp:
             raise ApiError("payload_too_large")
 
     def _authenticate(self, request: Incoming) -> Caller:
-        scheme, _, token = request.headers.get("authorization", "").partition(" ")
-        if scheme.lower() != BEARER_SCHEME or not token.strip():
+        token = self._presented_token(request)
+        if not token:
             raise ApiError("unauthorized", UNAUTHORIZED_NO_TOKEN)
         try:
-            return self._verifier.verify(token.strip())
+            return self._verifier.verify(token)
         except TokenError as error:
             logger.info("dashboard auth: token rechazado (%s)", error.code)
             raise ApiError("unauthorized", UNAUTHORIZED_BAD_TOKEN) from None
+
+    def _presented_token(self, request: Incoming) -> str:
+        if self._surface == SURFACE_IAM_API:
+            return request.headers.get(IAM_TOKEN_HEADER, "").strip()
+        scheme, _, token = request.headers.get("authorization", "").partition(" ")
+        return token.strip() if scheme.lower() == BEARER_SCHEME else ""
 
     def _may_act(self, caller: Caller) -> bool:
         return self._actions is not None and self._actions_group in caller.groups
@@ -327,6 +372,10 @@ __all__ = [
     "ActionsUnavailable",
     "CallerDirectory",
     "Incoming",
+    "Reply",
     "StackApp",
+    "error_reply",
     "incoming_from_event",
+    "json_reply",
+    "lambda_response",
 ]

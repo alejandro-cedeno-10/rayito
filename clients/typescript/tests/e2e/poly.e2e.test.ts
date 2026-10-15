@@ -7,12 +7,20 @@
  * `Deno.jupyter.html`, errores JS y `envs` de contexto), las opciones
  * excluyentes y `listCodeContexts()` con los contextos por defecto de cada
  * lenguaje. En un sandbox de `RAYITO_TEMPLATE` (`rayito-base`, sin Deno):
- * `javascript` y `typescript` son `UnimplementedError` con un mensaje que
- * nombra `rayito-base-poly`. Cada suite se omite sin su variable.
+ * `bash`, `javascript` y `typescript` son `UnimplementedError` con un mensaje
+ * que nombra `rayito-base-poly`. Un timeout en bash devuelve `ExecutionTimeout`
+ * y el contexto sigue vivo, y el shim de E2B ejecuta `js` y `ts` sobre poly.
+ * Cada suite se omite sin su variable.
  */
 
 import { afterAll, describe, expect, test } from "vitest";
-import { InvalidArgumentError, type Sandbox, UnimplementedError } from "../../src/index.js";
+import { Sandbox as ShimSandbox } from "../../src/e2b/index.js";
+import {
+  CommandExitError,
+  InvalidArgumentError,
+  type Sandbox,
+  UnimplementedError,
+} from "../../src/index.js";
 import {
   createTestSandbox,
   e2eEnabled,
@@ -23,7 +31,10 @@ import {
 
 const POLY_TEMPLATE_VAR = "RAYITO_TEMPLATE_POLY";
 const POLY_IMAGE = "rayito-base-poly";
-const DENO_LANGUAGES = ["javascript", "typescript"] as const;
+const POLY_LANGUAGES = ["bash", "javascript", "typescript"] as const;
+const BASH_TIMEOUT_MS = 2000;
+const BASH_PROBE_TIMEOUT_MS = 30_000;
+const BASH_KERNEL_MODULE = "bash_kernel";
 const ESCAPE = "\u001b";
 const PAUSE_MAX_IDLE_SECONDS = 300;
 const ENDLESS_LOOP_TIMEOUT_MS = 2_000;
@@ -130,6 +141,30 @@ describe.skipIf(!polyEnabled)(`kernels poly (requiere RAYITO_E2E=1 y ${POLY_TEMP
     await poly.removeCodeContext(ctx);
   });
 
+  test("bash timeout gives ExecutionTimeout and the context comes back", async () => {
+    const poly = await createTestSandbox(e2e, { timeoutMs: TEST_SANDBOX_TIMEOUT_MS });
+    const [timedOut] = await timed(`bash timeout ${BASH_TIMEOUT_MS} ms returned after`, () =>
+      poly.runCode("sleep 30", { language: "bash", timeoutMs: BASH_TIMEOUT_MS }),
+    );
+    expect(timedOut.error?.name).toBe("ExecutionTimeout");
+    const back = await poly.runCode("echo back", { language: "bash" });
+    expect(back.logs.stdout.join("")).toContain("back");
+  });
+
+  test("the E2B shim runs js and ts on poly", async () => {
+    const poly = await createTestSandbox(e2e, { timeoutMs: TEST_SANDBOX_TIMEOUT_MS });
+    const shim = await ShimSandbox.connect(poly.sandboxId, {
+      accessToken: poly.accessToken,
+      controlPlane: e2e.controlPlane,
+    });
+    try {
+      expect((await shim.runCode("1 + 1", { language: "js" })).text).toBe("2");
+      expect((await shim.runCode("const n: number = 3; n", { language: "ts" })).text).toBe("3");
+    } finally {
+      shim.native.close();
+    }
+  });
+
   test("javascript state survives pause and resume", async () => {
     const poly = await createTestSandbox(e2e, {
       timeoutMs: TEST_SANDBOX_TIMEOUT_MS,
@@ -152,9 +187,9 @@ describe.skipIf(!polyEnabled)(`kernels poly (requiere RAYITO_E2E=1 y ${POLY_TEMP
 describe.skipIf(!e2eEnabled())("kernels Deno en rayito-base (requiere RAYITO_E2E=1)", () => {
   const e2e = useE2E();
 
-  test("javascript and typescript are UNIMPLEMENTED on rayito-base", async () => {
+  test("bash, javascript and typescript are UNIMPLEMENTED on rayito-base", async () => {
     const base = await createTestSandbox(e2e);
-    for (const language of DENO_LANGUAGES) {
+    for (const language of POLY_LANGUAGES) {
       const executed = await base.runCode("1", { language }).catch((error) => error);
       expect(executed).toBeInstanceOf(UnimplementedError);
       expect(executed).not.toBeInstanceOf(InvalidArgumentError);
@@ -166,5 +201,9 @@ describe.skipIf(!e2eEnabled())("kernels Deno en rayito-base (requiere RAYITO_E2E
       console.log(`\n[m9] ${language} on rayito-base: ${(executed as Error).message}`);
     }
     expect((await base.listCodeContexts()).map((item) => item.id)).toEqual(["default"]);
+    const probe = await base.commands
+      .run(`python3 -c 'import ${BASH_KERNEL_MODULE}'`, { timeoutMs: BASH_PROBE_TIMEOUT_MS })
+      .catch((error: unknown) => error);
+    expect(probe).toBeInstanceOf(CommandExitError);
   });
 });

@@ -37,6 +37,7 @@ from rayito._limits import (
     QUOTA_WARNING_FRACTION,
     SUSPENDED_STATES,
 )
+from rayito._percent import PERCENT
 from rayito.exceptions import InvalidArgumentException
 
 QuotaLevel = Literal["ok", "warning", "critical"]
@@ -55,7 +56,6 @@ UNKNOWN_FAILURE_CODE: Final = "UnknownError"
 QUOTA_EXCEEDED_CODE: Final = "ServiceQuotaExceededException"
 CAPACITY_CODE: Final = "InsufficientCapacityException"
 MIB_PER_GB: Final = 1024
-PERCENT: Final = 100
 
 MEMORY_KIND: Final = "memory-gb"
 RATE_KIND: Final = "rate"

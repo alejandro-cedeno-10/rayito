@@ -198,6 +198,7 @@ nav:
           - Índice de metadatos: funciones-opcionales/indice-de-metadatos.md
           - Panel de gestión (cuotas, coste y flota): funciones-opcionales/panel-de-gestion.md
           - Panel en tu cuenta (la pila dashboard): funciones-opcionales/panel-en-tu-cuenta.md
+          - Panel, fase 3 (CloudWatch, varias cuentas, avisos): funciones-opcionales/panel-extras.md
       - Proxy local: funciones-opcionales/proxy-local.md
       - Experimental:
           - Dominio propio (experimental): funciones-opcionales/dominio-propio.md

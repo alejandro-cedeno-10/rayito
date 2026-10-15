@@ -314,6 +314,10 @@ class CliNode:
 
     options: frozenset[str]
     children: dict[str, CliNode] = field(default_factory=dict)
+    #: Las opciones que llevan un valor (no son banderas): en un grupo, el
+    #: valor que sigue a la opción no es un subcomando (`rayito dashboard
+    #: --port 8080`, `rayito --region us-east-1 stack ...`).
+    value_options: frozenset[str] = frozenset()
 
 
 def load_cli_tree() -> CliNode | None:
@@ -332,10 +336,17 @@ def load_cli_tree() -> CliNode | None:
             for option in [*getattr(param, "opts", []), *getattr(param, "secondary_opts", [])]
             if option.startswith("-")
         }
+        value_options = {
+            option
+            for param in getattr(command, "params", [])
+            if not getattr(param, "is_flag", False)
+            for option in getattr(param, "opts", [])
+            if option.startswith("-")
+        }
         children = {
             name: node(sub) for name, sub in (getattr(command, "commands", None) or {}).items()
         }
-        return CliNode(frozenset(options), children)
+        return CliNode(frozenset(options), children, frozenset(value_options))
 
     return node(typer.main.get_command(app))
 
@@ -365,13 +376,18 @@ def cli_problems(command_line: str, tree: CliNode) -> list[str]:
         if not tokens or tokens[0] != CLI_PROGRAM:
             continue
         node, path = tree, [CLI_PROGRAM]
+        skip_value = False
         for token in tokens[1:]:
+            if skip_value:
+                skip_value = False
+                continue
             if token == END_OF_OPTIONS:
                 break
             if token.startswith("-") and token != "-":
                 option = token.split("=", 1)[0]
                 if option not in node.options | HELP_OPTIONS:
                     problems.append(f"`{' '.join(path)}` no tiene la opción {option}")
+                skip_value = "=" not in token and option in node.value_options
                 continue
             if not node.children:
                 continue

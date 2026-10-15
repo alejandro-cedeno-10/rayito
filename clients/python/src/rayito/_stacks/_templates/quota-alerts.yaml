@@ -1,0 +1,225 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  Rayito (optional, ADR-026 phase 3): scheduled quota alerts. An EventBridge
+  schedule invokes one Lambda that measures the memory allocated to MicroVMs
+  against the region's quota and publishes to an SNS topic when the usage
+  crosses a threshold (once per crossing, not on every run). It also publishes
+  the usage fraction as one CloudWatch custom metric that the generated
+  CloudWatch dashboard can plot. Read-only on MicroVMs and Service Quotas;
+  creates no CloudFront distribution and no S3 bucket. Deploy it with
+  `rayito stack deploy quota-alerts`; delete the stack to remove everything
+  it created. One stack watches one region.
+
+Parameters:
+  ArtifactBucket:
+    Type: String
+    MinLength: 3
+    Description: >-
+      S3 bucket `OptionalStacks.deploy(artifact_bucket=...)` already uploaded
+      the function code to (same value, so the template can reference it
+      alongside the key `StackArtifact` resolves).
+  ArtifactS3Key:
+    Type: String
+    MinLength: 1
+    Description: >-
+      rayito/stacks/<component>/<sha256>.zip, the function zip's key inside
+      the rayito/ namespace the IAM templates protect (filled by
+      `OptionalStacks.deploy`, never set by hand).
+  ScheduleExpression:
+    Type: String
+    # Pinned equal to QUOTA_ALERTS_SCHEDULE_EXPRESSION in limits.json
+    # (scripts/tests/test_quota_alerts_template.py).
+    Default: rate(1 hour)
+    AllowedPattern: "^(rate|cron)\\(.+\\)$"
+    Description: >-
+      EventBridge schedule of the check. Every run lists the region's MicroVMs
+      (read calls) and writes one custom metric data point.
+  WarningPercent:
+    Type: Number
+    # Pinned equal to QUOTA_WARNING_FRACTION and QUOTA_CRITICAL_FRACTION in
+    # limits.json (scripts/tests/test_quota_alerts_template.py).
+    Default: 80
+    MinValue: 1
+    MaxValue: 100
+    Description: Percent of the memory quota at which the first alert is published.
+  CriticalPercent:
+    Type: Number
+    Default: 95
+    MinValue: 1
+    MaxValue: 100
+    Description: >-
+      Percent of the memory quota at which the critical alert is published. It
+      must be higher than WarningPercent.
+  NotificationEmail:
+    Type: String
+    Default: ""
+    AllowedPattern: "^$|^[^@\\s]+@[^@\\s]+$"
+    Description: >-
+      Optional. Subscribes this address to the topic the stack creates (the
+      recipient must confirm the subscription). Ignored with TopicArn.
+  TopicArn:
+    Type: String
+    Default: ""
+    AllowedPattern: "^$|^arn:aws[a-z-]*:sns:[a-z0-9-]+:[0-9]{12}:[A-Za-z0-9_-]{1,256}$"
+    Description: >-
+      Optional. Publish to this existing SNS topic of the same account and
+      region instead of creating one. The topic's own access policy must
+      allow the function role to publish.
+  LogRetentionDays:
+    Type: Number
+    Default: 30
+    AllowedValues: [1, 3, 5, 7, 14, 30, 60, 90, 180, 365]
+    Description: Retention of the function's log group.
+
+Conditions:
+  CreateTopic: !Equals [!Ref TopicArn, ""]
+  SubscribeEmail: !And
+    - !Condition CreateTopic
+    - !Not [!Equals [!Ref NotificationEmail, ""]]
+
+Resources:
+  AlertTopic:
+    Type: AWS::SNS::Topic
+    Condition: CreateTopic
+    Properties:
+      DisplayName: Rayito quota alerts
+
+  EmailSubscription:
+    Type: AWS::SNS::Subscription
+    Condition: SubscribeEmail
+    Properties:
+      TopicArn: !Ref AlertTopic
+      Protocol: email
+      Endpoint: !Ref NotificationEmail
+
+  # One row (key `check`) holds the last level, so an alert goes out when the
+  # usage crosses a threshold and not on every run while it stays above.
+  StateTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: check
+          AttributeType: S
+      KeySchema:
+        - AttributeName: check
+          KeyType: HASH
+
+  FunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      RetentionInDays: !Ref LogRetentionDays
+
+  # Read-only on MicroVMs and Service Quotas; its only writes are the alert,
+  # the metric (restricted to its own namespace) and the state row.
+  FunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: quota-alerts
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: WriteOwnLogs
+                Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub ${FunctionLogGroup.Arn}:*
+              # `List*` operations authorize on "*" (AWS_API_NOTES.md §10).
+              - Sid: ListMicrovms
+                Effect: Allow
+                Action: lambda:ListMicrovms
+                Resource: "*"
+              - Sid: ReadImageVersions
+                Effect: Allow
+                Action: lambda:GetMicrovmImageVersion
+                Resource: !Sub arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:microvm-image:*
+              - Sid: ReadQuotas
+                Effect: Allow
+                Action: servicequotas:ListServiceQuotas
+                Resource: "*"
+              - Sid: PublishAlert
+                Effect: Allow
+                Action: sns:Publish
+                Resource: !If [CreateTopic, !Ref AlertTopic, !Ref TopicArn]
+              - Sid: KeepLastLevel
+                Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                Resource: !GetAtt StateTable.Arn
+              # Pinned equal to QUOTA_METRIC_NAMESPACE in limits.json.
+              - Sid: PublishUsageMetric
+                Effect: Allow
+                Action: cloudwatch:PutMetricData
+                Resource: "*"
+                Condition:
+                  StringEquals:
+                    cloudwatch:namespace: Rayito/Dashboard
+
+  CheckFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Description: Rayito scheduled quota check (publishes to SNS when usage crosses a threshold).
+      Runtime: python3.12
+      Architectures: [arm64]
+      Handler: handler.lambda_handler
+      Role: !GetAtt FunctionRole.Arn
+      # Pinned equal to QUOTA_ALERTS_LAMBDA_TIMEOUT_SECONDS and
+      # QUOTA_ALERTS_LAMBDA_MEMORY_MIB in limits.json.
+      Timeout: 120
+      MemorySize: 256
+      LoggingConfig:
+        LogGroup: !Ref FunctionLogGroup
+      Code:
+        S3Bucket: !Ref ArtifactBucket
+        S3Key: !Ref ArtifactS3Key
+      Environment:
+        Variables:
+          RAYITO_ALERTS_TOPIC_ARN: !If [CreateTopic, !Ref AlertTopic, !Ref TopicArn]
+          RAYITO_ALERTS_STATE_TABLE: !Ref StateTable
+          RAYITO_ALERTS_WARNING_PERCENT: !Ref WarningPercent
+          RAYITO_ALERTS_CRITICAL_PERCENT: !Ref CriticalPercent
+          # The Lambda runtime's boto3 does not know `lambda-microvms`; its
+          # model ships in the zip under `models/`
+          # (`scripts/gen_stack_assets.py`), and botocore reads this before
+          # any client exists.
+          AWS_DATA_PATH: /var/task/models
+
+  CheckSchedule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: Runs the Rayito quota check.
+      ScheduleExpression: !Ref ScheduleExpression
+      State: ENABLED
+      Targets:
+        - Id: quota-check
+          Arn: !GetAtt CheckFunction.Arn
+
+  ScheduleInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref CheckFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt CheckSchedule.Arn
+
+Outputs:
+  TopicArn:
+    Description: SNS topic the alerts go to (subscribe to it).
+    Value: !If [CreateTopic, !Ref AlertTopic, !Ref TopicArn]
+  StateTableName:
+    Description: Table holding the last alert level.
+    Value: !Ref StateTable
+  FunctionName:
+    Description: The scheduled check; invoke it by hand to test the wiring.
+    Value: !Ref CheckFunction

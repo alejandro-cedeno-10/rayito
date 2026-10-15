@@ -152,13 +152,14 @@ lees tus propios datos con tus credenciales.
 | `tps` | tasa y ráfaga aplicadas de cada operación |
 | `warnings` | `memory_high`, `memory_critical`, `below_default` (las cuentas nuevas parten de cuotas reducidas) y `not_listed` |
 
-!!! warning "Pendiente de medir en AWS real"
-    Se está comprobando en una cuenta real si la cuota de memoria cuenta la
-    memoria mínima de la imagen (lo que suma el SDK) o la que ve el guest, y
-    si Service Quotas publica la utilización de estas cuotas. Hasta entonces
-    el uso de memoria es el calculado por el SDK. Los TPS de `ListMicrovms` y
-    `ListMicrovmImages` no están documentados por AWS. Detalle:
-    `AWS_API_NOTES.md` §30.
+!!! info "Medido en AWS real"
+    Probado el 2026-10-14 en us-east-1: Service Quotas **no publica la
+    utilización** de ninguna de las 26 cuotas de MicroVMs, así que el uso de
+    memoria es siempre el que calcula el SDK; `ListMicrovms` y
+    `ListMicrovmImages` aceptan unas 5 llamadas por segundo por cuenta (más
+    rápido, `ThrottlingException`) y no figuran entre las cuotas. Sigue sin
+    comprobarse si la cuota de memoria cuenta la memoria mínima de la imagen o
+    la que ve el guest. Detalle: `AWS_API_NOTES.md` §30 (Q163 y Q164).
 
 ## Coste facturado y coste estimado
 
@@ -462,7 +463,7 @@ panel y es gratis. *Facturado* viene de Cost Explorer y es **de pago**: sólo
 existe con `--cost-explorer` y pulsando el botón (cada consulta cuesta
 $0,01, también «Ignorar la caché»).
 
-![Coste estimado por sandbox y coste facturado desactivado](../assets/panel/panel-cost.png){ loading=lazy }
+![Coste estimado por sandbox y coste facturado aún sin consultar](../assets/panel/panel-cost.png){ loading=lazy }
 
 Con `--cost-explorer` y tras pulsar el botón, el panel muestra el facturado por
 tipo de uso junto al estimado. Cost Explorer tiene unas 24 h de retraso y el
