@@ -90,9 +90,20 @@ IMDS_PROBE = (
     'headers={"X-aws-ec2-metadata-token-ttl-seconds": "60"}); '
     'u.urlopen(r, timeout=3); print("imds ok")\''
 )
+EGRESS_PROBE_TIMEOUT_SECONDS = 5
+"""Plazo de cada intento de conexión de `urlopen` en la sonda de egress."""
+EGRESS_PROBE_ADDRESSES = 3
+"""Direcciones que puede devolver el DNS de `example.com`: `urlopen` prueba cada una
+con su propio plazo. Medido el 2026-10-15 con una allowlist que descarta todo salvo
+un CIDR ajeno: la negativa tardó de 10,2 a 11,7 s con dos direcciones, no los 5 s de un intento."""
+EGRESS_PROBE_STARTUP_SLACK_SECONDS = 5.0
+EGRESS_REFUSAL_BUDGET_SECONDS = (
+    EGRESS_PROBE_TIMEOUT_SECONDS * EGRESS_PROBE_ADDRESSES + EGRESS_PROBE_STARTUP_SLACK_SECONDS
+)
 EGRESS_PROBE = (
     "python3 -c 'import urllib.request as u; "
-    'u.urlopen("https://example.com", timeout=5); print("egress ok")\''
+    f'u.urlopen("https://example.com", timeout={EGRESS_PROBE_TIMEOUT_SECONDS}); '
+    'print("egress ok")\''
 )
 
 
@@ -491,7 +502,7 @@ def test_egress_allowlist(
             "egress: example.com through the allowlist",
             f"exit_code={excinfo.value.exit_code} in {elapsed:.2f} s",
         )
-        assert elapsed <= 10.0
+        assert elapsed <= EGRESS_REFUSAL_BUDGET_SECONDS
         assert sandbox.commands.run(EGRESS_PROBE, timeout=30).stdout.strip() == "egress ok"
     finally:
         with contextlib.suppress(SandboxNotFoundException):
