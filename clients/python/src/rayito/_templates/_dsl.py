@@ -224,7 +224,7 @@ class Template:
         `g=True` instala globalmente y, como en E2B, corre como root aunque
         un `set_user()` previo haya dejado otro usuario. La imagen necesita
         Node.js: `rayito-base` no lo trae, así que antes hay que llamar a
-        `dnf_install(["nodejs20", "nodejs20-npm"])`; sin npm el build falla
+        `dnf_install(NODE_PACKAGES)`; sin npm el build falla
         con un mensaje que lo explica."""
         names = "" if packages is None else f" {_package_names('npm_install', packages)}"
         flag = f" {NPM_GLOBAL_FLAG}" if g else ""

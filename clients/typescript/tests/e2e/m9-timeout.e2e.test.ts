@@ -27,9 +27,11 @@ import {
 import {
   type E2EContext,
   e2eEnabled,
+  msToSeconds,
   recordingControlPlane,
   report,
   seconds,
+  secondsToMs,
   sleep,
   useE2E,
   waitForTerminalState,
@@ -50,6 +52,8 @@ const TRACKING_TOLERANCE_MS = 2_000;
 const TRACKED_TIMEOUTS_MS = [200_000, 90_000, 400_000] as const;
 const PAUSE_MODE_TIMEOUT_MS = 60_000;
 const PAUSE_MAX_IDLE_SECONDS = 300;
+const AUTO_RESUME_RUN_TIMEOUT_MS = 120_000;
+const LONG_LIVED_TIMEOUT_MS = 120_000;
 const SHIM_TIMEOUT_MS = 30_000;
 const SHIM_EXTENDED_TIMEOUT_MS = 90_000;
 const SHIM_EXTEND_AFTER_MS = 5_000;
@@ -139,7 +143,7 @@ describe.skipIf(!e2eEnabled())("M9 server-enforced timeout (TypeScript)", () => 
       10_000 + TERMINATION_SLACK_MS,
     );
     const overrunMs = (info?.terminatedAt?.getTime() ?? Date.now()) - (shortenedAt + 10_000);
-    report(`${sandbox.sandboxId}: terminatedAt − deadline (overrun_s)`, overrunMs / 1000);
+    report(`${sandbox.sandboxId}: terminatedAt − deadline (overrun_s)`, msToSeconds(overrunMs));
     console.log(`\n[m9] stateReason=${info?.stateReason ?? "n/a"} timedOut=${info?.timedOut}`);
   });
 
@@ -185,17 +189,17 @@ describe.skipIf(!e2eEnabled())("M9 server-enforced timeout (TypeScript)", () => 
     );
     report(
       `${sandbox.sandboxId}: deadline -> SUSPENDED (pause_suspend_s)`,
-      (Date.now() - deadline) / 1000,
+      msToSeconds(Date.now() - deadline),
     );
     const resumedAt = Date.now();
     const execution = await withTimeout(
       sandbox.runCode("x"),
-      120_000,
+      AUTO_RESUME_RUN_TIMEOUT_MS,
       "runCode tras el auto-resume",
     );
     report(
       `${sandbox.sandboxId}: auto-resume -> runCode (auto_resume_s)`,
-      (Date.now() - resumedAt) / 1000,
+      msToSeconds(Date.now() - resumedAt),
     );
     expect(execution.text).toBe("42");
     const lifecycle = (await sandbox.getHealth()).lifecycle;
@@ -218,7 +222,7 @@ describe.skipIf(!e2eEnabled())("M9 server-enforced timeout (TypeScript)", () => 
   });
 
   test("setTimeout beyond maxLifetimeMs is InvalidArgumentError and keeps the deadline", async () => {
-    const sandbox = await createTimeoutSandbox(context, { timeoutMs: 120_000 });
+    const sandbox = await createTimeoutSandbox(context, { timeoutMs: LONG_LIVED_TIMEOUT_MS });
     const before = (await sandbox.getHealth()).lifecycle?.deadline?.getTime();
     const error = await sandbox.setTimeout(2_000_000).catch((caught: unknown) => caught);
     expect(error).toBeInstanceOf(InvalidArgumentError);
@@ -249,9 +253,9 @@ describe.skipIf(!e2eEnabled())("M9 server-enforced timeout (TypeScript)", () => 
       context,
       sandbox.sandboxId,
       "SUSPENDED",
-      SHORT_MAX_IDLE_SECONDS * 1000 + IDLE_SLACK_MS,
+      secondsToMs(SHORT_MAX_IDLE_SECONDS) + IDLE_SLACK_MS,
     );
-    report("stray request -> SUSPENDED again (s)", (Date.now() - strayAt) / 1000);
+    report("stray request -> SUSPENDED again (s)", msToSeconds(Date.now() - strayAt));
     const reopened = await Sandbox.connect(sandbox.sandboxId, {
       accessToken: token,
       controlPlane: context.controlPlane,
@@ -264,7 +268,7 @@ describe.skipIf(!e2eEnabled())("M9 server-enforced timeout (TypeScript)", () => 
   });
 
   test("the lifecycle tracks every setTimeout", async () => {
-    const sandbox = await createTimeoutSandbox(context, { timeoutMs: 120_000 });
+    const sandbox = await createTimeoutSandbox(context, { timeoutMs: LONG_LIVED_TIMEOUT_MS });
     for (const timeoutMs of TRACKED_TIMEOUTS_MS) {
       await sandbox.setTimeout(timeoutMs);
       const expected = Date.now() + timeoutMs;
@@ -305,7 +309,7 @@ describe.skipIf(!e2eEnabled())("M9 server-enforced timeout (TypeScript)", () => 
     );
     const overrunMs =
       (info?.terminatedAt?.getTime() ?? Date.now()) - (extendedAt + SHIM_EXTENDED_TIMEOUT_MS);
-    report(`${shim.sandboxId}: terminatedAt − deadline (overrun_s)`, overrunMs / 1000);
+    report(`${shim.sandboxId}: terminatedAt − deadline (overrun_s)`, msToSeconds(overrunMs));
 
     const paused = await ShimSandbox.create({
       ...shimOptions,

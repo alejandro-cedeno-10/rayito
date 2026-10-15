@@ -84,6 +84,15 @@ SCHEMES: Final = ("dark", "light")
 SECTION_SHARED: Final = "tokens"
 JSON_KEYS: Final = frozenset({"version", "name", SECTION_SHARED, *SCHEMES})
 
+#: Largo máximo de un nombre de familia en un token de fuente del tema; acota
+#: la expresión regular para que un tema no pueda colar un valor arbitrario.
+_FONT_NAME_MAX_CHARS: Final = 40
+#: Fuentes de reserva admitidas tras la primera en una pila `font-family`
+#: (ocho familias en total); mismo motivo que el límite anterior.
+_FONT_FALLBACKS_MAX: Final = 7
+_FONT_FAMILY: Final = (
+    rf"(?:\"[A-Za-z0-9 _-]{{1,{_FONT_NAME_MAX_CHARS}}}\"|[A-Za-z0-9_-]{{1,{_FONT_NAME_MAX_CHARS}}})"
+)
 _NUMBER = r"\d{1,3}(?:\.\d{1,3})?"
 _CHANNEL_SEPARATOR = r"(?:\s*,\s*|\s+)"
 _VALUE_PATTERNS: Final[dict[str, re.Pattern[str]]] = {
@@ -93,10 +102,7 @@ _VALUE_PATTERNS: Final[dict[str, re.Pattern[str]]] = {
         rf"{_CHANNEL_SEPARATOR}{_NUMBER}%?(?:\s*[,/]\s*(?:{_NUMBER}%?|0?\.\d{{1,3}}))?\s*\)"
     ),
     KIND_LENGTH: re.compile(rf"0|{_NUMBER}(?:px|rem|em)"),
-    KIND_FONT: re.compile(
-        r"(?:\"[A-Za-z0-9 _-]{1,40}\"|[A-Za-z0-9_-]{1,40})"
-        r"(?:\s*,\s*(?:\"[A-Za-z0-9 _-]{1,40}\"|[A-Za-z0-9_-]{1,40})){0,7}"
-    ),
+    KIND_FONT: re.compile(rf"{_FONT_FAMILY}(?:\s*,\s*{_FONT_FAMILY}){{0,{_FONT_FALLBACKS_MAX}}}"),
 }
 _NAME_PATTERN: Final = re.compile(rf"[A-Za-z0-9][A-Za-z0-9 _.-]{{0,{THEME_NAME_MAX_CHARS - 1}}}")
 _KEY_PATTERN: Final = re.compile(rf"[A-Za-z0-9_-]{{1,{SHOWN_KEY_MAX_CHARS}}}")

@@ -61,8 +61,21 @@ export function report(label: string, seconds: number): void {
   console.log(`\n[m6] ${label}: ${seconds.toFixed(2)} s`);
 }
 
+/** Milisegundos por segundo: la única conversión entre los `*Ms` y los segundos de los informes. */
+export const MS_PER_SECOND = 1000;
+
+/** Convierte milisegundos en segundos para los informes y los mensajes. */
+export function msToSeconds(ms: number): number {
+  return ms / MS_PER_SECOND;
+}
+
+/** Convierte segundos (los de la API de AWS y de las políticas) en milisegundos. */
+export function secondsToMs(value: number): number {
+  return value * MS_PER_SECOND;
+}
+
 export function seconds(sinceMs: number): number {
-  return (performance.now() - sinceMs) / 1000;
+  return msToSeconds(performance.now() - sinceMs);
 }
 
 export async function timed<T>(label: string, action: () => Promise<T>): Promise<[T, number]> {
@@ -86,7 +99,7 @@ export async function waitUntil(
   const started = performance.now();
   while (!(await predicate())) {
     if (performance.now() - started >= budgetMs) {
-      throw new Error(`${what} no ocurrió en ${budgetMs / 1000} s`);
+      throw new Error(`${what} no ocurrió en ${msToSeconds(budgetMs)} s`);
     }
     await sleep(pollMs);
   }
@@ -96,7 +109,7 @@ export async function waitUntil(
 export function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const deadline = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error(`${label} no llegó en ${ms / 1000} s`)), ms);
+    timer = setTimeout(() => reject(new Error(`${label} no llegó en ${msToSeconds(ms)} s`)), ms);
   });
   return Promise.race([promise, deadline]).finally(() => {
     if (timer !== undefined) {
@@ -130,7 +143,7 @@ export async function readUntil(
     const remaining = deadline - performance.now();
     if (remaining <= 0) {
       throw new Error(
-        `${String(needle)} no llegó en ${timeoutMs / 1000} s: ${JSON.stringify(buffer)}`,
+        `${String(needle)} no llegó en ${msToSeconds(timeoutMs)} s: ${JSON.stringify(buffer)}`,
       );
     }
     const result = await withTimeout(iterator.next(), remaining, String(needle));

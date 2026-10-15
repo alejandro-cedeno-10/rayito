@@ -65,7 +65,8 @@ y con la misma API que E2B.
 </div>
 </div>
 
-<div class="rx-ruler" role="img" aria-label="Tiempos medidos: resume 0,38 s; pool.take 0,77 s; listo para comandos 2,3 s; kernel listo 5,2 s">
+<div class="rx-ruler">
+<div class="rx-ruler__figure" role="img" aria-label="Tiempos medidos: resume 0,38 s; pool.take 0,77 s; listo para comandos 2,3 s; kernel listo 5,2 s">
 <div class="rx-ruler__track">
 <span class="rx-ruler__tick" style="--s:0"><span>0 s</span></span>
 <span class="rx-ruler__tick" style="--s:1"><span>1 s</span></span>
@@ -78,6 +79,7 @@ y con la misma API que E2B.
 <span class="rx-ruler__mark rx-ruler__mark--down" style="--s:0.77"><span class="rx-ruler__value">0,77 s</span><span class="rx-ruler__label"><code>pool.take()</code></span></span>
 <span class="rx-ruler__mark rx-ruler__mark--up" style="--s:2.3"><span class="rx-ruler__value">2,3 s</span><span class="rx-ruler__label">listo para comandos</span></span>
 <span class="rx-ruler__mark rx-ruler__mark--down rx-ruler__mark--end" style="--s:5.2"><span class="rx-ruler__value">5,2 s</span><span class="rx-ruler__label">kernel listo</span></span>
+</div>
 </div>
 <p class="rx-ruler__note">Medianas medidas en AWS real (us-east-1, 2026-09). Detalle en <a href="cost/#tiempos">Tiempos</a>.</p>
 </div>

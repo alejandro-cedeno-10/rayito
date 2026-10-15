@@ -20,7 +20,7 @@ import {
   Sandbox,
   SandboxNotFoundError,
 } from "../../src/index.js";
-import { e2eEnabled, report, seconds, TEMPLATE_VAR, useE2E } from "./helpers.js";
+import { e2eEnabled, report, seconds, secondsToMs, TEMPLATE_VAR, useE2E } from "./helpers.js";
 
 const CAPS_TEMPLATE_VAR = "RAYITO_TEMPLATE_CAPS";
 const DEFAULT_TEMPLATE_VAR = "RAYITO_TEMPLATE_DEFAULT";
@@ -28,6 +28,7 @@ const TEMPLATE_VERSION_VAR = "RAYITO_TEMPLATE_VERSION";
 const DEFAULT_TEMPLATE_VERSION_VAR = "RAYITO_TEMPLATE_DEFAULT_VERSION";
 const NOT_FOUND_BUDGET_MS = 5_000;
 const NO_ROLE_BUDGET_MS = 5_000;
+const SEED_TIMEOUT_MS = 120_000;
 const BUCKET_VAR = "RAYITO_PERSIST_BUCKET";
 const PREFIX_VAR = "RAYITO_PERSIST_PREFIX";
 const BLOB_BYTES = 20 * 1024 * 1024;
@@ -138,7 +139,7 @@ describe.skipIf(!enabled)("M7 persistence (TypeScript)", () => {
     const first = await createPersisted(persist);
     expect(first.persist?.equals(persist)).toBe(true);
     expect(first.lastRestore).toBeUndefined();
-    await first.commands.run(SEED_SCRIPT, { timeoutMs: 120_000 });
+    await first.commands.run(SEED_SCRIPT, { timeoutMs: SEED_TIMEOUT_MS });
     const blobBefore = await sha256(first, "data/blob.bin");
     let started = performance.now();
     const checkpoint = await first.checkpointFiles({ exclude: ["skipme"] });
@@ -185,7 +186,7 @@ describe.skipIf(!enabled)("M7 persistence (TypeScript)", () => {
       await expect(sandbox.restoreFiles({ source: fresh() })).rejects.toBeInstanceOf(NotFoundError);
       const elapsed = seconds(started);
       report("explicit restore of a missing name -> NotFoundError (s)", elapsed);
-      expect(elapsed * 1000).toBeLessThan(NOT_FOUND_BUDGET_MS);
+      expect(secondsToMs(elapsed)).toBeLessThan(NOT_FOUND_BUDGET_MS);
     } finally {
       await killQuietly(sandbox);
     }
@@ -214,7 +215,7 @@ describe.skipIf(!enabled)("M7 persistence (TypeScript)", () => {
       expect(failure).toBeInstanceOf(PersistenceError);
       expect((failure as PersistenceError).code).toBe("permission_denied");
       report("default image without a role -> checkpointFiles (s)", elapsed);
-      expect(elapsed * 1000).toBeLessThan(NO_ROLE_BUDGET_MS);
+      expect(secondsToMs(elapsed)).toBeLessThan(NO_ROLE_BUDGET_MS);
       expect((await sandbox.getHealth()).imdsBlocked).toBe(false);
     } finally {
       await killQuietly(sandbox);
