@@ -1,7 +1,7 @@
 # dashboard-stack Specification
 
 ## Purpose
-TBD - created by archiving change dashboard. Update Purpose after archive.
+The `dashboard` OptionalStack that serves the dashboard from the customer account behind Cognito or IAM authentication, with no Rayito-operated server.
 
 ## Requirements
 

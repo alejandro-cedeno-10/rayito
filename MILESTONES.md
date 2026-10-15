@@ -1917,6 +1917,9 @@ Publicada el 2026-10-15 en PyPI, npm y la GitHub Release `rayd-v0.12.0`
 - **`Template.dnf_install()` y `Template.npm_install()`** (#210), sync y
   async, en Python y TypeScript.
 - **Paridad de los e2e de TypeScript con los de Python** (#205, #218, #222).
+- **Paridad del SDK TypeScript**: `SandboxHealth.imdsBlocked`, `sbx.metadata`
+  y los tipos `Chart`, `ProcessInfo`, `WriteEntry` y `WatchHandle` en
+  `rayito/e2b`.
 - **Rediseño de la landing y del manual**, con la portada animada (#211,
   #215), y una ruta de primeros pasos más clara (#207).
 - **Seguridad**: `rustls` 0.23.46 por RUSTSEC-2026-0346 a 0349 (#208).
@@ -1936,8 +1939,8 @@ EFS):
   ensanchó y se repitió en AWS (#222).
 - Panel: la variante `aws-iam` de la pila `dashboard` verificada en AWS real
   (2026-10-14), sin tocar la VPC compartida de la cuenta.
-- Sobre el árbol etiquetado (`rayd-v0.12.0`): el `rayito-image.zip` firmado de la release, publicado como imagen
-  `rayito-base` (ver abajo), lanza y `rayito doctor --launch` termina 8 OK /
+- Sobre el árbol etiquetado (`rayd-v0.12.0`): el `rayito-image.zip` firmado
+  de la release, publicado como imagen `rayito-base` (ver abajo), lanza y `rayito doctor --launch` termina 8 OK /
   1 WARN / 0 FAIL / 1 SKIP (el WARN es la simulación IAM orientativa y el
   SKIP, el bucket que no se pasó).
 - Coste: sólo imágenes desechables, MicroVM-segundos y las pilas opcionales

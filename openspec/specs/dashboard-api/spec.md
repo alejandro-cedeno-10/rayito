@@ -1,7 +1,7 @@
 # dashboard-api Specification
 
 ## Purpose
-TBD - created by archiving change dashboard. Update Purpose after archive.
+The HTTP API `/api/v1` of the management dashboard (inventory, images, quotas, cost, events and actions), shared by `rayito dashboard` and the `dashboard` stack.
 
 ## Requirements
 

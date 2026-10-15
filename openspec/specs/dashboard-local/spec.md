@@ -1,7 +1,7 @@
 # dashboard-local Specification
 
 ## Purpose
-TBD - created by archiving change dashboard. Update Purpose after archive.
+The local `rayito dashboard` command: a loopback server with a read-only page over the dashboard API, off by default.
 
 ## Requirements
 

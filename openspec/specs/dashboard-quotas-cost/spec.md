@@ -1,7 +1,7 @@
 # dashboard-quotas-cost Specification
 
 ## Purpose
-TBD - created by archiving change dashboard. Update Purpose after archive.
+The `Quotas`, `UsageCost` and `Fleet` SDK services behind the dashboard, with parity across Python and TypeScript and cost features off by default.
 
 ## Requirements
 

@@ -30,3 +30,6 @@
       MicroVMs before and after, and clean up only what the run created.
 - [x] 4.3 Run the cases that need an agent 0.3.0 or later, `rayito-base-poly`
       and `rayito-base-caps` against a current image before archiving.
+      Satisfied by the 0.12.0 release acceptance on the per-lane disposable
+      images (base, caps, poly and caps with EFS), with the agent cases green
+      in both SDKs.
