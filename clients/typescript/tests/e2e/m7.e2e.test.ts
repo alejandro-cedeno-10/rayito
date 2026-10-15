@@ -13,15 +13,23 @@ import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { promisify } from "node:util";
 import { afterAll, describe, expect, test } from "vitest";
-import { NotFoundError, PersistenceError, S3Prefix, Sandbox } from "../../src/index.js";
-import { e2eEnabled, report, seconds, useE2E } from "./helpers.js";
+import {
+  NotFoundError,
+  PersistenceError,
+  S3Prefix,
+  Sandbox,
+  SandboxNotFoundError,
+} from "../../src/index.js";
+import { e2eEnabled, report, seconds, TEMPLATE_VAR, useE2E } from "./helpers.js";
 
 const CAPS_TEMPLATE_VAR = "RAYITO_TEMPLATE_CAPS";
+const DEFAULT_TEMPLATE_VAR = "RAYITO_TEMPLATE_DEFAULT";
+const TEMPLATE_VERSION_VAR = "RAYITO_TEMPLATE_VERSION";
+const DEFAULT_TEMPLATE_VERSION_VAR = "RAYITO_TEMPLATE_DEFAULT_VERSION";
+const NOT_FOUND_BUDGET_MS = 5_000;
+const NO_ROLE_BUDGET_MS = 5_000;
 const BUCKET_VAR = "RAYITO_PERSIST_BUCKET";
 const PREFIX_VAR = "RAYITO_PERSIST_PREFIX";
-const DEFAULT_TEMPLATE_VAR = "RAYITO_TEMPLATE_DEFAULT";
-const DEFAULT_TEMPLATE_VERSION_VAR = "RAYITO_TEMPLATE_DEFAULT_VERSION";
-const NO_ROLE_BUDGET_MS = 5000;
 const BLOB_BYTES = 20 * 1024 * 1024;
 const SANDBOX_TIMEOUT_MS = 1_800_000;
 const PERSIST_TIMEOUT_MS = 300_000;
@@ -115,6 +123,16 @@ describe.skipIf(!enabled)("M7 persistence (TypeScript)", () => {
     return result.stdout.split(/\s+/)[0] ?? "";
   }
 
+  async function killQuietly(sandbox: Sandbox): Promise<void> {
+    try {
+      await sandbox.kill();
+    } catch (error) {
+      if (!(error instanceof SandboxNotFoundError)) {
+        throw error;
+      }
+    }
+  }
+
   test("20 MB round trip, restore on create and reincarnate", async () => {
     const persist = fresh();
     const first = await createPersisted(persist);
@@ -159,12 +177,26 @@ describe.skipIf(!enabled)("M7 persistence (TypeScript)", () => {
     expect(["TERMINATING", "TERMINATED"]).toContain(old.state);
     await reborn.kill();
   });
+  test("restoring a missing name is NotFoundError", async () => {
+    const sandbox = await createPersisted(fresh());
+    try {
+      expect(sandbox.lastRestore).toBeUndefined();
+      const started = performance.now();
+      await expect(sandbox.restoreFiles({ source: fresh() })).rejects.toBeInstanceOf(NotFoundError);
+      const elapsed = seconds(started);
+      report("explicit restore of a missing name -> NotFoundError (s)", elapsed);
+      expect(elapsed * 1000).toBeLessThan(NOT_FOUND_BUDGET_MS);
+    } finally {
+      await killQuietly(sandbox);
+    }
+  });
 
   test("no role is permission_denied and imdsBlocked stays false", async () => {
-    const template = process.env[DEFAULT_TEMPLATE_VAR] || context.settings.template;
+    const defaultTemplate = process.env[DEFAULT_TEMPLATE_VAR] || process.env[TEMPLATE_VAR] || "";
     const sandbox = await Sandbox.create({
-      template: await context.controlPlane.resolveTemplateArn(template),
-      templateVersion: process.env[DEFAULT_TEMPLATE_VERSION_VAR] || undefined,
+      template: await context.controlPlane.resolveTemplateArn(defaultTemplate),
+      templateVersion:
+        process.env[DEFAULT_TEMPLATE_VERSION_VAR] || process.env[TEMPLATE_VERSION_VAR] || undefined,
       timeoutMs: SANDBOX_TIMEOUT_MS,
       idle: null,
       ingress: ["ALL_INGRESS"],
@@ -172,14 +204,20 @@ describe.skipIf(!enabled)("M7 persistence (TypeScript)", () => {
       controlPlane: context.controlPlane,
     });
     context.created.push(sandbox);
-    const started = performance.now();
-    const error = await sandbox.checkpointFiles({ target: fresh() }).catch((e: unknown) => e);
-    const elapsedMs = performance.now() - started;
-    report("default image without a role -> checkpointFiles", elapsedMs / 1000);
-    expect(error).toBeInstanceOf(PersistenceError);
-    expect((error as PersistenceError).code).toBe("permission_denied");
-    expect(elapsedMs).toBeLessThan(NO_ROLE_BUDGET_MS);
-    expect((await sandbox.getHealth()).imdsBlocked).toBe(false);
-    await sandbox.kill();
+    try {
+      const started = performance.now();
+      const failure = await sandbox.checkpointFiles({ target: fresh() }).then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+      const elapsed = seconds(started);
+      expect(failure).toBeInstanceOf(PersistenceError);
+      expect((failure as PersistenceError).code).toBe("permission_denied");
+      report("default image without a role -> checkpointFiles (s)", elapsed);
+      expect(elapsed * 1000).toBeLessThan(NO_ROLE_BUDGET_MS);
+      expect((await sandbox.getHealth()).imdsBlocked).toBe(false);
+    } finally {
+      await killQuietly(sandbox);
+    }
   });
 });
