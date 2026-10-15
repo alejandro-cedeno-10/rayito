@@ -10,6 +10,7 @@ from __future__ import annotations
 from rayito._stacks._model import StackComponent
 from rayito._stacks.components import (
     custom_domain,
+    dashboard,
     efs_volumes,
     events_webhooks,
     metadata_index,
@@ -30,6 +31,7 @@ COMPONENTS: tuple[StackComponent, ...] = (
     otlp_export.COMPONENT,
     templates.COMPONENT,
     custom_domain.COMPONENT,
+    dashboard.COMPONENT,
 )
 
 _BY_NAME: dict[str, StackComponent] = {component.name: component for component in COMPONENTS}

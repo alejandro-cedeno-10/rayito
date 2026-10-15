@@ -1386,6 +1386,18 @@ más): $0 en reposo y por uso.
   true` para los dos tamaños; tres builds en 206 s (baseline primero, los
   dos tamaños en paralelo después).
 
+**Reconocimiento de la variante por nombre (decisión de diseño, no medida en
+AWS).** El nombre de una imagen no es una propiedad que AWS verifique: el SDK
+sólo lo usa para adelantar un rechazo. Reconoce el patrón oficial
+`rayito-<variante>[-<talla>]` con la variante en el catálogo cerrado de
+`limits.json` (`officialImageVariants`) y la talla en la lista de tamaños de
+esta sección; cualquier otro nombre, y cualquier ARN, queda como variante
+desconocida y la decisión se difiere a `Health.features`, que el agente
+anuncia tras `/run`. Leer la capacidad de la propia imagen (por ejemplo
+`additionalOsCapabilities` en `GetMicrovmImageVersion`) costaría una llamada y
+un permiso más, y que esa respuesta lo devuelva no está medido: queda como
+pregunta abierta para una Q futura.
+
 ## 25. Logs, DynamoDB de eventos y Scheduler (`m15-events-webhooks`)
 
 **CloudWatch Logs** (`infra/events-webhooks.yaml`): `AWS::Logs::SubscriptionFilter`
@@ -1799,3 +1811,64 @@ distribución conectando al `DistributionDomainName` y mandando el
 hostname propio como SNI y como `Host` (`curl --connect-to`): CloudFront
 elige la distribución por el `Host`, y rechaza con 421 (domain fronting) un
 SNI distinto del `Host` cuyo certificado no lo cubra.
+
+## 30. Panel de gestión: Service Quotas, Cost Explorer e imágenes (`dashboard`, ADR-026, **contrato de parámetros**)
+
+Los servicios `Quotas`, `UsageCost` y `Fleet` del SDK (cambio OpenSpec
+`dashboard`, fase 1) sólo usan los parámetros de esta tabla. Los nombres se
+verificaron contra los modelos de servicio de `botocore` instalado
+(`service-quotas`, `ce` y `lambda-microvms`, leídos con
+`client.meta.service_model` el 2026-10-13, sin red) y, para Cost Explorer, contra
+la respuesta real del comando de §12 (`docs/benchmarks/raw/2026-09-cost-explorer-2026-09-16.json`);
+la regla dura 1 vale también aquí.
+
+| Operación (boto3 / AWS SDK v3) | Parámetros de entrada (y sólo estos) | Campos de salida que se leen | IAM | Fuente |
+|---|---|---|---|---|
+| `ListServiceQuotas` (`list_service_quotas` / `ListServiceQuotasCommand`, paquete `@aws-sdk/client-service-quotas`) | `ServiceCode` = `lambda`, `NextToken` | `Quotas[].QuotaCode`, `QuotaName`, `Value`, `Adjustable`; `NextToken` | `servicequotas:ListServiceQuotas` (ya usada por `rayito doctor`, §11) | modelo `service-quotas`; §11 |
+| `GetCostAndUsage` (`get_cost_and_usage` / `GetCostAndUsageCommand`, paquete `@aws-sdk/client-cost-explorer`) | `TimePeriod` (`Start`, `End` exclusivo, `AAAA-MM-DD`), `Granularity` (`DAILY` o `MONTHLY`), `Metrics` = `UnblendedCost` y `UsageQuantity`, `Filter` (`Dimensions` `SERVICE` = `AWS Lambda`, y `REGION` en un `And` si se filtra), `GroupBy` = `DIMENSION` `USAGE_TYPE`, `NextPageToken` | `ResultsByTime[].TimePeriod`, `Estimated`, `Groups[].Keys[0]`, `Groups[].Metrics.UnblendedCost.Amount`, `Metrics.UsageQuantity.Amount` y `Unit`; `NextPageToken` | `ce:GetCostAndUsage` | modelo `ce`; §12 |
+| `ListMicrovmImages` | `nameFilter`, `nextToken` | `items[].name`, `imageArn`, `state`, `latestActiveImageVersion`, `latestFailedImageVersion`, `createdAt` | `lambda:ListMicrovmImages` (ya en `rayito doctor` y `rayito image list`) | §4; modelo `lambda-microvms` |
+| `ListMicrovmImageVersions` | `imageIdentifier` (ARN), `nextToken` | `items[].imageVersion`, `state`, `status`, `baseImageVersion`, `codeArtifact.uri` (sólo el nombre del fichero), `resources[0].minimumMemoryInMiB` (opcional), `createdAt` | `lambda:ListMicrovmImageVersions` | §4; modelo `lambda-microvms` |
+
+Notas de contrato:
+
+- **Cost Explorer vive en us-east-1** (`ce.us-east-1.amazonaws.com`): el SDK
+  fija `COST_EXPLORER_REGION` aunque los MicroVMs estén en otra región. Cada
+  página de `GetCostAndUsage` es una petición de pago ($0,01,
+  <https://aws.amazon.com/aws-cost-management/aws-cost-explorer/pricing/>,
+  consultado 2026-10-13): el resultado cuenta las peticiones y una caché
+  local de `COST_CACHE_TTL_SECONDS` (24 h, el retraso de los datos) evita
+  repetirlas. Con `Granularity` `MONTHLY` y una ventana de un mes es una
+  sola página.
+- **Usage types de MicroVMs**: los cinco de §12
+  (`Lambda-MicroVM-Memory-GB-Second-ARM`, `-vCPU-Second-ARM`,
+  `-Snapshot-Read-GB`, `-Snapshot-Write-GB`, `-Snapshot-Storage-GB-Hour`).
+  El servicio `AWS Lambda` factura más tipos (peticiones, duración de
+  funciones): el SDK conserva sólo los que contienen `Lambda-MicroVM-`. Se
+  acepta un prefijo de región (`EUW1-Lambda-MicroVM-…`), **sin medir todavía**
+  fuera de us-east-1 (tarea 1.1 del cambio `dashboard`).
+- **Coste estimado, no facturado**: por sandbox `RUNNING`,
+  `segundos desde startedAt` × (`vCPU` × $0,0000276944 + `GB` × $0,0000036667)
+  con `vCPU = MiB / 2048` y `GB = MiB / 1024`, que reproduce la tabla de §12
+  (512 MiB $0,0315/h … 8192 MiB $0,5044/h). Es una cota superior (un sandbox
+  que estuvo suspendido sigue contando desde `startedAt`, porque
+  `list-microvms` no da los intervalos) y no incluye snapshots ni el consumo
+  sobre el baseline. Un sandbox suspendido no lleva importe.
+- **Memoria contra la cuota**: se suman los `RUNNING`, `SUSPENDING` y
+  `SUSPENDED` (§11) con el `minimumMemoryInMiB` de su versión de imagen
+  (`GetMicrovmImageVersion`, §24, una llamada gratuita por versión y
+  proceso). **Pendiente de medir** (tarea 1.1): si la cuota de memoria cuenta
+  `minimumMemoryInMiB` o la memoria que ve el guest, si Service Quotas
+  publica la utilización de las cuotas de MicroVMs (`UsageMetric` figura en el
+  modelo de `ListServiceQuotas`, sin leer) y el TPS de `ListMicrovms` y de
+  `ListMicrovmImages`, que no están en la tabla de cuotas (§11).
+- **Enlace de aumento de cuota**: `https://<región>.console.aws.amazon.com/servicequotas/home/services/lambda/quotas/<QuotaCode>`
+  (URL de la consola, no un parámetro de API; sólo la partición `aws`).
+  Pendiente de confirmar en la aceptación. Pedir el aumento desde el SDK
+  (`servicequotas:RequestServiceQuotaIncrease`) queda fuera: sería una
+  acción de escritura.
+- **Errores**: por código, nunca por texto. `AccessDeniedException` →
+  `AuthenticationException`; `TooManyRequestsException` (Service Quotas),
+  `LimitExceededException` (Cost Explorer) y `ThrottlingException` →
+  `RateLimitException`; el resto → `DashboardException` con `aws_code`. El
+  mensaje sólo lleva el código: el de AWS puede nombrar recursos de la
+  cuenta.

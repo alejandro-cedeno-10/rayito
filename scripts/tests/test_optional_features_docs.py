@@ -41,6 +41,15 @@ FEATURE_PAGES_0_6 = (
     "funciones-opcionales/dominio-propio.md",
 )
 
+#: El panel de gestión (ADR-026, cambio `dashboard`): una fila para los tres
+#: servicios del SDK (`Quotas`, `UsageCost`, `Fleet`) y otra para la pila
+#: `dashboard` en la cuenta, todavía sin aceptar en AWS real, así que su
+#: estado no dice "disponible".
+FEATURE_PAGES_DASHBOARD = (
+    "funciones-opcionales/panel-de-gestion.md",
+    "funciones-opcionales/panel-en-tu-cuenta.md",
+)
+
 DOCSTRING_MARKER = "Coste y activación"
 
 REQUIRED_SUBHEADINGS = (
@@ -156,12 +165,14 @@ def test_optional_features_table_header_matches_the_contract() -> None:
 def test_optional_features_table_has_one_row_per_function() -> None:
     page = read(OPTIONAL_FEATURES_PAGE)
     rows = parse_markdown_table(page, EXPECTED_TABLE_HEADER)
-    expected = len(FUNCTION_ANCHORS) + len(FEATURE_PAGES_0_6)
+    expected = (
+        len(FUNCTION_ANCHORS) + len(FEATURE_PAGES_0_6) + len(FEATURE_PAGES_DASHBOARD)
+    )
     assert len(rows) == expected, (
         f"se esperaban {expected} filas de funciones con coste, hay {len(rows)}"
     )
     linked = " ".join(row["Función"] for row in rows)
-    for feature_page in FEATURE_PAGES_0_6:
+    for feature_page in (*FEATURE_PAGES_0_6, *FEATURE_PAGES_DASHBOARD):
         assert f"({feature_page})" in linked, (
             f"{OPTIONAL_FEATURES_PAGE}: ninguna fila de la tabla enlaza a {feature_page}"
         )

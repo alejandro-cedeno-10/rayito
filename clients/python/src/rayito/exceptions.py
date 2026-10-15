@@ -409,6 +409,12 @@ class WebhookException(SandboxException):
     desplegada; el mensaje nunca repite una URL ni un secreto."""
 
 
+class DashboardException(SandboxException):
+    """Una llamada de lectura del panel de gestión (Service Quotas, Cost
+    Explorer, imágenes) falló con un código de AWS sin excepción propia;
+    `aws_code` lo lleva y el mensaje nunca repite el de AWS."""
+
+
 class CustomDomainException(SandboxException):
     """`CustomDomain` (m15-custom-domain, experimental) falló: una llamada
     al `KeyValueStore` de `register()`/`refresh()`/`unregister()`, o una de

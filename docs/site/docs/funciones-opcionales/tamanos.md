@@ -47,12 +47,24 @@ lanzar (`rayito-base-4gb`), nunca un ajuste del guest en marcha.
       borra la pila `sizes-guard` si la desplegaste (la pila no borra
       ninguna imagen).
     - **Ejemplo**:
-      ```python
-      from rayito import Sandbox
 
-      with Sandbox.create(size="4gb") as sbx:
-          sbx.commands.run("echo hola")
-      ```
+      === "Python"
+
+          ```python
+          from rayito import Sandbox
+
+          with Sandbox.create(size="4gb") as sbx:
+              sbx.commands.run("echo hola")
+          ```
+
+      === "TypeScript"
+
+          ```ts
+          import { Sandbox } from "rayito";
+
+          await using sbx = await Sandbox.create({ size: "4gb" });
+          await sbx.commands.run("echo hola");
+          ```
 
 !!! success "Aceptado en AWS real (2026-10-02)"
     `size=`/`size` (Python sync/async y TypeScript), `rayito image publish

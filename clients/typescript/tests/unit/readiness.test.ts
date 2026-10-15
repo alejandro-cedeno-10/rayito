@@ -195,6 +195,7 @@ describe("reconnect helpers", () => {
         resumeGeneration: 2n,
         clockOffsetMs: -3n,
         kernelStateLost: true,
+        imdsBlocked: true,
       }),
     );
     expect(health).toEqual({
@@ -206,6 +207,7 @@ describe("reconnect helpers", () => {
       resumeGeneration: 2,
       clockOffsetMs: -3,
       kernelStateLost: true,
+      imdsBlocked: true,
       egressEnforcement: "unspecified",
       lifecycle: undefined,
       cpuCount: 0,

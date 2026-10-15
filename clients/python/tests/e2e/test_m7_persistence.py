@@ -53,6 +53,8 @@ NO_ROLE_BUDGET_SECONDS = 5.0
 IMDS_BUDGET_SECONDS = 10.0
 SANDBOX_TIMEOUT_SECONDS = 1800
 CREDENTIAL_PROBE_UPTIME_SECONDS = 3600
+#: Margen sobre la sonda de uptime: el sandbox debe vivir más que ella.
+CREDENTIAL_PROBE_MARGIN_SECONDS = 600
 SEED_SCRIPT = (
     "mkdir -p /home/user/data /home/user/proj/src /home/user/.cache/pip /home/user/skipme "
     f"&& head -c {BLOB_BYTES} /dev/urandom > /home/user/data/blob.bin "
@@ -145,11 +147,12 @@ def caps_sandbox(
     control_plane: LambdaMicrovmsControlPlane,
     *,
     persist: S3Prefix,
+    timeout_seconds: int = SANDBOX_TIMEOUT_SECONDS,
 ) -> tuple[Sandbox, float]:
     started = time.perf_counter()
     created = Sandbox.create(
         control_plane.resolve_template_arn(persist_settings.caps_template),
-        timeout=SANDBOX_TIMEOUT_SECONDS,
+        timeout=timeout_seconds,
         idle=None,
         execution_role_arn=persist_settings.execution_role_arn,
         ingress=["ALL_INGRESS"],
@@ -347,7 +350,13 @@ def test_credentials_after_55_minutes(
     if os.environ.get(SLOW_VAR) != "1":
         pytest.skip(f"exporta {SLOW_VAR}=1 para medir la rotación de credenciales (≈ 62 min)")
     target = s3_cleanup.fresh(persist_settings)
-    sandbox, _ = caps_sandbox(persist_settings, e2e_settings, control_plane, persist=target)
+    sandbox, _ = caps_sandbox(
+        persist_settings,
+        e2e_settings,
+        control_plane,
+        persist=target,
+        timeout_seconds=CREDENTIAL_PROBE_UPTIME_SECONDS + CREDENTIAL_PROBE_MARGIN_SECONDS,
+    )
     try:
         while sandbox.get_health().uptime_ms < CREDENTIAL_PROBE_UPTIME_SECONDS * 1000:
             time.sleep(60)

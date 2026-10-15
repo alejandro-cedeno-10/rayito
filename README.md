@@ -1,7 +1,7 @@
 # Rayito
 
 [![CI](https://github.com/alejandro-cedeno-10/rayito/actions/workflows/ci.yml/badge.svg)](https://github.com/alejandro-cedeno-10/rayito/actions/workflows/ci.yml) [![PyPI](https://img.shields.io/pypi/v/rayito)](https://pypi.org/project/rayito/) [![npm](https://img.shields.io/npm/v/rayito)](https://www.npmjs.com/package/rayito) [![Licencia](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE) [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/alejandro-cedeno-10/rayito/badge)](https://scorecard.dev/viewer/?uri=github.com/alejandro-cedeno-10/rayito) [![Docs](https://img.shields.io/badge/docs-sitio-amber)](https://alejandro-cedeno-10.github.io/rayito/)
-<!-- OpenSSF Best Practices: tras registrar el proyecto (docs/research/openssf-badge-answers.md), añade este badge al final de la línea anterior con el id del proyecto:
+<!-- OpenSSF Best Practices: tras registrar el proyecto (https://www.bestpractices.dev/en/projects/new), añade este badge al final de la línea anterior con el id del proyecto:
 [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/<id>/badge)](https://www.bestpractices.dev/projects/<id>)
 -->
 
@@ -132,6 +132,11 @@ Todo funciona igual en Python (sync y `asyncio`) y en TypeScript.
   LangChain y Vercel AI ([LangChain y Vercel AI](https://alejandro-cedeno-10.github.io/rayito/guias/langchain-y-vercel-ai/)).
 - **CLI** `rayito`: publicar imágenes, `doctor`, operar sandboxes, pilas
   opcionales ([CLI](https://alejandro-cedeno-10.github.io/rayito/cli/)).
+- **Panel de gestión**: `rayito dashboard` abre un panel web local con los
+  sandboxes, las cuotas, el coste y las imágenes; acciones sólo con
+  `--allow-actions` ([recorrido paso a paso](https://alejandro-cedeno-10.github.io/rayito/funciones-opcionales/panel-de-gestion/#recorrido)).
+
+  ![Resumen del panel de gestión de Rayito](docs/site/docs/assets/panel/panel-overview.png)
 - **Probar en local** con Docker y Floci, sin cuenta de AWS
   ([Probar en local](https://alejandro-cedeno-10.github.io/rayito/guias/probar-en-local/)).
 - **Funciones opcionales, apagadas por defecto** (cada una cuesta algo en

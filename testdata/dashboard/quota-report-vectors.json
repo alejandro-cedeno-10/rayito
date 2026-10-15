@@ -1,0 +1,151 @@
+{
+  "description": "Quota report vectors shared by the Python and TypeScript SDKs. `applied` is `defaults` (every catalog quota at the region default) with `drop` (quota codes Service Quotas does not list) and `override` (code -> applied value). `fleet` lists sandboxes counted against the memory quota as `{memoryMiB, count}` groups; a null `memoryMiB` is a sandbox whose image memory could not be read.",
+  "cases": [
+    {
+      "name": "idle fleet in a large region",
+      "region": "us-east-1",
+      "applied": "defaults",
+      "drop": [],
+      "override": {},
+      "fleet": [],
+      "expected": {
+        "memory": {
+          "allocatedGb": 0,
+          "quotaGb": 1024,
+          "fraction": 0,
+          "level": "ok",
+          "sandboxes": 0,
+          "unresolved": 0
+        },
+        "warnings": [],
+        "suspendRate": 2
+      }
+    },
+    {
+      "name": "exactly at the warning threshold",
+      "region": "eu-west-1",
+      "applied": "defaults",
+      "drop": [],
+      "override": {},
+      "fleet": [{ "memoryMiB": 8192, "count": 40 }],
+      "expected": {
+        "memory": {
+          "allocatedGb": 320,
+          "quotaGb": 400,
+          "fraction": 0.8,
+          "level": "warning",
+          "sandboxes": 40,
+          "unresolved": 0
+        },
+        "warnings": [{ "kind": "memory_high", "code": "L-CD1C0CC4" }],
+        "suspendRate": 2
+      }
+    },
+    {
+      "name": "exactly at the critical threshold",
+      "region": "eu-west-1",
+      "applied": "defaults",
+      "drop": [],
+      "override": {},
+      "fleet": [{ "memoryMiB": 4096, "count": 95 }],
+      "expected": {
+        "memory": {
+          "allocatedGb": 380,
+          "quotaGb": 400,
+          "fraction": 0.95,
+          "level": "critical",
+          "sandboxes": 95,
+          "unresolved": 0
+        },
+        "warnings": [{ "kind": "memory_critical", "code": "L-CD1C0CC4" }],
+        "suspendRate": 2
+      }
+    },
+    {
+      "name": "just under the warning threshold",
+      "region": "eu-west-1",
+      "applied": "defaults",
+      "drop": [],
+      "override": {},
+      "fleet": [{ "memoryMiB": 2048, "count": 159 }],
+      "expected": {
+        "memory": {
+          "allocatedGb": 318,
+          "quotaGb": 400,
+          "fraction": 0.795,
+          "level": "ok",
+          "sandboxes": 159,
+          "unresolved": 0
+        },
+        "warnings": [],
+        "suspendRate": 2
+      }
+    },
+    {
+      "name": "unresolved image memory is counted apart",
+      "region": "eu-west-1",
+      "applied": "defaults",
+      "drop": [],
+      "override": {},
+      "fleet": [
+        { "memoryMiB": 1024, "count": 2 },
+        { "memoryMiB": null, "count": 3 }
+      ],
+      "expected": {
+        "memory": {
+          "allocatedGb": 2,
+          "quotaGb": 400,
+          "fraction": 0.005,
+          "level": "ok",
+          "sandboxes": 5,
+          "unresolved": 3
+        },
+        "warnings": [],
+        "suspendRate": 2
+      }
+    },
+    {
+      "name": "a reduced account warns about every quota below its default",
+      "region": "us-east-1",
+      "applied": "defaults",
+      "drop": [],
+      "override": { "L-CD1C0CC4": 256, "L-90045317": 1 },
+      "fleet": [{ "memoryMiB": 8192, "count": 20 }],
+      "expected": {
+        "memory": {
+          "allocatedGb": 160,
+          "quotaGb": 256,
+          "fraction": 0.625,
+          "level": "ok",
+          "sandboxes": 20,
+          "unresolved": 0
+        },
+        "warnings": [
+          { "kind": "below_default", "code": "L-CD1C0CC4" },
+          { "kind": "below_default", "code": "L-90045317" }
+        ],
+        "suspendRate": 1
+      }
+    },
+    {
+      "name": "the memory quota is not listed",
+      "region": "us-east-1",
+      "applied": "defaults",
+      "drop": ["L-CD1C0CC4"],
+      "override": {},
+      "fleet": [{ "memoryMiB": 8192, "count": 500 }],
+      "expected": {
+        "memory": {
+          "allocatedGb": 4000,
+          "quotaGb": null,
+          "fraction": null,
+          "level": "ok",
+          "sandboxes": 500,
+          "unresolved": 0
+        },
+        "warnings": [{ "kind": "not_listed", "code": "L-CD1C0CC4" }],
+        "suspendRate": 2
+      }
+    }
+  ]
+}

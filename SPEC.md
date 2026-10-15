@@ -115,7 +115,11 @@ Se rechazan en review si aparecen antes de M6:
   `SandboxPool`/`AsyncSandboxPool`, `Sandbox.create(pool=)`, `take()` →
   primera celda p95 0,90 s; `docs/site/docs/pool.md`); el pre-calentado
   sigue fuera.
-- Billing, dashboard o cualquier superficie de producto SaaS.
+- Billing o cualquier superficie de producto SaaS. Un panel de gestión
+  **opcional** que corre sólo en la cuenta y la máquina del propio usuario
+  (`rayito dashboard`, o una pila `OptionalStack` en su cuenta) no es
+  SaaS: sin servidor de Rayito, sin facturación propia y apagado por defecto
+  (ADR-026). Un panel hospedado por Rayito sigue siendo no-objetivo.
 - ~~**Metadatos por sandbox**~~: entregados en M6 vía `runHookPayload` +
   `Health` (los MicroVMs no admiten tags y `list-microvms` no filtra por
   ellos); `list(metadata=)` es O(n) sobre los sandboxes `RUNNING` y no es

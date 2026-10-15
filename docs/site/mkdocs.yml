@@ -73,6 +73,9 @@ theme:
 extra_css:
   - stylesheets/rayito.css
 
+hooks:
+  - hooks/limits_macros.py
+
 plugins:
   - search:
       lang: es
@@ -193,6 +196,8 @@ nav:
           - Exportación OTLP: funciones-opcionales/exportacion-otlp.md
           - OpenTelemetry (SDK): funciones-opcionales/opentelemetry.md
           - Índice de metadatos: funciones-opcionales/indice-de-metadatos.md
+          - Panel de gestión (cuotas, coste y flota): funciones-opcionales/panel-de-gestion.md
+          - Panel en tu cuenta (la pila dashboard): funciones-opcionales/panel-en-tu-cuenta.md
       - Proxy local: funciones-opcionales/proxy-local.md
       - Experimental:
           - Dominio propio (experimental): funciones-opcionales/dominio-propio.md
@@ -224,6 +229,7 @@ nav:
           - Shim E2B: referencia/python/shim-e2b.md
       - TypeScript: referencia/typescript.md
       - CLI: cli.md
+      - API del panel de gestión: referencia/api-del-panel.md
       - Errores: referencia/errores.md
       - Variables de entorno: referencia/variables-de-entorno.md
       - Límites: limits.md

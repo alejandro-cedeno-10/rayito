@@ -2,7 +2,12 @@ import { describe, expect, test } from "vitest";
 import limits from "../../../../limits.json" with { type: "json" };
 import * as rendered from "../../src/limits.js";
 
-const SET_KEYS = new Set(["terminalStates", "suspendedStates", "managedNetworkConnectors"]);
+const SET_KEYS = new Set([
+  "terminalStates",
+  "suspendedStates",
+  "managedNetworkConnectors",
+  "largeQuotaRegions",
+]);
 const CONSTANT_NAME_OVERRIDES: Record<string, string> = {
   s3BucketNameMin: "S3_BUCKET_NAME_MIN",
   s3BucketNameMax: "S3_BUCKET_NAME_MAX",

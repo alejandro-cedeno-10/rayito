@@ -52,6 +52,28 @@ servidor, subclase suya desde 0.4.0; el resto ya lo era).
 No hay una variante que junte `-caps` y `-poly`: ningún objetivo de `make` la
 publica y la combinación no está medida.
 
+## Cómo reconoce el SDK la variante
+
+Antes de lanzar, el SDK intenta deducir la variante por el **nombre** de la
+imagen, sólo para rechazar pronto (y sin pagar el lanzamiento) lo que esa
+imagen no puede hacer. Reconoce únicamente `rayito-<variante>` o
+`rayito-<variante>-<talla>`, con la variante en el catálogo cerrado `base`,
+`base-caps`, `base-caps-efs`, `base-poly` y `base-slim`, y la talla en las
+de [Tamaños](funciones-opcionales/tamanos.md) (`512mb`, `1gb`, `2gb`, `4gb`,
+`8gb`). Con una variante conocida:
+
+- `mounts=` y `telemetry=` con el rol de ejecución piden `base-caps` o
+  `base-caps-efs`;
+- `volumes=` pide `base-caps-efs`: la `base-caps` sin `amazon-efs-utils` no
+  puede montar EFS.
+
+Cualquier otro nombre (una imagen propia, aunque empiece por `rayito-`, como
+`rayito-mi-app`) o un ARN **no se interpreta**: el SDK lanza el sandbox y
+decide con lo que el agente anuncia en `Health.features`, que sigue siendo la
+autoridad. Si la imagen no tiene la función, el sandbox se termina (salvo
+`keep_on_failure`) y se lanza `UnimplementedError`. Así, una imagen propia
+con capas caps y EFS publicada con `--image-name` funciona sin cambiar nada.
+
 ## Publicar las tres
 
 Sin compilar nada, `rayito-base` y `rayito-base-caps` se publican desde el
@@ -89,16 +111,32 @@ imagen al crear el sandbox. Detalle, la tabla de tamaños (de la
 documentación de AWS, no medida salvo donde se dice) y el `$/h` por tamaño
 en [Límites](limits.md#tamano-cpuram).
 
-```python
-from rayito import Sandbox
+=== "Python"
 
-base = Sandbox.create("rayito-base")                          # o RAYITO_TEMPLATE
-caps = Sandbox.create("rayito-base-caps", allow_internet_access=False)
-poly = Sandbox.create("rayito-base-poly")
-print(poly.run_code("1 + 1", language="typescript").text)
-for sbx in (base, caps, poly):
-    sbx.kill()
-```
+    ```python
+    from rayito import Sandbox
+
+    base = Sandbox.create("rayito-base")                          # o RAYITO_TEMPLATE
+    caps = Sandbox.create("rayito-base-caps", allow_internet_access=False)
+    poly = Sandbox.create("rayito-base-poly")
+    print(poly.run_code("1 + 1", language="typescript").text)
+    for sbx in (base, caps, poly):
+        sbx.kill()
+    ```
+
+=== "TypeScript"
+
+    ```ts
+    import { Sandbox } from "rayito";
+
+    const base = await Sandbox.create({ template: "rayito-base" }); // o RAYITO_TEMPLATE
+    const caps = await Sandbox.create({ template: "rayito-base-caps", allowInternetAccess: false });
+    const poly = await Sandbox.create({ template: "rayito-base-poly" });
+    console.log((await poly.runCode("1 + 1", { language: "typescript" })).text);
+    for (const sbx of [base, caps, poly]) {
+      await sbx.kill();
+    }
+    ```
 
 ## IAM del llamante
 

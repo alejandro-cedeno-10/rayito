@@ -9,6 +9,7 @@
 
 import type { StackComponent } from "./model.js";
 import * as customDomain from "./templates/custom-domain.gen.js";
+import * as dashboard from "./templates/dashboard.gen.js";
 import * as efsVolumes from "./templates/efs-volumes.gen.js";
 import * as eventsWebhooks from "./templates/events-webhooks.gen.js";
 import * as metadataIndex from "./templates/metadata-index.gen.js";
@@ -25,6 +26,7 @@ interface GeneratedAsset {
 
 const ASSETS: Readonly<Record<string, GeneratedAsset>> = {
   "custom-domain": customDomain,
+  dashboard,
   "efs-volumes": efsVolumes,
   "events-webhooks": eventsWebhooks,
   "metadata-index": metadataIndex,

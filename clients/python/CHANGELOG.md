@@ -6,6 +6,80 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
 
 ## [Unreleased]
 
+### Añadido
+
+- **Pila `dashboard`** (el panel de gestión dentro de tu cuenta, ADR-026, fase
+  2): componente de `OptionalStacks`/`rayito stack deploy|status|destroy
+  dashboard`. Una Lambda con Function URL sirve la misma página y la misma API
+  `/api/v1` que `rayito dashboard`, con inicio de sesión de Cognito (el token se
+  valida en la función antes de enrutar), un rol de lectura y un rol de acciones
+  separados (`AllowActions=true`), una tabla de auditoría sólo de añadir
+  (escrita antes de cada acción; si falla, la acción no corre) y una caché del
+  coste facturado en DynamoDB (`EnableCostExplorer=true`). Tema propio por
+  `ThemeJson` o por un parámetro de SSM (`ThemeParameterName`, `LogoParameterName`),
+  con los mismos validadores que `--theme`. Sin CloudFront ni buckets de S3;
+  las etiquetas obligatorias se pasan con `--tag`. De sólo lectura y sin Cost
+  Explorer por defecto. Constantes nuevas en `limits.json` (`dashboardStack*`).
+  El coste facturado tiene tope aunque lo pida cualquier usuario con sesión
+  (ventanas de meses completos, regiones conocidas y un presupuesto diario de
+  consultas de pago para toda la pila); antes de cada acción la función
+  comprueba en Cognito que el usuario sigue habilitado y en el grupo, y la
+  página no entra en bucle de inicio de sesión tras un 401.
+
+- **`rayito dashboard`** (panel de gestión local, ADR-026, fase 1b): un
+  servidor en `127.0.0.1` con una página sin compilación (módulos ES y web
+  components, claro y oscuro) y la API JSON versionada `/api/v1` sobre
+  `Fleet`, `Quotas` y `UsageCost`: sandboxes, imágenes, cuotas con barras y
+  avisos y enlace de aumento, coste facturado y estimado rotulados por
+  separado, eventos y logs. De sólo lectura por defecto; `--allow-actions`
+  habilita matar, suspender y reanudar con confirmación y una cola que
+  respeta el TPS; `--cost-explorer` y `--events-stack` activan lo que
+  cuesta o necesita una pila. Defensas: `Host`/`Origin` como el proxy local,
+  token de arranque de un solo uso canjeado por una cookie `HttpOnly`,
+  `SameSite=Strict`, `Sec-Fetch-Site`, CSRF en todo `POST` y en la consulta
+  de coste facturado, CSP estricta y nada registrado.
+  Constantes nuevas en `limits.json` (`dashboard*`, `costExplorerRequestPriceUsd`).
+  La página tiene un resumen inicial (tarjetas y gráficas SVG), tabla densa
+  de sandboxes y tema oscuro por defecto; con `--theme` (`.json` o `.css`,
+  o `RAYITO_DASHBOARD_THEME`) y `--logo` (PNG o SVG) se usa la paleta propia,
+  validada y servida del mismo origen. `/api/v1/meta` añade `theme`.
+- **Servicios del panel de gestión** (`dashboard`, ADR-026, fase 1): `Quotas`
+  (cuotas aplicadas de Lambda MicroVMs, memoria asignada contra la cuota de la
+  región y avisos al 80 % y al 95 %), `UsageCost` (coste facturado por Cost
+  Explorer por tipo de uso, con caché local de 24 h, y coste estimado por
+  sandbox, siempre rotulados) y `Fleet` (sandboxes con la memoria de su
+  imagen, imágenes y versiones, historial de eventos y acciones masivas con
+  una cola que respeta los TPS), cada uno con su versión `Async*`.
+  Apagados por defecto: construirlos no llama a AWS, Cost Explorer ($0,01 por
+  petición) sólo se toca con `UsageCost.billed()` y las acciones exigen
+  `allow_actions=True`. Nueva excepción `DashboardException` y constantes
+  nuevas en `limits.json` (catálogo de cuotas, umbrales, TTL y precios de
+  cómputo). `rayito doctor` y `rayito image list` reutilizan los lectores de
+  cuotas e imágenes. Cada clase, método y opción dice si es gratuito o de pago (`billed()` y `events()` son de pago; `resume` vuelve a facturar cómputo) con el mismo texto en ambos SDK. Guía:
+  [Panel de gestión](https://alejandro-cedeno-10.github.io/rayito/funciones-opcionales/panel-de-gestion/).
+- **`Template.dnf_install()` y `Template.npm_install(packages=None, g=False)`**
+  (sync y async). Atajos del DSL para instalar paquetes del sistema con
+  `dnf` (sin paquetes débiles) y paquetes Node con `npm`; los nombres se
+  escapan para el shell y se rechazan las listas vacías y los nombres que
+  empiezan por `-`. `dnf_install` y `npm_install(g=True)` corren como root
+  aunque un `set_user()` previo dejara otro usuario. `npm_install` falla con el código 127 y un mensaje claro
+  si la imagen no tiene Node.js. `apt_install` sigue lanzando
+  `UnimplementedError`, ahora apuntando a `dnf_install`.
+
+### Cambiado
+
+- **La variante de imagen se reconoce con un catálogo cerrado**
+  (`parity-image-variants`). `resolve_image_variant` sólo interpreta
+  `rayito-<variante>[-<talla>]` con la variante en `base`, `base-caps`,
+  `base-caps-efs`, `base-poly` y `base-slim` y la talla del catálogo de
+  tamaños. Una imagen propia que empieza por `rayito-` (por ejemplo
+  `rayito-mi-app-caps-efs`) ya no se interpreta como una variante conocida
+  que no es caps ni se rechaza antes de lanzar: la decisión pasa a
+  `Health.features`, como ya ocurría con un ARN. `volumes=` (y `volume_mounts=` del shim) exige además
+  `rayito-base-caps-efs` cuando la variante se conoce: `rayito-base-caps` sin
+  `amazon-efs-utils` lanza `UnimplementedError` antes de lanzar en lugar de
+  después.
+
 ## [0.11.0] - 2026-10-13
 
 ### Añadido

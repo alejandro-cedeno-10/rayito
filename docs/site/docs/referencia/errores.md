@@ -40,6 +40,7 @@ cuándo ocurre y qué hacer.
     ├── TemplateException
     ├── StackException
     ├── WebhookException
+    ├── DashboardException
     ├── CustomDomainException
     └── AgentException
     AuthenticationException          (Exception: un problema de credenciales, no del sandbox)
@@ -85,6 +86,7 @@ cuándo ocurre y qué hacer.
     ├── TemplateError
     ├── StackError
     ├── WebhookError
+    ├── DashboardError
     ├── CustomDomainError
     └── AgentError
     AuthenticationError              (Error)
@@ -144,6 +146,7 @@ excepción: llega en `execution.error`.
 | `StackException` | `StackError` | CloudFormation (`code`) | `OptionalStacks.deploy/status/destroy` falló: `blocked` (pila en `ROLLBACK_COMPLETE`), `not_found`, `in_progress`, `failed` | ver [Pilas opcionales](../funciones-opcionales/pilas-opcionales.md#como-se-comporta) |
 | `BuildException` | `BuildError` | el build de la imagen (`reason`) | `Template.build()` falló: un paso del Dockerfile (`step`, `command`, `exit_code`, `log_tail`), el `ready_cmd`, la cuota de builds o el plazo | ver [Templates](../funciones-opcionales/templates.md#errores) |
 | `TemplateException` | `TemplateError` | el SDK | nombre de template inválido (1-64 `[A-Za-z0-9_-]`, sin `:tag`) | corrige el nombre; la imagen base inválida es `BuildException` con `reason="base_image_*"` |
+| `DashboardException` | `DashboardError` | Service Quotas, Cost Explorer, `lambda-microvms` (`aws_code`) | `Quotas`, `UsageCost` o `Fleet` (panel de gestión) recibió un código de AWS sin excepción propia (por ejemplo `DataUnavailableException`); el mensaje sólo lleva el código | ver [Panel de gestión](../funciones-opcionales/panel-de-gestion.md#errores) |
 | `CustomDomainException` | `CustomDomainError` | CloudFormation, CloudFront KVS | `CustomDomain` (experimental): deploy/status/destroy de la pila, o `expose()`/`get_host()` sin ruta válida | ver [Dominio propio](../funciones-opcionales/dominio-propio.md) |
 | `SandboxException` con `output_truncated` | `SandboxError` | el agente | nadie leyó la salida de un comando en 30 s y se llenó el búfer | consume el handle o redirige a un fichero |
 | `AgentException` | `AgentError` | el runtime del agente (`reason`) | `sbx.agent.run()`/`.stream()` falló: ver la tabla siguiente | lee `reason`, `session_id` y `usage`; nunca contiene el prompt ni la respuesta |

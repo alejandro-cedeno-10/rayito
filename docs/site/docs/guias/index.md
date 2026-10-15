@@ -82,11 +82,18 @@ diferencias con E2B.
 
 ## Agentes
 
+¿Dónde corre el agente? **Fuera** (tu host MCP o tu app con LangChain/Vercel
+AI): el sandbox es su herramienta y basta `rayito-base`. **Dentro**
+(`sbx.agent`): el bucle entero corre en el sandbox; necesita la imagen
+`rayito-agent` y la pasarela de secretos.
+
 | Guía | Para qué |
 |---|---|
 | [Servidor MCP](../mcp.md) | un sandbox para Claude Code, Claude Desktop, Cursor o VS Code |
 | [LangChain y Vercel AI](langchain-y-vercel-ai.md) | Rayito como herramienta de un agente |
 | [Agente en el sandbox](agente-en-el-sandbox.md) | un agente de código (OpenCode o deepagents) **dentro** del sandbox con `sbx.agent.run()`, el modelo tras la pasarela de secretos; el arranque rápido, opcional |
+| [Proveedores del agente](agente-proveedores.md) | los proveedores de modelo que admite `sbx.agent` tras la pasarela de secretos, cómo configurar cada uno y cuáles no se admiten |
+| [Templates de agente](../funciones-opcionales/templates-de-agente.md) | `AgentTemplate`: la imagen `rayito-agent` con OpenCode, ripgrep y deepagents, sus pines y el coste de cada versión |
 
 ## Desarrollar y probar
 

@@ -73,6 +73,12 @@ en `CLAUDE.md`; esta skill las concreta y añade el cómo. Detalle en:
 - Lo público es lo que exportan `rayito/__init__.py` (`__all__`),
   `rayito.e2b`, `src/index.ts` y `src/e2b/index.ts`. Lo demás es privado
   (módulos `_` en Python, sin re-exportar en TypeScript).
+  `scripts/check_sdk_parity.py` (en `make lint` y en CI) compara los dos
+  lados contra una lista de diferencias intencionales con su motivo.
+- Qué se prueba en cada SDK: el guest y `rayd` se prueban una vez (Python);
+  la CLI, MCP, el proxy y los duplicados sync/async son sólo Python; todo lo
+  demás tiene cobertura en los dos. Detalle en
+  [reference/parity-checklist.md](reference/parity-checklist.md).
 - Los tests nuevos se nombran por la función o el comportamiento
   (`test_s3_mounts_*.py`, `s3-mounts.test.ts`), no por el hito.
 

@@ -1,0 +1,177 @@
+"""``check_sdk_parity.py`` sobre un árbol mínimo en ``tmp_path``: el árbol
+alineado pasa, y cada deriva (un nombre sólo en Python, un valor sólo en
+TypeScript, una entrada de la lista de permitidos que ya no se justifica, una
+clase ``Async*`` sin gemela síncrona) falla nombrando el símbolo. Además, el
+árbol real del repositorio tiene que pasar."""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+import pytest
+
+SCRIPTS = Path(__file__).resolve().parents[1]
+if str(SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS))
+
+import check_sdk_parity
+
+REPO_ROOT = SCRIPTS.parent
+
+
+def write(root: Path, relative: Path, text: str) -> None:
+    target = root / relative
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(text, encoding="utf-8")
+
+
+@pytest.fixture
+def no_allowlists(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Los árboles de estos tests son sintéticos: sin las listas del repo."""
+    monkeypatch.setattr(check_sdk_parity, "PYTHON_ONLY", {})
+    monkeypatch.setattr(check_sdk_parity, "TYPESCRIPT_ONLY_VALUES", {})
+
+
+def build_tree(
+    root: Path,
+    *,
+    python_all: tuple[str, ...] = ("Sandbox", "SandboxException", "parse_chart"),
+    typescript: str = (
+        "export { Sandbox } from './sandbox.js';\n"
+        "export { SandboxError, parseChart } from './errors.js';\n"
+    ),
+) -> None:
+    listed = ", ".join(f'"{name}"' for name in python_all)
+    for _surface, python_path, typescript_path in check_sdk_parity.SURFACES:
+        write(root, python_path, f"__all__ = [{listed}]\n")
+        write(root, typescript_path, typescript)
+
+
+@pytest.mark.usefixtures("no_allowlists")
+def test_an_aligned_tree_passes(tmp_path: Path) -> None:
+    build_tree(tmp_path)
+    assert check_sdk_parity.problems_for(tmp_path) == []
+
+
+@pytest.mark.usefixtures("no_allowlists")
+def test_exception_and_snake_case_names_are_compared_normalised(tmp_path: Path) -> None:
+    build_tree(tmp_path)
+    python = check_sdk_parity.python_exports(tmp_path / check_sdk_parity.SURFACES[0][1])
+    typescript = check_sdk_parity.typescript_exports(
+        tmp_path / check_sdk_parity.SURFACES[0][2]
+    )
+    assert check_sdk_parity.normalise("SandboxException") == check_sdk_parity.normalise(
+        "SandboxError"
+    )
+    assert check_sdk_parity.normalise("parse_chart") == check_sdk_parity.normalise(
+        "parseChart"
+    )
+    assert python == {"Sandbox", "SandboxException", "parse_chart"}
+    assert set(typescript) == {"Sandbox", "SandboxError", "parseChart"}
+
+
+@pytest.mark.usefixtures("no_allowlists")
+def test_a_python_name_without_a_typescript_export_is_reported(tmp_path: Path) -> None:
+    build_tree(
+        tmp_path, python_all=("Sandbox", "SandboxException", "parse_chart", "Extra")
+    )
+    problems = check_sdk_parity.problems_for(tmp_path)
+    assert any(
+        "`Extra`" in problem and "TypeScript no lo exporta" in problem
+        for problem in problems
+    )
+
+
+@pytest.mark.usefixtures("no_allowlists")
+def test_a_typescript_value_without_a_python_name_is_reported(tmp_path: Path) -> None:
+    build_tree(
+        tmp_path,
+        typescript=(
+            "export { Sandbox } from './sandbox.js';\n"
+            "export { SandboxError, parseChart, extraHelper } from './errors.js';\n"
+        ),
+    )
+    problems = check_sdk_parity.problems_for(tmp_path)
+    assert any("`extraHelper`" in problem for problem in problems)
+
+
+@pytest.mark.usefixtures("no_allowlists")
+def test_typescript_types_do_not_need_a_python_counterpart(tmp_path: Path) -> None:
+    build_tree(
+        tmp_path,
+        typescript=(
+            "export { Sandbox } from './sandbox.js';\n"
+            "export { SandboxError, parseChart, type CreateOptions } from './errors.js';\n"
+            "export type { OtherOptions } from './x.js';\n"
+            "export interface Declared { readonly a: string }\n"
+            "export type Alias = string;\n"
+        ),
+    )
+    assert check_sdk_parity.problems_for(tmp_path) == []
+
+
+@pytest.mark.usefixtures("no_allowlists")
+def test_async_classes_need_their_sync_twin(tmp_path: Path) -> None:
+    build_tree(
+        tmp_path,
+        python_all=(
+            "Sandbox",
+            "SandboxException",
+            "parse_chart",
+            "AsyncSandbox",
+            "AsyncOrphan",
+        ),
+    )
+    problems = check_sdk_parity.problems_for(tmp_path)
+    assert any("`AsyncOrphan`" in problem for problem in problems)
+    assert not any("`AsyncSandbox`" in problem for problem in problems)
+
+
+def test_comments_and_aliases_in_typescript_exports_are_read_correctly() -> None:
+    parsed = check_sdk_parity.typescript_exports_from_source(
+        "// export { Hidden } from './a.js';\n"
+        "/* export { AlsoHidden } from './b.js'; */\n"
+        "export {\n  CapacityError as ServiceBusyError, // alias\n  type Logger as Log,\n} from './c.js';\n"
+        "export default Sandbox;\n"
+    )
+    assert parsed == {"ServiceBusyError": False, "Log": True}
+
+
+def test_a_stale_allowlist_entry_is_reported(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    build_tree(tmp_path)
+    monkeypatch.setattr(check_sdk_parity, "TYPESCRIPT_ONLY_VALUES", {})
+    monkeypatch.setattr(
+        check_sdk_parity,
+        "PYTHON_ONLY",
+        {"rayito": {"Gone": "ya no existe", "Sandbox": "ya coincide"}},
+    )
+    problems = check_sdk_parity.problems_for(tmp_path)
+    assert any(
+        "`Gone`" in problem and "ya no existe" in problem for problem in problems
+    )
+    assert any(
+        "`Sandbox`" in problem and "ya existe en el otro SDK" in problem
+        for problem in problems
+    )
+
+
+def test_the_real_tree_is_aligned() -> None:
+    assert check_sdk_parity.problems_for(REPO_ROOT) == []
+
+
+@pytest.mark.usefixtures("no_allowlists")
+def test_main_reports_ok_and_failure(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    build_tree(tmp_path)
+    assert check_sdk_parity.main(["--root", str(tmp_path)]) == 0
+    assert capsys.readouterr().out.strip() == "OK"
+    build_tree(
+        tmp_path, python_all=("Sandbox", "SandboxException", "parse_chart", "Extra")
+    )
+    assert check_sdk_parity.main(["--root", str(tmp_path)]) == 1
+    assert "KO" in capsys.readouterr().out
+    assert check_sdk_parity.main(["--bogus"]) == 2

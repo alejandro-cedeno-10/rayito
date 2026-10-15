@@ -6,6 +6,65 @@ versionado [SemVer](https://semver.org/lang/es/).
 
 ## [Unreleased]
 
+### Añadido
+
+- **Pila `dashboard`** (el panel de gestión dentro de tu cuenta, ADR-026, fase
+  2): componente de `OptionalStacks` (`deploy("dashboard", { artifactBucket })`),
+  espejo del de Python: la misma plantilla, el mismo zip y los mismos parámetros
+  (`AllowActions`, `EnableCostExplorer`, `ThemeJson`, `ThemeParameterName`...). De
+  sólo lectura y sin Cost Explorer por defecto. Constantes nuevas en `limits.ts`
+  (`DASHBOARD_STACK_*`). El coste facturado tiene tope aunque lo pida cualquier
+  usuario con sesión (ventanas de meses completos, regiones conocidas y un
+  presupuesto diario de consultas de pago para toda la pila) y las acciones se
+  comprueban en vivo en Cognito antes de ejecutarse.
+
+- **Servicios del panel de gestión** (`dashboard`, ADR-026, fase 1): `Quotas`
+  (cuotas aplicadas de Lambda MicroVMs, memoria asignada contra la cuota de la
+  región y avisos al 80 % y al 95 %), `UsageCost` (coste facturado por Cost
+  Explorer por tipo de uso, con caché local de 24 h, y coste estimado por
+  sandbox, siempre rotulados) y `Fleet` (sandboxes con la memoria de su
+  imagen, imágenes y versiones, historial de eventos y acciones masivas con
+  una cola que respeta los TPS).
+  Apagados por defecto: construirlos no llama a AWS, Cost Explorer ($0,01 por
+  petición) sólo se toca con `UsageCost.billed()` y las acciones exigen
+  `allowActions: true`. Nueva excepción `DashboardError` y constantes
+  nuevas en `limits.json` (catálogo de cuotas, umbrales, TTL y precios de
+  cómputo). Los clientes de Service Quotas y Cost Explorer son
+  peers opcionales (`@aws-sdk/client-service-quotas`,
+  `@aws-sdk/client-cost-explorer`). Cada clase, método y opción dice si es gratuito o de pago (`billed()` y `events()` son de pago; `resume` vuelve a facturar cómputo) con el mismo texto en ambos SDK. Guía:
+  [Panel de gestión](https://alejandro-cedeno-10.github.io/rayito/funciones-opcionales/panel-de-gestion/).
+- **`Template.dnfInstall()` y `Template.npmInstall(packages?, { g })`**.
+  Atajos del DSL para instalar paquetes del sistema con `dnf` (sin paquetes
+  débiles) y paquetes Node con `npm`; los nombres se escapan para el shell y
+  se rechazan las listas vacías y los nombres que empiezan por `-`.
+  `dnfInstall` y `npmInstall({ g: true })` corren como root aunque un
+  `setUser()` previo dejara otro usuario. `npmInstall` falla con el código 127 y un mensaje claro si la imagen no
+  tiene Node.js. `aptInstall` sigue lanzando `UnimplementedError`, ahora
+  apuntando a `dnfInstall`.
+- **`SandboxHealth.imdsBlocked`**: `true` cuando `rayd` instaló y verificó el
+  bloqueo de IMDS para los uids del sandbox (imagen con capabilities), como
+  `Health.imds_blocked` de Python; `false` en la imagen por defecto y en un
+  agente anterior a M6.
+- **`sbx.metadata`**: los `metadata` de `create({ metadata })` tal como los
+  devolvió el último `Health` (copia congelada), como `Sandbox.metadata` de
+  Python.
+- **`rayito/e2b` exporta** los tipos de gráficos (`Chart`, `LineChart`,
+  `ScatterChart`, `BarChart`, `PieChart`, `BoxAndWhiskerChart`, `SuperChart`,
+  `PointData`, `BarData`, `PieData`, `BoxAndWhiskerData`), `ChartType`,
+  `ScaleType`, `ProcessInfo`, `WriteEntry` y `WatchHandle`, los mismos nombres
+  que `rayito.e2b` en Python.
+
+### Cambiado
+
+- **La variante de imagen se reconoce con un catálogo cerrado**
+  (`parity-image-variants`): `resolveImageVariant` sólo interpreta
+  `rayito-<variante>[-<talla>]` con la variante en `base`, `base-caps`,
+  `base-caps-efs`, `base-poly` y `base-slim`. Una imagen propia que empieza
+  por `rayito-` (p. ej. `rayito-mi-app-caps-efs`) ya no se interpreta como una
+  variante conocida que no es caps ni se rechaza antes de lanzar: la decisión
+  pasa a `Health.features`, como ya ocurría con un ARN. `volumes` exige
+  `rayito-base-caps-efs` cuando la variante se conoce.
+
 ## [0.11.0] - 2026-10-13
 
 ### Cambiado
