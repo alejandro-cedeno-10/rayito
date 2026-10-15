@@ -123,6 +123,7 @@ METADATA_XATTR_PREFIX: Final = "user.rayito."
 COMPRESSION_OPT_IN_HEADER: Final = "rayito-compress"
 
 SUPPORTED_MEMORY_MIB: Final = (512, 1024, 2048, 4096, 8192)
+OFFICIAL_IMAGE_VARIANTS: Final = ("base", "base-caps", "base-caps-efs", "base-poly", "base-slim")
 GUEST_MEMORY_MULTIPLIER: Final = 4
 RESERVED_PORTS: Final = (8080, 9000)
 

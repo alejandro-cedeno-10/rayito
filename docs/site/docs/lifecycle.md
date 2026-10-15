@@ -179,18 +179,34 @@ primera llamada tras reanudar. Con `auto_resume=False` el sandbox sigue
 `max(3600, min(timeout + 60, 28800))`, y `lifecycle={"on_timeout": "pause",
 "auto_resume": True}` como en E2B ([Compatibilidad con E2B](e2b-compat.md)).
 
-```python
-from rayito.e2b import Sandbox
+=== "Python"
 
-sbx = Sandbox.create(timeout=300, lifecycle={"on_timeout": "pause", "auto_resume": True})
-sbx.set_timeout(900)
-token = sbx.native.access_token  # E2B no tiene este token; guárdalo junto al sandbox_id
-Sandbox.set_timeout(sbx.sandbox_id, 1200, access_token=token)
-same = Sandbox.connect(sbx.sandbox_id, timeout=600, access_token=token)
-same.kill()
-```
+    ```python
+    from rayito.e2b import Sandbox
 
-En TypeScript el token está en `sbx.native.accessToken`.
+    sbx = Sandbox.create(timeout=300, lifecycle={"on_timeout": "pause", "auto_resume": True})
+    sbx.set_timeout(900)
+    token = sbx.native.access_token  # E2B no tiene este token; guárdalo junto al sandbox_id
+    Sandbox.set_timeout(sbx.sandbox_id, 1200, access_token=token)
+    same = Sandbox.connect(sbx.sandbox_id, timeout=600, access_token=token)
+    same.kill()
+    ```
+
+=== "TypeScript"
+
+    ```ts
+    import { Sandbox } from "rayito/e2b";
+
+    const sbx = await Sandbox.create({
+      timeoutMs: 300_000,
+      lifecycle: { onTimeout: "pause", autoResume: true },
+    });
+    await sbx.setTimeout(900_000);
+    const token = sbx.native.accessToken; // E2B no tiene este token; guárdalo junto al sandboxId
+    await Sandbox.setTimeout(sbx.sandboxId, 1_200_000, { accessToken: token });
+    const same = await Sandbox.connect(sbx.sandboxId, { timeoutMs: 600_000, accessToken: token });
+    await same.kill();
+    ```
 
 ## Diferencias con E2B
 

@@ -18,9 +18,10 @@ nada.
 from __future__ import annotations
 
 import json
+import shlex
 from dataclasses import asdict
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Self
+from typing import TYPE_CHECKING, Any, Final, Self
 
 from rayito._images import (
     DEFAULT_BASE_IMAGE_NAME,
@@ -52,12 +53,62 @@ if TYPE_CHECKING:
 #: banderas que las capas de `image/Dockerfile`.
 PIP_INSTALL_COMMAND = "python3 -m pip install --no-cache-dir --break-system-packages"
 
+#: `dnf_install()`: la imagen base es Amazon Linux 2023; sin paquetes débiles
+#: para no inflar la capa (como las capas de `image/Dockerfile`). El valor es
+#: `0`: este dnf rechaza `False` (`Invalid boolean value`, medido 2026-10-14
+#: con la imagen base fijada por digest).
+DNF_INSTALL_COMMAND = "dnf install -y --setopt=install_weak_deps=0"
+DNF_CLEAN_COMMAND = "dnf clean all"
+
+#: `npm_install()`: sin auditoría ni anuncios de financiación, que sólo añaden
+#: red y ruido al log de build.
+NPM_INSTALL_COMMAND = "npm install --no-audit --no-fund"
+NPM_GLOBAL_FLAG = "-g"
+
+#: Paquetes de Node.js 20 de AL2023, con `node` y `npm` en el PATH vía
+#: alternatives. Medido 2026-10-14 con `docker run` sobre la imagen base
+#: fijada por digest: `nodejs20` instala 20.20.2 y `nodejs20-npm` npm 10.8.2;
+#: el `nodejs` a secas es Node 18 (EOL). Mismo conjunto que el diseño de
+#: `m7-poly-kernels` (D5).
+NODE_PACKAGES: Final = ("nodejs20", "nodejs20-npm")
+
+#: Usuarios que ya son root: `dnf_install()`/`npm_install(g=True)` no
+#: envuelven el paso si el último `set_user()` es uno de ellos.
+ROOT_USERS: Final = frozenset({"root", "0"})
+ROOT_USER: Final = "root"
+
+#: `rayito-base` (al2023-minimal) no trae Node.js ni npm: el paso falla con
+#: este mensaje y el código 127 (comando no encontrado) en vez de un
+#: `npm: not found` críptico. Se instala antes con `dnf_install(NODE_PACKAGES)`.
+NPM_MISSING_EXIT_CODE: Final = 127
+NPM_MISSING_MESSAGE: Final = (
+    "npm_install: la imagen no tiene npm; instala Node.js antes con "
+    f"dnf_install({json.dumps(list(NODE_PACKAGES))})"
+)
+
 _UNSUPPORTED_BASE_REASON = (
     "Template.{method}() necesita inyectar rayd y sus hooks en la imagen de base; en 0.6 sólo "
     "from_base_image() sabe componer eso (siempre sobre un zip de codeArtifact ya publicado con "
     "rayito image publish). Para una imagen externa, publícala primero con rayito image publish "
     "sobre un Dockerfile `FROM <esa imagen>@sha256:...`."
 )
+
+
+def _package_names(method: str, packages: str | list[str]) -> str:
+    """Valida y escapa nombres de paquete para una línea de shell: lista no
+    vacía, sin nombres vacíos y sin nombres que empiecen por `-` (se leerían
+    como opción del instalador)."""
+    names = [packages] if isinstance(packages, str) else list(packages)
+    if not names:
+        raise InvalidArgumentException(f"{method}: la lista de paquetes no puede ser vacía")
+    for name in names:
+        if not name.strip():
+            raise InvalidArgumentException(f"{method}: un nombre de paquete no puede ser vacío")
+        if name.startswith("-"):
+            raise InvalidArgumentException(
+                f"{method}: un nombre de paquete no puede empezar por '-': {name!r}"
+            )
+    return " ".join(shlex.quote(name) for name in names)
 
 
 class Template:
@@ -139,10 +190,55 @@ class Template:
         args = f" {extra_args}" if extra_args else ""
         return self.run_cmd(f"{PIP_INSTALL_COMMAND}{args} " + " ".join(names))
 
+    def _current_user(self) -> str | None:
+        for step in reversed(self._spec.steps):
+            if isinstance(step, UserStep):
+                return step.user
+        return None
+
+    def _run_as_root(self, cmd: str) -> Self:
+        """Añade `cmd` ejecutándose como root aunque un `set_user()` previo
+        haya dejado otro usuario: `USER root`, el `RUN` y `USER <anterior>`.
+        Es lo que hacen `apt_install()` y `npm_install(g=True)` de E2B, que
+        siempre corren como root."""
+        previous = self._current_user()
+        if previous is None or previous in ROOT_USERS:
+            return self.run_cmd(cmd)
+        spec = self._spec.with_step(UserStep(ROOT_USER))
+        spec = spec.with_step(RunStep(cmd)).with_step(UserStep(previous))
+        return self._with(spec)
+
+    def dnf_install(self, packages: str | list[str]) -> Self:
+        """Instala paquetes del sistema con `dnf` (Amazon Linux 2023), sin
+        paquetes débiles y limpiando la caché en la misma capa. Cada nombre
+        se escapa para el shell. Siempre corre como root: si un `set_user()`
+        previo dejó otro usuario, el paso se envuelve en `USER root` y
+        vuelve a ese usuario después."""
+        names = _package_names("dnf_install", packages)
+        return self._run_as_root(f"{DNF_INSTALL_COMMAND} {names} && {DNF_CLEAN_COMMAND}")
+
+    def npm_install(self, packages: str | list[str] | None = None, g: bool = False) -> Self:
+        """Instala paquetes con `npm`, con la firma de E2B
+        (`npm_install(packages=None, g=False)`). Sin `packages` ejecuta un
+        `npm install` plano en el WORKDIR (el `package.json` copiado antes);
+        `g=True` instala globalmente y, como en E2B, corre como root aunque
+        un `set_user()` previo haya dejado otro usuario. La imagen necesita
+        Node.js: `rayito-base` no lo trae, así que antes hay que llamar a
+        `dnf_install(["nodejs20", "nodejs20-npm"])`; sin npm el build falla
+        con un mensaje que lo explica."""
+        names = "" if packages is None else f" {_package_names('npm_install', packages)}"
+        flag = f" {NPM_GLOBAL_FLAG}" if g else ""
+        guard = (
+            f"command -v npm >/dev/null 2>&1 || "
+            f"{{ echo {shlex.quote(NPM_MISSING_MESSAGE)} >&2; exit {NPM_MISSING_EXIT_CODE}; }}"
+        )
+        cmd = f"{guard} && {NPM_INSTALL_COMMAND}{flag}{names}"
+        return self._run_as_root(cmd) if g else self.run_cmd(cmd)
+
     def apt_install(self, *_args: Any, **_kwargs: Any) -> Self:
         raise UnimplementedError(
             "Template.apt_install",
-            "rayito-base es Amazon Linux 2023 (dnf, no apt): usa run_cmd('dnf install -y ...')",
+            "rayito-base es Amazon Linux 2023 (dnf, no apt): usa dnf_install([...])",
         )
 
     def set_envs(self, envs: dict[str, str]) -> Self:

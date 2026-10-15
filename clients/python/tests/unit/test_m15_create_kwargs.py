@@ -102,14 +102,14 @@ def test_sync_create_rejects_volumes_without_a_single_own_connector(
     one egress connector (Q131), so a volume never runs with
     INTERNET_EGRESS, and this fails before any control plane is resolved."""
     with pytest.raises(InvalidArgumentException, match="NAT"):
-        Sandbox.create("rayito-base-caps", volumes=_VALID_VOLUME, egress=egress)
+        Sandbox.create("rayito-base-caps-efs", volumes=_VALID_VOLUME, egress=egress)
 
 
 @pytest.mark.asyncio
 async def test_async_create_rejects_volumes_with_internet_egress() -> None:
     with pytest.raises(InvalidArgumentException, match="INTERNET_EGRESS"):
         await AsyncSandbox.create(
-            "rayito-base-caps", volumes=_VALID_VOLUME, egress=[_CONNECTOR, "INTERNET_EGRESS"]
+            "rayito-base-caps-efs", volumes=_VALID_VOLUME, egress=[_CONNECTOR, "INTERNET_EGRESS"]
         )
 
 
@@ -120,4 +120,4 @@ def test_sync_create_with_volumes_needs_an_execution_role_before_resolving_a_con
     IMDS credentials (Q128): without one the mount would end `iam_denied`
     after paying for the MicroVM."""
     with pytest.raises(InvalidArgumentException, match="execution_role_arn"):
-        Sandbox.create("rayito-base-caps", volumes=_VALID_VOLUME, egress=[_CONNECTOR])
+        Sandbox.create("rayito-base-caps-efs", volumes=_VALID_VOLUME, egress=[_CONNECTOR])
