@@ -22,10 +22,16 @@ const SIGKILL = 9;
 const CPU_KILLED_EXIT_CODES = [SIGNAL_EXIT_BASE + SIGXCPU, SIGNAL_EXIT_BASE + SIGKILL];
 const POST_KILL_COMMAND = "sleep 3";
 const COMMAND_TIMEOUT_MS = 30_000;
-const EGRESS_REFUSAL_BUDGET_S = 10;
+/** Plazo de cada intento de conexión de `urlopen` en la sonda de egress. */
+const EGRESS_PROBE_TIMEOUT_S = 5;
+/** Direcciones a las que resuelve `example.com`; `urlopen` espera el plazo en cada una (AWS_API_NOTES Q46). */
+const EGRESS_PROBE_ADDRESSES = 2;
+/** Margen para arrancar el intérprete y resolver el DNS; el máximo medido fue 11,7 s. */
+const EGRESS_PROBE_STARTUP_SLACK_S = 5;
+const EGRESS_REFUSAL_BUDGET_S =
+  EGRESS_PROBE_TIMEOUT_S * EGRESS_PROBE_ADDRESSES + EGRESS_PROBE_STARTUP_SLACK_S;
 const BUSY_LOOP = "python3 -c 'while True: pass'";
-const EGRESS_PROBE =
-  'python3 -c \'import urllib.request as u; u.urlopen("https://example.com", timeout=5); print("egress ok")\'';
+const EGRESS_PROBE = `python3 -c 'import urllib.request as u; u.urlopen("https://example.com", timeout=${EGRESS_PROBE_TIMEOUT_S}); print("egress ok")'`;
 const BUSY_KERNEL_CELL = "sum(range(10**7))";
 const BUSY_KERNEL_RESULT = "49999995000000";
 const egressConnector = process.env[EGRESS_CONNECTOR_VAR];
