@@ -17,6 +17,7 @@ from rayito._agent._deploy_plan import AgentDeployPlan
 from rayito._agent._project_domain import AgentProject
 from rayito._models import IdlePolicy
 from rayito._payload import generate_access_token
+from rayito._pool_backends import JsonFilePoolBackend
 from rayito.cli._tokens import TOKEN_ENV_VAR, TokenFileError, read_token_file, write_token_file
 from rayito.exceptions import InvalidArgumentException
 
@@ -24,6 +25,10 @@ from rayito.exceptions import InvalidArgumentException
 #: pasa `--token-file` ni `RAYITO_ACCESS_TOKEN`: un fichero `0600` dentro del
 #: proyecto que el despliegue excluye del código que sube.
 AGENT_TOKEN_FILE_DEFAULT: Final = Path(".rayito/agent-token")
+#: Dónde guarda `rayito agent deploy` las plazas calientes para que sobrevivan
+#: al comando (`JsonFilePoolBackend`, modo 0600, con los tokens de las plazas
+#: aparcadas): junto al token, dentro del proyecto y fuera del código que sube.
+AGENT_POOL_FILE_DEFAULT: Final = Path(".rayito/agent-pool.json")
 TOKEN_DIRECTORY_MODE: Final = 0o700
 #: Cada cuántas líneas de log del build se imprime una de progreso.
 COMPACT_LOG_PROGRESS_LINES: Final = 200
@@ -149,6 +154,17 @@ def deploy_token(
     if from_environment is not None:
         return from_environment, None
     return default_token(AGENT_TOKEN_FILE_DEFAULT), AGENT_TOKEN_FILE_DEFAULT
+
+
+def pool_backend_for(
+    warm_vms: int, path: Path = AGENT_POOL_FILE_DEFAULT
+) -> JsonFilePoolBackend | None:
+    """El respaldo en fichero de las plazas calientes si hay que dejar alguna
+    aparcada (`warm_vms > 0`); sin plazas no se crea ni el directorio."""
+    if warm_vms == 0:
+        return None
+    path.parent.mkdir(parents=True, exist_ok=True, mode=TOKEN_DIRECTORY_MODE)
+    return JsonFilePoolBackend(path)
 
 
 def default_token(path: Path) -> str:

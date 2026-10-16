@@ -6,6 +6,7 @@ muestran sin llamar a AWS.
 
 from __future__ import annotations
 
+import dataclasses
 import os
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
@@ -43,6 +44,23 @@ DAYS_PER_WEEK: Final = 7
 #: Tamaño del snapshot de una imagen de agente (≈ 3,0 GB: el aviso de coste de
 #: `rayito agent template build`, medido en AWS real).
 AGENT_IMAGE_SNAPSHOT_GB_ESTIMATE: Final = 3.0
+#: Lo que `deploy_agent()` nunca sube como código del agente (patrones de
+#: `.dockerignore`): el control de versiones, los ficheros de entorno y
+#: secretos, los entornos y paquetes instalados en el portátil (arquitectura
+#: equivocada: las dependencias se instalan en la imagen), las cachés y el
+#: directorio `.rayito` donde la CLI guarda el access token de la flota
+#: (`testdata/agent-deploy/resolve.json`, la misma lista en TypeScript).
+AGENT_SOURCE_DEFAULT_EXCLUDES: Final[tuple[str, ...]] = (
+    ".git",
+    ".env",
+    ".env.*",
+    ".venv",
+    "venv",
+    "node_modules",
+    "__pycache__",
+    "*.pyc",
+    ".rayito",
+)
 PARKED_SLOTS_NOTE: Final = (
     "las plazas calientes se aparcan en el pool: cuestan almacenamiento de snapshot, no cómputo"
 )
@@ -213,6 +231,13 @@ def token_source_of(options: AgentDeployOptions, environ: Any) -> str:
     if options.access_token:
         return "argument"
     return "environment" if environ.get(ACCESS_TOKEN_ENV_VAR) else "generated"
+
+
+def with_default_excludes(project: AgentProject) -> AgentProject:
+    """El proyecto con `AGENT_SOURCE_DEFAULT_EXCLUDES` delante de sus propias
+    exclusiones, sin repetir ninguna."""
+    merged = tuple(dict.fromkeys([*AGENT_SOURCE_DEFAULT_EXCLUDES, *project.exclude]))
+    return dataclasses.replace(project, exclude=merged)
 
 
 def project_bucket(project: AgentProject) -> str | None:

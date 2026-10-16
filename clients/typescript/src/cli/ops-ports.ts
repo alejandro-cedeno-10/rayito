@@ -161,8 +161,6 @@ export interface AgentDeploySettings {
   readonly buildImage: boolean | undefined;
   readonly onBuildLogs: ((line: string) => void) | undefined;
   readonly onStep: ((step: { readonly kind: string; readonly detail: string }) => void) | undefined;
-  /** Dónde guardar las plazas calientes para que sobrevivan al comando. */
-  readonly poolBackendFile: string | undefined;
 }
 
 export interface AgentDeployRequest {

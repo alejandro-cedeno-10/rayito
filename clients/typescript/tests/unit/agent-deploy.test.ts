@@ -25,6 +25,7 @@ import {
 } from "../../src/agent/aws-resolve.js";
 import { deployWith, planDeploy } from "../../src/agent/deploy.js";
 import {
+  AGENT_SOURCE_DEFAULT_EXCLUDES,
   AgentDeployOptions,
   type AgentDeployStep,
   estimateCost,
@@ -251,6 +252,10 @@ describe("shared vectors", () => {
     expect(round(cost.parkedUsdPerDay)).toBe(item.parkedUsdPerDay);
     expect(round(cost.imageBuildUsd)).toBe(item.imageBuildUsd);
     expect(round(cost.imageStorageUsdPerWeek)).toBe(item.imageStorageUsdPerWeek);
+  });
+
+  test("the default source excludes are the shared list", () => {
+    expect([...AGENT_SOURCE_DEFAULT_EXCLUDES]).toEqual(RESOLVE.sourceExcludes);
   });
 
   test("the token is the argument, then the environment, then a new one", () => {
@@ -552,6 +557,17 @@ describe("deployAgent", () => {
     const fleet = await h.deploy({ scaling });
     expect(h.steps[h.steps.length - 1]).toEqual({ kind: "warm", detail: "ready" });
     expect(fleet.scaling).toEqual(scaling);
+  });
+
+  test("a deploy never ships the token or the environment files", async () => {
+    const h = new Harness();
+    await h.deploy({}, project({ exclude: ["dist", ".git"] }));
+    const exclude = (h.builds[0]?.template as unknown as { appExclude: readonly string[] })
+      .appExclude;
+    expect(exclude).toContain(".rayito");
+    expect(exclude).toContain(".env");
+    expect(exclude.filter((pattern) => pattern === ".git")).toHaveLength(1);
+    expect(exclude).toContain("dist");
   });
 
   test("keepOnFailure reaches the VM creation", async () => {

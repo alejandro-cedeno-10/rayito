@@ -40,6 +40,7 @@ from rayito._agent._deploy_plan import (
     project_bucket,
     project_for,
     resolved_region,
+    with_default_excludes,
 )
 from rayito._agent._fleet import AgentFleet
 from rayito._agent._fleet_async import AsyncAgentFleet
@@ -350,7 +351,7 @@ def preflight(
         environ=environ,
     )
     steps.extend(AgentDeployStep(STEP_SECRET_CREATED, gateway) for gateway in secrets.created)
-    resolved = dataclasses.replace(project, gateways=secrets.gateways)
+    resolved = with_default_excludes(dataclasses.replace(project, gateways=secrets.gateways))
     bucket = _bucket_for(resolved, options, aws, environ, steps)
     token = resolve_token(options.access_token, environ)
     return Preflight(resolved, bucket, token, effective_region, tuple(steps))

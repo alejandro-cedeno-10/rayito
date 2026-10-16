@@ -33,7 +33,12 @@ from rayito._agent._deploy_facade import (
     deploy_with_async,
     plan_deploy,
 )
-from rayito._agent._deploy_plan import AgentDeployOptions, AgentDeployStep, estimate_cost
+from rayito._agent._deploy_plan import (
+    AGENT_SOURCE_DEFAULT_EXCLUDES,
+    AgentDeployOptions,
+    AgentDeployStep,
+    estimate_cost,
+)
 from rayito._agent._detect_domain import DetectOverrides
 from rayito._agent._fleet import AgentFleet
 from rayito._agent._fleet_async import AsyncAgentFleet
@@ -233,6 +238,20 @@ def test_the_cost_estimate_matches_the_shared_vectors(case: dict[str, Any]) -> N
     assert round(cost.parked_usd_per_day, 6) == case["parkedUsdPerDay"]
     assert round(cost.image_build_usd, 6) == case["imageBuildUsd"]
     assert round(cost.image_storage_usd_per_week, 6) == case["imageStorageUsdPerWeek"]
+
+
+def test_the_default_source_excludes_are_the_shared_list() -> None:
+    assert list(AGENT_SOURCE_DEFAULT_EXCLUDES) == RESOLVE["sourceExcludes"]
+
+
+def test_a_deploy_never_ships_the_token_or_the_environment_files(harness: Harness) -> None:
+    harness.deploy(project(exclude=("dist", ".git")))
+
+    template = harness.builds[0]["template"]
+    assert ".rayito" in template.app_exclude
+    assert ".env" in template.app_exclude
+    assert template.app_exclude.count(".git") == 1
+    assert "dist" in template.app_exclude
 
 
 def test_the_token_is_the_argument_then_the_environment_then_a_new_one() -> None:

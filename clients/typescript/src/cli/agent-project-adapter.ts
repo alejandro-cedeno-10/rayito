@@ -12,7 +12,7 @@ import { resolveRuntime } from "../agent/runtimes.js";
 import { type AwsClientSettings, awsClientSettingsOf } from "../aws/control-plane.js";
 import { InvalidArgumentError, SandboxNotFoundError } from "../errors.js";
 import type { BuildInfo } from "../templates/build.js";
-import { describePlan } from "./agent-deploy.js";
+import { describePlan, poolBackendFileFor } from "./agent-deploy.js";
 import type {
   AgentBuildRequest,
   AgentDeployRequest,
@@ -140,7 +140,7 @@ export class SdkAgentProjectTools implements AgentProjectTools {
 
   async planDeploy(request: AgentDeployRequest): Promise<DeployPlanView> {
     const { planDeploy } = await import("../agent/deploy.js");
-    const { project, report, options } = await prepared(request);
+    const { project, report, options } = await prepared(request, false);
     const plan = await planDeploy(request.path, {
       project,
       options,
@@ -156,7 +156,7 @@ export class SdkAgentProjectTools implements AgentProjectTools {
 
   async deployFleet(request: AgentDeployRequest): Promise<DeployedFleetView> {
     const { deployAgent } = await import("../agent/deploy.js");
-    const { project, options } = await prepared(request);
+    const { project, options } = await prepared(request, true);
     const fleet = await deployAgent(request.path, { project, options, ...(await this.#aws()) });
     await fleet.detach();
     const [first] = fleet.deployments;
@@ -217,7 +217,7 @@ async function overridesOf(overrides: AgentDetectOverrides) {
 
 /** El proyecto detectado con las banderas aplicadas, su informe y las
  * `DeployOptions` de la petición. */
-async function prepared(request: AgentDeployRequest) {
+async function prepared(request: AgentDeployRequest, park: boolean) {
   const { projectFor } = await import("../agent/deploy-plan.js");
   const { AgentDeployOptions } = await import("../agent/deploy-plan.js");
   const { applyProjectFlags, applyServeFlags, scalingOf } = await import(
@@ -229,10 +229,15 @@ async function prepared(request: AgentDeployRequest) {
     request.flags,
   );
   const { settings } = request;
+  const scaling = scalingOf(project, request.flags);
+  const { fleetSettingsOf } = await import("../agent/fleet-base.js");
+  const backendFile = park
+    ? poolBackendFileFor(fleetSettingsOf(project, scaling).scaling.warmVms)
+    : undefined;
   const poolBackend =
-    settings.poolBackendFile === undefined
+    backendFile === undefined
       ? undefined
-      : new (await import("../pool/backend.js")).JsonFilePoolBackend(settings.poolBackendFile);
+      : new (await import("../pool/backend.js")).JsonFilePoolBackend(backendFile);
   const options = new AgentDeployOptions({
     bucket: settings.bucket,
     secretNames: settings.secretNames,
@@ -241,7 +246,7 @@ async function prepared(request: AgentDeployRequest) {
     accessToken: settings.accessToken,
     keepOnFailure: settings.keepOnFailure,
     buildImage: settings.buildImage,
-    scaling: scalingOf(project, request.flags),
+    scaling,
     poolBackend,
     onBuildLogs: settings.onBuildLogs,
     onStep: settings.onStep,

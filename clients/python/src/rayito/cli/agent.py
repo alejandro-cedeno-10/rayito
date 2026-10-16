@@ -62,6 +62,7 @@ from rayito.cli._agent_deploy import (
     describe_plan,
     detection_lines,
     parse_pairs,
+    pool_backend_for,
 )
 from rayito.cli._agent_scaffold import (
     DEFAULT_PROVIDER,
@@ -742,7 +743,9 @@ def deploy_command(
     as_json = json_mode(ctx)
     compact = None if verbose else CompactBuildLog(lambda line: echo(line, err=True))
 
-    def options_with(token: str | None, publisher: Callable[[], None] | None) -> AgentDeployOptions:
+    def options_with(
+        token: str | None, publisher: Callable[[], None] | None, pool_backend: Any = None
+    ) -> AgentDeployOptions:
         return AgentDeployOptions(
             bucket=bucket,
             secret_names=secret_names,
@@ -752,6 +755,7 @@ def deploy_command(
             keep_on_failure=keep_on_failure,
             build_image=build,
             scaling=scaling,
+            pool_backend=pool_backend,
             on_build_logs=(lambda line: echo(line, err=True)) if verbose else compact,
             on_step=step_printer(as_json),
         )
@@ -778,7 +782,11 @@ def deploy_command(
     try:
         fleet = deploy_agent(
             project=project,
-            options=options_with(token, publisher),
+            options=options_with(
+                token,
+                publisher,
+                pool_backend_for(fleet_settings_of(project, scaling).scaling.warm_vms),
+            ),
             region=clients.region,
             session=clients.session,
         )

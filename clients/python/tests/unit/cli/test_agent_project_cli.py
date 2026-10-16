@@ -620,6 +620,22 @@ def test_deploy_maps_every_scaling_and_serving_flag(
 
 
 @pytest.mark.usefixtures("access_token")
+def test_deploy_keeps_the_warm_slots_in_a_file_that_outlives_the_command(
+    monkeypatch: pytest.MonkeyPatch, runner: CliRunner, clients: Clients, tmp_path: Path
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    calls = install_deploy(monkeypatch)
+
+    runner.invoke(app, ["agent", "deploy", "--max-vms", "2", "--warm", "1"], obj=clients)
+    runner.invoke(app, ["agent", "deploy"], obj=clients)
+
+    with_warm, without = (call["options"].pool_backend for call in calls.deployed)
+    assert with_warm is not None
+    assert with_warm.path == Path(".rayito/agent-pool.json")
+    assert without is None
+
+
+@pytest.mark.usefixtures("access_token")
 def test_deploy_without_scaling_flags_leaves_the_scaling_to_the_project(
     monkeypatch: pytest.MonkeyPatch, runner: CliRunner, clients: Clients
 ) -> None:

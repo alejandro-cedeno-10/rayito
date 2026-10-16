@@ -175,5 +175,16 @@
       "imageBuildUsd": 0.0114,
       "imageStorageUsdPerWeek": 0.056
     }
+  ],
+  "sourceExcludes": [
+    ".git",
+    ".env",
+    ".env.*",
+    ".venv",
+    "venv",
+    "node_modules",
+    "__pycache__",
+    "*.pyc",
+    ".rayito"
   ]
 }

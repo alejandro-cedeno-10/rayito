@@ -25,6 +25,7 @@ import {
   formatUsd,
   PairFlagError,
   parseFlagPairs,
+  poolBackendFileFor,
 } from "../../../src/cli/agent-deploy.js";
 import {
   applyProjectFlags,
@@ -134,6 +135,14 @@ describe("deployToken", () => {
     const target = join(tempDirectory(), "agent-token");
     writeFileSync(target, "\n");
     expect(() => defaultToken(target)).toThrow(TokenFileError);
+  });
+
+  it("las plazas calientes van a un fichero sólo si hay alguna", () => {
+    const target = join(tempDirectory(), ".rayito", "agent-pool.json");
+    expect(poolBackendFileFor(0, target)).toBeUndefined();
+    expect(() => statSync(join(target, ".."))).toThrow();
+    expect(poolBackendFileFor(2, target)).toBe(target);
+    expect(statSync(join(target, "..")).mode & 0o777).toBe(0o700);
   });
 
   it("vive dentro del proyecto", () => {

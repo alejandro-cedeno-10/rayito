@@ -27,6 +27,7 @@ from rayito.cli._agent_deploy import (
     detection_lines,
     format_usd,
     parse_pairs,
+    pool_backend_for,
     replace_field,
 )
 from rayito.cli._session import Clients
@@ -178,6 +179,21 @@ def test_an_empty_default_token_file_is_an_error(tmp_path: Path) -> None:
 
     with pytest.raises(TokenFileError, match="vacío"):
         default_token(target)
+
+
+def test_the_parked_slots_are_kept_in_a_private_file_only_when_there_are_any(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / ".rayito" / "agent-pool.json"
+
+    assert pool_backend_for(0, target) is None
+    assert not target.parent.exists()
+    backend = pool_backend_for(2, target)
+
+    assert backend is not None
+    assert backend.persistent
+    assert backend.path == target
+    assert target.parent.stat().st_mode & 0o777 == 0o700
 
 
 def test_the_default_token_file_lives_inside_the_project() -> None:

@@ -19,6 +19,7 @@ import { BUCKET_ENV_VAR, type Environ } from "./aws-resolve.js";
 import type { DetectOverrides } from "./detect-domain.js";
 import { AGENT_FLEET_WARM_READY_TIMEOUT_MS, fleetSettingsOf } from "./fleet-base.js";
 import { AgentProject } from "./project.js";
+import { copyProject } from "./project-copy.js";
 import { ScalingOptions } from "./scaling-domain.js";
 
 export const SECONDS_PER_HOUR = 3600;
@@ -31,6 +32,23 @@ export const DAYS_PER_WEEK = 7;
 export const AGENT_IMAGE_SNAPSHOT_GB_ESTIMATE = 3.0;
 /** Plazo por defecto de un build de imagen, el de `AgentTemplate.build()`. */
 export const DEPLOY_BUILD_TIMEOUT_MS_DEFAULT = 1_800_000;
+/** Lo que `deployAgent()` nunca sube como código del agente (patrones de
+ * `.dockerignore`): el control de versiones, los ficheros de entorno y
+ * secretos, los entornos y paquetes instalados en el portátil (arquitectura
+ * equivocada: las dependencias se instalan en la imagen), las cachés y el
+ * directorio `.rayito` donde la CLI guarda el access token de la flota
+ * (`testdata/agent-deploy/resolve.json`, la misma lista en Python). */
+export const AGENT_SOURCE_DEFAULT_EXCLUDES: readonly string[] = [
+  ".git",
+  ".env",
+  ".env.*",
+  ".venv",
+  "venv",
+  "node_modules",
+  "__pycache__",
+  "*.pyc",
+  ".rayito",
+];
 export const PARKED_SLOTS_NOTE =
   "las plazas calientes se aparcan en el pool: cuestan almacenamiento de snapshot, no cómputo";
 export const IMAGE_MEMORY_NOTE =
@@ -231,6 +249,13 @@ export function estimateCost(memoryMib: number, scaling: ScalingOptions): AgentD
     imageBuildUsd: AGENT_IMAGE_SNAPSHOT_GB_ESTIMATE * SNAPSHOT_WRITE_PRICE_USD_PER_GB,
     imageStorageUsdPerWeek: AGENT_IMAGE_SNAPSHOT_GB_ESTIMATE * storagePerGbDay * DAYS_PER_WEEK,
   };
+}
+
+/** El proyecto con `AGENT_SOURCE_DEFAULT_EXCLUDES` delante de sus propias
+ * exclusiones, sin repetir ninguna. */
+export function withDefaultExcludes(project: AgentProject): AgentProject {
+  const merged = [...new Set([...AGENT_SOURCE_DEFAULT_EXCLUDES, ...project.exclude])];
+  return copyProject(project, { exclude: merged });
 }
 
 /** `[deploy].bucket` del fichero de proyecto (`AgentProject.deployBucket`); un

@@ -722,7 +722,6 @@ export const agentDeployCommand = defineCommand({
           buildImage: values.optionalFlag("build"),
           onBuildLogs: verbose ? (line) => context.console.echo(line, { err: true }) : compact?.log,
           onStep: stepPrinter(context),
-          poolBackendFile: undefined,
         },
       });
       if (values.flag("dry_run")) {

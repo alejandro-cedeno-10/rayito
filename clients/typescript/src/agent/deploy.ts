@@ -37,6 +37,7 @@ import {
   projectBucket,
   projectFor,
   resolvedRegion,
+  withDefaultExcludes,
 } from "./deploy-plan.js";
 import type { DetectOverrides } from "./detect-domain.js";
 import { AgentFleet, type AgentFleetOptions } from "./fleet.js";
@@ -265,9 +266,9 @@ export async function preflight(
   for (const gateway of secrets.created) {
     steps.push({ kind: STEP_SECRET_CREATED, detail: gateway });
   }
-  const resolved = copyProject(project, {
-    gateways: secrets.gateways as Record<string, SecretGateway>,
-  });
+  const resolved = withDefaultExcludes(
+    copyProject(project, { gateways: secrets.gateways as Record<string, SecretGateway> }),
+  );
   const bucket = await bucketFor(resolved, options, aws, environ, steps);
   return {
     project: resolved,

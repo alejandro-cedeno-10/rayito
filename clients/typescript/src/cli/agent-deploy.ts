@@ -16,6 +16,11 @@ import { readTokenFile, TOKEN_ENV_VAR, TokenFileError, writeTokenFile } from "./
  * pasa `--token-file` ni `RAYITO_ACCESS_TOKEN`: un fichero `0600` dentro del
  * proyecto que el despliegue excluye del código que sube. */
 export const AGENT_TOKEN_FILE_DEFAULT = ".rayito/agent-token";
+/** Dónde guarda `rayito agent deploy` las plazas calientes para que sobrevivan
+ * al comando (`JsonFilePoolBackend`, modo 0600, con los tokens de las plazas
+ * aparcadas): junto al token, dentro del proyecto y fuera del código que
+ * sube. */
+export const AGENT_POOL_FILE_DEFAULT = ".rayito/agent-pool.json";
 const TOKEN_DIRECTORY_MODE = 0o700;
 /** Cada cuántas líneas de log del build se imprime una de progreso. */
 export const COMPACT_LOG_PROGRESS_LINES = 200;
@@ -101,6 +106,19 @@ export function deployToken(
     return { token: fromEnvironment, file: undefined };
   }
   return { token: defaultToken(AGENT_TOKEN_FILE_DEFAULT), file: AGENT_TOKEN_FILE_DEFAULT };
+}
+
+/** La ruta del respaldo en fichero de las plazas calientes si hay que dejar
+ * alguna aparcada (`warmVms > 0`); sin plazas no se crea ni el directorio. */
+export function poolBackendFileFor(
+  warmVms: number,
+  path: string = AGENT_POOL_FILE_DEFAULT,
+): string | undefined {
+  if (warmVms === 0) {
+    return undefined;
+  }
+  mkdirSync(dirname(path), { recursive: true, mode: TOKEN_DIRECTORY_MODE });
+  return path;
 }
 
 export function defaultToken(path: string): string {
