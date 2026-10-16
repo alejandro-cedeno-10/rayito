@@ -494,7 +494,13 @@ rayito agent init [DIR] [--runtime R] [--language python|typescript] [--provider
                   [--region R] [--force]
 rayito agent build --bucket B [--file PATH] [--force] [--timeout 1800]
 rayito agent run PROMPT [--file PATH] [--session-id ID] [--model ID] [--stream]
-rayito agent deploy [--file PATH] [--timeout S] [--port N] [--token-file F] [--keep-on-failure]
+rayito agent detect [PATH] [--framework F] [--language L] [--entry E] [--protocol P] [--write]
+rayito agent deploy [PATH] [--file PATH] [--timeout S] [--port N] [--token-file F] [--keep-on-failure]
+                    [--framework F] [--language L] [--entry E] [--protocol P]
+                    [--memory MIB] [--max-sessions N] [--sessions shared|dedicated]
+                    [--min-vms N] [--max-vms N] [--warm N] [--idle S] [--queue N] [--queue-timeout S]
+                    [--env K=V]... [--allow-out DEST]... [--bucket B] [--secret PROVEEDOR=NOMBRE]...
+                    [--create-secret] [--base-artifact ZIP] [--yes] [--dry-run]
 rayito agent export --target docker|agentcore --out DIR [--file PATH] [--overwrite]
 rayito agent invoke SANDBOX_ID PROMPT [--session-id ID] [--stream] [--token-file F]
 rayito agent status SANDBOX_ID [--token-file F]
@@ -524,6 +530,24 @@ false` con `--json`) cuando el agente no informó de tokens. `init --runtime
 custom` escribe una app HTTP (`[runtime.app]` con `protocol = "raw"`,
 `requirements`, `install` y un `serve.py`), y `init --runtime langgraph`, un
 grafo de LangGraph a secas.
+
+`rayito agent detect` y `rayito agent deploy` (desde 0.14.0) trabajan con un
+agente que ya tienes, sin `rayito-agent.toml`: detectan el lenguaje, el
+framework, el punto de entrada, la instalación y el proveedor leyendo los
+ficheros (no ejecutan tu código), y las banderas fijan lo que la detección no
+acierta. `detect` no llama a AWS y con `--write` guarda lo detectado como
+`rayito-agent.json`; `deploy --dry-run` imprime la detección, el plan y el coste
+sin llamar a AWS. `deploy` despliega una **flota**
+([Varias sesiones y varias VMs](guias/flota-de-agentes.md)): `--min-vms` VMs
+vivos y `--warm` plazas aparcadas; con `--secret proveedor=nombre` usa un
+secreto que ya existe y con `--create-secret` crea el que falte desde la
+variable estándar del proveedor (cuesta $0,40 al mes); no crea buckets, y sólo
+publica la imagen base con `--base-artifact` y `--yes`. `invoke`, `status` y
+`stop` aceptan el nombre de la flota (`rayito agent stop <nombre>` termina todos
+sus VMs); el `session_id` que devuelve `invoke` en una flota con varios VMs
+identifica el VM, y pasarlo con `--session-id` sigue la conversación. Los
+mensajes y las ayudas van en español. Ver
+[Despliega tu agente](guias/despliega-tu-agente.md#sin-escribir-nada).
 
 Construye la imagen de `AgentTemplate`
 ([Templates de agente](funciones-opcionales/templates-de-agente.md)): parte

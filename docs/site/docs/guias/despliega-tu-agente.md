@@ -25,6 +25,173 @@ TypeScript), Hermes, LangGraph, deepagents y OpenCode. Cualquier otro
 (CrewAI, OpenAI Agents SDK, Google ADK, Claude Agent SDK, Vercel AI SDK…)
 entra por [`CustomRuntime`](#otros-frameworks-customruntime).
 
+## Sin escribir nada: `rayito agent deploy` { #sin-escribir-nada }
+
+Si ya tienes un agente (LangGraph, LangChain, deepagents, Strands, Hermes,
+OpenCode, Vercel AI SDK o una app HTTP propia), no hace falta describirlo:
+`deploy_agent()` lee los ficheros del proyecto, decide cómo se construye y se
+sirve, y lo despliega. No ejecuta tu código para averiguarlo.
+
+=== "CLI"
+
+    ```bash
+    rayito agent deploy ./mi-agente --dry-run   # qué detectó y cuánto costaría; no llama a AWS
+    rayito agent deploy ./mi-agente             # lo despliega
+    ```
+
+=== "Python"
+
+    ```python
+    from rayito import AgentDeployOptions, deploy_agent
+
+    fleet = deploy_agent(
+        "./mi-agente", options=AgentDeployOptions(bucket="amzn-s3-demo-bucket")
+    )
+    try:
+        reply = fleet.invoke("Resume el README.")
+        print(reply.text, reply.session_id)
+    finally:
+        fleet.stop()
+    ```
+
+=== "Python (async)"
+
+    ```python
+    from rayito import AgentDeployOptions, deploy_agent_async
+
+
+    async def main() -> None:
+        fleet = await deploy_agent_async(
+            "./mi-agente", options=AgentDeployOptions(bucket="amzn-s3-demo-bucket")
+        )
+        try:
+            reply = await fleet.invoke("Resume el README.")
+            print(reply.text, reply.session_id)
+        finally:
+            await fleet.stop()
+    ```
+
+=== "TypeScript"
+
+    ```ts
+    import { deployAgent } from "rayito";
+
+    const fleet = await deployAgent("./mi-agente", {
+      options: { bucket: "amzn-s3-demo-bucket" },
+    });
+    try {
+      const reply = await fleet.invoke("Resume el README.");
+      console.log(reply.text, reply.sessionId);
+    } finally {
+      await fleet.stop();
+    }
+    ```
+
+Lo que devuelve es una [flota](flota-de-agentes.md) (`AgentFleet`): uno o varios
+MicroVMs que sirven el agente, con las sesiones repartidas entre ellos. Con los
+valores por defecto es un solo VM, igual que `AgentProject.deploy()`.
+
+### Qué detecta y de dónde { #que-detecta-y-de-donde }
+
+| Qué | De dónde sale |
+|---|---|
+| Lenguaje | `pyproject.toml`, `requirements*.txt`, `uv.lock` (Python); `package.json` (TypeScript y JavaScript) |
+| Framework | las dependencias (`langgraph`, `langchain`, `deepagents`, `strands-agents`, `strands-harness`, `ai`, `@langchain/langgraph`, `@strands-agents/sdk`…), `langgraph.json`, la configuración de Hermes u OpenCode, y las apps web (`fastapi`, `flask`, `express`, `hono`, `bedrock-agentcore`…) |
+| Punto de entrada | el objeto del agente o una fábrica sin argumentos: `agent = create_react_agent(...)`, `graph = workflow.compile()`, `export const agent = new Agent(...)`, `export async function createAgent()` |
+| App HTTP (`custom`) | el comando de arranque (`uvicorn`, `flask`, el script `start`), el puerto, la ruta de salud y la de invocación, y el campo del cuerpo y de la respuesta |
+| Protocolo | `agentcore` si hay `/ping` y `/invocations`; `json` para una app con una ruta POST propia; `raw` si no hay nada invocable |
+| Instalación | el fichero de bloqueo: `uv.lock`, `requirements.txt`, `package-lock.json`, `pnpm-lock.yaml` o `yarn.lock` |
+| Versiones | `requires-python`, `.python-version`, `engines.node`, `.nvmrc`; se elige la compilación fijada más alta que las cumple |
+| Proveedor y modelo | las dependencias, los nombres de variable (`AWS_BEARER_TOKEN_BEDROCK`, `ANTHROPIC_API_KEY`…) y el id del modelo como literal en el código o en la configuración |
+
+Nunca se leen los valores de un `.env`, y `.git`, `.env*`, `.venv` y
+`node_modules` no suben a la imagen: las dependencias se instalan en ella, no se
+copian de tu portátil.
+
+Cuando un proyecto tiene un objeto de framework **y** una app HTTP (un grafo y
+un `server.py` con FastAPI, por ejemplo), gana el framework, porque trae
+`invoke()`, los eventos y el uso de tokens. La app queda como alternativa en el
+informe; `--entry http` sirve la app en su lugar.
+
+### Cambiar lo detectado { #cambiar-lo-detectado }
+
+El orden es: el fichero de proyecto, después la bandera o el argumento, después
+la detección y después el valor por defecto con nombre. Un `rayito-agent.toml`
+sólo necesita las claves que quieras fijar; `rayito agent detect --write` deja
+escrito lo detectado para que lo edites.
+
+| Bandera | Qué fija |
+|---|---|
+| `--framework`, `--language`, `--entry`, `--protocol` | lo que la detección decidiría (`--entry http` sirve la app HTTP) |
+| `--memory` | MiB de cada VM (se fija en la imagen: cambiarla construye una versión nueva) |
+| `--max-sessions`, `--queue`, `--queue-timeout` | sesiones por VM y la cola del host ([Varias sesiones y varias VMs](flota-de-agentes.md)) |
+| `--min-vms`, `--max-vms`, `--warm`, `--sessions`, `--idle` | cuántos VMs y cómo se reparten las sesiones |
+| `--env CLAVE=VALOR`, `--allow-out destino` | variables no secretas y salidas de red permitidas |
+| `--secret proveedor=nombre`, `--create-secret`, `--bucket`, `--base-artifact`, `--yes` | dónde está la credencial del modelo y el bucket, y qué se crea |
+| `--dry-run`, `--write` | mostrar el plan sin llamar a AWS, y guardar lo detectado |
+
+Un caso poco claro falla con un error que nombra lo que lo resuelve, nunca
+adivina: `ambiguous` (hay dos frameworks o dos puntos de entrada posibles: usa
+`--framework` o `--entry`), `not_detected` (no se reconoce el framework, o falta
+el id del modelo: escríbelo como literal o en `[model]`) y `unsupported` (una
+combinación que no llega a la pasarela sin cambiar el código).
+
+### Qué se resuelve solo y qué no { #que-se-resuelve-solo }
+
+Cada valor sale, en este orden, del argumento o la bandera, del fichero, de una
+variable de entorno y del descubrimiento; ninguno crea nada en silencio:
+
+- La **región** es `--region`, `[deploy] region`, `AWS_REGION` o la de tu perfil.
+- La **imagen base** es la versión más reciente de `rayito-base-caps`. Si no
+  existe, se publica sólo con `--base-artifact` y `--yes`.
+- El **bucket** del artefacto es `--bucket`, `[deploy] bucket`, `RAYITO_BUCKET` o
+  el del bootstrap de CDK de la cuenta. Rayito no crea buckets.
+- El **secreto del modelo** es `--secret`, el del fichero, o el de nombre
+  convencional `rayito/agents/<proyecto>/<proveedor>`. Sólo con `--create-secret`
+  se crea el que falte, desde la variable estándar del proveedor, que se lee en
+  tu proceso y no se escribe en disco ni en logs.
+- El **access token** es el de `RAYITO_ACCESS_TOKEN`, el de `--token-file` o uno
+  nuevo que se guarda en `.rayito/agent-token` (modo `0600`).
+
+La imagen del agente sólo se construye si cambió su contenido (código,
+dependencias, runtime o memoria); si no, se reutiliza.
+
+### Un framework que no está en la lista { #un-framework-que-no-esta-en-la-lista }
+
+Si el framework no tiene soporte propio, el contrato mínimo es una de estas tres
+formas, las de [`CustomRuntime`](#otros-frameworks-customruntime):
+
+| Forma | Qué esperamos | Protocolo |
+|---|---|---|
+| App HTTP | un `GET` de salud y un `POST` JSON de invocación | `json` (o `agentcore` si ya habla `/ping` y `/invocations`) |
+| Función | `módulo:atributo` (Python) o `ruta#exportación` (Node) que recibe `(prompt, session_id)` y devuelve texto o `{text, usage}` | — |
+| Comando | lee el prompt por la entrada estándar y escribe texto, o líneas del protocolo v1, por la salida | `text` o `rayito-v1` |
+
+!!! info "Coste y activación"
+    - **Activa:** llamar a `deploy_agent()`, `deploy_agent_async()`,
+      `deployAgent()` o `rayito agent deploy`. `plan_deploy()`/`planDeploy()` y
+      `--dry-run` calculan el plan y el coste sin llamar a AWS ni cargar ningún
+      paquete de AWS; `rayito agent detect` y `AgentProject.detect()` sólo leen
+      ficheros.
+    - **Recursos y llamadas AWS:** `min_vms` MicroVMs en marcha y `warm_vms`
+      aparcados; una versión de imagen nueva si cambió el contenido (y un
+      objeto en el bucket del artefacto); lecturas de `GetCallerIdentity`,
+      `HeadBucket`, `GetMicrovmImage` y `DescribeSecret`; con `--create-secret`,
+      `CreateSecret`; con `--base-artifact`, una imagen base.
+    - **Coste aproximado:** por cada VM en marcha, $0,126 por hora con 2 GB
+      (suspendido sólo paga el almacenamiento del snapshot); una versión de imagen
+      ≈ $0,056 por semana; un secreto $0,40 al mes. Precios de lista, us-east-1,
+      consultados el 2026-10-06: [Precios](../cost.md#coste-de-un-agente-desplegado).
+    - **IAM:** los de `Sandbox.create()`, `Sandbox.list()` y
+      `AgentTemplate.build()` (`RayitoSandboxRunner`, `RayitoTemplateBuilder`),
+      `sts:GetCallerIdentity`, `s3:ListBucket` sobre el bucket,
+      `secretsmanager:DescribeSecret` y, con `--create-secret`,
+      `secretsmanager:CreateSecret`.
+    - **Cómo apagarla:** `fleet.stop()` o `rayito agent stop <nombre>` terminan
+      todos los VMs de la flota; los valores por defecto no crean ningún
+      secreto, imagen base ni índice.
+    - **Ejemplo:** `deploy_agent("./mi-agente").invoke("Hola").text`.
+
 ## Cuándo usarlo
 
 - Quieres que el agente entero (el bucle del modelo y sus herramientas) corra
@@ -734,6 +901,7 @@ defecto es `agentcore`, y con él tus rutas propias no se alcanzan desde fuera:
 |---|---|---|---|
 | `agentcore` (por defecto) | `GET /ping` y `POST /invocations`; el host traduce a tu `invoke_path` | sí | tu app recibe `{"prompt"}` en una ruta y quieres `deployment.invoke()` y `stream()` |
 | `openai-chat` | lo mismo, traduciendo Chat Completions con streaming | sí | tu app es un servidor compatible con OpenAI |
+| `json` | `GET /ping` y `POST /invocations`, traducidos a tu ruta (el prompt va en `request_field`), y tus demás rutas tal cual | sí | tu app tiene su propio contrato JSON y quieres `invoke()` **y** que `/health` o `/chat` sigan alcanzables; es lo que elige la [detección](#sin-escribir-nada) |
 | `raw` | tus rutas tal cual (`/health`, `/invoke`, un servidor MCP...) | no: `UnimplementedError` | tu app ya tiene sus propias rutas y las llamas con tu cliente HTTP |
 
 Con `agentcore` u `openai-chat`, un `health_path` o un `invoke_path` distintos
@@ -883,15 +1051,18 @@ repositorio.
 | Tabla | Claves | Qué es |
 |---|---|---|
 | (raíz) | `schema`, `name` | versión del esquema y nombre (imagen y etiqueta del despliegue) |
-| `[runtime]` | `kind`, `entrypoint`, `language`, `command`, `protocol`, `requirements`, `install`, `python`, `toolsets`, `skills_dir` | el framework y cómo se arranca; cada `kind` admite sólo algunas (abajo) |
-| `[runtime.app]` | `command`, `port`, `health_path`, `invoke_path`, `protocol` | sólo con `kind = "custom"`: tu app HTTP (`HttpApp`); `command` y `port` son obligatorias |
+| `[runtime]` | `kind`, `entrypoint`, `language`, `framework`, `command`, `protocol`, `requirements`, `package_manager`, `python_version`, `node_version`, `adapter`, `install`, `python`, `toolsets`, `skills_dir` | el framework y cómo se instala y se arranca; cada `kind` admite sólo algunas (abajo). Con la [detección](#sin-escribir-nada), `kind` es opcional y el resto lo rellena lo detectado |
+| `[runtime.app]` | `command`, `port`, `health_path`, `invoke_path`, `protocol`, `request_field`, `response_field`, `port_env` | sólo con `kind = "custom"`: tu app HTTP (`HttpApp`); `command` y `port` son obligatorias; `request_field` y `response_field` sólo con `protocol = "json"` |
 | `[source]` | `path`, `requirements`, `exclude` | el directorio que se copia a la imagen y sus requisitos |
 | `[model]` | `provider`, `id`, `region`, `gateway`, `base_path`, `prompt_caching` | el modelo, y qué pasarela usa |
 | `[gateways.<nombre>]` | `preset`, `secret`, `region`, `models`… | una pasarela: uno de los presets de [Proveedores del agente](agente-proveedores.md) y el **nombre** del secreto |
 | `[agent]` | `instructions` o `instructions_file`, `small_model`, `runtime_version`, `raw_config`, `permissions`, `mcp.<nombre>`, `agents.<nombre>` | instrucciones (mutuamente excluyentes), permisos, servidores MCP y subagentes |
 | `[limits]` | `max_steps`, `timeout_seconds`, `max_output_bytes`, `max_total_tokens` | los límites de una ejecución |
-| `[serve]` | `port`, `timeout_seconds`, `idle_seconds`, `max_concurrency`, `metadata` | puerto del servicio, vida del despliegue (≤ 8 h), suspensión por inactividad, concurrencia y etiquetas |
-| `[network]` | `allow_internet_access`, `egress` | red del sandbox: cerrada salvo que la abras |
+| `[serve]` | `port`, `timeout_seconds`, `idle_seconds`, `max_concurrency`, `queue_max`, `queue_timeout_seconds`, `metadata` | puerto del servicio, vida del despliegue (≤ 8 h), suspensión por inactividad, concurrencia por VM, su cola y etiquetas |
+| `[scaling]` | `min_vms`, `max_vms`, `warm_vms`, `sessions`, `scale_in_after_seconds` | cuántos VMs y cómo se reparten las sesiones ([Varias sesiones y varias VMs](flota-de-agentes.md)) |
+| `[env]` | `NOMBRE = "valor"` | variables de entorno no secretas del agente; un nombre o un valor con forma de secreto se rechaza (`secret_value`): las credenciales van por una pasarela |
+| `[network]` | `allow_internet_access`, `egress`, `allow_out`, `deny_out` | red del sandbox: cerrada salvo que la abras; `allow_out` y `deny_out` son la política de salida (necesita `rayito-base-caps`) |
+| `[deploy]` | `region`, `bucket`, `base_image_version` | dónde se despliega: la región, el bucket del artefacto y la versión de la imagen base (`latest` por defecto) |
 | `[image]` | `base`, `template`, `memory_mib` | la imagen base, el nombre de una imagen ya construida y su memoria |
 
 Claves de `[runtime]` por `kind`: `langgraph` admite `entrypoint`; `strands` y

@@ -39,6 +39,11 @@ client.
 | AI agent (`AgentLimits`, since 0.8.0) | by default 50 steps (`max_steps`), 1,000,000 tokens (`max_total_tokens`; `None`/`null` turns it off), 600 s (`timeout_seconds` / `timeoutMs: 600_000`) and 16 MiB of output (`max_output_bytes`, at most 64 MiB) | `AgentException` with `reason` `max_steps`, `token_budget` or `timeout` ([Errors](referencia/errores.md#agentexception-agenterror)) |
 | Agent event line | ≤ 4 MiB; a longer one is dropped and counted in `dropped_lines` | — |
 | Memory of an agent image (`AgentTemplate`) | ≥ 2048 MiB | `InvalidArgumentException` |
+| Concurrency per VM of a served agent (since 0.14.0) | 1 by default (`max_concurrency`); at most the connections of the size minus one reserved for `/ping`: 7 with 2 GB, 15 with 4 GB, 31 with 8 GB (below 2 GB one vCPU is counted, a conservative value) | `InvalidArgumentException` |
+| Host queue of an agent (since 0.14.0) | `queue_max` 0 by default and at most 256; waits `queue_timeout_seconds` (30 s by default, at most 900 s) | `429` with `Retry-After`; `CapacityException` (`agent_capacity`) after the deadline |
+| Agent fleet (since 0.14.0) | from `min_vms` to `max_vms`, up to 64 per fleet; `warm_vms` ≤ `max_vms - min_vms`; `scale_in_after_seconds` from 60 s to 8 h (900 s by default) | `InvalidArgumentException` |
+| Restart of an agent's app (since 0.14.0) | up to 3 restarts in 300 s, waiting from 2 s up to 30 s | `/ping` 503 and `app_crashloop` in the failure marker |
+| Detection scan (since 0.14.0) | up to 5000 files, 6 folder levels and 256 KiB per file | `scan_truncated` warning |
 
 The TPS quotas are per account and region (`AWS_API_NOTES.md` §11); new
 accounts may start with lower values.
