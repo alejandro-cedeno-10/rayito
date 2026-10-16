@@ -12,7 +12,18 @@ actualizar. El detalle completo, cambio a cambio, está en el
 
 <div class="grid cards" markdown>
 
--   :material-tag:{ .lg .middle } **0.11.0** · 2026-10-13 · actual
+-   :material-tag:{ .lg .middle } **0.12.0** · 2026-10-15 · actual
+
+    ---
+
+    El panel de gestión: `Quotas`, `UsageCost` y `Fleet` en el SDK,
+    `rayito dashboard` en local y la pila `dashboard` en tu cuenta, con el
+    dashboard de CloudWatch, varias cuentas y avisos de cuota como extras
+    opcionales. Todo apagado por defecto y sin cambios que rompan la API.
+
+    [:octicons-arrow-right-24: Novedades de 0.12.0](0.12.0.md)
+
+-   :material-tag:{ .lg .middle } **0.11.0** · 2026-10-13
 
     ---
 

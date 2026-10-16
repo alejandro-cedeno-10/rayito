@@ -42,7 +42,7 @@ No SDK call SHALL build a `ConfigureService` gRPC stub, send a `Configure` reque
 - **THEN** `features.configure` is `true` and every other flag (`s3_mounts`, `efs_volumes`, `lifecycle_events`, `telemetry_export`, `secret_gateway`, `template_start`) is `false`
 
 ### Requirement: a feature that needs the execution role inside the guest is gated to the caps image variant before launch when the image name allows it
-`require_caps_for(feature, image_variant)` / `requireCapsFor(feature, imageVariant)` SHALL raise `UnimplementedError` before `run-microvm` when the template name resolves (by Rayito's own `rayito-<variant>[-<size>]` naming convention) to a variant other than `base-caps`, and SHALL do nothing (deferring the decision to the agent's own `Health.features` after boot) when the variant cannot be determined from the name (a custom image name or an ARN).
+`require_caps_for(feature, image_variant)` / `requireCapsFor(feature, imageVariant)` SHALL raise `UnimplementedError` before `run-microvm` when the template name resolves to a known variant other than `base-caps` and `base-caps-efs`, and SHALL do nothing (deferring the decision to the agent's own `Health.features` after boot) when the variant cannot be determined from the name. A name resolves to a variant only when it matches `rayito-<variant>[-<size>]` with `<variant>` in the closed catalogue `base`, `base-caps`, `base-caps-efs`, `base-poly`, `base-slim` (`limits.json` `officialImageVariants`) and `<size>` in the size catalogue; any other name (including a custom name that starts with `rayito-`) and any ARN SHALL resolve to unknown.
 
 #### Scenario: a known non-caps variant is rejected before any AWS call
 - **WHEN** a caps-only feature option is set together with `template="rayito-base"`
@@ -51,6 +51,14 @@ No SDK call SHALL build a `ConfigureService` gRPC stub, send a `Configure` reque
 #### Scenario: an unresolvable image name defers to the agent
 - **WHEN** a caps-only feature option is set together with a custom image name or an ARN
 - **THEN** `require_caps_for` does not raise, and the decision is left to the post-boot `Health.features` check
+
+#### Scenario: a custom name that starts with the project prefix is not interpreted
+- **WHEN** the template is `rayito-mybuild` or `rayito-accreg-ts-caps-efs`
+- **THEN** the variant resolves to unknown and no feature option is rejected before launch
+
+#### Scenario: a sized official name resolves to its variant
+- **WHEN** the template is `rayito-base-caps-efs-4gb`
+- **THEN** the variant resolves to `base-caps-efs`
 
 ### Requirement: one FeatureSet per agent process backs ConfigureService, Health.features and the lifecycle participants
 `rayd` SHALL build exactly one `FeatureSet` per process and share it between `ConfigureService`, `Health.features` and the hooks' lifecycle participants. `Health.features` SHALL be derived from each slot's `supported()`; with every slot `Unsupported` it SHALL equal `AgentFeatures::foundations_only()` and the participant list SHALL be empty.
@@ -69,3 +77,10 @@ No SDK call SHALL build a `ConfigureService` gRPC stub, send a `Configure` reque
 #### Scenario: a hung on_resume does not hold /resume
 - **WHEN** one participant's `on_resume` never returns
 - **THEN** `/resume` answers 200 after about `PARTICIPANT_RESUME_TIMEOUT`, and every other participant's `on_resume` still ran
+
+### Requirement: the efs gate is a shared helper
+`require_efs_for(feature, image_variant)` / `requireEfsFor(feature, imageVariant)` SHALL raise `UnimplementedError` before `run-microvm` when the variant is known and is not `base-caps-efs`, and SHALL do nothing when the variant is unknown. `plan_volumes`/`planVolumes` and the shim's `volume_mounts=` use it in place of the caps gate; the `volumes=` behaviour itself is specified in `efs-volumes`.
+
+#### Scenario: the helper skips an unknown variant
+- **WHEN** `require_efs_for("volumes", None)` is called
+- **THEN** nothing is raised
