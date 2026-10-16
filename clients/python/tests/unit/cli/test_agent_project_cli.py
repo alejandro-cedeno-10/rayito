@@ -15,7 +15,7 @@ from typing import Any, Final
 import pytest
 from typer.testing import CliRunner
 
-from rayito import AgentProject
+from rayito import AgentDeployStep, AgentProject, plan_deploy
 from rayito._agent._custom import CustomRuntime, HttpApp
 from rayito._agent._events import (
     AgentFailed,
@@ -26,11 +26,13 @@ from rayito._agent._events import (
     TokenUsage,
     ToolCall,
 )
+from rayito._payload import generate_access_token
 from rayito.cli import agent as agent_cli
 from rayito.cli._agent_scaffold import ScaffoldRequest, scaffold_files
 from rayito.cli._session import Clients
 from rayito.cli.app import app
 from rayito.exceptions import AgentException, InvalidArgumentException, SandboxException
+from tests.unit.fake_agent_project import project as real_project
 
 REPO_ROOT_DEPTH: Final = 5
 SCAFFOLD_VECTORS: Final = (
@@ -46,7 +48,9 @@ DEPLOYMENT_URL: Final = "https://abc.lambda-microvm.us-east-1.on.aws"
 PROXY_HEADER_VALUE: Final = "eyJhbGciOiJkaXIifQ..fake.jwe"
 USAGE: Final = TokenUsage(input=10, output=5)
 TOKEN_ENV: Final = "RAYITO_ACCESS_TOKEN"
-ACCESS_TOKEN: Final = "fake-access-token"
+ACCESS_TOKEN: Final = generate_access_token()
+#: El nombre de un secreto que ya existe (un nombre, no un valor).
+OWN_SECRET: Final = "nombre-" + "propio"
 
 
 @dataclass
@@ -63,6 +67,10 @@ class FakeResult:
 class FakeServe:
     port: int = 8088
     timeout_seconds: float = 3600.0
+    max_concurrency: int = 1
+    idle: Any = None
+    queue_max: int = 0
+    queue_timeout_seconds: float = 30.0
 
 
 @dataclass
@@ -108,8 +116,12 @@ class FakeExport:
 
 @dataclass(frozen=True)
 class FakeProject:
+    name: str = "support-bot"
     runtime: str = "deepagents"
     serve: FakeServe = FakeServe()
+    memory_mib: int = 2048
+    env: Any = field(default_factory=dict)
+    network: Any = None
     log: list[tuple[str, dict[str, Any]]] = field(default_factory=list)
     run_error: Exception | None = None
     run_events: tuple[Any, ...] = ()
@@ -429,66 +441,280 @@ def test_invalid_project_file_exits_two(
     assert "runtime.entrpoint" in result.output
 
 
+@dataclass
+class FakeFleet:
+    """La flota de doble de `deploy_agent()`."""
+
+    deployments: tuple[FakeDeployment, ...] = field(default_factory=lambda: (FakeDeployment(),))
+    name: str = "support-bot"
+    detached: bool = False
+    stopped: bool = False
+
+    @property
+    def sandbox_ids(self) -> tuple[str, ...]:
+        return tuple(deployment.sandbox_id for deployment in self.deployments)
+
+    def detach(self) -> None:
+        self.detached = True
+
+
+@dataclass
+class DeployCalls:
+    """Lo que la CLI pidió al SDK: los argumentos de `project_for` y de
+    `deploy_agent`."""
+
+    detected: list[dict[str, Any]] = field(default_factory=list)
+    deployed: list[dict[str, Any]] = field(default_factory=list)
+    planned: list[dict[str, Any]] = field(default_factory=list)
+
+
+def install_deploy(
+    monkeypatch: pytest.MonkeyPatch,
+    project: FakeProject | None = None,
+    *,
+    fleet: FakeFleet | None = None,
+    report: Any = None,
+    error: Exception | None = None,
+) -> DeployCalls:
+    calls = DeployCalls()
+    the_project = project or FakeProject()
+    the_fleet = fleet or FakeFleet()
+
+    def detect(path: Any, found: Any, overrides: Any) -> tuple[FakeProject, Any]:
+        calls.detected.append({"path": str(path), "overrides": overrides})
+        return the_project, report
+
+    def deploy(**kwargs: Any) -> FakeFleet:
+        calls.deployed.append(kwargs)
+        if error is not None:
+            raise error
+        return the_fleet
+
+    def plan(**kwargs: Any) -> Any:
+        calls.planned.append(kwargs)
+        return real_plan(**kwargs)
+
+    real_plan = plan_deploy
+    monkeypatch.setattr(agent_cli, "project_for", detect)
+    monkeypatch.setattr(agent_cli, "deploy_agent", deploy)
+    monkeypatch.setattr(agent_cli, "plan_deploy", plan)
+    return calls
+
+
 @pytest.mark.usefixtures("access_token")
 def test_deploy_json_never_prints_the_proxy_headers(
     monkeypatch: pytest.MonkeyPatch, runner: CliRunner, clients: Clients
 ) -> None:
-    install_project(monkeypatch, FakeProject())
+    install_deploy(monkeypatch)
     result = runner.invoke(app, ["--json", "agent", "deploy"], obj=clients)
     assert result.exit_code == 0, result.output
     assert json.loads(result.output) == {
+        "name": "support-bot",
         "sandboxId": SANDBOX_ID,
+        "sandboxIds": [SANDBOX_ID],
         "url": DEPLOYMENT_URL,
         "port": 8088,
+        "tokenFile": None,
     }
     assert PROXY_HEADER_VALUE not in result.output
     assert "authorization" not in result.output.lower()
 
 
 @pytest.mark.usefixtures("access_token")
-def test_deploy_text_never_prints_the_proxy_headers(
+def test_deploy_text_keeps_the_keys_of_0_13_and_adds_the_fleet(
     monkeypatch: pytest.MonkeyPatch, runner: CliRunner, clients: Clients
 ) -> None:
-    install_project(monkeypatch, FakeProject())
+    install_deploy(monkeypatch)
     result = runner.invoke(app, ["agent", "deploy"], obj=clients)
     assert f"sandbox_id={SANDBOX_ID}" in result.output
+    assert f"url={DEPLOYMENT_URL}" in result.output
+    assert "port=8088" in result.output
+    assert "name=support-bot" in result.output
+    assert "members=1" in result.output
     assert PROXY_HEADER_VALUE not in result.output
+
+
+@pytest.mark.usefixtures("access_token")
+def test_deploy_detaches_the_fleet_so_the_vms_outlive_the_command(
+    monkeypatch: pytest.MonkeyPatch, runner: CliRunner, clients: Clients
+) -> None:
+    fleet = FakeFleet()
+    install_deploy(monkeypatch, fleet=fleet)
+    runner.invoke(app, ["agent", "deploy"], obj=clients)
+    assert fleet.detached
+
+
+@pytest.mark.usefixtures("access_token")
+def test_deploy_takes_the_path_as_an_argument_or_as_file(
+    monkeypatch: pytest.MonkeyPatch, runner: CliRunner, clients: Clients
+) -> None:
+    calls = install_deploy(monkeypatch)
+    runner.invoke(app, ["agent", "deploy", "./mi-agente"], obj=clients)
+    runner.invoke(app, ["agent", "deploy", "--file", "./otro"], obj=clients)
+    runner.invoke(app, ["agent", "deploy"], obj=clients)
+    clash = runner.invoke(app, ["agent", "deploy", "./uno", "--file", "./dos"], obj=clients)
+    assert [item["path"] for item in calls.detected] == ["mi-agente", "otro", "."]
+    assert clash.exit_code == 2
+
+
+@pytest.mark.usefixtures("access_token")
+def test_deploy_passes_the_detection_overrides(
+    monkeypatch: pytest.MonkeyPatch, runner: CliRunner, clients: Clients
+) -> None:
+    calls = install_deploy(monkeypatch)
+    runner.invoke(app, ["agent", "deploy", "--framework", "strands", "--entry", "a:b"], obj=clients)
+    runner.invoke(app, ["agent", "deploy"], obj=clients)
+    first, second = (item["overrides"] for item in calls.detected)
+    assert (first.framework, first.entry, first.language, first.protocol) == (
+        "strands",
+        "a:b",
+        None,
+        None,
+    )
+    assert second is None
 
 
 @pytest.mark.usefixtures("access_token")
 def test_deploy_overrides_only_what_was_passed(
     monkeypatch: pytest.MonkeyPatch, runner: CliRunner, clients: Clients
 ) -> None:
-    seen: list[Any] = []
-
-    @dataclass(frozen=True)
-    class Project(FakeProject):
-        def deploy(self, **kwargs: Any) -> FakeDeployment:
-            seen.append(self.serve)
-            return self.deployment
-
-    install_project(monkeypatch, Project())
+    calls = install_deploy(monkeypatch)
     runner.invoke(app, ["agent", "deploy"], obj=clients)
     runner.invoke(app, ["agent", "deploy", "--port", "9100", "--timeout", "120"], obj=clients)
-    assert seen[0] == FakeServe()
-    assert seen[1] == FakeServe(port=9100, timeout_seconds=120.0)
+    first, second = (call["project"].serve for call in calls.deployed)
+    assert first == FakeServe()
+    assert (second.port, second.timeout_seconds) == (9100, 120.0)
+
+
+@pytest.mark.usefixtures("access_token")
+def test_deploy_maps_every_scaling_and_serving_flag(
+    monkeypatch: pytest.MonkeyPatch, runner: CliRunner, clients: Clients
+) -> None:
+    calls = install_deploy(monkeypatch)
+    result = runner.invoke(
+        app,
+        [
+            "agent", "deploy", "--memory", "4096", "--max-sessions", "2", "--sessions",
+            "dedicated", "--min-vms", "1", "--max-vms", "3", "--warm", "1", "--idle", "120",
+            "--queue", "8", "--queue-timeout", "45", "--env", "MODEL_ID=x", "--env", "A=b",
+            "--allow-out", "api.example.com",
+        ],
+        obj=clients,
+    )  # fmt: skip
+    assert result.exit_code == 0, result.output
+    deployed = calls.deployed[0]
+    project = deployed["project"]
+    assert project.memory_mib == 4096
+    assert project.serve.max_concurrency == 2
+    assert project.serve.idle.max_idle_seconds == 120
+    assert (project.serve.queue_max, project.serve.queue_timeout_seconds) == (8, 45.0)
+    assert dict(project.env) == {"MODEL_ID": "x", "A": "b"}
+    assert project.network == {"allow_out": ["api.example.com"]}
+    scaling = deployed["options"].scaling
+    assert (scaling.min_vms, scaling.max_vms, scaling.warm_vms, scaling.sessions) == (
+        1,
+        3,
+        1,
+        "dedicated",
+    )
+
+
+@pytest.mark.usefixtures("access_token")
+def test_deploy_without_scaling_flags_leaves_the_scaling_to_the_project(
+    monkeypatch: pytest.MonkeyPatch, runner: CliRunner, clients: Clients
+) -> None:
+    calls = install_deploy(monkeypatch)
+    runner.invoke(app, ["agent", "deploy"], obj=clients)
+    assert calls.deployed[0]["options"].scaling is None
+
+
+@pytest.mark.usefixtures("access_token")
+def test_deploy_rejects_invalid_scaling_with_a_usage_error(
+    monkeypatch: pytest.MonkeyPatch, runner: CliRunner, clients: Clients
+) -> None:
+    calls = install_deploy(monkeypatch)
+    result = runner.invoke(
+        app, ["agent", "deploy", "--min-vms", "3", "--max-vms", "2"], obj=clients
+    )
+    assert result.exit_code == 2
+    assert "min_vms" in result.output
+    assert calls.deployed == []
+
+
+@pytest.mark.usefixtures("access_token")
+def test_deploy_names_the_flag_the_project_cannot_take(
+    monkeypatch: pytest.MonkeyPatch, runner: CliRunner, clients: Clients
+) -> None:
+    @dataclass(frozen=True)
+    class OldServe:
+        port: int = 8088
+        timeout_seconds: float = 3600.0
+        max_concurrency: int = 1
+
+    install_deploy(monkeypatch, FakeProject(serve=OldServe()))  # type: ignore[arg-type]
+    result = runner.invoke(app, ["agent", "deploy", "--queue", "4"], obj=clients)
+    assert result.exit_code == 2
+    assert "--queue" in result.output
+    assert "queue_max" in result.output
+
+
+@pytest.mark.usefixtures("access_token")
+def test_deploy_rejects_a_malformed_secret_without_echoing_it(
+    monkeypatch: pytest.MonkeyPatch, runner: CliRunner, clients: Clients
+) -> None:
+    calls = install_deploy(monkeypatch)
+    result = runner.invoke(app, ["agent", "deploy", "--secret", "valor-pegado"], obj=clients)
+    assert result.exit_code == 2
+    assert "valor-pegado" not in result.output
+    assert calls.deployed == []
+
+
+@pytest.mark.usefixtures("access_token")
+def test_deploy_passes_the_aws_options_to_the_sdk(
+    monkeypatch: pytest.MonkeyPatch, runner: CliRunner, clients: Clients
+) -> None:
+    calls = install_deploy(monkeypatch)
+    runner.invoke(
+        app,
+        [
+            "agent", "deploy", "--bucket", "amzn-s3-demo-bucket",
+            "--secret", f"bedrock={OWN_SECRET}", "--create-secret", "--no-build",
+        ],
+        obj=clients,
+    )  # fmt: skip
+    options = calls.deployed[0]["options"]
+    assert options.bucket == "amzn-s3-demo-bucket"
+    assert dict(options.secret_names) == {"bedrock": OWN_SECRET}
+    assert options.create_secret_from_env
+    assert options.build_image is False
+    assert calls.deployed[0]["region"] == clients.region
+    assert calls.deployed[0]["session"] is clients.session
+
+
+@pytest.mark.usefixtures("access_token")
+def test_deploy_builds_by_default_only_when_a_bucket_allows_it(
+    monkeypatch: pytest.MonkeyPatch, runner: CliRunner, clients: Clients
+) -> None:
+    calls = install_deploy(monkeypatch)
+    runner.invoke(app, ["agent", "deploy"], obj=clients)
+    runner.invoke(app, ["agent", "deploy", "--build"], obj=clients)
+    assert [call["options"].build_image for call in calls.deployed] == [None, True]
 
 
 @pytest.mark.usefixtures("access_token")
 def test_deploy_passes_the_token_from_the_environment(
     monkeypatch: pytest.MonkeyPatch, runner: CliRunner, clients: Clients
 ) -> None:
-    project = install_project(monkeypatch, FakeProject())
+    calls = install_deploy(monkeypatch)
     runner.invoke(app, ["agent", "deploy"], obj=clients)
-    deploy_calls = [kwargs for name, kwargs in project.log if name == "deploy"]
-    assert [call["access_token"] for call in deploy_calls] == [ACCESS_TOKEN]
+    assert calls.deployed[0]["options"].access_token == ACCESS_TOKEN
 
 
 @pytest.mark.usefixtures("no_access_token")
 def test_deploy_writes_a_new_token_to_the_token_file(
     monkeypatch: pytest.MonkeyPatch, runner: CliRunner, clients: Clients, tmp_path: Path
 ) -> None:
-    project = install_project(monkeypatch, FakeProject())
+    calls = install_deploy(monkeypatch)
     token_file = tmp_path / "token"
     result = runner.invoke(app, ["agent", "deploy", "--token-file", str(token_file)], obj=clients)
     assert result.exit_code == 0, result.output
@@ -496,60 +722,59 @@ def test_deploy_writes_a_new_token_to_the_token_file(
     assert token
     assert token not in result.output
     assert token_file.stat().st_mode & 0o777 == 0o600
-    deploy_calls = [kwargs for name, kwargs in project.log if name == "deploy"]
-    assert [call["access_token"] for call in deploy_calls] == [token]
+    assert calls.deployed[0]["options"].access_token == token
 
 
 @pytest.mark.usefixtures("no_access_token")
-def test_deploy_without_any_way_to_reconnect_creates_nothing(
-    monkeypatch: pytest.MonkeyPatch, runner: CliRunner, clients: Clients
+def test_deploy_without_a_token_uses_a_default_file_and_reuses_it(
+    monkeypatch: pytest.MonkeyPatch, runner: CliRunner, clients: Clients, tmp_path: Path
 ) -> None:
-    project = install_project(monkeypatch, FakeProject())
-    result = runner.invoke(app, ["agent", "deploy"], obj=clients)
-    assert result.exit_code == 2
-    assert "--token-file" in result.output
-    assert [name for name, _ in project.log if name == "deploy"] == []
+    monkeypatch.chdir(tmp_path)
+    calls = install_deploy(monkeypatch)
+    first = runner.invoke(app, ["agent", "deploy"], obj=clients)
+    runner.invoke(app, ["agent", "deploy"], obj=clients)
+    default = tmp_path / ".rayito" / "agent-token"
+    token = default.read_text()
+    assert first.exit_code == 0
+    assert "token_file=.rayito/agent-token" in first.output
+    assert token not in first.output
+    assert default.stat().st_mode & 0o777 == 0o600
+    assert [call["options"].access_token for call in calls.deployed] == [token, token]
 
 
 @pytest.mark.usefixtures("no_access_token")
 def test_deploy_refuses_an_existing_token_file(
     monkeypatch: pytest.MonkeyPatch, runner: CliRunner, clients: Clients, tmp_path: Path
 ) -> None:
-    project = install_project(monkeypatch, FakeProject())
+    calls = install_deploy(monkeypatch)
     token_file = tmp_path / "token"
     token_file.write_text("old")
     result = runner.invoke(app, ["agent", "deploy", "--token-file", str(token_file)], obj=clients)
     assert result.exit_code == 2
     assert token_file.read_text() == "old"
-    assert [name for name, _ in project.log if name == "deploy"] == []
+    assert calls.deployed == []
 
 
 @pytest.mark.usefixtures("access_token")
 def test_deploy_keeps_the_sandbox_on_failure_only_when_asked(
     monkeypatch: pytest.MonkeyPatch, runner: CliRunner, clients: Clients
 ) -> None:
-    project = install_project(monkeypatch, FakeProject())
+    calls = install_deploy(monkeypatch)
     runner.invoke(app, ["agent", "deploy"], obj=clients)
     runner.invoke(app, ["agent", "deploy", "--keep-on-failure"], obj=clients)
-    calls = [kwargs for name, kwargs in project.log if name == "deploy"]
-    assert [call["keep_on_failure"] for call in calls] == [False, True]
+    assert [call["options"].keep_on_failure for call in calls.deployed] == [False, True]
 
 
 @pytest.mark.usefixtures("access_token")
 def test_a_failed_deploy_prints_the_cause_and_the_notes(
     monkeypatch: pytest.MonkeyPatch, runner: CliRunner, clients: Clients
 ) -> None:
-    @dataclass(frozen=True)
-    class Project(FakeProject):
-        def deploy(self, **kwargs: Any) -> FakeDeployment:
-            failure = SandboxException(
-                "el host del agente no pudo arrancar (app_exited). Final de la salida de error "
-                "de la app:\nModuleNotFoundError: agent"
-            )
-            failure.add_note(f"keep_on_failure=True: el sandbox {SANDBOX_ID} sigue vivo")
-            raise failure
-
-    install_project(monkeypatch, Project())
+    failure = SandboxException(
+        "el host del agente no pudo arrancar (app_exited). Final de la salida de error "
+        "de la app:\nModuleNotFoundError: agent"
+    )
+    failure.add_note(f"keep_on_failure=True: el sandbox {SANDBOX_ID} sigue vivo")
+    install_deploy(monkeypatch, error=failure)
     result = runner.invoke(app, ["agent", "deploy", "--keep-on-failure"], obj=clients)
     assert result.exit_code == 1
     assert "ModuleNotFoundError: agent" in result.output
@@ -560,14 +785,9 @@ def test_a_failed_deploy_prints_the_cause_and_the_notes(
 def test_an_invalid_argument_failure_also_prints_the_notes(
     monkeypatch: pytest.MonkeyPatch, runner: CliRunner, clients: Clients
 ) -> None:
-    @dataclass(frozen=True)
-    class Project(FakeProject):
-        def deploy(self, **kwargs: Any) -> FakeDeployment:
-            failure = InvalidArgumentException("pasarela sin configurar")
-            failure.add_note(f"keep_on_failure=True: el sandbox {SANDBOX_ID} sigue vivo")
-            raise failure
-
-    install_project(monkeypatch, Project())
+    failure = InvalidArgumentException("pasarela sin configurar")
+    failure.add_note(f"keep_on_failure=True: el sandbox {SANDBOX_ID} sigue vivo")
+    install_deploy(monkeypatch, error=failure)
     result = runner.invoke(app, ["agent", "deploy", "--keep-on-failure"], obj=clients)
     assert result.exit_code == 2
     assert "pasarela sin configurar" in result.output
@@ -578,14 +798,9 @@ def test_an_invalid_argument_failure_also_prints_the_notes(
 def test_any_other_failure_names_the_kept_sandbox_too(
     monkeypatch: pytest.MonkeyPatch, runner: CliRunner, clients: Clients
 ) -> None:
-    @dataclass(frozen=True)
-    class Project(FakeProject):
-        def deploy(self, **kwargs: Any) -> FakeDeployment:
-            failure = RuntimeError("boom")
-            failure.add_note(f"keep_on_failure=True: el sandbox {SANDBOX_ID} sigue vivo")
-            raise failure
-
-    install_project(monkeypatch, Project())
+    failure = RuntimeError("boom")
+    failure.add_note(f"keep_on_failure=True: el sandbox {SANDBOX_ID} sigue vivo")
+    install_deploy(monkeypatch, error=failure)
     result = runner.invoke(app, ["agent", "deploy", "--keep-on-failure"], obj=clients)
     assert result.exit_code != 0
     assert SANDBOX_ID in result.output
@@ -603,13 +818,134 @@ def test_deploy_warns_when_the_app_routes_are_not_exposed(
             command=["python", "serve.py"], port=9100, health_path="/health", protocol="raw"
         )
     )
-    install_project(monkeypatch, FakeProject(runtime=hidden))  # type: ignore[arg-type]
+    install_deploy(monkeypatch, FakeProject(runtime=hidden))  # type: ignore[arg-type]
     warned = runner.invoke(app, ["agent", "deploy"], obj=clients)
     assert 'protocol = "raw"' in warned.output
     assert "/health" in warned.output
-    install_project(monkeypatch, FakeProject(runtime=exposed))  # type: ignore[arg-type]
+    install_deploy(monkeypatch, FakeProject(runtime=exposed))  # type: ignore[arg-type]
     quiet = runner.invoke(app, ["agent", "deploy"], obj=clients)
     assert "aviso" not in quiet.output
+
+
+@pytest.mark.usefixtures("access_token")
+def test_deploy_prints_the_detection_before_creating_anything(
+    monkeypatch: pytest.MonkeyPatch, runner: CliRunner, clients: Clients
+) -> None:
+    @dataclass(frozen=True)
+    class Report:
+        language: str = "python"
+        framework: str = "langgraph"
+        evidence: tuple[str, ...] = ("langgraph.json",)
+
+    install_deploy(monkeypatch, report=Report())
+    result = runner.invoke(app, ["agent", "deploy"], obj=clients)
+    assert "detectado framework: langgraph" in result.output
+    assert "langgraph.json" not in result.output
+
+
+@pytest.mark.usefixtures("access_token")
+def test_deploy_prints_each_step_and_never_a_secret_name(
+    monkeypatch: pytest.MonkeyPatch, runner: CliRunner, clients: Clients
+) -> None:
+    def deploy(**kwargs: Any) -> FakeFleet:
+        emit = kwargs["options"].on_step
+        emit(AgentDeployStep("bucket", "discovered:amzn-s3-demo-bucket"))
+        emit(AgentDeployStep("secret_created", "bedrock"))
+        emit(AgentDeployStep("image", "3.0"))
+        emit(AgentDeployStep("warm", "timeout"))
+        return FakeFleet()
+
+    install_deploy(monkeypatch)
+    monkeypatch.setattr(agent_cli, "deploy_agent", deploy)
+    result = runner.invoke(app, ["agent", "deploy"], obj=clients)
+    assert "bucket del artefacto: amzn-s3-demo-bucket (discovered)" in result.output
+    assert "secreto creado para la pasarela bedrock" in result.output
+    assert "imagen lista: versión 3.0" in result.output
+    assert "siguen creándose" in result.output
+
+
+@pytest.mark.usefixtures("access_token")
+def test_deploy_shortens_the_build_logs_unless_verbose(
+    monkeypatch: pytest.MonkeyPatch, runner: CliRunner, clients: Clients
+) -> None:
+    calls = install_deploy(monkeypatch)
+    runner.invoke(app, ["agent", "deploy"], obj=clients)
+    runner.invoke(app, ["agent", "deploy", "--verbose"], obj=clients)
+    compact, verbose = (call["options"].on_build_logs for call in calls.deployed)
+    assert type(compact).__name__ == "CompactBuildLog"
+    assert type(verbose).__name__ != "CompactBuildLog"
+
+
+def test_dry_run_calls_neither_aws_nor_the_sdk_deploy(
+    monkeypatch: pytest.MonkeyPatch, runner: CliRunner, clients: Clients, tmp_path: Path
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv(TOKEN_ENV, raising=False)
+    calls = install_deploy(monkeypatch, real_project())  # type: ignore[arg-type]
+    result = runner.invoke(app, ["agent", "deploy", "--dry-run", "--max-vms", "2"])
+    assert result.exit_code == 0, result.output
+    assert calls.deployed == []
+    assert not (tmp_path / ".rayito").exists()
+    assert "VMs: mínimo 1, máximo 2" in result.output
+    assert "coste de lista" in result.output
+    assert "no se llamó a AWS" in result.output
+
+
+def test_dry_run_json_is_a_document(
+    monkeypatch: pytest.MonkeyPatch, runner: CliRunner, clients: Clients
+) -> None:
+    install_deploy(monkeypatch, real_project())  # type: ignore[arg-type]
+    result = runner.invoke(app, ["--json", "agent", "deploy", "--dry-run"])
+    document = json.loads(result.output)
+    assert document["dryRun"] is True
+    assert document["plan"]["scaling"]["maxVms"] == 1
+    assert document["plan"]["cost"]["runningUsdPerHour"] > 0
+
+
+def test_detect_describes_the_project_without_aws(
+    monkeypatch: pytest.MonkeyPatch, runner: CliRunner
+) -> None:
+    @dataclass(frozen=True)
+    class Report:
+        language: str = "typescript"
+        framework: str = "strands-ts"
+
+    install_deploy(monkeypatch, report=Report())
+    result = runner.invoke(app, ["agent", "detect", "./mi-agente", "--framework", "strands-ts"])
+    assert result.exit_code == 0, result.output
+    assert "detectado language: typescript" in result.output
+
+
+def test_detect_json_and_write(
+    monkeypatch: pytest.MonkeyPatch, runner: CliRunner, tmp_path: Path
+) -> None:
+    @dataclass(frozen=True)
+    class Report:
+        framework: str = "strands"
+
+    monkeypatch.setattr(
+        agent_cli, "project_for", lambda path, found, overrides: (real_project(), Report())
+    )
+    result = runner.invoke(app, ["--json", "agent", "detect", str(tmp_path), "--write"])
+    assert result.exit_code == 0, result.output
+    document = json.loads(result.output)
+    assert document["detection"] == {"framework": "strands"}
+    assert document["written"] == "rayito-agent.json"
+    assert (tmp_path / "rayito-agent.json").is_file()
+    again = runner.invoke(app, ["agent", "detect", str(tmp_path), "--write"])
+    assert again.exit_code == 2
+
+
+def test_detect_reports_an_ambiguous_project_as_a_usage_error(
+    monkeypatch: pytest.MonkeyPatch, runner: CliRunner
+) -> None:
+    def refuse(path: Any, found: Any, overrides: Any) -> None:
+        raise InvalidArgumentException("hay dos frameworks: usa --framework")
+
+    monkeypatch.setattr(agent_cli, "project_for", refuse)
+    result = runner.invoke(app, ["agent", "detect"])
+    assert result.exit_code == 2
+    assert "--framework" in result.output
 
 
 def test_init_custom_explains_the_raw_protocol(tmp_path: Path, runner: CliRunner) -> None:

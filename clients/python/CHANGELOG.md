@@ -8,6 +8,40 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
 
 ### Añadido
 
+- **`deploy_agent()` y `AgentFleet`: despliega el agente que ya tienes con una
+  llamada (`agent-zero-config`)**: `deploy_agent(ruta)` (y
+  `deploy_agent_async()`) detecta el proyecto sin ejecutar su código, resuelve
+  la región, la imagen base, el secreto del modelo, el bucket del artefacto
+  (el de `RAYITO_BUCKET` o el de activos del bootstrap de CDK; nunca crea un
+  bucket) y el access token, construye la imagen sólo si cambió y devuelve un
+  `AgentFleet`: uno o varios MicroVMs que sirven el agente. `ScalingOptions`
+  fija `min_vms`, `max_vms`, las plazas calientes (`warm_vms`, del pool de
+  plazas aparcadas) y si las sesiones se comparten o cada una tiene su VM
+  (`dedicated`). Con más de un VM posible, el `session_id` del resultado es un
+  handle `rs1.<sandbox>.<sesión>` que enruta derecho a su VM sin servidor
+  propio; una flota llena espera en una cola cliente y, al agotarse, lanza
+  `CapacityException` con `code="agent_capacity"`; un VM que desaparece es
+  `SandboxException` con `code="agent_vm_lost"`. Los VMs por encima de
+  `min_vms` se terminan solos (`set_timeout`), un VM que deja de contestar se
+  sustituye y `AgentFleet.connect()` reconstruye la flota en otro proceso.
+  `plan_deploy()` calcula el plan y el coste de lista sin llamar a AWS.
+  `DeployOptions` (como `AgentDeployOptions`), `DetectOverrides` y
+  `PoolConfig(access_token=)` son aditivos: `AgentProject.deploy()` no cambia.
+  Nada que cueste se crea sin pedirlo: un secreto sólo con
+  `create_secret_from_env=True`, la imagen base sólo con un publicador.
+
+- **`rayito agent detect` y `rayito agent deploy [RUTA]`**: la CLI detecta el
+  proyecto y lo despliega como una flota con `--min-vms`, `--max-vms`,
+  `--warm`, `--sessions`, `--max-sessions`, `--memory`, `--idle`, `--queue`,
+  `--env`, `--allow-out`, `--bucket`, `--secret proveedor=nombre`,
+  `--create-secret`, `--base-artifact` con `--yes`, `--build/--no-build`,
+  `--dry-run` (sólo plan y coste, sin AWS) y `--verbose`. El token se guarda
+  en `.rayito/agent-token` (modo 0600) si no se pasa `--token-file` ni
+  `RAYITO_ACCESS_TOKEN`, y los logs del build salen resumidos. `invoke`,
+  `status` y `stop` aceptan el nombre de la flota además del id de un sandbox.
+  El comportamiento de 0.13 de `agent deploy` se conserva (mismas claves de
+  salida) salvo que ya no exige `--token-file`.
+
 - **Strands, Strands harness, Hermes, LangGraph y agentes propios como
   runtimes de primera clase (`agent-runtimes-byo`)**: `StrandsRuntime` (SDK y
   harness), `HermesRuntime` y `CustomRuntime` con `HttpApp` suman runtimes a
