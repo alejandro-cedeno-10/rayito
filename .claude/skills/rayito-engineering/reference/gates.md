@@ -124,6 +124,7 @@ python3 scripts/check_hygiene.py   # más tu lista privada en .git/info/hygiene-
 gitleaks git --log-opts=HEAD --redact --no-banner .   # 8.30.1, como leaks.yml
 python3 scripts/check_pins.py
 python3 scripts/gen_limits.py --check
+python3 scripts/gen_agent_detection.py --check
 python3 scripts/gen_stack_assets.py --check
 python3 scripts/check_license.py
 uvx ruff==0.16.7 check scripts

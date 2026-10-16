@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "type": "module",
   "dependencies": {
-    "ai": "^1.0.0",
-    "@ai-sdk/amazon-bedrock": "^1.0.0"
+    "ai": "*",
+    "@ai-sdk/amazon-bedrock": "*"
   }
 }
