@@ -15,14 +15,11 @@ from rayito._agent._fleet import AgentFleet
 from rayito._agent._fleet_async import AsyncAgentFleet
 from rayito._agent._fleet_base import (
     AGENT_FLEET_BUSY_RETRY_SECONDS,
-    AGENT_FLEET_QUEUE_TIMEOUT_SECONDS_DEFAULT,
     AGENT_FLEET_SESSION_LABEL,
-    AGENT_FLEET_UNHEALTHY_PINGS,
-    decode_handle,
-    encode_handle,
     session_label,
 )
-from rayito._agent._scaling_domain import ScalingOptions
+from rayito._agent._scaling_domain import ScalingOptions, decode_handle, encode_handle
+from rayito._limits import AGENT_FLEET_UNHEALTHY_PINGS, AGENT_SERVICE_QUEUE_TIMEOUT_SECONDS_DEFAULT
 from rayito.exceptions import (
     CapacityException,
     InvalidArgumentException,
@@ -187,7 +184,7 @@ def test_a_full_fleet_queues_and_then_reports_capacity(flavor: FleetFlavor) -> N
 
     flavor.close_stream(held)
     assert raised.value.code == "agent_capacity"
-    assert sum(flavor.clock.sleeps) >= AGENT_FLEET_QUEUE_TIMEOUT_SECONDS_DEFAULT
+    assert sum(flavor.clock.sleeps) >= AGENT_SERVICE_QUEUE_TIMEOUT_SECONDS_DEFAULT
     assert set(flavor.clock.sleeps) == {AGENT_FLEET_BUSY_RETRY_SECONDS}
 
 

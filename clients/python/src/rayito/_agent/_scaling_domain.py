@@ -1,10 +1,9 @@
 """Dominio puro del escalado de un agente servido (`ScalingOptions`, ADR-029):
-los límites de concurrencia por VM, el asa enrutable de una sesión, la
-colocación de una sesión nueva entre los MicroVMs de la flota, la decisión de
-cola y el calendario de reducción. No importa `boto3`, `grpc` ni el código
-generado del proto, no tiene reloj propio (el instante llega por parámetro) y
-no toca la red: `AgentFleet` (la cáscara de I/O) le da los datos que midió y
-ejecuta lo que decide.
+los límites de concurrencia por VM, el asa enrutable de una sesión y las
+dos reglas de salud de la flota (cuándo se da un VM por perdido y cuántos
+faltan para el mínimo). No importa `boto3`, `grpc` ni el código generado del
+proto y no toca la red: `AgentFleet` (la cáscara de I/O) le da los datos que
+midió y ejecuta lo que decide.
 
 Los vectores compartidos con TypeScript están en
 `testdata/agent-fleet/routing.json`.
@@ -12,7 +11,6 @@ Los vectores compartidos con TypeScript están en
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Final, Literal, TypeAlias, get_args
 
@@ -23,7 +21,6 @@ from rayito._limits import (
     AGENT_SCALING_MAX_VMS_DEFAULT,
     AGENT_SCALING_MIN_VMS_DEFAULT,
     AGENT_SCALING_WARM_VMS_DEFAULT,
-    AGENT_SERVICE_QUEUE_MAX,
     AGENT_SERVICE_RESERVED_CONNECTIONS,
     AGENT_SESSION_HANDLE_PREFIX,
     BASELINE_MIB_PER_VCPU,
@@ -42,15 +39,6 @@ SESSIONS_DEDICATED: Final = "dedicated"
 DEFAULT_SESSION_MODE: Final = SESSIONS_SHARED
 #: Separador del asa enrutable `rs1.<sandbox_id>.<session_id>`.
 HANDLE_SEPARATOR: Final = "."
-#: Las decisiones de `place_session` y de `decide_queue`.
-PLACEMENT_ROUTE: Final = "route"
-PLACEMENT_CLAIM: Final = "claim"
-PLACEMENT_CREATE: Final = "create"
-PLACEMENT_WAIT: Final = "wait"
-PLACEMENT_LOST: Final = "lost"
-QUEUE_ENQUEUE: Final = "enqueue"
-QUEUE_REJECT: Final = "reject"
-QUEUE_TIMEOUT: Final = "timeout"
 
 
 def max_sessions_for_memory(memory_mib: int) -> int:
@@ -167,134 +155,6 @@ def validate_caller_session_id(value: str) -> str:
     return value
 
 
-@dataclass(frozen=True)
-class VmView:
-    """Lo que la flota sabe de un MicroVM al colocar una sesión: `active`
-    llamadas en curso, `served` sesiones distintas que ya ha servido, si
-    responde (`healthy`), si su `/ping` dice `HealthyBusy` (`busy`) y si es una
-    plaza templada suspendida (`warm`) que aún no sirve."""
-
-    sandbox_id: str
-    active: int = 0
-    served: int = 0
-    healthy: bool = True
-    busy: bool = False
-    warm: bool = False
-
-
-@dataclass(frozen=True)
-class Placement:
-    """Dónde va una sesión: `route` a un VM en marcha (`sandbox_id`), `claim`
-    una plaza templada, `create` un VM nuevo, `wait` (la flota está llena) o
-    `lost` (el asa nombra un VM que ya no está o no responde)."""
-
-    action: str
-    sandbox_id: str | None = None
-
-
-def place_session(
-    session_id: str | None,
-    vms: Sequence[VmView],
-    scaling: ScalingOptions,
-    *,
-    max_concurrency: int,
-) -> Placement:
-    """Decide dónde va una sesión. Con un asa va a su VM (o es `lost`). Sin
-    asa, en modo compartido va al VM sano con menos llamadas y hueco; en modo
-    dedicado, a un VM sin sesiones servidas. Si no hay, reanuda una plaza
-    templada, crea un VM si el total no llega a `max_vms` o espera."""
-    handle = None if session_id is None else decode_handle(session_id)
-    if handle is not None:
-        return _placement_for_handle(handle, vms)
-    candidates = [vm for vm in vms if vm.healthy and not vm.warm]
-    chosen = _free_vm(candidates, scaling, max_concurrency)
-    if chosen is not None:
-        return Placement(PLACEMENT_ROUTE, chosen.sandbox_id)
-    warm = sorted((vm for vm in vms if vm.warm and vm.healthy), key=lambda vm: vm.sandbox_id)
-    if warm:
-        return Placement(PLACEMENT_CLAIM, warm[0].sandbox_id)
-    if len(vms) < scaling.max_vms:
-        return Placement(PLACEMENT_CREATE)
-    return Placement(PLACEMENT_WAIT)
-
-
-def _placement_for_handle(handle: SessionHandle, vms: Sequence[VmView]) -> Placement:
-    for vm in vms:
-        if vm.sandbox_id == handle.sandbox_id and vm.healthy:
-            return Placement(PLACEMENT_ROUTE, vm.sandbox_id)
-    return Placement(PLACEMENT_LOST, handle.sandbox_id)
-
-
-def _free_vm(
-    candidates: Sequence[VmView], scaling: ScalingOptions, max_concurrency: int
-) -> VmView | None:
-    if scaling.sessions == SESSIONS_DEDICATED:
-        eligible = [vm for vm in candidates if vm.served == 0 and vm.active == 0]
-    else:
-        eligible = [vm for vm in candidates if not vm.busy and vm.active < max_concurrency]
-    if not eligible:
-        return None
-    return min(eligible, key=lambda vm: (vm.active, vm.sandbox_id))
-
-
-@dataclass(frozen=True)
-class QueueDecision:
-    """Qué hace el cliente con una llamada que no cabe: `enqueue` (espera
-    `wait_seconds` y reintenta), `reject` (la cola está llena o desactivada) o
-    `timeout` (esperó todo `queue_timeout_seconds`)."""
-
-    action: str
-    wait_seconds: float = 0.0
-
-
-def decide_queue(
-    *,
-    waiting: int,
-    elapsed_seconds: float,
-    queue_max: int,
-    queue_timeout_seconds: float,
-    retry_after_seconds: float,
-) -> QueueDecision:
-    """La decisión de cola de una llamada que recibió 429. Con
-    `queue_max == 0` (el valor por defecto) se rechaza enseguida, como en 0.14;
-    con cola, espera lo que dice el servicio (`retry_after_seconds`) sin pasar
-    de lo que queda del plazo."""
-    _whole(queue_max, "queue_max", 0, AGENT_SERVICE_QUEUE_MAX)
-    if queue_max == 0 or waiting >= queue_max:
-        return QueueDecision(QUEUE_REJECT)
-    remaining = queue_timeout_seconds - elapsed_seconds
-    if remaining <= 0:
-        return QueueDecision(QUEUE_TIMEOUT)
-    return QueueDecision(QUEUE_ENQUEUE, min(retry_after_seconds, remaining))
-
-
-@dataclass(frozen=True)
-class VmUsage:
-    """El uso de un VM en marcha para calcular la reducción: cuándo se creó
-    y cuándo se usó por última vez (segundos desde la época)."""
-
-    sandbox_id: str
-    created_at: float
-    last_used_at: float
-
-
-def scale_in_deadlines(usages: Sequence[VmUsage], scaling: ScalingOptions) -> Mapping[str, float]:
-    """Plazo de terminación de cada VM por encima de `min_vms`: su último uso
-    más `scale_in_after_seconds`. Los `min_vms` más antiguos son la base y no
-    tienen plazo."""
-    ordered = sorted(usages, key=lambda usage: (usage.created_at, usage.sandbox_id))
-    extras = ordered[scaling.min_vms :]
-    return {
-        usage.sandbox_id: usage.last_used_at + scaling.scale_in_after_seconds for usage in extras
-    }
-
-
-def expired_vms(deadlines: Mapping[str, float], now: float) -> tuple[str, ...]:
-    """Los VMs cuyo plazo de reducción ya pasó en `now`, por plazo."""
-    due = [(deadline, sandbox_id) for sandbox_id, deadline in deadlines.items() if deadline <= now]
-    return tuple(sandbox_id for _, sandbox_id in sorted(due))
-
-
 def is_unhealthy(failed_pings: int) -> bool:
     """Un VM se da por perdido tras `AGENT_FLEET_UNHEALTHY_PINGS` pings
     seguidos sin respuesta."""
@@ -311,21 +171,13 @@ __all__ = [
     "SESSIONS_DEDICATED",
     "SESSIONS_SHARED",
     "SESSION_MODES",
-    "Placement",
-    "QueueDecision",
     "ScalingOptions",
     "SessionHandle",
     "SessionMode",
-    "VmUsage",
-    "VmView",
-    "decide_queue",
     "decode_handle",
     "encode_handle",
-    "expired_vms",
     "is_unhealthy",
     "max_sessions_for_memory",
-    "place_session",
     "replacements_needed",
-    "scale_in_deadlines",
     "validate_caller_session_id",
 ]

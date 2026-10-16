@@ -12,10 +12,6 @@ import { TokenUsage } from "../../src/agent/events.js";
 import {
   AGENT_FLEET_BUSY_RETRY_MS,
   AGENT_FLEET_PING_TTL_MS,
-  AGENT_FLEET_QUEUE_TIMEOUT_MS_DEFAULT,
-  decodeHandle,
-  deficit,
-  encodeHandle,
   eventWithHandle,
   fleetSettingsOf,
   isLost,
@@ -29,52 +25,22 @@ import {
   surplus,
   withHandle,
 } from "../../src/agent/fleet-base.js";
-import { ServeOptions } from "../../src/agent/project.js";
-import { ScalingOptions } from "../../src/agent/scaling-domain.js";
+import { DEFAULT_QUEUE_TIMEOUT_MS, ServeOptions } from "../../src/agent/project.js";
+import { replacementsNeeded, ScalingOptions } from "../../src/agent/scaling-domain.js";
 import { InvalidArgumentError } from "../../src/errors.js";
 import { generateAccessToken } from "../../src/payload.js";
 import { slotAccessToken, validatePoolConfig } from "../../src/pool/config.js";
 import { project, SANDBOX_ID } from "./agent-project-fake.js";
 
 const VECTORS = join(import.meta.dirname, "..", "..", "..", "..", "testdata", "agent-fleet");
-const HANDLES = JSON.parse(readFileSync(join(VECTORS, "handles.json"), "utf8"));
+const SESSION_LABELS = JSON.parse(readFileSync(join(VECTORS, "session-labels.json"), "utf8"));
 const PLACEMENT = JSON.parse(readFileSync(join(VECTORS, "placement.json"), "utf8"));
 const NOW = 1_000_000;
 const MS_PER_SECOND = 1000;
 
 describe("handles", () => {
-  test("every encode vector round-trips", () => {
-    for (const item of HANDLES.encode) {
-      const handle = encodeHandle(item.sandboxId, item.sessionId ?? undefined);
-      expect(handle).toBe(item.handle);
-      expect(decodeHandle(handle)).toEqual({
-        sandboxId: item.sandboxId,
-        sessionId: item.sessionId ?? undefined,
-      });
-    }
-  });
-
-  test.each(HANDLES.decode as { value: string | null; route: unknown }[])(
-    "decode $value",
-    (item) => {
-      const route = item.route as { sandboxId: string; sessionId: string | null } | null;
-      expect(decodeHandle(item.value)).toEqual(
-        route === null
-          ? undefined
-          : { sandboxId: route.sandboxId, sessionId: route.sessionId ?? undefined },
-      );
-    },
-  );
-
-  test.each(HANDLES.encodeInvalid as string[])(
-    "a sandbox id %j cannot be a handle",
-    (sandboxId) => {
-      expect(() => encodeHandle(sandboxId, "ses")).toThrow(InvalidArgumentError);
-    },
-  );
-
   test("session labels hash the caller-chosen id", () => {
-    for (const item of HANDLES.sessionLabels) {
+    for (const item of SESSION_LABELS.sessionLabels) {
       expect(sessionLabel(item.sessionId)).toBe(item.label);
       expect(item.label).not.toContain(item.sessionId);
     }
@@ -208,8 +174,8 @@ describe("scaling", () => {
     const members = [1, 2, 3, 4].map((number) => newMember<unknown>(`microvm-${number}`));
     markExtras(members, scaling);
     expect(members.map((member) => member.extra)).toEqual([false, false, true, true]);
-    expect(deficit(1, scaling)).toBe(1);
-    expect(deficit(3, scaling)).toBe(0);
+    expect(replacementsNeeded(1, scaling)).toBe(1);
+    expect(replacementsNeeded(3, scaling)).toBe(0);
     expect(
       surplus(members, new ScalingOptions({ minVms: 1, maxVms: 3 })).map((m) => m.sandboxId),
     ).toEqual(["microvm-4"]);
@@ -256,7 +222,7 @@ describe("settings", () => {
     const settings = fleetSettingsOf(the, explicit);
     expect(settings.scaling).toBe(explicit);
     expect(settings.maxConcurrency).toBe(3);
-    expect(settings.queueTimeoutMs).toBe(AGENT_FLEET_QUEUE_TIMEOUT_MS_DEFAULT);
+    expect(settings.queueTimeoutMs).toBe(DEFAULT_QUEUE_TIMEOUT_MS);
     expect(fleetSettingsOf(undefined).scaling).toEqual(new ScalingOptions());
   });
 

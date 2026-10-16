@@ -20,40 +20,36 @@ from typing import TYPE_CHECKING, Any, Final, Literal
 
 from rayito._agent._events import AgentEvent, AgentFailed, AgentResult, Done
 from rayito._agent._project_base import seconds_ceiling
-from rayito._agent._scaling_domain import SESSIONS_DEDICATED, ScalingOptions
+from rayito._agent._scaling_domain import (
+    SESSIONS_DEDICATED,
+    ScalingOptions,
+    SessionHandle,
+    decode_handle,
+    encode_handle,
+    is_unhealthy,
+)
 from rayito._lifecycle_base import DEFAULT_IDLE_POLICY
+from rayito._limits import (
+    AGENT_FLEET_PING_TTL_SECONDS,
+    AGENT_SERVICE_QUEUE_TIMEOUT_SECONDS_DEFAULT,
+)
 from rayito._pool_base import (
     DEFAULT_MIN_REMAINING_SECONDS,
     MIN_REMAINING_FLOOR_SECONDS,
     PoolConfig,
 )
-from rayito.exceptions import InvalidArgumentException
 
 if TYPE_CHECKING:
     from rayito._agent._deployment_base import DeploymentState
     from rayito._agent._project_domain import AgentProject
 
-#: Prefijo de un id de sesión enrutable: `rs1.<sandbox_id>.<sesión interna>`.
-#: Con más de un VM posible, `AgentResult.session_id` lleva el VM de la
-#: sesión y pasarlo de vuelta enruta sin consultar a nadie.
-AGENT_SESSION_HANDLE_PREFIX: Final = "rs1"
-HANDLE_SEPARATOR: Final = "."
-HANDLE_PARTS: Final = 3
 #: Etiqueta del sandbox de un VM dedicado: el hash de la sesión que el
 #: llamante eligió (`session_index`). Nunca el id en claro: las etiquetas
 #: viajan en el `runHookPayload`.
 AGENT_FLEET_SESSION_LABEL: Final = "rayito.agent.session"
 SESSION_LABEL_HEX_CHARS: Final = 32
-#: Cuánto vale un ping (o un `busy` visto) para elegir miembro.
-AGENT_FLEET_PING_TTL_SECONDS: Final = 5.0
-#: Pings fallidos seguidos tras los que un miembro se da por perdido y se
-#: sustituye.
-AGENT_FLEET_UNHEALTHY_PINGS: Final = 3
 #: Espera entre dos intentos de colocar una sesión cuando la flota está llena.
 AGENT_FLEET_BUSY_RETRY_SECONDS: Final = 1.0
-#: Plazo de la cola cliente; es el mismo valor por defecto que la cola del
-#: host (`ServeOptions.queue_timeout_seconds`).
-AGENT_FLEET_QUEUE_TIMEOUT_SECONDS_DEFAULT: Final = 30.0
 #: Cuántos VMs crea a la vez `start()` (y `scale()`).
 AGENT_FLEET_START_CONCURRENCY: Final = 4
 #: Plazo para que las plazas calientes de un `deploy_agent` queden aparcadas:
@@ -77,33 +73,11 @@ PlanKind = Literal["use", "grow", "wait"]
 UNKNOWN_HEALTH: Final = "unknown"
 
 
-@dataclass(frozen=True)
-class SessionRoute:
-    """El destino de un id de sesión enrutable: el VM y la sesión que ve el
-    host (`None` si el handle no trae una)."""
-
-    sandbox_id: str
-    session_id: str | None
-
-
-def encode_handle(sandbox_id: str, session_id: str | None) -> str:
-    """`rs1.<sandbox_id>.<sesión>`: el id de sesión que devuelve una flota
-    enrutable."""
-    if not sandbox_id or HANDLE_SEPARATOR in sandbox_id:
-        raise InvalidArgumentException("el id del sandbox no puede ser vacío ni llevar un punto")
-    return HANDLE_SEPARATOR.join((AGENT_SESSION_HANDLE_PREFIX, sandbox_id, session_id or ""))
-
-
-def decode_handle(value: str | None) -> SessionRoute | None:
-    """El destino de `value` si es un handle de la flota; `None` si es un id
-    cualquiera (el del llamante o el de un despliegue de un solo VM). La
-    sesión interna puede llevar puntos: sólo se parte dos veces."""
-    if value is None:
-        return None
-    parts = value.split(HANDLE_SEPARATOR, HANDLE_PARTS - 1)
-    if len(parts) != HANDLE_PARTS or parts[0] != AGENT_SESSION_HANDLE_PREFIX or not parts[1]:
-        return None
-    return SessionRoute(sandbox_id=parts[1], session_id=parts[2] or None)
+def route_of(session_id: str | None) -> SessionHandle | None:
+    """El destino de `session_id` si es un id de sesión enrutable de la flota;
+    `None` si es un id cualquiera (el del llamante o el de un despliegue de un
+    solo VM)."""
+    return None if session_id is None else decode_handle(session_id)
 
 
 def session_label(session_id: str) -> str:
@@ -114,6 +88,8 @@ def session_label(session_id: str) -> str:
 
 def with_handle(result: AgentResult, sandbox_id: str) -> AgentResult:
     """El resultado con el id de sesión enrutable de `sandbox_id`."""
+    if not result.session_id:
+        return result
     return dataclasses.replace(result, session_id=encode_handle(sandbox_id, result.session_id))
 
 
@@ -214,7 +190,7 @@ def record_busy(member: Member, now: float) -> None:
 
 
 def is_lost(member: Member) -> bool:
-    return member.failed_pings >= AGENT_FLEET_UNHEALTHY_PINGS
+    return is_unhealthy(member.failed_pings)
 
 
 def is_free(member: Member, scaling: ScalingOptions, max_concurrency: int, now: float) -> bool:
@@ -261,11 +237,6 @@ def new_reservation() -> str:
     """La reserva con la que una sesión nueva ocupa un VM dedicado hasta
     conocer su id."""
     return f"reserva-{uuid.uuid4().hex}"
-
-
-def deficit(member_count: int, scaling: ScalingOptions) -> int:
-    """Cuántos VMs faltan para llegar a `min_vms`."""
-    return max(0, scaling.min_vms - member_count)
 
 
 def surplus(members: Sequence[Member], scaling: ScalingOptions) -> list[Member]:
@@ -337,7 +308,7 @@ def fleet_settings_of(
     if project is None:
         return FleetSettings(
             scaling=scaling or ScalingOptions(),
-            queue_timeout_seconds=AGENT_FLEET_QUEUE_TIMEOUT_SECONDS_DEFAULT,
+            queue_timeout_seconds=AGENT_SERVICE_QUEUE_TIMEOUT_SECONDS_DEFAULT,
             max_concurrency=1,
         )
     project_scaling = getattr(project, "scaling", None)
@@ -345,7 +316,7 @@ def fleet_settings_of(
     return FleetSettings(
         scaling=scaling or project_scaling or ScalingOptions(),
         queue_timeout_seconds=float(
-            AGENT_FLEET_QUEUE_TIMEOUT_SECONDS_DEFAULT if queue_timeout is None else queue_timeout
+            AGENT_SERVICE_QUEUE_TIMEOUT_SECONDS_DEFAULT if queue_timeout is None else queue_timeout
         ),
         max_concurrency=project.serve.max_concurrency,
     )

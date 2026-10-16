@@ -1,12 +1,11 @@
 /**
  * Dominio puro del escalado de un agente servido (`ScalingOptions`, ADR-029).
  * Espejo de `rayito._agent._scaling_domain`: los límites de concurrencia por
- * VM, el asa enrutable de una sesión, la colocación de una sesión nueva entre
- * los MicroVMs de la flota, la decisión de cola y el calendario de reducción.
- * No importa `@aws-sdk/*`, `@connectrpc/*` ni el código generado del proto, no
- * tiene reloj propio (el instante llega por parámetro) y no toca la red:
- * `AgentFleet` (la cáscara de I/O) le da los datos que midió y ejecuta lo que
- * decide. Los tiempos van en milisegundos.
+ * VM, el asa enrutable de una sesión y las dos reglas de salud de la flota
+ * (cuándo se da un VM por perdido y cuántos faltan para el mínimo). No importa
+ * `@aws-sdk/*`, `@connectrpc/*` ni el código generado del proto y no toca la
+ * red: `AgentFleet` (la cáscara de I/O) le da los datos que midió y ejecuta lo
+ * que decide. Los tiempos van en milisegundos.
  *
  * Los vectores compartidos con Python están en
  * `testdata/agent-fleet/routing.json`.
@@ -20,7 +19,6 @@ import {
   AGENT_SCALING_MAX_VMS_DEFAULT,
   AGENT_SCALING_MIN_VMS_DEFAULT,
   AGENT_SCALING_WARM_VMS_DEFAULT,
-  AGENT_SERVICE_QUEUE_MAX,
   AGENT_SERVICE_RESERVED_CONNECTIONS,
   AGENT_SESSION_HANDLE_PREFIX,
   BASELINE_MIB_PER_VCPU,
@@ -40,14 +38,6 @@ export const DEFAULT_SESSION_MODE: SessionMode = SESSIONS_SHARED;
 /** Separador del asa enrutable `rs1.<sandboxId>.<sessionId>`. */
 export const HANDLE_SEPARATOR = ".";
 /** Las decisiones de `placeSession` y de `decideQueue`. */
-export const PLACEMENT_ROUTE = "route";
-export const PLACEMENT_CLAIM = "claim";
-export const PLACEMENT_CREATE = "create";
-export const PLACEMENT_WAIT = "wait";
-export const PLACEMENT_LOST = "lost";
-export const QUEUE_ENQUEUE = "enqueue";
-export const QUEUE_REJECT = "reject";
-export const QUEUE_TIMEOUT = "timeout";
 
 function isInteger(value: unknown): value is number {
   return typeof value === "number" && Number.isInteger(value);
@@ -209,161 +199,6 @@ export function validateCallerSessionId(value: string): string {
     );
   }
   return value;
-}
-
-/**
- * Lo que la flota sabe de un MicroVM al colocar una sesión: `active` llamadas
- * en curso, `served` sesiones distintas que ya ha servido, si responde
- * (`healthy`), si su `/ping` dice `HealthyBusy` (`busy`) y si es una plaza
- * templada suspendida (`warm`) que aún no sirve.
- */
-export interface VmView {
-  readonly sandboxId: string;
-  readonly active?: number | undefined;
-  readonly served?: number | undefined;
-  readonly healthy?: boolean | undefined;
-  readonly busy?: boolean | undefined;
-  readonly warm?: boolean | undefined;
-}
-
-/** Dónde va una sesión: `route` a un VM en marcha (`sandboxId`), `claim` una
- * plaza templada, `create` un VM nuevo, `wait` (la flota está llena) o `lost`
- * (el asa nombra un VM que ya no está o no responde). */
-export interface Placement {
-  readonly action: string;
-  readonly sandboxId: string | undefined;
-}
-
-function isHealthy(vm: VmView): boolean {
-  return vm.healthy ?? true;
-}
-
-function byId(left: VmView, right: VmView): number {
-  return left.sandboxId < right.sandboxId ? -1 : left.sandboxId > right.sandboxId ? 1 : 0;
-}
-
-function freeVm(
-  candidates: readonly VmView[],
-  scaling: ScalingOptions,
-  maxConcurrency: number,
-): VmView | undefined {
-  const eligible =
-    scaling.sessions === SESSIONS_DEDICATED
-      ? candidates.filter((vm) => (vm.served ?? 0) === 0 && (vm.active ?? 0) === 0)
-      : candidates.filter((vm) => !(vm.busy ?? false) && (vm.active ?? 0) < maxConcurrency);
-  return [...eligible].sort(
-    (left, right) => (left.active ?? 0) - (right.active ?? 0) || byId(left, right),
-  )[0];
-}
-
-function placementForHandle(handle: SessionHandle, vms: readonly VmView[]): Placement {
-  const vm = vms.find(
-    (candidate) => candidate.sandboxId === handle.sandboxId && isHealthy(candidate),
-  );
-  return vm === undefined
-    ? { action: PLACEMENT_LOST, sandboxId: handle.sandboxId }
-    : { action: PLACEMENT_ROUTE, sandboxId: vm.sandboxId };
-}
-
-/**
- * Decide dónde va una sesión. Con un asa va a su VM (o es `lost`). Sin asa, en
- * modo compartido va al VM sano con menos llamadas y hueco; en modo dedicado, a
- * un VM sin sesiones servidas. Si no hay, reanuda una plaza templada, crea un
- * VM si el total no llega a `maxVms` o espera.
- */
-export function placeSession(
-  sessionId: string | undefined,
-  vms: readonly VmView[],
-  scaling: ScalingOptions,
-  options: { readonly maxConcurrency: number },
-): Placement {
-  const handle = sessionId === undefined ? undefined : decodeHandle(sessionId);
-  if (handle !== undefined) {
-    return placementForHandle(handle, vms);
-  }
-  const candidates = vms.filter((vm) => isHealthy(vm) && !(vm.warm ?? false));
-  const chosen = freeVm(candidates, scaling, options.maxConcurrency);
-  if (chosen !== undefined) {
-    return { action: PLACEMENT_ROUTE, sandboxId: chosen.sandboxId };
-  }
-  const warm = vms.filter((vm) => (vm.warm ?? false) && isHealthy(vm)).sort(byId)[0];
-  if (warm !== undefined) {
-    return { action: PLACEMENT_CLAIM, sandboxId: warm.sandboxId };
-  }
-  if (vms.length < scaling.maxVms) {
-    return { action: PLACEMENT_CREATE, sandboxId: undefined };
-  }
-  return { action: PLACEMENT_WAIT, sandboxId: undefined };
-}
-
-/** Qué hace el cliente con una llamada que no cabe: `enqueue` (espera
- * `waitMs` y reintenta), `reject` (la cola está llena o desactivada) o
- * `timeout` (esperó todo `queueTimeoutMs`). */
-export interface QueueDecision {
-  readonly action: string;
-  readonly waitMs: number;
-}
-
-/**
- * La decisión de cola de una llamada que recibió 429. Con `queueMax === 0` (el
- * valor por defecto) se rechaza enseguida, como en 0.14; con cola, espera lo
- * que dice el servicio (`retryAfterMs`) sin pasar de lo que queda del plazo.
- */
-export function decideQueue(options: {
-  readonly waiting: number;
-  readonly elapsedMs: number;
-  readonly queueMax: number;
-  readonly queueTimeoutMs: number;
-  readonly retryAfterMs: number;
-}): QueueDecision {
-  whole(options.queueMax, "queueMax", 0, AGENT_SERVICE_QUEUE_MAX);
-  if (options.queueMax === 0 || options.waiting >= options.queueMax) {
-    return { action: QUEUE_REJECT, waitMs: 0 };
-  }
-  const remaining = options.queueTimeoutMs - options.elapsedMs;
-  if (remaining <= 0) {
-    return { action: QUEUE_TIMEOUT, waitMs: 0 };
-  }
-  return { action: QUEUE_ENQUEUE, waitMs: Math.min(options.retryAfterMs, remaining) };
-}
-
-/** El uso de un VM en marcha para calcular la reducción: cuándo se creó y
- * cuándo se usó por última vez (milisegundos desde la época). */
-export interface VmUsage {
-  readonly sandboxId: string;
-  readonly createdAtMs: number;
-  readonly lastUsedAtMs: number;
-}
-
-/**
- * Plazo de terminación de cada VM por encima de `minVms`: su último uso más
- * `scaleInAfterMs`. Los `minVms` más antiguos son la base y no tienen plazo.
- */
-export function scaleInDeadlines(
-  usages: readonly VmUsage[],
-  scaling: ScalingOptions,
-): Readonly<Record<string, number>> {
-  const ordered = [...usages].sort(
-    (left, right) =>
-      left.createdAtMs - right.createdAtMs ||
-      (left.sandboxId < right.sandboxId ? -1 : left.sandboxId > right.sandboxId ? 1 : 0),
-  );
-  const deadlines: Record<string, number> = {};
-  for (const usage of ordered.slice(scaling.minVms)) {
-    deadlines[usage.sandboxId] = usage.lastUsedAtMs + scaling.scaleInAfterMs;
-  }
-  return deadlines;
-}
-
-/** Los VMs cuyo plazo de reducción ya pasó en `nowMs`, por plazo. */
-export function expiredVms(
-  deadlines: Readonly<Record<string, number>>,
-  nowMs: number,
-): readonly string[] {
-  return Object.entries(deadlines)
-    .filter(([, deadline]) => deadline <= nowMs)
-    .sort(([leftId, left], [rightId, right]) => left - right || (leftId < rightId ? -1 : 1))
-    .map(([sandboxId]) => sandboxId);
 }
 
 /** Un VM se da por perdido tras `AGENT_FLEET_UNHEALTHY_PINGS` pings seguidos

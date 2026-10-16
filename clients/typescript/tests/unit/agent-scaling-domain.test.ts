@@ -1,8 +1,7 @@
 /**
  * Lógica pura del escalado de agentes: los vectores compartidos con Python
  * (`testdata/agent-fleet/routing.json`) y las invariantes de `ScalingOptions`,
- * `ServeOptions` y `DeployOptions`. Los vectores hablan en segundos; aquí se
- * convierten a milisegundos.
+ * `ServeOptions` y `DeployOptions`.
  */
 
 import { readFileSync } from "node:fs";
@@ -11,17 +10,12 @@ import { describe, expect, test } from "vitest";
 import { BASE_IMAGE_VERSION_LATEST, DeployOptions } from "../../src/agent/deploy-domain.js";
 import { ServeOptions } from "../../src/agent/project.js";
 import {
-  decideQueue,
   decodeHandle,
   encodeHandle,
-  expiredVms,
   isUnhealthy,
   maxSessionsForMemory,
-  placeSession,
   replacementsNeeded,
   ScalingOptions,
-  scaleInDeadlines,
-  type VmView,
   validateCallerSessionId,
 } from "../../src/agent/scaling-domain.js";
 import { InvalidArgumentError } from "../../src/errors.js";
@@ -30,28 +24,8 @@ import {
   AGENT_SCALING_MAX_VMS_DEFAULT,
   AGENT_SCALING_MIN_VMS_DEFAULT,
   AGENT_SCALING_WARM_VMS_DEFAULT,
-  AGENT_SERVICE_QUEUE_MAX,
   POOL_SIZE_MAX,
 } from "../../src/limits.js";
-
-const MS_PER_SECOND = 1000;
-
-interface ScalingFixture {
-  readonly min_vms: number;
-  readonly max_vms: number;
-  readonly warm_vms: number;
-  readonly sessions: "shared" | "dedicated";
-  readonly scale_in_after_seconds: number;
-}
-
-interface VmFixture {
-  readonly sandbox_id: string;
-  readonly active: number;
-  readonly served: number;
-  readonly healthy: boolean;
-  readonly busy: boolean;
-  readonly warm: boolean;
-}
 
 interface Vectors {
   readonly memory: ReadonlyArray<{ memory_mib: number; max_sessions: number }>;
@@ -65,31 +39,6 @@ interface Vectors {
     readonly caller_valid: readonly string[];
     readonly caller_invalid: readonly string[];
   };
-  readonly placement: ReadonlyArray<{
-    case: string;
-    scaling: ScalingFixture;
-    max_concurrency: number;
-    session_id: string | null;
-    vms: VmFixture[];
-    expect: { action: string; sandbox_id: string | null };
-  }>;
-  readonly queue: ReadonlyArray<{
-    case: string;
-    waiting: number;
-    elapsed_seconds: number;
-    queue_max: number;
-    queue_timeout_seconds: number;
-    retry_after_seconds: number;
-    expect: { action: string; wait_seconds: number };
-  }>;
-  readonly scale_in: ReadonlyArray<{
-    case: string;
-    scaling: ScalingFixture;
-    usages: Array<{ sandbox_id: string; created_at: number; last_used_at: number }>;
-    now: number;
-    deadlines: Record<string, number>;
-    expired: string[];
-  }>;
   readonly health: {
     readonly threshold_offsets: ReadonlyArray<{ offset: number; unhealthy: boolean }>;
     readonly replacements: ReadonlyArray<{
@@ -106,27 +55,6 @@ const vectors = JSON.parse(
     "utf8",
   ),
 ) as Vectors;
-
-function scaling(fixture: ScalingFixture): ScalingOptions {
-  return new ScalingOptions({
-    minVms: fixture.min_vms,
-    maxVms: fixture.max_vms,
-    warmVms: fixture.warm_vms,
-    sessions: fixture.sessions,
-    scaleInAfterMs: fixture.scale_in_after_seconds * MS_PER_SECOND,
-  });
-}
-
-function view(fixture: VmFixture): VmView {
-  return {
-    sandboxId: fixture.sandbox_id,
-    active: fixture.active,
-    served: fixture.served,
-    healthy: fixture.healthy,
-    busy: fixture.busy,
-    warm: fixture.warm,
-  };
-}
 
 describe("session cap", () => {
   test.each(vectors.memory)("follows the connection cap of the VM: $memory_mib MiB", (entry) => {
@@ -166,64 +94,6 @@ describe("session handles", () => {
 
   test.each(vectors.handles.caller_invalid)("rejects the caller id %j", (value) => {
     expect(() => validateCallerSessionId(value)).toThrow(InvalidArgumentError);
-  });
-});
-
-describe("placement", () => {
-  test.each(vectors.placement)("$case", (entry) => {
-    const placement = placeSession(
-      entry.session_id ?? undefined,
-      entry.vms.map(view),
-      scaling(entry.scaling),
-      { maxConcurrency: entry.max_concurrency },
-    );
-    expect({ action: placement.action, sandbox_id: placement.sandboxId ?? null }).toEqual(
-      entry.expect,
-    );
-  });
-});
-
-describe("queue", () => {
-  test.each(vectors.queue)("$case", (entry) => {
-    const decision = decideQueue({
-      waiting: entry.waiting,
-      elapsedMs: entry.elapsed_seconds * MS_PER_SECOND,
-      queueMax: entry.queue_max,
-      queueTimeoutMs: entry.queue_timeout_seconds * MS_PER_SECOND,
-      retryAfterMs: entry.retry_after_seconds * MS_PER_SECOND,
-    });
-    expect({ action: decision.action, wait_seconds: decision.waitMs / MS_PER_SECOND }).toEqual(
-      entry.expect,
-    );
-  });
-
-  test("checks the queue bound", () => {
-    expect(() =>
-      decideQueue({
-        waiting: 0,
-        elapsedMs: 0,
-        queueMax: AGENT_SERVICE_QUEUE_MAX + 1,
-        queueTimeoutMs: 30_000,
-        retryAfterMs: 1000,
-      }),
-    ).toThrow(InvalidArgumentError);
-  });
-});
-
-describe("scale in", () => {
-  test.each(vectors.scale_in)("$case", (entry) => {
-    const deadlines = scaleInDeadlines(
-      entry.usages.map((usage) => ({
-        sandboxId: usage.sandbox_id,
-        createdAtMs: usage.created_at * MS_PER_SECOND,
-        lastUsedAtMs: usage.last_used_at * MS_PER_SECOND,
-      })),
-      scaling(entry.scaling),
-    );
-    expect(
-      Object.fromEntries(Object.entries(deadlines).map(([id, ms]) => [id, ms / MS_PER_SECOND])),
-    ).toEqual(entry.deadlines);
-    expect(expiredVms(deadlines, entry.now * MS_PER_SECOND)).toEqual(entry.expired);
   });
 });
 

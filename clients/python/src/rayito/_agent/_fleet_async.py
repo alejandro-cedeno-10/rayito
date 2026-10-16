@@ -32,9 +32,6 @@ from rayito._agent._fleet_base import (
     Member,
     MemberListing,
     capacity_message,
-    decode_handle,
-    deficit,
-    encode_handle,
     event_with_handle,
     fleet_settings_of,
     is_lost,
@@ -45,6 +42,7 @@ from rayito._agent._fleet_base import (
     pool_config_for,
     record_busy,
     record_ping,
+    route_of,
     session_label,
     surplus,
     vm_lost_message,
@@ -52,7 +50,13 @@ from rayito._agent._fleet_base import (
 )
 from rayito._agent._project_base import request_timeout
 from rayito._agent._project_service_async import AsyncProjectService
-from rayito._agent._scaling_domain import SESSIONS_DEDICATED, ScalingOptions
+from rayito._agent._scaling_domain import (
+    SESSIONS_DEDICATED,
+    ScalingOptions,
+    encode_handle,
+    replacements_needed,
+    validate_caller_session_id,
+)
 from rayito._limits import AGENT_SERVICE_READY_MARKER_PATH
 from rayito.exceptions import (
     AgentException,
@@ -330,7 +334,7 @@ class AsyncAgentFleet:
         `deploy_agent_async()`."""
         self._require_project()
         await self._start_pool()
-        missing = deficit(len(self._members), self.scaling)
+        missing = replacements_needed(len(self._members), self.scaling)
         gate = asyncio.Semaphore(AGENT_FLEET_START_CONCURRENCY)
 
         async def create() -> Member:
@@ -522,7 +526,9 @@ class AsyncAgentFleet:
         es nueva) hasta el plazo de la cola; un VM que ya no existe es
         `agent_vm_lost`."""
         deadline = self._clock() + self._settings.queue_timeout_seconds
-        routed = decode_handle(session_id) is not None
+        if session_id is not None:
+            validate_caller_session_id(session_id)
+        routed = route_of(session_id) is not None
         while True:
             lease = await self._lease(session_id, deadline)
             try:
@@ -561,7 +567,7 @@ class AsyncAgentFleet:
     async def _lease(self, session_id: str | None, deadline: float) -> Lease:
         """El VM de la llamada con una invocación en curso ya anotada: el del
         handle, o el que elige la cola para una sesión nueva."""
-        route = decode_handle(session_id)
+        route = route_of(session_id)
         if route is not None:
             return Lease(await self._route_member(route.sandbox_id), route.session_id)
         member, reservation = await self._place(session_id, deadline)
@@ -815,7 +821,7 @@ class AsyncAgentFleet:
     async def _fill_to_minimum(self) -> None:
         if self._project is None:
             return
-        for _ in range(deficit(len(self._members), self.scaling)):
+        for _ in range(replacements_needed(len(self._members), self.scaling)):
             member = await self._create_member(False)
             self._members.append(member)
             mark_extras(self._members, self.scaling)

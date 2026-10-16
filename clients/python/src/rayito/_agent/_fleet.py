@@ -34,9 +34,6 @@ from rayito._agent._fleet_base import (
     Member,
     MemberListing,
     capacity_message,
-    decode_handle,
-    deficit,
-    encode_handle,
     event_with_handle,
     fleet_settings_of,
     is_lost,
@@ -47,6 +44,7 @@ from rayito._agent._fleet_base import (
     pool_config_for,
     record_busy,
     record_ping,
+    route_of,
     session_label,
     surplus,
     vm_lost_message,
@@ -54,7 +52,13 @@ from rayito._agent._fleet_base import (
 )
 from rayito._agent._project_base import request_timeout
 from rayito._agent._project_service import ProjectService
-from rayito._agent._scaling_domain import SESSIONS_DEDICATED, ScalingOptions
+from rayito._agent._scaling_domain import (
+    SESSIONS_DEDICATED,
+    ScalingOptions,
+    encode_handle,
+    replacements_needed,
+    validate_caller_session_id,
+)
 from rayito._limits import AGENT_SERVICE_READY_MARKER_PATH
 from rayito.exceptions import (
     AgentException,
@@ -365,7 +369,7 @@ class AgentFleet:
         `deploy_agent()`."""
         self._require_project()
         self._start_pool()
-        missing = deficit(len(self.sandbox_ids), self.scaling)
+        missing = replacements_needed(len(self.sandbox_ids), self.scaling)
         created: list[Member] = []
         try:
             with ThreadPoolExecutor(max_workers=AGENT_FLEET_START_CONCURRENCY) as executor:
@@ -556,8 +560,10 @@ class AgentFleet:
         429 del host marca el VM ocupado y reintenta (en otro VM si la sesión
         es nueva) hasta el plazo de la cola; un VM que ya no existe es
         `agent_vm_lost`."""
+        if session_id is not None:
+            validate_caller_session_id(session_id)
         deadline = self._clock() + self._settings.queue_timeout_seconds
-        routed = decode_handle(session_id) is not None
+        routed = route_of(session_id) is not None
         while True:
             lease = self._lease(session_id, deadline)
             try:
@@ -596,7 +602,7 @@ class AgentFleet:
     def _lease(self, session_id: str | None, deadline: float) -> Lease:
         """El VM de la llamada con una invocación en curso ya anotada: el del
         handle, o el que elige la cola para una sesión nueva."""
-        route = decode_handle(session_id)
+        route = route_of(session_id)
         if route is not None:
             return Lease(self._route_member(route.sandbox_id), route.session_id)
         member, reservation = self._place(session_id, deadline)
@@ -867,7 +873,7 @@ class AgentFleet:
     def _fill_to_minimum(self) -> None:
         if self._project is None:
             return
-        for _ in range(deficit(len(self.sandbox_ids), self.scaling)):
+        for _ in range(replacements_needed(len(self.sandbox_ids), self.scaling)):
             member = self._create_member(False)
             with self._lock:
                 self._members.append(member)

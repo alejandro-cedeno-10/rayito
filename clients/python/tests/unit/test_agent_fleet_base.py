@@ -14,13 +14,7 @@ import pytest
 from rayito._agent._events import AgentFailed, AgentResult, Done, TokenUsage
 from rayito._agent._fleet_base import (
     AGENT_FLEET_BUSY_RETRY_SECONDS,
-    AGENT_FLEET_PING_TTL_SECONDS,
-    AGENT_FLEET_QUEUE_TIMEOUT_SECONDS_DEFAULT,
     Member,
-    SessionRoute,
-    decode_handle,
-    deficit,
-    encode_handle,
     event_with_handle,
     fleet_settings_of,
     is_lost,
@@ -34,41 +28,23 @@ from rayito._agent._fleet_base import (
     with_handle,
 )
 from rayito._agent._project_domain import ServeOptions
-from rayito._agent._scaling_domain import ScalingOptions
+from rayito._agent._scaling_domain import ScalingOptions, replacements_needed
+from rayito._limits import (
+    AGENT_FLEET_PING_TTL_SECONDS,
+    AGENT_SERVICE_QUEUE_TIMEOUT_SECONDS_DEFAULT,
+)
 from rayito._payload import generate_access_token
 from rayito.exceptions import InvalidArgumentException
 from tests.unit.fake_agent_project import SANDBOX_ID, project
 
 VECTORS = Path(__file__).parents[4] / "testdata" / "agent-fleet"
-HANDLES = json.loads((VECTORS / "handles.json").read_text(encoding="utf-8"))
+SESSION_LABELS = json.loads((VECTORS / "session-labels.json").read_text(encoding="utf-8"))
 PLACEMENT = json.loads((VECTORS / "placement.json").read_text(encoding="utf-8"))
 NOW = 1000.0
 
 
-def test_every_encode_vector_round_trips() -> None:
-    for case in HANDLES["encode"]:
-        handle = encode_handle(case["sandboxId"], case["sessionId"])
-
-        assert handle == case["handle"]
-        assert decode_handle(handle) == SessionRoute(case["sandboxId"], case["sessionId"])
-
-
-@pytest.mark.parametrize("case", HANDLES["decode"], ids=lambda case: str(case["value"]))
-def test_decode_matches_the_shared_vectors(case: dict[str, Any]) -> None:
-    route = case["route"]
-    expected = None if route is None else SessionRoute(route["sandboxId"], route["sessionId"])
-
-    assert decode_handle(case["value"]) == expected
-
-
-@pytest.mark.parametrize("sandbox_id", HANDLES["encodeInvalid"])
-def test_a_sandbox_id_that_cannot_be_a_handle_is_rejected(sandbox_id: str) -> None:
-    with pytest.raises(InvalidArgumentException):
-        encode_handle(sandbox_id, "ses")
-
-
 def test_session_labels_hash_the_caller_chosen_id() -> None:
-    for case in HANDLES["sessionLabels"]:
+    for case in SESSION_LABELS["sessionLabels"]:
         assert session_label(case["sessionId"]) == case["label"]
         assert case["sessionId"] not in case["label"]
 
@@ -156,8 +132,8 @@ def test_the_fleet_keeps_min_vms_and_marks_the_rest_as_extra() -> None:
     mark_extras(members, scaling)
 
     assert [member.extra for member in members] == [False, False, True, True]
-    assert deficit(1, scaling) == 1
-    assert deficit(3, scaling) == 0
+    assert replacements_needed(1, scaling) == 1
+    assert replacements_needed(3, scaling) == 0
     assert [m.sandbox_id for m in surplus(members, ScalingOptions(min_vms=1, max_vms=3))] == [
         "microvm-3"
     ]
@@ -197,7 +173,7 @@ def test_settings_read_the_project_and_let_an_explicit_scaling_win() -> None:
 
     assert settings.scaling is explicit
     assert settings.max_concurrency == 3
-    assert settings.queue_timeout_seconds == AGENT_FLEET_QUEUE_TIMEOUT_SECONDS_DEFAULT
+    assert settings.queue_timeout_seconds == AGENT_SERVICE_QUEUE_TIMEOUT_SECONDS_DEFAULT
     assert fleet_settings_of(None).scaling == ScalingOptions()
 
 

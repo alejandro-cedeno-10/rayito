@@ -14,17 +14,11 @@ from rayito._agent._deploy_domain import DeployOptions
 from rayito._agent._project_domain import ServeOptions
 from rayito._agent._scaling_domain import (
     ScalingOptions,
-    VmUsage,
-    VmView,
-    decide_queue,
     decode_handle,
     encode_handle,
-    expired_vms,
     is_unhealthy,
     max_sessions_for_memory,
-    place_session,
     replacements_needed,
-    scale_in_deadlines,
     validate_caller_session_id,
 )
 from rayito._limits import (
@@ -32,7 +26,6 @@ from rayito._limits import (
     AGENT_SCALING_MAX_VMS_DEFAULT,
     AGENT_SCALING_MIN_VMS_DEFAULT,
     AGENT_SCALING_WARM_VMS_DEFAULT,
-    AGENT_SERVICE_QUEUE_MAX,
     POOL_SIZE_MAX,
 )
 from rayito.exceptions import InvalidArgumentException
@@ -42,10 +35,6 @@ VECTORS = json.loads(
         encoding="utf-8"
     )
 )
-
-
-def _case(group: str) -> list[Any]:
-    return [pytest.param(case, id=case["case"]) for case in VECTORS[group]]
 
 
 @pytest.mark.parametrize("entry", VECTORS["memory"], ids=lambda e: str(e["memory_mib"]))
@@ -94,48 +83,6 @@ def test_a_caller_session_id_is_accepted(value: str) -> None:
 def test_a_caller_session_id_cannot_fake_the_reserved_prefix(value: str) -> None:
     with pytest.raises(InvalidArgumentException):
         validate_caller_session_id(value)
-
-
-@pytest.mark.parametrize("case", _case("placement"))
-def test_placement_matches_the_vector(case: dict[str, Any]) -> None:
-    placement = place_session(
-        case["session_id"],
-        [VmView(**vm) for vm in case["vms"]],
-        ScalingOptions(**case["scaling"]),
-        max_concurrency=case["max_concurrency"],
-    )
-    assert {"action": placement.action, "sandbox_id": placement.sandbox_id} == case["expect"]
-
-
-@pytest.mark.parametrize("case", _case("queue"))
-def test_the_queue_decision_matches_the_vector(case: dict[str, Any]) -> None:
-    decision = decide_queue(
-        waiting=case["waiting"],
-        elapsed_seconds=case["elapsed_seconds"],
-        queue_max=case["queue_max"],
-        queue_timeout_seconds=case["queue_timeout_seconds"],
-        retry_after_seconds=case["retry_after_seconds"],
-    )
-    assert {"action": decision.action, "wait_seconds": decision.wait_seconds} == case["expect"]
-
-
-def test_the_queue_bound_is_checked() -> None:
-    with pytest.raises(InvalidArgumentException):
-        decide_queue(
-            waiting=0,
-            elapsed_seconds=0,
-            queue_max=AGENT_SERVICE_QUEUE_MAX + 1,
-            queue_timeout_seconds=30,
-            retry_after_seconds=1,
-        )
-
-
-@pytest.mark.parametrize("case", _case("scale_in"))
-def test_scale_in_matches_the_vector(case: dict[str, Any]) -> None:
-    scaling = ScalingOptions(**case["scaling"])
-    deadlines = scale_in_deadlines([VmUsage(**usage) for usage in case["usages"]], scaling)
-    assert dict(deadlines) == case["deadlines"]
-    assert list(expired_vms(deadlines, case["now"])) == case["expired"]
 
 
 @pytest.mark.parametrize("entry", VECTORS["health"]["threshold_offsets"], ids=str)

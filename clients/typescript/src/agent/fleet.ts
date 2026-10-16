@@ -43,9 +43,6 @@ import {
   AGENT_FLEET_START_CONCURRENCY,
   AGENT_VM_LOST_CODE,
   capacityMessage,
-  decodeHandle,
-  deficit,
-  encodeHandle,
   eventWithHandle,
   type FleetMemberStatus,
   type FleetSettings,
@@ -63,6 +60,7 @@ import {
   poolConfigFor,
   recordBusy,
   recordPing,
+  routeOf,
   sessionLabel,
   surplus,
   vmLostMessage,
@@ -75,7 +73,12 @@ import {
   requestTimeoutMs,
   type ServiceSandbox,
 } from "./project-service.js";
-import { type ScalingOptions, SESSIONS_DEDICATED } from "./scaling-domain.js";
+import {
+  encodeHandle,
+  replacementsNeeded,
+  type ScalingOptions,
+  SESSIONS_DEDICATED,
+} from "./scaling-domain.js";
 
 const NO_TOKEN_MESSAGE =
   "esta flota se reconectó sin access token: sólo puede listarse o terminarse; " +
@@ -426,7 +429,7 @@ export class AgentFleet {
   async start(): Promise<this> {
     this.#requireProject();
     await this.#startPool();
-    const missing = deficit(this.#members.length, this.scaling);
+    const missing = replacementsNeeded(this.#members.length, this.scaling);
     const created: Member<AgentDeployment>[] = [];
     const errors: unknown[] = [];
     let next = 0;
@@ -643,7 +646,7 @@ export class AgentFleet {
     operation: (deployment: AgentDeployment, inner: string | undefined) => Promise<T>,
   ): Promise<[Lease, T]> {
     const deadline = this.#now() + this.#settings.queueTimeoutMs;
-    const routed = decodeHandle(sessionId) !== undefined;
+    const routed = routeOf(sessionId) !== undefined;
     for (;;) {
       const lease = await this.#lease(sessionId, deadline);
       try {
@@ -681,7 +684,7 @@ export class AgentFleet {
   }
 
   async #lease(sessionId: string | undefined, deadline: number): Promise<Lease> {
-    const route = decodeHandle(sessionId);
+    const route = routeOf(sessionId);
     if (route !== undefined) {
       return {
         member: await this.#routeMember(route.sandboxId),
@@ -1007,7 +1010,11 @@ export class AgentFleet {
     if (this.#project === undefined) {
       return;
     }
-    for (let missing = deficit(this.#members.length, this.scaling); missing > 0; missing -= 1) {
+    for (
+      let missing = replacementsNeeded(this.#members.length, this.scaling);
+      missing > 0;
+      missing -= 1
+    ) {
       this.#members.push(await this.#createMember(false));
       markExtras(this.#members, this.scaling);
     }

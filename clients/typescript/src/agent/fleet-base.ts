@@ -8,35 +8,30 @@
  */
 
 import { createHash } from "node:crypto";
-import { InvalidArgumentError } from "../errors.js";
+import { AGENT_FLEET_PING_TTL_SECONDS } from "../limits.js";
 import type { PoolConfig } from "../pool/config.js";
 import { MS_PER_SECOND } from "../units.js";
 import type { DeploymentState } from "./deployment.js";
 import type { AgentEvent, AgentResult } from "./events.js";
-import type { AgentProject } from "./project.js";
-import { ScalingOptions, SESSIONS_DEDICATED } from "./scaling-domain.js";
+import { type AgentProject, DEFAULT_QUEUE_TIMEOUT_MS } from "./project.js";
+import {
+  decodeHandle,
+  encodeHandle,
+  isUnhealthy,
+  ScalingOptions,
+  SESSIONS_DEDICATED,
+  type SessionHandle,
+} from "./scaling-domain.js";
 
-/** Prefijo de un id de sesión enrutable: `rs1.<sandbox_id>.<sesión interna>`.
- * Con más de un VM posible, `AgentResult.sessionId` lleva el VM de la sesión
- * y pasarlo de vuelta enruta sin consultar a nadie. */
-export const AGENT_SESSION_HANDLE_PREFIX = "rs1";
-export const HANDLE_SEPARATOR = ".";
-const HANDLE_PARTS = 3;
 /** Etiqueta del sandbox de un VM dedicado: el hash de la sesión que el
  * llamante eligió (`sessionIndex`). Nunca el id en claro: las etiquetas viajan
  * en el `runHookPayload`. */
 export const AGENT_FLEET_SESSION_LABEL = "rayito.agent.session";
 const SESSION_LABEL_HEX_CHARS = 32;
 /** Cuánto vale un ping (o un `busy` visto) para elegir miembro. */
-export const AGENT_FLEET_PING_TTL_MS = 5000;
-/** Pings fallidos seguidos tras los que un miembro se da por perdido y se
- * sustituye. */
-export const AGENT_FLEET_UNHEALTHY_PINGS = 3;
+export const AGENT_FLEET_PING_TTL_MS = AGENT_FLEET_PING_TTL_SECONDS * MS_PER_SECOND;
 /** Espera entre dos intentos de colocar una sesión cuando la flota está llena. */
 export const AGENT_FLEET_BUSY_RETRY_MS = 1000;
-/** Plazo de la cola cliente; es el mismo valor por defecto que la cola del
- * host (`ServeOptions.queueTimeoutMs`). */
-export const AGENT_FLEET_QUEUE_TIMEOUT_MS_DEFAULT = 30_000;
 /** Cuántos VMs crea a la vez `start()` (y `scale()`). */
 export const AGENT_FLEET_START_CONCURRENCY = 4;
 /** Plazo para que las plazas calientes de un `deployAgent` queden aparcadas:
@@ -59,35 +54,11 @@ const POOL_MIN_REMAINING_FLOOR_MS = 60_000;
 
 export type MemberHealth = DeploymentState | "unknown";
 
-export interface SessionRoute {
-  readonly sandboxId: string;
-  readonly sessionId: string | undefined;
-}
-
-/** `rs1.<sandbox_id>.<sesión>`: el id de sesión que devuelve una flota
- * enrutable. */
-export function encodeHandle(sandboxId: string, sessionId: string | undefined): string {
-  if (sandboxId === "" || sandboxId.includes(HANDLE_SEPARATOR)) {
-    throw new InvalidArgumentError("el id del sandbox no puede ser vacío ni llevar un punto");
-  }
-  return [AGENT_SESSION_HANDLE_PREFIX, sandboxId, sessionId ?? ""].join(HANDLE_SEPARATOR);
-}
-
-/** El destino de `value` si es un handle de la flota; `undefined` si es un id
- * cualquiera (el del llamante o el de un despliegue de un solo VM). La
- * sesión interna puede llevar puntos: sólo se parte dos veces. */
-export function decodeHandle(value: string | undefined | null): SessionRoute | undefined {
-  if (value === undefined || value === null) {
-    return undefined;
-  }
-  const parts = value.split(HANDLE_SEPARATOR);
-  const head = parts[0];
-  const sandboxId = parts[1];
-  if (parts.length < HANDLE_PARTS || head !== AGENT_SESSION_HANDLE_PREFIX || !sandboxId) {
-    return undefined;
-  }
-  const session = parts.slice(HANDLE_PARTS - 1).join(HANDLE_SEPARATOR);
-  return { sandboxId, sessionId: session === "" ? undefined : session };
+/** El destino de `sessionId` si es un id de sesión enrutable de la flota;
+ * `undefined` si es un id cualquiera (el del llamante o el de un despliegue de
+ * un solo VM). */
+export function routeOf(sessionId: string | undefined | null): SessionHandle | undefined {
+  return sessionId === undefined || sessionId === null ? undefined : decodeHandle(sessionId);
 }
 
 /** El valor de `AGENT_FLEET_SESSION_LABEL` de una sesión elegida por el
@@ -101,6 +72,9 @@ export function sessionLabel(sessionId: string): string {
 
 /** El resultado con el id de sesión enrutable de `sandboxId`. */
 export function withHandle(result: AgentResult, sandboxId: string): AgentResult {
+  if (!result.sessionId) {
+    return result;
+  }
   return Object.freeze({ ...result, sessionId: encodeHandle(sandboxId, result.sessionId) });
 }
 
@@ -220,7 +194,7 @@ export function recordBusy(member: Member, now: number): void {
 }
 
 export function isLost(member: Member): boolean {
-  return member.failedPings >= AGENT_FLEET_UNHEALTHY_PINGS;
+  return isUnhealthy(member.failedPings);
 }
 
 /** Si `member` puede aceptar una sesión nueva según lo que este proceso sabe.
@@ -290,11 +264,6 @@ let reservationCounter = 0;
 export function newReservation(): string {
   reservationCounter += 1;
   return `reserva-${Date.now().toString(36)}-${reservationCounter}`;
-}
-
-/** Cuántos VMs faltan para llegar a `minVms`. */
-export function deficit(memberCount: number, scaling: ScalingOptions): number {
-  return Math.max(0, scaling.minVms - memberCount);
 }
 
 /** Los miembros que sobran por encima de `maxVms`, los más nuevos primero. */
@@ -371,7 +340,7 @@ export function fleetSettingsOf(
   if (project === undefined) {
     return {
       scaling: scaling ?? new ScalingOptions(),
-      queueTimeoutMs: AGENT_FLEET_QUEUE_TIMEOUT_MS_DEFAULT,
+      queueTimeoutMs: DEFAULT_QUEUE_TIMEOUT_MS,
       maxConcurrency: 1,
     };
   }
@@ -379,7 +348,7 @@ export function fleetSettingsOf(
   const serve = project.serve as unknown as { queueTimeoutMs?: number };
   return {
     scaling: scaling ?? extras.scaling ?? new ScalingOptions(),
-    queueTimeoutMs: serve.queueTimeoutMs ?? AGENT_FLEET_QUEUE_TIMEOUT_MS_DEFAULT,
+    queueTimeoutMs: serve.queueTimeoutMs ?? DEFAULT_QUEUE_TIMEOUT_MS,
     maxConcurrency: project.serve.maxConcurrency,
   };
 }

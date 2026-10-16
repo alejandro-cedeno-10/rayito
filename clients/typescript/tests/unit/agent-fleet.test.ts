@@ -10,16 +10,13 @@ import { describe, expect, test } from "vitest";
 import { AgentFleet } from "../../src/agent/fleet.js";
 import {
   AGENT_FLEET_BUSY_RETRY_MS,
-  AGENT_FLEET_QUEUE_TIMEOUT_MS_DEFAULT,
   AGENT_FLEET_SESSION_LABEL,
-  AGENT_FLEET_UNHEALTHY_PINGS,
-  decodeHandle,
-  encodeHandle,
   sessionLabel,
 } from "../../src/agent/fleet-base.js";
-import { ServeOptions } from "../../src/agent/project.js";
-import { ScalingOptions } from "../../src/agent/scaling-domain.js";
+import { DEFAULT_QUEUE_TIMEOUT_MS, ServeOptions } from "../../src/agent/project.js";
+import { decodeHandle, encodeHandle, ScalingOptions } from "../../src/agent/scaling-domain.js";
 import { CapacityError, InvalidArgumentError, SandboxError } from "../../src/errors.js";
+import { AGENT_FLEET_UNHEALTHY_PINGS } from "../../src/limits.js";
 import { FLEET_TOKEN, FleetHarness, sandboxIdOf } from "./agent-fleet-fake.js";
 import { project } from "./agent-project-fake.js";
 
@@ -158,7 +155,7 @@ describe("shared mode", () => {
     expect(error).toBeInstanceOf(CapacityError);
     expect(error.code).toBe("agent_capacity");
     expect(h.clock.sleeps.reduce((a, b) => a + b, 0)).toBeGreaterThanOrEqual(
-      AGENT_FLEET_QUEUE_TIMEOUT_MS_DEFAULT,
+      DEFAULT_QUEUE_TIMEOUT_MS,
     );
     expect(new Set(h.clock.sleeps)).toEqual(new Set([AGENT_FLEET_BUSY_RETRY_MS]));
   });
