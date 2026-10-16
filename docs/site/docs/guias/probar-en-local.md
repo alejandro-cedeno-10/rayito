@@ -62,8 +62,8 @@ make local-down    # lo para todo y borra los volúmenes
 
 `make local-up` compila `rayd` dentro de Docker la primera vez (unos minutos,
 sin Rust en tu máquina). Si ya tienes el binario de `make build` (estático,
-musl, con `cargo zigbuild`; funciona también desde macOS), pásalo y te
-ahorras la compilación; es la vía si tu VM de Docker tiene menos de 6 GB y
+musl, con `cargo zigbuild`, compilado en Linux o en una VM Linux), pásalo y
+te ahorras la compilación; es la vía si tu VM de Docker tiene menos de 6 GB y
 rustc muere con `SIGKILL`:
 
 ```bash

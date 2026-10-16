@@ -6,6 +6,7 @@
 
 ## Checklist
 
+- [ ] Issue enlazado (`Closes #123`), si lo hay
 - [ ] Cambio OpenSpec enlazado (`openspec/changes/<nombre>/`) y `tasks.md` marcado
 - [ ] Tests nuevos o actualizados que cubren el cambio (`CONTRIBUTING.md` §6), o el motivo de que no los haya
 - [ ] `buf breaking` limpio, o el cambio incompatible del `.proto` justificado aquí

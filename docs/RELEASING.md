@@ -273,11 +273,14 @@ cargo publish --dry-run -p rayito-proto
   "Private vulnerability reporting"): es la vía de `SECURITY.md`.
 - Instalar la **app DCO** (https://github.com/apps/dco) y marcar su check
   como obligatorio en la protección de `main`.
-- **Protección de `main`**: PR obligatorio, checks `ci` (`lint + test
-  (x86_64)`, `typescript client …`, `kernel-sidecar …`, `rayd
+- **Protección de `main`**: PR obligatorio, commits firmados, solo merge commit y
+  los checks `ci` (`lint + test (x86_64)`, `typescript client …`,
+  `kernel-sidecar …`, `python client unit tests (3.11)` y `(3.13)`, `rayd
   aarch64-unknown-linux-musl`, `docs site …`, `cargo-deny`, `dependency
-  audit`, `test on aarch64 (ubuntu-24.04-arm)`) y DCO obligatorios, sin
-  force-push.
+  audit`, `test on aarch64 (ubuntu-24.04-arm)`), los dos de `leaks.yml`
+  (`gitleaks (whole history, redacted)`, `PR title and body carry no
+  environment identifiers`) y `CodeQL` obligatorios, y el check del DCO en
+  cuanto la app esté instalada; sin force-push.
 - Crear los environments `pypi`, `npm`, `release` y `e2e`, los cuatro con
   required reviewers. `pypi`, `npm` y `release` limitan sus despliegues a los
   tags `python-v*`, `typescript-v*` y `rayd-v*`; `e2e` (el del workflow
