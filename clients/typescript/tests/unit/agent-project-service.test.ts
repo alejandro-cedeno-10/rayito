@@ -183,6 +183,8 @@ describe("deploy", () => {
         idle: { maxIdleSeconds: 120, autoResume: true },
         metadata: { team: "soporte" },
         maxConcurrency: 2,
+        queueMax: 3,
+        queueTimeoutMs: 45_000,
       }),
       allowInternetAccess: true,
     });
@@ -205,12 +207,15 @@ describe("deploy", () => {
     ) as {
       driver: string;
       max_concurrency: number;
+      queue_max: number;
+      queue_timeout_seconds: number;
       ready_marker: string;
       limits: { max_steps: number };
       options: { config_path: string };
     };
     expect(hostJson.driver).toBe("deepagents");
     expect(hostJson.max_concurrency).toBe(2);
+    expect([hostJson.queue_max, hostJson.queue_timeout_seconds]).toEqual([3, 45]);
     expect(hostJson.ready_marker).toBe(AGENT_SERVICE_READY_MARKER_PATH);
     expect(hostJson.limits.max_steps).toBe(the.limits.maxSteps);
     expect(written.has(hostJson.options.config_path)).toBe(true);

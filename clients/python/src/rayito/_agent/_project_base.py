@@ -187,7 +187,7 @@ def host_config_for(project: AgentProject, sandbox_gateways: Mapping[str, Any]) 
 
 def host_document(project: AgentProject, host: HostConfig) -> dict[str, object]:
     """El `host.json`: el driver, sus opciones, los topes de `AgentLimits`,
-    la concurrencia y dónde dejar el marcador de listo."""
+    la concurrencia con su cola y dónde dejar el marcador de listo."""
     limits = project.limits
     return {
         "schema": AGENT_HOST_SCHEMA,
@@ -201,6 +201,8 @@ def host_document(project: AgentProject, host: HostConfig) -> dict[str, object]:
             "max_total_tokens": limits.max_total_tokens,
         },
         "max_concurrency": project.serve.max_concurrency,
+        "queue_max": project.serve.queue_max,
+        "queue_timeout_seconds": project.serve.queue_timeout_seconds,
         "session_header": AGENT_SERVICE_SESSION_HEADER,
         "ready_marker": AGENT_SERVICE_READY_MARKER_PATH,
     }

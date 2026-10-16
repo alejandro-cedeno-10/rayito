@@ -259,6 +259,8 @@ def test_deploy_writes_the_host_and_starts_it(flavor: Callable[..., Flavor]) -> 
             idle=IdlePolicy(max_idle_seconds=120),
             metadata={"team": "soporte"},
             max_concurrency=2,
+            queue_max=3,
+            queue_timeout_seconds=45,
         ),
         allow_internet_access=True,
     )
@@ -277,6 +279,7 @@ def test_deploy_writes_the_host_and_starts_it(flavor: Callable[..., Flavor]) -> 
     host_json = json.loads(written[AGENT_HOST_CONFIG_PATH].data)
     assert host_json["driver"] == "deepagents"
     assert host_json["max_concurrency"] == 2
+    assert (host_json["queue_max"], host_json["queue_timeout_seconds"]) == (3, 45)
     assert host_json["ready_marker"] == AGENT_SERVICE_READY_MARKER_PATH
     assert host_json["limits"]["max_steps"] == the_project.limits.max_steps
     assert host_json["options"]["config_path"] in written

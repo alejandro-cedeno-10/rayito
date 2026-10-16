@@ -258,7 +258,7 @@ export function hostConfigFor(project: AgentProject, sandbox: ServiceSandbox): H
 }
 
 /** El `host.json`: el driver, sus opciones, los topes de `AgentLimits`, la
- * concurrencia y dónde dejar el marcador de listo. */
+ * concurrencia con su cola y dónde dejar el marcador de listo. */
 export function hostDocument(project: AgentProject, host: HostConfig): Record<string, unknown> {
   const limits = project.limits;
   return {
@@ -273,6 +273,8 @@ export function hostDocument(project: AgentProject, host: HostConfig): Record<st
       max_total_tokens: limits.maxTotalTokens,
     },
     max_concurrency: project.serve.maxConcurrency,
+    queue_max: project.serve.queueMax,
+    queue_timeout_seconds: project.serve.queueTimeoutMs / MS_PER_SECOND,
     session_header: AGENT_SERVICE_SESSION_HEADER,
     ready_marker: AGENT_SERVICE_READY_MARKER_PATH,
   };
