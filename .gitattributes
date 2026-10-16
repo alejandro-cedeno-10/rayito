@@ -8,6 +8,9 @@ LICENSE     text eol=lf
 NOTICE      text eol=lf
 
 *.png       binary
+*.gif       binary
+*.mp4       binary
+*.webp      binary
 *.jpg       binary
 *.ico       binary
 *.zip       binary

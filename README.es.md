@@ -25,6 +25,10 @@ y la CLI en [Referencia](https://alejandro-cedeno-10.github.io/rayito/referencia
 La ergonomía de E2B sin que el código de tus clientes salga de tu cuenta, y sin
 clúster que operar: el SDK habla directamente con la API de Lambda MicroVMs.
 
+<p align="center">
+  <img src="docs/site/docs/assets/rayito/rayito-readme-960.gif" width="800" alt="Flujo animado de Rayito: dos gatos amarillos operan tres sandboxes sobre AWS Lambda microVMs, con un agente que envía código y salida de artefactos.">
+</p>
+
 ## Instalar
 
 ```bash

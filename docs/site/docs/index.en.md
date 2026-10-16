@@ -221,6 +221,14 @@ or deepagents, and the provider is whichever you prefer (see
 [Fast start? Which one to use](guias/agente-en-el-sandbox.md#que-uso) ·
 [VM versus tokens](cost.md#coste-de-un-agente-vm-frente-a-modelo)
 
+<figure class="rayito-art" data-rayito-art data-play-label="Play animation" data-pause-label="Pause animation" data-play-aria="Play the sandbox animation" data-pause-aria="Pause the sandbox animation">
+<video class="rayito-art__media" width="1280" height="720" data-poster="../assets/rayito/rayito-motion-poster-1280.webp" controls muted loop playsinline preload="none" aria-label="Rayito flow: an agent sends code to three isolated sandboxes on Lambda microVMs; power and results move through the machine." data-rayito-video>
+<source data-src="../assets/rayito/rayito-live-1280.mp4" type="video/mp4">
+</video>
+<noscript><p>With JavaScript turned off, <a href="../assets/rayito/rayito-live-1280.mp4">open the animation as a video</a>.</p></noscript>
+<button type="button" class="rayito-art__toggle" data-rayito-toggle aria-label="Play the sandbox animation">Play animation</button>
+</figure>
+
 </div>
 <div class="rx-split__code" markdown>
 
