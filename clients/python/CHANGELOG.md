@@ -6,6 +6,8 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-10-16
+
 ### Añadido
 
 - **`rayito --version`**: imprime la versión y el runtime (`rayito 0.x
@@ -1732,7 +1734,8 @@ Pasos manuales, fuera de CI, antes del primer tag (pasos canónicos en
 
 Builds internos de los hitos M1-M5, nunca publicados.
 
-[Unreleased]: https://github.com/alejandro-cedeno-10/rayito/compare/python-v0.12.0...HEAD
+[Unreleased]: https://github.com/alejandro-cedeno-10/rayito/compare/python-v0.13.0...HEAD
+[0.13.0]: https://github.com/alejandro-cedeno-10/rayito/compare/python-v0.12.0...python-v0.13.0
 [0.12.0]: https://github.com/alejandro-cedeno-10/rayito/compare/python-v0.11.0...python-v0.12.0
 [0.11.0]: https://github.com/alejandro-cedeno-10/rayito/compare/python-v0.10.0...python-v0.11.0
 [0.10.0]: https://github.com/alejandro-cedeno-10/rayito/compare/python-v0.9.1...python-v0.10.0
