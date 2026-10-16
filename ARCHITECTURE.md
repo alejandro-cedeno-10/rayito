@@ -2936,3 +2936,49 @@ sin nada.
 registro y en `limits.json`, y claves nuevas en el manifiesto. Quitar los
 runtimes nuevos devuelve `AgentTemplate` a sus dos runtimes sin tocar
 imágenes ya construidas.
+
+### Addendum a ADR-028 — agent-runtimes-dx: lo que un usuario externo encontró
+
+**Contexto.** Un usuario desplegó un grafo de LangGraph que ya tenía (un
+agente ReAct detrás de FastAPI) con los runtimes de 0.14 y midió el camino.
+Funcionó, pero nueve cosas costaron tiempo o escondieron información: el
+ejemplo documentado de `HttpApp` no corre (la imagen sólo trae `python3`), la
+app no corre desde su directorio de código, un arranque fallido sólo dice una
+clase de excepción y `deploy()` destruye la VM con la causa dentro, el
+andamiaje y la tabla de claves no mencionan `[runtime.app]`, un grafo de
+LangGraph a secas no produce salida, un `deploy()` sin `access_token` deja un
+token que nadie puede leer y `AgentDeployment` no pausa, el uso de tokens de
+una app es cero sin decir que es desconocido, el protocolo por defecto
+esconde las rutas propias de la app y los preparativos de una sola vez están
+repartidos.
+
+**Decisión.** Se arreglan sin romper nada y antes de publicar 0.14.0: (1) el
+host arranca la app y el comando con el venv de `requirements` primero en el
+`PATH`, el código copiado en el `PYTHONPATH` y, en una `HttpApp`, como
+directorio de trabajo, y `python` sin ninguno en el `PATH` es el intérprete
+del host; (2) el marcador de fallo lleva el código y la cola saneada de la
+salida de error (sin valores de entorno ni credenciales, acotada a 2 KiB) y
+`deploy(keep_on_failure=True)` conserva el sandbox, con un token conocido;
+(3) `AgentDeployment` expone `access_token` y suma `pause()` y `resume()`;
+(4) `usage_reported` dice si el uso es real, sin cambiar el tipo de `usage`;
+(5) el traductor de `langgraph` lee también el nodo `agent` de
+`create_react_agent`; (6) el protocolo por defecto no cambia, y `raw` se
+explica, se avisa en `rayito agent deploy` y se escribe en el andamiaje
+`custom`; (7) `rayito image publish --base-image-version latest` resuelve la
+versión de la base gestionada y la imprime. Detalle y alternativas en
+`openspec/changes/agent-runtimes-dx/design.md`.
+
+**Consecuencias.** Una imagen construida antes necesita reconstruirse para
+tener el host nuevo; el SDK es compatible hacia los dos lados (un marcador de
+sólo un código y una respuesta sin `usage_reported` se leen como antes). La
+redacción del diagnóstico es heurística: por eso está acotada, el host no la
+registra y el SDK la vuelve a acotar.
+
+**Alternativas descartadas.** Cambiar el protocolo por defecto a `raw` o
+detectarlo: quitaría `invoke()` a los proyectos que usan `agentcore` con rutas
+propias. Hacer `usage` opcional: rompe `result.usage.total` en todo llamador de
+0.13. Traducir por tipo de mensaje en vez de por nodo: cambiaría los eventos de
+deepagents (su middleware añade `ToolMessage`).
+
+**Reversible.** Aditivo: opciones nuevas del host, un campo con valor por
+defecto y métodos nuevos; ningún nombre público cambia ni se retira.

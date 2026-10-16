@@ -8,7 +8,7 @@
  */
 
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
@@ -17,6 +17,7 @@ import { DeepAgents } from "../../src/agent/deepagents.js";
 import { OpenCodeRuntime } from "../../src/agent/opencode.js";
 import { AGENT_APP_DIR, hostSha256 } from "../../src/agent/recipes.js";
 import { copyStep, runStep } from "../../src/agent/runtime.js";
+import { appFiles } from "../../src/agent/template.js";
 import {
   AgentTemplate,
   agentPoolWarmup,
@@ -304,6 +305,27 @@ describe("AgentTemplate with runtime objects and an app", () => {
       }).build({ bucket: "amzn-s3-demo-bucket" });
       expect(appFiles).toEqual([".dockerignore", "keep.txt", "pkg/agent.py"]);
     } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("excluded paths are never read nor warned about", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rayito-app-"));
+    const app = await makeApp(root);
+    const certificate = join(app, ".venv", "cacert.pem");
+    await writeFile(certificate, "-----BEGIN CERTIFICATE-----\n");
+    await chmod(certificate, 0);
+    const warnings: string[] = [];
+    const onWarning = (warning: Error) => warnings.push(warning.message);
+    process.on("warning", onWarning);
+    try {
+      const files = await appFiles(app, [".venv"]);
+      expect(files.map(([name]) => name)).toEqual([".dockerignore", "keep.txt", "pkg/agent.py"]);
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(warnings).toEqual([]);
+    } finally {
+      process.off("warning", onWarning);
+      await chmod(certificate, 0o600);
       await rm(root, { recursive: true, force: true });
     }
   });

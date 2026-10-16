@@ -16,11 +16,12 @@ import {
 } from "../../src/agent/project-service.js";
 import { AGENT_HOST_DIR } from "../../src/agent/recipes.js";
 import { AgentTemplate } from "../../src/agent/template.js";
-import { AgentError, SandboxError, TimeoutError } from "../../src/errors.js";
+import { AgentError, InvalidArgumentError, SandboxError, TimeoutError } from "../../src/errors.js";
 import {
   AGENT_SERVICE_PORT,
   AGENT_SERVICE_READY_MARKER_PATH,
   AGENT_SERVICE_READY_TIMEOUT_SECONDS,
+  AGENT_STARTUP_DIAGNOSTICS_MAX_BYTES,
 } from "../../src/limits.js";
 import { FakeAgentRuntime } from "./agent-fake.js";
 import {
@@ -36,6 +37,15 @@ interface Harness {
   readonly factory: FakeSandboxFactory;
   readonly clock: { now: number; sleeps: number[] };
   service(the: ReturnType<typeof project>): ProjectService;
+}
+
+async function failureOf(promise: Promise<unknown>): Promise<Error> {
+  try {
+    await promise;
+  } catch (error) {
+    return error as Error;
+  }
+  throw new Error("se esperaba un fallo");
 }
 
 function harness(options: FakeSandboxOptions = {}): Harness {
@@ -259,6 +269,65 @@ describe("deploy", () => {
     await expect(service(project()).deploy()).rejects.toThrow(/ModuleNotFoundError/);
     expect(sandbox.kills).toBe(1);
     expect(clock.now).toBe(0);
+  });
+
+  test("a failed startup shows the end of the app's stderr", async () => {
+    const { service, sandbox } = harness({
+      readyAfter: null,
+      failedMarker: "app_exited\nTraceback (most recent call last):\nModuleNotFoundError: agent\n",
+    });
+    const error = await failureOf(service(project()).deploy());
+    expect(error.message.startsWith("el host del agente no pudo arrancar (app_exited)")).toBe(true);
+    expect(error.message).toContain("ModuleNotFoundError: agent");
+    expect(sandbox.kills).toBe(1);
+  });
+
+  test("a failed marker is bounded again by the SDK", async () => {
+    const { service } = harness({
+      readyAfter: null,
+      failedMarker: `app_exited\n${"inicio ".repeat(3000)}fin-visible`,
+    });
+    const error = await failureOf(service(project()).deploy());
+    expect(error.message.endsWith("fin-visible")).toBe(true);
+    expect(new TextEncoder().encode(error.message).length).toBeLessThan(
+      AGENT_STARTUP_DIAGNOSTICS_MAX_BYTES + 200,
+    );
+  });
+
+  test("keepOnFailure leaves the sandbox alive and names it", async () => {
+    const { service, sandbox } = harness({
+      readyAfter: null,
+      failedMarker: "app_exited\nboom\n",
+    });
+    const error = await failureOf(
+      service(project()).deploy({ accessToken: "dG9rZW4", keepOnFailure: true }),
+    );
+    expect(sandbox.kills).toBe(0);
+    expect(error.message).toContain(SANDBOX_ID);
+    expect(error.message).toContain("Sandbox.kill");
+    expect(error.message).not.toContain("dG9rZW4");
+  });
+
+  test("keepOnFailure needs a token the caller knows", async () => {
+    vi.stubEnv("RAYITO_ACCESS_TOKEN", "");
+    const { service, factory } = harness();
+    await expect(service(project()).deploy({ keepOnFailure: true })).rejects.toBeInstanceOf(
+      InvalidArgumentError,
+    );
+    expect(factory.created).toEqual([]);
+    vi.stubEnv("RAYITO_ACCESS_TOKEN", "dG9rZW4");
+    await service(project()).deploy({ keepOnFailure: true });
+    expect(factory.created).toHaveLength(1);
+    vi.unstubAllEnvs();
+  });
+
+  test("keepOnFailure is off by default and a success never kills", async () => {
+    const failing = harness({ readyAfter: null, failedCode: "AgentFailure" });
+    await expect(failing.service(project()).deploy()).rejects.toBeInstanceOf(SandboxError);
+    expect(failing.sandbox.kills).toBe(1);
+    const ok = harness();
+    await ok.service(project()).deploy({ accessToken: "dG9rZW4", keepOnFailure: true });
+    expect(ok.sandbox.kills).toBe(0);
   });
 
   test("kills the sandbox on any step failure", async () => {

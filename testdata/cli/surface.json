@@ -205,6 +205,19 @@
           "default": null,
           "is_flag": false,
           "envvar": null
+        },
+        {
+          "name": "keep_on_failure",
+          "kind": "option",
+          "flags": [
+            "--keep-on-failure"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "default": false,
+          "is_flag": true,
+          "envvar": null
         }
       ]
     },

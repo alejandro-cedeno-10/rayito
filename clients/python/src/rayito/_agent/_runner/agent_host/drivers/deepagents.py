@@ -73,9 +73,12 @@ MODEL_ERROR_MODULES: Final = (
 #: OpenAI acepta (learn.microsoft.com/azure/ai-foundry/openai/api-version-lifecycle,
 #: consultado el 2026-10-07: la v1 ya no necesita versiones con fecha).
 AZURE_OPENAI_V1_API_VERSION: Final = "v1"
-#: El nodo del modelo en los grafos de `langchain.agents.create_agent`.
-MODEL_NODE: Final = "model"
-#: El nodo de herramientas en esos mismos grafos.
+#: Los nodos del modelo: `model` en los grafos de
+#: `langchain.agents.create_agent` (y deepagents) y `agent` en los de
+#: `langgraph.prebuilt.create_react_agent`; un `StateGraph` propio que los
+#: llame así se traduce igual.
+MODEL_NODES: Final = ("model", "agent")
+#: El nodo de herramientas en todos esos grafos.
 TOOLS_NODE: Final = "tools"
 
 _SESSION_ID_PATTERN: Final = re.compile(r"rda_[0-9a-f]{32}")
@@ -211,7 +214,7 @@ class Translator:
         return [{"type": "step_started", "index": self.steps}]
 
     def on_chunk(self, chunk: Any, metadata: Mapping[str, Any]) -> list[dict[str, Any]]:
-        if metadata.get("langgraph_node") != MODEL_NODE:
+        if metadata.get("langgraph_node") not in MODEL_NODES:
             return []
         if "|" in str(metadata.get("langgraph_checkpoint_ns", "")):
             return []
@@ -225,7 +228,7 @@ class Translator:
             return []
         events: list[dict[str, Any]] = []
         for node, value in update.items():
-            if node == MODEL_NODE:
+            if node in MODEL_NODES:
                 for message in _messages_of(value):
                     events.extend(self._model_message(message))
             elif node == TOOLS_NODE:
@@ -236,9 +239,10 @@ class Translator:
     def on_nested_update(self, update: object) -> None:
         if not isinstance(update, Mapping):
             return
-        for message in _messages_of(update.get(MODEL_NODE)):
-            for key, value in usage_of(message).items():
-                self.nested_usage[key] = self.nested_usage.get(key, 0) + value
+        for node in MODEL_NODES:
+            for message in _messages_of(update.get(node)):
+                for key, value in usage_of(message).items():
+                    self.nested_usage[key] = self.nested_usage.get(key, 0) + value
 
     def _model_message(self, message: Any) -> list[dict[str, Any]]:
         self.new_messages.append(message)

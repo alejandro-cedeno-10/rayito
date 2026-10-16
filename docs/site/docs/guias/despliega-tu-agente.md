@@ -58,8 +58,16 @@ entra por [`CustomRuntime`](#otros-frameworks-customruntime).
       `RayitoSecretsReader` para `run()` y `deploy()` (pila `secrets-access`),
       las mismas que usa [Agente en el sandbox](agente-en-el-sandbox.md).
     - **Cómo apagarla:** no llames a esas operaciones. Un despliegue se para
-      con `deployment.stop()` o `rayito agent stop`; las versiones de imagen,
-      con `rayito image prune`.
+      con `deployment.stop()` o `rayito agent stop` (o se suspende con
+      `deployment.pause()`, que no factura cómputo); las versiones de imagen,
+      con `rayito image prune`. `deploy(keep_on_failure=True)` deja vivo el
+      sandbox de un arranque fallido para depurarlo y sigue facturando hasta
+      que lo termines; está apagado por defecto.
+    - **Uso de tokens:** los runtimes con soporte propio informan siempre de
+      los tokens de cada paso. Una app, un comando o una función propios sólo
+      informan si su respuesta lleva `usage`; si no, `result.usage_reported` es
+      `False` y `result.usage` vale cero porque se desconoce, no porque no se
+      gastara nada. Consulta el consumo en tu proveedor.
     - **Ejemplo:** `AgentProject.load(".").deploy()` (los cuatro lenguajes
       están [más abajo](#3-despliegalo-como-servicio)).
 
@@ -77,6 +85,25 @@ entra por [`CustomRuntime`](#otros-frameworks-customruntime).
 
 `rayito agent init` y `rayito agent export` funcionan sin nada de esto: sólo
 escriben ficheros.
+
+### Los preparativos de una sola vez
+
+Son tres, se hacen una vez por cuenta y región, y `rayito doctor` comprueba que
+están. Con ellos hechos, el primer despliegue es construir la imagen del agente
+(≈ 5 minutos la primera vez, porque instala el runtime y tus requisitos) y
+desplegarla (≈ 10 segundos hasta que el servicio responde).
+
+| Qué | Cómo | Cuánto |
+|---|---|---|
+| Un bucket de S3 para el artefacto del build | `export RAYITO_BUCKET=amzn-s3-demo-bucket` ([Configurar AWS](../primeros-pasos/configurar-aws.md#2-un-bucket-para-los-artefactos)) | 1 min |
+| La imagen base `rayito-base-caps` | publícala desde el `rayito-image.zip` de la release ([Configurar AWS](../primeros-pasos/configurar-aws.md#4-publicar-la-imagen-rayito-base)) | ≈ 4 min |
+| La versión de la base gestionada de AWS | no hace falta buscarla a mano: con `--base-image-version latest`, `rayito image publish` usa la más reciente que lista AWS y la imprime; un número explícito fija una build reproducible | — |
+
+```bash
+rayito image publish --artifact rayito-image.zip --base-image-version latest \
+  --image-name rayito-base-caps --os-capabilities ALL
+rayito agent build --file ./support-bot --bucket "$RAYITO_BUCKET"
+```
 
 ## Qué runtime elegir
 
@@ -249,9 +276,41 @@ sobrescribe nada sin `--force`.
 
 === "LangGraph"
 
-    `graph.py`: la función recibe el contexto del runner (modelo,
-    instrucciones, subagentes, backend y el middleware de permisos) y devuelve
-    tu grafo compilado. Pasa `ctx.middleware`: sin él se pierden los permisos.
+    `graph.py`: la función recibe el contexto del runner (`ctx.model`, el
+    modelo ya cableado a la pasarela, e `ctx.instructions`) y devuelve tu grafo
+    compilado. Sirve un grafo de LangGraph a secas, el que ya tengas: un
+    `create_react_agent` o un `StateGraph` cuyo nodo del modelo se llame `agent`
+    (o `model`) y el de herramientas, `tools`. Rayito traduce de esos nodos el
+    texto, los pasos, las llamadas a herramientas y el uso de tokens.
+
+    ```python
+    from langchain_core.tools import tool
+    from langgraph.prebuilt import create_react_agent
+
+
+    @tool
+    def word_count(text: str) -> int:
+        """Cuenta las palabras de un texto."""
+        return len(text.split())
+
+
+    def build(ctx):
+        return create_react_agent(ctx.model, [word_count], prompt=ctx.instructions)
+    ```
+
+    ```toml
+    [runtime]
+    kind = "langgraph"
+    entrypoint = "graph:build"
+    ```
+
+    Los permisos del `AgentSpec` los aplica un `AgentMiddleware`, que
+    `create_react_agent` y `StateGraph` no tienen: sus herramientas son tuyas y
+    no se filtran. Para que se apliquen, construye con
+    `langchain.agents.create_agent(..., middleware=ctx.middleware)`. Si quieres
+    un agente profundo de deepagents, pasa `ctx.subagents`, `ctx.backend` y
+    `ctx.middleware` (sin el middleware se pierden los permisos), o usa
+    directamente `kind = "deepagents"`:
 
     ```python
     from deepagents import create_deep_agent
@@ -265,12 +324,6 @@ sobrescribe nada sin `--force`.
             backend=ctx.backend,
             middleware=ctx.middleware,
         )
-    ```
-
-    ```toml
-    [runtime]
-    kind = "langgraph"
-    entrypoint = "graph:build"
     ```
 
 === "deepagents"
@@ -299,15 +352,35 @@ sobrescribe nada sin `--force`.
 
 === "Personalizado"
 
-    Un comando que lee la petición (una línea JSON) por la entrada estándar y
-    escribe la respuesta. Con `protocol = "text"`, lo que imprime es la
-    respuesta.
+    `rayito agent init --runtime custom` escribe una app HTTP: la tabla
+    `[runtime.app]` con tu `command`, el `port` en el que escucha y sus rutas,
+    más `requirements` e `install`. Rayito arranca el `command` desde el
+    directorio de tu código copiado (también en su `PYTHONPATH`, así que
+    `python -m agent.server` funciona) y, con `requirements`, con el venv de
+    tus requisitos primero en el `PATH`: `python` es el del venv.
 
-    ```bash
-    #!/usr/bin/env bash
-    set -euo pipefail
-    python3 -c 'import json, sys; print(json.loads(sys.stdin.readline())["prompt"])'
+    ```toml
+    [runtime]
+    kind = "custom"
+    requirements = "requirements.txt"
+    install = []
+
+    [runtime.app]
+    command = ["python", "-m", "agent.server"]
+    port = 9100
+    health_path = "/health"
+    invoke_path = "/invoke"
+    protocol = "raw"
     ```
+
+    Esta app declara sus propias rutas (`/health` e `/invoke`), así que usa
+    `protocol = "raw"`: el despliegue las reenvía tal cual y las llamas con
+    `deployment.url` y `deployment.headers`. Con el protocolo por defecto
+    (`agentcore`) sólo se exponen `/ping` y `/invocations`, y `/health` e
+    `/invoke` contestan 404; [cuál elegir](#que-protocolo-elegir). Si en cambio
+    quieres un comando que lee la petición (una línea JSON) por la entrada
+    estándar y escribe la respuesta, con `protocol = "text"` lo que imprime es
+    la respuesta:
 
     ```toml
     [runtime]
@@ -426,8 +499,9 @@ runtime y proveedor.
 
 `deploy()` crea el sandbox, arranca el servidor del agente, espera a que esté
 listo y te devuelve un `AgentDeployment`: la URL y las cabeceras para
-llamarlo, y los métodos para invocarlo, ver su estado y pararlo. Si algo
-falla por el camino, destruye el sandbox y lanza la excepción.
+llamarlo, y los métodos para invocarlo, ver su estado, pausarlo y pararlo. Si
+algo falla por el camino, destruye el sandbox (salvo con `keep_on_failure`, ver
+[Si el arranque falla](#si-el-arranque-falla)) y lanza la excepción.
 
 === "Python"
 
@@ -496,7 +570,9 @@ si lo tienes definido, y sin ninguno de los dos no empieza, porque no habría
 forma de reconectarse. `invoke` y `status` lo leen con `--token-file` o de
 `RAYITO_ACCESS_TOKEN`. `stop` no lo necesita: termina el sandbox con su id. Desde
 el SDK, `deploy(access_token=...)` (`deploy({ accessToken })` en TypeScript)
-hace lo mismo que la variable.
+hace lo mismo que la variable; si no pasas ninguno, `deploy()` genera uno y
+`deployment.access_token` (`deployment.accessToken` en TypeScript) te lo
+devuelve para que lo guardes (nunca lo imprimas ni lo versiones).
 
 ### Llamar al servicio
 
@@ -547,6 +623,123 @@ reengánchate con el id del sandbox:
     rayito --json agent invoke microvm-00000000-0000-0000-0000-000000000001 "Hola" --stream
     ```
 
+### Pausar, reanudar y reconectar
+
+`deployment.pause()` suspende el sandbox: no factura cómputo mientras duerme y
+el servicio conserva su estado. La siguiente petición lo reanuda (también
+`deployment.resume()`), y con `idle`, activo por defecto, se suspende solo al
+quedar ocioso. Para volver al despliegue desde otro proceso, pasa el token que
+guardaste:
+
+=== "Python"
+
+    ```python
+    from rayito import AgentDeployment, AgentProject
+
+    deployment = AgentProject.load("./support-bot").deploy()
+    token = deployment.access_token
+    deployment.pause()
+    deployment.resume()
+
+    same = AgentDeployment.connect(deployment.sandbox_id, access_token=token)
+    print(same.status())
+    deployment.stop()
+    ```
+
+=== "Python (async)"
+
+    ```python
+    from rayito import AgentDeployment, AsyncAgentProject
+
+
+    async def main() -> None:
+        deployment = await AsyncAgentProject.load("./support-bot").deploy()
+        token = deployment.access_token
+        await deployment.pause()
+        await deployment.resume()
+        await deployment.stop()
+        print(AgentDeployment.__name__, token is not None)
+    ```
+
+=== "TypeScript"
+
+    ```ts
+    import { AgentDeployment, AgentProject } from "rayito";
+
+    const project = await AgentProject.load("./support-bot");
+    const deployment = await project.deploy();
+    const token = deployment.accessToken;
+    await deployment.pause();
+    await deployment.resume();
+
+    const same = await AgentDeployment.connect(deployment.sandboxId, { accessToken: token });
+    console.log(await same.status());
+    await deployment.stop();
+    ```
+
+### Si el arranque falla
+
+Si la app no arranca (falta un módulo, el comando no existe, no contesta a su
+ruta de salud), `deploy()` lanza `SandboxException` con el código del fallo
+(`app_exited`, `app_not_ready`, la clase de la excepción) y el final de la
+salida de error de la app, acotado a 2 KiB y sin valores de entorno ni
+credenciales. Por defecto destruye el sandbox. Para entrar a depurarlo, pide
+que se conserve (`keep_on_failure=True`; hace falta un `access_token`, porque
+sin él nadie podría conectarse); el error lleva el id en una nota. Cuesta hasta
+que lo termines con `Sandbox.kill(sandbox_id)` o `rayito agent stop`.
+
+=== "Python"
+
+    ```python
+    from rayito import AgentProject
+    from rayito.exceptions import SandboxException
+
+    project = AgentProject.load("./support-bot")
+    try:
+        project.deploy(access_token="<token>", keep_on_failure=True)
+    except SandboxException as exc:
+        print(exc)
+        print(*getattr(exc, "__notes__", []), sep="\n")
+    ```
+
+=== "TypeScript"
+
+    ```ts
+    import { AgentProject, SandboxError } from "rayito";
+
+    const project = await AgentProject.load("./support-bot");
+    try {
+      await project.deploy({ accessToken: "<token>", keepOnFailure: true });
+    } catch (error) {
+      if (error instanceof SandboxError) {
+        console.error(error.message);
+      }
+    }
+    ```
+
+=== "CLI"
+
+    ```bash
+    rayito agent deploy --file ./support-bot --token-file ./agent.token --keep-on-failure
+    ```
+
+### Qué protocolo elegir
+
+El `protocol` de una `HttpApp` decide qué expone el despliegue. El valor por
+defecto es `agentcore`, y con él tus rutas propias no se alcanzan desde fuera:
+
+| `protocol` | Qué expone el despliegue | `invoke()` | Cuándo |
+|---|---|---|---|
+| `agentcore` (por defecto) | `GET /ping` y `POST /invocations`; el host traduce a tu `invoke_path` | sí | tu app recibe `{"prompt"}` en una ruta y quieres `deployment.invoke()` y `stream()` |
+| `openai-chat` | lo mismo, traduciendo Chat Completions con streaming | sí | tu app es un servidor compatible con OpenAI |
+| `raw` | tus rutas tal cual (`/health`, `/invoke`, un servidor MCP...) | no: `UnimplementedError` | tu app ya tiene sus propias rutas y las llamas con tu cliente HTTP |
+
+Con `agentcore` u `openai-chat`, un `health_path` o un `invoke_path` distintos
+de `/ping` y `/invocations` sólo los usa el host por dentro: pedir `/health` o
+`/invoke` por la URL del despliegue da 404. `rayito agent deploy` lo avisa en
+ese caso, y `rayito agent init --runtime custom` escribe `protocol = "raw"`
+porque su app declara sus propias rutas.
+
 ### El contrato del servicio
 
 El servicio habla el contrato de runtime de AgentCore, así que el mismo agente
@@ -560,6 +753,9 @@ sirve igual en un MicroVM y en un contenedor exportado:
   cada evento del protocolo del agente, que acaba en `done` o `agent_failed`.
   Un fallo del agente es un `200` con `failed`; los códigos HTTP son sólo para el
   contrato (`400`, `413`, `429` si está ocupado, `503` si aún no está listo).
+  El JSON lleva `usage_reported`: `false` si el agente no informó de tokens
+  (`usage` vale entonces cero porque se desconoce); un servicio anterior sin
+  el campo equivale a `true`.
 - Atiende una petición a la vez. La cabecera
   `X-Amzn-Bedrock-AgentCore-Runtime-Session-Id` hace de `session_id` si el cuerpo
   no lo trae.
@@ -685,14 +881,25 @@ repositorio.
 | Tabla | Claves | Qué es |
 |---|---|---|
 | (raíz) | `schema`, `name` | versión del esquema y nombre (imagen y etiqueta del despliegue) |
-| `[runtime]` | `kind`, `entrypoint`, `language`, `command`, `protocol` | el framework y cómo se arranca |
+| `[runtime]` | `kind`, `entrypoint`, `language`, `command`, `protocol`, `requirements`, `install`, `python`, `toolsets`, `skills_dir` | el framework y cómo se arranca; cada `kind` admite sólo algunas (abajo) |
+| `[runtime.app]` | `command`, `port`, `health_path`, `invoke_path`, `protocol` | sólo con `kind = "custom"`: tu app HTTP (`HttpApp`); `command` y `port` son obligatorias |
 | `[source]` | `path`, `requirements`, `exclude` | el directorio que se copia a la imagen y sus requisitos |
-| `[model]` | `provider`, `id`, `region`, `gateway` | el modelo, y qué pasarela usa |
+| `[model]` | `provider`, `id`, `region`, `gateway`, `base_path`, `prompt_caching` | el modelo, y qué pasarela usa |
 | `[gateways.<nombre>]` | `preset`, `secret`, `region`, `models`… | una pasarela: uno de los presets de [Proveedores del agente](agente-proveedores.md) y el **nombre** del secreto |
-| `[agent]` | `instructions` o `instructions_file`, `permissions` | instrucciones (mutuamente excluyentes) y permisos |
-| `[limits]` | `max_steps`, `timeout_seconds` | los límites de una ejecución |
-| `[serve]` | `timeout_seconds`, `idle_seconds` | vida del despliegue (≤ 8 h) y suspensión por inactividad |
+| `[agent]` | `instructions` o `instructions_file`, `small_model`, `runtime_version`, `raw_config`, `permissions`, `mcp.<nombre>`, `agents.<nombre>` | instrucciones (mutuamente excluyentes), permisos, servidores MCP y subagentes |
+| `[limits]` | `max_steps`, `timeout_seconds`, `max_output_bytes`, `max_total_tokens` | los límites de una ejecución |
+| `[serve]` | `port`, `timeout_seconds`, `idle_seconds`, `max_concurrency`, `metadata` | puerto del servicio, vida del despliegue (≤ 8 h), suspensión por inactividad, concurrencia y etiquetas |
 | `[network]` | `allow_internet_access`, `egress` | red del sandbox: cerrada salvo que la abras |
+| `[image]` | `base`, `template`, `memory_mib` | la imagen base, el nombre de una imagen ya construida y su memoria |
+
+Claves de `[runtime]` por `kind`: `langgraph` admite `entrypoint`; `strands` y
+`strands-harness`, `entrypoint`, `language` y `requirements`; `hermes`,
+`toolsets` y `skills_dir`; `custom`, `install`, `requirements`, `python` y
+exactamente una de `command` (con `protocol`: `rayito-v1` o `text`),
+`entrypoint` o la tabla `[runtime.app]`; `opencode` y `deepagents`, ninguna.
+`install` son órdenes de shell que se ejecutan al construir la imagen, antes de
+copiar tu código, y `requirements`, un fichero de requisitos de tu `source` que
+se instala en un venv propio.
 
 Los tiempos van en segundos en el fichero, en los dos SDK. La CLI nunca cambia
 lo que dice el fichero salvo que pases la opción (`--port`, `--timeout`).
@@ -705,10 +912,15 @@ lo que dice el fichero salvo que pases la opción (`--port`, `--timeout`).
   `protocol="rayito-v1"` escribe líneas del protocolo del agente; con
   `protocol="text"`, lo que imprime es la respuesta.
 - `entrypoint`: una función de Python `paquete.modulo:funcion`.
-- `app`: una aplicación HTTP que ya habla `GET /ping` y `POST /invocations`
-  (`HttpApp(command=..., port=...)`). Si habla otro protocolo (por ejemplo, un
-  servidor MCP), `protocol="raw"` sólo la expone: `deploy()` te da la URL y las
-  cabeceras, y `invoke()` lanza `UnimplementedError`.
+- `app`: una aplicación HTTP (`HttpApp(command=..., port=...)`). Con
+  `protocol="agentcore"` (por defecto) el host sirve `/ping` y `/invocations` y
+  traduce a la ruta de tu app (`invoke_path`). Si tu app tiene sus propias rutas
+  o habla otro protocolo (por ejemplo, un servidor MCP), `protocol="raw"` sólo
+  la expone: `deploy()` te da la URL y las cabeceras, y `invoke()` lanza
+  `UnimplementedError`; [cuál elegir](#que-protocolo-elegir). El `command` corre
+  desde el directorio del código copiado, con ese directorio en su
+  `PYTHONPATH`, y `python` es el del venv de `requirements` (sin él, el de la
+  imagen).
 
 === "Python"
 
@@ -718,8 +930,14 @@ lo que dice el fichero salvo que pases la opción (`--port`, `--timeout`).
     command = CustomRuntime(command=["bash", "run.sh"], protocol="text")
     function = CustomRuntime(entrypoint="my_agent.main:answer")
     server = CustomRuntime(
-        install=["pip install crewai"],
-        app=HttpApp(command=["python", "serve.py"], port=9100),
+        requirements="requirements.txt",
+        app=HttpApp(
+            command=["python", "-m", "agent.server"],
+            port=9100,
+            health_path="/health",
+            invoke_path="/invoke",
+            protocol="raw",
+        ),
     )
     ```
 

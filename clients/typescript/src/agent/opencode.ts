@@ -633,6 +633,7 @@ export class OpenCodeRuntime implements AgentRuntime, InstallableRuntime, Servab
       sessionId: state.sessionId,
       exitCode,
       usage: state.usage,
+      usageReported: true,
     });
   }
 

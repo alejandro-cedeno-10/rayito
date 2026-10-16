@@ -8,8 +8,15 @@ Configuración del driver:
   `health_path`, `invoke_path`.
 - `protocol`: `agentcore` (el servidor ya habla `/ping` + `/invocations`),
   `openai-chat` (Chat Completions con streaming) o `raw`.
-- `workdir` y `start_timeout_seconds`. Las variables de entorno las hereda
+- `app_dir`: el código copiado; es el directorio de trabajo de la app y va al
+  principio de su `PYTHONPATH`, así que `python -m paquete.modulo` funciona.
+  `path_prepend`: directorios que van al principio de su `PATH` (el `bin` del
+  venv de `requirements`, de modo que `python` es el del venv). `workdir`
+  (sin `app_dir`) y `start_timeout_seconds`. El resto del entorno lo hereda
   del host.
+- Un arranque fallido (`app_exited`, `app_not_ready`) lleva el final de la
+  salida de error de la app, saneado (`diagnostics.py`).
+- Una app que no informa de `usage` tiene uso desconocido, no cero.
 
 Con `raw` no hay traducción: el host reenvía tal cual todo lo que no es
 `/ping` (`forward()`), y `run()` falla con `protocol_error`: un servidor MCP
@@ -28,6 +35,7 @@ from collections.abc import Iterator, Mapping
 from http import HTTPStatus
 from typing import Any, Final
 
+from ..diagnostics import sanitize_diagnostics
 from ..process import ChildProcess
 from ..protocol import (
     AgentFailure,
@@ -39,6 +47,7 @@ from ..protocol import (
     new_id,
     usage_dict,
 )
+from ._common import child_argv, child_environment
 
 LOOPBACK: Final = "127.0.0.1"
 SESSION_ID_PREFIX: Final = "app_"
@@ -53,6 +62,31 @@ REQUEST_TIMEOUT_SECONDS: Final = 600.0
 TEXT_KEYS: Final = ("text", "response", "result", "output", "message", "content", "answer")
 SESSION_HEADER: Final = "X-Amzn-Bedrock-AgentCore-Runtime-Session-Id"
 PROTOCOLS: Final = ("agentcore", "openai-chat", "raw")
+#: Cómo llama una app a cada contador de `usage`, en este orden: los nombres
+#: de Rayito, los de Anthropic y los de Chat Completions. Una app que no
+#: informa de ninguno tiene uso desconocido, no cero.
+USAGE_ALIASES: Final = (
+    ("input", ("input", "input_tokens", "prompt_tokens")),
+    ("output", ("output", "output_tokens", "completion_tokens")),
+    ("reasoning", ("reasoning", "reasoning_tokens")),
+    ("cache_read", ("cache_read", "cache_read_input_tokens")),
+    ("cache_write", ("cache_write", "cache_creation_input_tokens")),
+)
+
+
+def app_usage(raw: object) -> dict[str, int] | None:
+    """El uso de tokens que informa la app (`usage` de su respuesta) en las
+    claves de Rayito, o `None` si no informa de ninguno."""
+    if not isinstance(raw, Mapping):
+        return None
+    found: dict[str, Any] = {}
+    for key, aliases in USAGE_ALIASES:
+        for alias in aliases:
+            value = raw.get(alias)
+            if isinstance(value, int) and not isinstance(value, bool):
+                found[key] = value
+                break
+    return usage_dict(found) if found else None
 
 
 def extract_text(payload: object) -> str:
@@ -83,7 +117,7 @@ def iter_sse_data(response: http.client.HTTPResponse) -> Iterator[str]:
         yield "\n".join(data)
 
 
-def _delta_of(data: str, protocol: str) -> tuple[str, dict[str, Any] | None]:
+def _delta_of(data: str, protocol: str) -> tuple[str, dict[str, int] | None]:
     """El texto de un mensaje SSE y, si lo trae, el uso de tokens."""
     try:
         payload = json.loads(data)
@@ -96,16 +130,9 @@ def _delta_of(data: str, protocol: str) -> tuple[str, dict[str, Any] | None]:
             inner = choices[0].get("delta")
             content = inner.get("content") if isinstance(inner, Mapping) else None
             delta = content if isinstance(content, str) else ""
-        usage = payload.get("usage")
-        return delta, dict(usage) if isinstance(usage, Mapping) else None
-    return extract_text(payload), None
-
-
-def _chat_usage(raw: Mapping[str, Any] | None) -> dict[str, int]:
-    source = raw or {}
-    return usage_dict(
-        {"input": source.get("prompt_tokens"), "output": source.get("completion_tokens")}
-    )
+        return delta, app_usage(payload.get("usage"))
+    usage = app_usage(payload.get("usage")) if isinstance(payload, Mapping) else None
+    return extract_text(payload), usage
 
 
 class Driver:
@@ -136,15 +163,32 @@ class Driver:
         with self._lock:
             if self._child is not None:
                 return
-            env = dict(os.environ)
+            env = child_environment(self._config)
             self._child = ChildProcess(
-                [str(part) for part in self._config["command"]],
+                child_argv(self._config["command"], env),
                 env=env,
-                cwd=str(self._config["workdir"]) if self._config.get("workdir") else None,
+                cwd=self._working_directory(),
                 capture_stdout=False,
+                capture_stderr_tail=True,
             )
             atexit.register(self._child.kill)
         self._wait_healthy()
+
+    def _working_directory(self) -> str | None:
+        """El directorio del código copiado (`app_dir`), de modo que
+        `python -m paquete.modulo` y las rutas relativas funcionen; sin él,
+        el directorio de trabajo del agente."""
+        directory = self._config.get("app_dir") or self._config.get("workdir")
+        return str(directory) if directory else None
+
+    def _startup_failure(self, detail_code: str) -> AgentFailure:
+        """Un arranque fallido con el final de la salida de error de la app,
+        saneado: sin los valores del entorno ni credenciales."""
+        child = self._child
+        text = "" if child is None else child.stderr_text()
+        return AgentFailure(
+            "runtime_error", detail_code, sanitize_diagnostics(text, os.environ) or None
+        )
 
     def _wait_healthy(self) -> None:
         deadline = time.monotonic() + float(
@@ -153,7 +197,7 @@ class Driver:
         while time.monotonic() < deadline:
             child = self._child
             if child is None or child.poll() is not None:
-                raise AgentFailure("runtime_error", "app_exited")
+                raise self._startup_failure("app_exited")
             try:
                 connection = self._connection()
                 connection.request("GET", str(self._config.get("health_path", "/ping")))
@@ -164,7 +208,7 @@ class Driver:
             except OSError:
                 pass
             time.sleep(HEALTH_POLL_SECONDS)
-        raise AgentFailure("runtime_error", "app_not_ready")
+        raise self._startup_failure("app_not_ready")
 
     def forward(
         self, method: str, path: str, headers: Mapping[str, str], body: bytes | None
@@ -188,7 +232,7 @@ class Driver:
         response = self._post(request, state.session_id)
         text, usage = self._read(response, emit)
         emit(build_event("text", text=text))
-        emit(build_event("step_finished", index=1, usage=_chat_usage(usage), finish_reason="stop"))
+        emit(build_event("step_finished", index=1, usage=usage, finish_reason="stop"))
 
     def _post(self, request: Request, session_id: str) -> http.client.HTTPResponse:
         invoke_path = str(self._config.get("invoke_path", "/invocations"))
@@ -220,15 +264,17 @@ class Driver:
 
     def _read(
         self, response: http.client.HTTPResponse, emit: Emit
-    ) -> tuple[str, dict[str, Any] | None]:
+    ) -> tuple[str, dict[str, int] | None]:
         content_type = response.getheader("Content-Type", "")
         if "text/event-stream" not in content_type:
             try:
-                return extract_text(json.loads(response.read())), None
+                payload = json.loads(response.read())
             except ValueError:
                 raise AgentFailure("protocol_error", "invalid_response") from None
+            reported = app_usage(payload.get("usage")) if isinstance(payload, Mapping) else None
+            return extract_text(payload), reported
         parts: list[str] = []
-        usage: dict[str, Any] | None = None
+        usage: dict[str, int] | None = None
         for data in iter_sse_data(response):
             if data.strip() == "[DONE]":
                 break

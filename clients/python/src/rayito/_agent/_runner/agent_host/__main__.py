@@ -132,11 +132,13 @@ def serve(package: str, args: argparse.Namespace) -> int:
     if config.ready_marker is not None:
         Path(config.ready_marker).unlink(missing_ok=True)
         Path(config.ready_marker + serving.FAILED_SUFFIX).unlink(missing_ok=True)
+    diagnostics = importlib.import_module(".diagnostics", package)
     try:
         driver = create_driver(package, host["driver"], host["options"])
     except Exception as exc:
-        log.error("driver_unavailable code=%s", type(exc).__name__)
-        serving.write_failed_marker(config, type(exc).__name__)
+        code, detail = startup_failure(exc, diagnostics)
+        log.error("driver_unavailable code=%s", code)
+        serving.write_failed_marker(config, code, detail)
         return 1
     service = serving.Service(driver, config)
     server = serving.build_server(service, args.port)
@@ -144,19 +146,34 @@ def serve(package: str, args: argparse.Namespace) -> int:
         signal.SIGTERM, lambda *_: threading.Thread(target=server.shutdown, daemon=True).start()
     )
     warm_failed = threading.Event()
-    threading.Thread(target=_warm, args=(service, server, log, warm_failed), daemon=True).start()
+    threading.Thread(
+        target=_warm, args=(service, server, log, warm_failed, diagnostics), daemon=True
+    ).start()
     log.info("listening port=%d driver=%s", args.port, host["driver"])
     server.serve_forever()
     return 1 if warm_failed.is_set() else 0
 
 
-def _warm(service: Any, server: Any, log: logging.Logger, failed: threading.Event) -> None:
+def startup_failure(exc: Exception, diagnostics: Any) -> tuple[str, str | None]:
+    """El código y el diagnóstico saneado de un arranque fallido: el
+    `detail_code` de un `AgentFailure` y la cola de la salida de error de la
+    app, o el nombre de la clase de cualquier otra excepción y su mensaje."""
+    code = getattr(exc, "detail_code", None)
+    text = getattr(exc, "diagnostics", None) if code is not None else str(exc)
+    detail = diagnostics.sanitize_diagnostics(text, os.environ) if text else ""
+    return str(code if code is not None else type(exc).__name__), detail or None
+
+
+def _warm(
+    service: Any, server: Any, log: logging.Logger, failed: threading.Event, diagnostics: Any
+) -> None:
     try:
         service.driver.warm()
         service.mark_ready()
     except Exception as exc:
-        log.error("warm_failed code=%s", type(exc).__name__)
-        service.mark_failed(type(exc).__name__)
+        code, detail = startup_failure(exc, diagnostics)
+        log.error("warm_failed code=%s", code)
+        service.mark_failed(code, detail)
         failed.set()
         server.shutdown()
         return

@@ -1981,7 +1981,8 @@
             "agente.py"
           ],
           "protocol": "rayito-v1",
-          "workdir": "/home/user/proyecto"
+          "workdir": "/home/user/proyecto",
+          "app_dir": "/opt/agents/app"
         },
         "envs": {
           "PYTHONDONTWRITEBYTECODE": "1",
@@ -2006,7 +2007,8 @@
                   "agente.py"
                 ],
                 "protocol": "rayito-v1",
-                "workdir": "/home/user/proyecto"
+                "workdir": "/home/user/proyecto",
+                "app_dir": "/opt/agents/app"
               },
               "schema": "rayito.agent-host/1",
               "v": 1
@@ -2047,7 +2049,8 @@
             "./run.sh"
           ],
           "protocol": "text",
-          "workdir": "/home/user/proyecto"
+          "workdir": "/home/user/proyecto",
+          "app_dir": "/opt/agents/app"
         },
         "envs": {
           "PYTHONDONTWRITEBYTECODE": "1",
@@ -2073,7 +2076,8 @@
                   "./run.sh"
                 ],
                 "protocol": "text",
-                "workdir": "/home/user/proyecto"
+                "workdir": "/home/user/proyecto",
+                "app_dir": "/opt/agents/app"
               },
               "schema": "rayito.agent-host/1",
               "v": 1
@@ -2185,7 +2189,8 @@
           "invoke_path": "/invocations",
           "protocol": "agentcore",
           "workdir": "/home/user/proyecto",
-          "model": "gpt-4.1-mini"
+          "model": "gpt-4.1-mini",
+          "app_dir": "/opt/agents/app"
         },
         "envs": {
           "PYTHONDONTWRITEBYTECODE": "1",
@@ -2216,7 +2221,99 @@
                 "model": "gpt-4.1-mini",
                 "port": 8000,
                 "protocol": "agentcore",
-                "workdir": "/home/user/proyecto"
+                "workdir": "/home/user/proyecto",
+                "app_dir": "/opt/agents/app"
+              },
+              "schema": "rayito.agent-host/1",
+              "v": 1
+            }
+          },
+          {
+            "path": "/home/user/.rayito/agent/custom/wiring.env",
+            "mode": 384,
+            "text": "OPENAI_API_KEY='placeholder-not-a-secret'\nOPENAI_BASE_URL='http://127.0.0.1:18001/v1'\nRAYITO_MODEL_API_KEY='placeholder-not-a-secret'\nRAYITO_MODEL_BASE_URL='http://127.0.0.1:18001/v1'\nRAYITO_MODEL_ID='gpt-4.1-mini'\nRAYITO_MODEL_PROVIDER='openai'\n"
+          }
+        ]
+      }
+    },
+    {
+      "name": "custom-http-app-requirements",
+      "runtime": {
+        "kind": "custom",
+        "options": {
+          "app": {
+            "command": [
+              "uvicorn",
+              "app:app",
+              "--port",
+              "8000"
+            ],
+            "port": 8000
+          },
+          "requirements": "requirements.txt"
+        }
+      },
+      "spec": {
+        "provider": "openai",
+        "model": "gpt-4.1-mini"
+      },
+      "wiring": "gateway",
+      "workdir": "/home/user/proyecto",
+      "expected": {
+        "driver": "http-app",
+        "python": "/opt/agents/custom/bin/python",
+        "options": {
+          "command": [
+            "uvicorn",
+            "app:app",
+            "--port",
+            "8000"
+          ],
+          "port": 8000,
+          "health_path": "/ping",
+          "invoke_path": "/invocations",
+          "protocol": "agentcore",
+          "workdir": "/home/user/proyecto",
+          "model": "gpt-4.1-mini",
+          "app_dir": "/opt/agents/app",
+          "path_prepend": [
+            "/opt/agents/custom/bin"
+          ]
+        },
+        "envs": {
+          "PYTHONDONTWRITEBYTECODE": "1",
+          "PYTHONUNBUFFERED": "1",
+          "OPENAI_API_KEY": "placeholder-not-a-secret",
+          "OPENAI_BASE_URL": "http://127.0.0.1:18001/v1",
+          "RAYITO_MODEL_PROVIDER": "openai",
+          "RAYITO_MODEL_ID": "gpt-4.1-mini",
+          "RAYITO_MODEL_BASE_URL": "http://127.0.0.1:18001/v1",
+          "RAYITO_MODEL_API_KEY": "placeholder-not-a-secret"
+        },
+        "files": [],
+        "task_files": [
+          {
+            "path": "/home/user/.rayito/agent/custom/host.json",
+            "mode": 384,
+            "json": {
+              "driver": "http-app",
+              "options": {
+                "command": [
+                  "uvicorn",
+                  "app:app",
+                  "--port",
+                  "8000"
+                ],
+                "health_path": "/ping",
+                "invoke_path": "/invocations",
+                "model": "gpt-4.1-mini",
+                "port": 8000,
+                "protocol": "agentcore",
+                "workdir": "/home/user/proyecto",
+                "app_dir": "/opt/agents/app",
+                "path_prepend": [
+                  "/opt/agents/custom/bin"
+                ]
               },
               "schema": "rayito.agent-host/1",
               "v": 1
@@ -2265,7 +2362,8 @@
           "invoke_path": "/invocations",
           "protocol": "raw",
           "workdir": "/home/user/proyecto",
-          "model": "gemini-2.5-flash"
+          "model": "gemini-2.5-flash",
+          "app_dir": "/opt/agents/app"
         },
         "envs": {
           "PYTHONDONTWRITEBYTECODE": "1",
@@ -2294,7 +2392,8 @@
                 "model": "gemini-2.5-flash",
                 "port": 3000,
                 "protocol": "raw",
-                "workdir": "/home/user/proyecto"
+                "workdir": "/home/user/proyecto",
+                "app_dir": "/opt/agents/app"
               },
               "schema": "rayito.agent-host/1",
               "v": 1

@@ -351,7 +351,10 @@ pasarela genérica se crea con `SecretGateway` (ver
 `dropped_lines`/`droppedLines`, las líneas del runtime descartadas) o lanza
 `AgentException`/`AgentError`. `stream()` **nunca** lanza por un fallo del
 agente: el último evento es `Done` o `AgentFailed`. Los errores del sandbox
-o del transporte sí se propagan.
+o del transporte sí se propagan. `usage_reported`/`usageReported` (también en
+`Done`) es `False` si el agente no informó de tokens (una app, un comando o una
+función propios que no devuelven `usage`): `usage` vale entonces cero porque se
+desconoce, no porque no se gastara nada.
 
 Eventos (`event.type`): `step_started` (`StepStarted`), `text` (`Text`, el
 texto completo de una parte; OpenCode no emite deltas), `text_delta`

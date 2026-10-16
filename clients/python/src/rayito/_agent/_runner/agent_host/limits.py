@@ -72,6 +72,7 @@ class LimitTracker:
     last_text: str = ""
     deltas: list[str] = field(default_factory=list)
     usage: dict[str, int] = field(default_factory=lambda: dict.fromkeys(USAGE_KEYS, 0))
+    usage_reported: bool = False
     tool_calls: int = 0
 
     @property
@@ -101,6 +102,7 @@ class LimitTracker:
         return None
 
     def _add_usage(self, raw: object) -> None:
+        self.usage_reported = self.usage_reported or isinstance(raw, Mapping)
         source = raw if isinstance(raw, Mapping) else {}
         for key in USAGE_KEYS:
             self.usage[key] += count(source.get(key))

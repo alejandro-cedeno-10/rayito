@@ -11,5 +11,5 @@
     {"type": "text", "text": "Respuesta sintética final."},
     {"type": "step_finished", "index": 2, "finish_reason": "stop", "usage": {"input": 300, "output": 25, "reasoning": 10, "cache_read": 4100, "cache_write": 512}}
   ],
-  "done": {"type": "done", "session_id": "ses_0000000000000000000000000a", "exit_code": 0, "usage": {"input": 1500, "output": 105, "reasoning": 10, "cache_read": 8200, "cache_write": 512}}
+  "done": {"type": "done", "session_id": "ses_0000000000000000000000000a", "exit_code": 0, "usage": {"input": 1500, "output": 105, "reasoning": 10, "cache_read": 8200, "cache_write": 512}, "usage_reported": true}
 }

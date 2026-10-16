@@ -95,7 +95,17 @@ class HttpApp:
     la ruta que debe contestar 200 cuando está listo e `invoke_path` la que
     recibe `{"prompt": ...}`. `protocol` es `"agentcore"` (el contrato de
     AgentCore), `"openai-chat"` (Chat Completions con streaming) o `"raw"`
-    (sólo se expone)."""
+    (sólo se expone).
+
+    Cuándo cada uno: con `"agentcore"` u `"openai-chat"` el host sirve
+    `/ping` y `/invocations` y traduce a tu `invoke_path`, así que
+    `deployment.invoke()` funciona pero tus rutas propias no se alcanzan
+    desde fuera; con `"raw"` el despliegue reenvía tus rutas tal cual (tu
+    `/health`, tu `/invoke`, un servidor MCP) y `invoke()` no existe: usa
+    `deployment.url` y `deployment.headers` con tu cliente. Tu `command` se
+    ejecuta con el directorio del código copiado como directorio de trabajo y
+    en su `PYTHONPATH`; con `requirements`, `python` y `pip` son los del venv
+    (sin él, `python` es el intérprete de la imagen)."""
 
     command: Sequence[str]
     port: int
@@ -120,6 +130,18 @@ class HttpApp:
             raise InvalidArgumentException(
                 f"HttpApp.protocol debe ser uno de {list(HTTP_APP_PROTOCOLS)}"
             )
+
+    @property
+    def hides_own_routes(self) -> bool:
+        """Con `protocol="agentcore"` o `"openai-chat"` el despliegue sólo
+        expone `/ping` y `/invocations` (el host traduce a tu `invoke_path`):
+        tus rutas propias (`health_path`, `invoke_path` distintas de esas
+        dos) no se alcanzan desde fuera. Con `protocol="raw"` se exponen
+        tal cual."""
+        return self.protocol != "raw" and (
+            self.health_path != AGENT_SERVICE_HEALTH_PATH
+            or self.invoke_path != AGENT_SERVICE_INVOKE_PATH
+        )
 
     @classmethod
     def from_mapping(cls, table: Mapping[str, object]) -> HttpApp:
@@ -265,8 +287,21 @@ class CustomRuntime(HostBackedRuntime):
             options["python"] = self.python
         return options
 
+    def venv_bin(self, install_dir: str = AGENT_INSTALL_DIR) -> str:
+        """El `bin` del venv de `requirements`: va el primero en el `PATH` de
+        tu app o tu comando, de modo que `python` y `pip` son los suyos."""
+        return f"{install_dir}/{CUSTOM_VENV_NAME}/bin"
+
     def venv_python(self, install_dir: str = AGENT_INSTALL_DIR) -> str:
-        return f"{install_dir}/{CUSTOM_VENV_NAME}/bin/python"
+        return f"{self.venv_bin(install_dir)}/python"
+
+    def _environment_options(self) -> dict[str, object]:
+        """Dónde corre tu código: el directorio copiado (directorio de
+        trabajo y `PYTHONPATH`) y, con `requirements`, el `bin` del venv."""
+        options: dict[str, object] = {"app_dir": AGENT_APP_DIR}
+        if self.requirements is not None:
+            options["path_prepend"] = [self.venv_bin()]
+        return options
 
     def host_python(self) -> str:
         if self.requirements is not None:
@@ -303,6 +338,7 @@ class CustomRuntime(HostBackedRuntime):
                     "protocol": self.app.protocol,
                     "workdir": workdir,
                     "model": spec.model.id,
+                    **self._environment_options(),
                 },
             )
         if self.command_argv is not None:
@@ -312,6 +348,7 @@ class CustomRuntime(HostBackedRuntime):
                     "command": list(self.command_argv),
                     "protocol": self.protocol,
                     "workdir": workdir,
+                    **self._environment_options(),
                 },
             )
         return HostSetup(

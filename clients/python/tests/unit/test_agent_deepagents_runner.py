@@ -511,3 +511,50 @@ def test_subagent_usage_is_added_to_the_next_main_step(
     usages = [event["usage"] for event in events if event["type"] == "step_finished"]
     assert [(u["input"], u["output"], u["cache_read"]) for u in usages] == [(10, 1, 0), (80, 9, 40)]
     assert all(event.get("text") != "hecho" for event in events if event["type"] == "text_delta")
+
+
+def test_a_plain_react_graph_with_an_agent_node_is_translated(
+    stubs: dict[str, Any], tmp_path: Path
+) -> None:
+    """`langgraph.prebuilt.create_react_agent` nombra `agent` a su nodo del
+    modelo (y `tools` al de herramientas): el texto, los pasos, las
+    herramientas y el uso salen como en un grafo de `create_agent`."""
+    first = FakeMessage(
+        content="",
+        tool_calls=[{"name": "calculator", "args": {"expression": "12*7"}, "id": "c1"}],
+        usage_metadata={"input_tokens": 50, "output_tokens": 4},
+    )
+    tool = FakeMessage(content="84", tool_call_id="c1", name="calculator", kind="tool")
+    final = FakeMessage(content="Son 84.", usage_metadata={"input_tokens": 70, "output_tokens": 5})
+    agent_meta = {"langgraph_node": "agent", "langgraph_checkpoint_ns": "agent:1"}
+    stubs["graph"] = FakeGraph(
+        [
+            ("messages", (FakeMessage(content="Son "), agent_meta)),
+            ("updates", {"agent": {"messages": [first]}}),
+            ("updates", {"tools": {"messages": [tool]}}),
+            ("updates", {"agent": {"messages": [final]}}),
+        ]
+    )
+    events = _run(_config(tmp_path), _request())
+    kinds = [event["type"] for event in events]
+    assert kinds.count("step_started") == 2
+    call = next(event for event in events if event["type"] == "tool_call")
+    assert (call["name"], call["output"], call["status"]) == ("calculator", "84", "completed")
+    assert next(event for event in events if event["type"] == "text_delta")["text"] == "Son "
+    usages = [event["usage"] for event in events if event["type"] == "step_finished"]
+    assert [(u["input"], u["output"]) for u in usages] == [(50, 4), (70, 5)]
+    assert events[-1]["type"] == "done"
+
+
+def test_a_node_with_another_name_is_not_taken_for_the_model(
+    stubs: dict[str, Any], tmp_path: Path
+) -> None:
+    other = {"langgraph_node": "planner", "langgraph_checkpoint_ns": "planner:1"}
+    stubs["graph"] = FakeGraph(
+        [
+            ("messages", (FakeMessage(content="ruido"), other)),
+            ("updates", {"planner": {"messages": [FakeMessage(content="ruido")]}}),
+        ]
+    )
+    events = _run(_config(tmp_path), _request())
+    assert [event["type"] for event in events if event["type"] != "session"] == ["done"]

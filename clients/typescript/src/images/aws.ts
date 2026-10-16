@@ -17,6 +17,7 @@ import {
   GetMicrovmImageCommand,
   GetMicrovmImageVersionCommand,
   LambdaMicrovmsClient,
+  ListManagedMicrovmImageVersionsCommand,
   ListMicrovmImageBuildsCommand,
   UpdateMicrovmImageVersionCommand,
 } from "@aws-sdk/client-lambda-microvms";
@@ -92,6 +93,31 @@ export class SdkPublishPorts extends AwsBuildClients implements PublishPorts {
       );
       const { $metadata: _metadata, ...fields } = build;
       return fields as Record<string, unknown>;
+    } catch (error) {
+      throw sanitizeAwsError(error, { includeMessage: true });
+    }
+  }
+
+  async newestManagedVersion(arn: string): Promise<string | undefined> {
+    try {
+      let newest: { version: string; createdAt: Date } | undefined;
+      let token: string | undefined;
+      do {
+        const page = await this.#microvms.send(
+          new ListManagedMicrovmImageVersionsCommand({
+            imageIdentifier: arn,
+            ...(token === undefined ? {} : { nextToken: token }),
+          }),
+        );
+        for (const item of page.items ?? []) {
+          const createdAt = item.createdAt as Date;
+          if (newest === undefined || createdAt > newest.createdAt) {
+            newest = { version: String(item.imageVersion), createdAt };
+          }
+        }
+        token = page.nextToken;
+      } while (token !== undefined);
+      return newest?.version;
     } catch (error) {
       throw sanitizeAwsError(error, { includeMessage: true });
     }

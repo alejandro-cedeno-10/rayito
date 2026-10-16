@@ -84,6 +84,41 @@ describe("image publish", () => {
     expect(outcome.stdout).toContain("subido s3://");
   });
 
+  it("latest publica sobre la más reciente de la base gestionada y la imprime", async () => {
+    const files = workspace();
+    const ports = new FakePublishPorts();
+    ports.managedVersion = "7";
+    const outcome = await invoke(
+      publishArgs(files.zip()).map((item) => (item === "1" ? "latest" : item)),
+      { publishPorts: ports },
+    );
+    expect(outcome.exitCode).toBe(0);
+    expect(outcome.stderr).toContain("base_image_version=7");
+    expect(ports.calls.filter((call) => call.startsWith("newestManagedVersion:"))).toHaveLength(1);
+  });
+
+  it("una versión explícita se usa tal cual y no pregunta por la base gestionada", async () => {
+    const files = workspace();
+    const ports = new FakePublishPorts();
+    const outcome = await invoke(publishArgs(files.zip()), { publishPorts: ports });
+    expect(outcome.exitCode).toBe(0);
+    expect(outcome.stderr).not.toContain("base_image_version=");
+    expect(ports.calls.some((call) => call.startsWith("newestManagedVersion:"))).toBe(false);
+  });
+
+  it("una base gestionada sin versiones sale con 1 y nombra la opción", async () => {
+    const files = workspace();
+    const ports = new FakePublishPorts();
+    ports.managedVersion = undefined;
+    const outcome = await invoke(
+      publishArgs(files.zip()).map((item) => (item === "1" ? "latest" : item)),
+      { publishPorts: ports },
+    );
+    expect(outcome.exitCode).toBe(1);
+    expect(outcome.stderr).toContain("--base-image-version");
+    expect(ports.calls).not.toContain("getMicrovmImage");
+  });
+
   it("--json deja en stdout sólo el documento y manda el progreso a stderr", async () => {
     const files = workspace();
     const outcome = await invoke(["--json", ...publishArgs(files.zip())], {

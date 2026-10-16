@@ -81,6 +81,15 @@ export interface AgentDeployOverrides {
   readonly timeoutMs: number | undefined;
   /** El access token del sandbox del despliegue, para que `invoke` y `status` se reconecten. */
   readonly accessToken: string;
+  /** Deja vivo el sandbox si el arranque falla, para depurarlo. */
+  readonly keepOnFailure: boolean;
+}
+
+/** Las rutas de una `HttpApp` que el despliegue no expone (`HttpApp.hidesOwnRoutes`). */
+export interface HiddenAppRoutes {
+  readonly protocol: string;
+  readonly healthPath: string;
+  readonly invokePath: string;
 }
 
 export interface AgentExportRequest {
@@ -118,6 +127,8 @@ export interface DeployedAgent {
 export interface DeployedService {
   readonly agent: DeployedAgent;
   readonly port: number;
+  /** Las rutas propias de la app que no se alcanzan desde fuera, para avisar. */
+  readonly hiddenRoutes?: HiddenAppRoutes | undefined;
 }
 
 /** Un `AgentProject` ya cargado: `rayito agent build|run|deploy|export`. */

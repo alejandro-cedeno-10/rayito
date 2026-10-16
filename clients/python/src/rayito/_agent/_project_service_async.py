@@ -1,7 +1,8 @@
 """`AsyncAgentProject.build()`, `run()` y `deploy()`: el espejo asíncrono de
 `_project_service.py` (ADR-028, D6), sobre `AsyncAgentTemplate`,
 `AsyncSandbox` y `AsyncAgentDeployment`. Mismas reglas: nada cuesta hasta
-llamar a una operación y `deploy()` mata su sandbox ante cualquier fallo.
+llamar a una operación y `deploy()` mata su sandbox ante cualquier fallo
+(salvo `keep_on_failure`).
 """
 
 from __future__ import annotations
@@ -14,7 +15,6 @@ from typing import TYPE_CHECKING, Any
 from rayito._agent._deployment_async import AsyncAgentDeployment, default_async_transport
 from rayito._agent._events import AgentEvent, AgentResult
 from rayito._agent._project_base import (
-    AGENT_HOST_FAILED_SUFFIX,
     AGENT_SERVE_TAG,
     AGENT_SERVICE_READY_POLL_SECONDS,
     clear_markers_command,
@@ -24,10 +24,13 @@ from rayito._agent._project_base import (
     host_entries,
     is_raw_app,
     is_raw_project,
+    kept_sandbox_note,
     project_template,
     request_timeout,
+    require_reconnectable_token,
     run_create_args,
     serve_command,
+    startup_failure_message,
     template_name,
 )
 from rayito._agent._project_service import AGENT_SERVE_USER
@@ -119,12 +122,20 @@ class AsyncProjectService:
             await self._kill(sandbox)
 
     async def deploy(
-        self, *, region: str | None = None, session: Any = None, access_token: str | None = None
+        self,
+        *,
+        region: str | None = None,
+        session: Any = None,
+        access_token: str | None = None,
+        keep_on_failure: bool = False,
     ) -> AsyncAgentDeployment:
         """Sirve el agente desde un MicroVM y devuelve su
         `AsyncAgentDeployment`. Si cualquier paso falla, mata el sandbox
-        antes de propagar."""
+        antes de propagar (salvo con `keep_on_failure=True`, que lo deja
+        vivo y lo anota en el error)."""
         project = self._project
+        if keep_on_failure:
+            require_reconnectable_token(access_token)
         sandbox = await self._create(
             deploy_create_args(project, raw=is_raw_project(project), access_token=access_token),
             region,
@@ -154,8 +165,11 @@ class AsyncProjectService:
                 request_timeout=request_timeout(project),
                 transport_factory=self._transport_factory,
             )
-        except BaseException:
-            await self._kill(sandbox)
+        except BaseException as exc:
+            if keep_on_failure and isinstance(exc, Exception):
+                exc.add_note(kept_sandbox_note(sandbox))
+            else:
+                await self._kill(sandbox)
             raise
 
     async def _create(self, arguments: dict[str, Any], region: str | None, session: Any) -> Any:
@@ -176,10 +190,8 @@ class AsyncProjectService:
             if await sandbox.files.exists(AGENT_SERVICE_READY_MARKER_PATH):
                 return
             if await sandbox.files.exists(failed_marker_path()):
-                code = (await sandbox.files.read(failed_marker_path())).strip()
-                raise SandboxException(
-                    f"el host del agente no pudo arrancar ({code or AGENT_HOST_FAILED_SUFFIX})"
-                )
+                marker = await sandbox.files.read(failed_marker_path())
+                raise SandboxException(startup_failure_message(marker))
             if self._clock() >= deadline:
                 raise TimeoutException("el host del agente no estuvo listo a tiempo")
             await self._sleep(AGENT_SERVICE_READY_POLL_SECONDS)

@@ -48,6 +48,7 @@ import {
 } from "../command.js";
 import { EXIT_USAGE } from "../exit-codes.js";
 import { UsageError } from "../failures.js";
+import type { HiddenAppRoutes } from "../ops-ports.js";
 import { TOKEN_ENV_VAR, TokenFileError, writeTokenFile } from "../tokens.js";
 import { tokenFileOption, tokenOrUsage } from "./sandbox.js";
 import { buildLogPrinter, failure, printBuildInfo } from "./template.js";
@@ -159,6 +160,19 @@ function isOneOf(value: string, allowed: readonly string[]): boolean {
   return allowed.includes(value);
 }
 
+const USAGE_UNKNOWN_LABEL = "desconocido";
+const CUSTOM_INIT_HINT =
+  'la app usa protocol = "raw": el despliegue reenvía tus rutas (/health, /invoke) con ' +
+  'deployment.url y deployment.headers; deployment.invoke() es para protocol = "agentcore"';
+
+function rawRoutesHint(routes: HiddenAppRoutes): string {
+  return (
+    `aviso: con protocol = "${routes.protocol}" el despliegue sólo expone /ping y /invocations; ` +
+    `tus rutas (${routes.healthPath} y ${routes.invokePath}) no se alcanzan desde fuera. ` +
+    'Usa protocol = "raw" en [runtime.app] para exponerlas.'
+  );
+}
+
 function resultDocument(result: AgentResult): Record<string, unknown> {
   const { usage } = result;
   return {
@@ -173,6 +187,7 @@ function resultDocument(result: AgentResult): Record<string, unknown> {
       cacheWrite: usage.cacheWrite,
       total: usage.total,
     },
+    usageReported: result.usageReported !== false,
     exitCode: result.exitCode,
   };
 }
@@ -184,7 +199,8 @@ function printResult(context: CommandContext, result: AgentResult): void {
   }
   context.console.echo(result.text);
   context.console.echo(`session_id=${result.sessionId}`, { err: true });
-  context.console.echo(`steps=${result.steps} tokens=${result.usage.total}`, { err: true });
+  const tokens = result.usageReported === false ? USAGE_UNKNOWN_LABEL : result.usage.total;
+  context.console.echo(`steps=${result.steps} tokens=${tokens}`, { err: true });
 }
 
 /**
@@ -351,6 +367,9 @@ export const agentInitCommand = defineCommand({
       for (const name of written) {
         context.console.echo(`escrito ${name}`);
       }
+      if (runtime === "custom") {
+        context.console.echo(CUSTOM_INIT_HINT);
+      }
       context.console.echo(
         `siguiente paso: rayito agent build --bucket <bucket> --file ${directory}`,
       );
@@ -431,7 +450,9 @@ export const agentDeployCommand = defineCommand({
     "sandbox y la URL; las cabeceras de acceso no se imprimen nunca (se piden con " +
     "AgentDeployment.headers). El access token del sandbox se guarda en --token-file (o es el " +
     "de RAYITO_ACCESS_TOKEN): `invoke` y `status` lo necesitan. Vive como mucho 8 h: para " +
-    "pararlo, `rayito agent stop`.",
+    "pararlo, `rayito agent stop`. Un arranque fallido imprime su causa (el final de la salida " +
+    "de error de la app, sin valores de entorno ni credenciales) y termina el sandbox, salvo " +
+    "con --keep-on-failure.",
   parameters: [
     fileOption,
     option(["--timeout"], {
@@ -443,6 +464,11 @@ export const agentDeployCommand = defineCommand({
       help: "Puerto del servicio (por defecto, el del fichero).",
     }),
     tokenFileOption,
+    flag(["--keep-on-failure"], {
+      help:
+        "Si el arranque falla, deja el sandbox vivo para depurarlo (cuesta hasta que lo " +
+        "termines con `rayito agent stop`).",
+    }),
   ],
   run: (context) =>
     guarded(context, async () => {
@@ -454,8 +480,12 @@ export const agentDeployCommand = defineCommand({
         port: values.optionalNumber("port"),
         timeoutMs: timeout === undefined ? undefined : timeout * MS_PER_SECOND,
         accessToken,
+        keepOnFailure: values.flag("keep_on_failure"),
       });
-      const { agent, port } = deployed;
+      const { agent, port, hiddenRoutes } = deployed;
+      if (hiddenRoutes !== undefined) {
+        context.console.echo(rawRoutesHint(hiddenRoutes), { err: true });
+      }
       if (context.globals.json) {
         context.console.emitJson({ sandboxId: agent.sandboxId, url: agent.url, port });
         return undefined;

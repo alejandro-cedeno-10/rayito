@@ -374,7 +374,8 @@ GROUPS: tuple[tuple[str, ...], ...] = (
         # `/invocations`, port 8088 inside a MicroVM because `rayd` owns 8080
         # and 9000, 8080 in an exported container), its request bound and
         # concurrency, the ready marker the host writes under
-        # `agentStateDir`, the default lifetime of a deployment and the
+        # `agentStateDir` and the bound of the redacted stderr tail it leaves
+        # in the failed marker, the default lifetime of a deployment and the
         # margin `AgentProject.run()` adds to the sandbox lifetime, the
         # pins of the framework runtimes (PyPI and npm, checked 2026-10-16;
         # Hermes by tag and full commit; Node by the sha256 of the linux
@@ -393,6 +394,7 @@ GROUPS: tuple[tuple[str, ...], ...] = (
         "defaultAgentDeployTimeoutSeconds",
         "agentRunSandboxMarginSeconds",
         "agentServiceReadyMarkerPath",
+        "agentStartupDiagnosticsMaxBytes",
         "agentServiceSchema",
         "agentHermesApiPort",
         "agentStrandsVersion",

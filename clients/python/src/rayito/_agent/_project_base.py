@@ -8,10 +8,12 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import posixpath
 from collections.abc import Mapping
 from typing import Any, Final
 
+from rayito._agent._custom import CustomRuntime, HttpApp
 from rayito._agent._deployment_base import labels_for
 from rayito._agent._opencode import shell_quote
 from rayito._agent._project_domain import AgentProject
@@ -31,9 +33,12 @@ from rayito._limits import (
     AGENT_RUN_SANDBOX_MARGIN_SECONDS,
     AGENT_SERVICE_READY_MARKER_PATH,
     AGENT_SERVICE_SESSION_HEADER,
+    AGENT_STARTUP_DIAGNOSTICS_MAX_BYTES,
     DEFAULT_AGENT_WORKDIR,
 )
 from rayito._models import WriteEntry
+from rayito._sandbox_base import ACCESS_TOKEN_ENV_VAR
+from rayito.exceptions import InvalidArgumentException
 
 #: Esquema del `host.json` que lee `agent_host` (`rayito.agent-host/1`).
 AGENT_HOST_SCHEMA: Final = "rayito.agent-host/1"
@@ -150,6 +155,14 @@ def is_raw_project(project: AgentProject) -> bool:
     return is_raw_app(host)
 
 
+def app_hiding_own_routes(project: AgentProject) -> HttpApp | None:
+    """La `HttpApp` del proyecto si sus rutas propias no se alcanzan desde
+    fuera (`HttpApp.hides_own_routes`), para avisar al desplegar."""
+    runtime = resolve_runtime(project.runtime)
+    app = runtime.app if isinstance(runtime, CustomRuntime) else None
+    return app if app is not None and app.hides_own_routes else None
+
+
 def host_config_for(project: AgentProject, sandbox_gateways: Mapping[str, Any]) -> HostConfig:
     """La `HostConfig` del runtime con las URLs de las pasarelas del sandbox
     recién creado; falla con `InvalidArgumentException` si falta una."""
@@ -208,4 +221,40 @@ def clear_markers_command() -> str:
     `deploy()` diera por listo un host que aún no escucha."""
     return (
         f"rm -f {shell_quote(AGENT_SERVICE_READY_MARKER_PATH)} {shell_quote(failed_marker_path())}"
+    )
+
+
+def startup_failure_message(marker: str) -> str:
+    """El mensaje de un arranque fallido a partir del contenido del marcador
+    de fallo: la primera línea es el código y, si hay, el resto es el final de
+    la salida de error de la app que el host ya saneó. Se vuelve a acotar aquí
+    por si el marcador viene de un host más viejo o de otro escritor."""
+    code, _, detail = marker.strip().partition("\n")
+    message = f"el host del agente no pudo arrancar ({code.strip() or AGENT_HOST_FAILED_SUFFIX})"
+    tail = (
+        detail.strip()
+        .encode("utf-8")[-AGENT_STARTUP_DIAGNOSTICS_MAX_BYTES:]
+        .decode("utf-8", errors="ignore")
+    )
+    return f"{message}. Final de la salida de error de la app:\n{tail}" if tail else message
+
+
+def require_reconnectable_token(access_token: str | None) -> None:
+    """`keep_on_failure=True` conserva un sandbox al que sólo se llega con
+    su access token: sin uno que el llamador conozca (argumento o
+    `RAYITO_ACCESS_TOKEN`), conservarlo no sirve de nada."""
+    if not access_token and not os.environ.get(ACCESS_TOKEN_ENV_VAR):
+        raise InvalidArgumentException(
+            "deploy(keep_on_failure=True) necesita access_token (o "
+            f"{ACCESS_TOKEN_ENV_VAR}) para poder conectarte al sandbox que se conserva"
+        )
+
+
+def kept_sandbox_note(sandbox: Any) -> str:
+    """La nota que lleva el error de un despliegue con `keep_on_failure`:
+    qué sandbox quedó vivo y cómo terminarlo. Sólo el id, nunca el token."""
+    return (
+        f"keep_on_failure=True: el sandbox {sandbox.sandbox_id} sigue vivo; conéctate con "
+        "Sandbox.connect(sandbox_id, access_token=...) para depurarlo y termínalo con "
+        "Sandbox.kill(sandbox_id) al acabar."
     )

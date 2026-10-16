@@ -40,6 +40,7 @@ from rayito.cli._publish import (
     publish,
     publish_with_sizes,
     require_efs_combination,
+    resolve_base_image_version,
     validate_run_id,
 )
 from rayito.cli._session import Clients, clients_of, json_mode
@@ -205,8 +206,9 @@ def publish_command(
         typer.Option(
             "--base-image-version",
             help=(
-                "baseImageVersion de la base gestionada "
-                "(imageVersion de list-managed-microvm-image-versions)."
+                "baseImageVersion de la base gestionada (imageVersion de "
+                "list-managed-microvm-image-versions), o `latest` para la más reciente "
+                "que liste la base gestionada (se imprime la elegida)."
             ),
         ),
     ],
@@ -284,6 +286,12 @@ def publish_command(
     environment_variables = parse_environment_assignments(env)
     capabilities = validate_os_capabilities(os_capabilities)
     validate_efs_combination(with_efs, validate_variant(variant), capabilities)
+    clients = clients_of(ctx)
+    resolved_version = resolve_base_image_version(
+        clients.microvms, clients.region, base_image_version
+    )
+    if resolved_version != base_image_version:
+        echo(f"base_image_version={resolved_version}", err=True)
     settings = PublishSettings(
         artifact=artifact,
         image_name=image_name or default_image_name(variant, with_efs=with_efs),
@@ -291,7 +299,7 @@ def publish_command(
         bucket=resolve_bucket(bucket),
         stack_name=stack_name,
         build_role_arn=build_role_arn,
-        base_image_version=base_image_version,
+        base_image_version=resolved_version,
         memory_mib=memory_mib,
         force=force,
         timeout_seconds=timeout_seconds,
@@ -301,9 +309,9 @@ def publish_command(
         artifact_run_id=run_id,
     )
     code = (
-        publish_with_sizes(clients_of(ctx), settings, size_names, json_output=json_mode(ctx))
+        publish_with_sizes(clients, settings, size_names, json_output=json_mode(ctx))
         if size_names
-        else publish(clients_of(ctx), settings, json_output=json_mode(ctx))
+        else publish(clients, settings, json_output=json_mode(ctx))
     )
     if code:
         raise typer.Exit(code)

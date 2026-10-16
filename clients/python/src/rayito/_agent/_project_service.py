@@ -2,7 +2,7 @@
 la capa de aplicación sobre `AgentTemplate`, `Sandbox` y `AgentDeployment`.
 Nada aquí se ejecuta al construir o cargar un proyecto; cada operación es
 la única que crea recursos y `deploy()` mata su sandbox ante cualquier
-fallo.
+fallo (salvo `keep_on_failure`).
 """
 
 from __future__ import annotations
@@ -14,7 +14,6 @@ from typing import TYPE_CHECKING, Any, Final
 from rayito._agent._deployment import AgentDeployment, default_transport
 from rayito._agent._events import AgentEvent, AgentResult
 from rayito._agent._project_base import (
-    AGENT_HOST_FAILED_SUFFIX,
     AGENT_SERVE_TAG,
     AGENT_SERVICE_READY_POLL_SECONDS,
     clear_markers_command,
@@ -24,10 +23,13 @@ from rayito._agent._project_base import (
     host_entries,
     is_raw_app,
     is_raw_project,
+    kept_sandbox_note,
     project_template,
     request_timeout,
+    require_reconnectable_token,
     run_create_args,
     serve_command,
+    startup_failure_message,
     template_name,
 )
 from rayito._images import DEFAULT_BUILD_TIMEOUT_SECONDS
@@ -119,12 +121,19 @@ class ProjectService:
             self._kill(sandbox)
 
     def deploy(
-        self, *, region: str | None = None, session: Any = None, access_token: str | None = None
+        self,
+        *,
+        region: str | None = None,
+        session: Any = None,
+        access_token: str | None = None,
+        keep_on_failure: bool = False,
     ) -> AgentDeployment:
         """Sirve el agente desde un MicroVM y devuelve su
         `AgentDeployment`. Si cualquier paso falla, mata el sandbox antes de
         propagar."""
         project = self._project
+        if keep_on_failure:
+            require_reconnectable_token(access_token)
         sandbox = self._create(
             deploy_create_args(project, raw=is_raw_project(project), access_token=access_token),
             region,
@@ -153,8 +162,11 @@ class ProjectService:
                 request_timeout=request_timeout(project),
                 transport_factory=self._transport_factory,
             )
-        except BaseException:
-            self._kill(sandbox)
+        except BaseException as exc:
+            if keep_on_failure and isinstance(exc, Exception):
+                exc.add_note(kept_sandbox_note(sandbox))
+            else:
+                self._kill(sandbox)
             raise
 
     def _create(self, arguments: dict[str, Any], region: str | None, session: Any) -> Any:
@@ -175,10 +187,8 @@ class ProjectService:
             if sandbox.files.exists(AGENT_SERVICE_READY_MARKER_PATH):
                 return
             if sandbox.files.exists(failed_marker_path()):
-                code = sandbox.files.read(failed_marker_path()).strip()
-                raise SandboxException(
-                    f"el host del agente no pudo arrancar ({code or AGENT_HOST_FAILED_SUFFIX})"
-                )
+                marker = sandbox.files.read(failed_marker_path())
+                raise SandboxException(startup_failure_message(marker))
             if self._clock() >= deadline:
                 raise TimeoutException("el host del agente no estuvo listo a tiempo")
             self._sleep(AGENT_SERVICE_READY_POLL_SECONDS)

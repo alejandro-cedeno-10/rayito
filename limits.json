@@ -293,6 +293,7 @@
   "defaultAgentDeployTimeoutSeconds": 3600,
   "agentRunSandboxMarginSeconds": 60,
   "agentServiceReadyMarkerPath": "/home/user/.rayito/agent/host/ready",
+  "agentStartupDiagnosticsMaxBytes": 2048,
   "agentServiceSchema": "rayito.agent-service/1",
   "agentHermesApiPort": 8642,
   "agentStrandsVersion": "1.61.1",

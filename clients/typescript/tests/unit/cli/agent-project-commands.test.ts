@@ -15,6 +15,7 @@ import {
   DEFAULT_SERVICE_PORT,
   DEPLOYMENT_URL,
   FakeAgentProjects,
+  RESULT,
   SANDBOX_ID,
   USAGE,
 } from "./agent-project-fakes.js";
@@ -92,6 +93,32 @@ describe("agent init", () => {
     ]);
     expect(outcome.exitCode).toBe(0);
     expect(readFileSync(join(directory, "rayito-agent.toml"), "utf8")).toMatch(/^schema =/);
+  });
+
+  it("custom escribe una app con [runtime.app], requisitos e install, y explica raw", async () => {
+    const directory = tempDirectory();
+    const outcome = await invoke(new FakeAgentProjects(), [
+      "agent",
+      "init",
+      directory,
+      "--runtime",
+      "custom",
+    ]);
+    expect(outcome.exitCode).toBe(0);
+    expect(outcome.stdout).toContain('protocol = "raw"');
+    const projectFile = readFileSync(join(directory, "rayito-agent.toml"), "utf8");
+    for (const key of ['requirements = "requirements.txt"', "install = []", "[runtime.app]"]) {
+      expect(projectFile).toContain(key);
+    }
+    expect(readFileSync(join(directory, "serve.py"), "utf8")).toContain("/invoke");
+  });
+
+  it("langgraph escribe un grafo de LangGraph a secas", async () => {
+    const directory = tempDirectory();
+    await invoke(new FakeAgentProjects(), ["agent", "init", directory, "--runtime", "langgraph"]);
+    const graph = readFileSync(join(directory, "graph.py"), "utf8");
+    expect(graph).toContain("create_react_agent");
+    expect(graph).not.toContain("deepagents");
   });
 
   it("--json lista los ficheros escritos", async () => {
@@ -175,8 +202,22 @@ describe("agent run", () => {
       text: "hola",
       steps: 2,
       usage: { input: 10, output: 5, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 15 },
+      usageReported: true,
       exitCode: 0,
     });
+  });
+
+  it("dice desconocido cuando el agente no informó de tokens", async () => {
+    const projects = new FakeAgentProjects();
+    projects.project.runResult = {
+      ...RESULT,
+      usage: new TokenUsage(),
+      usageReported: false,
+    };
+    const text = await invoke(projects, ["agent", "run", "hola"]);
+    expect(text.stderr).toContain("tokens=desconocido");
+    const document = await invoke(projects, ["--json", "agent", "run", "hola"]);
+    expect(JSON.parse(document.stdout).usageReported).toBe(false);
   });
 
   it("--stream escribe los deltas y un salto de línea", async () => {
@@ -257,13 +298,35 @@ describe("agent deploy", () => {
     expect(outcome.stdout.toLowerCase()).not.toContain("authorization");
   });
 
+  it("--keep-on-failure sólo se reenvía si se pide", async () => {
+    const projects = new FakeAgentProjects();
+    await invoke(projects, ["agent", "deploy"], WITH_TOKEN);
+    await invoke(projects, ["agent", "deploy", "--keep-on-failure"], WITH_TOKEN);
+    expect(projects.project.calls.map((call) => call[4])).toEqual([false, true]);
+  });
+
+  it("avisa cuando las rutas de la app no se exponen", async () => {
+    const projects = new FakeAgentProjects();
+    projects.project.hiddenRoutes = {
+      protocol: "agentcore",
+      healthPath: "/health",
+      invokePath: "/invoke",
+    };
+    const warned = await invoke(projects, ["agent", "deploy"], WITH_TOKEN);
+    expect(warned.stderr).toContain('protocol = "raw"');
+    expect(warned.stderr).toContain("/health");
+    projects.project.hiddenRoutes = undefined;
+    const quiet = await invoke(projects, ["agent", "deploy"], WITH_TOKEN);
+    expect(quiet.stderr).not.toContain("aviso");
+  });
+
   it("sólo cambia lo que se pasó", async () => {
     const projects = new FakeAgentProjects();
     await invoke(projects, ["agent", "deploy"], WITH_TOKEN);
     await invoke(projects, ["agent", "deploy", "--port", "9100", "--timeout", "120"], WITH_TOKEN);
     expect(projects.project.calls).toEqual([
-      ["deploy", undefined, undefined, ACCESS_TOKEN],
-      ["deploy", 9100, 120 * MS_PER_SECOND, ACCESS_TOKEN],
+      ["deploy", undefined, undefined, ACCESS_TOKEN, false],
+      ["deploy", 9100, 120 * MS_PER_SECOND, ACCESS_TOKEN, false],
     ]);
   });
 
@@ -276,7 +339,7 @@ describe("agent deploy", () => {
     expect(token).not.toBe("");
     expect(outcome.stdout).not.toContain(token);
     expect(statSync(tokenFile).mode & 0o777).toBe(0o600);
-    expect(projects.project.calls).toEqual([["deploy", undefined, undefined, token]]);
+    expect(projects.project.calls).toEqual([["deploy", undefined, undefined, token, false]]);
   });
 
   it("sin forma de reconectarse no crea nada y sale con 2", async () => {

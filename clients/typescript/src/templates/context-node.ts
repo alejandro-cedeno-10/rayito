@@ -108,23 +108,24 @@ function changedDuringRead(relpath: string, cause?: unknown): BuildError {
 }
 
 /** `[rutaRelativaAlContexto, contenido]`, ordenado y sin duplicados, para
- * cada `CopyStep.src` bajo `contextDir`. */
+ * cada `CopyStep.src` bajo `contextDir`. `extraIgnore` son patrones de
+ * `.dockerignore` que se suman a los del fichero y filtran antes de leer. */
 export async function collectContextFiles(
   contextDir: string,
   copies: readonly CopyStep[],
+  extraIgnore: readonly string[] = [],
 ): Promise<Array<[string, Uint8Array]>> {
   // Resolved once, like `_context.py`'s `collect_context_files`: every
   // `CopyStep.src` and every file found under it is checked against this
   // same real path, so a symlink that escapes `contextDir` is caught too.
   const resolvedRoot = await realpath(contextDir);
-  let ignore: DockerIgnore;
+  let patterns = "";
   try {
-    ignore = DockerIgnore.fromText(
-      await readFile(join(resolvedRoot, DOCKERIGNORE_FILENAME), "utf8"),
-    );
+    patterns = await readFile(join(resolvedRoot, DOCKERIGNORE_FILENAME), "utf8");
   } catch {
-    ignore = DockerIgnore.empty();
+    patterns = "";
   }
+  const ignore = DockerIgnore.fromText([patterns, ...extraIgnore].join("\n"));
   const seen = new Map<string, Uint8Array>();
   for (const step of copies) {
     const source = join(resolvedRoot, step.src);

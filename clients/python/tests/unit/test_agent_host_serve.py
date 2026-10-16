@@ -85,6 +85,7 @@ def test_invocation_returns_the_json_result() -> None:
         "text": "respuesta",
         "session_id": SESSION,
         "usage": {"input": 10, "output": 0, "reasoning": 0, "cache_read": 0, "cache_write": 0},
+        "usage_reported": True,
         "steps": 2,
         "failed": None,
     }

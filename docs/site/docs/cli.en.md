@@ -115,6 +115,12 @@ rayito image publish --artifact image/rayito-image.zip --base-image-version 1 \
     [--artifact-run-id RUN_ID]
 ```
 
+`--base-image-version` is required and pins the version of the AWS managed
+base (`imageVersion` of `list-managed-microvm-image-versions`) the image is
+built on. There is no need to look it up by hand: with `latest` the newest one
+AWS lists is used and printed (`base_image_version=<version>`); an explicit
+number pins a reproducible build.
+
 `--with-efs` publishes the image with the `amazon-efs-utils` that `volumes=`
 needs ([EFS volumes](funciones-opcionales/volumenes-efs.md)): it requires a
 zip made with `rayito image zip --with-efs`, `--os-capabilities ALL` (`rayd`
@@ -500,7 +506,7 @@ rayito agent init [DIR] [--runtime R] [--language python|typescript] [--provider
                   [--region R] [--force]
 rayito agent build --bucket B [--file PATH] [--force] [--timeout 1800]
 rayito agent run PROMPT [--file PATH] [--session-id ID] [--model ID] [--stream]
-rayito agent deploy [--file PATH] [--timeout S] [--port N] [--token-file F]
+rayito agent deploy [--file PATH] [--timeout S] [--port N] [--token-file F] [--keep-on-failure]
 rayito agent export --target docker|agentcore --out DIR [--file PATH] [--overwrite]
 rayito agent invoke SANDBOX_ID PROMPT [--session-id ID] [--stream] [--token-file F]
 rayito agent status SANDBOX_ID [--token-file F]
@@ -519,7 +525,17 @@ and `port`) and never the access headers, and `--stream` prints the events as
 they arrive (with `--json`, one JSON line per event). `deploy` saves the
 sandbox access token to `--token-file` (or uses `RAYITO_ACCESS_TOKEN`) and
 exits with 2 without creating anything if it has neither; `invoke` and `status`
-read it the same way, and `stop` does not need it.
+read it the same way, and `stop` does not need it. If the startup fails,
+`deploy` prints the cause (the failure code and the end of the app's standard
+error, with no environment values or credentials) and terminates the sandbox,
+unless `--keep-on-failure` is given, which leaves it alive for debugging (it
+bills until `rayito agent stop`). With an `HttpApp` that declares its own
+routes without `protocol = "raw"`, `deploy` warns that they are not reachable
+from outside. `run` and `invoke` print `tokens=desconocido` ("unknown") (and
+`usageReported: false` with `--json`) when the agent reported no tokens.
+`init --runtime custom` writes an HTTP app (`[runtime.app]` with `protocol =
+"raw"`, `requirements`, `install` and a `serve.py`), and `init --runtime
+langgraph`, a plain LangGraph graph.
 
 Builds the `AgentTemplate` image
 ([Agent templates](funciones-opcionales/templates-de-agente.md)): it starts

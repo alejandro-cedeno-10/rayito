@@ -241,6 +241,7 @@ class AsyncAgentStream:
             exit_code=final.exit_code,
             tool_calls=tuple(self._tracker.tool_calls),
             dropped_lines=self._buffer.dropped,
+            usage_reported=final.usage_reported,
         )
 
     async def aclose(self) -> None:

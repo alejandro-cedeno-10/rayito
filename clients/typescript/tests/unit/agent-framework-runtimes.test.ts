@@ -18,6 +18,7 @@ import {
   HERMES_PROVIDERS,
   HermesRuntime,
 } from "../../src/agent/hermes.js";
+import { AGENT_APP_DIR } from "../../src/agent/recipes.js";
 import {
   directWiring,
   gatewayWiring,
@@ -374,6 +375,47 @@ describe("safe defaults (design D9)", () => {
       workdir: "/w",
     });
     expect(JSON.parse(DECODER.decode(host.files.files[0]?.data)).toolsets).toEqual(["file"]);
+  });
+
+  test("a custom app runs from the source directory with its venv first", () => {
+    const runtime = new CustomRuntime({
+      requirements: "requirements.txt",
+      app: new HttpApp({ command: ["python", "-m", "agent.server"], port: 9100 }),
+    });
+    const host = runtime.hostConfig(bedrock(), { wiring: directWiring(), workdir: "/home/user" });
+    expect(host.options.app_dir).toBe(AGENT_APP_DIR);
+    expect(host.options.path_prepend).toEqual([runtime.venvBin()]);
+    expect(runtime.venvPython()).toBe(`${runtime.venvBin()}/python`);
+    expect(host.python).toBe(runtime.venvPython());
+  });
+
+  test("without requirements there is no venv on the path", () => {
+    const runtime = new CustomRuntime({
+      app: new HttpApp({ command: ["python", "serve.py"], port: 9100 }),
+    });
+    const host = runtime.hostConfig(bedrock(), { wiring: directWiring(), workdir: "/home/user" });
+    expect(host.options.app_dir).toBe(AGENT_APP_DIR);
+    expect(host.options).not.toHaveProperty("path_prepend");
+  });
+
+  test("a custom command gets the same environment options", () => {
+    const runtime = new CustomRuntime({
+      command: ["python", "agent.py"],
+      requirements: "requirements.txt",
+    });
+    const host = runtime.hostConfig(bedrock(), { wiring: directWiring(), workdir: "/home/user" });
+    expect(host.options.app_dir).toBe(AGENT_APP_DIR);
+    expect(host.options.path_prepend).toEqual([runtime.venvBin()]);
+  });
+
+  test.each([
+    [new HttpApp({ command: ["x"], port: 9100 }), false],
+    [new HttpApp({ command: ["x"], port: 9100, healthPath: "/health" }), true],
+    [new HttpApp({ command: ["x"], port: 9100, invokePath: "/invoke" }), true],
+    [new HttpApp({ command: ["x"], port: 9100, healthPath: "/health", protocol: "raw" }), false],
+    [new HttpApp({ command: ["x"], port: 9100, invokePath: "/v1", protocol: "openai-chat" }), true],
+  ])("an app hides its own routes unless the protocol is raw %#", (app, hidden) => {
+    expect(app.hidesOwnRoutes).toBe(hidden);
   });
 
   test("hermes rejects command patterns it cannot enforce", () => {

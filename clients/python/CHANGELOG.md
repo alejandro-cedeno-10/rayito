@@ -53,6 +53,77 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   podían volver a abrir. `invoke` y `status` leen el token con `--token-file` y
   sin él salen con 2; `stop` ya no lo necesita (`terminate-microvm` por id).
 
+- **`AgentDeployment.pause()`, `resume()` y `access_token`, y `deploy(keep_on_failure=)`
+  (`agent-runtimes-dx`)**: `AgentDeployment` y `AsyncAgentDeployment` suspenden
+  y reanudan el sandbox del despliegue (`Sandbox.pause()` y `resume()`) y exponen
+  el access token con el que se creó, también el que se generó cuando no se pasó
+  `access_token=`, para reconectarse con `AgentDeployment.connect(sandbox_id,
+  access_token=...)`. `AgentProject.deploy(keep_on_failure=True)` deja vivo el
+  sandbox de un despliegue que falla (apagado por defecto: sigue facturando
+  hasta que lo termines), exige un `access_token` que el llamador conozca y
+  anota el id del sandbox en el error. `rayito agent deploy --keep-on-failure`
+  hace lo mismo.
+
+- **`AgentResult.usage_reported` y `Done.usage_reported`**: `False` cuando el
+  agente no informó de tokens (una `HttpApp` cuya respuesta no lleva `usage`, un
+  comando con `protocol="text"` o una función que no lo devuelve). `usage` vale
+  entonces cero porque se desconoce, no porque no se gastara nada, y la CLI
+  imprime `tokens=desconocido` y `usageReported` en `--json`. Una `HttpApp`
+  informa de `usage` si su respuesta lo trae (`input`/`output`,
+  `input_tokens`/`output_tokens` o `prompt_tokens`/`completion_tokens`).
+
+- **`HttpApp.hides_own_routes` y el aviso de `rayito agent deploy`**: con
+  `protocol="agentcore"` u `"openai-chat"` el despliegue sólo expone `/ping` y
+  `/invocations`; si tu `health_path` o `invoke_path` son otros, esas rutas no
+  se alcanzan desde fuera (404). `rayito agent deploy` lo avisa y apunta a
+  `protocol="raw"`; la guía explica cuándo usar cada protocolo.
+
+- **`rayito image publish --base-image-version latest`**: resuelve la versión
+  más reciente que lista `list-managed-microvm-image-versions` y la imprime
+  (`base_image_version=...`), así no hay que buscarla a mano y el cambio de la
+  base nunca pasa en silencio; la opción sigue siendo obligatoria y un número
+  explícito sigue fijándola para una build reproducible.
+
+### Cambiado
+
+- **`CustomRuntime` corre tu app y tu comando desde el código copiado, con su
+  venv primero en el `PATH` (`agent-runtimes-dx`)**: el directorio de trabajo de
+  una `HttpApp` es el del `source` copiado (`/opt/agents/app`) y va el primero en
+  su `PYTHONPATH`, así que `python -m paquete.modulo` funciona; con
+  `requirements`, `python` y `pip` son los del venv, y sin él `python` es el
+  intérprete de la imagen (que sólo trae `python3`). Los `command` de un
+  `CustomRuntime` reciben el mismo `PATH` y `PYTHONPATH`, y el directorio de
+  trabajo de un `command` no cambia. Hace falta reconstruir la imagen para que
+  una ya construida lo use.
+
+- **El uso de un agente que no informa de tokens es desconocido, no cero**: el
+  host marca `usage_reported` en `POST /invocations` y deja `usage` sin valor en
+  el `step_finished` de un comando con `protocol="text"` o de una función sin
+  `usage`. Un cliente de 0.13 que no conoce el campo sigue leyendo `usage`.
+
+- **Un arranque fallido del host cuenta qué falló**: el marcador de fallo lleva el
+  `detail_code` (`app_exited`, `app_not_ready`, la clase de la excepción) y, en
+  una `HttpApp`, el final de su salida de error (acotado a
+  `AGENT_STARTUP_DIAGNOSTICS_MAX_BYTES`, sin valores de entorno ni credenciales);
+  `deploy()` lo incluye en la `SandboxException` en vez del nombre de clase
+  opaco `AgentFailure`.
+
+- **`rayito agent init --runtime custom` escribe una app HTTP y `langgraph` un
+  grafo de LangGraph a secas**: `custom` escribe `[runtime.app]` (con `protocol =
+  "raw"`, sus rutas `/health` e `/invoke`), `requirements`, `install` y un
+  `serve.py` mínimo; `langgraph`, un `create_react_agent` en vez de
+  `create_deep_agent`. El runtime `langgraph` traduce además el nodo `agent` de
+  `create_react_agent` (antes sólo `model`), así que un grafo de LangGraph a
+  secas devuelve texto, pasos, herramientas y uso.
+
+### Corregido
+
+- **`exclude` de un `AgentProject`/`AgentTemplate(app_exclude=)` filtra antes de
+  leer**: un `.venv` excluido se leía entero y luego se descartaba (y su
+  `cacert.pem` disparaba el aviso de ficheros con secretos). Ahora los patrones
+  de `exclude` se suman a los de `.dockerignore` y filtran antes de leer ningún
+  fichero.
+
 ## [0.13.0] - 2026-10-16
 
 ### Añadido

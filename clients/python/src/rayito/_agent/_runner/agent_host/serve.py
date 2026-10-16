@@ -4,8 +4,8 @@ el contrato HTTP de AgentCore, con `http.server.ThreadingHTTPServer`.
 - `GET /ping` -> `200 {"status": "Healthy" | "HealthyBusy", "time_of_last_update"}`.
 - `POST /invocations` con `{"prompt", "session_id"?, "model"?, "reasoning"?}`.
   Con `Accept: text/event-stream`, un mensaje SSE por evento v1 hasta `done`
-  o `agent_failed`; si no, `{"v", "text", "session_id", "usage", "steps",
-  "failed"}`. `400` cuerpo inválido, `413` demasiado grande, `429` con
+  o `agent_failed`; si no, `{"v", "text", "session_id", "usage",
+  "usage_reported", "steps", "failed"}`. `400` cuerpo inválido, `413` demasiado grande, `429` con
   `Retry-After` por encima de `max_concurrency`, `503` antes de estar listo
   y `401` si hay token y no coincide.
 
@@ -104,12 +104,15 @@ class ServiceConfig:
     io_timeout_seconds: float = IO_TIMEOUT_SECONDS
 
 
-def write_failed_marker(config: ServiceConfig, code: str) -> None:
-    """Deja el motivo de un arranque fallido (el nombre de una clase de
-    excepción, nunca su mensaje) junto al marcador de listo, para que
-    `deploy()` falle enseguida y no al agotar su plazo."""
+def write_failed_marker(config: ServiceConfig, code: str, diagnostics: str | None = None) -> None:
+    """Deja el motivo de un arranque fallido junto al marcador de listo, para
+    que `deploy()` falle enseguida y no al agotar su plazo. La primera línea
+    es el código (el `detail_code` del fallo o el nombre de una clase de
+    excepción) y, si hay, el resto es el diagnóstico ya saneado
+    (`diagnostics.sanitize_diagnostics`)."""
     Service._write_marker(
-        None if config.ready_marker is None else config.ready_marker + FAILED_SUFFIX, code
+        None if config.ready_marker is None else config.ready_marker + FAILED_SUFFIX,
+        code if not diagnostics else f"{code}\n{diagnostics}",
     )
 
 
@@ -136,8 +139,8 @@ class Service:
         self._ready = True
         self._write_marker(self.config.ready_marker, "ready")
 
-    def mark_failed(self, code: str) -> None:
-        write_failed_marker(self.config, code)
+    def mark_failed(self, code: str, diagnostics: str | None = None) -> None:
+        write_failed_marker(self.config, code, diagnostics)
 
     @staticmethod
     def _write_marker(path: str | None, content: str) -> None:
@@ -294,6 +297,7 @@ def result_body(invocation: Invocation, terminal: Event) -> dict[str, Any]:
         "text": "" if failed else invocation.tracker.text,
         "session_id": session_id,
         "usage": dict(invocation.tracker.usage),
+        "usage_reported": invocation.tracker.usage_reported,
         "steps": invocation.tracker.steps,
         "failed": (
             {"reason": terminal.get("reason"), "detail_code": terminal.get("detail_code")}

@@ -17,6 +17,7 @@ import pytest
 from rayito import AgentModel, AgentPermissions, AgentSpec
 from rayito._agent._custom import CustomRuntime, HttpApp
 from rayito._agent._hermes import HERMES_DEFAULT_TOOLSETS, HermesRuntime
+from rayito._agent._recipes import AGENT_APP_DIR
 from rayito._agent._runtime import (
     DirectWiring,
     GatewayWiring,
@@ -392,6 +393,46 @@ def test_the_custom_runtime_sees_the_model_only_through_the_gateway() -> None:
     assert envs["RAYITO_MODEL_API_KEY"] == MODEL_CREDENTIAL_PLACEHOLDER
     assert envs["RAYITO_MODEL_BASE_URL"] == "http://127.0.0.1:18001"
     assert not {"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"} & set(envs)
+
+
+def test_a_custom_app_runs_from_the_source_directory_with_its_venv_first() -> None:
+    runtime = CustomRuntime(
+        requirements="requirements.txt",
+        app=HttpApp(command=["python", "-m", "agent.server"], port=9100),
+    )
+    host = runtime.host_config(_bedrock(), wiring=DirectWiring(), workdir="/home/user")
+    assert host.options["app_dir"] == AGENT_APP_DIR
+    assert host.options["path_prepend"] == [runtime.venv_bin()]
+    assert runtime.venv_python() == f"{runtime.venv_bin()}/python"
+    assert host.python == runtime.venv_python()
+
+
+def test_without_requirements_there_is_no_venv_on_the_path() -> None:
+    runtime = CustomRuntime(app=HttpApp(command=["python", "serve.py"], port=9100))
+    host = runtime.host_config(_bedrock(), wiring=DirectWiring(), workdir="/home/user")
+    assert host.options["app_dir"] == AGENT_APP_DIR
+    assert "path_prepend" not in host.options
+
+
+def test_a_custom_command_gets_the_same_environment_options() -> None:
+    runtime = CustomRuntime(command=["python", "agent.py"], requirements="requirements.txt")
+    host = runtime.host_config(_bedrock(), wiring=DirectWiring(), workdir="/home/user")
+    assert host.options["app_dir"] == AGENT_APP_DIR
+    assert host.options["path_prepend"] == [runtime.venv_bin()]
+
+
+@pytest.mark.parametrize(
+    ("app", "hidden"),
+    [
+        (HttpApp(command=["x"], port=9100), False),
+        (HttpApp(command=["x"], port=9100, health_path="/health"), True),
+        (HttpApp(command=["x"], port=9100, invoke_path="/invoke"), True),
+        (HttpApp(command=["x"], port=9100, health_path="/health", protocol="raw"), False),
+        (HttpApp(command=["x"], port=9100, invoke_path="/v1", protocol="openai-chat"), True),
+    ],
+)
+def test_an_app_hides_its_own_routes_unless_the_protocol_is_raw(app: HttpApp, hidden: bool) -> None:
+    assert app.hides_own_routes is hidden
 
 
 # ---- el contrato de tareas de AgentRuntime, por el host ----

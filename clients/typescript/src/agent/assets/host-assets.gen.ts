@@ -137,11 +137,13 @@ def serve(package: str, args: argparse.Namespace) -> int:
     if config.ready_marker is not None:
         Path(config.ready_marker).unlink(missing_ok=True)
         Path(config.ready_marker + serving.FAILED_SUFFIX).unlink(missing_ok=True)
+    diagnostics = importlib.import_module(".diagnostics", package)
     try:
         driver = create_driver(package, host["driver"], host["options"])
     except Exception as exc:
-        log.error("driver_unavailable code=%s", type(exc).__name__)
-        serving.write_failed_marker(config, type(exc).__name__)
+        code, detail = startup_failure(exc, diagnostics)
+        log.error("driver_unavailable code=%s", code)
+        serving.write_failed_marker(config, code, detail)
         return 1
     service = serving.Service(driver, config)
     server = serving.build_server(service, args.port)
@@ -149,19 +151,34 @@ def serve(package: str, args: argparse.Namespace) -> int:
         signal.SIGTERM, lambda *_: threading.Thread(target=server.shutdown, daemon=True).start()
     )
     warm_failed = threading.Event()
-    threading.Thread(target=_warm, args=(service, server, log, warm_failed), daemon=True).start()
+    threading.Thread(
+        target=_warm, args=(service, server, log, warm_failed, diagnostics), daemon=True
+    ).start()
     log.info("listening port=%d driver=%s", args.port, host["driver"])
     server.serve_forever()
     return 1 if warm_failed.is_set() else 0
 
 
-def _warm(service: Any, server: Any, log: logging.Logger, failed: threading.Event) -> None:
+def startup_failure(exc: Exception, diagnostics: Any) -> tuple[str, str | None]:
+    """El código y el diagnóstico saneado de un arranque fallido: el
+    \`detail_code\` de un \`AgentFailure\` y la cola de la salida de error de la
+    app, o el nombre de la clase de cualquier otra excepción y su mensaje."""
+    code = getattr(exc, "detail_code", None)
+    text = getattr(exc, "diagnostics", None) if code is not None else str(exc)
+    detail = diagnostics.sanitize_diagnostics(text, os.environ) if text else ""
+    return str(code if code is not None else type(exc).__name__), detail or None
+
+
+def _warm(
+    service: Any, server: Any, log: logging.Logger, failed: threading.Event, diagnostics: Any
+) -> None:
     try:
         service.driver.warm()
         service.mark_ready()
     except Exception as exc:
-        log.error("warm_failed code=%s", type(exc).__name__)
-        service.mark_failed(type(exc).__name__)
+        code, detail = startup_failure(exc, diagnostics)
+        log.error("warm_failed code=%s", code)
+        service.mark_failed(code, detail)
         failed.set()
         server.shutdown()
         return
@@ -170,6 +187,117 @@ def _warm(service: Any, server: Any, log: logging.Logger, failed: threading.Even
 
 if __name__ == "__main__":
     raise SystemExit(main(sys.argv))
+`,
+  "diagnostics.py": `"""Diagnóstico de un arranque fallido (ADR-028): la cola acotada y sin
+secretos de la salida de error de la app del usuario, o el mensaje de la
+excepción, que el host deja en el marcador de fallo para que \`deploy()\` la
+muestre en su error.
+
+Sólo biblioteca estándar y nada de \`rayito\`. Un texto del usuario nunca
+llega al marcador sin pasar por \`sanitize_diagnostics\`: se le quitan los
+caracteres de control, los valores de las variables de entorno del proceso
+(salvo las estructurales de \`STRUCTURAL_ENV_NAMES\`), los patrones con forma de
+credencial y se recorta a \`MAX_DIAGNOSTICS_BYTES\`.
+"""
+
+from __future__ import annotations
+
+import re
+from collections.abc import Mapping
+from typing import Final
+
+#: Tope en bytes UTF-8 del diagnóstico (\`AGENT_STARTUP_DIAGNOSTICS_MAX_BYTES\`
+#: de \`limits.json\`).
+MAX_DIAGNOSTICS_BYTES: Final = 2048
+#: Lo que sustituye a un valor retirado.
+REDACTED: Final = "[redacted]"
+#: Un valor de entorno más corto que esto no se retira: sería ruido (\`1\`,
+#: \`utf-8\`) y no es una credencial.
+MIN_REDACTED_VALUE_LENGTH: Final = 8
+#: Variables cuyo valor es estructura del sandbox (rutas, idioma), no un
+#: secreto; sus valores se dejan ver para que una traza se pueda leer.
+STRUCTURAL_ENV_NAMES: Final = frozenset(
+    {
+        "PATH",
+        "PYTHONPATH",
+        "HOME",
+        "PWD",
+        "OLDPWD",
+        "USER",
+        "LOGNAME",
+        "SHELL",
+        "LANG",
+        "LC_ALL",
+        "TERM",
+        "TMPDIR",
+        "HOSTNAME",
+        "VIRTUAL_ENV",
+        "AWS_REGION",
+        "AWS_DEFAULT_REGION",
+    }
+)
+#: Largo mínimo de una clave con prefijo de proveedor (\`sk-...\`), de los dos
+#: tramos de un JWT y de una cadena sin separadores que se toma por un token.
+PROVIDER_KEY_MIN_LENGTH: Final = 16
+JWT_SEGMENT_MIN_LENGTH: Final = 8
+TOKEN_RUN_MIN_LENGTH: Final = 40
+_CONTROL_CHARACTERS: Final = re.compile(r"\\x1b\\[[0-9;?]*[ -/]*[@-~]|[\\x00-\\x08\\x0b-\\x1f\\x7f]")
+_CREDENTIAL_PATTERNS: Final = (
+    re.compile(r"(?i)\\bbearer\\s+[A-Za-z0-9._~+/=-]+"),
+    re.compile(
+        rf"\\beyJ[A-Za-z0-9_-]{{{JWT_SEGMENT_MIN_LENGTH},}}"
+        rf"\\.[A-Za-z0-9_-]{{{JWT_SEGMENT_MIN_LENGTH},}}(?:\\.[A-Za-z0-9_-]*)?"
+    ),
+    re.compile(r"\\b(?:AKIA|ASIA)[0-9A-Z]{16}\\b"),
+    re.compile(rf"\\bsk-[A-Za-z0-9_-]{{{PROVIDER_KEY_MIN_LENGTH},}}"),
+    re.compile(r"(?i)\\b(token|secret|password|passwd|api[_-]?key|authorization)(\\s*[=:]\\s*)\\S+"),
+    re.compile(rf"[A-Za-z0-9_-]{{{TOKEN_RUN_MIN_LENGTH},}}"),
+)
+
+
+def _without_environment_values(text: str, environ: Mapping[str, str]) -> str:
+    values = sorted(
+        {
+            value
+            for name, value in environ.items()
+            if name not in STRUCTURAL_ENV_NAMES and len(value) >= MIN_REDACTED_VALUE_LENGTH
+        },
+        key=len,
+        reverse=True,
+    )
+    for value in values:
+        text = text.replace(value, REDACTED)
+    return text
+
+
+def _without_credentials(text: str) -> str:
+    for pattern in _CREDENTIAL_PATTERNS:
+        if pattern.groups:
+            text = pattern.sub(lambda match: f"{match.group(1)}{match.group(2)}{REDACTED}", text)
+        else:
+            text = pattern.sub(REDACTED, text)
+    return text
+
+
+def bounded_tail(text: str, max_bytes: int = MAX_DIAGNOSTICS_BYTES) -> str:
+    """El final de \`text\` en como mucho \`max_bytes\` bytes UTF-8, sin partir
+    un carácter y empezando en el principio de una línea si cabe."""
+    encoded = text.encode("utf-8")
+    if len(encoded) <= max_bytes:
+        return text
+    tail = encoded[-max_bytes:].decode("utf-8", errors="ignore")
+    newline = tail.find("\\n")
+    return tail[newline + 1 :] if 0 <= newline < len(tail) - 1 else tail
+
+
+def sanitize_diagnostics(text: str, environ: Mapping[str, str]) -> str:
+    """\`text\` sin caracteres de control, sin valores de \`environ\` ni
+    patrones de credencial, acotado a \`MAX_DIAGNOSTICS_BYTES\`. La
+    sustitución va antes del recorte para que un secreto partido por el
+    recorte no sobreviva."""
+    cleaned = _CONTROL_CHARACTERS.sub("", text.replace("\\r\\n", "\\n").replace("\\r", "\\n"))
+    cleaned = _without_credentials(_without_environment_values(cleaned, environ))
+    return bounded_tail(cleaned.strip()).strip()
 `,
   "drivers/__init__.py": `"""Drivers del host del agente: cada módulo expone \`create(options)\`
 y se importa de forma perezosa desde \`__main__.py\`."""
@@ -185,9 +313,11 @@ from __future__ import annotations
 import fnmatch
 import importlib
 import json
+import os
 import re
+import shutil
 import sys
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any, Final
 
 from ..protocol import AgentFailure, new_id
@@ -207,6 +337,9 @@ MODEL_ERROR_MODULES: Final = ("anthropic", "boto3", "botocore", "google", "httpx
 MAX_CAUSE_DEPTH: Final = 6
 #: Longitud máxima de un \`detail_code\`.
 MAX_DETAIL_CODE_LENGTH: Final = 64
+#: El nombre con el que un \`command\` de tu app llama al intérprete de Python
+#: del runtime.
+PYTHON_COMMAND: Final = "python"
 _DETAIL_CODE_PATTERN: Final = re.compile(r"[^a-z0-9_]")
 
 
@@ -224,6 +357,31 @@ def load_config(options: Mapping[str, Any]) -> Mapping[str, Any]:
     if not isinstance(loaded, dict):
         raise AgentFailure("protocol_error", "invalid_input")
     return loaded
+
+
+def child_environment(config: Mapping[str, Any]) -> dict[str, str]:
+    """El entorno de la app o el comando del usuario: el del host con los
+    directorios de \`path_prepend\` (los \`bin\` del venv de \`requirements\`) al
+    principio del \`PATH\`, de modo que \`python\` y \`pip\` sean los suyos, y el
+    código copiado (\`app_dir\`) al principio del \`PYTHONPATH\`."""
+    env = dict(os.environ)
+    prepend = [str(item) for item in config.get("path_prepend") or ()]
+    if prepend:
+        env["PATH"] = os.pathsep.join([*prepend, *filter(None, [env.get("PATH")])])
+    app_dir = config.get("app_dir")
+    if app_dir:
+        env["PYTHONPATH"] = os.pathsep.join([str(app_dir), *filter(None, [env.get("PYTHONPATH")])])
+    return env
+
+
+def child_argv(command: Sequence[object], env: Mapping[str, str]) -> list[str]:
+    """El \`argv\` del usuario; \`python\` sin ninguno en el \`PATH\` (la imagen
+    sólo trae \`python3\`) es el intérprete que ejecuta el host."""
+    argv = [str(part) for part in command]
+    missing = shutil.which(PYTHON_COMMAND, path=env.get("PATH")) is None
+    if argv and argv[0] == PYTHON_COMMAND and missing:
+        argv[0] = sys.executable
+    return argv
 
 
 def new_session_id() -> str:
@@ -419,7 +577,7 @@ class Driver:
             build_event(
                 "step_finished",
                 index=1,
-                usage=usage_dict(usage),
+                usage=None if usage is None else usage_dict(usage),
                 finish_reason=FINISH_REASON,
             )
         )
@@ -447,13 +605,15 @@ stdout a eventos del protocolo v1.
 
 Una salida distinta de 0 sin un \`agent_failed\` propio es \`runtime_error\`
 (ADR-025). El prompt nunca va en argv. Configuración: \`command\` (lista),
-\`protocol\` y \`workdir\`.
+\`protocol\`, \`workdir\`, \`path_prepend\` (directorios que van al principio del
+\`PATH\`, el \`bin\` del venv de \`requirements\`) y \`app_dir\` (el código copiado,
+que va al principio del \`PYTHONPATH\`). Con \`protocol="text"\` el hijo no
+informa de tokens: el uso es desconocido, no cero.
 """
 
 from __future__ import annotations
 
 import json
-import os
 import threading
 from collections.abc import Mapping
 from typing import Any, Final
@@ -468,7 +628,13 @@ from ..protocol import (
     RunState,
     build_event,
 )
-from ._common import load_config, resolve_session_id, sanitize_detail_code
+from ._common import (
+    child_argv,
+    child_environment,
+    load_config,
+    resolve_session_id,
+    sanitize_detail_code,
+)
 
 #: Una línea más larga se descarta (\`MAX_AGENT_EVENT_LINE_BYTES\` de
 #: \`limits.json\`).
@@ -493,8 +659,8 @@ def _request_line(request: Request, session_id: str) -> bytes:
     return (json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\\n").encode("utf-8")
 
 
-def _child_env(request: Request, session_id: str) -> dict[str, str]:
-    env = dict(os.environ)
+def _child_env(config: Mapping[str, Any], request: Request, session_id: str) -> dict[str, str]:
+    env = child_environment(config)
     env[SESSION_ID_ENV] = session_id
     env[REASONING_ENV] = "1" if request.reasoning else "0"
     if request.model is not None:
@@ -556,11 +722,11 @@ class Driver:
     def run(self, request: Request, emit: Emit, state: RunState) -> None:
         state.session_id = resolve_session_id(request.session_id)
         emit(build_event("session", session_id=state.session_id))
-        argv = [str(part) for part in self._config["command"]]
+        env = _child_env(self._config, request, state.session_id)
         with self._lock:
             self._child = ChildProcess(
-                argv,
-                env=_child_env(request, state.session_id),
+                child_argv(self._config["command"], env),
+                env=env,
                 cwd=str(self._config["workdir"]) if self._config.get("workdir") else None,
                 stdin=True,
             )
@@ -607,7 +773,7 @@ class Driver:
             parts.append(chunk)
             emit(build_event("text_delta", text=chunk))
         emit(build_event("text", text="".join(parts)))
-        emit(build_event("step_finished", index=1, usage={}, finish_reason=FINISH_REASON))
+        emit(build_event("step_finished", index=1, usage=None, finish_reason=FINISH_REASON))
 
     @staticmethod
     def _finish_v1(relay: Relay, exit_code: int) -> None:
@@ -704,9 +870,12 @@ MODEL_ERROR_MODULES: Final = (
 #: OpenAI acepta (learn.microsoft.com/azure/ai-foundry/openai/api-version-lifecycle,
 #: consultado el 2026-10-07: la v1 ya no necesita versiones con fecha).
 AZURE_OPENAI_V1_API_VERSION: Final = "v1"
-#: El nodo del modelo en los grafos de \`langchain.agents.create_agent\`.
-MODEL_NODE: Final = "model"
-#: El nodo de herramientas en esos mismos grafos.
+#: Los nodos del modelo: \`model\` en los grafos de
+#: \`langchain.agents.create_agent\` (y deepagents) y \`agent\` en los de
+#: \`langgraph.prebuilt.create_react_agent\`; un \`StateGraph\` propio que los
+#: llame así se traduce igual.
+MODEL_NODES: Final = ("model", "agent")
+#: El nodo de herramientas en todos esos grafos.
 TOOLS_NODE: Final = "tools"
 
 _SESSION_ID_PATTERN: Final = re.compile(r"rda_[0-9a-f]{32}")
@@ -842,7 +1011,7 @@ class Translator:
         return [{"type": "step_started", "index": self.steps}]
 
     def on_chunk(self, chunk: Any, metadata: Mapping[str, Any]) -> list[dict[str, Any]]:
-        if metadata.get("langgraph_node") != MODEL_NODE:
+        if metadata.get("langgraph_node") not in MODEL_NODES:
             return []
         if "|" in str(metadata.get("langgraph_checkpoint_ns", "")):
             return []
@@ -856,7 +1025,7 @@ class Translator:
             return []
         events: list[dict[str, Any]] = []
         for node, value in update.items():
-            if node == MODEL_NODE:
+            if node in MODEL_NODES:
                 for message in _messages_of(value):
                     events.extend(self._model_message(message))
             elif node == TOOLS_NODE:
@@ -867,9 +1036,10 @@ class Translator:
     def on_nested_update(self, update: object) -> None:
         if not isinstance(update, Mapping):
             return
-        for message in _messages_of(update.get(MODEL_NODE)):
-            for key, value in usage_of(message).items():
-                self.nested_usage[key] = self.nested_usage.get(key, 0) + value
+        for node in MODEL_NODES:
+            for message in _messages_of(update.get(node)):
+                for key, value in usage_of(message).items():
+                    self.nested_usage[key] = self.nested_usage.get(key, 0) + value
 
     def _model_message(self, message: Any) -> list[dict[str, Any]]:
         self.new_messages.append(message)
@@ -1627,8 +1797,15 @@ Configuración del driver:
   \`health_path\`, \`invoke_path\`.
 - \`protocol\`: \`agentcore\` (el servidor ya habla \`/ping\` + \`/invocations\`),
   \`openai-chat\` (Chat Completions con streaming) o \`raw\`.
-- \`workdir\` y \`start_timeout_seconds\`. Las variables de entorno las hereda
+- \`app_dir\`: el código copiado; es el directorio de trabajo de la app y va al
+  principio de su \`PYTHONPATH\`, así que \`python -m paquete.modulo\` funciona.
+  \`path_prepend\`: directorios que van al principio de su \`PATH\` (el \`bin\` del
+  venv de \`requirements\`, de modo que \`python\` es el del venv). \`workdir\`
+  (sin \`app_dir\`) y \`start_timeout_seconds\`. El resto del entorno lo hereda
   del host.
+- Un arranque fallido (\`app_exited\`, \`app_not_ready\`) lleva el final de la
+  salida de error de la app, saneado (\`diagnostics.py\`).
+- Una app que no informa de \`usage\` tiene uso desconocido, no cero.
 
 Con \`raw\` no hay traducción: el host reenvía tal cual todo lo que no es
 \`/ping\` (\`forward()\`), y \`run()\` falla con \`protocol_error\`: un servidor MCP
@@ -1647,6 +1824,7 @@ from collections.abc import Iterator, Mapping
 from http import HTTPStatus
 from typing import Any, Final
 
+from ..diagnostics import sanitize_diagnostics
 from ..process import ChildProcess
 from ..protocol import (
     AgentFailure,
@@ -1658,6 +1836,7 @@ from ..protocol import (
     new_id,
     usage_dict,
 )
+from ._common import child_argv, child_environment
 
 LOOPBACK: Final = "127.0.0.1"
 SESSION_ID_PREFIX: Final = "app_"
@@ -1672,6 +1851,31 @@ REQUEST_TIMEOUT_SECONDS: Final = 600.0
 TEXT_KEYS: Final = ("text", "response", "result", "output", "message", "content", "answer")
 SESSION_HEADER: Final = "X-Amzn-Bedrock-AgentCore-Runtime-Session-Id"
 PROTOCOLS: Final = ("agentcore", "openai-chat", "raw")
+#: Cómo llama una app a cada contador de \`usage\`, en este orden: los nombres
+#: de Rayito, los de Anthropic y los de Chat Completions. Una app que no
+#: informa de ninguno tiene uso desconocido, no cero.
+USAGE_ALIASES: Final = (
+    ("input", ("input", "input_tokens", "prompt_tokens")),
+    ("output", ("output", "output_tokens", "completion_tokens")),
+    ("reasoning", ("reasoning", "reasoning_tokens")),
+    ("cache_read", ("cache_read", "cache_read_input_tokens")),
+    ("cache_write", ("cache_write", "cache_creation_input_tokens")),
+)
+
+
+def app_usage(raw: object) -> dict[str, int] | None:
+    """El uso de tokens que informa la app (\`usage\` de su respuesta) en las
+    claves de Rayito, o \`None\` si no informa de ninguno."""
+    if not isinstance(raw, Mapping):
+        return None
+    found: dict[str, Any] = {}
+    for key, aliases in USAGE_ALIASES:
+        for alias in aliases:
+            value = raw.get(alias)
+            if isinstance(value, int) and not isinstance(value, bool):
+                found[key] = value
+                break
+    return usage_dict(found) if found else None
 
 
 def extract_text(payload: object) -> str:
@@ -1702,7 +1906,7 @@ def iter_sse_data(response: http.client.HTTPResponse) -> Iterator[str]:
         yield "\\n".join(data)
 
 
-def _delta_of(data: str, protocol: str) -> tuple[str, dict[str, Any] | None]:
+def _delta_of(data: str, protocol: str) -> tuple[str, dict[str, int] | None]:
     """El texto de un mensaje SSE y, si lo trae, el uso de tokens."""
     try:
         payload = json.loads(data)
@@ -1715,16 +1919,9 @@ def _delta_of(data: str, protocol: str) -> tuple[str, dict[str, Any] | None]:
             inner = choices[0].get("delta")
             content = inner.get("content") if isinstance(inner, Mapping) else None
             delta = content if isinstance(content, str) else ""
-        usage = payload.get("usage")
-        return delta, dict(usage) if isinstance(usage, Mapping) else None
-    return extract_text(payload), None
-
-
-def _chat_usage(raw: Mapping[str, Any] | None) -> dict[str, int]:
-    source = raw or {}
-    return usage_dict(
-        {"input": source.get("prompt_tokens"), "output": source.get("completion_tokens")}
-    )
+        return delta, app_usage(payload.get("usage"))
+    usage = app_usage(payload.get("usage")) if isinstance(payload, Mapping) else None
+    return extract_text(payload), usage
 
 
 class Driver:
@@ -1755,15 +1952,32 @@ class Driver:
         with self._lock:
             if self._child is not None:
                 return
-            env = dict(os.environ)
+            env = child_environment(self._config)
             self._child = ChildProcess(
-                [str(part) for part in self._config["command"]],
+                child_argv(self._config["command"], env),
                 env=env,
-                cwd=str(self._config["workdir"]) if self._config.get("workdir") else None,
+                cwd=self._working_directory(),
                 capture_stdout=False,
+                capture_stderr_tail=True,
             )
             atexit.register(self._child.kill)
         self._wait_healthy()
+
+    def _working_directory(self) -> str | None:
+        """El directorio del código copiado (\`app_dir\`), de modo que
+        \`python -m paquete.modulo\` y las rutas relativas funcionen; sin él,
+        el directorio de trabajo del agente."""
+        directory = self._config.get("app_dir") or self._config.get("workdir")
+        return str(directory) if directory else None
+
+    def _startup_failure(self, detail_code: str) -> AgentFailure:
+        """Un arranque fallido con el final de la salida de error de la app,
+        saneado: sin los valores del entorno ni credenciales."""
+        child = self._child
+        text = "" if child is None else child.stderr_text()
+        return AgentFailure(
+            "runtime_error", detail_code, sanitize_diagnostics(text, os.environ) or None
+        )
 
     def _wait_healthy(self) -> None:
         deadline = time.monotonic() + float(
@@ -1772,7 +1986,7 @@ class Driver:
         while time.monotonic() < deadline:
             child = self._child
             if child is None or child.poll() is not None:
-                raise AgentFailure("runtime_error", "app_exited")
+                raise self._startup_failure("app_exited")
             try:
                 connection = self._connection()
                 connection.request("GET", str(self._config.get("health_path", "/ping")))
@@ -1783,7 +1997,7 @@ class Driver:
             except OSError:
                 pass
             time.sleep(HEALTH_POLL_SECONDS)
-        raise AgentFailure("runtime_error", "app_not_ready")
+        raise self._startup_failure("app_not_ready")
 
     def forward(
         self, method: str, path: str, headers: Mapping[str, str], body: bytes | None
@@ -1807,7 +2021,7 @@ class Driver:
         response = self._post(request, state.session_id)
         text, usage = self._read(response, emit)
         emit(build_event("text", text=text))
-        emit(build_event("step_finished", index=1, usage=_chat_usage(usage), finish_reason="stop"))
+        emit(build_event("step_finished", index=1, usage=usage, finish_reason="stop"))
 
     def _post(self, request: Request, session_id: str) -> http.client.HTTPResponse:
         invoke_path = str(self._config.get("invoke_path", "/invocations"))
@@ -1839,15 +2053,17 @@ class Driver:
 
     def _read(
         self, response: http.client.HTTPResponse, emit: Emit
-    ) -> tuple[str, dict[str, Any] | None]:
+    ) -> tuple[str, dict[str, int] | None]:
         content_type = response.getheader("Content-Type", "")
         if "text/event-stream" not in content_type:
             try:
-                return extract_text(json.loads(response.read())), None
+                payload = json.loads(response.read())
             except ValueError:
                 raise AgentFailure("protocol_error", "invalid_response") from None
+            reported = app_usage(payload.get("usage")) if isinstance(payload, Mapping) else None
+            return extract_text(payload), reported
         parts: list[str] = []
-        usage: dict[str, Any] | None = None
+        usage: dict[str, int] | None = None
         for data in iter_sse_data(response):
             if data.strip() == "[DONE]":
                 break
@@ -2624,6 +2840,7 @@ class LimitTracker:
     last_text: str = ""
     deltas: list[str] = field(default_factory=list)
     usage: dict[str, int] = field(default_factory=lambda: dict.fromkeys(USAGE_KEYS, 0))
+    usage_reported: bool = False
     tool_calls: int = 0
 
     @property
@@ -2653,6 +2870,7 @@ class LimitTracker:
         return None
 
     def _add_usage(self, raw: object) -> None:
+        self.usage_reported = self.usage_reported or isinstance(raw, Mapping)
         source = raw if isinstance(raw, Mapping) else {}
         for key in USAGE_KEYS:
             self.usage[key] += count(source.get(key))
@@ -2673,6 +2891,7 @@ import contextlib
 import os
 import signal
 import subprocess
+import threading
 from collections.abc import Iterator, Mapping, Sequence
 from typing import IO, Final
 
@@ -2681,6 +2900,36 @@ from typing import IO, Final
 READ_CHUNK_BYTES: Final = 65536
 #: Cuánto se espera a que un hijo muera tras \`SIGKILL\` antes de seguir.
 KILL_WAIT_SECONDS: Final = 5.0
+#: Cuánto se espera a que el lector de stderr vea el final de un hijo que ya
+#: salió antes de leer su cola.
+STDERR_DRAIN_SECONDS: Final = 1.0
+#: Lo que se conserva de la salida de error de un hijo: el final, no el
+#: principio, porque ahí está el motivo de un fallo.
+STDERR_TAIL_BYTES: Final = 8192
+
+
+class _StderrTail:
+    """Lee el stderr de un hijo en un hilo y guarda sólo sus últimos
+    \`STDERR_TAIL_BYTES\` bytes, de modo que un hijo muy ruidoso no llena el
+    pipe ni la memoria."""
+
+    def __init__(self, stream: IO[bytes]) -> None:
+        self._stream = stream
+        self._buffer = b""
+        self._lock = threading.Lock()
+        self._thread = threading.Thread(target=self._drain, daemon=True)
+        self._thread.start()
+
+    def _drain(self) -> None:
+        descriptor = self._stream.fileno()
+        for chunk in iter(lambda: os.read(descriptor, READ_CHUNK_BYTES), b""):
+            with self._lock:
+                self._buffer = (self._buffer + chunk)[-STDERR_TAIL_BYTES:]
+
+    def text(self) -> str:
+        self._thread.join(timeout=STDERR_DRAIN_SECONDS)
+        with self._lock:
+            return self._buffer.decode("utf-8", errors="replace")
 
 
 class ChildProcess:
@@ -2694,6 +2943,7 @@ class ChildProcess:
         cwd: str | None = None,
         stdin: bool = False,
         capture_stdout: bool = True,
+        capture_stderr_tail: bool = False,
     ) -> None:
         self._process = subprocess.Popen(
             list(argv),
@@ -2701,8 +2951,13 @@ class ChildProcess:
             cwd=cwd,
             stdin=subprocess.PIPE if stdin else subprocess.DEVNULL,
             stdout=subprocess.PIPE if capture_stdout else subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stderr=subprocess.PIPE if capture_stderr_tail else subprocess.DEVNULL,
             start_new_session=True,
+        )
+        self._stderr_tail = (
+            _StderrTail(self._process.stderr)
+            if capture_stderr_tail and self._process.stderr is not None
+            else None
         )
 
     @property
@@ -2737,6 +2992,11 @@ class ChildProcess:
                 overflow = True
         if pending and not overflow:
             yield pending, False
+
+    def stderr_text(self) -> str:
+        """El final de lo que escribió el hijo en su salida de error (vacío si
+        no se pidió \`capture_stderr_tail\`)."""
+        return "" if self._stderr_tail is None else self._stderr_tail.text()
 
     def wait(self) -> int:
         return self._process.wait()
@@ -2804,12 +3064,15 @@ Emit = Callable[[Event], None]
 
 class AgentFailure(Exception):
     """Un fallo con \`reason\` y \`detail_code\` del protocolo, nunca con texto
-    del proveedor ni contenido."""
+    del proveedor ni contenido. \`diagnostics\` es la cola de la salida de
+    error de la app del usuario en un arranque fallido: no viaja por el
+    protocolo, sólo la lee el host para el marcador de fallo."""
 
-    def __init__(self, reason: str, detail_code: str) -> None:
+    def __init__(self, reason: str, detail_code: str, diagnostics: str | None = None) -> None:
         super().__init__(detail_code)
         self.reason = reason
         self.detail_code = detail_code
+        self.diagnostics = diagnostics
 
 
 class LimitExceeded(BaseException):
@@ -2982,8 +3245,8 @@ el contrato HTTP de AgentCore, con \`http.server.ThreadingHTTPServer\`.
 - \`GET /ping\` -> \`200 {"status": "Healthy" | "HealthyBusy", "time_of_last_update"}\`.
 - \`POST /invocations\` con \`{"prompt", "session_id"?, "model"?, "reasoning"?}\`.
   Con \`Accept: text/event-stream\`, un mensaje SSE por evento v1 hasta \`done\`
-  o \`agent_failed\`; si no, \`{"v", "text", "session_id", "usage", "steps",
-  "failed"}\`. \`400\` cuerpo inválido, \`413\` demasiado grande, \`429\` con
+  o \`agent_failed\`; si no, \`{"v", "text", "session_id", "usage",
+  "usage_reported", "steps", "failed"}\`. \`400\` cuerpo inválido, \`413\` demasiado grande, \`429\` con
   \`Retry-After\` por encima de \`max_concurrency\`, \`503\` antes de estar listo
   y \`401\` si hay token y no coincide.
 
@@ -3082,12 +3345,15 @@ class ServiceConfig:
     io_timeout_seconds: float = IO_TIMEOUT_SECONDS
 
 
-def write_failed_marker(config: ServiceConfig, code: str) -> None:
-    """Deja el motivo de un arranque fallido (el nombre de una clase de
-    excepción, nunca su mensaje) junto al marcador de listo, para que
-    \`deploy()\` falle enseguida y no al agotar su plazo."""
+def write_failed_marker(config: ServiceConfig, code: str, diagnostics: str | None = None) -> None:
+    """Deja el motivo de un arranque fallido junto al marcador de listo, para
+    que \`deploy()\` falle enseguida y no al agotar su plazo. La primera línea
+    es el código (el \`detail_code\` del fallo o el nombre de una clase de
+    excepción) y, si hay, el resto es el diagnóstico ya saneado
+    (\`diagnostics.sanitize_diagnostics\`)."""
     Service._write_marker(
-        None if config.ready_marker is None else config.ready_marker + FAILED_SUFFIX, code
+        None if config.ready_marker is None else config.ready_marker + FAILED_SUFFIX,
+        code if not diagnostics else f"{code}\\n{diagnostics}",
     )
 
 
@@ -3114,8 +3380,8 @@ class Service:
         self._ready = True
         self._write_marker(self.config.ready_marker, "ready")
 
-    def mark_failed(self, code: str) -> None:
-        write_failed_marker(self.config, code)
+    def mark_failed(self, code: str, diagnostics: str | None = None) -> None:
+        write_failed_marker(self.config, code, diagnostics)
 
     @staticmethod
     def _write_marker(path: str | None, content: str) -> None:
@@ -3272,6 +3538,7 @@ def result_body(invocation: Invocation, terminal: Event) -> dict[str, Any]:
         "text": "" if failed else invocation.tracker.text,
         "session_id": session_id,
         "usage": dict(invocation.tracker.usage),
+        "usage_reported": invocation.tracker.usage_reported,
         "steps": invocation.tracker.steps,
         "failed": (
             {"reason": terminal.get("reason"), "detail_code": terminal.get("detail_code")}

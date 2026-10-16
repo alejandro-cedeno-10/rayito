@@ -8,6 +8,7 @@ import contextlib
 import os
 import signal
 import subprocess
+import threading
 from collections.abc import Iterator, Mapping, Sequence
 from typing import IO, Final
 
@@ -16,6 +17,36 @@ from typing import IO, Final
 READ_CHUNK_BYTES: Final = 65536
 #: Cuánto se espera a que un hijo muera tras `SIGKILL` antes de seguir.
 KILL_WAIT_SECONDS: Final = 5.0
+#: Cuánto se espera a que el lector de stderr vea el final de un hijo que ya
+#: salió antes de leer su cola.
+STDERR_DRAIN_SECONDS: Final = 1.0
+#: Lo que se conserva de la salida de error de un hijo: el final, no el
+#: principio, porque ahí está el motivo de un fallo.
+STDERR_TAIL_BYTES: Final = 8192
+
+
+class _StderrTail:
+    """Lee el stderr de un hijo en un hilo y guarda sólo sus últimos
+    `STDERR_TAIL_BYTES` bytes, de modo que un hijo muy ruidoso no llena el
+    pipe ni la memoria."""
+
+    def __init__(self, stream: IO[bytes]) -> None:
+        self._stream = stream
+        self._buffer = b""
+        self._lock = threading.Lock()
+        self._thread = threading.Thread(target=self._drain, daemon=True)
+        self._thread.start()
+
+    def _drain(self) -> None:
+        descriptor = self._stream.fileno()
+        for chunk in iter(lambda: os.read(descriptor, READ_CHUNK_BYTES), b""):
+            with self._lock:
+                self._buffer = (self._buffer + chunk)[-STDERR_TAIL_BYTES:]
+
+    def text(self) -> str:
+        self._thread.join(timeout=STDERR_DRAIN_SECONDS)
+        with self._lock:
+            return self._buffer.decode("utf-8", errors="replace")
 
 
 class ChildProcess:
@@ -29,6 +60,7 @@ class ChildProcess:
         cwd: str | None = None,
         stdin: bool = False,
         capture_stdout: bool = True,
+        capture_stderr_tail: bool = False,
     ) -> None:
         self._process = subprocess.Popen(
             list(argv),
@@ -36,8 +68,13 @@ class ChildProcess:
             cwd=cwd,
             stdin=subprocess.PIPE if stdin else subprocess.DEVNULL,
             stdout=subprocess.PIPE if capture_stdout else subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stderr=subprocess.PIPE if capture_stderr_tail else subprocess.DEVNULL,
             start_new_session=True,
+        )
+        self._stderr_tail = (
+            _StderrTail(self._process.stderr)
+            if capture_stderr_tail and self._process.stderr is not None
+            else None
         )
 
     @property
@@ -72,6 +109,11 @@ class ChildProcess:
                 overflow = True
         if pending and not overflow:
             yield pending, False
+
+    def stderr_text(self) -> str:
+        """El final de lo que escribió el hijo en su salida de error (vacío si
+        no se pidió `capture_stderr_tail`)."""
+        return "" if self._stderr_tail is None else self._stderr_tail.text()
 
     def wait(self) -> int:
         return self._process.wait()

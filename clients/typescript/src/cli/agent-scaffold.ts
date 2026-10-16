@@ -52,7 +52,12 @@ const PYTHON_ENTRYPOINTS: Readonly<Record<string, string>> = {
 const TYPESCRIPT_ENTRYPOINT = "agent.ts";
 const EXCLUDES = [".venv", "node_modules", "__pycache__", ".git"];
 const INSTRUCTIONS_TEXT = "Responde en español, con frases cortas.\n";
-const CUSTOM_COMMAND = ["bash", "run.sh"];
+const CUSTOM_APP_COMMAND = ["python", "serve.py"];
+const CUSTOM_APP_PORT = 9100;
+const CUSTOM_APP_HEALTH_PATH = "/health";
+const CUSTOM_APP_INVOKE_PATH = "/invoke";
+const CUSTOM_APP_PROTOCOL = "raw";
+const SERVE_FILE_NAME = "serve.py";
 const NON_NAME_CHARACTERS = /[^a-z0-9]+/g;
 const EDGE_DASHES = /^-+|-+$/g;
 
@@ -97,24 +102,70 @@ const STRANDS_PACKAGE_JSON = `{
 }
 `;
 
-const LANGGRAPH_PY = `"""Grafo del agente. \`ctx\` trae el modelo ya cableado a la pasarela."""
+const LANGGRAPH_PY = `"""Grafo del agente. \`ctx\` trae el modelo ya cableado a la pasarela.
 
-from deepagents import create_deep_agent
+Un grafo de LangGraph a secas: \`create_react_agent\` (o un \`StateGraph\` cuyos
+nodos se llamen \`agent\` y \`tools\`). Si quieres los permisos del \`AgentSpec\`,
+usa \`langchain.agents.create_agent(..., middleware=ctx.middleware)\`.
+"""
+
+from langchain_core.tools import tool
+from langgraph.prebuilt import create_react_agent
+
+
+@tool
+def word_count(text: str) -> int:
+    """Cuenta las palabras de un texto."""
+    return len(text.split())
 
 
 def build(ctx):
-    return create_deep_agent(
-        model=ctx.model,
-        system_prompt=ctx.instructions,
-        subagents=ctx.subagents,
-        backend=ctx.backend,
-        middleware=ctx.middleware,
-    )
+    return create_react_agent(ctx.model, [word_count], prompt=ctx.instructions)
 `;
 
-const CUSTOM_RUN_SH = `#!/usr/bin/env bash
-set -euo pipefail
-python3 -c 'import json, sys; request = json.loads(sys.stdin.readline()); print(request["prompt"])'
+const CUSTOM_SERVE_PY = `"""Tu app HTTP. Rayito la arranca con \`python serve.py\` desde el
+directorio del código copiado y, con \`protocol = "raw"\`, expone tus rutas tal
+cual: \`GET /health\` y \`POST /invoke\`. Sustitúyela por tu servidor (FastAPI,
+Flask...) y añade sus dependencias a \`requirements.txt\`."""
+
+import json
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+PORT = 9100
+
+
+class Handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path == "/health":
+            self._reply(200, {"status": "ok"})
+        else:
+            self._reply(404, {"error": "not_found"})
+
+    def do_POST(self):
+        if self.path != "/invoke":
+            self._reply(404, {"error": "not_found"})
+            return
+        length = int(self.headers.get("Content-Length", 0))
+        prompt = json.loads(self.rfile.read(length) or b"{}").get("prompt", "")
+        self._reply(200, {"answer": f"Recibido: {prompt}"})
+
+    def _reply(self, status, body):
+        payload = json.dumps(body).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def log_message(self, *args):
+        pass
+
+
+if __name__ == "__main__":
+    ThreadingHTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
+`;
+
+const CUSTOM_REQUIREMENTS = `# Dependencias de tu app, una por línea (fastapi, langgraph...).
 `;
 
 const STRANDS_REQUIREMENTS = `strands-agents
@@ -173,7 +224,17 @@ function runtimeTable(request: ScaffoldRequest): string[] {
     lines.push(`language = ${quoted(TYPESCRIPT_LANGUAGE)}`);
   }
   if (request.runtime === "custom") {
-    lines.push(`command = [${CUSTOM_COMMAND.map(quoted).join(", ")}]`, 'protocol = "text"');
+    lines.push(
+      `requirements = ${quoted(REQUIREMENTS_FILE_NAME)}`,
+      "install = []",
+      "",
+      "[runtime.app]",
+      `command = [${CUSTOM_APP_COMMAND.map(quoted).join(", ")}]`,
+      `port = ${CUSTOM_APP_PORT}`,
+      `health_path = ${quoted(CUSTOM_APP_HEALTH_PATH)}`,
+      `invoke_path = ${quoted(CUSTOM_APP_INVOKE_PATH)}`,
+      `protocol = ${quoted(CUSTOM_APP_PROTOCOL)}`,
+    );
   }
   return lines;
 }
@@ -233,7 +294,8 @@ export function scaffoldFiles(request: ScaffoldRequest): Record<string, string> 
   } else if (request.runtime === "langgraph") {
     files["graph.py"] = LANGGRAPH_PY;
   } else if (request.runtime === "custom") {
-    files["run.sh"] = CUSTOM_RUN_SH;
+    files[SERVE_FILE_NAME] = CUSTOM_SERVE_PY;
+    files[REQUIREMENTS_FILE_NAME] = CUSTOM_REQUIREMENTS;
   }
   return files;
 }

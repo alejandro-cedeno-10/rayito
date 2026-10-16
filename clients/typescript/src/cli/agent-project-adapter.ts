@@ -5,8 +5,10 @@
  * `deploy` y `connect` la construyen en su primera llamada.
  */
 
+import { CustomRuntime } from "../agent/custom.js";
 import type { AgentDeployment } from "../agent/deployment.js";
 import type { AgentProject } from "../agent/project.js";
+import { resolveRuntime } from "../agent/runtimes.js";
 import { type AwsClientSettings, awsClientSettingsOf } from "../aws/control-plane.js";
 import { SandboxNotFoundError } from "../errors.js";
 import type { BuildInfo } from "../templates/build.js";
@@ -20,6 +22,7 @@ import type {
   AgentProjectTools,
   DeployedAgent,
   DeployedService,
+  HiddenAppRoutes,
 } from "./ops-ports.js";
 import type { CliServices } from "./services.js";
 
@@ -39,6 +42,14 @@ function deployedAgent(deployment: AgentDeployment): DeployedAgent {
     stream: (prompt, options) => deployment.stream(prompt, withSession(options)),
     status: () => deployment.status(),
   };
+}
+
+function hiddenRoutesOf(project: AgentProject): HiddenAppRoutes | undefined {
+  const runtime = resolveRuntime(project.runtime);
+  const app = runtime instanceof CustomRuntime ? runtime.app : undefined;
+  return app?.hidesOwnRoutes === true
+    ? { protocol: app.protocol, healthPath: app.healthPath, invokePath: app.invokePath }
+    : undefined;
 }
 
 function withSession(options: { readonly sessionId: string | undefined }): {
@@ -87,8 +98,13 @@ class SdkAgentProjectTool implements AgentProjectTool {
     const deployment = await project.deploy({
       ...(await this.#aws()),
       accessToken: overrides.accessToken,
+      keepOnFailure: overrides.keepOnFailure,
     });
-    return { agent: deployedAgent(deployment), port: effective.port };
+    return {
+      agent: deployedAgent(deployment),
+      port: effective.port,
+      hiddenRoutes: hiddenRoutesOf(this.#project),
+    };
   }
 
   async export(options: AgentExportRequest): Promise<AgentExportResult> {

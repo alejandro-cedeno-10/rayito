@@ -111,6 +111,7 @@
       "cache_read": 4100,
       "cache_write": 0
     },
+    "usage_reported": true,
     "type": "done"
   }
 }

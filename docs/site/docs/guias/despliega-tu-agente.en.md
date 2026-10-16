@@ -58,8 +58,17 @@ through [`CustomRuntime`](#otros-frameworks-customruntime).
       stack), the same ones [Agent in the sandbox](agente-en-el-sandbox.md)
       uses.
     - **How to turn it off:** do not call those operations. A deployment is
-      stopped with `deployment.stop()` or `rayito agent stop`; image versions
-      with `rayito image prune`.
+      stopped with `deployment.stop()` or `rayito agent stop` (or suspended
+      with `deployment.pause()`, which bills no compute); image versions with
+      `rayito image prune`. `deploy(keep_on_failure=True)` leaves the sandbox
+      of a failed startup alive so you can debug it and keeps billing until
+      you terminate it; it is off by default.
+    - **Token usage:** the runtimes with their own support always report the
+      tokens of each step. An app, a command or a function of your own only
+      reports them if its response carries `usage`; otherwise
+      `result.usage_reported` is `False` and `result.usage` is zero because it
+      is unknown, not because nothing was spent. Check consumption at your
+      provider.
     - **Example:** `AgentProject.load(".").deploy()` (all four languages are
       [below](#3-despliegalo-como-servicio)).
 
@@ -77,6 +86,25 @@ through [`CustomRuntime`](#otros-frameworks-customruntime).
 
 `rayito agent init` and `rayito agent export` work without any of this: they
 only write files.
+
+### The one-time prerequisites { #los-preparativos-de-una-sola-vez }
+
+There are three, done once per account and region, and `rayito doctor` checks
+that they are in place. With them done, the first deployment is building the
+agent image (≈ 5 minutes the first time, because it installs the runtime and
+your requirements) and deploying it (≈ 10 seconds until the service answers).
+
+| What | How | How long |
+|---|---|---|
+| An S3 bucket for the build artifact | `export RAYITO_BUCKET=amzn-s3-demo-bucket` ([Configure AWS](../primeros-pasos/configurar-aws.md#2-un-bucket-para-los-artefactos)) | 1 min |
+| The `rayito-base-caps` base image | publish it from the release `rayito-image.zip` ([Configure AWS](../primeros-pasos/configurar-aws.md#4-publicar-la-imagen-rayito-base)) | ≈ 4 min |
+| The version of the AWS managed base | no need to look it up by hand: with `--base-image-version latest`, `rayito image publish` uses the newest one AWS lists and prints it; an explicit number pins a reproducible build | — |
+
+```bash
+rayito image publish --artifact rayito-image.zip --base-image-version latest \
+  --image-name rayito-base-caps --os-capabilities ALL
+rayito agent build --file ./support-bot --bucket "$RAYITO_BUCKET"
+```
 
 ## Which runtime to choose { #que-runtime-elegir }
 
@@ -248,9 +276,41 @@ overwrites anything without `--force`.
 
 === "LangGraph"
 
-    `graph.py`: the function receives the runner context (model, instructions,
-    subagents, backend and the permissions middleware) and returns your
-    compiled graph. Pass `ctx.middleware`: without it the permissions are lost.
+    `graph.py`: the function receives the runner context (`ctx.model`, the model
+    already wired to the gateway, and `ctx.instructions`) and returns your
+    compiled graph. A plain LangGraph graph works, the one you already have: a
+    `create_react_agent` or a `StateGraph` whose model node is called `agent`
+    (or `model`) and whose tools node is called `tools`. Rayito translates the
+    text, the steps, the tool calls and the token usage from those nodes.
+
+    ```python
+    from langchain_core.tools import tool
+    from langgraph.prebuilt import create_react_agent
+
+
+    @tool
+    def word_count(text: str) -> int:
+        """Count the words of a text."""
+        return len(text.split())
+
+
+    def build(ctx):
+        return create_react_agent(ctx.model, [word_count], prompt=ctx.instructions)
+    ```
+
+    ```toml
+    [runtime]
+    kind = "langgraph"
+    entrypoint = "graph:build"
+    ```
+
+    The `AgentSpec` permissions are applied by an `AgentMiddleware`, which
+    `create_react_agent` and `StateGraph` do not have: their tools are yours and
+    are not filtered. To get them applied, build with
+    `langchain.agents.create_agent(..., middleware=ctx.middleware)`. If you
+    want a deepagents deep agent, pass `ctx.subagents`, `ctx.backend` and
+    `ctx.middleware` (without the middleware the permissions are lost), or use
+    `kind = "deepagents"` directly:
 
     ```python
     from deepagents import create_deep_agent
@@ -264,12 +324,6 @@ overwrites anything without `--force`.
             backend=ctx.backend,
             middleware=ctx.middleware,
         )
-    ```
-
-    ```toml
-    [runtime]
-    kind = "langgraph"
-    entrypoint = "graph:build"
     ```
 
 === "deepagents"
@@ -298,14 +352,35 @@ overwrites anything without `--force`.
 
 === "Custom"
 
-    A command that reads the request (one JSON line) on standard input and
-    writes the answer. With `protocol = "text"`, what it prints is the answer.
+    `rayito agent init --runtime custom` writes an HTTP app: the `[runtime.app]`
+    table with your `command`, the `port` it listens on and its routes, plus
+    `requirements` and `install`. Rayito starts the `command` from the
+    directory of your copied code (also on its `PYTHONPATH`, so `python -m
+    agent.server` works) and, with `requirements`, with the venv of your
+    requirements first on the `PATH`: `python` is the venv one.
 
-    ```bash
-    #!/usr/bin/env bash
-    set -euo pipefail
-    python3 -c 'import json, sys; print(json.loads(sys.stdin.readline())["prompt"])'
+    ```toml
+    [runtime]
+    kind = "custom"
+    requirements = "requirements.txt"
+    install = []
+
+    [runtime.app]
+    command = ["python", "-m", "agent.server"]
+    port = 9100
+    health_path = "/health"
+    invoke_path = "/invoke"
+    protocol = "raw"
     ```
+
+    This app declares its own routes (`/health` and `/invoke`), so it uses
+    `protocol = "raw"`: the deployment forwards them as they are and you call
+    them with `deployment.url` and `deployment.headers`. With the default
+    protocol (`agentcore`) only `/ping` and `/invocations` are exposed, and
+    `/health` and `/invoke` answer 404; [which to choose](#que-protocolo-elegir).
+    If you want a command that reads the request (one JSON line) on standard
+    input and writes the answer instead, with `protocol = "text"` what it
+    prints is the answer:
 
     ```toml
     [runtime]
@@ -423,8 +498,9 @@ combination.
 
 `deploy()` creates the sandbox, starts the agent server, waits until it is
 ready and returns an `AgentDeployment`: the URL and the headers to call it, and
-the methods to invoke it, check its status and stop it. If anything fails along
-the way, it destroys the sandbox and raises the exception.
+the methods to invoke it, check its status, pause it and stop it. If anything
+fails along the way, it destroys the sandbox (unless `keep_on_failure` is set,
+see [If the startup fails](#si-el-arranque-falla)) and raises the exception.
 
 === "Python"
 
@@ -493,7 +569,9 @@ never goes through argv and is never printed) or uses the one in
 because there would be no way to reconnect. `invoke` and `status` read it from
 `--token-file` or `RAYITO_ACCESS_TOKEN`. `stop` does not need it: it terminates
 the sandbox by its id. From the SDK, `deploy(access_token=...)` (`deploy({
-accessToken })` in TypeScript) does the same as the variable.
+accessToken })` in TypeScript) does the same as the variable; if you pass none,
+`deploy()` generates one and `deployment.access_token` (`deployment.accessToken`
+in TypeScript) hands it back so you can keep it (never print it or commit it).
 
 ### Calling the service { #llamar-al-servicio }
 
@@ -544,6 +622,124 @@ arrive. From another process, reattach with the sandbox id:
     rayito --json agent invoke microvm-00000000-0000-0000-0000-000000000001 "Hello" --stream
     ```
 
+### Pause, resume and reconnect { #pausar-reanudar-y-reconectar }
+
+`deployment.pause()` suspends the sandbox: it bills no compute while it sleeps
+and the service keeps its state. The next request resumes it (so does
+`deployment.resume()`), and with `idle`, on by default, it suspends itself
+once idle. To get back to the deployment from another process, pass the token
+you saved:
+
+=== "Python"
+
+    ```python
+    from rayito import AgentDeployment, AgentProject
+
+    deployment = AgentProject.load("./support-bot").deploy()
+    token = deployment.access_token
+    deployment.pause()
+    deployment.resume()
+
+    same = AgentDeployment.connect(deployment.sandbox_id, access_token=token)
+    print(same.status())
+    deployment.stop()
+    ```
+
+=== "Python (async)"
+
+    ```python
+    from rayito import AgentDeployment, AsyncAgentProject
+
+
+    async def main() -> None:
+        deployment = await AsyncAgentProject.load("./support-bot").deploy()
+        token = deployment.access_token
+        await deployment.pause()
+        await deployment.resume()
+        await deployment.stop()
+        print(AgentDeployment.__name__, token is not None)
+    ```
+
+=== "TypeScript"
+
+    ```ts
+    import { AgentDeployment, AgentProject } from "rayito";
+
+    const project = await AgentProject.load("./support-bot");
+    const deployment = await project.deploy();
+    const token = deployment.accessToken;
+    await deployment.pause();
+    await deployment.resume();
+
+    const same = await AgentDeployment.connect(deployment.sandboxId, { accessToken: token });
+    console.log(await same.status());
+    await deployment.stop();
+    ```
+
+### If the startup fails { #si-el-arranque-falla }
+
+If the app does not start (a module is missing, the command does not exist, it
+does not answer its health route), `deploy()` raises `SandboxException` with the
+failure code (`app_exited`, `app_not_ready`, the exception class) and the end of
+the app's standard error, bounded to 2 KiB and with no environment values or
+credentials. By default it destroys the sandbox. To get in and debug it, ask
+for it to be kept (`keep_on_failure=True`; an `access_token` is required,
+because without one nobody could connect); the error carries the id in a note.
+It costs money until you terminate it with `Sandbox.kill(sandbox_id)` or
+`rayito agent stop`.
+
+=== "Python"
+
+    ```python
+    from rayito import AgentProject
+    from rayito.exceptions import SandboxException
+
+    project = AgentProject.load("./support-bot")
+    try:
+        project.deploy(access_token="<token>", keep_on_failure=True)
+    except SandboxException as exc:
+        print(exc)
+        print(*getattr(exc, "__notes__", []), sep="\n")
+    ```
+
+=== "TypeScript"
+
+    ```ts
+    import { AgentProject, SandboxError } from "rayito";
+
+    const project = await AgentProject.load("./support-bot");
+    try {
+      await project.deploy({ accessToken: "<token>", keepOnFailure: true });
+    } catch (error) {
+      if (error instanceof SandboxError) {
+        console.error(error.message);
+      }
+    }
+    ```
+
+=== "CLI"
+
+    ```bash
+    rayito agent deploy --file ./support-bot --token-file ./agent.token --keep-on-failure
+    ```
+
+### Which protocol to choose { #que-protocolo-elegir }
+
+The `protocol` of an `HttpApp` decides what the deployment exposes. The default
+is `agentcore`, and with it your own routes cannot be reached from outside:
+
+| `protocol` | What the deployment exposes | `invoke()` | When |
+|---|---|---|---|
+| `agentcore` (default) | `GET /ping` and `POST /invocations`; the host translates to your `invoke_path` | yes | your app receives `{"prompt"}` on a route and you want `deployment.invoke()` and `stream()` |
+| `openai-chat` | the same, translating Chat Completions with streaming | yes | your app is an OpenAI-compatible server |
+| `raw` | your routes as they are (`/health`, `/invoke`, an MCP server...) | no: `UnimplementedError` | your app already has its own routes and you call them with your HTTP client |
+
+With `agentcore` or `openai-chat`, a `health_path` or `invoke_path` other than
+`/ping` and `/invocations` is only used by the host inside; asking for
+`/health` or `/invoke` on the deployment URL gives 404. `rayito agent deploy`
+warns about it in that case, and `rayito agent init --runtime custom` writes
+`protocol = "raw"` because its app declares its own routes.
+
 ### The service contract { #el-contrato-del-servicio }
 
 The service speaks the AgentCore runtime contract, so the same agent is served
@@ -556,7 +752,10 @@ the same way in a MicroVM and in an exported container:
   the `text`, the `session_id` and the usage; with it, an SSE stream with one
   event per agent protocol event, ending in `done` or `agent_failed`. An agent
   failure is a `200` with `failed`; HTTP codes are only for the contract
-  (`400`, `413`, `429` when busy, `503` when not ready yet).
+  (`400`, `413`, `429` when busy, `503` when not ready yet). The JSON carries
+  `usage_reported`: `false` if the agent did not report tokens (`usage` is then
+  zero because it is unknown); an older service without the field counts as
+  `true`.
 - It handles one request at a time. The
   `X-Amzn-Bedrock-AgentCore-Runtime-Session-Id` header acts as the `session_id`
   if the body does not carry one.
@@ -681,14 +880,25 @@ the repository.
 | Table | Keys | What it is |
 |---|---|---|
 | (root) | `schema`, `name` | schema version and name (image and deployment label) |
-| `[runtime]` | `kind`, `entrypoint`, `language`, `command`, `protocol` | the framework and how it starts |
+| `[runtime]` | `kind`, `entrypoint`, `language`, `command`, `protocol`, `requirements`, `install`, `python`, `toolsets`, `skills_dir` | the framework and how it starts; each `kind` only accepts some (below) |
+| `[runtime.app]` | `command`, `port`, `health_path`, `invoke_path`, `protocol` | only with `kind = "custom"`: your HTTP app (`HttpApp`); `command` and `port` are required |
 | `[source]` | `path`, `requirements`, `exclude` | the directory copied into the image and its requirements |
-| `[model]` | `provider`, `id`, `region`, `gateway` | the model, and which gateway it uses |
+| `[model]` | `provider`, `id`, `region`, `gateway`, `base_path`, `prompt_caching` | the model, and which gateway it uses |
 | `[gateways.<name>]` | `preset`, `secret`, `region`, `models`… | a gateway: one of the presets in [Agent providers](agente-proveedores.md) and the **name** of the secret |
-| `[agent]` | `instructions` or `instructions_file`, `permissions` | instructions (mutually exclusive) and permissions |
-| `[limits]` | `max_steps`, `timeout_seconds` | the limits of one run |
-| `[serve]` | `timeout_seconds`, `idle_seconds` | deployment lifetime (≤ 8 h) and idle suspension |
+| `[agent]` | `instructions` or `instructions_file`, `small_model`, `runtime_version`, `raw_config`, `permissions`, `mcp.<name>`, `agents.<name>` | instructions (mutually exclusive), permissions, MCP servers and subagents |
+| `[limits]` | `max_steps`, `timeout_seconds`, `max_output_bytes`, `max_total_tokens` | the limits of one run |
+| `[serve]` | `port`, `timeout_seconds`, `idle_seconds`, `max_concurrency`, `metadata` | service port, deployment lifetime (≤ 8 h), idle suspension, concurrency and labels |
 | `[network]` | `allow_internet_access`, `egress` | sandbox network: closed unless you open it |
+| `[image]` | `base`, `template`, `memory_mib` | the base image, the name of an already built image and its memory |
+
+`[runtime]` keys by `kind`: `langgraph` accepts `entrypoint`; `strands` and
+`strands-harness`, `entrypoint`, `language` and `requirements`; `hermes`,
+`toolsets` and `skills_dir`; `custom`, `install`, `requirements`, `python` and
+exactly one of `command` (with `protocol`: `rayito-v1` or `text`), `entrypoint`
+or the `[runtime.app]` table; `opencode` and `deepagents`, none. `install` are
+shell commands run when the image is built, before your code is copied, and
+`requirements` is a requirements file in your `source` that is installed into
+its own venv.
 
 Times are in seconds in the file, in both SDKs. The CLI never changes what the
 file says unless you pass the option (`--port`, `--timeout`).
@@ -701,11 +911,15 @@ file says unless you pass the option (`--port`, `--timeout`).
   `protocol="rayito-v1"` it writes agent protocol lines; with `protocol="text"`,
   what it prints is the answer.
 - `entrypoint`: a Python function `package.module:function`.
-- `app`: an HTTP application that already speaks `GET /ping` and
-  `POST /invocations` (`HttpApp(command=..., port=...)`). If it speaks another
-  protocol (for example, an MCP server), `protocol="raw"` only exposes it:
-  `deploy()` gives you the URL and the headers, and `invoke()` raises
-  `UnimplementedError`.
+- `app`: an HTTP application (`HttpApp(command=..., port=...)`). With
+  `protocol="agentcore"` (the default) the host serves `/ping` and
+  `/invocations` and translates to your app's route (`invoke_path`). If your
+  app has its own routes or speaks another protocol (for example, an MCP
+  server), `protocol="raw"` only exposes it: `deploy()` gives you the URL and
+  the headers, and `invoke()` raises `UnimplementedError`; [which to
+  choose](#que-protocolo-elegir). The `command` runs from the directory of the
+  copied code, with that directory on its `PYTHONPATH`, and `python` is the one
+  of the `requirements` venv (without it, the image one).
 
 === "Python"
 
@@ -715,8 +929,14 @@ file says unless you pass the option (`--port`, `--timeout`).
     command = CustomRuntime(command=["bash", "run.sh"], protocol="text")
     function = CustomRuntime(entrypoint="my_agent.main:answer")
     server = CustomRuntime(
-        install=["pip install crewai"],
-        app=HttpApp(command=["python", "serve.py"], port=9100),
+        requirements="requirements.txt",
+        app=HttpApp(
+            command=["python", "-m", "agent.server"],
+            port=9100,
+            health_path="/health",
+            invoke_path="/invoke",
+            protocol="raw",
+        ),
     )
     ```
 

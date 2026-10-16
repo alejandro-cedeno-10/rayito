@@ -338,6 +338,59 @@ def test_stop_kills_the_sandbox(make: Callable[..., Harness]) -> None:
     assert harness.sandbox.kills == 1
 
 
+def test_the_access_token_of_the_sandbox_is_exposed_to_reconnect(
+    make: Callable[..., Harness],
+) -> None:
+    harness = make()
+    assert harness.deployment.access_token == harness.sandbox.access_token
+
+
+def test_pause_and_resume_map_to_the_sandbox(make: Callable[..., Harness]) -> None:
+    harness = make()
+    assert harness.call("pause") is True
+    assert harness.sandbox.pause_calls == [{"wait": True}]
+    harness.call("pause", wait=False)
+    harness.call("resume")
+    harness.call("resume", wait=False)
+    assert harness.sandbox.pause_calls[1] == {"wait": False}
+    assert harness.sandbox.resume_calls == [{"wait": True}, {"wait": False}]
+    assert harness.sandbox.kills == 0
+
+
+def test_the_result_says_when_the_agent_reported_no_usage(make: Callable[..., Harness]) -> None:
+    body = {**RESULT_BODY, "usage": {"input": 0, "output": 0}, "usage_reported": False}
+    result = make(Scripted(body=json_body(body))).call("invoke", PROMPT)
+    assert result.usage_reported is False
+    assert result.usage.total == 0
+
+
+def test_an_older_service_without_the_field_reports_usage(make: Callable[..., Harness]) -> None:
+    result = make(Scripted(body=json_body(RESULT_BODY))).call("invoke", PROMPT)
+    assert result.usage_reported is True
+
+
+def test_a_stream_without_usage_in_its_steps_is_unreported(make: Callable[..., Harness]) -> None:
+    body = sse(
+        ("step_started", {"index": 1}),
+        ("text", {"text": "listo"}),
+        ("step_finished", {"index": 1, "usage": None}),
+        ("done", {"session_id": SESSION}),
+    )
+    harness = make(Scripted(body=body))
+    result = harness.result_of_stream("hola")
+    assert result.usage_reported is False
+    reported = make(
+        Scripted(
+            body=sse(
+                ("step_started", {"index": 1}),
+                ("step_finished", {"index": 1, "usage": {"input": 3}}),
+                ("done", {"session_id": SESSION}),
+            )
+        )
+    ).result_of_stream("hola")
+    assert reported.usage_reported is True
+
+
 def test_labels_round_trip() -> None:
     labels = labels_for("support-bot", 8088, raw=False)
     assert labels == {AGENT_DEPLOYMENT_LABEL: "support-bot", AGENT_DEPLOYMENT_PORT_LABEL: "8088"}

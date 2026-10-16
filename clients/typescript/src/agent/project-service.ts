@@ -3,18 +3,21 @@
  * aplicación sobre `AgentTemplate`, `Sandbox` y `AgentDeployment`. Espejo de
  * `rayito._agent._project_base` y `_project_service_async`. Nada aquí se
  * ejecuta al construir o cargar un proyecto; cada operación es la única que
- * crea recursos y `deploy()` mata su sandbox ante cualquier fallo.
+ * crea recursos y `deploy()` mata su sandbox ante cualquier fallo (salvo
+ * `keepOnFailure`).
  */
 
 import { posix } from "node:path";
-import { SandboxError, TimeoutError } from "../errors.js";
+import { InvalidArgumentError, SandboxError, TimeoutError } from "../errors.js";
 import {
   AGENT_RUN_SANDBOX_MARGIN_SECONDS,
   AGENT_SERVICE_READY_MARKER_PATH,
   AGENT_SERVICE_READY_TIMEOUT_SECONDS,
   AGENT_SERVICE_SESSION_HEADER,
+  AGENT_STARTUP_DIAGNOSTICS_MAX_BYTES,
   DEFAULT_AGENT_WORKDIR,
 } from "../limits.js";
+import { ACCESS_TOKEN_ENV_VAR } from "../sandbox/launch.js";
 import type { SandboxConnectOptions, SandboxCreateOptions } from "../sandbox/sandbox.js";
 import type { BuildInfo } from "../templates/build.js";
 import { AgentDeployment, type DeploymentSandbox, labelsFor } from "./deployment.js";
@@ -63,10 +66,17 @@ export type AgentProjectSandboxOptions = Pick<
 /** Lo de `AgentProjectSandboxOptions` más el access token del sandbox del
  * despliegue (el de `Sandbox.create()`; sin él, `RAYITO_ACCESS_TOKEN` o uno
  * nuevo). Quien quiera reconectarse desde otro proceso
- * (`AgentDeployment.connect`, `rayito agent invoke`) lo guarda: sin él sólo
- * `Sandbox.kill(sandboxId)` llega al sandbox. */
+ * (`AgentDeployment.connect`, `rayito agent invoke`) lo guarda (con uno nuevo,
+ * el valor está en `AgentDeployment.accessToken`): sin él sólo
+ * `Sandbox.kill(sandboxId)` llega al sandbox.
+ *
+ * `keepOnFailure` (`false` por defecto) deja vivo el sandbox si el despliegue
+ * falla, para depurarlo: el error lleva su id en el mensaje, hace falta
+ * `accessToken` (o `RAYITO_ACCESS_TOKEN`) para poder conectarse y lo
+ * terminas tú con `Sandbox.kill(sandboxId)`, porque sigue facturando. */
 export interface AgentProjectDeployOptions extends AgentProjectSandboxOptions {
   readonly accessToken?: string | undefined;
+  readonly keepOnFailure?: boolean | undefined;
 }
 
 export interface AgentProjectRunOptions extends AgentProjectSandboxOptions {
@@ -268,6 +278,45 @@ export function serveCommand(host: HostConfig, port: number): string {
   );
 }
 
+/** El mensaje de un arranque fallido a partir del contenido del marcador de
+ * fallo: la primera línea es el código y, si hay, el resto es el final de la
+ * salida de error de la app que el host ya saneó. Se vuelve a acotar aquí por
+ * si el marcador viene de un host más viejo o de otro escritor. */
+export function startupFailureMessage(marker: string): string {
+  const trimmed = marker.trim();
+  const newline = trimmed.indexOf("\n");
+  const code = (newline < 0 ? trimmed : trimmed.slice(0, newline)).trim();
+  const detail = newline < 0 ? "" : trimmed.slice(newline + 1).trim();
+  const message = `el host del agente no pudo arrancar (${code === "" ? AGENT_HOST_FAILED_SUFFIX : code})`;
+  const bytes = new TextEncoder().encode(detail);
+  const tail = new TextDecoder("utf-8", { fatal: false })
+    .decode(bytes.slice(-AGENT_STARTUP_DIAGNOSTICS_MAX_BYTES))
+    .replaceAll("\uFFFD", "");
+  return tail === "" ? message : `${message}. Final de la salida de error de la app:\n${tail}`;
+}
+
+/** `keepOnFailure` conserva un sandbox al que sólo se llega con su access
+ * token: sin uno que el llamador conozca (opción o `RAYITO_ACCESS_TOKEN`),
+ * conservarlo no sirve de nada. */
+export function requireReconnectableToken(accessToken: string | undefined): void {
+  if (!accessToken && !process.env[ACCESS_TOKEN_ENV_VAR]) {
+    throw new InvalidArgumentError(
+      "deploy({ keepOnFailure: true }) necesita accessToken (o " +
+        `${ACCESS_TOKEN_ENV_VAR}) para poder conectarte al sandbox que se conserva`,
+    );
+  }
+}
+
+/** La nota que lleva el error de un despliegue con `keepOnFailure`: qué
+ * sandbox quedó vivo y cómo terminarlo. Sólo el id, nunca el token. */
+export function keptSandboxNote(sandbox: { readonly sandboxId: string }): string {
+  return (
+    `keepOnFailure: el sandbox ${sandbox.sandboxId} sigue vivo; conéctate con ` +
+    "Sandbox.connect(sandboxId, { accessToken }) para depurarlo y termínalo con " +
+    "Sandbox.kill(sandboxId) al acabar."
+  );
+}
+
 export function failedMarkerPath(): string {
   return AGENT_SERVICE_READY_MARKER_PATH + AGENT_HOST_FAILED_SUFFIX;
 }
@@ -330,12 +379,17 @@ export class ProjectService {
   }
 
   /** Sirve el agente desde un MicroVM y devuelve su `AgentDeployment`. Si
-   * cualquier paso falla, mata el sandbox antes de propagar. */
+   * cualquier paso falla, mata el sandbox antes de propagar (salvo con
+   * `keepOnFailure`, que lo deja vivo y lo anota en el mensaje del error). */
   async deploy(options: AgentProjectDeployOptions = {}): Promise<AgentDeployment> {
     const project = this.#project;
+    const { keepOnFailure = false, ...sandboxOptions } = options;
+    if (keepOnFailure) {
+      requireReconnectableToken(options.accessToken);
+    }
     const sandbox = await this.#create(
       deployCreateOptions(project, { raw: isRawProject(project) }),
-      options,
+      sandboxOptions,
     );
     try {
       const host = hostConfigFor(project, sandbox);
@@ -361,7 +415,11 @@ export class ProjectService {
         fetch: this.#options.fetch,
       });
     } catch (error) {
-      await this.#kill(sandbox);
+      if (keepOnFailure && error instanceof Error) {
+        error.message = `${error.message}\n${keptSandboxNote(sandbox)}`;
+      } else {
+        await this.#kill(sandbox);
+      }
       throw error;
     }
   }
@@ -391,10 +449,7 @@ export class ProjectService {
         return;
       }
       if (await sandbox.files.exists(failedMarkerPath())) {
-        const code = (await sandbox.files.read(failedMarkerPath())).trim();
-        throw new SandboxError(
-          `el host del agente no pudo arrancar (${code === "" ? AGENT_HOST_FAILED_SUFFIX : code})`,
-        );
+        throw new SandboxError(startupFailureMessage(await sandbox.files.read(failedMarkerPath())));
       }
       if (now() >= deadline) {
         throw new TimeoutError("el host del agente no estuvo listo a tiempo");

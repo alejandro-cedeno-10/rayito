@@ -102,6 +102,16 @@ export interface HttpAppOptions {
  * `{"prompt": ...}`. `protocol` es `"agentcore"` (el contrato de AgentCore),
  * `"openai-chat"` (Chat Completions con streaming) o `"raw"` (sólo se
  * expone).
+ *
+ * Cuándo cada uno: con `"agentcore"` u `"openai-chat"` el host sirve `/ping` y
+ * `/invocations` y traduce a tu `invokePath`, así que `deployment.invoke()`
+ * funciona pero tus rutas propias no se alcanzan desde fuera; con `"raw"` el
+ * despliegue reenvía tus rutas tal cual (tu `/health`, tu `/invoke`, un
+ * servidor MCP) y `invoke()` no existe: usa `deployment.url` y
+ * `deployment.headers` con tu cliente. Tu `command` se ejecuta con el
+ * directorio del código copiado como directorio de trabajo y en su
+ * `PYTHONPATH`; con `requirements`, `python` y `pip` son los del venv (sin él,
+ * `python` es el intérprete de la imagen).
  */
 export class HttpApp {
   readonly command: readonly string[];
@@ -140,6 +150,18 @@ export class HttpApp {
     this.healthPath = healthPath;
     this.invokePath = invokePath;
     this.protocol = protocol;
+  }
+
+  /** Con `protocol: "agentcore"` u `"openai-chat"` el despliegue sólo expone
+   * `/ping` y `/invocations` (el host traduce a tu `invokePath`): tus rutas
+   * propias (`healthPath`, `invokePath` distintas de esas dos) no se alcanzan
+   * desde fuera. Con `protocol: "raw"` se exponen tal cual. */
+  get hidesOwnRoutes(): boolean {
+    return (
+      this.protocol !== "raw" &&
+      (this.healthPath !== AGENT_SERVICE_HEALTH_PATH ||
+        this.invokePath !== AGENT_SERVICE_INVOKE_PATH)
+    );
   }
 
   /** La tabla `[runtime.app]` de `rayito-agent.toml`. */
@@ -335,8 +357,24 @@ export class CustomRuntime extends HostBackedRuntime implements InstallableRunti
     return options;
   }
 
+  /** El `bin` del venv de `requirements`: va el primero en el `PATH` de tu
+   * app o tu comando, de modo que `python` y `pip` son los suyos. */
+  venvBin(installDir: string = AGENT_INSTALL_DIR): string {
+    return `${installDir}/${CUSTOM_VENV_NAME}/bin`;
+  }
+
   venvPython(installDir: string = AGENT_INSTALL_DIR): string {
-    return `${installDir}/${CUSTOM_VENV_NAME}/bin/python`;
+    return `${this.venvBin(installDir)}/python`;
+  }
+
+  /** Dónde corre tu código: el directorio copiado (directorio de trabajo y
+   * `PYTHONPATH`) y, con `requirements`, el `bin` del venv. */
+  #environmentOptions(): Record<string, unknown> {
+    const options: Record<string, unknown> = { app_dir: AGENT_APP_DIR };
+    if (this.requirements !== undefined) {
+      options.path_prepend = [this.venvBin()];
+    }
+    return options;
   }
 
   hostPython(): string {
@@ -385,13 +423,19 @@ export class CustomRuntime extends HostBackedRuntime implements InstallableRunti
           protocol: this.app.protocol,
           workdir,
           model: spec.model.id,
+          ...this.#environmentOptions(),
         },
       };
     }
     if (this.commandArgv !== undefined) {
       return {
         driver: "command",
-        options: { command: [...this.commandArgv], protocol: this.protocol, workdir },
+        options: {
+          command: [...this.commandArgv],
+          protocol: this.protocol,
+          workdir,
+          ...this.#environmentOptions(),
+        },
       };
     }
     return {

@@ -109,7 +109,7 @@ class Driver:
             build_event(
                 "step_finished",
                 index=1,
-                usage=usage_dict(usage),
+                usage=None if usage is None else usage_dict(usage),
                 finish_reason=FINISH_REASON,
             )
         )

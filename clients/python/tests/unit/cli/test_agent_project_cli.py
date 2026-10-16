@@ -15,6 +15,8 @@ from typing import Any, Final
 import pytest
 from typer.testing import CliRunner
 
+from rayito import AgentProject
+from rayito._agent._custom import CustomRuntime, HttpApp
 from rayito._agent._events import (
     AgentFailed,
     Done,
@@ -28,7 +30,7 @@ from rayito.cli import agent as agent_cli
 from rayito.cli._agent_scaffold import ScaffoldRequest, scaffold_files
 from rayito.cli._session import Clients
 from rayito.cli.app import app
-from rayito.exceptions import AgentException, InvalidArgumentException
+from rayito.exceptions import AgentException, InvalidArgumentException, SandboxException
 
 REPO_ROOT_DEPTH: Final = 5
 SCAFFOLD_VECTORS: Final = (
@@ -54,6 +56,7 @@ class FakeResult:
     steps: int = 2
     usage: TokenUsage = USAGE
     exit_code: int = 0
+    usage_reported: bool = True
 
 
 @dataclass(frozen=True)
@@ -105,6 +108,7 @@ class FakeExport:
 
 @dataclass(frozen=True)
 class FakeProject:
+    runtime: str = "deepagents"
     serve: FakeServe = FakeServe()
     log: list[tuple[str, dict[str, Any]]] = field(default_factory=list)
     run_error: Exception | None = None
@@ -262,7 +266,8 @@ def test_init_force_overwrites(tmp_path: Path, runner: CliRunner) -> None:
     result = runner.invoke(app, ["agent", "init", str(tmp_path), "--runtime", "custom", "--force"])
     assert result.exit_code == 0, result.output
     assert existing.read_text(encoding="utf-8").startswith("schema =")
-    assert (tmp_path / "run.sh").is_file()
+    assert (tmp_path / "serve.py").is_file()
+    assert (tmp_path / "requirements.txt").is_file()
 
 
 def test_init_json_lists_the_written_files(tmp_path: Path, runner: CliRunner) -> None:
@@ -346,8 +351,24 @@ def test_run_json_document(
             "cacheWrite": 0,
             "total": 15,
         },
+        "usageReported": True,
         "exitCode": 0,
     }
+
+
+def test_run_says_unknown_when_the_agent_reported_no_tokens(
+    monkeypatch: pytest.MonkeyPatch, runner: CliRunner, clients: Clients
+) -> None:
+    @dataclass(frozen=True)
+    class Project(FakeProject):
+        def run(self, prompt: str, **kwargs: Any) -> FakeResult:
+            return FakeResult(usage=TokenUsage(), usage_reported=False)
+
+    install_project(monkeypatch, Project())
+    text = runner.invoke(app, ["agent", "run", "hola"], obj=clients)
+    assert "tokens=desconocido" in text.output
+    document = runner.invoke(app, ["--json", "agent", "run", "hola"], obj=clients)
+    assert json.loads(document.output)["usageReported"] is False
 
 
 def test_run_stream_prints_deltas_then_a_newline(
@@ -501,6 +522,91 @@ def test_deploy_refuses_an_existing_token_file(
     assert result.exit_code == 2
     assert token_file.read_text() == "old"
     assert [name for name, _ in project.log if name == "deploy"] == []
+
+
+@pytest.mark.usefixtures("access_token")
+def test_deploy_keeps_the_sandbox_on_failure_only_when_asked(
+    monkeypatch: pytest.MonkeyPatch, runner: CliRunner, clients: Clients
+) -> None:
+    project = install_project(monkeypatch, FakeProject())
+    runner.invoke(app, ["agent", "deploy"], obj=clients)
+    runner.invoke(app, ["agent", "deploy", "--keep-on-failure"], obj=clients)
+    calls = [kwargs for name, kwargs in project.log if name == "deploy"]
+    assert [call["keep_on_failure"] for call in calls] == [False, True]
+
+
+@pytest.mark.usefixtures("access_token")
+def test_a_failed_deploy_prints_the_cause_and_the_notes(
+    monkeypatch: pytest.MonkeyPatch, runner: CliRunner, clients: Clients
+) -> None:
+    @dataclass(frozen=True)
+    class Project(FakeProject):
+        def deploy(self, **kwargs: Any) -> FakeDeployment:
+            failure = SandboxException(
+                "el host del agente no pudo arrancar (app_exited). Final de la salida de error "
+                "de la app:\nModuleNotFoundError: agent"
+            )
+            failure.add_note(f"keep_on_failure=True: el sandbox {SANDBOX_ID} sigue vivo")
+            raise failure
+
+    install_project(monkeypatch, Project())
+    result = runner.invoke(app, ["agent", "deploy", "--keep-on-failure"], obj=clients)
+    assert result.exit_code == 1
+    assert "ModuleNotFoundError: agent" in result.output
+    assert SANDBOX_ID in result.output
+
+
+@pytest.mark.usefixtures("access_token")
+def test_deploy_warns_when_the_app_routes_are_not_exposed(
+    monkeypatch: pytest.MonkeyPatch, runner: CliRunner, clients: Clients
+) -> None:
+    hidden = CustomRuntime(
+        app=HttpApp(command=["python", "serve.py"], port=9100, health_path="/health")
+    )
+    exposed = CustomRuntime(
+        app=HttpApp(
+            command=["python", "serve.py"], port=9100, health_path="/health", protocol="raw"
+        )
+    )
+    install_project(monkeypatch, FakeProject(runtime=hidden))  # type: ignore[arg-type]
+    warned = runner.invoke(app, ["agent", "deploy"], obj=clients)
+    assert 'protocol = "raw"' in warned.output
+    assert "/health" in warned.output
+    install_project(monkeypatch, FakeProject(runtime=exposed))  # type: ignore[arg-type]
+    quiet = runner.invoke(app, ["agent", "deploy"], obj=clients)
+    assert "aviso" not in quiet.output
+
+
+def test_init_custom_explains_the_raw_protocol(tmp_path: Path, runner: CliRunner) -> None:
+    result = runner.invoke(app, ["agent", "init", str(tmp_path), "--runtime", "custom"])
+    assert result.exit_code == 0, result.output
+    assert 'protocol = "raw"' in result.output
+    project_file = (tmp_path / "rayito-agent.toml").read_text(encoding="utf-8")
+    for key in (
+        'requirements = "requirements.txt"',
+        "install = []",
+        "[runtime.app]",
+        "port = 9100",
+    ):
+        assert key in project_file
+
+
+def test_init_custom_scaffolds_a_project_that_loads(tmp_path: Path, runner: CliRunner) -> None:
+    runner.invoke(app, ["agent", "init", str(tmp_path), "--runtime", "custom"])
+    loaded = AgentProject.load(tmp_path)
+    runtime = loaded.runtime
+    assert isinstance(runtime, CustomRuntime)
+    assert runtime.app is not None
+    assert runtime.app.protocol == "raw"
+    assert runtime.requirements == "requirements.txt"
+    assert not runtime.app.hides_own_routes
+
+
+def test_init_langgraph_scaffolds_a_plain_graph(tmp_path: Path, runner: CliRunner) -> None:
+    runner.invoke(app, ["agent", "init", str(tmp_path), "--runtime", "langgraph"])
+    graph = (tmp_path / "graph.py").read_text(encoding="utf-8")
+    assert "create_react_agent" in graph
+    assert "deepagents" not in graph
 
 
 def test_export_makes_no_aws_call(

@@ -343,6 +343,7 @@ export const AGENT_SERVICE_READY_TIMEOUT_SECONDS = 120 as const;
 export const DEFAULT_AGENT_DEPLOY_TIMEOUT_SECONDS = 3600 as const;
 export const AGENT_RUN_SANDBOX_MARGIN_SECONDS = 60 as const;
 export const AGENT_SERVICE_READY_MARKER_PATH = "/home/user/.rayito/agent/host/ready" as const;
+export const AGENT_STARTUP_DIAGNOSTICS_MAX_BYTES = 2048 as const;
 export const AGENT_SERVICE_SCHEMA = "rayito.agent-service/1" as const;
 export const AGENT_HERMES_API_PORT = 8642 as const;
 export const AGENT_STRANDS_VERSION = "1.61.1" as const;

@@ -25,6 +25,7 @@ import typer
 
 from rayito import AgentDeployment, AgentProject, AgentResult
 from rayito._agent._events import AgentEvent, AgentFailed, Text, TextDelta, ToolCall
+from rayito._agent._project_base import app_hiding_own_routes
 from rayito._agent._template import (
     AGENT_TEMPLATE_RUNTIMES,
     DEFAULT_AGENT_TEMPLATE_BASE,
@@ -53,7 +54,12 @@ from rayito.cli._console import EXIT_USAGE, echo, emit_json, fail, visible_contr
 from rayito.cli._session import clients_of, json_mode
 from rayito.cli._tokens import TOKEN_ENV_VAR, TokenFileError, write_token_file
 from rayito.cli.sandbox import TokenFileOption, kill_one, token_or_exit
-from rayito.exceptions import AgentException, BuildException, InvalidArgumentException
+from rayito.exceptions import (
+    AgentException,
+    BuildException,
+    InvalidArgumentException,
+    SandboxException,
+)
 
 EXPORT_TARGETS = ("docker", "agentcore")
 
@@ -160,6 +166,16 @@ DEPLOY_NEEDS_TOKEN_FILE_MESSAGE = (
     f"sin {TOKEN_ENV_VAR}, deploy necesita --token-file para poder volver a conectarte "
     "(invoke y status)"
 )
+CUSTOM_INIT_HINT = (
+    'la app usa protocol = "raw": el despliegue reenvía tus rutas (/health, /invoke) con '
+    'deployment.url y deployment.headers; deployment.invoke() es para protocol = "agentcore"'
+)
+USAGE_UNKNOWN_LABEL = "desconocido"
+RAW_ROUTES_HINT = (
+    'aviso: con protocol = "{protocol}" el despliegue sólo expone /ping y /invocations; '
+    'tus rutas ({health} y {invoke}) no se alcanzan desde fuera. Usa protocol = "raw" '
+    "en [runtime.app] para exponerlas."
+)
 PROJECT_FILE_HELP = "Fichero o directorio del proyecto (rayito-agent.toml o .json)."
 PROJECT_FILE_DEFAULT = "."
 JSON_LINE_SEPARATORS = (",", ":")
@@ -197,6 +213,7 @@ def result_document(result: AgentResult) -> dict[str, Any]:
         "text": result.text,
         "steps": result.steps,
         "usage": usage_document(result),
+        "usageReported": result.usage_reported,
         "exitCode": result.exit_code,
     }
 
@@ -207,7 +224,8 @@ def print_result(result: AgentResult, *, as_json: bool) -> None:
         return
     echo(result.text)
     echo(f"session_id={result.session_id}", err=True)
-    echo(f"steps={result.steps} tokens={result.usage.total}", err=True)
+    tokens = result.usage.total if result.usage_reported else USAGE_UNKNOWN_LABEL
+    echo(f"steps={result.steps} tokens={tokens}", err=True)
 
 
 class EventPrinter:
@@ -345,6 +363,8 @@ def init_command(
     else:
         for name in written:
             echo(f"escrito {name}")
+        if runtime == "custom":
+            echo(CUSTOM_INIT_HINT)
         echo(f"siguiente paso: rayito agent build --bucket <bucket> --file {directory}")
 
 
@@ -443,6 +463,14 @@ def deploy_command(
         typer.Option("--port", help="Puerto del servicio (por defecto, el del fichero)."),
     ] = None,
     token_file: TokenFileOption = None,
+    keep_on_failure: Annotated[
+        bool,
+        typer.Option(
+            "--keep-on-failure",
+            help="Si el arranque falla, deja el sandbox vivo para depurarlo (cuesta hasta "
+            "que lo termines con `rayito agent stop`).",
+        ),
+    ] = False,
 ) -> None:
     """Despliega el agente como servicio HTTP en un sandbox y deja la VM viva.
 
@@ -450,7 +478,9 @@ def deploy_command(
     imprimen nunca (se piden con AgentDeployment.headers). El access token
     del sandbox se guarda en --token-file (o es el de RAYITO_ACCESS_TOKEN):
     `invoke` y `status` lo necesitan. Vive como mucho 8 h: para pararlo,
-    `rayito agent stop`.
+    `rayito agent stop`. Un arranque fallido imprime su causa (el final de la
+    salida de error de la app, sin valores de entorno ni credenciales) y
+    termina el sandbox, salvo con --keep-on-failure.
     """
     token = deploy_token(token_file)
     project = load_project(file)
@@ -462,10 +492,23 @@ def deploy_command(
     clients = clients_of(ctx)
     try:
         deployment = dataclasses.replace(project, serve=serve).deploy(
-            region=clients.region, session=clients.session, access_token=token
+            region=clients.region,
+            session=clients.session,
+            access_token=token,
+            keep_on_failure=keep_on_failure,
         )
     except InvalidArgumentException as exc:
         fail(str(exc), code=EXIT_USAGE)
+    except SandboxException as exc:
+        fail("\n".join([str(exc), *getattr(exc, "__notes__", [])]))
+    hidden = app_hiding_own_routes(project)
+    if hidden is not None:
+        echo(
+            RAW_ROUTES_HINT.format(
+                protocol=hidden.protocol, health=hidden.health_path, invoke=hidden.invoke_path
+            ),
+            err=True,
+        )
     if json_mode(ctx):
         emit_json({"sandboxId": deployment.sandbox_id, "url": deployment.url, "port": serve.port})
     else:

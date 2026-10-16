@@ -109,6 +109,12 @@ rayito image publish --artifact image/rayito-image.zip --base-image-version 1 \
     [--artifact-run-id RUN_ID]
 ```
 
+`--base-image-version` es obligatoria y fija la versión de la base gestionada
+de AWS (`imageVersion` de `list-managed-microvm-image-versions`) sobre la que
+se construye la imagen. No hace falta buscarla a mano: con `latest` se usa la
+más reciente que lista AWS y se imprime (`base_image_version=<versión>`); un
+número explícito fija una build reproducible.
+
 `--with-efs` publica la imagen con `amazon-efs-utils` que necesita
 `volumes=` ([Volúmenes EFS](funciones-opcionales/volumenes-efs.md)): exige
 un zip hecho con `rayito image zip --with-efs`, `--os-capabilities ALL` (`rayd`
@@ -488,7 +494,7 @@ rayito agent init [DIR] [--runtime R] [--language python|typescript] [--provider
                   [--region R] [--force]
 rayito agent build --bucket B [--file PATH] [--force] [--timeout 1800]
 rayito agent run PROMPT [--file PATH] [--session-id ID] [--model ID] [--stream]
-rayito agent deploy [--file PATH] [--timeout S] [--port N] [--token-file F]
+rayito agent deploy [--file PATH] [--timeout S] [--port N] [--token-file F] [--keep-on-failure]
 rayito agent export --target docker|agentcore --out DIR [--file PATH] [--overwrite]
 rayito agent invoke SANDBOX_ID PROMPT [--session-id ID] [--stream] [--token-file F]
 rayito agent status SANDBOX_ID [--token-file F]
@@ -507,7 +513,17 @@ imprime el id del sandbox, la URL y el puerto (con `--json`, `sandboxId`,
 eventos a medida que llegan (con `--json`, una línea JSON por evento).
 `deploy` guarda el access token del sandbox en `--token-file` (o usa
 `RAYITO_ACCESS_TOKEN`) y sin ninguno de los dos sale con 2 sin crear nada;
-`invoke` y `status` lo leen igual, y `stop` no lo necesita.
+`invoke` y `status` lo leen igual, y `stop` no lo necesita. Si el arranque
+falla, `deploy` imprime la causa (el código del fallo y el final de la salida
+de error de la app, sin valores de entorno ni credenciales) y termina el
+sandbox, salvo con `--keep-on-failure`, que lo deja vivo para depurarlo
+(factura hasta `rayito agent stop`). Con una `HttpApp` que declara rutas
+propias sin `protocol = "raw"`, `deploy` avisa de que no se alcanzan desde
+fuera. `run` e `invoke` imprimen `tokens=desconocido` (y `usageReported:
+false` con `--json`) cuando el agente no informó de tokens. `init --runtime
+custom` escribe una app HTTP (`[runtime.app]` con `protocol = "raw"`,
+`requirements`, `install` y un `serve.py`), y `init --runtime langgraph`, un
+grafo de LangGraph a secas.
 
 Construye la imagen de `AgentTemplate`
 ([Templates de agente](funciones-opcionales/templates-de-agente.md)): parte

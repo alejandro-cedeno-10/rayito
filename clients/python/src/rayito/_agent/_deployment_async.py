@@ -337,7 +337,8 @@ class AsyncAgentDeployment:
     Coste aproximado: el del sandbox mientras vive, más el del modelo (ver
         `AsyncAgentProject.deploy()`).
     IAM: `GetMicrovm` y `CreateMicrovmAuthToken`; nada más.
-    Cómo apagarla: `await stop()` termina el sandbox y con él el despliegue.
+    Cómo apagarla: `await stop()` termina el sandbox y con él el despliegue;
+        `await pause()` deja de facturar cómputo sin perder el servicio.
     Ejemplo:
         deployment = await AsyncAgentDeployment.connect(sandbox_id)
         (await deployment.invoke("Resume el README.")).text
@@ -384,6 +385,15 @@ class AsyncAgentDeployment:
     @property
     def sandbox_id(self) -> str:
         return str(self._sandbox.sandbox_id)
+
+    @property
+    def access_token(self) -> str:
+        """El access token del sandbox del despliegue. Con el que pasaste a
+        `deploy(access_token=...)` o, si no pasaste ninguno, el que se generó:
+        guárdalo (nunca lo imprimas ni lo versiones) para reconectarte desde
+        otro proceso con `AsyncAgentDeployment.connect(sandbox_id, access_token=...)`
+        o con `rayito agent invoke --token-file`."""
+        return str(self._sandbox.access_token)
 
     @property
     def url(self) -> str:
@@ -450,6 +460,19 @@ class AsyncAgentDeployment:
             )
         finally:
             await response.close()
+
+    async def pause(self, *, wait: bool = True) -> bool:
+        """Suspende el sandbox del despliegue (`AsyncSandbox.pause()`):
+        mientras duerme no factura cómputo y el servicio conserva su estado.
+        `False` si ya estaba suspendido. La siguiente petición (o `resume()`)
+        lo reanuda; con `idle` (activo por defecto) también se suspende solo."""
+        return bool(await self._sandbox.pause(wait=wait))
+
+    async def resume(self, *, wait: bool = True) -> None:
+        """Reanuda el sandbox suspendido (`AsyncSandbox.resume()`) y, con
+        `wait`, espera a que esté listo. No hace falta antes de `invoke()`:
+        una petición a un sandbox suspendido ya lo reanuda."""
+        await self._sandbox.resume(wait=wait)
 
     async def stop(self) -> None:
         """Termina el sandbox del despliegue. Idempotente."""

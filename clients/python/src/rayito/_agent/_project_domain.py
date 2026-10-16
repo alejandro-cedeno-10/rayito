@@ -372,18 +372,34 @@ class AgentProject:
         )
 
     def deploy(
-        self, *, region: str | None = None, session: Any = None, access_token: str | None = None
+        self,
+        *,
+        region: str | None = None,
+        session: Any = None,
+        access_token: str | None = None,
+        keep_on_failure: bool = False,
     ) -> AgentDeployment:
         """Sirve el agente desde un MicroVM y devuelve su `AgentDeployment`:
         crea un sandbox desde la imagen del proyecto (con `serve.timeout_seconds`,
         `serve.idle` y las etiquetas de despliegue), escribe la configuración
         del host, lo arranca en modo servicio y espera su marcador de listo.
-        Si cualquier paso falla, termina el sandbox antes de lanzar.
+        Si cualquier paso falla, termina el sandbox antes de lanzar (salvo
+        con `keep_on_failure=True`).
 
         `access_token` es el del sandbox (como el de `Sandbox.create()`; sin
-        él, `RAYITO_ACCESS_TOKEN` o uno nuevo). Quien quiera reconectarse
-        desde otro proceso (`AgentDeployment.connect`, `rayito agent invoke`)
-        lo guarda: sin él sólo `Sandbox.kill(sandbox_id)` llega al sandbox.
+        él, `RAYITO_ACCESS_TOKEN` o uno nuevo). Con uno nuevo, el valor está en
+        `AgentDeployment.access_token`: guárdalo para reconectarte desde otro
+        proceso (`AgentDeployment.connect(sandbox_id, access_token=...)`,
+        `rayito agent invoke`); sin él sólo `Sandbox.kill(sandbox_id)` llega al
+        sandbox.
+
+        Un arranque fallido lanza `SandboxException` con el código del fallo
+        y el final de la salida de error de la app, sin valores de entorno ni
+        credenciales. Con `keep_on_failure=True` el sandbox no se termina
+        (para entrar a depurarlo: el error lleva su id en una nota) y hace
+        falta `access_token` (o `RAYITO_ACCESS_TOKEN`) para poder
+        conectarse; termínalo tú con `Sandbox.kill(sandbox_id)`, porque sigue
+        facturando. Por defecto es `False`.
 
         Coste y activación
         -------------------
@@ -410,7 +426,10 @@ class AgentProject:
         from rayito._agent._project_service import ProjectService
 
         return ProjectService(self).deploy(
-            region=region, session=session, access_token=access_token
+            region=region,
+            session=session,
+            access_token=access_token,
+            keep_on_failure=keep_on_failure,
         )
 
     def export(
@@ -480,7 +499,12 @@ class AsyncAgentProject(AgentProject):
         )
 
     async def deploy(  # type: ignore[override]
-        self, *, region: str | None = None, session: Any = None, access_token: str | None = None
+        self,
+        *,
+        region: str | None = None,
+        session: Any = None,
+        access_token: str | None = None,
+        keep_on_failure: bool = False,
     ) -> AsyncAgentDeployment:
         """Como `AgentProject.deploy()`, con `AsyncAgentDeployment`. Mismo
         bloque de coste: crea un sandbox que vive hasta `stop()` o hasta
@@ -509,7 +533,10 @@ class AsyncAgentProject(AgentProject):
         from rayito._agent._project_service_async import AsyncProjectService
 
         return await AsyncProjectService(self).deploy(
-            region=region, session=session, access_token=access_token
+            region=region,
+            session=session,
+            access_token=access_token,
+            keep_on_failure=keep_on_failure,
         )
 
     async def export(  # type: ignore[override]

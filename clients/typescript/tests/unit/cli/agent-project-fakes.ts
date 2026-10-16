@@ -15,6 +15,7 @@ import type {
   AgentProjectTools,
   DeployedAgent,
   DeployedService,
+  HiddenAppRoutes,
 } from "../../../src/cli/ops-ports.js";
 import type { BuildInfo } from "../../../src/templates/build.js";
 import type { Call } from "./ops-fakes.js";
@@ -71,6 +72,9 @@ export class FakeProject implements AgentProjectTool {
   readonly deployed = new FakeDeployed();
   runEvents: AgentEvent[] = [];
   runFailure: Error | undefined;
+  runResult: AgentResult = RESULT;
+  hiddenRoutes: HiddenAppRoutes | undefined;
+  deployFailure: Error | undefined;
 
   async build(options: AgentBuildRequest): Promise<BuildInfo> {
     this.calls.push(["build", options.bucket, options.force, options.timeoutMs]);
@@ -91,12 +95,25 @@ export class FakeProject implements AgentProjectTool {
     for (const event of this.runEvents) {
       options.onEvent?.(event);
     }
-    return RESULT;
+    return this.runResult;
   }
 
   async deploy(overrides: AgentDeployOverrides): Promise<DeployedService> {
-    this.calls.push(["deploy", overrides.port, overrides.timeoutMs, overrides.accessToken]);
-    return { agent: this.deployed, port: overrides.port ?? DEFAULT_SERVICE_PORT };
+    this.calls.push([
+      "deploy",
+      overrides.port,
+      overrides.timeoutMs,
+      overrides.accessToken,
+      overrides.keepOnFailure,
+    ]);
+    if (this.deployFailure !== undefined) {
+      throw this.deployFailure;
+    }
+    return {
+      agent: this.deployed,
+      port: overrides.port ?? DEFAULT_SERVICE_PORT,
+      hiddenRoutes: this.hiddenRoutes,
+    };
   }
 
   async export(options: AgentExportRequest): Promise<AgentExportResult> {

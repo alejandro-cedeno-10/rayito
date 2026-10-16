@@ -9,9 +9,11 @@ from __future__ import annotations
 import fnmatch
 import importlib
 import json
+import os
 import re
+import shutil
 import sys
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any, Final
 
 from ..protocol import AgentFailure, new_id
@@ -31,6 +33,9 @@ MODEL_ERROR_MODULES: Final = ("anthropic", "boto3", "botocore", "google", "httpx
 MAX_CAUSE_DEPTH: Final = 6
 #: Longitud máxima de un `detail_code`.
 MAX_DETAIL_CODE_LENGTH: Final = 64
+#: El nombre con el que un `command` de tu app llama al intérprete de Python
+#: del runtime.
+PYTHON_COMMAND: Final = "python"
 _DETAIL_CODE_PATTERN: Final = re.compile(r"[^a-z0-9_]")
 
 
@@ -48,6 +53,31 @@ def load_config(options: Mapping[str, Any]) -> Mapping[str, Any]:
     if not isinstance(loaded, dict):
         raise AgentFailure("protocol_error", "invalid_input")
     return loaded
+
+
+def child_environment(config: Mapping[str, Any]) -> dict[str, str]:
+    """El entorno de la app o el comando del usuario: el del host con los
+    directorios de `path_prepend` (los `bin` del venv de `requirements`) al
+    principio del `PATH`, de modo que `python` y `pip` sean los suyos, y el
+    código copiado (`app_dir`) al principio del `PYTHONPATH`."""
+    env = dict(os.environ)
+    prepend = [str(item) for item in config.get("path_prepend") or ()]
+    if prepend:
+        env["PATH"] = os.pathsep.join([*prepend, *filter(None, [env.get("PATH")])])
+    app_dir = config.get("app_dir")
+    if app_dir:
+        env["PYTHONPATH"] = os.pathsep.join([str(app_dir), *filter(None, [env.get("PYTHONPATH")])])
+    return env
+
+
+def child_argv(command: Sequence[object], env: Mapping[str, str]) -> list[str]:
+    """El `argv` del usuario; `python` sin ninguno en el `PATH` (la imagen
+    sólo trae `python3`) es el intérprete que ejecuta el host."""
+    argv = [str(part) for part in command]
+    missing = shutil.which(PYTHON_COMMAND, path=env.get("PATH")) is None
+    if argv and argv[0] == PYTHON_COMMAND and missing:
+        argv[0] = sys.executable
+    return argv
 
 
 def new_session_id() -> str:

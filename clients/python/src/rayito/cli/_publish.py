@@ -42,9 +42,12 @@ its own name (``make image-publish-caps`` uses ``rayito-base-caps``) so
 differs by this key never reuses a default version.
 
 ``--base-image-version`` is required: every publish names the managed base
-image version explicitly (``baseImageVersion`` of create/update-microvm-image,
-the ``imageVersion`` that ``list-managed-microvm-image-versions`` returns), so a
-silent roll of the managed image cannot change what a build runs on. The API
+image version (``baseImageVersion`` of create/update-microvm-image, the
+``imageVersion`` that ``list-managed-microvm-image-versions`` returns), so a
+silent roll of the managed image cannot change what a build runs on. The value
+``latest`` asks for the newest listed version and prints the one it chose
+(``resolve_base_image_version``): the roll is then explicit and visible, and an
+explicit number is what a reproducible build pins. The API
 accepts ``1`` but ``list-microvm-image-versions`` echoes the normalised ``1.0``
 (AWS_API_NOTES.md Q52), so the reuse check compares ``baseImageVersion``
 numerically and every other key exactly.
@@ -147,6 +150,13 @@ RUN_SCOPED_KEY_SEGMENT = "runs"
 RUN_ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]{0,63}")
 HOOKS_PORT = 9000
 MANAGED_BASE_IMAGE_NAME = "al2023-1"
+#: ``--base-image-version latest`` publishes on the newest version of the
+#: managed base image instead of a pinned one.
+LATEST_BASE_IMAGE_VERSION = "latest"
+NO_MANAGED_VERSION_MESSAGE = (
+    "la base gestionada no lista ninguna versión: pasa --base-image-version con una versión "
+    "de list-managed-microvm-image-versions"
+)
 # Nombre de la variable de imagen que `--sizes` hornea: información
 # declarada para que el código del usuario sepa el baseline de la imagen
 # (Q88) sin llamar a AWS; `rayd` no la lee hoy (0.6), ver el docstring del
@@ -323,6 +333,32 @@ def image_arn(clients: PublishClients, image_name: str) -> str:
 
 def base_image_arn(region: str) -> str:
     return f"arn:aws:lambda:{region}:aws:microvm-image:{MANAGED_BASE_IMAGE_NAME}"
+
+
+def newest_managed_version(microvms: Any, arn: str) -> tuple[str, datetime] | None:
+    """The newest version of the managed base image `arn` (`imageVersion` and
+    `createdAt` of ``list-managed-microvm-image-versions``), or ``None`` when
+    it lists none."""
+    paginator = microvms.get_paginator("list_managed_microvm_image_versions")
+    versions = [
+        item for page in paginator.paginate(imageIdentifier=arn) for item in page.get("items", [])
+    ]
+    if not versions:
+        return None
+    newest = max(versions, key=lambda item: item["createdAt"])
+    return str(newest["imageVersion"]), newest["createdAt"]
+
+
+def resolve_base_image_version(microvms: Any, region: str, requested: str) -> str:
+    """The ``baseImageVersion`` to publish on: ``requested`` as given, or, for
+    ``latest``, the newest the managed base image lists. The caller prints the
+    resolved value so the roll of the managed image is never silent."""
+    if requested != LATEST_BASE_IMAGE_VERSION:
+        return requested
+    newest = newest_managed_version(microvms, base_image_arn(region))
+    if newest is None:
+        fail(NO_MANAGED_VERSION_MESSAGE)
+    return newest[0]
 
 
 def desired_configuration(
