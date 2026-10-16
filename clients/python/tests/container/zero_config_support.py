@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import socket
 import subprocess
 import sys
 import threading
@@ -23,7 +24,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from http.server import ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, Final
+from typing import Any, Final, NamedTuple
 
 from rayito._agent._project_domain import AgentProject, ServeOptions
 
@@ -31,6 +32,7 @@ REPO_ROOT: Final = Path(__file__).resolve().parents[4]
 SAMPLES_DIR: Final = REPO_ROOT / "testdata" / "agent-samples"
 PROVIDERS_DIR: Final = REPO_ROOT / "dev" / "local" / "providers"
 MANIFEST: Final[dict[str, Any]] = json.loads((SAMPLES_DIR / "manifest.json").read_text("utf-8"))
+H2C_FRONT: Final = Path(__file__).with_name("h2c_front.mjs")
 SAMPLES_VAR: Final = "RAYITO_ZC_SAMPLES"
 ENDPOINT_HOST_VAR: Final = "RAYITO_ZC_ENDPOINT_HOST"
 DEFAULT_ENDPOINT_HOST: Final = "host.docker.internal"
@@ -141,16 +143,48 @@ def _load_fake_upstream() -> Any:
     return fake_upstream
 
 
+class FakeBedrock(NamedTuple):
+    """Los puertos del Bedrock falso: HTTP/1.1 y, delante, HTTP/2 en claro."""
+
+    http1: int
+    h2c: int
+
+
+def _free_port() -> int:
+    with socket.socket() as probe:
+        probe.bind(("0.0.0.0", 0))
+        return int(probe.getsockname()[1])
+
+
 @contextmanager
-def fake_bedrock() -> Iterator[int]:
-    """El Bedrock falso del entorno local en un puerto libre del host, para que
+def _h2c_front(upstream_port: int) -> Iterator[int]:
+    port = _free_port()
+    front = subprocess.Popen(
+        ["node", str(H2C_FRONT), str(port), str(upstream_port)],
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        assert front.stdout is not None
+        assert front.stdout.readline().strip() == "ready"
+        yield port
+    finally:
+        front.terminate()
+        front.wait(timeout=10)
+
+
+@contextmanager
+def fake_bedrock() -> Iterator[FakeBedrock]:
+    """El Bedrock falso del entorno local en puertos libres del host, para que
     los contenedores lo alcancen por `RAYITO_ZC_ENDPOINT_HOST`."""
     fake = _load_fake_upstream()
     server = ThreadingHTTPServer(("0.0.0.0", 0), fake.UpstreamHandler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
+    http1 = int(server.server_address[1])
     try:
-        yield int(server.server_address[1])
+        with _h2c_front(http1) as h2c:
+            yield FakeBedrock(http1=http1, h2c=h2c)
     finally:
         server.shutdown()
         server.server_close()
@@ -158,6 +192,29 @@ def fake_bedrock() -> Iterator[int]:
 
 def endpoint_url(port: int) -> str:
     return f"http://{os.environ.get(ENDPOINT_HOST_VAR, DEFAULT_ENDPOINT_HOST)}:{port}"
+
+
+OPENCODE_CONFIG_ENV: Final = "OPENCODE_CONFIG_CONTENT"
+OPENCODE_BEDROCK_PROVIDER: Final = "amazon-bedrock"
+
+
+def uses_http2(sample: dict[str, Any]) -> bool:
+    """El SDK de AWS para JavaScript habla HTTP/2 en claro con un endpoint
+    `http://`; lo hace la app propia de un ejemplo TypeScript. Los clientes
+    que crea el host (`protocol` de framework) usan HTTP/1.1."""
+    return bool(sample["language"] == "typescript" and sample["expected"]["protocol"] == "json")
+
+
+def model_endpoint_envs(sample: dict[str, Any], bedrock: FakeBedrock) -> list[str]:
+    """Los `-e` que dirigen al modelo falso. Los clientes de AWS leen
+    `AWS_ENDPOINT_URL_BEDROCK_RUNTIME`; OpenCode no, y su `endpoint` se
+    sobreescribe con la configuración en línea que admite."""
+    url = endpoint_url(bedrock.h2c if uses_http2(sample) else bedrock.http1)
+    envs = ["-e", f"AWS_ENDPOINT_URL_BEDROCK_RUNTIME={url}"]
+    if sample["expected"]["framework"] == "opencode":
+        override = {"provider": {OPENCODE_BEDROCK_PROVIDER: {"options": {"endpoint": url}}}}
+        envs += ["-e", f"{OPENCODE_CONFIG_ENV}={json.dumps(override)}"]
+    return envs
 
 
 class Container:

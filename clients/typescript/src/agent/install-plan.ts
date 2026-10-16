@@ -32,8 +32,15 @@ import {
   AGENT_UV_VERSION,
   AGENT_YARN_CLASSIC_VERSION,
 } from "../limits.js";
-import { containerPackagesStep, userRequirementsSteps } from "./host-runtime.js";
-import { copyStep, type InstallTarget, runStep, type TemplateStep } from "./runtime.js";
+import { userRequirementsSteps } from "./host-runtime.js";
+import {
+  containerPackagesStep,
+  copyStep,
+  DOWNLOAD_PACKAGES,
+  type InstallTarget,
+  runStep,
+  type TemplateStep,
+} from "./runtime.js";
 
 export const PYTHON_INSTALLERS = ["pip", "uv"] as const;
 export type PythonInstaller = (typeof PYTHON_INSTALLERS)[number];
@@ -73,8 +80,6 @@ export const PYTHON_BUILD_URL =
 export const NODE_DIST_URL = "https://nodejs.org/dist";
 export const UV_RELEASE_URL = "https://github.com/astral-sh/uv/releases/download";
 export const UV_ARCHIVE = "uv-aarch64-unknown-linux-gnu";
-/** Herramientas de descarga que una imagen Debian de contenedor no trae. */
-export const DOWNLOAD_PACKAGES = ["curl", "ca-certificates"] as const;
 /** `--hash=` en un fichero de requisitos activa `--require-hashes`. */
 export const UV_PIP_HASH_FLAG = "--require-hashes";
 

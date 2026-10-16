@@ -150,7 +150,6 @@ export const STRANDS_TS_PROVIDERS: Readonly<Record<string, ProviderClient>> = Ob
 
 const PYTHON_ENTRYPOINT_PATTERN = /^[A-Za-z_][A-Za-z0-9_.]*:[A-Za-z_][A-Za-z0-9_]*$/;
 const TS_ENTRYPOINT_PATTERN = /^[A-Za-z0-9_][A-Za-z0-9_./-]*\.(?:ts|mts|js|mjs)$/;
-const REQUIREMENTS_PATTERN = /^[A-Za-z0-9_][A-Za-z0-9_./-]*$/;
 
 /** Los requisitos con hash del venv de Strands (dato de paquete). */
 export function strandsRequirements(): string {

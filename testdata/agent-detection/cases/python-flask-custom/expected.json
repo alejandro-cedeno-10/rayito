@@ -22,6 +22,7 @@
       "8000"
     ],
     "port": 8000,
+    "port_env": null,
     "health_path": "/healthz",
     "invoke_path": "/chat",
     "request_field": "message",

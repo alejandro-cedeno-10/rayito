@@ -70,6 +70,26 @@ export function runStep(cmd: string): TemplateStep {
   return Object.freeze({ op: STEP_RUN, args: Object.freeze({ cmd }) });
 }
 
+/** Herramientas de descarga que una imagen Debian de contenedor no trae. */
+export const DOWNLOAD_PACKAGES = ["curl", "ca-certificates"] as const;
+
+/** El `RUN` de `apt-get` con las herramientas de build que una imagen Debian
+ * de un contenedor exportado no trae; vacío en un MicroVM. */
+export function containerPackagesStep(
+  target: InstallTarget,
+  packages: readonly string[],
+): readonly TemplateStep[] {
+  if (target.platform !== "container") {
+    return [];
+  }
+  return [
+    runStep(
+      "apt-get update && apt-get install -y --no-install-recommends " +
+        `${packages.join(" ")} && rm -rf /var/lib/apt/lists/*`,
+    ),
+  ];
+}
+
 /** Un paso `COPY` de un fichero o directorio del contexto de build. */
 export function copyStep(
   src: string,

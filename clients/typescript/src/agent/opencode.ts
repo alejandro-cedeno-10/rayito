@@ -39,7 +39,9 @@ import {
 import { AGENT_BIN_DIR } from "./recipes.js";
 import {
   type AgentRuntime,
+  containerPackagesStep,
   DEFAULT_INSTALL_PYTHON,
+  DOWNLOAD_PACKAGES,
   type HostConfig,
   hostConfig,
   type InstallableRuntime,
@@ -650,7 +652,7 @@ export class OpenCodeRuntime implements AgentRuntime, InstallableRuntime, Servab
   /** OpenCode y ripgrep desde sus assets de release, comprobados con
    * `sha256sum -c` contra los pines de `limits.json`. */
   installSteps(target: InstallTarget): readonly TemplateStep[] {
-    return [runStep(opencodeInstall(target))];
+    return [...containerPackagesStep(target, DOWNLOAD_PACKAGES), runStep(opencodeInstall(target))];
   }
 
   /** Nada: todo se descarga y se comprueba en el build. */

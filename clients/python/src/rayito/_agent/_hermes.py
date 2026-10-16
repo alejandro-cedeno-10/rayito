@@ -33,7 +33,6 @@ from rayito._agent._host_runtime import (
     HostBackedRuntime,
     HostSetup,
     ProviderClient,
-    container_packages_step,
     provider_base_url,
     require_supported_provider,
     standard_model_envs,
@@ -50,6 +49,7 @@ from rayito._agent._runtime import (
     InstallTarget,
     TemplateStep,
     WarmupStep,
+    container_packages_step,
     copy_step,
     run_step,
 )

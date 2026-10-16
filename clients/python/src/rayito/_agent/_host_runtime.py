@@ -215,23 +215,6 @@ def standard_model_envs(spec: AgentSpec, urls: Mapping[str, str] | None) -> dict
     return envs
 
 
-def container_packages_step(
-    target: InstallTarget, packages: Sequence[str]
-) -> tuple[TemplateStep, ...]:
-    """El `RUN` de `apt-get` con las herramientas de build que una imagen
-    Debian de un contenedor exportado no trae; vacío en un MicroVM, cuya
-    base ya las tiene."""
-    if target.platform != "container":
-        return ()
-    names = " ".join(packages)
-    return (
-        run_step(
-            "apt-get update && apt-get install -y --no-install-recommends "
-            f"{names} && rm -rf /var/lib/apt/lists/*"
-        ),
-    )
-
-
 def user_requirements_steps(
     target: InstallTarget, *, venv_dir: str, requirements: str, slug: str
 ) -> tuple[TemplateStep, ...]:
@@ -413,7 +396,6 @@ __all__ = [
     "HostBackedRuntime",
     "HostSetup",
     "ProviderClient",
-    "container_packages_step",
     "env_file_bytes",
     "failure_line",
     "model_base_url",

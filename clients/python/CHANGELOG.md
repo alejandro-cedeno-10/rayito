@@ -8,6 +8,15 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
 
 ### Añadido
 
+- **`AgentProject.detect()` une la detección con `deploy_agent`**: devuelve
+  `(proyecto, informe)` a partir de una carpeta, sin ejecutar su código, con
+  el proveedor y el modelo que encuentra (también en los ficheros de
+  configuración de Hermes y OpenCode), la pasarela del modelo y los plugins de
+  Node de LangGraph, DeepAgents y Vercel AI SDK como `custom` con su
+  adaptador. Strands instala con `uv` cuando el proyecto lo usa, y el host
+  recibe `queue_max` y `queue_timeout_seconds` en `host.json`. La detección
+  de una app HTTP que lee su puerto de `PORT` ahora lo declara (`port_env`),
+  de modo que el host se lo pasa y la app escucha donde él la espera.
 - **Opciones tipadas para servir un agente en varios VMs (`agent-zero-config`)**:
   `ServeOptions` suma `queue_max` y `queue_timeout_seconds` (la cola del host;
   con 0, el valor por defecto, la llamada que no cabe recibe 429 como hasta
@@ -192,6 +201,14 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
 
 ### Corregido
 
+- **Exportar a Docker**: el contexto crea los directorios de configuración del
+  agente con permisos de lectura para el usuario sin privilegios (BuildKit
+  los dejaba en `0600` con `--chmod`), la imagen de OpenCode instala `curl`
+  antes de descargar los binarios y los módulos y fábricas de un grafo se
+  resuelven como punto de entrada.
+- **El host relanzado mata antes lo que dejó el hijo muerto en su grupo**: un
+  envoltorio como `npm run start` que muere dejaba al servidor huérfano
+  ocupando el puerto y el relanzado nunca quedaba listo.
 - **`exclude` de un `AgentProject`/`AgentTemplate(app_exclude=)` filtra antes de
   leer**: un `.venv` excluido se leía entero y luego se descartaba (y su
   `cacert.pem` disparaba el aviso de ficheros con secretos). Ahora los patrones

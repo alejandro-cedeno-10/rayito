@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import http.client
 import json
+import os
 import signal
 import socket
 import subprocess
@@ -172,6 +173,47 @@ def test_a_child_that_stays_up_is_never_restarted(tmp_path: Path) -> None:
     finally:
         supervisor.stop()
     assert supervisor.state == process.STATE_STOPPED
+
+
+LEAVES_AN_ORPHAN = f"""
+import os, pathlib, subprocess, sys, time
+ready, pids = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
+orphan = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+with pids.open("a") as handle:
+    handle.write(str(orphan.pid) + "\\n")
+ready.write_text("ok")
+time.sleep({LIFETIME_SECONDS})
+os._exit(1)
+"""
+
+
+def _alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
+
+
+def test_what_a_dead_child_left_in_its_group_is_killed_before_the_restart(tmp_path: Path) -> None:
+    pids = tmp_path / "pids"
+    script = _script(tmp_path, "wrapper.py", LEAVES_AN_ORPHAN)
+    marker = tmp_path / "ready"
+    supervisor = Supervisor(
+        _spawn(script, str(marker), str(pids)),
+        marker.exists,
+        failure_codes=("child_exited", "child_not_ready"),
+        policy=FAST,
+        start_timeout_seconds=START_TIMEOUT_SECONDS,
+        environ={},
+    )
+    try:
+        supervisor.start()
+        assert wait_for(lambda: supervisor.restarts >= 1)
+        first = int(pids.read_text().split()[0])
+        assert wait_for(lambda: not _alive(first))
+    finally:
+        supervisor.stop()
 
 
 def test_a_child_that_dies_is_restarted_until_the_budget_runs_out(tmp_path: Path) -> None:

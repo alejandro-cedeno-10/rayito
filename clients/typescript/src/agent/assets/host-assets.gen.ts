@@ -3400,7 +3400,10 @@ class Supervisor:
 
     def _recover(self, dead: ChildProcess) -> bool:
         """Relanza hasta que el hijo queda listo; \`False\` si se paró o se
-        agotó el presupuesto."""
+        agotó el presupuesto. Antes se mata a lo que haya dejado el hijo muerto
+        en su grupo (el servidor que lanzaba un envoltorio como \`npm run\`):
+        seguiría ocupando el puerto del relanzado."""
+        dead.kill()
         last = dead
         while True:
             delay = self._budget.record_death(self._clock())

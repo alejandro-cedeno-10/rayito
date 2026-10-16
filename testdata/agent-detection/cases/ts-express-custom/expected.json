@@ -15,6 +15,7 @@
       "start"
     ],
     "port": 8000,
+    "port_env": "PORT",
     "health_path": "/health",
     "invoke_path": "/chat",
     "request_field": "message",

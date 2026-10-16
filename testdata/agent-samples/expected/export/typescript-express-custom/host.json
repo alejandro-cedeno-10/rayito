@@ -21,6 +21,7 @@
       "/opt/agents/node/bin"
     ],
     "port": 8000,
+    "port_env": "PORT",
     "protocol": "json",
     "request_field": "prompt",
     "workdir": "/home/user"

@@ -87,18 +87,20 @@ def _field(text: str, candidates: Sequence[str], templates: Sequence[str]) -> st
     return None
 
 
-def _port(text: str, language: str, launcher: Mapping[str, Any], rules: Mapping[str, Any]) -> int:
+def _port(
+    text: str, language: str, launcher: Mapping[str, Any], rules: Mapping[str, Any]
+) -> tuple[int, str | None]:
     if not launcher["portLiteral"]:
-        return AGENT_APP_INTERNAL_PORT
+        return AGENT_APP_INTERNAL_PORT, None
     app_rules = rules["app"]
     for template in app_rules["portEnvTemplates"][language]:
         if compiled_regex(template.replace("{env}", AGENT_APP_PORT_ENV)).search(text):
-            return AGENT_APP_INTERNAL_PORT
+            return AGENT_APP_INTERNAL_PORT, AGENT_APP_PORT_ENV
     for pattern in app_rules["portLiterals"][language]:
         match = compiled_regex(pattern).search(text)
         if match is not None:
-            return _checked_port(int(match.group(1)), rules)
-    return AGENT_APP_INTERNAL_PORT
+            return _checked_port(int(match.group(1)), rules), None
+    return AGENT_APP_INTERNAL_PORT, None
 
 
 def _checked_port(port: int, rules: Mapping[str, Any]) -> int:
@@ -190,12 +192,13 @@ def detect_app(
             f"{_PROTOCOL_PATH}: {text_error}", path=_PROTOCOL_PATH, code="not_detected"
         )
     request_field, response_field = _fields(text, protocol, rules, sink)
-    port = _port(text, entry.language, launcher, rules)
+    port, port_env = _port(text, entry.language, launcher, rules)
     command = _command(index, launcher, entry, manager, port, rules)
     app = DetectionApp(
         framework=framework["id"],
         command=command,
         port=port,
+        port_env=port_env,
         health_path=health,
         invoke_path=invoke,
         request_field=request_field,

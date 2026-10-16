@@ -34,7 +34,6 @@ import {
 import { HERMES_REQUIREMENTS } from "./assets/template-assets.gen.js";
 import type { AgentSpec } from "./domain.js";
 import {
-  containerPackagesStep,
   HostBackedRuntime,
   type HostSetup,
   type ProviderClient,
@@ -47,6 +46,7 @@ import { pythonDownloadCommand } from "./install-plan.js";
 import { shellQuote } from "./opencode.js";
 import { AGENT_APP_DIR, AGENT_INSTALL_DIR, hashedVenvInstall } from "./recipes.js";
 import {
+  containerPackagesStep,
   copyStep,
   type InstallableRuntime,
   type InstallTarget,

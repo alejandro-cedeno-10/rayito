@@ -20,6 +20,7 @@
       "8000"
     ],
     "port": 8000,
+    "port_env": null,
     "health_path": "/health",
     "invoke_path": "/ask",
     "request_field": "question",

@@ -223,23 +223,6 @@ export function standardModelEnvs(
   return envs;
 }
 
-/** El `RUN` de `apt-get` con las herramientas de build que una imagen Debian
- * de un contenedor exportado no trae; vacío en un MicroVM. */
-export function containerPackagesStep(
-  target: InstallTarget,
-  packages: readonly string[],
-): readonly TemplateStep[] {
-  if (target.platform !== "container") {
-    return [];
-  }
-  return [
-    runStep(
-      "apt-get update && apt-get install -y --no-install-recommends " +
-        `${packages.join(" ")} && rm -rf /var/lib/apt/lists/*`,
-    ),
-  ];
-}
-
 /** Instala en `venvDir` el fichero de requisitos del usuario
  * (`app/<requirements>` del contexto de build) después de los pines de Rayito.
  * `--require-hashes` se añade solo si el fichero lleva algún `--hash=`, y el

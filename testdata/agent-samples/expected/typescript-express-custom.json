@@ -13,7 +13,8 @@
       "health_path": "/healthz",
       "invoke_path": "/chat",
       "protocol": "json",
-      "request_field": "prompt"
+      "request_field": "prompt",
+      "port_env": "PORT"
     },
     "package_manager": "npm",
     "node_version": "22",

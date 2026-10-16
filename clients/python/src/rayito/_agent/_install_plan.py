@@ -29,8 +29,15 @@ from __future__ import annotations
 import re
 from typing import Final, Literal
 
-from rayito._agent._host_runtime import container_packages_step, user_requirements_steps
-from rayito._agent._runtime import InstallTarget, TemplateStep, copy_step, run_step
+from rayito._agent._host_runtime import user_requirements_steps
+from rayito._agent._runtime import (
+    DOWNLOAD_PACKAGES,
+    InstallTarget,
+    TemplateStep,
+    container_packages_step,
+    copy_step,
+    run_step,
+)
 from rayito._limits import (
     AGENT_DEFAULT_NODE_MAJOR,
     AGENT_DEFAULT_PYTHON_MINOR,
@@ -83,7 +90,6 @@ NODE_DIST_URL: Final = "https://nodejs.org/dist"
 UV_RELEASE_URL: Final = "https://github.com/astral-sh/uv/releases/download"
 UV_ARCHIVE: Final = "uv-aarch64-unknown-linux-gnu"
 #: Herramientas de descarga que una imagen Debian de contenedor no trae.
-DOWNLOAD_PACKAGES: Final[tuple[str, ...]] = ("curl", "ca-certificates")
 _REQUIREMENTS_PATH_PATTERN: Final = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_./-]*")
 #: `--hash=` en un fichero de requisitos activa `--require-hashes`.
 UV_PIP_HASH_FLAG: Final = "--require-hashes"

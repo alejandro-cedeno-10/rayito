@@ -54,6 +54,7 @@ export interface DetectionApp {
   readonly framework: string;
   readonly command: readonly string[];
   readonly port: number;
+  readonly portEnv: string | undefined;
   readonly healthPath: string;
   readonly invokePath: string | undefined;
   readonly requestField: string | undefined;
@@ -112,6 +113,7 @@ function appObject(app: DetectionApp): Record<string, unknown> {
     framework: app.framework,
     command: [...app.command],
     port: app.port,
+    port_env: nullable(app.portEnv),
     health_path: app.healthPath,
     invoke_path: nullable(app.invokePath),
     request_field: nullable(app.requestField),
@@ -139,6 +141,9 @@ function appTable(app: DetectionApp, protocol: string): Record<string, unknown> 
     health_path: app.healthPath,
     protocol,
   };
+  if (app.portEnv !== undefined) {
+    table.port_env = app.portEnv;
+  }
   if (app.invokePath !== undefined) {
     table.invoke_path = app.invokePath;
   }

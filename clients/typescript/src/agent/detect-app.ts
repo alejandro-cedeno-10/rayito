@@ -127,22 +127,26 @@ function portOf(
   language: string,
   launcher: LauncherRule,
   rules: DetectionRules,
-): number {
+): { readonly port: number; readonly portEnv: string | undefined } {
+  const plain = { port: AGENT_APP_INTERNAL_PORT, portEnv: undefined };
   if (!launcher.portLiteral) {
-    return AGENT_APP_INTERNAL_PORT;
+    return plain;
   }
   for (const template of rules.app.portEnvTemplates[language] ?? []) {
     if (compiledRegex(template.replaceAll("{env}", AGENT_APP_PORT_ENV)).test(text)) {
-      return AGENT_APP_INTERNAL_PORT;
+      return { port: AGENT_APP_INTERNAL_PORT, portEnv: AGENT_APP_PORT_ENV };
     }
   }
   for (const pattern of rules.app.portLiterals[language] ?? []) {
     const match = compiledRegex(pattern).exec(text);
     if (match !== null) {
-      return checkedPort(Number.parseInt(match[1] as string, 10), rules);
+      return {
+        port: checkedPort(Number.parseInt(match[1] as string, 10), rules),
+        portEnv: undefined,
+      };
     }
   }
-  return AGENT_APP_INTERNAL_PORT;
+  return plain;
 }
 
 function nodeCommand(
@@ -256,13 +260,14 @@ export function detectApp(
     });
   }
   const [requestField, responseField] = fieldsOf(text, protocol, rules, sink);
-  const port = portOf(text, entry.language, launcher, rules);
+  const { port, portEnv } = portOf(text, entry.language, launcher, rules);
   const command = commandOf(index, launcher, entry, manager, port, rules);
   return {
     app: {
       framework: framework.id,
       command,
       port,
+      portEnv,
       healthPath: health,
       invokePath: invoke,
       requestField,

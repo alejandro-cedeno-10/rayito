@@ -73,12 +73,14 @@ class DetectionProvider:
 @dataclass(frozen=True)
 class DetectionApp:
     """La app HTTP del proyecto: el comando que la arranca, el puerto en el
-    que escucha dentro del sandbox, sus rutas de salud e invocación y, con el
+    que escucha dentro del sandbox (y la variable de entorno con la que se le
+    indica, si la lee de ella), sus rutas de salud e invocación y, con el
     protocolo `json`, los campos de la petición y la respuesta."""
 
     framework: str
     command: tuple[str, ...]
     port: int
+    port_env: str | None
     health_path: str
     invoke_path: str | None
     request_field: str | None
@@ -89,6 +91,7 @@ class DetectionApp:
             "framework": self.framework,
             "command": list(self.command),
             "port": self.port,
+            "port_env": self.port_env,
             "health_path": self.health_path,
             "invoke_path": self.invoke_path,
             "request_field": self.request_field,
@@ -213,6 +216,8 @@ def _app_table(app: DetectionApp, protocol: str) -> dict[str, object]:
         "health_path": app.health_path,
         "protocol": protocol,
     }
+    if app.port_env is not None:
+        table["port_env"] = app.port_env
     if app.invoke_path is not None:
         table["invoke_path"] = app.invoke_path
     if app.request_field is not None:

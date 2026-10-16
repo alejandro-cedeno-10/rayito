@@ -34,10 +34,11 @@ from .zero_config_support import (
     SERVICE_TOKEN,
     SLOW_SECONDS,
     Container,
+    FakeBedrock,
     detected_project,
     docker_binary,
-    endpoint_url,
     fake_bedrock,
+    model_endpoint_envs,
     run,
     sample_ids,
     selected_samples,
@@ -62,16 +63,16 @@ def docker() -> str:
 
 
 @pytest.fixture(scope="module")
-def bedrock() -> Iterator[int]:
-    with fake_bedrock() as port:
-        yield port
+def bedrock() -> Iterator[FakeBedrock]:
+    with fake_bedrock() as fake:
+        yield fake
 
 
-def wait_ready(container: Container) -> None:
+def wait_ready(container: Container, timeout_seconds: float = READY_TIMEOUT_SECONDS) -> None:
     """Espera a que el servicio atienda una invocación: `/ping` contesta antes
     de que el driver esté listo, así que se sondea con una llamada real y se
     reintenta mientras el host contesta 503 (`not_ready`)."""
-    deadline = time.monotonic() + READY_TIMEOUT_SECONDS
+    deadline = time.monotonic() + timeout_seconds
     while True:
         try:
             status, _ = container.call("/invocations", {"prompt": "hola"}, timeout=60)
@@ -88,7 +89,7 @@ def wait_ready(container: Container) -> None:
 def container(
     request: pytest.FixtureRequest,
     docker: str,
-    bedrock: int,
+    bedrock: FakeBedrock,
     tmp_path_factory: pytest.TempPathFactory,
 ) -> Iterator[tuple[dict[str, Any], Container]]:
     sample = SAMPLES[request.param]
@@ -109,7 +110,7 @@ def container(
     run(
         docker, "run", "-d", "--rm", "--name", name, "--platform", "linux/arm64",
         "-e", f"RAYITO_AGENT_SERVICE_TOKEN={SERVICE_TOKEN}",
-        "-e", f"AWS_ENDPOINT_URL_BEDROCK_RUNTIME={endpoint_url(bedrock)}",
+        *model_endpoint_envs(sample, bedrock),
         "-e", f"AWS_BEARER_TOKEN_BEDROCK={PLACEHOLDER_KEY}",
         tag,
     )  # fmt: skip
@@ -129,7 +130,7 @@ def test_the_agent_answers_its_ping_and_an_invocation(
     status, body = handle.call("/invocations", {"prompt": PROMPT})
     assert status == 200, body
     reply = json.loads(body)
-    assert reply["failed"] is None
+    assert reply["failed"] is None, handle.logs()[-3000:]
     if sample["toolUse"]:
         assert EXPECTED_ANSWER in reply["text"]
     else:
@@ -187,19 +188,7 @@ def test_the_host_restarts_an_app_that_dies(container: tuple[dict[str, Any], Con
         pytest.skip(f"{sample['id']} corre dentro del proceso del host: no hay hijo que matar")
     for pid in children:
         handle.kill(pid)
-    deadline = time.monotonic() + RESTART_TIMEOUT_SECONDS
-    while time.monotonic() < deadline:
-        try:
-            status, body = handle.call("/ping", auth=False, timeout=10)
-            if status == 200 and json.loads(body).get("status") == "Healthy":
-                break
-        except RuntimeError:
-            pass
-        time.sleep(POLL_SECONDS)
-    else:
-        raise AssertionError(f"el host no reinició la app:\n{handle.logs()[-2000:]}")
-    status, body = handle.call("/invocations", {"prompt": PROMPT})
-    assert status == 200, body
+    wait_ready(handle, timeout_seconds=RESTART_TIMEOUT_SECONDS)
 
 
 def test_the_image_is_unprivileged_and_credential_free(

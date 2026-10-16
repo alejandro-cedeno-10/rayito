@@ -15,6 +15,7 @@
       "start"
     ],
     "port": 3000,
+    "port_env": null,
     "health_path": "/status",
     "invoke_path": "/invoke",
     "request_field": "prompt",

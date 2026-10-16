@@ -119,6 +119,27 @@ def run_step(cmd: str) -> TemplateStep:
     return TemplateStep(STEP_RUN, {"cmd": cmd})
 
 
+DOWNLOAD_PACKAGES: Final[tuple[str, ...]] = ("curl", "ca-certificates")
+"""Herramientas de descarga que una imagen Debian de contenedor no trae."""
+
+
+def container_packages_step(
+    target: InstallTarget, packages: Sequence[str]
+) -> tuple[TemplateStep, ...]:
+    """El `RUN` de `apt-get` con las herramientas de build que una imagen
+    Debian de un contenedor exportado no trae; vacío en un MicroVM, cuya
+    base ya las tiene."""
+    if target.platform != "container":
+        return ()
+    names = " ".join(packages)
+    return (
+        run_step(
+            "apt-get update && apt-get install -y --no-install-recommends "
+            f"{names} && rm -rf /var/lib/apt/lists/*"
+        ),
+    )
+
+
 def copy_step(src: str, dst: str, *, executable: bool = False) -> TemplateStep:
     """Un paso `COPY` de un fichero o directorio del contexto de build."""
     args: dict[str, object] = {"src": src, "dst": dst}
