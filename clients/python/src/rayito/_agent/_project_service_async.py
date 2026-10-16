@@ -39,7 +39,7 @@ from rayito._limits import AGENT_SERVICE_READY_MARKER_PATH, AGENT_SERVICE_READY_
 from rayito.exceptions import SandboxException, TimeoutException
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable
+    from collections.abc import Awaitable, Callable, Mapping
 
     from rayito._agent._project_domain import AgentProject
     from rayito._templates._models import BuildInfo
@@ -74,9 +74,13 @@ class AsyncProjectService:
         on_build_logs: Callable[[str], None] | None = None,
         region: str | None = None,
         session: Any = None,
+        base_version: str | None = None,
     ) -> BuildInfo:
-        """Construye la imagen del proyecto con `AsyncAgentTemplate.build()`."""
-        template: Any = project_template(self._project, asynchronous=True)
+        """Construye la imagen del proyecto con `AsyncAgentTemplate.build()`;
+        `base_version` fija la versión de la base (`None`: la más reciente)."""
+        template: Any = project_template(
+            self._project, asynchronous=True, base_version=base_version
+        )
         return await template.build(  # type: ignore[no-any-return]
             bucket=bucket,
             force=force,
@@ -128,49 +132,65 @@ class AsyncProjectService:
         session: Any = None,
         access_token: str | None = None,
         keep_on_failure: bool = False,
+        metadata: Mapping[str, str] | None = None,
+        index: Any = None,
     ) -> AsyncAgentDeployment:
         """Sirve el agente desde un MicroVM y devuelve su
         `AsyncAgentDeployment`. Si cualquier paso falla, mata el sandbox
         antes de propagar (salvo con `keep_on_failure=True`, que lo deja
-        vivo y lo anota en el error)."""
+        vivo y lo anota en el error). `metadata` e `index` son para una flota
+        (ver `deploy_create_args`)."""
         project = self._project
         if keep_on_failure:
             require_reconnectable_token(access_token)
         sandbox = await self._create(
-            deploy_create_args(project, raw=is_raw_project(project), access_token=access_token),
+            deploy_create_args(
+                project,
+                raw=is_raw_project(project),
+                access_token=access_token,
+                metadata=metadata,
+                index=index,
+            ),
             region,
             session,
         )
         try:
-            host = host_config_for(project, sandbox.gateways)
-            await sandbox.files.write_files(host_entries(project, host))
-            await sandbox.commands.run(clear_markers_command(), user=AGENT_SERVE_USER)
-            handle = await sandbox.commands.run(
-                serve_command(host, project.serve.port),
-                background=True,
-                user=AGENT_SERVE_USER,
-                envs=dict(host.envs),
-                timeout=None,
-                tag=AGENT_SERVE_TAG,
-                kill_tree=True,
-            )
-            handle.disconnect()
-            await self._wait_ready(sandbox)
-            return AsyncAgentDeployment(
-                sandbox,
-                port=project.serve.port,
-                host_access=await sandbox.get_host(project.serve.port),
-                project=project.name,
-                raw=is_raw_app(host),
-                request_timeout=request_timeout(project),
-                transport_factory=self._transport_factory,
-            )
+            return await self.serve(sandbox)
         except BaseException as exc:
             if keep_on_failure and isinstance(exc, Exception):
                 exc.add_note(kept_sandbox_note(sandbox))
             else:
                 await self._kill(sandbox)
             raise
+
+    async def serve(self, sandbox: Any) -> AsyncAgentDeployment:
+        """Arranca el host del agente en un sandbox ya creado (o tomado de un
+        pool con las pasarelas del proyecto) y espera su marcador de listo.
+        No mata el sandbox si falla: lo decide quien lo creó."""
+        project = self._project
+        host = host_config_for(project, sandbox.gateways)
+        await sandbox.files.write_files(host_entries(project, host))
+        await sandbox.commands.run(clear_markers_command(), user=AGENT_SERVE_USER)
+        handle = await sandbox.commands.run(
+            serve_command(host, project.serve.port),
+            background=True,
+            user=AGENT_SERVE_USER,
+            envs=dict(host.envs),
+            timeout=None,
+            tag=AGENT_SERVE_TAG,
+            kill_tree=True,
+        )
+        handle.disconnect()
+        await self._wait_ready(sandbox)
+        return AsyncAgentDeployment(
+            sandbox,
+            port=project.serve.port,
+            host_access=await sandbox.get_host(project.serve.port),
+            project=project.name,
+            raw=is_raw_app(host),
+            request_timeout=request_timeout(project),
+            transport_factory=self._transport_factory,
+        )
 
     async def _create(self, arguments: dict[str, Any], region: str | None, session: Any) -> Any:
         sandbox_class = self._sandbox_class

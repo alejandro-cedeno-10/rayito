@@ -1,0 +1,82 @@
+{
+  "schema": "rayito.agent-fleet-handles/1",
+  "prefix": "rs1",
+  "encode": [
+    {
+      "sandboxId": "microvm-00000000-0000-0000-0000-000000000001",
+      "sessionId": "ses_0000000000000000000000000a",
+      "handle": "rs1.microvm-00000000-0000-0000-0000-000000000001.ses_0000000000000000000000000a"
+    },
+    {
+      "sandboxId": "microvm-00000000-0000-0000-0000-000000000002",
+      "sessionId": "chat.with.dots",
+      "handle": "rs1.microvm-00000000-0000-0000-0000-000000000002.chat.with.dots"
+    },
+    {
+      "sandboxId": "microvm-00000000-0000-0000-0000-000000000003",
+      "sessionId": null,
+      "handle": "rs1.microvm-00000000-0000-0000-0000-000000000003."
+    }
+  ],
+  "decode": [
+    {
+      "value": "rs1.microvm-00000000-0000-0000-0000-000000000001.ses_0000000000000000000000000a",
+      "route": {
+        "sandboxId": "microvm-00000000-0000-0000-0000-000000000001",
+        "sessionId": "ses_0000000000000000000000000a"
+      }
+    },
+    {
+      "value": "rs1.microvm-00000000-0000-0000-0000-000000000002.chat.with.dots",
+      "route": {
+        "sandboxId": "microvm-00000000-0000-0000-0000-000000000002",
+        "sessionId": "chat.with.dots"
+      }
+    },
+    {
+      "value": "rs1.microvm-00000000-0000-0000-0000-000000000003.",
+      "route": {
+        "sandboxId": "microvm-00000000-0000-0000-0000-000000000003",
+        "sessionId": null
+      }
+    },
+    {
+      "value": "ses_0000000000000000000000000a",
+      "route": null
+    },
+    {
+      "value": "rs2.x.y",
+      "route": null
+    },
+    {
+      "value": "rs1..y",
+      "route": null
+    },
+    {
+      "value": "rs1.only-two",
+      "route": null
+    },
+    {
+      "value": "",
+      "route": null
+    },
+    {
+      "value": null,
+      "route": null
+    }
+  ],
+  "encodeInvalid": [
+    "",
+    "with.dot"
+  ],
+  "sessionLabels": [
+    {
+      "sessionId": "chat-1",
+      "label": "eaeb9111b1c6744278e803977dbf25fb"
+    },
+    {
+      "sessionId": "conversación-ñ",
+      "label": "2afb457d73ca197d86c5c6547416e478"
+    }
+  ]
+}

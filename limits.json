@@ -288,6 +288,7 @@
   "agentServiceInvokePath": "/invocations",
   "agentServiceSessionHeader": "X-Amzn-Bedrock-AgentCore-Runtime-Session-Id",
   "agentServiceMaxConcurrency": 1,
+  "poolSizeMax": 64,
   "agentServiceMaxRequestBytes": 1048576,
   "agentServiceReadyTimeoutSeconds": 120,
   "defaultAgentDeployTimeoutSeconds": 3600,

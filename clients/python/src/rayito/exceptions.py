@@ -21,7 +21,9 @@ class SandboxException(Exception):
 
     `status_code` es el HTTP del plano de control, `grpc_code` el status del
     agente y `aws_code` el nombre de la excepción de botocore; los tres son
-    opcionales según el origen.
+    opcionales según el origen. `code` es un código propio de Rayito de una
+    lista cerrada (`agent_vm_lost`: el MicroVM de un despliegue de agente
+    desapareció), `None` si el error no lo lleva.
     """
 
     def __init__(
@@ -31,11 +33,13 @@ class SandboxException(Exception):
         status_code: int | None = None,
         grpc_code: grpc.StatusCode | None = None,
         aws_code: str | None = None,
+        code: str | None = None,
     ) -> None:
         super().__init__(message)
         self.status_code = status_code
         self.grpc_code = grpc_code
         self.aws_code = aws_code
+        self.code = code
 
 
 class TimeoutException(SandboxException):
@@ -274,7 +278,13 @@ class QuotaExceededException(Exception):
 class CapacityException(Exception):
     """AWS no tiene capacidad momentánea para el MicroVM
     (`InsufficientCapacityException`); se reintenta con backoff. No es
-    `SandboxException`."""
+    `SandboxException`. `code` es `agent_capacity` cuando es una flota de
+    agentes la que no tiene cupo (todas las sesiones en uso y `max_vms`
+    alcanzado hasta agotar el plazo de la cola), `None` en el resto."""
+
+    def __init__(self, message: str = "", *, code: str | None = None) -> None:
+        super().__init__(message)
+        self.code = code
 
 
 class RayitoCompatWarning(UserWarning):

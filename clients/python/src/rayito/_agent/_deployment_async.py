@@ -474,6 +474,13 @@ class AsyncAgentDeployment:
         una petición a un sandbox suspendido ya lo reanuda."""
         await self._sandbox.resume(wait=wait)
 
+    async def set_timeout(self, timeout: int) -> None:
+        """Fija la vida restante del sandbox del despliegue
+        (`AsyncSandbox.set_timeout`, segundos enteros): `rayd` lo termina
+        solo al vencer. Una flota lo usa para que un VM sobrante desaparezca
+        sin servidor propio."""
+        await self._sandbox.set_timeout(timeout)
+
     async def stop(self) -> None:
         """Termina el sandbox del despliegue. Idempotente."""
         await self._sandbox.kill()

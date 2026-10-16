@@ -369,6 +369,13 @@ GROUPS: tuple[tuple[str, ...], ...] = (
         "agentPrefetchBuildTimeoutSeconds",
     ),
     (
+        # ADR-008 and ADR-029: the most parked slots one pool keeps
+        # (`PoolConfig.size`) and the most MicroVMs a fleet may hold
+        # (`ScalingOptions.max_vms`); the pool, the fleet and both SDKs share
+        # one bound. Not an AWS property.
+        "poolSizeMax",
+    ),
+    (
         # agent-runtimes-byo (ADR-028): the contract of the HTTP service an
         # agent exposes (the AgentCore runtime contract on `/ping` and
         # `/invocations`, port 8088 inside a MicroVM because `rayd` owns 8080

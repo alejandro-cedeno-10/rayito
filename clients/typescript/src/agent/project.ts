@@ -129,7 +129,7 @@ const DEFAULT_SERVE_TIMEOUT_MS = DEFAULT_AGENT_DEPLOY_TIMEOUT_SECONDS * MS_PER_S
  */
 export class AgentProjectError extends InvalidArgumentError {
   readonly path: string;
-  readonly code: AgentProjectErrorCode;
+  override readonly code: AgentProjectErrorCode;
 
   constructor(
     message: string,

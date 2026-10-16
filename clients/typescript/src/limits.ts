@@ -332,6 +332,8 @@ export const AGENT_KERNEL_WARMUP_SLIM_VALUE = "slim" as const;
 export const AGENT_PREFETCH_BUILD_MARKER_PATH = "/tmp/rayito-agent-prefetch.ready" as const;
 export const AGENT_PREFETCH_BUILD_TIMEOUT_SECONDS = 300 as const;
 
+export const POOL_SIZE_MAX = 64 as const;
+
 export const AGENT_SERVICE_PORT = 8088 as const;
 export const AGENT_SERVICE_EXPORT_PORT = 8080 as const;
 export const AGENT_SERVICE_HEALTH_PATH = "/ping" as const;

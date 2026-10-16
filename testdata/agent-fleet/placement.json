@@ -1,0 +1,400 @@
+{
+  "schema": "rayito.agent-fleet-placement/1",
+  "cases": [
+    {
+      "name": "shared uses the first free member",
+      "scaling": {
+        "minVms": 1,
+        "maxVms": 3,
+        "warmVms": 0,
+        "sessions": "shared"
+      },
+      "growing": 0,
+      "maxConcurrency": 1,
+      "members": [
+        {
+          "id": "microvm-00000000-0000-0000-0000-000000000001",
+          "inflight": 0,
+          "health": "unknown",
+          "bound": [],
+          "pingAgeSeconds": null,
+          "busyRemainingSeconds": null
+        },
+        {
+          "id": "microvm-00000000-0000-0000-0000-000000000002",
+          "inflight": 0,
+          "health": "unknown",
+          "bound": [],
+          "pingAgeSeconds": null,
+          "busyRemainingSeconds": null
+        }
+      ],
+      "expected": {
+        "kind": "use",
+        "memberId": "microvm-00000000-0000-0000-0000-000000000001"
+      }
+    },
+    {
+      "name": "shared prefers the member with fewer calls in flight",
+      "scaling": {
+        "minVms": 1,
+        "maxVms": 3,
+        "warmVms": 0,
+        "sessions": "shared"
+      },
+      "growing": 0,
+      "maxConcurrency": 2,
+      "members": [
+        {
+          "id": "microvm-00000000-0000-0000-0000-000000000001",
+          "inflight": 1,
+          "health": "unknown",
+          "bound": [],
+          "pingAgeSeconds": null,
+          "busyRemainingSeconds": null
+        },
+        {
+          "id": "microvm-00000000-0000-0000-0000-000000000002",
+          "inflight": 0,
+          "health": "unknown",
+          "bound": [],
+          "pingAgeSeconds": null,
+          "busyRemainingSeconds": null
+        }
+      ],
+      "expected": {
+        "kind": "use",
+        "memberId": "microvm-00000000-0000-0000-0000-000000000002"
+      }
+    },
+    {
+      "name": "shared skips a member at its concurrency cap",
+      "scaling": {
+        "minVms": 1,
+        "maxVms": 3,
+        "warmVms": 0,
+        "sessions": "shared"
+      },
+      "growing": 0,
+      "maxConcurrency": 2,
+      "members": [
+        {
+          "id": "microvm-00000000-0000-0000-0000-000000000001",
+          "inflight": 2,
+          "health": "unknown",
+          "bound": [],
+          "pingAgeSeconds": null,
+          "busyRemainingSeconds": null
+        },
+        {
+          "id": "microvm-00000000-0000-0000-0000-000000000002",
+          "inflight": 0,
+          "health": "unknown",
+          "bound": [],
+          "pingAgeSeconds": null,
+          "busyRemainingSeconds": null
+        }
+      ],
+      "expected": {
+        "kind": "use",
+        "memberId": "microvm-00000000-0000-0000-0000-000000000002"
+      }
+    },
+    {
+      "name": "shared skips a recently busy member",
+      "scaling": {
+        "minVms": 1,
+        "maxVms": 3,
+        "warmVms": 0,
+        "sessions": "shared"
+      },
+      "growing": 0,
+      "maxConcurrency": 1,
+      "members": [
+        {
+          "id": "microvm-00000000-0000-0000-0000-000000000001",
+          "inflight": 0,
+          "health": "busy",
+          "bound": [],
+          "pingAgeSeconds": 1.0,
+          "busyRemainingSeconds": 4.0
+        },
+        {
+          "id": "microvm-00000000-0000-0000-0000-000000000002",
+          "inflight": 0,
+          "health": "unknown",
+          "bound": [],
+          "pingAgeSeconds": null,
+          "busyRemainingSeconds": null
+        }
+      ],
+      "expected": {
+        "kind": "use",
+        "memberId": "microvm-00000000-0000-0000-0000-000000000002"
+      }
+    },
+    {
+      "name": "shared retries a member whose busy ping went stale",
+      "scaling": {
+        "minVms": 1,
+        "maxVms": 1,
+        "warmVms": 0,
+        "sessions": "shared"
+      },
+      "growing": 0,
+      "maxConcurrency": 1,
+      "members": [
+        {
+          "id": "microvm-00000000-0000-0000-0000-000000000001",
+          "inflight": 0,
+          "health": "busy",
+          "bound": [],
+          "pingAgeSeconds": 30.0,
+          "busyRemainingSeconds": -25.0
+        }
+      ],
+      "expected": {
+        "kind": "use",
+        "memberId": "microvm-00000000-0000-0000-0000-000000000001"
+      }
+    },
+    {
+      "name": "shared never uses an unavailable member",
+      "scaling": {
+        "minVms": 1,
+        "maxVms": 1,
+        "warmVms": 0,
+        "sessions": "shared"
+      },
+      "growing": 0,
+      "maxConcurrency": 1,
+      "members": [
+        {
+          "id": "microvm-00000000-0000-0000-0000-000000000001",
+          "inflight": 0,
+          "health": "unavailable",
+          "bound": [],
+          "pingAgeSeconds": 1.0,
+          "busyRemainingSeconds": null
+        }
+      ],
+      "expected": {
+        "kind": "wait",
+        "memberId": null
+      }
+    },
+    {
+      "name": "shared probes an unavailable member again once its ping went stale",
+      "scaling": {
+        "minVms": 1,
+        "maxVms": 1,
+        "warmVms": 0,
+        "sessions": "shared"
+      },
+      "growing": 0,
+      "maxConcurrency": 1,
+      "members": [
+        {
+          "id": "microvm-00000000-0000-0000-0000-000000000001",
+          "inflight": 0,
+          "health": "unavailable",
+          "bound": [],
+          "pingAgeSeconds": 30.0,
+          "busyRemainingSeconds": null
+        }
+      ],
+      "expected": {
+        "kind": "use",
+        "memberId": "microvm-00000000-0000-0000-0000-000000000001"
+      }
+    },
+    {
+      "name": "shared grows when everyone is busy and there is room",
+      "scaling": {
+        "minVms": 1,
+        "maxVms": 2,
+        "warmVms": 0,
+        "sessions": "shared"
+      },
+      "growing": 0,
+      "maxConcurrency": 1,
+      "members": [
+        {
+          "id": "microvm-00000000-0000-0000-0000-000000000001",
+          "inflight": 1,
+          "health": "unknown",
+          "bound": [],
+          "pingAgeSeconds": null,
+          "busyRemainingSeconds": null
+        }
+      ],
+      "expected": {
+        "kind": "grow",
+        "memberId": null
+      }
+    },
+    {
+      "name": "shared counts the VMs being created against the cap",
+      "scaling": {
+        "minVms": 1,
+        "maxVms": 2,
+        "warmVms": 0,
+        "sessions": "shared"
+      },
+      "growing": 1,
+      "maxConcurrency": 1,
+      "members": [
+        {
+          "id": "microvm-00000000-0000-0000-0000-000000000001",
+          "inflight": 1,
+          "health": "unknown",
+          "bound": [],
+          "pingAgeSeconds": null,
+          "busyRemainingSeconds": null
+        }
+      ],
+      "expected": {
+        "kind": "wait",
+        "memberId": null
+      }
+    },
+    {
+      "name": "shared waits at the cap",
+      "scaling": {
+        "minVms": 1,
+        "maxVms": 2,
+        "warmVms": 0,
+        "sessions": "shared"
+      },
+      "growing": 0,
+      "maxConcurrency": 1,
+      "members": [
+        {
+          "id": "microvm-00000000-0000-0000-0000-000000000001",
+          "inflight": 1,
+          "health": "unknown",
+          "bound": [],
+          "pingAgeSeconds": null,
+          "busyRemainingSeconds": null
+        },
+        {
+          "id": "microvm-00000000-0000-0000-0000-000000000002",
+          "inflight": 1,
+          "health": "unknown",
+          "bound": [],
+          "pingAgeSeconds": null,
+          "busyRemainingSeconds": null
+        }
+      ],
+      "expected": {
+        "kind": "wait",
+        "memberId": null
+      }
+    },
+    {
+      "name": "dedicated uses a member with no session",
+      "scaling": {
+        "minVms": 1,
+        "maxVms": 3,
+        "warmVms": 0,
+        "sessions": "dedicated"
+      },
+      "growing": 0,
+      "maxConcurrency": 1,
+      "members": [
+        {
+          "id": "microvm-00000000-0000-0000-0000-000000000001",
+          "inflight": 0,
+          "health": "unknown",
+          "bound": [
+            "s1"
+          ],
+          "pingAgeSeconds": null,
+          "busyRemainingSeconds": null
+        },
+        {
+          "id": "microvm-00000000-0000-0000-0000-000000000002",
+          "inflight": 0,
+          "health": "unknown",
+          "bound": [],
+          "pingAgeSeconds": null,
+          "busyRemainingSeconds": null
+        }
+      ],
+      "expected": {
+        "kind": "use",
+        "memberId": "microvm-00000000-0000-0000-0000-000000000002"
+      }
+    },
+    {
+      "name": "dedicated grows when every member has a session",
+      "scaling": {
+        "minVms": 1,
+        "maxVms": 2,
+        "warmVms": 0,
+        "sessions": "dedicated"
+      },
+      "growing": 0,
+      "maxConcurrency": 1,
+      "members": [
+        {
+          "id": "microvm-00000000-0000-0000-0000-000000000001",
+          "inflight": 0,
+          "health": "unknown",
+          "bound": [
+            "s1"
+          ],
+          "pingAgeSeconds": null,
+          "busyRemainingSeconds": null
+        }
+      ],
+      "expected": {
+        "kind": "grow",
+        "memberId": null
+      }
+    },
+    {
+      "name": "dedicated waits at the cap",
+      "scaling": {
+        "minVms": 1,
+        "maxVms": 1,
+        "warmVms": 0,
+        "sessions": "dedicated"
+      },
+      "growing": 0,
+      "maxConcurrency": 1,
+      "members": [
+        {
+          "id": "microvm-00000000-0000-0000-0000-000000000001",
+          "inflight": 0,
+          "health": "unknown",
+          "bound": [
+            "s1"
+          ],
+          "pingAgeSeconds": null,
+          "busyRemainingSeconds": null
+        }
+      ],
+      "expected": {
+        "kind": "wait",
+        "memberId": null
+      }
+    },
+    {
+      "name": "an empty fleet grows",
+      "scaling": {
+        "minVms": 1,
+        "maxVms": 2,
+        "warmVms": 0,
+        "sessions": "shared"
+      },
+      "growing": 0,
+      "maxConcurrency": 1,
+      "members": [],
+      "expected": {
+        "kind": "grow",
+        "memberId": null
+      }
+    }
+  ]
+}
