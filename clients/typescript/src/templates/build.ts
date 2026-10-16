@@ -26,7 +26,12 @@ import {
 import type { S3Client } from "@aws-sdk/client-s3";
 import { GetCallerIdentityCommand, STSClient } from "@aws-sdk/client-sts";
 import { clientConfig } from "../aws/control-plane.js";
-import { awsCode, loadOptionalSdkClient, type OptionalSdkClient } from "../aws/optional-client.js";
+import {
+  awsCode,
+  CLOUDWATCH_LOGS_PEER,
+  loadOptionalSdkClient,
+  type OptionalSdkClient,
+} from "../aws/optional-client.js";
 import { sanitizeAwsError } from "../aws/sanitize.js";
 import { BuildError, InvalidArgumentError, NotFoundError, TemplateError } from "../errors.js";
 import {
@@ -62,8 +67,7 @@ const S3_KEY_PREFIX = "rayito/templates";
 /** Descripción de cada versión que crea `Template.build()`. */
 const BUILD_DESCRIPTION = "rayito template build";
 /** Líneas de log que se releen para explicar un fallo (`GetLogEvents` `limit`, §27). */
-const BUILD_LOG_LINES = 500;
-const CLOUDWATCH_LOGS_PEER = "@aws-sdk/client-cloudwatch-logs";
+export const BUILD_LOG_LINES = 500;
 
 export interface BuildOptions {
   readonly bucket: string;
@@ -106,7 +110,7 @@ export interface BuildClients extends ImageBuildClients {
   readonly region: string;
   accountId(): Promise<string>;
   getObject(bucket: string, key: string): Promise<Uint8Array | undefined>;
-  readBuildLogs(logGroup: string): Promise<string[]>;
+  readBuildLogs(logGroup: string, limit?: number): Promise<string[]>;
 }
 
 /** Forma mínima de `@aws-sdk/client-cloudwatch-logs` que necesita
@@ -151,7 +155,7 @@ async function sanitizedCall<T>(call: () => Promise<T>): Promise<T> {
   }
 }
 
-class AwsBuildClients implements BuildClients {
+export class AwsBuildClients implements BuildClients {
   readonly region: string;
   readonly #credentials: BuildOptions["credentials"];
   readonly #config: object;
@@ -303,7 +307,7 @@ class AwsBuildClients implements BuildClients {
     }
   }
 
-  async readBuildLogs(logGroup: string): Promise<string[]> {
+  async readBuildLogs(logGroup: string, limit: number = BUILD_LOG_LINES): Promise<string[]> {
     const client = await this.#loadLogsClient();
     if (client === undefined) {
       return [];
@@ -331,7 +335,7 @@ class AwsBuildClients implements BuildClients {
         new sdk.GetLogEventsCommand({
           logGroupName: logGroup,
           logStreamName: streamName,
-          limit: BUILD_LOG_LINES,
+          limit,
         }),
       ),
     );
@@ -664,6 +668,54 @@ export async function getBuildStatus(handle: BuildHandle): Promise<BuildStatus> 
     };
   }
   return { state: "SUCCESSFUL", info: buildInfo(handle) };
+}
+
+/** La versión más reciente de `name`, sin filtrar por estado: `rayito template status`/`logs` sin `--version` quiere ver el build más reciente aunque fallara. */
+async function latestVersion(clients: BuildClients, name: string, arn: string): Promise<string> {
+  const version = newestVersion(await clients.listMicrovmImageVersions(arn));
+  if (version === undefined) {
+    throw new NotFoundError(`el template ${JSON.stringify(name)} no tiene ninguna versión`);
+  }
+  return version;
+}
+
+/**
+ * El estado del build de una versión de la imagen `name` (la más reciente si
+ * no se da `version`). Sólo lectura: `rayito template status`.
+ */
+export async function statusByName(
+  name: string,
+  version: string | undefined,
+  options: { region?: string; credentials?: BuildOptions["credentials"] } = {},
+): Promise<BuildStatus> {
+  validateTemplateName(name);
+  const clients = createBuildClients(options.region, options.credentials);
+  const arn = imageArn(clients, name, await clients.accountId());
+  return getBuildStatus({
+    arn,
+    version: version ?? (await latestVersion(clients, name, arn)),
+    name,
+    region: options.region,
+    credentials: options.credentials,
+  });
+}
+
+/**
+ * Las líneas más recientes del grupo de logs de la imagen `name`, sin
+ * importar si el último build terminó bien o mal. Sólo lectura: `rayito
+ * template logs`.
+ */
+export async function readRecentLogs(
+  name: string,
+  options: {
+    region?: string;
+    credentials?: BuildOptions["credentials"];
+    limit?: number;
+  } = {},
+): Promise<string[]> {
+  validateTemplateName(name);
+  const clients = createBuildClients(options.region, options.credentials);
+  return clients.readBuildLogs(logGroupOf(name), options.limit ?? BUILD_LOG_LINES);
 }
 
 export async function templateExists(

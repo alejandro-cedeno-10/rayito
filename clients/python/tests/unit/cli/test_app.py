@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
+from rayito._version import __version__
 from rayito.cli._session import Clients
 from rayito.cli.app import app, run_shim
 
@@ -145,6 +146,12 @@ def test_root_without_command_shows_help(runner: CliRunner) -> None:
     result = runner.invoke(app, [])
     assert result.exit_code in (0, 2)
     assert "image" in result.output and "sandbox" in result.output and "doctor" in result.output
+
+
+def test_version_names_the_runtime(runner: CliRunner) -> None:
+    result = runner.invoke(app, ["--version"])
+    assert result.exit_code == 0, result.output
+    assert result.stdout.strip() == f"rayito {__version__} (python)"
 
 
 def test_run_shim_exit_codes(capsys: pytest.CaptureFixture[str]) -> None:

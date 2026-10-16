@@ -1,0 +1,351 @@
+{
+  "description": "Documentos `--json` de `sandbox info`, `create --detach` y `metrics` compartidos por Python y TypeScript (ADR-027): la entrada con los campos del dataclass de Python y lo que `rayito.cli.sandbox` emite.",
+  "info": [
+    {
+      "name": "minimo",
+      "info": {
+        "sandbox_id": "microvm-a",
+        "state": "RUNNING",
+        "endpoint": "abc.lambda-microvm.us-east-1.on.aws",
+        "template": "arn:aws:lambda:us-east-1:123456789012:microvm-image:rayito-base",
+        "template_version": "1.0",
+        "started_at": "2026-09-15T14:39:02Z",
+        "maximum_duration_seconds": 3600
+      },
+      "expected": {
+        "sandbox_id": "microvm-a",
+        "state": "RUNNING",
+        "endpoint": "abc.lambda-microvm.us-east-1.on.aws",
+        "template": "arn:aws:lambda:us-east-1:123456789012:microvm-image:rayito-base",
+        "template_version": "1.0",
+        "started_at": "2026-09-15T14:39:02Z",
+        "maximum_duration_seconds": 3600,
+        "terminated_at": null,
+        "state_reason": null,
+        "idle": null,
+        "execution_role_arn": null,
+        "metadata": null,
+        "ingress": [],
+        "egress": [],
+        "lifecycle": null,
+        "agent_version": null,
+        "cpu_count": null,
+        "memory_mb": null,
+        "size": null,
+        "baseline_memory_mib": null,
+        "baseline_cpu": null,
+        "template_name": "rayito-base",
+        "endpoint_url": "https://abc.lambda-microvm.us-east-1.on.aws",
+        "expires_at": "2026-09-15T15:39:02Z"
+      },
+      "launch": {
+        "sandbox_id": "microvm-a",
+        "endpoint": "abc.lambda-microvm.us-east-1.on.aws",
+        "template": "rayito-base",
+        "template_version": "1.0",
+        "expires_at": "2026-09-15T15:39:02Z"
+      }
+    },
+    {
+      "name": "completo",
+      "info": {
+        "sandbox_id": "microvm-a",
+        "state": "RUNNING",
+        "endpoint": "abc.lambda-microvm.us-east-1.on.aws",
+        "template": "arn:aws:lambda:us-east-1:123456789012:microvm-image:rayito-base",
+        "template_version": "1.0",
+        "started_at": "2026-09-15T14:39:02Z",
+        "maximum_duration_seconds": 3600,
+        "terminated_at": "2026-09-15T15:10:00Z",
+        "state_reason": "Container Stopped with Exit Code: 124",
+        "idle": {
+          "max_idle_seconds": 300,
+          "suspended_duration_seconds": 600,
+          "auto_resume": true
+        },
+        "execution_role_arn": "arn:aws:iam::123456789012:role/rayito-execution",
+        "metadata": {
+          "env": "ci",
+          "user": "42"
+        },
+        "ingress": [
+          "ALL_INGRESS"
+        ],
+        "egress": [
+          "INTERNET_EGRESS",
+          "arn:aws:lambda:us-east-1:123456789012:network-connector:mine"
+        ],
+        "lifecycle": {
+          "phase": "active",
+          "deadline": "2026-09-15T15:30:02Z",
+          "cap": "2026-09-15T15:38:02Z",
+          "timeout_seconds": 3000.0,
+          "on_timeout": "kill",
+          "auto_resume": false,
+          "extensions": 2
+        },
+        "agent_version": "0.11.0",
+        "cpu_count": 2,
+        "memory_mb": 2048,
+        "size": "4gb",
+        "baseline_memory_mib": 4096,
+        "baseline_cpu": 8
+      },
+      "expected": {
+        "sandbox_id": "microvm-a",
+        "state": "RUNNING",
+        "endpoint": "abc.lambda-microvm.us-east-1.on.aws",
+        "template": "arn:aws:lambda:us-east-1:123456789012:microvm-image:rayito-base",
+        "template_version": "1.0",
+        "started_at": "2026-09-15T14:39:02Z",
+        "maximum_duration_seconds": 3600,
+        "terminated_at": "2026-09-15T15:10:00Z",
+        "state_reason": "Container Stopped with Exit Code: 124",
+        "idle": {
+          "max_idle_seconds": 300,
+          "suspended_duration_seconds": 600,
+          "auto_resume": true
+        },
+        "execution_role_arn": "arn:aws:iam::123456789012:role/rayito-execution",
+        "metadata": {
+          "env": "ci",
+          "user": "42"
+        },
+        "ingress": [
+          "ALL_INGRESS"
+        ],
+        "egress": [
+          "INTERNET_EGRESS",
+          "arn:aws:lambda:us-east-1:123456789012:network-connector:mine"
+        ],
+        "lifecycle": {
+          "phase": "active",
+          "deadline": "2026-09-15 15:30:02+00:00",
+          "cap": "2026-09-15 15:38:02+00:00",
+          "timeout_seconds": 3000.0,
+          "on_timeout": "kill",
+          "auto_resume": false,
+          "extensions": 2
+        },
+        "agent_version": "0.11.0",
+        "cpu_count": 2,
+        "memory_mb": 2048,
+        "size": "4gb",
+        "baseline_memory_mib": 4096,
+        "baseline_cpu": 8,
+        "template_name": "rayito-base",
+        "endpoint_url": "https://abc.lambda-microvm.us-east-1.on.aws",
+        "expires_at": "2026-09-15T15:30:02Z"
+      },
+      "launch": {
+        "sandbox_id": "microvm-a",
+        "endpoint": "abc.lambda-microvm.us-east-1.on.aws",
+        "template": "rayito-base",
+        "template_version": "1.0",
+        "expires_at": "2026-09-15T15:30:02Z"
+      }
+    },
+    {
+      "name": "plazo sin gestionar",
+      "info": {
+        "sandbox_id": "microvm-a",
+        "state": "RUNNING",
+        "endpoint": "abc.lambda-microvm.us-east-1.on.aws",
+        "template": "arn:aws:lambda:us-east-1:123456789012:microvm-image:rayito-base",
+        "template_version": "1.0",
+        "started_at": "2026-09-15T14:39:02Z",
+        "maximum_duration_seconds": 3600,
+        "metadata": {},
+        "idle": {
+          "max_idle_seconds": 60,
+          "suspended_duration_seconds": null,
+          "auto_resume": false
+        },
+        "lifecycle": {
+          "phase": "unmanaged",
+          "deadline": null,
+          "cap": null,
+          "timeout_seconds": 3600.0,
+          "on_timeout": null,
+          "auto_resume": true,
+          "extensions": 0
+        }
+      },
+      "expected": {
+        "sandbox_id": "microvm-a",
+        "state": "RUNNING",
+        "endpoint": "abc.lambda-microvm.us-east-1.on.aws",
+        "template": "arn:aws:lambda:us-east-1:123456789012:microvm-image:rayito-base",
+        "template_version": "1.0",
+        "started_at": "2026-09-15T14:39:02Z",
+        "maximum_duration_seconds": 3600,
+        "terminated_at": null,
+        "state_reason": null,
+        "idle": {
+          "max_idle_seconds": 60,
+          "suspended_duration_seconds": null,
+          "auto_resume": false
+        },
+        "execution_role_arn": null,
+        "metadata": {},
+        "ingress": [],
+        "egress": [],
+        "lifecycle": {
+          "phase": "unmanaged",
+          "deadline": null,
+          "cap": null,
+          "timeout_seconds": 3600.0,
+          "on_timeout": null,
+          "auto_resume": true,
+          "extensions": 0
+        },
+        "agent_version": null,
+        "cpu_count": null,
+        "memory_mb": null,
+        "size": null,
+        "baseline_memory_mib": null,
+        "baseline_cpu": null,
+        "template_name": "rayito-base",
+        "endpoint_url": "https://abc.lambda-microvm.us-east-1.on.aws",
+        "expires_at": "2026-09-15T15:39:02Z"
+      },
+      "launch": {
+        "sandbox_id": "microvm-a",
+        "endpoint": "abc.lambda-microvm.us-east-1.on.aws",
+        "template": "rayito-base",
+        "template_version": "1.0",
+        "expires_at": "2026-09-15T15:39:02Z"
+      }
+    },
+    {
+      "name": "plazo con fracciones",
+      "info": {
+        "sandbox_id": "microvm-a",
+        "state": "RUNNING",
+        "endpoint": "abc.lambda-microvm.us-east-1.on.aws",
+        "template": "arn:aws:lambda:us-east-1:123456789012:microvm-image:rayito-base",
+        "template_version": "1.0",
+        "started_at": "2026-09-15T14:39:02Z",
+        "maximum_duration_seconds": 3600,
+        "lifecycle": {
+          "phase": "resume_grace",
+          "deadline": "2026-09-15T15:30:02.250Z",
+          "cap": null,
+          "timeout_seconds": 0.5,
+          "on_timeout": "pause",
+          "auto_resume": true,
+          "extensions": 1
+        }
+      },
+      "expected": {
+        "sandbox_id": "microvm-a",
+        "state": "RUNNING",
+        "endpoint": "abc.lambda-microvm.us-east-1.on.aws",
+        "template": "arn:aws:lambda:us-east-1:123456789012:microvm-image:rayito-base",
+        "template_version": "1.0",
+        "started_at": "2026-09-15T14:39:02Z",
+        "maximum_duration_seconds": 3600,
+        "terminated_at": null,
+        "state_reason": null,
+        "idle": null,
+        "execution_role_arn": null,
+        "metadata": null,
+        "ingress": [],
+        "egress": [],
+        "lifecycle": {
+          "phase": "resume_grace",
+          "deadline": "2026-09-15 15:30:02.250000+00:00",
+          "cap": null,
+          "timeout_seconds": 0.5,
+          "on_timeout": "pause",
+          "auto_resume": true,
+          "extensions": 1
+        },
+        "agent_version": null,
+        "cpu_count": null,
+        "memory_mb": null,
+        "size": null,
+        "baseline_memory_mib": null,
+        "baseline_cpu": null,
+        "template_name": "rayito-base",
+        "endpoint_url": "https://abc.lambda-microvm.us-east-1.on.aws",
+        "expires_at": "2026-09-15T15:30:02Z"
+      },
+      "launch": {
+        "sandbox_id": "microvm-a",
+        "endpoint": "abc.lambda-microvm.us-east-1.on.aws",
+        "template": "rayito-base",
+        "template_version": "1.0",
+        "expires_at": "2026-09-15T15:30:02Z"
+      }
+    }
+  ],
+  "metrics": [
+    {
+      "name": "sin cache",
+      "metrics": {
+        "cpu_used_pct": 12.5,
+        "mem_used_bytes": 536870912,
+        "mem_total_bytes": 2147483648,
+        "disk_used_bytes": 1073741824,
+        "disk_total_bytes": 10737418240,
+        "cpu_count": 2,
+        "timestamp": "2026-09-15T16:02:07Z"
+      },
+      "expected": {
+        "timestamp": "2026-09-15T16:02:07Z",
+        "cpu_used_pct": 12.5,
+        "cpu_count": 2,
+        "mem_used": 536870912,
+        "mem_total": 2147483648,
+        "disk_used": 1073741824,
+        "disk_total": 10737418240
+      }
+    },
+    {
+      "name": "con cache",
+      "metrics": {
+        "cpu_used_pct": 12.5,
+        "mem_used_bytes": 536870912,
+        "mem_total_bytes": 2147483648,
+        "disk_used_bytes": 1073741824,
+        "disk_total_bytes": 10737418240,
+        "cpu_count": 2,
+        "timestamp": "2026-09-15T16:02:07Z",
+        "mem_cache_bytes": 104857600
+      },
+      "expected": {
+        "timestamp": "2026-09-15T16:02:07Z",
+        "cpu_used_pct": 12.5,
+        "cpu_count": 2,
+        "mem_used": 536870912,
+        "mem_total": 2147483648,
+        "disk_used": 1073741824,
+        "disk_total": 10737418240,
+        "mem_cache": 104857600
+      }
+    },
+    {
+      "name": "cache a cero",
+      "metrics": {
+        "cpu_used_pct": 12.5,
+        "mem_used_bytes": 536870912,
+        "mem_total_bytes": 2147483648,
+        "disk_used_bytes": 1073741824,
+        "disk_total_bytes": 10737418240,
+        "cpu_count": 2,
+        "timestamp": "2026-09-15T16:02:07Z",
+        "mem_cache_bytes": 0
+      },
+      "expected": {
+        "timestamp": "2026-09-15T16:02:07Z",
+        "cpu_used_pct": 12.5,
+        "cpu_count": 2,
+        "mem_used": 536870912,
+        "mem_total": 2147483648,
+        "disk_used": 1073741824,
+        "disk_total": 10737418240
+      }
+    }
+  ]
+}

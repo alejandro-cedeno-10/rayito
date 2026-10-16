@@ -1184,4 +1184,5 @@ async def test_a_malformed_chunk_stops_forwarding() -> None:
     )
 
     assert b"hello" not in connector.received
+    assert b"zz" not in connector.received
     assert b"9000" not in connector.received

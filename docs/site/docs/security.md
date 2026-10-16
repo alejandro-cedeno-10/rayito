@@ -327,6 +327,16 @@ cookies de tus otras apps locales y comparte "sitio" con ellas; ábrelo en
 `http://<id>.localhost:<puerto>` (tarro propio, la CLI lo anuncia) o en un
 perfil de navegador dedicado ([Proxy local](funciones-opcionales/proxy-local.md#navegador-y-cookies)).
 
+**Las dos CLI, la misma garantía**: el proxy de la CLI de TypeScript
+(`npx rayito sandbox proxy`) ejecuta los mismos vectores que el de Python
+(`testdata/cli/proxy-vectors.json`: cabeceras con CR o LF suelto, `obs-fold`,
+nombres fuera de los `tchar`, delimitación del cuerpo, `Host`/`Origin`,
+puertos) y comparten los topes y plazos de `limits.json`. Los espacios que se
+recortan alrededor de un valor de cabecera son sólo `OWS` (espacio y
+tabulador), no todo lo que un lenguaje llame espacio en blanco: un
+`Content-Length: 12` seguido de un `\x85` es inválido en las dos. Un `Content-Length` o un tamaño de trozo que no cabe en un
+entero seguro de JavaScript es `400` en la CLI de TypeScript.
+
 Riesgo residual (`SECURITY.md` T2/T3): mientras el proxy está en marcha,
 cualquier proceso que alcance el puerto local reenviado —de la máquina del
 operador, o de otra si se usó `--allow-remote`— tiene el mismo acceso al

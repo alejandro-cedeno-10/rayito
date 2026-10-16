@@ -30,7 +30,7 @@ import {
 import { EFS_VOLUMES_MAX_PER_SANDBOX } from "../limits.js";
 import { hasInternetConnector } from "../models.js";
 import { validateMountPaths } from "../mount-path.js";
-import { EFS_CAPS_VARIANT, requireEfsFor } from "../role-policy.js";
+import { EFS_IMAGE_NAME, requireEfsFor } from "../role-policy.js";
 import { EfsVolume, type MountState, type VolumeStatus } from "./domain.js";
 
 export const SECTION_NAME = "efs_volumes";
@@ -41,9 +41,6 @@ export const REQUIRED_FLAG = "efsVolumes";
 export const VOLUMES_DOC = "docs/site/docs/funciones-opcionales/volumenes-efs.md";
 /** La página que explica cómo dar internet a un sandbox con volumen. */
 export const VPC_GUIDE = "funciones-opcionales/volumenes-efs-vpc.md";
-/** La imagen opcional con `amazon-efs-utils` que publica
- * `rayito image publish --with-efs --os-capabilities ALL`. */
-export const EFS_IMAGE_NAME = `rayito-${EFS_CAPS_VARIANT}`;
 /** Cómo tiene internet un sandbox con volumen: saliendo por la VPC (Q131). */
 export const INTERNET_THROUGH_VPC =
   "para tener internet además del volumen, sal por tu VPC: una NAT o un transit gateway " +

@@ -59,6 +59,7 @@ import { type ControlPlaneOptions, resolveControlPlane, Sandbox } from "../sandb
 import type { SecretGateway } from "../secret-gateway/domain.js";
 import { bindSecrets, type SecretOptions, sharedSecretCache, warm } from "../secrets/inject.js";
 import { resolveTransportSettings, type TransportSettings } from "../transport/transport.js";
+import { MS_PER_SECOND } from "../units.js";
 import { InMemoryPoolBackend, type PoolBackend } from "./backend.js";
 import {
   launchOptions,
@@ -85,7 +86,6 @@ export const CLOSE_JOIN_MS = 30_000;
 export const SETTLE_CELL = "pass";
 export const SETTLE_GRACE_MS = 300;
 export const SETTLE_ATTEMPTS = 3;
-const MS_PER_SECOND = 1000;
 /**
  * Periodo del intervalo vacío que mantiene vivo el proceso mientras alguien
  * espera a `take()` o `close()`. El valor no importa: lo que retiene el bucle

@@ -69,6 +69,16 @@ GROUPS: tuple[tuple[str, ...], ...] = (
         "hookPathPrefix",
     ),
     ("maxConcurrentConnections1Vcpu",),
+    (
+        # `rayito sandbox proxy` (ADR-027), the same on both CLIs: the head
+        # cap is the 64 KiB default of asyncio's StreamReader, and the three
+        # timeouts keep an idle client or a hung handshake from holding a
+        # connection forever. Not AWS properties.
+        "proxyHeadMaxBytes",
+        "proxyHeadReadTimeoutSeconds",
+        "proxyUpstreamConnectTimeoutSeconds",
+        "proxyUpstreamResponseHeadTimeoutSeconds",
+    ),
     ("microvmStates", "terminalStates", "suspendedStates"),
     ("managedNetworkConnectors",),
     ("supportedRegions",),
@@ -357,6 +367,16 @@ GROUPS: tuple[tuple[str, ...], ...] = (
         # properties.
         "agentPrefetchBuildMarkerPath",
         "agentPrefetchBuildTimeoutSeconds",
+    ),
+    (
+        # typescript-cli-tools (ADR-027), the same on both CLIs: the MCP
+        # server cuts every text output to `mcpMaxOutputChars` characters
+        # (the `read_file` description quotes it) and `image publish --sizes`
+        # builds in waves of at most `maxConcurrentImageBuilds` (AWS_API_NOTES
+        # Q83: at least 10 parallel builds do not degrade the service).
+        # Not AWS properties.
+        "mcpMaxOutputChars",
+        "maxConcurrentImageBuilds",
     ),
 )
 

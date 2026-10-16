@@ -11,6 +11,7 @@ import type { AwsClientSettings } from "../aws/control-plane.js";
 import { InvalidArgumentError } from "../errors.js";
 import { COST_CACHE_TTL_SECONDS } from "../limits.js";
 import { defaultSizeCatalog, type SizeCatalog } from "../sizing/catalog.js";
+import { MS_PER_SECOND } from "../units.js";
 import { sdkCostExplorerSource } from "./aws.js";
 import {
   type BilledCost,
@@ -20,7 +21,6 @@ import {
   foldBilledCost,
   type Granularity,
   MEMORY_COUNTED_STATES,
-  MS_PER_SECOND,
   TtlCache,
 } from "./domain.js";
 import { InventoryReader } from "./inventory.js";

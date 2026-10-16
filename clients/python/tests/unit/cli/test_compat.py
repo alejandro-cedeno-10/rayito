@@ -4,15 +4,19 @@ formadas, la versión de imagen fuera del veredicto y la tabla de
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from rayito import __version__
 from rayito.cli import _compat
 
-LIMITS_MD = Path(__file__).resolve().parents[5] / "docs" / "site" / "docs" / "limits.md"
+REPO_ROOT = Path(__file__).resolve().parents[5]
+LIMITS_MD = REPO_ROOT / "docs" / "site" / "docs" / "limits.md"
+SHARED_COMPATIBILITY = REPO_ROOT / "testdata" / "cli" / "compatibility.json"
 SECTION_HEADING = "## Compatibilidad SDK ↔ rayd ↔ imagen"
 
 
@@ -92,3 +96,22 @@ def test_series_0_3_requires_the_m9_agent() -> None:
     row = _compat.row_for("0.3")
     assert row is not None and row.min_agent_version == "0.3.0"
     assert _compat.assess("0.3.0", "0.2.0").status == "FAIL"
+
+
+def shared_compatibility() -> dict[str, Any]:
+    document: dict[str, Any] = json.loads(SHARED_COMPATIBILITY.read_text(encoding="utf-8"))
+    return document
+
+
+def test_shared_table_matches_code() -> None:
+    """`testdata/cli/compatibility.json` es la copia que lee la CLI de TypeScript."""
+    shared = [_compat.CompatibilityRow(**row) for row in shared_compatibility()["table"]]
+    assert shared == list(_compat.COMPATIBILITY)
+
+
+@pytest.mark.parametrize("case", shared_compatibility()["assessments"])
+def test_shared_assessments(case: dict[str, Any]) -> None:
+    assessment = _compat.assess(case["sdkVersion"], case["agentVersion"])
+    assert assessment.status == case["status"]
+    assert assessment.reason == case["reason"]
+    assert (None if assessment.row is None else assessment.row.sdk_series) == case["row"]

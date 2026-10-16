@@ -1,8 +1,8 @@
 # Instalación
 
 Rayito tiene dos SDK con la misma superficie, Python y TypeScript, y una CLI
-en Python. Instala el SDK del lenguaje de tu aplicación y la CLI para
-preparar la cuenta.
+en cada uno, con las mismas órdenes. Instala el SDK del lenguaje de tu
+aplicación y, para preparar la cuenta, la CLI de cualquiera de los dos.
 
 ## El SDK
 
@@ -29,15 +29,29 @@ preparar la cuenta.
 ## La CLI
 
 La CLI `rayito` publica la imagen, diagnostica la cuenta y opera sandboxes.
-Es un extra del paquete de Python:
+Hay una por SDK, con la misma superficie ([CLI](../cli.md)):
 
-```bash
-pip install "rayito[cli]"          # o: uv tool install "rayito[cli]"
-rayito --help
-```
+=== "Python"
 
-Si usas TypeScript, instálala igualmente (o ejecútala sin instalar con
-`uvx --from "rayito[cli]" rayito doctor`).
+    Es un extra del paquete de Python:
+
+    ```bash
+    pip install "rayito[cli]"          # o: uv tool install "rayito[cli]"
+    rayito --help
+    ```
+
+    Para ejecutarla sin instalar: `uvx --from "rayito[cli]" rayito doctor`.
+
+=== "TypeScript"
+
+    Viene en el paquete npm, sin extras:
+
+    ```bash
+    npx rayito --help                  # o: npm install --global rayito
+    ```
+
+Si instalas las dos, gana la primera del `PATH`; `rayito --version` dice
+cuál responde.
 
 ## Extras opcionales
 
@@ -45,8 +59,8 @@ Nada de esto hace falta para empezar.
 
 | Para | Python | TypeScript |
 |---|---|---|
-| La CLI `rayito` | `pip install "rayito[cli]"` | (usa la de Python) |
-| El servidor MCP ([Servidor MCP](../mcp.md)) | `pip install "rayito[mcp]"` | — |
+| La CLI `rayito` | `pip install "rayito[cli]"` | (incluida en el paquete: `npx rayito`) |
+| El servidor MCP ([Servidor MCP](../mcp.md)) | `pip install "rayito[mcp]"` | `npm i @modelcontextprotocol/server zod` |
 | Trazas OpenTelemetry ([OpenTelemetry](../funciones-opcionales/opentelemetry.md)) | `pip install "rayito[otel]" opentelemetry-sdk` | `npm i @opentelemetry/api @opentelemetry/sdk-trace-base` |
 | Secretos de Secrets Manager ([Secretos](../secrets.md)) | (incluido: usa `boto3`) | `npm i @aws-sdk/client-secrets-manager` |
 | Pasarela de secretos y agente en el sandbox ([Pasarela de secretos](../funciones-opcionales/pasarela-de-secretos.md), [Agente en el sandbox](../guias/agente-en-el-sandbox.md)) | (incluido: usa `boto3`) | `npm i @aws-sdk/client-secrets-manager` |

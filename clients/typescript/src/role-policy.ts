@@ -20,6 +20,8 @@ export const CAPS_VARIANT = "base-caps";
  * caps y además deja montar `volumes`.
  */
 export const EFS_CAPS_VARIANT = `${CAPS_VARIANT}-efs`;
+/** La imagen opcional con `amazon-efs-utils` que publica `rayito image publish --with-efs --os-capabilities ALL`. */
+export const EFS_IMAGE_NAME = `rayito-${EFS_CAPS_VARIANT}`;
 /** Las variantes que conceden el capability mask de ADR-012. */
 export const CAPS_VARIANTS: ReadonlySet<string> = new Set([CAPS_VARIANT, EFS_CAPS_VARIANT]);
 /** Las variantes oficiales (catálogo cerrado de `limits.json`). */

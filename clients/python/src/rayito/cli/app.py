@@ -17,6 +17,7 @@ from typing import Annotated, Any
 import typer
 import typer.core
 
+from rayito._version import __version__
 from rayito.cli._console import translated_failures
 from rayito.cli.agent import agent_app
 from rayito.cli.dashboard import dashboard_app
@@ -29,6 +30,7 @@ from rayito.cli.stack import stack_app
 from rayito.cli.template import template_app
 
 PROG_NAME = "rayito"
+RUNTIME_NAME = "python"
 SHIM_HINT = "ejecuta con: uv run --project clients/python python scripts/{script} …"
 EXIT_USAGE = 2
 
@@ -60,6 +62,14 @@ app.command("doctor")(doctor)
 app.add_typer(dashboard_app, name="dashboard")
 
 
+def print_version(requested: bool) -> None:
+    """`rayito --version`: versión y runtime, para saber cuál de las dos CLI
+    (Python o TypeScript) responde cuando ambas están instaladas."""
+    if requested:
+        typer.echo(f"{PROG_NAME} {__version__} ({RUNTIME_NAME})")
+        raise typer.Exit()
+
+
 @app.callback()
 def root(
     ctx: typer.Context,
@@ -75,6 +85,15 @@ def root(
     ] = False,
     verbose: Annotated[
         bool, typer.Option("--verbose", help="Logs INFO del SDK y de la CLI.")
+    ] = False,
+    version: Annotated[
+        bool,
+        typer.Option(
+            "--version",
+            callback=print_version,
+            is_eager=True,
+            help=f"Versión y runtime ({RUNTIME_NAME}).",
+        ),
     ] = False,
 ) -> None:
     """Rayito: sandboxes sobre AWS Lambda MicroVMs."""

@@ -27,30 +27,60 @@ options and environment variables.
 | [`rayito dashboard`](#rayito-dashboard) | — |
 | [`rayito doctor`](#rayito-doctor) | — |
 
-The MCP server is another executable in the same package, `rayito-mcp`
-([MCP server](mcp.md)).
+There are two CLIs with the same surface, output and exit codes: the Python
+one (the `cli` extra) and the TypeScript one (the `rayito` executable of the
+npm package). What follows applies to both except where stated otherwise; the
+two command trees are compared against `testdata/cli/surface.json` and
+`scripts/check_sdk_parity.py --cli`. The MCP server is another executable in
+the same package, `rayito-mcp` ([MCP server](mcp.md)).
 
 ## Installation { #instalacion }
 
-The CLI is an extra of the `rayito` package (it adds `typer`):
+=== "Python"
 
-```bash
-pip install "rayito[cli]"        # or: uv pip install "rayito[cli]"
-rayito --help
-```
+    The CLI is an extra of the `rayito` package (it adds `typer`):
 
-From a checkout of the repository, without installing anything:
+    ```bash
+    pip install "rayito[cli]"        # or: uv pip install "rayito[cli]"
+    rayito --help
+    ```
 
-```bash
-uv run --project clients/python rayito --help
-```
+    From a checkout of the repository, without installing anything:
 
-Without the extra, `rayito` prints how to install it and exits with 2.
+    ```bash
+    uv run --project clients/python rayito --help
+    ```
+
+    Without the extra, `rayito` prints how to install it and exits with 2.
+
+=== "TypeScript"
+
+    The `rayito` npm package declares the `rayito` executable (Node 20 or
+    later, ESM only, no CLI dependencies: it uses `node:util`):
+
+    ```bash
+    npx rayito --help                # without installing anything
+    npm install --global rayito      # or: pnpm add --global rayito
+    rayito --help
+    ```
+
+    The AWS clients that not every command needs are **optional peers** of the
+    package (`@aws-sdk/client-cloudformation` for `stack`, `events` and
+    `domain`, `@aws-sdk/client-cloudwatch-logs` for `sandbox logs`,
+    `@aws-sdk/client-iam` for `doctor`'s IAM simulation,
+    `@aws-sdk/client-service-quotas` and `@aws-sdk/client-cost-explorer` for
+    the dashboard, among others). A command that needs a missing one fails and
+    says which package to install. The TypeScript API is async-only: the CLI
+    does not change because of that.
+
+!!! warning "Two global installs"
+    If you install both CLIs, the first one on the `PATH` wins.
+    `rayito --version` says which one answers (`(python)` or `(node)`).
 
 ## Global options and credentials { #opciones-globales-y-credenciales }
 
 ```text
-rayito [--profile P] [--region R] [--json] [--verbose] <group> <command> …
+rayito [--profile P] [--region R] [--json] [--verbose] [--version] <group> <command> …
 ```
 
 - `--profile` and `--region` build the `boto3` session; without them
@@ -63,6 +93,9 @@ rayito [--profile P] [--region R] [--json] [--verbose] <group> <command> …
 - `--json`: each command writes **a single JSON document** to stdout and
   progress to stderr, so `rayito --json sandbox list | jq` works.
 - `--verbose`: `INFO` logs from the SDK (reconnections, probes) and the CLI.
+- `--version`: prints `rayito <version> (python)`. The runtime in parentheses
+  says which of the two CLIs answers when the Python one and the npm
+  package's coexist (`rayito <version> (node)`): the first on the `PATH` wins.
 
 Exit codes: `0` success; `1` the operation failed (non-launchable build, a
 version that `prune` could not delete, an unknown id in `kill`, a `doctor`
@@ -495,7 +528,8 @@ rayito [--region R] dashboard cloudwatch [--log-group GROUP ...]
                  [--log-group-prefix PREFIX] [--otlp] [--quota] [--output FILE]
 ```
 
-The local management dashboard: a server on `127.0.0.1` (random port unless
+The local management dashboard, identical in both CLIs (same page, same
+`/api/v1` API, same headers and same `Host`, `Origin` and CSRF checks): a server on `127.0.0.1` (random port unless
 `--port`) with a page and the `/api/v1` API over your AWS credentials, until
 you press Ctrl+C. It prints the bootstrap URL **only once**, with a
 single-use token. By default it is **read-only**: `--allow-actions` enables
@@ -635,4 +669,4 @@ it they print the `uv run --project clients/python …` command and exit with 2.
   out by `SPEC.md` §4 ([E2B compatibility](e2b-compat.md)).
 - Wrapping the development tools (`bench_cold_start.py`, `hooks-sim.py`,
   `gen_limits.py`, `check_*.py`).
-- A CLI in TypeScript or shell completion.
+- Shell completion.

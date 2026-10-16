@@ -5,6 +5,7 @@ validados."""
 
 from __future__ import annotations
 
+import base64
 import json
 from pathlib import Path
 from typing import Any
@@ -23,6 +24,8 @@ from rayito._dashboard._theme import (
 )
 from rayito._limits import DASHBOARD_LOGO_MAX_BYTES, DASHBOARD_THEME_MAX_BYTES
 from rayito.exceptions import InvalidArgumentException
+
+from .dashboard_vectors import load_vectors
 
 EXAMPLES = Path(__file__).resolve().parents[4] / "examples" / "dashboard-theme"
 INJECTION_VALUES = (
@@ -218,3 +221,58 @@ def test_it_rejects_unsafe_or_unknown_logos(logo: bytes) -> None:
 def test_it_rejects_a_logo_over_the_size_cap() -> None:
     with pytest.raises(InvalidArgumentException):
         parse_logo(PNG_SIGNATURE + b"0" * DASHBOARD_LOGO_MAX_BYTES)
+
+
+THEME_VECTORS = load_vectors("theme-vectors.json")
+
+
+def vector_text(case: dict[str, Any]) -> str:
+    return case["text"] if "text" in case else json.dumps(case["document"])
+
+
+@pytest.mark.parametrize(
+    "case",
+    THEME_VECTORS["themes"]["valid"],
+    ids=[c["id"] for c in THEME_VECTORS["themes"]["valid"]],
+)
+def test_the_shared_valid_theme_vectors(case: dict[str, Any]) -> None:
+    theme = parse_theme(vector_text(case), fmt=case["format"])
+    expected = case["expected"]
+    assert theme.name == expected["name"]
+    assert dict(theme.shared) == expected["shared"]
+    assert dict(theme.dark) == expected["dark"]
+    assert dict(theme.light) == expected["light"]
+    assert theme.css() == expected["css"]
+
+
+@pytest.mark.parametrize(
+    "case",
+    THEME_VECTORS["themes"]["invalid"],
+    ids=[c["id"] for c in THEME_VECTORS["themes"]["invalid"]],
+)
+def test_the_shared_invalid_theme_vectors(case: dict[str, Any]) -> None:
+    with pytest.raises(InvalidArgumentException) as raised:
+        parse_theme(vector_text(case), fmt=case["format"])
+    assert str(raised.value) == case["message"]
+    for forbidden in case.get("messageExcludes", []):
+        assert forbidden not in str(raised.value)
+
+
+@pytest.mark.parametrize(
+    "case",
+    THEME_VECTORS["logos"]["valid"],
+    ids=[c["id"] for c in THEME_VECTORS["logos"]["valid"]],
+)
+def test_the_shared_valid_logo_vectors(case: dict[str, Any]) -> None:
+    assert parse_logo(base64.b64decode(case["base64"])).content_type == case["contentType"]
+
+
+@pytest.mark.parametrize(
+    "case",
+    THEME_VECTORS["logos"]["invalid"],
+    ids=[c["id"] for c in THEME_VECTORS["logos"]["invalid"]],
+)
+def test_the_shared_invalid_logo_vectors(case: dict[str, Any]) -> None:
+    with pytest.raises(InvalidArgumentException) as raised:
+        parse_logo(base64.b64decode(case["base64"]))
+    assert str(raised.value) == case["message"]

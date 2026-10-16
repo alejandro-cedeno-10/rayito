@@ -1,0 +1,988 @@
+{
+  "description": "Theme and logo vectors shared by the Python and TypeScript SDKs. `valid` themes carry the parsed token sections and the exact generated CSS; `invalid` ones the exact error message, which never repeats the offending value (`messageExcludes`). A theme is `text` or a JSON `document`. Logos are base64 so binary files survive the JSON; sizes over the cap are tested with the named limits in each SDK.",
+  "themes": {
+    "valid": [
+      {
+        "id": "an empty theme",
+        "format": "json",
+        "document": {
+          "version": 1
+        },
+        "expected": {
+          "name": "custom",
+          "shared": {},
+          "dark": {},
+          "light": {},
+          "css": "/* Tema «custom» (generado) */\n\n"
+        }
+      },
+      {
+        "id": "a named theme with dark and light colors",
+        "format": "json",
+        "document": {
+          "version": 1,
+          "name": "demo",
+          "dark": {
+            "bg": "#101010"
+          },
+          "light": {
+            "bg": "#fff"
+          }
+        },
+        "expected": {
+          "name": "demo",
+          "shared": {},
+          "dark": {
+            "bg": "#101010"
+          },
+          "light": {
+            "bg": "#fff"
+          },
+          "css": "/* Tema «demo» (generado) */\n/* dark */\n:root, :root[data-theme=\"dark\"] {\n  --bg: #101010;\n}\n/* light */\n:root[data-theme=\"light\"] {\n  --bg: #fff;\n}\n@media (prefers-color-scheme: light) {\n  :root:not([data-theme=\"dark\"]) {\n    --bg: #fff;\n  }\n}\n"
+        }
+      },
+      {
+        "id": "the color #fff",
+        "format": "json",
+        "document": {
+          "version": 1,
+          "tokens": {
+            "radius": "0.5rem",
+            "space-2": "8px",
+            "font-mono": "\"Fira Code\", monospace"
+          },
+          "dark": {
+            "bg": "#fff"
+          }
+        },
+        "expected": {
+          "name": "custom",
+          "shared": {
+            "radius": "0.5rem",
+            "space-2": "8px",
+            "font-mono": "\"Fira Code\", monospace"
+          },
+          "dark": {
+            "bg": "#fff"
+          },
+          "light": {},
+          "css": "/* Tema «custom» (generado) */\n/* dark */\n:root, :root[data-theme=\"dark\"] {\n  --bg: #fff;\n  --radius: 0.5rem;\n  --space-2: 8px;\n  --font-mono: \"Fira Code\", monospace;\n}\n/* light */\n:root[data-theme=\"light\"] {\n  --radius: 0.5rem;\n  --space-2: 8px;\n  --font-mono: \"Fira Code\", monospace;\n}\n@media (prefers-color-scheme: light) {\n  :root:not([data-theme=\"dark\"]) {\n    --radius: 0.5rem;\n    --space-2: 8px;\n    --font-mono: \"Fira Code\", monospace;\n  }\n}\n"
+        }
+      },
+      {
+        "id": "the color #ffff",
+        "format": "json",
+        "document": {
+          "version": 1,
+          "tokens": {
+            "radius": "0.5rem",
+            "space-2": "8px",
+            "font-mono": "\"Fira Code\", monospace"
+          },
+          "dark": {
+            "bg": "#ffff"
+          }
+        },
+        "expected": {
+          "name": "custom",
+          "shared": {
+            "radius": "0.5rem",
+            "space-2": "8px",
+            "font-mono": "\"Fira Code\", monospace"
+          },
+          "dark": {
+            "bg": "#ffff"
+          },
+          "light": {},
+          "css": "/* Tema «custom» (generado) */\n/* dark */\n:root, :root[data-theme=\"dark\"] {\n  --bg: #ffff;\n  --radius: 0.5rem;\n  --space-2: 8px;\n  --font-mono: \"Fira Code\", monospace;\n}\n/* light */\n:root[data-theme=\"light\"] {\n  --radius: 0.5rem;\n  --space-2: 8px;\n  --font-mono: \"Fira Code\", monospace;\n}\n@media (prefers-color-scheme: light) {\n  :root:not([data-theme=\"dark\"]) {\n    --radius: 0.5rem;\n    --space-2: 8px;\n    --font-mono: \"Fira Code\", monospace;\n  }\n}\n"
+        }
+      },
+      {
+        "id": "the color #110d1c",
+        "format": "json",
+        "document": {
+          "version": 1,
+          "tokens": {
+            "radius": "0.5rem",
+            "space-2": "8px",
+            "font-mono": "\"Fira Code\", monospace"
+          },
+          "dark": {
+            "bg": "#110d1c"
+          }
+        },
+        "expected": {
+          "name": "custom",
+          "shared": {
+            "radius": "0.5rem",
+            "space-2": "8px",
+            "font-mono": "\"Fira Code\", monospace"
+          },
+          "dark": {
+            "bg": "#110d1c"
+          },
+          "light": {},
+          "css": "/* Tema «custom» (generado) */\n/* dark */\n:root, :root[data-theme=\"dark\"] {\n  --bg: #110d1c;\n  --radius: 0.5rem;\n  --space-2: 8px;\n  --font-mono: \"Fira Code\", monospace;\n}\n/* light */\n:root[data-theme=\"light\"] {\n  --radius: 0.5rem;\n  --space-2: 8px;\n  --font-mono: \"Fira Code\", monospace;\n}\n@media (prefers-color-scheme: light) {\n  :root:not([data-theme=\"dark\"]) {\n    --radius: 0.5rem;\n    --space-2: 8px;\n    --font-mono: \"Fira Code\", monospace;\n  }\n}\n"
+        }
+      },
+      {
+        "id": "the color #110d1c80",
+        "format": "json",
+        "document": {
+          "version": 1,
+          "tokens": {
+            "radius": "0.5rem",
+            "space-2": "8px",
+            "font-mono": "\"Fira Code\", monospace"
+          },
+          "dark": {
+            "bg": "#110d1c80"
+          }
+        },
+        "expected": {
+          "name": "custom",
+          "shared": {
+            "radius": "0.5rem",
+            "space-2": "8px",
+            "font-mono": "\"Fira Code\", monospace"
+          },
+          "dark": {
+            "bg": "#110d1c80"
+          },
+          "light": {},
+          "css": "/* Tema «custom» (generado) */\n/* dark */\n:root, :root[data-theme=\"dark\"] {\n  --bg: #110d1c80;\n  --radius: 0.5rem;\n  --space-2: 8px;\n  --font-mono: \"Fira Code\", monospace;\n}\n/* light */\n:root[data-theme=\"light\"] {\n  --radius: 0.5rem;\n  --space-2: 8px;\n  --font-mono: \"Fira Code\", monospace;\n}\n@media (prefers-color-scheme: light) {\n  :root:not([data-theme=\"dark\"]) {\n    --radius: 0.5rem;\n    --space-2: 8px;\n    --font-mono: \"Fira Code\", monospace;\n  }\n}\n"
+        }
+      },
+      {
+        "id": "the color rgb(1, 2, 3)",
+        "format": "json",
+        "document": {
+          "version": 1,
+          "tokens": {
+            "radius": "0.5rem",
+            "space-2": "8px",
+            "font-mono": "\"Fira Code\", monospace"
+          },
+          "dark": {
+            "bg": "rgb(1, 2, 3)"
+          }
+        },
+        "expected": {
+          "name": "custom",
+          "shared": {
+            "radius": "0.5rem",
+            "space-2": "8px",
+            "font-mono": "\"Fira Code\", monospace"
+          },
+          "dark": {
+            "bg": "rgb(1, 2, 3)"
+          },
+          "light": {},
+          "css": "/* Tema «custom» (generado) */\n/* dark */\n:root, :root[data-theme=\"dark\"] {\n  --bg: rgb(1, 2, 3);\n  --radius: 0.5rem;\n  --space-2: 8px;\n  --font-mono: \"Fira Code\", monospace;\n}\n/* light */\n:root[data-theme=\"light\"] {\n  --radius: 0.5rem;\n  --space-2: 8px;\n  --font-mono: \"Fira Code\", monospace;\n}\n@media (prefers-color-scheme: light) {\n  :root:not([data-theme=\"dark\"]) {\n    --radius: 0.5rem;\n    --space-2: 8px;\n    --font-mono: \"Fira Code\", monospace;\n  }\n}\n"
+        }
+      },
+      {
+        "id": "the color rgba(1 2 3 / 0.5)",
+        "format": "json",
+        "document": {
+          "version": 1,
+          "tokens": {
+            "radius": "0.5rem",
+            "space-2": "8px",
+            "font-mono": "\"Fira Code\", monospace"
+          },
+          "dark": {
+            "bg": "rgba(1 2 3 / 0.5)"
+          }
+        },
+        "expected": {
+          "name": "custom",
+          "shared": {
+            "radius": "0.5rem",
+            "space-2": "8px",
+            "font-mono": "\"Fira Code\", monospace"
+          },
+          "dark": {
+            "bg": "rgba(1 2 3 / 0.5)"
+          },
+          "light": {},
+          "css": "/* Tema «custom» (generado) */\n/* dark */\n:root, :root[data-theme=\"dark\"] {\n  --bg: rgba(1 2 3 / 0.5);\n  --radius: 0.5rem;\n  --space-2: 8px;\n  --font-mono: \"Fira Code\", monospace;\n}\n/* light */\n:root[data-theme=\"light\"] {\n  --radius: 0.5rem;\n  --space-2: 8px;\n  --font-mono: \"Fira Code\", monospace;\n}\n@media (prefers-color-scheme: light) {\n  :root:not([data-theme=\"dark\"]) {\n    --radius: 0.5rem;\n    --space-2: 8px;\n    --font-mono: \"Fira Code\", monospace;\n  }\n}\n"
+        }
+      },
+      {
+        "id": "the color hsl(200, 50%, 40%)",
+        "format": "json",
+        "document": {
+          "version": 1,
+          "tokens": {
+            "radius": "0.5rem",
+            "space-2": "8px",
+            "font-mono": "\"Fira Code\", monospace"
+          },
+          "dark": {
+            "bg": "hsl(200, 50%, 40%)"
+          }
+        },
+        "expected": {
+          "name": "custom",
+          "shared": {
+            "radius": "0.5rem",
+            "space-2": "8px",
+            "font-mono": "\"Fira Code\", monospace"
+          },
+          "dark": {
+            "bg": "hsl(200, 50%, 40%)"
+          },
+          "light": {},
+          "css": "/* Tema «custom» (generado) */\n/* dark */\n:root, :root[data-theme=\"dark\"] {\n  --bg: hsl(200, 50%, 40%);\n  --radius: 0.5rem;\n  --space-2: 8px;\n  --font-mono: \"Fira Code\", monospace;\n}\n/* light */\n:root[data-theme=\"light\"] {\n  --radius: 0.5rem;\n  --space-2: 8px;\n  --font-mono: \"Fira Code\", monospace;\n}\n@media (prefers-color-scheme: light) {\n  :root:not([data-theme=\"dark\"]) {\n    --radius: 0.5rem;\n    --space-2: 8px;\n    --font-mono: \"Fira Code\", monospace;\n  }\n}\n"
+        }
+      },
+      {
+        "id": "lengths and fonts in the shared section",
+        "format": "json",
+        "document": {
+          "version": 1,
+          "tokens": {
+            "radius": "2px",
+            "space-1": "0",
+            "font-sans": "Inter, Arial, sans-serif"
+          }
+        },
+        "expected": {
+          "name": "custom",
+          "shared": {
+            "radius": "2px",
+            "space-1": "0",
+            "font-sans": "Inter, Arial, sans-serif"
+          },
+          "dark": {},
+          "light": {},
+          "css": "/* Tema «custom» (generado) */\n/* dark */\n:root, :root[data-theme=\"dark\"] {\n  --radius: 2px;\n  --space-1: 0;\n  --font-sans: Inter, Arial, sans-serif;\n}\n/* light */\n:root[data-theme=\"light\"] {\n  --radius: 2px;\n  --space-1: 0;\n  --font-sans: Inter, Arial, sans-serif;\n}\n@media (prefers-color-scheme: light) {\n  :root:not([data-theme=\"dark\"]) {\n    --radius: 2px;\n    --space-1: 0;\n    --font-sans: Inter, Arial, sans-serif;\n  }\n}\n"
+        }
+      },
+      {
+        "id": "values are trimmed",
+        "format": "json",
+        "document": {
+          "version": 1,
+          "dark": {
+            "bg": "  #000  "
+          }
+        },
+        "expected": {
+          "name": "custom",
+          "shared": {},
+          "dark": {
+            "bg": "#000"
+          },
+          "light": {},
+          "css": "/* Tema «custom» (generado) */\n/* dark */\n:root, :root[data-theme=\"dark\"] {\n  --bg: #000;\n}\n"
+        }
+      },
+      {
+        "id": "a CSS theme with the three sections",
+        "format": "css",
+        "text": "/* demo */\n:root { --radius: 2px; }\n:root[data-theme=\"dark\"] { --bg: #000; }\n:root[data-theme=\"light\"] { --bg: #fff; --fg: #111; }\n",
+        "expected": {
+          "name": "custom",
+          "shared": {
+            "radius": "2px"
+          },
+          "dark": {
+            "bg": "#000"
+          },
+          "light": {
+            "bg": "#fff",
+            "fg": "#111"
+          },
+          "css": "/* Tema «custom» (generado) */\n/* dark */\n:root, :root[data-theme=\"dark\"] {\n  --bg: #000;\n  --radius: 2px;\n}\n/* light */\n:root[data-theme=\"light\"] {\n  --bg: #fff;\n  --fg: #111;\n  --radius: 2px;\n}\n@media (prefers-color-scheme: light) {\n  :root:not([data-theme=\"dark\"]) {\n    --bg: #fff;\n    --fg: #111;\n    --radius: 2px;\n  }\n}\n"
+        }
+      },
+      {
+        "id": "a CSS theme with only shared tokens",
+        "format": "css",
+        "text": ":root { --radius: 4px; --font-sans: Inter, sans-serif; }",
+        "expected": {
+          "name": "custom",
+          "shared": {
+            "radius": "4px",
+            "font-sans": "Inter, sans-serif"
+          },
+          "dark": {},
+          "light": {},
+          "css": "/* Tema «custom» (generado) */\n/* dark */\n:root, :root[data-theme=\"dark\"] {\n  --radius: 4px;\n  --font-sans: Inter, sans-serif;\n}\n/* light */\n:root[data-theme=\"light\"] {\n  --radius: 4px;\n  --font-sans: Inter, sans-serif;\n}\n@media (prefers-color-scheme: light) {\n  :root:not([data-theme=\"dark\"]) {\n    --radius: 4px;\n    --font-sans: Inter, sans-serif;\n  }\n}\n"
+        }
+      }
+    ],
+    "invalid": [
+      {
+        "id": "unknown key {\"version\": 1, \"extra\": 1}",
+        "format": "json",
+        "document": {
+          "version": 1,
+          "extra": 1
+        },
+        "message": "tema: clave desconocida: extra"
+      },
+      {
+        "id": "unknown key {\"version\": 1, \"tokens\": {\"not-a-token\": \"#fff\"}}",
+        "format": "json",
+        "document": {
+          "version": 1,
+          "tokens": {
+            "not-a-token": "#fff"
+          }
+        },
+        "message": "tema: clave desconocida en «tokens»: not-a-token"
+      },
+      {
+        "id": "unknown key {\"version\": 1, \"dark\": {\"radius\": \"1px\"}}",
+        "format": "json",
+        "document": {
+          "version": 1,
+          "dark": {
+            "radius": "1px"
+          }
+        },
+        "message": "tema: clave desconocida en «dark»: radius"
+      },
+      {
+        "id": "unknown key {\"version\": 1, \"light\": {\"font-sans\": \"Arial\"}}",
+        "format": "json",
+        "document": {
+          "version": 1,
+          "light": {
+            "font-sans": "Arial"
+          }
+        },
+        "message": "tema: clave desconocida en «light»: font-sans"
+      },
+      {
+        "id": "injection 'red; } body { display: none' in bg",
+        "format": "json",
+        "document": {
+          "version": 1,
+          "tokens": {
+            "bg": "red; } body { display: none"
+          }
+        },
+        "message": "tema: valor no válido para bg (se espera color)",
+        "messageExcludes": [
+          "red; } body { display: none"
+        ]
+      },
+      {
+        "id": "injection 'red; } body { display: none' in radius",
+        "format": "json",
+        "document": {
+          "version": 1,
+          "tokens": {
+            "radius": "red; } body { display: none"
+          }
+        },
+        "message": "tema: valor no válido para radius (se espera length)",
+        "messageExcludes": [
+          "red; } body { display: none"
+        ]
+      },
+      {
+        "id": "injection 'url(https://example.com/x.png)' in bg",
+        "format": "json",
+        "document": {
+          "version": 1,
+          "tokens": {
+            "bg": "url(https://example.com/x.png)"
+          }
+        },
+        "message": "tema: valor no válido para bg (se espera color)",
+        "messageExcludes": [
+          "url(https://example.com/x.png)"
+        ]
+      },
+      {
+        "id": "injection 'url(https://example.com/x.png)' in radius",
+        "format": "json",
+        "document": {
+          "version": 1,
+          "tokens": {
+            "radius": "url(https://example.com/x.png)"
+          }
+        },
+        "message": "tema: valor no válido para radius (se espera length)",
+        "messageExcludes": [
+          "url(https://example.com/x.png)"
+        ]
+      },
+      {
+        "id": "injection '#fff; background: url(x)' in bg",
+        "format": "json",
+        "document": {
+          "version": 1,
+          "tokens": {
+            "bg": "#fff; background: url(x)"
+          }
+        },
+        "message": "tema: valor no válido para bg (se espera color)",
+        "messageExcludes": [
+          "#fff; background: url(x)"
+        ]
+      },
+      {
+        "id": "injection '#fff; background: url(x)' in radius",
+        "format": "json",
+        "document": {
+          "version": 1,
+          "tokens": {
+            "radius": "#fff; background: url(x)"
+          }
+        },
+        "message": "tema: valor no válido para radius (se espera length)",
+        "messageExcludes": [
+          "#fff; background: url(x)"
+        ]
+      },
+      {
+        "id": "injection 'expression(alert(1))' in bg",
+        "format": "json",
+        "document": {
+          "version": 1,
+          "tokens": {
+            "bg": "expression(alert(1))"
+          }
+        },
+        "message": "tema: valor no válido para bg (se espera color)",
+        "messageExcludes": [
+          "expression(alert(1))"
+        ]
+      },
+      {
+        "id": "injection 'expression(alert(1))' in radius",
+        "format": "json",
+        "document": {
+          "version": 1,
+          "tokens": {
+            "radius": "expression(alert(1))"
+          }
+        },
+        "message": "tema: valor no válido para radius (se espera length)",
+        "messageExcludes": [
+          "expression(alert(1))"
+        ]
+      },
+      {
+        "id": "injection 'var(--bg)' in bg",
+        "format": "json",
+        "document": {
+          "version": 1,
+          "tokens": {
+            "bg": "var(--bg)"
+          }
+        },
+        "message": "tema: valor no válido para bg (se espera color)",
+        "messageExcludes": [
+          "var(--bg)"
+        ]
+      },
+      {
+        "id": "injection 'var(--bg)' in radius",
+        "format": "json",
+        "document": {
+          "version": 1,
+          "tokens": {
+            "radius": "var(--bg)"
+          }
+        },
+        "message": "tema: valor no válido para radius (se espera length)",
+        "messageExcludes": [
+          "var(--bg)"
+        ]
+      },
+      {
+        "id": "injection 'rgb(0, 0, 0) !important' in bg",
+        "format": "json",
+        "document": {
+          "version": 1,
+          "tokens": {
+            "bg": "rgb(0, 0, 0) !important"
+          }
+        },
+        "message": "tema: valor no válido para bg (se espera color)",
+        "messageExcludes": [
+          "rgb(0, 0, 0) !important"
+        ]
+      },
+      {
+        "id": "injection 'rgb(0, 0, 0) !important' in radius",
+        "format": "json",
+        "document": {
+          "version": 1,
+          "tokens": {
+            "radius": "rgb(0, 0, 0) !important"
+          }
+        },
+        "message": "tema: valor no válido para radius (se espera length)",
+        "messageExcludes": [
+          "rgb(0, 0, 0) !important"
+        ]
+      },
+      {
+        "id": "injection '</style><script>alert(1)</script>' in bg",
+        "format": "json",
+        "document": {
+          "version": 1,
+          "tokens": {
+            "bg": "</style><script>alert(1)</script>"
+          }
+        },
+        "message": "tema: valor no válido para bg (se espera color)",
+        "messageExcludes": [
+          "</style><script>alert(1)</script>"
+        ]
+      },
+      {
+        "id": "injection '</style><script>alert(1)</script>' in radius",
+        "format": "json",
+        "document": {
+          "version": 1,
+          "tokens": {
+            "radius": "</style><script>alert(1)</script>"
+          }
+        },
+        "message": "tema: valor no válido para radius (se espera length)",
+        "messageExcludes": [
+          "</style><script>alert(1)</script>"
+        ]
+      },
+      {
+        "id": "injection 'javascript:alert(1)' in bg",
+        "format": "json",
+        "document": {
+          "version": 1,
+          "tokens": {
+            "bg": "javascript:alert(1)"
+          }
+        },
+        "message": "tema: valor no válido para bg (se espera color)",
+        "messageExcludes": [
+          "javascript:alert(1)"
+        ]
+      },
+      {
+        "id": "injection 'javascript:alert(1)' in radius",
+        "format": "json",
+        "document": {
+          "version": 1,
+          "tokens": {
+            "radius": "javascript:alert(1)"
+          }
+        },
+        "message": "tema: valor no válido para radius (se espera length)",
+        "messageExcludes": [
+          "javascript:alert(1)"
+        ]
+      },
+      {
+        "id": "injection '#12' in bg",
+        "format": "json",
+        "document": {
+          "version": 1,
+          "tokens": {
+            "bg": "#12"
+          }
+        },
+        "message": "tema: valor no válido para bg (se espera color)",
+        "messageExcludes": [
+          "#12"
+        ]
+      },
+      {
+        "id": "injection '#12' in radius",
+        "format": "json",
+        "document": {
+          "version": 1,
+          "tokens": {
+            "radius": "#12"
+          }
+        },
+        "message": "tema: valor no válido para radius (se espera length)",
+        "messageExcludes": [
+          "#12"
+        ]
+      },
+      {
+        "id": "injection '#ggg' in bg",
+        "format": "json",
+        "document": {
+          "version": 1,
+          "tokens": {
+            "bg": "#ggg"
+          }
+        },
+        "message": "tema: valor no válido para bg (se espera color)",
+        "messageExcludes": [
+          "#ggg"
+        ]
+      },
+      {
+        "id": "injection '#ggg' in radius",
+        "format": "json",
+        "document": {
+          "version": 1,
+          "tokens": {
+            "radius": "#ggg"
+          }
+        },
+        "message": "tema: valor no válido para radius (se espera length)",
+        "messageExcludes": [
+          "#ggg"
+        ]
+      },
+      {
+        "id": "injection '10' in bg",
+        "format": "json",
+        "document": {
+          "version": 1,
+          "tokens": {
+            "bg": "10"
+          }
+        },
+        "message": "tema: valor no válido para bg (se espera color)",
+        "messageExcludes": [
+          "10"
+        ]
+      },
+      {
+        "id": "injection '10' in radius",
+        "format": "json",
+        "document": {
+          "version": 1,
+          "tokens": {
+            "radius": "10"
+          }
+        },
+        "message": "tema: valor no válido para radius (se espera length)",
+        "messageExcludes": [
+          "10"
+        ]
+      },
+      {
+        "id": "injection '1e3px' in bg",
+        "format": "json",
+        "document": {
+          "version": 1,
+          "tokens": {
+            "bg": "1e3px"
+          }
+        },
+        "message": "tema: valor no válido para bg (se espera color)",
+        "messageExcludes": [
+          "1e3px"
+        ]
+      },
+      {
+        "id": "injection '1e3px' in radius",
+        "format": "json",
+        "document": {
+          "version": 1,
+          "tokens": {
+            "radius": "1e3px"
+          }
+        },
+        "message": "tema: valor no válido para radius (se espera length)",
+        "messageExcludes": [
+          "1e3px"
+        ]
+      },
+      {
+        "id": "injection 'calc(1px + 2px)' in bg",
+        "format": "json",
+        "document": {
+          "version": 1,
+          "tokens": {
+            "bg": "calc(1px + 2px)"
+          }
+        },
+        "message": "tema: valor no válido para bg (se espera color)",
+        "messageExcludes": [
+          "calc(1px + 2px)"
+        ]
+      },
+      {
+        "id": "injection 'calc(1px + 2px)' in radius",
+        "format": "json",
+        "document": {
+          "version": 1,
+          "tokens": {
+            "radius": "calc(1px + 2px)"
+          }
+        },
+        "message": "tema: valor no válido para radius (se espera length)",
+        "messageExcludes": [
+          "calc(1px + 2px)"
+        ]
+      },
+      {
+        "id": "font injection 'Arial; } body { color: red'",
+        "format": "json",
+        "document": {
+          "version": 1,
+          "tokens": {
+            "font-sans": "Arial; } body { color: red"
+          }
+        },
+        "message": "tema: valor no válido para font-sans (se espera font)"
+      },
+      {
+        "id": "font injection 'url(https://example.com/font.woff2)'",
+        "format": "json",
+        "document": {
+          "version": 1,
+          "tokens": {
+            "font-sans": "url(https://example.com/font.woff2)"
+          }
+        },
+        "message": "tema: valor no válido para font-sans (se espera font)"
+      },
+      {
+        "id": "font injection '\"Arial\", url(x)'",
+        "format": "json",
+        "document": {
+          "version": 1,
+          "tokens": {
+            "font-sans": "\"Arial\", url(x)"
+          }
+        },
+        "message": "tema: valor no válido para font-sans (se espera font)"
+      },
+      {
+        "id": "font injection 'Arial\\\\'",
+        "format": "json",
+        "document": {
+          "version": 1,
+          "tokens": {
+            "font-sans": "Arial\\"
+          }
+        },
+        "message": "tema: valor no válido para font-sans (se espera font)"
+      },
+      {
+        "id": "font injection 'a, b, c, d, e, f, g, h, i'",
+        "format": "json",
+        "document": {
+          "version": 1,
+          "tokens": {
+            "font-sans": "a, b, c, d, e, f, g, h, i"
+          }
+        },
+        "message": "tema: valor no válido para font-sans (se espera font)"
+      },
+      {
+        "id": "an unknown key with markup is not echoed",
+        "format": "json",
+        "document": {
+          "version": 1,
+          "tokens": {
+            "</style><script>": "#fff"
+          }
+        },
+        "message": "tema: clave desconocida en «tokens»: (clave no válida)",
+        "messageExcludes": [
+          "script"
+        ]
+      },
+      {
+        "id": "malformed document ''",
+        "format": "json",
+        "text": "",
+        "message": "tema: el JSON no es válido"
+      },
+      {
+        "id": "malformed document '[]'",
+        "format": "json",
+        "text": "[]",
+        "message": "tema: la raíz debe ser un objeto"
+      },
+      {
+        "id": "malformed document 'not json'",
+        "format": "json",
+        "text": "not json",
+        "message": "tema: el JSON no es válido"
+      },
+      {
+        "id": "malformed document '{\"version\": 2}'",
+        "format": "json",
+        "text": "{\"version\": 2}",
+        "message": "tema: «version» debe ser 1"
+      },
+      {
+        "id": "malformed document '{\"name\": \"x\"}'",
+        "format": "json",
+        "text": "{\"name\": \"x\"}",
+        "message": "tema: «version» debe ser 1"
+      },
+      {
+        "id": "malformed document '{\"version\": 1, \"name\": \"<b>\"}'",
+        "format": "json",
+        "text": "{\"version\": 1, \"name\": \"<b>\"}",
+        "message": "tema: «name» admite letras, números, espacio, punto, guion y guion bajo (hasta 40)"
+      },
+      {
+        "id": "a non-object section",
+        "format": "json",
+        "document": {
+          "version": 1,
+          "dark": [
+            1
+          ]
+        },
+        "message": "tema: «dark» debe ser un objeto de clave y valor"
+      },
+      {
+        "id": "a non-string value",
+        "format": "json",
+        "document": {
+          "version": 1,
+          "dark": {
+            "bg": 5
+          }
+        },
+        "message": "tema: valor no válido para bg (se espera color)"
+      },
+      {
+        "id": "CSS that is not just token blocks '@import url(https://example.com/x.css);'",
+        "format": "css",
+        "text": "@import url(https://example.com/x.css);",
+        "message": "tema: el CSS sólo admite bloques :root"
+      },
+      {
+        "id": "CSS that is not just token blocks 'body { color: red }'",
+        "format": "css",
+        "text": "body { color: red }",
+        "message": "tema: selector CSS no admitido"
+      },
+      {
+        "id": "CSS that is not just token blocks ':root { --bg: url(x); }'",
+        "format": "css",
+        "text": ":root { --bg: url(x); }",
+        "message": "tema: valor no válido para bg (se espera color)"
+      },
+      {
+        "id": "CSS that is not just token blocks ':root { --bg: #fff; } a { x: y }'",
+        "format": "css",
+        "text": ":root { --bg: #fff; } a { x: y }",
+        "message": "tema: selector CSS no admitido"
+      },
+      {
+        "id": "CSS that is not just token blocks ':root { background: red; }'",
+        "format": "css",
+        "text": ":root { background: red; }",
+        "message": "tema: declaración CSS no admitida"
+      },
+      {
+        "id": "CSS that is not just token blocks \":root[data-theme='x'] { --bg: #fff; }\"",
+        "format": "css",
+        "text": ":root[data-theme='x'] { --bg: #fff; }",
+        "message": "tema: selector CSS no admitido"
+      },
+      {
+        "id": "CSS that is not just token blocks ':root { --bg: #fff } .x'",
+        "format": "css",
+        "text": ":root { --bg: #fff } .x",
+        "message": "tema: el CSS sólo admite bloques :root"
+      },
+      {
+        "id": "CSS that is not just token blocks ':root { --unknown: #fff; }'",
+        "format": "css",
+        "text": ":root { --unknown: #fff; }",
+        "message": "tema: clave desconocida en «tokens»: unknown"
+      },
+      {
+        "id": "an unknown format",
+        "format": "yaml",
+        "text": "{}",
+        "message": "tema: el formato debe ser .json o .css"
+      }
+    ]
+  },
+  "logos": {
+    "valid": [
+      {
+        "id": "a PNG by its signature",
+        "contentType": "image/png",
+        "base64": "iVBORw0KGgpyZXN0"
+      },
+      {
+        "id": "a plain SVG",
+        "contentType": "image/svg+xml",
+        "base64": "PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciID48Y2lyY2xlIHI9IjEiIGZpbGw9IiNmZmYiLz48dXNlIGhyZWY9IiNhIi8+PC9zdmc+"
+      }
+    ],
+    "invalid": [
+      {
+        "id": "a script element",
+        "base64": "PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciID48c2NyaXB0PmFsZXJ0KDEpPC9zY3JpcHQ+PC9zdmc+",
+        "message": "logo: el SVG no admite el elemento script"
+      },
+      {
+        "id": "a foreignObject",
+        "base64": "PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciID48Zm9yZWlnbk9iamVjdD48ZGl2Lz48L2ZvcmVpZ25PYmplY3Q+PC9zdmc+",
+        "message": "logo: el SVG no admite el elemento foreignobject"
+      },
+      {
+        "id": "an event handler",
+        "base64": "PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIG9ubG9hZD0iYWxlcnQoMSkiPjwvc3ZnPg==",
+        "message": "logo: el SVG no admite manejadores de eventos"
+      },
+      {
+        "id": "an external href",
+        "base64": "PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciID48YSBocmVmPSJodHRwczovL2V4YW1wbGUuY29tIj48cmVjdC8+PC9hPjwvc3ZnPg==",
+        "message": "logo: el SVG no admite referencias externas"
+      },
+      {
+        "id": "a data URL image",
+        "base64": "PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciID48aW1hZ2UgaHJlZj0iZGF0YTppbWFnZS9wbmc7YmFzZTY0LEFBQUEiLz48L3N2Zz4=",
+        "message": "logo: el SVG no admite referencias externas"
+      },
+      {
+        "id": "an external url() fill",
+        "base64": "PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciID48cmVjdCBmaWxsPSJ1cmwoaHR0cHM6Ly9leGFtcGxlLmNvbS94KSIvPjwvc3ZnPg==",
+        "message": "logo: el SVG no admite referencias externas"
+      },
+      {
+        "id": "a CSS import",
+        "base64": "PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciID48c3R5bGU+QGltcG9ydCAneC5jc3MnOzwvc3R5bGU+PC9zdmc+",
+        "message": "logo: el SVG no admite estilos con recursos externos"
+      },
+      {
+        "id": "an animated href",
+        "base64": "PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciID48YW5pbWF0ZSBhdHRyaWJ1dGVOYW1lPSJocmVmIiB0bz0iamF2YXNjcmlwdDphbGVydCgxKSIvPjwvc3ZnPg==",
+        "message": "logo: el SVG no admite el elemento animate"
+      },
+      {
+        "id": "an external url() style",
+        "base64": "PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciID48cmVjdCBzdHlsZT0iZmlsbDp1cmwoLy9leGFtcGxlLmNvbS94KSIvPjwvc3ZnPg==",
+        "message": "logo: el SVG no admite referencias externas"
+      },
+      {
+        "id": "a DOCTYPE with an entity",
+        "base64": "PCFET0NUWVBFIHN2ZyBbPCFFTlRJVFkgYSAiYiI+XT48c3ZnIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyIvPg==",
+        "message": "logo: el SVG no puede llevar DOCTYPE ni entidades"
+      },
+      {
+        "id": "an HTML document",
+        "base64": "PGh0bWw+PGJvZHkvPjwvaHRtbD4=",
+        "message": "logo: no es un PNG ni un SVG válido"
+      },
+      {
+        "id": "a GIF",
+        "base64": "R0lGODlh",
+        "message": "logo: no es un PNG ni un SVG válido"
+      },
+      {
+        "id": "an empty file",
+        "base64": "",
+        "message": "logo: no es un PNG ni un SVG válido"
+      }
+    ]
+  }
+}

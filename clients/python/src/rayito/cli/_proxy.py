@@ -112,11 +112,16 @@ from rayito._limits import (
     MAX_CONCURRENT_CONNECTIONS_1_VCPU,
     PORT_MAX,
     PORT_MIN,
+    PROXY_HEAD_MAX_BYTES,
+    PROXY_HEAD_READ_TIMEOUT_SECONDS,
+    PROXY_UPSTREAM_CONNECT_TIMEOUT_SECONDS,
+    PROXY_UPSTREAM_RESPONSE_HEAD_TIMEOUT_SECONDS,
     TERMINAL_STATES,
 )
 from rayito._transport import TokenRefresher, TokenStore
 from rayito.cli._http_framing import (
     CONTENT_LENGTH_HEADER_NAME,
+    HTTP_OWS,
     SWITCHING_PROTOCOLS,
     TRANSFER_ENCODING_HEADER_NAME,
     BodyFraming,
@@ -149,13 +154,14 @@ FORBIDDEN_RESPONSE: bytes = (
 SERVICE_UNAVAILABLE_RESPONSE: bytes = (
     b"HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"
 )
-# Un cliente que abre la conexión y no termina la cabecera, o un handshake
-# TLS que se queda colgado, no retienen una tarea para siempre.
-HEAD_READ_TIMEOUT_SECONDS = 30.0
-UPSTREAM_CONNECT_TIMEOUT_SECONDS = 30.0
+#: Un cliente que abre la conexión y no termina la cabecera, o un handshake
+#: TLS que se queda colgado, no retienen una tarea para siempre. Los valores
+#: viven en `limits.json`, compartidos con la CLI de TypeScript.
+HEAD_READ_TIMEOUT_SECONDS = PROXY_HEAD_READ_TIMEOUT_SECONDS
+UPSTREAM_CONNECT_TIMEOUT_SECONDS = PROXY_UPSTREAM_CONNECT_TIMEOUT_SECONDS
 #: Lo que espera la cabecera de la respuesta a una petición de upgrade
 #: antes de responder `502` (un handshake de WebSocket es inmediato).
-UPSTREAM_RESPONSE_HEAD_TIMEOUT_SECONDS = 30.0
+UPSTREAM_RESPONSE_HEAD_TIMEOUT_SECONDS = PROXY_UPSTREAM_RESPONSE_HEAD_TIMEOUT_SECONDS
 # Cada cuánto `_run_until_stopped` mira el `stop_event` del e2e.
 STOP_POLL_SECONDS = 0.1
 # RFC 9110 §5.6.2 `tchar`: los nombres de cabecera del cliente que no
@@ -268,12 +274,12 @@ class ProxyAccess:
     sandbox_host: str | None = None
 
     def admits_host(self, host: str | None) -> bool:
-        return host is not None and host.strip().lower() in self.hosts
+        return host is not None and host.strip(HTTP_OWS).lower() in self.hosts
 
     def admits_origin(self, origin: str | None) -> bool:
         """Sin `Origin` (curl, un navegador en una petición del mismo
         origen que no lo manda) pasa; `null` u otro origen, no."""
-        return origin is None or origin.strip().lower().rstrip("/") in self.origins
+        return origin is None or origin.strip(HTTP_OWS).lower().rstrip("/") in self.origins
 
 
 def _bracketed(host: str) -> str:
@@ -442,7 +448,7 @@ class HttpHead:
         `Connection`; un `Upgrade` suelto (p. ej. con `Connection:
         keep-alive`) no es un upgrade y se trata como cualquier petición."""
         tokens = {
-            token.strip().lower()
+            token.strip(HTTP_OWS).lower()
             for token in (self.header(CONNECTION_HEADER_NAME) or "").split(",")
         }
         return "upgrade" in tokens and self.header(UPGRADE_HEADER_NAME) is not None
@@ -483,7 +489,7 @@ def parse_http_head(raw: bytes) -> HttpHead:
             raise MalformedHttpHeadError("línea de cabecera sin ':'")
         if not _TOKEN_CHARS.match(name):
             raise MalformedHttpHeadError("nombre de cabecera fuera de los tchar de RFC 9110")
-        headers.append((name, value.strip()))
+        headers.append((name, value.strip(HTTP_OWS)))
     return HttpHead(request_line=request_line, headers=tuple(headers))
 
 
@@ -503,9 +509,9 @@ def without_dashboard_cookies(cookie_header: str) -> str | None:
     """El valor de `Cookie` sin las cookies de sesión del panel local; `None`
     si no queda ninguna (la cabecera entera se descarta)."""
     kept = [
-        cookie.strip()
+        cookie.strip(HTTP_OWS)
         for cookie in cookie_header.split(COOKIE_PAIR_DELIMITER)
-        if cookie.strip() and not cookie.strip().startswith(DASHBOARD_COOKIE_PREFIX)
+        if cookie.strip(HTTP_OWS) and not cookie.strip(HTTP_OWS).startswith(DASHBOARD_COOKIE_PREFIX)
     ]
     return COOKIE_SEPARATOR.join(kept) if kept else None
 
@@ -835,8 +841,8 @@ async def _relay_chunked(reader: asyncio.StreamReader, writer: asyncio.StreamWri
     tamaño 0 y la línea vacía tras los `trailer`; ni un byte más."""
     while True:
         size_line = await reader.readuntil(CRLF)
-        writer.write(size_line)
         size = chunk_size(size_line)
+        writer.write(size_line)
         if size == 0:
             break
         await _copy_exactly(reader, writer, size)
@@ -895,7 +901,7 @@ async def serve_proxy(
             connect_timeout=connect_timeout,
         )
 
-    server = await asyncio.start_server(on_connection, sock=listener)
+    server = await asyncio.start_server(on_connection, sock=listener, limit=PROXY_HEAD_MAX_BYTES)
     if ready is not None:
         ready(server)
     async with server:

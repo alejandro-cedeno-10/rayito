@@ -158,6 +158,23 @@ class CoreClient:
         response = self._api.handle(request)
         return response.status, response.body
 
+    def call_with_lists(
+        self,
+        method: str,
+        path: str,
+        query: Mapping[str, list[str]],
+        body: Any = None,
+    ) -> tuple[int, dict[str, Any]]:
+        """Como `call`, pero con parámetros repetidos (`?type=a&type=b`)."""
+        request = ApiRequest(
+            method,
+            f"{API_PREFIX}{path}",
+            dict(query),
+            b"" if body is None else json.dumps(body).encode(),
+        )
+        response = self._api.handle(request)
+        return response.status, response.body
+
     def close(self) -> None:
         self._api.close()
 

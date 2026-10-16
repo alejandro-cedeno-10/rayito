@@ -1,0 +1,886 @@
+{
+  "description": "Contratos puros de `rayito image publish` compartidos por Python y TypeScript (ADR-027): nombres, combinaciones, claves de artefacto, configuración deseada, tamaños y resúmenes. La fuente es rayito.cli._publish y rayito.cli.image.",
+  "defaultNames": [
+    {
+      "variant": "full",
+      "withEfs": false,
+      "value": "rayito-base"
+    },
+    {
+      "variant": "full",
+      "withEfs": true,
+      "value": "rayito-base-caps-efs"
+    },
+    {
+      "variant": "slim",
+      "withEfs": false,
+      "value": "rayito-base-slim"
+    },
+    {
+      "variant": "slim",
+      "withEfs": true,
+      "error": "--with-efs sólo con --variant full, no 'slim'"
+    },
+    {
+      "variant": "poly",
+      "withEfs": false,
+      "value": "rayito-base-poly"
+    },
+    {
+      "variant": "poly",
+      "withEfs": true,
+      "error": "--with-efs sólo con --variant full, no 'poly'"
+    },
+    {
+      "variant": "bogus",
+      "withEfs": false,
+      "error": "variant desconocida: 'bogus' (admitidas: full, slim, poly)"
+    },
+    {
+      "variant": "bogus",
+      "withEfs": true,
+      "error": "variant desconocida: 'bogus' (admitidas: full, slim, poly)"
+    }
+  ],
+  "efsCombinations": [
+    {
+      "variant": "full",
+      "osCapabilities": null,
+      "error": "--with-efs necesita --os-capabilities ALL: rayd sólo monta EFS con CAP_SYS_ADMIN"
+    },
+    {
+      "variant": "full",
+      "osCapabilities": "ALL",
+      "error": null
+    },
+    {
+      "variant": "slim",
+      "osCapabilities": null,
+      "error": "--with-efs sólo con --variant full, no 'slim'"
+    },
+    {
+      "variant": "slim",
+      "osCapabilities": "ALL",
+      "error": "--with-efs sólo con --variant full, no 'slim'"
+    },
+    {
+      "variant": "poly",
+      "osCapabilities": null,
+      "error": "--with-efs sólo con --variant full, no 'poly'"
+    },
+    {
+      "variant": "poly",
+      "osCapabilities": "ALL",
+      "error": "--with-efs sólo con --variant full, no 'poly'"
+    }
+  ],
+  "runIds": [
+    {
+      "runId": "run-1"
+    },
+    {
+      "runId": "a"
+    },
+    {
+      "runId": "A9-b"
+    },
+    {
+      "runId": "0"
+    },
+    {
+      "runId": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    },
+    {
+      "runId": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "error": "--artifact-run-id inválido: 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' (letras, dígitos y guiones, de 1 a 64, empezando por letra o dígito)"
+    },
+    {
+      "runId": "",
+      "error": "--artifact-run-id inválido: '' (letras, dígitos y guiones, de 1 a 64, empezando por letra o dígito)"
+    },
+    {
+      "runId": "-x",
+      "error": "--artifact-run-id inválido: '-x' (letras, dígitos y guiones, de 1 a 64, empezando por letra o dígito)"
+    },
+    {
+      "runId": "a/b",
+      "error": "--artifact-run-id inválido: 'a/b' (letras, dígitos y guiones, de 1 a 64, empezando por letra o dígito)"
+    },
+    {
+      "runId": "a..b",
+      "error": "--artifact-run-id inválido: 'a..b' (letras, dígitos y guiones, de 1 a 64, empezando por letra o dígito)"
+    },
+    {
+      "runId": "a b",
+      "error": "--artifact-run-id inválido: 'a b' (letras, dígitos y guiones, de 1 a 64, empezando por letra o dígito)"
+    },
+    {
+      "runId": "ñ",
+      "error": "--artifact-run-id inválido: 'ñ' (letras, dígitos y guiones, de 1 a 64, empezando por letra o dígito)"
+    },
+    {
+      "runId": "../x",
+      "error": "--artifact-run-id inválido: '../x' (letras, dígitos y guiones, de 1 a 64, empezando por letra o dígito)"
+    }
+  ],
+  "artifactKeys": [
+    {
+      "payload": "zip-bytes-1",
+      "sha256": "78948c0a0dd6839320c68b3553d228cc59e9f213f663edf3afa3d26ca0d737ea",
+      "runId": null,
+      "value": "rayito/images/rayd-78948c0a0dd6.zip"
+    },
+    {
+      "payload": "zip-bytes-2",
+      "sha256": "117523be701b259a72e2f4b2f923237b8e74a2077937057b3aee229f60800732",
+      "runId": null,
+      "value": "rayito/images/rayd-117523be701b.zip"
+    },
+    {
+      "payload": "zip-bytes-1",
+      "sha256": "78948c0a0dd6839320c68b3553d228cc59e9f213f663edf3afa3d26ca0d737ea",
+      "runId": "run-1",
+      "value": "rayito/images/runs/run-1/rayd-78948c0a0dd6.zip"
+    },
+    {
+      "payload": "",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "runId": null,
+      "value": "rayito/images/rayd-e3b0c44298fc.zip"
+    },
+    {
+      "payload": "zip-bytes-1",
+      "sha256": "78948c0a0dd6839320c68b3553d228cc59e9f213f663edf3afa3d26ca0d737ea",
+      "runId": "bad/id",
+      "error": "--artifact-run-id inválido: 'bad/id' (letras, dígitos y guiones, de 1 a 64, empezando por letra o dígito)"
+    }
+  ],
+  "configurations": [
+    {
+      "name": "baseline por defecto",
+      "settings": {},
+      "region": "us-east-1",
+      "buildRoleArn": "arn:aws:iam::123456789012:role/build",
+      "artifactUri": "s3://bucket/rayito/images/rayd-abc.zip",
+      "expected": {
+        "baseImageArn": "arn:aws:lambda:us-east-1:aws:microvm-image:al2023-1",
+        "baseImageVersion": "1",
+        "buildRoleArn": "arn:aws:iam::123456789012:role/build",
+        "codeArtifact": {
+          "uri": "s3://bucket/rayito/images/rayd-abc.zip"
+        },
+        "resources": [
+          {
+            "minimumMemoryInMiB": 2048
+          }
+        ],
+        "cpuConfigurations": [
+          {
+            "architecture": "ARM_64"
+          }
+        ],
+        "hooks": {
+          "port": 9000,
+          "microvmImageHooks": {
+            "ready": "ENABLED",
+            "readyTimeoutInSeconds": 600,
+            "validate": "ENABLED",
+            "validateTimeoutInSeconds": 600
+          },
+          "microvmHooks": {
+            "run": "ENABLED",
+            "runTimeoutInSeconds": 30,
+            "resume": "ENABLED",
+            "resumeTimeoutInSeconds": 30,
+            "suspend": "ENABLED",
+            "suspendTimeoutInSeconds": 30,
+            "terminate": "ENABLED",
+            "terminateTimeoutInSeconds": 10
+          }
+        },
+        "logging": {
+          "cloudWatch": {
+            "logGroup": "/rayito/rayito-base"
+          }
+        }
+      }
+    },
+    {
+      "name": "con capabilities",
+      "settings": {
+        "os_capabilities": "ALL",
+        "image_name": "rayito-base-caps"
+      },
+      "region": "us-east-1",
+      "buildRoleArn": "arn:aws:iam::123456789012:role/build",
+      "artifactUri": "s3://bucket/rayito/images/rayd-abc.zip",
+      "expected": {
+        "baseImageArn": "arn:aws:lambda:us-east-1:aws:microvm-image:al2023-1",
+        "baseImageVersion": "1",
+        "buildRoleArn": "arn:aws:iam::123456789012:role/build",
+        "codeArtifact": {
+          "uri": "s3://bucket/rayito/images/rayd-abc.zip"
+        },
+        "resources": [
+          {
+            "minimumMemoryInMiB": 2048
+          }
+        ],
+        "cpuConfigurations": [
+          {
+            "architecture": "ARM_64"
+          }
+        ],
+        "hooks": {
+          "port": 9000,
+          "microvmImageHooks": {
+            "ready": "ENABLED",
+            "readyTimeoutInSeconds": 600,
+            "validate": "ENABLED",
+            "validateTimeoutInSeconds": 600
+          },
+          "microvmHooks": {
+            "run": "ENABLED",
+            "runTimeoutInSeconds": 30,
+            "resume": "ENABLED",
+            "resumeTimeoutInSeconds": 30,
+            "suspend": "ENABLED",
+            "suspendTimeoutInSeconds": 30,
+            "terminate": "ENABLED",
+            "terminateTimeoutInSeconds": 10
+          }
+        },
+        "logging": {
+          "cloudWatch": {
+            "logGroup": "/rayito/rayito-base-caps"
+          }
+        },
+        "additionalOsCapabilities": [
+          "ALL"
+        ]
+      }
+    },
+    {
+      "name": "con variables de entorno",
+      "settings": {
+        "environment_variables": {
+          "A": "1",
+          "RAYITO_BASELINE_MEMORY_MIB": "4096"
+        },
+        "memory_mib": 4096
+      },
+      "region": "us-east-1",
+      "buildRoleArn": "arn:aws:iam::123456789012:role/build",
+      "artifactUri": "s3://bucket/rayito/images/rayd-abc.zip",
+      "expected": {
+        "baseImageArn": "arn:aws:lambda:us-east-1:aws:microvm-image:al2023-1",
+        "baseImageVersion": "1",
+        "buildRoleArn": "arn:aws:iam::123456789012:role/build",
+        "codeArtifact": {
+          "uri": "s3://bucket/rayito/images/rayd-abc.zip"
+        },
+        "resources": [
+          {
+            "minimumMemoryInMiB": 4096
+          }
+        ],
+        "cpuConfigurations": [
+          {
+            "architecture": "ARM_64"
+          }
+        ],
+        "hooks": {
+          "port": 9000,
+          "microvmImageHooks": {
+            "ready": "ENABLED",
+            "readyTimeoutInSeconds": 600,
+            "validate": "ENABLED",
+            "validateTimeoutInSeconds": 600
+          },
+          "microvmHooks": {
+            "run": "ENABLED",
+            "runTimeoutInSeconds": 30,
+            "resume": "ENABLED",
+            "resumeTimeoutInSeconds": 30,
+            "suspend": "ENABLED",
+            "suspendTimeoutInSeconds": 30,
+            "terminate": "ENABLED",
+            "terminateTimeoutInSeconds": 10
+          }
+        },
+        "logging": {
+          "cloudWatch": {
+            "logGroup": "/rayito/rayito-base"
+          }
+        },
+        "environmentVariables": {
+          "A": "1",
+          "RAYITO_BASELINE_MEMORY_MIB": "4096"
+        }
+      }
+    },
+    {
+      "name": "con otra versión base y nombre",
+      "settings": {
+        "base_image_version": "3",
+        "image_name": "otra"
+      },
+      "region": "us-east-1",
+      "buildRoleArn": "arn:aws:iam::123456789012:role/build",
+      "artifactUri": "s3://bucket/rayito/images/rayd-abc.zip",
+      "expected": {
+        "baseImageArn": "arn:aws:lambda:us-east-1:aws:microvm-image:al2023-1",
+        "baseImageVersion": "3",
+        "buildRoleArn": "arn:aws:iam::123456789012:role/build",
+        "codeArtifact": {
+          "uri": "s3://bucket/rayito/images/rayd-abc.zip"
+        },
+        "resources": [
+          {
+            "minimumMemoryInMiB": 2048
+          }
+        ],
+        "cpuConfigurations": [
+          {
+            "architecture": "ARM_64"
+          }
+        ],
+        "hooks": {
+          "port": 9000,
+          "microvmImageHooks": {
+            "ready": "ENABLED",
+            "readyTimeoutInSeconds": 600,
+            "validate": "ENABLED",
+            "validateTimeoutInSeconds": 600
+          },
+          "microvmHooks": {
+            "run": "ENABLED",
+            "runTimeoutInSeconds": 30,
+            "resume": "ENABLED",
+            "resumeTimeoutInSeconds": 30,
+            "suspend": "ENABLED",
+            "suspendTimeoutInSeconds": 30,
+            "terminate": "ENABLED",
+            "terminateTimeoutInSeconds": 10
+          }
+        },
+        "logging": {
+          "cloudWatch": {
+            "logGroup": "/rayito/otra"
+          }
+        }
+      }
+    },
+    {
+      "name": "sin variables de entorno no lleva la clave",
+      "settings": {
+        "environment_variables": {}
+      },
+      "region": "us-east-1",
+      "buildRoleArn": "arn:aws:iam::123456789012:role/build",
+      "artifactUri": "s3://bucket/rayito/images/rayd-abc.zip",
+      "expected": {
+        "baseImageArn": "arn:aws:lambda:us-east-1:aws:microvm-image:al2023-1",
+        "baseImageVersion": "1",
+        "buildRoleArn": "arn:aws:iam::123456789012:role/build",
+        "codeArtifact": {
+          "uri": "s3://bucket/rayito/images/rayd-abc.zip"
+        },
+        "resources": [
+          {
+            "minimumMemoryInMiB": 2048
+          }
+        ],
+        "cpuConfigurations": [
+          {
+            "architecture": "ARM_64"
+          }
+        ],
+        "hooks": {
+          "port": 9000,
+          "microvmImageHooks": {
+            "ready": "ENABLED",
+            "readyTimeoutInSeconds": 600,
+            "validate": "ENABLED",
+            "validateTimeoutInSeconds": 600
+          },
+          "microvmHooks": {
+            "run": "ENABLED",
+            "runTimeoutInSeconds": 30,
+            "resume": "ENABLED",
+            "resumeTimeoutInSeconds": 30,
+            "suspend": "ENABLED",
+            "suspendTimeoutInSeconds": 30,
+            "terminate": "ENABLED",
+            "terminateTimeoutInSeconds": 10
+          }
+        },
+        "logging": {
+          "cloudWatch": {
+            "logGroup": "/rayito/rayito-base"
+          }
+        }
+      }
+    }
+  ],
+  "logGroups": [
+    {
+      "imageName": "rayito-base",
+      "expected": "/rayito/rayito-base"
+    },
+    {
+      "imageName": "rayito-base-poly-8gb",
+      "expected": "/rayito/rayito-base-poly-8gb"
+    }
+  ],
+  "sized": [
+    {
+      "size": "512mb",
+      "base": {
+        "environment_variables": {
+          "A": "1"
+        }
+      },
+      "imageName": "rayito-base-512mb",
+      "memoryMib": 512,
+      "environmentVariables": {
+        "A": "1",
+        "RAYITO_BASELINE_MEMORY_MIB": "512"
+      }
+    },
+    {
+      "size": "1gb",
+      "base": {
+        "environment_variables": {
+          "A": "1"
+        }
+      },
+      "imageName": "rayito-base-1gb",
+      "memoryMib": 1024,
+      "environmentVariables": {
+        "A": "1",
+        "RAYITO_BASELINE_MEMORY_MIB": "1024"
+      }
+    },
+    {
+      "size": "4gb",
+      "base": {
+        "environment_variables": {
+          "A": "1"
+        }
+      },
+      "imageName": "rayito-base-4gb",
+      "memoryMib": 4096,
+      "environmentVariables": {
+        "A": "1",
+        "RAYITO_BASELINE_MEMORY_MIB": "4096"
+      }
+    },
+    {
+      "size": "8gb",
+      "base": {
+        "environment_variables": {
+          "A": "1"
+        }
+      },
+      "imageName": "rayito-base-8gb",
+      "memoryMib": 8192,
+      "environmentVariables": {
+        "A": "1",
+        "RAYITO_BASELINE_MEMORY_MIB": "8192"
+      }
+    }
+  ],
+  "sizeEnvVars": [
+    {
+      "size": "512mb",
+      "expected": "RAYITO_TEMPLATE_512MB"
+    },
+    {
+      "size": "4gb",
+      "expected": "RAYITO_TEMPLATE_4GB"
+    }
+  ],
+  "summaries": [
+    {
+      "name": "reutilizada",
+      "uploaded": true,
+      "buildSeconds": null,
+      "build": {
+        "buildState": "SUCCESSFUL",
+        "chipsetGeneration": "3",
+        "snapshotBuild": {
+          "memorySnapshotSizeInBytes": 900
+        },
+        "stateReason": null
+      },
+      "gate": null,
+      "expected": {
+        "imageArn": "arn:x",
+        "imageVersion": "3.0",
+        "artifact": "s3://bucket/rayito/images/rayd-abc.zip",
+        "artifactUploaded": true,
+        "buildSeconds": null,
+        "buildState": "SUCCESSFUL",
+        "chipsetGeneration": "3",
+        "snapshotBuild": {
+          "memorySnapshotSizeInBytes": 900
+        },
+        "launchable": true
+      }
+    },
+    {
+      "name": "construida",
+      "uploaded": true,
+      "buildSeconds": 61.234,
+      "build": {
+        "buildState": "SUCCESSFUL",
+        "chipsetGeneration": "3",
+        "snapshotBuild": {
+          "memorySnapshotSizeInBytes": 900
+        },
+        "stateReason": null
+      },
+      "gate": {
+        "imageState": "UPDATED",
+        "versionState": "SUCCESSFUL",
+        "versionStatus": "ACTIVE",
+        "stateReason": null
+      },
+      "expected": {
+        "imageArn": "arn:x",
+        "imageVersion": "3.0",
+        "artifact": "s3://bucket/rayito/images/rayd-abc.zip",
+        "artifactUploaded": true,
+        "buildSeconds": 61.2,
+        "buildState": "SUCCESSFUL",
+        "chipsetGeneration": "3",
+        "snapshotBuild": {
+          "memorySnapshotSizeInBytes": 900
+        },
+        "launchable": true,
+        "gate": {
+          "imageState": "UPDATED",
+          "versionState": "SUCCESSFUL",
+          "versionStatus": "ACTIVE",
+          "stateReason": null,
+          "launchable": true
+        },
+        "buildStateReason": null
+      }
+    },
+    {
+      "name": "fallida",
+      "uploaded": false,
+      "buildSeconds": 5.0,
+      "build": {
+        "buildState": "FAILED",
+        "stateReason": "x"
+      },
+      "gate": {
+        "imageState": "UPDATE_FAILED",
+        "versionState": "FAILED",
+        "versionStatus": "INACTIVE",
+        "stateReason": "boom"
+      },
+      "expected": {
+        "imageArn": "arn:x",
+        "imageVersion": "3.0",
+        "artifact": "s3://bucket/rayito/images/rayd-abc.zip",
+        "artifactUploaded": false,
+        "buildSeconds": 5.0,
+        "buildState": "FAILED",
+        "chipsetGeneration": null,
+        "snapshotBuild": {},
+        "launchable": false,
+        "gate": {
+          "imageState": "UPDATE_FAILED",
+          "versionState": "FAILED",
+          "versionStatus": "INACTIVE",
+          "stateReason": "boom",
+          "launchable": false
+        },
+        "buildStateReason": "x"
+      }
+    }
+  ],
+  "aggregates": [
+    {
+      "name": "sin tamaños",
+      "baseline": {
+        "imageArn": "arn:x",
+        "imageVersion": "3.0",
+        "artifact": "s3://bucket/rayito/images/rayd-abc.zip",
+        "artifactUploaded": true,
+        "buildSeconds": null,
+        "buildState": "SUCCESSFUL",
+        "chipsetGeneration": "3",
+        "snapshotBuild": {
+          "memorySnapshotSizeInBytes": 900
+        },
+        "launchable": true
+      },
+      "sized": {},
+      "expected": {
+        "imageArn": "arn:x",
+        "imageVersion": "3.0",
+        "artifact": "s3://bucket/rayito/images/rayd-abc.zip",
+        "artifactUploaded": true,
+        "buildSeconds": null,
+        "buildState": "SUCCESSFUL",
+        "chipsetGeneration": "3",
+        "snapshotBuild": {
+          "memorySnapshotSizeInBytes": 900
+        },
+        "launchable": true
+      }
+    },
+    {
+      "name": "con tamaños",
+      "baseline": {
+        "imageArn": "arn:x",
+        "imageVersion": "3.0",
+        "artifact": "s3://bucket/rayito/images/rayd-abc.zip",
+        "artifactUploaded": true,
+        "buildSeconds": null,
+        "buildState": "SUCCESSFUL",
+        "chipsetGeneration": "3",
+        "snapshotBuild": {
+          "memorySnapshotSizeInBytes": 900
+        },
+        "launchable": true
+      },
+      "sized": {
+        "4gb": {
+          "imageArn": "arn:x-4gb",
+          "imageVersion": "1.0",
+          "artifact": "s3://bucket/rayito/images/rayd-abc.zip",
+          "artifactUploaded": true,
+          "buildSeconds": null,
+          "buildState": "SUCCESSFUL",
+          "chipsetGeneration": "3",
+          "snapshotBuild": {
+            "memorySnapshotSizeInBytes": 900
+          },
+          "launchable": true
+        }
+      },
+      "expected": {
+        "imageArn": "arn:x",
+        "imageVersion": "3.0",
+        "artifact": "s3://bucket/rayito/images/rayd-abc.zip",
+        "artifactUploaded": true,
+        "buildSeconds": null,
+        "buildState": "SUCCESSFUL",
+        "chipsetGeneration": "3",
+        "snapshotBuild": {
+          "memorySnapshotSizeInBytes": 900
+        },
+        "launchable": true,
+        "sizes": {
+          "4gb": {
+            "imageArn": "arn:x-4gb",
+            "imageVersion": "1.0",
+            "artifact": "s3://bucket/rayito/images/rayd-abc.zip",
+            "artifactUploaded": true,
+            "buildSeconds": null,
+            "buildState": "SUCCESSFUL",
+            "chipsetGeneration": "3",
+            "snapshotBuild": {
+              "memorySnapshotSizeInBytes": 900
+            },
+            "launchable": true
+          }
+        }
+      }
+    }
+  ],
+  "sizes": [
+    {
+      "raw": null,
+      "value": []
+    },
+    {
+      "raw": "",
+      "value": []
+    },
+    {
+      "raw": "512mb,4gb",
+      "value": [
+        "512mb",
+        "4gb"
+      ]
+    },
+    {
+      "raw": " 512mb , 4gb ",
+      "value": [
+        "512mb",
+        "4gb"
+      ]
+    },
+    {
+      "raw": "2gb",
+      "error": "'2gb' ya es el baseline sin sufijo; quítalo de --sizes",
+      "hint": "--sizes"
+    },
+    {
+      "raw": "bogus",
+      "error": "'bogus': admitidos 512mb, 1gb, 2gb, 4gb, 8gb",
+      "hint": "--sizes"
+    },
+    {
+      "raw": "512mb,512mb",
+      "error": "tamaños repetidos",
+      "hint": "--sizes"
+    },
+    {
+      "raw": "512mb,",
+      "value": [
+        "512mb"
+      ]
+    },
+    {
+      "raw": ",,",
+      "value": []
+    }
+  ],
+  "baselineMemory": [
+    {
+      "memoryMib": 2048,
+      "sizes": []
+    },
+    {
+      "memoryMib": 4096,
+      "sizes": []
+    },
+    {
+      "memoryMib": 2048,
+      "sizes": [
+        "4gb"
+      ]
+    },
+    {
+      "memoryMib": 4096,
+      "sizes": [
+        "4gb"
+      ],
+      "error": "--sizes publica el baseline sin sufijo a 2048 MiB (la regla de sizes-catalog: la imagen sin sufijo siempre es el baseline); quita --memory-mib o publica sin --sizes para elegir otro valor",
+      "hint": "--memory-mib"
+    }
+  ],
+  "environment": [
+    {
+      "raw": [],
+      "value": {}
+    },
+    {
+      "raw": [
+        "A=1"
+      ],
+      "value": {
+        "A": "1"
+      }
+    },
+    {
+      "raw": [
+        "A=1",
+        "B=x=y"
+      ],
+      "value": {
+        "A": "1",
+        "B": "x=y"
+      }
+    },
+    {
+      "raw": [
+        "EMPTY="
+      ],
+      "value": {
+        "EMPTY": ""
+      }
+    },
+    {
+      "raw": [
+        "_x=1",
+        "a1=2"
+      ],
+      "value": {
+        "_x": "1",
+        "a1": "2"
+      }
+    },
+    {
+      "raw": [
+        "x"
+      ],
+      "error": "formato K=V esperado: 'x'",
+      "hint": "--env"
+    },
+    {
+      "raw": [
+        "=v"
+      ],
+      "error": "'': nombre de variable inválido (letras, dígitos y `_`, sin empezar por un dígito)",
+      "hint": "--env"
+    },
+    {
+      "raw": [
+        "1A=x"
+      ],
+      "error": "'1A': nombre de variable inválido (letras, dígitos y `_`, sin empezar por un dígito)",
+      "hint": "--env"
+    },
+    {
+      "raw": [
+        "a-b=1"
+      ],
+      "error": "'a-b': nombre de variable inválido (letras, dígitos y `_`, sin empezar por un dígito)",
+      "hint": "--env"
+    },
+    {
+      "raw": [
+        "a b=1"
+      ],
+      "error": "'a b': nombre de variable inválido (letras, dígitos y `_`, sin empezar por un dígito)",
+      "hint": "--env"
+    }
+  ],
+  "variants": [
+    "full",
+    "slim",
+    "poly"
+  ],
+  "osCapabilities": [
+    "ALL"
+  ],
+  "constants": {
+    "defaultStackName": "rayito-m0-iam",
+    "buildRoleOutputKey": "BuildRoleArn",
+    "baselineMemoryEnvVar": "RAYITO_BASELINE_MEMORY_MIB",
+    "maxConcurrentImageBuilds": 10,
+    "hooks": {
+      "port": 9000,
+      "microvmImageHooks": {
+        "ready": "ENABLED",
+        "readyTimeoutInSeconds": 600,
+        "validate": "ENABLED",
+        "validateTimeoutInSeconds": 600
+      },
+      "microvmHooks": {
+        "run": "ENABLED",
+        "runTimeoutInSeconds": 30,
+        "resume": "ENABLED",
+        "resumeTimeoutInSeconds": 30,
+        "suspend": "ENABLED",
+        "suspendTimeoutInSeconds": 30,
+        "terminate": "ENABLED",
+        "terminateTimeoutInSeconds": 10
+      }
+    },
+    "efsImageName": "rayito-base-caps-efs",
+    "hooksPort": 9000,
+    "runScopedKeySegment": "runs",
+    "imageArtifactKeyPrefix": "rayito/images",
+    "defaultMemoryMib": 2048
+  }
+}

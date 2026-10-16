@@ -70,8 +70,12 @@ describe("zero cost", () => {
 
   it("no dashboard module imports an optional peer statically", () => {
     const dir = resolve(HERE, "../../src/dashboard");
-    for (const file of readdirSync(dir)) {
-      const source = readFileSync(resolve(dir, file), "utf8");
+    const files = readdirSync(dir, { recursive: true, withFileTypes: true }).filter((entry) =>
+      entry.isFile(),
+    );
+    for (const entry of files) {
+      const file = resolve(entry.parentPath, entry.name);
+      const source = readFileSync(file, "utf8");
       expect(source, file).not.toMatch(
         /from\s+["']@aws-sdk\/client-(service-quotas|cost-explorer)/,
       );

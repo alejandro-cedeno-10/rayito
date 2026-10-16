@@ -323,6 +323,16 @@ shares a "site" with them; open it at `http://<id>.localhost:<port>` (its own
 jar, the CLI announces it) or in a dedicated browser profile
 ([Local proxy](funciones-opcionales/proxy-local.md#navegador-y-cookies)).
 
+**Both CLIs, the same guarantee**: the TypeScript CLI's proxy
+(`npx rayito sandbox proxy`) runs the same vectors as the Python one
+(`testdata/cli/proxy-vectors.json`: headers with a bare CR or LF, `obs-fold`,
+names outside the `tchar` set, body delimiting, `Host`/`Origin`, ports) and
+they share the caps and deadlines of `limits.json`. The whitespace trimmed
+around a header value is only `OWS` (space and tab), not everything a
+language calls whitespace: a `Content-Length: 12` followed by a `\x85` is
+invalid in both. A `Content-Length` or chunk size that does not fit in a
+JavaScript safe integer is `400` in the TypeScript CLI.
+
 Residual risk (`SECURITY.md` T2/T3): while the proxy is running, any process
 that reaches the forwarded local port —on the operator's machine, or on
 another if `--allow-remote` was used— has the same access to the sandbox as

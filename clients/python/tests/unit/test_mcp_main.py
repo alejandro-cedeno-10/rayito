@@ -6,10 +6,12 @@ autenticación fuera de loopback (design D9) y el mensaje amable sin el extra
 from __future__ import annotations
 
 import importlib
+import json
 import logging
 import subprocess
 import sys
-from typing import Any
+from pathlib import Path
+from typing import Any, Final
 
 import pytest
 
@@ -25,6 +27,12 @@ from rayito.mcp._cli import (
 )
 from rayito.mcp._settings import IDLE_ENV_VAR, TIMEOUT_ENV_VAR
 
+REPO_ROOT_DEPTH: Final = 4
+HOST_VECTORS: Final = json.loads(
+    (
+        Path(__file__).resolve().parents[REPO_ROOT_DEPTH] / "testdata" / "mcp" / "host-vectors.json"
+    ).read_text(encoding="utf-8")
+)
 MCP_MODULES = ("rayito.mcp", "rayito.mcp.__main__", "rayito.mcp._cli")
 
 
@@ -250,3 +258,18 @@ def test_module_help_lists_the_transport_flags_without_double_import() -> None:
     assert "--host" in completed.stdout
     assert "--port" in completed.stdout
     assert "found in sys.modules" not in completed.stderr
+
+
+@pytest.mark.parametrize("case", HOST_VECTORS["authority"], ids=lambda case: case["expected"])
+def test_shared_authority_vectors(case: dict[str, Any]) -> None:
+    assert http_authority(case["host"], case["port"]) == case["expected"]
+
+
+@pytest.mark.parametrize("case", HOST_VECTORS["wildcard"], ids=lambda case: case["host"])
+def test_shared_wildcard_vectors(case: dict[str, Any]) -> None:
+    assert is_wildcard(case["host"]) is case["expected"]
+
+
+@pytest.mark.parametrize("case", HOST_VECTORS["loopback"], ids=lambda case: case["host"])
+def test_shared_loopback_vectors(case: dict[str, Any]) -> None:
+    assert is_loopback(case["host"]) is case["expected"]

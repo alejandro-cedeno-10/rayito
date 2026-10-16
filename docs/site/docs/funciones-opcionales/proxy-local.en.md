@@ -6,8 +6,9 @@ renewing its token. That way a browser, `curl` or any HTTP client reaches a
 server inside the sandbox without knowing anything about AWS.
 
 !!! info "Cost and activation"
-    - **Default**: it does nothing until you run the command. It is CLI-only:
-      no SDK option turns it on.
+    - **Default**: it does nothing until you run the command. It is CLI-only
+      (the Python one and the TypeScript one, with the same options and the
+      same `Host` and `Origin` checks): no SDK option turns it on.
     - **Turns on**: a local HTTP/1.1 server that forwards to the sandbox's
       `--port`.
     - **Resources and AWS calls**: `lambda:GetMicrovm` once (for the

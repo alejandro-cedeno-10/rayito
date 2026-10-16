@@ -55,8 +55,24 @@ def echo(message: str = "", *, err: bool = False) -> None:
     print(safe, file=stream, flush=True)
 
 
+def python_text(value: object) -> str:
+    """`str(value)`, con los instantes siempre en UTC (`2026-09-15 14:39:02+00:00`).
+
+    boto3 entrega `datetime` en la zona local de la máquina: sin normalizar,
+    la salida cambiaría con `TZ` y no coincidiría con la de la CLI de
+    TypeScript, que escribe siempre UTC (`testdata/cli/format-vectors.json`)."""
+    if isinstance(value, datetime):
+        return str(value.astimezone(UTC))
+    return str(value)
+
+
+def utc_isoformat(moment: datetime) -> str:
+    """`datetime.isoformat()` en UTC: `2026-09-15T14:39:02+00:00`."""
+    return moment.astimezone(UTC).isoformat()
+
+
 def emit_json(document: Any) -> None:
-    echo(json.dumps(document, indent=2, default=str))
+    echo(json.dumps(document, indent=2, default=python_text))
 
 
 def table(columns: Sequence[str], rows: Iterable[Sequence[object]]) -> None:
@@ -67,7 +83,7 @@ def table(columns: Sequence[str], rows: Iterable[Sequence[object]]) -> None:
     for column in columns:
         rendered.add_column(column, overflow="fold")
     for row in rows:
-        rendered.add_row(*("" if cell is None else str(cell) for cell in row))
+        rendered.add_row(*("" if cell is None else python_text(cell) for cell in row))
     buffer = io.StringIO()
     console = Console(file=buffer, width=table_width(), force_terminal=False, color_system=None)
     console.print(rendered)

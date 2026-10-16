@@ -1,0 +1,27 @@
+{
+  "description": "Autoridades HTTP, direcciones comodin y loopback del modo --http de rayito-mcp: los ejecutan pytest y vitest.",
+  "authority": [
+    { "host": "127.0.0.1", "port": 8000, "expected": "127.0.0.1:8000" },
+    { "host": "127.0.0.2", "port": 8000, "expected": "127.0.0.2:8000" },
+    { "host": "::1", "port": 8000, "expected": "[::1]:8000" },
+    { "host": "fe80::1", "port": 9000, "expected": "[fe80::1]:9000" },
+    { "host": "localhost", "port": 8000, "expected": "localhost:8000" }
+  ],
+  "wildcard": [
+    { "host": "0.0.0.0", "expected": true },
+    { "host": "::", "expected": true },
+    { "host": "0:0:0:0:0:0:0:0", "expected": true },
+    { "host": "127.0.0.1", "expected": false },
+    { "host": "::1", "expected": false },
+    { "host": "host", "expected": false }
+  ],
+  "loopback": [
+    { "host": "127.0.0.1", "expected": true },
+    { "host": "127.0.0.2", "expected": true },
+    { "host": "::1", "expected": true },
+    { "host": "localhost", "expected": true },
+    { "host": "0.0.0.0", "expected": false },
+    { "host": "192.168.1.5", "expected": false },
+    { "host": "host", "expected": false }
+  ]
+}

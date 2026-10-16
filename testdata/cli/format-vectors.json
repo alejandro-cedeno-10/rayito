@@ -1,0 +1,506 @@
+{
+  "description": "Vectores de formato de la CLI compartidos por Python y TypeScript (ADR-027): los valores esperados salen de `rayito.cli._console` y de `str`/`repr` de Python.",
+  "age": [
+    {
+      "startedAt": "2026-09-15T14:39:02Z",
+      "now": "2026-09-15T16:02:07Z",
+      "expected": "1h23m"
+    },
+    {
+      "startedAt": "2026-09-15T15:50:00Z",
+      "now": "2026-09-15T16:02:07Z",
+      "expected": "12m07s"
+    },
+    {
+      "startedAt": "2026-09-15T16:02:00Z",
+      "now": "2026-09-15T16:02:07Z",
+      "expected": "7s"
+    },
+    {
+      "startedAt": "2026-09-15T16:02:07Z",
+      "now": "2026-09-15T16:02:07Z",
+      "expected": "0s"
+    },
+    {
+      "startedAt": "2026-09-15T16:30:00Z",
+      "now": "2026-09-15T16:02:07Z",
+      "expected": "0s"
+    },
+    {
+      "startedAt": "2026-09-14T16:02:07Z",
+      "now": "2026-09-15T16:02:07Z",
+      "expected": "24h00m"
+    },
+    {
+      "startedAt": "2026-09-15T16:01:07Z",
+      "now": "2026-09-15T16:02:07Z",
+      "expected": "1m00s"
+    }
+  ],
+  "isoUtc": [
+    {
+      "instant": "2026-09-15T14:39:02Z",
+      "expected": "2026-09-15T14:39:02Z"
+    },
+    {
+      "instant": "2026-09-15T14:39:02.987Z",
+      "expected": "2026-09-15T14:39:02Z"
+    },
+    {
+      "instant": "2026-01-01T00:00:00Z",
+      "expected": "2026-01-01T00:00:00Z"
+    }
+  ],
+  "pythonDatetimeText": [
+    {
+      "instant": "2026-09-15T14:39:02Z",
+      "expected": "2026-09-15 14:39:02+00:00"
+    },
+    {
+      "instant": "2026-09-15T14:39:02.123Z",
+      "expected": "2026-09-15 14:39:02.123000+00:00"
+    },
+    {
+      "instant": "2026-09-15T14:39:02.007Z",
+      "expected": "2026-09-15 14:39:02.007000+00:00"
+    },
+    {
+      "instant": "2026-12-31T23:59:59.999Z",
+      "expected": "2026-12-31 23:59:59.999000+00:00"
+    },
+    {
+      "instant": "2026-09-15T10:39:02-04:00",
+      "expected": "2026-09-15 14:39:02+00:00"
+    },
+    {
+      "instant": "2026-09-15T20:09:02+05:30",
+      "expected": "2026-09-15 14:39:02+00:00"
+    },
+    {
+      "instant": "2026-09-16T01:30:00+03:00",
+      "expected": "2026-09-15 22:30:00+00:00"
+    },
+    {
+      "instant": "2026-12-31T22:00:00-05:00",
+      "expected": "2027-01-01 03:00:00+00:00"
+    },
+    {
+      "instant": "2026-09-15T10:39:02.123-04:00",
+      "expected": "2026-09-15 14:39:02.123000+00:00"
+    }
+  ],
+  "eventTimestamp": [
+    {
+      "epochMs": 0,
+      "expected": "1970-01-01T00:00:00.000Z"
+    },
+    {
+      "epochMs": 1789483142123,
+      "expected": "2026-09-15T14:39:02.123Z"
+    },
+    {
+      "epochMs": 1789483142000,
+      "expected": "2026-09-15T14:39:02.000Z"
+    },
+    {
+      "epochMs": 1789483142007,
+      "expected": "2026-09-15T14:39:02.007Z"
+    }
+  ],
+  "pythonStringRepr": [
+    {
+      "text": "plain",
+      "expected": "'plain'"
+    },
+    {
+      "text": "it's",
+      "expected": "\"it's\""
+    },
+    {
+      "text": "say \"hi\"",
+      "expected": "'say \"hi\"'"
+    },
+    {
+      "text": "both ' and \"",
+      "expected": "'both \\' and \"'"
+    },
+    {
+      "text": "line\nbreak",
+      "expected": "'line\\nbreak'"
+    },
+    {
+      "text": "tab\there",
+      "expected": "'tab\\there'"
+    },
+    {
+      "text": "back\\slash",
+      "expected": "'back\\\\slash'"
+    },
+    {
+      "text": "(sin valor)",
+      "expected": "'(sin valor)'"
+    },
+    {
+      "text": "",
+      "expected": "''"
+    },
+    {
+      "text": "ctl\u0001x",
+      "expected": "'ctl\\x01x'"
+    }
+  ],
+  "pythonFloatText": [
+    {
+      "value": 0,
+      "expected": "0.0"
+    },
+    {
+      "value": 0.0,
+      "expected": "0.0"
+    },
+    {
+      "value": 12.5,
+      "expected": "12.5"
+    },
+    {
+      "value": 100,
+      "expected": "100.0"
+    },
+    {
+      "value": 0.1,
+      "expected": "0.1"
+    },
+    {
+      "value": 3.14159,
+      "expected": "3.14159"
+    },
+    {
+      "value": 99.99,
+      "expected": "99.99"
+    },
+    {
+      "value": 1,
+      "expected": "1.0"
+    },
+    {
+      "value": 0.0001,
+      "expected": "0.0001"
+    }
+  ],
+  "visibleControls": [
+    {
+      "text": "plain",
+      "expected": "plain"
+    },
+    {
+      "text": "esc\u001b[31mred\u001b[0m",
+      "expected": "esc\\x1b[31mred\\x1b[0m"
+    },
+    {
+      "text": "tab\tkeep\nnewline",
+      "expected": "tab\tkeep\nnewline"
+    },
+    {
+      "text": "osc\u001b]52;c;ZXZpbA==\u0007",
+      "expected": "osc\\x1b]52;c;ZXZpbA==\\x07"
+    },
+    {
+      "text": "c1csi",
+      "expected": "c1\\x9bcsi"
+    },
+    {
+      "text": "delchar",
+      "expected": "del\\x7fchar"
+    },
+    {
+      "text": "unicode ñ漢",
+      "expected": "unicode ñ漢"
+    }
+  ],
+  "table": [
+    {
+      "columns": [
+        "name",
+        "state",
+        "n"
+      ],
+      "rows": [
+        [
+          "a",
+          "RUNNING",
+          1
+        ],
+        [
+          "longer-name",
+          null,
+          true
+        ],
+        [
+          "é漢",
+          "x",
+          "y"
+        ]
+      ],
+      "width": 120,
+      "expected": "name         state    n   \na            RUNNING  1   \nlonger-name           True\né漢          x        y   "
+    },
+    {
+      "columns": [
+        "name",
+        "state"
+      ],
+      "rows": [],
+      "width": 120,
+      "expected": "name  state"
+    },
+    {
+      "columns": [
+        "only"
+      ],
+      "rows": [
+        [
+          "x"
+        ],
+        [
+          "yy"
+        ],
+        [
+          false
+        ]
+      ],
+      "width": 120,
+      "expected": "only \nx    \nyy   \nFalse"
+    },
+    {
+      "columns": [
+        "id",
+        "age"
+      ],
+      "rows": [
+        [
+          "microvm-a",
+          "1h23m"
+        ],
+        [
+          "microvm-b",
+          "12m07s"
+        ]
+      ],
+      "width": 120,
+      "expected": "id         age   \nmicrovm-a  1h23m \nmicrovm-b  12m07s"
+    },
+    {
+      "columns": [
+        "a"
+      ],
+      "rows": [
+        [
+          "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        ],
+        [
+          "y"
+        ]
+      ],
+      "width": 120,
+      "expected": "a                                                                                                                       \nxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\nxxxxxxxxxx                                                                                                              \ny                                                                                                                       "
+    },
+    {
+      "columns": [
+        "size",
+        "name",
+        "published",
+        "imageArn",
+        "state",
+        "sameArtifact",
+        "createdAt"
+      ],
+      "rows": [
+        [
+          "512mb",
+          "rayito-base-512mb",
+          false,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          "4gb",
+          "rayito-base-4gb",
+          true,
+          "arn:aws:lambda:us-east-1:123456789012:microvm-image:rayito-base-4gb",
+          "UPDATED",
+          true,
+          "2026-09-16 10:00:00+00:00"
+        ],
+        [
+          "8gb",
+          "rayito-base-8gb",
+          true,
+          "arn:aws:lambda:us-east-1:123456789012:microvm-image:rayito-base-8gb",
+          "CREATED",
+          false,
+          "2026-09-16 11:00:00+00:00"
+        ]
+      ],
+      "width": 120,
+      "expected": "size   name               published  imageArn                           state    sameArtifact  createdAt                \n512mb  rayito-base-512mb  False                                                                                         \n4gb    rayito-base-4gb    True       arn:aws:lambda:us-east-1:12345678  UPDATED  True          2026-09-16 10:00:00+00:00\n                                     9012:microvm-image:rayito-base-4g                                                  \n                                     b                                                                                  \n8gb    rayito-base-8gb    True       arn:aws:lambda:us-east-1:12345678  CREATED  False         2026-09-16 11:00:00+00:00\n                                     9012:microvm-image:rayito-base-8g                                                  \n                                     b                                                                                  "
+    },
+    {
+      "columns": [
+        "descripcion",
+        "estado"
+      ],
+      "rows": [
+        [
+          "una descripción con varias palabras bastante largas que no caben",
+          "ok"
+        ],
+        [
+          "corta",
+          "fallo"
+        ]
+      ],
+      "width": 40,
+      "expected": "descripcion                       estado\nuna descripción con varias        ok    \npalabras bastante largas que no         \ncaben                                   \ncorta                             fallo "
+    },
+    {
+      "columns": [
+        "k",
+        "valor"
+      ],
+      "rows": [
+        [
+          "clave",
+          "palabra-larguisima-sin-espacios-que-se-pliega-por-caracteres"
+        ],
+        [
+          "漢字漢字漢字漢字",
+          "x"
+        ]
+      ],
+      "width": 30,
+      "expected": "k               valor         \nclave           palabra-largui\n                sima-sin-espac\n                ios-que-se-pli\n                ega-por-caract\n                eres          \n漢字漢字漢字漢  x             \n字                            "
+    },
+    {
+      "columns": [
+        "encabezado_muy_largo_que_no_cabe",
+        "b"
+      ],
+      "rows": [
+        [
+          "1",
+          "2"
+        ]
+      ],
+      "width": 20,
+      "expected": "encabezado_muy_la   \nrgo_que_no_cabe    b\n1                  2"
+    },
+    {
+      "columns": [
+        "a",
+        "b",
+        "c"
+      ],
+      "rows": [
+        [
+          "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+          "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz"
+        ]
+      ],
+      "width": 60,
+      "expected": "a                    b                   c                  \nxxxxxxxxxxxxxxxxxxx  yyyyyyyyyyyyyyyyyy  zzzzzzzzzzzzzzzzzzz\nxxxxxxxxxxxxxxxxxxx  yyyyyyyyyyyyyyyyyy  zzzzzzzzzzzzzzzzzzz\nxxxxxxxxxxxx         yyyyyyyyyyyyyy      zzzzzzzzzzzz       "
+    },
+    {
+      "columns": [
+        "a",
+        "b"
+      ],
+      "rows": [
+        [
+          "1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20",
+          "ok"
+        ]
+      ],
+      "width": 24,
+      "expected": "a                     b \n1 2 3 4 5 6 7 8 9 10  ok\n11 12 13 14 15 16 17    \n18 19 20                "
+    }
+  ],
+  "jsonDocuments": [
+    {
+      "name": "metrics con cpu entero",
+      "floatKeys": [
+        "cpu_used_pct"
+      ],
+      "document": {
+        "timestamp": "2026-09-15T14:39:02Z",
+        "cpu_used_pct": 0,
+        "cpu_count": 2,
+        "mem_used": 1024
+      },
+      "expected": "{\n  \"timestamp\": \"2026-09-15T14:39:02Z\",\n  \"cpu_used_pct\": 0.0,\n  \"cpu_count\": 2,\n  \"mem_used\": 1024\n}"
+    },
+    {
+      "name": "metrics con cpu decimal",
+      "floatKeys": [
+        "cpu_used_pct"
+      ],
+      "document": {
+        "cpu_used_pct": 12.5,
+        "cpu_count": 2
+      },
+      "expected": "{\n  \"cpu_used_pct\": 12.5,\n  \"cpu_count\": 2\n}"
+    },
+    {
+      "name": "metrics con cpu al tope",
+      "floatKeys": [
+        "cpu_used_pct"
+      ],
+      "document": {
+        "cpu_used_pct": 100,
+        "cpu_count": 4
+      },
+      "expected": "{\n  \"cpu_used_pct\": 100.0,\n  \"cpu_count\": 4\n}"
+    },
+    {
+      "name": "cuotas de doctor",
+      "floatKeys": [
+        "value",
+        "default"
+      ],
+      "document": {
+        "quotas": [
+          {
+            "code": "L-1",
+            "value": 10,
+            "adjustable": true
+          }
+        ],
+        "below_default": [
+          {
+            "code": "L-1",
+            "value": 10,
+            "default": 100
+          }
+        ]
+      },
+      "expected": "{\n  \"quotas\": [\n    {\n      \"code\": \"L-1\",\n      \"value\": 10.0,\n      \"adjustable\": true\n    }\n  ],\n  \"below_default\": [\n    {\n      \"code\": \"L-1\",\n      \"value\": 10.0,\n      \"default\": 100.0\n    }\n  ]\n}"
+    },
+    {
+      "name": "duraciones redondeadas",
+      "floatKeys": [
+        "waitedSeconds",
+        "buildSeconds",
+        "seconds"
+      ],
+      "document": {
+        "waitedSeconds": 0,
+        "buildSeconds": null,
+        "seconds": 2.5,
+        "attempts": 0
+      },
+      "expected": "{\n  \"waitedSeconds\": 0.0,\n  \"buildSeconds\": null,\n  \"seconds\": 2.5,\n  \"attempts\": 0\n}"
+    }
+  ]
+}

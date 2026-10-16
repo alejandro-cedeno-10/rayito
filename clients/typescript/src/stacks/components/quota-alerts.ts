@@ -19,10 +19,9 @@ import {
 import type { StackComponent } from "../model.js";
 
 /** El coste mensual de la métrica que publica la pila, con coma decimal. */
-const CUSTOM_METRIC_MONTHLY_COST = CLOUDWATCH_CUSTOM_METRIC_PRICE_USD_PER_MONTH.toFixed(2).replace(
-  ".",
-  ",",
-);
+export const CUSTOM_METRIC_MONTHLY_COST = CLOUDWATCH_CUSTOM_METRIC_PRICE_USD_PER_MONTH.toFixed(
+  2,
+).replace(".", ",");
 const WARNING_PARAMETER = "WarningPercent";
 const CRITICAL_PARAMETER = "CriticalPercent";
 

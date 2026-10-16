@@ -148,7 +148,7 @@ Python ≥ 3.11 o Node ≥ 20. La CLI (`rayito doctor`) se instala con pip.
 
     ```bash
     pnpm add rayito
-    pip install "rayito[cli]"  # sólo para la CLI
+    npx rayito doctor          # la CLI también viene en el paquete npm
     ```
 
 [Instalación](primeros-pasos/instalacion.md)

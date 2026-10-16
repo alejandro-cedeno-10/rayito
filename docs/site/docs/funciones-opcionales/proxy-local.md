@@ -7,7 +7,9 @@ a un servidor del sandbox sin saber nada de AWS.
 
 !!! info "Coste y activación"
     - **Por defecto**: no hace nada hasta que ejecutas el comando. Es sólo
-      CLI: ninguna opción del SDK lo activa.
+      CLI (la de Python y la de TypeScript, con las mismas opciones y las
+      mismas comprobaciones de `Host` y `Origin`): ninguna opción del SDK lo
+      activa.
     - **Activa**: un servidor HTTP/1.1 local que reenvía al puerto `--port`
       del sandbox.
     - **Recursos y llamadas AWS**: `lambda:GetMicrovm` una vez (para el

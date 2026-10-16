@@ -2657,7 +2657,8 @@ para el estado y las pilas opcionales; este ADR lo extiende a una interfaz.
    de entrada sobre los mismos servicios.
 6. **Paridad de SDK en los servicios.** `Quotas` y `UsageCost` se ofrecen en
    Python (sync y async) y TypeScript con la misma superficie. El servidor
-   del panel vive en la CLI de Python, que sigue siendo la única CLI.
+   del panel vive en la CLI de Python (el ADR-027 sustituye esta frase: la CLI
+   de TypeScript lo servirá también).
 7. **Seguridad.** Fase 1: loopback, comprobación de `Host`/`Origin` y
    defensa de CSRF como `cli/_proxy.py`, más un token de inicio de un solo
    uso que el servidor cambia por una cookie `HttpOnly` `SameSite=Strict` y
@@ -2708,3 +2709,104 @@ ventaja sobre S3 y Lambda.
 
 **Reversible.** `rayito stack destroy dashboard` borra la pila; el comando
 local no deja estado. Sin ellos el SDK queda exactamente como antes.
+
+## ADR-027 — Herramientas de línea de órdenes en los dos SDKs
+
+**Contexto.** La CLI `rayito`, el servidor MCP (`rayito-mcp`) y el servidor
+local del panel viven sólo en el paquete Python, detrás de los extras `cli` y
+`mcp`. `cli.md` y la checklist de paridad declaraban una CLI en TypeScript
+"fuera de alcance", y el punto 6 de ADR-026 repetía que la CLI de Python
+"sigue siendo la única CLI". Quien trabaja en Node tiene que instalar Python
+sólo para desplegar una pila, listar sandboxes o abrir el panel, y la
+paridad de SDK que persigue el proyecto se detiene en la biblioteca. E2B ya
+resuelve esto con un paquete aparte (`@e2b/cli`, ejecutable `e2b`).
+
+**Decisión.**
+
+1. **TypeScript entrega los tres ejecutables.** El paquete npm `rayito`
+   añade `bin` con `rayito` (CLI) y `rayito-mcp` (servidor MCP); el panel
+   local es la orden `rayito dashboard`. Son entradas ESM nuevas del
+   empaquetador con shebang. `exports` no cambia (`.`, `./e2b` y
+   `./package.json`), `sideEffects: false` se mantiene y ningún ejecutable se
+   importa desde `index`: la biblioteca no se rompe ni crece.
+2. **Misma superficie, un solo contrato.** La CLI de TypeScript reproduce
+   rutas, opciones, tipos, valores por defecto, `--json`, códigos de salida y
+   traducción de errores de la de Python. El contrato es
+   `testdata/cli/surface.json`, un golden que genera y comprueba un test de
+   pytest sobre el árbol de `typer`; vitest comparará con él (fase 1) el árbol de
+   comandos de TypeScript, y `scripts/check_sdk_parity.py --cli` lista lo que
+   falta con la fase que lo entrega. Mientras dure la transición el informe
+   no hace fallar el CI; cuando cierre la última fase se convierte en
+   comprobación. Lo mismo para MCP con `testdata/mcp/tools.json`.
+3. **Sin dependencias para la CLI.** Se usa `node:util parseArgs` con un
+   árbol declarativo propio (`defineCommand`). La CLI es una cáscara sobre
+   servicios ya públicos del SDK; la lógica nueva (doctor, publish, prune,
+   proxy, panel) se escribe como dominio puro más adaptador, con los
+   valores por defecto de las constantes del SDK y los límites compartidos en
+   `limits.json`.
+4. **MCP con el SDK oficial como peer opcional.** `@modelcontextprotocol/server`
+   (v2) y `zod` son peers opcionales cargados con `loadOptionalPeer`, el
+   equivalente del extra `mcp`. Se descarta `@modelcontextprotocol/sdk` 1.x
+   por su cadena de dependencias (express, hono, jose, ajv…) y un JSON-RPC
+   propio por stdio por el coste de seguir a mano el protocolo en una
+   superficie expuesta. Mismas seis herramientas, anotaciones, variables
+   `RAYITO_MCP_*`, lease de un sandbox por proceso y log sólo por stderr y sin
+   payloads. Si `--http` exige un segundo peer, será opcional y se carga sólo
+   con esa opción.
+5. **Panel: una SPA, un contrato, dos cáscaras locales.** La copia canónica de
+   la SPA sigue en el paquete Python (la necesitan el wheel y la Lambda del
+   componente `dashboard`); el build de TypeScript la copia a `dist/` sin
+   versionarla, y `pack-check` compara el tarball con la fuente byte a byte.
+   El contrato `/api/v1` es el esquema JSON ya existente más casos y vectores
+   compartidos (`api-v1-cases.json`, `guard-vectors.json`,
+   `security-headers.json`, `theme-vectors.json`) que ejecutan los dos SDKs.
+   La seguridad de ADR-026 punto 7 no se relaja: sólo `127.0.0.1`, `Host` y
+   `Origin` comprobados, token de inicio de un solo uso cambiado por cookie
+   `HttpOnly` `SameSite=Strict`, CSRF, CSP sin `unsafe-inline`, solo lectura
+   por defecto y sin registrar peticiones, cabeceras ni token. La Lambda del
+   panel sigue siendo Python mientras dure la transición.
+6. **Funciones con coste apagadas.** Nada de esto cambia ADR-014: sin
+   invocar la orden no hay llamadas ni recursos, el coste facturado del panel
+   sigue apagado por defecto y el test de cero llamadas vale en los dos SDKs.
+7. **Una instalación global gana a la otra.** Si conviven la CLI de Python y
+   la de TypeScript, manda la primera del `PATH`; `rayito --version` dice qué
+   runtime responde (`node` o `python`) y la documentación lo avisa.
+8. **Sin API síncrona en TypeScript (D8).** TypeScript sigue siendo sólo
+   asíncrono (`await Sandbox.create()`); no se ofrece una variante bloqueante,
+   ni en la biblioteca ni como apoyo de la CLI. Las opciones estudiadas:
+   `Atomics.wait` con un worker (estilo synckit) bloquea el bucle de eventos,
+   exige argumentos clonables (sin callbacks `onStdout`, streams, PTY,
+   `AbortSignal` ni handles vivos), necesita un registro de proxies entre hilos,
+   no sirve en navegador ni en el hilo principal de Electron y duplica
+   superficie y tests; `child_process.execFileSync` lanza un proceso por llamada
+   (cientos de milisegundos), no reutiliza gRPC ni la caché de tokens, no
+   permite streaming y hace pasar secretos por argumentos o entorno. El SDK de
+   JavaScript de E2B tampoco la tiene: sólo Python ofrece sync y async. La
+   regla `ASYNC_PREFIX` de `check_sdk_parity.py` ya lo recoge, y la
+   referencia de TypeScript lo documenta con un ejemplo de `await` de primer
+   nivel.
+
+**Fases.** Un PR apilado por fase y una sola aceptación en AWS al final:
+0, este ADR, el cambio OpenSpec `typescript-cli-tools`, el golden y el
+informe de paridad; 1, núcleo de la CLI y las órdenes más usadas; 2, `doctor`;
+3, pilas, templates, eventos y dominio; 4, terminal interactiva y
+`sandbox proxy`; 5, `image publish|prune|zip`; 6, servidor MCP; 7, núcleo del
+panel; 8, `rayito dashboard` local; 9, documentación y CHANGELOG.
+
+**Consecuencias.** Hay que mantener dos implementaciones de la CLI, del MCP y
+de la seguridad del panel, y la deriva se acota con el golden de superficie y
+los vectores compartidos en `testdata/`. `SECURITY.md` se revisa antes de las
+fases 4 y 8. El guest y `rayd` siguen probándose una vez; los ejecutables de
+TypeScript se prueban en los dos SDKs y con e2e propios. El punto 6 de
+ADR-026 queda sustituido (la CLI de Python deja de ser la única); el resto de
+ADR-026 sigue en vigor. `cli.md` y la checklist de paridad dejan de declarar la
+CLI de TypeScript fuera de alcance.
+
+**Alternativas descartadas.** Un paquete npm aparte para la CLI (`@e2b/cli`):
+duplica versionado y publicación y rompe `npx rayito`. Dejar la CLI sólo en Python: obliga a instalar Python a quien sólo usa Node.
+Una dependencia de parseo de argumentos (commander, yargs): suma cadena de
+suministro para lo que cubre `parseArgs`.
+
+**Reversible.** Quitar `bin` y las entradas del empaquetador devuelve el
+paquete a ser sólo biblioteca; la CLI, el MCP y el panel de Python no
+cambian.

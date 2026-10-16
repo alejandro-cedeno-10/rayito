@@ -11,7 +11,7 @@
  * produce: sin cifrado, sin zip64, sin comentario global largo.
  */
 
-import { inflateRawSync } from "node:zlib";
+import { deflateRawSync, inflateRawSync } from "node:zlib";
 
 const EOCD_SIGNATURE = 0x06054b50;
 const CENTRAL_DIRECTORY_SIGNATURE = 0x02014b50;
@@ -106,51 +106,92 @@ function readLocalFile(
   throw new Error(`zip inválido: método de compresión no soportado (${compressionMethod})`);
 }
 
-/** Un zip determinista (orden de `entries`, método "stored", fecha fija)
- * con cada `[nombre, contenido]` de `entries`. */
-export function writeZip(entries: ReadonlyArray<readonly [string, Uint8Array]>): Uint8Array {
+/** Una entrada de un zip determinista: el modo Unix y el método van por entrada. */
+export interface ZipEntry {
+  readonly name: string;
+  readonly content: Uint8Array;
+  /** Permisos Unix (`0o755`); por defecto `DEFAULT_FILE_MODE`. */
+  readonly mode?: number;
+}
+
+export interface ZipWriteOptions {
+  /** DEFLATE (método 8, el `zlib` de Node con su nivel por defecto) en vez de "stored". */
+  readonly compress?: boolean;
+  /** `true` marca el creador como Unix (versión 3), para que los modos de `ZipEntry.mode` cuenten al descomprimir. */
+  readonly unixCreator?: boolean;
+}
+
+const DEFAULT_FILE_MODE = 0o644;
+const VERSION_NEEDED_TO_EXTRACT = 20;
+const UNIX_CREATOR = 3;
+const BITS_PER_BYTE = 8;
+const MODE_SHIFT = 16;
+const UTF8_NAME_FLAG = 0x0800;
+
+function methodOf(options: ZipWriteOptions): number {
+  return options.compress === true ? DEFLATE_METHOD : STORED_METHOD;
+}
+
+function madeBy(options: ZipWriteOptions): number {
+  return options.unixCreator === true
+    ? (UNIX_CREATOR << BITS_PER_BYTE) | VERSION_NEEDED_TO_EXTRACT
+    : VERSION_NEEDED_TO_EXTRACT;
+}
+
+/**
+ * Un zip determinista (orden de `entries`, fecha fija) con cada entrada. El
+ * contenido, el nombre y el modo fijan los bytes: dos llamadas iguales dan el
+ * mismo archivo. Un nombre no ASCII lleva la bandera UTF-8.
+ */
+export function writeZipEntries(
+  entries: readonly ZipEntry[],
+  options: ZipWriteOptions = {},
+): Uint8Array {
   const localParts: Buffer[] = [];
   const centralParts: Buffer[] = [];
   let offset = 0;
+  const method = methodOf(options);
 
-  for (const [name, content] of entries) {
+  for (const { name, content, mode = DEFAULT_FILE_MODE } of entries) {
     const nameBytes = Buffer.from(name, "utf8");
+    const flags = nameBytes.length === name.length ? 0 : UTF8_NAME_FLAG;
     const checksum = crc32(content);
+    const stored = method === DEFLATE_METHOD ? deflateRawSync(content) : Buffer.from(content);
     const localHeader = Buffer.alloc(30);
     localHeader.writeUInt32LE(LOCAL_FILE_HEADER_SIGNATURE, 0);
-    localHeader.writeUInt16LE(20, 4); // version needed to extract
-    localHeader.writeUInt16LE(0, 6); // flags
-    localHeader.writeUInt16LE(STORED_METHOD, 8);
+    localHeader.writeUInt16LE(VERSION_NEEDED_TO_EXTRACT, 4);
+    localHeader.writeUInt16LE(flags, 6);
+    localHeader.writeUInt16LE(method, 8);
     localHeader.writeUInt16LE(0, 10); // mod time
     localHeader.writeUInt16LE(DOS_FIXED_DATE_TIME, 12); // mod date
     localHeader.writeUInt32LE(checksum, 14);
-    localHeader.writeUInt32LE(content.length, 18); // compressed size
+    localHeader.writeUInt32LE(stored.length, 18); // compressed size
     localHeader.writeUInt32LE(content.length, 22); // uncompressed size
     localHeader.writeUInt16LE(nameBytes.length, 26);
     localHeader.writeUInt16LE(0, 28); // extra length
-    localParts.push(localHeader, nameBytes, Buffer.from(content));
+    localParts.push(localHeader, nameBytes, stored);
 
     const centralHeader = Buffer.alloc(46);
     centralHeader.writeUInt32LE(CENTRAL_DIRECTORY_SIGNATURE, 0);
-    centralHeader.writeUInt16LE(20, 4); // version made by
-    centralHeader.writeUInt16LE(20, 6); // version needed to extract
-    centralHeader.writeUInt16LE(0, 8); // flags
-    centralHeader.writeUInt16LE(STORED_METHOD, 10);
+    centralHeader.writeUInt16LE(madeBy(options), 4);
+    centralHeader.writeUInt16LE(VERSION_NEEDED_TO_EXTRACT, 6);
+    centralHeader.writeUInt16LE(flags, 8);
+    centralHeader.writeUInt16LE(method, 10);
     centralHeader.writeUInt16LE(0, 12); // mod time
     centralHeader.writeUInt16LE(DOS_FIXED_DATE_TIME, 14); // mod date
     centralHeader.writeUInt32LE(checksum, 16);
-    centralHeader.writeUInt32LE(content.length, 20); // compressed size
+    centralHeader.writeUInt32LE(stored.length, 20); // compressed size
     centralHeader.writeUInt32LE(content.length, 24); // uncompressed size
     centralHeader.writeUInt16LE(nameBytes.length, 28);
     centralHeader.writeUInt16LE(0, 30); // extra length
     centralHeader.writeUInt16LE(0, 32); // comment length
     centralHeader.writeUInt16LE(0, 34); // disk number
     centralHeader.writeUInt16LE(0, 36); // internal attrs
-    centralHeader.writeUInt32LE(0o644 << 16, 38); // external attrs (unix perms)
+    centralHeader.writeUInt32LE((mode << MODE_SHIFT) >>> 0, 38); // external attrs (unix perms)
     centralHeader.writeUInt32LE(offset, 42);
     centralParts.push(centralHeader, nameBytes);
 
-    offset += localHeader.length + nameBytes.length + content.length;
+    offset += localHeader.length + nameBytes.length + stored.length;
   }
 
   const centralDirectoryOffset = offset;
@@ -166,4 +207,10 @@ export function writeZip(entries: ReadonlyArray<readonly [string, Uint8Array]>):
   eocd.writeUInt16LE(0, 20);
 
   return new Uint8Array(Buffer.concat([...localParts, centralDirectory, eocd]));
+}
+
+/** Un zip determinista (orden de `entries`, método "stored", fecha fija)
+ * con cada `[nombre, contenido]` de `entries`. */
+export function writeZip(entries: ReadonlyArray<readonly [string, Uint8Array]>): Uint8Array {
+  return writeZipEntries(entries.map(([name, content]) => ({ name, content })));
 }

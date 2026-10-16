@@ -3,21 +3,33 @@ que nombran la variable y la restricción idle < timeout (design D4)."""
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+from typing import Any, Final
+
 import pytest
 
 from rayito import IdlePolicy
+from rayito._limits import IDLE_MAX_IDLE_MIN_SECONDS, MAX_DURATION_SECONDS
 from rayito._sandbox_base import TEMPLATE_ENV_VAR
 from rayito.mcp._settings import (
     DEFAULT_IDLE_SECONDS,
+    DEFAULT_LOG_LEVEL,
     DEFAULT_TIMEOUT_SECONDS,
     EXECUTION_ROLE_ENV_VAR,
     IDLE_ENV_VAR,
     LOG_LEVEL_ENV_VAR,
+    MIN_TIMEOUT_SECONDS,
     TEMPLATE_VERSION_ENV_VAR,
     TIMEOUT_ENV_VAR,
     McpSettings,
 )
 
+REPO_ROOT_DEPTH: Final = 4
+SETTINGS_CASES: Final = (
+    Path(__file__).resolve().parents[REPO_ROOT_DEPTH] / "testdata" / "mcp" / "settings-cases.json"
+)
+SHARED: Final = json.loads(SETTINGS_CASES.read_text(encoding="utf-8"))
 ROLE_ARN = "arn:aws:iam::123456789012:role/rayito-execution"
 
 
@@ -104,3 +116,40 @@ def test_idle_not_below_timeout_names_both_variables() -> None:
         McpSettings.from_env({TIMEOUT_ENV_VAR: "120"})
     with pytest.raises(ValueError, match=IDLE_ENV_VAR):
         McpSettings(timeout_seconds=600, idle_seconds=600)
+
+
+def test_defaults_and_bounds_match_the_shared_contract() -> None:
+    defaults = SHARED["defaults"]
+    assert defaults["timeoutSeconds"] == DEFAULT_TIMEOUT_SECONDS
+    assert defaults["idleSeconds"] == DEFAULT_IDLE_SECONDS
+    assert defaults["minTimeoutSeconds"] == MIN_TIMEOUT_SECONDS
+    assert defaults["maxTimeoutSeconds"] == MAX_DURATION_SECONDS
+    assert defaults["minIdleSeconds"] == IDLE_MAX_IDLE_MIN_SECONDS
+    assert defaults["logLevel"] == DEFAULT_LOG_LEVEL
+
+
+def describe_settings(settings: McpSettings) -> dict[str, Any]:
+    policy = settings.idle_policy
+    return {
+        "template": settings.template,
+        "templateVersion": settings.template_version,
+        "executionRoleArn": settings.execution_role_arn,
+        "timeoutSeconds": settings.timeout_seconds,
+        "idleSeconds": settings.idle_seconds,
+        "logLevel": settings.log_level,
+        "logging": settings.logging,
+        "idlePolicy": (
+            None
+            if policy is None
+            else {"maxIdleSeconds": policy.max_idle_seconds, "autoResume": policy.auto_resume}
+        ),
+    }
+
+
+@pytest.mark.parametrize("case", SHARED["cases"], ids=[case["name"] for case in SHARED["cases"]])
+def test_shared_settings_cases(case: dict[str, Any]) -> None:
+    if "errorVariable" in case:
+        with pytest.raises(ValueError, match=case["errorVariable"]):
+            McpSettings.from_env(case["env"])
+        return
+    assert describe_settings(McpSettings.from_env(case["env"])) == case["expected"]

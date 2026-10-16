@@ -2,10 +2,31 @@
 
 ## Contenido
 
+- Regresión por niveles
 - Flujo de release
 - Reglas para cualquier ejecución en AWS
 - Inventario y limpieza
 - Coste
+
+## Regresión por niveles
+
+No todo cambio pide la misma comprobación. El nivel lo marca lo que toca el
+diff, y el PR dice cuál corrió. Ante la duda, sube de nivel.
+
+| Qué cambia | Qué corre | AWS real |
+|---|---|---|
+| Solo docs, tests o CI | gates del lenguaje tocado y `mkdocs --strict` | No |
+| SDK o herramientas (CLI, servidor MCP, panel local, proxy) sin tocar `rayd`, imagen, proto, `infra/` ni el plano de control | CI completo y el e2e local (`make local-up` y `make local-e2e`, Docker + Floci; en CI, `local-e2e.yml` se dispara con cambios en `clients/**`, `testdata/**` y `limits.json`, entre otros) | Un chequeo corto y dirigido, solo de la función tocada y en carriles paralelos por lenguaje (por ejemplo, los e2e de la CLI o del MCP que cambiaron), con inventario antes y después |
+| `rayd`, imagen, `proto/`, `infra/`, plano de control o una release | CI completo, e2e local y la regresión completa (e2e de Python y de TypeScript, el corpus de E2B) | Sí: regresión completa; la rotación de 60 minutos solo si el mantenedor la pide |
+
+- Los carriles de Python y de TypeScript corren en paralelo, cada uno con su
+  imagen y su prefijo de recursos, nunca contra la misma imagen a la vez (ver
+  «Reglas para cualquier ejecución en AWS»).
+- El e2e local no sustituye al real cuando cambia el runtime: no cubre el proxy
+  de AWS, los snapshots, IMDS, los montajes ni el coste
+  (`docs/site/docs/guias/probar-en-local.md`).
+- Un cambio de SDK que añade una función con coste o toca el protocolo con
+  `rayd` sube al nivel de la fila siguiente.
 
 ## Flujo de release
 

@@ -6,6 +6,97 @@ versionado [SemVer](https://semver.org/lang/es/).
 
 ## [Unreleased]
 
+### Añadido
+
+- **Documentación de la CLI, el servidor MCP y el panel en TypeScript
+  (ADR-027, fase 9)**: `cli.md`, `mcp.md`, las páginas del panel, el proxy
+  local, la instalación y `optional-features.md` llevan pestañas Python y
+  TypeScript, y `optional-features.md` suma una fila para `rayito-mcp`. La
+  API de TypeScript sigue siendo sólo asíncrona (ADR-027, D8).
+
+- **CLI `rayito` en TypeScript, fases 2, 3 y 5 (ADR-027)**: `doctor`
+  (las diez comprobaciones y `--efs-vpc-id`, con `@aws-sdk/client-iam` como peer
+  opcional para la simulación de IAM), `template build|status|logs`,
+  `agent template build`, `events deploy|status|destroy|list` y `events webhook
+  add|list|remove`, `domain deploy|status|destroy`, `dashboard cloudwatch` e
+  `image publish|prune|zip`, con la misma superficie, salida y códigos de
+  salida que la CLI de Python. La tabla de compatibilidad SDK a rayd, el
+  contrato de `doctor`, los dashboards de CloudWatch, los contratos puros de
+  `image` (nombres, configuración deseada, planes de poda, entradas del zip) y
+  los casos de órdenes por pila se comparten con Python en `testdata/`.
+
+- **CLI `rayito` en TypeScript, fase 4 (ADR-027)**: `sandbox connect` y
+  `sandbox create` sin `--detach` abren una terminal real (PTY del sandbox en
+  modo raw, Ctrl-C como byte, cambio de tamaño reenviado, EOF en tuberías;
+  salen con el código del shell y `create` termina el sandbox pase lo que
+  pase), y `sandbox proxy` expone un puerto del guest en `127.0.0.1` con las
+  mismas garantías que la CLI de Python: `Host` (421) y `Origin` (403)
+  validados, un solo mensaje por conexión, delimitación ambigua o cabecera con
+  CR/LF suelto en 400, tope de conexiones (503) y sin JWE en ningún informe.
+  Los vectores de contrabando de cabeceras, delimitación del cuerpo y
+  Host/Origin (`testdata/cli/proxy-vectors.json`) los ejecutan las dos CLI.
+
+- **Servidor MCP `rayito-mcp` en TypeScript (ADR-027, fase 6)**: el paquete
+  declara el ejecutable `rayito-mcp` (`npx rayito-mcp`; `dist/mcp.mjs`, sólo
+  ESM, sin tocar `exports` ni importarse desde `index`) con las mismas seis
+  herramientas que el de Python (`run_code`, `run_command`, `read_file`,
+  `write_file`, `list_files`, `list_sandboxes`), las mismas anotaciones, las
+  mismas variables `RAYITO_TEMPLATE` y `RAYITO_MCP_*` y un sandbox por proceso
+  creado en la primera herramienta que lo necesita y terminado al salir. stdio
+  por defecto y `--http` para streamable HTTP en loopback con `Host` y `Origin`
+  exactos. `@modelcontextprotocol/server` (2.x) y `zod` son peers opcionales:
+  sin ellos `rayito` sigue funcionando y el ejecutable explica la orden
+  `npx -y -p rayito -p @modelcontextprotocol/server -p zod rayito-mcp`. Los
+  nombres, descripciones, anotaciones y esquemas de entrada de las herramientas
+  (`testdata/mcp/tools.json`), los casos de configuración
+  (`testdata/mcp/settings-cases.json`) y las autoridades de `--http`
+  (`testdata/mcp/host-vectors.json`) los ejecutan pytest y vitest.
+
+- **CLI `rayito` en TypeScript, fase 1 (ADR-027)**: el paquete declara el
+  ejecutable `rayito` (`npx rayito ...`; `dist/cli.mjs`, sólo ESM, sin tocar
+  `exports` ni importarse desde `index`) con las opciones globales `--profile`,
+  `--region`, `--json`, `--verbose` y `--version` (`rayito 0.x (node)`), los
+  mismos códigos de salida que la CLI de Python y estas órdenes: `sandbox list |
+  info | kill | logs | metrics | exec | create --detach`, `stack list | status |
+  deploy | destroy` e `image list | sizes`. Salida y documentos `--json`
+  idénticos a los de Python (tabla de `rich` incluida), comprobados con
+  vectores y casos de `testdata/cli/` que ejecutan las dos CLI. Las demás
+  órdenes (`doctor`, `template`, `events`, `domain`, `dashboard`,
+  `sandbox connect|proxy`, `create` sin `--detach` e `image publish|prune|zip`)
+  se describen en las entradas siguientes y entran en el mismo cambio.
+
+- **Panel local en TypeScript, fases 7 y 8 (ADR-027)**: `npx rayito dashboard`
+  sirve en `127.0.0.1` la misma SPA y el mismo contrato `/api/v1` que
+  `rayito dashboard` de Python, con las mismas defensas (`Host`/`Origin`, token
+  de arranque de un solo uso, cookie `HttpOnly`, `Sec-Fetch-Site`, CSRF, sólo
+  lectura por defecto, CSP sin `unsafe-inline`, nada se registra) y las mismas
+  opciones (`--port`, `--allow-actions`, `--cost-explorer`, `--events-stack`,
+  `--log-group`, `--theme`, `--logo`, `--account`, `--external-id`, `--open`).
+  Todo lo que cuesta sigue apagado hasta pedirlo. La SPA tiene una sola fuente
+  (la del paquete de Python): el build la copia a `dist/dashboard-static/` y
+  `pack:check` falla si el tarball difiere byte a byte. Nuevos vectores
+  compartidos con Python en `testdata/dashboard/` (`api-v1-cases.json`,
+  `guard-vectors.json`, `security-headers.json`, `theme-vectors.json`). Dependencia de desarrollo nueva: `ajv`
+  (valida las respuestas contra `api-v1.schema.json`).
+
+- **Pruebas locales de la CLI, el servidor MCP y el panel**: los escenarios de
+  `tests/shared` corren tanto contra AWS real como en el e2e local (Docker +
+  Floci), y `make local-e2e` construye `rayito-mcp` para probarlo por stdio.
+
+### Corregido
+
+- **El reuso de una versión de imagen comparaba objetos por el orden de sus
+  claves**: AWS devuelve `hooks` con otro orden que el que se envía, así que
+  `Template.build()` reconstruía una imagen idéntica. Ahora la igualdad es
+  estructural y las variables de entorno (que la lista no devuelve) se
+  confirman con `GetMicrovmImageVersion`, como en Python.
+
+- **La CLI escribe los `float` de Python como Python**: `rayito --json sandbox
+  metrics` (`cpu_used_pct`), el JSON de `doctor` (el valor de una cuota y su
+  mínimo) y las duraciones de `image publish|prune|zip` llevan su parte
+  decimal (`0.0`, `10.0`) en vez de `0` y `10`, igual que la CLI de Python y
+  que la tabla.
+
 ## [0.12.0] - 2026-10-15
 
 ### Añadido

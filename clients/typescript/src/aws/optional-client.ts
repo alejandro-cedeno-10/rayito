@@ -14,10 +14,18 @@ import { clientConfig } from "./control-plane.js";
 
 type Credentials = AwsClientSettings["credentials"];
 
+/** Peer opcional con el SDK de CloudWatch Logs (`GetLogEvents`), el mismo para imágenes, plantillas y logs. */
+export const CLOUDWATCH_LOGS_PEER = "@aws-sdk/client-cloudwatch-logs";
+
 /** El código de error de AWS de una excepción del SDK v3 (su `name`). */
 export function awsCode(error: unknown): string | undefined {
   const name = (error as { name?: unknown } | null)?.name;
   return typeof name === "string" ? name : undefined;
+}
+
+/** Un error del SDK de AWS v3 lleva `$metadata` o `$fault`; un error propio o un bug, no. */
+export function isAwsSdkError(error: unknown): error is Error {
+  return error instanceof Error && ("$metadata" in error || "$fault" in error);
 }
 
 /** Un cliente del SDK v3 ya construido: `send` manda un `…Command` de `sdk`. */

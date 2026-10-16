@@ -1,0 +1,63 @@
+{
+  "description": "Contrato de `rayito doctor` compartido por Python y TypeScript (ADR-027): los nombres de las comprobaciones, las acciones IAM que simula y los umbrales. La fuente es rayito.cli._checks.",
+  "checkNames": [
+    "credentials",
+    "managed-images",
+    "quotas",
+    "iam-simulation",
+    "bucket",
+    "image-gate",
+    "sandboxes",
+    "token",
+    "agent",
+    "compatibility"
+  ],
+  "preLaunchCheckCount": 7,
+  "defaultTemplate": "rayito-base",
+  "launchTimeoutSeconds": 300,
+  "launchMetadata": {
+    "rayito": "doctor"
+  },
+  "maxRunningBeforeFail": 10,
+  "maxListedIds": 20,
+  "capsImageSuffix": "-caps",
+  "imageArtifactKeyPrefix": "rayito/images",
+  "managedBaseImageName": "al2023-1",
+  "simulatedActions": {
+    "image": [
+      "lambda:RunMicrovm",
+      "lambda:GetMicrovm",
+      "lambda:SuspendMicrovm",
+      "lambda:ResumeMicrovm",
+      "lambda:TerminateMicrovm",
+      "lambda:CreateMicrovmAuthToken",
+      "lambda:GetMicrovmImage",
+      "lambda:UpdateMicrovmImage",
+      "lambda:DeleteMicrovmImageVersion",
+      "lambda:GetMicrovmImageVersion",
+      "lambda:ListMicrovmImageVersions",
+      "lambda:GetMicrovmImageBuild",
+      "lambda:ListMicrovmImageBuilds"
+    ],
+    "wildcard": [
+      "lambda:ListMicrovms",
+      "lambda:ListMicrovmImages",
+      "lambda:ListManagedMicrovmImages",
+      "lambda:ListManagedMicrovmImageVersions",
+      "lambda:CreateMicrovmImage",
+      "logs:DescribeLogStreams",
+      "logs:GetLogEvents",
+      "servicequotas:ListServiceQuotas"
+    ],
+    "connector": [
+      "lambda:PassNetworkConnector"
+    ],
+    "bucketObjects": [
+      "s3:PutObject",
+      "s3:GetObject"
+    ],
+    "bucket": [
+      "s3:ListBucket"
+    ]
+  }
+}
