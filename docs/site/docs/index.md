@@ -222,10 +222,10 @@ o deepagents, y el proveedor, el que prefieras (ver
 [VM frente a tokens](cost.md#coste-de-un-agente-vm-frente-a-modelo)
 
 <figure class="rayito-art" data-rayito-art data-play-label="Reproducir animación" data-pause-label="Pausar animación" data-play-aria="Reproducir animación de los sandboxes" data-pause-aria="Pausar animación de los sandboxes">
-<video class="rayito-art__media" width="1280" height="720" poster="assets/rayito/rayito-motion-poster-1280.webp" controls muted loop playsinline preload="none" aria-label="Flujo de Rayito: un agente envía código a tres sandboxes aislados sobre Lambda microVMs; la energía y los resultados avanzan por la máquina." data-rayito-video>
+<video class="rayito-art__media" width="1280" height="720" data-poster="assets/rayito/rayito-motion-poster-1280.webp" controls muted loop playsinline preload="none" aria-label="Flujo de Rayito: un agente envía código a tres sandboxes aislados sobre Lambda microVMs; la energía y los resultados avanzan por la máquina." data-rayito-video>
 <source data-src="assets/rayito/rayito-live-1280.mp4" type="video/mp4">
-<img src="assets/rayito/rayito-motion-poster-1280.webp" width="1280" height="720" alt="Dos gatos amarillos operan tres sandboxes de Rayito sobre AWS Lambda microVMs.">
 </video>
+<noscript><p>Si JavaScript está desactivado, <a href="assets/rayito/rayito-live-1280.mp4">abre la animación en vídeo</a>.</p></noscript>
 <button type="button" class="rayito-art__toggle" data-rayito-toggle aria-label="Reproducir animación de los sandboxes">Reproducir animación</button>
 </figure>
 

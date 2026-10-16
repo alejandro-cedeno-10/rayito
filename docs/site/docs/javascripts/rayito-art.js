@@ -18,7 +18,11 @@
       const reduced = window.matchMedia("(prefers-reduced-motion: reduce)");
       let loaded = false;
 
+      const showPoster = () => {
+        if (video.dataset.poster && !video.poster) video.poster = video.dataset.poster;
+      };
       const load = () => {
+        showPoster();
         if (loaded) return;
         loaded = true;
         video.querySelectorAll("source[data-src]").forEach((source) => {
@@ -53,11 +57,14 @@
           (entries) => {
             if (!entries.some((entry) => entry.isIntersecting)) return;
             observer.disconnect();
+            showPoster();
             if (!reduced.matches) play();
           },
           { threshold: VISIBLE_RATIO },
         );
         observer.observe(box);
+      } else {
+        showPoster();
       }
       sync();
     });

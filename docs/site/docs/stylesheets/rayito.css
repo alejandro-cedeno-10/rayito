@@ -1597,11 +1597,6 @@ body {
   border-color: var(--rx-arc);
 }
 
-.rx-home .rayito-art__toggle:focus-visible {
-  outline: 3px solid var(--rx-arc);
-  outline-offset: 3px;
-}
-
 .rx-home .rayito-art:not([data-ready]) .rayito-art__toggle {
   visibility: hidden;
 }
