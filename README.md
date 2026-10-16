@@ -1,52 +1,55 @@
 # Rayito
 
-[![CI](https://github.com/alejandro-cedeno-10/rayito/actions/workflows/ci.yml/badge.svg)](https://github.com/alejandro-cedeno-10/rayito/actions/workflows/ci.yml) [![PyPI](https://img.shields.io/pypi/v/rayito)](https://pypi.org/project/rayito/) [![npm](https://img.shields.io/npm/v/rayito)](https://www.npmjs.com/package/rayito) [![Licencia](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE) [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/alejandro-cedeno-10/rayito/badge)](https://scorecard.dev/viewer/?uri=github.com/alejandro-cedeno-10/rayito) [![Docs](https://img.shields.io/badge/docs-sitio-amber)](https://alejandro-cedeno-10.github.io/rayito/)
-<!-- OpenSSF Best Practices: tras registrar el proyecto (https://www.bestpractices.dev/en/projects/new), añade este badge al final de la línea anterior con el id del proyecto:
+**English** · [Español](README.es.md)
+
+[![CI](https://github.com/alejandro-cedeno-10/rayito/actions/workflows/ci.yml/badge.svg)](https://github.com/alejandro-cedeno-10/rayito/actions/workflows/ci.yml) [![PyPI](https://img.shields.io/pypi/v/rayito)](https://pypi.org/project/rayito/) [![npm](https://img.shields.io/npm/v/rayito)](https://www.npmjs.com/package/rayito) [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE) [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/alejandro-cedeno-10/rayito/badge)](https://scorecard.dev/viewer/?uri=github.com/alejandro-cedeno-10/rayito) [![Docs](https://img.shields.io/badge/docs-site-amber)](https://alejandro-cedeno-10.github.io/rayito/en/)
+<!-- OpenSSF Best Practices: after registering the project (https://www.bestpractices.dev/en/projects/new), add this badge at the end of the previous line with the project id:
 [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/<id>/badge)](https://www.bestpractices.dev/projects/<id>)
 -->
 
-Sandboxes de ejecución para agentes de IA, aislados por hardware, corriendo en tu
-propia cuenta de AWS sobre Lambda MicroVMs.
+Hardware-isolated execution sandboxes for AI agents, running in your own AWS
+account on Lambda MicroVMs.
 
-> Sandboxes que aparecen en un destello. Dentro de tu propia cuenta de AWS.
+> Sandboxes that appear in a flash. Inside your own AWS account.
 
-Documentación completa: **https://alejandro-cedeno-10.github.io/rayito/**
+Full documentation: **https://alejandro-cedeno-10.github.io/rayito/en/** (also in Spanish: <https://alejandro-cedeno-10.github.io/rayito/>)
 
-**Empieza aquí** (unos 15 minutos, en tu cuenta):
-[Primeros pasos](https://alejandro-cedeno-10.github.io/rayito/primeros-pasos/)
-→ [Configurar AWS](https://alejandro-cedeno-10.github.io/rayito/primeros-pasos/configurar-aws/)
-→ [Primer sandbox](https://alejandro-cedeno-10.github.io/rayito/quickstart/).
-¿Vienes de E2B? [Migrar desde E2B](https://alejandro-cedeno-10.github.io/rayito/migrar-desde-e2b/).
-Una guía por función en [Guías](https://alejandro-cedeno-10.github.io/rayito/guias/) y la API de Python, TypeScript
-y la CLI en [Referencia](https://alejandro-cedeno-10.github.io/rayito/referencia/).
+**Start here** (about 15 minutes, in your account):
+[Getting started](https://alejandro-cedeno-10.github.io/rayito/en/primeros-pasos/)
+→ [Set up AWS](https://alejandro-cedeno-10.github.io/rayito/en/primeros-pasos/configurar-aws/)
+→ [First sandbox](https://alejandro-cedeno-10.github.io/rayito/en/quickstart/).
+Coming from E2B? [Migrate from E2B](https://alejandro-cedeno-10.github.io/rayito/en/migrar-desde-e2b/).
+One guide per feature in [Guides](https://alejandro-cedeno-10.github.io/rayito/en/guias/) and the Python, TypeScript and
+CLI API in [Reference](https://alejandro-cedeno-10.github.io/rayito/en/referencia/).
 
-La ergonomía de E2B sin que el código de tus clientes salga de tu cuenta, y sin
-clúster que operar: el SDK habla directamente con la API de Lambda MicroVMs.
+E2B's ergonomics without your customers' code leaving your account, and
+without a cluster to operate: the SDK talks directly to the Lambda MicroVMs
+API.
 
-## Instalar
+## Install
 
 ```bash
-pip install "rayito[cli]"   # SDK Python (Python >= 3.11) y la CLI `rayito`
-pnpm add rayito             # SDK TypeScript (Node >= 20); o: npm i rayito / yarn add rayito / bun add rayito
+pip install "rayito[cli]"   # Python SDK (Python >= 3.11) and the `rayito` CLI
+pnpm add rayito             # TypeScript SDK (Node >= 20); or: npm i rayito / yarn add rayito / bun add rayito
 ```
 
-La CLI (`rayito image publish`, `rayito doctor`…) es Python aunque uses el
-SDK de TypeScript. Extras de Python: `cli`, `mcp` (servidor MCP), `otel`
-(trazas OpenTelemetry) y `custom-domain` (dominio propio, experimental); las
-funciones opcionales de TypeScript cargan *peerDependencies* opcionales
-([Instalación](https://alejandro-cedeno-10.github.io/rayito/primeros-pasos/instalacion/#extras-opcionales)).
+The CLI (`rayito image publish`, `rayito doctor`…) is Python even if you use
+the TypeScript SDK. Python extras: `cli`, `mcp` (MCP server), `otel`
+(OpenTelemetry traces) and `custom-domain` (custom domain, experimental); the
+optional TypeScript features load optional *peerDependencies*
+([Installation](https://alejandro-cedeno-10.github.io/rayito/en/primeros-pasos/instalacion/#extras-opcionales)).
 
-## Primer sandbox
+## First sandbox
 
-Con la imagen `rayito-base` publicada en tu cuenta
-([Empezar en tu cuenta de AWS](#empezar-en-tu-cuenta-de-aws)) y
-`AWS_PROFILE`, `AWS_REGION` y `RAYITO_TEMPLATE=rayito-base` exportadas:
+With the `rayito-base` image published in your account
+([Get started in your AWS account](#get-started-in-your-aws-account)) and
+`AWS_PROFILE`, `AWS_REGION` and `RAYITO_TEMPLATE=rayito-base` exported:
 
 ```python
 from rayito import Sandbox
 
-with Sandbox.create() as sbx:  # `with` mata el sandbox al salir
-    print(sbx.commands.run("echo hola").stdout)  # "hola\n"
+with Sandbox.create() as sbx:  # `with` kills the sandbox on exit
+    print(sbx.commands.run("echo hello").stdout)  # "hello\n"
     sbx.files.write("/home/user/data.csv", "a,b\n1,2\n")
     print(sbx.run_code("import pandas as pd; pd.read_csv('/home/user/data.csv').shape").text)  # "(1, 2)"
 ```
@@ -54,40 +57,40 @@ with Sandbox.create() as sbx:  # `with` mata el sandbox al salir
 ```ts
 import { Sandbox } from "rayito";
 
-await using sbx = await Sandbox.create(); // `await using` mata el sandbox al salir
-console.log((await sbx.commands.run("echo hola")).stdout); // "hola\n"
+await using sbx = await Sandbox.create(); // `await using` kills the sandbox on exit
+console.log((await sbx.commands.run("echo hello")).stdout); // "hello\n"
 console.log((await sbx.runCode("x = 40; x + 2")).text); // "42"
 ```
 
-Si vienes del SDK de E2B, `rayito.e2b` (Python) y `rayito/e2b` (TypeScript)
-son un drop-in a nivel de import de E2B 2.x: lo que Lambda MicroVMs no puede
-hacer lanza `UnimplementedError` en vez de aproximarse en silencio
-([Diferencias con E2B](https://alejandro-cedeno-10.github.io/rayito/e2b-compat/)). El shim exige una imagen 0.3.0 o
-posterior.
+If you come from the E2B SDK, `rayito.e2b` (Python) and `rayito/e2b`
+(TypeScript) are an import-level drop-in for E2B 2.x: what Lambda MicroVMs
+cannot do raises `UnimplementedError` instead of approximating silently
+([Differences from E2B](https://alejandro-cedeno-10.github.io/rayito/en/e2b-compat/)). The shim requires a 0.3.0 or later
+image.
 
 ```python
-from rayito.e2b import Sandbox  # antes: from e2b_code_interpreter import Sandbox
+from rayito.e2b import Sandbox  # before: from e2b_code_interpreter import Sandbox
 
 with Sandbox.create(timeout=300, metadata={"run": "42"}) as sbx:
     print(sbx.run_code("1 + 1").text)  # "2"
-    sbx.set_timeout(600)  # rayd mueve el plazo, hasta max_lifetime
+    sbx.set_timeout(600)  # rayd moves the deadline, up to max_lifetime
 ```
 
-## Un agente de código dentro del sandbox
+## A coding agent inside the sandbox
 
-`sbx.agent` corre un agente de código ([OpenCode](https://github.com/anomalyco/opencode),
-o deepagents) **dentro** del sandbox. El agente llama a su modelo (Bedrock,
-Anthropic o un endpoint compatible con OpenAI) sólo a través de la
-[pasarela de secretos](https://alejandro-cedeno-10.github.io/rayito/funciones-opcionales/pasarela-de-secretos/): usa la
-credencial, pero nunca puede leerla. Basta un `Sandbox.create()` normal sobre
-la imagen `rayito-agent` (`rayito agent template build`,
-[Templates de agente](https://alejandro-cedeno-10.github.io/rayito/funciones-opcionales/templates-de-agente/)):
+`sbx.agent` runs a coding agent ([OpenCode](https://github.com/anomalyco/opencode),
+or deepagents) **inside** the sandbox. The agent calls its model (Bedrock,
+Anthropic or an OpenAI-compatible endpoint) only through the
+[secret gateway](https://alejandro-cedeno-10.github.io/rayito/en/funciones-opcionales/pasarela-de-secretos/): it uses the
+credential but can never read it. A normal `Sandbox.create()` on the
+`rayito-agent` image is enough (`rayito agent template build`,
+[Agent templates](https://alejandro-cedeno-10.github.io/rayito/en/funciones-opcionales/templates-de-agente/)):
 
 ```python
 from rayito import AgentModel, AgentSpec, Sandbox, SecretStore, bedrock_gateway
 
 MODEL_ID = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
-SecretStore().create("bedrock-key", "Bearer <clave de Bedrock de corta duración>")
+SecretStore().create("bedrock-key", "Bearer <short-lived Bedrock key>")
 spec = AgentSpec(model=AgentModel(provider="bedrock", id=MODEL_ID, gateway="bedrock", region="us-east-1"))
 
 with Sandbox.create(
@@ -95,96 +98,97 @@ with Sandbox.create(
     allow_internet_access=False,
     gateways={"bedrock": bedrock_gateway("bedrock-key", region="us-east-1", models=[MODEL_ID])},
 ) as sbx:
-    result = sbx.agent.run("Lista los ficheros de /home/user y resume qué hay.", spec=spec)
+    result = sbx.agent.run("List the files in /home/user and summarize what is there.", spec=spec)
     print(result.text, result.usage.total)
 ```
 
-El arranque rápido (un pool con `warmup`) es
-opcional; cuándo compensa, en
-[¿Qué uso?](https://alejandro-cedeno-10.github.io/rayito/guias/agente-en-el-sandbox/#que-uso). Guía completa:
-[Agente en el sandbox](https://alejandro-cedeno-10.github.io/rayito/guias/agente-en-el-sandbox/); qué cuesta la VM
-frente a los tokens del modelo: [Precios](https://alejandro-cedeno-10.github.io/rayito/cost/#coste-de-un-agente-vm-frente-a-modelo).
+The fast start (a pool with `warmup`) is optional; when it pays off, in
+[Which one do I use?](https://alejandro-cedeno-10.github.io/rayito/en/guias/agente-en-el-sandbox/#que-uso). Full guide:
+[Agent in the sandbox](https://alejandro-cedeno-10.github.io/rayito/en/guias/agente-en-el-sandbox/); what the VM costs
+versus the model's tokens: [Pricing](https://alejandro-cedeno-10.github.io/rayito/en/cost/#coste-de-un-agente-vm-frente-a-modelo).
 
-## Qué incluye
+## What is included
 
-Todo funciona igual en Python (sync y `asyncio`) y en TypeScript.
+Everything works the same in Python (sync and `asyncio`) and in TypeScript.
 
-- **Ciclo de vida**: `create`, `connect`, `kill`, `list`, metadatos
-  ([Ciclo de vida](https://alejandro-cedeno-10.github.io/rayito/guias/ciclo-de-vida/)); `pause()`/`resume()` con
-  auto-suspensión por inactividad ([Pausar y reanudar](https://alejandro-cedeno-10.github.io/rayito/guias/pausar-reanudar/));
-  un plazo que `rayd` impone aunque tu proceso muera
-  ([Plazo del servidor](https://alejandro-cedeno-10.github.io/rayito/lifecycle/)).
-- **Ejecutar**: `commands` ([Comandos](https://alejandro-cedeno-10.github.io/rayito/guias/comandos/)), `run_code` con un
-  kernel Jupyter con estado ([Ejecutar código](https://alejandro-cedeno-10.github.io/rayito/guias/ejecutar-codigo/)),
-  kernels bash, JavaScript y TypeScript ([Lenguajes y kernels](https://alejandro-cedeno-10.github.io/rayito/kernels/))
-  y terminales reales ([Terminal (PTY)](https://alejandro-cedeno-10.github.io/rayito/guias/terminal-pty/)).
-- **Ficheros y red**: `files`, ficheros grandes y URLs firmadas por S3
-  ([Ficheros y S3](https://alejandro-cedeno-10.github.io/rayito/files/)); política de salida a internet de E2B
-  ([Red saliente](https://alejandro-cedeno-10.github.io/rayito/network/)); HTTP a un puerto del sandbox
-  ([Puertos y host](https://alejandro-cedeno-10.github.io/rayito/guias/puertos-y-host/)).
-- **Arranque y duración**: sandboxes en menos de un segundo desde un pool de
-  suspendidos ([Pool](https://alejandro-cedeno-10.github.io/rayito/pool/)); el `HOME` en S3 más allá de las 8 h
-  ([Persistencia](https://alejandro-cedeno-10.github.io/rayito/persistence/)).
-- **Observar**: métricas e historial, listado reanudable
-  ([Métricas y listado](https://alejandro-cedeno-10.github.io/rayito/observability/)); la API git de E2B ([Git](https://alejandro-cedeno-10.github.io/rayito/git/)).
-- **Agentes**: el agente dentro del sandbox (arriba); el servidor MCP para
-  Claude Code, Cursor o VS Code ([Servidor MCP](https://alejandro-cedeno-10.github.io/rayito/mcp/)); adaptadores para
-  LangChain y Vercel AI ([LangChain y Vercel AI](https://alejandro-cedeno-10.github.io/rayito/guias/langchain-y-vercel-ai/)).
-- **CLI** `rayito`: publicar imágenes, `doctor`, operar sandboxes, pilas
-  opcionales ([CLI](https://alejandro-cedeno-10.github.io/rayito/cli/)).
-- **Panel de gestión**: `rayito dashboard` abre un panel web local con los
-  sandboxes, las cuotas, el coste y las imágenes; acciones sólo con
-  `--allow-actions` ([recorrido paso a paso](https://alejandro-cedeno-10.github.io/rayito/funciones-opcionales/panel-de-gestion/#recorrido)).
+- **Lifecycle**: `create`, `connect`, `kill`, `list`, metadata
+  ([Lifecycle](https://alejandro-cedeno-10.github.io/rayito/en/guias/ciclo-de-vida/)); `pause()`/`resume()` with
+  idle auto-suspend ([Pause and resume](https://alejandro-cedeno-10.github.io/rayito/en/guias/pausar-reanudar/));
+  a deadline that `rayd` enforces even if your process dies
+  ([Server-side deadline](https://alejandro-cedeno-10.github.io/rayito/en/lifecycle/)).
+- **Run**: `commands` ([Commands](https://alejandro-cedeno-10.github.io/rayito/en/guias/comandos/)), `run_code` with a
+  stateful Jupyter kernel ([Run code](https://alejandro-cedeno-10.github.io/rayito/en/guias/ejecutar-codigo/)),
+  bash, JavaScript and TypeScript kernels ([Languages and kernels](https://alejandro-cedeno-10.github.io/rayito/en/kernels/))
+  and real terminals ([Terminal (PTY)](https://alejandro-cedeno-10.github.io/rayito/en/guias/terminal-pty/)).
+- **Files and network**: `files`, large files and S3 presigned URLs
+  ([Files and S3](https://alejandro-cedeno-10.github.io/rayito/en/files/)); E2B's outbound internet policy
+  ([Outbound network](https://alejandro-cedeno-10.github.io/rayito/en/network/)); HTTP to a sandbox port
+  ([Ports and host](https://alejandro-cedeno-10.github.io/rayito/en/guias/puertos-y-host/)).
+- **Start-up and lifetime**: sandboxes in under a second from a pool of
+  suspended ones ([Pool](https://alejandro-cedeno-10.github.io/rayito/en/pool/)); `HOME` on S3 beyond the 8 h
+  ([Persistence](https://alejandro-cedeno-10.github.io/rayito/en/persistence/)).
+- **Observe**: metrics and history, resumable listing
+  ([Metrics and listing](https://alejandro-cedeno-10.github.io/rayito/en/observability/)); E2B's git API ([Git](https://alejandro-cedeno-10.github.io/rayito/en/git/)).
+- **Agents**: the agent inside the sandbox (above); the MCP server for
+  Claude Code, Cursor or VS Code ([MCP server](https://alejandro-cedeno-10.github.io/rayito/en/mcp/)); adapters for
+  LangChain and Vercel AI ([LangChain and Vercel AI](https://alejandro-cedeno-10.github.io/rayito/en/guias/langchain-y-vercel-ai/)).
+- **`rayito` CLI**: publish images, `doctor`, operate sandboxes, optional
+  stacks ([CLI](https://alejandro-cedeno-10.github.io/rayito/en/cli/)).
+- **Management dashboard**: `rayito dashboard` opens a local web dashboard
+  with your sandboxes, quotas, cost and images; actions only with
+  `--allow-actions` ([step-by-step tour](https://alejandro-cedeno-10.github.io/rayito/en/funciones-opcionales/panel-de-gestion/#recorrido)).
 
-  ![Resumen del panel de gestión de Rayito](docs/site/docs/assets/panel/panel-overview.png)
-- **Probar en local** con Docker y Floci, sin cuenta de AWS
-  ([Probar en local](https://alejandro-cedeno-10.github.io/rayito/guias/probar-en-local/)).
-- **Funciones opcionales, apagadas por defecto** (cada una cuesta algo en
-  tu cuenta y sólo se activa con una opción explícita): secretos de Secrets
-  Manager, pasarela de secretos, montajes S3, tamaños de 512 MiB a 8 GiB,
-  eventos y webhooks, exportación OTLP, trazas OpenTelemetry, índice de
-  metadatos en DynamoDB, templates declarativos y de agente, proxy local,
-  volúmenes EFS (experimental) y dominio propio (experimental). Qué activa y
-  qué cuesta cada una: [Funciones opcionales](https://alejandro-cedeno-10.github.io/rayito/optional-features/).
+  ![Overview of the Rayito management dashboard](docs/site/docs/assets/panel/panel-overview.png)
+- **Test locally** with Docker and Floci, without an AWS account
+  ([Test locally](https://alejandro-cedeno-10.github.io/rayito/en/guias/probar-en-local/)).
+- **Optional features, off by default** (each one costs something in your
+  account and is only enabled with an explicit option): Secrets Manager
+  secrets, secret gateway, S3 mounts, sizes from 512 MiB to 8 GiB, events and
+  webhooks, OTLP export, OpenTelemetry traces, metadata index in DynamoDB,
+  declarative and agent templates, local proxy, EFS volumes (experimental) and
+  custom domain (experimental). What each one enables and costs:
+  [Optional features](https://alejandro-cedeno-10.github.io/rayito/en/optional-features/).
 
-## Cómo funciona
+## How it works
 
 ```
-tu proceso (Python / TypeScript)                AWS, tu cuenta
+your process (Python / TypeScript)              AWS, your account
 ┌───────────────────────────────┐   HTTPS/2    ┌──────────────────────────────┐
-│ SDK rayito                    │ ───────────► │ proxy de Lambda MicroVMs     │
-│  · boto3 / SDK JS: run-microvm│              │   ▼ h2c                      │
+│ rayito SDK                    │ ───────────► │ Lambda MicroVMs proxy        │
+│  · boto3 / JS SDK: run-microvm│              │   ▼ h2c                      │
 │  · gRPC: commands, files,     │              │ MicroVM: rayd → sidecar →    │
-│    run_code, pty              │ ◄─────────── │   ipykernel (tu código aquí) │
+│    run_code, pty              │ ◄─────────── │   ipykernel (your code here) │
 └───────────────────────────────┘   streams    └──────────────────────────────┘
 ```
 
-- **El SDK nunca corre dentro del sandbox.** Vive en tu proceso (tu app, tu
-  agente, tu CI) y sólo envía RPCs: crea el MicroVM con la API
-  `lambda-microvms` de tu cuenta y habla gRPC con `rayd`, el agente Rust que
-  va dentro de la imagen. Nada del runtime de tu agente se copia a la VM.
-- **Dónde corre tu código.** Lo que envías con `run_code` se ejecuta en un
-  kernel de Jupyter dentro del MicroVM como uid 1000 (con estado entre
-  celdas); `commands`, `pty` y `sbx.agent` lanzan procesos normales ahí
-  mismo, también como uid 1000. `rayd` corre como root y es el único que
-  toca los hooks de Lambda. Los kernels bash, JavaScript y TypeScript (Deno)
-  viven en la variante de imagen `rayito-base-poly`
-  ([Lenguajes y kernels](https://alejandro-cedeno-10.github.io/rayito/kernels/)).
-- **Desde qué lenguajes.** Hoy, Python y TypeScript. Cualquier otro lenguaje
-  con un cliente gRPC puede hablar con `rayd` generando el cliente desde
-  `proto/rayito/v1/` ([Otros lenguajes (gRPC)](https://alejandro-cedeno-10.github.io/rayito/referencia/otros-lenguajes/)).
+- **The SDK never runs inside the sandbox.** It lives in your process (your
+  app, your agent, your CI) and only sends RPCs: it creates the MicroVM with
+  your account's `lambda-microvms` API and talks gRPC to `rayd`, the Rust
+  agent that lives inside the image. Nothing of your agent's runtime is
+  copied into the VM.
+- **Where your code runs.** What you send with `run_code` runs in a Jupyter
+  kernel inside the MicroVM as uid 1000 (with state between cells);
+  `commands`, `pty` and `sbx.agent` launch normal processes right there,
+  also as uid 1000. `rayd` runs as root and is the only one that touches the
+  Lambda hooks. The bash, JavaScript and TypeScript (Deno) kernels live in
+  the `rayito-base-poly` image variant
+  ([Languages and kernels](https://alejandro-cedeno-10.github.io/rayito/en/kernels/)).
+- **From which languages.** Today, Python and TypeScript. Any other language
+  with a gRPC client can talk to `rayd` by generating the client from
+  `proto/rayito/v1/` ([Other languages (gRPC)](https://alejandro-cedeno-10.github.io/rayito/en/referencia/otros-lenguajes/)).
 
-Detalle de procesos, usuarios, tokens y transportes en
-[Conceptos](https://alejandro-cedeno-10.github.io/rayito/concepts/) y en `ARCHITECTURE.md` ("Qué corre dónde").
+Details on processes, users, tokens and transports in
+[Concepts](https://alejandro-cedeno-10.github.io/rayito/en/concepts/) and in `ARCHITECTURE.md` ("What runs where", in
+Spanish).
 
-## Empezar en tu cuenta de AWS
+## Get started in your AWS account
 
-Cuatro pasos, todos en tu propia cuenta (Rayito no tiene servidor ni API
-key). La receta completa, con cada orden, está en
-[Configurar AWS](https://alejandro-cedeno-10.github.io/rayito/primeros-pasos/configurar-aws/).
+Four steps, all in your own account (Rayito has no server or API key). The
+full recipe, with every command, is in
+[Set up AWS](https://alejandro-cedeno-10.github.io/rayito/en/primeros-pasos/configurar-aws/).
 
-1. **IAM**: despliega los roles de build y ejecución y las políticas del
-   cliente ([`infra/README.md`](infra/README.md)):
+1. **IAM**: deploy the build and execution roles and the client policies
+   ([`infra/README.md`](infra/README.md)):
 
    ```bash
    aws cloudformation deploy --stack-name rayito-m0-iam \
@@ -192,16 +196,16 @@ key). La receta completa, con cada orden, está en
      --parameter-overrides ArtifactBucket=amzn-s3-demo-bucket LogGroupPrefix=/rayito
    ```
 
-   Asigna a tu usuario la política del output `CallerPolicyArn`
-   (`rayito-m0-caller-<región>`) y al rol de tu servicio, sólo la de
-   `SandboxLauncherPolicyArn` ([IAM](https://alejandro-cedeno-10.github.io/rayito/operacion/iam/)).
+   Attach the `CallerPolicyArn` output policy to your user
+   (`rayito-m0-caller-<region>`) and, to your service's role, only the
+   `SandboxLauncherPolicyArn` one ([IAM](https://alejandro-cedeno-10.github.io/rayito/en/operacion/iam/)).
 
-2. **Imagen**: publica `rayito-base` desde el `rayito-image.zip` firmado de
-   la release, sin compilar nada. Verifica la firma antes de publicar
-   ([Verificar una release](https://alejandro-cedeno-10.github.io/rayito/verify/)):
+2. **Image**: publish `rayito-base` from the release's signed
+   `rayito-image.zip`, without building anything. Verify the signature
+   before publishing ([Verify a release](https://alejandro-cedeno-10.github.io/rayito/en/verify/)):
 
    ```bash
-   RAYD_VERSION=$(python -c "import rayito; print(rayito.__version__)")   # la del SDK instalado
+   RAYD_VERSION=$(python -c "import rayito; print(rayito.__version__)")   # the installed SDK's
    curl -fsSLO "https://github.com/alejandro-cedeno-10/rayito/releases/download/rayd-v${RAYD_VERSION}/rayito-image.zip"
    curl -fsSLO "https://github.com/alejandro-cedeno-10/rayito/releases/download/rayd-v${RAYD_VERSION}/rayito-image.zip.sigstore.json"
    cosign verify-blob --bundle rayito-image.zip.sigstore.json \
@@ -210,104 +214,102 @@ key). La receta completa, con cada orden, está en
    rayito image publish --artifact rayito-image.zip --base-image-version 1 --bucket amzn-s3-demo-bucket
    ```
 
-   La imagen debe llevar el `rayd` de la misma versión que el SDK
-   (`rayito doctor` lo comprueba). Las variantes `-caps` (red saliente y el
-   agente) y `-poly` (kernels bash, JavaScript y TypeScript), en
-   [Imágenes](https://alejandro-cedeno-10.github.io/rayito/images/). Desde el código fuente: `make image-publish
-   BUCKET=amzn-s3-demo-bucket`, que compila `rayd` para
-   `aarch64-unknown-linux-musl` en Linux o WSL2 (en macOS, dentro de una VM
-   Linux) con `cargo-zigbuild` ([`CONTRIBUTING.md`](CONTRIBUTING.md)).
+   The image must carry the same-version `rayd` as the SDK
+   (`rayito doctor` checks it). The `-caps` (outbound network and the
+   agent) and `-poly` (bash, JavaScript and TypeScript kernels) variants, in
+   [Images](https://alejandro-cedeno-10.github.io/rayito/en/images/). From source: `make image-publish
+   BUCKET=amzn-s3-demo-bucket`, which builds `rayd` for
+   `aarch64-unknown-linux-musl` on Linux or WSL2 (on macOS, inside a Linux
+   VM) with `cargo-zigbuild` ([`CONTRIBUTING.md`](CONTRIBUTING.md)).
 
-3. **Diagnóstico**: `rayito doctor --template rayito-base` comprueba
-   credenciales, cuotas, IAM, bucket, imagen, versión del agente y
-   compatibilidad SDK ↔ `rayd`; `--launch` prueba además un sandbox efímero.
+3. **Diagnosis**: `rayito doctor --template rayito-base` checks
+   credentials, quotas, IAM, bucket, image, agent version and SDK ↔ `rayd`
+   compatibility; `--launch` also tries an ephemeral sandbox.
 
-4. **Primer sandbox**: [Primer sandbox](https://alejandro-cedeno-10.github.io/rayito/quickstart/).
+4. **First sandbox**: [First sandbox](https://alejandro-cedeno-10.github.io/rayito/en/quickstart/).
 
-## Coste y latencia
+## Cost and latency
 
-Un sandbox factura el cómputo de Lambda MicroVMs mientras corre, más el
-almacenamiento de cada versión de imagen y de los sandboxes suspendidos; no
-hay cargos de Rayito. Precios de lista, ejemplos, tiempos medidos y el
-coste de un agente (VM frente a tokens del modelo), en
-[Precios](https://alejandro-cedeno-10.github.io/rayito/cost/). Las mediciones de arranque en frío están en
+A sandbox bills Lambda MicroVMs compute while it runs, plus the storage of
+each image version and of suspended sandboxes; there are no Rayito charges.
+List prices, examples, measured timings and the cost of an agent (VM versus
+model tokens), in [Pricing](https://alejandro-cedeno-10.github.io/rayito/en/cost/). The cold-start measurements are in
 [`docs/benchmarks/2026-09-cold-start.md`](docs/benchmarks/2026-09-cold-start.md).
 
-## Estado
+## Status
 
-**Alfa, serie 0.9** ([Licencia, estado y soporte](#licencia-estado-y-soporte)).
-Los SDK de Python y TypeScript y `rayd` avanzan en lockstep de
-`MAJOR.MINOR`: cada SDK exige una imagen construida con el `rayd` de su
-misma serie, y `rayito doctor` lo comprueba (tabla en
-[Compatibilidad SDK ↔ rayd ↔ imagen](https://alejandro-cedeno-10.github.io/rayito/limits/#compatibilidad-sdk-rayd-imagen)). Lo que trae cada
-versión: [Novedades](https://alejandro-cedeno-10.github.io/rayito/novedades/) y los `CHANGELOG.md` de cada componente.
+**Alpha, 0.9 series** ([License, status and support](#license-status-and-support)).
+The Python and TypeScript SDKs and `rayd` advance in `MAJOR.MINOR` lockstep:
+each SDK requires an image built with the `rayd` of its own series, and
+`rayito doctor` checks it (table in
+[SDK ↔ rayd ↔ image compatibility](https://alejandro-cedeno-10.github.io/rayito/en/limits/#compatibilidad-sdk-rayd-imagen)).
+What each version brings: [What's new](https://alejandro-cedeno-10.github.io/rayito/en/novedades/) and each component's
+`CHANGELOG.md`.
 
-## Documentos
+## Documents
 
-| Fichero | Contenido |
+Most repository documents are written in Spanish.
+
+| File | Contents |
 |---|---|
-| `SPEC.md` | Qué construimos, alcance, no-objetivos, decisiones |
-| `ARCHITECTURE.md` | Las tres capas y los ADRs |
-| `AWS_API_NOTES.md` | Superficie verificada de la API de AWS. **Leer antes de tocar `src/`** |
-| `docs/aws-api/` | Apéndice crudo: modelo `service-2.json`, `help` de los 25 comandos, resumen de shapes |
-| `MILESTONES.md` | Hitos y criterios de aceptación |
-| `infra/` | Plantillas de CloudFormation: IAM de build, ejecución y cliente (`iam.yaml`), conector de egress, rol OIDC del e2e ([`infra/README.md`](infra/README.md)) |
-| `CLAUDE.md` | Reglas para trabajar con Claude Code |
-| `CONTRIBUTING.md` | Cómo contribuir: requisitos, puesta en marcha (SDK y entorno local con Docker + Floci), GitHub Issues y OpenSpec, ramas trunk-based, Conventional Commits, DCO y commits firmados, PR, gates y revisión |
-| `SECURITY.md` | Cómo reportar una vulnerabilidad, versiones soportadas y el modelo de amenazas |
-| `SUPPORT.md` | Dónde pedir ayuda (documentación, `rayito doctor`, issues) |
+| `SPEC.md` | What we build, scope, non-goals, decisions |
+| `ARCHITECTURE.md` | The three layers and the ADRs |
+| `AWS_API_NOTES.md` | Verified AWS API surface. **Read before touching `src/`** |
+| `docs/aws-api/` | Raw appendix: `service-2.json` model, `help` of the 25 commands, shapes summary |
+| `MILESTONES.md` | Milestones and acceptance criteria |
+| `infra/` | CloudFormation templates: build, execution and client IAM (`iam.yaml`), egress connector, e2e OIDC role ([`infra/README.md`](infra/README.md)) |
+| `CLAUDE.md` | Rules for working with Claude Code |
+| `CONTRIBUTING.md` | How to contribute: requirements, setup (SDK and local Docker + Floci environment), GitHub Issues and OpenSpec, trunk-based branches, Conventional Commits, DCO and signed commits, PRs, gates and review |
+| `SECURITY.md` | How to report a vulnerability, supported versions and the threat model |
+| `SUPPORT.md` | Where to ask for help (documentation, `rayito doctor`, issues) |
 | `CODE_OF_CONDUCT.md` | Contributor Covenant 3.0 |
-| `GOVERNANCE.md` | Quién decide y cómo (ADRs, cambios OpenSpec, mantenedores) |
-| `LICENSE`, `NOTICE`, `CHANGELOG.md` | Apache-2.0, atribuciones de terceros y los changelogs por componente |
-| `docs/RELEASING.md` | Pasos manuales de publicación (PyPI, npm, GitHub Release, tags) |
-| `proto/rayito/v1/` | El contrato gRPC. Fuente de verdad de toda la API |
+| `GOVERNANCE.md` | Who decides and how (ADRs, OpenSpec changes, maintainers) |
+| `LICENSE`, `NOTICE`, `CHANGELOG.md` | Apache-2.0, third-party attributions and the per-component changelogs |
+| `docs/RELEASING.md` | Manual publishing steps (PyPI, npm, GitHub Release, tags) |
+| `proto/rayito/v1/` | The gRPC contract. Source of truth for the whole API |
 
-## Estructura del repositorio
+## Repository layout
 
 ```
-proto/rayito/v1/         contrato gRPC (package rayito.v1), fuente de verdad
-crates/rayd/             agente Rust (tonic) que corre dentro del MicroVM
-crates/rayd-core/        dominio puro del agente (sin IO; puertos como traits)
-crates/rayito-proto/     código Rust generado desde proto/
-kernel-sidecar/          sidecar Python con jupyter_client (y Deno en -poly)
-clients/python/          SDK Python (paquete `rayito`, shim `rayito.e2b`)
-clients/typescript/      SDK TypeScript (paquete `rayito`, entrada `rayito/e2b`)
-image/                   Dockerfile ARM64 de las imágenes
-infra/                   plantillas de CloudFormation (IAM, egress, CI OIDC)
-docs/site/               documentación de usuario (mkdocs)
-docs/aws-api/            volcado crudo de la API de Lambda MicroVMs
-openspec/                specs y changes archivados de cada hito
+proto/rayito/v1/         gRPC contract (package rayito.v1), source of truth
+crates/rayd/             Rust agent (tonic) that runs inside the MicroVM
+crates/rayd-core/        pure domain of the agent (no IO; ports as traits)
+crates/rayito-proto/     Rust code generated from proto/
+kernel-sidecar/          Python sidecar with jupyter_client (and Deno in -poly)
+clients/python/          Python SDK (package `rayito`, shim `rayito.e2b`)
+clients/typescript/      TypeScript SDK (package `rayito`, entry point `rayito/e2b`)
+image/                   ARM64 Dockerfile of the images
+infra/                   CloudFormation templates (IAM, egress, CI OIDC)
+docs/site/               user documentation (mkdocs, Spanish and English)
+docs/aws-api/            raw dump of the Lambda MicroVMs API
+openspec/                specs and archived changes of each milestone
 ```
 
-## Licencia, estado y soporte
+## License, status and support
 
-- **Estado**: alfa (`Development Status :: 3 - Alpha`). Serie 0.x con
-  [SemVer](https://semver.org/lang/es/): una MINOR puede romper
-  compatibilidad y lo anuncia en el changelog; un PATCH nunca. Política de
-  versionado, obsolescencia y soporte en
-  [Versionado y soporte](docs/site/docs/limits.md#versionado-y-soporte).
-- **Licencia**: [Apache-2.0](LICENSE). Las atribuciones de terceros (código
-  vendorizado o adaptado) están en [`NOTICE`](NOTICE), que viaja con el
-  wheel de PyPI y el paquete de npm.
-- **Contribuir**: [`CONTRIBUTING.md`](CONTRIBUTING.md) (puesta en marcha,
-  gates, DCO y commits firmados) y [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md).
-- **Ayuda y seguridad**: [`SUPPORT.md`](SUPPORT.md); las vulnerabilidades se
-  reportan en privado según [`SECURITY.md`](SECURITY.md).
-- **Marcas**: E2B es una marca de su titular. Rayito es un proyecto
-  independiente, **no afiliado, patrocinado ni respaldado por E2B**; el
-  nombre se usa sólo para describir la compatibilidad de API de
-  `rayito.e2b` / `rayito/e2b`. AWS, Lambda y las demás marcas citadas
-  pertenecen a sus titulares.
+- **Status**: alpha (`Development Status :: 3 - Alpha`). 0.x series with
+  [SemVer](https://semver.org/): a MINOR may break compatibility and
+  announces it in the changelog; a PATCH never does. Versioning, deprecation
+  and support policy in
+  [Versioning and support](docs/site/docs/limits.en.md#versionado-y-soporte).
+- **License**: [Apache-2.0](LICENSE). Third-party attributions (vendored or
+  adapted code) are in [`NOTICE`](NOTICE), which ships with the PyPI wheel
+  and the npm package.
+- **Contributing**: [`CONTRIBUTING.md`](CONTRIBUTING.md) (setup,
+  gates, DCO and signed commits) and [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md).
+  Issues, pull requests and security reports in English or Spanish are
+  welcome.
+- **Help and security**: [`SUPPORT.md`](SUPPORT.md); vulnerabilities are
+  reported privately according to [`SECURITY.md`](SECURITY.md).
+- **Trademarks**: E2B is a trademark of its owner. Rayito is an independent
+  project, **not affiliated with, sponsored or endorsed by E2B**; the name is
+  used only to describe the API compatibility of `rayito.e2b` /
+  `rayito/e2b`. AWS, Lambda and the other trademarks mentioned belong to
+  their owners.
 
-## In English
+## Documentation languages
 
-Rayito is an open-source (Apache-2.0) sandbox SDK for AI agents: Python
-(`pip install rayito`) and TypeScript (`npm i rayito`) clients that run
-hardware-isolated sandboxes on AWS Lambda MicroVMs in your own AWS account,
-with no server or API key of ours in between. The in-VM agent `rayd` (Rust)
-ships as a signed GitHub Release asset. `rayito.e2b` / `rayito/e2b` offer an
-import-level drop-in for the E2B 2.x SDK; Rayito is an independent project,
-not affiliated with or endorsed by E2B. The documentation and code comments
-are in Spanish, but issues, pull requests and security reports in English
-are welcome: see [`CONTRIBUTING.md`](CONTRIBUTING.md),
-[`SUPPORT.md`](SUPPORT.md) and [`SECURITY.md`](SECURITY.md).
+The documentation site is bilingual: Spanish (default) and English, with a
+language switcher in the header. This README exists in both languages
+([`README.es.md`](README.es.md) for Spanish). Code comments, docstrings and
+user-facing SDK messages are in Spanish.

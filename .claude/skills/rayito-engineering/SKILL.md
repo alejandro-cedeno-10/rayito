@@ -1,6 +1,6 @@
 ---
 name: rayito-engineering
-description: Convenciones de ingeniería de Rayito, el SDK Python/TypeScript compatible con E2B y su agente Rust rayd: capas hexagonales por lenguaje, paridad entre Python, TypeScript y el shim E2B, valores con nombre, funciones con coste apagadas por defecto y el convenio OptionalStack, mapeo de errores, qué no se escribe nunca en ficheros ni logs, gates locales (con la VM Linux de rayd), flujo OpenSpec, release y aceptación en AWS, y documentación en español (Diátaxis). Úsala antes de diseñar, implementar, revisar o publicar cualquier cambio en este repositorio.
+description: Convenciones de ingeniería de Rayito, el SDK Python/TypeScript compatible con E2B y su agente Rust rayd: capas hexagonales por lenguaje, paridad entre Python, TypeScript y el shim E2B, valores con nombre, funciones con coste apagadas por defecto y el convenio OptionalStack, mapeo de errores, qué no se escribe nunca en ficheros ni logs, gates locales (con la VM Linux de rayd), flujo OpenSpec, release y aceptación en AWS, y documentación en español e inglés (Diátaxis). Úsala antes de diseñar, implementar, revisar o publicar cualquier cambio en este repositorio.
 ---
 
 # Ingeniería en Rayito
@@ -60,7 +60,8 @@ en `CLAUDE.md`; esta skill las concreta y añade el cómo. Detalle en:
 
 - Código en inglés: identificadores, clases, funciones, constantes y los
   nombres de fichero y carpeta del código y de los tests. Docstrings, TSDoc,
-  comentarios, mensajes al usuario y docs (`docs/site`), en español.
+  comentarios y mensajes al usuario, en español; los docs (`docs/site`), en
+  español e inglés.
 - Se comenta el porqué, no el qué. Nada de comentarios en línea dentro de una
   función: extrae un helper con nombre o cuéntalo en el docstring/TSDoc. Sin
   etiquetas de ticket en el código.
@@ -224,10 +225,21 @@ duplicación, y todo el código en inglés), la paridad, el coste y los gates.
 
 ## Documentación
 
-- En español, con Diátaxis: `primeros-pasos/` (tutorial), `guias/` (cómo
+- En español **y en inglés**, las dos versiones al día. La página
+  `pagina.md` es el español (idioma por defecto, URLs sin cambio) y
+  `pagina.en.md` es el inglés (`/en/...`); `mkdocs-static-i18n` con el
+  diseño por sufijo. Un cambio de contenido toca las dos en el mismo PR, con
+  los mismos bloques de código y las mismas anclas lógicas.
+  `scripts/check_docs_i18n.py` (en `make lint`, `make docs` y CI) exige la
+  pareja de cada página, salvo las de `PENDING_TRANSLATION` (una lista que
+  sólo encoge). Las cadenas del `nav` se traducen en
+  `nav_translations` de `mkdocs.yml`. El código y los identificadores van
+  igual en ambas; los comentarios de los ejemplos, en el idioma de la página.
+  `README.md` está en inglés y `README.es.md` en español.
+- Con Diátaxis: `primeros-pasos/` (tutorial), `guias/` (cómo
   hacer), `referencia/` (API, CLI, errores, límites) y `concepts.md` +
   `ARCHITECTURE.md` (explicación). Cada página nueva entra en el `nav` de
-  `docs/site/mkdocs.yml`.
+  `docs/site/mkdocs.yml`, con su título inglés en `nav_translations`.
 - Los ejemplos van en pestañas `=== "Python"` / `=== "TypeScript"` y
   `scripts/check_docs_examples.py` los compila y comprueba sus tipos.
 - Las funciones opcionales llevan la caja "Coste y activación", y lo medido en

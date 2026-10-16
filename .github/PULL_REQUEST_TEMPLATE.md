@@ -14,5 +14,6 @@
 - [ ] e2e contra AWS ejecutado (imagen y coste aproximado anotados) o "sin cambio de runtime"
 - [ ] Sin secretos, tokens, JWE, `runHookPayload` ni contenido de ficheros en logs, tests o fixtures
 - [ ] Documentación actualizada (`ARCHITECTURE.md` / `AWS_API_NOTES.md` si hay un hecho nuevo de la plataforma)
+- [ ] Docs de usuario en español e inglés, sincronizadas (`pagina.md` y `pagina.en.md`; `python3 scripts/check_docs_i18n.py`)
 - [ ] `CHANGELOG.md` del paquete tocado actualizado
 - [ ] Todos los commits con DCO y firmados (`git commit -s -S`)

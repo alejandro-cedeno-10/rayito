@@ -33,8 +33,8 @@ theme:
     text: Atkinson Hyperlegible Next
     code: JetBrains Mono
   features:
-    - navigation.instant
-    - navigation.instant.progress
+    # Sin navigation.instant: con él el selector de idioma no cambia a la
+    # misma página en el otro idioma (aviso de mkdocs-static-i18n).
     - navigation.tracking
     - navigation.tabs
     - navigation.tabs.sticky
@@ -77,14 +77,139 @@ hooks:
   - hooks/limits_macros.py
 
 plugins:
-  - search:
-      lang: es
+  - search
+  # Sitio bilingüe: `pagina.md` es español (por defecto, URLs sin cambio) y
+  # `pagina.en.md` es inglés, bajo /en/. Una página sin traducción se sirve en
+  # español también en /en/ (`fallback_to_default`); `scripts/check_docs_i18n.py`
+  # exige la pareja de cada página. `reconfigure_search` declara los dos
+  # idiomas del buscador, pero el índice (`search/search_index.json`) es uno
+  # solo y lo comparten /es y /en: una consulta devuelve también la misma
+  # página en el otro idioma (Material no filtra por idioma; límite conocido
+  # de mkdocs-static-i18n). El selector sale de `reconfigure_material`.
+  - i18n:
+      docs_structure: suffix
+      fallback_to_default: true
+      reconfigure_material: true
+      reconfigure_search: true
+      languages:
+        - locale: es
+          name: Español
+          default: true
+          build: true
+        - locale: en
+          name: English
+          build: true
+          site_name: Rayito
+          site_description: Execution sandboxes for AI agents on AWS Lambda MicroVMs, in your own account.
+          copyright: >-
+            Copyright 2026 Rayito contributors ·
+            <a href="https://github.com/alejandro-cedeno-10/rayito/blob/main/LICENSE">Apache-2.0</a> ·
+            <a href="https://github.com/alejandro-cedeno-10/rayito/blob/main/CONTRIBUTING.md">Contributing</a> ·
+            <a href="https://github.com/alejandro-cedeno-10/rayito/blob/main/SECURITY.md">Security</a> ·
+            <a href="https://github.com/alejandro-cedeno-10/rayito/blob/main/CODE_OF_CONDUCT.md">Code of conduct</a><br>
+            Independent project, not affiliated with, sponsored or endorsed by E2B or AWS;
+            their names are used only to describe compatibility and platform.
+          theme:
+            palette:
+              - toggle:
+                  name: Dark mode
+              - toggle:
+                  name: Light mode
+          nav_translations:
+            Inicio: Home
+            Primeros pasos: Getting started
+            Instalación: Installation
+            Configurar AWS: Set up AWS
+            Primer sandbox: First sandbox
+            Conceptos: Concepts
+            Guías: Guides
+            Sandbox: Sandbox
+            Ciclo de vida: Lifecycle
+            Pausar y reanudar: Pause and resume
+            Plazo del servidor: Server-side deadline
+            Pool: Pool
+            Persistencia: Persistence
+            Async: Async
+            Ejecutar: Run
+            Comandos: Commands
+            Ejecutar código: Run code
+            Lenguajes y kernels: Languages and kernels
+            Terminal (PTY): Terminal (PTY)
+            Ficheros y red: Files and network
+            Ficheros y S3: Files and S3
+            Red saliente: Outbound network
+            Puertos y host: Ports and host
+            Observar y herramientas: Observe and tools
+            Métricas y listado: Metrics and listing
+            Git: Git
+            Agentes: Agents
+            Servidor MCP: MCP server
+            LangChain y Vercel AI: LangChain and Vercel AI
+            Agente en el sandbox: Agent in the sandbox
+            Proveedores del agente: Agent providers
+            Desarrollar: Develop
+            Probar en local (Docker + Floci): Test locally (Docker + Floci)
+            Funciones opcionales: Optional features
+            Resumen y coste: Overview and cost
+            Pilas opcionales (rayito stack): Optional stacks (rayito stack)
+            En el sandbox: In the sandbox
+            Montajes S3: S3 mounts
+            Tamaños: Sizes
+            Pasarela de secretos: Secret gateway
+            Volúmenes EFS (experimental): EFS volumes (experimental)
+            Volúmenes EFS en tu VPC (experimental): EFS volumes in your VPC (experimental)
+            Secretos: Secrets
+            Imágenes: Images
+            Templates declarativos: Declarative templates
+            Templates de agente: Agent templates
+            Observar: Observe
+            Eventos y webhooks: Events and webhooks
+            Exportación OTLP: OTLP export
+            OpenTelemetry (SDK): OpenTelemetry (SDK)
+            Índice de metadatos: Metadata index
+            Panel de gestión (cuotas, coste y flota): Management dashboard (quotas, cost and fleet)
+            Panel en tu cuenta (la pila dashboard): Dashboard in your account (the dashboard stack)
+            Panel, fase 3 (CloudWatch, varias cuentas, avisos): Dashboard, phase 3 (CloudWatch, multiple accounts, alerts)
+            Proxy local: Local proxy
+            Experimental: Experimental
+            Dominio propio (experimental): Custom domain (experimental)
+            Migrar desde E2B: Migrate from E2B
+            Diferencias: Differences
+            Paridad: Parity
+            Novedades: What's new
+            Referencia: Reference
+            Python: Python
+            Resumen: Overview
+            Subclientes: Subclients
+            Modelos: Models
+            Opcionales: Optional
+            Excepciones: Exceptions
+            Shim E2B: E2B shim
+            TypeScript: TypeScript
+            CLI: CLI
+            API del panel de gestión: Management dashboard API
+            Errores: Errors
+            Variables de entorno: Environment variables
+            Límites: Limits
+            Otros lenguajes (gRPC): Other languages (gRPC)
+            Changelog: Changelog
+            Operación: Operations
+            IAM: IAM
+            Seguridad: Security
+            Precios (MicroVMs, pool, agentes): Pricing (MicroVMs, pool, agents)
+            Verificar una release: Verify a release
+            Solución de problemas: Troubleshooting
+            FAQ: FAQ
   # Sirve las fuentes desde el propio sitio: sin peticiones a terceros.
   # RAYITO_DOCS_PRIVACY=false lo apaga para compilar sin red. Sólo para
   # vistas previas locales: nunca para publicar, porque la fuente de títulos
   # (overrides/main.html) se pediría entonces a un tercero en tiempo de lectura.
   - privacy:
       enabled: !ENV [RAYITO_DOCS_PRIVACY, true]
+  # Con dos idiomas cada objeto de la API tiene una URL por idioma: se enlaza
+  # la más cercana a la página actual en vez de avisar de duplicados.
+  - autorefs:
+      resolve_closest: true
   - mkdocstrings:
       handlers:
         python:

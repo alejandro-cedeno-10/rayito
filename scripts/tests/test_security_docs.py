@@ -25,9 +25,7 @@ RETIRED_SENTENCES = {
     "docs/site/docs/funciones-opcionales/pasarela-de-secretos.md": (
         "suplantar ni leer de vuelta su propia credencial",
     ),
-    "infra/README.md": (
-        "otra rama, otro environment u otro repositorio no pueden asumirlo",
-    ),
+    "infra/README.md": ("otra rama, otro environment u otro repositorio no pueden asumirlo",),
     "docs/site/docs/concepts.md": ("(o exporta `RAYITO_ACCESS_TOKEN`)",),
 }
 
@@ -92,12 +90,8 @@ def paragraph(text: str, opening: str) -> str:
 def threat_row(marker: str) -> str:
     """La única fila de la tabla de amenazas de `SECURITY.md` cuyo primer campo
     es el marcador, para que una aserción sobre T2 no la satisfaga otra prosa."""
-    rows = [
-        line for line in security_md().splitlines() if line.startswith(f"| {marker} |")
-    ]
-    assert len(rows) == 1, (
-        f"SECURITY.md: {marker} debería ser una única fila, hay {len(rows)}"
-    )
+    rows = [line for line in security_md().splitlines() if line.startswith(f"| {marker} |")]
+    assert len(rows) == 1, f"SECURITY.md: {marker} debería ser una única fila, hay {len(rows)}"
     return flatten(rows[0])
 
 
@@ -108,9 +102,7 @@ def assert_says(where: str, text: str, fragments: Iterable[str]) -> None:
 
 def assert_silent(where: str, text: str, fragments: Iterable[str]) -> None:
     for fragment in fragments:
-        assert fragment not in text, (
-            f"{where}: reapareció la frase retirada «{fragment}»"
-        )
+        assert fragment not in text, f"{where}: reapareció la frase retirada «{fragment}»"
 
 
 def test_t2_names_the_in_vm_origin() -> None:
@@ -130,9 +122,7 @@ def test_t2_names_the_in_vm_origin() -> None:
             "`peer_refused`",
         ),
     )
-    assert_silent(
-        "SECURITY.md T2", row, ("el kernel no se reinicia", "queda pendiente")
-    )
+    assert_silent("SECURITY.md T2", row, ("el kernel no se reinicia", "queda pendiente"))
 
     origin = paragraph(architecture_md(), "**Origen de los hooks")
     assert_says(
@@ -146,9 +136,7 @@ def test_t2_names_the_in_vm_origin() -> None:
             "`peer_refused`",
         ),
     )
-    assert_silent(
-        "ARCHITECTURE.md «Origen de los hooks»", origin, ("queda pendiente",)
-    )
+    assert_silent("ARCHITECTURE.md «Origen de los hooks»", origin, ("queda pendiente",))
 
     adr = section(architecture_md(), "## ADR-006")
     assert_says(
@@ -595,7 +583,10 @@ def test_t24_qualifies_the_gateway_guarantee() -> None:
     assert_says(
         "docs/site/docs/security.md",
         flatten(site_doc("security")),
-        ("Pasarela de secretos (T24)", "Hooks de ciclo de vida forjados desde dentro de la VM (T2)"),
+        (
+            "Pasarela de secretos (T24)",
+            "Hooks de ciclo de vida forjados desde dentro de la VM (T2)",
+        ),
     )
 
 
@@ -613,8 +604,11 @@ def test_cosign_recipes_bind_the_installed_version() -> None:
     being installed."""
     for relative in (
         "docs/site/docs/verify.md",
+        "docs/site/docs/verify.en.md",
         "README.md",
+        "README.es.md",
         "docs/site/docs/primeros-pasos/configurar-aws.md",
+        "docs/site/docs/primeros-pasos/configurar-aws.en.md",
     ):
         text = read(relative)
         assert "certificate-identity-regexp" not in text, relative
@@ -627,15 +621,29 @@ def test_the_release_recipe_verifies_before_publishing() -> None:
     ``contents: write`` can replace a release asset: the recommended recipe
     verifies the bundle and ``SHA256SUMS`` before it publishes anything
     (``sec-supply-chain-followups``, SC-A08)."""
-    page = read("docs/site/docs/primeros-pasos/configurar-aws.md")
-    recipe = page[page.index('=== "Desde la release (recomendado)"') : page.index(
-        '=== "Desde el código fuente"'
-    )]
+    for relative, from_release, from_source in (
+        (
+            "docs/site/docs/primeros-pasos/configurar-aws.md",
+            '=== "Desde la release (recomendado)"',
+            '=== "Desde el código fuente"',
+        ),
+        (
+            "docs/site/docs/primeros-pasos/configurar-aws.en.md",
+            '=== "From the release (recommended)"',
+            '=== "From source"',
+        ),
+    ):
+        page = read(relative)
+        recipe = page[page.index(from_release) : page.index(from_source)]
 
-    assert recipe.index("cosign verify-blob") < recipe.index("rayito image publish")
-    assert recipe.index("sha256sum -c") < recipe.index("rayito image publish")
-    assert "SHA256SUMS" in recipe
-    assert_silent("configurar-aws.md", flatten(recipe), ("Opcional pero recomendable",))
+        assert recipe.index("cosign verify-blob") < recipe.index("rayito image publish"), relative
+        assert recipe.index("sha256sum -c") < recipe.index("rayito image publish"), relative
+        assert "SHA256SUMS" in recipe, relative
+    assert_silent(
+        "configurar-aws.md",
+        flatten(read("docs/site/docs/primeros-pasos/configurar-aws.md")),
+        ("Opcional pero recomendable",),
+    )
 
 
 def test_verify_states_what_a_signature_proves() -> None:
@@ -659,3 +667,18 @@ def test_verify_states_what_a_signature_proves() -> None:
         flatten(read("docs/site/docs/verify.md")),
         ("sube los assets en otro que exige la aprobación del mantenedor",),
     )
+
+
+def test_the_english_signature_page_states_the_same_limits() -> None:
+    """The English twin carries the same invariants as the Spanish page: the
+    approval comes before the OIDC token, a rehearsal signs nothing, and
+    creating a `rayd-v*` tag is what the signature does not gate."""
+    text = flatten(read("docs/site/docs/verify.en.md"))
+    proof = section(read("docs/site/docs/verify.en.md"), "### What the signature proves")
+
+    assert_says(
+        "verify.en.md «What the signature proves»",
+        proof,
+        ("`release` environment", "OIDC token", "`dry_run`", "`rayd-v*` tag"),
+    )
+    assert_silent("verify.en.md", text, ("certificate-identity-regexp",))

@@ -54,8 +54,9 @@ Va primero: si algo se filtró, la revisión para ahí y avisa al mantenedor
   docstring/TSDoc.
 - **Todo el código va en inglés**: identificadores, clases, funciones,
   variables, constantes, nombres de fichero y de carpeta del código y de los
-  tests. Docstrings, TSDoc, comentarios, mensajes al usuario y la
-  documentación de `docs/site` van en español.
+  tests. Docstrings, TSDoc, comentarios y mensajes al usuario van en
+  español; la documentación de `docs/site`, en español e inglés (cada
+  `pagina.md` con su `pagina.en.md`, sincronizadas).
 - Los tests se nombran por el comportamiento, no por el hito.
 
 ## 4. Paridad y compatibilidad
@@ -81,5 +82,6 @@ Va primero: si algo se filtró, la revisión para ahí y avisa al mantenedor
 - Pasan los gates de [gates.md](gates.md) del lenguaje tocado, y el CI está
   en verde.
 - Hay entrada en el CHANGELOG del paquete tocado.
-- Las docs están en español, con pestañas Python/TypeScript, y
-  `mkdocs --strict` pasa.
+- Las docs están en español e inglés (`pagina.md` y `pagina.en.md`, mismos
+  ejemplos), con pestañas Python/TypeScript, `check_docs_i18n.py` y
+  `mkdocs --strict` pasan.

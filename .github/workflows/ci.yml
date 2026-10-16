@@ -391,6 +391,8 @@ jobs:
         with:
           python-version: "3.12"
           enable-cache: auto
+      - name: Every Spanish docs page has its English twin (.en.md), examples in sync
+        run: python3 scripts/check_docs_i18n.py
       - name: Build the docs site strictly (no deploy)
         run: cd clients/python && uv run --group docs mkdocs build -f ../../docs/site/mkdocs.yml --strict --site-dir ../../docs/site/_build
       - name: Docs examples compile, name-check and typecheck against rayito; CLI commands exist (no AWS)

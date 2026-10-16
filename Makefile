@@ -197,6 +197,7 @@ lint:
 	python scripts/check_pins.py
 	python scripts/check_hygiene.py
 	python scripts/check_dashboard_images.py
+	python scripts/check_docs_i18n.py
 	uvx ruff==0.16.7 check scripts
 	python scripts/gen_limits.py --check
 	python scripts/check_sdk_parity.py
@@ -491,9 +492,11 @@ wheel:
 	  $(call hashed-tool,twine,"$$tools") && \
 	  "$$tools/bin/twine" check $(PYTHON_CLIENT)/dist/*
 
-# Sitio de documentación (mkdocs-material + mkdocstrings) construido en modo
-# estricto desde el entorno del cliente Python, sin deploy.
+# Sitio de documentación bilingüe (mkdocs-material + mkdocstrings +
+# mkdocs-static-i18n) construido en modo estricto desde el entorno del cliente
+# Python, sin deploy. Antes, cada página en español debe tener su pareja .en.md.
 docs:
+	python3 scripts/check_docs_i18n.py
 	cd $(PYTHON_CLIENT) && uv run --group docs mkdocs build -f ../../docs/site/mkdocs.yml --strict --site-dir ../../docs/site/_build
 
 # Ejemplos del sitio: Python (compile + ruff F821 + mypy contra rayito), JSON,
