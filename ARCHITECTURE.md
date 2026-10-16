@@ -2982,3 +2982,110 @@ deepagents (su middleware añade `ToolMessage`).
 
 **Reversible.** Aditivo: opciones nuevas del host, un campo con valor por
 defecto y métodos nuevos; ningún nombre público cambia ni se retira.
+
+## ADR-029 — agent-zero-config: despliega el agente que ya tienes con una orden
+
+**Contexto.** ADR-028 y su addendum dejaron que un agente existente se
+despliegue, pero hay que escribir el fichero de proyecto a mano (runtime,
+punto de entrada, receta de instalación, opciones de servicio), hacer cuatro
+preparativos de una vez (imagen base, bucket, secreto del modelo, token) y,
+para pasar de una MicroVM a varias, escribir uno su propio enrutado de
+sesiones. El objetivo de 0.14 es que un proyecto existente, en cualquiera de
+los frameworks que los runtimes ya sirven, se despliegue con una llamada o una
+orden y sin tocar su código, y que todo lo detectado se pueda sustituir con
+una opción tipada.
+
+**Decisión.**
+
+1. **Detección pura.** `AgentProject.detect()` (y `deploy_agent`,
+   `deployAgent`, `rayito agent deploy` por debajo) deciden idioma,
+   framework, punto de entrada, rutas de una app HTTP, protocolo, plan de
+   instalación, versiones de Python y Node y proveedor leyendo ficheros del
+   proyecto: nunca importa, ejecuta ni evalúa código del usuario, nunca lee
+   valores de `.env*`, y no llama a AWS. Es un servicio de dominio sobre un
+   puerto `ProjectTree`; el adaptador es el sistema de ficheros. Las reglas
+   (nombres de manifiestos, dependencias por framework, patrones, candidatos,
+   prioridad) son datos en `agent-detection.json`, generados a los dos SDKs
+   con `--check` como `gen_limits.py`, y los dos SDKs pasan los mismos
+   vectores (`testdata/agent-detection/`). No se usa `ast` de Python, porque
+   un usuario de TypeScript también despliega agentes de Python y al revés.
+2. **Orden de precedencia.** Fichero de proyecto, después opción o
+   argumento, después detección, después valor por defecto con nombre. Si hay
+   dudas se falla con `ambiguous` o `not_detected` y el mensaje nombra la
+   opción que lo resuelve: una conjetura nunca es silenciosa. Si hay un objeto
+   del framework y una app HTTP, gana el driver del framework (trae
+   `invoke()`, eventos y uso) y la app queda en `alternatives`.
+3. **Cuatro objetos de valor, sin renombres.** `ServeOptions` suma cola
+   acotada y su tope de sesiones por VM queda limitado por el tope de
+   conexiones del tamaño; `ScalingOptions` (`min_vms`, `max_vms`, `warm_vms`,
+   `sessions` compartidas o dedicadas, `scale_in_after_seconds`);
+   `AgentProject` suma `env` (sin secretos), `network`, región y versiones; y
+   `DeployOptions` para el despliegue de una llamada. Todos los valores por
+   defecto y límites son constantes de `limits.json`.
+4. **Frameworks sin conocimiento en el dominio.** El dominio no importa
+   ningún framework. El conocimiento vive en los datos de detección y en un
+   driver del host por framework; un driver Node genérico con un adaptador
+   por framework de JavaScript cubre LangGraph.js, deepagents-js, Vercel AI
+   SDK y Strands TypeScript (`strands-ts` se mantiene como alias). El
+   contrato mínimo para cualquier otro es una app HTTP, una función o una
+   orden. Los paquetes de Bedrock de JavaScript (`@ai-sdk/amazon-bedrock`,
+   `@langchain/aws`, `@strands-agents/sdk`) leen `AWS_BEARER_TOKEN_BEDROCK` y
+   `AWS_ENDPOINT_URL_BEDROCK_RUNTIME` (comprobado leyendo los paquetes
+   publicados el 2026-10-16), así que llegan a la pasarela sin cambiar el
+   agente.
+5. **Protocolo `json`.** Para una app HTTP: el host sirve `/ping` y
+   `/invocations`, traduce la invocación a un POST en la ruta propia de la
+   app y reenvía el resto sin tocarlo, de modo que `invoke()` funciona y las
+   rutas de la app siguen accesibles. `HttpApp` explícito conserva
+   `agentcore` como valor por defecto; sólo la detección elige `json`.
+6. **Flota enrutada en el cliente, sin servidor propio.** `AgentFleet` reparte
+   sesiones entre MicroVMs. Con más de una VM el id de sesión es un
+   identificador enrutable `rs1.<sandbox>.<id>` que apunta a su VM sin
+   consulta. Los miembros son las MicroVMs no terminadas de la imagen del
+   proyecto, porque una MicroVM no se puede etiquetar. Las VMs en espera son
+   el `Pool` existente (con un `access_token` opcional), la reducción usa el
+   `set_timeout` y la autoterminación de `rayd` que ya existen, y la cola
+   (primero en el host, luego en el cliente con `429 Retry-After`) acaba en
+   `CapacityException`. Un índice para ids elegidos por el llamante en modo
+   dedicado es opcional y reutiliza la pila `metadata-index`.
+7. **El host supervisa la app.** Reinicia con espera exponencial y
+   presupuesto acotado; pasado el presupuesto, `/ping` falla y el marcador
+   lleva `app_crashloop`, y la flota sustituye la VM.
+8. **Valores por defecto de AWS sin crear nada a escondidas.** Región, imagen
+   base, bucket, secreto del modelo y token se resuelven en orden fijo
+   (argumento, fichero, variable de entorno, descubrimiento, error en
+   español antes de crear nada). El bucket nunca se crea, la imagen base se
+   publica sólo con confirmación y el secreto sólo con `--create-secret`. El
+   agente sigue sin ver nunca la clave del modelo (ADR-023 y ADR-025).
+9. **Coste.** `deploy_agent`, `deployAgent`, `rayito agent deploy` y
+   `AgentFleet` llevan la caja "Coste y activación". `detect`, `load` y
+   `--dry-run` no llaman a AWS ni cargan sus peers, con un test en cada SDK.
+10. **Sin cambios en Rust.** El "agente" de `crates/` es `rayd`; la
+    supervisión, el enrutado de sesiones, la salud y la inactividad las cubren
+    el host, el cliente y funciones que `rayd` ya tiene. Arrancar el host
+    dentro de la instantánea de la imagen se descarta para 0.14 y queda como
+    candidato de 0.15. Se reabre si una prueba en AWS muestra que el host no
+    sobrevive a suspender y reanudar, o que el tope de conexiones exige
+    admisión en `rayd`.
+
+**Consecuencias.** Todo es aditivo: `AgentProject`, `deploy()`, `sbx.agent.run`,
+`AgentTemplate`, un `rayito-agent.toml` de antes y el nombre `strands-ts`
+siguen igual. Una imagen construida antes necesita reconstruirse para tener el
+host nuevo. La detección es heurística y por eso nunca adivina: prefiere un
+error que nombra la opción. Cambiar `memory_mib` produce una versión nueva de
+imagen (el tamaño se fija en la imagen). El tope de conexiones por debajo de
+2 GB no está publicado; el valor del límite es conservador y se mide en AWS.
+
+**Alternativas descartadas.** Importar el código del usuario para
+inspeccionarlo: ejecutaría código ajeno en el portátil del desarrollador.
+`ast` de Python para detectar: no sirve a TypeScript con el mismo resultado.
+Un servidor de sesiones propio o una tabla obligatoria: rompe "sin servidor
+propio" y añade coste; el identificador enrutable no necesita ninguno. Cambiar
+el protocolo por defecto de `HttpApp` a `json`: rompería a quien usa
+`agentcore` con `invoke()`. Un carril Rust para arrancar el host dentro de la
+instantánea: exige cambiar el contrato de `rayd` para ganar menos de lo que ya
+mide la reanudación.
+
+**Reversible.** Aditivo: módulos, claves del fichero y constantes nuevos;
+quitar `deploy_agent` y `AgentFleet` deja el 0.14 anterior intacto. Detalle en
+`openspec/changes/agent-zero-config/design.md`.

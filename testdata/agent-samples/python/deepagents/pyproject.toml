@@ -1,0 +1,9 @@
+[project]
+name = "research-notes"
+version = "0.1.0"
+description = "Agente de investigación con deepagents"
+requires-python = ">=3.11"
+dependencies = [
+    "deepagents>=0.7",
+    "langchain-aws>=1.0",
+]
