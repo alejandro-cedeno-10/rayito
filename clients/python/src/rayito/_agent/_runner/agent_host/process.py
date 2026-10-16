@@ -46,7 +46,12 @@ class _StderrTail:
     def text(self) -> str:
         self._thread.join(timeout=STDERR_DRAIN_SECONDS)
         with self._lock:
-            return self._buffer.decode("utf-8", errors="replace")
+            text = self._buffer.decode("utf-8", errors="replace")
+            full = len(self._buffer) >= STDERR_TAIL_BYTES
+        # Con el búfer lleno el corte cae a mitad de línea: se descarta ese
+        # trozo para que un valor partido no escape a la sustitución.
+        newline = text.find("\n")
+        return text[newline + 1 :] if full and 0 <= newline < len(text) - 1 else text
 
 
 class ChildProcess:

@@ -242,7 +242,12 @@ PROVIDER_KEY_MIN_LENGTH: Final = 16
 JWT_SEGMENT_MIN_LENGTH: Final = 8
 TOKEN_RUN_MIN_LENGTH: Final = 40
 _CONTROL_CHARACTERS: Final = re.compile(r"\\x1b\\[[0-9;?]*[ -/]*[@-~]|[\\x00-\\x08\\x0b-\\x1f\\x7f]")
+#: Cada patrón con grupo conserva el grupo 1 (el nombre y el separador) y
+#: retira el resto; sin grupo se retira todo lo que casa. El orden importa:
+#: \`Authorization\` va antes que \`Bearer\` para retirar también el esquema
+#: \`Basic\` y su valor.
 _CREDENTIAL_PATTERNS: Final = (
+    re.compile(r"(?i)(\\bauthorization[\\"']?\\s*[=:]\\s*).*"),
     re.compile(r"(?i)\\bbearer\\s+[A-Za-z0-9._~+/=-]+"),
     re.compile(
         rf"\\beyJ[A-Za-z0-9_-]{{{JWT_SEGMENT_MIN_LENGTH},}}"
@@ -250,8 +255,13 @@ _CREDENTIAL_PATTERNS: Final = (
     ),
     re.compile(r"\\b(?:AKIA|ASIA)[0-9A-Z]{16}\\b"),
     re.compile(rf"\\bsk-[A-Za-z0-9_-]{{{PROVIDER_KEY_MIN_LENGTH},}}"),
-    re.compile(r"(?i)\\b(token|secret|password|passwd|api[_-]?key|authorization)(\\s*[=:]\\s*)\\S+"),
-    re.compile(rf"[A-Za-z0-9_-]{{{TOKEN_RUN_MIN_LENGTH},}}"),
+    re.compile(r"(://[^\\s/:@]+:)[^\\s/@]+(?=@)"),
+    re.compile(
+        r"(?i)((?<![A-Za-z0-9_])[A-Za-z0-9_]*"
+        r"(?:token|secret|password|passwd|api[_-]?key|access[_-]?key|credential|private[_-]?key)"
+        r"[A-Za-z0-9_]*[\\"']?\\s*[=:]\\s*[\\"']?)[^\\s\\"',}]+"
+    ),
+    re.compile(rf"(?<![A-Za-z0-9_/.-])[A-Za-z0-9_/+=-]{{{TOKEN_RUN_MIN_LENGTH},}}"),
 )
 
 
@@ -273,7 +283,7 @@ def _without_environment_values(text: str, environ: Mapping[str, str]) -> str:
 def _without_credentials(text: str) -> str:
     for pattern in _CREDENTIAL_PATTERNS:
         if pattern.groups:
-            text = pattern.sub(lambda match: f"{match.group(1)}{match.group(2)}{REDACTED}", text)
+            text = pattern.sub(lambda match: f"{match.group(1)}{REDACTED}", text)
         else:
             text = pattern.sub(REDACTED, text)
     return text
@@ -2929,7 +2939,12 @@ class _StderrTail:
     def text(self) -> str:
         self._thread.join(timeout=STDERR_DRAIN_SECONDS)
         with self._lock:
-            return self._buffer.decode("utf-8", errors="replace")
+            text = self._buffer.decode("utf-8", errors="replace")
+            full = len(self._buffer) >= STDERR_TAIL_BYTES
+        # Con el búfer lleno el corte cae a mitad de línea: se descarta ese
+        # trozo para que un valor partido no escape a la sustitución.
+        newline = text.find("\\n")
+        return text[newline + 1 :] if full and 0 <= newline < len(text) - 1 else text
 
 
 class ChildProcess:

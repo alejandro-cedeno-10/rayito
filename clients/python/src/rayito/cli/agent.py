@@ -288,6 +288,12 @@ def load_project(file: str) -> AgentProject:
         fail(str(exc), code=EXIT_USAGE)
 
 
+def _with_notes(exc: BaseException) -> str:
+    """El mensaje de `exc` seguido de sus notas (`--keep-on-failure` deja en
+    ellas qué sandbox sigue vivo y cómo conectarse)."""
+    return "\n".join([str(exc), *getattr(exc, "__notes__", [])])
+
+
 def run_failed(exc: AgentException) -> None:
     fail(str(exc))
 
@@ -498,9 +504,15 @@ def deploy_command(
             keep_on_failure=keep_on_failure,
         )
     except InvalidArgumentException as exc:
-        fail(str(exc), code=EXIT_USAGE)
+        fail(_with_notes(exc), code=EXIT_USAGE)
     except SandboxException as exc:
-        fail("\n".join([str(exc), *getattr(exc, "__notes__", [])]))
+        fail(_with_notes(exc))
+    except Exception as exc:
+        # Cualquier otro error (credenciales, botocore...) sigue su camino,
+        # pero un sandbox conservado por --keep-on-failure se nombra antes.
+        for note in getattr(exc, "__notes__", []):
+            echo(note, err=True)
+        raise
     hidden = app_hiding_own_routes(project)
     if hidden is not None:
         echo(

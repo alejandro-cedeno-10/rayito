@@ -73,6 +73,39 @@ def test_sanitize_removes_environment_values_and_credentials() -> None:
     assert diagnostics.REDACTED in cleaned
 
 
+@pytest.mark.parametrize(
+    ("text", "leaked"),
+    [
+        ("DB_PASSWORD=Hunter2pass", "Hunter2pass"),
+        ("GITHUB_TOKEN=ghp_abcdef123456", "ghp_abcdef123456"),
+        (
+            "AWS_SECRET_ACCESS_KEY=" + "wJalrXUtnFEMI/K7MDENG/bPxRfiC" + "YEXAMPLEKEY",
+            "wJalrXUtnFEMI",
+        ),
+        ('{"api_key": "abcd1234efgh5678"}', "abcd1234efgh5678"),
+        ("input_value='my-s3cret-value' password: 'quoted-pass'", "quoted-pass"),
+        ("Authorization: Basic dXNlcjpwYXNzd29yZA==", "dXNlcjpwYXNzd29yZA"),
+        ("postgres://admin:Hunter2pass@db.internal:5432/app", "Hunter2pass"),
+        ("clave " + "wJalrXUtnFEMI/K7MDENG/bPxRfiC" + "YEXAMPLEKEY fin", "K7MDENG"),
+    ],
+)
+def test_sanitize_redacts_prefixed_quoted_and_url_credentials(text: str, leaked: str) -> None:
+    cleaned = diagnostics.sanitize_diagnostics(text, {})
+    assert leaked not in cleaned
+    assert diagnostics.REDACTED in cleaned
+
+
+def test_sanitize_keeps_paths_and_the_url_host_readable() -> None:
+    text = (
+        'File "/opt/agents/custom/lib/python3.12/site-packages/pkg/module/handler.py", line 3\n'
+        "postgres://admin:Hunter2pass@db.internal:5432/app"
+    )
+    cleaned = diagnostics.sanitize_diagnostics(text, {})
+    assert "/opt/agents/custom/lib/python3.12/site-packages/pkg/module/handler.py" in cleaned
+    assert "admin:" in cleaned
+    assert "@db.internal" in cleaned
+
+
 def test_sanitize_strips_control_characters_and_keeps_text_readable() -> None:
     cleaned = diagnostics.sanitize_diagnostics("\x1b[31mTraceback\x1b[0m\r\nValueError: x\x00", {})
     assert cleaned == "Traceback\nValueError: x"
@@ -435,3 +468,18 @@ def test_a_failed_marker_is_written_from_a_thread_safe_path(tmp_path: Path) -> N
         writer.join()
     first_line = (tmp_path / f"ready{serve.FAILED_SUFFIX}").read_text().splitlines()[0]
     assert first_line.startswith("codigo_")
+
+
+def test_the_stderr_tail_drops_the_line_cut_by_the_window() -> None:
+    import os
+    import sys
+
+    from rayito._agent._runner.agent_host import process
+
+    noisy = f"import sys; sys.stderr.write('x' * {process.STDERR_TAIL_BYTES} + chr(10) + 'fin')"
+    child = process.ChildProcess(
+        [sys.executable, "-c", noisy], env=dict(os.environ), capture_stderr_tail=True
+    )
+    child.wait()
+    tail = child.stderr_text()
+    assert tail == "fin"

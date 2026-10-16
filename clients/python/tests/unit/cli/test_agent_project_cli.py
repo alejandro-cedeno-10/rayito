@@ -557,6 +557,41 @@ def test_a_failed_deploy_prints_the_cause_and_the_notes(
 
 
 @pytest.mark.usefixtures("access_token")
+def test_an_invalid_argument_failure_also_prints_the_notes(
+    monkeypatch: pytest.MonkeyPatch, runner: CliRunner, clients: Clients
+) -> None:
+    @dataclass(frozen=True)
+    class Project(FakeProject):
+        def deploy(self, **kwargs: Any) -> FakeDeployment:
+            failure = InvalidArgumentException("pasarela sin configurar")
+            failure.add_note(f"keep_on_failure=True: el sandbox {SANDBOX_ID} sigue vivo")
+            raise failure
+
+    install_project(monkeypatch, Project())
+    result = runner.invoke(app, ["agent", "deploy", "--keep-on-failure"], obj=clients)
+    assert result.exit_code == 2
+    assert "pasarela sin configurar" in result.output
+    assert SANDBOX_ID in result.output
+
+
+@pytest.mark.usefixtures("access_token")
+def test_any_other_failure_names_the_kept_sandbox_too(
+    monkeypatch: pytest.MonkeyPatch, runner: CliRunner, clients: Clients
+) -> None:
+    @dataclass(frozen=True)
+    class Project(FakeProject):
+        def deploy(self, **kwargs: Any) -> FakeDeployment:
+            failure = RuntimeError("boom")
+            failure.add_note(f"keep_on_failure=True: el sandbox {SANDBOX_ID} sigue vivo")
+            raise failure
+
+    install_project(monkeypatch, Project())
+    result = runner.invoke(app, ["agent", "deploy", "--keep-on-failure"], obj=clients)
+    assert result.exit_code != 0
+    assert SANDBOX_ID in result.output
+
+
+@pytest.mark.usefixtures("access_token")
 def test_deploy_warns_when_the_app_routes_are_not_exposed(
     monkeypatch: pytest.MonkeyPatch, runner: CliRunner, clients: Clients
 ) -> None:

@@ -413,6 +413,10 @@ export class AgentProject {
    * proceso (`AgentDeployment.connect`, `rayito agent invoke`) lo guarda: sin
    * él sólo `Sandbox.kill(sandboxId)` llega al sandbox.
    *
+   * Si el despliegue falla, el sandbox se mata. Con `keepOnFailure: true` (hace
+   * falta `accessToken`) se deja vivo para depurarlo, sigue facturando hasta
+   * que lo termines, y el mensaje del error dice cuál es.
+   *
    * Coste y activación
    * -------------------
    * Activa: `await project.deploy()` (o `rayito agent deploy`); nada más lo

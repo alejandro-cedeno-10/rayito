@@ -91,7 +91,7 @@ escriben ficheros.
 Son tres, se hacen una vez por cuenta y región, y `rayito doctor` comprueba que
 están. Con ellos hechos, el primer despliegue es construir la imagen del agente
 (≈ 5 minutos la primera vez, porque instala el runtime y tus requisitos) y
-desplegarla (≈ 10 segundos hasta que el servicio responde).
+desplegarla (≈ 20 segundos hasta que el servicio responde).
 
 | Qué | Cómo | Cuánto |
 |---|---|---|
@@ -649,7 +649,7 @@ guardaste:
 === "Python (async)"
 
     ```python
-    from rayito import AgentDeployment, AsyncAgentProject
+    from rayito import AsyncAgentDeployment, AsyncAgentProject
 
 
     async def main() -> None:
@@ -657,8 +657,10 @@ guardaste:
         token = deployment.access_token
         await deployment.pause()
         await deployment.resume()
+
+        same = await AsyncAgentDeployment.connect(deployment.sandbox_id, access_token=token)
+        print(await same.status())
         await deployment.stop()
-        print(AgentDeployment.__name__, token is not None)
     ```
 
 === "TypeScript"

@@ -92,7 +92,7 @@ only write files.
 There are three, done once per account and region, and `rayito doctor` checks
 that they are in place. With them done, the first deployment is building the
 agent image (≈ 5 minutes the first time, because it installs the runtime and
-your requirements) and deploying it (≈ 10 seconds until the service answers).
+your requirements) and deploying it (≈ 20 seconds until the service answers).
 
 | What | How | How long |
 |---|---|---|
@@ -648,7 +648,7 @@ you saved:
 === "Python (async)"
 
     ```python
-    from rayito import AgentDeployment, AsyncAgentProject
+    from rayito import AsyncAgentDeployment, AsyncAgentProject
 
 
     async def main() -> None:
@@ -656,8 +656,10 @@ you saved:
         token = deployment.access_token
         await deployment.pause()
         await deployment.resume()
+
+        same = await AsyncAgentDeployment.connect(deployment.sandbox_id, access_token=token)
+        print(await same.status())
         await deployment.stop()
-        print(AgentDeployment.__name__, token is not None)
     ```
 
 === "TypeScript"
