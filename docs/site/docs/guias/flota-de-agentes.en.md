@@ -116,7 +116,8 @@ VM (`rs1.<sandbox>.<session>`): passing it back takes the call to the same VM
 without asking anyone. With `max_vms = 1` the session id does not change. From
 another process, `AgentFleet.connect(name, access_token=...)` rebuilds the fleet
 from the non-terminated MicroVMs of its image without resuming any, and a
-session id from the first call still leads to its VM.
+session id from the first call still leads to its VM. For the reconnected fleet's
+replies to return the handle too, pass the same `scaling` you deployed it with.
 
 A session id you choose yourself (a chat thread) is only remembered inside the
 process that deployed the fleet. To find it from another process in `dedicated`

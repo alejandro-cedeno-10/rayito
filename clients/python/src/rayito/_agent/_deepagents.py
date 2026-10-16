@@ -32,6 +32,7 @@ from rayito._agent._domain import (
     validate_model_id,
 )
 from rayito._agent._events import AgentEvent, AgentFailed, Done
+from rayito._agent._host_runtime import standard_model_envs
 from rayito._agent._install_plan import (
     DEFAULT_PYTHON_INSTALLER,
     PYTHON_INSTALLERS,
@@ -442,12 +443,18 @@ class DeepAgents:
 
     def host_config(self, spec: AgentSpec, *, wiring: ModelWiring, workdir: str) -> HostConfig:
         """La configuración del host para el driver `deepagents`: el mismo
-        fichero de configuración y las mismas variables que `command()`."""
+        fichero de configuración y las mismas variables que `command()`, más
+        las estándar del proveedor apuntadas a la pasarela, para que también
+        el cliente de modelo que crea tu grafo pase por ella."""
+        urls = wiring_urls(wiring)
         return HostConfig(
             driver="deepagents",
             python=DEEPAGENTS_PYTHON,
-            files=self._config_files(spec, wiring_urls(wiring), workdir),
-            envs=_run_envs(spec, direct=isinstance(wiring, DirectWiring)),
+            files=self._config_files(spec, urls, workdir),
+            envs={
+                **_run_envs(spec, direct=isinstance(wiring, DirectWiring)),
+                **standard_model_envs(spec, urls),
+            },
             options={"config_path": DEEPAGENTS_CONFIG_PATH},
         )
 

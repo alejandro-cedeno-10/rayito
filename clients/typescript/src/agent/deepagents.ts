@@ -31,6 +31,7 @@ import {
   validateModelId,
 } from "./domain.js";
 import type { AgentEvent, AgentFailed, Done } from "./events.js";
+import { standardModelEnvs } from "./host-runtime.js";
 import {
   checkRequirementsPath,
   DEFAULT_PYTHON_INSTALLER,
@@ -489,16 +490,22 @@ export class DeepAgents implements AgentRuntime, InstallableRuntime, ServableRun
   }
 
   /** La configuración del host para el driver `deepagents`: el mismo
-   * fichero de configuración y las mismas variables que `command()`. */
+   * fichero de configuración y las mismas variables que `command()`, más las
+   * estándar del proveedor apuntadas a la pasarela, para que también el
+   * cliente de modelo que crea tu grafo pase por ella. */
   hostConfig(
     spec: AgentSpec,
     options: { readonly wiring: ModelWiring; readonly workdir: string },
   ): HostConfig {
+    const urls = wiringUrls(options.wiring);
     return hostConfig({
       driver: "deepagents",
       python: DEEPAGENTS_PYTHON,
-      files: this.#configFiles(spec, wiringUrls(options.wiring), options.workdir),
-      envs: runEnvs(spec, options.wiring.kind === "direct"),
+      files: this.#configFiles(spec, urls, options.workdir),
+      envs: {
+        ...runEnvs(spec, options.wiring.kind === "direct"),
+        ...standardModelEnvs(spec, urls),
+      },
       options: { config_path: DEEPAGENTS_CONFIG_PATH },
     });
   }

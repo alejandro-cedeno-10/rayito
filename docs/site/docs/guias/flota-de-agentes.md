@@ -115,7 +115,9 @@ VM (`rs1.<sandbox>.<sesión>`): pasarlo de vuelta lleva la llamada al mismo VM s
 consultar a nadie. Con `max_vms = 1` el id de sesión no cambia. Desde otro
 proceso, `AgentFleet.connect(nombre, access_token=...)` reconstruye la flota con
 los MicroVMs no terminados de su imagen sin reanudar ninguno, y un id de sesión
-de la primera llamada sigue llevando a su VM.
+de la primera llamada sigue llevando a su VM. Para que las respuestas de la
+flota reconectada también devuelvan el asa, pasa el mismo `scaling` con el que
+la desplegaste.
 
 Un id de sesión que elijas tú (el hilo de un chat) sólo se recuerda dentro del
 proceso que desplegó la flota. Para encontrarlo desde otro proceso en modo

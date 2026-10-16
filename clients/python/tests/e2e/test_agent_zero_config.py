@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import shlex
 import time
 import urllib.request
 from collections.abc import Iterator
@@ -52,6 +53,7 @@ from .agent_zero_config_support import (
     RECOVERY_TIMEOUT_SECONDS,
     SECRET_VAR,
     SUSPEND_WAIT_SECONDS,
+    TERMINATION_WAIT_SECONDS,
     Ledger,
     project_name,
     region,
@@ -170,11 +172,23 @@ def test_zero_config(
     assert sandbox_exposes_key(sandbox, credential) == []
     fleet.stop()
     fleets.remove(fleet)
-    assert not Sandbox.list(template=project_name(sample, ""), region=region())
+    assert_no_vms_left(project_name(sample, ""))
+
+
+def assert_no_vms_left(template: str) -> None:
+    """Terminar un VM tarda unos segundos en dejar de listarse: se espera a que
+    la imagen se quede sin VMs."""
+    deadline = time.monotonic() + TERMINATION_WAIT_SECONDS
+    while True:
+        left = [item.sandbox_id for item in Sandbox.list(template=template, region=region())]
+        if not left:
+            return
+        assert time.monotonic() < deadline, left
+        time.sleep(POLL_SECONDS)
 
 
 def sandbox_children(sandbox: Any) -> list[int]:
-    result = sandbox.commands.run(f"python3 -c {json.dumps(CHILDREN)}", timeout=60)
+    result = sandbox.commands.run(f"python3 -c {shlex.quote(CHILDREN)}", timeout=60)
     return [int(pid) for pid in result.stdout.split()]
 
 
@@ -182,7 +196,7 @@ def wait_for_ping(sandbox: Any) -> None:
     deadline = time.monotonic() + RECOVERY_TIMEOUT_SECONDS
     while time.monotonic() < deadline:
         try:
-            result = sandbox.commands.run(f"python3 -c {json.dumps(PING_SCRIPT)}", timeout=20)
+            result = sandbox.commands.run(f"python3 -c {shlex.quote(PING_SCRIPT)}", timeout=20)
             if '"Healthy"' in result.stdout:
                 return
         except SandboxException:
@@ -214,7 +228,9 @@ def test_custom_options(
         )
     assert "busy" in outcomes and "text" in outcomes
 
-    rebuilt = AgentFleet.connect(fleet.name, access_token=token, region=region())
+    rebuilt = AgentFleet.connect(
+        fleet.name, access_token=token, scaling=fleet.scaling, region=region()
+    )
     again = rebuilt.invoke(PROMPT, session_id=first.session_id)
     assert vm_of(again.session_id) == vm_of(first.session_id)
 
@@ -222,7 +238,7 @@ def test_custom_options(
     assert_suspends_and_resumes(fleet, sample)
     fleet.stop()
     fleets.remove(fleet)
-    assert not Sandbox.list(template=project_name(sample, "c"), region=region())
+    assert_no_vms_left(project_name(sample, "c"))
 
 
 def busy_or_text(deployment: Any, prompt: str) -> str:

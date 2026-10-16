@@ -37,6 +37,7 @@ import {
   SUSPEND_WAIT_MS,
   selectedSamples,
   stagedSample,
+  TERMINATION_WAIT_MS,
   TEST_TIMEOUT_MS,
 } from "./agent-zero-config-support.js";
 import { e2eEnabled } from "./helpers.js";
@@ -121,6 +122,18 @@ describe.runIf(READY)("agent-zero-config en AWS real (Bedrock)", () => {
     return live;
   }
 
+  /** Terminar un VM tarda unos segundos en dejar de listarse: se espera a que
+   * la imagen se quede sin VMs. */
+  async function expectNoVmsLeft(name: string): Promise<void> {
+    const deadline = Date.now() + TERMINATION_WAIT_MS;
+    let live = await liveOf(name);
+    while (live.length > 0 && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, POLL_MS));
+      live = await liveOf(name);
+    }
+    expect(live).toEqual([]);
+  }
+
   it.for(SAMPLES.map((sample) => [sample.id, sample] as const))(
     "sin opciones: %s",
     { timeout: TEST_TIMEOUT_MS },
@@ -146,7 +159,7 @@ describe.runIf(READY)("agent-zero-config en AWS real (Bedrock)", () => {
       expect(await sandboxExposesKey(sandbox, await modelCredential(BEDROCK_REGION))).toEqual([]);
       await fleet.stop();
       fleets.splice(fleets.indexOf(fleet), 1);
-      expect(await liveOf(projectName(sample, ""))).toEqual([]);
+      await expectNoVmsLeft(projectName(sample, ""));
     },
   );
 
@@ -184,6 +197,7 @@ describe.runIf(READY)("agent-zero-config en AWS real (Bedrock)", () => {
 
       const rebuilt = await AgentFleet.connect(fleet.name, {
         accessToken,
+        scaling: fleet.scaling,
         connection: { region: BEDROCK_REGION },
       });
       const again = await rebuilt.invoke(PROMPT, { sessionId: first.sessionId });
@@ -193,7 +207,7 @@ describe.runIf(READY)("agent-zero-config en AWS real (Bedrock)", () => {
       await assertSuspendsAndResumes(fleet, sample);
       await fleet.stop();
       fleets.splice(fleets.indexOf(fleet), 1);
-      expect(await liveOf(projectName(sample, "c"))).toEqual([]);
+      await expectNoVmsLeft(projectName(sample, "c"));
     },
   );
 
