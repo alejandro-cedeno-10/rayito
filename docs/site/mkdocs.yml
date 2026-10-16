@@ -82,6 +82,7 @@ extra_javascript:
 
 hooks:
   - hooks/limits_macros.py
+  - hooks/alternate_links.py
 
 plugins:
   - search
