@@ -326,7 +326,9 @@ cargo publish --dry-run -p rayito-proto
      CHANGELOG y los ficheros generados de las pilas (los directorios de
      plantillas y artefactos de `clients/python/src/rayito/_stacks/` y
      `clients/typescript/src/stacks/templates/`); también aborta si
-     release-please movió un fichero que la configuración no explica, o si
+     release-please movió un fichero que la configuración no explica (los
+     ficheros generados de las pilas se admiten, así que se puede volver a
+     ejecutar sobre una rama ya preparada), o si
      un fichero de versión que `main` no tocó desde la base de
      release-please no queda idéntico al de su rama (contraste de los
      actualizadores con los de release-please). En todos los casos sale con
