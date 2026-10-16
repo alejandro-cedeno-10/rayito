@@ -11,7 +11,7 @@
 
 import { createHash } from "node:crypto";
 import { AGENT_HOST_FILES } from "./assets/host-assets.gen.js";
-import { PREFETCH_SCRIPT } from "./assets/template-assets.gen.js";
+import { NODE_BRIDGE, PREFETCH_SCRIPT } from "./assets/template-assets.gen.js";
 import { DEFAULT_INSTALL_DIR, type InstallTarget } from "./runtime.js";
 
 /** Directorio raíz de todo lo que la plantilla instala (root, 0755). */
@@ -26,8 +26,17 @@ export const AGENT_HOST_DIR = `${AGENT_RAYITO_DIR}/agent_host`;
 /** Nombres de las carpetas del contexto de build que `AgentTemplate` copia. */
 export const AGENT_HOST_CONTEXT_DIR = "agent_host";
 export const AGENT_APP_CONTEXT_DIR = "app";
+/** El puente de Node de los agentes de JavaScript y TypeScript (dato de
+ * paquete) y dónde lo instala la plantilla. */
+export const NODE_BRIDGE_NAME = "node_bridge.mjs";
+export const NODE_BRIDGE_PATH = `${AGENT_RAYITO_DIR}/${NODE_BRIDGE_NAME}`;
 export const PREFETCH_SCRIPT_NAME = "rayito-agent-prefetch";
 export const PREFETCH_SCRIPT_PATH = `${AGENT_BIN_DIR}/${PREFETCH_SCRIPT_NAME}`;
+
+/** El puente de Node (`node_bridge.mjs`). */
+export function nodeBridge(): string {
+  return NODE_BRIDGE;
+}
 
 /** El demonio de precarga (`rayito-agent-prefetch`). */
 export function prefetchScript(): string {

@@ -2857,11 +2857,17 @@ que hay que apagar.
    0755 bajo `/opt/agents/rayito/`). Habla el protocolo JSONL v1 (ADR-025)
    por dos transportes: stdio (tarea, lo que hoy hace el runner) y HTTP
    (servicio). Sus drivers: `deepagents`/`langgraph`, `strands` (SDK y
-   harness, en proceso), `strands-ts` (puente Node), `hermes` (su API server
+   harness, en proceso), `node-callable` (un puente Node con un adaptador por
+   framework: Strands, LangGraph.js y deepagents-js, AI SDK de Vercel y una
+   función propia; `strands-ts` es su nombre antiguo), `hermes` (su API server
    en loopback, con clave aleatoria por arranque), `opencode` (traductor del
    JSONL de `opencode run`), `callable` (función `módulo:atributo`),
    `command` (proceso que habla v1 o texto plano) y `http-app` (servidor
-   propio del usuario detrás del host). La ruta `deepagents_runner.py` se
+   propio del usuario detrás del host: con el protocolo `json` también
+   reenvía sus demás rutas). El host supervisa las apps de larga vida (las
+   relanza con espera creciente y declara `app_crashloop` agotado el
+   presupuesto) y puede poner una cola FIFO acotada delante de
+   `max_concurrency`. La ruta `deepagents_runner.py` se
    mantiene como envoltorio, así que una imagen nueva sirve a un SDK
    anterior y al revés. Los límites de `AgentLimits` los aplica el host
    cuando no hay SDK en el bucle (servicio), con la misma semántica y los

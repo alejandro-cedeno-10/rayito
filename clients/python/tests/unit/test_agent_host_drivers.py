@@ -468,6 +468,7 @@ def test_host_driver_registry_has_one_line_per_driver() -> None:
         "deepagents",
         "hermes",
         "http-app",
+        "node-callable",
         "opencode",
         "strands",
         "strands-ts",

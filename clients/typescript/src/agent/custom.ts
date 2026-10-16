@@ -5,7 +5,10 @@
  * HTTP. Espejo de `rayito._agent._custom`: implementa `AgentRuntime`,
  * `InstallableRuntime` y `ServableRuntime` sobre `HostBackedRuntime`.
  *
- * Exactamente uno de `command`, `entrypoint` o `app`:
+ * Exactamente uno de `command`, `entrypoint` o `app`. Con `packageManager`
+ * (`pip` o `uv`: Python; `npm`, `pnpm` o `yarn`: Node) y `pythonVersion` o
+ * `nodeVersion` el proyecto se instala con el gestor y la versión del
+ * intérprete que pidas (`install-plan.ts`):
  *
  * - `command`: tu `argv`, que recibe la petición por stdin y habla el
  *   protocolo v1 por stdout (`protocol: "rayito-v1"`) o escribe texto
@@ -14,10 +17,24 @@
  *   `RAYITO_REASONING`).
  * - `entrypoint: "modulo:funcion"`: una función de Python que recibe la
  *   petición (`{ prompt, session_id, model, reasoning }`) y devuelve el texto,
- *   un iterable de trozos de texto o un objeto con `text`.
+ *   un iterable de trozos de texto o un objeto con `text`. Con un gestor de
+ *   Node es `ruta.ts#exportacion` y la ejecuta `node_bridge.mjs` con un
+ *   `adapter`: `callable` (la misma función, en JavaScript), `langgraph` (un
+ *   grafo de LangGraph.js o de deepagents-js) o `vercel-ai` (un agente del AI
+ *   SDK).
  * - `app: new HttpApp(...)`: tu servidor HTTP; Rayito lo arranca, espera a su
- *   ruta de salud y traduce `/invocations`. Con `protocol: "raw"` (un servidor
- *   MCP por Streamable HTTP, por ejemplo) sólo se expone, sin traducir.
+ *   ruta de salud y traduce `/invocations`. Con `protocol: "json"` (una app con
+ *   su propio contrato) también reenvía tus demás rutas; con `protocol: "raw"`
+ *   (un servidor MCP por Streamable HTTP, por ejemplo) sólo se expone, sin
+ *   traducir.
+ *
+ * Ese es el contrato mínimo de cualquier framework que no tiene su propio
+ * adaptador (CrewAI, OpenAI Agents SDK, Google ADK, Claude Agent SDK...): una app
+ * HTTP que contesta a su ruta de salud y a un POST con JSON, una función
+ * `(petición) -> texto` o un comando que lee el prompt por stdin y escribe texto
+ * por stdout. Los frameworks con adaptador (Strands, deepagents y LangGraph,
+ * Hermes, OpenCode, y en JavaScript LangGraph.js, deepagents-js y el AI SDK) no
+ * necesitan ninguno de los tres.
  *
  * El modelo llega a tu código por las variables estándar del proveedor y por
  * las `RAYITO_MODEL_*`, apuntadas a la pasarela con un marcador como clave: la
@@ -27,8 +44,13 @@
 import { createHash } from "node:crypto";
 import { InvalidArgumentError } from "../errors.js";
 import {
+  AGENT_DEFAULT_NODE_MAJOR,
+  AGENT_NODE_SHA256S,
+  AGENT_NODE_VERSIONS,
+  AGENT_PROTOCOL_VERSION,
   AGENT_SERVICE_HEALTH_PATH,
   AGENT_SERVICE_INVOKE_PATH,
+  AGENT_STATE_DIR,
   MODEL_CREDENTIAL_PLACEHOLDER,
   PORT_MAX,
   PORT_MIN,
@@ -40,23 +62,64 @@ import {
   modelBaseUrl,
   PYTHON_FLAG_ENVS,
   standardModelEnvs,
-  userRequirementsSteps,
 } from "./host-runtime.js";
-import { AGENT_APP_DIR, AGENT_INSTALL_DIR } from "./recipes.js";
 import {
+  checkNodeVersion,
+  checkPythonVersion,
+  checkRequirementsPath,
+  ecosystem,
+  NODE_PACKAGE_MANAGERS,
+  nodeBin,
+  nodeDependencySteps,
+  nodeRuntimeSteps,
+  pythonDependencySteps,
+  pythonInterpreter,
+  pythonManifest,
+  pythonRuntimeSteps,
+} from "./install-plan.js";
+import {
+  AGENT_APP_DIR,
+  AGENT_INSTALL_DIR,
+  NODE_BRIDGE_NAME,
+  NODE_BRIDGE_PATH,
+  nodeBridge,
+} from "./recipes.js";
+import {
+  copyStep,
   type InstallableRuntime,
   type InstallTarget,
+  installTarget,
   runStep,
   type TemplateStep,
 } from "./runtime.js";
 
 export const CUSTOM_PROTOCOLS = ["rayito-v1", "text"] as const;
 export type CustomProtocol = (typeof CUSTOM_PROTOCOLS)[number];
-export const HTTP_APP_PROTOCOLS = ["agentcore", "openai-chat", "raw"] as const;
+export const HTTP_APP_PROTOCOLS = ["agentcore", "json", "openai-chat", "raw"] as const;
 export type HttpAppProtocol = (typeof HTTP_APP_PROTOCOLS)[number];
 export const CUSTOM_NAME = "custom";
 export const DEFAULT_CUSTOM_PROTOCOL: CustomProtocol = "rayito-v1";
 export const DEFAULT_HTTP_APP_PROTOCOL: HttpAppProtocol = "agentcore";
+export const HTTP_APP_KEYS: readonly string[] = [
+  "command",
+  "port",
+  "health_path",
+  "invoke_path",
+  "protocol",
+  "request_field",
+  "response_field",
+  "port_env",
+];
+/** Los adaptadores del puente de Node que un `CustomRuntime` con un gestor de
+ * Node puede elegir (el de Strands lo trae `StrandsRuntime`). */
+export const CUSTOM_ADAPTERS = ["callable", "langgraph", "vercel-ai"] as const;
+export type CustomAdapter = (typeof CUSTOM_ADAPTERS)[number];
+export const DEFAULT_CUSTOM_ADAPTER: CustomAdapter = "callable";
+/** Carpeta de sesiones (bajo el estado del runtime) del historial que guarda el
+ * puente de Node para los marcos sin memoria propia. */
+export const CUSTOM_SESSIONS_DIR_NAME = "sessions";
+/** El instalador de Python si `requirements` no trae `packageManager`. */
+export const DEFAULT_PYTHON_INSTALLER = "pip";
 /** El venv que crea `CustomRuntime({ requirements })`. */
 export const CUSTOM_VENV_NAME = "custom";
 /** Variables con el modelo que ve tu código, además de las estándar. */
@@ -71,7 +134,10 @@ export const REQUEST_MODEL_ENV = "RAYITO_MODEL";
 export const REQUEST_REASONING_ENV = "RAYITO_REASONING";
 
 const PYTHON_ENTRYPOINT_PATTERN = /^[A-Za-z_][A-Za-z0-9_.]*:[A-Za-z_][A-Za-z0-9_]*$/;
-const REQUIREMENTS_PATTERN = /^[A-Za-z0-9_][A-Za-z0-9_./-]*$/;
+/** `ruta/modulo.ts` o `ruta/modulo.ts#exportacion`. */
+const NODE_ENTRYPOINT_PATTERN = /^[A-Za-z0-9_][A-Za-z0-9_./-]*(#[A-Za-z_$][A-Za-z0-9_$]*)?$/;
+const FIELD_PATTERN = /^[A-Za-z_][A-Za-z0-9_.]*$/;
+const ENV_NAME_PATTERN = /^[A-Z_][A-Z0-9_]*$/;
 const URL_PATH_PATTERN = /^\/[A-Za-z0-9._~!$&'()*+,;=:@%/-]*$/;
 
 function argv(value: unknown, label: string): readonly string[] {
@@ -93,6 +159,16 @@ export interface HttpAppOptions {
   readonly healthPath?: string | undefined;
   readonly invokePath?: string | undefined;
   readonly protocol?: HttpAppProtocol | undefined;
+  /** Con `protocol: "json"`: el campo del cuerpo que lleva el prompt (por
+   * defecto `prompt`). */
+  readonly requestField?: string | undefined;
+  /** Con `protocol: "json"`: de dónde sale el texto (con puntos para anidar); si
+   * falta, del primer campo de texto de `answer`, `output`, `text`, `response`,
+   * `result` o `content`. */
+  readonly responseField?: string | undefined;
+  /** La variable de entorno con la que se le dice a tu app en qué `port`
+   * escuchar (por ejemplo `PORT`). */
+  readonly portEnv?: string | undefined;
 }
 
 /**
@@ -100,15 +176,20 @@ export interface HttpAppOptions {
  * lo arranca, `port` es donde escucha (dentro del sandbox), `healthPath` es la
  * ruta que debe contestar 200 cuando está listo e `invokePath` la que recibe
  * `{"prompt": ...}`. `protocol` es `"agentcore"` (el contrato de AgentCore),
- * `"openai-chat"` (Chat Completions con streaming) o `"raw"` (sólo se
- * expone).
+ * `"json"` (una app con su propio contrato JSON), `"openai-chat"` (Chat
+ * Completions con streaming) o `"raw"` (sólo se expone).
  *
  * Cuándo cada uno: con `"agentcore"` u `"openai-chat"` el host sirve `/ping` y
  * `/invocations` y traduce a tu `invokePath`, así que `deployment.invoke()`
- * funciona pero tus rutas propias no se alcanzan desde fuera; con `"raw"` el
- * despliegue reenvía tus rutas tal cual (tu `/health`, tu `/invoke`, un
+ * funciona pero tus rutas propias no se alcanzan desde fuera; con `"json"` el
+ * host traduce igual (el prompt va en `requestField`, por defecto `prompt`, y
+ * el texto sale de `responseField`, o del primer campo de texto de `answer`,
+ * `output`, `text`, `response`, `result` o `content`) y además reenvía tus
+ * demás rutas, de modo que `invoke()` funciona y tu `/health` o tu `/chat`
+ * siguen alcanzables; con `"raw"` el despliegue reenvía tus rutas tal cual (un
  * servidor MCP) y `invoke()` no existe: usa `deployment.url` y
- * `deployment.headers` con tu cliente. Tu `command` se ejecuta con el
+ * `deployment.headers` con tu cliente. `portEnv` es la variable de entorno con
+ * la que se le dice a tu app en qué `port` escuchar (por ejemplo `PORT`). Tu `command` se ejecuta con el
  * directorio del código copiado como directorio de trabajo y en su
  * `PYTHONPATH`; con `requirements`, `python` y `pip` son los del venv (sin él,
  * `python` es el intérprete de la imagen).
@@ -119,6 +200,9 @@ export class HttpApp {
   readonly healthPath: string;
   readonly invokePath: string;
   readonly protocol: HttpAppProtocol;
+  readonly requestField: string | undefined;
+  readonly responseField: string | undefined;
+  readonly portEnv: string | undefined;
 
   constructor(options: HttpAppOptions) {
     this.command = argv(options.command, "HttpApp.command");
@@ -146,19 +230,44 @@ export class HttpApp {
         `HttpApp.protocol debe ser uno de ${JSON.stringify(HTTP_APP_PROTOCOLS)}`,
       );
     }
+    for (const [label, value] of [
+      ["requestField", options.requestField],
+      ["responseField", options.responseField],
+    ] as const) {
+      if (value === undefined) {
+        continue;
+      }
+      if (protocol !== "json") {
+        throw new InvalidArgumentError(`HttpApp.${label} sólo se usa con protocol 'json'`);
+      }
+      if (typeof value !== "string" || !FIELD_PATTERN.test(value)) {
+        throw new InvalidArgumentError(
+          `HttpApp.${label} debe ser un nombre de campo (con puntos para anidar)`,
+        );
+      }
+    }
+    if (options.portEnv !== undefined && !ENV_NAME_PATTERN.test(String(options.portEnv))) {
+      throw new InvalidArgumentError(
+        "HttpApp.portEnv debe ser un nombre de variable de entorno (MAYÚSCULAS)",
+      );
+    }
     this.port = options.port;
     this.healthPath = healthPath;
     this.invokePath = invokePath;
     this.protocol = protocol;
+    this.requestField = options.requestField;
+    this.responseField = options.responseField;
+    this.portEnv = options.portEnv;
   }
 
   /** Con `protocol: "agentcore"` u `"openai-chat"` el despliegue sólo expone
    * `/ping` y `/invocations` (el host traduce a tu `invokePath`): tus rutas
    * propias (`healthPath`, `invokePath` distintas de esas dos) no se alcanzan
-   * desde fuera. Con `protocol: "raw"` se exponen tal cual. */
+   * desde fuera. Con `protocol: "json"` o `"raw"` se exponen tal cual. */
   get hidesOwnRoutes(): boolean {
     return (
       this.protocol !== "raw" &&
+      this.protocol !== "json" &&
       (this.healthPath !== AGENT_SERVICE_HEALTH_PATH ||
         this.invokePath !== AGENT_SERVICE_INVOKE_PATH)
     );
@@ -166,9 +275,8 @@ export class HttpApp {
 
   /** La tabla `[runtime.app]` de `rayito-agent.toml`. */
   static fromMapping(table: Readonly<Record<string, unknown>>): HttpApp {
-    const known = ["command", "port", "health_path", "invoke_path", "protocol"];
     const unknown = Object.keys(table)
-      .filter((key) => !known.includes(key))
+      .filter((key) => !HTTP_APP_KEYS.includes(key))
       .sort();
     if (unknown.length > 0) {
       throw new InvalidArgumentError(`runtime.app.${unknown[0]}: clave desconocida`);
@@ -179,6 +287,9 @@ export class HttpApp {
       healthPath: table.health_path as string | undefined,
       invokePath: table.invoke_path as string | undefined,
       protocol: table.protocol as HttpAppProtocol | undefined,
+      requestField: table.request_field as string | undefined,
+      responseField: table.response_field as string | undefined,
+      portEnv: table.port_env as string | undefined,
     });
   }
 
@@ -194,6 +305,15 @@ export class HttpApp {
     if (this.protocol !== DEFAULT_HTTP_APP_PROTOCOL) {
       table.protocol = this.protocol;
     }
+    if (this.requestField !== undefined) {
+      table.request_field = this.requestField;
+    }
+    if (this.responseField !== undefined) {
+      table.response_field = this.responseField;
+    }
+    if (this.portEnv !== undefined) {
+      table.port_env = this.portEnv;
+    }
     return table;
   }
 }
@@ -203,8 +323,10 @@ export interface CustomRuntimeOptions {
   /** Órdenes de shell que se ejecutan al construir la imagen (como root,
    * antes de copiar tu `source`). */
   readonly install?: readonly string[] | undefined;
-  /** Un fichero de requisitos de tu `source` (`app/<requirements>`): se
-   * instala en un venv propio, que pasa a ser el intérprete del host. */
+  /** Un fichero de dependencias de tu `source` (`app/<requirements>`:
+   * `requirements.txt` o, con `packageManager: "uv"`, `pyproject.toml` o
+   * `uv.lock`): se instala en un venv propio, que pasa a ser el intérprete del
+   * host. */
   readonly requirements?: string | undefined;
   readonly command?: readonly string[] | undefined;
   readonly entrypoint?: string | undefined;
@@ -212,10 +334,26 @@ export interface CustomRuntimeOptions {
   readonly protocol?: CustomProtocol | undefined;
   /** El intérprete con el que corre todo (por defecto `python3`). */
   readonly python?: string | undefined;
+  /** `pip` o `uv` (Python) o `npm`, `pnpm` o `yarn` (Node: `source` debe llevar
+   * `package.json` y su lockfile). */
+  readonly packageManager?: string | undefined;
+  /** La versión menor de CPython (`"3.11"`...) si no es la de la imagen. */
+  readonly pythonVersion?: string | undefined;
+  /** La versión mayor de Node (`"22"`, `"24"`). */
+  readonly nodeVersion?: string | undefined;
+  /** Cómo el puente de Node ejecuta un `entrypoint` `ruta.ts#exportacion`:
+   * `callable`, `langgraph` o `vercel-ai`. */
+  readonly adapter?: string | undefined;
 }
 
 /**
  * `AgentRuntime` del agente que escribes tú (ver el módulo).
+ *
+ * `install` son órdenes de shell que se ejecutan al construir la imagen (como
+ * root, antes de copiar tu `source`). `requirements` es un fichero de
+ * dependencias de tu `source`; `packageManager` elige el gestor (`pip`, `uv`,
+ * `npm`, `pnpm` o `yarn`), y `pythonVersion` y `nodeVersion` piden un
+ * intérprete distinto del de la imagen (un build con sha256 fijado).
  *
  * Coste y activación
  * -------------------
@@ -242,6 +380,10 @@ export class CustomRuntime extends HostBackedRuntime implements InstallableRunti
   readonly app: HttpApp | undefined;
   readonly protocol: CustomProtocol;
   readonly python: string | undefined;
+  readonly packageManager: string | undefined;
+  readonly pythonVersion: string | undefined;
+  readonly nodeVersion: string | undefined;
+  readonly adapter: string | undefined;
 
   constructor(options: CustomRuntimeOptions = {}) {
     super();
@@ -268,22 +410,8 @@ export class CustomRuntime extends HostBackedRuntime implements InstallableRunti
     if (protocol !== DEFAULT_CUSTOM_PROTOCOL && options.command === undefined) {
       throw new InvalidArgumentError("CustomRuntime.protocol sólo se usa con command");
     }
-    if (options.entrypoint !== undefined && !PYTHON_ENTRYPOINT_PATTERN.test(options.entrypoint)) {
-      throw new InvalidArgumentError(
-        "CustomRuntime.entrypoint debe tener la forma 'paquete.modulo:funcion'",
-      );
-    }
     if (options.app !== undefined && !(options.app instanceof HttpApp)) {
       throw new InvalidArgumentError("CustomRuntime.app debe ser un HttpApp");
-    }
-    const requirements = options.requirements;
-    if (
-      requirements !== undefined &&
-      (!REQUIREMENTS_PATTERN.test(requirements) || requirements.split("/").includes(".."))
-    ) {
-      throw new InvalidArgumentError(
-        "CustomRuntime.requirements es una ruta relativa dentro de source",
-      );
     }
     if (
       options.python !== undefined &&
@@ -291,14 +419,23 @@ export class CustomRuntime extends HostBackedRuntime implements InstallableRunti
     ) {
       throw new InvalidArgumentError("CustomRuntime.python no puede ser vacío");
     }
+    const kind = toolchain(options);
+    checkEntrypoint(options.entrypoint, kind);
+    checkRequirements(options.requirements, kind, options.packageManager);
+    checkAdapter(options.adapter, options.entrypoint, kind);
     this.install = Object.freeze([...install]);
-    this.requirements = requirements;
+    this.requirements = options.requirements;
     this.commandArgv =
       options.command === undefined ? undefined : argv(options.command, "CustomRuntime.command");
     this.entrypoint = options.entrypoint;
     this.app = options.app;
     this.protocol = protocol;
     this.python = options.python;
+    this.packageManager = options.packageManager;
+    this.pythonVersion = options.pythonVersion;
+    this.nodeVersion = options.nodeVersion;
+    const bridged = kind === "node" && options.entrypoint !== undefined;
+    this.adapter = options.adapter ?? (bridged ? DEFAULT_CUSTOM_ADAPTER : undefined);
   }
 
   /** El runtime de la tabla `[runtime]` de `rayito-agent.toml`. */
@@ -327,6 +464,10 @@ export class CustomRuntime extends HostBackedRuntime implements InstallableRunti
       app: app === undefined ? undefined : HttpApp.fromMapping(app as Record<string, unknown>),
       protocol: (text("protocol") ?? DEFAULT_CUSTOM_PROTOCOL) as CustomProtocol,
       python: text("python"),
+      packageManager: text("package_manager"),
+      pythonVersion: text("python_version"),
+      nodeVersion: text("node_version"),
+      adapter: text("adapter"),
     });
   }
 
@@ -351,10 +492,30 @@ export class CustomRuntime extends HostBackedRuntime implements InstallableRunti
     if (this.protocol !== DEFAULT_CUSTOM_PROTOCOL) {
       options.protocol = this.protocol;
     }
-    if (this.python !== undefined) {
-      options.python = this.python;
+    const optional: ReadonlyArray<readonly [string, string | undefined]> = [
+      ["python", this.python],
+      ["package_manager", this.packageManager],
+      ["python_version", this.pythonVersion],
+      ["node_version", this.nodeVersion],
+    ];
+    for (const [key, value] of optional) {
+      if (value !== undefined) {
+        options[key] = value;
+      }
+    }
+    if (this.adapter !== undefined && this.adapter !== DEFAULT_CUSTOM_ADAPTER) {
+      options.adapter = this.adapter;
     }
     return options;
+  }
+
+  get #node(): boolean {
+    return this.packageManager !== undefined && ecosystem(this.packageManager) === "node";
+  }
+
+  /** El `entrypoint` es de JavaScript y lo ejecuta el puente de Node. */
+  get #bridged(): boolean {
+    return this.#node && this.entrypoint !== undefined;
   }
 
   /** El `bin` del venv de `requirements`: va el primero en el `PATH` de tu
@@ -367,12 +528,24 @@ export class CustomRuntime extends HostBackedRuntime implements InstallableRunti
     return `${this.venvBin(installDir)}/python`;
   }
 
+  #pinnedPython(): string {
+    return pythonInterpreter(installTarget(), this.pythonVersion);
+  }
+
   /** Dónde corre tu código: el directorio copiado (directorio de trabajo y
-   * `PYTHONPATH`) y, con `requirements`, el `bin` del venv. */
+   * `PYTHONPATH`) y, con `requirements`, el `bin` del venv; con un gestor de
+   * Node, el `bin` de Node. */
   #environmentOptions(): Record<string, unknown> {
     const options: Record<string, unknown> = { app_dir: AGENT_APP_DIR };
+    const prepend: string[] = [];
     if (this.requirements !== undefined) {
-      options.path_prepend = [this.venvBin()];
+      prepend.push(this.venvBin());
+    }
+    if (this.#node) {
+      prepend.push(nodeBin(installTarget()));
+    }
+    if (prepend.length > 0) {
+      options.path_prepend = prepend;
     }
     return options;
   }
@@ -380,6 +553,9 @@ export class CustomRuntime extends HostBackedRuntime implements InstallableRunti
   hostPython(): string {
     if (this.requirements !== undefined) {
       return this.venvPython();
+    }
+    if (this.pythonVersion !== undefined) {
+      return this.#pinnedPython();
     }
     return this.python ?? "python3";
   }
@@ -413,19 +589,7 @@ export class CustomRuntime extends HostBackedRuntime implements InstallableRunti
     workdir: string,
   ): HostSetup {
     if (this.app !== undefined) {
-      return {
-        driver: "http-app",
-        options: {
-          command: [...this.app.command],
-          port: this.app.port,
-          health_path: this.app.healthPath,
-          invoke_path: this.app.invokePath,
-          protocol: this.app.protocol,
-          workdir,
-          model: spec.model.id,
-          ...this.#environmentOptions(),
-        },
-      };
+      return { driver: "http-app", options: this.#appOptions(this.app, spec, workdir) };
     }
     if (this.commandArgv !== undefined) {
       return {
@@ -438,58 +602,219 @@ export class CustomRuntime extends HostBackedRuntime implements InstallableRunti
         },
       };
     }
+    if (this.#bridged) {
+      return { driver: "node-callable", config: this.#bridgeConfig(spec, workdir) };
+    }
     return {
       driver: "callable",
       options: { entrypoint: this.entrypoint, app_dir: AGENT_APP_DIR, workdir },
     };
   }
 
-  /** Tus órdenes de `install` y, con `requirements`, el venv con tus
-   * requisitos. */
+  #appOptions(app: HttpApp, spec: AgentSpec, workdir: string): Record<string, unknown> {
+    const options: Record<string, unknown> = {
+      command: [...app.command],
+      port: app.port,
+      health_path: app.healthPath,
+      invoke_path: app.invokePath,
+      protocol: app.protocol,
+      workdir,
+      model: spec.model.id,
+      ...this.#environmentOptions(),
+    };
+    if (app.requestField !== undefined) {
+      options.request_field = app.requestField;
+    }
+    if (app.responseField !== undefined) {
+      options.response_field = app.responseField;
+    }
+    if (app.portEnv !== undefined) {
+      options.port_env = app.portEnv;
+    }
+    return options;
+  }
+
+  #bridgeConfig(spec: AgentSpec, workdir: string): Record<string, unknown> {
+    const stateDir = `${AGENT_STATE_DIR}/${this.stateName}`;
+    return {
+      v: AGENT_PROTOCOL_VERSION,
+      bridge: NODE_BRIDGE_PATH,
+      adapter: this.adapter,
+      entrypoint: this.entrypoint,
+      model: spec.model.id,
+      instructions: spec.instructions ?? null,
+      workdir,
+      app_dir: AGENT_APP_DIR,
+      state_dir: stateDir,
+      sessions_dir: `${stateDir}/${CUSTOM_SESSIONS_DIR_NAME}`,
+    };
+  }
+
+  /** Tus órdenes de `install` y el toolchain que pidas: con `requirements`, el
+   * venv con tus dependencias; con un gestor de Node, Node y la instalación
+   * congelada de tu lockfile (y el puente si hay `entrypoint`). */
   installSteps(target: InstallTarget): readonly TemplateStep[] {
     const steps: TemplateStep[] = this.install.map((command) => runStep(command));
-    if (this.requirements !== undefined) {
-      const venvDir = `${target.installDir}/${CUSTOM_VENV_NAME}`;
-      const creator = this.python ?? target.python;
-      steps.push(runStep(`${creator} -m venv ${venvDir}`));
+    if (this.#node) {
       steps.push(
-        ...userRequirementsSteps(target, {
-          venvDir,
-          requirements: this.requirements,
-          slug: CUSTOM_VENV_NAME,
-        }),
+        ...nodeRuntimeSteps(target, this.nodeVersion),
+        ...nodeDependencySteps(target, this.packageManager as string),
       );
+      if (this.#bridged) {
+        steps.push(copyStep(NODE_BRIDGE_NAME, NODE_BRIDGE_PATH));
+      }
+      return steps;
+    }
+    steps.push(...pythonRuntimeSteps(target, this.pythonVersion));
+    if (this.requirements !== undefined) {
+      steps.push(...this.#pythonDependencySteps(target, this.requirements));
     }
     return steps;
   }
 
-  /** Ninguno: tu código y tus requisitos van en `source`. */
-  contextFiles(): Readonly<Record<string, string>> {
-    return {};
+  #pythonDependencySteps(target: InstallTarget, requirements: string): readonly TemplateStep[] {
+    const manifest = pythonManifest(requirements);
+    return pythonDependencySteps(target, {
+      installer: this.packageManager ?? DEFAULT_PYTHON_INSTALLER,
+      manifest,
+      path: manifest === "requirements" ? requirements : undefined,
+      python: this.python ?? pythonInterpreter(target, this.pythonVersion),
+      venvDir: `${target.installDir}/${CUSTOM_VENV_NAME}`,
+      slug: CUSTOM_VENV_NAME,
+    });
   }
 
-  /** Qué se instaló: el driver, el hash de tus órdenes y tus requisitos. */
+  /** El puente de Node si hay un `entrypoint` de JavaScript; si no, ninguno:
+   * tu código y tus requisitos van en `source`. */
+  contextFiles(): Readonly<Record<string, string>> {
+    return this.#bridged ? { [NODE_BRIDGE_NAME]: nodeBridge() } : {};
+  }
+
+  /** Qué se instaló: el driver, el hash de tus órdenes y tus requisitos, y el
+   * gestor y las versiones de intérprete que pediste. */
   manifestEntry(): Readonly<Record<string, unknown>> {
-    return {
+    const entry: Record<string, unknown> = {
       driver: this.hostSetupDriver(),
       install_sha256: createHash("sha256").update(this.install.join("\n"), "utf8").digest("hex"),
       requirements: this.requirements ?? null,
     };
+    if (this.packageManager !== undefined) {
+      entry.package_manager = this.packageManager;
+    }
+    if (this.pythonVersion !== undefined) {
+      entry.python_version = this.pythonVersion;
+    }
+    if (this.#node) {
+      const major = this.nodeVersion ?? AGENT_DEFAULT_NODE_MAJOR;
+      entry.node_version = AGENT_NODE_VERSIONS[major];
+      entry.node_sha256 = AGENT_NODE_SHA256S[major];
+    }
+    return entry;
   }
 
   hostSetupDriver(): string {
     if (this.app !== undefined) {
       return "http-app";
     }
-    return this.commandArgv !== undefined ? "command" : "callable";
+    if (this.commandArgv !== undefined) {
+      return "command";
+    }
+    return this.#bridged ? "node-callable" : "callable";
   }
 
-  /** Ninguna: no sabemos qué instalas. */
+  /** Node o el CPython fijado, si los pediste; si no, ninguna: no sabemos qué
+   * instalas. */
   smokeChecks(): readonly string[] {
+    if (this.#node) {
+      return ["su user -c 'node --version'"];
+    }
+    if (this.pythonVersion !== undefined) {
+      return [`su user -c '${this.#pinnedPython()} --version'`];
+    }
     return [];
   }
 
   prefetchPaths(): readonly string[] {
     return [];
+  }
+}
+
+/** El ecosistema (`python`, `node` o `undefined`) que piden las opciones del
+ * toolchain, validando que no se contradigan. */
+function toolchain(options: CustomRuntimeOptions): "python" | "node" | undefined {
+  const manager = options.packageManager;
+  if (manager !== undefined && typeof manager !== "string") {
+    throw new InvalidArgumentError("CustomRuntime.packageManager debe ser una cadena");
+  }
+  const kind = manager === undefined ? undefined : ecosystem(manager);
+  if (options.pythonVersion !== undefined) {
+    if (kind === "node") {
+      throw new InvalidArgumentError(
+        "CustomRuntime.pythonVersion no se combina con un gestor de Node",
+      );
+    }
+    if (options.python !== undefined) {
+      throw new InvalidArgumentError(
+        "CustomRuntime.python y pythonVersion no se combinan: usa uno",
+      );
+    }
+    checkPythonVersion(options.pythonVersion);
+  }
+  if (options.nodeVersion !== undefined) {
+    if (kind !== "node") {
+      throw new InvalidArgumentError(
+        `CustomRuntime.nodeVersion necesita packageManager en ${JSON.stringify(NODE_PACKAGE_MANAGERS)}`,
+      );
+    }
+    checkNodeVersion(options.nodeVersion);
+  }
+  return kind;
+}
+
+function checkEntrypoint(entrypoint: string | undefined, kind: string | undefined): void {
+  if (entrypoint === undefined) {
+    return;
+  }
+  const pattern = kind === "node" ? NODE_ENTRYPOINT_PATTERN : PYTHON_ENTRYPOINT_PATTERN;
+  if (!pattern.test(entrypoint) || entrypoint.split("/").includes("..")) {
+    const shape = kind === "node" ? "'ruta/modulo.ts#exportacion'" : "'paquete.modulo:funcion'";
+    throw new InvalidArgumentError(`CustomRuntime.entrypoint debe tener la forma ${shape}`);
+  }
+}
+
+function checkRequirements(
+  requirements: string | undefined,
+  kind: string | undefined,
+  manager: string | undefined,
+): void {
+  if (requirements === undefined) {
+    return;
+  }
+  if (kind === "node") {
+    throw new InvalidArgumentError(
+      "CustomRuntime.requirements es de Python: con un gestor de Node las " +
+        "dependencias son las de package.json",
+    );
+  }
+  checkRequirementsPath("CustomRuntime", requirements, manager);
+}
+
+function checkAdapter(
+  adapter: string | undefined,
+  entrypoint: string | undefined,
+  kind: string | undefined,
+): void {
+  if (adapter === undefined) {
+    return;
+  }
+  if (!(CUSTOM_ADAPTERS as readonly string[]).includes(adapter)) {
+    throw new InvalidArgumentError(
+      `CustomRuntime.adapter debe ser uno de ${JSON.stringify(CUSTOM_ADAPTERS)}`,
+    );
+  }
+  if (kind !== "node" || entrypoint === undefined) {
+    throw new InvalidArgumentError(
+      "CustomRuntime.adapter sólo se usa con entrypoint y un gestor de Node",
+    );
   }
 }

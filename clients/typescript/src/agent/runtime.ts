@@ -114,12 +114,17 @@ export interface AgentRuntime {
   warmupSteps(): readonly WarmupStep[];
 }
 
-/** Los drivers del host del agente (ADR-028, design.md D3): lista cerrada. */
+/**
+ * Los drivers del host del agente (ADR-028, design.md D3): lista cerrada.
+ * `strands-ts` es el nombre antiguo de `node-callable` con el adaptador
+ * `strands` y sólo se mantiene para leer una configuración ya escrita.
+ */
 export const HOST_DRIVERS = [
   "deepagents",
   "opencode",
   "strands",
   "strands-ts",
+  "node-callable",
   "hermes",
   "callable",
   "command",

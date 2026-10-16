@@ -7,7 +7,18 @@ Configuración del driver:
 - `command`: argv del servidor; `port`: puerto en el que escucha;
   `health_path`, `invoke_path`.
 - `protocol`: `agentcore` (el servidor ya habla `/ping` + `/invocations`),
+  `json` (una app con su propio contrato: el prompt va en el campo
+  `request_field` y el texto sale de `response_field`, o del primer campo de
+  texto de `JSON_TEXT_KEYS`; sus demás rutas siguen alcanzables),
   `openai-chat` (Chat Completions con streaming) o `raw`.
+- `port_env`: la variable de entorno con la que se le dice a la app en qué
+  `port` escuchar (por ejemplo `PORT`); sin ella no se toca el entorno.
+- Supervisión: una app que muere después de estar lista se relanza con una
+  espera creciente (`restart_max`, `restart_window_seconds`,
+  `restart_backoff_seconds`, `restart_backoff_max_seconds`; ver
+  `process.RestartPolicy`). Mientras se relanza `availability()` es
+  `restarting`; pasado el presupuesto es `failed` y el host deja el marcador
+  `app_crashloop`.
 - `app_dir`: el código copiado; es el directorio de trabajo de la app y va al
   principio de su `PYTHONPATH`, así que `python -m paquete.modulo` funciona.
   `path_prepend`: directorios que van al principio de su `PATH` (el `bin` del
@@ -20,23 +31,29 @@ Configuración del driver:
 
 Con `raw` no hay traducción: el host reenvía tal cual todo lo que no es
 `/ping` (`forward()`), y `run()` falla con `protocol_error`: un servidor MCP
-o cualquier otro protocolo sólo se expone, no se invoca con `invoke()`.
+o cualquier otro protocolo sólo se expone, no se invoca con `invoke()`. Con
+`json` el host traduce `/invocations` y además reenvía tal cual el resto de
+rutas (`forwards`).
 """
 
 from __future__ import annotations
 
-import atexit
 import http.client
 import json
-import os
 import threading
-import time
 from collections.abc import Iterator, Mapping
 from http import HTTPStatus
 from typing import Any, Final
 
-from ..diagnostics import sanitize_diagnostics
-from ..process import ChildProcess
+from ..process import (
+    DEFAULT_START_TIMEOUT_SECONDS,
+    STATE_FAILED,
+    STATE_RESTARTING,
+    ChildProcess,
+    FailureListener,
+    RestartPolicy,
+    Supervisor,
+)
 from ..protocol import (
     AgentFailure,
     Emit,
@@ -51,17 +68,22 @@ from ._common import child_argv, child_environment
 
 LOOPBACK: Final = "127.0.0.1"
 SESSION_ID_PREFIX: Final = "app_"
-#: Segundos que se espera a que la app conteste a su ruta de salud
-#: (`AGENT_SERVICE_READY_TIMEOUT_SECONDS` de `limits.json` es el tope del
-#: SDK; el de la app, algo menor).
-DEFAULT_START_TIMEOUT_SECONDS: Final = 90.0
-HEALTH_POLL_SECONDS: Final = 0.2
 #: Plazo de una llamada a la app mientras no llegue el del host.
 REQUEST_TIMEOUT_SECONDS: Final = 600.0
 #: Claves de una respuesta JSON donde buscar el texto, en este orden.
 TEXT_KEYS: Final = ("text", "response", "result", "output", "message", "content", "answer")
 SESSION_HEADER: Final = "X-Amzn-Bedrock-AgentCore-Runtime-Session-Id"
-PROTOCOLS: Final = ("agentcore", "openai-chat", "raw")
+PROTOCOLS: Final = ("agentcore", "json", "openai-chat", "raw")
+#: El campo del cuerpo que lleva el prompt con `json`, si la
+#: configuración no trae `request_field`.
+DEFAULT_REQUEST_FIELD: Final = "prompt"
+#: Dónde buscar el texto de una respuesta `json` cuando no hay
+#: `response_field`, en este orden (los candidatos de la detección).
+JSON_TEXT_KEYS: Final = ("answer", "output", "text", "response", "result", "content")
+#: Los estados de `availability()`.
+AVAILABLE: Final = "ready"
+RESTARTING: Final = "restarting"
+FAILED: Final = "failed"
 #: Cómo llama una app a cada contador de `usage`, en este orden: los nombres
 #: de Rayito, los de Anthropic y los de Chat Completions. Una app que no
 #: informa de ninguno tiene uso desconocido, no cero.
@@ -89,17 +111,28 @@ def app_usage(raw: object) -> dict[str, int] | None:
     return usage_dict(found) if found else None
 
 
-def extract_text(payload: object) -> str:
+def extract_text(payload: object, keys: tuple[str, ...] = TEXT_KEYS) -> str:
     """El texto de una respuesta JSON de la app: una cadena tal cual, la
-    primera clave de `TEXT_KEYS` que sea cadena, o el JSON entero."""
+    primera clave de `keys` que sea cadena, o el JSON entero."""
     if isinstance(payload, str):
         return payload
     if isinstance(payload, Mapping):
-        for key in TEXT_KEYS:
+        for key in keys:
             value = payload.get(key)
             if isinstance(value, str):
                 return value
     return json.dumps(payload, ensure_ascii=False)
+
+
+def field_text(payload: object, path: str) -> str | None:
+    """El texto en `path` (claves separadas por puntos) de la respuesta, o
+    `None` si falta o no es una cadena."""
+    current = payload
+    for part in path.split("."):
+        if not isinstance(current, Mapping) or part not in current:
+            return None
+        current = current[part]
+    return current if isinstance(current, str) else None
 
 
 def iter_sse_data(response: http.client.HTTPResponse) -> Iterator[str]:
@@ -117,7 +150,9 @@ def iter_sse_data(response: http.client.HTTPResponse) -> Iterator[str]:
         yield "\n".join(data)
 
 
-def _delta_of(data: str, protocol: str) -> tuple[str, dict[str, int] | None]:
+def _delta_of(
+    data: str, protocol: str, text_keys: tuple[str, ...] = TEXT_KEYS
+) -> tuple[str, dict[str, int] | None]:
     """El texto de un mensaje SSE y, si lo trae, el uso de tokens."""
     try:
         payload = json.loads(data)
@@ -132,7 +167,7 @@ def _delta_of(data: str, protocol: str) -> tuple[str, dict[str, int] | None]:
             delta = content if isinstance(content, str) else ""
         return delta, app_usage(payload.get("usage"))
     usage = app_usage(payload.get("usage")) if isinstance(payload, Mapping) else None
-    return extract_text(payload), usage
+    return extract_text(payload, text_keys), usage
 
 
 class Driver:
@@ -143,16 +178,39 @@ class Driver:
         self._protocol = str(config.get("protocol", "agentcore"))
         if self._protocol not in PROTOCOLS:
             raise AgentFailure("protocol_error", "invalid_protocol")
-        self._child: ChildProcess | None = None
+        self._supervisor: Supervisor | None = None
+        self._listeners: list[FailureListener] = []
         self._lock = threading.Lock()
         self._request_timeout = REQUEST_TIMEOUT_SECONDS
 
     @property
     def raw(self) -> bool:
+        """Sin traducción: `/invocations` tampoco existe, todo se reenvía."""
         return self._protocol == "raw"
+
+    @property
+    def forwards(self) -> bool:
+        """El host reenvía a la app las rutas que no son `/ping` ni
+        `/invocations` (`raw` y `json`)."""
+        return self._protocol in ("raw", "json")
 
     def warm(self) -> None:
         self._ensure_started()
+
+    def add_failure_listener(self, listener: FailureListener) -> None:
+        """Quien se entera de un bucle de caídas (`app_crashloop`)."""
+        self._listeners.append(listener)
+        if self._supervisor is not None:
+            self._supervisor.add_failure_listener(listener)
+
+    def availability(self) -> str:
+        """`ready`, `restarting` (la app murió y se relanza) o `failed`
+        (agotó su presupuesto de relanzamientos)."""
+        supervisor = self._supervisor
+        state = AVAILABLE if supervisor is None else supervisor.state
+        if state == STATE_RESTARTING:
+            return RESTARTING
+        return FAILED if state == STATE_FAILED else AVAILABLE
 
     def _connection(self) -> http.client.HTTPConnection:
         return http.client.HTTPConnection(
@@ -161,18 +219,39 @@ class Driver:
 
     def _ensure_started(self) -> None:
         with self._lock:
-            if self._child is not None:
+            if self._supervisor is not None:
                 return
-            env = child_environment(self._config)
-            self._child = ChildProcess(
-                child_argv(self._config["command"], env),
-                env=env,
-                cwd=self._working_directory(),
-                capture_stdout=False,
-                capture_stderr_tail=True,
+            supervisor = Supervisor(
+                self._spawn,
+                self._healthy,
+                failure_codes=("app_exited", "app_not_ready"),
+                policy=RestartPolicy.from_config(self._config),
+                start_timeout_seconds=float(
+                    self._config.get("start_timeout_seconds", DEFAULT_START_TIMEOUT_SECONDS)
+                ),
             )
-            atexit.register(self._child.kill)
-        self._wait_healthy()
+            for listener in self._listeners:
+                supervisor.add_failure_listener(listener)
+            self._supervisor = supervisor
+        try:
+            supervisor.start()
+        except AgentFailure:
+            with self._lock:
+                self._supervisor = None
+            raise
+
+    def _spawn(self) -> ChildProcess:
+        env = child_environment(self._config)
+        port_env = self._config.get("port_env")
+        if port_env:
+            env[str(port_env)] = str(self._config["port"])
+        return ChildProcess(
+            child_argv(self._config["command"], env),
+            env=env,
+            cwd=self._working_directory(),
+            capture_stdout=False,
+            capture_stderr_tail=True,
+        )
 
     def _working_directory(self) -> str | None:
         """El directorio del código copiado (`app_dir`), de modo que
@@ -181,39 +260,20 @@ class Driver:
         directory = self._config.get("app_dir") or self._config.get("workdir")
         return str(directory) if directory else None
 
-    def _startup_failure(self, detail_code: str) -> AgentFailure:
-        """Un arranque fallido con el final de la salida de error de la app,
-        saneado: sin los valores del entorno ni credenciales."""
-        child = self._child
-        text = "" if child is None else child.stderr_text()
-        return AgentFailure(
-            "runtime_error", detail_code, sanitize_diagnostics(text, os.environ) or None
-        )
-
-    def _wait_healthy(self) -> None:
-        deadline = time.monotonic() + float(
-            self._config.get("start_timeout_seconds", DEFAULT_START_TIMEOUT_SECONDS)
-        )
-        while time.monotonic() < deadline:
-            child = self._child
-            if child is None or child.poll() is not None:
-                raise self._startup_failure("app_exited")
-            try:
-                connection = self._connection()
-                connection.request("GET", str(self._config.get("health_path", "/ping")))
-                status = connection.getresponse().status
-                connection.close()
-                if status == HTTPStatus.OK:
-                    return
-            except OSError:
-                pass
-            time.sleep(HEALTH_POLL_SECONDS)
-        raise self._startup_failure("app_not_ready")
+    def _healthy(self) -> bool:
+        try:
+            connection = self._connection()
+            connection.request("GET", str(self._config.get("health_path", "/ping")))
+            status = connection.getresponse().status
+            connection.close()
+        except OSError:
+            return False
+        return status == HTTPStatus.OK
 
     def forward(
         self, method: str, path: str, headers: Mapping[str, str], body: bytes | None
     ) -> http.client.HTTPResponse:
-        """Reenvía una petición tal cual a la app (sólo `raw`)."""
+        """Reenvía una petición tal cual a la app (`raw` y `json`)."""
         self._ensure_started()
         connection = self._connection()
         try:
@@ -234,24 +294,31 @@ class Driver:
         emit(build_event("text", text=text))
         emit(build_event("step_finished", index=1, usage=usage, finish_reason="stop"))
 
+    def _body(self, request: Request, session_id: str) -> dict[str, Any]:
+        if self._protocol == "openai-chat":
+            return {
+                "model": request.model or self._config.get("model", ""),
+                "messages": [{"role": "user", "content": request.prompt}],
+                "stream": True,
+                "stream_options": {"include_usage": True},
+            }
+        if self._protocol == "json":
+            field = str(self._config.get("request_field") or DEFAULT_REQUEST_FIELD)
+            return {field: request.prompt, "session_id": session_id}
+        body: dict[str, Any] = {"prompt": request.prompt}
+        if request.model is not None:
+            body["model"] = request.model
+        return body
+
     def _post(self, request: Request, session_id: str) -> http.client.HTTPResponse:
         invoke_path = str(self._config.get("invoke_path", "/invocations"))
         headers = {
             "Content-Type": "application/json",
             "Accept": "text/event-stream, application/json",
         }
-        if self._protocol == "openai-chat":
-            body: dict[str, Any] = {
-                "model": request.model or self._config.get("model", ""),
-                "messages": [{"role": "user", "content": request.prompt}],
-                "stream": True,
-                "stream_options": {"include_usage": True},
-            }
-        else:
+        if self._protocol != "openai-chat":
             headers[SESSION_HEADER] = session_id
-            body = {"prompt": request.prompt}
-            if request.model is not None:
-                body["model"] = request.model
+        body = self._body(request, session_id)
         try:
             connection = self._connection()
             connection.request("POST", invoke_path, body=json.dumps(body), headers=headers)
@@ -261,6 +328,25 @@ class Driver:
         if response.status != HTTPStatus.OK:
             raise AgentFailure("runtime_error", f"app_http_{count(response.status)}")
         return response
+
+    def _json_text(self, payload: object) -> str:
+        """El texto de una respuesta `json`: `response_field` si se
+        configuró (y es un error que falte) o el primer candidato."""
+        field = self._config.get("response_field")
+        if not field:
+            return extract_text(payload, JSON_TEXT_KEYS)
+        text = field_text(payload, str(field))
+        if text is None:
+            raise AgentFailure("protocol_error", "invalid_response")
+        return text
+
+    def _text_keys(self) -> tuple[str, ...]:
+        """Las claves donde buscar el texto de un mensaje SSE: las de la
+        detección con `json`, o `response_field` si se configuró."""
+        if self._protocol != "json":
+            return TEXT_KEYS
+        field = self._config.get("response_field")
+        return (str(field),) if field else JSON_TEXT_KEYS
 
     def _read(
         self, response: http.client.HTTPResponse, emit: Emit
@@ -272,13 +358,14 @@ class Driver:
             except ValueError:
                 raise AgentFailure("protocol_error", "invalid_response") from None
             reported = app_usage(payload.get("usage")) if isinstance(payload, Mapping) else None
-            return extract_text(payload), reported
+            text = self._json_text(payload) if self._protocol == "json" else extract_text(payload)
+            return text, reported
         parts: list[str] = []
         usage: dict[str, int] | None = None
         for data in iter_sse_data(response):
             if data.strip() == "[DONE]":
                 break
-            delta, found = _delta_of(data, self._protocol)
+            delta, found = _delta_of(data, self._protocol, self._text_keys())
             usage = found or usage
             if delta:
                 parts.append(delta)
@@ -287,11 +374,9 @@ class Driver:
 
     def cancel(self) -> None:
         with self._lock:
-            child = self._child
-        if child is not None:
-            child.kill()
-            with self._lock:
-                self._child = None
+            supervisor, self._supervisor = self._supervisor, None
+        if supervisor is not None:
+            supervisor.stop()
 
 
 def create(config: Mapping[str, Any]) -> Driver:

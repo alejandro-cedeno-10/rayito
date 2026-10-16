@@ -38,6 +38,7 @@ from rayito._agent._host_runtime import (
     require_supported_provider,
     standard_model_envs,
 )
+from rayito._agent._install_plan import python_download_command
 from rayito._agent._opencode import shell_quote
 from rayito._agent._recipes import (
     AGENT_APP_DIR,
@@ -55,12 +56,11 @@ from rayito._agent._runtime import (
 from rayito._limits import (
     AGENT_HERMES_API_PORT,
     AGENT_HERMES_COMMIT,
-    AGENT_HERMES_PYTHON_BUILD_TAG,
-    AGENT_HERMES_PYTHON_SHA256,
-    AGENT_HERMES_PYTHON_VERSION,
     AGENT_HERMES_REQUIREMENTS_SHA256,
     AGENT_HERMES_VERSION,
     AGENT_PROTOCOL_VERSION,
+    AGENT_PYTHON_BUILD_SHA256S,
+    AGENT_PYTHON_BUILD_VERSIONS,
     AGENT_STATE_DIR,
     MODEL_CREDENTIAL_PLACEHOLDER,
 )
@@ -79,12 +79,9 @@ HERMES_PYTHON: Final = f"{HERMES_VENV_DIR}/bin/python"
 HERMES_SOURCE_DIR: Final = f"{HERMES_INSTALL_DIR}/src"
 HERMES_REQUIREMENTS_NAME: Final = "requirements-hermes.txt"
 HERMES_REPOSITORY_URL: Final = "https://github.com/NousResearch/hermes-agent"
-#: Tarball `install_only` de python-build-standalone para linux arm64 glibc.
-HERMES_PYTHON_TARBALL_URL: Final = (
-    "https://github.com/astral-sh/python-build-standalone/releases/download/"
-    f"{AGENT_HERMES_PYTHON_BUILD_TAG}/cpython-{AGENT_HERMES_PYTHON_VERSION}"
-    f"%2B{AGENT_HERMES_PYTHON_BUILD_TAG}-aarch64-unknown-linux-gnu-install_only.tar.gz"
-)
+#: La versión menor de CPython que necesita Hermes; el build es el fijado
+#: en `AGENT_PYTHON_BUILD_VERSIONS`.
+HERMES_PYTHON_MINOR: Final = "3.14"
 #: Lo que sobra del checkout en una imagen (medido: 379 MiB -> 86 MiB).
 HERMES_PRUNED_PATHS: Final[tuple[str, ...]] = (
     ".git",
@@ -314,13 +311,7 @@ class HermesRuntime(HostBackedRuntime):
         interpreter = dataclasses.replace(target, python=f"{hermes_dir}/python/bin/python3")
         steps = list(container_packages_step(target, ("curl", "ca-certificates", "git")))
         steps += [
-            run_step(
-                f"mkdir -p {hermes_dir}"
-                f" && curl -fsSL --retry 3 -o {PYTHON_TARBALL_PATH} {HERMES_PYTHON_TARBALL_URL}"
-                f" && echo '{AGENT_HERMES_PYTHON_SHA256}  {PYTHON_TARBALL_PATH}' | sha256sum -c -"
-                f" && tar -xzf {PYTHON_TARBALL_PATH} -C {hermes_dir}"
-                f" && rm -f {PYTHON_TARBALL_PATH}"
-            ),
+            run_step(python_download_command(HERMES_PYTHON_MINOR, hermes_dir, PYTHON_TARBALL_PATH)),
             copy_step(HERMES_REQUIREMENTS_NAME, requirements),
             run_step(
                 hashed_venv_install(
@@ -352,8 +343,8 @@ class HermesRuntime(HostBackedRuntime):
         return {
             "version": AGENT_HERMES_VERSION,
             "commit": AGENT_HERMES_COMMIT,
-            "python_version": AGENT_HERMES_PYTHON_VERSION,
-            "python_sha256": AGENT_HERMES_PYTHON_SHA256,
+            "python_version": AGENT_PYTHON_BUILD_VERSIONS[HERMES_PYTHON_MINOR],
+            "python_sha256": AGENT_PYTHON_BUILD_SHA256S[HERMES_PYTHON_MINOR],
             "requirements_sha256": AGENT_HERMES_REQUIREMENTS_SHA256,
             "requirements_file_sha256": hashlib.sha256(hermes_requirements()).hexdigest(),
         }

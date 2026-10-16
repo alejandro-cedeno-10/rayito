@@ -32,6 +32,12 @@ from rayito._agent._domain import (
     validate_model_id,
 )
 from rayito._agent._events import AgentEvent, AgentFailed, Done
+from rayito._agent._install_plan import (
+    PYTHON_INSTALLERS,
+    check_requirements_path,
+    python_dependency_steps,
+    python_manifest,
+)
 from rayito._agent._opencode import (
     AGENT_RUN_LOCK_PATH,
     canonical_json,
@@ -88,6 +94,10 @@ DEEPAGENTS_SESSIONS_DIR: Final = f"{DEEPAGENTS_STATE_DIR}/sessions"
 DEEPAGENTS_VENV_DIR: Final = f"{AGENT_INSTALL_DIR}/deepagents"
 DEEPAGENTS_PYTHON: Final = f"{DEEPAGENTS_VENV_DIR}/bin/python"
 DEEPAGENTS_REQUIREMENTS_NAME: Final = "requirements-deepagents.txt"
+#: Nombre con el que se copian los ficheros de dependencias de tu proyecto y
+#: el instalador por defecto (`pip`).
+DEEPAGENTS_USER_SLUG: Final = "deepagents"
+DEFAULT_PYTHON_INSTALLER: Final = "pip"
 #: El runner (dato de paquete de `_agent/_runner/`) en el contexto de build.
 DEEPAGENTS_RUNNER_NAME: Final = "deepagents_runner.py"
 #: Donde la plantilla instala el runner, de root y 0755 (design.md §3).
@@ -265,18 +275,31 @@ class DeepAgents:
 
     name: str = "deepagents"
 
-    def __init__(self, entrypoint: str | None = None, *, require_entrypoint: bool = False) -> None:
+    def __init__(
+        self,
+        entrypoint: str | None = None,
+        *,
+        require_entrypoint: bool = False,
+        requirements: str | None = None,
+        package_manager: str | None = None,
+    ) -> None:
         if entrypoint is not None and (
             not isinstance(entrypoint, str) or not _ENTRYPOINT_PATTERN.fullmatch(entrypoint)
         ):
             raise InvalidArgumentException(
                 "DeepAgents.entrypoint debe tener la forma 'paquete.modulo:funcion'"
             )
+        _check_user_requirements(entrypoint, requirements, package_manager)
         self.entrypoint = entrypoint
         self.require_entrypoint = require_entrypoint
+        self.requirements = requirements
+        self.package_manager = package_manager
 
     def __repr__(self) -> str:
-        return f"DeepAgents(entrypoint={self.entrypoint!r})"
+        return (
+            f"DeepAgents(entrypoint={self.entrypoint!r}, requirements={self.requirements!r}, "
+            f"package_manager={self.package_manager!r})"
+        )
 
     def build_config(
         self, spec: AgentSpec, *, gateway_urls: Mapping[str, str], workdir: str
@@ -345,24 +368,45 @@ class DeepAgents:
         )
 
     def install_steps(self, target: InstallTarget) -> Sequence[TemplateStep]:
-        """Copia los requisitos con hash, crea el venv con `--require-hashes`
-        y copia el runner (0755)."""
+        """Copia los requisitos con hash, crea el venv con `--require-hashes`,
+        añade las dependencias de tu proyecto (`requirements`, con `pip` o
+        `uv`) sin quitar lo que ya hay y copia el runner (0755)."""
         requirements = f"{target.install_dir}/{DEEPAGENTS_REQUIREMENTS_NAME}"
-        return (
+        venv_dir = f"{target.install_dir}/deepagents"
+        steps: list[TemplateStep] = [
             copy_step(DEEPAGENTS_REQUIREMENTS_NAME, requirements),
             run_step(
                 hashed_venv_install(
                     target,
-                    venv_dir=f"{target.install_dir}/deepagents",
+                    venv_dir=venv_dir,
                     requirements_path=requirements,
                     requirements_sha256=AGENT_DEEPAGENTS_REQUIREMENTS_SHA256,
                 )
             ),
+        ]
+        if self.requirements is not None:
+            steps += self._user_dependency_steps(target, venv_dir)
+        steps.append(
             copy_step(
                 DEEPAGENTS_RUNNER_NAME,
                 f"{target.install_dir}/rayito/{DEEPAGENTS_RUNNER_NAME}",
                 executable=True,
-            ),
+            )
+        )
+        return steps
+
+    def _user_dependency_steps(self, target: InstallTarget, venv_dir: str) -> list[TemplateStep]:
+        requirements = str(self.requirements)
+        manifest = python_manifest(requirements)
+        return python_dependency_steps(
+            target,
+            installer=self.package_manager or DEFAULT_PYTHON_INSTALLER,
+            manifest=manifest,
+            path=requirements if manifest == "requirements" else None,
+            python=f"{venv_dir}/bin/python",
+            venv_dir=venv_dir,
+            slug=DEEPAGENTS_USER_SLUG,
+            create_venv=False,
         )
 
     def context_files(self) -> Mapping[str, bytes]:
@@ -373,11 +417,16 @@ class DeepAgents:
         }
 
     def manifest_entry(self) -> Mapping[str, object]:
-        """El sha256 de los requisitos y el del runner, para el manifiesto."""
-        return {
+        """El sha256 de los requisitos y el del runner, para el manifiesto, y
+        los de tu proyecto si los pediste."""
+        entry: dict[str, object] = {
             "requirements_sha256": AGENT_DEEPAGENTS_REQUIREMENTS_SHA256,
             "runner_sha256": hashlib.sha256(deepagents_runner()).hexdigest(),
         }
+        if self.requirements is not None:
+            entry["user_requirements"] = self.requirements
+            entry["package_manager"] = self.package_manager or DEFAULT_PYTHON_INSTALLER
+        return entry
 
     def smoke_checks(self) -> Sequence[str]:
         """Importa deepagents y los modelos de cada proveedor, y comprueba
@@ -401,6 +450,25 @@ class DeepAgents:
             envs=_run_envs(spec, direct=isinstance(wiring, DirectWiring)),
             options={"config_path": DEEPAGENTS_CONFIG_PATH},
         )
+
+
+def _check_user_requirements(
+    entrypoint: str | None, requirements: str | None, package_manager: str | None
+) -> None:
+    if requirements is None and package_manager is None:
+        return
+    if entrypoint is None:
+        raise InvalidArgumentException(
+            "DeepAgents.requirements y package_manager necesitan un entrypoint: "
+            "sin código tuyo no hay dependencias que instalar"
+        )
+    if package_manager is not None and package_manager not in PYTHON_INSTALLERS:
+        raise InvalidArgumentException(
+            f"DeepAgents.package_manager debe ser uno de {list(PYTHON_INSTALLERS)}"
+        )
+    if requirements is None:
+        raise InvalidArgumentException("DeepAgents.package_manager necesita requirements")
+    check_requirements_path("DeepAgents", requirements, package_manager)
 
 
 def deepagents_requirements() -> bytes:

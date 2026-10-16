@@ -1170,7 +1170,7 @@
       "wiring": "gateway",
       "workdir": "/home/user/proyecto",
       "expected": {
-        "driver": "strands-ts",
+        "driver": "node-callable",
         "python": "python3",
         "options": {
           "config_path": "/home/user/.rayito/agent/strands/config.json"
@@ -1190,9 +1190,10 @@
             "path": "/home/user/.rayito/agent/strands/config.json",
             "mode": 384,
             "json": {
+              "adapter": "strands",
               "app_dir": "/opt/agents/app",
               "base_url": "http://127.0.0.1:18001/v1",
-              "bridge": "/opt/agents/rayito/strands_bridge.mjs",
+              "bridge": "/opt/agents/rayito/node_bridge.mjs",
               "client": "OpenAIModel",
               "credential_placeholder": "placeholder-not-a-secret",
               "entrypoint": "agent.ts",
@@ -1221,9 +1222,10 @@
             "path": "/home/user/.rayito/agent/strands/config.json",
             "mode": 384,
             "json": {
+              "adapter": "strands",
               "app_dir": "/opt/agents/app",
               "base_url": "http://127.0.0.1:18001/v1",
-              "bridge": "/opt/agents/rayito/strands_bridge.mjs",
+              "bridge": "/opt/agents/rayito/node_bridge.mjs",
               "client": "OpenAIModel",
               "credential_placeholder": "placeholder-not-a-secret",
               "entrypoint": "agent.ts",
@@ -1250,7 +1252,7 @@
             "path": "/home/user/.rayito/agent/strands/host.json",
             "mode": 384,
             "json": {
-              "driver": "strands-ts",
+              "driver": "node-callable",
               "options": {
                 "config_path": "/home/user/.rayito/agent/strands/config.json"
               },
@@ -1284,7 +1286,7 @@
       "wiring": "gateway",
       "workdir": "/home/user/proyecto",
       "expected": {
-        "driver": "strands-ts",
+        "driver": "node-callable",
         "python": "python3",
         "options": {
           "config_path": "/home/user/.rayito/agent/strands/config.json"
@@ -1305,9 +1307,10 @@
             "path": "/home/user/.rayito/agent/strands/config.json",
             "mode": 384,
             "json": {
+              "adapter": "strands",
               "app_dir": "/opt/agents/app",
               "base_url": "http://127.0.0.1:18001",
-              "bridge": "/opt/agents/rayito/strands_bridge.mjs",
+              "bridge": "/opt/agents/rayito/node_bridge.mjs",
               "client": "BedrockModel",
               "credential_placeholder": "placeholder-not-a-secret",
               "entrypoint": "src/agent.ts",
@@ -1336,9 +1339,10 @@
             "path": "/home/user/.rayito/agent/strands/config.json",
             "mode": 384,
             "json": {
+              "adapter": "strands",
               "app_dir": "/opt/agents/app",
               "base_url": "http://127.0.0.1:18001",
-              "bridge": "/opt/agents/rayito/strands_bridge.mjs",
+              "bridge": "/opt/agents/rayito/node_bridge.mjs",
               "client": "BedrockModel",
               "credential_placeholder": "placeholder-not-a-secret",
               "entrypoint": "src/agent.ts",
@@ -1365,7 +1369,7 @@
             "path": "/home/user/.rayito/agent/strands/host.json",
             "mode": 384,
             "json": {
-              "driver": "strands-ts",
+              "driver": "node-callable",
               "options": {
                 "config_path": "/home/user/.rayito/agent/strands/config.json"
               },
@@ -1397,7 +1401,7 @@
       "wiring": "gateway",
       "workdir": "/home/user/proyecto",
       "expected": {
-        "driver": "strands-ts",
+        "driver": "node-callable",
         "python": "python3",
         "options": {
           "config_path": "/home/user/.rayito/agent/strands/config.json"
@@ -1417,9 +1421,10 @@
             "path": "/home/user/.rayito/agent/strands/config.json",
             "mode": 384,
             "json": {
+              "adapter": "strands",
               "app_dir": "/opt/agents/app",
               "base_url": "http://127.0.0.1:18001",
-              "bridge": "/opt/agents/rayito/strands_bridge.mjs",
+              "bridge": "/opt/agents/rayito/node_bridge.mjs",
               "client": "GoogleModel",
               "credential_placeholder": "placeholder-not-a-secret",
               "entrypoint": "agent.ts",
@@ -1448,9 +1453,10 @@
             "path": "/home/user/.rayito/agent/strands/config.json",
             "mode": 384,
             "json": {
+              "adapter": "strands",
               "app_dir": "/opt/agents/app",
               "base_url": "http://127.0.0.1:18001",
-              "bridge": "/opt/agents/rayito/strands_bridge.mjs",
+              "bridge": "/opt/agents/rayito/node_bridge.mjs",
               "client": "GoogleModel",
               "credential_placeholder": "placeholder-not-a-secret",
               "entrypoint": "agent.ts",
@@ -1477,7 +1483,7 @@
             "path": "/home/user/.rayito/agent/strands/host.json",
             "mode": 384,
             "json": {
-              "driver": "strands-ts",
+              "driver": "node-callable",
               "options": {
                 "config_path": "/home/user/.rayito/agent/strands/config.json"
               },
@@ -2002,13 +2008,13 @@
             "json": {
               "driver": "command",
               "options": {
+                "app_dir": "/opt/agents/app",
                 "command": [
                   "python3",
                   "agente.py"
                 ],
                 "protocol": "rayito-v1",
-                "workdir": "/home/user/proyecto",
-                "app_dir": "/opt/agents/app"
+                "workdir": "/home/user/proyecto"
               },
               "schema": "rayito.agent-host/1",
               "v": 1
@@ -2072,12 +2078,12 @@
             "json": {
               "driver": "command",
               "options": {
+                "app_dir": "/opt/agents/app",
                 "command": [
                   "./run.sh"
                 ],
                 "protocol": "text",
-                "workdir": "/home/user/proyecto",
-                "app_dir": "/opt/agents/app"
+                "workdir": "/home/user/proyecto"
               },
               "schema": "rayito.agent-host/1",
               "v": 1
@@ -2210,6 +2216,7 @@
             "json": {
               "driver": "http-app",
               "options": {
+                "app_dir": "/opt/agents/app",
                 "command": [
                   "uvicorn",
                   "app:app",
@@ -2221,8 +2228,7 @@
                 "model": "gpt-4.1-mini",
                 "port": 8000,
                 "protocol": "agentcore",
-                "workdir": "/home/user/proyecto",
-                "app_dir": "/opt/agents/app"
+                "workdir": "/home/user/proyecto"
               },
               "schema": "rayito.agent-host/1",
               "v": 1
@@ -2298,6 +2304,7 @@
             "json": {
               "driver": "http-app",
               "options": {
+                "app_dir": "/opt/agents/app",
                 "command": [
                   "uvicorn",
                   "app:app",
@@ -2307,13 +2314,12 @@
                 "health_path": "/ping",
                 "invoke_path": "/invocations",
                 "model": "gpt-4.1-mini",
-                "port": 8000,
-                "protocol": "agentcore",
-                "workdir": "/home/user/proyecto",
-                "app_dir": "/opt/agents/app",
                 "path_prepend": [
                   "/opt/agents/custom/bin"
-                ]
+                ],
+                "port": 8000,
+                "protocol": "agentcore",
+                "workdir": "/home/user/proyecto"
               },
               "schema": "rayito.agent-host/1",
               "v": 1
@@ -2383,6 +2389,7 @@
             "json": {
               "driver": "http-app",
               "options": {
+                "app_dir": "/opt/agents/app",
                 "command": [
                   "node",
                   "mcp.js"
@@ -2392,8 +2399,7 @@
                 "model": "gemini-2.5-flash",
                 "port": 3000,
                 "protocol": "raw",
-                "workdir": "/home/user/proyecto",
-                "app_dir": "/opt/agents/app"
+                "workdir": "/home/user/proyecto"
               },
               "schema": "rayito.agent-host/1",
               "v": 1
@@ -2403,6 +2409,682 @@
             "path": "/home/user/.rayito/agent/custom/wiring.env",
             "mode": 384,
             "text": "GEMINI_API_KEY='placeholder-not-a-secret'\nGOOGLE_GEMINI_BASE_URL='http://127.0.0.1:18001'\nRAYITO_MODEL_API_KEY='placeholder-not-a-secret'\nRAYITO_MODEL_BASE_URL='http://127.0.0.1:18001'\nRAYITO_MODEL_ID='gemini-2.5-flash'\nRAYITO_MODEL_PROVIDER='google'\n"
+          }
+        ]
+      }
+    },
+    {
+      "name": "custom-http-app-json",
+      "runtime": {
+        "kind": "custom",
+        "options": {
+          "app": {
+            "command": [
+              "python",
+              "-m",
+              "flask",
+              "run",
+              "--port",
+              "8000"
+            ],
+            "port": 8000,
+            "protocol": "json",
+            "health_path": "/healthz",
+            "invoke_path": "/chat",
+            "request_field": "question",
+            "response_field": "data.answer",
+            "port_env": "PORT"
+          }
+        }
+      },
+      "spec": {
+        "provider": "bedrock",
+        "model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+        "region": "us-east-1"
+      },
+      "wiring": "gateway",
+      "workdir": "/home/user/proyecto",
+      "expected": {
+        "driver": "http-app",
+        "python": "python3",
+        "options": {
+          "command": [
+            "python",
+            "-m",
+            "flask",
+            "run",
+            "--port",
+            "8000"
+          ],
+          "port": 8000,
+          "health_path": "/healthz",
+          "invoke_path": "/chat",
+          "protocol": "json",
+          "workdir": "/home/user/proyecto",
+          "model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "app_dir": "/opt/agents/app",
+          "request_field": "question",
+          "response_field": "data.answer",
+          "port_env": "PORT"
+        },
+        "envs": {
+          "PYTHONDONTWRITEBYTECODE": "1",
+          "PYTHONUNBUFFERED": "1",
+          "AWS_REGION": "us-east-1",
+          "AWS_BEARER_TOKEN_BEDROCK": "placeholder-not-a-secret",
+          "AWS_ENDPOINT_URL_BEDROCK_RUNTIME": "http://127.0.0.1:18001",
+          "RAYITO_MODEL_PROVIDER": "bedrock",
+          "RAYITO_MODEL_ID": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "RAYITO_MODEL_REGION": "us-east-1",
+          "RAYITO_MODEL_BASE_URL": "http://127.0.0.1:18001",
+          "RAYITO_MODEL_API_KEY": "placeholder-not-a-secret"
+        },
+        "files": [],
+        "task_files": [
+          {
+            "path": "/home/user/.rayito/agent/custom/host.json",
+            "mode": 384,
+            "json": {
+              "driver": "http-app",
+              "options": {
+                "app_dir": "/opt/agents/app",
+                "command": [
+                  "python",
+                  "-m",
+                  "flask",
+                  "run",
+                  "--port",
+                  "8000"
+                ],
+                "health_path": "/healthz",
+                "invoke_path": "/chat",
+                "model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+                "port": 8000,
+                "port_env": "PORT",
+                "protocol": "json",
+                "request_field": "question",
+                "response_field": "data.answer",
+                "workdir": "/home/user/proyecto"
+              },
+              "schema": "rayito.agent-host/1",
+              "v": 1
+            }
+          },
+          {
+            "path": "/home/user/.rayito/agent/custom/wiring.env",
+            "mode": 384,
+            "text": "AWS_BEARER_TOKEN_BEDROCK='placeholder-not-a-secret'\nAWS_ENDPOINT_URL_BEDROCK_RUNTIME='http://127.0.0.1:18001'\nAWS_REGION='us-east-1'\nRAYITO_MODEL_API_KEY='placeholder-not-a-secret'\nRAYITO_MODEL_BASE_URL='http://127.0.0.1:18001'\nRAYITO_MODEL_ID='us.anthropic.claude-haiku-4-5-20251001-v1:0'\nRAYITO_MODEL_PROVIDER='bedrock'\nRAYITO_MODEL_REGION='us-east-1'\n"
+          }
+        ]
+      }
+    },
+    {
+      "name": "custom-http-app-json-defaults",
+      "runtime": {
+        "kind": "custom",
+        "options": {
+          "app": {
+            "command": [
+              "serve"
+            ],
+            "port": 8000,
+            "protocol": "json"
+          }
+        }
+      },
+      "spec": {
+        "provider": "openai",
+        "model": "gpt-4.1-mini"
+      },
+      "wiring": "gateway",
+      "workdir": "/home/user/proyecto",
+      "expected": {
+        "driver": "http-app",
+        "python": "python3",
+        "options": {
+          "command": [
+            "serve"
+          ],
+          "port": 8000,
+          "health_path": "/ping",
+          "invoke_path": "/invocations",
+          "protocol": "json",
+          "workdir": "/home/user/proyecto",
+          "model": "gpt-4.1-mini",
+          "app_dir": "/opt/agents/app"
+        },
+        "envs": {
+          "PYTHONDONTWRITEBYTECODE": "1",
+          "PYTHONUNBUFFERED": "1",
+          "OPENAI_API_KEY": "placeholder-not-a-secret",
+          "OPENAI_BASE_URL": "http://127.0.0.1:18001/v1",
+          "RAYITO_MODEL_PROVIDER": "openai",
+          "RAYITO_MODEL_ID": "gpt-4.1-mini",
+          "RAYITO_MODEL_BASE_URL": "http://127.0.0.1:18001/v1",
+          "RAYITO_MODEL_API_KEY": "placeholder-not-a-secret"
+        },
+        "files": [],
+        "task_files": [
+          {
+            "path": "/home/user/.rayito/agent/custom/host.json",
+            "mode": 384,
+            "json": {
+              "driver": "http-app",
+              "options": {
+                "app_dir": "/opt/agents/app",
+                "command": [
+                  "serve"
+                ],
+                "health_path": "/ping",
+                "invoke_path": "/invocations",
+                "model": "gpt-4.1-mini",
+                "port": 8000,
+                "protocol": "json",
+                "workdir": "/home/user/proyecto"
+              },
+              "schema": "rayito.agent-host/1",
+              "v": 1
+            }
+          },
+          {
+            "path": "/home/user/.rayito/agent/custom/wiring.env",
+            "mode": 384,
+            "text": "OPENAI_API_KEY='placeholder-not-a-secret'\nOPENAI_BASE_URL='http://127.0.0.1:18001/v1'\nRAYITO_MODEL_API_KEY='placeholder-not-a-secret'\nRAYITO_MODEL_BASE_URL='http://127.0.0.1:18001/v1'\nRAYITO_MODEL_ID='gpt-4.1-mini'\nRAYITO_MODEL_PROVIDER='openai'\n"
+          }
+        ]
+      }
+    },
+    {
+      "name": "custom-node-callable",
+      "runtime": {
+        "kind": "custom",
+        "options": {
+          "entrypoint": "src/agent.ts#handler",
+          "package_manager": "npm"
+        }
+      },
+      "spec": {
+        "provider": "openai",
+        "model": "gpt-4.1-mini",
+        "instructions": "Responde en español."
+      },
+      "wiring": "gateway",
+      "workdir": "/home/user/proyecto",
+      "expected": {
+        "driver": "node-callable",
+        "python": "python3",
+        "options": {
+          "config_path": "/home/user/.rayito/agent/custom/config.json"
+        },
+        "envs": {
+          "PYTHONDONTWRITEBYTECODE": "1",
+          "PYTHONUNBUFFERED": "1",
+          "OPENAI_API_KEY": "placeholder-not-a-secret",
+          "OPENAI_BASE_URL": "http://127.0.0.1:18001/v1",
+          "RAYITO_MODEL_PROVIDER": "openai",
+          "RAYITO_MODEL_ID": "gpt-4.1-mini",
+          "RAYITO_MODEL_BASE_URL": "http://127.0.0.1:18001/v1",
+          "RAYITO_MODEL_API_KEY": "placeholder-not-a-secret"
+        },
+        "files": [
+          {
+            "path": "/home/user/.rayito/agent/custom/config.json",
+            "mode": 384,
+            "json": {
+              "adapter": "callable",
+              "app_dir": "/opt/agents/app",
+              "bridge": "/opt/agents/rayito/node_bridge.mjs",
+              "entrypoint": "src/agent.ts#handler",
+              "instructions": "Responde en español.",
+              "model": "gpt-4.1-mini",
+              "sessions_dir": "/home/user/.rayito/agent/custom/sessions",
+              "state_dir": "/home/user/.rayito/agent/custom",
+              "v": 1,
+              "workdir": "/home/user/proyecto"
+            }
+          }
+        ],
+        "task_files": [
+          {
+            "path": "/home/user/.rayito/agent/custom/config.json",
+            "mode": 384,
+            "json": {
+              "adapter": "callable",
+              "app_dir": "/opt/agents/app",
+              "bridge": "/opt/agents/rayito/node_bridge.mjs",
+              "entrypoint": "src/agent.ts#handler",
+              "instructions": "Responde en español.",
+              "model": "gpt-4.1-mini",
+              "sessions_dir": "/home/user/.rayito/agent/custom/sessions",
+              "state_dir": "/home/user/.rayito/agent/custom",
+              "v": 1,
+              "workdir": "/home/user/proyecto"
+            }
+          },
+          {
+            "path": "/home/user/.rayito/agent/custom/host.json",
+            "mode": 384,
+            "json": {
+              "driver": "node-callable",
+              "options": {
+                "config_path": "/home/user/.rayito/agent/custom/config.json"
+              },
+              "schema": "rayito.agent-host/1",
+              "v": 1
+            }
+          },
+          {
+            "path": "/home/user/.rayito/agent/custom/wiring.env",
+            "mode": 384,
+            "text": "OPENAI_API_KEY='placeholder-not-a-secret'\nOPENAI_BASE_URL='http://127.0.0.1:18001/v1'\nRAYITO_MODEL_API_KEY='placeholder-not-a-secret'\nRAYITO_MODEL_BASE_URL='http://127.0.0.1:18001/v1'\nRAYITO_MODEL_ID='gpt-4.1-mini'\nRAYITO_MODEL_PROVIDER='openai'\n"
+          }
+        ]
+      }
+    },
+    {
+      "name": "custom-node-langgraph",
+      "runtime": {
+        "kind": "custom",
+        "options": {
+          "entrypoint": "src/agent.ts#graph",
+          "package_manager": "pnpm",
+          "node_version": "24",
+          "adapter": "langgraph"
+        }
+      },
+      "spec": {
+        "provider": "bedrock",
+        "model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+        "region": "us-east-1"
+      },
+      "wiring": "gateway",
+      "workdir": "/home/user/proyecto",
+      "expected": {
+        "driver": "node-callable",
+        "python": "python3",
+        "options": {
+          "config_path": "/home/user/.rayito/agent/custom/config.json"
+        },
+        "envs": {
+          "PYTHONDONTWRITEBYTECODE": "1",
+          "PYTHONUNBUFFERED": "1",
+          "AWS_REGION": "us-east-1",
+          "AWS_BEARER_TOKEN_BEDROCK": "placeholder-not-a-secret",
+          "AWS_ENDPOINT_URL_BEDROCK_RUNTIME": "http://127.0.0.1:18001",
+          "RAYITO_MODEL_PROVIDER": "bedrock",
+          "RAYITO_MODEL_ID": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "RAYITO_MODEL_REGION": "us-east-1",
+          "RAYITO_MODEL_BASE_URL": "http://127.0.0.1:18001",
+          "RAYITO_MODEL_API_KEY": "placeholder-not-a-secret"
+        },
+        "files": [
+          {
+            "path": "/home/user/.rayito/agent/custom/config.json",
+            "mode": 384,
+            "json": {
+              "adapter": "langgraph",
+              "app_dir": "/opt/agents/app",
+              "bridge": "/opt/agents/rayito/node_bridge.mjs",
+              "entrypoint": "src/agent.ts#graph",
+              "instructions": null,
+              "model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+              "sessions_dir": "/home/user/.rayito/agent/custom/sessions",
+              "state_dir": "/home/user/.rayito/agent/custom",
+              "v": 1,
+              "workdir": "/home/user/proyecto"
+            }
+          }
+        ],
+        "task_files": [
+          {
+            "path": "/home/user/.rayito/agent/custom/config.json",
+            "mode": 384,
+            "json": {
+              "adapter": "langgraph",
+              "app_dir": "/opt/agents/app",
+              "bridge": "/opt/agents/rayito/node_bridge.mjs",
+              "entrypoint": "src/agent.ts#graph",
+              "instructions": null,
+              "model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+              "sessions_dir": "/home/user/.rayito/agent/custom/sessions",
+              "state_dir": "/home/user/.rayito/agent/custom",
+              "v": 1,
+              "workdir": "/home/user/proyecto"
+            }
+          },
+          {
+            "path": "/home/user/.rayito/agent/custom/host.json",
+            "mode": 384,
+            "json": {
+              "driver": "node-callable",
+              "options": {
+                "config_path": "/home/user/.rayito/agent/custom/config.json"
+              },
+              "schema": "rayito.agent-host/1",
+              "v": 1
+            }
+          },
+          {
+            "path": "/home/user/.rayito/agent/custom/wiring.env",
+            "mode": 384,
+            "text": "AWS_BEARER_TOKEN_BEDROCK='placeholder-not-a-secret'\nAWS_ENDPOINT_URL_BEDROCK_RUNTIME='http://127.0.0.1:18001'\nAWS_REGION='us-east-1'\nRAYITO_MODEL_API_KEY='placeholder-not-a-secret'\nRAYITO_MODEL_BASE_URL='http://127.0.0.1:18001'\nRAYITO_MODEL_ID='us.anthropic.claude-haiku-4-5-20251001-v1:0'\nRAYITO_MODEL_PROVIDER='bedrock'\nRAYITO_MODEL_REGION='us-east-1'\n"
+          }
+        ]
+      }
+    },
+    {
+      "name": "custom-node-vercel-ai-direct",
+      "runtime": {
+        "kind": "custom",
+        "options": {
+          "entrypoint": "agent.ts",
+          "package_manager": "yarn",
+          "adapter": "vercel-ai"
+        }
+      },
+      "spec": {
+        "provider": "bedrock",
+        "model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+        "region": "us-east-1"
+      },
+      "wiring": "direct",
+      "workdir": "/home/user/proyecto",
+      "expected": {
+        "driver": "node-callable",
+        "python": "python3",
+        "options": {
+          "config_path": "/home/user/.rayito/agent/custom/config.json"
+        },
+        "envs": {
+          "PYTHONDONTWRITEBYTECODE": "1",
+          "PYTHONUNBUFFERED": "1",
+          "AWS_REGION": "us-east-1",
+          "RAYITO_MODEL_PROVIDER": "bedrock",
+          "RAYITO_MODEL_ID": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "RAYITO_MODEL_REGION": "us-east-1"
+        },
+        "files": [
+          {
+            "path": "/home/user/.rayito/agent/custom/config.json",
+            "mode": 384,
+            "json": {
+              "adapter": "vercel-ai",
+              "app_dir": "/opt/agents/app",
+              "bridge": "/opt/agents/rayito/node_bridge.mjs",
+              "entrypoint": "agent.ts",
+              "instructions": null,
+              "model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+              "sessions_dir": "/home/user/.rayito/agent/custom/sessions",
+              "state_dir": "/home/user/.rayito/agent/custom",
+              "v": 1,
+              "workdir": "/home/user/proyecto"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "custom-node-http-app",
+      "runtime": {
+        "kind": "custom",
+        "options": {
+          "package_manager": "npm",
+          "app": {
+            "command": [
+              "node",
+              "server.js"
+            ],
+            "port": 8000,
+            "protocol": "json",
+            "port_env": "PORT"
+          }
+        }
+      },
+      "spec": {
+        "provider": "openai",
+        "model": "gpt-4.1-mini"
+      },
+      "wiring": "gateway",
+      "workdir": "/home/user/proyecto",
+      "expected": {
+        "driver": "http-app",
+        "python": "python3",
+        "options": {
+          "command": [
+            "node",
+            "server.js"
+          ],
+          "port": 8000,
+          "health_path": "/ping",
+          "invoke_path": "/invocations",
+          "protocol": "json",
+          "workdir": "/home/user/proyecto",
+          "model": "gpt-4.1-mini",
+          "app_dir": "/opt/agents/app",
+          "path_prepend": [
+            "/opt/agents/node/bin"
+          ],
+          "port_env": "PORT"
+        },
+        "envs": {
+          "PYTHONDONTWRITEBYTECODE": "1",
+          "PYTHONUNBUFFERED": "1",
+          "OPENAI_API_KEY": "placeholder-not-a-secret",
+          "OPENAI_BASE_URL": "http://127.0.0.1:18001/v1",
+          "RAYITO_MODEL_PROVIDER": "openai",
+          "RAYITO_MODEL_ID": "gpt-4.1-mini",
+          "RAYITO_MODEL_BASE_URL": "http://127.0.0.1:18001/v1",
+          "RAYITO_MODEL_API_KEY": "placeholder-not-a-secret"
+        },
+        "files": [],
+        "task_files": [
+          {
+            "path": "/home/user/.rayito/agent/custom/host.json",
+            "mode": 384,
+            "json": {
+              "driver": "http-app",
+              "options": {
+                "app_dir": "/opt/agents/app",
+                "command": [
+                  "node",
+                  "server.js"
+                ],
+                "health_path": "/ping",
+                "invoke_path": "/invocations",
+                "model": "gpt-4.1-mini",
+                "path_prepend": [
+                  "/opt/agents/node/bin"
+                ],
+                "port": 8000,
+                "port_env": "PORT",
+                "protocol": "json",
+                "workdir": "/home/user/proyecto"
+              },
+              "schema": "rayito.agent-host/1",
+              "v": 1
+            }
+          },
+          {
+            "path": "/home/user/.rayito/agent/custom/wiring.env",
+            "mode": 384,
+            "text": "OPENAI_API_KEY='placeholder-not-a-secret'\nOPENAI_BASE_URL='http://127.0.0.1:18001/v1'\nRAYITO_MODEL_API_KEY='placeholder-not-a-secret'\nRAYITO_MODEL_BASE_URL='http://127.0.0.1:18001/v1'\nRAYITO_MODEL_ID='gpt-4.1-mini'\nRAYITO_MODEL_PROVIDER='openai'\n"
+          }
+        ]
+      }
+    },
+    {
+      "name": "custom-pinned-python-uv-lock",
+      "runtime": {
+        "kind": "custom",
+        "options": {
+          "entrypoint": "agente:responde",
+          "requirements": "uv.lock",
+          "package_manager": "uv",
+          "python_version": "3.13"
+        }
+      },
+      "spec": {
+        "provider": "openai",
+        "model": "gpt-4.1-mini"
+      },
+      "wiring": "gateway",
+      "workdir": "/home/user/proyecto",
+      "expected": {
+        "driver": "callable",
+        "python": "/opt/agents/custom/bin/python",
+        "options": {
+          "entrypoint": "agente:responde",
+          "app_dir": "/opt/agents/app",
+          "workdir": "/home/user/proyecto"
+        },
+        "envs": {
+          "PYTHONDONTWRITEBYTECODE": "1",
+          "PYTHONUNBUFFERED": "1",
+          "OPENAI_API_KEY": "placeholder-not-a-secret",
+          "OPENAI_BASE_URL": "http://127.0.0.1:18001/v1",
+          "RAYITO_MODEL_PROVIDER": "openai",
+          "RAYITO_MODEL_ID": "gpt-4.1-mini",
+          "RAYITO_MODEL_BASE_URL": "http://127.0.0.1:18001/v1",
+          "RAYITO_MODEL_API_KEY": "placeholder-not-a-secret"
+        },
+        "files": [],
+        "task_files": [
+          {
+            "path": "/home/user/.rayito/agent/custom/host.json",
+            "mode": 384,
+            "json": {
+              "driver": "callable",
+              "options": {
+                "app_dir": "/opt/agents/app",
+                "entrypoint": "agente:responde",
+                "workdir": "/home/user/proyecto"
+              },
+              "schema": "rayito.agent-host/1",
+              "v": 1
+            }
+          },
+          {
+            "path": "/home/user/.rayito/agent/custom/wiring.env",
+            "mode": 384,
+            "text": "OPENAI_API_KEY='placeholder-not-a-secret'\nOPENAI_BASE_URL='http://127.0.0.1:18001/v1'\nRAYITO_MODEL_API_KEY='placeholder-not-a-secret'\nRAYITO_MODEL_BASE_URL='http://127.0.0.1:18001/v1'\nRAYITO_MODEL_ID='gpt-4.1-mini'\nRAYITO_MODEL_PROVIDER='openai'\n"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ts-strands-pnpm-node24",
+      "runtime": {
+        "kind": "strands",
+        "options": {
+          "language": "typescript",
+          "entrypoint": "src/agent.ts",
+          "package_manager": "pnpm",
+          "node_version": "24"
+        }
+      },
+      "spec": {
+        "provider": "bedrock",
+        "model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+        "region": "us-east-1"
+      },
+      "wiring": "gateway",
+      "workdir": "/home/user/proyecto",
+      "expected": {
+        "driver": "node-callable",
+        "python": "python3",
+        "options": {
+          "config_path": "/home/user/.rayito/agent/strands/config.json"
+        },
+        "envs": {
+          "PYTHONDONTWRITEBYTECODE": "1",
+          "PYTHONUNBUFFERED": "1",
+          "OTEL_SDK_DISABLED": "true",
+          "OTEL_TRACES_EXPORTER": "none",
+          "OTEL_METRICS_EXPORTER": "none",
+          "OTEL_LOGS_EXPORTER": "none",
+          "AWS_REGION": "us-east-1",
+          "AWS_BEARER_TOKEN_BEDROCK": "placeholder-not-a-secret",
+          "AWS_ENDPOINT_URL_BEDROCK_RUNTIME": "http://127.0.0.1:18001"
+        },
+        "files": [
+          {
+            "path": "/home/user/.rayito/agent/strands/config.json",
+            "mode": 384,
+            "json": {
+              "adapter": "strands",
+              "app_dir": "/opt/agents/app",
+              "base_url": "http://127.0.0.1:18001",
+              "bridge": "/opt/agents/rayito/node_bridge.mjs",
+              "client": "BedrockModel",
+              "credential_placeholder": "placeholder-not-a-secret",
+              "entrypoint": "src/agent.ts",
+              "instructions": null,
+              "model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+              "permissions": {
+                "default": "allow",
+                "tools": {
+                  "question": "deny",
+                  "webfetch": "deny",
+                  "websearch": "deny"
+                }
+              },
+              "prompt_caching": true,
+              "provider": "bedrock",
+              "region": "us-east-1",
+              "sessions_dir": "/home/user/.rayito/agent/strands/sessions",
+              "state_dir": "/home/user/.rayito/agent/strands",
+              "v": 1,
+              "workdir": "/home/user/proyecto"
+            }
+          }
+        ],
+        "task_files": [
+          {
+            "path": "/home/user/.rayito/agent/strands/config.json",
+            "mode": 384,
+            "json": {
+              "adapter": "strands",
+              "app_dir": "/opt/agents/app",
+              "base_url": "http://127.0.0.1:18001",
+              "bridge": "/opt/agents/rayito/node_bridge.mjs",
+              "client": "BedrockModel",
+              "credential_placeholder": "placeholder-not-a-secret",
+              "entrypoint": "src/agent.ts",
+              "instructions": null,
+              "model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+              "permissions": {
+                "default": "allow",
+                "tools": {
+                  "question": "deny",
+                  "webfetch": "deny",
+                  "websearch": "deny"
+                }
+              },
+              "prompt_caching": true,
+              "provider": "bedrock",
+              "region": "us-east-1",
+              "sessions_dir": "/home/user/.rayito/agent/strands/sessions",
+              "state_dir": "/home/user/.rayito/agent/strands",
+              "v": 1,
+              "workdir": "/home/user/proyecto"
+            }
+          },
+          {
+            "path": "/home/user/.rayito/agent/strands/host.json",
+            "mode": 384,
+            "json": {
+              "driver": "node-callable",
+              "options": {
+                "config_path": "/home/user/.rayito/agent/strands/config.json"
+              },
+              "schema": "rayito.agent-host/1",
+              "v": 1
+            }
+          },
+          {
+            "path": "/home/user/.rayito/agent/strands/wiring.env",
+            "mode": 384,
+            "text": "AWS_BEARER_TOKEN_BEDROCK='placeholder-not-a-secret'\nAWS_ENDPOINT_URL_BEDROCK_RUNTIME='http://127.0.0.1:18001'\nAWS_REGION='us-east-1'\n"
           }
         ]
       }

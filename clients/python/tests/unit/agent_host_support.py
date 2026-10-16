@@ -5,12 +5,17 @@ from __future__ import annotations
 
 import http.client
 import json
+import socket
+import sys
+import textwrap
 import threading
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
+from pathlib import Path
 from typing import Any
 
 from rayito._agent._runner.agent_host import serve
+from rayito._agent._runner.agent_host.drivers import http_app
 from rayito._agent._runner.agent_host.limits import Limits
 from rayito._agent._runner.agent_host.protocol import (
     AgentFailure,
@@ -168,3 +173,88 @@ def wait_for(condition: Callable[[], bool], timeout: float = CONNECT_TIMEOUT_SEC
 
 def tiny_limits(**overrides: Any) -> Limits:
     return Limits(**{"timeout_seconds": 5.0, **overrides})
+
+
+JSON_APP_SOURCE = """
+import json, os, sys, threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+CRASH_AFTER = float(os.environ.get("CRASH_AFTER", "0"))
+
+
+def crash():
+    print("fatal: " + os.environ.get("APP_FATAL", "caida"), file=sys.stderr, flush=True)
+    os._exit(9)
+
+
+if CRASH_AFTER:
+    threading.Timer(CRASH_AFTER, crash).start()
+
+
+class Handler(BaseHTTPRequestHandler):
+    def log_message(self, *args):
+        pass
+
+    def _send(self, status, payload):
+        data = json.dumps(payload).encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def do_GET(self):
+        if self.path == "/health":
+            self._send(200, {"ok": True})
+        elif self.path == "/crash":
+            os._exit(7)
+        else:
+            self._send(200, {"path": self.path, "port_env": os.environ.get("APP_PORT")})
+
+    def do_POST(self):
+        size = int(self.headers.get("Content-Length") or 0)
+        body = json.loads(self.rfile.read(size) or b"{}")
+        answer = "eco: " + str(body.get("question"))
+        self._send(200, {"answer": answer, "session": body.get("session_id")})
+
+
+ThreadingHTTPServer(("127.0.0.1", int(os.environ["APP_PORT"])), Handler).serve_forever()
+"""
+
+
+JSON_APP_POLICY = {
+    "restart_max": 2,
+    "restart_window_seconds": 60,
+    "restart_backoff_seconds": 0.05,
+    "restart_backoff_max_seconds": 0.1,
+}
+APP_START_TIMEOUT_SECONDS = 20
+
+
+def free_port() -> int:
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
+def json_app_driver(tmp_path: Path, **extra: Any) -> http_app.Driver:
+    """El driver `http-app` con `protocol="json"` sobre una app de la
+    biblioteca estándar (`JSON_APP_SOURCE`): `/health`, `/chat` (campo
+    `question`, respuesta en `answer`) y `/crash`."""
+    script = tmp_path / "app.py"
+    script.write_text(textwrap.dedent(JSON_APP_SOURCE), encoding="utf-8")
+    return http_app.Driver(
+        {
+            "command": [sys.executable, str(script)],
+            "port": free_port(),
+            "port_env": "APP_PORT",
+            "health_path": "/health",
+            "invoke_path": "/chat",
+            "protocol": "json",
+            "request_field": "question",
+            "workdir": str(tmp_path),
+            "start_timeout_seconds": APP_START_TIMEOUT_SECONDS,
+            **JSON_APP_POLICY,
+            **extra,
+        }
+    )

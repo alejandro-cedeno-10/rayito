@@ -107,6 +107,22 @@
             "22",
             "24"
           ]
+        },
+        "package_manager": {
+          "enum": [
+            "pip",
+            "uv",
+            "npm",
+            "pnpm",
+            "yarn"
+          ]
+        },
+        "adapter": {
+          "enum": [
+            "callable",
+            "langgraph",
+            "vercel-ai"
+          ]
         }
       },
       "additionalProperties": false,
@@ -176,7 +192,9 @@
                 "language",
                 "framework",
                 "python_version",
-                "node_version"
+                "node_version",
+                "requirements",
+                "package_manager"
               ]
             }
           }
@@ -200,6 +218,8 @@
                 "language",
                 "framework",
                 "python_version",
+                "requirements",
+                "package_manager",
                 "node_version"
               ]
             }
@@ -224,6 +244,8 @@
                 "language",
                 "framework",
                 "python_version",
+                "requirements",
+                "package_manager",
                 "node_version"
               ]
             }
@@ -279,7 +301,9 @@
                 "language",
                 "framework",
                 "python_version",
-                "node_version"
+                "node_version",
+                "package_manager",
+                "adapter"
               ]
             }
           }

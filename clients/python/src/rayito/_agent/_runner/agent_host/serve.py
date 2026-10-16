@@ -6,8 +6,11 @@ el contrato HTTP de AgentCore, con `http.server.ThreadingHTTPServer`.
   Con `Accept: text/event-stream`, un mensaje SSE por evento v1 hasta `done`
   o `agent_failed`; si no, `{"v", "text", "session_id", "usage",
   "usage_reported", "steps", "failed"}`. `400` cuerpo inválido, `413` demasiado grande, `429` con
-  `Retry-After` por encima de `max_concurrency`, `503` antes de estar listo
-  y `401` si hay token y no coincide.
+  `Retry-After` por encima de `max_concurrency` (con `queue_max` > 0 la
+  petición espera su turno en una cola FIFO acotada hasta
+  `queue_timeout_seconds` y sólo entonces recibe el `429`), `503` antes de
+  estar listo o mientras la app se relanza (con `Retry-After`) y `401` si
+  hay token y no coincide.
 
 El host no loguea contenido: sólo método, ruta sin consulta, estado, bytes y
 duración. Nunca el prompt, una cabecera ni el token.
@@ -23,6 +26,7 @@ import os
 import queue
 import threading
 import time
+from collections import deque
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field
 from http import HTTPStatus
@@ -55,6 +59,28 @@ MAX_REQUEST_BYTES: Final = 1_048_576
 MAX_CONCURRENCY: Final = 1
 STATUS_HEALTHY: Final = "Healthy"
 STATUS_BUSY: Final = "HealthyBusy"
+STATUS_UNHEALTHY: Final = "Unhealthy"
+#: Los estados de `availability()` de un driver supervisado.
+AVAILABILITY_RESTARTING: Final = "restarting"
+AVAILABILITY_FAILED: Final = "failed"
+#: El `error` del `503` según por qué no se sirve.
+NOT_READY_CODE: Final = "not_ready"
+UNAVAILABLE_CODES: Final = {
+    AVAILABILITY_RESTARTING: "app_restarting",
+    AVAILABILITY_FAILED: "app_crashloop",
+}
+#: Resultados de `Service.acquire()`.
+ACQUIRED: Final = "acquired"
+QUEUE_FULL: Final = "busy"
+QUEUE_TIMEOUT: Final = "queue_timeout"
+#: Cola de espera: sin cola por defecto (0.14 contestaba `429`), con el
+#: tope y el plazo máximo que acepta el SDK (`AGENT_SERVICE_QUEUE_MAX_DEFAULT`,
+#: `AGENT_SERVICE_QUEUE_MAX`, `AGENT_SERVICE_QUEUE_TIMEOUT_SECONDS_DEFAULT` y
+#: `AGENT_SERVICE_QUEUE_TIMEOUT_SECONDS_MAX` de `limits.json`).
+QUEUE_MAX_DEFAULT: Final = 0
+QUEUE_MAX: Final = 256
+QUEUE_TIMEOUT_SECONDS_DEFAULT: Final = 30.0
+QUEUE_TIMEOUT_SECONDS_MAX: Final = 900.0
 #: Segundos que `Retry-After` pide esperar con el agente ocupado o sin
 #: calentar.
 RETRY_AFTER_SECONDS: Final = 1
@@ -97,6 +123,8 @@ class ServiceConfig:
 
     limits: Limits = field(default_factory=Limits)
     max_concurrency: int = MAX_CONCURRENCY
+    queue_max: int = QUEUE_MAX_DEFAULT
+    queue_timeout_seconds: float = QUEUE_TIMEOUT_SECONDS_DEFAULT
     max_request_bytes: int = MAX_REQUEST_BYTES
     token: str | None = None
     session_header: str = SESSION_HEADER
@@ -126,10 +154,14 @@ class Service:
         self.driver = driver
         self.config = config
         self._clock = clock
-        self._lock = threading.Lock()
+        self._turns = threading.Condition()
         self._active = 0
+        self._waiting: deque[object] = deque()
         self._ready = False
         self._last_update = int(clock())
+        listen = getattr(driver, "add_failure_listener", None)
+        if listen is not None:
+            listen(self.mark_failed)
 
     @property
     def ready(self) -> bool:
@@ -149,29 +181,70 @@ class Service:
             with open(path, "w", encoding="utf-8") as handle:
                 handle.write(content + "\n")
 
-    def ping(self) -> dict[str, object]:
-        with self._lock:
-            busy = self._active >= self.config.max_concurrency
-            return {
-                "status": STATUS_BUSY if busy else STATUS_HEALTHY,
-                "time_of_last_update": self._last_update,
-            }
+    def availability(self) -> str | None:
+        """`restarting` o `failed` si el driver supervisa una app que murió;
+        `None` si sirve."""
+        report = getattr(self.driver, "availability", None)
+        state = None if report is None else report()
+        return state if state in (AVAILABILITY_RESTARTING, AVAILABILITY_FAILED) else None
 
-    def acquire(self) -> bool:
-        with self._lock:
-            if self._active >= self.config.max_concurrency:
-                return False
-            self._active += 1
-            if self._active >= self.config.max_concurrency:
-                self._last_update = int(self._clock())
-            return True
+    def ping(self) -> tuple[int, dict[str, object]]:
+        """El estado HTTP y el cuerpo de `/ping`: `HealthyBusy` con todas las
+        ejecuciones ocupadas o con la app relanzándose, y `503` `Unhealthy`
+        cuando agotó sus relanzamientos."""
+        availability = self.availability()
+        with self._turns:
+            busy = self._active >= self.config.max_concurrency
+            if availability == AVAILABILITY_FAILED:
+                status, code = STATUS_UNHEALTHY, HTTPStatus.SERVICE_UNAVAILABLE
+            elif busy or availability == AVAILABILITY_RESTARTING:
+                status, code = STATUS_BUSY, HTTPStatus.OK
+            else:
+                status, code = STATUS_HEALTHY, HTTPStatus.OK
+            return code, {"status": status, "time_of_last_update": self._last_update}
+
+    def acquire(self) -> str:
+        """Pide un cupo de ejecución: `acquired`; `busy` si no hay cupo y la
+        cola está llena (o apagada); `queue_timeout` si esperó
+        `queue_timeout_seconds` sin turno. La cola es FIFO: una petición
+        nueva no adelanta a las que esperan."""
+        with self._turns:
+            if not self._waiting and self._active < self.config.max_concurrency:
+                self._take()
+                return ACQUIRED
+            if len(self._waiting) >= self.config.queue_max:
+                return QUEUE_FULL
+            return self._wait_for_turn()
+
+    def _wait_for_turn(self) -> str:
+        ticket = object()
+        self._waiting.append(ticket)
+        deadline = time.monotonic() + self.config.queue_timeout_seconds
+        try:
+            while True:
+                if self._waiting[0] is ticket and self._active < self.config.max_concurrency:
+                    self._take()
+                    return ACQUIRED
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return QUEUE_TIMEOUT
+                self._turns.wait(remaining)
+        finally:
+            self._waiting.remove(ticket)
+            self._turns.notify_all()
+
+    def _take(self) -> None:
+        self._active += 1
+        if self._active >= self.config.max_concurrency:
+            self._last_update = int(self._clock())
 
     def release(self) -> None:
-        with self._lock:
+        with self._turns:
             was_busy = self._active >= self.config.max_concurrency
             self._active -= 1
             if was_busy:
                 self._last_update = int(self._clock())
+            self._turns.notify_all()
 
     def authorized(self, header: str | None) -> bool:
         """Sin token configurado todo pasa (en un MicroVM la autenticación es
@@ -363,23 +436,29 @@ def make_handler(service: Service) -> type[BaseHTTPRequestHandler]:
         def _is_raw(self) -> bool:
             return bool(getattr(service.driver, "raw", False))
 
+        def _forwards(self) -> bool:
+            """El driver quiere las rutas que no son del host (`raw` y
+            `json`)."""
+            return self._is_raw() or bool(getattr(service.driver, "forwards", False))
+
         def do_GET(self) -> None:
             self._started = time.monotonic()
             if self.path.split("?", 1)[0] == HEALTH_PATH:
-                self._send_json(HTTPStatus.OK, service.ping())
-            elif self._is_raw():
+                status, body = service.ping()
+                self._send_json(status, body)
+            elif self._forwards():
                 self._forward()
             else:
                 self._error(HTTPStatus.NOT_FOUND, "not_found")
 
         def do_PUT(self) -> None:
-            self._forward_raw()
+            self._forward_other()
 
         do_DELETE = do_PATCH = do_OPTIONS = do_PUT
 
-        def _forward_raw(self) -> None:
+        def _forward_other(self) -> None:
             self._started = time.monotonic()
-            if self._is_raw():
+            if self._forwards():
                 self._forward()
             else:
                 self._error(HTTPStatus.NOT_FOUND, "not_found")
@@ -389,16 +468,28 @@ def make_handler(service: Service) -> type[BaseHTTPRequestHandler]:
             con la misma autenticación y el mismo tope de cuerpo."""
             if not service.authorized(self.headers.get("Authorization")):
                 self._error(HTTPStatus.UNAUTHORIZED, "unauthorized", {"WWW-Authenticate": "Bearer"})
-            elif not service.ready:
-                self._error(
-                    HTTPStatus.SERVICE_UNAVAILABLE,
-                    "not_ready",
-                    {"Retry-After": str(RETRY_AFTER_SECONDS)},
-                )
+            elif not self._available():
+                return
             else:
                 body = self._read_body()
                 if body is not None:
                     self._relay(body)
+
+        def _available(self) -> bool:
+            """`False` (tras contestar `503` con `Retry-After`) si el host no
+            está listo o la app se relanza o cayó para siempre."""
+            code = (
+                NOT_READY_CODE
+                if not service.ready
+                else UNAVAILABLE_CODES.get(service.availability() or "")
+            )
+            if code is not None:
+                self._error(
+                    HTTPStatus.SERVICE_UNAVAILABLE,
+                    code,
+                    {"Retry-After": str(RETRY_AFTER_SECONDS)},
+                )
+            return code is None
 
         def _read_body(self) -> bytes | None:
             return self._read_limited_body(empty_ok=True)
@@ -431,24 +522,22 @@ def make_handler(service: Service) -> type[BaseHTTPRequestHandler]:
                 self._forward()
                 return
             if self.path.split("?", 1)[0] != INVOKE_PATH:
-                self._error(HTTPStatus.NOT_FOUND, "not_found")
+                self._forward_other()
                 return
             if not service.authorized(self.headers.get("Authorization")):
                 self._error(HTTPStatus.UNAUTHORIZED, "unauthorized", {"WWW-Authenticate": "Bearer"})
                 return
-            if not service.ready:
-                self._error(
-                    HTTPStatus.SERVICE_UNAVAILABLE,
-                    "not_ready",
-                    {"Retry-After": str(RETRY_AFTER_SECONDS)},
-                )
+            if not self._available():
                 return
             request = self._read_request()
             if request is None:
                 return
-            if not service.acquire():
+            outcome = service.acquire()
+            if outcome != ACQUIRED:
                 self._error(
-                    HTTPStatus.TOO_MANY_REQUESTS, "busy", {"Retry-After": str(RETRY_AFTER_SECONDS)}
+                    HTTPStatus.TOO_MANY_REQUESTS,
+                    outcome,
+                    {"Retry-After": str(RETRY_AFTER_SECONDS)},
                 )
                 return
             invocation = Invocation(service, request)

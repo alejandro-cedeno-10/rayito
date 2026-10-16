@@ -6,7 +6,8 @@
 `host.json` (esquema `rayito.agent-host/1`) lleva `driver` (una clave de
 `DRIVERS`), `options` (las opciones del driver de `HostConfig.options`, que
 el driver recibe como su configuración) y, opcionalmente, `limits`,
-`max_concurrency`, `max_request_bytes`, `session_header` y `ready_marker`.
+`max_concurrency`, `queue_max`, `queue_timeout_seconds`, `max_request_bytes`,
+`session_header` y `ready_marker`.
 Las variables de entorno de `HostConfig.envs` las pone quien lanza el host
 (el comando del SDK o el `ENV` del Dockerfile exportado). En `task` la
 petición llega por stdin y las líneas v1 salen por un descriptor privado; en
@@ -39,6 +40,7 @@ DRIVERS: Final[dict[str, str]] = {
     "callable": "drivers.callable",
     "command": "drivers.command",
     "strands": "drivers.strands",
+    "node-callable": "drivers.node_callable",
     "strands-ts": "drivers.strands_ts",
     "hermes": "drivers.hermes",
 }
@@ -124,6 +126,14 @@ def serve(package: str, args: argparse.Namespace) -> int:
     config = serving.ServiceConfig(
         limits=limits.Limits.from_config(host.get("limits")),
         max_concurrency=int(host.get("max_concurrency", serving.MAX_CONCURRENCY)),
+        queue_max=_bounded(host.get("queue_max"), serving.QUEUE_MAX_DEFAULT, serving.QUEUE_MAX),
+        queue_timeout_seconds=float(
+            _bounded(
+                host.get("queue_timeout_seconds"),
+                serving.QUEUE_TIMEOUT_SECONDS_DEFAULT,
+                serving.QUEUE_TIMEOUT_SECONDS_MAX,
+            )
+        ),
         max_request_bytes=int(host.get("max_request_bytes", serving.MAX_REQUEST_BYTES)),
         token=os.environ.get(serving.TOKEN_ENV) or None,
         session_header=str(host.get("session_header", serving.SESSION_HEADER)),
@@ -152,6 +162,14 @@ def serve(package: str, args: argparse.Namespace) -> int:
     log.info("listening port=%d driver=%s", args.port, host["driver"])
     server.serve_forever()
     return 1 if warm_failed.is_set() else 0
+
+
+def _bounded(value: Any, default: Any, ceiling: Any) -> Any:
+    """`value` si es un número no negativo (sin pasar de `ceiling`), si no
+    `default`: un valor inválido de `host.json` nunca deja el host sin
+    arrancar."""
+    valid = isinstance(value, int | float) and not isinstance(value, bool) and value >= 0
+    return min(value, ceiling) if valid else default
 
 
 def startup_failure(exc: Exception, diagnostics: Any) -> tuple[str, str | None]:

@@ -16,6 +16,7 @@ import pytest
 
 from rayito import AgentModel, AgentPermissions, AgentSpec
 from rayito._agent._custom import CustomRuntime, HttpApp
+from rayito._agent._deepagents import DeepAgents
 from rayito._agent._hermes import HERMES_DEFAULT_TOOLSETS, HermesRuntime
 from rayito._agent._recipes import AGENT_APP_DIR
 from rayito._agent._runtime import (
@@ -160,6 +161,11 @@ def test_the_registry_resolves_the_framework_names() -> None:
         ("strands", {"entrypoint": "agente:crea", "requirements": "requirements.txt"}),
         ("strands-harness", {"entrypoint": "agente:crea"}),
         ("strands", {"language": "typescript", "entrypoint": "agent.ts"}),
+        ("langgraph", {"entrypoint": "agente:crea", "requirements": "requirements.txt"}),
+        (
+            "langgraph",
+            {"entrypoint": "agente:crea", "requirements": "uv.lock", "package_manager": "uv"},
+        ),
         ("hermes", {}),
         ("hermes", {"toolsets": ["terminal"], "skills_dir": "skills"}),
         ("custom", {"command": ["./run.sh"], "protocol": "text", "install": ["echo hola"]}),
@@ -167,6 +173,42 @@ def test_the_registry_resolves_the_framework_names() -> None:
         (
             "custom",
             {"app": {"command": ["serve"], "port": 9000, "protocol": "openai-chat"}},
+        ),
+        (
+            "custom",
+            {
+                "app": {
+                    "command": ["serve"],
+                    "port": 9000,
+                    "protocol": "json",
+                    "request_field": "question",
+                    "response_field": "data.answer",
+                    "port_env": "PORT",
+                }
+            },
+        ),
+        (
+            "custom",
+            {"entrypoint": "agent.ts#graph", "package_manager": "pnpm", "adapter": "langgraph"},
+        ),
+        ("custom", {"entrypoint": "agent.ts", "package_manager": "npm", "node_version": "24"}),
+        (
+            "custom",
+            {
+                "entrypoint": "a:b",
+                "requirements": "uv.lock",
+                "package_manager": "uv",
+                "python_version": "3.13",
+            },
+        ),
+        (
+            "strands",
+            {
+                "language": "typescript",
+                "entrypoint": "agent.ts",
+                "package_manager": "yarn",
+                "node_version": "22",
+            },
         ),
     ],
 )
@@ -201,6 +243,34 @@ def test_runtime_options_round_trip_through_the_project_file_table(
         lambda: HttpApp(command=["x"], port=0),
         lambda: HttpApp(command=["x"], port=8000, health_path="ping"),
         lambda: HttpApp(command=["x"], port=8000, protocol="soap"),  # type: ignore[arg-type]
+        lambda: HttpApp(command=["x"], port=8000, request_field="q"),
+        lambda: HttpApp(command=["x"], port=8000, protocol="json", response_field="a b"),
+        lambda: HttpApp(command=["x"], port=8000, protocol="json", request_field="1q"),
+        lambda: HttpApp(command=["x"], port=8000, port_env="port"),
+        lambda: CustomRuntime(entrypoint="a.ts#x", package_manager="bun"),
+        lambda: CustomRuntime(entrypoint="a:b", node_version="22"),
+        lambda: CustomRuntime(entrypoint="a.ts", package_manager="npm", node_version="21"),
+        lambda: CustomRuntime(entrypoint="a:b", package_manager="uv", python_version="3.9"),
+        lambda: CustomRuntime(entrypoint="a.ts", package_manager="npm", python_version="3.13"),
+        lambda: CustomRuntime(entrypoint="a:b", python="python3.12", python_version="3.13"),
+        lambda: CustomRuntime(entrypoint="a:b", adapter="callable"),
+        lambda: CustomRuntime(entrypoint="a.ts", package_manager="npm", adapter="crewai"),
+        lambda: CustomRuntime(command=["x"], package_manager="npm", adapter="callable"),
+        lambda: CustomRuntime(entrypoint="a.ts", package_manager="npm", requirements="r.txt"),
+        lambda: CustomRuntime(entrypoint="a:b", requirements="uv.lock", package_manager="pip"),
+        lambda: CustomRuntime(entrypoint="a:b", requirements="pyproject.toml"),
+        lambda: CustomRuntime(entrypoint="a:b", package_manager="npm"),
+        lambda: CustomRuntime(entrypoint="a.ts#1x", package_manager="npm"),
+        lambda: CustomRuntime(entrypoint="../a.ts", package_manager="npm"),
+        lambda: DeepAgents(requirements="r.txt"),
+        lambda: DeepAgents("a:b", requirements="uv.lock"),
+        lambda: DeepAgents("a:b", requirements="r.txt", package_manager="bun"),
+        lambda: DeepAgents("a:b", package_manager="uv"),
+        lambda: DeepAgents("a:b", requirements="../r.txt"),
+        lambda: StrandsRuntime(package_manager="npm"),
+        lambda: StrandsRuntime(node_version="22"),
+        lambda: StrandsRuntime(language="typescript", entrypoint="a.ts", package_manager="uv"),
+        lambda: StrandsRuntime(language="typescript", entrypoint="a.ts", node_version="19"),
     ],
 )
 def test_invalid_runtime_arguments_fail_with_invalid_argument(factory: Any) -> None:

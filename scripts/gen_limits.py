@@ -403,8 +403,6 @@ GROUPS: tuple[tuple[str, ...], ...] = (
         "agentStrandsTsHarnessVersion",
         "agentHermesVersion",
         "agentHermesCommit",
-        "agentNodeVersion",
-        "agentNodeSha256",
         "agentExportBaseImage",
         "agentExportBaseImageDigest",
         "agentProjectSchema",
@@ -424,16 +422,12 @@ GROUPS: tuple[tuple[str, ...], ...] = (
         # agent-runtimes-byo (ADR-028), frameworks lane: the sha256 of the
         # hashed requirements files of the Strands, Strands harness and
         # Hermes runtimes (package data under `_agent/_assets/`), the pinned
-        # CPython 3.14 build Hermes v0.22.2 needs (python-build-standalone
-        # linux arm64 `install_only` tarball: version, release tag and the
-        # sha256 GitHub publishes for the asset, checked 2026-10-16) and the
-        # schema name of the host configuration file. Not AWS properties.
+        # schema name of the host configuration file. The CPython 3.14 build
+        # Hermes v0.22.2 needs is the `3.14` entry of `agentPythonBuild*`
+        # below. Not AWS properties.
         "agentStrandsRequirementsSha256",
         "agentStrandsHarnessRequirementsSha256",
         "agentHermesRequirementsSha256",
-        "agentHermesPythonVersion",
-        "agentHermesPythonBuildTag",
-        "agentHermesPythonSha256",
         "agentHostSchema",
     ),
     (
@@ -533,7 +527,6 @@ CONSTANT_NAME_OVERRIDES = {
     "agentOpencodeSha256": "AGENT_OPENCODE_SHA256",
     "agentRipgrepSha256": "AGENT_RIPGREP_SHA256",
     "agentDeepagentsRequirementsSha256": "AGENT_DEEPAGENTS_REQUIREMENTS_SHA256",
-    "agentNodeSha256": "AGENT_NODE_SHA256",
     "agentStrandsRequirementsSha256": "AGENT_STRANDS_REQUIREMENTS_SHA256",
     "agentStrandsHarnessRequirementsSha256": "AGENT_STRANDS_HARNESS_REQUIREMENTS_SHA256",
     "agentHermesRequirementsSha256": "AGENT_HERMES_REQUIREMENTS_SHA256",

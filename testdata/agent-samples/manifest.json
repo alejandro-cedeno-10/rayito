@@ -281,7 +281,7 @@
         "health": "/healthz",
         "invoke": "/chat",
         "requestField": "prompt",
-        "responseField": "text"
+        "responseField": null
       }
     },
     {

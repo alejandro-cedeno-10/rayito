@@ -23,7 +23,7 @@
 - **THEN** it raises `InvalidArgumentException` and creates no sandbox
 
 ### Requirement: An HttpApp tells when its own routes are not exposed
-`HttpApp` SHALL provide `hides_own_routes` / `hidesOwnRoutes`: `true` when the protocol is not `raw` and `health_path` or `invoke_path` differ from `AGENT_SERVICE_HEALTH_PATH` and `AGENT_SERVICE_INVOKE_PATH`. `rayito agent deploy` SHALL print a warning naming the protocol and the routes, and pointing to `protocol = "raw"`, when it is `true`; the default protocol SHALL NOT change.
+`HttpApp` SHALL provide `hides_own_routes` / `hidesOwnRoutes`: `true` when the protocol is neither `raw` nor `json` and `health_path` or `invoke_path` differ from `AGENT_SERVICE_HEALTH_PATH` and `AGENT_SERVICE_INVOKE_PATH`. `rayito agent deploy` SHALL print a warning naming the protocol and the routes, and pointing to `protocol = "raw"`, when it is `true`; the default protocol SHALL NOT change.
 
 #### Scenario: custom routes with the default protocol
 - **WHEN** an app with `health_path="/health"` and the default protocol is deployed from the CLI

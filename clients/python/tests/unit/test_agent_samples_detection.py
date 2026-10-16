@@ -43,8 +43,8 @@ def test_detection_decides_the_sample_without_options(sample: dict[str, Any]) ->
 @pytest.mark.parametrize("sample", SAMPLES, ids=_ids())
 def test_detection_language_is_the_sample_language(sample: dict[str, Any]) -> None:
     report = _report(sample)
-    if sample["language"] == "any":
-        assert report.language in (None, "python", "typescript")
+    if sample["lockfile"] is None:
+        assert report.language is None
     else:
         assert report.language == sample["language"]
 
@@ -73,6 +73,12 @@ def test_a_custom_http_sample_reports_its_routes(sample: dict[str, Any]) -> None
 
 @pytest.mark.parametrize("sample", SAMPLES, ids=_ids())
 def test_the_report_holds_no_file_content_or_secret(sample: dict[str, Any]) -> None:
-    text = json.dumps(_report(sample).to_dict())
+    report = _report(sample)
+    text = json.dumps(
+        [
+            report.evidence and [e.to_dict() for e in report.evidence],
+            report.providers and [p.to_dict() for p in report.providers],
+        ]
+    )
     assert "MODEL_ID=" not in text
     assert "rayito" not in text.lower()

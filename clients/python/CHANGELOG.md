@@ -26,6 +26,28 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   de instalación, versiones y proveedor, sin ejecutar su código) y las reglas
   que comparten los dos SDK (`agent-detection.json`) quedan listas para
   `deploy_agent`.
+- **Host y adaptadores de instalación del agente (0.14, lane de adaptadores)**:
+  el host del agente sirve una cola FIFO acotada (`queue_max` y
+  `queue_timeout_seconds` de `host.json`; sin cola por defecto, como 0.14.0-rc)
+  y supervisa las apps de larga vida (`http-app` y Hermes): una app que muere
+  se relanza con espera creciente, `/ping` es `HealthyBusy` y las invocaciones
+  reciben `503` con `Retry-After` mientras tanto, y agotado el presupuesto el
+  marcador de fallo lleva `app_crashloop` con la cola saneada de su salida de
+  error. `HttpApp(protocol="json")` traduce `/invocations` al contrato propio de
+  una app (`request_field` y `response_field`) y reenvía sus demás rutas;
+  `agentcore` sigue siendo el valor por defecto de un `HttpApp` explícito. Un
+  único puente de Node (`node_bridge.mjs`, driver `node-callable`) ejecuta
+  agentes de Strands (el antiguo `strands-ts`, que sigue como alias),
+  LangGraph.js y deepagents-js (`adapter="langgraph"`), el AI SDK de Vercel
+  (`adapter="vercel-ai"`) y una función propia (`adapter="callable"`) con
+  `CustomRuntime(entrypoint="ruta.ts#exportacion", package_manager=...)`. Y
+  `CustomRuntime` y `StrandsRuntime(language="typescript")` aceptan
+  `package_manager` (`pip`, `uv`, `npm`, `pnpm`, `yarn`), `python_version` y
+  `node_version`: el plan de instalación (`_install_plan.py`) baja CPython y Node
+  con sha256 fijado en `limits.json` y hace la instalación congelada del gestor.
+  Cuando el modelo va por la pasarela, el puente fuerza HTTP/1.1 en el AWS SDK de
+  JavaScript, que de otro modo habla HTTP/2 con Bedrock. Nada cambia para los
+  runtimes y los ficheros de proyecto de 0.13.
 
 - **Strands, Strands harness, Hermes, LangGraph y agentes propios como
   runtimes de primera clase (`agent-runtimes-byo`)**: `StrandsRuntime` (SDK y
