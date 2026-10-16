@@ -74,6 +74,8 @@
   --rx-r-s: 0.2rem;
   --rx-r-m: 0.4rem;
   --rx-r-l: 0.8rem;
+  --rx-art-bg: #fff;
+  --rx-art-max: 64rem;
 }
 
 /* Mapeo a las variables de Material (paleta primary/accent: custom). */
@@ -1558,4 +1560,48 @@ body {
 .rx-home pre {
   overflow-x: auto;
   max-width: 100%;
+}
+
+/* Ilustración animada: el dibujo es sobre blanco y lo sigue siendo en oscuro. */
+
+.rx-home .rayito-art {
+  width: 100%;
+  max-width: var(--rx-art-max);
+  margin: var(--rx-s8) auto;
+}
+
+.rx-home .rayito-art__media {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 16 / 9;
+  object-fit: contain;
+  background: var(--rx-art-bg);
+  border: 1px solid var(--rx-line);
+  border-radius: var(--rx-r-m);
+}
+
+.rx-home .rayito-art__toggle {
+  display: block;
+  margin: var(--rx-s3) auto 0;
+  padding: var(--rx-s2) var(--rx-s4);
+  border: 1px solid var(--rx-line);
+  border-radius: var(--rx-r-s);
+  color: var(--rx-ink);
+  background: var(--rx-surface);
+  font: inherit;
+  cursor: pointer;
+}
+
+.rx-home .rayito-art__toggle:hover {
+  border-color: var(--rx-arc);
+}
+
+.rx-home .rayito-art__toggle:focus-visible {
+  outline: 3px solid var(--rx-arc);
+  outline-offset: 3px;
+}
+
+.rx-home .rayito-art:not([data-ready]) .rayito-art__toggle {
+  visibility: hidden;
 }

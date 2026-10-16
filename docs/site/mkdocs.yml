@@ -7,6 +7,9 @@ repo_url: https://github.com/alejandro-cedeno-10/rayito
 repo_name: alejandro-cedeno-10/rayito
 edit_uri: edit/main/docs/site/docs/
 strict: true
+# El GIF sólo lo usa el README del repositorio: el sitio sirve el vídeo.
+exclude_docs: |
+  assets/rayito/rayito-readme-960.gif
 copyright: >-
   Copyright 2026 Rayito contributors ·
   <a href="https://github.com/alejandro-cedeno-10/rayito/blob/main/LICENSE">Apache-2.0</a> ·
@@ -72,6 +75,9 @@ theme:
 
 extra_css:
   - stylesheets/rayito.css
+
+extra_javascript:
+  - javascripts/rayito-art.js
 
 hooks:
   - hooks/limits_macros.py

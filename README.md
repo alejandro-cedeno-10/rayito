@@ -26,6 +26,10 @@ E2B's ergonomics without your customers' code leaving your account, and
 without a cluster to operate: the SDK talks directly to the Lambda MicroVMs
 API.
 
+<p align="center">
+  <img src="docs/site/docs/assets/rayito/rayito-readme-960.gif" width="800" alt="Animated flow of Rayito: two yellow cats operate three sandboxes on AWS Lambda microVMs, with an agent sending code in and artifacts coming out.">
+</p>
+
 ## Install
 
 ```bash
