@@ -52,6 +52,7 @@ services:
           - api.deepseek.com
           - api.x.ai
           - litellm.example.com
+          - bedrock-runtime.us-east-1.amazonaws.com
 
   runner:
     environment:
