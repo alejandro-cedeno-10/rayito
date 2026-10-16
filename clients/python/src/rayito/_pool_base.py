@@ -13,7 +13,7 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, Final, Literal
 
 from rayito._index import DynamoDbIndex, validate_index
-from rayito._limits import MAX_DURATION_SECONDS
+from rayito._limits import MAX_DURATION_SECONDS, POOL_SIZE_MAX
 from rayito._models import REDACTED, IdlePolicy, SandboxInfo
 from rayito._network_base import NetworkInput, checked_policy, resolve_network
 from rayito._payload import validated_cpu_time_limit, validated_envs, validated_metadata
@@ -32,7 +32,6 @@ if TYPE_CHECKING:
     from rayito._agent._runtime import WarmupStep
 
 POOL_SCHEMA: Final = "rayito.pool/1"
-POOL_SIZE_MAX: Final = 64
 FILL_CONCURRENCY_MAX: Final = 8
 MIN_REMAINING_FLOOR_SECONDS: Final = 60
 SWEEP_INTERVAL_MIN_SECONDS: Final = 5.0

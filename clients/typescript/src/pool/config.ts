@@ -9,6 +9,7 @@
 import type { WarmupStep } from "../agent/runtime.js";
 import { InvalidArgumentError } from "../errors.js";
 import { type DynamoDbIndex, validateIndex } from "../index/dynamodb.js";
+import { POOL_SIZE_MAX } from "../limits.js";
 import {
   type IdlePolicy,
   type IdlePolicyInput,
@@ -24,7 +25,6 @@ import {
 } from "../sandbox/launch.js";
 import { resolveNetwork, validatePolicyShape } from "../sandbox/network.js";
 
-export const POOL_SIZE_MAX = 64;
 export const FILL_CONCURRENCY_MAX = 8;
 export const MIN_REMAINING_FLOOR_MS = 60_000;
 export const SWEEP_INTERVAL_MIN_MS = 5000;

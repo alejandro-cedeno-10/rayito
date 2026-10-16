@@ -29,6 +29,9 @@ CONSTANT_NAME_OVERRIDES = {
     "agentStrandsHarnessRequirementsSha256": "AGENT_STRANDS_HARNESS_REQUIREMENTS_SHA256",
     "agentHermesRequirementsSha256": "AGENT_HERMES_REQUIREMENTS_SHA256",
     "agentHermesPythonSha256": "AGENT_HERMES_PYTHON_SHA256",
+    "agentPythonBuildSha256": "AGENT_PYTHON_BUILD_SHA256",
+    "agentNodeBuildSha256": "AGENT_NODE_BUILD_SHA256",
+    "agentUvSha256": "AGENT_UV_SHA256",
 }
 
 

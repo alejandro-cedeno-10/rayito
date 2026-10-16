@@ -89,6 +89,24 @@
         "python": {
           "type": "string",
           "minLength": 1
+        },
+        "framework": {
+          "type": "string",
+          "minLength": 1
+        },
+        "python_version": {
+          "enum": [
+            "3.11",
+            "3.12",
+            "3.13",
+            "3.14"
+          ]
+        },
+        "node_version": {
+          "enum": [
+            "22",
+            "24"
+          ]
         }
       },
       "additionalProperties": false,
@@ -107,7 +125,11 @@
           "then": {
             "propertyNames": {
               "enum": [
-                "kind"
+                "kind",
+                "language",
+                "framework",
+                "python_version",
+                "node_version"
               ]
             }
           }
@@ -126,7 +148,11 @@
           "then": {
             "propertyNames": {
               "enum": [
-                "kind"
+                "kind",
+                "language",
+                "framework",
+                "python_version",
+                "node_version"
               ]
             }
           }
@@ -146,7 +172,11 @@
             "propertyNames": {
               "enum": [
                 "kind",
-                "entrypoint"
+                "entrypoint",
+                "language",
+                "framework",
+                "python_version",
+                "node_version"
               ]
             }
           }
@@ -167,7 +197,10 @@
               "enum": [
                 "kind",
                 "entrypoint",
-                "language"
+                "language",
+                "framework",
+                "python_version",
+                "node_version"
               ]
             }
           }
@@ -188,7 +221,10 @@
               "enum": [
                 "kind",
                 "entrypoint",
-                "language"
+                "language",
+                "framework",
+                "python_version",
+                "node_version"
               ]
             }
           }
@@ -209,7 +245,11 @@
               "enum": [
                 "kind",
                 "toolsets",
-                "skills_dir"
+                "skills_dir",
+                "language",
+                "framework",
+                "python_version",
+                "node_version"
               ]
             }
           }
@@ -235,7 +275,11 @@
                 "entrypoint",
                 "app",
                 "protocol",
-                "python"
+                "python",
+                "language",
+                "framework",
+                "python_version",
+                "node_version"
               ]
             }
           }
@@ -981,7 +1025,58 @@
           "additionalProperties": {
             "type": "string"
           }
+        },
+        "queue_max": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 256
+        },
+        "queue_timeout_seconds": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 900
         }
+      }
+    },
+    "scaling": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "min_vms": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 64
+        },
+        "max_vms": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 64
+        },
+        "warm_vms": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 64
+        },
+        "sessions": {
+          "enum": [
+            "shared",
+            "dedicated"
+          ]
+        },
+        "scale_in_after_seconds": {
+          "type": "number",
+          "minimum": 60,
+          "maximum": 28800
+        }
+      }
+    },
+    "env": {
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+      },
+      "additionalProperties": {
+        "type": "string"
       }
     },
     "network": {
@@ -997,6 +1092,44 @@
             "type": "string",
             "minLength": 1
           }
+        },
+        "allow_out": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 253
+          },
+          "maxItems": 256
+        },
+        "deny_out": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 253
+          },
+          "maxItems": 256
+        }
+      }
+    },
+    "deploy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "region": {
+          "type": "string",
+          "minLength": 1
+        },
+        "bucket": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 63,
+          "pattern": "^[^\\s/]+$"
+        },
+        "base_image_version": {
+          "type": "string",
+          "pattern": "^\\S+$"
         }
       }
     },

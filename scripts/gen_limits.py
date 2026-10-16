@@ -436,6 +436,75 @@ GROUPS: tuple[tuple[str, ...], ...] = (
         "agentHermesPythonSha256",
         "agentHostSchema",
     ),
+    (
+        # agent-zero-config (ADR-029), lane A: the pool-size cap the warm
+        # fleet and `Pool` share, the scaling defaults of one VM (today's
+        # behaviour) and their bounds, the host queue and its timeout, the
+        # connections kept for `/ping` and control (the per-VM session cap
+        # derives from `maxConcurrentConnections1Vcpu` and
+        # `baselineMibPerVcpu`), the fleet's ping cache and unhealthy
+        # threshold, the app-supervision budget, the internal port and port
+        # env var of a detected HTTP app, the routable session handle prefix
+        # and the scan bounds, the default source excludes, the schema names
+        # of the detection report and its rules file. Not AWS properties,
+        # except the connection cap they derive from (AWS_API_NOTES quotas).
+        "poolSizeMax",
+        "agentScalingMinVmsDefault",
+        "agentScalingMaxVmsDefault",
+        "agentScalingWarmVmsDefault",
+        "agentScaleInAfterSecondsDefault",
+        "agentScaleInAfterSecondsMin",
+        "agentServiceQueueMaxDefault",
+        "agentServiceQueueMax",
+        "agentServiceQueueTimeoutSecondsDefault",
+        "agentServiceQueueTimeoutSecondsMax",
+        "agentServiceReservedConnections",
+        "agentFleetPingTtlSeconds",
+        "agentFleetUnhealthyPings",
+        "agentAppRestartMax",
+        "agentAppRestartWindowSeconds",
+        "agentAppRestartBackoffSeconds",
+        "agentAppRestartBackoffMaxSeconds",
+        "agentAppInternalPort",
+        "agentAppPortEnv",
+        "agentSessionHandlePrefix",
+        "agentDetectionMaxFiles",
+        "agentDetectionMaxDepth",
+        "agentDetectionMaxFileBytes",
+        "agentSourceDefaultExcludes",
+        "agentDetectionSchema",
+        "agentDetectionRulesSchema",
+    ),
+    (
+        # agent-zero-config (ADR-029), lane A: the pinned toolchains an
+        # install plan may download, each with the digest its publisher
+        # states (checked 2026-10-16): CPython builds of python-build-
+        # standalone (one release tag, linux arm64 `install_only` tarball
+        # sha256 from the GitHub release assets), Node tarballs (sha256 from
+        # nodejs.org SHASUMS256.txt), the uv release tarball and the
+        # corepack integrity of pnpm and yarn (npm registry `dist.integrity`).
+        # The default minor is the base image interpreter, which needs no
+        # download; the default Node major is the one Strands TypeScript
+        # requires. Keyed by minor ("3.12") or major ("22"). Not AWS
+        # properties.
+        "agentPythonBuildTag",
+        "agentPythonBuildVersions",
+        "agentPythonBuildSha256",
+        "agentDefaultPythonMinor",
+        "agentNodeBuildVersions",
+        "agentNodeBuildSha256",
+        "agentDefaultNodeMajor",
+        "agentUvVersion",
+        "agentUvSha256",
+        "agentPnpmVersion",
+        "agentPnpmIntegrity",
+        "agentYarnClassicVersion",
+        "agentYarnClassicIntegrity",
+        "agentYarnBerryVersion",
+        "agentYarnBerryIntegrity",
+        "agentSecretNameTemplate",
+        "agentTokenFileDefault",
+    ),
 )
 
 PYTHON_HEADER = '''"""Límites y cuotas de Lambda MicroVMs que el SDK valida en cliente.
@@ -469,6 +538,9 @@ CONSTANT_NAME_OVERRIDES = {
     "agentStrandsHarnessRequirementsSha256": "AGENT_STRANDS_HARNESS_REQUIREMENTS_SHA256",
     "agentHermesRequirementsSha256": "AGENT_HERMES_REQUIREMENTS_SHA256",
     "agentHermesPythonSha256": "AGENT_HERMES_PYTHON_SHA256",
+    "agentPythonBuildSha256": "AGENT_PYTHON_BUILD_SHA256",
+    "agentNodeBuildSha256": "AGENT_NODE_BUILD_SHA256",
+    "agentUvSha256": "AGENT_UV_SHA256",
 }
 
 
@@ -579,7 +651,7 @@ def python_line(key: str, value: object) -> str:
             return f"{name}: Final = ({elements[0]},)"
         return python_collection(f"{name}: Final = ", elements, "(", ")")
     line = f"{name}: Final = {python_scalar(value)}"
-    if len(line) <= LINE_WIDTH:
+    if len(line) <= LINE_WIDTH or len(f"{INDENT}{python_scalar(value)}") > LINE_WIDTH:
         return line
     return f"{name}: Final = (\n{INDENT}{python_scalar(value)}\n)"
 
