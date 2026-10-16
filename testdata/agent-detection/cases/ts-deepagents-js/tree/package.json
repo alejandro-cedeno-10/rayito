@@ -1,0 +1,9 @@
+{
+  "name": "demo-agent",
+  "version": "0.1.0",
+  "type": "module",
+  "dependencies": {
+    "deepagents": "^1.0.0",
+    "@langchain/anthropic": "^1.0.0"
+  }
+}

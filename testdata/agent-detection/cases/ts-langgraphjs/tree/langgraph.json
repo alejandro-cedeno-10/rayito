@@ -1,0 +1,6 @@
+{
+  "node_version": "22",
+  "graphs": {
+    "agent": "./src/agent.ts:graph"
+  }
+}

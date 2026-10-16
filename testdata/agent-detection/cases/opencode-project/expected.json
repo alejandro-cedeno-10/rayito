@@ -1,0 +1,32 @@
+{
+  "schema": "rayito.agent-detection/1",
+  "language": null,
+  "framework": "opencode",
+  "kind": "opencode",
+  "entrypoint": null,
+  "entrypoint_kind": null,
+  "protocol": "framework",
+  "options": {},
+  "app": null,
+  "install": null,
+  "providers": [
+    {
+      "preset": "bedrock",
+      "evidence": [
+        {
+          "path": "opencode.json",
+          "rule": "config"
+        }
+      ]
+    }
+  ],
+  "models": [],
+  "evidence": [
+    {
+      "path": "opencode.json",
+      "rule": "file:opencode.json"
+    }
+  ],
+  "warnings": [],
+  "alternatives": []
+}

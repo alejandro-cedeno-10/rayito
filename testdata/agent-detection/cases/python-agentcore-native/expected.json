@@ -1,0 +1,61 @@
+{
+  "schema": "rayito.agent-detection/1",
+  "language": "python",
+  "framework": "agentcore",
+  "kind": "custom",
+  "entrypoint": "app:app",
+  "entrypoint_kind": "object",
+  "protocol": "agentcore",
+  "options": {},
+  "app": {
+    "framework": "agentcore",
+    "command": [
+      "python",
+      "-m",
+      "uvicorn",
+      "app:app",
+      "--host",
+      "127.0.0.1",
+      "--port",
+      "8000"
+    ],
+    "port": 8000,
+    "health_path": "/ping",
+    "invoke_path": "/invocations",
+    "request_field": null,
+    "response_field": null
+  },
+  "install": {
+    "manager": "pip",
+    "lockfile": null,
+    "requirements": "requirements.txt",
+    "require_hashes": false,
+    "reproducible": true,
+    "build_script": false,
+    "python_version": "3.12",
+    "node_version": null
+  },
+  "providers": [],
+  "models": [],
+  "evidence": [
+    {
+      "path": "requirements.txt",
+      "rule": "dep:bedrock-agentcore"
+    },
+    {
+      "path": "app.py",
+      "rule": "entry:py-agentcore-app"
+    },
+    {
+      "path": "requirements.txt",
+      "rule": "install:pip"
+    }
+  ],
+  "warnings": [
+    {
+      "code": "no_provider",
+      "detail": "no se detecta ningún proveedor de modelo; indícalo con --secret proveedor=nombre"
+    }
+  ],
+  "alternatives": []
+}

@@ -1,0 +1,54 @@
+{
+  "schema": "rayito.agent-detection/1",
+  "language": "python",
+  "framework": "strands",
+  "kind": "strands",
+  "entrypoint": "agent:agent",
+  "entrypoint_kind": "object",
+  "protocol": "framework",
+  "options": {},
+  "app": null,
+  "install": {
+    "manager": "pip-project",
+    "lockfile": null,
+    "requirements": null,
+    "require_hashes": false,
+    "reproducible": false,
+    "build_script": false,
+    "python_version": "3.12",
+    "node_version": null
+  },
+  "providers": [
+    {
+      "preset": "bedrock",
+      "evidence": [
+        {
+          "path": "pyproject.toml",
+          "rule": "dep:strands-agents"
+        }
+      ]
+    }
+  ],
+  "models": [],
+  "evidence": [
+    {
+      "path": "pyproject.toml",
+      "rule": "dep:strands-agents"
+    },
+    {
+      "path": "agent.py",
+      "rule": "entry:py-strands-agent"
+    },
+    {
+      "path": "pyproject.toml",
+      "rule": "version:specifier"
+    }
+  ],
+  "warnings": [
+    {
+      "code": "not_reproducible",
+      "detail": "sin fichero de bloqueo la instalación no es reproducible"
+    }
+  ],
+  "alternatives": []
+}

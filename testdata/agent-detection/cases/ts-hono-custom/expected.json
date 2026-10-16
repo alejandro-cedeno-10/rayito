@@ -1,0 +1,60 @@
+{
+  "schema": "rayito.agent-detection/1",
+  "language": "typescript",
+  "framework": "hono",
+  "kind": "custom",
+  "entrypoint": "server.js#app",
+  "entrypoint_kind": "object",
+  "protocol": "json",
+  "options": {},
+  "app": {
+    "framework": "hono",
+    "command": [
+      "npm",
+      "run",
+      "start"
+    ],
+    "port": 3000,
+    "health_path": "/status",
+    "invoke_path": "/invoke",
+    "request_field": "prompt",
+    "response_field": null
+  },
+  "install": {
+    "manager": "npm",
+    "lockfile": "package-lock.json",
+    "requirements": null,
+    "require_hashes": false,
+    "reproducible": true,
+    "build_script": false,
+    "python_version": null,
+    "node_version": "22"
+  },
+  "providers": [],
+  "models": [],
+  "evidence": [
+    {
+      "path": "package.json",
+      "rule": "dep:hono"
+    },
+    {
+      "path": "server.js",
+      "rule": "entry:ts-hono-app"
+    },
+    {
+      "path": "package-lock.json",
+      "rule": "install:npm"
+    }
+  ],
+  "warnings": [
+    {
+      "code": "request_field_assumed",
+      "detail": "no se detectó el campo de la petición; se usa prompt"
+    },
+    {
+      "code": "no_provider",
+      "detail": "no se detecta ningún proveedor de modelo; indícalo con --secret proveedor=nombre"
+    }
+  ],
+  "alternatives": []
+}

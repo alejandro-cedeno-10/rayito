@@ -1,0 +1,9 @@
+{
+  "name": "demo-agent",
+  "version": "0.1.0",
+  "type": "module",
+  "dependencies": {
+    "@strands-agents/harness": "^1.0.0",
+    "@strands-agents/sdk": "^1.0.0"
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "name": "demo-agent",
+  "version": "0.1.0",
+  "type": "module",
+  "dependencies": {
+    "express": "^1.0.0"
+  },
+  "scripts": {
+    "start": "node dist/server.js",
+    "build": "tsc"
+  }
+}
