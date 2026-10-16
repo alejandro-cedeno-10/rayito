@@ -69,6 +69,9 @@ dev = [
 docs = [
     "mkdocs-material>=9.6",
     "mkdocstrings[python]>=0.27",
+    # Exacta: el sitio bilingüe (es por defecto, en) depende de su sufijo
+    # `pagina.en.md`; una subida pasa por Dependabot y por `make docs`.
+    "mkdocs-static-i18n==1.3.1",
 ]
 
 [build-system]
