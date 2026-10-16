@@ -7,13 +7,14 @@ placa limpia y las capas recortadas) no se versiona: se pasa como argumento.
     uv run --with pillow==12.3.0 --with numpy==2.5.4 python scripts/build_landing_art.py \
         --kit <carpeta-del-kit> --out docs/site/docs/assets/rayito
 
-Cada número sale de `source/animate-v2.cjs` del kit, el guion que dibujó el
-vídeo aprobado: las cajas de las capas sobre la placa de 1672 x 941, las
-fórmulas de peso de las colas y las alas, y el polígono `rail` de la barandilla
-que va delante de la gata. El CSS no puede deformar una malla, así que cada
-sprite deformado se parte en dos imágenes del mismo tamaño (cuerpo y cola, o
-cuerpo y ala) con una banda de solape: en reposo la pila reproduce el sprite
-original y en movimiento el cuerpo tapa la unión.
+Las cajas de las capas sobre la placa de 1672 x 941 y el polígono `rail` de la
+barandilla que va delante de la gata salen de `source/animate-v2.cjs` del kit.
+El CSS no puede deformar una malla, así que cada sprite articulado se parte en
+dos imágenes del mismo tamaño (cuerpo y cola, o cuerpo y ala) con polígonos
+dibujados sobre el propio sprite: el cuerpo conserva su silueta entera y la
+parte móvil va detrás, con un relleno oculto bajo el cuerpo que tapa el hueco
+al girar. En reposo la pila reproduce el sprite original y en movimiento no
+queda ningún trazo suelto del contorno.
 
 Además de las capas escribe, fuera de `--out`, la imagen fija de reposo
 `art-still-1672.png` si se pasa `--still`: es la referencia de la comprobación
@@ -35,8 +36,9 @@ PLATE_W, PLATE_H = 1672, 941
 PLATE_SMALL_W = 960
 PLATE_QUALITY = 80
 LAYER_QUALITY = 90
-SMOOTH_MOVING = (0.0, 0.1)
-SMOOTH_STATIC = (0.25, 0.6)
+MASK_SUPERSAMPLE = 8
+UNDER_FILL_DEPTH = 5
+WING_FILL = (248, 249, 253)
 
 OG_W, OG_H = 1200, 630
 OG_QUALITY = 80
@@ -54,6 +56,41 @@ RAIL_POLYGONS = [
     [(1445, 512), (1458, 512), (1458, 551), (1446, 552)],
     [(1310, 548), (1475, 548), (1475, 593), (1310, 593)],
 ]
+MALE_TAIL_CUT = [(0, 118), (66, 118), (66, 188), (68.5, 188), (68.5, 214), (0, 214)]
+MALE_TAIL_UNDER = [(0, 118), (66, 118), (66, 188), (78, 188), (78, 214), (0, 214)]
+FEMALE_TAIL_CUT = [(0, 95), (50.5, 95), (50.5, 170), (0, 170)]
+FEMALE_TAIL_UNDER = [(0, 95), (51, 95), (51, 150), (60, 150), (60, 176), (0, 176)]
+CUBE_SILHOUETTE = [
+    (69, 43),
+    (75, 38),
+    (90, 30),
+    (105, 24),
+    (125, 22),
+    (140, 26),
+    (146, 32),
+    (156, 32.5),
+    (158, 36),
+    (160.5, 45),
+    (162, 60),
+    (164, 70),
+    (166, 85),
+    (168, 98),
+    (166, 104),
+    (125, 124),
+    (100, 118),
+    (79, 112),
+    (73, 100),
+    (73, 88),
+    (77, 83),
+    (81, 79),
+    (80.5, 71),
+    (76.5, 70),
+    (72, 64),
+    (70, 58),
+    (70, 50),
+]
+CUBE_WING_SPLIT_X = 115
+WING_BANDS = {"l": (0, 84, 44, 92), "r": (140, 203, 24, 66)}
 PACKET_SCALE = 0.72
 BELT_START = (1348, 678)
 BELT_TRAVEL = (247, 68)
@@ -73,34 +110,15 @@ SIGNAL_START = (111, 431)
 SIGNAL_RADIUS = 5
 
 
-def clamp(values: np.ndarray) -> np.ndarray:
-    return np.clip(values, 0.0, 1.0)
-
-
-def smoothstep(low: float, high: float, values: np.ndarray) -> np.ndarray:
-    x = clamp((values - low) / (high - low))
-    return x * x * (3 - 2 * x)
-
-
-def grid(image: Image.Image) -> tuple[np.ndarray, np.ndarray]:
-    """Coordenadas de píxel de origen (sx, sy) de cada punto del sprite."""
-    sy, sx = np.mgrid[0 : image.height, 0 : image.width].astype(np.float64)
-    return sx, sy
-
-
-def male_weight(image: Image.Image) -> np.ndarray:
-    sx, sy = grid(image)
-    return clamp((100 - sx) / 90) * clamp((sy - 115) / 35) * clamp((245 - sy) / 30)
-
-
-def female_weight(image: Image.Image) -> np.ndarray:
-    sx, sy = grid(image)
-    return clamp((75 - sx) / 65) * clamp((sy - 75) / 30) * clamp((200 - sy) / 40)
-
-
-def wing_weights(image: Image.Image) -> tuple[np.ndarray, np.ndarray]:
-    sx, _ = grid(image)
-    return clamp((83 - sx) / 18), clamp((sx - 158) / 18)
+def polygon_mask(
+    size: tuple[int, int], polygon: list[tuple[float, float]]
+) -> np.ndarray:
+    """Máscara antialiasada (0..1) de un polígono en coordenadas de píxel del sprite."""
+    scale = MASK_SUPERSAMPLE
+    mask = Image.new("L", (size[0] * scale, size[1] * scale), 0)
+    ImageDraw.Draw(mask).polygon([(x * scale, y * scale) for x, y in polygon], fill=255)
+    small = mask.resize(size, Image.Resampling.BOX)
+    return np.asarray(small, dtype=np.float64) / 255
 
 
 def with_alpha(image: Image.Image, factor: np.ndarray) -> Image.Image:
@@ -110,13 +128,65 @@ def with_alpha(image: Image.Image, factor: np.ndarray) -> Image.Image:
     return Image.fromarray(data, "RGBA")
 
 
-def split_by_weight(
-    image: Image.Image, weight: np.ndarray
+def split_by_polygons(
+    image: Image.Image,
+    cut: list[tuple[float, float]],
+    under: list[tuple[float, float]],
 ) -> tuple[Image.Image, Image.Image]:
-    """(cuerpo, parte móvil): el cuerpo pierde sólo la zona lejana de la unión."""
-    moving = with_alpha(image, smoothstep(*SMOOTH_MOVING, weight))
-    body = with_alpha(image, 1 - smoothstep(*SMOOTH_STATIC, weight))
+    """(cuerpo, parte móvil): el cuerpo pierde sólo lo que queda fuera de su contorno.
+
+    `cut` es la parte que se mueve y desaparece del cuerpo; `under` la rodea con
+    unos píxeles que siguen dentro del cuerpo y que, al ir detrás, tapan la unión.
+    """
+    size = image.size
+    body = with_alpha(image, 1 - polygon_mask(size, cut))
+    moving = with_alpha(
+        image, np.maximum(polygon_mask(size, under), polygon_mask(size, cut))
+    )
     return body, moving
+
+
+def dilate(mask: np.ndarray, radius: int) -> np.ndarray:
+    """Dilatación cuadrada de una máscara 0..1 (el máximo en una ventana)."""
+    padded = np.pad(mask, radius)
+    out = np.zeros_like(mask)
+    height, width = mask.shape
+    for dy in range(2 * radius + 1):
+        for dx in range(2 * radius + 1):
+            out = np.maximum(out, padded[dy : dy + height, dx : dx + width])
+    return out
+
+
+def cube_layers(cube: Image.Image) -> tuple[Image.Image, Image.Image, Image.Image]:
+    """(cuerpo, ala izquierda, ala derecha) del cubo con alas.
+
+    El cuerpo es la silueta del cubo; cada ala es todo lo que queda fuera más una
+    franja de relleno liso bajo el borde del cubo, para que al girar no asome ni
+    un trozo del contorno del cubo ni un hueco.
+    """
+    size = cube.size
+    inside = polygon_mask(size, CUBE_SILHOUETTE)
+    outside = 1 - inside
+    near_edge = dilate(outside, UNDER_FILL_DEPTH) * (inside > 0)
+    data = np.array(cube.convert("RGBA"))
+    sy, sx = np.mgrid[0 : size[1], 0 : size[0]]
+    wings = []
+    for side, on_side in (
+        ("l", sx < CUBE_WING_SPLIT_X),
+        ("r", sx >= CUBE_WING_SPLIT_X),
+    ):
+        left, right, top, bottom = WING_BANDS[side]
+        in_window = (sx >= left) & (sx <= right) & (sy >= top) & (sy <= bottom)
+        band = (near_edge > 0) & in_window
+        layer = data.copy()
+        keep = on_side & (inside == 0)
+        layer[..., 3] = np.where(keep, data[..., 3], 0)
+        layer[band] = (*WING_FILL, 255)
+        layer[(inside > 0) & ~band, 3] = 0
+        edge = (inside > 0) & (inside < 1) & on_side & ~band
+        layer[edge, 3] = np.round(data[edge, 3] * (1 - inside[edge])).astype(np.uint8)
+        wings.append(Image.fromarray(layer, "RGBA"))
+    return with_alpha(cube, inside), wings[0], wings[1]
 
 
 def rail_front(plate: Image.Image) -> Image.Image:
@@ -297,33 +367,18 @@ def build(kit: Path, out: Path, still_path: Path | None) -> None:
     encode_webp(layers["output-packet"], art / "packet.webp", lossy_rgb=False)
     layers["packet"] = layers["output-packet"]
 
-    male = layers["male"]
-    body, tail = split_by_weight(male, male_weight(male))
-    encode_webp(body, art / "male-body.webp", lossy_rgb=False)
-    encode_webp(tail, art / "male-tail.webp", lossy_rgb=False)
-    female = layers["female"]
-    body, tail = split_by_weight(female, female_weight(female))
-    encode_webp(body, art / "female-body.webp", lossy_rgb=False)
-    encode_webp(tail, art / "female-tail.webp", lossy_rgb=False)
+    for name, cut, under in (
+        ("male", MALE_TAIL_CUT, MALE_TAIL_UNDER),
+        ("female", FEMALE_TAIL_CUT, FEMALE_TAIL_UNDER),
+    ):
+        body, tail = split_by_polygons(layers[name], cut, under)
+        encode_webp(body, art / f"{name}-body.webp", lossy_rgb=False)
+        encode_webp(tail, art / f"{name}-tail.webp", lossy_rgb=False)
 
-    cube = layers["winged-cube"]
-    left, right = wing_weights(cube)
-    both = np.maximum(left, right)
-    encode_webp(
-        with_alpha(cube, 1 - smoothstep(*SMOOTH_STATIC, both)),
-        art / "cube-body.webp",
-        lossy_rgb=False,
-    )
-    encode_webp(
-        with_alpha(cube, smoothstep(*SMOOTH_MOVING, left)),
-        art / "cube-wing-l.webp",
-        lossy_rgb=False,
-    )
-    encode_webp(
-        with_alpha(cube, smoothstep(*SMOOTH_MOVING, right)),
-        art / "cube-wing-r.webp",
-        lossy_rgb=False,
-    )
+    body, wing_left, wing_right = cube_layers(layers["winged-cube"])
+    encode_webp(body, art / "cube-body.webp", lossy_rgb=False)
+    encode_webp(wing_left, art / "cube-wing-l.webp", lossy_rgb=False)
+    encode_webp(wing_right, art / "cube-wing-r.webp", lossy_rgb=False)
     encode_webp(rail_front(plate), art / "rail-front.webp", lossy_rgb=False)
 
     still = compose_still(plate, layers)

@@ -86,3 +86,21 @@ def test_layers_are_lazy_and_sized(language: str) -> None:
         assert 'loading="lazy"' in image and "width=" in image and "height=" in image, (
             image
         )
+
+
+@pytest.mark.parametrize("language", ["es", "en"])
+def test_pause_toggle_has_a_fixed_label(language: str) -> None:
+    text = PAGES[language].read_text(encoding="utf-8")
+    button = re.search(r"<button [^>]*data-rx-art-toggle[^>]*>", text)
+    assert button, "falta el botón de pausa"
+    assert 'aria-label="' in button.group(0) and 'aria-pressed="false"' in button.group(
+        0
+    )
+    assert "data-play-label" not in text and "data-pause-label" not in text
+
+
+@pytest.mark.parametrize("language", ["es", "en"])
+def test_each_wing_has_its_own_hinge_class(language: str) -> None:
+    text = PAGES[language].read_text(encoding="utf-8")
+    assert "rx-art__wing rx-art__wing--l" in text
+    assert "rx-art__wing rx-art__wing--r" in text

@@ -2,7 +2,8 @@
  * Ilustración "Cómo funciona": mejora progresiva. La figura se dibuja y se anima
  * sola con CSS; este script sólo ahorra trabajo (pausa fuera de pantalla y con
  * la pestaña oculta) y añade el botón de pausa que exige WCAG 2.2.2 para un
- * movimiento que dura más de 5 s. Los textos salen de los atributos data-*.
+ * movimiento que dura más de 5 s. La etiqueta del botón es fija (la pone el
+ * HTML, en cada idioma) y su estado se anuncia con aria-pressed.
  */
 (() => {
   const reduced = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -26,22 +27,18 @@
         delete figure.dataset.offscreen;
       }
 
-      const label = () => {
-        const paused = "userPaused" in figure.dataset;
-        button.textContent = paused ? figure.dataset.playLabel : figure.dataset.pauseLabel;
-        button.setAttribute("aria-pressed", String(paused));
-      };
+      if (!button) return;
+
       const sync = () => {
         button.hidden = reduced.matches;
       };
       button.addEventListener("click", () => {
         if ("userPaused" in figure.dataset) delete figure.dataset.userPaused;
         else figure.dataset.userPaused = "";
-        label();
+        button.setAttribute("aria-pressed", String("userPaused" in figure.dataset));
       });
       reduced.addEventListener("change", sync);
       sync();
-      label();
     });
   }
 

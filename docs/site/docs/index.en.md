@@ -138,7 +138,7 @@ Your code asks for a sandbox; AWS Lambda starts it in your account and
 hands back the result.
 { .rx-section__lead }
 
-<figure class="rx-art" data-rx-art data-pause-label="Pause animation" data-play-label="Play animation">
+<figure class="rx-art" data-rx-art>
 <div class="rx-art__stage" role="img" aria-label="Rayito illustration: an agent sends code to three isolated sandboxes on AWS Lambda MicroVMs; two cats run the machine and the results leave on a conveyor belt.">
 <img class="rx-art__plate" src="../assets/rayito/art/plate-1672.webp" srcset="../assets/rayito/art/plate-960.webp 960w, ../assets/rayito/art/plate-1672.webp 1672w" sizes="(min-width: 76.25em) 1220px, 100vw" width="1672" height="941" loading="lazy" decoding="async" alt="Rayito illustration: an agent sends code to three isolated sandboxes on AWS Lambda MicroVMs; two cats run the machine and the results leave on a conveyor belt.">
 <img class="rx-art__l rx-art__gear rx-art__gear--1" src="../assets/rayito/art/gear-1.webp" width="69" height="70" loading="lazy" decoding="async" alt="" aria-hidden="true">
@@ -154,8 +154,8 @@ hands back the result.
 </span>
 <img class="rx-art__l rx-art__rail" src="../assets/rayito/art/rail-front.webp" width="165" height="96" loading="lazy" decoding="async" alt="" aria-hidden="true">
 <span class="rx-art__l rx-art__cube" aria-hidden="true"><span class="rx-art__cube-bob">
-<img class="rx-art__wing" src="../assets/rayito/art/cube-wing-l.webp" width="203" height="122" loading="lazy" decoding="async" alt="" aria-hidden="true">
-<img class="rx-art__wing" src="../assets/rayito/art/cube-wing-r.webp" width="203" height="122" loading="lazy" decoding="async" alt="" aria-hidden="true">
+<img class="rx-art__wing rx-art__wing--l" src="../assets/rayito/art/cube-wing-l.webp" width="203" height="122" loading="lazy" decoding="async" alt="" aria-hidden="true">
+<img class="rx-art__wing rx-art__wing--r" src="../assets/rayito/art/cube-wing-r.webp" width="203" height="122" loading="lazy" decoding="async" alt="" aria-hidden="true">
 <img src="../assets/rayito/art/cube-body.webp" width="203" height="122" loading="lazy" decoding="async" alt="" aria-hidden="true">
 </span></span>
 <img class="rx-art__l rx-art__belt" src="../assets/rayito/art/packet.webp" style="--i:0" width="90" height="86" loading="lazy" decoding="async" alt="" aria-hidden="true">
@@ -178,7 +178,7 @@ hands back the result.
 <span class="rx-art__l rx-art__signal" aria-hidden="true"></span>
 </div>
 <figcaption><ol><li>Your agent or your code calls the SDK with your AWS credentials.</li><li>Every sandbox starts in its own hardware-isolated Lambda MicroVM.</li><li>Outputs, files and artifacts come back to your code; nothing goes through a Rayito server.</li></ol></figcaption>
-<button type="button" class="rx-art__toggle" data-rx-art-toggle aria-pressed="false" hidden>Pause animation</button>
+<button type="button" class="rx-art__toggle" data-rx-art-toggle aria-label="Pause animation" aria-pressed="false" hidden><span class="rx-art__icon" aria-hidden="true"></span></button>
 </figure>
 
 <div class="rx-actions" markdown>
@@ -254,7 +254,7 @@ Save the code from the top in `first.py` (or `first.ts`) and run it.
 </div>
 </div>
 
-<div class="rx-actions" markdown>
+<div class="rx-actions rx-actions--steps" markdown>
 [Launch your first sandbox](quickstart.md){ .md-button .md-button--primary }
 </div>
 

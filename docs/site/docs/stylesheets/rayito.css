@@ -60,6 +60,7 @@
   --rx-fs-h3: 0.95rem;
   --rx-fs-lead: clamp(0.85rem, 0.8rem + 0.3vw, 1rem);
   --rx-fs-small: 0.65rem;
+  --rx-fs-caption: 0.75rem;
   --rx-measure: 34em;
 
   --rx-s1: 0.2rem;
@@ -74,8 +75,21 @@
   --rx-r-s: 0.2rem;
   --rx-r-m: 0.4rem;
   --rx-r-l: 0.8rem;
+  --rx-r-pill: 999px;
   --rx-art-bg: #fff;
-  --rx-art-max: 64rem;
+  --rx-art-max: 46rem;
+  --rx-art-loop: 6s;
+  --rx-art-half: calc(var(--rx-art-loop) / 2);
+  --rx-art-quarter: calc(var(--rx-art-loop) / 4);
+  --rx-art-eighth: calc(var(--rx-art-loop) / 8);
+  --rx-art-sway: 3.724deg;
+  --rx-art-breath: 0.012;
+  --rx-art-tail-swing: 6deg;
+  --rx-art-flap-swing: 10deg;
+  --rx-art-badge: 1.1rem;
+  --rx-art-toggle: 2rem;
+  --rx-art-toggle-ink: #12152a;
+  --rx-art-toggle-bg: rgb(255 255 255 / 0.88);
   --rx-art-glow-core: rgb(255 247 185);
   --rx-art-glow-mid: rgb(251 140 0 / 0.25);
   --rx-art-glow-edge: rgb(251 140 0 / 0);
@@ -1503,73 +1517,71 @@ body {
     }
   }
 
-  /* Ilustración: bucle maestro de 6 s; todos los periodos lo dividen. Cada
-     seno se escribe con easeInOutSine y `alternate`, que da un seno exacto;
-     los retardos negativos hacen que el primer fotograma ya esté a mitad. */
+  /* Ilustración: un bucle maestro (--rx-art-loop) y todos los periodos son
+     fracciones suyas, así que el dibujo cierra el ciclo sin saltos. Cada seno
+     se escribe con easeInOutSine y `alternate`, que da un seno exacto; los
+     retardos negativos hacen que el primer fotograma ya esté a mitad. */
 
-  .rx-art__gear { animation: rx-art-spin 3s linear infinite; }
+  .rx-art__gear { animation: rx-art-spin var(--rx-art-half) linear infinite; }
   .rx-art__gear--2 { animation-name: rx-art-spin-back; }
 
   .rx-art__male {
     animation:
-      rx-art-sway 1.5s var(--rx-art-ease-sine) -0.75s infinite alternate,
-      rx-art-breath 0.75s var(--rx-art-ease-sine) -0.375s infinite alternate;
+      rx-art-sway var(--rx-art-quarter) var(--rx-art-ease-sine) calc(var(--rx-art-eighth) * -1) infinite alternate,
+      rx-art-breath var(--rx-art-eighth) var(--rx-art-ease-sine) calc(var(--rx-art-eighth) / -2) infinite alternate;
   }
 
   .rx-art__male > .rx-art__tail {
-    animation: rx-art-tail-male 1.5s var(--rx-art-ease-sine) -0.75s infinite alternate;
+    animation: rx-art-tail var(--rx-art-quarter) var(--rx-art-ease-sine) calc(var(--rx-art-eighth) * -1) infinite alternate;
   }
 
-  .rx-art__female { animation: rx-art-sway 1.5s var(--rx-art-ease-sine) -2.5365s infinite alternate; }
+  .rx-art__female {
+    animation: rx-art-sway var(--rx-art-quarter) var(--rx-art-ease-sine) calc(var(--rx-art-loop) * -0.42275) infinite alternate;
+  }
 
   .rx-art__female > .rx-art__tail {
-    animation: rx-art-tail-female 1.5s var(--rx-art-ease-sine) -1.323s infinite alternate;
+    animation: rx-art-tail var(--rx-art-quarter) var(--rx-art-ease-sine) calc(var(--rx-art-loop) * -0.2205) infinite alternate;
   }
 
-  .rx-art__cube { animation: rx-art-cube-x 3s var(--rx-art-ease-sine) -1.5s infinite alternate; }
+  .rx-art__cube { animation: rx-art-cube-x var(--rx-art-half) var(--rx-art-ease-sine) calc(var(--rx-art-quarter) * -1) infinite alternate; }
 
   .rx-art__cube-bob {
     animation:
-      rx-art-cube-y 1.5s var(--rx-art-ease-sine) -0.75s infinite alternate,
-      rx-art-cube-tilt 3s var(--rx-art-ease-sine) -1.5s infinite alternate;
+      rx-art-cube-y var(--rx-art-quarter) var(--rx-art-ease-sine) calc(var(--rx-art-eighth) * -1) infinite alternate,
+      rx-art-cube-tilt var(--rx-art-half) var(--rx-art-ease-sine) calc(var(--rx-art-quarter) * -1) infinite alternate;
   }
 
-  .rx-art__wing { animation: rx-art-flap 0.5s var(--rx-art-ease-sine) infinite alternate; }
+  .rx-art__wing { animation: rx-art-flap calc(var(--rx-art-loop) / 12) var(--rx-art-ease-sine) infinite alternate; }
 
-  .rx-art__belt { animation: rx-art-belt 3s linear calc(var(--i) * -1s) infinite; }
-  .rx-art__arrow { animation: rx-art-arrow 3s linear calc(var(--i) * -1.5s) infinite; }
+  .rx-art__belt { animation: rx-art-belt var(--rx-art-half) linear calc(var(--i) * var(--rx-art-loop) / -6) infinite; }
+  .rx-art__arrow { animation: rx-art-arrow var(--rx-art-half) linear calc(var(--i) * var(--rx-art-quarter) * -1) infinite; }
 
   .rx-art__glow {
-    animation: rx-art-glow 1.5s var(--rx-art-ease-sine) calc(var(--i) * 0.9549s - 3.75s) infinite alternate;
+    animation: rx-art-glow var(--rx-art-quarter) var(--rx-art-ease-sine) calc(var(--i) * var(--rx-art-loop) * 0.15915 - var(--rx-art-loop) * 0.625) infinite alternate;
   }
 
   .rx-art__dot {
-    animation: rx-art-dot 0.75s var(--rx-art-ease-sine) calc(var(--n) * 0.23873s - 1.875s) infinite alternate;
+    animation: rx-art-dot var(--rx-art-eighth) var(--rx-art-ease-sine) calc(var(--n) * var(--rx-art-loop) * 0.039788 - var(--rx-art-loop) * 0.3125) infinite alternate;
   }
 
-  .rx-art__signal { animation: rx-art-signal 3s linear infinite; }
+  .rx-art__signal { animation: rx-art-signal var(--rx-art-half) linear infinite; }
 
   @keyframes rx-art-spin { to { rotate: 360deg; } }
   @keyframes rx-art-spin-back { to { rotate: -360deg; } }
 
   @keyframes rx-art-sway {
-    from { rotate: -3.724deg; }
-    to { rotate: 3.724deg; }
+    from { rotate: calc(var(--rx-art-sway) * -1); }
+    to { rotate: var(--rx-art-sway); }
   }
 
   @keyframes rx-art-breath {
-    from { scale: 1 0.988; }
-    to { scale: 1 1.012; }
+    from { scale: 1 calc(1 - var(--rx-art-breath)); }
+    to { scale: 1 calc(1 + var(--rx-art-breath)); }
   }
 
-  @keyframes rx-art-tail-male {
-    from { rotate: -9deg; }
-    to { rotate: 9deg; }
-  }
-
-  @keyframes rx-art-tail-female {
-    from { rotate: -11deg; }
-    to { rotate: 11deg; }
+  @keyframes rx-art-tail {
+    from { rotate: calc(var(--rx-art-tail-swing) * -1); }
+    to { rotate: var(--rx-art-tail-swing); }
   }
 
   @keyframes rx-art-cube-x {
@@ -1588,8 +1600,8 @@ body {
   }
 
   @keyframes rx-art-flap {
-    from { scale: 1 1; }
-    to { scale: 1 0.16; }
+    from { rotate: calc(var(--rx-art-flap-swing) * var(--dir) * -1); }
+    to { rotate: calc(var(--rx-art-flap-swing) * var(--dir)); }
   }
 
   @keyframes rx-art-belt {
@@ -1715,7 +1727,8 @@ body {
  * El dibujo es sobre blanco y lo sigue siendo en modo oscuro.
  */
 
-.rx-art {
+.md-typeset .rx-art {
+  position: relative;
   width: 100%;
   max-width: var(--rx-art-max);
   margin: var(--rx-s8) auto;
@@ -1833,8 +1846,14 @@ body {
   transform-origin: 50% 51.327%;
 }
 
-.rx-art__wing {
-  transform-origin: 50% 50.44%;
+.rx-art__wing--l {
+  --dir: 1;
+  transform-origin: 37.438% 55.738%;
+}
+
+.rx-art__wing--r {
+  --dir: -1;
+  transform-origin: 78.818% 45.082%;
 }
 
 .rx-art__gear--2 {
@@ -1900,7 +1919,7 @@ body {
   max-width: none;
   margin: var(--rx-s4) 0 0;
   color: var(--rx-ink-2);
-  font-size: 0.75rem;
+  font-size: var(--rx-fs-caption);
   font-style: normal;
   text-align: left;
 }
@@ -1917,7 +1936,7 @@ body {
 .rx-art figcaption li {
   position: relative;
   margin: 0;
-  padding-left: 1.6rem;
+  padding-left: var(--rx-s8);
   counter-increment: rx-art;
 }
 
@@ -1925,15 +1944,15 @@ body {
   content: counter(rx-art);
   position: absolute;
   left: 0;
-  top: 0.05rem;
+  top: 0;
   display: grid;
   place-items: center;
-  width: 1.1rem;
-  height: 1.1rem;
+  width: var(--rx-art-badge);
+  height: var(--rx-art-badge);
   border-radius: 50%;
   background: var(--rx-volt);
   color: var(--rx-on-volt);
-  font-size: 0.6rem;
+  font-size: var(--rx-fs-small);
   font-weight: 800;
 }
 
@@ -1944,24 +1963,41 @@ body {
 }
 
 .rx-art__toggle {
-  display: block;
-  margin: var(--rx-s3) auto 0;
-  padding: var(--rx-s2) var(--rx-s4);
-  border: 1px solid var(--rx-line);
-  border-radius: var(--rx-r-s);
-  color: var(--rx-ink);
-  background: var(--rx-surface);
-  font: inherit;
-  font-size: 0.7rem;
+  position: absolute;
+  top: var(--rx-s2);
+  right: var(--rx-s2);
+  display: grid;
+  place-items: center;
+  width: var(--rx-art-toggle);
+  height: var(--rx-art-toggle);
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  color: var(--rx-art-toggle-ink);
+  background: var(--rx-art-toggle-bg);
+  box-shadow: 0 0 0 1px rgb(18 21 42 / 0.16);
+  opacity: 0.7;
   cursor: pointer;
+  transition: opacity var(--rx-dur-fast);
 }
 
-.rx-art__toggle:hover {
-  border-color: var(--rx-arc);
+.rx-art__toggle:is(:hover, :focus-visible) {
+  opacity: 1;
 }
 
 .rx-art__toggle[hidden] {
   display: none;
+}
+
+.rx-art__icon {
+  width: var(--rx-s3);
+  height: var(--rx-s3);
+  background: linear-gradient(90deg, currentColor 0 36%, transparent 36% 64%, currentColor 64%);
+}
+
+.rx-art__toggle[aria-pressed="true"] .rx-art__icon {
+  background: currentColor;
+  clip-path: polygon(10% 0, 100% 50%, 10% 100%);
 }
 
 /* Etiqueta de sección y fila de llamadas a la acción */
@@ -1969,12 +2005,12 @@ body {
 .rx-eyebrow {
   display: inline-block;
   margin: 0 0 var(--rx-s2);
-  padding: 0.2rem 0.7rem;
+  padding: var(--rx-s1) var(--rx-s3);
   border: 1px solid var(--rx-line);
-  border-radius: 999px;
+  border-radius: var(--rx-r-pill);
   background-color: var(--rx-surface);
   color: var(--rx-volt-ink);
-  font-size: 0.65rem;
+  font-size: var(--rx-fs-small);
   font-weight: 700;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -1996,6 +2032,22 @@ body {
   margin: 0;
 }
 
+.md-typeset .md-button .twemoji {
+  margin-inline-end: var(--rx-s2);
+}
+
+@media screen and (max-width: 59.99em) {
+  .md-typeset .rx-actions--steps .md-button--primary {
+    background-color: transparent;
+    border-color: var(--rx-line);
+    color: var(--rx-ink);
+  }
+
+  .rx-actions--steps {
+    margin-block-end: var(--rx-s8);
+  }
+}
+
 .rx-art + .rx-actions,
 .rx-section > .rx-actions {
   justify-content: center;
@@ -2004,7 +2056,7 @@ body {
 .rx-cta__note {
   margin: var(--rx-s4) 0 0;
   color: var(--rx-ink-2);
-  font-size: 0.7rem;
+  font-size: var(--rx-fs-small);
 }
 
 .md-typeset .rx-sr-only {

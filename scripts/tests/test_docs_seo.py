@@ -54,3 +54,9 @@ def test_key_pages_have_a_description_of_the_right_length(
 def test_home_has_a_short_seo_title(suffix: str) -> None:
     title = front_matter(DOCS / f"index{suffix}.md").get("seo_title", "")
     assert title and len(title) <= MAX_SEO_TITLE and title != "Rayito - Rayito"
+
+
+def test_software_entity_id_is_per_language() -> None:
+    partial = DOCS.parent / "overrides" / "partials" / "rayito-jsonld.html"
+    text = partial.read_text(encoding="utf-8")
+    assert '"@id": {{ (page.canonical_url ~ "#software") | tojson }}' in text
