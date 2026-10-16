@@ -30,6 +30,9 @@ HOST_DIR = Path(_runner.__file__).parent / "agent_host"
 START_TIMEOUT_SECONDS = 20
 SECRET_VALUE = "valor-secreto-que-no-debe-salir"
 FAKE_ACCESS_KEY = "AK" + "IA" + "ABCDEFGHIJKLMNOP"
+FAKE_PROVIDER_KEY = "sk-" + "abcdefghij" + "klmnopqrstuvwxyz"
+FAKE_GITHUB_TOKEN = "gh" + "p_" + "abcdef" + "123456"
+FAKE_API_KEY_VALUE = "abcd1234" + "efgh5678"
 
 
 def _free_port() -> int:
@@ -56,7 +59,7 @@ def test_sanitize_removes_environment_values_and_credentials() -> None:
     }
     text = (
         f"error con {SECRET_VALUE} y Bearer abc.def-ghi y token=abc123 "
-        f"{FAKE_ACCESS_KEY} sk-abcdefghijklmnopqrstuvwxyz "
+        f"{FAKE_ACCESS_KEY} {FAKE_PROVIDER_KEY} "
         "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.firma /opt/agents/custom/bin"
     )
     cleaned = diagnostics.sanitize_diagnostics(text, environ)
@@ -65,7 +68,7 @@ def test_sanitize_removes_environment_values_and_credentials() -> None:
         "abc.def-ghi",
         "abc123",
         FAKE_ACCESS_KEY,
-        "sk-abcdefghijklmnopqrstuvwxyz",
+        FAKE_PROVIDER_KEY,
         "eyJhbGciOiJIUzI1NiJ9",
     ):
         assert leaked not in cleaned
@@ -77,12 +80,12 @@ def test_sanitize_removes_environment_values_and_credentials() -> None:
     ("text", "leaked"),
     [
         ("DB_PASSWORD=Hunter2pass", "Hunter2pass"),
-        ("GITHUB_TOKEN=ghp_abcdef123456", "ghp_abcdef123456"),
+        (f"GITHUB_TOKEN={FAKE_GITHUB_TOKEN}", FAKE_GITHUB_TOKEN),
         (
             "AWS_SECRET_ACCESS_KEY=" + "wJalrXUtnFEMI/K7MDENG/bPxRfiC" + "YEXAMPLEKEY",
             "wJalrXUtnFEMI",
         ),
-        ('{"api_key": "abcd1234efgh5678"}', "abcd1234efgh5678"),
+        (f'{{"api_key": "{FAKE_API_KEY_VALUE}"}}', FAKE_API_KEY_VALUE),
         ("input_value='my-s3cret-value' password: 'quoted-pass'", "quoted-pass"),
         ("Authorization: Basic dXNlcjpwYXNzd29yZA==", "dXNlcjpwYXNzd29yZA"),
         ("postgres://admin:Hunter2pass@db.internal:5432/app", "Hunter2pass"),
