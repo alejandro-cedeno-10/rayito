@@ -24,11 +24,12 @@ CONSTANT_NAME_OVERRIDES = {
     "agentOpencodeSha256": "AGENT_OPENCODE_SHA256",
     "agentRipgrepSha256": "AGENT_RIPGREP_SHA256",
     "agentDeepagentsRequirementsSha256": "AGENT_DEEPAGENTS_REQUIREMENTS_SHA256",
-    "agentNodeSha256": "AGENT_NODE_SHA256",
     "agentStrandsRequirementsSha256": "AGENT_STRANDS_REQUIREMENTS_SHA256",
     "agentStrandsHarnessRequirementsSha256": "AGENT_STRANDS_HARNESS_REQUIREMENTS_SHA256",
     "agentHermesRequirementsSha256": "AGENT_HERMES_REQUIREMENTS_SHA256",
-    "agentHermesPythonSha256": "AGENT_HERMES_PYTHON_SHA256",
+    "agentPythonBuildSha256s": "AGENT_PYTHON_BUILD_SHA256S",
+    "agentNodeSha256s": "AGENT_NODE_SHA256S",
+    "agentUvSha256": "AGENT_UV_SHA256",
 }
 
 

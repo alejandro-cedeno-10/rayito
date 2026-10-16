@@ -403,8 +403,6 @@ GROUPS: tuple[tuple[str, ...], ...] = (
         "agentStrandsTsHarnessVersion",
         "agentHermesVersion",
         "agentHermesCommit",
-        "agentNodeVersion",
-        "agentNodeSha256",
         "agentExportBaseImage",
         "agentExportBaseImageDigest",
         "agentProjectSchema",
@@ -424,17 +422,49 @@ GROUPS: tuple[tuple[str, ...], ...] = (
         # agent-runtimes-byo (ADR-028), frameworks lane: the sha256 of the
         # hashed requirements files of the Strands, Strands harness and
         # Hermes runtimes (package data under `_agent/_assets/`), the pinned
-        # CPython 3.14 build Hermes v0.22.2 needs (python-build-standalone
-        # linux arm64 `install_only` tarball: version, release tag and the
-        # sha256 GitHub publishes for the asset, checked 2026-10-16) and the
-        # schema name of the host configuration file. Not AWS properties.
+        # schema name of the host configuration file. The CPython 3.14 build
+        # Hermes v0.22.2 needs is the `3.14` entry of `agentPythonBuild*`
+        # below. Not AWS properties.
         "agentStrandsRequirementsSha256",
         "agentStrandsHarnessRequirementsSha256",
         "agentHermesRequirementsSha256",
-        "agentHermesPythonVersion",
-        "agentHermesPythonBuildTag",
-        "agentHermesPythonSha256",
         "agentHostSchema",
+    ),
+    (
+        # 0.14 host and build adapters (design D3, D4, D6): how an HTTP app
+        # the host supervises is restarted (at most `agentAppRestartMax`
+        # restarts inside `agentAppRestartWindowSeconds`, exponential backoff
+        # from `agentAppRestartBackoffSeconds` capped at
+        # `agentAppRestartBackoffMaxSeconds`), the port a detected app is told
+        # to listen on and the variable that carries it, the bounded FIFO the
+        # service keeps in front of `max_concurrency` (default 0 = no queue,
+        # the 0.14 behaviour of answering 429) with its wait bound, the
+        # pinned python-build-standalone CPython builds and Node.js builds a
+        # project may pick (key = minor or major; linux arm64 tarballs,
+        # sha256 published with the asset, checked 2026-10-16) and the
+        # pinned package managers the install plan can bring. Not AWS
+        # properties.
+        "agentAppRestartMax",
+        "agentAppRestartWindowSeconds",
+        "agentAppRestartBackoffSeconds",
+        "agentAppRestartBackoffMaxSeconds",
+        "agentAppInternalPort",
+        "agentAppPortEnv",
+        "agentServiceQueueMaxDefault",
+        "agentServiceQueueMax",
+        "agentServiceQueueTimeoutSecondsDefault",
+        "agentServiceQueueTimeoutSecondsMax",
+        "agentPythonBuildTag",
+        "agentPythonBuildVersions",
+        "agentPythonBuildSha256s",
+        "agentDefaultPythonMinor",
+        "agentNodeVersions",
+        "agentNodeSha256s",
+        "agentDefaultNodeMajor",
+        "agentUvVersion",
+        "agentUvSha256",
+        "agentPnpmVersion",
+        "agentYarnVersion",
     ),
 )
 
@@ -464,11 +494,12 @@ CONSTANT_NAME_OVERRIDES = {
     "agentOpencodeSha256": "AGENT_OPENCODE_SHA256",
     "agentRipgrepSha256": "AGENT_RIPGREP_SHA256",
     "agentDeepagentsRequirementsSha256": "AGENT_DEEPAGENTS_REQUIREMENTS_SHA256",
-    "agentNodeSha256": "AGENT_NODE_SHA256",
     "agentStrandsRequirementsSha256": "AGENT_STRANDS_REQUIREMENTS_SHA256",
     "agentStrandsHarnessRequirementsSha256": "AGENT_STRANDS_HARNESS_REQUIREMENTS_SHA256",
     "agentHermesRequirementsSha256": "AGENT_HERMES_REQUIREMENTS_SHA256",
-    "agentHermesPythonSha256": "AGENT_HERMES_PYTHON_SHA256",
+    "agentPythonBuildSha256s": "AGENT_PYTHON_BUILD_SHA256S",
+    "agentNodeSha256s": "AGENT_NODE_SHA256S",
+    "agentUvSha256": "AGENT_UV_SHA256",
 }
 
 
