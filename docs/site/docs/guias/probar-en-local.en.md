@@ -283,6 +283,9 @@ which only the runner defines, the `local` tests are skipped.
 | Pause and resume | `rayd`'s state machine | memory snapshot and restore |
 | `OptionalStacks` (`rayito stack`) | deploy, status, redeploy and delete of six stacks (`metadata-index`, `secrets-access`, `otlp-export`, `s3-mounts`, `sizes-guard`, `templates`), plus `events-webhooks` from `LifecycleEvents` | `custom-domain` and `efs-volumes`; real IAM permissions and cost |
 | Metadata index, `SecretStore`, `secrets=` | yes | |
+| `rayito` CLI, Python and TypeScript | stack, image, `sandbox create --detach`, `info`, `exec`, `metrics`, `list` and `kill`, and the `create` and `connect` terminals (TypeScript), with the same scenarios as against real AWS | `sandbox proxy` (it needs the AWS proxy), `doctor` with IAM and image builds |
+| MCP server (`rayito-mcp`) | over stdio, the shared `testdata/mcp/tools.json` contract and the startup errors; the six tools against a sandbox over in-process `--http` (TypeScript) | the six tools over stdio against a MicroVM |
+| Local dashboard `rayito dashboard` (TypeScript) | the read-only routes validated with `api-v1.schema.json` and the security guards (no session, an action without `--allow-actions`, billed cost off) | Cost Explorer and the real bulk actions |
 | Secrets gateway (`gateways=`) | the `ConfigureSandbox` section and the listener | the HTTPS forwarding to the upstream |
 | `Template.build` | zip upload to S3 and `create-microvm-image` | the real image build and its `/ready` |
 | Events and webhooks | the stack, the webhooks, `create(events=)` and the three Lambdas run in process, with a signed delivery to a local receiver | the CloudWatch Logs subscription and the HTTPS delivery with its SSRF filter |
@@ -310,6 +313,9 @@ notes and its
 ## In CI { #en-ci }
 
 The `local-e2e` workflow runs `make local-up` and `make local-e2e` on
-`ubuntu-24.04-arm` on PRs that touch the local environment or `rayd`
-(`crates/`, `proto/`, `Cargo.lock`), every night and by hand
-(`workflow_dispatch`). It uses no repository credentials or secrets.
+`ubuntu-24.04-arm` on PRs that touch the local environment, `rayd`
+(`crates/`, `proto/`, `Cargo.lock`), the SDKs and their tools (`clients/`,
+without the CHANGELOGs) or the shared data (`testdata/`, `limits.json`), every
+night and by hand (`workflow_dispatch`). It uses no repository credentials or
+secrets. It is the check that replaces a full AWS regression when a change only
+touches an SDK or its tools.

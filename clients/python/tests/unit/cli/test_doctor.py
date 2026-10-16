@@ -759,3 +759,56 @@ def test_run_check_translates_every_status_kind() -> None:
 def test_doctor_context_repr_never_shows_the_minted_token() -> None:
     context = _checks.DoctorContext(minted_token="JWE-DO-NOT-PRINT")
     assert "JWE-DO-NOT-PRINT" not in repr(context)
+
+
+DOCTOR_CONTRACT = json.loads(
+    (Path(__file__).resolve().parents[5] / "testdata" / "cli" / "doctor-contract.json").read_text(
+        encoding="utf-8"
+    )
+)
+
+
+def test_shared_doctor_contract_matches_code() -> None:
+    """`testdata/cli/doctor-contract.json` es lo que la CLI de TypeScript reproduce."""
+    from rayito.cli import _publish
+
+    actions = DOCTOR_CONTRACT["simulatedActions"]
+    pairs: list[tuple[str, Any, Any]] = [
+        ("checkNames", list(_checks.CHECK_NAMES), DOCTOR_CONTRACT["checkNames"]),
+        (
+            "preLaunchCheckCount",
+            len(_checks.PRE_LAUNCH_CHECKS),
+            DOCTOR_CONTRACT["preLaunchCheckCount"],
+        ),
+        ("defaultTemplate", _checks.DEFAULT_TEMPLATE, DOCTOR_CONTRACT["defaultTemplate"]),
+        (
+            "launchTimeoutSeconds",
+            _checks.LAUNCH_TIMEOUT_SECONDS,
+            DOCTOR_CONTRACT["launchTimeoutSeconds"],
+        ),
+        ("launchMetadata", _checks.LAUNCH_METADATA, DOCTOR_CONTRACT["launchMetadata"]),
+        (
+            "maxRunningBeforeFail",
+            _checks.MAX_RUNNING_BEFORE_FAIL,
+            DOCTOR_CONTRACT["maxRunningBeforeFail"],
+        ),
+        ("maxListedIds", _checks.MAX_LISTED_IDS, DOCTOR_CONTRACT["maxListedIds"]),
+        ("capsImageSuffix", _checks.CAPS_IMAGE_SUFFIX, DOCTOR_CONTRACT["capsImageSuffix"]),
+        (
+            "imageArtifactKeyPrefix",
+            _publish.S3_KEY_PREFIX,
+            DOCTOR_CONTRACT["imageArtifactKeyPrefix"],
+        ),
+        (
+            "managedBaseImageName",
+            _publish.MANAGED_BASE_IMAGE_NAME,
+            DOCTOR_CONTRACT["managedBaseImageName"],
+        ),
+        ("image", list(_checks.IMAGE_ACTIONS), actions["image"]),
+        ("wildcard", list(_checks.WILDCARD_ACTIONS), actions["wildcard"]),
+        ("connector", list(_checks.CONNECTOR_ACTIONS), actions["connector"]),
+        ("bucketObjects", list(_checks.BUCKET_OBJECT_ACTIONS), actions["bucketObjects"]),
+        ("bucket", list(_checks.BUCKET_ACTIONS), actions["bucket"]),
+    ]
+    for name, actual, shared in pairs:
+        assert actual == shared, name

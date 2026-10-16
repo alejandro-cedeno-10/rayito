@@ -1,0 +1,151 @@
+{
+  "description": "Casos de McpSettings.from_env / parseMcpSettings: los ejecutan pytest y vitest. Los valores por defecto y los limites son un contrato de las dos implementaciones.",
+  "defaults": {
+    "timeoutSeconds": 3600,
+    "idleSeconds": 300,
+    "logLevel": "INFO",
+    "minTimeoutSeconds": 60,
+    "maxTimeoutSeconds": 28800,
+    "minIdleSeconds": 60
+  },
+  "cases": [
+    {
+      "name": "empty environment gives the defaults",
+      "env": {},
+      "expected": {
+        "template": null,
+        "templateVersion": null,
+        "executionRoleArn": null,
+        "timeoutSeconds": 3600,
+        "idleSeconds": 300,
+        "logLevel": "INFO",
+        "logging": "disabled",
+        "idlePolicy": { "maxIdleSeconds": 300, "autoResume": true }
+      }
+    },
+    {
+      "name": "every variable is read",
+      "env": {
+        "RAYITO_TEMPLATE": "rayito-base",
+        "RAYITO_TEMPLATE_VERSION": "16.0",
+        "RAYITO_EXECUTION_ROLE_ARN": "arn:aws:iam::123456789012:role/rayito-execution",
+        "RAYITO_MCP_TIMEOUT_SECONDS": "900",
+        "RAYITO_MCP_IDLE_SECONDS": "120",
+        "RAYITO_MCP_LOG_LEVEL": "debug"
+      },
+      "expected": {
+        "template": "rayito-base",
+        "templateVersion": "16.0",
+        "executionRoleArn": "arn:aws:iam::123456789012:role/rayito-execution",
+        "timeoutSeconds": 900,
+        "idleSeconds": 120,
+        "logLevel": "DEBUG",
+        "logging": "cloudwatch",
+        "idlePolicy": { "maxIdleSeconds": 120, "autoResume": true }
+      }
+    },
+    {
+      "name": "empty values fall back to the defaults",
+      "env": {
+        "RAYITO_TEMPLATE": "",
+        "RAYITO_MCP_TIMEOUT_SECONDS": "",
+        "RAYITO_MCP_IDLE_SECONDS": "",
+        "RAYITO_MCP_LOG_LEVEL": ""
+      },
+      "expected": {
+        "template": null,
+        "templateVersion": null,
+        "executionRoleArn": null,
+        "timeoutSeconds": 3600,
+        "idleSeconds": 300,
+        "logLevel": "INFO",
+        "logging": "disabled",
+        "idlePolicy": { "maxIdleSeconds": 300, "autoResume": true }
+      }
+    },
+    {
+      "name": "idle zero disables auto-suspend",
+      "env": { "RAYITO_MCP_IDLE_SECONDS": "0" },
+      "expected": {
+        "template": null,
+        "templateVersion": null,
+        "executionRoleArn": null,
+        "timeoutSeconds": 3600,
+        "idleSeconds": 0,
+        "logLevel": "INFO",
+        "logging": "disabled",
+        "idlePolicy": null
+      }
+    },
+    {
+      "name": "minimum timeout is inclusive when idle is disabled",
+      "env": { "RAYITO_MCP_TIMEOUT_SECONDS": "60", "RAYITO_MCP_IDLE_SECONDS": "0" },
+      "expected": {
+        "template": null,
+        "templateVersion": null,
+        "executionRoleArn": null,
+        "timeoutSeconds": 60,
+        "idleSeconds": 0,
+        "logLevel": "INFO",
+        "logging": "disabled",
+        "idlePolicy": null
+      }
+    },
+    {
+      "name": "maximum timeout is inclusive",
+      "env": { "RAYITO_MCP_TIMEOUT_SECONDS": "28800" },
+      "expected": {
+        "template": null,
+        "templateVersion": null,
+        "executionRoleArn": null,
+        "timeoutSeconds": 28800,
+        "idleSeconds": 300,
+        "logLevel": "INFO",
+        "logging": "disabled",
+        "idlePolicy": { "maxIdleSeconds": 300, "autoResume": true }
+      }
+    },
+    {
+      "name": "minimum idle is inclusive",
+      "env": { "RAYITO_MCP_IDLE_SECONDS": "60" },
+      "expected": {
+        "template": null,
+        "templateVersion": null,
+        "executionRoleArn": null,
+        "timeoutSeconds": 3600,
+        "idleSeconds": 60,
+        "logLevel": "INFO",
+        "logging": "disabled",
+        "idlePolicy": { "maxIdleSeconds": 60, "autoResume": true }
+      }
+    },
+    {
+      "name": "idle below a short timeout is valid",
+      "env": { "RAYITO_MCP_TIMEOUT_SECONDS": "120", "RAYITO_MCP_IDLE_SECONDS": "60" },
+      "expected": {
+        "template": null,
+        "templateVersion": null,
+        "executionRoleArn": null,
+        "timeoutSeconds": 120,
+        "idleSeconds": 60,
+        "logLevel": "INFO",
+        "logging": "disabled",
+        "idlePolicy": { "maxIdleSeconds": 60, "autoResume": true }
+      }
+    },
+    { "name": "idle is not a number", "env": { "RAYITO_MCP_IDLE_SECONDS": "abc" }, "errorVariable": "RAYITO_MCP_IDLE_SECONDS" },
+    { "name": "timeout below the minimum", "env": { "RAYITO_MCP_TIMEOUT_SECONDS": "30" }, "errorVariable": "RAYITO_MCP_TIMEOUT_SECONDS" },
+    { "name": "timeout above the maximum", "env": { "RAYITO_MCP_TIMEOUT_SECONDS": "28801" }, "errorVariable": "RAYITO_MCP_TIMEOUT_SECONDS" },
+    { "name": "timeout with a unit suffix", "env": { "RAYITO_MCP_TIMEOUT_SECONDS": "1h" }, "errorVariable": "RAYITO_MCP_TIMEOUT_SECONDS" },
+    { "name": "idle below the minimum", "env": { "RAYITO_MCP_IDLE_SECONDS": "10" }, "errorVariable": "RAYITO_MCP_IDLE_SECONDS" },
+    { "name": "negative idle", "env": { "RAYITO_MCP_IDLE_SECONDS": "-60" }, "errorVariable": "RAYITO_MCP_IDLE_SECONDS" },
+    { "name": "unknown log level", "env": { "RAYITO_MCP_LOG_LEVEL": "LOUD" }, "errorVariable": "RAYITO_MCP_LOG_LEVEL" },
+    { "name": "default idle does not fit a 120 s timeout", "env": { "RAYITO_MCP_TIMEOUT_SECONDS": "120" }, "errorVariable": "RAYITO_MCP_IDLE_SECONDS" },
+    { "name": "default idle equals a 300 s timeout", "env": { "RAYITO_MCP_TIMEOUT_SECONDS": "300" }, "errorVariable": "RAYITO_MCP_IDLE_SECONDS" },
+    {
+      "name": "idle above the timeout",
+      "env": { "RAYITO_MCP_TIMEOUT_SECONDS": "600", "RAYITO_MCP_IDLE_SECONDS": "900" },
+      "errorVariable": "RAYITO_MCP_IDLE_SECONDS"
+    }
+  ]
+}

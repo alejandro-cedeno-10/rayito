@@ -1,0 +1,158 @@
+{
+  "description": "Tabla de compatibilidad SDK a rayd y sus evaluaciones, compartida por Python y TypeScript (ADR-027). La fuente de lo esperado es rayito.cli._compat; `docs/site/docs/limits.md` lleva la misma tabla.",
+  "table": [
+    {
+      "sdk_series": "0.1",
+      "min_agent_version": "0.1.0",
+      "note": "M6: imds_blocked, hook_anomalies y metadata exigen el rayd del tag rayd-v0.1.0"
+    },
+    {
+      "sdk_series": "0.2",
+      "min_agent_version": "0.2.0",
+      "note": "M7: Checkpoint/Restore (persist=) y language= exigen el rayd del tag rayd-v0.2.0"
+    },
+    {
+      "sdk_series": "0.3",
+      "min_agent_version": "0.3.0",
+      "note": "M9: max_lifetime/on_timeout, set_timeout, get_metrics_history, network= y los kernels Deno exigen el rayd del tag rayd-v0.3.0"
+    },
+    {
+      "sdk_series": "0.4",
+      "min_agent_version": "0.4.0",
+      "note": "0.4: UnimplementedError único, SetTimeout validado en el dominio y mensajes del agente en español exigen el rayd del tag rayd-v0.4.0"
+    },
+    {
+      "sdk_series": "0.5",
+      "min_agent_version": "0.5.0",
+      "note": "0.5: /suspend con sync acotado por sistema de ficheros y las funciones opcionales (secretos, índice, OTel) se validan con el rayd del tag rayd-v0.5.0"
+    },
+    {
+      "sdk_series": "0.6",
+      "min_agent_version": "0.6.0",
+      "note": "0.6: ConfigureSandbox y las funciones 0.6 (montajes S3, eventos, OTLP, pasarela de secretos, start/ready de templates) exigen el rayd del tag rayd-v0.6.0"
+    },
+    {
+      "sdk_series": "0.7",
+      "min_agent_version": "0.7.0",
+      "note": "0.7: los volúmenes EFS (create(volumes=)) y el endurecimiento del agente (hooks aislados, persistencia ligada al /run) exigen el rayd del tag rayd-v0.7.0"
+    },
+    {
+      "sdk_series": "0.8",
+      "min_agent_version": "0.8.0",
+      "note": "0.8: el agente de IA (sbx.agent, AgentTemplate y el warmup de los pools) se valida con el rayd del tag rayd-v0.8.0"
+    },
+    {
+      "sdk_series": "0.9",
+      "min_agent_version": "0.9.0",
+      "note": "0.9: connect() recupera sbx.gateways desde ConfigureStatus y el arranque rápido del agente sin la opción D se validan con el rayd del tag rayd-v0.9.0"
+    },
+    {
+      "sdk_series": "0.10",
+      "min_agent_version": "0.10.0",
+      "note": "0.10: el timeout y abort() del agente paran todo el árbol de procesos (kill_tree) y los proveedores del agente se validan con el rayd del tag rayd-v0.10.0"
+    },
+    {
+      "sdk_series": "0.11",
+      "min_agent_version": "0.11.0",
+      "note": "0.11: el arranque rápido de AgentTemplate (kernel_warmup=False por defecto) y las claves de artefacto por ejecución se validan con el rayd del tag rayd-v0.11.0"
+    },
+    {
+      "sdk_series": "0.12",
+      "min_agent_version": "0.12.0",
+      "note": "0.12: el panel de gestión (rayito dashboard y la pila dashboard) se validan con el rayd del tag rayd-v0.12.0"
+    }
+  ],
+  "assessments": [
+    {
+      "sdkVersion": "0.1.0",
+      "agentVersion": "0.1.0",
+      "status": "OK",
+      "reason": "SDK 0.1.0, agent_version 0.1.0",
+      "row": "0.1"
+    },
+    {
+      "sdkVersion": "0.1.0",
+      "agentVersion": "0.0.9",
+      "status": "FAIL",
+      "reason": "agent_version 0.0.9 por debajo del mínimo 0.1.0 del SDK 0.1.0: publica una imagen desde el tag rayd-v0.1.0",
+      "row": "0.1"
+    },
+    {
+      "sdkVersion": "0.1.0",
+      "agentVersion": "0.2.0",
+      "status": "WARN",
+      "reason": "agent_version 0.2.0 es más nuevo que el SDK 0.1.0 (0.2 > 0.1): actualiza el SDK",
+      "row": "0.1"
+    },
+    {
+      "sdkVersion": "0.1.3",
+      "agentVersion": "0.1.0",
+      "status": "OK",
+      "reason": "SDK 0.1.3, agent_version 0.1.0",
+      "row": "0.1"
+    },
+    {
+      "sdkVersion": "0.1.0",
+      "agentVersion": "0.1.7-rc1",
+      "status": "OK",
+      "reason": "SDK 0.1.0, agent_version 0.1.7-rc1",
+      "row": "0.1"
+    },
+    {
+      "sdkVersion": "0.1.0",
+      "agentVersion": "abc",
+      "status": "FAIL",
+      "reason": "versión no reconocida: 'abc' (se esperaba MAJOR.MINOR.PATCH)",
+      "row": null
+    },
+    {
+      "sdkVersion": "9.9.0",
+      "agentVersion": "0.1.0",
+      "status": "FAIL",
+      "reason": "sin fila de compatibilidad para el SDK 9.9",
+      "row": null
+    },
+    {
+      "sdkVersion": "0.3.0",
+      "agentVersion": "0.2.0",
+      "status": "FAIL",
+      "reason": "agent_version 0.2.0 por debajo del mínimo 0.3.0 del SDK 0.3.0: publica una imagen desde el tag rayd-v0.3.0",
+      "row": "0.3"
+    },
+    {
+      "sdkVersion": "0.11.0",
+      "agentVersion": "0.11.0",
+      "status": "OK",
+      "reason": "SDK 0.11.0, agent_version 0.11.0",
+      "row": "0.11"
+    },
+    {
+      "sdkVersion": "0.11.2",
+      "agentVersion": "v0.11.0+build.5",
+      "status": "OK",
+      "reason": "SDK 0.11.2, agent_version v0.11.0+build.5",
+      "row": "0.11"
+    },
+    {
+      "sdkVersion": "abc",
+      "agentVersion": "0.1.0",
+      "status": "FAIL",
+      "reason": "versión no reconocida: 'abc' (se esperaba MAJOR.MINOR.PATCH)",
+      "row": null
+    },
+    {
+      "sdkVersion": "0.10.0",
+      "agentVersion": "0.11.0",
+      "status": "WARN",
+      "reason": "agent_version 0.11.0 es más nuevo que el SDK 0.10.0 (0.11 > 0.10): actualiza el SDK",
+      "row": "0.10"
+    },
+    {
+      "sdkVersion": "1.0",
+      "agentVersion": "0.1.0",
+      "status": "FAIL",
+      "reason": "versión no reconocida: '1.0' (se esperaba MAJOR.MINOR.PATCH)",
+      "row": null
+    }
+  ]
+}

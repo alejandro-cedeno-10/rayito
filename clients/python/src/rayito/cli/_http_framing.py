@@ -28,6 +28,10 @@ CONTENT_LENGTH_HEADER_NAME: Final = "Content-Length"
 CHUNKED_CODING: Final = "chunked"
 HEAD_METHOD: Final = "HEAD"
 LIST_SEPARATOR: Final = ","
+#: RFC 9110 §5.6.3 `OWS`: lo único que se recorta alrededor de un elemento de
+#: lista. `str.strip()` quita también `\x85` o `\xa0`, y `12\x85` pasaría por
+#: una longitud válida que un upstream estricto rechazaría.
+HTTP_OWS: Final = " \t"
 #: RFC 9110 §15.2: `1xx` nunca lleva cuerpo.
 INFORMATIONAL_MIN: Final = 100
 INFORMATIONAL_MAX: Final = 199
@@ -60,7 +64,9 @@ NO_BODY: Final = BodyFraming(BodyKind.NONE)
 
 
 def _list_values(values: Iterable[str]) -> list[str]:
-    return [item.strip().lower() for value in values for item in value.split(LIST_SEPARATOR)]
+    return [
+        item.strip(HTTP_OWS).lower() for value in values for item in value.split(LIST_SEPARATOR)
+    ]
 
 
 def _content_length(values: list[str]) -> int | None:
@@ -136,8 +142,8 @@ def response_body_framing(
 
 def chunk_size(line: bytes) -> int:
     """El tamaño de una línea `chunk-size [; ext] CRLF` (RFC 9112 §7.1)."""
-    size, _, _ = line.rstrip(b"\r\n").partition(b";")
-    text = size.strip().decode("latin-1")
+    size, _, _ = line.removesuffix(b"\r\n").partition(b";")
+    text = size.strip(HTTP_OWS.encode("ascii")).decode("latin-1")
     if not text or any(char not in string.hexdigits for char in text):
         raise MalformedFramingError("chunk-size inválido")
     return int(text, 16)

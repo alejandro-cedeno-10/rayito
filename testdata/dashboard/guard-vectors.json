@@ -1,0 +1,955 @@
+{
+  "description": "Guard matrix of the local dashboard server shared by the Python and TypeScript shells. Each case builds the fake world, signs in (session signed) or not (anonymous), substitutes {port}, {host}, {cookieName}, {csrf} and {startTarget} in the request and calls LocalApp.respond with lower-cased headers. A header with a null value is removed. expect: status; errorCode of the JSON error; headers (a null value means the header is absent from the reply); setCookieHas/setCookieLacks (attributes of Set-Cookie); bodyHas (keys of the JSON body), bodyText, bodyContains, contentTypePrefix; writes, noPlaneCalls and costQueries as in api-v1-cases.json. redeemFirst burns the start token before the request.",
+  "cases": [
+    {
+      "id": "without the session cookie / answers 401",
+      "world": {},
+      "session": "anonymous",
+      "request": {
+        "method": "GET",
+        "target": "/",
+        "headers": {}
+      },
+      "expect": {
+        "status": 401,
+        "errorCode": "unauthorized"
+      }
+    },
+    {
+      "id": "without the session cookie /index.html answers 401",
+      "world": {},
+      "session": "anonymous",
+      "request": {
+        "method": "GET",
+        "target": "/index.html",
+        "headers": {}
+      },
+      "expect": {
+        "status": 401,
+        "errorCode": "unauthorized"
+      }
+    },
+    {
+      "id": "without the session cookie /js/app.js answers 401",
+      "world": {},
+      "session": "anonymous",
+      "request": {
+        "method": "GET",
+        "target": "/js/app.js",
+        "headers": {}
+      },
+      "expect": {
+        "status": 401,
+        "errorCode": "unauthorized"
+      }
+    },
+    {
+      "id": "without the session cookie /api/v1/meta answers 401",
+      "world": {},
+      "session": "anonymous",
+      "request": {
+        "method": "GET",
+        "target": "/api/v1/meta",
+        "headers": {}
+      },
+      "expect": {
+        "status": 401,
+        "errorCode": "unauthorized"
+      }
+    },
+    {
+      "id": "without the session cookie /api/v1/session answers 401",
+      "world": {},
+      "session": "anonymous",
+      "request": {
+        "method": "GET",
+        "target": "/api/v1/session",
+        "headers": {}
+      },
+      "expect": {
+        "status": 401,
+        "errorCode": "unauthorized"
+      }
+    },
+    {
+      "id": "a forged cookie is not a session",
+      "world": {},
+      "session": "anonymous",
+      "request": {
+        "method": "GET",
+        "target": "/api/v1/meta",
+        "headers": {
+          "Cookie": "{cookieName}=forged"
+        }
+      },
+      "expect": {
+        "status": 401,
+        "errorCode": "unauthorized"
+      }
+    },
+    {
+      "id": "a garbage cookie is not a session",
+      "world": {},
+      "session": "anonymous",
+      "request": {
+        "method": "GET",
+        "target": "/api/v1/meta",
+        "headers": {
+          "Cookie": "garbage"
+        }
+      },
+      "expect": {
+        "status": 401,
+        "errorCode": "unauthorized"
+      }
+    },
+    {
+      "id": "a without a value cookie is not a session",
+      "world": {},
+      "session": "anonymous",
+      "request": {
+        "method": "GET",
+        "target": "/api/v1/meta",
+        "headers": {
+          "Cookie": "{cookieName}"
+        }
+      },
+      "expect": {
+        "status": 401,
+        "errorCode": "unauthorized"
+      }
+    },
+    {
+      "id": "a empty cookie is not a session",
+      "world": {},
+      "session": "anonymous",
+      "request": {
+        "method": "GET",
+        "target": "/api/v1/meta",
+        "headers": {
+          "Cookie": ""
+        }
+      },
+      "expect": {
+        "status": 401,
+        "errorCode": "unauthorized"
+      }
+    },
+    {
+      "id": "the start token is swapped for a strict HttpOnly cookie",
+      "world": {},
+      "session": "anonymous",
+      "request": {
+        "method": "GET",
+        "target": "{startTarget}",
+        "headers": {}
+      },
+      "expect": {
+        "status": 303,
+        "headers": {
+          "Location": "/",
+          "Referrer-Policy": null
+        },
+        "setCookieHas": [
+          "HttpOnly",
+          "SameSite=Strict",
+          "Path=/"
+        ],
+        "setCookieLacks": [
+          "Secure"
+        ]
+      }
+    },
+    {
+      "id": "the start token works once",
+      "world": {},
+      "session": "anonymous",
+      "request": {
+        "method": "GET",
+        "target": "{startTarget}",
+        "headers": {}
+      },
+      "redeemFirst": true,
+      "expect": {
+        "status": 401,
+        "errorCode": "unauthorized"
+      }
+    },
+    {
+      "id": "a wrong start token is unauthorized",
+      "world": {},
+      "session": "anonymous",
+      "request": {
+        "method": "GET",
+        "target": "/?token=not-the-token",
+        "headers": {}
+      },
+      "expect": {
+        "status": 401,
+        "errorCode": "unauthorized"
+      }
+    },
+    {
+      "id": "the csrf token is only given to a session",
+      "world": {},
+      "session": "anonymous",
+      "request": {
+        "method": "GET",
+        "target": "/api/v1/session",
+        "headers": {}
+      },
+      "expect": {
+        "status": 401,
+        "errorCode": "unauthorized"
+      }
+    },
+    {
+      "id": "a session receives the csrf token",
+      "world": {},
+      "session": "signed",
+      "request": {
+        "method": "GET",
+        "target": "/api/v1/session",
+        "headers": {}
+      },
+      "expect": {
+        "status": 200,
+        "bodyHas": [
+          "csrfToken"
+        ]
+      }
+    },
+    {
+      "id": "the loopback name 127.0.0.1:{port} is admitted",
+      "world": {},
+      "session": "signed",
+      "request": {
+        "method": "GET",
+        "target": "/api/v1/meta",
+        "headers": {
+          "Host": "127.0.0.1:{port}"
+        }
+      },
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "id": "the loopback name localhost:{port} is admitted",
+      "world": {},
+      "session": "signed",
+      "request": {
+        "method": "GET",
+        "target": "/api/v1/meta",
+        "headers": {
+          "Host": "localhost:{port}"
+        }
+      },
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "id": "the foreign host evil.example is a misdirected request",
+      "world": {},
+      "session": "signed",
+      "request": {
+        "method": "GET",
+        "target": "/api/v1/meta",
+        "headers": {
+          "Host": "evil.example"
+        }
+      },
+      "expect": {
+        "status": 421,
+        "errorCode": "misdirected_request"
+      }
+    },
+    {
+      "id": "the foreign host evil.example:{port} is a misdirected request",
+      "world": {},
+      "session": "signed",
+      "request": {
+        "method": "GET",
+        "target": "/api/v1/meta",
+        "headers": {
+          "Host": "evil.example:{port}"
+        }
+      },
+      "expect": {
+        "status": 421,
+        "errorCode": "misdirected_request"
+      }
+    },
+    {
+      "id": "the foreign host 127.0.0.1 is a misdirected request",
+      "world": {},
+      "session": "signed",
+      "request": {
+        "method": "GET",
+        "target": "/api/v1/meta",
+        "headers": {
+          "Host": "127.0.0.1"
+        }
+      },
+      "expect": {
+        "status": 421,
+        "errorCode": "misdirected_request"
+      }
+    },
+    {
+      "id": "the foreign host 127.0.0.1:1 is a misdirected request",
+      "world": {},
+      "session": "signed",
+      "request": {
+        "method": "GET",
+        "target": "/api/v1/meta",
+        "headers": {
+          "Host": "127.0.0.1:1"
+        }
+      },
+      "expect": {
+        "status": 421,
+        "errorCode": "misdirected_request"
+      }
+    },
+    {
+      "id": "the foreign host 0.0.0.0:{port} is a misdirected request",
+      "world": {},
+      "session": "signed",
+      "request": {
+        "method": "GET",
+        "target": "/api/v1/meta",
+        "headers": {
+          "Host": "0.0.0.0:{port}"
+        }
+      },
+      "expect": {
+        "status": 421,
+        "errorCode": "misdirected_request"
+      }
+    },
+    {
+      "id": "a missing Host is a misdirected request",
+      "world": {},
+      "session": "signed",
+      "request": {
+        "method": "GET",
+        "target": "/api/v1/meta",
+        "headers": {
+          "Host": null
+        }
+      },
+      "expect": {
+        "status": 421,
+        "errorCode": "misdirected_request"
+      }
+    },
+    {
+      "id": "the foreign origin http://evil.example is forbidden",
+      "world": {},
+      "session": "signed",
+      "request": {
+        "method": "GET",
+        "target": "/api/v1/meta",
+        "headers": {
+          "Origin": "http://evil.example"
+        }
+      },
+      "expect": {
+        "status": 403,
+        "errorCode": "forbidden"
+      }
+    },
+    {
+      "id": "the foreign origin null is forbidden",
+      "world": {},
+      "session": "signed",
+      "request": {
+        "method": "GET",
+        "target": "/api/v1/meta",
+        "headers": {
+          "Origin": "null"
+        }
+      },
+      "expect": {
+        "status": 403,
+        "errorCode": "forbidden"
+      }
+    },
+    {
+      "id": "the foreign origin https://127.0.0.1:{port} is forbidden",
+      "world": {},
+      "session": "signed",
+      "request": {
+        "method": "GET",
+        "target": "/api/v1/meta",
+        "headers": {
+          "Origin": "https://127.0.0.1:{port}"
+        }
+      },
+      "expect": {
+        "status": 403,
+        "errorCode": "forbidden"
+      }
+    },
+    {
+      "id": "the foreign origin http://127.0.0.1 is forbidden",
+      "world": {},
+      "session": "signed",
+      "request": {
+        "method": "GET",
+        "target": "/api/v1/meta",
+        "headers": {
+          "Origin": "http://127.0.0.1"
+        }
+      },
+      "expect": {
+        "status": 403,
+        "errorCode": "forbidden"
+      }
+    },
+    {
+      "id": "the own origin is admitted",
+      "world": {},
+      "session": "signed",
+      "request": {
+        "method": "GET",
+        "target": "/api/v1/meta",
+        "headers": {
+          "Origin": "http://127.0.0.1:{port}"
+        }
+      },
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "id": "Sec-Fetch-Site same-site without origin is forbidden",
+      "world": {},
+      "session": "signed",
+      "request": {
+        "method": "GET",
+        "target": "/api/v1/meta",
+        "headers": {
+          "Sec-Fetch-Site": "same-site"
+        }
+      },
+      "expect": {
+        "status": 403,
+        "errorCode": "forbidden"
+      }
+    },
+    {
+      "id": "Sec-Fetch-Site cross-site without origin is forbidden",
+      "world": {},
+      "session": "signed",
+      "request": {
+        "method": "GET",
+        "target": "/api/v1/meta",
+        "headers": {
+          "Sec-Fetch-Site": "cross-site"
+        }
+      },
+      "expect": {
+        "status": 403,
+        "errorCode": "forbidden"
+      }
+    },
+    {
+      "id": "Sec-Fetch-Site Same-Site without origin is forbidden",
+      "world": {},
+      "session": "signed",
+      "request": {
+        "method": "GET",
+        "target": "/api/v1/meta",
+        "headers": {
+          "Sec-Fetch-Site": "Same-Site"
+        }
+      },
+      "expect": {
+        "status": 403,
+        "errorCode": "forbidden"
+      }
+    },
+    {
+      "id": "Sec-Fetch-Site same-origin is admitted",
+      "world": {},
+      "session": "signed",
+      "request": {
+        "method": "GET",
+        "target": "/api/v1/meta",
+        "headers": {
+          "Sec-Fetch-Site": "same-origin"
+        }
+      },
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "id": "Sec-Fetch-Site none is admitted",
+      "world": {},
+      "session": "signed",
+      "request": {
+        "method": "GET",
+        "target": "/api/v1/meta",
+        "headers": {
+          "Sec-Fetch-Site": "none"
+        }
+      },
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "id": "the billed cost GET billed=true needs the csrf token and calls nothing without it",
+      "world": {
+        "costExplorer": true
+      },
+      "session": "signed",
+      "request": {
+        "method": "GET",
+        "target": "/api/v1/cost?billed=true",
+        "headers": {}
+      },
+      "expect": {
+        "status": 403,
+        "errorCode": "csrf_failed",
+        "costQueries": 0
+      }
+    },
+    {
+      "id": "the billed cost GET billed=true&refresh=true needs the csrf token and calls nothing without it",
+      "world": {
+        "costExplorer": true
+      },
+      "session": "signed",
+      "request": {
+        "method": "GET",
+        "target": "/api/v1/cost?billed=true&refresh=true",
+        "headers": {}
+      },
+      "expect": {
+        "status": 403,
+        "errorCode": "csrf_failed",
+        "costQueries": 0
+      }
+    },
+    {
+      "id": "the billed cost GET with the csrf token goes through",
+      "world": {
+        "costExplorer": true
+      },
+      "session": "signed",
+      "request": {
+        "method": "GET",
+        "target": "/api/v1/cost?billed=true",
+        "headers": {
+          "X-Rayito-CSRF": "{csrf}"
+        }
+      },
+      "expect": {
+        "status": 200,
+        "costQueries": 1
+      }
+    },
+    {
+      "id": "the free cost estimate needs no csrf token",
+      "world": {
+        "costExplorer": true
+      },
+      "session": "signed",
+      "request": {
+        "method": "GET",
+        "target": "/api/v1/cost",
+        "headers": {}
+      },
+      "expect": {
+        "status": 200,
+        "costQueries": 0
+      }
+    },
+    {
+      "id": "a POST without the csrf token is refused and calls nothing",
+      "world": {
+        "allowActions": true
+      },
+      "session": "signed",
+      "request": {
+        "method": "POST",
+        "target": "/api/v1/sandboxes/microvm-00000000-0000-0000-0000-000000000001/kill",
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"confirm\": true}"
+      },
+      "expect": {
+        "status": 403,
+        "errorCode": "csrf_failed",
+        "writes": []
+      }
+    },
+    {
+      "id": "a POST with a wrong csrf token is refused",
+      "world": {
+        "allowActions": true
+      },
+      "session": "signed",
+      "request": {
+        "method": "POST",
+        "target": "/api/v1/sandboxes/microvm-00000000-0000-0000-0000-000000000001/kill",
+        "headers": {
+          "Content-Type": "application/json",
+          "X-Rayito-CSRF": "guess"
+        },
+        "body": "{\"confirm\": true}"
+      },
+      "expect": {
+        "status": 403,
+        "errorCode": "csrf_failed",
+        "writes": []
+      }
+    },
+    {
+      "id": "a POST that is not JSON is refused before the csrf check",
+      "world": {
+        "allowActions": true
+      },
+      "session": "signed",
+      "request": {
+        "method": "POST",
+        "target": "/api/v1/sandboxes/microvm-00000000-0000-0000-0000-000000000001/kill",
+        "headers": {
+          "Content-Type": "text/plain",
+          "X-Rayito-CSRF": "{csrf}"
+        },
+        "body": "{\"confirm\": true}"
+      },
+      "expect": {
+        "status": 415,
+        "errorCode": "unsupported_media_type",
+        "writes": []
+      }
+    },
+    {
+      "id": "a POST without a content type is refused",
+      "world": {
+        "allowActions": true
+      },
+      "session": "signed",
+      "request": {
+        "method": "POST",
+        "target": "/api/v1/sandboxes/microvm-00000000-0000-0000-0000-000000000001/kill",
+        "headers": {
+          "X-Rayito-CSRF": "{csrf}"
+        },
+        "body": "{\"confirm\": true}"
+      },
+      "expect": {
+        "status": 415,
+        "errorCode": "unsupported_media_type",
+        "writes": []
+      }
+    },
+    {
+      "id": "a JSON content type with a charset is admitted",
+      "world": {
+        "allowActions": true
+      },
+      "session": "signed",
+      "request": {
+        "method": "POST",
+        "target": "/api/v1/sandboxes/microvm-00000000-0000-0000-0000-000000000001/kill",
+        "headers": {
+          "Content-Type": "application/json; charset=utf-8",
+          "X-Rayito-CSRF": "{csrf}"
+        },
+        "body": "{\"confirm\": true}"
+      },
+      "expect": {
+        "status": 202
+      }
+    },
+    {
+      "id": "a cross-site POST with the cookie and token still dies on origin",
+      "world": {
+        "allowActions": true
+      },
+      "session": "signed",
+      "request": {
+        "method": "POST",
+        "target": "/api/v1/sandboxes/microvm-00000000-0000-0000-0000-000000000001/kill",
+        "headers": {
+          "Content-Type": "application/json",
+          "X-Rayito-CSRF": "{csrf}",
+          "Origin": "http://evil.example"
+        },
+        "body": "{\"confirm\": true}"
+      },
+      "expect": {
+        "status": 403,
+        "errorCode": "forbidden",
+        "writes": []
+      }
+    },
+    {
+      "id": "a cross-site fetch POST still dies on Sec-Fetch-Site",
+      "world": {
+        "allowActions": true
+      },
+      "session": "signed",
+      "request": {
+        "method": "POST",
+        "target": "/api/v1/sandboxes/microvm-00000000-0000-0000-0000-000000000001/kill",
+        "headers": {
+          "Content-Type": "application/json",
+          "X-Rayito-CSRF": "{csrf}",
+          "Sec-Fetch-Site": "same-site"
+        },
+        "body": "{\"confirm\": true}"
+      },
+      "expect": {
+        "status": 403,
+        "errorCode": "forbidden",
+        "writes": []
+      }
+    },
+    {
+      "id": "a valid POST goes through",
+      "world": {
+        "allowActions": true
+      },
+      "session": "signed",
+      "request": {
+        "method": "POST",
+        "target": "/api/v1/sandboxes/microvm-00000000-0000-0000-0000-000000000001/kill",
+        "headers": {
+          "Content-Type": "application/json",
+          "X-Rayito-CSRF": "{csrf}"
+        },
+        "body": "{\"confirm\": true}"
+      },
+      "expect": {
+        "status": 202
+      }
+    },
+    {
+      "id": "read-only by default: a valid POST is refused with no AWS call",
+      "world": {},
+      "session": "signed",
+      "request": {
+        "method": "POST",
+        "target": "/api/v1/sandboxes/microvm-00000000-0000-0000-0000-000000000001/kill",
+        "headers": {
+          "Content-Type": "application/json",
+          "X-Rayito-CSRF": "{csrf}"
+        },
+        "body": "{\"confirm\": true}"
+      },
+      "expect": {
+        "status": 403,
+        "errorCode": "actions_disabled",
+        "noPlaneCalls": true
+      }
+    },
+    {
+      "id": "PUT is not an allowed method",
+      "world": {},
+      "session": "signed",
+      "request": {
+        "method": "PUT",
+        "target": "/api/v1/meta",
+        "headers": {}
+      },
+      "expect": {
+        "status": 405,
+        "errorCode": "method_not_allowed"
+      }
+    },
+    {
+      "id": "DELETE is not an allowed method",
+      "world": {},
+      "session": "signed",
+      "request": {
+        "method": "DELETE",
+        "target": "/api/v1/meta",
+        "headers": {}
+      },
+      "expect": {
+        "status": 405,
+        "errorCode": "method_not_allowed"
+      }
+    },
+    {
+      "id": "PATCH is not an allowed method",
+      "world": {},
+      "session": "signed",
+      "request": {
+        "method": "PATCH",
+        "target": "/api/v1/meta",
+        "headers": {}
+      },
+      "expect": {
+        "status": 405,
+        "errorCode": "method_not_allowed"
+      }
+    },
+    {
+      "id": "HEAD is not an allowed method",
+      "world": {},
+      "session": "signed",
+      "request": {
+        "method": "HEAD",
+        "target": "/api/v1/meta",
+        "headers": {}
+      },
+      "expect": {
+        "status": 405,
+        "errorCode": "method_not_allowed"
+      }
+    },
+    {
+      "id": "OPTIONS is not an allowed method",
+      "world": {},
+      "session": "signed",
+      "request": {
+        "method": "OPTIONS",
+        "target": "/api/v1/meta",
+        "headers": {}
+      },
+      "expect": {
+        "status": 405,
+        "errorCode": "method_not_allowed"
+      }
+    },
+    {
+      "id": "theme.css is always served and empty without a user theme",
+      "world": {},
+      "session": "signed",
+      "request": {
+        "method": "GET",
+        "target": "/theme.css",
+        "headers": {}
+      },
+      "expect": {
+        "status": 200,
+        "bodyText": "",
+        "contentTypePrefix": "text/css"
+      }
+    },
+    {
+      "id": "without a user logo the logo path is a 404",
+      "world": {},
+      "session": "signed",
+      "request": {
+        "method": "GET",
+        "target": "/theme/logo",
+        "headers": {}
+      },
+      "expect": {
+        "status": 404,
+        "errorCode": "not_found"
+      }
+    },
+    {
+      "id": "the unknown path /nope.js is a 404",
+      "world": {},
+      "session": "signed",
+      "request": {
+        "method": "GET",
+        "target": "/nope.js",
+        "headers": {}
+      },
+      "expect": {
+        "status": 404,
+        "errorCode": "not_found"
+      }
+    },
+    {
+      "id": "the unknown path /../../etc/passwd is a 404",
+      "world": {},
+      "session": "signed",
+      "request": {
+        "method": "GET",
+        "target": "/../../etc/passwd",
+        "headers": {}
+      },
+      "expect": {
+        "status": 404,
+        "errorCode": "not_found"
+      }
+    },
+    {
+      "id": "the unknown path /js/ is a 404",
+      "world": {},
+      "session": "signed",
+      "request": {
+        "method": "GET",
+        "target": "/js/",
+        "headers": {}
+      },
+      "expect": {
+        "status": 404,
+        "errorCode": "not_found"
+      }
+    },
+    {
+      "id": "the unknown path /%2e%2e/secret is a 404",
+      "world": {},
+      "session": "signed",
+      "request": {
+        "method": "GET",
+        "target": "/%2e%2e/secret",
+        "headers": {}
+      },
+      "expect": {
+        "status": 404,
+        "errorCode": "not_found"
+      }
+    },
+    {
+      "id": "the unknown path /_static/index.html is a 404",
+      "world": {},
+      "session": "signed",
+      "request": {
+        "method": "GET",
+        "target": "/_static/index.html",
+        "headers": {}
+      },
+      "expect": {
+        "status": 404,
+        "errorCode": "not_found"
+      }
+    },
+    {
+      "id": "the SPA is served to a session",
+      "world": {},
+      "session": "signed",
+      "request": {
+        "method": "GET",
+        "target": "/",
+        "headers": {}
+      },
+      "expect": {
+        "status": 200,
+        "contentTypePrefix": "text/html",
+        "bodyContains": "<rayito-app>"
+      }
+    },
+    {
+      "id": "theme.css needs a session",
+      "world": {},
+      "session": "anonymous",
+      "request": {
+        "method": "GET",
+        "target": "/theme.css",
+        "headers": {}
+      },
+      "expect": {
+        "status": 401,
+        "errorCode": "unauthorized"
+      }
+    }
+  ]
+}

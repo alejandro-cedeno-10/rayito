@@ -10,7 +10,7 @@ lees tus propios datos con tus credenciales.
 !!! note "Qué hay"
     La página cubre los **servicios del SDK** (Python síncrono y asíncrono, y
     TypeScript, con la misma superficie) y el **panel web local**
-    (`rayito dashboard`, sólo CLI de Python), que se construye encima de
+    (`rayito dashboard`, en la CLI de Python y en la de TypeScript), que se construye encima de
     ellos: [salta al panel](#panel-web-local). La pila opcional `dashboard`
     en tu cuenta (fase 2) tiene su propia página:
     [Panel en tu cuenta](panel-en-tu-cuenta.md).
@@ -331,8 +331,8 @@ las acciones masivas.
 ## Panel web local: `rayito dashboard` { #panel-web-local }
 
 `rayito dashboard` arranca en tu máquina un servidor en `127.0.0.1` que
-sirve una página (módulos ES y web components, sin Node ni compilación,
-empaquetada en el wheel) y la [API JSON `/api/v1`](../referencia/api-del-panel.md)
+sirve una página (módulos ES y web components, sin compilación, empaquetada
+en el wheel de Python y en el paquete npm; una sola copia en el repositorio) y la [API JSON `/api/v1`](../referencia/api-del-panel.md)
 sobre los mismos servicios `Quotas`, `UsageCost` y `Fleet`. Usa tus
 credenciales de AWS y no deja nada desplegado: al pulsar Ctrl+C se acaba.
 
@@ -403,13 +403,29 @@ salen del propio panel sobre datos de ejemplo (sandboxes, importes y logs
 inventados, con identificadores de relleno): sin cuentas, URL, tokens ni
 nombres reales, y sin metadatos. Tus valores serán distintos.
 
-**1. Instala la CLI.** El panel es parte de la CLI de Python (extra `cli`);
-el panel local es una orden de la CLI de Python y no tiene equivalente en TypeScript.
+**1. Instala la CLI.** El panel es una orden de las dos CLI, con la misma
+página y la misma API:
 
-```bash
-pip install "rayito[cli]"        # o: uv pip install "rayito[cli]"
-rayito dashboard --help
-```
+=== "Python"
+
+    ```bash
+    pip install "rayito[cli]"        # o: uv pip install "rayito[cli]"
+    rayito dashboard --help
+    ```
+
+=== "TypeScript"
+
+    ```bash
+    npm install --global rayito      # o: npx rayito dashboard --help
+    npm install --global @aws-sdk/client-service-quotas
+    rayito dashboard --help
+    ```
+
+    `@aws-sdk/client-service-quotas` es un peer opcional: sin él, la vista de
+    cuotas del panel devuelve un error que nombra el paquete a instalar. Con
+    `--cost-explorer` hace falta `@aws-sdk/client-cost-explorer`, con
+    `--events-stack`, `@aws-sdk/client-dynamodb` y, para los logs de un
+    sandbox, `@aws-sdk/client-cloudwatch-logs`.
 
 **2. Arranca el panel.** Con `--allow-actions` para poder actuar y, si tienes
 la pila de [eventos](eventos-y-webhooks.md), con `--events-stack`:

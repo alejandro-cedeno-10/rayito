@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { compareDirectories, SOURCE_DIR } from "./dashboard-static.mjs";
 
 const PACKAGE_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const DIST_DIR = join(PACKAGE_DIR, "dist");
@@ -20,7 +21,13 @@ const REQUIRED_ENTRIES = [
   "package/dist/e2b.cjs",
   "package/dist/e2b.d.mts",
   "package/dist/e2b.d.cts",
+  "package/dist/cli.mjs",
+  "package/dist/mcp.mjs",
+  "package/dist/dashboard-static/index.html",
 ];
+const SHEBANG = "#!/usr/bin/env node";
+const EXTRACT_DIR_NAME = "extract";
+const PACKED_STATIC_ENTRY = "package/dist/dashboard-static";
 
 // `@opentelemetry/api` (M13b) sólo se importa con `import type` en
 // `src/otel.ts`, que `tsdown`/rolldown borran del build: ningún fichero
@@ -59,6 +66,7 @@ const CONDITION_EXTENSIONS = {
 function main() {
   assertNoRuntimeOpenTelemetryImport();
   assertTypesMatchEachCondition();
+  assertBinaryEntriesAreExecutable();
   rmSync(PACK_DIR, { recursive: true, force: true });
   mkdirSync(PACK_DIR);
   try {
@@ -68,8 +76,31 @@ function main() {
     if (missing.length > 0) {
       throw new Error(`faltan en el tarball: ${missing.join(", ")}`);
     }
+    assertPackedDashboardMatchesSource();
   } finally {
     rmSync(PACK_DIR, { recursive: true, force: true });
+  }
+}
+
+/**
+ * Cada `bin` de `package.json` (ADR-027, D1) apunta a un fichero de `dist/`
+ * ESM que arranca con el shebang de Node: sin él, `npx rayito` lo ejecutaría
+ * el shell. Un ejecutable nunca es una condición de `exports`: la biblioteca
+ * no lo importa.
+ */
+function assertBinaryEntriesAreExecutable() {
+  const manifest = JSON.parse(readFileSync(join(PACKAGE_DIR, "package.json"), "utf-8"));
+  const problems = Object.entries(manifest.bin ?? {}).flatMap(([name, target]) => {
+    const file = join(PACKAGE_DIR, String(target));
+    if (!String(target).endsWith(".mjs")) {
+      return [`bin ${name}: ${target} debe ser un .mjs (sólo ESM)`];
+    }
+    return readFileSync(file, "utf-8").startsWith(SHEBANG)
+      ? []
+      : [`bin ${name}: ${target} no empieza por ${SHEBANG}`];
+  });
+  if (problems.length > 0) {
+    throw new Error(`bin de package.json mal formado: ${problems.join("; ")}`);
   }
 }
 
@@ -111,6 +142,35 @@ function conditionProblems(subpath, target) {
       .map(([field, extension]) => `${subpath}: ${condition}.${field} debe acabar en ${extension}`),
   );
   return [...keyProblems, ...fileProblems];
+}
+
+/**
+ * La SPA del tarball es la canónica del paquete de Python, byte a byte
+ * (ADR-027, D4): falla si falta un fichero, sobra uno o alguno difiere. El
+ * build la copia de `SOURCE_DIR`, así que una diferencia es un tarball hecho
+ * con un `dist/` viejo o una copia tocada a mano.
+ */
+function assertPackedDashboardMatchesSource() {
+  const extractDir = join(PACK_DIR, EXTRACT_DIR_NAME);
+  mkdirSync(extractDir);
+  const tarball = readdirSync(PACK_DIR).find((name) => name.endsWith(".tgz"));
+  execFileSync(
+    "tar",
+    [
+      "-xzf",
+      join(PACK_DIR_NAME, tarball),
+      "-C",
+      join(PACK_DIR_NAME, EXTRACT_DIR_NAME),
+      PACKED_STATIC_ENTRY,
+    ],
+    {
+      cwd: PACKAGE_DIR,
+    },
+  );
+  const problems = compareDirectories(SOURCE_DIR, join(extractDir, PACKED_STATIC_ENTRY));
+  if (problems.length > 0) {
+    throw new Error(`la SPA del tarball no es idéntica a la de Python: ${problems.join(", ")}`);
+  }
 }
 
 function packedEntries() {

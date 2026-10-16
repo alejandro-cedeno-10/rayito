@@ -21,30 +21,60 @@ opciones y variables de entorno.
 | [`rayito dashboard`](#rayito-dashboard) | — |
 | [`rayito doctor`](#rayito-doctor) | — |
 
-El servidor MCP es otro ejecutable del mismo paquete, `rayito-mcp`
-([Servidor MCP](mcp.md)).
+Hay dos CLI con la misma superficie, salida y códigos de salida: la de
+Python (extra `cli`) y la de TypeScript (ejecutable `rayito` del paquete npm).
+Lo que sigue vale para las dos salvo donde se diga lo contrario; los dos
+árboles de órdenes se comparan con `testdata/cli/surface.json` y
+`scripts/check_sdk_parity.py --cli`. El servidor MCP es otro ejecutable del
+mismo paquete, `rayito-mcp` ([Servidor MCP](mcp.md)).
 
 ## Instalación
 
-La CLI es un extra del paquete `rayito` (añade `typer`):
+=== "Python"
 
-```bash
-pip install "rayito[cli]"        # o: uv pip install "rayito[cli]"
-rayito --help
-```
+    La CLI es un extra del paquete `rayito` (añade `typer`):
 
-Desde un checkout del repositorio, sin instalar nada:
+    ```bash
+    pip install "rayito[cli]"        # o: uv pip install "rayito[cli]"
+    rayito --help
+    ```
 
-```bash
-uv run --project clients/python rayito --help
-```
+    Desde un checkout del repositorio, sin instalar nada:
 
-Sin el extra, `rayito` imprime cómo instalarlo y sale con 2.
+    ```bash
+    uv run --project clients/python rayito --help
+    ```
+
+    Sin el extra, `rayito` imprime cómo instalarlo y sale con 2.
+
+=== "TypeScript"
+
+    El paquete npm `rayito` declara el ejecutable `rayito` (Node 20 o
+    superior, sólo ESM, sin dependencias de CLI: usa `node:util`):
+
+    ```bash
+    npx rayito --help                # sin instalar nada
+    npm install --global rayito      # o: pnpm add --global rayito
+    rayito --help
+    ```
+
+    Los clientes de AWS que no todas las órdenes necesitan son **peers
+    opcionales** del paquete (`@aws-sdk/client-cloudformation` para `stack`,
+    `events` y `domain`, `@aws-sdk/client-cloudwatch-logs` para
+    `sandbox logs`, `@aws-sdk/client-iam` para la simulación de IAM de
+    `doctor`, `@aws-sdk/client-service-quotas` y
+    `@aws-sdk/client-cost-explorer` para el panel, entre otros). Una orden que
+    necesita uno que falta falla y dice qué paquete instalar. La API
+    de TypeScript es sólo asíncrona: la CLI no cambia por eso.
+
+!!! warning "Dos instalaciones globales"
+    Si instalas las dos CLI, gana la primera del `PATH`.
+    `rayito --version` dice cuál responde (`(python)` o `(node)`).
 
 ## Opciones globales y credenciales
 
 ```text
-rayito [--profile P] [--region R] [--json] [--verbose] <grupo> <comando> …
+rayito [--profile P] [--region R] [--json] [--verbose] [--version] <grupo> <comando> …
 ```
 
 - `--profile` y `--region` construyen la sesión de `boto3`; sin ellos se usa
@@ -57,6 +87,9 @@ rayito [--profile P] [--region R] [--json] [--verbose] <grupo> <comando> …
 - `--json`: cada comando escribe **un único documento JSON** por stdout y el
   progreso por stderr, así `rayito --json sandbox list | jq` funciona.
 - `--verbose`: logs `INFO` del SDK (reconexiones, sondas) y de la CLI.
+- `--version`: imprime `rayito <versión> (python)`. El runtime entre paréntesis
+  dice cuál de las dos CLI responde cuando conviven la de Python y la del
+  paquete npm (`rayito <versión> (node)`): manda la primera del `PATH`.
 
 Códigos de salida: `0` éxito; `1` la operación falló (build no lanzable, una
 versión que `prune` no pudo borrar, un id desconocido en `kill`, un `FAIL`
@@ -482,7 +515,8 @@ rayito [--region R] dashboard cloudwatch [--log-group GRUPO ...]
                  [--log-group-prefix PREFIJO] [--otlp] [--quota] [--output FICHERO]
 ```
 
-El panel de gestión local: un servidor en `127.0.0.1` (puerto al azar salvo
+El panel de gestión local, idéntico en las dos CLI (misma página, misma API
+`/api/v1`, mismas cabeceras y mismos controles de `Host`, `Origin` y CSRF): un servidor en `127.0.0.1` (puerto al azar salvo
 `--port`) con una página y la API `/api/v1` sobre tus credenciales de AWS,
 hasta que pulses Ctrl+C. Imprime **una sola vez** la URL de arranque con un
 token de un solo uso. Por defecto es de **sólo lectura**: `--allow-actions`
@@ -619,4 +653,4 @@ imprimen el comando `uv run --project clients/python …` y salen con 2.
   primitiva o quedan fuera por `SPEC.md` §4 ([Compatibilidad con E2B](e2b-compat.md)).
 - Envolver las herramientas de desarrollo (`bench_cold_start.py`,
   `hooks-sim.py`, `gen_limits.py`, `check_*.py`).
-- Una CLI en TypeScript ni completado de shell.
+- Completado de shell.

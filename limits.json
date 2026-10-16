@@ -20,6 +20,10 @@
   "endpointTlsPort": 443,
   "hookPathPrefix": "/aws/lambda-microvms/runtime/v1",
   "maxConcurrentConnections1Vcpu": 8,
+  "proxyHeadMaxBytes": 65536,
+  "proxyHeadReadTimeoutSeconds": 30,
+  "proxyUpstreamConnectTimeoutSeconds": 30,
+  "proxyUpstreamResponseHeadTimeoutSeconds": 30,
   "microvmStates": ["PENDING", "RUNNING", "SUSPENDING", "SUSPENDED", "TERMINATING", "TERMINATED"],
   "terminalStates": ["TERMINATING", "TERMINATED"],
   "suspendedStates": ["SUSPENDING", "SUSPENDED"],
@@ -270,5 +274,7 @@
   "cloudwatchFreeDashboardMetrics": 50,
   "cloudwatchDashboardPriceUsdPerMonth": 3,
   "cloudwatchLogsInsightsPriceUsdPerGb": 0.005,
-  "cloudwatchCustomMetricPriceUsdPerMonth": 0.3
+  "cloudwatchCustomMetricPriceUsdPerMonth": 0.3,
+  "mcpMaxOutputChars": 100000,
+  "maxConcurrentImageBuilds": 10
 }

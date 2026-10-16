@@ -1,0 +1,483 @@
+{
+  "description": "Cases of the /api/v1 core shared by the Python and TypeScript SDKs. Each case builds a fake world, sends the steps to the core router (no transport) and checks status, a JSON subset of the body, the response schema and what the fakes saw. The same file runs in pytest and vitest.",
+  "format": {
+    "world": "sandboxes: list of {n, state?, image?, version?}; the default is RUNNING on image 'base' version 1.0 (2048 MiB). quotaMemoryGb: memory quota (default 100). allowActions, costExplorer: booleans. events: null (no events stack) or list of {n}; logs: null or {lines, truncated, fallback}. failures: map of an operation (listMicrovms, suspendMicrovm:<n>) to {kind: aws|authentication|invalid_argument|unexpected, code?, message?}. unchanged: list of '<operation>:<n>' that report no change.",
+    "request": "method, path (below /api/v1), query (name to list of values), body (JSON or null). A value {\"$repeat\": {\"text\", \"times\"}} expands to a string and {\"$sandboxIds\": N} to N sandbox ids.",
+    "expect": "status; schema (definition of api-v1.schema.json); body (subset: objects by key, arrays by length and element); absentText (strings that must not appear in the body); writes (write operations the plane saw, in order, cumulative); noPlaneCalls; costQueries and listings (cumulative counters); eventsQuery (the last query sent to the history); logRead (sandbox id and limit of the last read).",
+    "waitForJob": "a step {waitForJob: true, expect} polls the job of the previous response until it finishes and checks that final document."
+  },
+  "cases": [
+    {
+      "id": "meta reports the mode and the constants the SPA needs",
+      "world": {},
+      "steps": [
+        {
+          "request": {"method": "GET", "path": "/meta"},
+          "expect": {
+            "status": 200,
+            "schema": "meta",
+            "body": {
+              "apiVersion": "v1",
+              "deployment": "local",
+              "allowActions": false,
+              "costExplorer": {"enabled": false, "requestPriceUsd": 0.01, "cacheTtlSeconds": 86400},
+              "eventsConfigured": false,
+              "logsAvailable": false,
+              "bulkMaxSandboxes": 100,
+              "theme": {"name": "rayito", "logo": false}
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "meta with actions, events and logs configured",
+      "world": {"allowActions": true, "costExplorer": true, "events": [], "logs": {"lines": []}},
+      "steps": [
+        {
+          "request": {"method": "GET", "path": "/meta"},
+          "expect": {
+            "status": 200,
+            "schema": "meta",
+            "body": {
+              "allowActions": true,
+              "costExplorer": {"enabled": true},
+              "eventsConfigured": true,
+              "logsAvailable": true
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "sandboxes list with memory and nothing secret",
+      "world": {"sandboxes": [{"n": 1}, {"n": 2}, {"n": 3, "state": "SUSPENDED"}]},
+      "steps": [
+        {
+          "request": {"method": "GET", "path": "/sandboxes"},
+          "expect": {
+            "status": 200,
+            "schema": "sandboxes",
+            "body": {
+              "sandboxes": [
+                {"sandboxId": "microvm-00000000-0000-0000-0000-000000000001", "state": "RUNNING", "image": "rayito-base-2gb", "imageVersion": "1.0", "memoryMib": 2048},
+                {"sandboxId": "microvm-00000000-0000-0000-0000-000000000002", "memoryMib": 2048},
+                {"sandboxId": "microvm-00000000-0000-0000-0000-000000000003", "state": "SUSPENDED", "memoryMib": 2048}
+              ]
+            },
+            "absentText": ["envs", "runHookPayload", "token", "jwe", "secret"]
+          }
+        }
+      ]
+    },
+    {
+      "id": "sandboxes filter by state",
+      "world": {"sandboxes": [{"n": 1}, {"n": 2}, {"n": 3, "state": "SUSPENDED"}]},
+      "steps": [
+        {
+          "request": {"method": "GET", "path": "/sandboxes", "query": {"state": ["SUSPENDED"]}},
+          "expect": {
+            "status": 200,
+            "body": {"sandboxes": [{"sandboxId": "microvm-00000000-0000-0000-0000-000000000003"}]}
+          }
+        }
+      ]
+    },
+    {
+      "id": "an identical read inside the cache window lists once",
+      "world": {"sandboxes": [{"n": 1}]},
+      "steps": [
+        {"request": {"method": "GET", "path": "/sandboxes"}, "expect": {"status": 200, "listings": 1}},
+        {"request": {"method": "GET", "path": "/sandboxes"}, "expect": {"status": 200, "listings": 1}}
+      ]
+    },
+    {
+      "id": "images and versions",
+      "world": {"sandboxes": [{"n": 1}]},
+      "steps": [
+        {
+          "request": {"method": "GET", "path": "/images"},
+          "expect": {"status": 200, "schema": "images", "body": {"images": [{"name": "rayito-base", "state": "CREATED", "latestActiveVersion": "2.0", "latestFailedVersion": null}]}}
+        },
+        {
+          "request": {"method": "GET", "path": "/images/versions", "query": {"image": ["rayito-base"]}},
+          "expect": {"status": 200, "schema": "imageVersions", "body": {"image": "rayito-base", "versions": [{"imageVersion": "2.0", "artifact": "artifact.zip", "memoryMib": 2048}]}}
+        }
+      ]
+    },
+    {
+      "id": "versions need an image",
+      "world": {},
+      "steps": [
+        {
+          "request": {"method": "GET", "path": "/images/versions"},
+          "expect": {"status": 400, "schema": "error", "body": {"error": {"code": "invalid_argument", "message": "falta el parámetro image"}}}
+        }
+      ]
+    },
+    {
+      "id": "quotas report memory, warnings and the increase link",
+      "world": {"sandboxes": [{"n": 1}, {"n": 2}, {"n": 3, "state": "SUSPENDED"}]},
+      "steps": [
+        {
+          "request": {"method": "GET", "path": "/quotas"},
+          "expect": {
+            "status": 200,
+            "schema": "quotas",
+            "body": {"region": "us-east-1", "memory": {"allocatedGb": 6, "quotaGb": 100, "level": "ok", "sandboxes": 3, "unresolved": 0}, "warnings": [{"kind": "below_default", "code": "L-CD1C0CC4"}]}
+          }
+        }
+      ]
+    },
+    {
+      "id": "quotas warn near the limit",
+      "world": {"sandboxes": [{"n": 1}, {"n": 2}, {"n": 3, "state": "SUSPENDED"}], "quotaMemoryGb": 6.2},
+      "steps": [
+        {
+          "request": {"method": "GET", "path": "/quotas"},
+          "expect": {
+            "status": 200,
+            "schema": "quotas",
+            "body": {"memory": {"level": "critical"}, "warnings": [{"kind": "memory_critical", "code": "L-CD1C0CC4"}, {"kind": "below_default", "code": "L-CD1C0CC4"}]}
+          }
+        }
+      ]
+    },
+    {
+      "id": "cost gives the estimate and never calls Cost Explorer by default",
+      "world": {"sandboxes": [{"n": 1}]},
+      "steps": [
+        {
+          "request": {"method": "GET", "path": "/cost"},
+          "expect": {"status": 200, "schema": "cost", "body": {"estimated": {"label": "estimated"}, "billed": null}, "costQueries": 0}
+        }
+      ]
+    },
+    {
+      "id": "billed cost is refused without the option and costs nothing",
+      "world": {"sandboxes": [{"n": 1}]},
+      "steps": [
+        {
+          "request": {"method": "GET", "path": "/cost", "query": {"billed": ["true"]}},
+          "expect": {"status": 403, "schema": "error", "body": {"error": {"code": "cost_explorer_disabled"}}, "costQueries": 0}
+        }
+      ]
+    },
+    {
+      "id": "billed cost is labelled and cached",
+      "world": {"sandboxes": [{"n": 1}], "costExplorer": true},
+      "steps": [
+        {
+          "request": {"method": "GET", "path": "/cost", "query": {"billed": ["true"]}},
+          "expect": {
+            "status": 200,
+            "schema": "cost",
+            "body": {"billed": {"label": "billed", "partial": true, "lines": [{"component": "vcpu"}]}},
+            "costQueries": 1
+          }
+        },
+        {
+          "request": {"method": "GET", "path": "/cost", "query": {"billed": ["true"]}},
+          "expect": {"status": 200, "costQueries": 1}
+        },
+        {
+          "request": {"method": "GET", "path": "/cost", "query": {"billed": ["true"], "refresh": ["true"]}},
+          "expect": {"status": 200, "costQueries": 2}
+        }
+      ]
+    },
+    {
+      "id": "events are off until a stack is configured",
+      "world": {},
+      "steps": [
+        {
+          "request": {"method": "GET", "path": "/events"},
+          "expect": {"status": 200, "schema": "events", "body": {"configured": false, "events": []}}
+        }
+      ]
+    },
+    {
+      "id": "events come from the history",
+      "world": {"events": [{"n": 1}]},
+      "steps": [
+        {
+          "request": {"method": "GET", "path": "/events", "query": {"sandboxId": ["microvm-00000000-0000-0000-0000-000000000001"], "limit": ["5"]}},
+          "expect": {
+            "status": 200,
+            "schema": "events",
+            "body": {"configured": true, "events": [{"eventId": "evt-1", "type": "sandbox.lifecycle.killed", "killReason": "timeout", "generation": 1}]},
+            "eventsQuery": {"sandboxId": "microvm-00000000-0000-0000-0000-000000000001", "types": null, "limit": 5, "order": "desc"}
+          }
+        }
+      ]
+    },
+    {
+      "id": "events accept an order and types",
+      "world": {"events": [{"n": 1}]},
+      "steps": [
+        {
+          "request": {"method": "GET", "path": "/events", "query": {"order": ["asc"], "type": ["sandbox.lifecycle.killed", "sandbox.lifecycle.paused"]}},
+          "expect": {"status": 200, "eventsQuery": {"sandboxId": null, "types": ["sandbox.lifecycle.killed", "sandbox.lifecycle.paused"], "limit": 100, "order": "asc"}}
+        }
+      ]
+    },
+    {
+      "id": "events reject a limit out of range, a non-integer limit and a bad order",
+      "world": {"events": []},
+      "steps": [
+        {"request": {"method": "GET", "path": "/events", "query": {"limit": ["0"]}}, "expect": {"status": 400, "schema": "error", "body": {"error": {"code": "invalid_argument", "message": "limit: entre 1 y 500"}}}},
+        {"request": {"method": "GET", "path": "/events", "query": {"limit": ["501"]}}, "expect": {"status": 400, "body": {"error": {"message": "limit: entre 1 y 500"}}}},
+        {"request": {"method": "GET", "path": "/events", "query": {"limit": ["many"]}}, "expect": {"status": 400, "body": {"error": {"message": "limit: se esperaba un entero"}}}},
+        {"request": {"method": "GET", "path": "/events", "query": {"order": ["sideways"]}}, "expect": {"status": 400, "body": {"error": {"message": "order debe ser 'asc' o 'desc'"}}}}
+      ]
+    },
+    {
+      "id": "logs are read on demand",
+      "world": {"logs": {"lines": [{"timestamp": "2026-10-13T12:00:00.000Z", "message": "hola", "stream": "stream"}], "truncated": true}},
+      "steps": [
+        {
+          "request": {"method": "GET", "path": "/logs", "query": {"sandboxId": ["microvm-00000000-0000-0000-0000-000000000001"]}},
+          "expect": {
+            "status": 200,
+            "schema": "logs",
+            "body": {"truncated": true, "fallback": false, "lines": [{"message": "hola"}]},
+            "logRead": {"sandboxId": "microvm-00000000-0000-0000-0000-000000000001", "limit": 1000}
+          }
+        }
+      ]
+    },
+    {
+      "id": "logs report the name search fallback",
+      "world": {"logs": {"lines": [{"timestamp": "2026-10-13T12:00:00.000Z", "message": "hola", "stream": "stream"}], "fallback": true}},
+      "steps": [
+        {
+          "request": {"method": "GET", "path": "/logs", "query": {"sandboxId": ["microvm-00000000-0000-0000-0000-000000000001"], "limit": ["10"]}},
+          "expect": {"status": 200, "schema": "logs", "body": {"fallback": true}, "logRead": {"sandboxId": "microvm-00000000-0000-0000-0000-000000000001", "limit": 10}}
+        }
+      ]
+    },
+    {
+      "id": "logs are absent without a source and need a sandbox id",
+      "world": {},
+      "steps": [
+        {"request": {"method": "GET", "path": "/logs", "query": {"sandboxId": ["x"]}}, "expect": {"status": 404, "schema": "error", "body": {"error": {"code": "not_found"}}}}
+      ]
+    },
+    {
+      "id": "logs reject a missing sandbox id and a limit above the cap",
+      "world": {"logs": {"lines": []}},
+      "steps": [
+        {"request": {"method": "GET", "path": "/logs"}, "expect": {"status": 400, "body": {"error": {"message": "falta el parámetro sandboxId"}}}},
+        {"request": {"method": "GET", "path": "/logs", "query": {"sandboxId": ["x"], "limit": ["1001"]}}, "expect": {"status": 400, "body": {"error": {"message": "limit: entre 1 y 1000"}}}}
+      ]
+    },
+    {
+      "id": "actions are refused without the flag and make no AWS call",
+      "world": {"sandboxes": [{"n": 1}]},
+      "steps": [
+        {
+          "request": {"method": "POST", "path": "/sandboxes/microvm-00000000-0000-0000-0000-000000000001/kill", "body": {"confirm": true}},
+          "expect": {"status": 403, "schema": "error", "body": {"error": {"code": "actions_disabled"}}, "noPlaneCalls": true}
+        },
+        {
+          "request": {"method": "POST", "path": "/sandboxes/microvm-00000000-0000-0000-0000-000000000001/suspend", "body": {"confirm": true}},
+          "expect": {"status": 403, "body": {"error": {"code": "actions_disabled"}}, "noPlaneCalls": true}
+        },
+        {
+          "request": {"method": "POST", "path": "/sandboxes/microvm-00000000-0000-0000-0000-000000000001/resume", "body": {"confirm": true}},
+          "expect": {"status": 403, "body": {"error": {"code": "actions_disabled"}}, "noPlaneCalls": true}
+        },
+        {
+          "request": {"method": "POST", "path": "/actions", "body": {"action": "kill", "sandboxIds": ["microvm-00000000-0000-0000-0000-000000000001"], "confirm": true}},
+          "expect": {"status": 403, "body": {"error": {"code": "actions_disabled"}}, "noPlaneCalls": true}
+        }
+      ]
+    },
+    {
+      "id": "actions need an explicit confirmation",
+      "world": {"sandboxes": [{"n": 1}], "allowActions": true},
+      "steps": [
+        {
+          "request": {"method": "POST", "path": "/sandboxes/microvm-00000000-0000-0000-0000-000000000001/kill", "body": {}},
+          "expect": {"status": 400, "body": {"error": {"code": "confirmation_required"}}, "writes": []}
+        },
+        {
+          "request": {"method": "POST", "path": "/actions", "body": {"action": "kill", "sandboxIds": ["microvm-00000000-0000-0000-0000-000000000001"], "confirm": "yes"}},
+          "expect": {"status": 400, "body": {"error": {"code": "confirmation_required"}}, "writes": []}
+        }
+      ]
+    },
+    {
+      "id": "a single kill runs as a job",
+      "world": {"sandboxes": [{"n": 1}, {"n": 2}], "allowActions": true},
+      "steps": [
+        {
+          "request": {"method": "POST", "path": "/sandboxes/microvm-00000000-0000-0000-0000-000000000002/kill", "body": {"confirm": true}},
+          "expect": {"status": 202, "schema": "jobDocument", "body": {"job": {"action": "kill", "total": 1}}}
+        },
+        {
+          "waitForJob": true,
+          "expect": {
+            "status": 200,
+            "schema": "jobDocument",
+            "body": {"job": {"status": "finished", "counts": {"done": 1, "unchanged": 0, "failed": 0}, "items": [{"sandboxId": "microvm-00000000-0000-0000-0000-000000000002", "outcome": "done", "code": null}]}},
+            "writes": ["terminateMicrovm"]
+          }
+        }
+      ]
+    },
+    {
+      "id": "a bulk failure reports only the AWS code and the queue continues",
+      "world": {
+        "sandboxes": [{"n": 1}, {"n": 2}, {"n": 3, "state": "SUSPENDED"}],
+        "allowActions": true,
+        "failures": {"suspendMicrovm:1": {"kind": "aws", "code": "ThrottlingException", "message": "mensaje que no debe salir"}},
+        "unchanged": ["suspendMicrovm:2"]
+      },
+      "steps": [
+        {
+          "request": {"method": "POST", "path": "/actions", "body": {"action": "suspend", "sandboxIds": ["microvm-00000000-0000-0000-0000-000000000001", "microvm-00000000-0000-0000-0000-000000000002", "microvm-00000000-0000-0000-0000-000000000003"], "confirm": true}},
+          "expect": {"status": 202, "schema": "jobDocument"}
+        },
+        {
+          "waitForJob": true,
+          "expect": {
+            "status": 200,
+            "schema": "jobDocument",
+            "body": {"job": {"counts": {"done": 1, "unchanged": 1, "failed": 1}, "items": [{"code": "ThrottlingException"}, {"code": null}, {"code": null}]}},
+            "absentText": ["mensaje que no debe salir"]
+          }
+        },
+        {
+          "request": {"method": "GET", "path": "/actions"},
+          "expect": {"status": 200, "schema": "jobsDocument", "body": {"jobs": [{"action": "suspend", "status": "finished"}]}}
+        }
+      ]
+    },
+    {
+      "id": "an unknown job is a 404",
+      "world": {},
+      "steps": [
+        {"request": {"method": "GET", "path": "/actions/job-999"}, "expect": {"status": 404, "schema": "error", "body": {"error": {"code": "not_found"}}}}
+      ]
+    },
+    {
+      "id": "the plan names the operation and counts the sandboxes",
+      "world": {"allowActions": true},
+      "steps": [
+        {
+          "request": {"method": "GET", "path": "/actions/plan", "query": {"action": ["suspend"], "count": ["10"]}},
+          "expect": {"status": 200, "schema": "planDocument", "body": {"plan": {"action": "suspend", "operation": "SuspendMicrovm", "count": 10}}}
+        },
+        {
+          "request": {"method": "GET", "path": "/actions/plan", "query": {"action": ["explode"], "count": ["10"]}},
+          "expect": {"status": 400, "body": {"error": {"code": "invalid_argument", "message": "action: no es válida (admitidas: kill, suspend, resume)"}}}
+        },
+        {
+          "request": {"method": "GET", "path": "/actions/plan", "query": {"action": ["kill"], "count": ["101"]}},
+          "expect": {"status": 400, "body": {"error": {"message": "count: entre 1 y 100"}}}
+        }
+      ]
+    },
+    {
+      "id": "invalid bulk requests fail before any AWS call",
+      "world": {"sandboxes": [{"n": 1}], "allowActions": true},
+      "steps": [
+        {"request": {"method": "POST", "path": "/actions", "body": {"action": "explode", "sandboxIds": ["x"], "confirm": true}}, "expect": {"status": 400, "schema": "error", "writes": []}},
+        {"request": {"method": "POST", "path": "/actions", "body": {"action": "kill", "sandboxIds": "x", "confirm": true}}, "expect": {"status": 400, "body": {"error": {"message": "sandboxIds: se esperaba una lista de ids"}}, "writes": []}},
+        {"request": {"method": "POST", "path": "/actions", "body": {"action": "kill", "sandboxIds": [], "confirm": true}}, "expect": {"status": 400, "writes": []}},
+        {"request": {"method": "POST", "path": "/actions", "body": {"action": "kill", "sandboxIds": [{"$repeat": {"text": "x", "times": 1000}}], "confirm": true}}, "expect": {"status": 400, "writes": []}},
+        {"request": {"method": "POST", "path": "/actions", "body": {"action": "kill", "sandboxIds": [1], "confirm": true}}, "expect": {"status": 400, "writes": []}},
+        {"request": {"method": "POST", "path": "/actions", "body": {"action": "kill", "sandboxIds": {"$sandboxIds": 101}, "confirm": true}}, "expect": {"status": 400, "body": {"error": {"code": "invalid_argument", "message": "sandboxIds: como mucho 100 ids por acción"}}, "writes": []}}
+      ]
+    },
+    {
+      "id": "an invalid JSON body and a non-object body are refused",
+      "world": {"allowActions": true},
+      "steps": [
+        {"request": {"method": "POST", "path": "/actions", "rawBody": "{not json"}, "expect": {"status": 400, "schema": "error", "body": {"error": {"code": "invalid_json"}}}},
+        {"request": {"method": "POST", "path": "/actions", "rawBody": "[1, 2]"}, "expect": {"status": 400, "body": {"error": {"code": "invalid_json"}}}}
+      ]
+    },
+    {
+      "id": "unknown routes and methods",
+      "world": {},
+      "steps": [
+        {"request": {"method": "GET", "path": "/nope"}, "expect": {"status": 404, "schema": "error", "body": {"error": {"code": "not_found"}}}},
+        {"request": {"method": "POST", "path": "/quotas", "body": {}}, "expect": {"status": 405, "schema": "error", "body": {"error": {"code": "method_not_allowed"}}}}
+      ]
+    },
+    {
+      "id": "AWS failures map to codes without the AWS message",
+      "world": {"failures": {"listMicrovms": {"kind": "aws", "code": "ServiceException", "message": "mensaje que no debe salir"}}},
+      "steps": [
+        {
+          "request": {"method": "GET", "path": "/sandboxes"},
+          "expect": {"status": 502, "schema": "error", "body": {"error": {"code": "aws_error", "awsCode": "ServiceException"}}, "absentText": ["mensaje que no debe salir"]}
+        }
+      ]
+    },
+    {
+      "id": "missing permissions are a 403 with a fixed message",
+      "world": {"failures": {"listMicrovms": {"kind": "authentication", "code": "AccessDeniedException", "message": "detalle interno"}}},
+      "steps": [
+        {
+          "request": {"method": "GET", "path": "/sandboxes"},
+          "expect": {"status": 403, "schema": "error", "body": {"error": {"code": "aws_access_denied", "awsCode": "AccessDeniedException"}}, "absentText": ["detalle interno"]}
+        }
+      ]
+    },
+    {
+      "id": "a throttled call is a 429",
+      "world": {"failures": {"listMicrovms": {"kind": "rate_limit", "code": "ThrottlingException", "message": "detalle interno"}}},
+      "steps": [
+        {
+          "request": {"method": "GET", "path": "/sandboxes"},
+          "expect": {"status": 429, "schema": "error", "body": {"error": {"code": "aws_throttled", "awsCode": "ThrottlingException"}}, "absentText": ["detalle interno"]}
+        }
+      ]
+    },
+    {
+      "id": "a missing resource is a 404 with a fixed message",
+      "world": {"failures": {"listMicrovms": {"kind": "not_found", "message": "detalle interno"}}},
+      "steps": [
+        {
+          "request": {"method": "GET", "path": "/sandboxes"},
+          "expect": {"status": 404, "schema": "error", "body": {"error": {"code": "not_found", "message": "no existe"}}, "absentText": ["detalle interno"]}
+        }
+      ]
+    },
+    {
+      "id": "an AWS validation failure carries the code and never the AWS message",
+      "world": {"failures": {"listMicrovms": {"kind": "invalid_argument", "code": "ValidationException", "message": "arn:aws:lambda:us-east-1:123456789012:image/privada rechazada"}}},
+      "steps": [
+        {
+          "request": {"method": "GET", "path": "/sandboxes"},
+          "expect": {
+            "status": 400,
+            "schema": "error",
+            "body": {"error": {"code": "invalid_argument", "awsCode": "ValidationException", "message": "AWS rechazó un argumento de la petición"}},
+            "absentText": ["123456789012"]
+          }
+        }
+      ]
+    },
+    {
+      "id": "an unexpected failure is an internal error with no detail",
+      "world": {"failures": {"listMicrovms": {"kind": "unexpected", "message": "clave-secreta"}}},
+      "steps": [
+        {
+          "request": {"method": "GET", "path": "/sandboxes"},
+          "expect": {"status": 500, "schema": "error", "body": {"error": {"code": "internal_error"}}, "absentText": ["clave-secreta"]}
+        }
+      ]
+    },
+    {
+      "id": "there are no additional accounts without the multi-account view",
+      "world": {},
+      "steps": [
+        {"request": {"method": "GET", "path": "/accounts"}, "expect": {"status": 200, "schema": "accounts", "body": {"accounts": []}}}
+      ]
+    }
+  ]
+}

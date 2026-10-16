@@ -12,8 +12,11 @@ en `CLAUDE.md`; esta skill las concreta y añade el cómo. Detalle en:
   incluida la VM Linux para `rayd`.
 - [reference/parity-checklist.md](reference/parity-checklist.md): checklist
   de paridad Python / TypeScript / shim E2B, errores y docs.
-- [reference/release-and-aws.md](reference/release-and-aws.md): release,
-  aceptación en AWS real, inventario y limpieza.
+- [reference/release-and-aws.md](reference/release-and-aws.md): regresión por
+  niveles (docs o tests: sin AWS; solo SDK o herramientas: CI, e2e local con
+  Docker + Floci y un chequeo corto en AWS; `rayd`, imagen, proto, infra o
+  release: regresión completa), release, aceptación en AWS real, inventario y
+  limpieza.
 - [reference/review-checklist.md](reference/review-checklist.md): checklist
   de revisión (barrido seguro del diff, hexagonal y DDD, código limpio,
   paridad, coste y gates), obligatoria antes de fusionar.
@@ -81,7 +84,10 @@ en `CLAUDE.md`; esta skill las concreta y añade el cómo. Detalle en:
   `scripts/check_sdk_parity.py` (en `make lint` y en CI) compara los dos
   lados contra una lista de diferencias intencionales con su motivo.
 - Qué se prueba en cada SDK: el guest y `rayd` se prueban una vez (Python);
-  la CLI, MCP, el proxy y los duplicados sync/async son sólo Python; todo lo
+  los duplicados sync/async son sólo Python; la CLI y MCP tendrán cobertura en
+  los dos según ADR-027 (golden de superficie en `testdata/cli/surface.json`;
+  `check_sdk_parity.py --cli` falla si TypeScript no define una orden de
+  Python); todo lo
   demás tiene cobertura en los dos. Detalle en
   [reference/parity-checklist.md](reference/parity-checklist.md).
 - Los tests nuevos se nombran por la función o el comportamiento

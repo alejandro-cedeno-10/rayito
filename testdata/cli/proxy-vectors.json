@@ -1,0 +1,1733 @@
+{
+  "_comment": "Vectores de la CLI sandbox proxy compartidos por Python y TypeScript (ADR-027, fase 4): contrabando de cabeceras, delimitaci\u00f3n del cuerpo, reescritura de la cabecera y lista de Host/Origin. Generados con la CLI de Python; los dos lados comprueban que no cambian.",
+  "headAccepted": [
+    {
+      "raw": "GET / HTTP/1.1\r\n\r\n",
+      "requestLine": "GET / HTTP/1.1",
+      "headers": []
+    },
+    {
+      "raw": "GET / HTTP/1.1\r\nHost: a\r\nFoo:   bar \t\r\n\r\n",
+      "requestLine": "GET / HTTP/1.1",
+      "headers": [
+        [
+          "Host",
+          "a"
+        ],
+        [
+          "Foo",
+          "bar"
+        ]
+      ]
+    },
+    {
+      "raw": "POST /x HTTP/1.1\r\nTransfer-Encoding: gzip\r\nTransfer-Encoding: chunked\r\n\r\n",
+      "requestLine": "POST /x HTTP/1.1",
+      "headers": [
+        [
+          "Transfer-Encoding",
+          "gzip"
+        ],
+        [
+          "Transfer-Encoding",
+          "chunked"
+        ]
+      ]
+    },
+    {
+      "raw": "GET / HTTP/1.1\r\nFoo: a\u0085\r\n\r\n",
+      "requestLine": "GET / HTTP/1.1",
+      "headers": [
+        [
+          "Foo",
+          "a\u0085"
+        ]
+      ]
+    },
+    {
+      "raw": "GET / HTTP/1.1\r\nFoo:\r\n\r\n",
+      "requestLine": "GET / HTTP/1.1",
+      "headers": [
+        [
+          "Foo",
+          ""
+        ]
+      ]
+    },
+    {
+      "raw": "GET / HTTP/1.1\r\nFoo: a:b\r\n\r\n",
+      "requestLine": "GET / HTTP/1.1",
+      "headers": [
+        [
+          "Foo",
+          "a:b"
+        ]
+      ]
+    },
+    {
+      "raw": "GET / HTTP/1.1\r\nX-aws-proxy-port: 9000\r\n\r\n",
+      "requestLine": "GET / HTTP/1.1",
+      "headers": [
+        [
+          "X-aws-proxy-port",
+          "9000"
+        ]
+      ]
+    }
+  ],
+  "headRejected": [
+    {
+      "name": "bare LF hides a fake x-aws-proxy-port line",
+      "raw": "GET / HTTP/1.1\r\nFoo: a\nX-aws-proxy-port: 9000\r\n\r\n"
+    },
+    {
+      "name": "bare CR hides a fake header",
+      "raw": "GET / HTTP/1.1\r\nFoo: a\rX-aws-proxy-port: 9000\r\n\r\n"
+    },
+    {
+      "name": "bare CR in the request line",
+      "raw": "GET /\r HTTP/1.1\r\nFoo: a\r\n\r\n"
+    },
+    {
+      "name": "bare LF in the request line",
+      "raw": "GET /\n HTTP/1.1\r\nFoo: a\r\n\r\n"
+    },
+    {
+      "name": "header line without colon",
+      "raw": "GET / HTTP/1.1\r\nFoo: a\r\nBar\r\n\r\n"
+    },
+    {
+      "name": "obs-fold with a space",
+      "raw": "GET / HTTP/1.1\r\nFoo: a\r\n continued\r\n\r\n"
+    },
+    {
+      "name": "obs-fold with a tab",
+      "raw": "GET / HTTP/1.1\r\nFoo: a\r\n\tcontinued\r\n\r\n"
+    },
+    {
+      "name": "space inside the name",
+      "raw": "GET / HTTP/1.1\r\nFo o: a\r\n\r\n"
+    },
+    {
+      "name": "space before the colon",
+      "raw": "GET / HTTP/1.1\r\nContent-Length : 5\r\n\r\n"
+    },
+    {
+      "name": "control character in the name",
+      "raw": "GET / HTTP/1.1\r\nFoo\u0001: a\r\n\r\n"
+    },
+    {
+      "name": "NUL in the name",
+      "raw": "GET / HTTP/1.1\r\nFoo\u0000: a\r\n\r\n"
+    },
+    {
+      "name": "latin-1 letter in the name",
+      "raw": "GET / HTTP/1.1\r\nF\u00f6o: a\r\n\r\n"
+    },
+    {
+      "name": "empty name",
+      "raw": "GET / HTTP/1.1\r\n: a\r\n\r\n"
+    },
+    {
+      "name": "empty request line",
+      "raw": "\r\nFoo: a\r\n\r\n"
+    },
+    {
+      "name": "no terminator",
+      "raw": ""
+    },
+    {
+      "name": "no final blank line",
+      "raw": "GET / HTTP/1.1\r\nFoo: a\r\n"
+    },
+    {
+      "name": "only LF terminator",
+      "raw": "GET / HTTP/1.1\nFoo: a\n\n"
+    }
+  ],
+  "rewriteHead": [
+    {
+      "name": "strips client proxy headers and host",
+      "raw": "GET /a?b=1 HTTP/1.1\r\nHost: 127.0.0.1:8080\r\nX-Aws-Proxy-Auth: evil\r\nx-aws-proxy-port: 9000\r\nX-AWS-PROXY-Other: 1\r\nAccept: */*\r\n\r\n",
+      "endpoint": "abc.example.com",
+      "jwe": "JWE-OPERATOR",
+      "port": 8080,
+      "expected": "GET /a?b=1 HTTP/1.1\r\nAccept: */*\r\nHost: abc.example.com\r\nX-aws-proxy-auth: JWE-OPERATOR\r\nX-aws-proxy-port: 8080\r\nConnection: close\r\n\r\n"
+    },
+    {
+      "name": "drops every Host header",
+      "raw": "GET / HTTP/1.1\r\nHost: a\r\nhost: b\r\n\r\n",
+      "endpoint": "abc.example.com",
+      "jwe": "JWE-OPERATOR",
+      "port": 8080,
+      "expected": "GET / HTTP/1.1\r\nHost: abc.example.com\r\nX-aws-proxy-auth: JWE-OPERATOR\r\nX-aws-proxy-port: 8080\r\nConnection: close\r\n\r\n"
+    },
+    {
+      "name": "keeps one Connection: close",
+      "raw": "GET / HTTP/1.1\r\nConnection: keep-alive\r\nConnection: upgrade-ish\r\n\r\n",
+      "endpoint": "abc.example.com",
+      "jwe": "JWE-OPERATOR",
+      "port": 8080,
+      "expected": "GET / HTTP/1.1\r\nHost: abc.example.com\r\nX-aws-proxy-auth: JWE-OPERATOR\r\nX-aws-proxy-port: 8080\r\nConnection: close\r\n\r\n"
+    },
+    {
+      "name": "hides the dashboard cookies",
+      "raw": "GET / HTTP/1.1\r\nCookie: a=1; rayito_dashboard_8080=secret; b=2\r\n\r\n",
+      "endpoint": "abc.example.com",
+      "jwe": "JWE-OPERATOR",
+      "port": 8080,
+      "expected": "GET / HTTP/1.1\r\nCookie: a=1; b=2\r\nHost: abc.example.com\r\nX-aws-proxy-auth: JWE-OPERATOR\r\nX-aws-proxy-port: 8080\r\nConnection: close\r\n\r\n"
+    },
+    {
+      "name": "drops a cookie header with only dashboard cookies",
+      "raw": "GET / HTTP/1.1\r\nCookie: rayito_dashboard_8080=secret\r\nAccept: */*\r\n\r\n",
+      "endpoint": "abc.example.com",
+      "jwe": "JWE-OPERATOR",
+      "port": 8080,
+      "expected": "GET / HTTP/1.1\r\nAccept: */*\r\nHost: abc.example.com\r\nX-aws-proxy-auth: JWE-OPERATOR\r\nX-aws-proxy-port: 8080\r\nConnection: close\r\n\r\n"
+    },
+    {
+      "name": "hides the dashboard cookie without a space after the semicolon",
+      "raw": "GET / HTTP/1.1\r\nCookie: a=1;rayito_dashboard_1=s;b=2\r\n\r\n",
+      "endpoint": "abc.example.com",
+      "jwe": "JWE-OPERATOR",
+      "port": 8080,
+      "expected": "GET / HTTP/1.1\r\nCookie: a=1; b=2\r\nHost: abc.example.com\r\nX-aws-proxy-auth: JWE-OPERATOR\r\nX-aws-proxy-port: 8080\r\nConnection: close\r\n\r\n"
+    },
+    {
+      "name": "keeps Upgrade and Connection intact",
+      "raw": "GET /ws HTTP/1.1\r\nHost: 127.0.0.1:8080\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n",
+      "endpoint": "abc.example.com",
+      "jwe": "JWE-OPERATOR",
+      "port": 8080,
+      "expected": "GET /ws HTTP/1.1\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nHost: abc.example.com\r\nX-aws-proxy-auth: JWE-OPERATOR\r\nX-aws-proxy-port: 8080\r\n\r\n"
+    },
+    {
+      "name": "upgrade token among others",
+      "raw": "GET /ws HTTP/1.1\r\nConnection: keep-alive, Upgrade\r\nUpgrade: websocket\r\n\r\n",
+      "endpoint": "abc.example.com",
+      "jwe": "JWE-OPERATOR",
+      "port": 8080,
+      "expected": "GET /ws HTTP/1.1\r\nConnection: keep-alive, Upgrade\r\nUpgrade: websocket\r\nHost: abc.example.com\r\nX-aws-proxy-auth: JWE-OPERATOR\r\nX-aws-proxy-port: 8080\r\n\r\n"
+    },
+    {
+      "name": "Upgrade without the connection token is a plain request",
+      "raw": "GET / HTTP/1.1\r\nConnection: keep-alive\r\nUpgrade: websocket\r\n\r\n",
+      "endpoint": "abc.example.com",
+      "jwe": "JWE-OPERATOR",
+      "port": 8080,
+      "expected": "GET / HTTP/1.1\r\nUpgrade: websocket\r\nHost: abc.example.com\r\nX-aws-proxy-auth: JWE-OPERATOR\r\nX-aws-proxy-port: 8080\r\nConnection: close\r\n\r\n"
+    }
+  ],
+  "closingResponseHead": [
+    {
+      "raw": "HTTP/1.1 200 OK\r\nConnection: keep-alive\r\nContent-Length: 2\r\n\r\n",
+      "expected": "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n"
+    },
+    {
+      "raw": "HTTP/1.1 403 Forbidden\r\nconnection: Upgrade\r\n\r\n",
+      "expected": "HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n"
+    }
+  ],
+  "requestFraming": [
+    {
+      "transferEncodings": [],
+      "contentLengths": [],
+      "expected": {
+        "kind": "none",
+        "length": 0
+      }
+    },
+    {
+      "transferEncodings": [],
+      "contentLengths": [
+        "0"
+      ],
+      "expected": {
+        "kind": "none",
+        "length": 0
+      }
+    },
+    {
+      "transferEncodings": [],
+      "contentLengths": [
+        "12"
+      ],
+      "expected": {
+        "kind": "length",
+        "length": 12
+      }
+    },
+    {
+      "transferEncodings": [],
+      "contentLengths": [
+        "0012"
+      ],
+      "expected": {
+        "kind": "length",
+        "length": 12
+      }
+    },
+    {
+      "transferEncodings": [],
+      "contentLengths": [
+        " 7 "
+      ],
+      "expected": {
+        "kind": "length",
+        "length": 7
+      }
+    },
+    {
+      "transferEncodings": [],
+      "contentLengths": [
+        "\t7\t"
+      ],
+      "expected": {
+        "kind": "length",
+        "length": 7
+      }
+    },
+    {
+      "transferEncodings": [],
+      "contentLengths": [
+        "12",
+        "12"
+      ],
+      "expected": {
+        "kind": "length",
+        "length": 12
+      }
+    },
+    {
+      "transferEncodings": [],
+      "contentLengths": [
+        "12, 12"
+      ],
+      "expected": {
+        "kind": "length",
+        "length": 12
+      }
+    },
+    {
+      "transferEncodings": [
+        "chunked"
+      ],
+      "contentLengths": [],
+      "expected": {
+        "kind": "chunked",
+        "length": 0
+      }
+    },
+    {
+      "transferEncodings": [
+        "gzip",
+        "Chunked"
+      ],
+      "contentLengths": [],
+      "expected": {
+        "kind": "chunked",
+        "length": 0
+      }
+    },
+    {
+      "transferEncodings": [
+        "gzip,chunked"
+      ],
+      "contentLengths": [],
+      "expected": {
+        "kind": "chunked",
+        "length": 0
+      }
+    },
+    {
+      "transferEncodings": [
+        "Chunked "
+      ],
+      "contentLengths": [],
+      "expected": {
+        "kind": "chunked",
+        "length": 0
+      }
+    },
+    {
+      "transferEncodings": [
+        "chunked,"
+      ],
+      "contentLengths": [],
+      "expected": {
+        "kind": "chunked",
+        "length": 0
+      }
+    }
+  ],
+  "requestFramingRejected": [
+    {
+      "transferEncodings": [
+        "chunked"
+      ],
+      "contentLengths": [
+        "3"
+      ]
+    },
+    {
+      "transferEncodings": [
+        "chunked"
+      ],
+      "contentLengths": [
+        ""
+      ]
+    },
+    {
+      "transferEncodings": [
+        "gzip"
+      ],
+      "contentLengths": []
+    },
+    {
+      "transferEncodings": [
+        ""
+      ],
+      "contentLengths": []
+    },
+    {
+      "transferEncodings": [
+        ","
+      ],
+      "contentLengths": []
+    },
+    {
+      "transferEncodings": [
+        "chunked, gzip"
+      ],
+      "contentLengths": []
+    },
+    {
+      "transferEncodings": [
+        "chunked",
+        "gzip"
+      ],
+      "contentLengths": []
+    },
+    {
+      "transferEncodings": [],
+      "contentLengths": [
+        "3",
+        "4"
+      ]
+    },
+    {
+      "transferEncodings": [],
+      "contentLengths": [
+        "3,4"
+      ]
+    },
+    {
+      "transferEncodings": [],
+      "contentLengths": [
+        "+3"
+      ]
+    },
+    {
+      "transferEncodings": [],
+      "contentLengths": [
+        "-3"
+      ]
+    },
+    {
+      "transferEncodings": [],
+      "contentLengths": [
+        ""
+      ]
+    },
+    {
+      "transferEncodings": [],
+      "contentLengths": [
+        "1.5"
+      ]
+    },
+    {
+      "transferEncodings": [],
+      "contentLengths": [
+        "0x10"
+      ]
+    },
+    {
+      "transferEncodings": [],
+      "contentLengths": [
+        "12\u0085"
+      ]
+    },
+    {
+      "transferEncodings": [],
+      "contentLengths": [
+        "12\u00a0"
+      ]
+    },
+    {
+      "transferEncodings": [],
+      "contentLengths": [
+        "1 2"
+      ]
+    }
+  ],
+  "responseFraming": [
+    {
+      "status": 101,
+      "method": "GET",
+      "transferEncodings": [],
+      "contentLengths": [
+        "9"
+      ],
+      "expected": {
+        "kind": "none",
+        "length": 0
+      }
+    },
+    {
+      "status": 100,
+      "method": "GET",
+      "transferEncodings": [],
+      "contentLengths": [],
+      "expected": {
+        "kind": "none",
+        "length": 0
+      }
+    },
+    {
+      "status": 199,
+      "method": "GET",
+      "transferEncodings": [],
+      "contentLengths": [
+        "5"
+      ],
+      "expected": {
+        "kind": "none",
+        "length": 0
+      }
+    },
+    {
+      "status": 204,
+      "method": "GET",
+      "transferEncodings": [],
+      "contentLengths": [],
+      "expected": {
+        "kind": "none",
+        "length": 0
+      }
+    },
+    {
+      "status": 304,
+      "method": "GET",
+      "transferEncodings": [],
+      "contentLengths": [
+        "9"
+      ],
+      "expected": {
+        "kind": "none",
+        "length": 0
+      }
+    },
+    {
+      "status": 200,
+      "method": "HEAD",
+      "transferEncodings": [],
+      "contentLengths": [
+        "9"
+      ],
+      "expected": {
+        "kind": "none",
+        "length": 0
+      }
+    },
+    {
+      "status": 200,
+      "method": "head",
+      "transferEncodings": [
+        "chunked"
+      ],
+      "contentLengths": [],
+      "expected": {
+        "kind": "none",
+        "length": 0
+      }
+    },
+    {
+      "status": 200,
+      "method": "GET",
+      "transferEncodings": [
+        "chunked"
+      ],
+      "contentLengths": [],
+      "expected": {
+        "kind": "chunked",
+        "length": 0
+      }
+    },
+    {
+      "status": 200,
+      "method": "GET",
+      "transferEncodings": [
+        "gzip"
+      ],
+      "contentLengths": [],
+      "expected": {
+        "kind": "until-close",
+        "length": 0
+      }
+    },
+    {
+      "status": 200,
+      "method": "GET",
+      "transferEncodings": [
+        "gzip, chunked"
+      ],
+      "contentLengths": [],
+      "expected": {
+        "kind": "chunked",
+        "length": 0
+      }
+    },
+    {
+      "status": 200,
+      "method": "GET",
+      "transferEncodings": [
+        "chunked",
+        "gzip"
+      ],
+      "contentLengths": [],
+      "expected": {
+        "kind": "until-close",
+        "length": 0
+      }
+    },
+    {
+      "status": 200,
+      "method": "GET",
+      "transferEncodings": [],
+      "contentLengths": [
+        "9"
+      ],
+      "expected": {
+        "kind": "length",
+        "length": 9
+      }
+    },
+    {
+      "status": 200,
+      "method": "GET",
+      "transferEncodings": [],
+      "contentLengths": [
+        "0"
+      ],
+      "expected": {
+        "kind": "none",
+        "length": 0
+      }
+    },
+    {
+      "status": 200,
+      "method": "GET",
+      "transferEncodings": [],
+      "contentLengths": [
+        "x"
+      ],
+      "expected": {
+        "kind": "until-close",
+        "length": 0
+      }
+    },
+    {
+      "status": 200,
+      "method": "GET",
+      "transferEncodings": [],
+      "contentLengths": [
+        "3",
+        "4"
+      ],
+      "expected": {
+        "kind": "until-close",
+        "length": 0
+      }
+    },
+    {
+      "status": 200,
+      "method": "GET",
+      "transferEncodings": [],
+      "contentLengths": [
+        "9\u0085"
+      ],
+      "expected": {
+        "kind": "until-close",
+        "length": 0
+      }
+    },
+    {
+      "status": 200,
+      "method": "GET",
+      "transferEncodings": [],
+      "contentLengths": [],
+      "expected": {
+        "kind": "until-close",
+        "length": 0
+      }
+    },
+    {
+      "status": 200,
+      "method": "GET",
+      "transferEncodings": [
+        "chunked"
+      ],
+      "contentLengths": [
+        "9"
+      ],
+      "expected": {
+        "kind": "chunked",
+        "length": 0
+      }
+    }
+  ],
+  "responseStatus": [
+    {
+      "line": "HTTP/1.1 101 Switching Protocols",
+      "expected": 101
+    },
+    {
+      "line": "HTTP/1.0 200",
+      "expected": 200
+    },
+    {
+      "line": "HTTP/1.1 404 Not Found",
+      "expected": 404
+    },
+    {
+      "line": "HTTP/1.1 200 ",
+      "expected": 200
+    }
+  ],
+  "responseStatusRejected": [
+    "garbage",
+    "HTTP/2 200 OK",
+    "HTTP/1.1 20 OK",
+    "",
+    "HTTP/1.1 2000 OK",
+    "HTTP/1.2 200 OK",
+    "http/1.1 200 OK",
+    "HTTP/1.1 200OK",
+    "HTTP/1.1 abc OK"
+  ],
+  "chunkSize": [
+    {
+      "line": "1a\r\n",
+      "expected": 26
+    },
+    {
+      "line": "1A\r\n",
+      "expected": 26
+    },
+    {
+      "line": "0\r\n",
+      "expected": 0
+    },
+    {
+      "line": "0;ext=1\r\n",
+      "expected": 0
+    },
+    {
+      "line": "0 ;x\r\n",
+      "expected": 0
+    },
+    {
+      "line": " 5 \r\n",
+      "expected": 5
+    },
+    {
+      "line": "ff;a=b;c\r\n",
+      "expected": 255
+    },
+    {
+      "line": "000a\r\n",
+      "expected": 10
+    }
+  ],
+  "chunkSizeRejected": [
+    "\r\n",
+    "zz\r\n",
+    "-1\r\n",
+    "+5\r\n",
+    "0x10\r\n",
+    "1a\r\r\n",
+    "\u00a05\r\n",
+    "5\u0085\r\n",
+    ";ext\r\n",
+    "1 2\r\n"
+  ],
+  "access": [
+    {
+      "name": "default loopback",
+      "input": {
+        "bind": "127.0.0.1",
+        "localPort": 8080,
+        "sandboxId": "microvm-x",
+        "allowedHosts": [],
+        "allowedOrigins": []
+      },
+      "hosts": [
+        "127.0.0.1:8080",
+        "[::1]:8080",
+        "localhost:8080",
+        "microvm-x.localhost:8080"
+      ],
+      "origins": [
+        "http://127.0.0.1:8080",
+        "http://[::1]:8080",
+        "http://localhost:8080",
+        "http://microvm-x.localhost:8080"
+      ],
+      "sandboxHost": "microvm-x.localhost",
+      "checks": [
+        {
+          "host": "127.0.0.1:8080",
+          "origin": null,
+          "hostAdmitted": true,
+          "originAdmitted": true
+        },
+        {
+          "host": "localhost:8080",
+          "origin": null,
+          "hostAdmitted": true,
+          "originAdmitted": true
+        },
+        {
+          "host": "[::1]:8080",
+          "origin": null,
+          "hostAdmitted": true,
+          "originAdmitted": true
+        },
+        {
+          "host": "LocalHost:8080",
+          "origin": null,
+          "hostAdmitted": true,
+          "originAdmitted": true
+        },
+        {
+          "host": " 127.0.0.1:8080\t",
+          "origin": null,
+          "hostAdmitted": true,
+          "originAdmitted": true
+        },
+        {
+          "host": "microvm-x.localhost:8080",
+          "origin": null,
+          "hostAdmitted": true,
+          "originAdmitted": true
+        },
+        {
+          "host": "attacker.example:8080",
+          "origin": null,
+          "hostAdmitted": false,
+          "originAdmitted": true
+        },
+        {
+          "host": null,
+          "origin": null,
+          "hostAdmitted": false,
+          "originAdmitted": true
+        },
+        {
+          "host": "127.0.0.1:9999",
+          "origin": null,
+          "hostAdmitted": false,
+          "originAdmitted": true
+        },
+        {
+          "host": "127.0.0.1",
+          "origin": null,
+          "hostAdmitted": false,
+          "originAdmitted": true
+        },
+        {
+          "host": "127.0.0.1:8080",
+          "origin": "http://localhost:8080",
+          "hostAdmitted": true,
+          "originAdmitted": true
+        },
+        {
+          "host": "127.0.0.1:8080",
+          "origin": "http://127.0.0.1:8080/",
+          "hostAdmitted": true,
+          "originAdmitted": true
+        },
+        {
+          "host": "127.0.0.1:8080",
+          "origin": "HTTP://LOCALHOST:8080",
+          "hostAdmitted": true,
+          "originAdmitted": true
+        },
+        {
+          "host": "127.0.0.1:8080",
+          "origin": "null",
+          "hostAdmitted": true,
+          "originAdmitted": false
+        },
+        {
+          "host": "127.0.0.1:8080",
+          "origin": "http://attacker.example",
+          "hostAdmitted": true,
+          "originAdmitted": false
+        },
+        {
+          "host": "127.0.0.1:8080",
+          "origin": "https://localhost:8080",
+          "hostAdmitted": true,
+          "originAdmitted": false
+        },
+        {
+          "host": "127.0.0.1:8080",
+          "origin": "",
+          "hostAdmitted": true,
+          "originAdmitted": false
+        }
+      ]
+    },
+    {
+      "name": "port 80 admits the bare names",
+      "input": {
+        "bind": "127.0.0.1",
+        "localPort": 80,
+        "sandboxId": "microvm-x",
+        "allowedHosts": [],
+        "allowedOrigins": []
+      },
+      "hosts": [
+        "127.0.0.1",
+        "127.0.0.1:80",
+        "[::1]",
+        "[::1]:80",
+        "localhost",
+        "localhost:80",
+        "microvm-x.localhost",
+        "microvm-x.localhost:80"
+      ],
+      "origins": [
+        "http://127.0.0.1",
+        "http://127.0.0.1:80",
+        "http://[::1]",
+        "http://[::1]:80",
+        "http://localhost",
+        "http://localhost:80",
+        "http://microvm-x.localhost",
+        "http://microvm-x.localhost:80"
+      ],
+      "sandboxHost": "microvm-x.localhost",
+      "checks": [
+        {
+          "host": "localhost",
+          "origin": null,
+          "hostAdmitted": true,
+          "originAdmitted": true
+        },
+        {
+          "host": "127.0.0.1",
+          "origin": null,
+          "hostAdmitted": true,
+          "originAdmitted": true
+        },
+        {
+          "host": "[::1]",
+          "origin": null,
+          "hostAdmitted": true,
+          "originAdmitted": true
+        },
+        {
+          "host": "localhost:80",
+          "origin": null,
+          "hostAdmitted": true,
+          "originAdmitted": true
+        },
+        {
+          "host": "localhost:8080",
+          "origin": null,
+          "hostAdmitted": false,
+          "originAdmitted": true
+        }
+      ]
+    },
+    {
+      "name": "sandbox id that is not a DNS label",
+      "input": {
+        "bind": "127.0.0.1",
+        "localPort": 8080,
+        "sandboxId": "Micro_VM.x",
+        "allowedHosts": [],
+        "allowedOrigins": []
+      },
+      "hosts": [
+        "127.0.0.1:8080",
+        "[::1]:8080",
+        "localhost:8080"
+      ],
+      "origins": [
+        "http://127.0.0.1:8080",
+        "http://[::1]:8080",
+        "http://localhost:8080"
+      ],
+      "sandboxHost": null,
+      "checks": [
+        {
+          "host": "micro_vm.x.localhost:8080",
+          "origin": null,
+          "hostAdmitted": false,
+          "originAdmitted": true
+        }
+      ]
+    },
+    {
+      "name": "no sandbox id",
+      "input": {
+        "bind": "127.0.0.1",
+        "localPort": 8080,
+        "sandboxId": null,
+        "allowedHosts": [],
+        "allowedOrigins": []
+      },
+      "hosts": [
+        "127.0.0.1:8080",
+        "[::1]:8080",
+        "localhost:8080"
+      ],
+      "origins": [
+        "http://127.0.0.1:8080",
+        "http://[::1]:8080",
+        "http://localhost:8080"
+      ],
+      "sandboxHost": null,
+      "checks": [
+        {
+          "host": "microvm-x.localhost:8080",
+          "origin": null,
+          "hostAdmitted": false,
+          "originAdmitted": true
+        }
+      ]
+    },
+    {
+      "name": "wildcard bind admits nothing by itself",
+      "input": {
+        "bind": "0.0.0.0",
+        "localPort": 8080,
+        "sandboxId": "microvm-x",
+        "allowedHosts": [],
+        "allowedOrigins": []
+      },
+      "hosts": [
+        "127.0.0.1:8080",
+        "[::1]:8080",
+        "localhost:8080"
+      ],
+      "origins": [
+        "http://127.0.0.1:8080",
+        "http://[::1]:8080",
+        "http://localhost:8080"
+      ],
+      "sandboxHost": null,
+      "checks": [
+        {
+          "host": "0.0.0.0:8080",
+          "origin": null,
+          "hostAdmitted": false,
+          "originAdmitted": true
+        },
+        {
+          "host": "127.0.0.1:8080",
+          "origin": null,
+          "hostAdmitted": true,
+          "originAdmitted": true
+        }
+      ]
+    },
+    {
+      "name": "wildcard bind with an allowed host",
+      "input": {
+        "bind": "0.0.0.0",
+        "localPort": 8080,
+        "sandboxId": "microvm-x",
+        "allowedHosts": [
+          "devbox.example.com"
+        ],
+        "allowedOrigins": []
+      },
+      "hosts": [
+        "127.0.0.1:8080",
+        "[::1]:8080",
+        "devbox.example.com",
+        "devbox.example.com:8080",
+        "localhost:8080"
+      ],
+      "origins": [
+        "http://127.0.0.1:8080",
+        "http://[::1]:8080",
+        "http://devbox.example.com",
+        "http://devbox.example.com:8080",
+        "http://localhost:8080"
+      ],
+      "sandboxHost": null,
+      "checks": [
+        {
+          "host": "devbox.example.com:8080",
+          "origin": null,
+          "hostAdmitted": true,
+          "originAdmitted": true
+        },
+        {
+          "host": "devbox.example.com",
+          "origin": null,
+          "hostAdmitted": true,
+          "originAdmitted": true
+        },
+        {
+          "host": "devbox.example.com:9",
+          "origin": null,
+          "hostAdmitted": false,
+          "originAdmitted": true
+        }
+      ]
+    },
+    {
+      "name": "ipv6 wildcard",
+      "input": {
+        "bind": "::",
+        "localPort": 8080,
+        "sandboxId": "microvm-x",
+        "allowedHosts": [
+          "devbox.example.com"
+        ],
+        "allowedOrigins": []
+      },
+      "hosts": [
+        "127.0.0.1:8080",
+        "[::1]:8080",
+        "devbox.example.com",
+        "devbox.example.com:8080",
+        "localhost:8080"
+      ],
+      "origins": [
+        "http://127.0.0.1:8080",
+        "http://[::1]:8080",
+        "http://devbox.example.com",
+        "http://devbox.example.com:8080",
+        "http://localhost:8080"
+      ],
+      "sandboxHost": null,
+      "checks": [
+        {
+          "host": "[::]:8080",
+          "origin": null,
+          "hostAdmitted": false,
+          "originAdmitted": true
+        },
+        {
+          "host": "devbox.example.com:8080",
+          "origin": null,
+          "hostAdmitted": true,
+          "originAdmitted": true
+        }
+      ]
+    },
+    {
+      "name": "concrete bind address",
+      "input": {
+        "bind": "192.168.1.5",
+        "localPort": 8080,
+        "sandboxId": "microvm-x",
+        "allowedHosts": [],
+        "allowedOrigins": []
+      },
+      "hosts": [
+        "127.0.0.1:8080",
+        "192.168.1.5:8080",
+        "[::1]:8080",
+        "localhost:8080"
+      ],
+      "origins": [
+        "http://127.0.0.1:8080",
+        "http://192.168.1.5:8080",
+        "http://[::1]:8080",
+        "http://localhost:8080"
+      ],
+      "sandboxHost": null,
+      "checks": [
+        {
+          "host": "192.168.1.5:8080",
+          "origin": null,
+          "hostAdmitted": true,
+          "originAdmitted": true
+        },
+        {
+          "host": "microvm-x.localhost:8080",
+          "origin": null,
+          "hostAdmitted": false,
+          "originAdmitted": true
+        }
+      ]
+    },
+    {
+      "name": "ipv6 bind address",
+      "input": {
+        "bind": "::1",
+        "localPort": 8080,
+        "sandboxId": "microvm-x",
+        "allowedHosts": [],
+        "allowedOrigins": []
+      },
+      "hosts": [
+        "127.0.0.1:8080",
+        "[::1]:8080",
+        "localhost:8080",
+        "microvm-x.localhost:8080"
+      ],
+      "origins": [
+        "http://127.0.0.1:8080",
+        "http://[::1]:8080",
+        "http://localhost:8080",
+        "http://microvm-x.localhost:8080"
+      ],
+      "sandboxHost": "microvm-x.localhost",
+      "checks": [
+        {
+          "host": "[::1]:8080",
+          "origin": null,
+          "hostAdmitted": true,
+          "originAdmitted": true
+        },
+        {
+          "host": "microvm-x.localhost:8080",
+          "origin": null,
+          "hostAdmitted": true,
+          "originAdmitted": true
+        }
+      ]
+    },
+    {
+      "name": "allowed host with explicit port",
+      "input": {
+        "bind": "127.0.0.1",
+        "localPort": 8080,
+        "sandboxId": "microvm-x",
+        "allowedHosts": [
+          "Devbox.Example.com:9090"
+        ],
+        "allowedOrigins": []
+      },
+      "hosts": [
+        "127.0.0.1:8080",
+        "[::1]:8080",
+        "devbox.example.com:9090",
+        "localhost:8080",
+        "microvm-x.localhost:8080"
+      ],
+      "origins": [
+        "http://127.0.0.1:8080",
+        "http://[::1]:8080",
+        "http://devbox.example.com:9090",
+        "http://localhost:8080",
+        "http://microvm-x.localhost:8080"
+      ],
+      "sandboxHost": "microvm-x.localhost",
+      "checks": [
+        {
+          "host": "devbox.example.com:9090",
+          "origin": null,
+          "hostAdmitted": true,
+          "originAdmitted": true
+        },
+        {
+          "host": "devbox.example.com:8080",
+          "origin": null,
+          "hostAdmitted": false,
+          "originAdmitted": true
+        },
+        {
+          "host": "devbox.example.com",
+          "origin": null,
+          "hostAdmitted": false,
+          "originAdmitted": true
+        }
+      ]
+    },
+    {
+      "name": "allowed host that is an ipv6 literal",
+      "input": {
+        "bind": "127.0.0.1",
+        "localPort": 8080,
+        "sandboxId": "microvm-x",
+        "allowedHosts": [
+          "[::2]",
+          "::3"
+        ],
+        "allowedOrigins": []
+      },
+      "hosts": [
+        "127.0.0.1:8080",
+        "[::1]:8080",
+        "[::2]",
+        "[::2]:8080",
+        "[::3]",
+        "[::3]:8080",
+        "localhost:8080",
+        "microvm-x.localhost:8080"
+      ],
+      "origins": [
+        "http://127.0.0.1:8080",
+        "http://[::1]:8080",
+        "http://[::2]",
+        "http://[::2]:8080",
+        "http://[::3]",
+        "http://[::3]:8080",
+        "http://localhost:8080",
+        "http://microvm-x.localhost:8080"
+      ],
+      "sandboxHost": "microvm-x.localhost",
+      "checks": [
+        {
+          "host": "[::2]",
+          "origin": null,
+          "hostAdmitted": true,
+          "originAdmitted": true
+        },
+        {
+          "host": "[::2]:8080",
+          "origin": null,
+          "hostAdmitted": true,
+          "originAdmitted": true
+        },
+        {
+          "host": "[::3]:8080",
+          "origin": null,
+          "hostAdmitted": true,
+          "originAdmitted": true
+        },
+        {
+          "host": "[::3]",
+          "origin": null,
+          "hostAdmitted": true,
+          "originAdmitted": true
+        }
+      ]
+    },
+    {
+      "name": "allow-origin explicit",
+      "input": {
+        "bind": "127.0.0.1",
+        "localPort": 8080,
+        "sandboxId": "microvm-x",
+        "allowedHosts": [],
+        "allowedOrigins": [
+          "https://notebook.example.com/"
+        ]
+      },
+      "hosts": [
+        "127.0.0.1:8080",
+        "[::1]:8080",
+        "localhost:8080",
+        "microvm-x.localhost:8080"
+      ],
+      "origins": [
+        "http://127.0.0.1:8080",
+        "http://[::1]:8080",
+        "http://localhost:8080",
+        "http://microvm-x.localhost:8080",
+        "https://notebook.example.com"
+      ],
+      "sandboxHost": "microvm-x.localhost",
+      "checks": [
+        {
+          "host": "127.0.0.1:8080",
+          "origin": "https://notebook.example.com",
+          "hostAdmitted": true,
+          "originAdmitted": true
+        },
+        {
+          "host": "127.0.0.1:8080",
+          "origin": "https://notebook.example.com:8443",
+          "hostAdmitted": true,
+          "originAdmitted": false
+        },
+        {
+          "host": "127.0.0.1:8080",
+          "origin": "http://notebook.example.com",
+          "hostAdmitted": true,
+          "originAdmitted": false
+        }
+      ]
+    }
+  ],
+  "accessRejected": [
+    {
+      "option": "allowed-host",
+      "input": {
+        "bind": "127.0.0.1",
+        "localPort": 8080,
+        "sandboxId": "microvm-x",
+        "allowedHosts": [
+          ""
+        ],
+        "allowedOrigins": []
+      }
+    },
+    {
+      "option": "allowed-host",
+      "input": {
+        "bind": "127.0.0.1",
+        "localPort": 8080,
+        "sandboxId": "microvm-x",
+        "allowedHosts": [
+          "http://devbox.example.com"
+        ],
+        "allowedOrigins": []
+      }
+    },
+    {
+      "option": "allowed-host",
+      "input": {
+        "bind": "127.0.0.1",
+        "localPort": 8080,
+        "sandboxId": "microvm-x",
+        "allowedHosts": [
+          "devbox.example.com/x"
+        ],
+        "allowedOrigins": []
+      }
+    },
+    {
+      "option": "allowed-host",
+      "input": {
+        "bind": "127.0.0.1",
+        "localPort": 8080,
+        "sandboxId": "microvm-x",
+        "allowedHosts": [
+          "user@devbox"
+        ],
+        "allowedOrigins": []
+      }
+    },
+    {
+      "option": "allowed-host",
+      "input": {
+        "bind": "127.0.0.1",
+        "localPort": 8080,
+        "sandboxId": "microvm-x",
+        "allowedHosts": [
+          "a:b:c:"
+        ],
+        "allowedOrigins": []
+      }
+    },
+    {
+      "option": "allowed-host",
+      "input": {
+        "bind": "127.0.0.1",
+        "localPort": 8080,
+        "sandboxId": "microvm-x",
+        "allowedHosts": [
+          "dev box"
+        ],
+        "allowedOrigins": []
+      }
+    },
+    {
+      "option": "allowed-host",
+      "input": {
+        "bind": "127.0.0.1",
+        "localPort": 8080,
+        "sandboxId": "microvm-x",
+        "allowedHosts": [
+          "devbox:"
+        ],
+        "allowedOrigins": []
+      }
+    },
+    {
+      "option": "allowed-host",
+      "input": {
+        "bind": "127.0.0.1",
+        "localPort": 8080,
+        "sandboxId": "microvm-x",
+        "allowedHosts": [
+          "devbox.example.com?x"
+        ],
+        "allowedOrigins": []
+      }
+    },
+    {
+      "option": "allowed-host",
+      "input": {
+        "bind": "127.0.0.1",
+        "localPort": 8080,
+        "sandboxId": "microvm-x",
+        "allowedHosts": [
+          "devbox#x"
+        ],
+        "allowedOrigins": []
+      }
+    },
+    {
+      "option": "allowed-host",
+      "input": {
+        "bind": "127.0.0.1",
+        "localPort": 8080,
+        "sandboxId": "microvm-x",
+        "allowedHosts": [
+          "devbox:80a"
+        ],
+        "allowedOrigins": []
+      }
+    },
+    {
+      "option": "allow-origin",
+      "input": {
+        "bind": "127.0.0.1",
+        "localPort": 8080,
+        "sandboxId": "microvm-x",
+        "allowedHosts": [],
+        "allowedOrigins": [
+          ""
+        ]
+      }
+    },
+    {
+      "option": "allow-origin",
+      "input": {
+        "bind": "127.0.0.1",
+        "localPort": 8080,
+        "sandboxId": "microvm-x",
+        "allowedHosts": [],
+        "allowedOrigins": [
+          "devbox.example.com"
+        ]
+      }
+    },
+    {
+      "option": "allow-origin",
+      "input": {
+        "bind": "127.0.0.1",
+        "localPort": 8080,
+        "sandboxId": "microvm-x",
+        "allowedHosts": [],
+        "allowedOrigins": [
+          "ftp://x"
+        ]
+      }
+    },
+    {
+      "option": "allow-origin",
+      "input": {
+        "bind": "127.0.0.1",
+        "localPort": 8080,
+        "sandboxId": "microvm-x",
+        "allowedHosts": [],
+        "allowedOrigins": [
+          "null"
+        ]
+      }
+    },
+    {
+      "option": "allow-origin",
+      "input": {
+        "bind": "127.0.0.1",
+        "localPort": 8080,
+        "sandboxId": "microvm-x",
+        "allowedHosts": [],
+        "allowedOrigins": [
+          "https://x.example.com/path"
+        ]
+      }
+    },
+    {
+      "option": "allow-origin",
+      "input": {
+        "bind": "127.0.0.1",
+        "localPort": 8080,
+        "sandboxId": "microvm-x",
+        "allowedHosts": [],
+        "allowedOrigins": [
+          "https://"
+        ]
+      }
+    },
+    {
+      "option": "allow-origin",
+      "input": {
+        "bind": "127.0.0.1",
+        "localPort": 8080,
+        "sandboxId": "microvm-x",
+        "allowedHosts": [],
+        "allowedOrigins": [
+          "https://u@x.example.com"
+        ]
+      }
+    }
+  ],
+  "wildcard": [
+    {
+      "host": "0.0.0.0",
+      "expected": true
+    },
+    {
+      "host": "::",
+      "expected": true
+    },
+    {
+      "host": "0:0:0:0:0:0:0:0",
+      "expected": true
+    },
+    {
+      "host": "::0",
+      "expected": true
+    },
+    {
+      "host": "0::",
+      "expected": true
+    },
+    {
+      "host": "127.0.0.1",
+      "expected": false
+    },
+    {
+      "host": "localhost",
+      "expected": false
+    },
+    {
+      "host": "",
+      "expected": false
+    },
+    {
+      "host": "::1",
+      "expected": false
+    },
+    {
+      "host": "1.0.0.0",
+      "expected": false
+    },
+    {
+      "host": "0.0.0.1",
+      "expected": false
+    }
+  ],
+  "loopbackBind": [
+    {
+      "bind": "127.0.0.1",
+      "expected": true
+    },
+    {
+      "bind": "::1",
+      "expected": true
+    },
+    {
+      "bind": "localhost",
+      "expected": true
+    },
+    {
+      "bind": "0.0.0.0",
+      "expected": false
+    },
+    {
+      "bind": "::",
+      "expected": false
+    },
+    {
+      "bind": "192.168.1.5",
+      "expected": false
+    },
+    {
+      "bind": "127.0.0.2",
+      "expected": false
+    },
+    {
+      "bind": "LOCALHOST",
+      "expected": false
+    }
+  ],
+  "sandboxLocalhostName": [
+    {
+      "id": "microvm-x",
+      "expected": "microvm-x.localhost"
+    },
+    {
+      "id": "MicroVM-X",
+      "expected": "microvm-x.localhost"
+    },
+    {
+      "id": "a",
+      "expected": "a.localhost"
+    },
+    {
+      "id": "Micro_VM",
+      "expected": null
+    },
+    {
+      "id": "has.dot",
+      "expected": null
+    },
+    {
+      "id": "",
+      "expected": null
+    },
+    {
+      "id": "-bad",
+      "expected": null
+    },
+    {
+      "id": "bad-",
+      "expected": null
+    },
+    {
+      "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "expected": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.localhost"
+    },
+    {
+      "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "expected": null
+    }
+  ],
+  "ports": {
+    "proxyPort": {
+      "valid": [
+        1,
+        8080,
+        65535
+      ],
+      "invalid": [
+        0,
+        -1,
+        65536,
+        1000000,
+        9000
+      ]
+    },
+    "localPort": {
+      "valid": [
+        1,
+        9000,
+        65535
+      ],
+      "invalid": [
+        0,
+        -1,
+        65536,
+        1000000
+      ]
+    },
+    "maxConnections": {
+      "valid": [
+        1,
+        8,
+        100
+      ],
+      "invalid": [
+        0,
+        -3
+      ]
+    }
+  }
+}

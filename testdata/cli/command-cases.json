@@ -1,0 +1,4386 @@
+{
+  "description": "Casos de comando de la CLI compartidos por Python y TypeScript (ADR-027): un mundo en JSON, los argumentos y lo que `rayito` imprime y devuelve. Lo esperado sale de la CLI de Python; TypeScript tiene que reproducirlo.",
+  "cases": [
+    {
+      "name": "sandbox list --json oculta los estados terminales",
+      "args": [
+        "--json",
+        "sandbox",
+        "list"
+      ],
+      "now": "2026-09-15T16:02:07Z",
+      "world": {
+        "sandboxes": [
+          {
+            "id": "microvm-a",
+            "state": "RUNNING",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T14:39:02Z"
+          },
+          {
+            "id": "microvm-b",
+            "state": "SUSPENDED",
+            "image": "other",
+            "version": "2.0",
+            "startedAt": "2026-09-15T15:50:00Z"
+          },
+          {
+            "id": "microvm-c",
+            "state": "TERMINATED",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T14:39:02Z"
+          }
+        ],
+        "infos": [
+          {
+            "id": "microvm-a",
+            "state": "RUNNING",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T14:39:02Z",
+            "metadata": {
+              "env": "ci"
+            }
+          },
+          {
+            "id": "microvm-b",
+            "state": "SUSPENDED",
+            "image": "other",
+            "version": "2.0",
+            "startedAt": "2026-09-15T15:50:00Z"
+          }
+        ]
+      },
+      "expected": {
+        "exitCode": 0,
+        "stdout": "[\n  {\n    \"sandbox_id\": \"microvm-a\",\n    \"state\": \"RUNNING\",\n    \"template\": \"rayito-base\",\n    \"template_arn\": \"arn:aws:lambda:us-east-1:123456789012:microvm-image:rayito-base\",\n    \"template_version\": \"1.0\",\n    \"started_at\": \"2026-09-15T14:39:02Z\",\n    \"age\": \"1h23m\"\n  },\n  {\n    \"sandbox_id\": \"microvm-b\",\n    \"state\": \"SUSPENDED\",\n    \"template\": \"other\",\n    \"template_arn\": \"arn:aws:lambda:us-east-1:123456789012:microvm-image:other\",\n    \"template_version\": \"2.0\",\n    \"started_at\": \"2026-09-15T15:50:00Z\",\n    \"age\": \"12m07s\"\n  }\n]\n",
+        "effects": {
+          "terminated": [],
+          "stackCalls": [],
+          "stackParameters": {}
+        }
+      }
+    },
+    {
+      "name": "sandbox list --json --all-states",
+      "args": [
+        "--json",
+        "sandbox",
+        "list",
+        "--all-states"
+      ],
+      "now": "2026-09-15T16:02:07Z",
+      "world": {
+        "sandboxes": [
+          {
+            "id": "microvm-a",
+            "state": "RUNNING",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T14:39:02Z"
+          },
+          {
+            "id": "microvm-b",
+            "state": "SUSPENDED",
+            "image": "other",
+            "version": "2.0",
+            "startedAt": "2026-09-15T15:50:00Z"
+          },
+          {
+            "id": "microvm-c",
+            "state": "TERMINATED",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T14:39:02Z"
+          }
+        ],
+        "infos": [
+          {
+            "id": "microvm-a",
+            "state": "RUNNING",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T14:39:02Z",
+            "metadata": {
+              "env": "ci"
+            }
+          },
+          {
+            "id": "microvm-b",
+            "state": "SUSPENDED",
+            "image": "other",
+            "version": "2.0",
+            "startedAt": "2026-09-15T15:50:00Z"
+          }
+        ]
+      },
+      "expected": {
+        "exitCode": 0,
+        "stdout": "[\n  {\n    \"sandbox_id\": \"microvm-a\",\n    \"state\": \"RUNNING\",\n    \"template\": \"rayito-base\",\n    \"template_arn\": \"arn:aws:lambda:us-east-1:123456789012:microvm-image:rayito-base\",\n    \"template_version\": \"1.0\",\n    \"started_at\": \"2026-09-15T14:39:02Z\",\n    \"age\": \"1h23m\"\n  },\n  {\n    \"sandbox_id\": \"microvm-b\",\n    \"state\": \"SUSPENDED\",\n    \"template\": \"other\",\n    \"template_arn\": \"arn:aws:lambda:us-east-1:123456789012:microvm-image:other\",\n    \"template_version\": \"2.0\",\n    \"started_at\": \"2026-09-15T15:50:00Z\",\n    \"age\": \"12m07s\"\n  },\n  {\n    \"sandbox_id\": \"microvm-c\",\n    \"state\": \"TERMINATED\",\n    \"template\": \"rayito-base\",\n    \"template_arn\": \"arn:aws:lambda:us-east-1:123456789012:microvm-image:rayito-base\",\n    \"template_version\": \"1.0\",\n    \"started_at\": \"2026-09-15T14:39:02Z\",\n    \"age\": \"1h23m\"\n  }\n]\n",
+        "effects": {
+          "terminated": [],
+          "stackCalls": [],
+          "stackParameters": {}
+        }
+      }
+    },
+    {
+      "name": "sandbox list --json --template",
+      "args": [
+        "--json",
+        "sandbox",
+        "list",
+        "--template",
+        "other"
+      ],
+      "now": "2026-09-15T16:02:07Z",
+      "world": {
+        "sandboxes": [
+          {
+            "id": "microvm-a",
+            "state": "RUNNING",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T14:39:02Z"
+          },
+          {
+            "id": "microvm-b",
+            "state": "SUSPENDED",
+            "image": "other",
+            "version": "2.0",
+            "startedAt": "2026-09-15T15:50:00Z"
+          },
+          {
+            "id": "microvm-c",
+            "state": "TERMINATED",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T14:39:02Z"
+          }
+        ],
+        "infos": [
+          {
+            "id": "microvm-a",
+            "state": "RUNNING",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T14:39:02Z",
+            "metadata": {
+              "env": "ci"
+            }
+          },
+          {
+            "id": "microvm-b",
+            "state": "SUSPENDED",
+            "image": "other",
+            "version": "2.0",
+            "startedAt": "2026-09-15T15:50:00Z"
+          }
+        ]
+      },
+      "expected": {
+        "exitCode": 0,
+        "stdout": "[\n  {\n    \"sandbox_id\": \"microvm-b\",\n    \"state\": \"SUSPENDED\",\n    \"template\": \"other\",\n    \"template_arn\": \"arn:aws:lambda:us-east-1:123456789012:microvm-image:other\",\n    \"template_version\": \"2.0\",\n    \"started_at\": \"2026-09-15T15:50:00Z\",\n    \"age\": \"12m07s\"\n  }\n]\n",
+        "effects": {
+          "terminated": [],
+          "stackCalls": [],
+          "stackParameters": {}
+        }
+      }
+    },
+    {
+      "name": "sandbox list --json --template con version",
+      "args": [
+        "--json",
+        "sandbox",
+        "list",
+        "--template",
+        "rayito-base",
+        "--template-version",
+        "1.0"
+      ],
+      "now": "2026-09-15T16:02:07Z",
+      "world": {
+        "sandboxes": [
+          {
+            "id": "microvm-a",
+            "state": "RUNNING",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T14:39:02Z"
+          },
+          {
+            "id": "microvm-b",
+            "state": "SUSPENDED",
+            "image": "other",
+            "version": "2.0",
+            "startedAt": "2026-09-15T15:50:00Z"
+          },
+          {
+            "id": "microvm-c",
+            "state": "TERMINATED",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T14:39:02Z"
+          }
+        ],
+        "infos": [
+          {
+            "id": "microvm-a",
+            "state": "RUNNING",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T14:39:02Z",
+            "metadata": {
+              "env": "ci"
+            }
+          },
+          {
+            "id": "microvm-b",
+            "state": "SUSPENDED",
+            "image": "other",
+            "version": "2.0",
+            "startedAt": "2026-09-15T15:50:00Z"
+          }
+        ]
+      },
+      "expected": {
+        "exitCode": 0,
+        "stdout": "[\n  {\n    \"sandbox_id\": \"microvm-a\",\n    \"state\": \"RUNNING\",\n    \"template\": \"rayito-base\",\n    \"template_arn\": \"arn:aws:lambda:us-east-1:123456789012:microvm-image:rayito-base\",\n    \"template_version\": \"1.0\",\n    \"started_at\": \"2026-09-15T14:39:02Z\",\n    \"age\": \"1h23m\"\n  }\n]\n",
+        "effects": {
+          "terminated": [],
+          "stackCalls": [],
+          "stackParameters": {}
+        }
+      }
+    },
+    {
+      "name": "sandbox list --json --state",
+      "args": [
+        "--json",
+        "sandbox",
+        "list",
+        "--state",
+        "suspended",
+        "--state",
+        "running"
+      ],
+      "now": "2026-09-15T16:02:07Z",
+      "world": {
+        "sandboxes": [
+          {
+            "id": "microvm-a",
+            "state": "RUNNING",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T14:39:02Z"
+          },
+          {
+            "id": "microvm-b",
+            "state": "SUSPENDED",
+            "image": "other",
+            "version": "2.0",
+            "startedAt": "2026-09-15T15:50:00Z"
+          },
+          {
+            "id": "microvm-c",
+            "state": "TERMINATED",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T14:39:02Z"
+          }
+        ],
+        "infos": [
+          {
+            "id": "microvm-a",
+            "state": "RUNNING",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T14:39:02Z",
+            "metadata": {
+              "env": "ci"
+            }
+          },
+          {
+            "id": "microvm-b",
+            "state": "SUSPENDED",
+            "image": "other",
+            "version": "2.0",
+            "startedAt": "2026-09-15T15:50:00Z"
+          }
+        ]
+      },
+      "expected": {
+        "exitCode": 0,
+        "stdout": "[\n  {\n    \"sandbox_id\": \"microvm-a\",\n    \"state\": \"RUNNING\",\n    \"template\": \"rayito-base\",\n    \"template_arn\": \"arn:aws:lambda:us-east-1:123456789012:microvm-image:rayito-base\",\n    \"template_version\": \"1.0\",\n    \"started_at\": \"2026-09-15T14:39:02Z\",\n    \"age\": \"1h23m\"\n  },\n  {\n    \"sandbox_id\": \"microvm-b\",\n    \"state\": \"SUSPENDED\",\n    \"template\": \"other\",\n    \"template_arn\": \"arn:aws:lambda:us-east-1:123456789012:microvm-image:other\",\n    \"template_version\": \"2.0\",\n    \"started_at\": \"2026-09-15T15:50:00Z\",\n    \"age\": \"12m07s\"\n  }\n]\n",
+        "effects": {
+          "terminated": [],
+          "stackCalls": [],
+          "stackParameters": {}
+        }
+      }
+    },
+    {
+      "name": "sandbox list en tabla",
+      "args": [
+        "sandbox",
+        "list"
+      ],
+      "now": "2026-09-15T16:02:07Z",
+      "world": {
+        "sandboxes": [
+          {
+            "id": "microvm-a",
+            "state": "RUNNING",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T14:39:02Z"
+          },
+          {
+            "id": "microvm-b",
+            "state": "SUSPENDED",
+            "image": "other",
+            "version": "2.0",
+            "startedAt": "2026-09-15T15:50:00Z"
+          },
+          {
+            "id": "microvm-c",
+            "state": "TERMINATED",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T14:39:02Z"
+          }
+        ],
+        "infos": [
+          {
+            "id": "microvm-a",
+            "state": "RUNNING",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T14:39:02Z",
+            "metadata": {
+              "env": "ci"
+            }
+          },
+          {
+            "id": "microvm-b",
+            "state": "SUSPENDED",
+            "image": "other",
+            "version": "2.0",
+            "startedAt": "2026-09-15T15:50:00Z"
+          }
+        ]
+      },
+      "expected": {
+        "exitCode": 0,
+        "stdout": "sandbox_id  state      template     template_version  started_at            age   \nmicrovm-a   RUNNING    rayito-base  1.0               2026-09-15T14:39:02Z  1h23m \nmicrovm-b   SUSPENDED  other        2.0               2026-09-15T15:50:00Z  12m07s\n",
+        "effects": {
+          "terminated": [],
+          "stackCalls": [],
+          "stackParameters": {}
+        }
+      }
+    },
+    {
+      "name": "sandbox list sin sandboxes",
+      "args": [
+        "--json",
+        "sandbox",
+        "list"
+      ],
+      "now": "2026-09-15T16:02:07Z",
+      "world": {
+        "sandboxes": [],
+        "infos": []
+      },
+      "expected": {
+        "exitCode": 0,
+        "stdout": "[]\n",
+        "effects": {
+          "terminated": [],
+          "stackCalls": [],
+          "stackParameters": {}
+        }
+      }
+    },
+    {
+      "name": "sandbox list con un estado desconocido",
+      "args": [
+        "sandbox",
+        "list",
+        "--state",
+        "bogus"
+      ],
+      "now": "2026-09-15T16:02:07Z",
+      "world": {
+        "sandboxes": [
+          {
+            "id": "microvm-a",
+            "state": "RUNNING",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T14:39:02Z"
+          },
+          {
+            "id": "microvm-b",
+            "state": "SUSPENDED",
+            "image": "other",
+            "version": "2.0",
+            "startedAt": "2026-09-15T15:50:00Z"
+          },
+          {
+            "id": "microvm-c",
+            "state": "TERMINATED",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T14:39:02Z"
+          }
+        ],
+        "infos": [
+          {
+            "id": "microvm-a",
+            "state": "RUNNING",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T14:39:02Z",
+            "metadata": {
+              "env": "ci"
+            }
+          },
+          {
+            "id": "microvm-b",
+            "state": "SUSPENDED",
+            "image": "other",
+            "version": "2.0",
+            "startedAt": "2026-09-15T15:50:00Z"
+          }
+        ]
+      },
+      "expected": {
+        "exitCode": 2,
+        "stdout": "",
+        "effects": {
+          "terminated": [],
+          "stackCalls": [],
+          "stackParameters": {}
+        }
+      },
+      "stderrIncludes": [
+        "--state: estado desconocido ['BOGUS']"
+      ]
+    },
+    {
+      "name": "sandbox list --all-states no se combina",
+      "args": [
+        "sandbox",
+        "list",
+        "--all-states",
+        "--state",
+        "running"
+      ],
+      "now": "2026-09-15T16:02:07Z",
+      "world": {
+        "sandboxes": [
+          {
+            "id": "microvm-a",
+            "state": "RUNNING",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T14:39:02Z"
+          },
+          {
+            "id": "microvm-b",
+            "state": "SUSPENDED",
+            "image": "other",
+            "version": "2.0",
+            "startedAt": "2026-09-15T15:50:00Z"
+          },
+          {
+            "id": "microvm-c",
+            "state": "TERMINATED",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T14:39:02Z"
+          }
+        ],
+        "infos": [
+          {
+            "id": "microvm-a",
+            "state": "RUNNING",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T14:39:02Z",
+            "metadata": {
+              "env": "ci"
+            }
+          },
+          {
+            "id": "microvm-b",
+            "state": "SUSPENDED",
+            "image": "other",
+            "version": "2.0",
+            "startedAt": "2026-09-15T15:50:00Z"
+          }
+        ]
+      },
+      "expected": {
+        "exitCode": 2,
+        "stdout": "",
+        "effects": {
+          "terminated": [],
+          "stackCalls": [],
+          "stackParameters": {}
+        }
+      },
+      "stderrIncludes": [
+        "--all-states no se combina con --state, --metadata ni --index-table"
+      ]
+    },
+    {
+      "name": "sandbox list --index-table exige --metadata",
+      "args": [
+        "sandbox",
+        "list",
+        "--index-table",
+        "tabla"
+      ],
+      "now": "2026-09-15T16:02:07Z",
+      "world": {
+        "sandboxes": [
+          {
+            "id": "microvm-a",
+            "state": "RUNNING",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T14:39:02Z"
+          },
+          {
+            "id": "microvm-b",
+            "state": "SUSPENDED",
+            "image": "other",
+            "version": "2.0",
+            "startedAt": "2026-09-15T15:50:00Z"
+          },
+          {
+            "id": "microvm-c",
+            "state": "TERMINATED",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T14:39:02Z"
+          }
+        ],
+        "infos": [
+          {
+            "id": "microvm-a",
+            "state": "RUNNING",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T14:39:02Z",
+            "metadata": {
+              "env": "ci"
+            }
+          },
+          {
+            "id": "microvm-b",
+            "state": "SUSPENDED",
+            "image": "other",
+            "version": "2.0",
+            "startedAt": "2026-09-15T15:50:00Z"
+          }
+        ]
+      },
+      "expected": {
+        "exitCode": 2,
+        "stdout": "",
+        "effects": {
+          "terminated": [],
+          "stackCalls": [],
+          "stackParameters": {}
+        }
+      },
+      "stderrIncludes": [
+        "--index-table sólo filtra junto a --metadata K=V"
+      ]
+    },
+    {
+      "name": "sandbox list --metadata mal formado",
+      "args": [
+        "sandbox",
+        "list",
+        "--metadata",
+        "mal"
+      ],
+      "now": "2026-09-15T16:02:07Z",
+      "world": {
+        "sandboxes": [
+          {
+            "id": "microvm-a",
+            "state": "RUNNING",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T14:39:02Z"
+          },
+          {
+            "id": "microvm-b",
+            "state": "SUSPENDED",
+            "image": "other",
+            "version": "2.0",
+            "startedAt": "2026-09-15T15:50:00Z"
+          },
+          {
+            "id": "microvm-c",
+            "state": "TERMINATED",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T14:39:02Z"
+          }
+        ],
+        "infos": [
+          {
+            "id": "microvm-a",
+            "state": "RUNNING",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T14:39:02Z",
+            "metadata": {
+              "env": "ci"
+            }
+          },
+          {
+            "id": "microvm-b",
+            "state": "SUSPENDED",
+            "image": "other",
+            "version": "2.0",
+            "startedAt": "2026-09-15T15:50:00Z"
+          }
+        ]
+      },
+      "expected": {
+        "exitCode": 2,
+        "stdout": "",
+        "effects": {
+          "terminated": [],
+          "stackCalls": [],
+          "stackParameters": {}
+        }
+      },
+      "stderrIncludes": [
+        "--metadata: se esperaba K=V (entrada n.º 1)"
+      ]
+    },
+    {
+      "name": "sandbox info --json --no-metadata",
+      "args": [
+        "--json",
+        "sandbox",
+        "info",
+        "microvm-a",
+        "--no-metadata"
+      ],
+      "now": "2026-09-15T16:02:07Z",
+      "world": {
+        "sandboxes": [
+          {
+            "id": "microvm-a",
+            "state": "RUNNING",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T14:39:02Z"
+          },
+          {
+            "id": "microvm-b",
+            "state": "SUSPENDED",
+            "image": "other",
+            "version": "2.0",
+            "startedAt": "2026-09-15T15:50:00Z"
+          },
+          {
+            "id": "microvm-c",
+            "state": "TERMINATED",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T14:39:02Z"
+          }
+        ],
+        "infos": [
+          {
+            "id": "microvm-a",
+            "state": "RUNNING",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T14:39:02Z",
+            "metadata": {
+              "env": "ci"
+            }
+          },
+          {
+            "id": "microvm-b",
+            "state": "SUSPENDED",
+            "image": "other",
+            "version": "2.0",
+            "startedAt": "2026-09-15T15:50:00Z"
+          }
+        ]
+      },
+      "expected": {
+        "exitCode": 0,
+        "stdout": "{\n  \"sandbox_id\": \"microvm-a\",\n  \"state\": \"RUNNING\",\n  \"endpoint\": \"abc.lambda-microvm.us-east-1.on.aws\",\n  \"template\": \"arn:aws:lambda:us-east-1:123456789012:microvm-image:rayito-base\",\n  \"template_version\": \"1.0\",\n  \"started_at\": \"2026-09-15T14:39:02Z\",\n  \"maximum_duration_seconds\": 3600,\n  \"terminated_at\": null,\n  \"state_reason\": null,\n  \"idle\": null,\n  \"execution_role_arn\": null,\n  \"metadata\": {\n    \"env\": \"ci\"\n  },\n  \"ingress\": [],\n  \"egress\": [],\n  \"lifecycle\": null,\n  \"agent_version\": null,\n  \"cpu_count\": null,\n  \"memory_mb\": null,\n  \"size\": null,\n  \"baseline_memory_mib\": null,\n  \"baseline_cpu\": null,\n  \"template_name\": \"rayito-base\",\n  \"endpoint_url\": \"https://abc.lambda-microvm.us-east-1.on.aws\",\n  \"expires_at\": \"2026-09-15T15:39:02Z\"\n}\n",
+        "effects": {
+          "terminated": [],
+          "stackCalls": [],
+          "stackParameters": {}
+        }
+      }
+    },
+    {
+      "name": "sandbox info de un suspendido",
+      "args": [
+        "--json",
+        "sandbox",
+        "info",
+        "microvm-b",
+        "--no-metadata"
+      ],
+      "now": "2026-09-15T16:02:07Z",
+      "world": {
+        "sandboxes": [
+          {
+            "id": "microvm-a",
+            "state": "RUNNING",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T14:39:02Z"
+          },
+          {
+            "id": "microvm-b",
+            "state": "SUSPENDED",
+            "image": "other",
+            "version": "2.0",
+            "startedAt": "2026-09-15T15:50:00Z"
+          },
+          {
+            "id": "microvm-c",
+            "state": "TERMINATED",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T14:39:02Z"
+          }
+        ],
+        "infos": [
+          {
+            "id": "microvm-a",
+            "state": "RUNNING",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T14:39:02Z",
+            "metadata": {
+              "env": "ci"
+            }
+          },
+          {
+            "id": "microvm-b",
+            "state": "SUSPENDED",
+            "image": "other",
+            "version": "2.0",
+            "startedAt": "2026-09-15T15:50:00Z"
+          }
+        ]
+      },
+      "expected": {
+        "exitCode": 0,
+        "stdout": "{\n  \"sandbox_id\": \"microvm-b\",\n  \"state\": \"SUSPENDED\",\n  \"endpoint\": \"abc.lambda-microvm.us-east-1.on.aws\",\n  \"template\": \"arn:aws:lambda:us-east-1:123456789012:microvm-image:other\",\n  \"template_version\": \"2.0\",\n  \"started_at\": \"2026-09-15T15:50:00Z\",\n  \"maximum_duration_seconds\": 3600,\n  \"terminated_at\": null,\n  \"state_reason\": null,\n  \"idle\": null,\n  \"execution_role_arn\": null,\n  \"metadata\": null,\n  \"ingress\": [],\n  \"egress\": [],\n  \"lifecycle\": null,\n  \"agent_version\": null,\n  \"cpu_count\": null,\n  \"memory_mb\": null,\n  \"size\": null,\n  \"baseline_memory_mib\": null,\n  \"baseline_cpu\": null,\n  \"template_name\": \"other\",\n  \"endpoint_url\": \"https://abc.lambda-microvm.us-east-1.on.aws\",\n  \"expires_at\": \"2026-09-15T16:50:00Z\"\n}\n",
+        "effects": {
+          "terminated": [],
+          "stackCalls": [],
+          "stackParameters": {}
+        }
+      }
+    },
+    {
+      "name": "sandbox info en texto",
+      "args": [
+        "sandbox",
+        "info",
+        "microvm-a",
+        "--no-metadata"
+      ],
+      "now": "2026-09-15T16:02:07Z",
+      "world": {
+        "sandboxes": [
+          {
+            "id": "microvm-a",
+            "state": "RUNNING",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T14:39:02Z"
+          },
+          {
+            "id": "microvm-b",
+            "state": "SUSPENDED",
+            "image": "other",
+            "version": "2.0",
+            "startedAt": "2026-09-15T15:50:00Z"
+          },
+          {
+            "id": "microvm-c",
+            "state": "TERMINATED",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T14:39:02Z"
+          }
+        ],
+        "infos": [
+          {
+            "id": "microvm-a",
+            "state": "RUNNING",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T14:39:02Z",
+            "metadata": {
+              "env": "ci"
+            }
+          },
+          {
+            "id": "microvm-b",
+            "state": "SUSPENDED",
+            "image": "other",
+            "version": "2.0",
+            "startedAt": "2026-09-15T15:50:00Z"
+          }
+        ]
+      },
+      "expected": {
+        "exitCode": 0,
+        "stdout": "sandbox_id: microvm-a\nstate: RUNNING\nendpoint: abc.lambda-microvm.us-east-1.on.aws\ntemplate: arn:aws:lambda:us-east-1:123456789012:microvm-image:rayito-base\ntemplate_version: 1.0\nstarted_at: 2026-09-15T14:39:02Z\nmaximum_duration_seconds: 3600\nterminated_at: None\nstate_reason: None\nidle: None\nexecution_role_arn: None\nmetadata: {'env': 'ci'}\ningress: ()\negress: ()\nlifecycle: None\nagent_version: None\ncpu_count: None\nmemory_mb: None\nsize: None\nbaseline_memory_mib: None\nbaseline_cpu: None\ntemplate_name: rayito-base\nendpoint_url: https://abc.lambda-microvm.us-east-1.on.aws\nexpires_at: 2026-09-15T15:39:02Z\n",
+        "effects": {
+          "terminated": [],
+          "stackCalls": [],
+          "stackParameters": {}
+        }
+      }
+    },
+    {
+      "name": "sandbox info de un id desconocido",
+      "args": [
+        "sandbox",
+        "info",
+        "microvm-zz",
+        "--no-metadata"
+      ],
+      "now": "2026-09-15T16:02:07Z",
+      "world": {
+        "sandboxes": [
+          {
+            "id": "microvm-a",
+            "state": "RUNNING",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T14:39:02Z"
+          },
+          {
+            "id": "microvm-b",
+            "state": "SUSPENDED",
+            "image": "other",
+            "version": "2.0",
+            "startedAt": "2026-09-15T15:50:00Z"
+          },
+          {
+            "id": "microvm-c",
+            "state": "TERMINATED",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T14:39:02Z"
+          }
+        ],
+        "infos": [
+          {
+            "id": "microvm-a",
+            "state": "RUNNING",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T14:39:02Z",
+            "metadata": {
+              "env": "ci"
+            }
+          },
+          {
+            "id": "microvm-b",
+            "state": "SUSPENDED",
+            "image": "other",
+            "version": "2.0",
+            "startedAt": "2026-09-15T15:50:00Z"
+          }
+        ]
+      },
+      "expected": {
+        "exitCode": 1,
+        "stdout": "",
+        "effects": {
+          "terminated": [],
+          "stackCalls": [],
+          "stackParameters": {}
+        }
+      },
+      "stderrIncludes": [
+        "microvm-zz"
+      ]
+    },
+    {
+      "name": "sandbox kill por id con uno desconocido",
+      "args": [
+        "sandbox",
+        "kill",
+        "microvm-a",
+        "microvm-b"
+      ],
+      "now": "2026-09-15T16:02:07Z",
+      "world": {
+        "sandboxes": [
+          {
+            "id": "microvm-a",
+            "state": "RUNNING",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T14:39:02Z"
+          },
+          {
+            "id": "microvm-b",
+            "state": "SUSPENDED",
+            "image": "other",
+            "version": "2.0",
+            "startedAt": "2026-09-15T15:50:00Z"
+          },
+          {
+            "id": "microvm-c",
+            "state": "TERMINATED",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T14:39:02Z"
+          }
+        ],
+        "infos": [
+          {
+            "id": "microvm-a",
+            "state": "RUNNING",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T14:39:02Z",
+            "metadata": {
+              "env": "ci"
+            }
+          },
+          {
+            "id": "microvm-b",
+            "state": "SUSPENDED",
+            "image": "other",
+            "version": "2.0",
+            "startedAt": "2026-09-15T15:50:00Z"
+          }
+        ],
+        "missing": [
+          "microvm-b"
+        ]
+      },
+      "expected": {
+        "exitCode": 1,
+        "stdout": "microvm-a terminated\nmicrovm-b not found\n",
+        "effects": {
+          "terminated": [
+            "microvm-a"
+          ],
+          "stackCalls": [],
+          "stackParameters": {}
+        }
+      }
+    },
+    {
+      "name": "sandbox kill --json",
+      "args": [
+        "--json",
+        "sandbox",
+        "kill",
+        "microvm-a"
+      ],
+      "now": "2026-09-15T16:02:07Z",
+      "world": {
+        "sandboxes": [
+          {
+            "id": "microvm-a",
+            "state": "RUNNING",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T14:39:02Z"
+          },
+          {
+            "id": "microvm-b",
+            "state": "SUSPENDED",
+            "image": "other",
+            "version": "2.0",
+            "startedAt": "2026-09-15T15:50:00Z"
+          },
+          {
+            "id": "microvm-c",
+            "state": "TERMINATED",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T14:39:02Z"
+          }
+        ],
+        "infos": [
+          {
+            "id": "microvm-a",
+            "state": "RUNNING",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T14:39:02Z",
+            "metadata": {
+              "env": "ci"
+            }
+          },
+          {
+            "id": "microvm-b",
+            "state": "SUSPENDED",
+            "image": "other",
+            "version": "2.0",
+            "startedAt": "2026-09-15T15:50:00Z"
+          }
+        ]
+      },
+      "expected": {
+        "exitCode": 0,
+        "stdout": "[\n  {\n    \"sandbox_id\": \"microvm-a\",\n    \"outcome\": \"terminated\"\n  }\n]\n",
+        "effects": {
+          "terminated": [
+            "microvm-a"
+          ],
+          "stackCalls": [],
+          "stackParameters": {}
+        }
+      }
+    },
+    {
+      "name": "sandbox kill --all declinado",
+      "args": [
+        "sandbox",
+        "kill",
+        "--all"
+      ],
+      "now": "2026-09-15T16:02:07Z",
+      "world": {
+        "sandboxes": [
+          {
+            "id": "microvm-a",
+            "state": "RUNNING",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T14:39:02Z"
+          },
+          {
+            "id": "microvm-b",
+            "state": "SUSPENDED",
+            "image": "other",
+            "version": "2.0",
+            "startedAt": "2026-09-15T15:50:00Z"
+          },
+          {
+            "id": "microvm-c",
+            "state": "TERMINATED",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T14:39:02Z"
+          }
+        ],
+        "infos": [
+          {
+            "id": "microvm-a",
+            "state": "RUNNING",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T14:39:02Z",
+            "metadata": {
+              "env": "ci"
+            }
+          },
+          {
+            "id": "microvm-b",
+            "state": "SUSPENDED",
+            "image": "other",
+            "version": "2.0",
+            "startedAt": "2026-09-15T15:50:00Z"
+          }
+        ]
+      },
+      "stdin": "n\n",
+      "expected": {
+        "exitCode": 1,
+        "stdout": "microvm-a\nmicrovm-b\n¿Terminar 2 MicroVMs? [y/N]: n\n",
+        "effects": {
+          "terminated": [],
+          "stackCalls": [],
+          "stackParameters": {}
+        }
+      }
+    },
+    {
+      "name": "sandbox kill --all aceptado",
+      "args": [
+        "sandbox",
+        "kill",
+        "--all"
+      ],
+      "now": "2026-09-15T16:02:07Z",
+      "world": {
+        "sandboxes": [
+          {
+            "id": "microvm-a",
+            "state": "RUNNING",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T14:39:02Z"
+          },
+          {
+            "id": "microvm-b",
+            "state": "SUSPENDED",
+            "image": "other",
+            "version": "2.0",
+            "startedAt": "2026-09-15T15:50:00Z"
+          },
+          {
+            "id": "microvm-c",
+            "state": "TERMINATED",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T14:39:02Z"
+          }
+        ],
+        "infos": [
+          {
+            "id": "microvm-a",
+            "state": "RUNNING",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T14:39:02Z",
+            "metadata": {
+              "env": "ci"
+            }
+          },
+          {
+            "id": "microvm-b",
+            "state": "SUSPENDED",
+            "image": "other",
+            "version": "2.0",
+            "startedAt": "2026-09-15T15:50:00Z"
+          }
+        ]
+      },
+      "stdin": "y\n",
+      "expected": {
+        "exitCode": 0,
+        "stdout": "microvm-a\nmicrovm-b\n¿Terminar 2 MicroVMs? [y/N]: y\nmicrovm-a terminated\nmicrovm-b terminated\n",
+        "effects": {
+          "terminated": [
+            "microvm-a",
+            "microvm-b"
+          ],
+          "stackCalls": [],
+          "stackParameters": {}
+        }
+      }
+    },
+    {
+      "name": "sandbox kill --all sin entrada aborta",
+      "args": [
+        "sandbox",
+        "kill",
+        "--all"
+      ],
+      "now": "2026-09-15T16:02:07Z",
+      "world": {
+        "sandboxes": [
+          {
+            "id": "microvm-a",
+            "state": "RUNNING",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T14:39:02Z"
+          },
+          {
+            "id": "microvm-b",
+            "state": "SUSPENDED",
+            "image": "other",
+            "version": "2.0",
+            "startedAt": "2026-09-15T15:50:00Z"
+          },
+          {
+            "id": "microvm-c",
+            "state": "TERMINATED",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T14:39:02Z"
+          }
+        ],
+        "infos": [
+          {
+            "id": "microvm-a",
+            "state": "RUNNING",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T14:39:02Z",
+            "metadata": {
+              "env": "ci"
+            }
+          },
+          {
+            "id": "microvm-b",
+            "state": "SUSPENDED",
+            "image": "other",
+            "version": "2.0",
+            "startedAt": "2026-09-15T15:50:00Z"
+          }
+        ]
+      },
+      "stdin": "",
+      "expected": {
+        "exitCode": 1,
+        "stdout": "microvm-a\nmicrovm-b\n¿Terminar 2 MicroVMs? [y/N]: ",
+        "effects": {
+          "terminated": [],
+          "stackCalls": [],
+          "stackParameters": {}
+        }
+      }
+    },
+    {
+      "name": "sandbox kill --all --yes --template --json",
+      "args": [
+        "--json",
+        "sandbox",
+        "kill",
+        "--all",
+        "--yes",
+        "--template",
+        "other"
+      ],
+      "now": "2026-09-15T16:02:07Z",
+      "world": {
+        "sandboxes": [
+          {
+            "id": "microvm-a",
+            "state": "RUNNING",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T14:39:02Z"
+          },
+          {
+            "id": "microvm-b",
+            "state": "SUSPENDED",
+            "image": "other",
+            "version": "2.0",
+            "startedAt": "2026-09-15T15:50:00Z"
+          },
+          {
+            "id": "microvm-c",
+            "state": "TERMINATED",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T14:39:02Z"
+          }
+        ],
+        "infos": [
+          {
+            "id": "microvm-a",
+            "state": "RUNNING",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T14:39:02Z",
+            "metadata": {
+              "env": "ci"
+            }
+          },
+          {
+            "id": "microvm-b",
+            "state": "SUSPENDED",
+            "image": "other",
+            "version": "2.0",
+            "startedAt": "2026-09-15T15:50:00Z"
+          }
+        ]
+      },
+      "expected": {
+        "exitCode": 0,
+        "stdout": "[\n  {\n    \"sandbox_id\": \"microvm-b\",\n    \"outcome\": \"terminated\"\n  }\n]\n",
+        "effects": {
+          "terminated": [
+            "microvm-b"
+          ],
+          "stackCalls": [],
+          "stackParameters": {}
+        }
+      }
+    },
+    {
+      "name": "sandbox kill --all sin nada vivo",
+      "args": [
+        "--json",
+        "sandbox",
+        "kill",
+        "--all",
+        "--yes"
+      ],
+      "now": "2026-09-15T16:02:07Z",
+      "world": {
+        "sandboxes": [],
+        "infos": []
+      },
+      "expected": {
+        "exitCode": 0,
+        "stdout": "[]\n",
+        "effects": {
+          "terminated": [],
+          "stackCalls": [],
+          "stackParameters": {}
+        }
+      }
+    },
+    {
+      "name": "sandbox kill --all excluye los ids",
+      "args": [
+        "sandbox",
+        "kill",
+        "--all",
+        "microvm-a"
+      ],
+      "now": "2026-09-15T16:02:07Z",
+      "world": {
+        "sandboxes": [
+          {
+            "id": "microvm-a",
+            "state": "RUNNING",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T14:39:02Z"
+          },
+          {
+            "id": "microvm-b",
+            "state": "SUSPENDED",
+            "image": "other",
+            "version": "2.0",
+            "startedAt": "2026-09-15T15:50:00Z"
+          },
+          {
+            "id": "microvm-c",
+            "state": "TERMINATED",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T14:39:02Z"
+          }
+        ],
+        "infos": [
+          {
+            "id": "microvm-a",
+            "state": "RUNNING",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T14:39:02Z",
+            "metadata": {
+              "env": "ci"
+            }
+          },
+          {
+            "id": "microvm-b",
+            "state": "SUSPENDED",
+            "image": "other",
+            "version": "2.0",
+            "startedAt": "2026-09-15T15:50:00Z"
+          }
+        ]
+      },
+      "expected": {
+        "exitCode": 2,
+        "stdout": "",
+        "effects": {
+          "terminated": [],
+          "stackCalls": [],
+          "stackParameters": {}
+        }
+      },
+      "stderrIncludes": [
+        "excluyentes"
+      ]
+    },
+    {
+      "name": "sandbox kill sin ids ni --all",
+      "args": [
+        "sandbox",
+        "kill"
+      ],
+      "now": "2026-09-15T16:02:07Z",
+      "world": {
+        "sandboxes": [
+          {
+            "id": "microvm-a",
+            "state": "RUNNING",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T14:39:02Z"
+          },
+          {
+            "id": "microvm-b",
+            "state": "SUSPENDED",
+            "image": "other",
+            "version": "2.0",
+            "startedAt": "2026-09-15T15:50:00Z"
+          },
+          {
+            "id": "microvm-c",
+            "state": "TERMINATED",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T14:39:02Z"
+          }
+        ],
+        "infos": [
+          {
+            "id": "microvm-a",
+            "state": "RUNNING",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T14:39:02Z",
+            "metadata": {
+              "env": "ci"
+            }
+          },
+          {
+            "id": "microvm-b",
+            "state": "SUSPENDED",
+            "image": "other",
+            "version": "2.0",
+            "startedAt": "2026-09-15T15:50:00Z"
+          }
+        ]
+      },
+      "expected": {
+        "exitCode": 2,
+        "stdout": "",
+        "effects": {
+          "terminated": [],
+          "stackCalls": [],
+          "stackParameters": {}
+        }
+      },
+      "stderrIncludes": [
+        "--all"
+      ]
+    },
+    {
+      "name": "sandbox logs --json",
+      "args": [
+        "--json",
+        "sandbox",
+        "logs",
+        "microvm-a"
+      ],
+      "now": "2026-09-15T16:02:07Z",
+      "world": {
+        "sandboxes": [
+          {
+            "id": "microvm-a",
+            "state": "RUNNING",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T14:39:02Z"
+          },
+          {
+            "id": "microvm-b",
+            "state": "SUSPENDED",
+            "image": "other",
+            "version": "2.0",
+            "startedAt": "2026-09-15T15:50:00Z"
+          },
+          {
+            "id": "microvm-c",
+            "state": "TERMINATED",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T14:39:02Z"
+          }
+        ],
+        "infos": [
+          {
+            "id": "microvm-a",
+            "state": "RUNNING",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T14:39:02Z",
+            "metadata": {
+              "env": "ci"
+            }
+          },
+          {
+            "id": "microvm-b",
+            "state": "SUSPENDED",
+            "image": "other",
+            "version": "2.0",
+            "startedAt": "2026-09-15T15:50:00Z"
+          }
+        ],
+        "logs": {
+          "streams": [
+            "2026/09/15[1.0]microvm-a",
+            "2026/09/14[1.0]microvm-zzz"
+          ],
+          "events": {
+            "2026/09/15[1.0]microvm-a": [
+              {
+                "timestamp": 1789483142123,
+                "message": "arranca\n"
+              },
+              {
+                "timestamp": 1789483143000,
+                "message": "listo"
+              },
+              {
+                "timestamp": 1789483144500,
+                "message": "fin\n\n"
+              }
+            ]
+          }
+        }
+      },
+      "expected": {
+        "exitCode": 0,
+        "stdout": "[\n  {\n    \"timestamp\": \"2026-09-15T14:39:02.123Z\",\n    \"message\": \"arranca\",\n    \"stream\": \"2026/09/15[1.0]microvm-a\"\n  },\n  {\n    \"timestamp\": \"2026-09-15T14:39:03.000Z\",\n    \"message\": \"listo\",\n    \"stream\": \"2026/09/15[1.0]microvm-a\"\n  },\n  {\n    \"timestamp\": \"2026-09-15T14:39:04.500Z\",\n    \"message\": \"fin\",\n    \"stream\": \"2026/09/15[1.0]microvm-a\"\n  }\n]\n",
+        "effects": {
+          "terminated": [],
+          "stackCalls": [],
+          "stackParameters": {}
+        }
+      }
+    },
+    {
+      "name": "sandbox logs en texto",
+      "args": [
+        "sandbox",
+        "logs",
+        "microvm-a"
+      ],
+      "now": "2026-09-15T16:02:07Z",
+      "world": {
+        "sandboxes": [
+          {
+            "id": "microvm-a",
+            "state": "RUNNING",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T14:39:02Z"
+          },
+          {
+            "id": "microvm-b",
+            "state": "SUSPENDED",
+            "image": "other",
+            "version": "2.0",
+            "startedAt": "2026-09-15T15:50:00Z"
+          },
+          {
+            "id": "microvm-c",
+            "state": "TERMINATED",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T14:39:02Z"
+          }
+        ],
+        "infos": [
+          {
+            "id": "microvm-a",
+            "state": "RUNNING",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T14:39:02Z",
+            "metadata": {
+              "env": "ci"
+            }
+          },
+          {
+            "id": "microvm-b",
+            "state": "SUSPENDED",
+            "image": "other",
+            "version": "2.0",
+            "startedAt": "2026-09-15T15:50:00Z"
+          }
+        ],
+        "logs": {
+          "streams": [
+            "2026/09/15[1.0]microvm-a",
+            "2026/09/14[1.0]microvm-zzz"
+          ],
+          "events": {
+            "2026/09/15[1.0]microvm-a": [
+              {
+                "timestamp": 1789483142123,
+                "message": "arranca\n"
+              },
+              {
+                "timestamp": 1789483143000,
+                "message": "listo"
+              },
+              {
+                "timestamp": 1789483144500,
+                "message": "fin\n\n"
+              }
+            ]
+          }
+        }
+      },
+      "expected": {
+        "exitCode": 0,
+        "stdout": "2026-09-15T14:39:02.123Z arranca\n2026-09-15T14:39:03.000Z listo\n2026-09-15T14:39:04.500Z fin\n",
+        "effects": {
+          "terminated": [],
+          "stackCalls": [],
+          "stackParameters": {}
+        }
+      }
+    },
+    {
+      "name": "sandbox logs --limit",
+      "args": [
+        "--json",
+        "sandbox",
+        "logs",
+        "microvm-a",
+        "--limit",
+        "2"
+      ],
+      "now": "2026-09-15T16:02:07Z",
+      "world": {
+        "sandboxes": [
+          {
+            "id": "microvm-a",
+            "state": "RUNNING",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T14:39:02Z"
+          },
+          {
+            "id": "microvm-b",
+            "state": "SUSPENDED",
+            "image": "other",
+            "version": "2.0",
+            "startedAt": "2026-09-15T15:50:00Z"
+          },
+          {
+            "id": "microvm-c",
+            "state": "TERMINATED",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T14:39:02Z"
+          }
+        ],
+        "infos": [
+          {
+            "id": "microvm-a",
+            "state": "RUNNING",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T14:39:02Z",
+            "metadata": {
+              "env": "ci"
+            }
+          },
+          {
+            "id": "microvm-b",
+            "state": "SUSPENDED",
+            "image": "other",
+            "version": "2.0",
+            "startedAt": "2026-09-15T15:50:00Z"
+          }
+        ],
+        "logs": {
+          "streams": [
+            "2026/09/15[1.0]microvm-a",
+            "2026/09/14[1.0]microvm-zzz"
+          ],
+          "events": {
+            "2026/09/15[1.0]microvm-a": [
+              {
+                "timestamp": 1789483142123,
+                "message": "arranca\n"
+              },
+              {
+                "timestamp": 1789483143000,
+                "message": "listo"
+              },
+              {
+                "timestamp": 1789483144500,
+                "message": "fin\n\n"
+              }
+            ]
+          }
+        }
+      },
+      "expected": {
+        "exitCode": 0,
+        "stdout": "[\n  {\n    \"timestamp\": \"2026-09-15T14:39:02.123Z\",\n    \"message\": \"arranca\",\n    \"stream\": \"2026/09/15[1.0]microvm-a\"\n  },\n  {\n    \"timestamp\": \"2026-09-15T14:39:03.000Z\",\n    \"message\": \"listo\",\n    \"stream\": \"2026/09/15[1.0]microvm-a\"\n  }\n]\n",
+        "effects": {
+          "terminated": [],
+          "stackCalls": [],
+          "stackParameters": {}
+        }
+      }
+    },
+    {
+      "name": "sandbox logs --since relativo",
+      "args": [
+        "--json",
+        "sandbox",
+        "logs",
+        "microvm-a",
+        "--since",
+        "2h"
+      ],
+      "now": "2026-09-15T16:02:07Z",
+      "world": {
+        "sandboxes": [
+          {
+            "id": "microvm-a",
+            "state": "RUNNING",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T14:39:02Z"
+          },
+          {
+            "id": "microvm-b",
+            "state": "SUSPENDED",
+            "image": "other",
+            "version": "2.0",
+            "startedAt": "2026-09-15T15:50:00Z"
+          },
+          {
+            "id": "microvm-c",
+            "state": "TERMINATED",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T14:39:02Z"
+          }
+        ],
+        "infos": [
+          {
+            "id": "microvm-a",
+            "state": "RUNNING",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T14:39:02Z",
+            "metadata": {
+              "env": "ci"
+            }
+          },
+          {
+            "id": "microvm-b",
+            "state": "SUSPENDED",
+            "image": "other",
+            "version": "2.0",
+            "startedAt": "2026-09-15T15:50:00Z"
+          }
+        ],
+        "logs": {
+          "streams": [
+            "2026/09/15[1.0]microvm-a",
+            "2026/09/14[1.0]microvm-zzz"
+          ],
+          "events": {
+            "2026/09/15[1.0]microvm-a": [
+              {
+                "timestamp": 1789483142123,
+                "message": "arranca\n"
+              },
+              {
+                "timestamp": 1789483143000,
+                "message": "listo"
+              },
+              {
+                "timestamp": 1789483144500,
+                "message": "fin\n\n"
+              }
+            ]
+          }
+        }
+      },
+      "expected": {
+        "exitCode": 0,
+        "stdout": "[\n  {\n    \"timestamp\": \"2026-09-15T14:39:02.123Z\",\n    \"message\": \"arranca\",\n    \"stream\": \"2026/09/15[1.0]microvm-a\"\n  },\n  {\n    \"timestamp\": \"2026-09-15T14:39:03.000Z\",\n    \"message\": \"listo\",\n    \"stream\": \"2026/09/15[1.0]microvm-a\"\n  },\n  {\n    \"timestamp\": \"2026-09-15T14:39:04.500Z\",\n    \"message\": \"fin\",\n    \"stream\": \"2026/09/15[1.0]microvm-a\"\n  }\n]\n",
+        "effects": {
+          "terminated": [],
+          "stackCalls": [],
+          "stackParameters": {}
+        }
+      }
+    },
+    {
+      "name": "sandbox logs --since absoluto",
+      "args": [
+        "--json",
+        "sandbox",
+        "logs",
+        "microvm-a",
+        "--since",
+        "2026-09-15T00:00:00Z"
+      ],
+      "now": "2026-09-15T16:02:07Z",
+      "world": {
+        "sandboxes": [
+          {
+            "id": "microvm-a",
+            "state": "RUNNING",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T14:39:02Z"
+          },
+          {
+            "id": "microvm-b",
+            "state": "SUSPENDED",
+            "image": "other",
+            "version": "2.0",
+            "startedAt": "2026-09-15T15:50:00Z"
+          },
+          {
+            "id": "microvm-c",
+            "state": "TERMINATED",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T14:39:02Z"
+          }
+        ],
+        "infos": [
+          {
+            "id": "microvm-a",
+            "state": "RUNNING",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T14:39:02Z",
+            "metadata": {
+              "env": "ci"
+            }
+          },
+          {
+            "id": "microvm-b",
+            "state": "SUSPENDED",
+            "image": "other",
+            "version": "2.0",
+            "startedAt": "2026-09-15T15:50:00Z"
+          }
+        ],
+        "logs": {
+          "streams": [
+            "2026/09/15[1.0]microvm-a",
+            "2026/09/14[1.0]microvm-zzz"
+          ],
+          "events": {
+            "2026/09/15[1.0]microvm-a": [
+              {
+                "timestamp": 1789483142123,
+                "message": "arranca\n"
+              },
+              {
+                "timestamp": 1789483143000,
+                "message": "listo"
+              },
+              {
+                "timestamp": 1789483144500,
+                "message": "fin\n\n"
+              }
+            ]
+          }
+        }
+      },
+      "expected": {
+        "exitCode": 0,
+        "stdout": "[\n  {\n    \"timestamp\": \"2026-09-15T14:39:02.123Z\",\n    \"message\": \"arranca\",\n    \"stream\": \"2026/09/15[1.0]microvm-a\"\n  },\n  {\n    \"timestamp\": \"2026-09-15T14:39:03.000Z\",\n    \"message\": \"listo\",\n    \"stream\": \"2026/09/15[1.0]microvm-a\"\n  },\n  {\n    \"timestamp\": \"2026-09-15T14:39:04.500Z\",\n    \"message\": \"fin\",\n    \"stream\": \"2026/09/15[1.0]microvm-a\"\n  }\n]\n",
+        "effects": {
+          "terminated": [],
+          "stackCalls": [],
+          "stackParameters": {}
+        }
+      }
+    },
+    {
+      "name": "sandbox logs con el stream de otro dia",
+      "args": [
+        "--json",
+        "sandbox",
+        "logs",
+        "microvm-a"
+      ],
+      "now": "2026-09-15T16:02:07Z",
+      "world": {
+        "sandboxes": [
+          {
+            "id": "microvm-a",
+            "state": "RUNNING",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T14:39:02Z"
+          },
+          {
+            "id": "microvm-b",
+            "state": "SUSPENDED",
+            "image": "other",
+            "version": "2.0",
+            "startedAt": "2026-09-15T15:50:00Z"
+          },
+          {
+            "id": "microvm-c",
+            "state": "TERMINATED",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T14:39:02Z"
+          }
+        ],
+        "infos": [
+          {
+            "id": "microvm-a",
+            "state": "RUNNING",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T14:39:02Z",
+            "metadata": {
+              "env": "ci"
+            }
+          },
+          {
+            "id": "microvm-b",
+            "state": "SUSPENDED",
+            "image": "other",
+            "version": "2.0",
+            "startedAt": "2026-09-15T15:50:00Z"
+          }
+        ],
+        "logs": {
+          "streams": [
+            "2026/09/16[1.0]microvm-a",
+            "2026/09/17[1.0]microvm-a",
+            "2026/09/15[2.0]microvm-a",
+            "2026/09/16[1.0]microvm-ax"
+          ],
+          "events": {
+            "2026/09/16[1.0]microvm-a": [
+              {
+                "timestamp": 1789569600000,
+                "message": "otro dia"
+              }
+            ],
+            "2026/09/17[1.0]microvm-a": [
+              {
+                "timestamp": 1789656000000,
+                "message": "y otro"
+              }
+            ]
+          }
+        }
+      },
+      "expected": {
+        "exitCode": 0,
+        "stdout": "[\n  {\n    \"timestamp\": \"2026-09-16T14:40:00.000Z\",\n    \"message\": \"otro dia\",\n    \"stream\": \"2026/09/16[1.0]microvm-a\"\n  },\n  {\n    \"timestamp\": \"2026-09-17T14:40:00.000Z\",\n    \"message\": \"y otro\",\n    \"stream\": \"2026/09/17[1.0]microvm-a\"\n  }\n]\n",
+        "effects": {
+          "terminated": [],
+          "stackCalls": [],
+          "stackParameters": {}
+        }
+      },
+      "stderrIncludes": [
+        "aviso: no existe el stream esperado 2026/09/15[1.0]microvm-a; se muestran 2026/09/16[1.0]microvm-a, 2026/09/17[1.0]microvm-a"
+      ]
+    },
+    {
+      "name": "sandbox logs sin ningun stream",
+      "args": [
+        "sandbox",
+        "logs",
+        "microvm-a"
+      ],
+      "now": "2026-09-15T16:02:07Z",
+      "world": {
+        "sandboxes": [
+          {
+            "id": "microvm-a",
+            "state": "RUNNING",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T14:39:02Z"
+          },
+          {
+            "id": "microvm-b",
+            "state": "SUSPENDED",
+            "image": "other",
+            "version": "2.0",
+            "startedAt": "2026-09-15T15:50:00Z"
+          },
+          {
+            "id": "microvm-c",
+            "state": "TERMINATED",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T14:39:02Z"
+          }
+        ],
+        "infos": [
+          {
+            "id": "microvm-a",
+            "state": "RUNNING",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T14:39:02Z",
+            "metadata": {
+              "env": "ci"
+            }
+          },
+          {
+            "id": "microvm-b",
+            "state": "SUSPENDED",
+            "image": "other",
+            "version": "2.0",
+            "startedAt": "2026-09-15T15:50:00Z"
+          }
+        ],
+        "logs": {
+          "streams": [],
+          "events": {}
+        }
+      },
+      "expected": {
+        "exitCode": 1,
+        "stdout": "",
+        "effects": {
+          "terminated": [],
+          "stackCalls": [],
+          "stackParameters": {}
+        }
+      },
+      "stderrIncludes": [
+        "sin logs: el sandbox se lanzó con logging disabled"
+      ]
+    },
+    {
+      "name": "sandbox logs en un grupo inexistente",
+      "args": [
+        "sandbox",
+        "logs",
+        "microvm-a",
+        "--log-group",
+        "/rayito/nada"
+      ],
+      "now": "2026-09-15T16:02:07Z",
+      "world": {
+        "sandboxes": [
+          {
+            "id": "microvm-a",
+            "state": "RUNNING",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T14:39:02Z"
+          },
+          {
+            "id": "microvm-b",
+            "state": "SUSPENDED",
+            "image": "other",
+            "version": "2.0",
+            "startedAt": "2026-09-15T15:50:00Z"
+          },
+          {
+            "id": "microvm-c",
+            "state": "TERMINATED",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T14:39:02Z"
+          }
+        ],
+        "infos": [
+          {
+            "id": "microvm-a",
+            "state": "RUNNING",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T14:39:02Z",
+            "metadata": {
+              "env": "ci"
+            }
+          },
+          {
+            "id": "microvm-b",
+            "state": "SUSPENDED",
+            "image": "other",
+            "version": "2.0",
+            "startedAt": "2026-09-15T15:50:00Z"
+          }
+        ],
+        "logs": {
+          "streams": [
+            "2026/09/15[1.0]microvm-a",
+            "2026/09/14[1.0]microvm-zzz"
+          ],
+          "events": {
+            "2026/09/15[1.0]microvm-a": [
+              {
+                "timestamp": 1789483142123,
+                "message": "arranca\n"
+              },
+              {
+                "timestamp": 1789483143000,
+                "message": "listo"
+              },
+              {
+                "timestamp": 1789483144500,
+                "message": "fin\n\n"
+              }
+            ]
+          }
+        }
+      },
+      "expected": {
+        "exitCode": 1,
+        "stdout": "",
+        "effects": {
+          "terminated": [],
+          "stackCalls": [],
+          "stackParameters": {}
+        }
+      },
+      "stderrIncludes": [
+        "grupo consultado: /rayito/nada"
+      ]
+    },
+    {
+      "name": "sandbox logs con --since invalido",
+      "args": [
+        "sandbox",
+        "logs",
+        "microvm-a",
+        "--since",
+        "ayer"
+      ],
+      "now": "2026-09-15T16:02:07Z",
+      "world": {
+        "sandboxes": [
+          {
+            "id": "microvm-a",
+            "state": "RUNNING",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T14:39:02Z"
+          },
+          {
+            "id": "microvm-b",
+            "state": "SUSPENDED",
+            "image": "other",
+            "version": "2.0",
+            "startedAt": "2026-09-15T15:50:00Z"
+          },
+          {
+            "id": "microvm-c",
+            "state": "TERMINATED",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T14:39:02Z"
+          }
+        ],
+        "infos": [
+          {
+            "id": "microvm-a",
+            "state": "RUNNING",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T14:39:02Z",
+            "metadata": {
+              "env": "ci"
+            }
+          },
+          {
+            "id": "microvm-b",
+            "state": "SUSPENDED",
+            "image": "other",
+            "version": "2.0",
+            "startedAt": "2026-09-15T15:50:00Z"
+          }
+        ],
+        "logs": {
+          "streams": [
+            "2026/09/15[1.0]microvm-a",
+            "2026/09/14[1.0]microvm-zzz"
+          ],
+          "events": {
+            "2026/09/15[1.0]microvm-a": [
+              {
+                "timestamp": 1789483142123,
+                "message": "arranca\n"
+              },
+              {
+                "timestamp": 1789483143000,
+                "message": "listo"
+              },
+              {
+                "timestamp": 1789483144500,
+                "message": "fin\n\n"
+              }
+            ]
+          }
+        }
+      },
+      "expected": {
+        "exitCode": 2,
+        "stdout": "",
+        "effects": {
+          "terminated": [],
+          "stackCalls": [],
+          "stackParameters": {}
+        }
+      },
+      "stderrIncludes": [
+        "--since no reconocido: 'ayer'"
+      ]
+    },
+    {
+      "name": "sandbox logs de un id desconocido",
+      "args": [
+        "sandbox",
+        "logs",
+        "microvm-zz"
+      ],
+      "now": "2026-09-15T16:02:07Z",
+      "world": {
+        "sandboxes": [
+          {
+            "id": "microvm-a",
+            "state": "RUNNING",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T14:39:02Z"
+          },
+          {
+            "id": "microvm-b",
+            "state": "SUSPENDED",
+            "image": "other",
+            "version": "2.0",
+            "startedAt": "2026-09-15T15:50:00Z"
+          },
+          {
+            "id": "microvm-c",
+            "state": "TERMINATED",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T14:39:02Z"
+          }
+        ],
+        "infos": [
+          {
+            "id": "microvm-a",
+            "state": "RUNNING",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T14:39:02Z",
+            "metadata": {
+              "env": "ci"
+            }
+          },
+          {
+            "id": "microvm-b",
+            "state": "SUSPENDED",
+            "image": "other",
+            "version": "2.0",
+            "startedAt": "2026-09-15T15:50:00Z"
+          }
+        ],
+        "logs": {
+          "streams": [
+            "2026/09/15[1.0]microvm-a",
+            "2026/09/14[1.0]microvm-zzz"
+          ],
+          "events": {
+            "2026/09/15[1.0]microvm-a": [
+              {
+                "timestamp": 1789483142123,
+                "message": "arranca\n"
+              },
+              {
+                "timestamp": 1789483143000,
+                "message": "listo"
+              },
+              {
+                "timestamp": 1789483144500,
+                "message": "fin\n\n"
+              }
+            ]
+          }
+        }
+      },
+      "expected": {
+        "exitCode": 1,
+        "stdout": "",
+        "effects": {
+          "terminated": [],
+          "stackCalls": [],
+          "stackParameters": {}
+        }
+      },
+      "stderrIncludes": [
+        "microvm-zz"
+      ]
+    },
+    {
+      "name": "stack list en tabla",
+      "args": [
+        "stack",
+        "list"
+      ],
+      "now": "2026-09-15T16:02:07Z",
+      "expected": {
+        "exitCode": 0,
+        "stdout": "name                  supported  idle_monthly                                                                           \nmetadata-index        True       $0 (on-demand, tabla vacía; IAM es gratis)                                             \nsecrets-access        True       $0 (sólo IAM; los secretos que crees facturan aparte)                                  \nefs-volumes           True       $0,30/GB-mes (Standard) hasta los 30 días, luego $0,016/GB-mes (IA); $0 si el sistema  \n                                 de ficheros está vacío                                                                 \ns3-mounts             True       $0 (sólo IAM)                                                                          \nsizes-guard           True       $0 (sólo IAM)                                                                          \nevents-webhooks       True       ~$0,40/mes (el secreto; DynamoDB, Lambda y SQS son on-demand/por uso)                  \notlp-export           True       $0 (sólo IAM)                                                                          \ntemplates             True       $0 (sólo IAM)                                                                          \ncustom-domain         True       ~$0 en reposo (CloudFront sin tráfico no factura; el KVS tampoco)                      \ndashboard             True       ~$0 en reposo: sin tráfico no hay invocaciones, y Lambda, DynamoDB bajo demanda y      \n                                 Cognito (capa gratuita de usuarios activos) sólo facturan por uso. Un parámetro SSM    \n                                 Advanced propio (tema o logo) cuesta $0,05 al mes aunque no haya tráfico               \ndashboard-cloudwatch  True       $0 con los 3 dashboards gratuitos de la cuenta (hasta 50 métricas cada uno); 3 USD al  \n                                 mes por dashboard por encima de esos 3                                                 \ndashboard-read-role   True       $0: IAM no factura                                                                     \nquota-alerts          True       ~0,30 USD al mes: una métrica personalizada (Rayito/Dashboard/MemoryAllocatedFraction);\n                                 Lambda, EventBridge, DynamoDB bajo demanda y SNS (correo) caben en sus capas gratuitas \n",
+        "effects": {
+          "terminated": [],
+          "stackCalls": [],
+          "stackParameters": {}
+        }
+      }
+    },
+    {
+      "name": "stack status sin desplegar --json",
+      "args": [
+        "--json",
+        "stack",
+        "status",
+        "metadata-index"
+      ],
+      "now": "2026-09-15T16:02:07Z",
+      "expected": {
+        "exitCode": 0,
+        "stdout": "null\n",
+        "effects": {
+          "terminated": [],
+          "stackCalls": [
+            "describe"
+          ],
+          "stackParameters": {}
+        }
+      }
+    },
+    {
+      "name": "stack status sin desplegar",
+      "args": [
+        "stack",
+        "status",
+        "metadata-index"
+      ],
+      "now": "2026-09-15T16:02:07Z",
+      "expected": {
+        "exitCode": 0,
+        "stdout": "metadata-index: no desplegado\n",
+        "effects": {
+          "terminated": [],
+          "stackCalls": [
+            "describe"
+          ],
+          "stackParameters": {}
+        }
+      }
+    },
+    {
+      "name": "stack status desplegado --json",
+      "args": [
+        "--json",
+        "stack",
+        "status",
+        "metadata-index"
+      ],
+      "now": "2026-09-15T16:02:07Z",
+      "world": {
+        "stacks": {
+          "rayito-metadata-index": {
+            "state": "CREATE_COMPLETE",
+            "outputs": {
+              "TableName": "rayito-sandboxes",
+              "TableArn": "arn:aws:dynamodb:us-east-1:123456789012:table/rayito-sandboxes"
+            },
+            "parameters": {}
+          }
+        }
+      },
+      "expected": {
+        "exitCode": 0,
+        "stdout": "{\n  \"name\": \"rayito-metadata-index\",\n  \"state\": \"CREATE_COMPLETE\",\n  \"outputs\": {\n    \"TableName\": \"rayito-sandboxes\",\n    \"TableArn\": \"arn:aws:dynamodb:us-east-1:123456789012:table/rayito-sandboxes\"\n  }\n}\n",
+        "effects": {
+          "terminated": [],
+          "stackCalls": [
+            "describe"
+          ],
+          "stackParameters": {}
+        }
+      }
+    },
+    {
+      "name": "stack status desplegado",
+      "args": [
+        "stack",
+        "status",
+        "metadata-index"
+      ],
+      "now": "2026-09-15T16:02:07Z",
+      "world": {
+        "stacks": {
+          "rayito-metadata-index": {
+            "state": "CREATE_COMPLETE",
+            "outputs": {
+              "TableName": "rayito-sandboxes",
+              "TableArn": "arn:aws:dynamodb:us-east-1:123456789012:table/rayito-sandboxes"
+            },
+            "parameters": {}
+          }
+        }
+      },
+      "expected": {
+        "exitCode": 0,
+        "stdout": "metadata-index: CREATE_COMPLETE\n  TableName = rayito-sandboxes\n  TableArn = arn:aws:dynamodb:us-east-1:123456789012:table/rayito-sandboxes\n",
+        "effects": {
+          "terminated": [],
+          "stackCalls": [
+            "describe"
+          ],
+          "stackParameters": {}
+        }
+      }
+    },
+    {
+      "name": "stack status con --stack-name",
+      "args": [
+        "--json",
+        "stack",
+        "status",
+        "metadata-index",
+        "--stack-name",
+        "rayito-mi-propia"
+      ],
+      "now": "2026-09-15T16:02:07Z",
+      "world": {
+        "stacks": {
+          "rayito-metadata-index": {
+            "state": "CREATE_COMPLETE",
+            "outputs": {
+              "TableName": "rayito-sandboxes",
+              "TableArn": "arn:aws:dynamodb:us-east-1:123456789012:table/rayito-sandboxes"
+            },
+            "parameters": {}
+          }
+        }
+      },
+      "expected": {
+        "exitCode": 0,
+        "stdout": "null\n",
+        "effects": {
+          "terminated": [],
+          "stackCalls": [
+            "describe"
+          ],
+          "stackParameters": {}
+        }
+      }
+    },
+    {
+      "name": "stack status de un componente desconocido",
+      "args": [
+        "stack",
+        "status",
+        "nope"
+      ],
+      "now": "2026-09-15T16:02:07Z",
+      "expected": {
+        "exitCode": 2,
+        "stdout": "",
+        "effects": {
+          "terminated": [],
+          "stackCalls": [],
+          "stackParameters": {}
+        }
+      },
+      "stderrIncludes": [
+        "componente desconocido: 'nope'"
+      ]
+    },
+    {
+      "name": "stack deploy --yes",
+      "args": [
+        "stack",
+        "deploy",
+        "s3-mounts",
+        "--param",
+        "BucketName=amzn-s3-demo-bucket",
+        "--yes"
+      ],
+      "now": "2026-09-15T16:02:07Z",
+      "expected": {
+        "exitCode": 0,
+        "stdout": "Coste y activación de s3-mounts\n  Activa: rayito stack deploy s3-mounts\n  Recursos y llamadas AWS: AWS::IAM::ManagedPolicy\n  Coste aproximado (reposo): $0 (sólo IAM)\n  Cómo apagarla: rayito stack destroy s3-mounts (destroy() borra la política; no borra ningún objeto ni el bucket)\n  Fuente: AWS_API_NOTES.md §23\n  Parámetros que cambian (los no pasados conservan su valor actual):\n    BucketName: '(sin valor)' -> 'amzn-s3-demo-bucket'\n    Prefixes: '(sin valor)' -> '*'\n    ReadOnly: '(sin valor)' -> 'true'\ns3-mounts: CREATE_COMPLETE\n",
+        "effects": {
+          "terminated": [],
+          "stackCalls": [
+            "describe",
+            "describe",
+            "create",
+            "wait",
+            "describe"
+          ],
+          "stackParameters": {
+            "BucketName": "amzn-s3-demo-bucket",
+            "Prefixes": "*",
+            "ReadOnly": "true"
+          }
+        }
+      }
+    },
+    {
+      "name": "stack deploy declinado",
+      "args": [
+        "stack",
+        "deploy",
+        "s3-mounts",
+        "--param",
+        "BucketName=amzn-s3-demo-bucket"
+      ],
+      "now": "2026-09-15T16:02:07Z",
+      "stdin": "n\n",
+      "expected": {
+        "exitCode": 1,
+        "stdout": "Coste y activación de s3-mounts\n  Activa: rayito stack deploy s3-mounts\n  Recursos y llamadas AWS: AWS::IAM::ManagedPolicy\n  Coste aproximado (reposo): $0 (sólo IAM)\n  Cómo apagarla: rayito stack destroy s3-mounts (destroy() borra la política; no borra ningún objeto ni el bucket)\n  Fuente: AWS_API_NOTES.md §23\n  Parámetros que cambian (los no pasados conservan su valor actual):\n    BucketName: '(sin valor)' -> 'amzn-s3-demo-bucket'\n    Prefixes: '(sin valor)' -> '*'\n    ReadOnly: '(sin valor)' -> 'true'\n¿Desplegar esta pila? [y/N]: n\n",
+        "effects": {
+          "terminated": [],
+          "stackCalls": [
+            "describe"
+          ],
+          "stackParameters": {}
+        }
+      }
+    },
+    {
+      "name": "stack deploy aceptado",
+      "args": [
+        "stack",
+        "deploy",
+        "s3-mounts",
+        "--param",
+        "BucketName=amzn-s3-demo-bucket"
+      ],
+      "now": "2026-09-15T16:02:07Z",
+      "stdin": "y\n",
+      "expected": {
+        "exitCode": 0,
+        "stdout": "Coste y activación de s3-mounts\n  Activa: rayito stack deploy s3-mounts\n  Recursos y llamadas AWS: AWS::IAM::ManagedPolicy\n  Coste aproximado (reposo): $0 (sólo IAM)\n  Cómo apagarla: rayito stack destroy s3-mounts (destroy() borra la política; no borra ningún objeto ni el bucket)\n  Fuente: AWS_API_NOTES.md §23\n  Parámetros que cambian (los no pasados conservan su valor actual):\n    BucketName: '(sin valor)' -> 'amzn-s3-demo-bucket'\n    Prefixes: '(sin valor)' -> '*'\n    ReadOnly: '(sin valor)' -> 'true'\n¿Desplegar esta pila? [y/N]: y\ns3-mounts: CREATE_COMPLETE\n",
+        "effects": {
+          "terminated": [],
+          "stackCalls": [
+            "describe",
+            "describe",
+            "create",
+            "wait",
+            "describe"
+          ],
+          "stackParameters": {
+            "BucketName": "amzn-s3-demo-bucket",
+            "Prefixes": "*",
+            "ReadOnly": "true"
+          }
+        }
+      }
+    },
+    {
+      "name": "stack deploy --json",
+      "args": [
+        "--json",
+        "stack",
+        "deploy",
+        "s3-mounts",
+        "--param",
+        "BucketName=amzn-s3-demo-bucket"
+      ],
+      "now": "2026-09-15T16:02:07Z",
+      "expected": {
+        "exitCode": 0,
+        "stdout": "{\n  \"name\": \"rayito-s3-mounts\",\n  \"state\": \"CREATE_COMPLETE\",\n  \"outputs\": {\n    \"StackName\": \"rayito-s3-mounts\"\n  }\n}\n",
+        "effects": {
+          "terminated": [],
+          "stackCalls": [
+            "describe",
+            "create",
+            "wait",
+            "describe"
+          ],
+          "stackParameters": {
+            "BucketName": "amzn-s3-demo-bucket",
+            "Prefixes": "*",
+            "ReadOnly": "true"
+          }
+        }
+      }
+    },
+    {
+      "name": "stack deploy con --param --tag",
+      "args": [
+        "stack",
+        "deploy",
+        "s3-mounts",
+        "--param",
+        "BucketName=amzn-s3-demo-bucket",
+        "--param",
+        "Prefixes=t/*",
+        "--tag",
+        "team=a",
+        "--yes"
+      ],
+      "now": "2026-09-15T16:02:07Z",
+      "expected": {
+        "exitCode": 0,
+        "stdout": "Coste y activación de s3-mounts\n  Activa: rayito stack deploy s3-mounts\n  Recursos y llamadas AWS: AWS::IAM::ManagedPolicy\n  Coste aproximado (reposo): $0 (sólo IAM)\n  Cómo apagarla: rayito stack destroy s3-mounts (destroy() borra la política; no borra ningún objeto ni el bucket)\n  Fuente: AWS_API_NOTES.md §23\n  Parámetros que cambian (los no pasados conservan su valor actual):\n    BucketName: '(sin valor)' -> 'amzn-s3-demo-bucket'\n    Prefixes: '(sin valor)' -> 't/*'\n    ReadOnly: '(sin valor)' -> 'true'\ns3-mounts: CREATE_COMPLETE\n",
+        "effects": {
+          "terminated": [],
+          "stackCalls": [
+            "describe",
+            "describe",
+            "create",
+            "wait",
+            "describe"
+          ],
+          "stackParameters": {
+            "BucketName": "amzn-s3-demo-bucket",
+            "Prefixes": "t/*",
+            "ReadOnly": "true"
+          }
+        }
+      }
+    },
+    {
+      "name": "stack deploy solo cambia lo pasado",
+      "args": [
+        "stack",
+        "deploy",
+        "s3-mounts",
+        "--param",
+        "ReadOnly=false",
+        "--yes"
+      ],
+      "now": "2026-09-15T16:02:07Z",
+      "world": {
+        "stacks": {
+          "rayito-s3-mounts": {
+            "state": "UPDATE_COMPLETE",
+            "outputs": {
+              "PolicyName": "RayitoS3MountAccess"
+            },
+            "parameters": {
+              "BucketName": "amzn-s3-demo-bucket",
+              "Prefixes": "t/*",
+              "ReadOnly": "true"
+            }
+          }
+        }
+      },
+      "expected": {
+        "exitCode": 0,
+        "stdout": "Coste y activación de s3-mounts\n  Activa: rayito stack deploy s3-mounts\n  Recursos y llamadas AWS: AWS::IAM::ManagedPolicy\n  Coste aproximado (reposo): $0 (sólo IAM)\n  Cómo apagarla: rayito stack destroy s3-mounts (destroy() borra la política; no borra ningún objeto ni el bucket)\n  Fuente: AWS_API_NOTES.md §23\n  Parámetros que cambian (los no pasados conservan su valor actual):\n    ReadOnly: 'true' -> 'false'\ns3-mounts: UPDATE_COMPLETE\n",
+        "effects": {
+          "terminated": [],
+          "stackCalls": [
+            "describe",
+            "describe",
+            "update",
+            "wait",
+            "describe"
+          ],
+          "stackParameters": {
+            "ReadOnly": "false"
+          }
+        }
+      }
+    },
+    {
+      "name": "stack deploy con un parametro mal formado",
+      "args": [
+        "stack",
+        "deploy",
+        "s3-mounts",
+        "--param",
+        "sin-igual",
+        "--yes"
+      ],
+      "now": "2026-09-15T16:02:07Z",
+      "expected": {
+        "exitCode": 2,
+        "stdout": "",
+        "effects": {
+          "terminated": [],
+          "stackCalls": [],
+          "stackParameters": {}
+        }
+      },
+      "stderrIncludes": [
+        "K=V"
+      ]
+    },
+    {
+      "name": "stack deploy de un componente desconocido",
+      "args": [
+        "stack",
+        "deploy",
+        "nope",
+        "--yes"
+      ],
+      "now": "2026-09-15T16:02:07Z",
+      "expected": {
+        "exitCode": 2,
+        "stdout": "",
+        "effects": {
+          "terminated": [],
+          "stackCalls": [],
+          "stackParameters": {}
+        }
+      },
+      "stderrIncludes": [
+        "componente desconocido: 'nope'"
+      ]
+    },
+    {
+      "name": "stack destroy --yes",
+      "args": [
+        "stack",
+        "destroy",
+        "metadata-index",
+        "--yes"
+      ],
+      "now": "2026-09-15T16:02:07Z",
+      "world": {
+        "stacks": {
+          "rayito-metadata-index": {
+            "state": "CREATE_COMPLETE",
+            "outputs": {
+              "TableName": "rayito-sandboxes",
+              "TableArn": "arn:aws:dynamodb:us-east-1:123456789012:table/rayito-sandboxes"
+            },
+            "parameters": {}
+          }
+        }
+      },
+      "expected": {
+        "exitCode": 0,
+        "stdout": "Al borrar: destroy() borra la tabla (desactiva antes DeletionProtection si está en true) y las dos políticas\nmetadata-index: borrado\n",
+        "effects": {
+          "terminated": [],
+          "stackCalls": [
+            "delete",
+            "wait"
+          ],
+          "stackParameters": {}
+        }
+      }
+    },
+    {
+      "name": "stack destroy --json",
+      "args": [
+        "--json",
+        "stack",
+        "destroy",
+        "metadata-index"
+      ],
+      "now": "2026-09-15T16:02:07Z",
+      "world": {
+        "stacks": {
+          "rayito-metadata-index": {
+            "state": "CREATE_COMPLETE",
+            "outputs": {
+              "TableName": "rayito-sandboxes",
+              "TableArn": "arn:aws:dynamodb:us-east-1:123456789012:table/rayito-sandboxes"
+            },
+            "parameters": {}
+          }
+        }
+      },
+      "expected": {
+        "exitCode": 0,
+        "stdout": "{\n  \"name\": \"metadata-index\",\n  \"state\": \"destroyed\"\n}\n",
+        "effects": {
+          "terminated": [],
+          "stackCalls": [
+            "delete",
+            "wait"
+          ],
+          "stackParameters": {}
+        }
+      }
+    },
+    {
+      "name": "stack destroy declinado",
+      "args": [
+        "stack",
+        "destroy",
+        "metadata-index"
+      ],
+      "now": "2026-09-15T16:02:07Z",
+      "world": {
+        "stacks": {
+          "rayito-metadata-index": {
+            "state": "CREATE_COMPLETE",
+            "outputs": {
+              "TableName": "rayito-sandboxes",
+              "TableArn": "arn:aws:dynamodb:us-east-1:123456789012:table/rayito-sandboxes"
+            },
+            "parameters": {}
+          }
+        }
+      },
+      "stdin": "n\n",
+      "expected": {
+        "exitCode": 1,
+        "stdout": "Al borrar: destroy() borra la tabla (desactiva antes DeletionProtection si está en true) y las dos políticas\n¿Borrar la pila de metadata-index? [y/N]: n\n",
+        "effects": {
+          "terminated": [],
+          "stackCalls": [],
+          "stackParameters": {}
+        }
+      }
+    },
+    {
+      "name": "image list --json",
+      "args": [
+        "--json",
+        "image",
+        "list"
+      ],
+      "now": "2026-09-15T16:02:07Z",
+      "world": {
+        "images": [
+          {
+            "name": "rayito-base",
+            "state": "UPDATED",
+            "active": "3.0",
+            "createdAt": "2026-09-15T14:39:02Z"
+          },
+          {
+            "name": "rayito-base-caps",
+            "state": "UPDATED",
+            "active": "6.0",
+            "failed": "5.0",
+            "createdAt": "2026-09-16T10:00:00Z"
+          },
+          {
+            "name": "mi-imagen",
+            "state": "CREATED",
+            "createdAt": "2026-09-17T08:30:15Z"
+          }
+        ],
+        "imageVersions": {
+          "rayito-base": [
+            {
+              "version": "2.0",
+              "state": "FAILED",
+              "status": "INACTIVE",
+              "baseVersion": "1.0",
+              "createdAt": "2026-09-01T02:00:00Z"
+            },
+            {
+              "version": "3.0",
+              "state": "SUCCESSFUL",
+              "status": "ACTIVE",
+              "baseVersion": "1.0",
+              "artifact": "rayd-000000000000.zip",
+              "createdAt": "2026-09-01T03:00:00Z"
+            }
+          ]
+        }
+      },
+      "expected": {
+        "exitCode": 0,
+        "stdout": "[\n  {\n    \"name\": \"rayito-base\",\n    \"imageArn\": \"arn:aws:lambda:us-east-1:123456789012:microvm-image:rayito-base\",\n    \"state\": \"UPDATED\",\n    \"latestActiveImageVersion\": \"3.0\",\n    \"latestFailedImageVersion\": null,\n    \"createdAt\": \"2026-09-15 14:39:02+00:00\"\n  },\n  {\n    \"name\": \"rayito-base-caps\",\n    \"imageArn\": \"arn:aws:lambda:us-east-1:123456789012:microvm-image:rayito-base-caps\",\n    \"state\": \"UPDATED\",\n    \"latestActiveImageVersion\": \"6.0\",\n    \"latestFailedImageVersion\": \"5.0\",\n    \"createdAt\": \"2026-09-16 10:00:00+00:00\"\n  },\n  {\n    \"name\": \"mi-imagen\",\n    \"imageArn\": \"arn:aws:lambda:us-east-1:123456789012:microvm-image:mi-imagen\",\n    \"state\": \"CREATED\",\n    \"latestActiveImageVersion\": null,\n    \"latestFailedImageVersion\": null,\n    \"createdAt\": \"2026-09-17 08:30:15+00:00\"\n  }\n]\n",
+        "effects": {
+          "terminated": [],
+          "stackCalls": [],
+          "stackParameters": {}
+        }
+      }
+    },
+    {
+      "name": "image list en tabla",
+      "args": [
+        "image",
+        "list"
+      ],
+      "now": "2026-09-15T16:02:07Z",
+      "world": {
+        "images": [
+          {
+            "name": "rayito-base",
+            "state": "UPDATED",
+            "active": "3.0",
+            "createdAt": "2026-09-15T14:39:02Z"
+          },
+          {
+            "name": "rayito-base-caps",
+            "state": "UPDATED",
+            "active": "6.0",
+            "failed": "5.0",
+            "createdAt": "2026-09-16T10:00:00Z"
+          },
+          {
+            "name": "mi-imagen",
+            "state": "CREATED",
+            "createdAt": "2026-09-17T08:30:15Z"
+          }
+        ],
+        "imageVersions": {
+          "rayito-base": [
+            {
+              "version": "2.0",
+              "state": "FAILED",
+              "status": "INACTIVE",
+              "baseVersion": "1.0",
+              "createdAt": "2026-09-01T02:00:00Z"
+            },
+            {
+              "version": "3.0",
+              "state": "SUCCESSFUL",
+              "status": "ACTIVE",
+              "baseVersion": "1.0",
+              "artifact": "rayd-000000000000.zip",
+              "createdAt": "2026-09-01T03:00:00Z"
+            }
+          ]
+        }
+      },
+      "expected": {
+        "exitCode": 0,
+        "stdout": "name              state    latestActiveImageVersion  latestFailedImageVersion  createdAt                \nrayito-base       UPDATED  3.0                                                 2026-09-15 14:39:02+00:00\nrayito-base-caps  UPDATED  6.0                       5.0                       2026-09-16 10:00:00+00:00\nmi-imagen         CREATED                                                      2026-09-17 08:30:15+00:00\n",
+        "effects": {
+          "terminated": [],
+          "stackCalls": [],
+          "stackParameters": {}
+        }
+      }
+    },
+    {
+      "name": "image list --name-filter",
+      "args": [
+        "--json",
+        "image",
+        "list",
+        "--name-filter",
+        "rayito-base-c"
+      ],
+      "now": "2026-09-15T16:02:07Z",
+      "world": {
+        "images": [
+          {
+            "name": "rayito-base",
+            "state": "UPDATED",
+            "active": "3.0",
+            "createdAt": "2026-09-15T14:39:02Z"
+          },
+          {
+            "name": "rayito-base-caps",
+            "state": "UPDATED",
+            "active": "6.0",
+            "failed": "5.0",
+            "createdAt": "2026-09-16T10:00:00Z"
+          },
+          {
+            "name": "mi-imagen",
+            "state": "CREATED",
+            "createdAt": "2026-09-17T08:30:15Z"
+          }
+        ],
+        "imageVersions": {
+          "rayito-base": [
+            {
+              "version": "2.0",
+              "state": "FAILED",
+              "status": "INACTIVE",
+              "baseVersion": "1.0",
+              "createdAt": "2026-09-01T02:00:00Z"
+            },
+            {
+              "version": "3.0",
+              "state": "SUCCESSFUL",
+              "status": "ACTIVE",
+              "baseVersion": "1.0",
+              "artifact": "rayd-000000000000.zip",
+              "createdAt": "2026-09-01T03:00:00Z"
+            }
+          ]
+        }
+      },
+      "expected": {
+        "exitCode": 0,
+        "stdout": "[\n  {\n    \"name\": \"rayito-base-caps\",\n    \"imageArn\": \"arn:aws:lambda:us-east-1:123456789012:microvm-image:rayito-base-caps\",\n    \"state\": \"UPDATED\",\n    \"latestActiveImageVersion\": \"6.0\",\n    \"latestFailedImageVersion\": \"5.0\",\n    \"createdAt\": \"2026-09-16 10:00:00+00:00\"\n  }\n]\n",
+        "effects": {
+          "terminated": [],
+          "stackCalls": [],
+          "stackParameters": {}
+        }
+      }
+    },
+    {
+      "name": "image list de una imagen",
+      "args": [
+        "--json",
+        "image",
+        "list",
+        "rayito-base"
+      ],
+      "now": "2026-09-15T16:02:07Z",
+      "world": {
+        "images": [
+          {
+            "name": "rayito-base",
+            "state": "UPDATED",
+            "active": "3.0",
+            "createdAt": "2026-09-15T14:39:02Z"
+          },
+          {
+            "name": "rayito-base-caps",
+            "state": "UPDATED",
+            "active": "6.0",
+            "failed": "5.0",
+            "createdAt": "2026-09-16T10:00:00Z"
+          },
+          {
+            "name": "mi-imagen",
+            "state": "CREATED",
+            "createdAt": "2026-09-17T08:30:15Z"
+          }
+        ],
+        "imageVersions": {
+          "rayito-base": [
+            {
+              "version": "2.0",
+              "state": "FAILED",
+              "status": "INACTIVE",
+              "baseVersion": "1.0",
+              "createdAt": "2026-09-01T02:00:00Z"
+            },
+            {
+              "version": "3.0",
+              "state": "SUCCESSFUL",
+              "status": "ACTIVE",
+              "baseVersion": "1.0",
+              "artifact": "rayd-000000000000.zip",
+              "createdAt": "2026-09-01T03:00:00Z"
+            }
+          ]
+        }
+      },
+      "expected": {
+        "exitCode": 0,
+        "stdout": "[\n  {\n    \"imageVersion\": \"3.0\",\n    \"state\": \"SUCCESSFUL\",\n    \"status\": \"ACTIVE\",\n    \"baseImageVersion\": \"1.0\",\n    \"artifact\": \"rayd-000000000000.zip\",\n    \"createdAt\": \"2026-09-01 03:00:00+00:00\"\n  },\n  {\n    \"imageVersion\": \"2.0\",\n    \"state\": \"FAILED\",\n    \"status\": \"INACTIVE\",\n    \"baseImageVersion\": \"1.0\",\n    \"artifact\": null,\n    \"createdAt\": \"2026-09-01 02:00:00+00:00\"\n  }\n]\n",
+        "effects": {
+          "terminated": [],
+          "stackCalls": [],
+          "stackParameters": {}
+        }
+      }
+    },
+    {
+      "name": "image list de una imagen en tabla",
+      "args": [
+        "image",
+        "list",
+        "rayito-base"
+      ],
+      "now": "2026-09-15T16:02:07Z",
+      "world": {
+        "images": [
+          {
+            "name": "rayito-base",
+            "state": "UPDATED",
+            "active": "3.0",
+            "createdAt": "2026-09-15T14:39:02Z"
+          },
+          {
+            "name": "rayito-base-caps",
+            "state": "UPDATED",
+            "active": "6.0",
+            "failed": "5.0",
+            "createdAt": "2026-09-16T10:00:00Z"
+          },
+          {
+            "name": "mi-imagen",
+            "state": "CREATED",
+            "createdAt": "2026-09-17T08:30:15Z"
+          }
+        ],
+        "imageVersions": {
+          "rayito-base": [
+            {
+              "version": "2.0",
+              "state": "FAILED",
+              "status": "INACTIVE",
+              "baseVersion": "1.0",
+              "createdAt": "2026-09-01T02:00:00Z"
+            },
+            {
+              "version": "3.0",
+              "state": "SUCCESSFUL",
+              "status": "ACTIVE",
+              "baseVersion": "1.0",
+              "artifact": "rayd-000000000000.zip",
+              "createdAt": "2026-09-01T03:00:00Z"
+            }
+          ]
+        }
+      },
+      "expected": {
+        "exitCode": 0,
+        "stdout": "imageVersion  state       status    baseImageVersion  artifact               createdAt                \n3.0           SUCCESSFUL  ACTIVE    1.0               rayd-000000000000.zip  2026-09-01 03:00:00+00:00\n2.0           FAILED      INACTIVE  1.0                                      2026-09-01 02:00:00+00:00\n",
+        "effects": {
+          "terminated": [],
+          "stackCalls": [],
+          "stackParameters": {}
+        }
+      }
+    },
+    {
+      "name": "image list con NAME y --name-filter",
+      "args": [
+        "image",
+        "list",
+        "rayito-base",
+        "--name-filter",
+        "x"
+      ],
+      "now": "2026-09-15T16:02:07Z",
+      "world": {
+        "images": [
+          {
+            "name": "rayito-base",
+            "state": "UPDATED",
+            "active": "3.0",
+            "createdAt": "2026-09-15T14:39:02Z"
+          },
+          {
+            "name": "rayito-base-caps",
+            "state": "UPDATED",
+            "active": "6.0",
+            "failed": "5.0",
+            "createdAt": "2026-09-16T10:00:00Z"
+          },
+          {
+            "name": "mi-imagen",
+            "state": "CREATED",
+            "createdAt": "2026-09-17T08:30:15Z"
+          }
+        ],
+        "imageVersions": {
+          "rayito-base": [
+            {
+              "version": "2.0",
+              "state": "FAILED",
+              "status": "INACTIVE",
+              "baseVersion": "1.0",
+              "createdAt": "2026-09-01T02:00:00Z"
+            },
+            {
+              "version": "3.0",
+              "state": "SUCCESSFUL",
+              "status": "ACTIVE",
+              "baseVersion": "1.0",
+              "artifact": "rayd-000000000000.zip",
+              "createdAt": "2026-09-01T03:00:00Z"
+            }
+          ]
+        }
+      },
+      "expected": {
+        "exitCode": 2,
+        "stdout": "",
+        "effects": {
+          "terminated": [],
+          "stackCalls": [],
+          "stackParameters": {}
+        }
+      },
+      "stderrIncludes": [
+        "--name-filter sólo sin NAME"
+      ]
+    },
+    {
+      "name": "image sizes sin tamaños extra",
+      "args": [
+        "--json",
+        "image",
+        "sizes"
+      ],
+      "now": "2026-09-15T16:02:07Z",
+      "world": {
+        "images": [
+          {
+            "name": "rayito-base",
+            "state": "UPDATED",
+            "active": "3.0",
+            "createdAt": "2026-09-15T14:39:02Z"
+          }
+        ],
+        "artifacts": {
+          "rayito-base@3.0": "a.zip"
+        }
+      },
+      "expected": {
+        "exitCode": 0,
+        "stdout": "[\n  {\n    \"size\": \"512mb\",\n    \"name\": \"rayito-base-512mb\",\n    \"published\": false,\n    \"imageArn\": null,\n    \"state\": null,\n    \"sameArtifact\": null,\n    \"createdAt\": null\n  },\n  {\n    \"size\": \"1gb\",\n    \"name\": \"rayito-base-1gb\",\n    \"published\": false,\n    \"imageArn\": null,\n    \"state\": null,\n    \"sameArtifact\": null,\n    \"createdAt\": null\n  },\n  {\n    \"size\": \"2gb\",\n    \"name\": \"rayito-base\",\n    \"published\": true,\n    \"imageArn\": \"arn:aws:lambda:us-east-1:123456789012:microvm-image:rayito-base\",\n    \"state\": \"UPDATED\",\n    \"sameArtifact\": null,\n    \"createdAt\": \"2026-09-15 14:39:02+00:00\"\n  },\n  {\n    \"size\": \"4gb\",\n    \"name\": \"rayito-base-4gb\",\n    \"published\": false,\n    \"imageArn\": null,\n    \"state\": null,\n    \"sameArtifact\": null,\n    \"createdAt\": null\n  },\n  {\n    \"size\": \"8gb\",\n    \"name\": \"rayito-base-8gb\",\n    \"published\": false,\n    \"imageArn\": null,\n    \"state\": null,\n    \"sameArtifact\": null,\n    \"createdAt\": null\n  }\n]\n",
+        "effects": {
+          "terminated": [],
+          "stackCalls": [],
+          "stackParameters": {}
+        }
+      }
+    },
+    {
+      "name": "image sizes con la familia publicada",
+      "args": [
+        "--json",
+        "image",
+        "sizes"
+      ],
+      "now": "2026-09-15T16:02:07Z",
+      "world": {
+        "images": [
+          {
+            "name": "rayito-base",
+            "state": "UPDATED",
+            "active": "3.0",
+            "createdAt": "2026-09-15T14:39:02Z"
+          },
+          {
+            "name": "rayito-base-4gb",
+            "state": "UPDATED",
+            "active": "1.0",
+            "createdAt": "2026-09-16T10:00:00Z"
+          },
+          {
+            "name": "rayito-base-8gb",
+            "state": "CREATED",
+            "active": "2.0",
+            "createdAt": "2026-09-16T11:00:00Z"
+          },
+          {
+            "name": "rayito-base-1gb",
+            "state": "CREATE_FAILED",
+            "createdAt": "2026-09-16T12:00:00Z"
+          }
+        ],
+        "artifacts": {
+          "rayito-base@3.0": "a.zip",
+          "rayito-base-4gb@1.0": "a.zip",
+          "rayito-base-8gb@2.0": "b.zip"
+        }
+      },
+      "expected": {
+        "exitCode": 0,
+        "stdout": "[\n  {\n    \"size\": \"512mb\",\n    \"name\": \"rayito-base-512mb\",\n    \"published\": false,\n    \"imageArn\": null,\n    \"state\": null,\n    \"sameArtifact\": null,\n    \"createdAt\": null\n  },\n  {\n    \"size\": \"1gb\",\n    \"name\": \"rayito-base-1gb\",\n    \"published\": true,\n    \"imageArn\": \"arn:aws:lambda:us-east-1:123456789012:microvm-image:rayito-base-1gb\",\n    \"state\": \"CREATE_FAILED\",\n    \"sameArtifact\": null,\n    \"createdAt\": \"2026-09-16 12:00:00+00:00\"\n  },\n  {\n    \"size\": \"2gb\",\n    \"name\": \"rayito-base\",\n    \"published\": true,\n    \"imageArn\": \"arn:aws:lambda:us-east-1:123456789012:microvm-image:rayito-base\",\n    \"state\": \"UPDATED\",\n    \"sameArtifact\": null,\n    \"createdAt\": \"2026-09-15 14:39:02+00:00\"\n  },\n  {\n    \"size\": \"4gb\",\n    \"name\": \"rayito-base-4gb\",\n    \"published\": true,\n    \"imageArn\": \"arn:aws:lambda:us-east-1:123456789012:microvm-image:rayito-base-4gb\",\n    \"state\": \"UPDATED\",\n    \"sameArtifact\": true,\n    \"createdAt\": \"2026-09-16 10:00:00+00:00\"\n  },\n  {\n    \"size\": \"8gb\",\n    \"name\": \"rayito-base-8gb\",\n    \"published\": true,\n    \"imageArn\": \"arn:aws:lambda:us-east-1:123456789012:microvm-image:rayito-base-8gb\",\n    \"state\": \"CREATED\",\n    \"sameArtifact\": false,\n    \"createdAt\": \"2026-09-16 11:00:00+00:00\"\n  }\n]\n",
+        "effects": {
+          "terminated": [],
+          "stackCalls": [],
+          "stackParameters": {}
+        }
+      }
+    },
+    {
+      "name": "image sizes en tabla",
+      "args": [
+        "image",
+        "sizes"
+      ],
+      "now": "2026-09-15T16:02:07Z",
+      "world": {
+        "images": [
+          {
+            "name": "rayito-base",
+            "state": "UPDATED",
+            "active": "3.0",
+            "createdAt": "2026-09-15T14:39:02Z"
+          },
+          {
+            "name": "rayito-base-4gb",
+            "state": "UPDATED",
+            "active": "1.0",
+            "createdAt": "2026-09-16T10:00:00Z"
+          },
+          {
+            "name": "rayito-base-8gb",
+            "state": "CREATED",
+            "active": "2.0",
+            "createdAt": "2026-09-16T11:00:00Z"
+          },
+          {
+            "name": "rayito-base-1gb",
+            "state": "CREATE_FAILED",
+            "createdAt": "2026-09-16T12:00:00Z"
+          }
+        ],
+        "artifacts": {
+          "rayito-base@3.0": "a.zip",
+          "rayito-base-4gb@1.0": "a.zip",
+          "rayito-base-8gb@2.0": "b.zip"
+        }
+      },
+      "expected": {
+        "exitCode": 0,
+        "stdout": "size   name               published  imageArn                     state          sameArtifact  createdAt                \n512mb  rayito-base-512mb  False                                                                                         \n1gb    rayito-base-1gb    True       arn:aws:lambda:us-east-1:12  CREATE_FAILED                2026-09-16 12:00:00+00:00\n                                     3456789012:microvm-image:ra                                                        \n                                     yito-base-1gb                                                                      \n2gb    rayito-base        True       arn:aws:lambda:us-east-1:12  UPDATED                      2026-09-15 14:39:02+00:00\n                                     3456789012:microvm-image:ra                                                        \n                                     yito-base                                                                          \n4gb    rayito-base-4gb    True       arn:aws:lambda:us-east-1:12  UPDATED        True          2026-09-16 10:00:00+00:00\n                                     3456789012:microvm-image:ra                                                        \n                                     yito-base-4gb                                                                      \n8gb    rayito-base-8gb    True       arn:aws:lambda:us-east-1:12  CREATED        False         2026-09-16 11:00:00+00:00\n                                     3456789012:microvm-image:ra                                                        \n                                     yito-base-8gb                                                                      \n",
+        "effects": {
+          "terminated": [],
+          "stackCalls": [],
+          "stackParameters": {}
+        }
+      }
+    },
+    {
+      "name": "image sizes --variant slim",
+      "args": [
+        "--json",
+        "image",
+        "sizes",
+        "--variant",
+        "slim"
+      ],
+      "now": "2026-09-15T16:02:07Z",
+      "world": {
+        "images": [
+          {
+            "name": "rayito-base",
+            "state": "UPDATED",
+            "active": "3.0",
+            "createdAt": "2026-09-15T14:39:02Z"
+          }
+        ],
+        "artifacts": {
+          "rayito-base@3.0": "a.zip"
+        }
+      },
+      "expected": {
+        "exitCode": 0,
+        "stdout": "[\n  {\n    \"size\": \"512mb\",\n    \"name\": \"rayito-base-slim-512mb\",\n    \"published\": false,\n    \"imageArn\": null,\n    \"state\": null,\n    \"sameArtifact\": null,\n    \"createdAt\": null\n  },\n  {\n    \"size\": \"1gb\",\n    \"name\": \"rayito-base-slim-1gb\",\n    \"published\": false,\n    \"imageArn\": null,\n    \"state\": null,\n    \"sameArtifact\": null,\n    \"createdAt\": null\n  },\n  {\n    \"size\": \"2gb\",\n    \"name\": \"rayito-base-slim\",\n    \"published\": false,\n    \"imageArn\": null,\n    \"state\": null,\n    \"sameArtifact\": null,\n    \"createdAt\": null\n  },\n  {\n    \"size\": \"4gb\",\n    \"name\": \"rayito-base-slim-4gb\",\n    \"published\": false,\n    \"imageArn\": null,\n    \"state\": null,\n    \"sameArtifact\": null,\n    \"createdAt\": null\n  },\n  {\n    \"size\": \"8gb\",\n    \"name\": \"rayito-base-slim-8gb\",\n    \"published\": false,\n    \"imageArn\": null,\n    \"state\": null,\n    \"sameArtifact\": null,\n    \"createdAt\": null\n  }\n]\n",
+        "effects": {
+          "terminated": [],
+          "stackCalls": [],
+          "stackParameters": {}
+        }
+      }
+    },
+    {
+      "name": "image sizes --image-name",
+      "args": [
+        "--json",
+        "image",
+        "sizes",
+        "--image-name",
+        "custom"
+      ],
+      "now": "2026-09-15T16:02:07Z",
+      "world": {
+        "images": [
+          {
+            "name": "custom",
+            "state": "UPDATED",
+            "active": "1.0",
+            "createdAt": "2026-09-15T14:39:02Z"
+          },
+          {
+            "name": "custom-512mb",
+            "state": "UPDATED",
+            "active": "1.0",
+            "createdAt": "2026-09-15T14:39:02Z"
+          }
+        ],
+        "artifacts": {
+          "custom@1.0": "z.zip",
+          "custom-512mb@1.0": "z.zip"
+        }
+      },
+      "expected": {
+        "exitCode": 0,
+        "stdout": "[\n  {\n    \"size\": \"512mb\",\n    \"name\": \"custom-512mb\",\n    \"published\": true,\n    \"imageArn\": \"arn:aws:lambda:us-east-1:123456789012:microvm-image:custom-512mb\",\n    \"state\": \"UPDATED\",\n    \"sameArtifact\": true,\n    \"createdAt\": \"2026-09-15 14:39:02+00:00\"\n  },\n  {\n    \"size\": \"1gb\",\n    \"name\": \"custom-1gb\",\n    \"published\": false,\n    \"imageArn\": null,\n    \"state\": null,\n    \"sameArtifact\": null,\n    \"createdAt\": null\n  },\n  {\n    \"size\": \"2gb\",\n    \"name\": \"custom\",\n    \"published\": true,\n    \"imageArn\": \"arn:aws:lambda:us-east-1:123456789012:microvm-image:custom\",\n    \"state\": \"UPDATED\",\n    \"sameArtifact\": null,\n    \"createdAt\": \"2026-09-15 14:39:02+00:00\"\n  },\n  {\n    \"size\": \"4gb\",\n    \"name\": \"custom-4gb\",\n    \"published\": false,\n    \"imageArn\": null,\n    \"state\": null,\n    \"sameArtifact\": null,\n    \"createdAt\": null\n  },\n  {\n    \"size\": \"8gb\",\n    \"name\": \"custom-8gb\",\n    \"published\": false,\n    \"imageArn\": null,\n    \"state\": null,\n    \"sameArtifact\": null,\n    \"createdAt\": null\n  }\n]\n",
+        "effects": {
+          "terminated": [],
+          "stackCalls": [],
+          "stackParameters": {}
+        }
+      }
+    },
+    {
+      "name": "image sizes con una variante desconocida",
+      "args": [
+        "image",
+        "sizes",
+        "--variant",
+        "bogus"
+      ],
+      "now": "2026-09-15T16:02:07Z",
+      "world": {
+        "images": [
+          {
+            "name": "rayito-base",
+            "state": "UPDATED",
+            "active": "3.0",
+            "createdAt": "2026-09-15T14:39:02Z"
+          }
+        ],
+        "artifacts": {
+          "rayito-base@3.0": "a.zip"
+        }
+      },
+      "expected": {
+        "exitCode": 2,
+        "stdout": "",
+        "effects": {
+          "terminated": [],
+          "stackCalls": [],
+          "stackParameters": {}
+        }
+      },
+      "stderrIncludes": [
+        "admitidas: full, slim, poly"
+      ]
+    },
+    {
+      "name": "events status sin desplegar",
+      "args": [
+        "events",
+        "status"
+      ],
+      "now": "2026-09-15T16:02:07Z",
+      "expected": {
+        "exitCode": 0,
+        "stdout": "events-webhooks: no desplegado\n",
+        "effects": {
+          "terminated": [],
+          "stackCalls": [
+            "describe"
+          ],
+          "stackParameters": {}
+        }
+      }
+    },
+    {
+      "name": "events status sin desplegar --json",
+      "args": [
+        "--json",
+        "events",
+        "status"
+      ],
+      "now": "2026-09-15T16:02:07Z",
+      "expected": {
+        "exitCode": 0,
+        "stdout": "null\n",
+        "effects": {
+          "terminated": [],
+          "stackCalls": [
+            "describe"
+          ],
+          "stackParameters": {}
+        }
+      }
+    },
+    {
+      "name": "events status desplegado",
+      "args": [
+        "events",
+        "status"
+      ],
+      "world": {
+        "stacks": {
+          "rayito-events-webhooks": {
+            "state": "CREATE_COMPLETE",
+            "outputs": {
+              "EventsTableName": "t"
+            }
+          }
+        }
+      },
+      "now": "2026-09-15T16:02:07Z",
+      "expected": {
+        "exitCode": 0,
+        "stdout": "events-webhooks: CREATE_COMPLETE\n",
+        "effects": {
+          "terminated": [],
+          "stackCalls": [
+            "describe"
+          ],
+          "stackParameters": {}
+        }
+      }
+    },
+    {
+      "name": "events status con --stack-name",
+      "args": [
+        "--json",
+        "events",
+        "status",
+        "--stack-name",
+        "otra"
+      ],
+      "world": {
+        "stacks": {
+          "otra": {
+            "state": "UPDATE_COMPLETE"
+          }
+        }
+      },
+      "now": "2026-09-15T16:02:07Z",
+      "expected": {
+        "exitCode": 0,
+        "stdout": "{\n  \"name\": \"otra\",\n  \"state\": \"UPDATE_COMPLETE\",\n  \"outputs\": {}\n}\n",
+        "effects": {
+          "terminated": [],
+          "stackCalls": [
+            "describe"
+          ],
+          "stackParameters": {}
+        }
+      }
+    },
+    {
+      "name": "events deploy --json con etiquetas",
+      "args": [
+        "--json",
+        "events",
+        "deploy",
+        "--artifact-bucket",
+        "mi-bucket",
+        "--log-group-name",
+        "/rayito/rayito-base",
+        "--tag",
+        "Owner=equipo",
+        "--tag",
+        "Environment=testing",
+        "--reconciler-interval-minutes",
+        "7"
+      ],
+      "now": "2026-09-15T16:02:07Z",
+      "expected": {
+        "exitCode": 0,
+        "stdout": "{\n  \"name\": \"rayito-events-webhooks\",\n  \"state\": \"CREATE_COMPLETE\",\n  \"outputs\": {\n    \"StackName\": \"rayito-events-webhooks\"\n  }\n}\n",
+        "effects": {
+          "terminated": [],
+          "stackCalls": [
+            "describe",
+            "put_artifact",
+            "create",
+            "wait",
+            "describe"
+          ],
+          "stackParameters": {
+            "LogGroupName": "/rayito/rayito-base",
+            "ReconcilerIntervalMinutes": "7",
+            "ArtifactBucket": "mi-bucket",
+            "ArtifactS3Key": "rayito/stacks/events-webhooks/80fb159fcdc949aa98168d4c09aaa27ef55c22a153ccc9490c1ab16e071a7e6c.zip"
+          }
+        }
+      }
+    },
+    {
+      "name": "events deploy con una etiqueta mal formada",
+      "args": [
+        "events",
+        "deploy",
+        "--artifact-bucket",
+        "mi-bucket",
+        "--log-group-name",
+        "/rayito/rayito-base",
+        "--tag",
+        "x",
+        "--yes"
+      ],
+      "now": "2026-09-15T16:02:07Z",
+      "expected": {
+        "exitCode": 2,
+        "stdout": "",
+        "effects": {
+          "terminated": [],
+          "stackCalls": [],
+          "stackParameters": {}
+        }
+      },
+      "stderrIncludes": [
+        "--tag"
+      ]
+    },
+    {
+      "name": "events destroy --yes",
+      "args": [
+        "events",
+        "destroy",
+        "--yes"
+      ],
+      "world": {
+        "stacks": {
+          "rayito-events-webhooks": {
+            "state": "CREATE_COMPLETE",
+            "outputs": {
+              "EventsTableName": "t"
+            }
+          }
+        }
+      },
+      "now": "2026-09-15T16:02:07Z",
+      "expected": {
+        "exitCode": 0,
+        "stdout": "Al borrar: destroy() borra el secreto (force-delete: cualquier webhook ya registrado deja de poder verificarse), la tabla, las tres Lambdas con sus log groups, la suscripción, las dos colas de fallos y el scheduler\nevents-webhooks: borrado\n",
+        "effects": {
+          "terminated": [],
+          "stackCalls": [
+            "delete",
+            "wait"
+          ],
+          "stackParameters": {}
+        }
+      }
+    },
+    {
+      "name": "events destroy declinado",
+      "args": [
+        "events",
+        "destroy"
+      ],
+      "stdin": "n\n",
+      "world": {
+        "stacks": {
+          "rayito-events-webhooks": {
+            "state": "CREATE_COMPLETE",
+            "outputs": {
+              "EventsTableName": "t"
+            }
+          }
+        }
+      },
+      "now": "2026-09-15T16:02:07Z",
+      "expected": {
+        "exitCode": 1,
+        "stdout": "Al borrar: destroy() borra el secreto (force-delete: cualquier webhook ya registrado deja de poder verificarse), la tabla, las tres Lambdas con sus log groups, la suscripción, las dos colas de fallos y el scheduler\n¿Borrar la pila de events-webhooks? [y/N]: n\n",
+        "effects": {
+          "terminated": [],
+          "stackCalls": [],
+          "stackParameters": {}
+        }
+      }
+    },
+    {
+      "name": "events destroy --json",
+      "args": [
+        "--json",
+        "events",
+        "destroy"
+      ],
+      "world": {
+        "stacks": {
+          "rayito-events-webhooks": {
+            "state": "CREATE_COMPLETE",
+            "outputs": {
+              "EventsTableName": "t"
+            }
+          }
+        }
+      },
+      "now": "2026-09-15T16:02:07Z",
+      "expected": {
+        "exitCode": 0,
+        "stdout": "{\n  \"name\": \"events-webhooks\",\n  \"state\": \"destroyed\"\n}\n",
+        "effects": {
+          "terminated": [],
+          "stackCalls": [
+            "delete",
+            "wait"
+          ],
+          "stackParameters": {}
+        }
+      }
+    },
+    {
+      "name": "domain status sin desplegar",
+      "args": [
+        "domain",
+        "status"
+      ],
+      "now": "2026-09-15T16:02:07Z",
+      "expected": {
+        "exitCode": 0,
+        "stdout": "custom-domain: no desplegado\n",
+        "effects": {
+          "terminated": [],
+          "stackCalls": [
+            "describe"
+          ],
+          "stackParameters": {}
+        }
+      }
+    },
+    {
+      "name": "domain status sin desplegar --json",
+      "args": [
+        "--json",
+        "domain",
+        "status"
+      ],
+      "now": "2026-09-15T16:02:07Z",
+      "expected": {
+        "exitCode": 0,
+        "stdout": "null\n",
+        "effects": {
+          "terminated": [],
+          "stackCalls": [
+            "describe"
+          ],
+          "stackParameters": {}
+        }
+      }
+    },
+    {
+      "name": "domain status desplegado",
+      "args": [
+        "domain",
+        "status"
+      ],
+      "world": {
+        "stacks": {
+          "rayito-custom-domain": {
+            "state": "CREATE_COMPLETE",
+            "outputs": {
+              "DistributionDomainName": "d111.cloudfront.net"
+            }
+          }
+        }
+      },
+      "now": "2026-09-15T16:02:07Z",
+      "expected": {
+        "exitCode": 0,
+        "stdout": "custom-domain: CREATE_COMPLETE\n  DistributionDomainName = d111.cloudfront.net\n",
+        "effects": {
+          "terminated": [],
+          "stackCalls": [
+            "describe"
+          ],
+          "stackParameters": {}
+        }
+      }
+    },
+    {
+      "name": "domain status desplegado --json",
+      "args": [
+        "--json",
+        "domain",
+        "status"
+      ],
+      "world": {
+        "stacks": {
+          "rayito-custom-domain": {
+            "state": "CREATE_COMPLETE",
+            "outputs": {
+              "DistributionDomainName": "d111.cloudfront.net"
+            }
+          }
+        }
+      },
+      "now": "2026-09-15T16:02:07Z",
+      "expected": {
+        "exitCode": 0,
+        "stdout": "{\n  \"name\": \"rayito-custom-domain\",\n  \"state\": \"CREATE_COMPLETE\",\n  \"outputs\": {\n    \"DistributionDomainName\": \"d111.cloudfront.net\"\n  }\n}\n",
+        "effects": {
+          "terminated": [],
+          "stackCalls": [
+            "describe"
+          ],
+          "stackParameters": {}
+        }
+      }
+    },
+    {
+      "name": "domain deploy --yes",
+      "args": [
+        "domain",
+        "deploy",
+        "--public-domain",
+        "sbx.example.com",
+        "--certificate-arn",
+        "arn:aws:acm:us-east-1:123456789012:certificate/abc",
+        "--yes"
+      ],
+      "now": "2026-09-15T16:02:07Z",
+      "expected": {
+        "exitCode": 0,
+        "stdout": "Coste y activación de custom-domain\n  Recursos y llamadas AWS: AWS::CloudFront::Distribution, AWS::CloudFront::Function, AWS::CloudFront::KeyValueStore, AWS::CloudFront::KeyValueStoreAssociation (en la Function)\n  Coste aproximado (reposo): ~$0 en reposo (CloudFront sin tráfico no factura; el KVS tampoco)\n  Coste por uso: CloudFront: ~$0,085/GB + $0,0075/10 000 peticiones HTTPS (salida, us-east-1); CloudFront Functions: ~$0,10 por 1 000 000 de invocaciones (una por petición, cifra de lista desde su lanzamiento, no reconfirmada en vivo esta sesión); KeyValueStore, lectura (la que hace la Function en cada petición): ~$0,50 por 1 000 000 de lecturas; KeyValueStore, llamada de gestión (PutKey/DeleteKey de register()/unregister()/refresh()): ~$5 por 1 000 000 de llamadas\n  Cómo apagarla: rayito domain destroy (destroy() borra la distribución (tarda ~15 min en deshabilitarse primero), la Function y el KVS; ninguna ruta sobrevive)\ncustom-domain: CREATE_COMPLETE\n",
+        "effects": {
+          "terminated": [],
+          "stackCalls": [
+            "describe",
+            "create",
+            "wait",
+            "describe"
+          ],
+          "stackParameters": {
+            "PublicDomain": "sbx.example.com",
+            "CertificateArn": "arn:aws:acm:us-east-1:123456789012:certificate/abc"
+          }
+        }
+      }
+    },
+    {
+      "name": "domain deploy declinado",
+      "args": [
+        "domain",
+        "deploy",
+        "--public-domain",
+        "sbx.example.com",
+        "--certificate-arn",
+        "arn:aws:acm:us-east-1:123456789012:certificate/abc"
+      ],
+      "stdin": "n\n",
+      "now": "2026-09-15T16:02:07Z",
+      "expected": {
+        "exitCode": 1,
+        "stdout": "Coste y activación de custom-domain\n  Recursos y llamadas AWS: AWS::CloudFront::Distribution, AWS::CloudFront::Function, AWS::CloudFront::KeyValueStore, AWS::CloudFront::KeyValueStoreAssociation (en la Function)\n  Coste aproximado (reposo): ~$0 en reposo (CloudFront sin tráfico no factura; el KVS tampoco)\n  Coste por uso: CloudFront: ~$0,085/GB + $0,0075/10 000 peticiones HTTPS (salida, us-east-1); CloudFront Functions: ~$0,10 por 1 000 000 de invocaciones (una por petición, cifra de lista desde su lanzamiento, no reconfirmada en vivo esta sesión); KeyValueStore, lectura (la que hace la Function en cada petición): ~$0,50 por 1 000 000 de lecturas; KeyValueStore, llamada de gestión (PutKey/DeleteKey de register()/unregister()/refresh()): ~$5 por 1 000 000 de llamadas\n  Cómo apagarla: rayito domain destroy (destroy() borra la distribución (tarda ~15 min en deshabilitarse primero), la Function y el KVS; ninguna ruta sobrevive)\n¿Desplegar esta pila? [y/N]: n\n",
+        "effects": {
+          "terminated": [],
+          "stackCalls": [],
+          "stackParameters": {}
+        }
+      }
+    },
+    {
+      "name": "domain deploy --json con nombres alternativos",
+      "args": [
+        "--json",
+        "domain",
+        "deploy",
+        "--public-domain",
+        "sbx.example.com",
+        "--certificate-arn",
+        "arn:aws:acm:us-east-1:123456789012:certificate/abc",
+        "--alternate-domain-name",
+        "8000-a.sbx.example.com",
+        "--stack-name",
+        "mi-dominio"
+      ],
+      "now": "2026-09-15T16:02:07Z",
+      "expected": {
+        "exitCode": 0,
+        "stdout": "{\n  \"name\": \"mi-dominio\",\n  \"state\": \"CREATE_COMPLETE\",\n  \"outputs\": {\n    \"StackName\": \"mi-dominio\"\n  }\n}\n",
+        "effects": {
+          "terminated": [],
+          "stackCalls": [
+            "describe",
+            "create",
+            "wait",
+            "describe"
+          ],
+          "stackParameters": {
+            "PublicDomain": "sbx.example.com",
+            "CertificateArn": "arn:aws:acm:us-east-1:123456789012:certificate/abc",
+            "AlternateDomainNames": "8000-a.sbx.example.com"
+          }
+        }
+      }
+    },
+    {
+      "name": "domain deploy con un dominio inválido",
+      "args": [
+        "domain",
+        "deploy",
+        "--public-domain",
+        "no es un dominio",
+        "--certificate-arn",
+        "arn:aws:acm:us-east-1:123456789012:certificate/abc",
+        "--yes"
+      ],
+      "now": "2026-09-15T16:02:07Z",
+      "expected": {
+        "exitCode": 1,
+        "stdout": "",
+        "effects": {
+          "terminated": [],
+          "stackCalls": [],
+          "stackParameters": {}
+        }
+      },
+      "stderrIncludes": [
+        "inválido"
+      ]
+    },
+    {
+      "name": "domain destroy --yes",
+      "args": [
+        "domain",
+        "destroy",
+        "--yes"
+      ],
+      "world": {
+        "stacks": {
+          "rayito-custom-domain": {
+            "state": "CREATE_COMPLETE",
+            "outputs": {
+              "DistributionDomainName": "d111.cloudfront.net"
+            }
+          }
+        }
+      },
+      "now": "2026-09-15T16:02:07Z",
+      "expected": {
+        "exitCode": 0,
+        "stdout": "Al borrar: destroy() borra la distribución (tarda ~15 min en deshabilitarse primero), la Function y el KVS; ninguna ruta sobrevive\ncustom-domain: borrado\n",
+        "effects": {
+          "terminated": [],
+          "stackCalls": [
+            "delete",
+            "wait"
+          ],
+          "stackParameters": {}
+        }
+      }
+    },
+    {
+      "name": "domain destroy declinado",
+      "args": [
+        "domain",
+        "destroy"
+      ],
+      "stdin": "n\n",
+      "world": {
+        "stacks": {
+          "rayito-custom-domain": {
+            "state": "CREATE_COMPLETE",
+            "outputs": {
+              "DistributionDomainName": "d111.cloudfront.net"
+            }
+          }
+        }
+      },
+      "now": "2026-09-15T16:02:07Z",
+      "expected": {
+        "exitCode": 1,
+        "stdout": "Al borrar: destroy() borra la distribución (tarda ~15 min en deshabilitarse primero), la Function y el KVS; ninguna ruta sobrevive\n¿Borrar la pila de dominio propio? [y/N]: n\n",
+        "effects": {
+          "terminated": [],
+          "stackCalls": [],
+          "stackParameters": {}
+        }
+      }
+    },
+    {
+      "name": "domain destroy --json",
+      "args": [
+        "--json",
+        "domain",
+        "destroy"
+      ],
+      "world": {
+        "stacks": {
+          "rayito-custom-domain": {
+            "state": "CREATE_COMPLETE",
+            "outputs": {
+              "DistributionDomainName": "d111.cloudfront.net"
+            }
+          }
+        }
+      },
+      "now": "2026-09-15T16:02:07Z",
+      "expected": {
+        "exitCode": 0,
+        "stdout": "{\n  \"name\": \"custom-domain\",\n  \"state\": \"destroyed\"\n}\n",
+        "effects": {
+          "terminated": [],
+          "stackCalls": [
+            "delete",
+            "wait"
+          ],
+          "stackParameters": {}
+        }
+      }
+    },
+    {
+      "name": "dashboard cloudwatch por defecto",
+      "args": [
+        "--region",
+        "us-east-1",
+        "dashboard",
+        "cloudwatch"
+      ],
+      "now": "2026-09-15T16:02:07Z",
+      "expected": {
+        "exitCode": 0,
+        "stdout": "{\n  \"start\": \"-PT6H\",\n  \"widgets\": [\n    {\n      \"type\": \"text\",\n      \"width\": 24,\n      \"height\": 3,\n      \"properties\": {\n        \"markdown\": \"# Rayito\\nLogs de los sandboxes (Logs Insights sobre `/rayito/*`). Cada widget de log ejecuta su consulta al abrir o refrescar el dashboard y CloudWatch factura los datos escaneados: usa un intervalo corto.\"\n      }\n    },\n    {\n      \"type\": \"log\",\n      \"width\": 12,\n      \"height\": 6,\n      \"properties\": {\n        \"region\": \"us-east-1\",\n        \"title\": \"Líneas de log por intervalo\",\n        \"query\": \"SOURCE logGroups(namePrefix: ['/rayito/']) | stats count(*) as lines by bin(5m)\",\n        \"view\": \"timeSeries\"\n      }\n    },\n    {\n      \"type\": \"log\",\n      \"width\": 12,\n      \"height\": 6,\n      \"properties\": {\n        \"region\": \"us-east-1\",\n        \"title\": \"Errores por intervalo\",\n        \"query\": \"SOURCE logGroups(namePrefix: ['/rayito/']) | filter @message like /(?i)error|exception|traceback|fatal|panic/\\n| stats count(*) as errors by bin(5m)\",\n        \"view\": \"timeSeries\"\n      }\n    },\n    {\n      \"type\": \"log\",\n      \"width\": 12,\n      \"height\": 6,\n      \"properties\": {\n        \"region\": \"us-east-1\",\n        \"title\": \"Líneas por grupo de logs\",\n        \"query\": \"SOURCE logGroups(namePrefix: ['/rayito/']) | stats count(*) as lines by @log\\n| sort lines desc\\n| limit 20\",\n        \"view\": \"table\"\n      }\n    },\n    {\n      \"type\": \"log\",\n      \"width\": 12,\n      \"height\": 6,\n      \"properties\": {\n        \"region\": \"us-east-1\",\n        \"title\": \"Streams más ruidosos\",\n        \"query\": \"SOURCE logGroups(namePrefix: ['/rayito/']) | stats count(*) as lines by @logStream\\n| sort lines desc\\n| limit 20\",\n        \"view\": \"table\"\n      }\n    },\n    {\n      \"type\": \"log\",\n      \"width\": 24,\n      \"height\": 6,\n      \"properties\": {\n        \"region\": \"us-east-1\",\n        \"title\": \"Errores recientes\",\n        \"query\": \"SOURCE logGroups(namePrefix: ['/rayito/']) | filter @message like /(?i)error|exception|traceback|fatal|panic/\\n| fields @timestamp, @logStream, @message\\n| sort @timestamp desc\\n| limit 50\",\n        \"view\": \"table\"\n      }\n    }\n  ]\n}\n",
+        "effects": {
+          "terminated": [],
+          "stackCalls": [],
+          "stackParameters": {}
+        }
+      }
+    },
+    {
+      "name": "dashboard cloudwatch con otlp y cuota",
+      "args": [
+        "--region",
+        "us-east-1",
+        "dashboard",
+        "cloudwatch",
+        "--otlp",
+        "--quota"
+      ],
+      "now": "2026-09-15T16:02:07Z",
+      "expected": {
+        "exitCode": 0,
+        "stdout": "{\n  \"start\": \"-PT6H\",\n  \"widgets\": [\n    {\n      \"type\": \"text\",\n      \"width\": 24,\n      \"height\": 3,\n      \"properties\": {\n        \"markdown\": \"# Rayito\\nLogs de los sandboxes (Logs Insights sobre `/rayito/*`). Cada widget de log ejecuta su consulta al abrir o refrescar el dashboard y CloudWatch factura los datos escaneados: usa un intervalo corto.\"\n      }\n    },\n    {\n      \"type\": \"log\",\n      \"width\": 12,\n      \"height\": 6,\n      \"properties\": {\n        \"region\": \"us-east-1\",\n        \"title\": \"Líneas de log por intervalo\",\n        \"query\": \"SOURCE logGroups(namePrefix: ['/rayito/']) | stats count(*) as lines by bin(5m)\",\n        \"view\": \"timeSeries\"\n      }\n    },\n    {\n      \"type\": \"log\",\n      \"width\": 12,\n      \"height\": 6,\n      \"properties\": {\n        \"region\": \"us-east-1\",\n        \"title\": \"Errores por intervalo\",\n        \"query\": \"SOURCE logGroups(namePrefix: ['/rayito/']) | filter @message like /(?i)error|exception|traceback|fatal|panic/\\n| stats count(*) as errors by bin(5m)\",\n        \"view\": \"timeSeries\"\n      }\n    },\n    {\n      \"type\": \"log\",\n      \"width\": 12,\n      \"height\": 6,\n      \"properties\": {\n        \"region\": \"us-east-1\",\n        \"title\": \"Líneas por grupo de logs\",\n        \"query\": \"SOURCE logGroups(namePrefix: ['/rayito/']) | stats count(*) as lines by @log\\n| sort lines desc\\n| limit 20\",\n        \"view\": \"table\"\n      }\n    },\n    {\n      \"type\": \"log\",\n      \"width\": 12,\n      \"height\": 6,\n      \"properties\": {\n        \"region\": \"us-east-1\",\n        \"title\": \"Streams más ruidosos\",\n        \"query\": \"SOURCE logGroups(namePrefix: ['/rayito/']) | stats count(*) as lines by @logStream\\n| sort lines desc\\n| limit 20\",\n        \"view\": \"table\"\n      }\n    },\n    {\n      \"type\": \"log\",\n      \"width\": 24,\n      \"height\": 6,\n      \"properties\": {\n        \"region\": \"us-east-1\",\n        \"title\": \"Errores recientes\",\n        \"query\": \"SOURCE logGroups(namePrefix: ['/rayito/']) | filter @message like /(?i)error|exception|traceback|fatal|panic/\\n| fields @timestamp, @logStream, @message\\n| sort @timestamp desc\\n| limit 50\",\n        \"view\": \"table\"\n      }\n    },\n    {\n      \"type\": \"chart\",\n      \"width\": 12,\n      \"height\": 6,\n      \"properties\": {\n        \"view\": \"line\",\n        \"title\": \"CPU en uso (%)\",\n        \"description\": \"Métricas OTLP de rayd (telemetry=); media entre sandboxes.\",\n        \"region\": \"us-east-1\",\n        \"data\": {\n          \"queries\": [\n            {\n              \"id\": \"cpu\",\n              \"type\": \"cloudwatch-metrics\",\n              \"language\": \"PromQL\",\n              \"query\": \"avg({\\\"rayito.sandbox.cpu.used_pct\\\"})\",\n              \"label\": \"CPU %\"\n            }\n          ]\n        }\n      }\n    },\n    {\n      \"type\": \"chart\",\n      \"width\": 12,\n      \"height\": 6,\n      \"properties\": {\n        \"view\": \"line\",\n        \"title\": \"Memoria (bytes)\",\n        \"description\": \"Métricas OTLP de rayd (telemetry=); media entre sandboxes.\",\n        \"region\": \"us-east-1\",\n        \"data\": {\n          \"queries\": [\n            {\n              \"id\": \"used\",\n              \"type\": \"cloudwatch-metrics\",\n              \"language\": \"PromQL\",\n              \"query\": \"avg({\\\"rayito.sandbox.memory.used_bytes\\\"})\",\n              \"label\": \"en uso\"\n            },\n            {\n              \"id\": \"total\",\n              \"type\": \"cloudwatch-metrics\",\n              \"language\": \"PromQL\",\n              \"query\": \"avg({\\\"rayito.sandbox.memory.total_bytes\\\"})\",\n              \"label\": \"total\"\n            }\n          ]\n        }\n      }\n    },\n    {\n      \"type\": \"chart\",\n      \"width\": 12,\n      \"height\": 6,\n      \"properties\": {\n        \"view\": \"line\",\n        \"title\": \"Disco (bytes)\",\n        \"description\": \"Métricas OTLP de rayd (telemetry=); media entre sandboxes.\",\n        \"region\": \"us-east-1\",\n        \"data\": {\n          \"queries\": [\n            {\n              \"id\": \"used\",\n              \"type\": \"cloudwatch-metrics\",\n              \"language\": \"PromQL\",\n              \"query\": \"avg({\\\"rayito.sandbox.disk.used_bytes\\\"})\",\n              \"label\": \"en uso\"\n            },\n            {\n              \"id\": \"total\",\n              \"type\": \"cloudwatch-metrics\",\n              \"language\": \"PromQL\",\n              \"query\": \"avg({\\\"rayito.sandbox.disk.total_bytes\\\"})\",\n              \"label\": \"total\"\n            }\n          ]\n        }\n      }\n    },\n    {\n      \"type\": \"metric\",\n      \"width\": 12,\n      \"height\": 6,\n      \"properties\": {\n        \"region\": \"us-east-1\",\n        \"title\": \"Memoria asignada / cuota\",\n        \"view\": \"timeSeries\",\n        \"metrics\": [\n          [\n            \"Rayito/Dashboard\",\n            \"MemoryAllocatedFraction\",\n            \"Region\",\n            \"us-east-1\"\n          ]\n        ],\n        \"stat\": \"Maximum\",\n        \"period\": 3600,\n        \"yAxis\": {\n          \"left\": {\n            \"min\": 0,\n            \"max\": 1\n          }\n        },\n        \"annotations\": {\n          \"horizontal\": [\n            {\n              \"label\": \"Aviso\",\n              \"value\": 0.8\n            },\n            {\n              \"label\": \"Crítico\",\n              \"value\": 0.95\n            }\n          ]\n        }\n      }\n    }\n  ]\n}\n",
+        "effects": {
+          "terminated": [],
+          "stackCalls": [],
+          "stackParameters": {}
+        }
+      }
+    },
+    {
+      "name": "dashboard cloudwatch con grupos propios",
+      "args": [
+        "--region",
+        "us-east-1",
+        "dashboard",
+        "cloudwatch",
+        "--log-group",
+        "/rayito/a",
+        "--log-group",
+        "/rayito/b"
+      ],
+      "now": "2026-09-15T16:02:07Z",
+      "expected": {
+        "exitCode": 0,
+        "stdout": "{\n  \"start\": \"-PT6H\",\n  \"widgets\": [\n    {\n      \"type\": \"text\",\n      \"width\": 24,\n      \"height\": 3,\n      \"properties\": {\n        \"markdown\": \"# Rayito\\nLogs de los sandboxes (Logs Insights sobre `/rayito/a, /rayito/b`). Cada widget de log ejecuta su consulta al abrir o refrescar el dashboard y CloudWatch factura los datos escaneados: usa un intervalo corto.\"\n      }\n    },\n    {\n      \"type\": \"log\",\n      \"width\": 12,\n      \"height\": 6,\n      \"properties\": {\n        \"region\": \"us-east-1\",\n        \"title\": \"Líneas de log por intervalo\",\n        \"query\": \"SOURCE '/rayito/a' | SOURCE '/rayito/b' | stats count(*) as lines by bin(5m)\",\n        \"view\": \"timeSeries\"\n      }\n    },\n    {\n      \"type\": \"log\",\n      \"width\": 12,\n      \"height\": 6,\n      \"properties\": {\n        \"region\": \"us-east-1\",\n        \"title\": \"Errores por intervalo\",\n        \"query\": \"SOURCE '/rayito/a' | SOURCE '/rayito/b' | filter @message like /(?i)error|exception|traceback|fatal|panic/\\n| stats count(*) as errors by bin(5m)\",\n        \"view\": \"timeSeries\"\n      }\n    },\n    {\n      \"type\": \"log\",\n      \"width\": 12,\n      \"height\": 6,\n      \"properties\": {\n        \"region\": \"us-east-1\",\n        \"title\": \"Líneas por grupo de logs\",\n        \"query\": \"SOURCE '/rayito/a' | SOURCE '/rayito/b' | stats count(*) as lines by @log\\n| sort lines desc\\n| limit 20\",\n        \"view\": \"table\"\n      }\n    },\n    {\n      \"type\": \"log\",\n      \"width\": 12,\n      \"height\": 6,\n      \"properties\": {\n        \"region\": \"us-east-1\",\n        \"title\": \"Streams más ruidosos\",\n        \"query\": \"SOURCE '/rayito/a' | SOURCE '/rayito/b' | stats count(*) as lines by @logStream\\n| sort lines desc\\n| limit 20\",\n        \"view\": \"table\"\n      }\n    },\n    {\n      \"type\": \"log\",\n      \"width\": 24,\n      \"height\": 6,\n      \"properties\": {\n        \"region\": \"us-east-1\",\n        \"title\": \"Errores recientes\",\n        \"query\": \"SOURCE '/rayito/a' | SOURCE '/rayito/b' | filter @message like /(?i)error|exception|traceback|fatal|panic/\\n| fields @timestamp, @logStream, @message\\n| sort @timestamp desc\\n| limit 50\",\n        \"view\": \"table\"\n      }\n    }\n  ]\n}\n",
+        "effects": {
+          "terminated": [],
+          "stackCalls": [],
+          "stackParameters": {}
+        }
+      }
+    },
+    {
+      "name": "dashboard cloudwatch con un prefijo inválido",
+      "args": [
+        "--region",
+        "us-east-1",
+        "dashboard",
+        "cloudwatch",
+        "--log-group-prefix",
+        "rayito/"
+      ],
+      "now": "2026-09-15T16:02:07Z",
+      "expected": {
+        "exitCode": 2,
+        "stdout": "",
+        "effects": {
+          "terminated": [],
+          "stackCalls": [],
+          "stackParameters": {}
+        }
+      },
+      "stderrIncludes": [
+        "prefijo de grupo de logs inválido"
+      ]
+    },
+    {
+      "name": "image list --json con instantes en otra zona",
+      "args": [
+        "--json",
+        "image",
+        "list"
+      ],
+      "now": "2026-09-15T16:02:07Z",
+      "world": {
+        "images": [
+          {
+            "name": "rayito-base",
+            "state": "UPDATED",
+            "active": "3.0",
+            "createdAt": "2026-09-15T10:39:02-04:00"
+          },
+          {
+            "name": "rayito-base-caps",
+            "state": "UPDATED",
+            "active": "6.0",
+            "failed": "5.0",
+            "createdAt": "2026-09-16T15:30:00+05:30"
+          },
+          {
+            "name": "mi-imagen",
+            "state": "CREATED",
+            "createdAt": "2026-09-17T11:30:15+03:00"
+          }
+        ],
+        "imageVersions": {
+          "rayito-base": [
+            {
+              "version": "2.0",
+              "state": "FAILED",
+              "status": "INACTIVE",
+              "baseVersion": "1.0",
+              "createdAt": "2026-08-31T22:00:00-04:00"
+            },
+            {
+              "version": "3.0",
+              "state": "SUCCESSFUL",
+              "status": "ACTIVE",
+              "baseVersion": "1.0",
+              "artifact": "rayd-000000000000.zip",
+              "createdAt": "2026-09-01T08:30:00+05:30"
+            }
+          ]
+        }
+      },
+      "expected": {
+        "exitCode": 0,
+        "stdout": "[\n  {\n    \"name\": \"rayito-base\",\n    \"imageArn\": \"arn:aws:lambda:us-east-1:123456789012:microvm-image:rayito-base\",\n    \"state\": \"UPDATED\",\n    \"latestActiveImageVersion\": \"3.0\",\n    \"latestFailedImageVersion\": null,\n    \"createdAt\": \"2026-09-15 14:39:02+00:00\"\n  },\n  {\n    \"name\": \"rayito-base-caps\",\n    \"imageArn\": \"arn:aws:lambda:us-east-1:123456789012:microvm-image:rayito-base-caps\",\n    \"state\": \"UPDATED\",\n    \"latestActiveImageVersion\": \"6.0\",\n    \"latestFailedImageVersion\": \"5.0\",\n    \"createdAt\": \"2026-09-16 10:00:00+00:00\"\n  },\n  {\n    \"name\": \"mi-imagen\",\n    \"imageArn\": \"arn:aws:lambda:us-east-1:123456789012:microvm-image:mi-imagen\",\n    \"state\": \"CREATED\",\n    \"latestActiveImageVersion\": null,\n    \"latestFailedImageVersion\": null,\n    \"createdAt\": \"2026-09-17 08:30:15+00:00\"\n  }\n]\n",
+        "effects": {
+          "terminated": [],
+          "stackCalls": [],
+          "stackParameters": {}
+        }
+      }
+    },
+    {
+      "name": "image list en tabla con instantes en otra zona",
+      "args": [
+        "image",
+        "list"
+      ],
+      "now": "2026-09-15T16:02:07Z",
+      "world": {
+        "images": [
+          {
+            "name": "rayito-base",
+            "state": "UPDATED",
+            "active": "3.0",
+            "createdAt": "2026-09-15T10:39:02-04:00"
+          },
+          {
+            "name": "rayito-base-caps",
+            "state": "UPDATED",
+            "active": "6.0",
+            "failed": "5.0",
+            "createdAt": "2026-09-16T15:30:00+05:30"
+          },
+          {
+            "name": "mi-imagen",
+            "state": "CREATED",
+            "createdAt": "2026-09-17T11:30:15+03:00"
+          }
+        ],
+        "imageVersions": {
+          "rayito-base": [
+            {
+              "version": "2.0",
+              "state": "FAILED",
+              "status": "INACTIVE",
+              "baseVersion": "1.0",
+              "createdAt": "2026-08-31T22:00:00-04:00"
+            },
+            {
+              "version": "3.0",
+              "state": "SUCCESSFUL",
+              "status": "ACTIVE",
+              "baseVersion": "1.0",
+              "artifact": "rayd-000000000000.zip",
+              "createdAt": "2026-09-01T08:30:00+05:30"
+            }
+          ]
+        }
+      },
+      "expected": {
+        "exitCode": 0,
+        "stdout": "name              state    latestActiveImageVersion  latestFailedImageVersion  createdAt                \nrayito-base       UPDATED  3.0                                                 2026-09-15 14:39:02+00:00\nrayito-base-caps  UPDATED  6.0                       5.0                       2026-09-16 10:00:00+00:00\nmi-imagen         CREATED                                                      2026-09-17 08:30:15+00:00\n",
+        "effects": {
+          "terminated": [],
+          "stackCalls": [],
+          "stackParameters": {}
+        }
+      }
+    },
+    {
+      "name": "image list de una imagen en tabla con instantes en otra zona",
+      "args": [
+        "image",
+        "list",
+        "rayito-base"
+      ],
+      "now": "2026-09-15T16:02:07Z",
+      "world": {
+        "images": [
+          {
+            "name": "rayito-base",
+            "state": "UPDATED",
+            "active": "3.0",
+            "createdAt": "2026-09-15T10:39:02-04:00"
+          },
+          {
+            "name": "rayito-base-caps",
+            "state": "UPDATED",
+            "active": "6.0",
+            "failed": "5.0",
+            "createdAt": "2026-09-16T15:30:00+05:30"
+          },
+          {
+            "name": "mi-imagen",
+            "state": "CREATED",
+            "createdAt": "2026-09-17T11:30:15+03:00"
+          }
+        ],
+        "imageVersions": {
+          "rayito-base": [
+            {
+              "version": "2.0",
+              "state": "FAILED",
+              "status": "INACTIVE",
+              "baseVersion": "1.0",
+              "createdAt": "2026-08-31T22:00:00-04:00"
+            },
+            {
+              "version": "3.0",
+              "state": "SUCCESSFUL",
+              "status": "ACTIVE",
+              "baseVersion": "1.0",
+              "artifact": "rayd-000000000000.zip",
+              "createdAt": "2026-09-01T08:30:00+05:30"
+            }
+          ]
+        }
+      },
+      "expected": {
+        "exitCode": 0,
+        "stdout": "imageVersion  state       status    baseImageVersion  artifact               createdAt                \n3.0           SUCCESSFUL  ACTIVE    1.0               rayd-000000000000.zip  2026-09-01 03:00:00+00:00\n2.0           FAILED      INACTIVE  1.0                                      2026-09-01 02:00:00+00:00\n",
+        "effects": {
+          "terminated": [],
+          "stackCalls": [],
+          "stackParameters": {}
+        }
+      }
+    },
+    {
+      "name": "sandbox list --json con instantes en otra zona",
+      "args": [
+        "--json",
+        "sandbox",
+        "list"
+      ],
+      "now": "2026-09-15T16:02:07Z",
+      "world": {
+        "sandboxes": [
+          {
+            "id": "microvm-a",
+            "state": "RUNNING",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T10:39:02-04:00"
+          },
+          {
+            "id": "microvm-b",
+            "state": "SUSPENDED",
+            "image": "other",
+            "version": "2.0",
+            "startedAt": "2026-09-15T21:20:00+05:30"
+          },
+          {
+            "id": "microvm-c",
+            "state": "TERMINATED",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T17:39:02+03:00"
+          }
+        ],
+        "infos": [
+          {
+            "id": "microvm-a",
+            "state": "RUNNING",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T10:39:02-04:00",
+            "metadata": {
+              "env": "ci"
+            }
+          },
+          {
+            "id": "microvm-b",
+            "state": "SUSPENDED",
+            "image": "other",
+            "version": "2.0",
+            "startedAt": "2026-09-15T21:20:00+05:30"
+          }
+        ]
+      },
+      "expected": {
+        "exitCode": 0,
+        "stdout": "[\n  {\n    \"sandbox_id\": \"microvm-a\",\n    \"state\": \"RUNNING\",\n    \"template\": \"rayito-base\",\n    \"template_arn\": \"arn:aws:lambda:us-east-1:123456789012:microvm-image:rayito-base\",\n    \"template_version\": \"1.0\",\n    \"started_at\": \"2026-09-15T14:39:02Z\",\n    \"age\": \"1h23m\"\n  },\n  {\n    \"sandbox_id\": \"microvm-b\",\n    \"state\": \"SUSPENDED\",\n    \"template\": \"other\",\n    \"template_arn\": \"arn:aws:lambda:us-east-1:123456789012:microvm-image:other\",\n    \"template_version\": \"2.0\",\n    \"started_at\": \"2026-09-15T15:50:00Z\",\n    \"age\": \"12m07s\"\n  }\n]\n",
+        "effects": {
+          "terminated": [],
+          "stackCalls": [],
+          "stackParameters": {}
+        }
+      }
+    },
+    {
+      "name": "sandbox list en tabla con instantes en otra zona",
+      "args": [
+        "sandbox",
+        "list"
+      ],
+      "now": "2026-09-15T16:02:07Z",
+      "world": {
+        "sandboxes": [
+          {
+            "id": "microvm-a",
+            "state": "RUNNING",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T10:39:02-04:00"
+          },
+          {
+            "id": "microvm-b",
+            "state": "SUSPENDED",
+            "image": "other",
+            "version": "2.0",
+            "startedAt": "2026-09-15T21:20:00+05:30"
+          },
+          {
+            "id": "microvm-c",
+            "state": "TERMINATED",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T17:39:02+03:00"
+          }
+        ],
+        "infos": [
+          {
+            "id": "microvm-a",
+            "state": "RUNNING",
+            "image": "rayito-base",
+            "version": "1.0",
+            "startedAt": "2026-09-15T10:39:02-04:00",
+            "metadata": {
+              "env": "ci"
+            }
+          },
+          {
+            "id": "microvm-b",
+            "state": "SUSPENDED",
+            "image": "other",
+            "version": "2.0",
+            "startedAt": "2026-09-15T21:20:00+05:30"
+          }
+        ]
+      },
+      "expected": {
+        "exitCode": 0,
+        "stdout": "sandbox_id  state      template     template_version  started_at            age   \nmicrovm-a   RUNNING    rayito-base  1.0               2026-09-15T14:39:02Z  1h23m \nmicrovm-b   SUSPENDED  other        2.0               2026-09-15T15:50:00Z  12m07s\n",
+        "effects": {
+          "terminated": [],
+          "stackCalls": [],
+          "stackParameters": {}
+        }
+      }
+    }
+  ]
+}

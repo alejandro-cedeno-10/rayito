@@ -14,7 +14,7 @@ import {
   ListMicrovmImageVersionsCommand,
 } from "@aws-sdk/client-lambda-microvms";
 import { type AwsClientSettings, clientConfig } from "../aws/control-plane.js";
-import { awsCode, loadOptionalSdkClient } from "../aws/optional-client.js";
+import { awsCode, isAwsSdkError, loadOptionalSdkClient } from "../aws/optional-client.js";
 import { sanitizeAwsError } from "../aws/sanitize.js";
 import { AuthenticationError, DashboardError, RateLimitError } from "../errors.js";
 import { COST_EXPLORER_REGION, COST_EXPLORER_SERVICE_NAME, QUOTA_SERVICE_CODE } from "../limits.js";
@@ -61,11 +61,6 @@ export interface Sender {
 
 /** Entrega el cliente en la primera llamada, nunca al construir el adaptador. */
 export type SenderProvider = () => Promise<Sender>;
-
-/** Un error del SDK de AWS v3 lleva `$metadata` o `$fault`; un bug propio, no. */
-function isAwsSdkError(error: unknown): boolean {
-  return typeof error === "object" && error !== null && ("$metadata" in error || "$fault" in error);
-}
 
 /**
  * Memoiza la construcción del cliente: una promesa compartida entre llamadas

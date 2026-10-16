@@ -24,6 +24,7 @@ from mcp.types import ToolAnnotations
 from pydantic import Field
 
 from rayito._aws import ControlPlane
+from rayito._limits import MCP_MAX_OUTPUT_CHARS
 from rayito._transport import TransportSettings
 from rayito._version import __version__
 from rayito.exceptions import (
@@ -75,6 +76,16 @@ SERVER_INSTRUCTIONS = (
     "a ciegas."
 )
 
+
+def spaced_thousands(value: int) -> str:
+    """`100000` como `100 000`: el grupo de miles con espacio de las descripciones en español."""
+    return f"{value:,}".replace(",", " ")
+
+
+READ_FILE_DESCRIPTION = (
+    "Lee un fichero de texto UTF-8 del sandbox. Devuelve `content`, `size` y "
+    f"`truncated` (la salida se corta a {spaced_thousands(MCP_MAX_OUTPUT_CHARS)} caracteres)."
+)
 PAYLOAD_LOGGERS = ("botocore", "boto3", "urllib3")
 PAYLOAD_LOGGERS_LEVEL = logging.WARNING
 
@@ -212,10 +223,11 @@ def register_tools(
         call.finish(sandbox.sandbox_id, exit_code=output["exit_code"])
         return output
 
-    @server.tool(annotations=ToolAnnotations(read_only_hint=True, idempotent_hint=True))
+    @server.tool(
+        description=READ_FILE_DESCRIPTION,
+        annotations=ToolAnnotations(read_only_hint=True, idempotent_hint=True),
+    )
     async def read_file(ctx: Context[SandboxLease], path: PathArg) -> FileContent:
-        """Lee un fichero de texto UTF-8 del sandbox. Devuelve `content`,
-        `size` y `truncated` (la salida se corta a 100 000 caracteres)."""
         lease = lease_of(ctx)
         call = CallLog("read_file", path_chars=len(path))
         async with translated_errors(lease):

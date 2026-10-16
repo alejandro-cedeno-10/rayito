@@ -128,18 +128,65 @@ export function baseImageVersionMatches(echoed: unknown, desired: unknown): bool
   return echoed.trim() !== "" && desired.trim() !== "" && Number.isFinite(a) && a === b;
 }
 
+/** Igualdad estructural: el orden de las claves de un objeto no cuenta (AWS devuelve `hooks` con otro orden que el que se envía). */
 function deepEqual(a: unknown, b: unknown): boolean {
-  return JSON.stringify(a) === JSON.stringify(b);
+  if (Array.isArray(a) || Array.isArray(b)) {
+    return (
+      Array.isArray(a) &&
+      Array.isArray(b) &&
+      a.length === b.length &&
+      a.every((item, index) => deepEqual(item, b[index]))
+    );
+  }
+  if (typeof a === "object" && a !== null && typeof b === "object" && b !== null) {
+    const left = a as Record<string, unknown>;
+    const right = b as Record<string, unknown>;
+    const keys = Object.keys(left);
+    return (
+      keys.length === Object.keys(right).length &&
+      keys.every((key) => key in right && deepEqual(left[key], right[key]))
+    );
+  }
+  return a === b;
+}
+
+const ENVIRONMENT_VARIABLES_KEY = "environmentVariables";
+
+function environmentOf(value: unknown): Record<string, unknown> {
+  return (value ?? {}) as Record<string, unknown>;
+}
+
+/**
+ * Cada clave de `desired` salvo `environmentVariables`, que se compara
+ * aparte: `list-microvm-image-versions` nunca las devuelve (Q118).
+ */
+export function settingsMatch(
+  version: Record<string, unknown>,
+  desired: Record<string, unknown>,
+): boolean {
+  return Object.entries(desired).every(
+    ([key, value]) =>
+      key === ENVIRONMENT_VARIABLES_KEY ||
+      (key === BASE_IMAGE_VERSION_KEY
+        ? baseImageVersionMatches(version[key], value)
+        : deepEqual(version[key], value)),
+  );
+}
+
+/** Una versión sin variables (nunca las tuvo, o viene de la lista) cuenta como `{}`, igual que un `desired` vacío. */
+function environmentMatches(echoed: unknown, wanted: Record<string, unknown>): boolean {
+  return deepEqual(environmentOf(echoed), wanted);
 }
 
 export function configurationMatches(
   version: Record<string, unknown>,
   desired: Record<string, unknown>,
 ): boolean {
-  return Object.entries(desired).every(([key, value]) =>
-    key === BASE_IMAGE_VERSION_KEY
-      ? baseImageVersionMatches(version[key], value)
-      : deepEqual(version[key], value),
+  return (
+    environmentMatches(
+      version[ENVIRONMENT_VARIABLES_KEY],
+      environmentOf(desired[ENVIRONMENT_VARIABLES_KEY]),
+    ) && settingsMatch(version, desired)
   );
 }
 
@@ -162,16 +209,33 @@ export function isActiveSuccessful(item: Record<string, unknown>): boolean {
   return item["state"] === SUCCESSFUL_VERSION_STATE && item["status"] === ACTIVE_VERSION_STATUS;
 }
 
-/** La versión lanzable más reciente con exactamente `desired`; reusarla evita un build. */
+/**
+ * La versión lanzable más reciente con exactamente `desired`; reusarla evita
+ * un build. Las candidatas que coinciden en todo lo demás se comprueban de la
+ * más nueva a la más vieja y, sólo si se piden variables de entorno, se
+ * confirman con `get-microvm-image-version` (la lista no las devuelve: Q118).
+ */
 export async function findReusableVersion(
   clients: ImageBuildClients,
   arn: string,
   desired: Record<string, unknown>,
 ): Promise<string | undefined> {
-  const versions = await clients.listMicrovmImageVersions(arn);
-  return newestVersion(
-    versions.filter((item) => isActiveSuccessful(item) && configurationMatches(item, desired)),
-  );
+  const wanted = environmentOf(desired[ENVIRONMENT_VARIABLES_KEY]);
+  const candidates = (await clients.listMicrovmImageVersions(arn))
+    .filter((item) => isActiveSuccessful(item) && settingsMatch(item, desired))
+    .sort((left, right) => createdAtMs(right) - createdAtMs(left));
+  for (const item of candidates) {
+    const echoed =
+      Object.keys(wanted).length === 0
+        ? item[ENVIRONMENT_VARIABLES_KEY]
+        : (await clients.getMicrovmImageVersion(arn, String(item["imageVersion"])))?.[
+            ENVIRONMENT_VARIABLES_KEY
+          ];
+    if (environmentMatches(echoed, wanted)) {
+      return String(item["imageVersion"]);
+    }
+  }
+  return undefined;
 }
 
 /** Las claves de `INHERITED_CONFIGURATION_KEYS` que la versión base declara. */
@@ -263,6 +327,13 @@ export type Sleeper = (ms: number) => Promise<void>;
 
 const defaultSleep: Sleeper = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+export interface WaitForGateOptions {
+  /** Se llama tras cada lectura con la puerta y los milisegundos que lleva esperando. */
+  readonly onTick?: ((gate: VersionGate, elapsedMs: number) => void) | undefined;
+  /** El reloj de la espera (ms); por defecto `Date.now`. */
+  readonly now?: (() => number) | undefined;
+}
+
 /** Sondea hasta `settled` o hasta agotar `timeoutMs`; el llamante decide qué
  * error lanzar en cada caso (un timeout no es un build fallido). */
 export async function waitForGate(
@@ -271,14 +342,18 @@ export async function waitForGate(
   version: string,
   timeoutMs: number,
   sleep: Sleeper = defaultSleep,
+  options: WaitForGateOptions = {},
 ): Promise<{ gate: VersionGate; timedOut: boolean }> {
-  const started = Date.now();
+  const now = options.now ?? Date.now;
+  const started = now();
   for (;;) {
     const gate = await readGate(clients, arn, version);
+    const elapsed = now() - started;
+    options.onTick?.(gate, elapsed);
     if (gate.settled) {
       return { gate, timedOut: false };
     }
-    if (Date.now() - started >= timeoutMs) {
+    if (elapsed >= timeoutMs) {
       return { gate, timedOut: true };
     }
     await sleep(POLL_INTERVAL_MS);

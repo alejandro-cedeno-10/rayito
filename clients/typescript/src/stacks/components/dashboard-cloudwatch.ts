@@ -6,6 +6,7 @@
  * de Python (`rayito dashboard cloudwatch`); este componente sólo lo despliega.
  */
 
+import { DEFAULT_LOG_GROUP_PREFIX } from "../../dashboard/cloudwatch-board.js";
 import {
   CLOUDWATCH_DASHBOARD_PRICE_USD_PER_MONTH,
   CLOUDWATCH_FREE_DASHBOARD_METRICS,
@@ -19,18 +20,15 @@ function priceEs(value: number): string {
   return String(value).replace(".", ",");
 }
 
-const DASHBOARD_IDLE_COST =
+export const DASHBOARD_IDLE_COST =
   `$0 con los ${CLOUDWATCH_FREE_DASHBOARDS} dashboards gratuitos de la cuenta (hasta ` +
   `${CLOUDWATCH_FREE_DASHBOARD_METRICS} métricas cada uno); ` +
   `${priceEs(CLOUDWATCH_DASHBOARD_PRICE_USD_PER_MONTH)} USD al mes por dashboard por ` +
   `encima de esos ${CLOUDWATCH_FREE_DASHBOARDS}`;
-const LOGS_INSIGHTS_COST =
+export const LOGS_INSIGHTS_COST =
   "Logs Insights: cada widget de log ejecuta su consulta al abrir o refrescar el " +
   "dashboard y se factura por GB escaneado " +
   `(${priceEs(CLOUDWATCH_LOGS_INSIGHTS_PRICE_USD_PER_GB)} USD/GB); acota el intervalo`;
-
-/** Prefijo por defecto de los grupos de logs, con la barra final para no abarcar `/rayito-otro`. */
-export const DEFAULT_LOG_GROUP_PREFIX = "/rayito/";
 
 export const COMPONENT: StackComponent = {
   name: "dashboard-cloudwatch",

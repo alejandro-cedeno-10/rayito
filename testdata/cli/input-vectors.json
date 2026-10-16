@@ -1,0 +1,218 @@
+{
+  "description": "Vectores de entrada de la CLI compartidos por Python y TypeScript (ADR-027): `shlex.join`, pares K=V y `--since`.",
+  "shellJoin": [
+    {
+      "words": [
+        "ls"
+      ],
+      "expected": "ls"
+    },
+    {
+      "words": [
+        "ls",
+        "-l",
+        "/tmp"
+      ],
+      "expected": "ls -l /tmp"
+    },
+    {
+      "words": [
+        "echo",
+        "hello world"
+      ],
+      "expected": "echo 'hello world'"
+    },
+    {
+      "words": [
+        "echo",
+        "it's"
+      ],
+      "expected": "echo 'it'\"'\"'s'"
+    },
+    {
+      "words": [
+        "sh",
+        "-c",
+        "a && b; c | d"
+      ],
+      "expected": "sh -c 'a && b; c | d'"
+    },
+    {
+      "words": [
+        ""
+      ],
+      "expected": "''"
+    },
+    {
+      "words": [
+        "a_b-c.d/e:f=g,h@i%j+k"
+      ],
+      "expected": "a_b-c.d/e:f=g,h@i%j+k"
+    },
+    {
+      "words": [
+        "$HOME",
+        "`x`",
+        "\"q\""
+      ],
+      "expected": "'$HOME' '`x`' '\"q\"'"
+    },
+    {
+      "words": [
+        "ñ",
+        "tab\tx",
+        "new\nline"
+      ],
+      "expected": "'ñ' 'tab\tx' 'new\nline'"
+    }
+  ],
+  "pairs": [
+    {
+      "values": [],
+      "expected": {}
+    },
+    {
+      "values": [
+        "A=1"
+      ],
+      "expected": {
+        "A": "1"
+      }
+    },
+    {
+      "values": [
+        "A=1",
+        "B=x=y"
+      ],
+      "expected": {
+        "A": "1",
+        "B": "x=y"
+      }
+    },
+    {
+      "values": [
+        "EMPTY="
+      ],
+      "expected": {
+        "EMPTY": ""
+      }
+    },
+    {
+      "values": [
+        "A=1",
+        "A=2"
+      ],
+      "expected": {
+        "A": "2"
+      }
+    }
+  ],
+  "pairErrors": [
+    {
+      "values": [
+        "novalue"
+      ],
+      "option": "--metadata",
+      "message": "--metadata: se esperaba K=V (entrada n.º 1)"
+    },
+    {
+      "values": [
+        "=x"
+      ],
+      "option": "--metadata",
+      "message": "--metadata: se esperaba K=V (entrada n.º 1)"
+    },
+    {
+      "values": [
+        "A=1",
+        "oops"
+      ],
+      "option": "--metadata",
+      "message": "--metadata: se esperaba K=V (entrada n.º 2)"
+    }
+  ],
+  "since": [
+    {
+      "text": "30m",
+      "now": "2026-09-15T16:02:07Z",
+      "expectedMs": 1789486327000
+    },
+    {
+      "text": "2h",
+      "now": "2026-09-15T16:02:07Z",
+      "expectedMs": 1789480927000
+    },
+    {
+      "text": "1d",
+      "now": "2026-09-15T16:02:07Z",
+      "expectedMs": 1789401727000
+    },
+    {
+      "text": "45s",
+      "now": "2026-09-15T16:02:07Z",
+      "expectedMs": 1789488082000
+    },
+    {
+      "text": " 10m ",
+      "now": "2026-09-15T16:02:07Z",
+      "expectedMs": 1789487527000
+    },
+    {
+      "text": "2026-09-15T10:00:00Z",
+      "now": "2026-09-15T16:02:07Z",
+      "expectedMs": 1789466400000
+    },
+    {
+      "text": "2026-09-15T10:00:00",
+      "now": "2026-09-15T16:02:07Z",
+      "expectedMs": 1789466400000
+    },
+    {
+      "text": "2026-09-15T10:00:00+02:00",
+      "now": "2026-09-15T16:02:07Z",
+      "expectedMs": 1789459200000
+    },
+    {
+      "text": "2026-09-15 10:00:00",
+      "now": "2026-09-15T16:02:07Z",
+      "expectedMs": 1789466400000
+    },
+    {
+      "text": "2026-09-15",
+      "now": "2026-09-15T16:02:07Z",
+      "expectedMs": 1789430400000
+    },
+    {
+      "text": "2026-09-15T10:00:00.250Z",
+      "now": "2026-09-15T16:02:07Z",
+      "expectedMs": 1789466400250
+    }
+  ],
+  "sinceErrors": [
+    {
+      "text": "yesterday",
+      "now": "2026-09-15T16:02:07Z",
+      "message": "--since no reconocido: 'yesterday' (usa 30m, 2h, 1d o ISO-8601)"
+    },
+    {
+      "text": "1w",
+      "now": "2026-09-15T16:02:07Z",
+      "message": "--since no reconocido: '1w' (usa 30m, 2h, 1d o ISO-8601)"
+    },
+    {
+      "text": "",
+      "now": "2026-09-15T16:02:07Z",
+      "message": "--since no reconocido: '' (usa 30m, 2h, 1d o ISO-8601)"
+    },
+    {
+      "text": "10",
+      "now": "2026-09-15T16:02:07Z",
+      "message": "--since no reconocido: '10' (usa 30m, 2h, 1d o ISO-8601)"
+    },
+    {
+      "text": "2026-13-45",
+      "now": "2026-09-15T16:02:07Z",
+      "message": "--since no reconocido: '2026-13-45' (usa 30m, 2h, 1d o ISO-8601)"
+    }
+  ]
+}

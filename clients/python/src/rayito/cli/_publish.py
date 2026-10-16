@@ -114,6 +114,7 @@ from rayito._images import (
     upload_if_absent,
 )
 from rayito._images import wait_for_gate as wait_for_image_gate
+from rayito._limits import MAX_CONCURRENT_IMAGE_BUILDS
 from rayito._sizing import NAME_TO_MEMORY_MIB
 from rayito.cli._artifact import VARIANTS, marker_has_efs, marker_variant
 from rayito.cli._console import client_error_code, echo, emit_json, fail
@@ -151,14 +152,6 @@ MANAGED_BASE_IMAGE_NAME = "al2023-1"
 # (Q88) sin llamar a AWS; `rayd` no la lee hoy (0.6), ver el docstring del
 # módulo y `sized_settings`.
 BASELINE_MEMORY_ENV_VAR = "RAYITO_BASELINE_MEMORY_MIB"
-# Oleadas de construcción simultánea de `--sizes`: al menos 10 builds en
-# paralelo no degradan el servicio (Q83, docs/research/2026-10-e2b-out-of-
-# scope.md; compartido con el límite de concurrencia de m15-templates, que
-# mide lo mismo del lado de `CreateMicrovmImage`). El catálogo cerrado de
-# tamaños tiene como mucho 4 sufijos además del baseline, así que hoy esto
-# nunca forma una segunda oleada; se implementa igual porque el límite es
-# del servicio, no de este catálogo.
-MAX_CONCURRENT_IMAGE_BUILDS_Q83 = 10
 
 IMAGE_HOOKS: dict[str, Any] = {
     "port": HOOKS_PORT,
@@ -646,7 +639,7 @@ def publish_sizes(
     una imagen por cada nombre de `size_names` (nunca el baseline: eso es
     `build_or_reuse(base_settings, ...)`, que `publish`/
     `publish_with_sizes` ya cubren por su cuenta). Cada oleada de a lo sumo
-    `MAX_CONCURRENT_IMAGE_BUILDS_Q83` construcciones se somete entera antes
+    `MAX_CONCURRENT_IMAGE_BUILDS` construcciones se somete entera antes
     de esperar a que ninguna se asiente, así ``create``/``update-microvm-
     image`` las construye en paralelo. Nunca imprime el documento final:
     devuelve el resumen de cada tamaño (su `['launchable']` dice si quedó
@@ -655,8 +648,8 @@ def publish_sizes(
     emit = progress_emitter(json_output)
     require_matching_variant(base_settings)
     summaries: dict[str, dict[str, Any]] = {}
-    for wave_start in range(0, len(size_names), MAX_CONCURRENT_IMAGE_BUILDS_Q83):
-        wave = size_names[wave_start : wave_start + MAX_CONCURRENT_IMAGE_BUILDS_Q83]
+    for wave_start in range(0, len(size_names), MAX_CONCURRENT_IMAGE_BUILDS):
+        wave = size_names[wave_start : wave_start + MAX_CONCURRENT_IMAGE_BUILDS]
         pending: list[tuple[str, PublishSettings, str, str, UploadedArtifact, float]] = []
         for size_name in wave:
             settings = sized_settings(base_settings, size_name)

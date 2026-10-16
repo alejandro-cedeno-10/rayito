@@ -5,6 +5,7 @@ en una terminal."""
 from __future__ import annotations
 
 import io
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -53,3 +54,13 @@ def test_echo_to_a_pipe_keeps_the_bytes(monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.setattr("sys.stdout", pipe)
     _console.echo(f"x{CURSOR_UP_AND_ERASE}")
     assert pipe.getvalue() == f"x{CURSOR_UP_AND_ERASE}\n"
+
+
+def test_datetimes_in_any_zone_are_written_in_utc(capsys: pytest.CaptureFixture[str]) -> None:
+    moment = datetime(2026, 9, 15, 10, 39, 2, tzinfo=timezone(timedelta(hours=-4)))
+    _console.emit_json({"createdAt": moment})
+    _console.table(["createdAt"], [[moment]])
+    out = capsys.readouterr().out
+    assert '"createdAt": "2026-09-15 14:39:02+00:00"' in out
+    assert "2026-09-15 14:39:02+00:00" in out.split("\n", 3)[3]
+    assert "-04:00" not in out

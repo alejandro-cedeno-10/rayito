@@ -6,6 +6,32 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
 
 ## [Unreleased]
 
+### Añadido
+
+- **`rayito --version`**: imprime la versión y el runtime (`rayito 0.x
+  (python)`), para saber cuál de las dos CLI (Python o TypeScript) responde
+  cuando ambas están instaladas.
+
+### Cambiado
+
+- **`rayito sandbox proxy` recorta sólo `OWS` y valida el tamaño de trozo
+  antes de reenviarlo** (ADR-027, vectores compartidos con la CLI de
+  TypeScript en `testdata/cli/proxy-vectors.json`). Los valores de cabecera,
+  los elementos de `Content-Length`/`Transfer-Encoding` y el `chunk-size`
+  pierden sólo espacios y tabuladores (RFC 9110 §5.6.3): `str.strip()` quitaba
+  también `\x85` o `\xa0`, así que un `Content-Length: 12\x85` tenía longitud
+  12 en el proxy y un upstream estricto lo rechazaría. Un `chunk-size` inválido ya no
+  se escribe en el upstream antes de cortar. Los topes y plazos del proxy
+  (`PROXY_*`) pasan a `limits.json`, con los mismos valores.
+
+- **La CLI escribe siempre los instantes en UTC** (`2026-09-15 14:39:02+00:00`
+  en `--json` y en las tablas, `isoformat` en UTC en `image prune`): antes
+  salían en la zona local de la máquina, porque boto3 entrega `datetime` en
+  esa zona, y la CLI de TypeScript escribe UTC. Los vectores compartidos
+  (`testdata/cli/format-vectors.json`) y los casos con instantes en otra zona
+  (`command-cases.json`) hacen fallar el CI de los dos lenguajes si vuelven a
+  separarse.
+
 ## [0.12.0] - 2026-10-15
 
 ### Añadido

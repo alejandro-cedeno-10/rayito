@@ -27,6 +27,7 @@ import {
   QUOTA_WARNING_FRACTION,
   SUSPENDED_STATES,
 } from "../limits.js";
+import { MS_PER_SECOND } from "../units.js";
 
 export type QuotaLevel = "ok" | "warning" | "critical";
 export type WarningKind = "memory_high" | "memory_critical" | "below_default" | "not_listed";
@@ -48,8 +49,6 @@ export const CAPACITY_CODE = "InsufficientCapacityException";
  */
 export const MEMORY_COUNTED_STATES: readonly string[] = [RUNNING_STATE, ...SUSPENDED_STATES];
 export const MIB_PER_GB = 1024;
-/** Milisegundos en un segundo, para convertir marcas de `Date`. */
-export const MS_PER_SECOND = 1000;
 export const PERCENT = 100;
 
 export const MEMORY_KIND = "memory-gb";
@@ -583,6 +582,11 @@ export class TtlCache<K, V> {
       return undefined;
     }
     return entry.value;
+  }
+
+  /** Descarta todo lo guardado (el panel lo hace tras una acción). */
+  clear(): void {
+    this.#entries.clear();
   }
 
   put(key: K, value: V): void {

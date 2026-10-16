@@ -17,6 +17,7 @@ from typing import Any, Final
 from mcp.types import EmbeddedResource, ImageContent, TextContent, TextResourceContents
 from typing_extensions import TypedDict
 
+from rayito._limits import MCP_MAX_OUTPUT_CHARS
 from rayito._models import (
     CommandResult,
     EntryInfo,
@@ -27,7 +28,6 @@ from rayito._models import (
 )
 from rayito.exceptions import CommandExitException
 
-MAX_OUTPUT_CHARS: Final = 100_000
 PNG_MIME: Final = "image/png"
 JPEG_MIME: Final = "image/jpeg"
 SVG_MIME: Final = "image/svg+xml"
@@ -82,7 +82,7 @@ class SandboxList(TypedDict):
 ContentBlock = TextContent | ImageContent | EmbeddedResource
 
 
-def truncate_text(text: str, limit: int = MAX_OUTPUT_CHARS) -> tuple[str, bool]:
+def truncate_text(text: str, limit: int = MCP_MAX_OUTPUT_CHARS) -> tuple[str, bool]:
     """Corta `text` a `limit` caracteres con el sufijo `… [truncado: <n>
     caracteres más]`; el booleano dice si hubo corte."""
     if len(text) <= limit:
@@ -92,7 +92,7 @@ def truncate_text(text: str, limit: int = MAX_OUTPUT_CHARS) -> tuple[str, bool]:
 
 
 def execution_to_blocks(
-    execution: Execution, *, sandbox_id: str, limit: int = MAX_OUTPUT_CHARS
+    execution: Execution, *, sandbox_id: str, limit: int = MCP_MAX_OUTPUT_CHARS
 ) -> list[ContentBlock]:
     """Primero un `TextContent` JSON con el resumen, después una imagen por
     `png`/`jpeg` y un recurso embebido por `svg` (design D6)."""
@@ -162,7 +162,7 @@ def svg_result_uri(sandbox_id: str, execution_count: int | None, index: int) -> 
 
 
 def command_output_from(
-    result: CommandResult | CommandExitException, limit: int = MAX_OUTPUT_CHARS
+    result: CommandResult | CommandExitException, limit: int = MCP_MAX_OUTPUT_CHARS
 ) -> CommandOutput:
     """Un exit code distinto de cero es dato: la excepción del SDK lleva los
     mismos campos que el resultado."""
@@ -176,7 +176,7 @@ def command_output_from(
     )
 
 
-def file_content_from(path: str, content: str, limit: int = MAX_OUTPUT_CHARS) -> FileContent:
+def file_content_from(path: str, content: str, limit: int = MCP_MAX_OUTPUT_CHARS) -> FileContent:
     text, cut = truncate_text(content, limit)
     return FileContent(path=path, content=text, size=len(content), truncated=cut)
 

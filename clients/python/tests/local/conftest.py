@@ -25,6 +25,7 @@ import pytest
 
 from rayito import Sandbox
 from rayito._aws import LambdaMicrovmsControlPlane
+from rayito._limits import TERMINAL_STATES
 from rayito._transport import TransportSettings
 from rayito.exceptions import SandboxNotFoundException
 
@@ -124,12 +125,23 @@ def seed_local_image(session: boto3.session.Session, bucket: str) -> str:
     return str(created["imageArn"])
 
 
+def terminate_stale_sandboxes(plane: LocalGuestControlPlane) -> None:
+    """Termina en Floci lo que una sesión anterior dejó vivo. Un guest aloja un
+    sandbox a la vez y contesta el `Health` de cualquier id que Floci liste,
+    así que un residuo haría coincidir un filtro `--metadata` con un id ajeno."""
+    for item in list(plane.list_microvms()):
+        if item.state not in TERMINAL_STATES:
+            with contextlib.suppress(SandboxNotFoundException):
+                plane.terminate_microvm(item.sandbox_id)
+
+
 @pytest.fixture(scope="session")
 def control_plane(
     local_settings: LocalSettings, aws_session: boto3.session.Session
 ) -> Iterator[LocalGuestControlPlane]:
     inner = LambdaMicrovmsControlPlane.from_session(aws_session, region=local_settings.region)
     plane = LocalGuestControlPlane(inner, local_settings.address)
+    terminate_stale_sandboxes(plane)
     yield plane
     live = plane.live_sandbox_id
     if live is not None:

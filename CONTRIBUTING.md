@@ -217,6 +217,15 @@ se filtran los tests (`LOCAL_E2E_ARGS`) están en
 [Probar en local](docs/site/docs/guias/probar-en-local.md). Este entorno
 no sustituye al e2e contra AWS que cierra un hito o una release (regla 4).
 
+Cuánto AWS hace falta depende de lo que toca el cambio. Si solo cambian docs o
+tests, ninguno. Si cambian el SDK o sus herramientas (CLI, servidor MCP, panel
+local) sin tocar `rayd`, la imagen, `proto/`, `infra/` ni el plano de control,
+bastan el CI, el e2e local de esta sección (el workflow `local-e2e` se dispara
+con cambios en `clients/` y `testdata/`) y un chequeo corto en AWS de la
+función tocada. Con cambios en `rayd`, la imagen, `proto/`, `infra/`, el plano
+de control o una release, la regresión completa. La tabla está en
+`.claude/skills/rayito-engineering/reference/release-and-aws.md`.
+
 ## 3. Seguimiento de trabajo
 
 - El trabajo se sigue en **GitHub Issues**: bugs y propuestas con las

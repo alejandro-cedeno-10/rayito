@@ -1,0 +1,164 @@
+{
+  "server": {
+    "name": "rayito",
+    "instructions": "Todas las herramientas comparten un único sandbox Linux (usuario uid 1000, directorio /home/user) con un kernel Python que conserva el estado entre llamadas a run_code; hay salida a internet salvo que la imagen lo impida. El sandbox aparece en la primera llamada que lo necesita y se destruye cuando el servidor termina; si pasa un rato sin uso AWS lo suspende y la siguiente llamada lo reanuda sola. Un exit_code distinto de cero en run_command o un error del kernel en run_code son datos para leer, no fallos que reintentar a ciegas."
+  },
+  "tools": [
+    {
+      "name": "run_code",
+      "description": "Ejecuta código Python en el kernel con estado del sandbox (las variables persisten entre llamadas). Devuelve un bloque JSON con `text`, `stdout`, `stderr`, `error`, `execution_count` y los mime types de cada resultado, seguido de las imágenes PNG/JPEG y los SVG que produjo la celda. Un error del kernel llega en `error`.",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "openWorldHint": true
+      },
+      "input": [
+        {
+          "name": "code",
+          "type": "string",
+          "required": true,
+          "description": "Código Python que ejecutar en el kernel del sandbox."
+        },
+        {
+          "name": "timeout",
+          "type": "integer",
+          "required": false,
+          "description": "Segundos de reloj que el agente concede a la celda antes de interrumpirla.",
+          "default": 300,
+          "minimum": 1,
+          "maximum": 3600
+        }
+      ],
+      "output": null
+    },
+    {
+      "name": "run_command",
+      "description": "Ejecuta un comando de shell en el sandbox y espera a que termine. Devuelve `stdout`, `stderr` y `exit_code`; un exit code distinto de cero es información, no un error.",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "openWorldHint": true
+      },
+      "input": [
+        {
+          "name": "cmd",
+          "type": "string",
+          "required": true,
+          "description": "Comando que ejecuta /bin/sh -c como el usuario del sandbox."
+        },
+        {
+          "name": "timeout",
+          "type": "integer",
+          "required": false,
+          "description": "Segundos de reloj antes de que el agente mate el comando.",
+          "default": 60,
+          "minimum": 1,
+          "maximum": 3600
+        },
+        {
+          "name": "cwd",
+          "type": "string",
+          "required": false,
+          "description": "Directorio de trabajo; por defecto /home/user."
+        }
+      ],
+      "output": [
+        "exit_code",
+        "stderr",
+        "stdout",
+        "truncated"
+      ]
+    },
+    {
+      "name": "read_file",
+      "description": "Lee un fichero de texto UTF-8 del sandbox. Devuelve `content`, `size` y `truncated` (la salida se corta a 100 000 caracteres).",
+      "annotations": {
+        "readOnlyHint": true,
+        "idempotentHint": true
+      },
+      "input": [
+        {
+          "name": "path",
+          "type": "string",
+          "required": true,
+          "description": "Ruta absoluta o relativa a /home/user."
+        }
+      ],
+      "output": [
+        "content",
+        "path",
+        "size",
+        "truncated"
+      ]
+    },
+    {
+      "name": "write_file",
+      "description": "Escribe un fichero de texto UTF-8 en el sandbox, creando los directorios intermedios y sobrescribiendo si ya existe. Devuelve `path` y `size`.",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": true
+      },
+      "input": [
+        {
+          "name": "path",
+          "type": "string",
+          "required": true,
+          "description": "Ruta absoluta o relativa a /home/user."
+        },
+        {
+          "name": "content",
+          "type": "string",
+          "required": true,
+          "description": "Contenido del fichero en UTF-8."
+        }
+      ],
+      "output": [
+        "path",
+        "size"
+      ]
+    },
+    {
+      "name": "list_files",
+      "description": "Lista un directorio del sandbox hasta `depth` niveles. Cada entrada trae `name`, `path`, `type` (`file`, `dir`, `symlink` o null), `size` y `modified_time` (ISO 8601).",
+      "annotations": {
+        "readOnlyHint": true,
+        "idempotentHint": true
+      },
+      "input": [
+        {
+          "name": "path",
+          "type": "string",
+          "required": false,
+          "description": "Directorio que listar.",
+          "default": "/home/user"
+        },
+        {
+          "name": "depth",
+          "type": "integer",
+          "required": false,
+          "description": "Niveles de subdirectorios que incluir.",
+          "default": 1,
+          "minimum": 1,
+          "maximum": 5
+        }
+      ],
+      "output": [
+        "entries",
+        "path"
+      ]
+    },
+    {
+      "name": "list_sandboxes",
+      "description": "Lista los sandboxes vivos de la imagen configurada en `RAYITO_TEMPLATE` (cualquier estado salvo terminado); `current` marca el de este servidor. Nunca crea un sandbox.",
+      "annotations": {
+        "readOnlyHint": true,
+        "idempotentHint": true
+      },
+      "input": [],
+      "output": [
+        "sandboxes"
+      ]
+    }
+  ]
+}

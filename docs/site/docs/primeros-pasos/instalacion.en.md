@@ -1,8 +1,8 @@
 # Installation
 
 Rayito has two SDKs with the same surface, Python and TypeScript, and a CLI
-written in Python. Install the SDK for your application's language and the
-CLI to set up the account.
+in each one, with the same commands. Install the SDK for your application's
+language and, to set up the account, the CLI of either one.
 
 ## The SDK { #el-sdk }
 
@@ -29,15 +29,29 @@ CLI to set up the account.
 ## The CLI { #la-cli }
 
 The `rayito` CLI publishes the image, diagnoses the account and operates
-sandboxes. It is an extra of the Python package:
+sandboxes. There is one per SDK, with the same surface ([CLI](../cli.md)):
 
-```bash
-pip install "rayito[cli]"          # or: uv tool install "rayito[cli]"
-rayito --help
-```
+=== "Python"
 
-If you use TypeScript, install it anyway (or run it without installing with
-`uvx --from "rayito[cli]" rayito doctor`).
+    It is an extra of the Python package:
+
+    ```bash
+    pip install "rayito[cli]"          # or: uv tool install "rayito[cli]"
+    rayito --help
+    ```
+
+    To run it without installing: `uvx --from "rayito[cli]" rayito doctor`.
+
+=== "TypeScript"
+
+    It ships in the npm package, with no extras:
+
+    ```bash
+    npx rayito --help                  # or: npm install --global rayito
+    ```
+
+If you install both, the first one on the `PATH` wins; `rayito --version` says
+which one answers.
 
 ## Optional extras { #extras-opcionales }
 
@@ -45,8 +59,8 @@ None of this is needed to get started.
 
 | For | Python | TypeScript |
 |---|---|---|
-| The `rayito` CLI | `pip install "rayito[cli]"` | (use the Python one) |
-| The MCP server ([MCP server](../mcp.md)) | `pip install "rayito[mcp]"` | — |
+| The `rayito` CLI | `pip install "rayito[cli]"` | (included in the package: `npx rayito`) |
+| The MCP server ([MCP server](../mcp.md)) | `pip install "rayito[mcp]"` | `npm i @modelcontextprotocol/server zod` |
 | OpenTelemetry traces ([OpenTelemetry](../funciones-opcionales/opentelemetry.md)) | `pip install "rayito[otel]" opentelemetry-sdk` | `npm i @opentelemetry/api @opentelemetry/sdk-trace-base` |
 | Secrets Manager secrets ([Secrets](../secrets.md)) | (included: uses `boto3`) | `npm i @aws-sdk/client-secrets-manager` |
 | Secret gateway and agent in the sandbox ([Secret gateway](../funciones-opcionales/pasarela-de-secretos.md), [Agent in the sandbox](../guias/agente-en-el-sandbox.md)) | (included: uses `boto3`) | `npm i @aws-sdk/client-secrets-manager` |

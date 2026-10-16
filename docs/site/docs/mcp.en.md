@@ -1,7 +1,10 @@
 # MCP server
 
-`rayito.mcp` is a [Model Context Protocol](https://modelcontextprotocol.io)
-server that gives any MCP host (Claude Code, Claude Desktop, Cursor, VS
+`rayito.mcp` (Python) and the `rayito-mcp` executable of the npm package
+(TypeScript) are a [Model Context Protocol](https://modelcontextprotocol.io)
+server with the same six tools, the same environment variables and the same
+behavior (the tools' contract is in `testdata/mcp/tools.json`, and both test
+suites check it). It gives any MCP host (Claude Code, Claude Desktop, Cursor, VS
 Code, the Inspector) a Rayito sandbox with one start command and one
 environment variable. Each server **process** owns **one** sandbox: it is
 created on the first tool that needs it, AWS suspends it when
@@ -24,24 +27,47 @@ to an agent that runs **inside** the sandbox (`sbx.agent`), use
 
 ## Installation { #instalacion }
 
-```bash
-pip install "rayito[mcp]"      # or: uv add "rayito[mcp]"
-python -m rayito.mcp --help     # equivalent to the rayito-mcp script
-```
+=== "Python"
 
-The extra installs the official `mcp` 2.x SDK (`pip install "rayito[mcp]"`,
-the package is on PyPI). From a repository checkout:
+    ```bash
+    pip install "rayito[mcp]"      # or: uv add "rayito[mcp]"
+    python -m rayito.mcp --help     # equivalent to the rayito-mcp script
+    ```
 
-```bash
-uv run --project <repo>/clients/python --extra mcp rayito-mcp
-```
+    The extra installs the official `mcp` 2.x SDK (`pip install "rayito[mcp]"`,
+    the package is on PyPI). From a repository checkout:
 
-Without the extra, `rayito-mcp` and `python -m rayito.mcp` print a
-one-line notice with the install command and exit with 2 (no traceback),
-just like the `rayito` CLI without `rayito[cli]`; `import rayito` does not
-change. Accessing a `rayito.mcp` name directly (`McpSettings`,
-`build_server`, …) without the extra fails with a `ModuleNotFoundError`
-that gives the same command.
+    ```bash
+    uv run --project <repo>/clients/python --extra mcp rayito-mcp
+    ```
+
+    Without the extra, `rayito-mcp` and `python -m rayito.mcp` print a
+    one-line notice with the install command and exit with 2 (no traceback),
+    just like the `rayito` CLI without `rayito[cli]`; `import rayito` does not
+    change. Accessing a `rayito.mcp` name directly (`McpSettings`,
+    `build_server`, …) without the extra fails with a `ModuleNotFoundError`
+    that gives the same command.
+
+=== "TypeScript"
+
+    The `rayito-mcp` executable ships in the `rayito` package. The official MCP
+    SDK (`@modelcontextprotocol/server`) and `zod` are **optional peers**: they
+    are not installed with `rayito`, just like Python's `mcp` extra. Without
+    installing anything:
+
+    ```bash
+    npx -y -p rayito -p @modelcontextprotocol/server -p zod rayito-mcp --help
+    ```
+
+    Or in a project:
+
+    ```bash
+    npm install rayito @modelcontextprotocol/server zod
+    npx rayito-mcp --help
+    ```
+
+    If either peer is missing, `rayito-mcp` prints the exact `npx` command above
+    and exits with 2, with no traceback; `import "rayito"` does not change.
 
 ## Environment variables { #variables-de-entorno }
 
@@ -106,35 +132,65 @@ sandbox is still the same one) and a sandbox that expired (`ya no existe
 
 ## Claude Code { #claude-code }
 
-```bash
-claude mcp add rayito \
-  -e RAYITO_TEMPLATE=rayito-base -e AWS_REGION=us-east-1 -e AWS_PROFILE=<your-profile> \
-  -- uvx --from "rayito[mcp]" rayito-mcp
-```
+=== "Python"
 
-From a checkout, replace the command with
-`uv run --project <repo>/clients/python --extra mcp rayito-mcp`.
+    ```bash
+    claude mcp add rayito \
+      -e RAYITO_TEMPLATE=rayito-base -e AWS_REGION=us-east-1 -e AWS_PROFILE=<your-profile> \
+      -- uvx --from "rayito[mcp]" rayito-mcp
+    ```
+
+    From a checkout, replace the command with
+    `uv run --project <repo>/clients/python --extra mcp rayito-mcp`.
+
+=== "TypeScript"
+
+    ```bash
+    claude mcp add rayito \
+      -e RAYITO_TEMPLATE=rayito-base -e AWS_REGION=us-east-1 -e AWS_PROFILE=<your-profile> \
+      -- npx -y -p rayito -p @modelcontextprotocol/server -p zod rayito-mcp
+    ```
 
 ## Claude Desktop { #claude-desktop }
 
 `claude_desktop_config.json` (`~/Library/Application Support/Claude/` on
 macOS, `%APPDATA%\Claude\` on Windows):
 
-```json
-{
-  "mcpServers": {
-    "rayito": {
-      "command": "uvx",
-      "args": ["--from", "rayito[mcp]", "rayito-mcp"],
-      "env": {
-        "RAYITO_TEMPLATE": "rayito-base",
-        "AWS_REGION": "us-east-1",
-        "AWS_PROFILE": "<your-profile>"
+=== "Python"
+
+    ```json
+    {
+      "mcpServers": {
+        "rayito": {
+          "command": "uvx",
+          "args": ["--from", "rayito[mcp]", "rayito-mcp"],
+          "env": {
+            "RAYITO_TEMPLATE": "rayito-base",
+            "AWS_REGION": "us-east-1",
+            "AWS_PROFILE": "<your-profile>"
+          }
+        }
       }
     }
-  }
-}
-```
+    ```
+
+=== "TypeScript"
+
+    ```json
+    {
+      "mcpServers": {
+        "rayito": {
+          "command": "npx",
+          "args": ["-y", "-p", "rayito", "-p", "@modelcontextprotocol/server", "-p", "zod", "rayito-mcp"],
+          "env": {
+            "RAYITO_TEMPLATE": "rayito-base",
+            "AWS_REGION": "us-east-1",
+            "AWS_PROFILE": "<your-profile>"
+          }
+        }
+      }
+    }
+    ```
 
 Claude Desktop only rereads the file at startup: quit it completely (not
 just the window) and open it again. The sandbox is destroyed when Claude
@@ -144,39 +200,84 @@ Desktop closes the server.
 
 Cursor, `.cursor/mcp.json`:
 
-```json
-{
-  "mcpServers": {
-    "rayito": {
-      "command": "uvx",
-      "args": ["--from", "rayito[mcp]", "rayito-mcp"],
-      "env": {"RAYITO_TEMPLATE": "rayito-base", "AWS_REGION": "us-east-1", "AWS_PROFILE": "<your-profile>"}
+=== "Python"
+
+    ```json
+    {
+      "mcpServers": {
+        "rayito": {
+          "command": "uvx",
+          "args": ["--from", "rayito[mcp]", "rayito-mcp"],
+          "env": {"RAYITO_TEMPLATE": "rayito-base", "AWS_REGION": "us-east-1", "AWS_PROFILE": "<your-profile>"}
+        }
+      }
     }
-  }
-}
-```
+    ```
+
+=== "TypeScript"
+
+    ```json
+    {
+      "mcpServers": {
+        "rayito": {
+          "command": "npx",
+          "args": ["-y", "-p", "rayito", "-p", "@modelcontextprotocol/server", "-p", "zod", "rayito-mcp"],
+          "env": {"RAYITO_TEMPLATE": "rayito-base", "AWS_REGION": "us-east-1", "AWS_PROFILE": "<your-profile>"}
+        }
+      }
+    }
+    ```
 
 VS Code, `.vscode/mcp.json`:
 
-```json
-{
-  "servers": {
-    "rayito": {
-      "type": "stdio",
-      "command": "uvx",
-      "args": ["--from", "rayito[mcp]", "rayito-mcp"],
-      "env": {"RAYITO_TEMPLATE": "rayito-base", "AWS_REGION": "us-east-1", "AWS_PROFILE": "<your-profile>"}
+=== "Python"
+
+    ```json
+    {
+      "servers": {
+        "rayito": {
+          "type": "stdio",
+          "command": "uvx",
+          "args": ["--from", "rayito[mcp]", "rayito-mcp"],
+          "env": {"RAYITO_TEMPLATE": "rayito-base", "AWS_REGION": "us-east-1", "AWS_PROFILE": "<your-profile>"}
+        }
+      }
     }
-  }
-}
-```
+    ```
+
+=== "TypeScript"
+
+    ```json
+    {
+      "servers": {
+        "rayito": {
+          "type": "stdio",
+          "command": "npx",
+          "args": ["-y", "-p", "rayito", "-p", "@modelcontextprotocol/server", "-p", "zod", "rayito-mcp"],
+          "env": {"RAYITO_TEMPLATE": "rayito-base", "AWS_REGION": "us-east-1", "AWS_PROFILE": "<your-profile>"}
+        }
+      }
+    }
+    ```
 
 ## HTTP mode { #modo-http }
 
-```bash
-python -m rayito.mcp --http                    # http://127.0.0.1:8000/mcp
-python -m rayito.mcp --http --host 127.0.0.1 --port 8000
-```
+=== "Python"
+
+    ```bash
+    python -m rayito.mcp --http                    # http://127.0.0.1:8000/mcp
+    python -m rayito.mcp --http --host 127.0.0.1 --port 8000
+    ```
+
+=== "TypeScript"
+
+    ```bash
+    npx -y -p rayito -p @modelcontextprotocol/server -p zod rayito-mcp --http   # http://127.0.0.1:8000/mcp
+    npx rayito-mcp --http --host 127.0.0.1 --port 8000
+    ```
+
+    It serves the official SDK's HTTP transport over `node:http`, with no
+    additional dependencies.
 
 It serves streamable HTTP for hosts and tools that only speak HTTP (the
 Inspector in URL mode, Cursor's or Claude Code's remote entries):
@@ -204,18 +305,28 @@ claude mcp add --transport http rayito-http http://127.0.0.1:8000/mcp
 
 ## Inspector { #inspector }
 
-```bash
-RAYITO_TEMPLATE=rayito-base AWS_REGION=us-east-1 AWS_PROFILE=<your-profile> \
-  pnpm dlx @modelcontextprotocol/inspector \
-  uv run --project <repo>/clients/python --extra mcp rayito-mcp
-```
+=== "Python"
+
+    ```bash
+    RAYITO_TEMPLATE=rayito-base AWS_REGION=us-east-1 AWS_PROFILE=<your-profile> \
+      pnpm dlx @modelcontextprotocol/inspector \
+      uv run --project <repo>/clients/python --extra mcp rayito-mcp
+    ```
+
+=== "TypeScript"
+
+    ```bash
+    RAYITO_TEMPLATE=rayito-base AWS_REGION=us-east-1 AWS_PROFILE=<your-profile> \
+      pnpm dlx @modelcontextprotocol/inspector \
+      npx -y -p rayito -p @modelcontextprotocol/server -p zod rayito-mcp
+    ```
 
 The six tools appear in the *Tools* tab; `run_command` with `echo hello`
 creates the sandbox (the first call takes as long as the MicroVM startup
 takes) and `run_code` with
 `import matplotlib.pyplot as plt; plt.plot([1, 2, 3]); plt.show()` returns
 the JSON and the rendered PNG. When you close the Inspector the sandbox is
-destroyed. In URL mode, start `python -m rayito.mcp --http` and connect the
+destroyed. In URL mode, start `python -m rayito.mcp --http` (or `rayito-mcp --http`) and connect the
 Inspector to `http://127.0.0.1:8000/mcp`.
 
 ## Costs and limits { #costes-y-limites }
@@ -227,7 +338,7 @@ Inspector to `http://127.0.0.1:8000/mcp`.
   closing it (`SIGKILL`, forced close), the shutdown's `terminate-microvm`
   does not run and the MicroVM keeps billing until
   `RAYITO_MCP_TIMEOUT_SECONDS`. To find and kill it: `list_sandboxes` from
-  any server with the same image, `Sandbox.kill(sandbox_id)` from Python, or
+  any server with the same image, `Sandbox.kill(sandbox_id)` (`Sandbox.kill(sandboxId)` in TypeScript), or
   `aws lambda-microvms terminate-microvm --microvm-identifier <id>`.
 - **Outputs truncated** at 100,000 characters (`stdout`, `stderr`,
   `content`, `text`), with `truncated: true`; images travel as the sidecar

@@ -21,8 +21,8 @@ from rayito import (
     Result,
     SandboxListItem,
 )
+from rayito._limits import MCP_MAX_OUTPUT_CHARS
 from rayito.mcp._results import (
-    MAX_OUTPUT_CHARS,
     command_output_from,
     directory_listing_from,
     execution_to_blocks,
@@ -64,9 +64,8 @@ def test_truncate_text_below_at_and_above_the_limit() -> None:
     assert text == "abcde\n… [truncado: 3 caracteres más]"
 
 
-def test_truncate_text_default_limit_is_100_000() -> None:
-    assert MAX_OUTPUT_CHARS == 100_000
-    text, truncated = truncate_text("x" * 100_010)
+def test_truncate_text_default_limit_is_the_shared_one() -> None:
+    text, truncated = truncate_text("x" * (MCP_MAX_OUTPUT_CHARS + 10))
     assert truncated is True
     assert text.endswith("… [truncado: 10 caracteres más]")
 
@@ -159,7 +158,7 @@ def test_execution_long_stdout_is_truncated_with_flag() -> None:
 
 
 def test_execution_long_text_is_truncated_with_flag() -> None:
-    execution = Execution(results=[text_result("z" * (MAX_OUTPUT_CHARS + 1))])
+    execution = Execution(results=[text_result("z" * (MCP_MAX_OUTPUT_CHARS + 1))])
     summary = summary_of(execution)
     assert summary["truncated"] is True
     text = summary["text"]

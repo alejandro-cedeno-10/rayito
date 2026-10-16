@@ -20,10 +20,9 @@ import {
   SSM_ADVANCED_PARAMETER_PRICE_USD_PER_MONTH,
   SSM_API_INTERACTION_PRICE_USD_PER_TEN_THOUSAND,
 } from "../../limits.js";
+import { SECONDS_PER_DAY, SECONDS_PER_HOUR } from "../../units.js";
 import type { StackComponent } from "../model.js";
 
-const SECONDS_PER_HOUR = 3600;
-const SECONDS_PER_DAY = 86_400;
 const API_INTERACTIONS_PER_BILLING_UNIT = 10_000;
 /** La función lee el tema y el logo: dos parámetros por relectura. */
 const SSM_PARAMETERS_READ = 2;

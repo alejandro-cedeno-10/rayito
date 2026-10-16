@@ -1,0 +1,2577 @@
+{
+  "commands": [
+    {
+      "path": [],
+      "group": true,
+      "invoke_without_command": false,
+      "hidden": false,
+      "parameters": [
+        {
+          "name": "profile",
+          "kind": "option",
+          "flags": [
+            "--profile"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "region",
+          "kind": "option",
+          "flags": [
+            "--region"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "json_output",
+          "kind": "option",
+          "flags": [
+            "--json"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "default": false,
+          "is_flag": true,
+          "envvar": null
+        },
+        {
+          "name": "verbose",
+          "kind": "option",
+          "flags": [
+            "--verbose"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "default": false,
+          "is_flag": true,
+          "envvar": null
+        },
+        {
+          "name": "version",
+          "kind": "option",
+          "flags": [
+            "--version"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "default": false,
+          "is_flag": true,
+          "envvar": null
+        }
+      ]
+    },
+    {
+      "path": [
+        "agent"
+      ],
+      "group": true,
+      "invoke_without_command": false,
+      "hidden": false,
+      "parameters": []
+    },
+    {
+      "path": [
+        "agent",
+        "template"
+      ],
+      "group": true,
+      "invoke_without_command": false,
+      "hidden": false,
+      "parameters": []
+    },
+    {
+      "path": [
+        "agent",
+        "template",
+        "build"
+      ],
+      "group": false,
+      "invoke_without_command": false,
+      "hidden": false,
+      "parameters": [
+        {
+          "name": "bucket",
+          "kind": "option",
+          "flags": [
+            "--bucket"
+          ],
+          "type": "str",
+          "required": true,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "name",
+          "kind": "option",
+          "flags": [
+            "--name"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": false,
+          "default": "rayito-agent",
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "base",
+          "kind": "option",
+          "flags": [
+            "--base"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": false,
+          "default": "rayito-base-caps",
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "memory_mb",
+          "kind": "option",
+          "flags": [
+            "--memory-mb"
+          ],
+          "type": "int",
+          "required": false,
+          "multiple": false,
+          "default": 2048,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "deepagents",
+          "kind": "option",
+          "flags": [
+            "--deepagents",
+            "--no-deepagents"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "default": true,
+          "is_flag": true,
+          "envvar": null
+        },
+        {
+          "name": "prefetch",
+          "kind": "option",
+          "flags": [
+            "--prefetch",
+            "--no-prefetch"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "default": true,
+          "is_flag": true,
+          "envvar": null
+        },
+        {
+          "name": "kernel_warmup",
+          "kind": "option",
+          "flags": [
+            "--kernel-warmup",
+            "--no-kernel-warmup"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "default": false,
+          "is_flag": true,
+          "envvar": null
+        },
+        {
+          "name": "force",
+          "kind": "option",
+          "flags": [
+            "--force"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "default": false,
+          "is_flag": true,
+          "envvar": null
+        },
+        {
+          "name": "timeout",
+          "kind": "option",
+          "flags": [
+            "--timeout"
+          ],
+          "type": "float",
+          "required": false,
+          "multiple": false,
+          "default": 1800.0,
+          "is_flag": false,
+          "envvar": null
+        }
+      ]
+    },
+    {
+      "path": [
+        "dashboard"
+      ],
+      "group": true,
+      "invoke_without_command": true,
+      "hidden": false,
+      "parameters": [
+        {
+          "name": "port",
+          "kind": "option",
+          "flags": [
+            "--port"
+          ],
+          "type": "int",
+          "required": false,
+          "multiple": false,
+          "default": 0,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "allow_actions",
+          "kind": "option",
+          "flags": [
+            "--allow-actions"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "default": false,
+          "is_flag": true,
+          "envvar": null
+        },
+        {
+          "name": "cost_explorer",
+          "kind": "option",
+          "flags": [
+            "--cost-explorer"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "default": false,
+          "is_flag": true,
+          "envvar": null
+        },
+        {
+          "name": "events_stack",
+          "kind": "option",
+          "flags": [
+            "--events-stack"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "log_group",
+          "kind": "option",
+          "flags": [
+            "--log-group"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "theme",
+          "kind": "option",
+          "flags": [
+            "--theme"
+          ],
+          "type": "path",
+          "required": false,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": "RAYITO_DASHBOARD_THEME"
+        },
+        {
+          "name": "logo",
+          "kind": "option",
+          "flags": [
+            "--logo"
+          ],
+          "type": "path",
+          "required": false,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": "RAYITO_DASHBOARD_LOGO"
+        },
+        {
+          "name": "account",
+          "kind": "option",
+          "flags": [
+            "--account"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": true,
+          "default": null,
+          "is_flag": false,
+          "envvar": "RAYITO_DASHBOARD_ACCOUNTS"
+        },
+        {
+          "name": "external_id",
+          "kind": "option",
+          "flags": [
+            "--external-id"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": "RAYITO_DASHBOARD_EXTERNAL_ID"
+        },
+        {
+          "name": "open_browser",
+          "kind": "option",
+          "flags": [
+            "--open"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "default": false,
+          "is_flag": true,
+          "envvar": null
+        }
+      ]
+    },
+    {
+      "path": [
+        "dashboard",
+        "cloudwatch"
+      ],
+      "group": false,
+      "invoke_without_command": false,
+      "hidden": false,
+      "parameters": [
+        {
+          "name": "log_group",
+          "kind": "option",
+          "flags": [
+            "--log-group"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": true,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "log_group_prefix",
+          "kind": "option",
+          "flags": [
+            "--log-group-prefix"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": false,
+          "default": "/rayito/",
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "otlp",
+          "kind": "option",
+          "flags": [
+            "--otlp"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "default": false,
+          "is_flag": true,
+          "envvar": null
+        },
+        {
+          "name": "quota",
+          "kind": "option",
+          "flags": [
+            "--quota"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "default": false,
+          "is_flag": true,
+          "envvar": null
+        },
+        {
+          "name": "output",
+          "kind": "option",
+          "flags": [
+            "--output",
+            "-o"
+          ],
+          "type": "path",
+          "required": false,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        }
+      ]
+    },
+    {
+      "path": [
+        "doctor"
+      ],
+      "group": false,
+      "invoke_without_command": false,
+      "hidden": false,
+      "parameters": [
+        {
+          "name": "template",
+          "kind": "option",
+          "flags": [
+            "--template"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": false,
+          "default": "rayito-base",
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "template_version",
+          "kind": "option",
+          "flags": [
+            "--template-version"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "bucket",
+          "kind": "option",
+          "flags": [
+            "--bucket"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "launch",
+          "kind": "option",
+          "flags": [
+            "--launch"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "default": false,
+          "is_flag": true,
+          "envvar": null
+        },
+        {
+          "name": "efs_vpc_id",
+          "kind": "option",
+          "flags": [
+            "--efs-vpc-id"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "efs_subnet_ids",
+          "kind": "option",
+          "flags": [
+            "--efs-subnet-ids"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        }
+      ]
+    },
+    {
+      "path": [
+        "domain"
+      ],
+      "group": true,
+      "invoke_without_command": false,
+      "hidden": false,
+      "parameters": []
+    },
+    {
+      "path": [
+        "domain",
+        "deploy"
+      ],
+      "group": false,
+      "invoke_without_command": false,
+      "hidden": false,
+      "parameters": [
+        {
+          "name": "public_domain",
+          "kind": "option",
+          "flags": [
+            "--public-domain"
+          ],
+          "type": "str",
+          "required": true,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "certificate_arn",
+          "kind": "option",
+          "flags": [
+            "--certificate-arn"
+          ],
+          "type": "str",
+          "required": true,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "stack_name",
+          "kind": "option",
+          "flags": [
+            "--stack-name"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "alternate_domain_names",
+          "kind": "option",
+          "flags": [
+            "--alternate-domain-name"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": true,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "yes",
+          "kind": "option",
+          "flags": [
+            "--yes"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "default": false,
+          "is_flag": true,
+          "envvar": null
+        }
+      ]
+    },
+    {
+      "path": [
+        "domain",
+        "destroy"
+      ],
+      "group": false,
+      "invoke_without_command": false,
+      "hidden": false,
+      "parameters": [
+        {
+          "name": "stack_name",
+          "kind": "option",
+          "flags": [
+            "--stack-name"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "yes",
+          "kind": "option",
+          "flags": [
+            "--yes"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "default": false,
+          "is_flag": true,
+          "envvar": null
+        }
+      ]
+    },
+    {
+      "path": [
+        "domain",
+        "status"
+      ],
+      "group": false,
+      "invoke_without_command": false,
+      "hidden": false,
+      "parameters": [
+        {
+          "name": "stack_name",
+          "kind": "option",
+          "flags": [
+            "--stack-name"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        }
+      ]
+    },
+    {
+      "path": [
+        "events"
+      ],
+      "group": true,
+      "invoke_without_command": false,
+      "hidden": false,
+      "parameters": []
+    },
+    {
+      "path": [
+        "events",
+        "deploy"
+      ],
+      "group": false,
+      "invoke_without_command": false,
+      "hidden": false,
+      "parameters": [
+        {
+          "name": "artifact_bucket",
+          "kind": "option",
+          "flags": [
+            "--artifact-bucket"
+          ],
+          "type": "str",
+          "required": true,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "log_group_name",
+          "kind": "option",
+          "flags": [
+            "--log-group-name"
+          ],
+          "type": "str",
+          "required": true,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "reconciler_interval_minutes",
+          "kind": "option",
+          "flags": [
+            "--reconciler-interval-minutes"
+          ],
+          "type": "int",
+          "required": false,
+          "multiple": false,
+          "default": 5,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "stack_name",
+          "kind": "option",
+          "flags": [
+            "--stack-name"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": false,
+          "default": "rayito-events-webhooks",
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "tag",
+          "kind": "option",
+          "flags": [
+            "--tag"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": true,
+          "default": [],
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "yes",
+          "kind": "option",
+          "flags": [
+            "--yes"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "default": false,
+          "is_flag": true,
+          "envvar": null
+        }
+      ]
+    },
+    {
+      "path": [
+        "events",
+        "destroy"
+      ],
+      "group": false,
+      "invoke_without_command": false,
+      "hidden": false,
+      "parameters": [
+        {
+          "name": "stack_name",
+          "kind": "option",
+          "flags": [
+            "--stack-name"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": false,
+          "default": "rayito-events-webhooks",
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "yes",
+          "kind": "option",
+          "flags": [
+            "--yes"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "default": false,
+          "is_flag": true,
+          "envvar": null
+        }
+      ]
+    },
+    {
+      "path": [
+        "events",
+        "list"
+      ],
+      "group": false,
+      "invoke_without_command": false,
+      "hidden": false,
+      "parameters": [
+        {
+          "name": "sandbox_id",
+          "kind": "option",
+          "flags": [
+            "--sandbox-id"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "event_type",
+          "kind": "option",
+          "flags": [
+            "--type"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": true,
+          "default": [],
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "limit",
+          "kind": "option",
+          "flags": [
+            "--limit"
+          ],
+          "type": "int",
+          "required": false,
+          "multiple": false,
+          "default": 100,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "order",
+          "kind": "option",
+          "flags": [
+            "--order"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": false,
+          "default": "desc",
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "stack_name",
+          "kind": "option",
+          "flags": [
+            "--stack-name"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": false,
+          "default": "rayito-events-webhooks",
+          "is_flag": false,
+          "envvar": null
+        }
+      ]
+    },
+    {
+      "path": [
+        "events",
+        "status"
+      ],
+      "group": false,
+      "invoke_without_command": false,
+      "hidden": false,
+      "parameters": [
+        {
+          "name": "stack_name",
+          "kind": "option",
+          "flags": [
+            "--stack-name"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": false,
+          "default": "rayito-events-webhooks",
+          "is_flag": false,
+          "envvar": null
+        }
+      ]
+    },
+    {
+      "path": [
+        "events",
+        "webhook"
+      ],
+      "group": true,
+      "invoke_without_command": false,
+      "hidden": false,
+      "parameters": []
+    },
+    {
+      "path": [
+        "events",
+        "webhook",
+        "add"
+      ],
+      "group": false,
+      "invoke_without_command": false,
+      "hidden": false,
+      "parameters": [
+        {
+          "name": "url",
+          "kind": "argument",
+          "flags": [
+            "url"
+          ],
+          "type": "str",
+          "required": true,
+          "multiple": false,
+          "default": null
+        },
+        {
+          "name": "secret_name",
+          "kind": "option",
+          "flags": [
+            "--secret-name"
+          ],
+          "type": "str",
+          "required": true,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "event_type",
+          "kind": "option",
+          "flags": [
+            "--type"
+          ],
+          "type": "str",
+          "required": true,
+          "multiple": true,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "stack_name",
+          "kind": "option",
+          "flags": [
+            "--stack-name"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": false,
+          "default": "rayito-events-webhooks",
+          "is_flag": false,
+          "envvar": null
+        }
+      ]
+    },
+    {
+      "path": [
+        "events",
+        "webhook",
+        "list"
+      ],
+      "group": false,
+      "invoke_without_command": false,
+      "hidden": false,
+      "parameters": [
+        {
+          "name": "stack_name",
+          "kind": "option",
+          "flags": [
+            "--stack-name"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": false,
+          "default": "rayito-events-webhooks",
+          "is_flag": false,
+          "envvar": null
+        }
+      ]
+    },
+    {
+      "path": [
+        "events",
+        "webhook",
+        "remove"
+      ],
+      "group": false,
+      "invoke_without_command": false,
+      "hidden": false,
+      "parameters": [
+        {
+          "name": "webhook_id",
+          "kind": "argument",
+          "flags": [
+            "webhook_id"
+          ],
+          "type": "str",
+          "required": true,
+          "multiple": false,
+          "default": null
+        },
+        {
+          "name": "stack_name",
+          "kind": "option",
+          "flags": [
+            "--stack-name"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": false,
+          "default": "rayito-events-webhooks",
+          "is_flag": false,
+          "envvar": null
+        }
+      ]
+    },
+    {
+      "path": [
+        "image"
+      ],
+      "group": true,
+      "invoke_without_command": false,
+      "hidden": false,
+      "parameters": []
+    },
+    {
+      "path": [
+        "image",
+        "list"
+      ],
+      "group": false,
+      "invoke_without_command": false,
+      "hidden": false,
+      "parameters": [
+        {
+          "name": "name",
+          "kind": "argument",
+          "flags": [
+            "name"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": false,
+          "default": null
+        },
+        {
+          "name": "name_filter",
+          "kind": "option",
+          "flags": [
+            "--name-filter"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        }
+      ]
+    },
+    {
+      "path": [
+        "image",
+        "prune"
+      ],
+      "group": false,
+      "invoke_without_command": false,
+      "hidden": false,
+      "parameters": [
+        {
+          "name": "image_name",
+          "kind": "option",
+          "flags": [
+            "--image-name"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": false,
+          "default": "rayito-base",
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "keep",
+          "kind": "option",
+          "flags": [
+            "--keep"
+          ],
+          "type": "int",
+          "required": false,
+          "multiple": false,
+          "default": 5,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "dry_run",
+          "kind": "option",
+          "flags": [
+            "--dry-run"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "default": false,
+          "is_flag": true,
+          "envvar": null
+        },
+        {
+          "name": "wait_timeout",
+          "kind": "option",
+          "flags": [
+            "--wait-timeout"
+          ],
+          "type": "float",
+          "required": false,
+          "multiple": false,
+          "default": 600.0,
+          "is_flag": false,
+          "envvar": null
+        }
+      ]
+    },
+    {
+      "path": [
+        "image",
+        "publish"
+      ],
+      "group": false,
+      "invoke_without_command": false,
+      "hidden": false,
+      "parameters": [
+        {
+          "name": "artifact",
+          "kind": "option",
+          "flags": [
+            "--artifact"
+          ],
+          "type": "path",
+          "required": true,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "base_image_version",
+          "kind": "option",
+          "flags": [
+            "--base-image-version"
+          ],
+          "type": "str",
+          "required": true,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "bucket",
+          "kind": "option",
+          "flags": [
+            "--bucket"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "image_name",
+          "kind": "option",
+          "flags": [
+            "--image-name"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "variant",
+          "kind": "option",
+          "flags": [
+            "--variant"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": false,
+          "default": "full",
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "os_capabilities",
+          "kind": "option",
+          "flags": [
+            "--os-capabilities"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "build_role_arn",
+          "kind": "option",
+          "flags": [
+            "--build-role-arn"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "stack_name",
+          "kind": "option",
+          "flags": [
+            "--stack-name"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": false,
+          "default": "rayito-m0-iam",
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "memory_mib",
+          "kind": "option",
+          "flags": [
+            "--memory-mib"
+          ],
+          "type": "int",
+          "required": false,
+          "multiple": false,
+          "default": 2048,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "timeout_seconds",
+          "kind": "option",
+          "flags": [
+            "--timeout-seconds"
+          ],
+          "type": "float",
+          "required": false,
+          "multiple": false,
+          "default": 1800.0,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "force",
+          "kind": "option",
+          "flags": [
+            "--force"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "default": false,
+          "is_flag": true,
+          "envvar": null
+        },
+        {
+          "name": "sizes",
+          "kind": "option",
+          "flags": [
+            "--sizes"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "env",
+          "kind": "option",
+          "flags": [
+            "--env"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": true,
+          "default": [],
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "with_efs",
+          "kind": "option",
+          "flags": [
+            "--with-efs"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "default": false,
+          "is_flag": true,
+          "envvar": null
+        },
+        {
+          "name": "artifact_run_id",
+          "kind": "option",
+          "flags": [
+            "--artifact-run-id"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        }
+      ]
+    },
+    {
+      "path": [
+        "image",
+        "sizes"
+      ],
+      "group": false,
+      "invoke_without_command": false,
+      "hidden": false,
+      "parameters": [
+        {
+          "name": "variant",
+          "kind": "option",
+          "flags": [
+            "--variant"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": false,
+          "default": "full",
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "image_name",
+          "kind": "option",
+          "flags": [
+            "--image-name"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        }
+      ]
+    },
+    {
+      "path": [
+        "image",
+        "zip"
+      ],
+      "group": false,
+      "invoke_without_command": false,
+      "hidden": false,
+      "parameters": [
+        {
+          "name": "image_dir",
+          "kind": "argument",
+          "flags": [
+            "image_dir"
+          ],
+          "type": "path",
+          "required": true,
+          "multiple": false,
+          "default": null
+        },
+        {
+          "name": "destination",
+          "kind": "argument",
+          "flags": [
+            "destination"
+          ],
+          "type": "path",
+          "required": true,
+          "multiple": false,
+          "default": null
+        },
+        {
+          "name": "variant",
+          "kind": "option",
+          "flags": [
+            "--variant"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": false,
+          "default": "full",
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "sidecar",
+          "kind": "option",
+          "flags": [
+            "--sidecar"
+          ],
+          "type": "path",
+          "required": false,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "with_efs",
+          "kind": "option",
+          "flags": [
+            "--with-efs"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "default": false,
+          "is_flag": true,
+          "envvar": null
+        },
+        {
+          "name": "artifact_run_id",
+          "kind": "option",
+          "flags": [
+            "--artifact-run-id"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        }
+      ]
+    },
+    {
+      "path": [
+        "sandbox"
+      ],
+      "group": true,
+      "invoke_without_command": false,
+      "hidden": false,
+      "parameters": []
+    },
+    {
+      "path": [
+        "sandbox",
+        "connect"
+      ],
+      "group": false,
+      "invoke_without_command": false,
+      "hidden": false,
+      "parameters": [
+        {
+          "name": "sandbox_id",
+          "kind": "argument",
+          "flags": [
+            "sandbox_id"
+          ],
+          "type": "str",
+          "required": true,
+          "multiple": false,
+          "default": null
+        },
+        {
+          "name": "user",
+          "kind": "option",
+          "flags": [
+            "--user",
+            "-u"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "cwd",
+          "kind": "option",
+          "flags": [
+            "--cwd",
+            "-c"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "env",
+          "kind": "option",
+          "flags": [
+            "--env",
+            "-e"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": true,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "token_file",
+          "kind": "option",
+          "flags": [
+            "--token-file"
+          ],
+          "type": "path",
+          "required": false,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        }
+      ]
+    },
+    {
+      "path": [
+        "sandbox",
+        "create"
+      ],
+      "group": false,
+      "invoke_without_command": false,
+      "hidden": false,
+      "parameters": [
+        {
+          "name": "template",
+          "kind": "argument",
+          "flags": [
+            "template"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": false,
+          "default": null
+        },
+        {
+          "name": "timeout",
+          "kind": "option",
+          "flags": [
+            "--timeout"
+          ],
+          "type": "int",
+          "required": false,
+          "multiple": false,
+          "default": 3600,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "metadata",
+          "kind": "option",
+          "flags": [
+            "--metadata"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": true,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "env",
+          "kind": "option",
+          "flags": [
+            "--env",
+            "-e"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": true,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "detach",
+          "kind": "option",
+          "flags": [
+            "--detach",
+            "-d"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "default": false,
+          "is_flag": true,
+          "envvar": null
+        },
+        {
+          "name": "token_file",
+          "kind": "option",
+          "flags": [
+            "--token-file"
+          ],
+          "type": "path",
+          "required": false,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "user",
+          "kind": "option",
+          "flags": [
+            "--user",
+            "-u"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "cwd",
+          "kind": "option",
+          "flags": [
+            "--cwd",
+            "-c"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        }
+      ]
+    },
+    {
+      "path": [
+        "sandbox",
+        "exec"
+      ],
+      "group": false,
+      "invoke_without_command": false,
+      "hidden": false,
+      "parameters": [
+        {
+          "name": "sandbox_id",
+          "kind": "argument",
+          "flags": [
+            "sandbox_id"
+          ],
+          "type": "str",
+          "required": true,
+          "multiple": false,
+          "default": null
+        },
+        {
+          "name": "command",
+          "kind": "argument",
+          "flags": [
+            "command"
+          ],
+          "type": "str",
+          "required": true,
+          "multiple": false,
+          "default": null
+        },
+        {
+          "name": "background",
+          "kind": "option",
+          "flags": [
+            "--background",
+            "-b"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "default": false,
+          "is_flag": true,
+          "envvar": null
+        },
+        {
+          "name": "cwd",
+          "kind": "option",
+          "flags": [
+            "--cwd",
+            "-c"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "user",
+          "kind": "option",
+          "flags": [
+            "--user",
+            "-u"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "env",
+          "kind": "option",
+          "flags": [
+            "--env",
+            "-e"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": true,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "timeout",
+          "kind": "option",
+          "flags": [
+            "--timeout"
+          ],
+          "type": "float",
+          "required": false,
+          "multiple": false,
+          "default": 0,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "token_file",
+          "kind": "option",
+          "flags": [
+            "--token-file"
+          ],
+          "type": "path",
+          "required": false,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        }
+      ]
+    },
+    {
+      "path": [
+        "sandbox",
+        "info"
+      ],
+      "group": false,
+      "invoke_without_command": false,
+      "hidden": false,
+      "parameters": [
+        {
+          "name": "sandbox_id",
+          "kind": "argument",
+          "flags": [
+            "sandbox_id"
+          ],
+          "type": "str",
+          "required": true,
+          "multiple": false,
+          "default": null
+        },
+        {
+          "name": "no_metadata",
+          "kind": "option",
+          "flags": [
+            "--no-metadata"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "default": false,
+          "is_flag": true,
+          "envvar": null
+        }
+      ]
+    },
+    {
+      "path": [
+        "sandbox",
+        "kill"
+      ],
+      "group": false,
+      "invoke_without_command": false,
+      "hidden": false,
+      "parameters": [
+        {
+          "name": "sandbox_ids",
+          "kind": "argument",
+          "flags": [
+            "sandbox_ids"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": false,
+          "default": null
+        },
+        {
+          "name": "all_sandboxes",
+          "kind": "option",
+          "flags": [
+            "--all"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "default": false,
+          "is_flag": true,
+          "envvar": null
+        },
+        {
+          "name": "template",
+          "kind": "option",
+          "flags": [
+            "--template"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "yes",
+          "kind": "option",
+          "flags": [
+            "--yes",
+            "-y"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "default": false,
+          "is_flag": true,
+          "envvar": null
+        }
+      ]
+    },
+    {
+      "path": [
+        "sandbox",
+        "list"
+      ],
+      "group": false,
+      "invoke_without_command": false,
+      "hidden": false,
+      "parameters": [
+        {
+          "name": "template",
+          "kind": "option",
+          "flags": [
+            "--template"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "template_version",
+          "kind": "option",
+          "flags": [
+            "--template-version"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "all_states",
+          "kind": "option",
+          "flags": [
+            "--all-states"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "default": false,
+          "is_flag": true,
+          "envvar": null
+        },
+        {
+          "name": "metadata",
+          "kind": "option",
+          "flags": [
+            "--metadata"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": true,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "state",
+          "kind": "option",
+          "flags": [
+            "--state"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": true,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "index_table",
+          "kind": "option",
+          "flags": [
+            "--index-table"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        }
+      ]
+    },
+    {
+      "path": [
+        "sandbox",
+        "logs"
+      ],
+      "group": false,
+      "invoke_without_command": false,
+      "hidden": false,
+      "parameters": [
+        {
+          "name": "sandbox_id",
+          "kind": "argument",
+          "flags": [
+            "sandbox_id"
+          ],
+          "type": "str",
+          "required": true,
+          "multiple": false,
+          "default": null
+        },
+        {
+          "name": "log_group",
+          "kind": "option",
+          "flags": [
+            "--log-group"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "limit",
+          "kind": "option",
+          "flags": [
+            "--limit"
+          ],
+          "type": "int",
+          "required": false,
+          "multiple": false,
+          "default": 1000,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "since",
+          "kind": "option",
+          "flags": [
+            "--since"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        }
+      ]
+    },
+    {
+      "path": [
+        "sandbox",
+        "metrics"
+      ],
+      "group": false,
+      "invoke_without_command": false,
+      "hidden": false,
+      "parameters": [
+        {
+          "name": "sandbox_id",
+          "kind": "argument",
+          "flags": [
+            "sandbox_id"
+          ],
+          "type": "str",
+          "required": true,
+          "multiple": false,
+          "default": null
+        },
+        {
+          "name": "follow",
+          "kind": "option",
+          "flags": [
+            "--follow",
+            "-f"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "default": false,
+          "is_flag": true,
+          "envvar": null
+        },
+        {
+          "name": "interval",
+          "kind": "option",
+          "flags": [
+            "--interval"
+          ],
+          "type": "float",
+          "required": false,
+          "multiple": false,
+          "default": 5.0,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "token_file",
+          "kind": "option",
+          "flags": [
+            "--token-file"
+          ],
+          "type": "path",
+          "required": false,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        }
+      ]
+    },
+    {
+      "path": [
+        "sandbox",
+        "proxy"
+      ],
+      "group": false,
+      "invoke_without_command": false,
+      "hidden": false,
+      "parameters": [
+        {
+          "name": "sandbox_id",
+          "kind": "argument",
+          "flags": [
+            "sandbox_id"
+          ],
+          "type": "str",
+          "required": true,
+          "multiple": false,
+          "default": null
+        },
+        {
+          "name": "port",
+          "kind": "option",
+          "flags": [
+            "--port"
+          ],
+          "type": "int",
+          "required": true,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "local_port",
+          "kind": "option",
+          "flags": [
+            "--local-port"
+          ],
+          "type": "int",
+          "required": false,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "bind",
+          "kind": "option",
+          "flags": [
+            "--bind"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": false,
+          "default": "127.0.0.1",
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "allow_remote",
+          "kind": "option",
+          "flags": [
+            "--allow-remote"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "default": false,
+          "is_flag": true,
+          "envvar": null
+        },
+        {
+          "name": "allowed_host",
+          "kind": "option",
+          "flags": [
+            "--allowed-host"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": true,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "allow_origin",
+          "kind": "option",
+          "flags": [
+            "--allow-origin"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": true,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "max_connections",
+          "kind": "option",
+          "flags": [
+            "--max-connections"
+          ],
+          "type": "int",
+          "required": false,
+          "multiple": false,
+          "default": 8,
+          "is_flag": false,
+          "envvar": null
+        }
+      ]
+    },
+    {
+      "path": [
+        "stack"
+      ],
+      "group": true,
+      "invoke_without_command": false,
+      "hidden": false,
+      "parameters": []
+    },
+    {
+      "path": [
+        "stack",
+        "deploy"
+      ],
+      "group": false,
+      "invoke_without_command": false,
+      "hidden": false,
+      "parameters": [
+        {
+          "name": "component",
+          "kind": "argument",
+          "flags": [
+            "component"
+          ],
+          "type": "str",
+          "required": true,
+          "multiple": false,
+          "default": null
+        },
+        {
+          "name": "stack_name",
+          "kind": "option",
+          "flags": [
+            "--stack-name"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "param",
+          "kind": "option",
+          "flags": [
+            "--param"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": true,
+          "default": [],
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "artifact_bucket",
+          "kind": "option",
+          "flags": [
+            "--artifact-bucket"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "tag",
+          "kind": "option",
+          "flags": [
+            "--tag"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": true,
+          "default": [],
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "yes",
+          "kind": "option",
+          "flags": [
+            "--yes"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "default": false,
+          "is_flag": true,
+          "envvar": null
+        }
+      ]
+    },
+    {
+      "path": [
+        "stack",
+        "destroy"
+      ],
+      "group": false,
+      "invoke_without_command": false,
+      "hidden": false,
+      "parameters": [
+        {
+          "name": "component",
+          "kind": "argument",
+          "flags": [
+            "component"
+          ],
+          "type": "str",
+          "required": true,
+          "multiple": false,
+          "default": null
+        },
+        {
+          "name": "stack_name",
+          "kind": "option",
+          "flags": [
+            "--stack-name"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "yes",
+          "kind": "option",
+          "flags": [
+            "--yes"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "default": false,
+          "is_flag": true,
+          "envvar": null
+        }
+      ]
+    },
+    {
+      "path": [
+        "stack",
+        "list"
+      ],
+      "group": false,
+      "invoke_without_command": false,
+      "hidden": false,
+      "parameters": []
+    },
+    {
+      "path": [
+        "stack",
+        "status"
+      ],
+      "group": false,
+      "invoke_without_command": false,
+      "hidden": false,
+      "parameters": [
+        {
+          "name": "component",
+          "kind": "argument",
+          "flags": [
+            "component"
+          ],
+          "type": "str",
+          "required": true,
+          "multiple": false,
+          "default": null
+        },
+        {
+          "name": "stack_name",
+          "kind": "option",
+          "flags": [
+            "--stack-name"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        }
+      ]
+    },
+    {
+      "path": [
+        "template"
+      ],
+      "group": true,
+      "invoke_without_command": false,
+      "hidden": false,
+      "parameters": []
+    },
+    {
+      "path": [
+        "template",
+        "build"
+      ],
+      "group": false,
+      "invoke_without_command": false,
+      "hidden": false,
+      "parameters": [
+        {
+          "name": "spec",
+          "kind": "argument",
+          "flags": [
+            "spec"
+          ],
+          "type": "path",
+          "required": true,
+          "multiple": false,
+          "default": null
+        },
+        {
+          "name": "name",
+          "kind": "option",
+          "flags": [
+            "--name"
+          ],
+          "type": "str",
+          "required": true,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "bucket",
+          "kind": "option",
+          "flags": [
+            "--bucket"
+          ],
+          "type": "str",
+          "required": true,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "memory_mb",
+          "kind": "option",
+          "flags": [
+            "--memory-mb"
+          ],
+          "type": "int",
+          "required": false,
+          "multiple": false,
+          "default": 2048,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "force",
+          "kind": "option",
+          "flags": [
+            "--force"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "default": false,
+          "is_flag": true,
+          "envvar": null
+        },
+        {
+          "name": "timeout",
+          "kind": "option",
+          "flags": [
+            "--timeout"
+          ],
+          "type": "float",
+          "required": false,
+          "multiple": false,
+          "default": 1800.0,
+          "is_flag": false,
+          "envvar": null
+        }
+      ]
+    },
+    {
+      "path": [
+        "template",
+        "logs"
+      ],
+      "group": false,
+      "invoke_without_command": false,
+      "hidden": false,
+      "parameters": [
+        {
+          "name": "name",
+          "kind": "argument",
+          "flags": [
+            "name"
+          ],
+          "type": "str",
+          "required": true,
+          "multiple": false,
+          "default": null
+        },
+        {
+          "name": "limit",
+          "kind": "option",
+          "flags": [
+            "--limit"
+          ],
+          "type": "int",
+          "required": false,
+          "multiple": false,
+          "default": 500,
+          "is_flag": false,
+          "envvar": null
+        }
+      ]
+    },
+    {
+      "path": [
+        "template",
+        "status"
+      ],
+      "group": false,
+      "invoke_without_command": false,
+      "hidden": false,
+      "parameters": [
+        {
+          "name": "name",
+          "kind": "argument",
+          "flags": [
+            "name"
+          ],
+          "type": "str",
+          "required": true,
+          "multiple": false,
+          "default": null
+        },
+        {
+          "name": "version",
+          "kind": "option",
+          "flags": [
+            "--version"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        }
+      ]
+    }
+  ]
+}

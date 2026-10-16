@@ -280,6 +280,9 @@ se saltan.
 | Pausa y reanudación | la máquina de estados de `rayd` | snapshot y restauración de la memoria |
 | `OptionalStacks` (`rayito stack`) | despliegue, estado, redespliegue y borrado de seis pilas (`metadata-index`, `secrets-access`, `otlp-export`, `s3-mounts`, `sizes-guard`, `templates`), más `events-webhooks` desde `LifecycleEvents` | `custom-domain` y `efs-volumes`; permisos IAM y coste reales |
 | Índice de metadatos, `SecretStore`, `secrets=` | sí | |
+| CLI `rayito` de Python y de TypeScript | stack, image, `sandbox create --detach`, `info`, `exec`, `metrics`, `list` y `kill`, y las terminales de `create` y `connect` (TypeScript), con los mismos escenarios que contra AWS real | `sandbox proxy` (necesita el proxy de AWS), `doctor` con IAM y los builds de imagen |
+| Servidor MCP (`rayito-mcp`) | por stdio, el contrato compartido `testdata/mcp/tools.json` y los errores de arranque; las seis herramientas contra un sandbox por `--http` en proceso (TypeScript) | las seis herramientas por stdio contra un MicroVM |
+| Panel local `rayito dashboard` (TypeScript) | las rutas de sólo lectura validadas con `api-v1.schema.json` y las guardas de seguridad (sin sesión, acción sin `--allow-actions`, coste facturado apagado) | Cost Explorer y las acciones masivas reales |
 | Pasarela de secretos (`gateways=`) | la sección de `ConfigureSandbox` y el listener | el reenvío HTTPS al upstream |
 | `Template.build` | subida del zip a S3 y `create-microvm-image` | el build real de la imagen y su `/ready` |
 | Eventos y webhooks | la pila, los webhooks, `create(events=)` y los tres Lambdas ejecutados en proceso, con una entrega firmada a un receptor local | la suscripción de CloudWatch Logs y la entrega HTTPS con su filtro SSRF |
@@ -307,6 +310,9 @@ abre el PR), lee sus notas de release y sus
 ## En CI
 
 El workflow `local-e2e` corre `make local-up` y `make local-e2e` en
-`ubuntu-24.04-arm` en los PR que tocan el entorno local o `rayd` (`crates/`,
-`proto/`, `Cargo.lock`), cada noche y a mano
-(`workflow_dispatch`). No usa credenciales ni secretos del repositorio.
+`ubuntu-24.04-arm` en los PR que tocan el entorno local, `rayd` (`crates/`,
+`proto/`, `Cargo.lock`), los SDK y sus herramientas (`clients/`, sin los
+CHANGELOG) o los datos compartidos (`testdata/`, `limits.json`), cada noche y a
+mano (`workflow_dispatch`). No usa credenciales ni secretos del repositorio.
+Es la comprobación que sustituye a una regresión completa en AWS cuando un
+cambio sólo toca un SDK o sus herramientas.

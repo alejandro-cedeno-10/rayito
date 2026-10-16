@@ -1,0 +1,645 @@
+{
+  "description": "Zips de la imagen compartidos por Python y TypeScript (ADR-027): qué entradas lleva cada variante, en qué orden, con qué modo y qué se excluye. La fuente es rayito.cli._artifact; los bytes del archivo no se comparan (cada lenguaje usa su zlib).",
+  "tree": {
+    "Dockerfile": "FROM scratch\n",
+    "rayd": "ELF-binary\n",
+    "licenses/LICENSE": "LICENSE\n",
+    "licenses/NOTICE": "NOTICE\n",
+    "licenses/THIRD_PARTY_LICENSES.md": "THIRD_PARTY_LICENSES.md\n",
+    "kernel-sidecar/ipython/startup/0004_warmup.py": "pass\n",
+    "kernel-sidecar/requirements.txt": "ipykernel==6\n",
+    "kernel-sidecar/tests/test_x.py": "excluded\n",
+    "kernel-sidecar/__pycache__/x.pyc": "excluded\n",
+    "kernel-sidecar/uv.lock": "excluded\n",
+    "kernel-sidecar/.venv/lib/x.py": "excluded\n",
+    "old.zip": "excluded\n",
+    ".gitignore": "excluded\n",
+    "requirements.in": "excluded\n",
+    "a-b.txt": "dash\n",
+    "a/b.txt": "slash\n",
+    "ñ.txt": "ene\n"
+  },
+  "constants": {
+    "variants": [
+      "full",
+      "slim",
+      "poly"
+    ],
+    "fixedDateTime": [
+      1980,
+      1,
+      1,
+      0,
+      0,
+      0
+    ],
+    "warmupMarker": "kernel-sidecar/ipython/startup/warmup_variant",
+    "kernelsMarker": "kernel-sidecar/kernels_variant",
+    "efsMarker": "kernel-sidecar/efs_variant",
+    "slimContent": "slim\n",
+    "polyContent": "poly\n",
+    "efsContent": "efs\n",
+    "excludedSuffixes": [
+      ".zip",
+      ".pyc"
+    ],
+    "excludedDirectories": [
+      ".mypy_cache",
+      ".pytest_cache",
+      ".ruff_cache",
+      ".venv",
+      "__pycache__",
+      "tests"
+    ],
+    "excludedFiles": [
+      ".gitignore",
+      "requirements.in",
+      "uv.lock"
+    ],
+    "rayd": "rayd",
+    "noticesDirectory": "licenses",
+    "noticeFiles": [
+      "LICENSE",
+      "NOTICE",
+      "THIRD_PARTY_LICENSES.md"
+    ],
+    "requirementsFiles": [
+      "requirements.txt",
+      "requirements-poly.txt"
+    ]
+  },
+  "cases": [
+    {
+      "name": "full",
+      "variant": "full",
+      "withEfs": false,
+      "tree": "default",
+      "count": 10,
+      "entries": [
+        {
+          "name": "Dockerfile",
+          "mode": 420,
+          "content": "FROM scratch\n"
+        },
+        {
+          "name": "a/b.txt",
+          "mode": 420,
+          "content": "slash\n"
+        },
+        {
+          "name": "a-b.txt",
+          "mode": 420,
+          "content": "dash\n"
+        },
+        {
+          "name": "kernel-sidecar/ipython/startup/0004_warmup.py",
+          "mode": 420,
+          "content": "pass\n"
+        },
+        {
+          "name": "kernel-sidecar/requirements.txt",
+          "mode": 420,
+          "content": "ipykernel==6\n"
+        },
+        {
+          "name": "licenses/LICENSE",
+          "mode": 420,
+          "content": "LICENSE\n"
+        },
+        {
+          "name": "licenses/NOTICE",
+          "mode": 420,
+          "content": "NOTICE\n"
+        },
+        {
+          "name": "licenses/THIRD_PARTY_LICENSES.md",
+          "mode": 420,
+          "content": "THIRD_PARTY_LICENSES.md\n"
+        },
+        {
+          "name": "rayd",
+          "mode": 493,
+          "content": "ELF-binary\n"
+        },
+        {
+          "name": "ñ.txt",
+          "mode": 420,
+          "content": "ene\n"
+        }
+      ],
+      "dates": [
+        [
+          1980,
+          1,
+          1,
+          0,
+          0,
+          0
+        ]
+      ],
+      "markerVariant": "full",
+      "hasEfs": false
+    },
+    {
+      "name": "slim",
+      "variant": "slim",
+      "withEfs": false,
+      "tree": "default",
+      "count": 11,
+      "entries": [
+        {
+          "name": "Dockerfile",
+          "mode": 420,
+          "content": "FROM scratch\n"
+        },
+        {
+          "name": "a/b.txt",
+          "mode": 420,
+          "content": "slash\n"
+        },
+        {
+          "name": "a-b.txt",
+          "mode": 420,
+          "content": "dash\n"
+        },
+        {
+          "name": "kernel-sidecar/ipython/startup/0004_warmup.py",
+          "mode": 420,
+          "content": "pass\n"
+        },
+        {
+          "name": "kernel-sidecar/requirements.txt",
+          "mode": 420,
+          "content": "ipykernel==6\n"
+        },
+        {
+          "name": "licenses/LICENSE",
+          "mode": 420,
+          "content": "LICENSE\n"
+        },
+        {
+          "name": "licenses/NOTICE",
+          "mode": 420,
+          "content": "NOTICE\n"
+        },
+        {
+          "name": "licenses/THIRD_PARTY_LICENSES.md",
+          "mode": 420,
+          "content": "THIRD_PARTY_LICENSES.md\n"
+        },
+        {
+          "name": "rayd",
+          "mode": 493,
+          "content": "ELF-binary\n"
+        },
+        {
+          "name": "ñ.txt",
+          "mode": 420,
+          "content": "ene\n"
+        },
+        {
+          "name": "kernel-sidecar/ipython/startup/warmup_variant",
+          "mode": 420,
+          "content": "slim\n"
+        }
+      ],
+      "dates": [
+        [
+          1980,
+          1,
+          1,
+          0,
+          0,
+          0
+        ]
+      ],
+      "markerVariant": "slim",
+      "hasEfs": false
+    },
+    {
+      "name": "poly",
+      "variant": "poly",
+      "withEfs": false,
+      "tree": "default",
+      "count": 11,
+      "entries": [
+        {
+          "name": "Dockerfile",
+          "mode": 420,
+          "content": "FROM scratch\n"
+        },
+        {
+          "name": "a/b.txt",
+          "mode": 420,
+          "content": "slash\n"
+        },
+        {
+          "name": "a-b.txt",
+          "mode": 420,
+          "content": "dash\n"
+        },
+        {
+          "name": "kernel-sidecar/ipython/startup/0004_warmup.py",
+          "mode": 420,
+          "content": "pass\n"
+        },
+        {
+          "name": "kernel-sidecar/requirements.txt",
+          "mode": 420,
+          "content": "ipykernel==6\n"
+        },
+        {
+          "name": "licenses/LICENSE",
+          "mode": 420,
+          "content": "LICENSE\n"
+        },
+        {
+          "name": "licenses/NOTICE",
+          "mode": 420,
+          "content": "NOTICE\n"
+        },
+        {
+          "name": "licenses/THIRD_PARTY_LICENSES.md",
+          "mode": 420,
+          "content": "THIRD_PARTY_LICENSES.md\n"
+        },
+        {
+          "name": "rayd",
+          "mode": 493,
+          "content": "ELF-binary\n"
+        },
+        {
+          "name": "ñ.txt",
+          "mode": 420,
+          "content": "ene\n"
+        },
+        {
+          "name": "kernel-sidecar/kernels_variant",
+          "mode": 420,
+          "content": "poly\n"
+        }
+      ],
+      "dates": [
+        [
+          1980,
+          1,
+          1,
+          0,
+          0,
+          0
+        ]
+      ],
+      "markerVariant": "poly",
+      "hasEfs": false
+    },
+    {
+      "name": "full con efs",
+      "variant": "full",
+      "withEfs": true,
+      "tree": "default",
+      "count": 11,
+      "entries": [
+        {
+          "name": "Dockerfile",
+          "mode": 420,
+          "content": "FROM scratch\n"
+        },
+        {
+          "name": "a/b.txt",
+          "mode": 420,
+          "content": "slash\n"
+        },
+        {
+          "name": "a-b.txt",
+          "mode": 420,
+          "content": "dash\n"
+        },
+        {
+          "name": "kernel-sidecar/ipython/startup/0004_warmup.py",
+          "mode": 420,
+          "content": "pass\n"
+        },
+        {
+          "name": "kernel-sidecar/requirements.txt",
+          "mode": 420,
+          "content": "ipykernel==6\n"
+        },
+        {
+          "name": "licenses/LICENSE",
+          "mode": 420,
+          "content": "LICENSE\n"
+        },
+        {
+          "name": "licenses/NOTICE",
+          "mode": 420,
+          "content": "NOTICE\n"
+        },
+        {
+          "name": "licenses/THIRD_PARTY_LICENSES.md",
+          "mode": 420,
+          "content": "THIRD_PARTY_LICENSES.md\n"
+        },
+        {
+          "name": "rayd",
+          "mode": 493,
+          "content": "ELF-binary\n"
+        },
+        {
+          "name": "ñ.txt",
+          "mode": 420,
+          "content": "ene\n"
+        },
+        {
+          "name": "kernel-sidecar/efs_variant",
+          "mode": 420,
+          "content": "efs\n"
+        }
+      ],
+      "dates": [
+        [
+          1980,
+          1,
+          1,
+          0,
+          0,
+          0
+        ]
+      ],
+      "markerVariant": "full",
+      "hasEfs": true
+    },
+    {
+      "name": "slim con efs",
+      "variant": "slim",
+      "withEfs": true,
+      "tree": "default",
+      "count": 12,
+      "entries": [
+        {
+          "name": "Dockerfile",
+          "mode": 420,
+          "content": "FROM scratch\n"
+        },
+        {
+          "name": "a/b.txt",
+          "mode": 420,
+          "content": "slash\n"
+        },
+        {
+          "name": "a-b.txt",
+          "mode": 420,
+          "content": "dash\n"
+        },
+        {
+          "name": "kernel-sidecar/ipython/startup/0004_warmup.py",
+          "mode": 420,
+          "content": "pass\n"
+        },
+        {
+          "name": "kernel-sidecar/requirements.txt",
+          "mode": 420,
+          "content": "ipykernel==6\n"
+        },
+        {
+          "name": "licenses/LICENSE",
+          "mode": 420,
+          "content": "LICENSE\n"
+        },
+        {
+          "name": "licenses/NOTICE",
+          "mode": 420,
+          "content": "NOTICE\n"
+        },
+        {
+          "name": "licenses/THIRD_PARTY_LICENSES.md",
+          "mode": 420,
+          "content": "THIRD_PARTY_LICENSES.md\n"
+        },
+        {
+          "name": "rayd",
+          "mode": 493,
+          "content": "ELF-binary\n"
+        },
+        {
+          "name": "ñ.txt",
+          "mode": 420,
+          "content": "ene\n"
+        },
+        {
+          "name": "kernel-sidecar/ipython/startup/warmup_variant",
+          "mode": 420,
+          "content": "slim\n"
+        },
+        {
+          "name": "kernel-sidecar/efs_variant",
+          "mode": 420,
+          "content": "efs\n"
+        }
+      ],
+      "dates": [
+        [
+          1980,
+          1,
+          1,
+          0,
+          0,
+          0
+        ]
+      ],
+      "markerVariant": "slim",
+      "hasEfs": true
+    },
+    {
+      "name": "poly con efs",
+      "variant": "poly",
+      "withEfs": true,
+      "tree": "default",
+      "count": 12,
+      "entries": [
+        {
+          "name": "Dockerfile",
+          "mode": 420,
+          "content": "FROM scratch\n"
+        },
+        {
+          "name": "a/b.txt",
+          "mode": 420,
+          "content": "slash\n"
+        },
+        {
+          "name": "a-b.txt",
+          "mode": 420,
+          "content": "dash\n"
+        },
+        {
+          "name": "kernel-sidecar/ipython/startup/0004_warmup.py",
+          "mode": 420,
+          "content": "pass\n"
+        },
+        {
+          "name": "kernel-sidecar/requirements.txt",
+          "mode": 420,
+          "content": "ipykernel==6\n"
+        },
+        {
+          "name": "licenses/LICENSE",
+          "mode": 420,
+          "content": "LICENSE\n"
+        },
+        {
+          "name": "licenses/NOTICE",
+          "mode": 420,
+          "content": "NOTICE\n"
+        },
+        {
+          "name": "licenses/THIRD_PARTY_LICENSES.md",
+          "mode": 420,
+          "content": "THIRD_PARTY_LICENSES.md\n"
+        },
+        {
+          "name": "rayd",
+          "mode": 493,
+          "content": "ELF-binary\n"
+        },
+        {
+          "name": "ñ.txt",
+          "mode": 420,
+          "content": "ene\n"
+        },
+        {
+          "name": "kernel-sidecar/kernels_variant",
+          "mode": 420,
+          "content": "poly\n"
+        },
+        {
+          "name": "kernel-sidecar/efs_variant",
+          "mode": 420,
+          "content": "efs\n"
+        }
+      ],
+      "dates": [
+        [
+          1980,
+          1,
+          1,
+          0,
+          0,
+          0
+        ]
+      ],
+      "markerVariant": "poly",
+      "hasEfs": true
+    },
+    {
+      "name": "sin Dockerfile",
+      "variant": "full",
+      "withEfs": false,
+      "tree": [
+        ".gitignore",
+        "a-b.txt",
+        "a/b.txt",
+        "kernel-sidecar/.venv/lib/x.py",
+        "kernel-sidecar/__pycache__/x.pyc",
+        "kernel-sidecar/ipython/startup/0004_warmup.py",
+        "kernel-sidecar/requirements.txt",
+        "kernel-sidecar/tests/test_x.py",
+        "kernel-sidecar/uv.lock",
+        "licenses/LICENSE",
+        "licenses/NOTICE",
+        "licenses/THIRD_PARTY_LICENSES.md",
+        "old.zip",
+        "rayd",
+        "requirements.in",
+        "ñ.txt"
+      ],
+      "errorKind": "missingDockerfile"
+    },
+    {
+      "name": "rayd sin avisos de licencia",
+      "variant": "full",
+      "withEfs": false,
+      "tree": [
+        ".gitignore",
+        "Dockerfile",
+        "a-b.txt",
+        "a/b.txt",
+        "kernel-sidecar/.venv/lib/x.py",
+        "kernel-sidecar/__pycache__/x.pyc",
+        "kernel-sidecar/ipython/startup/0004_warmup.py",
+        "kernel-sidecar/requirements.txt",
+        "kernel-sidecar/tests/test_x.py",
+        "kernel-sidecar/uv.lock",
+        "old.zip",
+        "rayd",
+        "requirements.in",
+        "ñ.txt"
+      ],
+      "errorKind": "missingNotice"
+    },
+    {
+      "name": "sin rayd no hacen falta avisos",
+      "variant": "full",
+      "withEfs": false,
+      "tree": [
+        ".gitignore",
+        "Dockerfile",
+        "a-b.txt",
+        "a/b.txt",
+        "kernel-sidecar/.venv/lib/x.py",
+        "kernel-sidecar/__pycache__/x.pyc",
+        "kernel-sidecar/ipython/startup/0004_warmup.py",
+        "kernel-sidecar/requirements.txt",
+        "kernel-sidecar/tests/test_x.py",
+        "kernel-sidecar/uv.lock",
+        "old.zip",
+        "requirements.in",
+        "ñ.txt"
+      ],
+      "count": 6,
+      "entries": [
+        {
+          "name": "Dockerfile",
+          "mode": 420,
+          "content": "FROM scratch\n"
+        },
+        {
+          "name": "a/b.txt",
+          "mode": 420,
+          "content": "slash\n"
+        },
+        {
+          "name": "a-b.txt",
+          "mode": 420,
+          "content": "dash\n"
+        },
+        {
+          "name": "kernel-sidecar/ipython/startup/0004_warmup.py",
+          "mode": 420,
+          "content": "pass\n"
+        },
+        {
+          "name": "kernel-sidecar/requirements.txt",
+          "mode": 420,
+          "content": "ipykernel==6\n"
+        },
+        {
+          "name": "ñ.txt",
+          "mode": 420,
+          "content": "ene\n"
+        }
+      ],
+      "dates": [
+        [
+          1980,
+          1,
+          1,
+          0,
+          0,
+          0
+        ]
+      ],
+      "markerVariant": "full",
+      "hasEfs": false
+    }
+  ]
+}

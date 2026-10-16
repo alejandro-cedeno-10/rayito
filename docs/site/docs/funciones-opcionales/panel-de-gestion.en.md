@@ -10,7 +10,7 @@ you read your own data with your credentials.
 !!! note "What is here"
     The page covers the **SDK services** (synchronous and asynchronous Python, and
     TypeScript, with the same surface) and the **local web dashboard**
-    (`rayito dashboard`, Python CLI only), which is built on top of
+    (`rayito dashboard`, in the Python CLI and in the TypeScript one), which is built on top of
     them: [jump to the dashboard](#panel-web-local). The optional `dashboard` stack
     in your account (phase 2) has its own page:
     [Dashboard in your account](panel-en-tu-cuenta.md).
@@ -331,8 +331,8 @@ the bulk actions.
 ## Local web dashboard: `rayito dashboard` { #panel-web-local }
 
 `rayito dashboard` starts on your machine a server at `127.0.0.1` that
-serves a page (ES modules and web components, no Node or build step,
-packaged in the wheel) and the [JSON API `/api/v1`](../referencia/api-del-panel.md)
+serves a page (ES modules and web components, no build step, packaged in
+the Python wheel and in the npm package; a single copy in the repository) and the [JSON API `/api/v1`](../referencia/api-del-panel.md)
 over the same `Quotas`, `UsageCost` and `Fleet` services. It uses your
 AWS credentials and leaves nothing deployed: pressing Ctrl+C ends it.
 
@@ -405,13 +405,29 @@ names, and no metadata. Your values will be different. The dashboard's interface
 and the screenshots are in Spanish; the original label is given in parentheses
 where it helps.
 
-**1. Install the CLI.** The dashboard is part of the Python CLI (`cli` extra);
-the local dashboard is a Python CLI command and has no TypeScript equivalent.
+**1. Install the CLI.** The dashboard is a command of both CLIs, with the same
+page and the same API:
 
-```bash
-pip install "rayito[cli]"        # or: uv pip install "rayito[cli]"
-rayito dashboard --help
-```
+=== "Python"
+
+    ```bash
+    pip install "rayito[cli]"        # or: uv pip install "rayito[cli]"
+    rayito dashboard --help
+    ```
+
+=== "TypeScript"
+
+    ```bash
+    npm install --global rayito      # or: npx rayito dashboard --help
+    npm install --global @aws-sdk/client-service-quotas
+    rayito dashboard --help
+    ```
+
+    `@aws-sdk/client-service-quotas` is an optional peer: without it, the
+    dashboard's quotas view returns an error that names the package to
+    install. With `--cost-explorer` you need `@aws-sdk/client-cost-explorer`,
+    with `--events-stack`, `@aws-sdk/client-dynamodb` and, for a sandbox's
+    logs, `@aws-sdk/client-cloudwatch-logs`.
 
 **2. Start the dashboard.** With `--allow-actions` to be able to act and, if you have
 the [events](eventos-y-webhooks.md) stack, with `--events-stack`:

@@ -28,6 +28,11 @@ export const HOOK_PATH_PREFIX = "/aws/lambda-microvms/runtime/v1" as const;
 
 export const MAX_CONCURRENT_CONNECTIONS_1_VCPU = 8 as const;
 
+export const PROXY_HEAD_MAX_BYTES = 65536 as const;
+export const PROXY_HEAD_READ_TIMEOUT_SECONDS = 30 as const;
+export const PROXY_UPSTREAM_CONNECT_TIMEOUT_SECONDS = 30 as const;
+export const PROXY_UPSTREAM_RESPONSE_HEAD_TIMEOUT_SECONDS = 30 as const;
+
 export const MICROVM_STATES = [
   "PENDING",
   "RUNNING",
@@ -326,3 +331,6 @@ export const AGENT_KERNEL_WARMUP_SLIM_VALUE = "slim" as const;
 
 export const AGENT_PREFETCH_BUILD_MARKER_PATH = "/tmp/rayito-agent-prefetch.ready" as const;
 export const AGENT_PREFETCH_BUILD_TIMEOUT_SECONDS = 300 as const;
+
+export const MCP_MAX_OUTPUT_CHARS = 100000 as const;
+export const MAX_CONCURRENT_IMAGE_BUILDS = 10 as const;

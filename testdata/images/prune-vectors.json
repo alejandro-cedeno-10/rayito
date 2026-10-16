@@ -1,0 +1,436 @@
+{
+  "description": "Planes de `rayito image prune` compartidos por Python y TypeScript (ADR-027): qué versiones se conservan y cuáles se borran, y la tabla. La fuente es rayito.cli._prune.",
+  "plans": [
+    {
+      "name": "conserva las tres más nuevas y la viva",
+      "keep": 3,
+      "live": [
+        "2.0"
+      ],
+      "versions": [
+        {
+          "imageVersion": "7.0",
+          "state": "SUCCESSFUL",
+          "status": "ACTIVE",
+          "createdAt": "2026-09-01T07:00:00Z"
+        },
+        {
+          "imageVersion": "6.0",
+          "state": "SUCCESSFUL",
+          "status": "ACTIVE",
+          "createdAt": "2026-09-01T06:00:00Z"
+        },
+        {
+          "imageVersion": "5.0",
+          "state": "SUCCESSFUL",
+          "status": "ACTIVE",
+          "createdAt": "2026-09-01T05:00:00Z"
+        },
+        {
+          "imageVersion": "4.0",
+          "state": "SUCCESSFUL",
+          "status": "ACTIVE",
+          "createdAt": "2026-09-01T04:00:00Z"
+        },
+        {
+          "imageVersion": "3.0",
+          "state": "SUCCESSFUL",
+          "status": "ACTIVE",
+          "createdAt": "2026-09-01T03:00:00Z"
+        },
+        {
+          "imageVersion": "2.0",
+          "state": "SUCCESSFUL",
+          "status": "ACTIVE",
+          "createdAt": "2026-09-01T02:00:00Z"
+        },
+        {
+          "imageVersion": "1.0",
+          "state": "SUCCESSFUL",
+          "status": "ACTIVE",
+          "createdAt": "2026-09-01T01:00:00Z"
+        }
+      ],
+      "kept": [
+        [
+          "7.0",
+          "newest"
+        ],
+        [
+          "6.0",
+          "newest"
+        ],
+        [
+          "5.0",
+          "newest"
+        ],
+        [
+          "2.0",
+          "live microvm"
+        ]
+      ],
+      "delete": [
+        "1.0",
+        "3.0",
+        "4.0"
+      ],
+      "rows": [
+        [
+          "7.0",
+          "SUCCESSFUL",
+          "ACTIVE",
+          "2026-09-01T07:00:00+00:00",
+          "keep (newest)"
+        ],
+        [
+          "6.0",
+          "SUCCESSFUL",
+          "ACTIVE",
+          "2026-09-01T06:00:00+00:00",
+          "keep (newest)"
+        ],
+        [
+          "5.0",
+          "SUCCESSFUL",
+          "ACTIVE",
+          "2026-09-01T05:00:00+00:00",
+          "keep (newest)"
+        ],
+        [
+          "4.0",
+          "SUCCESSFUL",
+          "ACTIVE",
+          "2026-09-01T04:00:00+00:00",
+          "delete"
+        ],
+        [
+          "3.0",
+          "SUCCESSFUL",
+          "ACTIVE",
+          "2026-09-01T03:00:00+00:00",
+          "delete"
+        ],
+        [
+          "2.0",
+          "SUCCESSFUL",
+          "ACTIVE",
+          "2026-09-01T02:00:00+00:00",
+          "keep (live microvm)"
+        ],
+        [
+          "1.0",
+          "SUCCESSFUL",
+          "ACTIVE",
+          "2026-09-01T01:00:00+00:00",
+          "delete"
+        ]
+      ],
+      "table": [
+        "version  state       status  createdAt                  action             ",
+        "7.0      SUCCESSFUL  ACTIVE  2026-09-01T07:00:00+00:00  keep (newest)      ",
+        "6.0      SUCCESSFUL  ACTIVE  2026-09-01T06:00:00+00:00  keep (newest)      ",
+        "5.0      SUCCESSFUL  ACTIVE  2026-09-01T05:00:00+00:00  keep (newest)      ",
+        "4.0      SUCCESSFUL  ACTIVE  2026-09-01T04:00:00+00:00  delete             ",
+        "3.0      SUCCESSFUL  ACTIVE  2026-09-01T03:00:00+00:00  delete             ",
+        "2.0      SUCCESSFUL  ACTIVE  2026-09-01T02:00:00+00:00  keep (live microvm)",
+        "1.0      SUCCESSFUL  ACTIVE  2026-09-01T01:00:00+00:00  delete             "
+      ]
+    },
+    {
+      "name": "un build en vuelo no cuenta ni se borra",
+      "keep": 2,
+      "live": [],
+      "versions": [
+        {
+          "imageVersion": "7.0",
+          "state": "DELETING",
+          "status": "INACTIVE",
+          "createdAt": "2026-09-01T07:00:00Z"
+        },
+        {
+          "imageVersion": "6.0",
+          "state": "FAILED",
+          "status": "INACTIVE",
+          "createdAt": "2026-09-01T06:00:00Z"
+        },
+        {
+          "imageVersion": "5.0",
+          "state": "SUCCESSFUL",
+          "status": "ACTIVE",
+          "createdAt": "2026-09-01T05:00:00Z"
+        },
+        {
+          "imageVersion": "4.0",
+          "state": "PENDING",
+          "status": "INACTIVE",
+          "createdAt": "2026-09-01T04:00:00Z"
+        },
+        {
+          "imageVersion": "3.0",
+          "state": "IN_PROGRESS",
+          "status": "INACTIVE",
+          "createdAt": "2026-09-01T03:00:00Z"
+        },
+        {
+          "imageVersion": "2.0",
+          "state": "SUCCESSFUL",
+          "status": "ACTIVE",
+          "createdAt": "2026-09-01T02:00:00Z"
+        },
+        {
+          "imageVersion": "1.0",
+          "state": "SUCCESSFUL",
+          "status": "ACTIVE",
+          "createdAt": "2026-09-01T01:00:00Z"
+        }
+      ],
+      "kept": [
+        [
+          "7.0",
+          "deleting"
+        ],
+        [
+          "5.0",
+          "newest"
+        ],
+        [
+          "4.0",
+          "pending"
+        ],
+        [
+          "3.0",
+          "in_progress"
+        ],
+        [
+          "2.0",
+          "newest"
+        ]
+      ],
+      "delete": [
+        "1.0",
+        "6.0"
+      ],
+      "rows": [
+        [
+          "7.0",
+          "DELETING",
+          "INACTIVE",
+          "2026-09-01T07:00:00+00:00",
+          "keep (deleting)"
+        ],
+        [
+          "6.0",
+          "FAILED",
+          "INACTIVE",
+          "2026-09-01T06:00:00+00:00",
+          "delete"
+        ],
+        [
+          "5.0",
+          "SUCCESSFUL",
+          "ACTIVE",
+          "2026-09-01T05:00:00+00:00",
+          "keep (newest)"
+        ],
+        [
+          "4.0",
+          "PENDING",
+          "INACTIVE",
+          "2026-09-01T04:00:00+00:00",
+          "keep (pending)"
+        ],
+        [
+          "3.0",
+          "IN_PROGRESS",
+          "INACTIVE",
+          "2026-09-01T03:00:00+00:00",
+          "keep (in_progress)"
+        ],
+        [
+          "2.0",
+          "SUCCESSFUL",
+          "ACTIVE",
+          "2026-09-01T02:00:00+00:00",
+          "keep (newest)"
+        ],
+        [
+          "1.0",
+          "SUCCESSFUL",
+          "ACTIVE",
+          "2026-09-01T01:00:00+00:00",
+          "delete"
+        ]
+      ],
+      "table": [
+        "version  state        status    createdAt                  action            ",
+        "7.0      DELETING     INACTIVE  2026-09-01T07:00:00+00:00  keep (deleting)   ",
+        "6.0      FAILED       INACTIVE  2026-09-01T06:00:00+00:00  delete            ",
+        "5.0      SUCCESSFUL   ACTIVE    2026-09-01T05:00:00+00:00  keep (newest)     ",
+        "4.0      PENDING      INACTIVE  2026-09-01T04:00:00+00:00  keep (pending)    ",
+        "3.0      IN_PROGRESS  INACTIVE  2026-09-01T03:00:00+00:00  keep (in_progress)",
+        "2.0      SUCCESSFUL   ACTIVE    2026-09-01T02:00:00+00:00  keep (newest)     ",
+        "1.0      SUCCESSFUL   ACTIVE    2026-09-01T01:00:00+00:00  delete            "
+      ]
+    },
+    {
+      "name": "nada que borrar",
+      "keep": 5,
+      "live": [],
+      "versions": [
+        {
+          "imageVersion": "2.0",
+          "state": "SUCCESSFUL",
+          "status": "ACTIVE",
+          "createdAt": "2026-09-01T02:00:00Z"
+        },
+        {
+          "imageVersion": "1.0",
+          "state": "SUCCESSFUL",
+          "status": "ACTIVE",
+          "createdAt": "2026-09-01T01:00:00Z"
+        }
+      ],
+      "kept": [
+        [
+          "2.0",
+          "newest"
+        ],
+        [
+          "1.0",
+          "newest"
+        ]
+      ],
+      "delete": [],
+      "rows": [
+        [
+          "2.0",
+          "SUCCESSFUL",
+          "ACTIVE",
+          "2026-09-01T02:00:00+00:00",
+          "keep (newest)"
+        ],
+        [
+          "1.0",
+          "SUCCESSFUL",
+          "ACTIVE",
+          "2026-09-01T01:00:00+00:00",
+          "keep (newest)"
+        ]
+      ],
+      "table": [
+        "version  state       status  createdAt                  action       ",
+        "2.0      SUCCESSFUL  ACTIVE  2026-09-01T02:00:00+00:00  keep (newest)",
+        "1.0      SUCCESSFUL  ACTIVE  2026-09-01T01:00:00+00:00  keep (newest)"
+      ]
+    },
+    {
+      "name": "sin versiones",
+      "keep": 5,
+      "live": [],
+      "versions": [],
+      "kept": [],
+      "delete": [],
+      "rows": [],
+      "table": [
+        "version  state  status  createdAt  action"
+      ]
+    },
+    {
+      "name": "las versiones fallidas o inactivas se borran aunque haya espacio",
+      "keep": 5,
+      "live": [],
+      "versions": [
+        {
+          "imageVersion": "3.0",
+          "state": "SUCCESSFUL",
+          "status": "ACTIVE",
+          "createdAt": "2026-09-01T03:00:00Z"
+        },
+        {
+          "imageVersion": "2.0",
+          "state": "SUCCESSFUL",
+          "status": "INACTIVE",
+          "createdAt": "2026-09-01T02:00:00Z"
+        },
+        {
+          "imageVersion": "1.0",
+          "state": "FAILED",
+          "status": "INACTIVE",
+          "createdAt": "2026-09-01T01:00:00Z"
+        }
+      ],
+      "kept": [
+        [
+          "3.0",
+          "newest"
+        ]
+      ],
+      "delete": [
+        "1.0",
+        "2.0"
+      ],
+      "rows": [
+        [
+          "3.0",
+          "SUCCESSFUL",
+          "ACTIVE",
+          "2026-09-01T03:00:00+00:00",
+          "keep (newest)"
+        ],
+        [
+          "2.0",
+          "SUCCESSFUL",
+          "INACTIVE",
+          "2026-09-01T02:00:00+00:00",
+          "delete"
+        ],
+        [
+          "1.0",
+          "FAILED",
+          "INACTIVE",
+          "2026-09-01T01:00:00+00:00",
+          "delete"
+        ]
+      ],
+      "table": [
+        "version  state       status    createdAt                  action       ",
+        "3.0      SUCCESSFUL  ACTIVE    2026-09-01T03:00:00+00:00  keep (newest)",
+        "2.0      SUCCESSFUL  INACTIVE  2026-09-01T02:00:00+00:00  delete       ",
+        "1.0      FAILED      INACTIVE  2026-09-01T01:00:00+00:00  delete       "
+      ]
+    }
+  ],
+  "constants": {
+    "defaultKeep": 5,
+    "defaultWaitTimeoutSeconds": 600.0,
+    "pollIntervalSeconds": 5.0,
+    "retryBackoffSeconds": [
+      5.0,
+      10.0,
+      20.0,
+      40.0,
+      80.0
+    ],
+    "inFlightStates": [
+      "DELETED",
+      "DELETING",
+      "IN_PROGRESS",
+      "PENDING"
+    ],
+    "busyImageStates": [
+      "DELETING",
+      "UPDATING"
+    ],
+    "liveMicrovmExcludedStates": [
+      "TERMINATED",
+      "TERMINATING"
+    ],
+    "tableHeader": [
+      "version",
+      "state",
+      "status",
+      "createdAt",
+      "action"
+    ]
+  }
+}

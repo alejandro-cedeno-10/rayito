@@ -16,12 +16,14 @@ import {
   LambdaMicrovmsClient,
 } from "@aws-sdk/client-lambda-microvms";
 import { CreateBucketCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { InvalidArgumentError } from "../../src/errors.js";
 import {
   LambdaMicrovmsControlPlane,
   Sandbox,
   type SandboxCreateOptions,
   SandboxNotFoundError,
 } from "../../src/index.js";
+import { TERMINAL_STATES } from "../../src/limits.js";
 import { writeZip } from "../../src/templates/zip-node.js";
 import { GuestAddress, LOCAL_GUEST_VAR, LocalGuestControlPlane } from "./guest.js";
 
@@ -114,14 +116,33 @@ export interface LocalHarness {
   readonly templateArn: string;
 }
 
+/**
+ * Termina en Floci lo que una sesión anterior dejó vivo. Un guest aloja un
+ * sandbox a la vez y contesta el `Health` de cualquier id que Floci liste, así
+ * que un residuo haría coincidir un filtro `--metadata` con un id ajeno.
+ */
+async function terminateStaleSandboxes(controlPlane: LocalGuestControlPlane): Promise<void> {
+  const stale: string[] = [];
+  for await (const item of controlPlane.listMicrovms()) {
+    if (!TERMINAL_STATES.has(item.state)) {
+      stale.push(item.sandboxId);
+    }
+  }
+  for (const sandboxId of stale) {
+    await controlPlane.terminateMicrovm(sandboxId).catch((error: unknown) => {
+      if (!(error instanceof SandboxNotFoundError || error instanceof InvalidArgumentError)) {
+        throw error;
+      }
+    });
+  }
+}
+
 export async function localHarness(): Promise<LocalHarness> {
   const settings = localSettings();
   const inner = LambdaMicrovmsControlPlane.fromRegion(settings.region);
-  return {
-    settings,
-    controlPlane: new LocalGuestControlPlane(inner, settings.address),
-    templateArn: await seedLocalImage(settings),
-  };
+  const controlPlane = new LocalGuestControlPlane(inner, settings.address);
+  await terminateStaleSandboxes(controlPlane);
+  return { settings, controlPlane, templateArn: await seedLocalImage(settings) };
 }
 
 /** `create()` como lo llama un e2e, con el plano y el transporte locales. */

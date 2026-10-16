@@ -41,7 +41,13 @@ from typing import Any, Protocol
 
 from botocore.exceptions import ClientError
 
-from rayito.cli._console import client_error_code, client_error_message, echo, emit_json
+from rayito.cli._console import (
+    client_error_code,
+    client_error_message,
+    echo,
+    emit_json,
+    utc_isoformat,
+)
 
 DEFAULT_IMAGE_NAME = "rayito-base"
 DEFAULT_KEEP = 5
@@ -104,11 +110,11 @@ class Plan:
 
     def rows(self) -> list[tuple[str, str, str, str, str]]:
         rows = [
-            (v.image_version, v.state, v.status, v.created_at.isoformat(), f"keep ({why})")
+            (v.image_version, v.state, v.status, utc_isoformat(v.created_at), f"keep ({why})")
             for v, why in self.keep
         ]
         rows.extend(
-            (v.image_version, v.state, v.status, v.created_at.isoformat(), "delete")
+            (v.image_version, v.state, v.status, utc_isoformat(v.created_at), "delete")
             for v in self.delete
         )
         rows.sort(key=lambda row: row[3], reverse=True)

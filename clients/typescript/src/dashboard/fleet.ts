@@ -243,7 +243,7 @@ export class Fleet {
       );
     }
     validateAction(action);
-    const ids = validatedIds(sandboxIds);
+    const ids = validatedSandboxIds(sandboxIds);
     const plan = planBulk(action, ids.length, options.appliedRate);
     const bucket = new TokenBucket(plan.tps, {
       now: this.#monotonic,
@@ -300,7 +300,8 @@ function validateAction(action: string): void {
   }
 }
 
-function validatedIds(sandboxIds: Iterable<string>): string[] {
+/** Los ids sin repetir y con su longitud comprobada; la API del panel los valida igual antes de encolar. */
+export function validatedSandboxIds(sandboxIds: Iterable<string>): string[] {
   const ids = [...new Set(sandboxIds)];
   if (ids.length === 0) {
     throw new InvalidArgumentError("sandboxIds no puede estar vacío");
