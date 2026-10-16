@@ -16,6 +16,7 @@ import { join } from "node:path";
 import { afterAll, describe, expect, test } from "vitest";
 import { runCli } from "../../src/cli/run.js";
 import type { ServicesFactory } from "../../src/cli/services.js";
+import { SIZE_NAMES } from "../../src/sizing/sizing.js";
 import { FakeInput } from "../unit/cli/interactive-fakes.js";
 import { FakeTerminal } from "../unit/cli/terminal.js";
 
@@ -23,7 +24,6 @@ const EXEC_FAILURE_CODE = 7;
 const EXEC_TIMEOUT_CODE = 124;
 const EXEC_TIMEOUT_SECONDS = 2;
 const SLEEP_SECONDS = 20;
-const SIZE_NAMES_COUNT = 5;
 const SHELL_EXIT_CODE = 3;
 const INPUT_ATTACH_BUDGET_MS = 300_000;
 const SESSION_END_BUDGET_MS = 300_000;
@@ -131,7 +131,7 @@ export function defineCliReadScenarios(world: CliWorld): void {
       expect(Array.isArray(JSON.parse(images.stdout))).toBe(true);
       const sizes = await rayito(world, ["--json", "image", "sizes"]);
       expect(sizes.exitCode).toBe(0);
-      expect(JSON.parse(sizes.stdout)).toHaveLength(SIZE_NAMES_COUNT);
+      expect(JSON.parse(sizes.stdout)).toHaveLength(SIZE_NAMES.length);
     });
   });
 }

@@ -502,5 +502,91 @@
       },
       "expected": "{\n  \"waitedSeconds\": 0.0,\n  \"buildSeconds\": null,\n  \"seconds\": 2.5,\n  \"attempts\": 0\n}"
     }
+  ],
+  "generalText": [
+    {
+      "value": 0,
+      "expected": "0"
+    },
+    {
+      "value": 1,
+      "expected": "1"
+    },
+    {
+      "value": 5,
+      "expected": "5"
+    },
+    {
+      "value": 10,
+      "expected": "10"
+    },
+    {
+      "value": 100,
+      "expected": "100"
+    },
+    {
+      "value": 12.5,
+      "expected": "12.5"
+    },
+    {
+      "value": 0.5,
+      "expected": "0.5"
+    },
+    {
+      "value": 1000,
+      "expected": "1000"
+    },
+    {
+      "value": 100000,
+      "expected": "100000"
+    },
+    {
+      "value": 999999,
+      "expected": "999999"
+    },
+    {
+      "value": 123456.7,
+      "expected": "123457"
+    },
+    {
+      "value": 1234567,
+      "expected": "1.23457e+06"
+    },
+    {
+      "value": 1000000,
+      "expected": "1e+06"
+    },
+    {
+      "value": 10000000000.0,
+      "expected": "1e+10"
+    },
+    {
+      "value": 0.0001,
+      "expected": "0.0001"
+    },
+    {
+      "value": 1e-05,
+      "expected": "1e-05"
+    },
+    {
+      "value": 1.2345e-05,
+      "expected": "1.2345e-05"
+    },
+    {
+      "value": 3.14159265,
+      "expected": "3.14159"
+    },
+    {
+      "value": 2500.5,
+      "expected": "2500.5"
+    },
+    {
+      "value": -5,
+      "expected": "-5"
+    },
+    {
+      "value": -1234567,
+      "expected": "-1.23457e+06"
+    }
   ]
 }

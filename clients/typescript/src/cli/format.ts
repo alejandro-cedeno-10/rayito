@@ -36,6 +36,31 @@ export function pythonFloatText(value: number): string {
   return Number.isInteger(value) ? value.toFixed(FIXED_FRACTION_DIGITS) : String(value);
 }
 
+const GENERAL_FORMAT_SIGNIFICANT_DIGITS = 6;
+const GENERAL_FORMAT_MIN_FIXED_EXPONENT = -4;
+const GENERAL_FORMAT_EXPONENT_DIGITS = 2;
+const TRAILING_ZEROS = /\.?0+$/;
+
+/** `format(value, "g")` de Python: seis cifras significativas, sin ceros finales y con exponente fuera de `1e-4 <= |x| < 1e6`; las cuotas del doctor se imprimen así. */
+export function pythonGeneralText(value: number): string {
+  if (!Number.isFinite(value)) {
+    return Number.isNaN(value) ? "nan" : value > 0 ? "inf" : "-inf";
+  }
+  const digits = GENERAL_FORMAT_SIGNIFICANT_DIGITS - 1;
+  const [mantissa = "", exponentText = "0"] = value.toExponential(digits).split("e");
+  const exponent = Number(exponentText);
+  if (
+    exponent < GENERAL_FORMAT_MIN_FIXED_EXPONENT ||
+    exponent >= GENERAL_FORMAT_SIGNIFICANT_DIGITS
+  ) {
+    const sign = exponent < 0 ? "-" : "+";
+    const magnitude = padNumber(Math.abs(exponent), GENERAL_FORMAT_EXPONENT_DIGITS);
+    return `${mantissa.replace(TRAILING_ZEROS, "")}e${sign}${magnitude}`;
+  }
+  const fixed = value.toPrecision(GENERAL_FORMAT_SIGNIFICANT_DIGITS);
+  return fixed.includes(".") ? fixed.replace(TRAILING_ZEROS, "") : fixed;
+}
+
 /** Cómo imprime Python una secuencia: `dataclasses.asdict` conserva las tuplas; un `dict` de `details` lleva listas. */
 export type SequenceStyle = "tuple" | "list";
 

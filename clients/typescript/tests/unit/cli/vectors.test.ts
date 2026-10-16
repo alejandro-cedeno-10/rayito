@@ -12,6 +12,7 @@ import {
   isoUtc,
   pythonDatetimeText,
   pythonFloatText,
+  pythonGeneralText,
 } from "../../../src/cli/format.js";
 import { shellJoin } from "../../../src/cli/shell.js";
 import { renderTable } from "../../../src/cli/table-layout.js";
@@ -27,6 +28,7 @@ interface FormatVectors {
   eventTimestamp: Array<{ epochMs: number; expected: string }>;
   pythonStringRepr: Array<{ text: string; expected: string }>;
   pythonFloatText: Array<{ value: number; expected: string }>;
+  generalText: Array<{ value: number; expected: string }>;
   visibleControls: Array<{ text: string; expected: string }>;
   jsonDocuments: Array<{ name: string; floatKeys: string[]; document: unknown; expected: string }>;
   table: Array<{ columns: string[]; rows: unknown[][]; width: number; expected: string }>;
@@ -66,6 +68,10 @@ describe("vectores de formato compartidos con Python", () => {
 
   it.each(format.pythonFloatText)("str(float) de $value", (vector) => {
     expect(pythonFloatText(vector.value)).toBe(vector.expected);
+  });
+
+  it.each(format.generalText)('format(value, "g") de $value', (vector) => {
+    expect(pythonGeneralText(vector.value)).toBe(vector.expected);
   });
 
   it.each(format.jsonDocuments)("documento JSON: $name", (vector) => {
