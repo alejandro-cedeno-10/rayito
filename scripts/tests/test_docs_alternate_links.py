@@ -41,3 +41,20 @@ def test_other_alternate_links_are_kept() -> None:
 def test_the_selector_links_are_not_touched() -> None:
     link = '<a href="../en/cost/" hreflang="en" class="md-select__link">'
     assert load_hook().on_post_page(link) == link
+
+
+def test_static_templates_such_as_404_are_cleaned() -> None:
+    html = '<link rel="alternate" href="./" hreflang="es">\n<link rel="icon" href="a.svg">'
+    out = load_hook().on_post_template(html, template_name="404.html", config=None)
+    assert "alternate" not in out and 'rel="icon"' in out
+
+
+def test_build_fails_when_an_alternate_survives(tmp_path: Path) -> None:
+    (tmp_path / "ok.html").write_text(RSS, encoding="utf-8")
+    config = {"site_dir": str(tmp_path)}
+    load_hook().on_post_build(config)
+    (tmp_path / "bad.html").write_text(
+        '<link rel="alternate" hreflang="en" href="x">', encoding="utf-8"
+    )
+    with pytest.raises(RuntimeError, match=r"bad\.html"):
+        load_hook().on_post_build(config)
