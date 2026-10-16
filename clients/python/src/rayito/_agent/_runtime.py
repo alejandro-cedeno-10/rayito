@@ -30,8 +30,18 @@ from rayito.exceptions import InvalidArgumentException
 STEP_RUN: Final = "run"
 STEP_COPY: Final = "copy"
 #: Los drivers del host del agente (ADR-028, design.md D3): lista cerrada.
+#: `strands-ts` es el nombre antiguo de `node-callable` con el adaptador
+#: `strands` y sólo se mantiene para leer una configuración ya escrita.
 HostDriver: TypeAlias = Literal[
-    "deepagents", "opencode", "strands", "strands-ts", "hermes", "callable", "command", "http-app"
+    "deepagents",
+    "opencode",
+    "strands",
+    "strands-ts",
+    "node-callable",
+    "hermes",
+    "callable",
+    "command",
+    "http-app",
 ]
 HOST_DRIVERS: Final[tuple[str, ...]] = get_args(HostDriver)
 #: Dónde se instala: un MicroVM de Rayito o un contenedor exportado.

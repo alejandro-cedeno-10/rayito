@@ -17,7 +17,8 @@ Qué hace cada variante:
   `AGENT_STATE_DIR/strands`.
 - **TypeScript**: tu `Agent` de `@strands-agents/sdk` (módulo `entrypoint`,
   que exporta `agent` o `createAgent(ctx)`) corre en Node a través de
-  `strands_bridge.mjs`; las dependencias son las de tu `package-lock.json`.
+  `node_bridge.mjs` (adaptador `strands`); las dependencias son las de tu
+  lockfile (`npm`, `pnpm` o `yarn`).
 
 El modelo llega siempre por la pasarela de secretos con un marcador como
 clave, nunca con credenciales de AWS que el agente pudiera leer (`AWS_*`).
@@ -36,7 +37,6 @@ from rayito._agent._host_runtime import (
     HostBackedRuntime,
     HostSetup,
     ProviderClient,
-    container_packages_step,
     permission_rules,
     provider_base_url,
     require_supported_provider,
@@ -44,13 +44,22 @@ from rayito._agent._host_runtime import (
     tool_allowed,
     user_requirements_steps,
 )
+from rayito._agent._install_plan import (
+    NODE_PACKAGE_MANAGERS,
+    check_node_version,
+    node_bin,
+    node_dependency_steps,
+    node_runtime_steps,
+)
 from rayito._agent._opencode import shell_quote
 from rayito._agent._recipes import (
     AGENT_APP_DIR,
     AGENT_INSTALL_DIR,
-    AGENT_RAYITO_DIR,
+    NODE_BRIDGE_NAME,
+    NODE_BRIDGE_PATH,
     asset_bytes,
     hashed_venv_install,
+    node_bridge,
 )
 from rayito._agent._runtime import (
     InstallTarget,
@@ -60,8 +69,9 @@ from rayito._agent._runtime import (
     run_step,
 )
 from rayito._limits import (
-    AGENT_NODE_SHA256,
-    AGENT_NODE_VERSION,
+    AGENT_DEFAULT_NODE_MAJOR,
+    AGENT_NODE_SHA256S,
+    AGENT_NODE_VERSIONS,
     AGENT_PROTOCOL_VERSION,
     AGENT_STATE_DIR,
     AGENT_STRANDS_HARNESS_REQUIREMENTS_SHA256,
@@ -78,6 +88,9 @@ StrandsLanguage = Literal["python", "typescript"]
 STRANDS_LANGUAGES: Final[tuple[str, ...]] = ("python", "typescript")
 #: Nombres con los que el registro y el telemetría conocen al adaptador.
 STRANDS_NAME: Final = "strands"
+#: El adaptador del puente de Node y el gestor de paquetes por defecto.
+STRANDS_ADAPTER: Final = "strands"
+DEFAULT_NODE_PACKAGE_MANAGER: Final = "npm"
 STRANDS_HARNESS_NAME: Final = "strands-harness"
 #: Estado del runtime dentro de `AGENT_STATE_DIR` (sesiones y memoria).
 STRANDS_STATE_NAME: Final = "strands"
@@ -89,18 +102,6 @@ STRANDS_VENV_NAME: Final = "strands"
 STRANDS_HARNESS_VENV_NAME: Final = "strands-harness"
 STRANDS_REQUIREMENTS_NAME: Final = "requirements-strands.txt"
 STRANDS_HARNESS_REQUIREMENTS_NAME: Final = "requirements-strands-harness.txt"
-#: El puente de Node (dato de paquete) y dónde lo instala la plantilla.
-STRANDS_BRIDGE_NAME: Final = "strands_bridge.mjs"
-STRANDS_BRIDGE_PATH: Final = f"{AGENT_RAYITO_DIR}/{STRANDS_BRIDGE_NAME}"
-#: Node: tarball oficial linux arm64 (SHASUMS256 de nodejs.org) en `node/`.
-NODE_DIR_NAME: Final = "node"
-NODE_TARBALL_URL: Final = (
-    f"https://nodejs.org/dist/v{AGENT_NODE_VERSION}/node-v{AGENT_NODE_VERSION}-linux-arm64.tar.gz"
-)
-#: El `package.json` y el lockfile del usuario (`app/` del contexto de build)
-#: que `npm ci` instala junto a Node, en `<install_dir>/` para que Node los
-#: resuelva desde `AGENT_APP_DIR` y desde el puente.
-NODE_PACKAGE_FILES: Final[tuple[str, ...]] = ("package.json", "package-lock.json")
 #: Lo que el build importa como prueba de humo de cada venv.
 STRANDS_SMOKE_MODULES: Final = "strands, boto3, anthropic, openai, google.genai"
 STRANDS_HARNESS_SMOKE_MODULES: Final = f"{STRANDS_SMOKE_MODULES}, strands_harness"
@@ -158,11 +159,6 @@ def strands_requirements() -> bytes:
 def strands_harness_requirements() -> bytes:
     """Requisitos con hash del venv del harness de Strands."""
     return asset_bytes(STRANDS_HARNESS_REQUIREMENTS_NAME)
-
-
-def strands_bridge() -> bytes:
-    """El puente de Node que importa tu agente y habla el protocolo v1."""
-    return asset_bytes(STRANDS_BRIDGE_NAME)
 
 
 def harness_permission_aliases() -> dict[str, str]:
@@ -230,6 +226,8 @@ class StrandsRuntime(HostBackedRuntime):
         harness: bool = False,
         language: StrandsLanguage = "python",
         requirements: str | None = None,
+        package_manager: str | None = None,
+        node_version: str | None = None,
     ) -> None:
         if language not in STRANDS_LANGUAGES:
             raise InvalidArgumentException(
@@ -252,11 +250,32 @@ class StrandsRuntime(HostBackedRuntime):
                 "StrandsRuntime.requirements es una ruta relativa dentro de source "
                 "y sólo existe con language='python'"
             )
+        self._check_node_options(language, package_manager, node_version)
         self.entrypoint = entrypoint
         self.harness = harness
         self.language: StrandsLanguage = language
         self.requirements = requirements
+        self.package_manager = package_manager
+        self.node_version = node_version
         self.name = STRANDS_HARNESS_NAME if harness else STRANDS_NAME
+
+    @staticmethod
+    def _check_node_options(
+        language: str, package_manager: str | None, node_version: str | None
+    ) -> None:
+        if package_manager is None and node_version is None:
+            return
+        if language != "typescript":
+            raise InvalidArgumentException(
+                "StrandsRuntime.package_manager y node_version sólo existen con "
+                "language='typescript'"
+            )
+        if package_manager is not None and package_manager not in NODE_PACKAGE_MANAGERS:
+            raise InvalidArgumentException(
+                f"StrandsRuntime.package_manager debe ser uno de {list(NODE_PACKAGE_MANAGERS)}"
+            )
+        if node_version is not None:
+            check_node_version(node_version)
 
     @staticmethod
     def _check_entrypoint(entrypoint: str | None, language: str) -> None:
@@ -277,7 +296,8 @@ class StrandsRuntime(HostBackedRuntime):
     def __repr__(self) -> str:
         return (
             f"StrandsRuntime(entrypoint={self.entrypoint!r}, harness={self.harness!r}, "
-            f"language={self.language!r}, requirements={self.requirements!r})"
+            f"language={self.language!r}, requirements={self.requirements!r}, "
+            f"package_manager={self.package_manager!r}, node_version={self.node_version!r})"
         )
 
     @classmethod
@@ -287,7 +307,14 @@ class StrandsRuntime(HostBackedRuntime):
         entrypoint = options.get("entrypoint")
         language = options.get("language", "python")
         requirements = options.get("requirements")
-        for label, value in (("entrypoint", entrypoint), ("requirements", requirements)):
+        manager = options.get("package_manager")
+        node_version = options.get("node_version")
+        for label, value in (
+            ("entrypoint", entrypoint),
+            ("requirements", requirements),
+            ("package_manager", manager),
+            ("node_version", node_version),
+        ):
             if value is not None and not isinstance(value, str):
                 raise InvalidArgumentException(f"runtime.{label} debe ser una cadena")
         if not isinstance(language, str):
@@ -297,6 +324,8 @@ class StrandsRuntime(HostBackedRuntime):
             harness=kind == STRANDS_HARNESS_NAME,
             language=language,  # type: ignore[arg-type]
             requirements=requirements if isinstance(requirements, str) else None,
+            package_manager=manager if isinstance(manager, str) else None,
+            node_version=node_version if isinstance(node_version, str) else None,
         )
 
     def to_options(self) -> dict[str, object]:
@@ -308,6 +337,10 @@ class StrandsRuntime(HostBackedRuntime):
             options["language"] = self.language
         if self.requirements is not None:
             options["requirements"] = self.requirements
+        if self.package_manager is not None:
+            options["package_manager"] = self.package_manager
+        if self.node_version is not None:
+            options["node_version"] = self.node_version
         return options
 
     @property
@@ -356,8 +389,9 @@ class StrandsRuntime(HostBackedRuntime):
             "permissions": permission_rules(spec.permissions),
         }
         if self._typescript:
-            config["bridge"] = STRANDS_BRIDGE_PATH
-            return HostSetup(driver="strands-ts", config=config)
+            config["bridge"] = NODE_BRIDGE_PATH
+            config["adapter"] = STRANDS_ADAPTER
+            return HostSetup(driver="node-callable", config=config)
         config["harness"] = self.harness
         config["memory_dir"] = STRANDS_MEMORY_DIR
         config["builtin_tools"] = harness_builtin_tools(spec) if self.harness else None
@@ -366,8 +400,9 @@ class StrandsRuntime(HostBackedRuntime):
 
     def install_steps(self, target: InstallTarget) -> Sequence[TemplateStep]:
         """Python: los requisitos con hash, el venv (`--require-hashes`) y,
-        si hay, los del usuario. TypeScript: Node (sha256 fijado) y
-        `npm ci --ignore-scripts` de tu lockfile, más el puente."""
+        si hay, los del usuario. TypeScript: Node (sha256 fijado), la
+        instalación congelada de tu lockfile (`npm`, `pnpm` o `yarn`) y el
+        puente."""
         if self._typescript:
             return self._typescript_steps(target)
         name = STRANDS_HARNESS_REQUIREMENTS_NAME if self.harness else STRANDS_REQUIREMENTS_NAME
@@ -396,34 +431,15 @@ class StrandsRuntime(HostBackedRuntime):
         return steps
 
     def _typescript_steps(self, target: InstallTarget) -> list[TemplateStep]:
-        node_dir = f"{target.install_dir}/{NODE_DIR_NAME}"
-        node_bin = f"{node_dir}/bin"
-        steps = list(container_packages_step(target, ("curl", "ca-certificates")))
-        steps.append(
-            run_step(
-                f"curl -fsSL --retry 3 -o /tmp/node.tar.gz {NODE_TARBALL_URL}"
-                f" && echo '{AGENT_NODE_SHA256}  /tmp/node.tar.gz' | sha256sum -c -"
-                f" && mkdir -p {node_dir}"
-                f" && tar -xzf /tmp/node.tar.gz -C {node_dir} --strip-components=1"
-                f" && rm -f /tmp/node.tar.gz"
-                f" && ln -sf {node_bin}/node /usr/local/bin/node"
-            )
-        )
-        steps += [
-            copy_step(f"app/{name}", f"{target.install_dir}/{name}") for name in NODE_PACKAGE_FILES
-        ]
-        steps.append(
-            run_step(
-                f"cd {target.install_dir} && PATH={node_bin}:$PATH"
-                " npm ci --ignore-scripts --omit=dev --no-audit --no-fund"
-            )
-        )
-        steps.append(copy_step(STRANDS_BRIDGE_NAME, STRANDS_BRIDGE_PATH))
+        manager = self.package_manager or DEFAULT_NODE_PACKAGE_MANAGER
+        steps = node_runtime_steps(target, self.node_version)
+        steps += node_dependency_steps(target, manager)
+        steps.append(copy_step(NODE_BRIDGE_NAME, NODE_BRIDGE_PATH))
         return steps
 
     def context_files(self) -> Mapping[str, bytes]:
         if self._typescript:
-            return {STRANDS_BRIDGE_NAME: strands_bridge()}
+            return {NODE_BRIDGE_NAME: node_bridge()}
         if self.harness:
             return {STRANDS_HARNESS_REQUIREMENTS_NAME: strands_harness_requirements()}
         return {STRANDS_REQUIREMENTS_NAME: strands_requirements()}
@@ -431,13 +447,14 @@ class StrandsRuntime(HostBackedRuntime):
     def manifest_entry(self) -> Mapping[str, object]:
         """Versiones y hashes de lo instalado, para el manifiesto."""
         if self._typescript:
+            major = self.node_version or AGENT_DEFAULT_NODE_MAJOR
             return {
                 "language": "typescript",
-                "node_version": AGENT_NODE_VERSION,
-                "node_sha256": AGENT_NODE_SHA256,
+                "node_version": AGENT_NODE_VERSIONS[major],
+                "node_sha256": AGENT_NODE_SHA256S[major],
                 "tested_sdk_version": AGENT_STRANDS_TS_VERSION,
                 "tested_harness_version": AGENT_STRANDS_TS_HARNESS_VERSION,
-                "bridge_sha256": hashlib.sha256(strands_bridge()).hexdigest(),
+                "bridge_sha256": hashlib.sha256(node_bridge()).hexdigest(),
             }
         if self.harness:
             return {
@@ -459,7 +476,7 @@ class StrandsRuntime(HostBackedRuntime):
                 "su user -c 'node --version'",
                 f'su user -c "cd {AGENT_INSTALL_DIR} && node --input-type=module -e '
                 f'\'import \\"{TS_SMOKE_MODULE}\\"\'"',
-                f"su user -c 'test -r {STRANDS_BRIDGE_PATH}'",
+                f"su user -c 'test -r {NODE_BRIDGE_PATH}'",
             )
         modules = STRANDS_HARNESS_SMOKE_MODULES if self.harness else STRANDS_SMOKE_MODULES
         return (f"su user -c \"{self.venv_python()} -c 'import {modules}'\"",)
@@ -467,7 +484,7 @@ class StrandsRuntime(HostBackedRuntime):
     def prefetch_paths(self) -> Sequence[str]:
         """El binario de Node (TypeScript); el venv de Python se carga con
         `warmup_steps()`."""
-        return (f"{AGENT_INSTALL_DIR}/{NODE_DIR_NAME}/bin/node",) if self._typescript else ()
+        return (f"{node_bin(InstallTarget())}/node",) if self._typescript else ()
 
     def warmup_steps(self) -> Sequence[WarmupStep]:
         """Carga Strands (o Node con el SDK) en la caché de páginas."""
@@ -488,14 +505,12 @@ class StrandsRuntime(HostBackedRuntime):
 __all__ = [
     "HARNESS_ALWAYS_OFF",
     "HARNESS_PERMISSION_TOOLS",
-    "STRANDS_BRIDGE_PATH",
     "STRANDS_HARNESS_NAME",
     "STRANDS_NAME",
     "STRANDS_PROVIDERS",
     "STRANDS_TS_PROVIDERS",
     "StrandsRuntime",
     "harness_builtin_tools",
-    "strands_bridge",
     "strands_harness_requirements",
     "strands_requirements",
 ]

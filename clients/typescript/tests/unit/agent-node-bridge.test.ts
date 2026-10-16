@@ -1,13 +1,17 @@
 /**
- * El puente de Node de Strands (`strands_bridge.mjs`, ADR-028): la traducción
- * de `agent.stream()` a eventos v1 contra los eventos grabados que comparte con
- * el driver de Python (`testdata/agent/strands-ts-events.jsonl` y
- * `strands-expected-events.json`), los permisos, la construcción del modelo por
- * pasarela y una ejecución completa con módulos de doble. El puente es Node: se
- * prueba aquí, con el SDK de TypeScript, y el host (Python) lo ejecuta tal cual.
+ * El puente de Node del host (`node_bridge.mjs`, ADR-028 y 0.14 D3). Adaptador
+ * `strands`: la traducción de `agent.stream()` a eventos v1 contra los eventos
+ * grabados que comparte con el driver de Python
+ * (`testdata/agent/strands-ts-events.jsonl` y `strands-expected-events.json`),
+ * los permisos, la construcción del modelo por pasarela y una ejecución completa
+ * con módulos de doble. Adaptadores `langgraph`, `vercel-ai` y `callable`: los
+ * vectores de `testdata/agent/node-adapters/`, la resolución de `entrypoint`
+ * (`ruta#exportación`), el historial de los marcos sin memoria y el proceso
+ * real. El puente es Node: se prueba aquí y el host (Python) lo ejecuta tal cual.
  */
 
-import { readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { describe, expect, test } from "vitest";
@@ -22,9 +26,14 @@ const BRIDGE = join(
   "rayito",
   "_agent",
   "_assets",
-  "strands_bridge.mjs",
+  "node_bridge.mjs",
 );
 
+/** `Module` de Node: el gancho `_load` es su nombre, no el nuestro. */
+interface ModuleLoader {
+  // biome-ignore lint/style/useNamingConvention: nombre del gancho de `node:module`.
+  _load: (...args: unknown[]) => unknown;
+}
 type Json = Record<string, unknown>;
 type Emit = (event: Json) => void;
 interface Bridge {
@@ -50,9 +59,39 @@ interface Bridge {
     importModule: (name: string) => Promise<unknown>;
   }): Promise<void>;
   usageOf(raw: unknown): Json;
+  rayitoUsage(raw: unknown): Json;
   truncateOutput(text: string): [string, boolean];
+  parseEntrypoint(value: string): { path: string; exportName: string | null };
+  loadTarget(
+    config: Json,
+    preferred: string[],
+    importModule: (name: string) => Promise<unknown>,
+  ): Promise<unknown>;
+  GraphTranslator: new () => { feed(chunk: unknown): Json[]; answer: string };
+  AiStreamTranslator: new (options: {
+    reasoning: boolean;
+  }) => {
+    feed(part: Json): Json[];
+    answer: string;
+    failure: unknown;
+  };
+  generatedParts(result: Json): Iterable<Json>;
+  HistoryStore: new (
+    directory: string | null,
+    sessionId: string,
+  ) => {
+    path: string | null;
+    load(): Json[];
+    save(history: Json[], prompt: string, answer: string): void;
+  };
+  BridgeError: new (code: string) => Error & { code: string };
+  forceHttp1ForAwsSdk(loader?: ModuleLoader): () => void;
+  GATEWAY_ENDPOINT_ENV: string;
   DENIED_TOOL_MESSAGE: string;
   ANTHROPIC_MAX_TOKENS: number;
+  DEFAULT_ADAPTER: string;
+  HISTORY_MAX_MESSAGES: number;
+  SESSION_FILE_MODE: number;
 }
 
 const bridge = (await import(pathToFileURL(BRIDGE).href)) as Bridge;
@@ -357,5 +396,538 @@ describe("the real bridge process", () => {
       reason: "protocol_error",
       detail_code: "invalid_request",
     });
+  });
+});
+
+interface AdapterVectors {
+  cases: Json[];
+  generate_cases: Json[];
+  invalid_returns: Json[];
+}
+
+function readVectors(name: string): AdapterVectors {
+  return JSON.parse(readFileSync(join(TESTDATA, "node-adapters", name), "utf8")) as AdapterVectors;
+}
+
+const SESSION = `rda_${"d".repeat(32)}`;
+
+function moduleLoader(modules: Record<string, unknown>): (name: string) => Promise<unknown> {
+  return (name: string) => {
+    const entry = Object.entries(modules).find(([suffix]) => name.endsWith(suffix));
+    return entry === undefined
+      ? Promise.reject(new Error(`sin módulo ${name}`))
+      : Promise.resolve(entry[1]);
+  };
+}
+
+async function runAdapter(
+  adapter: string,
+  modules: Record<string, unknown>,
+  options: { config?: Json; request?: Json } = {},
+): Promise<Json[]> {
+  const emitted: Json[] = [];
+  await bridge.run({
+    config: { adapter, app_dir: "/a", entrypoint: "agent.mjs", ...options.config },
+    request: { v: 1, prompt: "suma", session_id: SESSION, ...options.request },
+    emit: (event) => emitted.push(event),
+    importModule: moduleLoader(modules),
+  });
+  return emitted;
+}
+
+describe("entrypoint resolution", () => {
+  test("a path with and without an export name", () => {
+    expect(bridge.parseEntrypoint("src/agent.ts#graph")).toEqual({
+      path: "src/agent.ts",
+      exportName: "graph",
+    });
+    expect(bridge.parseEntrypoint("agent.ts")).toEqual({ path: "agent.ts", exportName: null });
+  });
+
+  test("the named export wins, then the preferred names, then default", async () => {
+    const module = { graph: "g", agent: "a", default: "d" };
+    const load = (entrypoint: string, preferred: string[]) =>
+      bridge.loadTarget({ app_dir: "/a", entrypoint }, preferred, () => Promise.resolve(module));
+    await expect(load("x.ts#agent", ["graph"])).resolves.toBe("a");
+    await expect(load("x.ts", ["graph", "agent"])).resolves.toBe("g");
+    await expect(load("x.ts", ["nada"])).resolves.toBe("d");
+  });
+
+  test("a named export that does not exist is entrypoint_not_found", async () => {
+    await expect(
+      bridge.loadTarget({ app_dir: "/a", entrypoint: "x.ts#no" }, [], () => Promise.resolve({})),
+    ).rejects.toMatchObject({ code: "entrypoint_not_found" });
+  });
+});
+
+describe("langgraph adapter", () => {
+  const vectors = readVectors("langgraph.json");
+  test.each(vectors.cases.map((c) => String(c.name)))("translates %s", (name) => {
+    const vector = (vectors.cases as Json[]).find((c) => c.name === name) as Json;
+    const translator = new bridge.GraphTranslator();
+    const events = (vector.chunks as unknown[]).flatMap((chunk) => translator.feed(chunk));
+    expect(events).toEqual(vector.events);
+    expect(translator.answer).toBe(vector.answer);
+  });
+
+  function fakeGraph(chunks: Json[], calls: Json[], extra: Json = {}) {
+    return {
+      ...extra,
+      async stream(input: Json, options: Json) {
+        calls.push({ input, options });
+        return (async function* () {
+          yield* chunks;
+        })();
+      },
+    };
+  }
+
+  const answerChunks = (vectors.cases as Json[])[0]?.chunks as Json[];
+
+  test("runs the graph with the thread id and the updates stream mode", async () => {
+    const calls: Json[] = [];
+    const directory = mkdtempSync(join(tmpdir(), "bridge-"));
+    try {
+      const events = await runAdapter(
+        "langgraph",
+        { "agent.mjs": { graph: fakeGraph(answerChunks, calls) } },
+        { config: { sessions_dir: directory }, request: { prompt: "2 + 3" } },
+      );
+      expect(events.at(-1)).toMatchObject({ type: "step_finished", index: 2 });
+      expect(calls[0]?.options).toEqual({
+        configurable: { thread_id: SESSION },
+        streamMode: "updates",
+      });
+      expect(calls[0]?.input).toEqual({ messages: [{ role: "user", content: "2 + 3" }] });
+    } finally {
+      rmSync(directory, { recursive: true });
+    }
+  });
+
+  test("a graph without a checkpointer keeps the conversation between runs", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "bridge-"));
+    try {
+      const calls: Json[] = [];
+      const modules = { "agent.mjs": { graph: fakeGraph(answerChunks, calls) } };
+      await runAdapter("langgraph", modules, { config: { sessions_dir: directory } });
+      await runAdapter("langgraph", modules, {
+        config: { sessions_dir: directory },
+        request: { prompt: "y ahora" },
+      });
+      expect((calls[1]?.input as Json | undefined)?.messages).toEqual([
+        { role: "user", content: "suma" },
+        { role: "assistant", content: "La suma es 5" },
+        { role: "user", content: "y ahora" },
+      ]);
+      const file = join(directory, `${SESSION}.json`);
+      expect(statSync(file).mode & 0o777).toBe(bridge.SESSION_FILE_MODE);
+    } finally {
+      rmSync(directory, { recursive: true });
+    }
+  });
+
+  test("a graph with its own checkpointer is left to keep its own state", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "bridge-"));
+    try {
+      const calls: Json[] = [];
+      const graph = fakeGraph(answerChunks, calls, { checkpointer: {} });
+      await runAdapter(
+        "langgraph",
+        { "agent.mjs": { graph } },
+        { config: { sessions_dir: directory } },
+      );
+      await runAdapter(
+        "langgraph",
+        { "agent.mjs": { graph } },
+        { config: { sessions_dir: directory } },
+      );
+      expect((calls[1]?.input as Json | undefined)?.messages).toHaveLength(1);
+      expect(() => statSync(join(directory, `${SESSION}.json`))).toThrow();
+    } finally {
+      rmSync(directory, { recursive: true });
+    }
+  });
+
+  test("a factory receives the run context and may return the graph", async () => {
+    const contexts: Json[] = [];
+    const factory = (ctx: Json) => {
+      contexts.push(ctx);
+      return fakeGraph([], []);
+    };
+    await runAdapter(
+      "langgraph",
+      { "agent.mjs": { createGraph: factory } },
+      { config: { model: "m1", workdir: "/w", instructions: "Sé breve." } },
+    );
+    expect(contexts[0]).toMatchObject({
+      modelId: "m1",
+      workdir: "/w",
+      instructions: "Sé breve.",
+      sessionId: SESSION,
+    });
+  });
+
+  test("an export that is neither a graph nor a factory is invalid_entrypoint", async () => {
+    await expect(runAdapter("langgraph", { "agent.mjs": { graph: 3 } })).rejects.toMatchObject({
+      code: "invalid_entrypoint",
+    });
+  });
+});
+
+describe("vercel-ai adapter", () => {
+  const vectors = readVectors("vercel-ai.json");
+  test.each(vectors.cases.map((c) => String(c.name)))("translates %s", (name) => {
+    const vector = (vectors.cases as Json[]).find((c) => c.name === name) as Json;
+    const translator = new bridge.AiStreamTranslator({ reasoning: vector.reasoning === true });
+    const events = (vector.parts as Json[]).flatMap((part) => translator.feed(part));
+    expect(events).toEqual(vector.events);
+    expect(translator.answer).toBe(vector.answer);
+  });
+
+  test.each(vectors.generate_cases.map((c) => String(c.name)))(
+    "translates generate() %s",
+    (name) => {
+      const vector = (vectors.generate_cases as Json[]).find((c) => c.name === name) as Json;
+      const translator = new bridge.AiStreamTranslator({ reasoning: false });
+      const events = [...bridge.generatedParts(vector.result as Json)].flatMap((part) =>
+        translator.feed(part),
+      );
+      expect(events).toEqual(vector.events);
+      expect(translator.answer).toBe(vector.answer);
+    },
+  );
+
+  const streamingAgent = (parts: Json[], calls: Json[]) => ({
+    async stream(input: Json) {
+      calls.push(input);
+      return {
+        fullStream: (async function* () {
+          yield* parts;
+        })(),
+      };
+    },
+  });
+  const firstParts = (vectors.cases as Json[])[0]?.parts as Json[];
+
+  test("streams the agent and keeps the conversation between runs", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "bridge-"));
+    try {
+      const calls: Json[] = [];
+      const modules = { "agent.mjs": { agent: streamingAgent(firstParts, calls) } };
+      const first = await runAdapter("vercel-ai", modules, { config: { sessions_dir: directory } });
+      await runAdapter("vercel-ai", modules, {
+        config: { sessions_dir: directory },
+        request: { prompt: "otra" },
+      });
+      expect(first.map((event) => event.type)).toContain("text_delta");
+      expect((calls[1] as Json).messages).toEqual([
+        { role: "user", content: "suma" },
+        { role: "assistant", content: "La suma es 5" },
+        { role: "user", content: "otra" },
+      ]);
+    } finally {
+      rmSync(directory, { recursive: true });
+    }
+  });
+
+  test("an agent without stream() is run with generate()", async () => {
+    const result = (vectors.generate_cases as Json[])[1]?.result;
+    const agent = { generate: () => Promise.resolve(result) };
+    const events = await runAdapter("vercel-ai", { "agent.mjs": { agent } });
+    expect(events.map((event) => event.type)).toEqual([
+      "step_started",
+      "text_delta",
+      "text",
+      "step_finished",
+    ]);
+  });
+
+  test("a stream error part fails the run with the original error", async () => {
+    class APICallError extends Error {}
+    const failure = new APICallError("detalle con sk-123");
+    const agent = streamingAgent([{ type: "start-step" }, { type: "error", error: failure }], []);
+    const error = await runAdapter("vercel-ai", { "agent.mjs": { agent } }).catch((e) => e);
+    expect(error).toBe(failure);
+    expect(bridge.classify(error)).toEqual(["model_error", "apicallerror"]);
+  });
+
+  test("a factory may return the agent", async () => {
+    const contexts: Json[] = [];
+    const createAgent = (ctx: Json) => {
+      contexts.push(ctx);
+      return streamingAgent([], []);
+    };
+    await runAdapter("vercel-ai", { "agent.mjs": { createAgent } }, { config: { model: "m2" } });
+    expect(contexts[0]).toMatchObject({ modelId: "m2", sessionId: SESSION });
+  });
+});
+
+describe("callable adapter", () => {
+  const vectors = readVectors("callable.json");
+
+  function returned(spec: Json): unknown {
+    switch (spec.kind) {
+      case "string":
+      case "object":
+      case "number":
+        return spec.value;
+      default: {
+        const chunks = spec.value as unknown[];
+        return spec.async === true
+          ? (async function* () {
+              yield* chunks;
+            })()
+          : chunks;
+      }
+    }
+  }
+
+  test.each(vectors.cases.map((c) => String(c.name)))("runs %s", async (name) => {
+    const vector = (vectors.cases as Json[]).find((c) => c.name === name) as Json;
+    const seen: Json[] = [];
+    const handler = (request: Json) => {
+      seen.push(request);
+      return returned(vector.returns as Json);
+    };
+    const events = await runAdapter("callable", { "agent.mjs": { handler } });
+    expect(events).toEqual(vector.events);
+    expect(seen[0]).toEqual({
+      prompt: "suma",
+      session_id: SESSION,
+      model: null,
+      reasoning: false,
+    });
+  });
+
+  test.each(vectors.invalid_returns)("rejects a return of kind %#", async (spec) => {
+    const handler = () => returned(spec as Json);
+    await expect(runAdapter("callable", { "agent.mjs": { handler } })).rejects.toMatchObject({
+      code: "invalid_response",
+    });
+  });
+
+  test("an async function and the #export form work", async () => {
+    const events = await runAdapter(
+      "callable",
+      { "agent.mjs": { respond: async () => "hecho" } },
+      { config: { entrypoint: "agent.mjs#respond" } },
+    );
+    expect(events[1]).toEqual({ v: 1, type: "text", text: "hecho" });
+  });
+
+  test("a non-function export is invalid_entrypoint", async () => {
+    await expect(
+      runAdapter("callable", { "agent.mjs": { handler: "no soy una función" } }),
+    ).rejects.toMatchObject({ code: "invalid_entrypoint" });
+  });
+});
+
+describe("dispatch and errors", () => {
+  test("strands is the default adapter", () => {
+    expect(bridge.DEFAULT_ADAPTER).toBe("strands");
+  });
+
+  test("an unknown adapter fails with a closed detail code", async () => {
+    const error = await runAdapter("crewai", {}).catch((e) => e);
+    expect(bridge.classify(error)).toEqual(["runtime_error", "unknown_adapter"]);
+  });
+
+  test("AWS and AI SDK error classes are model errors, by name", () => {
+    class ThrottlingException extends Error {}
+    expect(bridge.classify(new ThrottlingException("x"))[0]).toBe("model_error");
+    const aiSdk = Object.assign(new Error("x"), { name: "AI_APICallError" });
+    expect(bridge.classify(aiSdk)[0]).toBe("model_error");
+    const named = Object.assign(new Error("x"), { name: "AccessDeniedException" });
+    expect(bridge.classify(named)[0]).toBe("model_error");
+    expect(bridge.classify(new bridge.BridgeError("Mala Señal"))).toEqual([
+      "runtime_error",
+      "mala_se_al",
+    ]);
+  });
+
+  test("rayitoUsage keeps only Rayito counters", () => {
+    expect(bridge.rayitoUsage({ input: 2, cache_read: 1, output: -1, otro: 9 })).toEqual({
+      input: 2,
+      output: 0,
+      reasoning: 0,
+      cache_read: 1,
+      cache_write: 0,
+    });
+  });
+});
+
+describe("history store", () => {
+  test("without a directory nothing is read or written", () => {
+    const store = new bridge.HistoryStore(null, SESSION);
+    expect(store.load()).toEqual([]);
+    store.save([], "x", "y");
+  });
+
+  test("an unreadable or malformed file is an empty history", () => {
+    const directory = mkdtempSync(join(tmpdir(), "bridge-"));
+    try {
+      const store = new bridge.HistoryStore(directory, SESSION);
+      expect(store.load()).toEqual([]);
+      writeFileSync(join(directory, `${SESSION}.json`), "{no es json");
+      expect(store.load()).toEqual([]);
+      writeFileSync(join(directory, `${SESSION}.json`), '{"a":1}');
+      expect(store.load()).toEqual([]);
+    } finally {
+      rmSync(directory, { recursive: true });
+    }
+  });
+
+  test("keeps only the last messages", () => {
+    const directory = mkdtempSync(join(tmpdir(), "bridge-"));
+    try {
+      const store = new bridge.HistoryStore(directory, SESSION);
+      const old = Array.from({ length: bridge.HISTORY_MAX_MESSAGES }, (_, index) => ({
+        role: "user",
+        content: String(index),
+      }));
+      store.save(old, "nuevo", "respuesta");
+      const kept = store.load();
+      expect(kept).toHaveLength(bridge.HISTORY_MAX_MESSAGES);
+      expect(kept.at(-1)).toEqual({ role: "assistant", content: "respuesta" });
+      expect(kept[0]).toEqual({ role: "user", content: "2" });
+    } finally {
+      rmSync(directory, { recursive: true });
+    }
+  });
+});
+
+describe("the real bridge process with a framework adapter", () => {
+  test("runs a callable module and closes the run with done", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const directory = mkdtempSync(join(tmpdir(), "bridge-"));
+    try {
+      writeFileSync(
+        join(directory, "agent.mjs"),
+        "export const handler = ({ prompt }) => `eco ${prompt}`;",
+      );
+      const config = join(directory, "config.json");
+      writeFileSync(
+        config,
+        JSON.stringify({ adapter: "callable", app_dir: directory, entrypoint: "agent.mjs" }),
+      );
+      const result = spawnSync(process.execPath, [BRIDGE, config], {
+        input: JSON.stringify({ v: 1, prompt: "hola", session_id: SESSION }),
+        encoding: "utf8",
+      });
+      expect(result.status).toBe(0);
+      const lines = result.stdout
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as Json);
+      expect(lines.map((line) => line.type)).toEqual([
+        "step_started",
+        "text",
+        "step_finished",
+        "done",
+      ]);
+      expect(lines[1]?.text).toBe("eco hola");
+    } finally {
+      rmSync(directory, { recursive: true });
+    }
+  });
+
+  test("an unknown adapter is an agent_failed line, not a crash", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const directory = mkdtempSync(join(tmpdir(), "bridge-"));
+    try {
+      const config = join(directory, "config.json");
+      writeFileSync(config, JSON.stringify({ adapter: "crewai" }));
+      const result = spawnSync(process.execPath, [BRIDGE, config], {
+        input: JSON.stringify({ v: 1, prompt: "hola", session_id: SESSION }),
+        encoding: "utf8",
+      });
+      expect(result.status).toBe(0);
+      expect(JSON.parse(result.stdout.trim())).toEqual({
+        v: 1,
+        type: "agent_failed",
+        reason: "runtime_error",
+        detail_code: "unknown_adapter",
+        session_id: SESSION,
+      });
+    } finally {
+      rmSync(directory, { recursive: true });
+    }
+  });
+});
+
+describe("HTTP/1.1 for the AWS SDK behind the gateway", () => {
+  class Http2Handler {}
+  class Http1Handler {}
+
+  test("a module exporting both smithy handlers comes out with the HTTP/1.1 one in both names", () => {
+    const smithy = { NodeHttp2Handler: Http2Handler, NodeHttpHandler: Http1Handler };
+    const other = { NodeHttp2Handler: 1, NodeHttpHandler: 2, value: "intacto" };
+    const loader: ModuleLoader = {
+      // biome-ignore lint/style/useNamingConvention: nombre del gancho de `node:module`.
+      _load: (request: unknown) => (request === "smithy" ? smithy : other),
+    };
+    const restore = bridge.forceHttp1ForAwsSdk(loader);
+    const patched = loader._load("smithy") as typeof smithy;
+    expect(patched.NodeHttp2Handler).toBe(Http1Handler);
+    expect(patched.NodeHttpHandler).toBe(Http1Handler);
+    expect(loader._load("otro")).toEqual({
+      NodeHttp2Handler: 1,
+      NodeHttpHandler: 2,
+      value: "intacto",
+    });
+    restore();
+    expect(loader._load("smithy")).toBe(smithy);
+  });
+
+  function projectWithSmithy(directory: string): string {
+    const module = join(directory, "node_modules", "@smithy", "node-http-handler");
+    mkdirSync(module, { recursive: true });
+    writeFileSync(
+      join(module, "package.json"),
+      JSON.stringify({ name: "@smithy/node-http-handler", version: "0.0.0", main: "index.js" }),
+    );
+    writeFileSync(
+      join(module, "index.js"),
+      "class NodeHttpHandler {}\nclass NodeHttp2Handler {}\nmodule.exports = { NodeHttpHandler, NodeHttp2Handler };\n",
+    );
+    writeFileSync(
+      join(directory, "agent.mjs"),
+      'import * as handlers from "@smithy/node-http-handler";\n' +
+        "export const handler = () => String(handlers.NodeHttp2Handler === handlers.NodeHttpHandler);\n",
+    );
+    const config = join(directory, "config.json");
+    writeFileSync(
+      config,
+      JSON.stringify({ adapter: "callable", app_dir: directory, entrypoint: "agent.mjs" }),
+    );
+    return config;
+  }
+
+  test.each([
+    [true, "true"],
+    [false, "false"],
+  ])("the process patches only with the gateway endpoint set (%s)", async (gateway, expected) => {
+    const { spawnSync } = await import("node:child_process");
+    const directory = mkdtempSync(join(tmpdir(), "bridge-"));
+    try {
+      const config = projectWithSmithy(directory);
+      const env: Record<string, string> = { ...(process.env as Record<string, string>) };
+      delete env[bridge.GATEWAY_ENDPOINT_ENV];
+      if (gateway) {
+        env[bridge.GATEWAY_ENDPOINT_ENV] = "http://127.0.0.1:1";
+      }
+      const result = spawnSync(process.execPath, [BRIDGE, config], {
+        input: JSON.stringify({ v: 1, prompt: "x", session_id: SESSION }),
+        encoding: "utf8",
+        env,
+      });
+      const lines = result.stdout
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as Json);
+      expect(lines.find((line) => line.type === "text")?.text).toBe(expected);
+    } finally {
+      rmSync(directory, { recursive: true });
+    }
   });
 });

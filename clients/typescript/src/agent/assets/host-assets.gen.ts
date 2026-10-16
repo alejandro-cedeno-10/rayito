@@ -11,7 +11,8 @@ export const AGENT_HOST_FILES: Readonly<Record<string, string>> = {
 \`host.json\` (esquema \`rayito.agent-host/1\`) lleva \`driver\` (una clave de
 \`DRIVERS\`), \`options\` (las opciones del driver de \`HostConfig.options\`, que
 el driver recibe como su configuración) y, opcionalmente, \`limits\`,
-\`max_concurrency\`, \`max_request_bytes\`, \`session_header\` y \`ready_marker\`.
+\`max_concurrency\`, \`queue_max\`, \`queue_timeout_seconds\`, \`max_request_bytes\`,
+\`session_header\` y \`ready_marker\`.
 Las variables de entorno de \`HostConfig.envs\` las pone quien lanza el host
 (el comando del SDK o el \`ENV\` del Dockerfile exportado). En \`task\` la
 petición llega por stdin y las líneas v1 salen por un descriptor privado; en
@@ -44,6 +45,7 @@ DRIVERS: Final[dict[str, str]] = {
     "callable": "drivers.callable",
     "command": "drivers.command",
     "strands": "drivers.strands",
+    "node-callable": "drivers.node_callable",
     "strands-ts": "drivers.strands_ts",
     "hermes": "drivers.hermes",
 }
@@ -129,6 +131,14 @@ def serve(package: str, args: argparse.Namespace) -> int:
     config = serving.ServiceConfig(
         limits=limits.Limits.from_config(host.get("limits")),
         max_concurrency=int(host.get("max_concurrency", serving.MAX_CONCURRENCY)),
+        queue_max=_bounded(host.get("queue_max"), serving.QUEUE_MAX_DEFAULT, serving.QUEUE_MAX),
+        queue_timeout_seconds=float(
+            _bounded(
+                host.get("queue_timeout_seconds"),
+                serving.QUEUE_TIMEOUT_SECONDS_DEFAULT,
+                serving.QUEUE_TIMEOUT_SECONDS_MAX,
+            )
+        ),
         max_request_bytes=int(host.get("max_request_bytes", serving.MAX_REQUEST_BYTES)),
         token=os.environ.get(serving.TOKEN_ENV) or None,
         session_header=str(host.get("session_header", serving.SESSION_HEADER)),
@@ -157,6 +167,14 @@ def serve(package: str, args: argparse.Namespace) -> int:
     log.info("listening port=%d driver=%s", args.port, host["driver"])
     server.serve_forever()
     return 1 if warm_failed.is_set() else 0
+
+
+def _bounded(value: Any, default: Any, ceiling: Any) -> Any:
+    """\`value\` si es un número no negativo (sin pasar de \`ceiling\`), si no
+    \`default\`: un valor inválido de \`host.json\` nunca deja el host sin
+    arrancar."""
+    valid = isinstance(value, int | float) and not isinstance(value, bool) and value >= 0
+    return min(value, ceiling) if valid else default
 
 
 def startup_failure(exc: Exception, diagnostics: Any) -> tuple[str, str | None]:
@@ -1429,19 +1447,25 @@ uso de \`run.completed\`) y un \`tool_call\` por pareja \`tool.started\` /
 
 from __future__ import annotations
 
-import atexit
 import http.client
 import json
 import os
 import secrets
 import threading
-import time
 from collections.abc import Iterator, Mapping
 from http import HTTPStatus
 from pathlib import Path
 from typing import Any, Final
 
-from ..process import ChildProcess
+from ..process import (
+    DEFAULT_START_TIMEOUT_SECONDS,
+    STATE_FAILED,
+    STATE_RESTARTING,
+    ChildProcess,
+    FailureListener,
+    RestartPolicy,
+    Supervisor,
+)
 from ..protocol import (
     AgentFailure,
     Emit,
@@ -1459,8 +1483,6 @@ HEALTH_PATH: Final = "/health"
 RUNS_PATH: Final = "/v1/runs"
 STOP_SUFFIX: Final = "/stop"
 EVENTS_SUFFIX: Final = "/events"
-DEFAULT_START_TIMEOUT_SECONDS: Final = 90.0
-HEALTH_POLL_SECONDS: Final = 0.2
 #: Hermes manda un comentario \`: keepalive\` cada 10 s; más de este silencio
 #: sin un solo byte es un cuelgue.
 STREAM_IDLE_TIMEOUT_SECONDS: Final = 120.0
@@ -1657,7 +1679,8 @@ class Driver:
     def __init__(self, config: Mapping[str, Any]) -> None:
         self._config = config
         self._api_key = secrets.token_urlsafe(API_KEY_BYTES)
-        self._child: ChildProcess | None = None
+        self._supervisor: Supervisor | None = None
+        self._listeners: list[FailureListener] = []
         self._run_id: str | None = None
         self._lock = threading.Lock()
 
@@ -1670,47 +1693,64 @@ class Driver:
     def warm(self) -> None:
         self._ensure_started()
 
+    def add_failure_listener(self, listener: FailureListener) -> None:
+        """Quien se entera de un bucle de caídas (\`app_crashloop\`)."""
+        self._listeners.append(listener)
+        if self._supervisor is not None:
+            self._supervisor.add_failure_listener(listener)
+
+    def availability(self) -> str:
+        """\`ready\`, \`restarting\` (Hermes murió y se relanza) o \`failed\`."""
+        supervisor = self._supervisor
+        state = "" if supervisor is None else supervisor.state
+        if state == STATE_RESTARTING:
+            return "restarting"
+        return "failed" if state == STATE_FAILED else "ready"
+
     def _ensure_started(self) -> None:
         with self._lock:
-            if self._child is not None:
+            if self._supervisor is not None:
                 return
-            write_home(self._config)
-            argv = [
-                str(self._config["python"]),
-                "-P",
-                "-m",
-                "hermes_cli.main",
-                "gateway",
-                "run",
-            ]
-            self._child = ChildProcess(
-                argv,
-                env=child_env(self._config, self._api_key),
-                cwd=str(self._config["workdir"]),
-                capture_stdout=False,
+            supervisor = Supervisor(
+                self._spawn,
+                self._healthy,
+                failure_codes=("hermes_exited", "hermes_not_ready"),
+                environ=child_env(self._config, self._api_key),
+                policy=RestartPolicy.from_config(self._config),
+                start_timeout_seconds=float(
+                    self._config.get("start_timeout_seconds", DEFAULT_START_TIMEOUT_SECONDS)
+                ),
             )
-            atexit.register(self._child.kill)
-        self._wait_healthy()
+            for listener in self._listeners:
+                supervisor.add_failure_listener(listener)
+            self._supervisor = supervisor
+        write_home(self._config)
+        try:
+            supervisor.start()
+        except AgentFailure:
+            with self._lock:
+                self._supervisor = None
+            raise
 
-    def _wait_healthy(self) -> None:
-        deadline = time.monotonic() + float(
-            self._config.get("start_timeout_seconds", DEFAULT_START_TIMEOUT_SECONDS)
+    def _spawn(self) -> ChildProcess:
+        argv = [str(self._config["python"]), "-P", "-m", "hermes_cli.main", "gateway", "run"]
+        return ChildProcess(
+            argv,
+            env=child_env(self._config, self._api_key),
+            cwd=str(self._config["workdir"]),
+            capture_stdout=False,
+            capture_stderr_tail=True,
         )
-        while time.monotonic() < deadline:
-            child = self._child
-            if child is None or child.poll() is not None:
-                raise AgentFailure("runtime_error", "hermes_exited")
-            try:
-                connection = self._connection(REQUEST_TIMEOUT_SECONDS)
-                connection.request("GET", HEALTH_PATH)
-                status = connection.getresponse().status
-                connection.close()
-                if status == HTTPStatus.OK:
-                    return
-            except OSError:
-                pass
-            time.sleep(HEALTH_POLL_SECONDS)
-        raise AgentFailure("runtime_error", "hermes_not_ready")
+
+    def _healthy(self) -> bool:
+        try:
+            connection = self._connection(REQUEST_TIMEOUT_SECONDS)
+            connection.request("GET", HEALTH_PATH)
+            status = connection.getresponse().status
+            connection.close()
+        except OSError:
+            return False
+        return status == HTTPStatus.OK
 
     def run(self, request: Request, emit: Emit, state: RunState) -> None:
         self._ensure_started()
@@ -1788,10 +1828,9 @@ class Driver:
             except OSError:
                 pass
         with self._lock:
-            child = self._child
-            self._child = None
-        if child is not None:
-            child.kill()
+            supervisor, self._supervisor = self._supervisor, None
+        if supervisor is not None:
+            supervisor.stop()
 
 
 def create(options: Mapping[str, Any]) -> Driver:
@@ -1806,7 +1845,18 @@ Configuración del driver:
 - \`command\`: argv del servidor; \`port\`: puerto en el que escucha;
   \`health_path\`, \`invoke_path\`.
 - \`protocol\`: \`agentcore\` (el servidor ya habla \`/ping\` + \`/invocations\`),
+  \`json\` (una app con su propio contrato: el prompt va en el campo
+  \`request_field\` y el texto sale de \`response_field\`, o del primer campo de
+  texto de \`JSON_TEXT_KEYS\`; sus demás rutas siguen alcanzables),
   \`openai-chat\` (Chat Completions con streaming) o \`raw\`.
+- \`port_env\`: la variable de entorno con la que se le dice a la app en qué
+  \`port\` escuchar (por ejemplo \`PORT\`); sin ella no se toca el entorno.
+- Supervisión: una app que muere después de estar lista se relanza con una
+  espera creciente (\`restart_max\`, \`restart_window_seconds\`,
+  \`restart_backoff_seconds\`, \`restart_backoff_max_seconds\`; ver
+  \`process.RestartPolicy\`). Mientras se relanza \`availability()\` es
+  \`restarting\`; pasado el presupuesto es \`failed\` y el host deja el marcador
+  \`app_crashloop\`.
 - \`app_dir\`: el código copiado; es el directorio de trabajo de la app y va al
   principio de su \`PYTHONPATH\`, así que \`python -m paquete.modulo\` funciona.
   \`path_prepend\`: directorios que van al principio de su \`PATH\` (el \`bin\` del
@@ -1819,23 +1869,29 @@ Configuración del driver:
 
 Con \`raw\` no hay traducción: el host reenvía tal cual todo lo que no es
 \`/ping\` (\`forward()\`), y \`run()\` falla con \`protocol_error\`: un servidor MCP
-o cualquier otro protocolo sólo se expone, no se invoca con \`invoke()\`.
+o cualquier otro protocolo sólo se expone, no se invoca con \`invoke()\`. Con
+\`json\` el host traduce \`/invocations\` y además reenvía tal cual el resto de
+rutas (\`forwards\`).
 """
 
 from __future__ import annotations
 
-import atexit
 import http.client
 import json
-import os
 import threading
-import time
 from collections.abc import Iterator, Mapping
 from http import HTTPStatus
 from typing import Any, Final
 
-from ..diagnostics import sanitize_diagnostics
-from ..process import ChildProcess
+from ..process import (
+    DEFAULT_START_TIMEOUT_SECONDS,
+    STATE_FAILED,
+    STATE_RESTARTING,
+    ChildProcess,
+    FailureListener,
+    RestartPolicy,
+    Supervisor,
+)
 from ..protocol import (
     AgentFailure,
     Emit,
@@ -1850,17 +1906,22 @@ from ._common import child_argv, child_environment
 
 LOOPBACK: Final = "127.0.0.1"
 SESSION_ID_PREFIX: Final = "app_"
-#: Segundos que se espera a que la app conteste a su ruta de salud
-#: (\`AGENT_SERVICE_READY_TIMEOUT_SECONDS\` de \`limits.json\` es el tope del
-#: SDK; el de la app, algo menor).
-DEFAULT_START_TIMEOUT_SECONDS: Final = 90.0
-HEALTH_POLL_SECONDS: Final = 0.2
 #: Plazo de una llamada a la app mientras no llegue el del host.
 REQUEST_TIMEOUT_SECONDS: Final = 600.0
 #: Claves de una respuesta JSON donde buscar el texto, en este orden.
 TEXT_KEYS: Final = ("text", "response", "result", "output", "message", "content", "answer")
 SESSION_HEADER: Final = "X-Amzn-Bedrock-AgentCore-Runtime-Session-Id"
-PROTOCOLS: Final = ("agentcore", "openai-chat", "raw")
+PROTOCOLS: Final = ("agentcore", "json", "openai-chat", "raw")
+#: El campo del cuerpo que lleva el prompt con \`json\`, si la
+#: configuración no trae \`request_field\`.
+DEFAULT_REQUEST_FIELD: Final = "prompt"
+#: Dónde buscar el texto de una respuesta \`json\` cuando no hay
+#: \`response_field\`, en este orden (los candidatos de la detección).
+JSON_TEXT_KEYS: Final = ("answer", "output", "text", "response", "result", "content")
+#: Los estados de \`availability()\`.
+AVAILABLE: Final = "ready"
+RESTARTING: Final = "restarting"
+FAILED: Final = "failed"
 #: Cómo llama una app a cada contador de \`usage\`, en este orden: los nombres
 #: de Rayito, los de Anthropic y los de Chat Completions. Una app que no
 #: informa de ninguno tiene uso desconocido, no cero.
@@ -1888,17 +1949,28 @@ def app_usage(raw: object) -> dict[str, int] | None:
     return usage_dict(found) if found else None
 
 
-def extract_text(payload: object) -> str:
+def extract_text(payload: object, keys: tuple[str, ...] = TEXT_KEYS) -> str:
     """El texto de una respuesta JSON de la app: una cadena tal cual, la
-    primera clave de \`TEXT_KEYS\` que sea cadena, o el JSON entero."""
+    primera clave de \`keys\` que sea cadena, o el JSON entero."""
     if isinstance(payload, str):
         return payload
     if isinstance(payload, Mapping):
-        for key in TEXT_KEYS:
+        for key in keys:
             value = payload.get(key)
             if isinstance(value, str):
                 return value
     return json.dumps(payload, ensure_ascii=False)
+
+
+def field_text(payload: object, path: str) -> str | None:
+    """El texto en \`path\` (claves separadas por puntos) de la respuesta, o
+    \`None\` si falta o no es una cadena."""
+    current = payload
+    for part in path.split("."):
+        if not isinstance(current, Mapping) or part not in current:
+            return None
+        current = current[part]
+    return current if isinstance(current, str) else None
 
 
 def iter_sse_data(response: http.client.HTTPResponse) -> Iterator[str]:
@@ -1916,7 +1988,9 @@ def iter_sse_data(response: http.client.HTTPResponse) -> Iterator[str]:
         yield "\\n".join(data)
 
 
-def _delta_of(data: str, protocol: str) -> tuple[str, dict[str, int] | None]:
+def _delta_of(
+    data: str, protocol: str, text_keys: tuple[str, ...] = TEXT_KEYS
+) -> tuple[str, dict[str, int] | None]:
     """El texto de un mensaje SSE y, si lo trae, el uso de tokens."""
     try:
         payload = json.loads(data)
@@ -1931,7 +2005,7 @@ def _delta_of(data: str, protocol: str) -> tuple[str, dict[str, int] | None]:
             delta = content if isinstance(content, str) else ""
         return delta, app_usage(payload.get("usage"))
     usage = app_usage(payload.get("usage")) if isinstance(payload, Mapping) else None
-    return extract_text(payload), usage
+    return extract_text(payload, text_keys), usage
 
 
 class Driver:
@@ -1942,16 +2016,39 @@ class Driver:
         self._protocol = str(config.get("protocol", "agentcore"))
         if self._protocol not in PROTOCOLS:
             raise AgentFailure("protocol_error", "invalid_protocol")
-        self._child: ChildProcess | None = None
+        self._supervisor: Supervisor | None = None
+        self._listeners: list[FailureListener] = []
         self._lock = threading.Lock()
         self._request_timeout = REQUEST_TIMEOUT_SECONDS
 
     @property
     def raw(self) -> bool:
+        """Sin traducción: \`/invocations\` tampoco existe, todo se reenvía."""
         return self._protocol == "raw"
+
+    @property
+    def forwards(self) -> bool:
+        """El host reenvía a la app las rutas que no son \`/ping\` ni
+        \`/invocations\` (\`raw\` y \`json\`)."""
+        return self._protocol in ("raw", "json")
 
     def warm(self) -> None:
         self._ensure_started()
+
+    def add_failure_listener(self, listener: FailureListener) -> None:
+        """Quien se entera de un bucle de caídas (\`app_crashloop\`)."""
+        self._listeners.append(listener)
+        if self._supervisor is not None:
+            self._supervisor.add_failure_listener(listener)
+
+    def availability(self) -> str:
+        """\`ready\`, \`restarting\` (la app murió y se relanza) o \`failed\`
+        (agotó su presupuesto de relanzamientos)."""
+        supervisor = self._supervisor
+        state = AVAILABLE if supervisor is None else supervisor.state
+        if state == STATE_RESTARTING:
+            return RESTARTING
+        return FAILED if state == STATE_FAILED else AVAILABLE
 
     def _connection(self) -> http.client.HTTPConnection:
         return http.client.HTTPConnection(
@@ -1960,18 +2057,39 @@ class Driver:
 
     def _ensure_started(self) -> None:
         with self._lock:
-            if self._child is not None:
+            if self._supervisor is not None:
                 return
-            env = child_environment(self._config)
-            self._child = ChildProcess(
-                child_argv(self._config["command"], env),
-                env=env,
-                cwd=self._working_directory(),
-                capture_stdout=False,
-                capture_stderr_tail=True,
+            supervisor = Supervisor(
+                self._spawn,
+                self._healthy,
+                failure_codes=("app_exited", "app_not_ready"),
+                policy=RestartPolicy.from_config(self._config),
+                start_timeout_seconds=float(
+                    self._config.get("start_timeout_seconds", DEFAULT_START_TIMEOUT_SECONDS)
+                ),
             )
-            atexit.register(self._child.kill)
-        self._wait_healthy()
+            for listener in self._listeners:
+                supervisor.add_failure_listener(listener)
+            self._supervisor = supervisor
+        try:
+            supervisor.start()
+        except AgentFailure:
+            with self._lock:
+                self._supervisor = None
+            raise
+
+    def _spawn(self) -> ChildProcess:
+        env = child_environment(self._config)
+        port_env = self._config.get("port_env")
+        if port_env:
+            env[str(port_env)] = str(self._config["port"])
+        return ChildProcess(
+            child_argv(self._config["command"], env),
+            env=env,
+            cwd=self._working_directory(),
+            capture_stdout=False,
+            capture_stderr_tail=True,
+        )
 
     def _working_directory(self) -> str | None:
         """El directorio del código copiado (\`app_dir\`), de modo que
@@ -1980,39 +2098,20 @@ class Driver:
         directory = self._config.get("app_dir") or self._config.get("workdir")
         return str(directory) if directory else None
 
-    def _startup_failure(self, detail_code: str) -> AgentFailure:
-        """Un arranque fallido con el final de la salida de error de la app,
-        saneado: sin los valores del entorno ni credenciales."""
-        child = self._child
-        text = "" if child is None else child.stderr_text()
-        return AgentFailure(
-            "runtime_error", detail_code, sanitize_diagnostics(text, os.environ) or None
-        )
-
-    def _wait_healthy(self) -> None:
-        deadline = time.monotonic() + float(
-            self._config.get("start_timeout_seconds", DEFAULT_START_TIMEOUT_SECONDS)
-        )
-        while time.monotonic() < deadline:
-            child = self._child
-            if child is None or child.poll() is not None:
-                raise self._startup_failure("app_exited")
-            try:
-                connection = self._connection()
-                connection.request("GET", str(self._config.get("health_path", "/ping")))
-                status = connection.getresponse().status
-                connection.close()
-                if status == HTTPStatus.OK:
-                    return
-            except OSError:
-                pass
-            time.sleep(HEALTH_POLL_SECONDS)
-        raise self._startup_failure("app_not_ready")
+    def _healthy(self) -> bool:
+        try:
+            connection = self._connection()
+            connection.request("GET", str(self._config.get("health_path", "/ping")))
+            status = connection.getresponse().status
+            connection.close()
+        except OSError:
+            return False
+        return status == HTTPStatus.OK
 
     def forward(
         self, method: str, path: str, headers: Mapping[str, str], body: bytes | None
     ) -> http.client.HTTPResponse:
-        """Reenvía una petición tal cual a la app (sólo \`raw\`)."""
+        """Reenvía una petición tal cual a la app (\`raw\` y \`json\`)."""
         self._ensure_started()
         connection = self._connection()
         try:
@@ -2033,24 +2132,31 @@ class Driver:
         emit(build_event("text", text=text))
         emit(build_event("step_finished", index=1, usage=usage, finish_reason="stop"))
 
+    def _body(self, request: Request, session_id: str) -> dict[str, Any]:
+        if self._protocol == "openai-chat":
+            return {
+                "model": request.model or self._config.get("model", ""),
+                "messages": [{"role": "user", "content": request.prompt}],
+                "stream": True,
+                "stream_options": {"include_usage": True},
+            }
+        if self._protocol == "json":
+            field = str(self._config.get("request_field") or DEFAULT_REQUEST_FIELD)
+            return {field: request.prompt, "session_id": session_id}
+        body: dict[str, Any] = {"prompt": request.prompt}
+        if request.model is not None:
+            body["model"] = request.model
+        return body
+
     def _post(self, request: Request, session_id: str) -> http.client.HTTPResponse:
         invoke_path = str(self._config.get("invoke_path", "/invocations"))
         headers = {
             "Content-Type": "application/json",
             "Accept": "text/event-stream, application/json",
         }
-        if self._protocol == "openai-chat":
-            body: dict[str, Any] = {
-                "model": request.model or self._config.get("model", ""),
-                "messages": [{"role": "user", "content": request.prompt}],
-                "stream": True,
-                "stream_options": {"include_usage": True},
-            }
-        else:
+        if self._protocol != "openai-chat":
             headers[SESSION_HEADER] = session_id
-            body = {"prompt": request.prompt}
-            if request.model is not None:
-                body["model"] = request.model
+        body = self._body(request, session_id)
         try:
             connection = self._connection()
             connection.request("POST", invoke_path, body=json.dumps(body), headers=headers)
@@ -2060,6 +2166,25 @@ class Driver:
         if response.status != HTTPStatus.OK:
             raise AgentFailure("runtime_error", f"app_http_{count(response.status)}")
         return response
+
+    def _json_text(self, payload: object) -> str:
+        """El texto de una respuesta \`json\`: \`response_field\` si se
+        configuró (y es un error que falte) o el primer candidato."""
+        field = self._config.get("response_field")
+        if not field:
+            return extract_text(payload, JSON_TEXT_KEYS)
+        text = field_text(payload, str(field))
+        if text is None:
+            raise AgentFailure("protocol_error", "invalid_response")
+        return text
+
+    def _text_keys(self) -> tuple[str, ...]:
+        """Las claves donde buscar el texto de un mensaje SSE: las de la
+        detección con \`json\`, o \`response_field\` si se configuró."""
+        if self._protocol != "json":
+            return TEXT_KEYS
+        field = self._config.get("response_field")
+        return (str(field),) if field else JSON_TEXT_KEYS
 
     def _read(
         self, response: http.client.HTTPResponse, emit: Emit
@@ -2071,13 +2196,14 @@ class Driver:
             except ValueError:
                 raise AgentFailure("protocol_error", "invalid_response") from None
             reported = app_usage(payload.get("usage")) if isinstance(payload, Mapping) else None
-            return extract_text(payload), reported
+            text = self._json_text(payload) if self._protocol == "json" else extract_text(payload)
+            return text, reported
         parts: list[str] = []
         usage: dict[str, int] | None = None
         for data in iter_sse_data(response):
             if data.strip() == "[DONE]":
                 break
-            delta, found = _delta_of(data, self._protocol)
+            delta, found = _delta_of(data, self._protocol, self._text_keys())
             usage = found or usage
             if delta:
                 parts.append(delta)
@@ -2086,15 +2212,57 @@ class Driver:
 
     def cancel(self) -> None:
         with self._lock:
-            child = self._child
-        if child is not None:
-            child.kill()
-            with self._lock:
-                self._child = None
+            supervisor, self._supervisor = self._supervisor, None
+        if supervisor is not None:
+            supervisor.stop()
 
 
 def create(config: Mapping[str, Any]) -> Driver:
     return Driver(config)
+`,
+  "drivers/node_callable.py": `"""Driver \`node-callable\` del host (0.14, D3): ejecuta tu agente de
+JavaScript o TypeScript con \`node node_bridge.mjs <config>\`. Un único puente de
+Node con un adaptador por framework (\`adapter\`: \`strands\`, \`langgraph\`,
+\`vercel-ai\` o \`callable\`) habla el protocolo v1 por stdout, así que este
+driver es el driver \`command\` con ese comando fijo: mismos eventos, mismo
+cierre (\`agent_failed\` y \`done\` del puente) y mismo mapeo de la salida del
+proceso.
+
+Configuración: la del puente (el JSON que escribe el runtime del SDK, al que
+apunta \`config_path\`): \`bridge\` (ruta del puente), \`adapter\` (si falta, el
+puente usa \`strands\`), \`entrypoint\`, \`app_dir\` y \`workdir\`.
+
+\`strands-ts\` es el nombre antiguo de este driver (con \`adapter="strands"\`);
+sigue en el registro como alias.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Mapping
+from typing import Any, Final
+
+from ..protocol import AgentFailure
+from . import command
+from ._common import load_config
+
+NODE_BINARY: Final = "node"
+#: El adaptador que el puente usa si la configuración no trae \`adapter\`.
+DEFAULT_ADAPTER: Final = "strands"
+
+
+def create(options: Mapping[str, Any]) -> command.Driver:
+    config = load_config(options)
+    config_path = options.get("config_path")
+    bridge = config.get("bridge")
+    if not isinstance(config_path, str) or not isinstance(bridge, str):
+        raise AgentFailure("protocol_error", "invalid_input")
+    return command.Driver(
+        {
+            "command": [NODE_BINARY, bridge, config_path],
+            "protocol": command.PROTOCOL_V1,
+            "workdir": config.get("workdir"),
+        }
+    )
 `,
   "drivers/opencode.py": `"""Driver de OpenCode del host (ADR-028, D3): lanza \`opencode run --format
 json\` con los mismos argumentos que construye el adaptador del SDK y traduce
@@ -2740,41 +2908,16 @@ class Driver:
 def create(options: Mapping[str, Any]) -> Driver:
     return Driver(load_config(options))
 `,
-  "drivers/strands_ts.py": `"""Driver \`strands-ts\` del host (ADR-028, D2 y D3): ejecuta tu agente de
-\`@strands-agents/sdk\` (TypeScript) con \`node strands_bridge.mjs <config>\`. El
-puente habla el protocolo v1 por stdout, así que este driver es el driver
-\`command\` con ese comando fijo: mismos eventos, mismo cierre (\`agent_failed\`
-y \`done\` del puente) y mismo mapeo de la salida del proceso.
-
-Configuración: la del puente (el JSON que escribe \`rayito._agent._strands\`,
-al que apunta \`config_path\`): \`bridge\` (ruta del puente) y \`workdir\`.
-"""
+  "drivers/strands_ts.py": `"""Driver \`strands-ts\` del host: el nombre con el que 0.14.0-rc servía a
+Strands Agents para TypeScript. Es el driver \`node-callable\` (el adaptador
+\`strands\` es su valor por defecto); se mantiene como alias para que una
+\`host.json\` ya escrita siga arrancando."""
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from typing import Any, Final
+from .node_callable import create
 
-from ..protocol import AgentFailure
-from . import command
-from ._common import load_config
-
-NODE_BINARY: Final = "node"
-
-
-def create(options: Mapping[str, Any]) -> command.Driver:
-    config = load_config(options)
-    config_path = options.get("config_path")
-    bridge = config.get("bridge")
-    if not isinstance(config_path, str) or not isinstance(bridge, str):
-        raise AgentFailure("protocol_error", "invalid_input")
-    return command.Driver(
-        {
-            "command": [NODE_BINARY, bridge, config_path],
-            "protocol": command.PROTOCOL_V1,
-            "workdir": config.get("workdir"),
-        }
-    )
+__all__ = ["create"]
 `,
   "limits.py": `"""Topes de una ejecución en modo servicio (\`agent_host\`, ADR-028, D3). Tiene
 la misma semántica que el \`LimitTracker\` del SDK
@@ -2891,19 +3034,29 @@ class LimitTracker:
         deltas, su concatenación."""
         return self.last_text or "".join(self.deltas)
 `,
-  "process.py": `"""Procesos hijos de los drivers (\`opencode\`, \`http-app\`, \`command\`): cada
-uno nace en su propio grupo de procesos para poder matar a todo su árbol, y
-\`kill()\` es idempotente. Sólo biblioteca estándar."""
+  "process.py": `"""Procesos hijos de los drivers (\`opencode\`, \`http-app\`, \`command\`, \`hermes\`):
+cada uno nace en su propio grupo de procesos para poder matar a todo su
+árbol, y \`kill()\` es idempotente. \`Supervisor\` vigila al hijo de un driver de
+larga vida (\`http-app\`, \`hermes\`): si muere después de estar listo lo
+relanza con una espera creciente y, pasado su presupuesto, lo da por caído
+(\`app_crashloop\`). Sólo biblioteca estándar."""
 
 from __future__ import annotations
 
+import atexit
 import contextlib
 import os
 import signal
 import subprocess
 import threading
-from collections.abc import Iterator, Mapping, Sequence
-from typing import IO, Final
+import time
+from collections import deque
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from dataclasses import dataclass
+from typing import IO, Any, Final
+
+from .diagnostics import sanitize_diagnostics
+from .protocol import AgentFailure
 
 #: Lectura de un fragmento de stdout: más pequeño que cualquier línea de
 #: evento razonable, pero sin una llamada de sistema por byte.
@@ -2916,6 +3069,27 @@ STDERR_DRAIN_SECONDS: Final = 1.0
 #: Lo que se conserva de la salida de error de un hijo: el final, no el
 #: principio, porque ahí está el motivo de un fallo.
 STDERR_TAIL_BYTES: Final = 8192
+#: Cuántas veces se relanza una app que muere dentro de la ventana, la
+#: ventana, y la espera inicial y máxima entre relanzamientos
+#: (\`AGENT_APP_RESTART_MAX\`, \`AGENT_APP_RESTART_WINDOW_SECONDS\`,
+#: \`AGENT_APP_RESTART_BACKOFF_SECONDS\` y \`AGENT_APP_RESTART_BACKOFF_MAX_SECONDS\`
+#: de \`limits.json\`).
+DEFAULT_RESTART_MAX: Final = 3
+DEFAULT_RESTART_WINDOW_SECONDS: Final = 300.0
+DEFAULT_RESTART_BACKOFF_SECONDS: Final = 2.0
+DEFAULT_RESTART_BACKOFF_MAX_SECONDS: Final = 30.0
+#: Cada cuánto se sondea la salud de una app que arranca.
+HEALTH_POLL_SECONDS: Final = 0.2
+#: Plazo por defecto para que una app esté lista tras (re)lanzarla.
+DEFAULT_START_TIMEOUT_SECONDS: Final = 90.0
+#: Estados de un hijo supervisado.
+STATE_RUNNING: Final = "running"
+STATE_RESTARTING: Final = "restarting"
+STATE_FAILED: Final = "failed"
+STATE_STOPPED: Final = "stopped"
+#: \`detail_code\` del marcador de fallo cuando se agota el presupuesto de
+#: relanzamientos.
+CRASHLOOP_CODE: Final = "app_crashloop"
 
 
 class _StderrTail:
@@ -3025,6 +3199,209 @@ class ChildProcess:
             os.killpg(self._process.pid, signal.SIGKILL)
         with contextlib.suppress(subprocess.TimeoutExpired):
             self._process.wait(timeout=KILL_WAIT_SECONDS)
+
+
+@dataclass(frozen=True)
+class RestartPolicy:
+    """Cuántos relanzamientos admite un hijo y con qué esperas."""
+
+    max_restarts: int = DEFAULT_RESTART_MAX
+    window_seconds: float = DEFAULT_RESTART_WINDOW_SECONDS
+    backoff_seconds: float = DEFAULT_RESTART_BACKOFF_SECONDS
+    backoff_max_seconds: float = DEFAULT_RESTART_BACKOFF_MAX_SECONDS
+
+    @classmethod
+    def from_config(cls, config: Mapping[str, object]) -> RestartPolicy:
+        """Las claves \`restart_max\`, \`restart_window_seconds\`,
+        \`restart_backoff_seconds\` y \`restart_backoff_max_seconds\` de la
+        configuración del driver; una ausente o inválida usa el valor por
+        defecto."""
+        defaults = cls()
+        return cls(
+            max_restarts=_non_negative(config.get("restart_max"), defaults.max_restarts),
+            window_seconds=float(
+                _non_negative(config.get("restart_window_seconds"), defaults.window_seconds)
+            ),
+            backoff_seconds=float(
+                _non_negative(config.get("restart_backoff_seconds"), defaults.backoff_seconds)
+            ),
+            backoff_max_seconds=float(
+                _non_negative(
+                    config.get("restart_backoff_max_seconds"), defaults.backoff_max_seconds
+                )
+            ),
+        )
+
+
+def _non_negative(value: object, default: Any) -> Any:
+    valid = isinstance(value, int | float) and not isinstance(value, bool) and value >= 0
+    return value if valid else default
+
+
+class RestartBudget:
+    """El presupuesto de relanzamientos: cuenta las muertes dentro de la
+    ventana y decide cuánto esperar antes del siguiente. Puro: el reloj lo
+    pone quien llama."""
+
+    def __init__(self, policy: RestartPolicy) -> None:
+        self._policy = policy
+        self._deaths: deque[float] = deque()
+
+    def record_death(self, now: float) -> float | None:
+        """Registra una muerte en \`now\` y devuelve los segundos de espera
+        antes de relanzar, o \`None\` si el presupuesto se agotó: la muerte
+        \`max_restarts + 1\` dentro de la ventana es un bucle de caídas."""
+        horizon = now - self._policy.window_seconds
+        while self._deaths and self._deaths[0] <= horizon:
+            self._deaths.popleft()
+        if len(self._deaths) >= self._policy.max_restarts:
+            return None
+        self._deaths.append(now)
+        delay = self._policy.backoff_seconds * 2 ** (len(self._deaths) - 1)
+        return float(min(delay, self._policy.backoff_max_seconds))
+
+
+FailureListener = Callable[[str, str | None], None]
+
+
+class Supervisor:
+    """Arranca el hijo de un driver, espera a que esté listo y lo vigila.
+
+    El primer arranque es síncrono y un fallo es \`AgentFailure\`
+    (\`failure_codes[0]\` si el hijo sale, \`failure_codes[1]\` si no contesta a
+    tiempo) con el final de su salida de error ya saneado: no se relanza,
+    porque lo más probable es una app mal configurada. Una muerte posterior
+    pasa a \`restarting\`, espera \`RestartBudget\` y relanza; si el relanzado
+    no queda listo cuenta como otra muerte. Agotado el presupuesto el
+    estado es \`failed\` y los oyentes reciben \`app_crashloop\` con la cola de
+    su salida de error. \`spawn\` debe crear el hijo con
+    \`capture_stderr_tail=True\`; \`probe\` dice si ya contesta."""
+
+    def __init__(
+        self,
+        spawn: Callable[[], ChildProcess],
+        probe: Callable[[], bool],
+        *,
+        failure_codes: tuple[str, str],
+        policy: RestartPolicy | None = None,
+        start_timeout_seconds: float = DEFAULT_START_TIMEOUT_SECONDS,
+        environ: Mapping[str, str] | None = None,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self._spawn = spawn
+        self._probe = probe
+        self._failure_codes = failure_codes
+        self._budget = RestartBudget(policy or RestartPolicy())
+        self._start_timeout = start_timeout_seconds
+        self._environ = os.environ if environ is None else environ
+        self._clock = clock
+        self._lock = threading.Lock()
+        self._stop = threading.Event()
+        self._state = STATE_STOPPED
+        self._child: ChildProcess | None = None
+        self._listeners: list[FailureListener] = []
+        self._monitor: threading.Thread | None = None
+        self.restarts = 0
+
+    @property
+    def state(self) -> str:
+        with self._lock:
+            return self._state
+
+    def add_failure_listener(self, listener: FailureListener) -> None:
+        self._listeners.append(listener)
+
+    def start(self) -> None:
+        """El primer arranque; vuelve cuando la app está lista."""
+        child = self._spawn()
+        with self._lock:
+            self._child = child
+        self._stop.clear()
+        try:
+            self._await_ready(child)
+        except AgentFailure:
+            self.stop()
+            raise
+        with self._lock:
+            self._state = STATE_RUNNING
+        atexit.register(self.stop)
+        self._monitor = threading.Thread(target=self._watch, daemon=True)
+        self._monitor.start()
+
+    def stop(self) -> None:
+        """Deja de vigilar y mata al hijo; es idempotente."""
+        self._stop.set()
+        with self._lock:
+            child, self._child = self._child, None
+            self._state = STATE_STOPPED
+        if child is not None:
+            child.kill()
+
+    def _set_state(self, state: str) -> None:
+        with self._lock:
+            if self._state != STATE_STOPPED:
+                self._state = state
+
+    def _current(self) -> ChildProcess | None:
+        with self._lock:
+            return self._child
+
+    def _failure(self, code: str, child: ChildProcess) -> AgentFailure:
+        text = sanitize_diagnostics(child.stderr_text(), self._environ)
+        return AgentFailure("runtime_error", code, text or None)
+
+    def _await_ready(self, child: ChildProcess) -> None:
+        deadline = self._clock() + self._start_timeout
+        while self._clock() < deadline and not self._stop.is_set():
+            if child.poll() is not None:
+                raise self._failure(self._failure_codes[0], child)
+            if self._probe():
+                return
+            self._stop.wait(HEALTH_POLL_SECONDS)
+        raise self._failure(self._failure_codes[1], child)
+
+    def _watch(self) -> None:
+        while not self._stop.is_set():
+            child = self._current()
+            if child is None:
+                return
+            child.wait()
+            if self._stop.is_set() or not self._recover(child):
+                return
+
+    def _recover(self, dead: ChildProcess) -> bool:
+        """Relanza hasta que el hijo queda listo; \`False\` si se paró o se
+        agotó el presupuesto."""
+        last = dead
+        while True:
+            delay = self._budget.record_death(self._clock())
+            if delay is None:
+                self._give_up(last)
+                return False
+            self._set_state(STATE_RESTARTING)
+            if self._stop.wait(delay):
+                return False
+            child = self._spawn()
+            with self._lock:
+                if self._stop.is_set():
+                    child.kill()
+                    return False
+                self._child = child
+            self.restarts += 1
+            try:
+                self._await_ready(child)
+            except AgentFailure:
+                child.kill()
+                last = child
+                continue
+            self._set_state(STATE_RUNNING)
+            return True
+
+    def _give_up(self, child: ChildProcess) -> None:
+        self._set_state(STATE_FAILED)
+        text = sanitize_diagnostics(child.stderr_text(), self._environ)
+        for listener in self._listeners:
+            listener(CRASHLOOP_CODE, text or None)
 `,
   "protocol.py": `"""Protocolo JSONL v1 de Rayito, lado del host del agente (\`agent_host\`,
 ADR-028, design.md D3). Un evento es un diccionario \`{"v": 1, "type": ...}\`;
@@ -3262,8 +3639,11 @@ el contrato HTTP de AgentCore, con \`http.server.ThreadingHTTPServer\`.
   Con \`Accept: text/event-stream\`, un mensaje SSE por evento v1 hasta \`done\`
   o \`agent_failed\`; si no, \`{"v", "text", "session_id", "usage",
   "usage_reported", "steps", "failed"}\`. \`400\` cuerpo inválido, \`413\` demasiado grande, \`429\` con
-  \`Retry-After\` por encima de \`max_concurrency\`, \`503\` antes de estar listo
-  y \`401\` si hay token y no coincide.
+  \`Retry-After\` por encima de \`max_concurrency\` (con \`queue_max\` > 0 la
+  petición espera su turno en una cola FIFO acotada hasta
+  \`queue_timeout_seconds\` y sólo entonces recibe el \`429\`), \`503\` antes de
+  estar listo o mientras la app se relanza (con \`Retry-After\`) y \`401\` si
+  hay token y no coincide.
 
 El host no loguea contenido: sólo método, ruta sin consulta, estado, bytes y
 duración. Nunca el prompt, una cabecera ni el token.
@@ -3279,6 +3659,7 @@ import os
 import queue
 import threading
 import time
+from collections import deque
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field
 from http import HTTPStatus
@@ -3311,6 +3692,28 @@ MAX_REQUEST_BYTES: Final = 1_048_576
 MAX_CONCURRENCY: Final = 1
 STATUS_HEALTHY: Final = "Healthy"
 STATUS_BUSY: Final = "HealthyBusy"
+STATUS_UNHEALTHY: Final = "Unhealthy"
+#: Los estados de \`availability()\` de un driver supervisado.
+AVAILABILITY_RESTARTING: Final = "restarting"
+AVAILABILITY_FAILED: Final = "failed"
+#: El \`error\` del \`503\` según por qué no se sirve.
+NOT_READY_CODE: Final = "not_ready"
+UNAVAILABLE_CODES: Final = {
+    AVAILABILITY_RESTARTING: "app_restarting",
+    AVAILABILITY_FAILED: "app_crashloop",
+}
+#: Resultados de \`Service.acquire()\`.
+ACQUIRED: Final = "acquired"
+QUEUE_FULL: Final = "busy"
+QUEUE_TIMEOUT: Final = "queue_timeout"
+#: Cola de espera: sin cola por defecto (0.14 contestaba \`429\`), con el
+#: tope y el plazo máximo que acepta el SDK (\`AGENT_SERVICE_QUEUE_MAX_DEFAULT\`,
+#: \`AGENT_SERVICE_QUEUE_MAX\`, \`AGENT_SERVICE_QUEUE_TIMEOUT_SECONDS_DEFAULT\` y
+#: \`AGENT_SERVICE_QUEUE_TIMEOUT_SECONDS_MAX\` de \`limits.json\`).
+QUEUE_MAX_DEFAULT: Final = 0
+QUEUE_MAX: Final = 256
+QUEUE_TIMEOUT_SECONDS_DEFAULT: Final = 30.0
+QUEUE_TIMEOUT_SECONDS_MAX: Final = 900.0
 #: Segundos que \`Retry-After\` pide esperar con el agente ocupado o sin
 #: calentar.
 RETRY_AFTER_SECONDS: Final = 1
@@ -3353,6 +3756,8 @@ class ServiceConfig:
 
     limits: Limits = field(default_factory=Limits)
     max_concurrency: int = MAX_CONCURRENCY
+    queue_max: int = QUEUE_MAX_DEFAULT
+    queue_timeout_seconds: float = QUEUE_TIMEOUT_SECONDS_DEFAULT
     max_request_bytes: int = MAX_REQUEST_BYTES
     token: str | None = None
     session_header: str = SESSION_HEADER
@@ -3382,10 +3787,14 @@ class Service:
         self.driver = driver
         self.config = config
         self._clock = clock
-        self._lock = threading.Lock()
+        self._turns = threading.Condition()
         self._active = 0
+        self._waiting: deque[object] = deque()
         self._ready = False
         self._last_update = int(clock())
+        listen = getattr(driver, "add_failure_listener", None)
+        if listen is not None:
+            listen(self.mark_failed)
 
     @property
     def ready(self) -> bool:
@@ -3405,29 +3814,70 @@ class Service:
             with open(path, "w", encoding="utf-8") as handle:
                 handle.write(content + "\\n")
 
-    def ping(self) -> dict[str, object]:
-        with self._lock:
-            busy = self._active >= self.config.max_concurrency
-            return {
-                "status": STATUS_BUSY if busy else STATUS_HEALTHY,
-                "time_of_last_update": self._last_update,
-            }
+    def availability(self) -> str | None:
+        """\`restarting\` o \`failed\` si el driver supervisa una app que murió;
+        \`None\` si sirve."""
+        report = getattr(self.driver, "availability", None)
+        state = None if report is None else report()
+        return state if state in (AVAILABILITY_RESTARTING, AVAILABILITY_FAILED) else None
 
-    def acquire(self) -> bool:
-        with self._lock:
-            if self._active >= self.config.max_concurrency:
-                return False
-            self._active += 1
-            if self._active >= self.config.max_concurrency:
-                self._last_update = int(self._clock())
-            return True
+    def ping(self) -> tuple[int, dict[str, object]]:
+        """El estado HTTP y el cuerpo de \`/ping\`: \`HealthyBusy\` con todas las
+        ejecuciones ocupadas o con la app relanzándose, y \`503\` \`Unhealthy\`
+        cuando agotó sus relanzamientos."""
+        availability = self.availability()
+        with self._turns:
+            busy = self._active >= self.config.max_concurrency
+            if availability == AVAILABILITY_FAILED:
+                status, code = STATUS_UNHEALTHY, HTTPStatus.SERVICE_UNAVAILABLE
+            elif busy or availability == AVAILABILITY_RESTARTING:
+                status, code = STATUS_BUSY, HTTPStatus.OK
+            else:
+                status, code = STATUS_HEALTHY, HTTPStatus.OK
+            return code, {"status": status, "time_of_last_update": self._last_update}
+
+    def acquire(self) -> str:
+        """Pide un cupo de ejecución: \`acquired\`; \`busy\` si no hay cupo y la
+        cola está llena (o apagada); \`queue_timeout\` si esperó
+        \`queue_timeout_seconds\` sin turno. La cola es FIFO: una petición
+        nueva no adelanta a las que esperan."""
+        with self._turns:
+            if not self._waiting and self._active < self.config.max_concurrency:
+                self._take()
+                return ACQUIRED
+            if len(self._waiting) >= self.config.queue_max:
+                return QUEUE_FULL
+            return self._wait_for_turn()
+
+    def _wait_for_turn(self) -> str:
+        ticket = object()
+        self._waiting.append(ticket)
+        deadline = time.monotonic() + self.config.queue_timeout_seconds
+        try:
+            while True:
+                if self._waiting[0] is ticket and self._active < self.config.max_concurrency:
+                    self._take()
+                    return ACQUIRED
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return QUEUE_TIMEOUT
+                self._turns.wait(remaining)
+        finally:
+            self._waiting.remove(ticket)
+            self._turns.notify_all()
+
+    def _take(self) -> None:
+        self._active += 1
+        if self._active >= self.config.max_concurrency:
+            self._last_update = int(self._clock())
 
     def release(self) -> None:
-        with self._lock:
+        with self._turns:
             was_busy = self._active >= self.config.max_concurrency
             self._active -= 1
             if was_busy:
                 self._last_update = int(self._clock())
+            self._turns.notify_all()
 
     def authorized(self, header: str | None) -> bool:
         """Sin token configurado todo pasa (en un MicroVM la autenticación es
@@ -3619,23 +4069,29 @@ def make_handler(service: Service) -> type[BaseHTTPRequestHandler]:
         def _is_raw(self) -> bool:
             return bool(getattr(service.driver, "raw", False))
 
+        def _forwards(self) -> bool:
+            """El driver quiere las rutas que no son del host (\`raw\` y
+            \`json\`)."""
+            return self._is_raw() or bool(getattr(service.driver, "forwards", False))
+
         def do_GET(self) -> None:
             self._started = time.monotonic()
             if self.path.split("?", 1)[0] == HEALTH_PATH:
-                self._send_json(HTTPStatus.OK, service.ping())
-            elif self._is_raw():
+                status, body = service.ping()
+                self._send_json(status, body)
+            elif self._forwards():
                 self._forward()
             else:
                 self._error(HTTPStatus.NOT_FOUND, "not_found")
 
         def do_PUT(self) -> None:
-            self._forward_raw()
+            self._forward_other()
 
         do_DELETE = do_PATCH = do_OPTIONS = do_PUT
 
-        def _forward_raw(self) -> None:
+        def _forward_other(self) -> None:
             self._started = time.monotonic()
-            if self._is_raw():
+            if self._forwards():
                 self._forward()
             else:
                 self._error(HTTPStatus.NOT_FOUND, "not_found")
@@ -3645,16 +4101,28 @@ def make_handler(service: Service) -> type[BaseHTTPRequestHandler]:
             con la misma autenticación y el mismo tope de cuerpo."""
             if not service.authorized(self.headers.get("Authorization")):
                 self._error(HTTPStatus.UNAUTHORIZED, "unauthorized", {"WWW-Authenticate": "Bearer"})
-            elif not service.ready:
-                self._error(
-                    HTTPStatus.SERVICE_UNAVAILABLE,
-                    "not_ready",
-                    {"Retry-After": str(RETRY_AFTER_SECONDS)},
-                )
+            elif not self._available():
+                return
             else:
                 body = self._read_body()
                 if body is not None:
                     self._relay(body)
+
+        def _available(self) -> bool:
+            """\`False\` (tras contestar \`503\` con \`Retry-After\`) si el host no
+            está listo o la app se relanza o cayó para siempre."""
+            code = (
+                NOT_READY_CODE
+                if not service.ready
+                else UNAVAILABLE_CODES.get(service.availability() or "")
+            )
+            if code is not None:
+                self._error(
+                    HTTPStatus.SERVICE_UNAVAILABLE,
+                    code,
+                    {"Retry-After": str(RETRY_AFTER_SECONDS)},
+                )
+            return code is None
 
         def _read_body(self) -> bytes | None:
             return self._read_limited_body(empty_ok=True)
@@ -3687,24 +4155,22 @@ def make_handler(service: Service) -> type[BaseHTTPRequestHandler]:
                 self._forward()
                 return
             if self.path.split("?", 1)[0] != INVOKE_PATH:
-                self._error(HTTPStatus.NOT_FOUND, "not_found")
+                self._forward_other()
                 return
             if not service.authorized(self.headers.get("Authorization")):
                 self._error(HTTPStatus.UNAUTHORIZED, "unauthorized", {"WWW-Authenticate": "Bearer"})
                 return
-            if not service.ready:
-                self._error(
-                    HTTPStatus.SERVICE_UNAVAILABLE,
-                    "not_ready",
-                    {"Retry-After": str(RETRY_AFTER_SECONDS)},
-                )
+            if not self._available():
                 return
             request = self._read_request()
             if request is None:
                 return
-            if not service.acquire():
+            outcome = service.acquire()
+            if outcome != ACQUIRED:
                 self._error(
-                    HTTPStatus.TOO_MANY_REQUESTS, "busy", {"Retry-After": str(RETRY_AFTER_SECONDS)}
+                    HTTPStatus.TOO_MANY_REQUESTS,
+                    outcome,
+                    {"Retry-After": str(RETRY_AFTER_SECONDS)},
                 )
                 return
             invocation = Invocation(service, request)

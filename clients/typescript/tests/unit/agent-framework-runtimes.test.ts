@@ -12,13 +12,14 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 import { CustomRuntime, HttpApp } from "../../src/agent/custom.js";
+import { DeepAgents } from "../../src/agent/deepagents.js";
 import { AgentModel, AgentPermissions, AgentSpec } from "../../src/agent/domain.js";
 import {
   HERMES_DEFAULT_TOOLSETS,
   HERMES_PROVIDERS,
   HermesRuntime,
 } from "../../src/agent/hermes.js";
-import { AGENT_APP_DIR } from "../../src/agent/recipes.js";
+import { AGENT_APP_DIR, nodeBridge } from "../../src/agent/recipes.js";
 import {
   directWiring,
   gatewayWiring,
@@ -39,7 +40,6 @@ import {
   STRANDS_PROVIDERS,
   STRANDS_TS_PROVIDERS,
   StrandsRuntime,
-  strandsBridge,
 } from "../../src/agent/strands.js";
 import { InvalidArgumentError } from "../../src/errors.js";
 import { MODEL_CREDENTIAL_PLACEHOLDER } from "../../src/limits.js";
@@ -171,10 +171,10 @@ describe("framework install vectors", () => {
 
   test("the embedded bridge is the file Python ships", () => {
     const python = readFileSync(
-      join(REPO, "clients", "python", "src", "rayito", "_agent", "_assets", "strands_bridge.mjs"),
+      join(REPO, "clients", "python", "src", "rayito", "_agent", "_assets", "node_bridge.mjs"),
       "utf8",
     );
-    expect(strandsBridge()).toBe(python);
+    expect(nodeBridge()).toBe(python);
   });
 });
 
@@ -201,11 +201,46 @@ describe("framework runtimes", () => {
     ["strands", { entrypoint: "agente:crea", requirements: "requirements.txt" }],
     ["strands-harness", { entrypoint: "agente:crea" }],
     ["strands", { language: "typescript", entrypoint: "agent.ts" }],
+    ["langgraph", { entrypoint: "agente:crea", requirements: "requirements.txt" }],
+    ["langgraph", { entrypoint: "agente:crea", requirements: "uv.lock", package_manager: "uv" }],
     ["hermes", {}],
     ["hermes", { toolsets: ["terminal"], skills_dir: "skills" }],
     ["custom", { command: ["./run.sh"], protocol: "text", install: ["echo hola"] }],
     ["custom", { entrypoint: "agente:responde", requirements: "r.txt", python: "python3" }],
     ["custom", { app: { command: ["serve"], port: 9000, protocol: "openai-chat" } }],
+    [
+      "custom",
+      {
+        app: {
+          command: ["serve"],
+          port: 9000,
+          protocol: "json",
+          request_field: "question",
+          response_field: "data.answer",
+          port_env: "PORT",
+        },
+      },
+    ],
+    ["custom", { entrypoint: "agent.ts#graph", package_manager: "pnpm", adapter: "langgraph" }],
+    ["custom", { entrypoint: "agent.ts", package_manager: "npm", node_version: "24" }],
+    [
+      "custom",
+      {
+        entrypoint: "a:b",
+        requirements: "uv.lock",
+        package_manager: "uv",
+        python_version: "3.13",
+      },
+    ],
+    [
+      "strands",
+      {
+        language: "typescript",
+        entrypoint: "agent.ts",
+        package_manager: "yarn",
+        node_version: "22",
+      },
+    ],
   ])("options round trip: %s %j", (kind, options) => {
     const table = runtimeToOptions(runtimeFromOptions(kind, options));
     const { kind: tableKind, ...rest } = table;
@@ -239,6 +274,106 @@ describe("framework runtimes", () => {
     ["http port", () => new HttpApp({ command: ["x"], port: 0 })],
     ["http path", () => new HttpApp({ command: ["x"], port: 8000, healthPath: "ping" })],
     ["http protocol", () => new HttpApp({ command: ["x"], port: 8000, protocol: "soap" as never })],
+    ["http request field", () => new HttpApp({ command: ["x"], port: 8000, requestField: "q" })],
+    [
+      "http response field",
+      () => new HttpApp({ command: ["x"], port: 8000, protocol: "json", responseField: "a b" }),
+    ],
+    [
+      "http request field name",
+      () => new HttpApp({ command: ["x"], port: 8000, protocol: "json", requestField: "1q" }),
+    ],
+    ["http port env", () => new HttpApp({ command: ["x"], port: 8000, portEnv: "port" })],
+    [
+      "custom unknown manager",
+      () => new CustomRuntime({ entrypoint: "a.ts#x", packageManager: "bun" }),
+    ],
+    [
+      "custom node version alone",
+      () => new CustomRuntime({ entrypoint: "a:b", nodeVersion: "22" }),
+    ],
+    [
+      "custom unknown node version",
+      () => new CustomRuntime({ entrypoint: "a.ts", packageManager: "npm", nodeVersion: "21" }),
+    ],
+    [
+      "custom unknown python version",
+      () => new CustomRuntime({ entrypoint: "a:b", packageManager: "uv", pythonVersion: "3.9" }),
+    ],
+    [
+      "custom python version with node",
+      () => new CustomRuntime({ entrypoint: "a.ts", packageManager: "npm", pythonVersion: "3.13" }),
+    ],
+    [
+      "custom python and python version",
+      () => new CustomRuntime({ entrypoint: "a:b", python: "python3.12", pythonVersion: "3.13" }),
+    ],
+    [
+      "custom adapter without node",
+      () => new CustomRuntime({ entrypoint: "a:b", adapter: "callable" }),
+    ],
+    [
+      "custom unknown adapter",
+      () => new CustomRuntime({ entrypoint: "a.ts", packageManager: "npm", adapter: "crewai" }),
+    ],
+    [
+      "custom adapter with command",
+      () => new CustomRuntime({ command: ["x"], packageManager: "npm", adapter: "callable" }),
+    ],
+    [
+      "custom requirements with node",
+      () => new CustomRuntime({ entrypoint: "a.ts", packageManager: "npm", requirements: "r.txt" }),
+    ],
+    [
+      "custom lock with pip",
+      () =>
+        new CustomRuntime({ entrypoint: "a:b", requirements: "uv.lock", packageManager: "pip" }),
+    ],
+    [
+      "custom pyproject without uv",
+      () => new CustomRuntime({ entrypoint: "a:b", requirements: "pyproject.toml" }),
+    ],
+    [
+      "custom python entrypoint with node",
+      () => new CustomRuntime({ entrypoint: "a:b", packageManager: "npm" }),
+    ],
+    [
+      "custom js export name",
+      () => new CustomRuntime({ entrypoint: "a.ts#1x", packageManager: "npm" }),
+    ],
+    [
+      "custom js entrypoint outside source",
+      () => new CustomRuntime({ entrypoint: "../a.ts", packageManager: "npm" }),
+    ],
+    ["deepagents requirements without entrypoint", () => new DeepAgents({ requirements: "r.txt" })],
+    [
+      "deepagents lock without uv",
+      () => new DeepAgents({ entrypoint: "a:b", requirements: "uv.lock" }),
+    ],
+    [
+      "deepagents unknown manager",
+      () => new DeepAgents({ entrypoint: "a:b", requirements: "r.txt", packageManager: "bun" }),
+    ],
+    ["deepagents manager alone", () => new DeepAgents({ entrypoint: "a:b", packageManager: "uv" })],
+    [
+      "deepagents requirements outside source",
+      () => new DeepAgents({ entrypoint: "a:b", requirements: "../r.txt" }),
+    ],
+    ["strands manager with python", () => new StrandsRuntime({ packageManager: "npm" })],
+    ["strands node version with python", () => new StrandsRuntime({ nodeVersion: "22" })],
+    [
+      "strands python manager",
+      () =>
+        new StrandsRuntime({
+          language: "typescript",
+          entrypoint: "a.ts",
+          packageManager: "uv" as never,
+        }),
+    ],
+    [
+      "strands unknown node version",
+      () => new StrandsRuntime({ language: "typescript", entrypoint: "a.ts", nodeVersion: "19" }),
+    ],
   ])("invalid arguments fail: %s", (_label, factory) => {
     expect(factory).toThrow(InvalidArgumentError);
   });

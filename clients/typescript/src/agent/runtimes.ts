@@ -47,11 +47,23 @@ export const CUSTOM_RUNTIME_KIND = "custom";
 export const RUNTIME_OPTION_KEYS: Readonly<Record<string, readonly string[]>> = Object.freeze({
   opencode: [],
   deepagents: [],
-  langgraph: ["entrypoint"],
-  strands: ["entrypoint", "language", "requirements"],
-  "strands-harness": ["entrypoint", "language", "requirements"],
+  langgraph: ["entrypoint", "requirements", "package_manager"],
+  strands: ["entrypoint", "language", "requirements", "package_manager", "node_version"],
+  "strands-harness": ["entrypoint", "language", "requirements", "package_manager", "node_version"],
   hermes: ["toolsets", "skills_dir"],
-  custom: ["install", "requirements", "command", "entrypoint", "app", "protocol", "python"],
+  custom: [
+    "install",
+    "requirements",
+    "command",
+    "entrypoint",
+    "app",
+    "protocol",
+    "python",
+    "package_manager",
+    "python_version",
+    "node_version",
+    "adapter",
+  ],
 });
 
 function looksLikeRuntime(candidate: unknown): candidate is AgentRuntime {
@@ -101,7 +113,19 @@ function langgraph(options: Readonly<Record<string, unknown>>): AgentRuntime {
   if (typeof entrypoint !== "string") {
     throw new InvalidArgumentError("entrypoint debe ser una cadena");
   }
-  return new DeepAgents({ entrypoint, requireEntrypoint: true });
+  const text = (key: string): string | undefined => {
+    const value = options[key];
+    if (value !== undefined && typeof value !== "string") {
+      throw new InvalidArgumentError(`runtime.${key} debe ser una cadena`);
+    }
+    return value;
+  };
+  return new DeepAgents({
+    entrypoint,
+    requireEntrypoint: true,
+    requirements: text("requirements"),
+    packageManager: text("package_manager"),
+  });
 }
 
 /** `kind` -> constructor desde la tabla `[runtime]`. Un `kind` sin entrada se
@@ -136,9 +160,17 @@ export function runtimeToOptions(runtime: string | AgentRuntime): Record<string,
     return { kind: "opencode" };
   }
   if (runtime instanceof DeepAgents) {
-    return runtime.entrypoint === undefined
-      ? { kind: "deepagents" }
-      : { kind: "langgraph", entrypoint: runtime.entrypoint };
+    if (runtime.entrypoint === undefined) {
+      return { kind: "deepagents" };
+    }
+    const table: Record<string, unknown> = { kind: "langgraph", entrypoint: runtime.entrypoint };
+    if (runtime.requirements !== undefined) {
+      table.requirements = runtime.requirements;
+    }
+    if (runtime.packageManager !== undefined) {
+      table.package_manager = runtime.packageManager;
+    }
+    return table;
   }
   if (
     runtime instanceof StrandsRuntime ||

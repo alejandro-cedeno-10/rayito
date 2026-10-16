@@ -461,7 +461,7 @@ generator's casing):
 | `agentStrandsTsVersion`, `agentStrandsTsHarnessVersion` | 1.21.0, 0.3.0 | npm 2026-10-16 |
 | `agentHermesVersion`, `agentHermesCommit` | 0.22.2, full commit sha | GitHub release tag |
 | `agentHermesRequirementsSha256` | sha256 | generated |
-| `agentNodeVersion`, `agentNodeSha256` | 22.x LTS linux-arm64 | nodejs.org SHASUMS256 |
+| `agentNodeVersions`, `agentNodeSha256s` (one entry per major) | 22.x LTS linux-arm64 | nodejs.org SHASUMS256 |
 | `agentExportBaseImage`, `agentExportBaseImageDigest` | `python:3.12-slim-bookworm`, `sha256:...` | Docker Hub, pinned by digest |
 | `agentProjectSchema` | `rayito.agent-project/1` | this change |
 | `agentProjectFileNames` | `["rayito-agent.toml", "rayito-agent.json"]` | this change |

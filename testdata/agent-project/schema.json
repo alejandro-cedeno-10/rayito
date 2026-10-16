@@ -89,6 +89,30 @@
         "python": {
           "type": "string",
           "minLength": 1
+        },
+        "package_manager": {
+          "enum": [
+            "pip",
+            "uv",
+            "npm",
+            "pnpm",
+            "yarn"
+          ]
+        },
+        "python_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "node_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "adapter": {
+          "enum": [
+            "callable",
+            "langgraph",
+            "vercel-ai"
+          ]
         }
       },
       "additionalProperties": false,
@@ -146,7 +170,9 @@
             "propertyNames": {
               "enum": [
                 "kind",
-                "entrypoint"
+                "entrypoint",
+                "requirements",
+                "package_manager"
               ]
             }
           }
@@ -167,7 +193,10 @@
               "enum": [
                 "kind",
                 "entrypoint",
-                "language"
+                "language",
+                "requirements",
+                "package_manager",
+                "node_version"
               ]
             }
           }
@@ -188,7 +217,10 @@
               "enum": [
                 "kind",
                 "entrypoint",
-                "language"
+                "language",
+                "requirements",
+                "package_manager",
+                "node_version"
               ]
             }
           }
@@ -235,7 +267,11 @@
                 "entrypoint",
                 "app",
                 "protocol",
-                "python"
+                "python",
+                "package_manager",
+                "python_version",
+                "node_version",
+                "adapter"
               ]
             }
           }
