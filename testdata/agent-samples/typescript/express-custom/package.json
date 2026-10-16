@@ -1,0 +1,13 @@
+{
+  "name": "faq-service-js",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Servicio de preguntas frecuentes: una app Express que llama a Bedrock con el SDK de AWS",
+  "engines": { "node": ">=22" },
+  "scripts": { "start": "node app.js" },
+  "dependencies": {
+    "@aws-sdk/client-bedrock-runtime": "^3.900.0",
+    "express": "^5.0.0"
+  }
+}

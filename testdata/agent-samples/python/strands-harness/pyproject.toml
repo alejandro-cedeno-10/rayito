@@ -1,0 +1,8 @@
+[project]
+name = "ops-harness"
+version = "0.1.0"
+description = "Agente de operaciones con Strands harness, con la disposición que exporta su CLI"
+requires-python = ">=3.11"
+dependencies = [
+    "strands-harness~=0.3.1",
+]
