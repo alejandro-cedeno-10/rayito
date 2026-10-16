@@ -123,7 +123,7 @@ detail, change by change, is in each component's
     ```python
     import rayito
 
-    print(rayito.__version__)  # "0.11.0"
+    print(rayito.__version__)  # "0.12.0"
     ```
 
 === "TypeScript"
@@ -131,7 +131,7 @@ detail, change by change, is in each component's
     ```ts
     import { VERSION } from "rayito";
 
-    console.log(VERSION); // "0.11.0"
+    console.log(VERSION); // "0.12.0"
     ```
 
 === "CLI"

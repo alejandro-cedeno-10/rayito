@@ -126,7 +126,7 @@ actualizar. El detalle completo, cambio a cambio, está en el
     ```python
     import rayito
 
-    print(rayito.__version__)  # "0.11.0"
+    print(rayito.__version__)  # "0.12.0"
     ```
 
 === "TypeScript"
@@ -134,7 +134,7 @@ actualizar. El detalle completo, cambio a cambio, está en el
     ```ts
     import { VERSION } from "rayito";
 
-    console.log(VERSION); // "0.11.0"
+    console.log(VERSION); // "0.12.0"
     ```
 
 === "CLI"
