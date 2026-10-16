@@ -1,7 +1,7 @@
 # Gates locales
 
 Son las mismas cadenas `run:` de `.github/workflows/ci.yml`; si cambian allí,
-cambian también aquí y en `CONTRIBUTING.md` §3. Corre los del lenguaje que
+cambian también aquí y en `CONTRIBUTING.md` §7. Corre los del lenguaje que
 tocaste, y además OpenSpec, docs y los de la raíz. Indica en el PR en qué
 sistema corrieron.
 

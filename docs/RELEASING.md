@@ -336,7 +336,7 @@ cargo publish --dry-run -p rayito-proto
    Revisar después que las versiones de `pyproject.toml`,
    `src/rayito/_version.py`, `package.json`, `src/version.ts`, `Cargo.toml`
    y `Cargo.lock` son idénticas.
-2. Gates verdes en CI sobre ese PR (`CONTRIBUTING.md` §3), incluidos
+2. Gates verdes en CI sobre ese PR (`CONTRIBUTING.md` §7), incluidos
    `python scripts/check_license.py`, `make image-licenses` (job `build`),
    `cargo-deny`, la auditoría de
    dependencias y `cargo test --locked` (un `Cargo.lock` que release-please

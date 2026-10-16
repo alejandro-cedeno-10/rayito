@@ -39,7 +39,7 @@ body:
     id: openspec
     attributes:
       label: ¿Escribirías el cambio OpenSpec?
-      description: "`openspec/changes/<nombre>/` con proposal, design, tasks y specs delta (CONTRIBUTING.md §2)."
+      description: "`openspec/changes/<nombre>/` con proposal, design, tasks y specs delta (CONTRIBUTING.md §3)."
       options:
         - Sí, puedo escribirlo
         - Con ayuda

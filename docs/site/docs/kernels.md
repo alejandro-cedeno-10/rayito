@@ -245,7 +245,7 @@ el marcador y no ejecuta nada de esa capa.
 # Linux / macOS
 make image-publish-poly BUCKET=<bucket>          # publica rayito-base-poly
 
-# Windows (sin make; toolchain de CONTRIBUTING.md §3)
+# Windows (sin make; toolchain de CONTRIBUTING.md §1.3)
 cargo zigbuild --release --locked --target aarch64-unknown-linux-musl -p rayd
 cp target/aarch64-unknown-linux-musl/release/rayd image/rayd
 python scripts/copy_sidecar.py kernel-sidecar image/kernel-sidecar
