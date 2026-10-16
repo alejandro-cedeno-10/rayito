@@ -85,6 +85,11 @@ versionado [SemVer](https://semver.org/lang/es/).
 
 ### Corregido
 
+- **`rayito doctor`: números de cuota como en Python**: el resumen humano de
+  `quotas` imprime los valores con `format(value, "g")` de Python (`1e+06` en
+  vez de `1000000`), con vectores `generalText` compartidos en
+  `testdata/cli/format-vectors.json`.
+
 - **El reuso de una versión de imagen comparaba objetos por el orden de sus
   claves**: AWS devuelve `hooks` con otro orden que el que se envía, así que
   `Template.build()` reconstruía una imagen idéntica. Ahora la igualdad es
