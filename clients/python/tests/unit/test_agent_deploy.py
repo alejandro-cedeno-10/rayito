@@ -351,25 +351,23 @@ def test_plan_deploy_without_build_has_no_memory_note() -> None:
     assert plan.notes == ()
 
 
-def test_plan_deploy_uses_the_detector_when_the_project_has_one(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_plan_deploy_uses_the_detector(monkeypatch: pytest.MonkeyPatch) -> None:
     seen: list[Any] = []
 
-    def detect(path: Any, overrides: Any) -> tuple[AgentProject, object]:
-        seen.append((str(path), overrides))
+    def detect(path: Any, overrides: Any, *, region: Any = None) -> tuple[AgentProject, object]:
+        seen.append((str(path), overrides, region))
         return project(), {"framework": "langgraph"}
 
-    monkeypatch.setattr(AgentProject, "detect", staticmethod(detect), raising=False)
+    monkeypatch.setattr(AgentProject, "detect", staticmethod(detect))
     overrides = DetectOverrides(framework="langgraph")
 
-    plan = plan_deploy("./mi-agente", overrides=overrides)
+    plan = plan_deploy("./mi-agente", overrides=overrides, region="us-east-1")
 
-    assert seen == [("./mi-agente", overrides)]
+    assert seen == [("./mi-agente", overrides, "us-east-1")]
     assert plan.detection == {"framework": "langgraph"}
 
 
-def test_plan_deploy_falls_back_to_the_project_file(tmp_path: Path) -> None:
+def test_a_complete_project_file_needs_no_detection(tmp_path: Path) -> None:
     (tmp_path / "rayito-agent.json").write_text(json.dumps(project().to_dict()))
 
     plan = plan_deploy(tmp_path)

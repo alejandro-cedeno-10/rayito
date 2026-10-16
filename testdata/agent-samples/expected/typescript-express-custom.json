@@ -1,0 +1,51 @@
+{
+  "schema": "rayito.agent-project/1",
+  "name": "express-custom",
+  "runtime": {
+    "kind": "custom",
+    "app": {
+      "command": [
+        "npm",
+        "run",
+        "start"
+      ],
+      "port": 8000,
+      "health_path": "/healthz",
+      "invoke_path": "/chat",
+      "protocol": "json",
+      "request_field": "prompt"
+    },
+    "package_manager": "npm",
+    "node_version": "22",
+    "language": "typescript",
+    "framework": "express"
+  },
+  "source": {
+    "path": "."
+  },
+  "model": {
+    "provider": "bedrock",
+    "id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+    "gateway": "bedrock",
+    "region": "us-east-1"
+  },
+  "gateways": {
+    "bedrock": {
+      "preset": "custom",
+      "upstream": "https://bedrock-runtime.us-east-1.amazonaws.com",
+      "headers": {
+        "authorization": "rayito/agents/express-custom/bedrock"
+      },
+      "allow": [
+        [
+          "POST",
+          "/model/us.anthropic.claude-haiku-4-5-20251001-v1%3A0/converse-stream"
+        ],
+        [
+          "POST",
+          "/model/us.anthropic.claude-haiku-4-5-20251001-v1%3A0/converse"
+        ]
+      ]
+    }
+  }
+}

@@ -53,15 +53,22 @@ import {
   requireSupportedProvider,
   standardModelEnvs,
   toolAllowed,
-  userRequirementsSteps,
 } from "./host-runtime.js";
 import {
   checkNodeVersion,
+  checkRequirementsPath,
+  DEFAULT_NODE_PACKAGE_MANAGER,
+  DEFAULT_PYTHON_INSTALLER,
   NODE_PACKAGE_MANAGERS,
   type NodePackageManager,
   nodeBin,
   nodeDependencySteps,
   nodeRuntimeSteps,
+  type PackageManager,
+  PYTHON_INSTALLERS,
+  type PythonInstaller,
+  pythonDependencySteps,
+  pythonManifest,
 } from "./install-plan.js";
 import { shellQuote } from "./opencode.js";
 import {
@@ -88,7 +95,6 @@ export type StrandsLanguage = (typeof STRANDS_LANGUAGES)[number];
 export const STRANDS_NAME = "strands";
 /** El adaptador del puente de Node y el gestor de paquetes por defecto. */
 export const STRANDS_ADAPTER = "strands";
-export const DEFAULT_NODE_PACKAGE_MANAGER = "npm";
 export const STRANDS_HARNESS_NAME = "strands-harness";
 /** Estado del runtime dentro de `AGENT_STATE_DIR` (sesiones y memoria). */
 export const STRANDS_STATE_NAME = "strands";
@@ -198,8 +204,10 @@ export interface StrandsRuntimeOptions {
   /** Un fichero de requisitos de tu `source` (`app/<requirements>`) que se
    * instala en el venv después de los pines de Rayito (sólo Python). */
   readonly requirements?: string | undefined;
-  /** Con `language: "typescript"`: `npm` (por defecto), `pnpm` o `yarn`. */
-  readonly packageManager?: NodePackageManager | undefined;
+  /** Con `language: "python"`: `pip` (por defecto) o `uv` (entonces
+   * `requirements` puede ser `pyproject.toml` o `uv.lock`). Con
+   * `language: "typescript"`: `npm` (por defecto), `pnpm` o `yarn`. */
+  readonly packageManager?: PackageManager | undefined;
   /** Con `language: "typescript"`: la versión mayor de Node (`"22"`, `"24"`). */
   readonly nodeVersion?: string | undefined;
 }
@@ -234,7 +242,7 @@ export class StrandsRuntime extends HostBackedRuntime implements InstallableRunt
   readonly harness: boolean;
   readonly language: StrandsLanguage;
   readonly requirements: string | undefined;
-  readonly packageManager: NodePackageManager | undefined;
+  readonly packageManager: PackageManager | undefined;
   readonly nodeVersion: string | undefined;
 
   constructor(options: StrandsRuntimeOptions = {}) {
@@ -257,17 +265,7 @@ export class StrandsRuntime extends HostBackedRuntime implements InstallableRunt
     }
     checkEntrypoint(options.entrypoint, language);
     const requirements = options.requirements;
-    if (
-      requirements !== undefined &&
-      (language === "typescript" ||
-        !REQUIREMENTS_PATTERN.test(requirements) ||
-        requirements.split("/").includes(".."))
-    ) {
-      throw new InvalidArgumentError(
-        "StrandsRuntime.requirements es una ruta relativa dentro de source " +
-          "y sólo existe con language 'python'",
-      );
-    }
+    checkRequirements(language, requirements, options.packageManager);
     checkNodeOptions(language, options.packageManager, options.nodeVersion);
     this.entrypoint = options.entrypoint;
     this.harness = harness;
@@ -293,7 +291,7 @@ export class StrandsRuntime extends HostBackedRuntime implements InstallableRunt
       harness: kind === STRANDS_HARNESS_NAME,
       language: (text("language") ?? "python") as StrandsLanguage,
       requirements: text("requirements"),
-      packageManager: text("package_manager") as NodePackageManager | undefined,
+      packageManager: text("package_manager") as PackageManager | undefined,
       nodeVersion: text("node_version"),
     });
   }
@@ -412,21 +410,35 @@ export class StrandsRuntime extends HostBackedRuntime implements InstallableRunt
       ),
     ];
     if (this.requirements !== undefined) {
-      steps.push(
-        ...userRequirementsSteps(target, {
-          venvDir,
-          requirements: this.requirements,
-          slug: this.#venvName,
-        }),
-      );
+      steps.push(...this.#userDependencySteps(target, venvDir, this.requirements));
     }
     return steps;
+  }
+
+  #userDependencySteps(
+    target: InstallTarget,
+    venvDir: string,
+    requirements: string,
+  ): readonly TemplateStep[] {
+    const manifest = pythonManifest(requirements);
+    return pythonDependencySteps(target, {
+      installer: (this.packageManager ?? DEFAULT_PYTHON_INSTALLER) as PythonInstaller,
+      manifest,
+      path: manifest === "requirements" ? requirements : undefined,
+      python: `${venvDir}/bin/python`,
+      venvDir,
+      slug: this.#venvName,
+      createVenv: false,
+    });
   }
 
   #typescriptSteps(target: InstallTarget): TemplateStep[] {
     return [
       ...nodeRuntimeSteps(target, this.nodeVersion),
-      ...nodeDependencySteps(target, this.packageManager ?? DEFAULT_NODE_PACKAGE_MANAGER),
+      ...nodeDependencySteps(
+        target,
+        (this.packageManager ?? DEFAULT_NODE_PACKAGE_MANAGER) as NodePackageManager,
+      ),
       copyStep(NODE_BRIDGE_NAME, NODE_BRIDGE_PATH),
     ];
   }
@@ -508,18 +520,51 @@ export class StrandsRuntime extends HostBackedRuntime implements InstallableRunt
   }
 }
 
+/** `requirements` (y, con `uv`, `pyproject.toml` o `uv.lock`) sólo existe con
+ * `language: "python"`; el `packageManager` de Python es `pip` o `uv` y necesita
+ * `requirements`. */
+function checkRequirements(
+  language: string,
+  requirements: string | undefined,
+  packageManager: string | undefined,
+): void {
+  if (language === "typescript") {
+    if (requirements !== undefined) {
+      throw new InvalidArgumentError(
+        "StrandsRuntime.requirements sólo existe con language 'python'",
+      );
+    }
+    return;
+  }
+  if (
+    packageManager !== undefined &&
+    !(PYTHON_INSTALLERS as readonly string[]).includes(packageManager)
+  ) {
+    throw new InvalidArgumentError(
+      `StrandsRuntime.packageManager debe ser uno de ${JSON.stringify(PYTHON_INSTALLERS)}`,
+    );
+  }
+  if (requirements === undefined) {
+    if (packageManager !== undefined) {
+      throw new InvalidArgumentError("StrandsRuntime.packageManager necesita requirements");
+    }
+    return;
+  }
+  checkRequirementsPath("StrandsRuntime", requirements, packageManager);
+}
+
 function checkNodeOptions(
   language: string,
   packageManager: string | undefined,
   nodeVersion: string | undefined,
 ): void {
-  if (packageManager === undefined && nodeVersion === undefined) {
-    return;
-  }
   if (language !== "typescript") {
-    throw new InvalidArgumentError(
-      "StrandsRuntime.packageManager y nodeVersion sólo existen con language 'typescript'",
-    );
+    if (nodeVersion !== undefined) {
+      throw new InvalidArgumentError(
+        "StrandsRuntime.nodeVersion sólo existe con language 'typescript'",
+      );
+    }
+    return;
   }
   if (
     packageManager !== undefined &&

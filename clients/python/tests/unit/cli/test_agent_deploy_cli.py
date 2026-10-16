@@ -13,6 +13,8 @@ import pytest
 from typer.testing import CliRunner
 
 from rayito import AgentDeployOptions, ScalingOptions, plan_deploy
+from rayito._agent._detect_domain import detect
+from rayito._agent._detect_fs import LocalProjectTree
 from rayito._payload import generate_access_token
 from rayito.cli import agent as agent_cli
 from rayito.cli._agent_deploy import (
@@ -34,6 +36,8 @@ from rayito.cli._tokens import TOKEN_ENV_VAR, TokenFileError
 from rayito.cli.app import app
 from rayito.exceptions import AgentException, InvalidArgumentException
 from tests.unit.fake_agent_project import SANDBOX_ID, project
+
+SAMPLE_DIR = Path(__file__).parents[5] / "testdata" / "agent-samples" / "python" / "strands"
 
 FLEET_NAME = "support-bot"
 
@@ -215,18 +219,17 @@ def test_usd_uses_a_decimal_comma() -> None:
     assert format_usd(0.1261) == "$0,1261"
 
 
-def test_detection_lines_skip_evidence_lists_and_empty_values() -> None:
-    @dataclass(frozen=True)
-    class Report:
-        language: str = "python"
-        framework: str = ""
-        port: int = 8000
-        evidence: tuple[str, ...] = ("pyproject.toml",)
-        warnings: list[str] = field(default_factory=lambda: ["aviso"])
-
-    assert detection_lines(Report()) == ["detectado language: python", "detectado port: 8000"]
+def test_detection_lines_say_what_was_decided_without_file_contents() -> None:
+    lines = detection_lines(detect(LocalProjectTree(SAMPLE_DIR)))
+    assert lines[:4] == [
+        "detectado lenguaje: python",
+        "detectado framework: strands",
+        "detectado punto de entrada: agent:agent",
+        "detectado protocolo: framework",
+    ]
+    assert "detectado instalación: uv (uv.lock), versión 3.12" in lines
+    assert "detectado proveedor del modelo: bedrock" in lines
     assert detection_lines(None) == []
-    assert detection_lines(Report) == []
 
 
 # ------------------------------------------------------------ fleet commands

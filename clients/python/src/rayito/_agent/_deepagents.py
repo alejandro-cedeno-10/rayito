@@ -33,6 +33,7 @@ from rayito._agent._domain import (
 )
 from rayito._agent._events import AgentEvent, AgentFailed, Done
 from rayito._agent._install_plan import (
+    DEFAULT_PYTHON_INSTALLER,
     PYTHON_INSTALLERS,
     check_requirements_path,
     python_dependency_steps,
@@ -97,7 +98,6 @@ DEEPAGENTS_REQUIREMENTS_NAME: Final = "requirements-deepagents.txt"
 #: Nombre con el que se copian los ficheros de dependencias de tu proyecto y
 #: el instalador por defecto (`pip`).
 DEEPAGENTS_USER_SLUG: Final = "deepagents"
-DEFAULT_PYTHON_INSTALLER: Final = "pip"
 #: El runner (dato de paquete de `_agent/_runner/`) en el contexto de build.
 DEEPAGENTS_RUNNER_NAME: Final = "deepagents_runner.py"
 #: Donde la plantilla instala el runner, de root y 0755 (design.md §3).

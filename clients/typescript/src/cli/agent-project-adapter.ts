@@ -120,7 +120,12 @@ export class SdkAgentProjectTools implements AgentProjectTools {
 
   async detect(path: string, overrides: AgentDetectOverrides): Promise<DetectedProject> {
     const { projectFor } = await import("../agent/deploy-plan.js");
-    const { project, report } = await projectFor(path, undefined, overridesOf(overrides));
+    const { project, report } = await projectFor(
+      path,
+      undefined,
+      overridesOf(overrides),
+      this.#region(),
+    );
     return { report, document: project.toObject() };
   }
 
@@ -141,7 +146,7 @@ export class SdkAgentProjectTools implements AgentProjectTools {
 
   async planDeploy(request: AgentDeployRequest): Promise<DeployPlanView> {
     const { planDeploy } = await import("../agent/deploy.js");
-    const { project, report, options } = await prepared(request, false);
+    const { project, report, options } = await prepared(request, false, this.#region());
     const plan = await planDeploy(request.path, {
       project,
       options,
@@ -157,7 +162,7 @@ export class SdkAgentProjectTools implements AgentProjectTools {
 
   async deployFleet(request: AgentDeployRequest): Promise<DeployedFleetView> {
     const { deployAgent } = await import("../agent/deploy.js");
-    const { project, options } = await prepared(request, true);
+    const { project, options } = await prepared(request, true, this.#region());
     const fleet = await deployAgent(request.path, { project, options, ...(await this.#aws()) });
     await fleet.detach();
     const [first] = fleet.deployments;
@@ -224,13 +229,18 @@ function overridesOf(overrides: AgentDetectOverrides): DetectOverrides | undefin
 
 /** El proyecto detectado con las banderas aplicadas, su informe y las
  * `DeployOptions` de la petición. */
-async function prepared(request: AgentDeployRequest, park: boolean) {
+async function prepared(request: AgentDeployRequest, park: boolean, region: string | undefined) {
   const { projectFor } = await import("../agent/deploy-plan.js");
   const { AgentDeployOptions } = await import("../agent/deploy-plan.js");
   const { applyProjectFlags, applyServeFlags, scalingOf } = await import(
     "./agent-project-flags.js"
   );
-  const detected = await projectFor(request.path, undefined, overridesOf(request.overrides));
+  const detected = await projectFor(
+    request.path,
+    undefined,
+    overridesOf(request.overrides),
+    region,
+  );
   const project = applyProjectFlags(
     applyServeFlags(detected.project, request.flags),
     request.flags,

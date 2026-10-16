@@ -40,6 +40,7 @@ from rayito import (
     plan_deploy,
 )
 from rayito._agent._deploy_plan import project_for
+from rayito._agent._detect_report import DetectionReport
 from rayito._agent._events import AgentEvent, AgentFailed, Text, TextDelta, ToolCall
 from rayito._agent._fleet_base import fleet_settings_of
 from rayito._agent._project_base import app_hiding_own_routes
@@ -561,14 +562,14 @@ def detect_command(
     """
     overrides = detect_overrides_of(framework, language, entry, protocol)
     try:
-        project, report = project_for(path, None, overrides)
+        project, report = project_for(path, None, overrides, ctx.meta.get("region"))
     except InvalidArgumentException as exc:
         fail(str(exc), code=EXIT_USAGE)
     written = write_detected_project(path, project) if write else None
     if json_mode(ctx):
         emit_json(
             {
-                "detection": None if report is None else camel_keys(dataclasses.asdict(report)),  # type: ignore[call-overload]
+                "detection": None if report is None else report.to_dict(),
                 "project": camel_keys(project.to_dict()),
                 "written": written,
             }
@@ -722,7 +723,7 @@ def deploy_command(
     target = deploy_target(path, file)
     overrides = detect_overrides_of(framework, language, entry, protocol)
     try:
-        project, report = project_for(target, None, overrides)
+        project, report = project_for(target, None, overrides, ctx.meta.get("region"))
         project = apply_serve_flags(
             project,
             max_sessions=max_sessions,
@@ -848,12 +849,12 @@ def scaling_of(
     )
 
 
-def print_plan(plan: Any, report: object, *, as_json: bool) -> None:
+def print_plan(plan: Any, report: DetectionReport | None, *, as_json: bool) -> None:
     if as_json:
         emit_json(
             {
                 "dryRun": True,
-                "detection": None if report is None else camel_keys(dataclasses.asdict(report)),  # type: ignore[call-overload]
+                "detection": None if report is None else report.to_dict(),
                 "plan": camel_keys(dataclasses.asdict(plan) | {"detection": None}),
             }
         )

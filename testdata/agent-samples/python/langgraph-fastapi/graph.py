@@ -6,6 +6,8 @@ from langchain_aws import ChatBedrockConverse
 from langchain_core.tools import tool
 from langgraph.prebuilt import create_react_agent
 
+DEFAULT_MODEL_ID = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+
 SYSTEM_PROMPT = "You are an orders assistant. Use the tools when they apply and answer in one short sentence."
 ORDERS = {"A-100": "shipped", "A-200": "processing"}
 
@@ -23,5 +25,5 @@ def order_status(order_id: str) -> str:
 
 
 def build_graph():
-    model = ChatBedrockConverse(model=os.environ["MODEL_ID"], region_name=os.environ.get("AWS_REGION"))
+    model = ChatBedrockConverse(model=os.environ.get("MODEL_ID", DEFAULT_MODEL_ID), region_name=os.environ.get("AWS_REGION"))
     return create_react_agent(model, [add, order_status], prompt=SYSTEM_PROMPT)

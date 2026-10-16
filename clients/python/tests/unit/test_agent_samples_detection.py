@@ -11,8 +11,10 @@ from typing import Any, Final
 
 import pytest
 
+from rayito import AgentProject
 from rayito._agent._detect_domain import detect
 from rayito._agent._detect_fs import LocalProjectTree
+from rayito._agent._project_domain import AgentProjectException
 
 ROOT: Final = Path(__file__).parents[4] / "testdata" / "agent-samples"
 MANIFEST: Final = json.loads((ROOT / "manifest.json").read_text(encoding="utf-8"))
@@ -82,3 +84,38 @@ def test_the_report_holds_no_file_content_or_secret(sample: dict[str, Any]) -> N
     )
     assert "MODEL_ID=" not in text
     assert "rayito" not in text.lower()
+
+
+REGION: Final = "us-east-1"
+EXPECTED: Final = ROOT / "expected"
+
+
+@pytest.mark.parametrize("sample", SAMPLES, ids=_ids())
+def test_the_detected_project_is_the_shared_document(sample: dict[str, Any]) -> None:
+    project, _ = AgentProject.detect(ROOT / sample["dir"], region=REGION)
+    expected = json.loads((EXPECTED / f"{sample['id']}.json").read_text(encoding="utf-8"))
+    assert project.to_dict() == expected
+
+
+def test_a_project_without_a_model_id_names_the_key_that_fixes_it(tmp_path: Path) -> None:
+    (tmp_path / "requirements.txt").write_text("strands-agents==1.0.0\n", encoding="utf-8")
+    (tmp_path / "agent.py").write_text(
+        "from strands import Agent\nagent = Agent()\n", encoding="utf-8"
+    )
+    with pytest.raises(AgentProjectException) as raised:
+        AgentProject.detect(tmp_path, region=REGION)
+    assert raised.value.code == "not_detected"
+    assert raised.value.path == "model.id"
+
+
+def test_the_region_comes_from_the_argument_or_the_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("AWS_REGION", raising=False)
+    sample = ROOT / "python" / "strands"
+    with pytest.raises(AgentProjectException) as raised:
+        AgentProject.detect(sample)
+    assert raised.value.path == "deploy.region"
+    monkeypatch.setenv("AWS_REGION", "eu-west-1")
+    project, _ = AgentProject.detect(sample)
+    assert project.spec.model.region == "eu-west-1"

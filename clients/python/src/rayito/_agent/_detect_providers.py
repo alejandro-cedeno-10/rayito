@@ -66,8 +66,28 @@ def _config_provider(
     return None
 
 
+def _model_files(
+    index: ProjectIndex, rules: Mapping[str, Any], language: str | None, framework: str
+) -> list[str]:
+    """Donde se buscan literales de modelo: el código del lenguaje y, para
+    Hermes u OpenCode (que se configuran, no se programan), su fichero de
+    configuración."""
+    configs = [
+        name
+        for spec in rules["configProviders"]
+        if spec["framework"] == framework
+        for name in spec["files"]
+        if index.has_root_file(name)
+    ]
+    return [*(index.sources(language) if language is not None else []), *configs]
+
+
 def _models(
-    index: ProjectIndex, rules: Mapping[str, Any], language: str | None, presets: Sequence[str]
+    index: ProjectIndex,
+    rules: Mapping[str, Any],
+    language: str | None,
+    framework: str,
+    presets: Sequence[str],
 ) -> tuple[str, ...]:
     patterns = [
         pattern
@@ -76,7 +96,7 @@ def _models(
         for pattern in provider.get("models", [])
     ]
     found: set[str] = set()
-    for path in index.sources(language) if language is not None else []:
+    for path in _model_files(index, rules, language, framework):
         text = index.read(path)
         for pattern in patterns:
             if text is not None:
@@ -114,7 +134,7 @@ def detect_providers(
     providers = tuple(strong or weak)
     _warn(providers, sink)
     presets = [provider.preset for provider in providers]
-    return providers, _models(index, rules, language, presets)
+    return providers, _models(index, rules, language, framework, presets)
 
 
 def _warn(providers: tuple[DetectionProvider, ...], sink: WarningSink) -> None:

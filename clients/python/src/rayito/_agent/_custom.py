@@ -56,6 +56,7 @@ from rayito._agent._host_runtime import (
     standard_model_envs,
 )
 from rayito._agent._install_plan import (
+    DEFAULT_PYTHON_INSTALLER,
     NODE_PACKAGE_MANAGERS,
     check_node_version,
     check_python_version,
@@ -120,7 +121,6 @@ CUSTOM_VENV_NAME: Final = "custom"
 #: el puente de Node para los marcos sin memoria propia.
 CUSTOM_SESSIONS_DIR_NAME: Final = "sessions"
 #: El instalador de Python si `requirements` no trae `package_manager`.
-DEFAULT_PYTHON_INSTALLER: Final = "pip"
 #: Variables con el modelo que ve tu código, además de las estándar del
 #: proveedor.
 MODEL_PROVIDER_ENV: Final = "RAYITO_MODEL_PROVIDER"

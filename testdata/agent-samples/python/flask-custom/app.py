@@ -5,6 +5,8 @@ import os
 import boto3
 from flask import Flask, jsonify, request
 
+DEFAULT_MODEL_ID = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+
 app = Flask(__name__)
 client = boto3.client("bedrock-runtime", region_name=os.environ.get("AWS_REGION"))
 SYSTEM = [{"text": "You answer frequently asked questions in one short sentence."}]
@@ -19,7 +21,7 @@ def healthz():
 def chat():
     prompt = request.get_json(force=True)["prompt"]
     reply = client.converse(
-        modelId=os.environ["MODEL_ID"],
+        modelId=os.environ.get("MODEL_ID", DEFAULT_MODEL_ID),
         system=SYSTEM,
         messages=[{"role": "user", "content": [{"text": prompt}]}],
     )

@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Final
 
 from rayito._agent._deploy_plan import AgentDeployPlan
+from rayito._agent._detect_report import DetectionReport
 from rayito._agent._project_domain import AgentProject
 from rayito._models import IdlePolicy, NetworkPolicy
 from rayito._payload import generate_access_token
@@ -214,13 +215,32 @@ def _source_label(source: str) -> str:
     return _SOURCE_LABELS.get(source, source)
 
 
-def detection_lines(report: object) -> list[str]:
-    """Los campos escalares de un informe de detección como `clave: valor`
-    (no la lista de evidencias ni ningún contenido de ficheros)."""
-    if not dataclasses.is_dataclass(report) or isinstance(report, type):
+def detection_lines(report: DetectionReport | None) -> list[str]:
+    """Lo que la detección decidió, en español y sin contenido de ficheros:
+    lenguaje, framework, punto de entrada, protocolo, instalación, proveedor y
+    avisos."""
+    if report is None:
         return []
-    return [
-        f"detectado {key}: {value}"
-        for key, value in dataclasses.asdict(report).items()
-        if isinstance(value, str | int | bool) and value not in ("", None)
-    ]
+    lines = [f"detectado {label}: {value}" for label, value in _scalar_fields(report)]
+    install = report.install
+    if install is not None:
+        versions = [v for v in (install.python_version, install.node_version) if v]
+        extra = f", versión {' '.join(versions)}" if versions else ""
+        lockfile = f" ({install.lockfile})" if install.lockfile else ""
+        lines.append(f"detectado instalación: {install.manager}{lockfile}{extra}")
+    if report.providers:
+        lines.append(
+            "detectado proveedor del modelo: " + ", ".join(p.preset for p in report.providers)
+        )
+    lines += [f"aviso: {warning.detail}" for warning in report.warnings]
+    return lines
+
+
+def _scalar_fields(report: DetectionReport) -> list[tuple[str, str]]:
+    fields = (
+        ("lenguaje", report.language),
+        ("framework", report.framework),
+        ("punto de entrada", report.entrypoint),
+        ("protocolo", report.protocol),
+    )
+    return [(label, value) for label, value in fields if value]

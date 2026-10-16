@@ -42,14 +42,19 @@ from rayito._agent._host_runtime import (
     require_supported_provider,
     standard_model_envs,
     tool_allowed,
-    user_requirements_steps,
 )
 from rayito._agent._install_plan import (
+    DEFAULT_NODE_PACKAGE_MANAGER,
+    DEFAULT_PYTHON_INSTALLER,
     NODE_PACKAGE_MANAGERS,
+    PYTHON_INSTALLERS,
     check_node_version,
+    check_requirements_path,
     node_bin,
     node_dependency_steps,
     node_runtime_steps,
+    python_dependency_steps,
+    python_manifest,
 )
 from rayito._agent._opencode import shell_quote
 from rayito._agent._recipes import (
@@ -90,7 +95,6 @@ STRANDS_LANGUAGES: Final[tuple[str, ...]] = ("python", "typescript")
 STRANDS_NAME: Final = "strands"
 #: El adaptador del puente de Node y el gestor de paquetes por defecto.
 STRANDS_ADAPTER: Final = "strands"
-DEFAULT_NODE_PACKAGE_MANAGER: Final = "npm"
 STRANDS_HARNESS_NAME: Final = "strands-harness"
 #: Estado del runtime dentro de `AGENT_STATE_DIR` (sesiones y memoria).
 STRANDS_STATE_NAME: Final = "strands"
@@ -241,15 +245,7 @@ class StrandsRuntime(HostBackedRuntime):
                 "(@strands-agents/harness); harness=True es sólo de Python"
             )
         self._check_entrypoint(entrypoint, language)
-        if requirements is not None and (
-            language == "typescript"
-            or not _REQUIREMENTS_PATTERN.fullmatch(requirements)
-            or ".." in requirements.split("/")
-        ):
-            raise InvalidArgumentException(
-                "StrandsRuntime.requirements es una ruta relativa dentro de source "
-                "y sólo existe con language='python'"
-            )
+        self._check_requirements(language, requirements, package_manager)
         self._check_node_options(language, package_manager, node_version)
         self.entrypoint = entrypoint
         self.harness = harness
@@ -260,16 +256,40 @@ class StrandsRuntime(HostBackedRuntime):
         self.name = STRANDS_HARNESS_NAME if harness else STRANDS_NAME
 
     @staticmethod
+    def _check_requirements(
+        language: str, requirements: str | None, package_manager: str | None
+    ) -> None:
+        """`requirements` (y, con `uv`, `pyproject.toml` o `uv.lock`) sólo
+        existe con `language='python'`; `package_manager` de Python es `pip` o
+        `uv` y necesita `requirements`."""
+        if language == "typescript":
+            if requirements is not None:
+                raise InvalidArgumentException(
+                    "StrandsRuntime.requirements sólo existe con language='python'"
+                )
+            return
+        if package_manager is not None and package_manager not in PYTHON_INSTALLERS:
+            raise InvalidArgumentException(
+                f"StrandsRuntime.package_manager debe ser uno de {list(PYTHON_INSTALLERS)}"
+            )
+        if requirements is None:
+            if package_manager is not None:
+                raise InvalidArgumentException(
+                    "StrandsRuntime.package_manager necesita requirements"
+                )
+            return
+        check_requirements_path("StrandsRuntime", requirements, package_manager)
+
+    @staticmethod
     def _check_node_options(
         language: str, package_manager: str | None, node_version: str | None
     ) -> None:
-        if package_manager is None and node_version is None:
-            return
         if language != "typescript":
-            raise InvalidArgumentException(
-                "StrandsRuntime.package_manager y node_version sólo existen con "
-                "language='typescript'"
-            )
+            if node_version is not None:
+                raise InvalidArgumentException(
+                    "StrandsRuntime.node_version sólo existe con language='typescript'"
+                )
+            return
         if package_manager is not None and package_manager not in NODE_PACKAGE_MANAGERS:
             raise InvalidArgumentException(
                 f"StrandsRuntime.package_manager debe ser uno de {list(NODE_PACKAGE_MANAGERS)}"
@@ -425,10 +445,22 @@ class StrandsRuntime(HostBackedRuntime):
             ),
         ]
         if self.requirements is not None:
-            steps += user_requirements_steps(
-                target, venv_dir=venv_dir, requirements=self.requirements, slug=self._venv_name
-            )
+            steps += self._user_dependency_steps(target, venv_dir)
         return steps
+
+    def _user_dependency_steps(self, target: InstallTarget, venv_dir: str) -> list[TemplateStep]:
+        requirements = str(self.requirements)
+        manifest = python_manifest(requirements)
+        return python_dependency_steps(
+            target,
+            installer=self.package_manager or DEFAULT_PYTHON_INSTALLER,
+            manifest=manifest,
+            path=requirements if manifest == "requirements" else None,
+            python=f"{venv_dir}/bin/python",
+            venv_dir=venv_dir,
+            slug=self._venv_name,
+            create_venv=False,
+        )
 
     def _typescript_steps(self, target: InstallTarget) -> list[TemplateStep]:
         manager = self.package_manager or DEFAULT_NODE_PACKAGE_MANAGER

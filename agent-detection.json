@@ -997,7 +997,8 @@
         "BEDROCK_MODEL_ID"
       ],
       "models": [
-        "[\"']((?:us|eu|apac|global)\\.(?:anthropic|amazon|meta|mistral)\\.[\\w.:-]+|(?:anthropic|amazon|meta|mistral)\\.[\\w.:-]*v\\d[\\w.:-]*)[\"']"
+        "[\"'](?:[a-z][\\w-]*/)?((?:us|eu|apac|global)\\.(?:anthropic|amazon|meta|mistral)\\.[\\w.:-]+|(?:anthropic|amazon|meta|mistral)\\.[\\w.:-]*v\\d[\\w.:-]*)[\"']",
+        "(?:default|model|model_id|modelId):\\s*((?:us|eu|apac|global)\\.(?:anthropic|amazon|meta|mistral)\\.[\\w.:-]+)"
       ]
     },
     {
@@ -1237,5 +1238,49 @@
         "google": "gemini"
       }
     }
-  ]
+  ],
+  "bridge": {
+    "comment": "Del informe de detección al proyecto (`AgentProject.detect`): cómo se llama cada proveedor en el modelo, qué runtime sirve cada framework de JavaScript, qué tipos de runtime llevan las claves de instalación y cuáles esperan sólo la ruta del módulo.",
+    "modelProviders": {
+      "bedrock": "bedrock",
+      "anthropic": "anthropic",
+      "openai": "openai",
+      "gemini": "google",
+      "azure": "azure",
+      "openrouter": "openai-compatible",
+      "groq": "openai-compatible",
+      "mistral": "openai-compatible",
+      "deepseek": "openai-compatible",
+      "xai": "openai-compatible",
+      "litellm": "openai-compatible",
+      "openai-compatible": "openai-compatible"
+    },
+    "nodeRuntimes": {
+      "langgraph": {
+        "kind": "custom",
+        "adapter": "langgraph"
+      },
+      "deepagents": {
+        "kind": "custom",
+        "adapter": "langgraph"
+      },
+      "vercel-ai": {
+        "kind": "custom",
+        "adapter": "vercel-ai"
+      }
+    },
+    "installKinds": [
+      "langgraph",
+      "strands",
+      "strands-harness",
+      "custom"
+    ],
+    "modulePathKinds": {
+      "typescript": [
+        "strands"
+      ]
+    },
+    "defaultSource": ".",
+    "defaultUvManifest": "pyproject.toml"
+  }
 }

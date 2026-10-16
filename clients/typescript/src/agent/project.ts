@@ -45,6 +45,7 @@ import type { SecretLike } from "../secrets/names.js";
 import type { BuildInfo } from "../templates/build.js";
 import { validateBucketHint, validateImageVersion } from "./deploy-domain.js";
 import type { AgentDeployment } from "./deployment.js";
+import type { DetectionReport, DetectOverrides } from "./detect-report.js";
 import {
   AgentLimits,
   AgentModel,
@@ -586,6 +587,23 @@ export class AgentProject {
       baseDir: document.baseDir,
       readText: document.readText,
     });
+  }
+
+  /** El proyecto de un agente que ya tienes y su `DetectionReport` (`undefined`
+   * si un fichero de proyecto completo no necesitó detectar nada), sin ejecutar
+   * su código ni llamar a AWS. El fichero de proyecto, si existe, gana
+   * clave por clave; lo que calla lo completa la detección (lenguaje,
+   * framework, punto de entrada, instalación, proveedor y modelo) y
+   * `overrides` fuerza lo que tú indiques. Si el caso no es claro lanza
+   * `AgentProjectError` con `code` `ambiguous`, `not_detected` o `unsupported` y
+   * la clave o bandera que lo resuelve. */
+  static async detect(
+    path = ".",
+    overrides?: DetectOverrides,
+    options: { readonly region?: string | undefined } = {},
+  ): Promise<readonly [AgentProject, DetectionReport | undefined]> {
+    const { detectProject } = await import("./project-file.js");
+    return detectProject(path, overrides, options);
   }
 
   /** El proyecto de un documento ya leído. Puro: las rutas relativas se
@@ -1440,6 +1458,12 @@ const GATEWAY_PRESETS: Readonly<Record<string, Preset>> = Object.freeze({
       litellmGateway(secret, o as unknown as Parameters<typeof litellmGateway>[1]),
   },
 });
+
+/** Las claves de un preset de pasarela (además de `secret` y `rate_per_minute`):
+ * lo que `AgentProject.detect` tiene que rellenar con la región y los modelos. */
+export function gatewayPresetKeys(preset: string): readonly string[] {
+  return Object.hasOwn(GATEWAY_PRESETS, preset) ? (GATEWAY_PRESETS[preset]?.keys ?? []) : [];
+}
 
 /** El nombre de cada opción del fichero (snake_case) en `gateways.ts`. */
 const GATEWAY_OPTION_NAMES: Readonly<Record<string, string>> = Object.freeze({

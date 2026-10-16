@@ -337,24 +337,21 @@ describe("planDeploy", () => {
     expect(plan.notes).toEqual([]);
   });
 
-  test("uses the detector when the project has one", async () => {
-    const seen: unknown[] = [];
-    const detect = async (path: string, overrides: DetectOverrides | undefined) => {
-      seen.push([path, overrides]);
-      return [project(), { framework: "langgraph" }] as const;
-    };
-    Object.defineProperty(AgentProject, "detect", { value: detect, configurable: true });
+  test("uses the detector", async () => {
+    const detect = vi
+      .spyOn(AgentProject, "detect")
+      .mockResolvedValue([project(), { framework: "langgraph" } as never]);
     try {
       const overrides: DetectOverrides = { framework: "langgraph" };
-      const plan = await planDeploy("./mi-agente", { overrides });
-      expect(seen).toEqual([["./mi-agente", overrides]]);
+      const plan = await planDeploy("./mi-agente", { overrides, region: "us-east-1" });
+      expect(detect).toHaveBeenCalledWith("./mi-agente", overrides, { region: "us-east-1" });
       expect(plan.detection).toEqual({ framework: "langgraph" });
     } finally {
-      delete (AgentProject as unknown as { detect?: unknown }).detect;
+      detect.mockRestore();
     }
   });
 
-  test("falls back to the project file", async () => {
+  test("a complete project file needs no detection", async () => {
     const directory = mkdtempSync(join(tmpdir(), "rayito-deploy-"));
     writeFileSync(join(directory, "rayito-agent.json"), JSON.stringify(project().toObject()));
     const plan = await planDeploy(directory);

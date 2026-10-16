@@ -40,6 +40,10 @@ export type PythonInstaller = (typeof PYTHON_INSTALLERS)[number];
 export const NODE_PACKAGE_MANAGERS = ["npm", "pnpm", "yarn"] as const;
 export type NodePackageManager = (typeof NODE_PACKAGE_MANAGERS)[number];
 export const PACKAGE_MANAGERS = [...PYTHON_INSTALLERS, ...NODE_PACKAGE_MANAGERS] as const;
+export type PackageManager = (typeof PACKAGE_MANAGERS)[number];
+/** El gestor que se usa si el proyecto no dice cuál. */
+export const DEFAULT_PYTHON_INSTALLER: PythonInstaller = "pip";
+export const DEFAULT_NODE_PACKAGE_MANAGER: NodePackageManager = "npm";
 /** Cómo se describen las dependencias de Python de un proyecto: un fichero de
  * requisitos, `pyproject.toml` más `uv.lock`, o `pyproject.toml` solo. */
 export const PYTHON_MANIFESTS = ["requirements", "uv-lock", "pyproject"] as const;

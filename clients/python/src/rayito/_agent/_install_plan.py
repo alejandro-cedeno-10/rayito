@@ -52,6 +52,9 @@ NodePackageManager = Literal["npm", "pnpm", "yarn"]
 #: de requisitos, `pyproject.toml` más `uv.lock`, o `pyproject.toml` solo.
 PythonManifest = Literal["requirements", "uv-lock", "pyproject"]
 PYTHON_INSTALLERS: Final[tuple[str, ...]] = ("pip", "uv")
+#: El gestor que se usa si el proyecto no dice cuál.
+DEFAULT_PYTHON_INSTALLER: Final = "pip"
+DEFAULT_NODE_PACKAGE_MANAGER: Final = "npm"
 NODE_PACKAGE_MANAGERS: Final[tuple[str, ...]] = ("npm", "pnpm", "yarn")
 PACKAGE_MANAGERS: Final[tuple[str, ...]] = (*PYTHON_INSTALLERS, *NODE_PACKAGE_MANAGERS)
 PYTHON_MANIFESTS: Final[tuple[str, ...]] = ("requirements", "uv-lock", "pyproject")
@@ -346,6 +349,8 @@ def node_dependency_steps(target: InstallTarget, manager: str) -> list[TemplateS
 
 
 __all__ = [
+    "DEFAULT_NODE_PACKAGE_MANAGER",
+    "DEFAULT_PYTHON_INSTALLER",
     "NODE_LOCKFILES",
     "NODE_PACKAGE_MANAGERS",
     "PACKAGE_MANAGERS",

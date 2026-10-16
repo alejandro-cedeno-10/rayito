@@ -3,6 +3,8 @@ import { tool } from "@langchain/core/tools";
 import { createReactAgent } from "@langchain/langgraph/prebuilt";
 import { z } from "zod";
 
+const DEFAULT_MODEL_ID = "us.anthropic.claude-haiku-4-5-20251001-v1:0";
+
 const ORDERS = { "A-100": "shipped", "A-200": "processing" };
 
 const add = tool(({ a, b }) => String(a + b), {
@@ -18,7 +20,7 @@ const orderStatus = tool(({ orderId }) => ORDERS[orderId] ?? "unknown", {
 });
 
 export const graph = createReactAgent({
-  llm: new ChatBedrockConverse({ model: process.env.MODEL_ID, region: process.env.AWS_REGION }),
+  llm: new ChatBedrockConverse({ model: process.env.MODEL_ID ?? DEFAULT_MODEL_ID, region: process.env.AWS_REGION }),
   tools: [add, orderStatus],
   prompt: "You are an orders assistant. Use the tools when they apply and answer in one short sentence.",
 });

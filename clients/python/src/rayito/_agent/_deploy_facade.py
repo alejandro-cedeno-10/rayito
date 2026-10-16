@@ -53,7 +53,7 @@ from rayito._secrets import SecretStore
 from rayito.exceptions import InvalidArgumentException
 
 if TYPE_CHECKING:
-    from rayito._agent._detect_domain import DetectOverrides
+    from rayito._agent._detect_report import DetectOverrides
 
 logger = logging.getLogger("rayito.agent")
 
@@ -117,7 +117,7 @@ def plan_deploy(
         plan.cost.running_usd_per_hour
     """
     chosen = options or AgentDeployOptions()
-    detected, report = project_for(path, project, overrides)
+    detected, report = project_for(path, project, overrides, region)
     return build_plan(
         detected,
         chosen,
@@ -245,7 +245,7 @@ def deploy_with(
 ) -> AgentFleet:
     """`deploy_agent()` con las dependencias de `ports`."""
     chosen = options or AgentDeployOptions()
-    detected, _ = project_for(path, project, overrides)
+    detected, _ = project_for(path, project, overrides, region)
     flight = preflight(detected, chosen, ports, region=region, session=session)
     _emit(chosen, flight.steps)
     service = ProjectService(flight.project, **dict(ports.service_kwargs))

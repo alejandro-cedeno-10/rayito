@@ -87,17 +87,33 @@ function configProvider(
   return undefined;
 }
 
+/** Donde se buscan literales de modelo: el código del lenguaje y, para Hermes u
+ * OpenCode (que se configuran, no se programan), su fichero de configuración. */
+function modelFiles(
+  index: ProjectIndex,
+  rules: DetectionRules,
+  language: string | undefined,
+  framework: string,
+): string[] {
+  const configs = rules.configProviders
+    .filter((spec) => spec.framework === framework)
+    .flatMap((spec) => spec.files)
+    .filter((name) => index.hasRootFile(name));
+  return [...(language === undefined ? [] : index.sources(language)), ...configs];
+}
+
 function modelsOf(
   index: ProjectIndex,
   rules: DetectionRules,
   language: string | undefined,
+  framework: string,
   presets: readonly string[],
 ): string[] {
   const patterns = rules.providers
     .filter((provider) => presets.includes(provider.preset))
     .flatMap((provider) => provider.models ?? []);
   const found = new Set<string>();
-  for (const path of language === undefined ? [] : index.sources(language)) {
+  for (const path of modelFiles(index, rules, language, framework)) {
     const text = index.read(path);
     for (const pattern of patterns) {
       if (text !== undefined) {
@@ -171,5 +187,5 @@ export function detectProviders(
   const providers = strong.length > 0 ? strong : weak;
   warn(providers, sink);
   const presets = providers.map((provider) => provider.preset);
-  return { providers, models: modelsOf(index, rules, language, presets) };
+  return { providers, models: modelsOf(index, rules, language, framework, presets) };
 }

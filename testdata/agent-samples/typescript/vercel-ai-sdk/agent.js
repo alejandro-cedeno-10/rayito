@@ -2,12 +2,14 @@ import { createAmazonBedrock } from "@ai-sdk/amazon-bedrock";
 import { ToolLoopAgent, tool } from "ai";
 import { z } from "zod";
 
+const DEFAULT_MODEL_ID = "us.anthropic.claude-haiku-4-5-20251001-v1:0";
+
 const MEETINGS = { standup: "09:30 daily", retro: "every other friday" };
 
 const bedrock = createAmazonBedrock({ region: process.env.AWS_REGION });
 
 export const agent = new ToolLoopAgent({
-  model: bedrock(process.env.MODEL_ID),
+  model: bedrock(process.env.MODEL_ID ?? DEFAULT_MODEL_ID),
   instructions: "You keep meeting notes. Use the tools when they apply and answer in one short sentence.",
   tools: {
     add: tool({

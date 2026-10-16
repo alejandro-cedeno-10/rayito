@@ -32,7 +32,7 @@ from rayito._sandbox_base import ACCESS_TOKEN_ENV_VAR
 from rayito.exceptions import InvalidArgumentException
 
 if TYPE_CHECKING:
-    from rayito._agent._detect_domain import DetectOverrides
+    from rayito._agent._detect_report import DetectionReport, DetectOverrides
     from rayito._index import DynamoDbIndex
     from rayito._pool_backends import PoolBackend
 
@@ -294,18 +294,15 @@ def project_for(
     path: str | os.PathLike[str],
     project: AgentProject | None,
     overrides: DetectOverrides | None,
-) -> tuple[AgentProject, object | None]:
+    region: str | None = None,
+) -> tuple[AgentProject, DetectionReport | None]:
     """El proyecto a desplegar y, si salió de la detección, su informe. Un
     `project` explícito gana a todo; si no, `AgentProject.detect()` (que lee
     el fichero de proyecto y completa lo que falte sin ejecutar código del
     usuario). Es el único sitio donde el despliegue conoce la detección."""
     if project is not None:
         return project, None
-    detect = getattr(AgentProject, "detect", None)
-    if detect is not None:
-        detected = detect(path, overrides)
-        return detected[0], detected[1]
-    return AgentProject.load(path), None
+    return AgentProject.detect(path, overrides, region=region)
 
 
 def resolved_region(

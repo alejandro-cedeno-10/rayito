@@ -115,7 +115,7 @@ export async function planDeploy(
   args: DeployAgentOptions = {},
 ): Promise<AgentDeployPlan> {
   const options = optionsOf(args.options);
-  const { project, report } = await projectFor(path, args.project, args.overrides);
+  const { project, report } = await projectFor(path, args.project, args.overrides, args.region);
   return buildPlan(project, options, {
     region: resolvedRegion(args.region, project, process.env),
     detection: report,
@@ -183,7 +183,7 @@ export async function deployWith(
   args: DeployAgentOptions = {},
 ): Promise<AgentFleet> {
   const options = optionsOf(args.options);
-  const detected = await projectFor(path, args.project, args.overrides);
+  const detected = await projectFor(path, args.project, args.overrides, args.region);
   const flight = await preflight(detected.project, options, ports, args);
   emit(options, flight.steps);
   const service = new ProjectService(flight.project, ports.serviceOptions);

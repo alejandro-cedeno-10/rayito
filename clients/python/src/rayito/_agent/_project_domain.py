@@ -25,7 +25,7 @@ import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, Final, Self, TypeVar
+from typing import TYPE_CHECKING, Any, Final, Self, TypeVar, cast
 
 from rayito._agent._deploy_domain import (
     validate_bucket_hint,
@@ -95,6 +95,7 @@ from rayito.exceptions import InvalidArgumentException
 if TYPE_CHECKING:
     from rayito._agent._deployment import AgentDeployment
     from rayito._agent._deployment_async import AsyncAgentDeployment
+    from rayito._agent._detect_report import DetectionReport, DetectOverrides
     from rayito._agent._events import AgentEvent, AgentResult
     from rayito._agent._export import AgentExport
     from rayito._secrets import SecretRef
@@ -444,6 +445,28 @@ class AgentProject:
         return cls.from_dict(
             document.data, base_dir=document.base_dir, read_text=document.read_text
         )
+
+    @classmethod
+    def detect(
+        cls,
+        path: str | os.PathLike[str] = ".",
+        overrides: DetectOverrides | None = None,
+        *,
+        region: str | None = None,
+    ) -> tuple[Self, DetectionReport | None]:
+        """El proyecto de un agente que ya tienes y su `DetectionReport`
+        (`None` si un fichero de proyecto completo no necesitó detectar nada),
+        sin ejecutar su código ni llamar a AWS. El fichero de proyecto, si
+        existe, gana clave por clave; lo que calla lo completa la detección
+        (lenguaje, framework, punto de entrada, instalación, proveedor y
+        modelo) y `overrides` fuerza lo que tú indiques. Si el caso no es
+        claro lanza `AgentProjectException` con `code` `ambiguous`,
+        `not_detected` o `unsupported` y la clave o bandera que lo resuelve.
+        """
+        from rayito._agent._project_file import detect_project
+
+        project, report = detect_project(path, overrides, region=region)
+        return cast(Self, project), report
 
     @classmethod
     def from_dict(

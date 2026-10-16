@@ -17,6 +17,7 @@ from typer.testing import CliRunner
 
 from rayito import AgentDeployStep, AgentProject, plan_deploy
 from rayito._agent._custom import CustomRuntime, HttpApp
+from rayito._agent._detect_report import DetectionReport
 from rayito._agent._events import (
     AgentFailed,
     Done,
@@ -480,7 +481,9 @@ def install_deploy(
     the_project = project or FakeProject()
     the_fleet = fleet or FakeFleet()
 
-    def detect(path: Any, found: Any, overrides: Any) -> tuple[FakeProject, Any]:
+    def detect(
+        path: Any, found: Any, overrides: Any, region: Any = None
+    ) -> tuple[FakeProject, Any]:
         calls.detected.append({"path": str(path), "overrides": overrides})
         return the_project, report
 
@@ -827,20 +830,25 @@ def test_deploy_warns_when_the_app_routes_are_not_exposed(
     assert "aviso" not in quiet.output
 
 
+def a_report(framework: str = "langgraph", language: str = "python") -> DetectionReport:
+    return DetectionReport(
+        language=language,
+        framework=framework,
+        kind=framework,
+        entrypoint=None,
+        entrypoint_kind=None,
+        protocol="framework",
+    )
+
+
 @pytest.mark.usefixtures("access_token")
 def test_deploy_prints_the_detection_before_creating_anything(
     monkeypatch: pytest.MonkeyPatch, runner: CliRunner, clients: Clients
 ) -> None:
-    @dataclass(frozen=True)
-    class Report:
-        language: str = "python"
-        framework: str = "langgraph"
-        evidence: tuple[str, ...] = ("langgraph.json",)
-
-    install_deploy(monkeypatch, report=Report())
+    install_deploy(monkeypatch, report=a_report())
     result = runner.invoke(app, ["agent", "deploy"], obj=clients)
     assert "detectado framework: langgraph" in result.output
-    assert "langgraph.json" not in result.output
+    assert "detectado lenguaje: python" in result.output
 
 
 @pytest.mark.usefixtures("access_token")
@@ -905,31 +913,25 @@ def test_dry_run_json_is_a_document(
 def test_detect_describes_the_project_without_aws(
     monkeypatch: pytest.MonkeyPatch, runner: CliRunner
 ) -> None:
-    @dataclass(frozen=True)
-    class Report:
-        language: str = "typescript"
-        framework: str = "strands-ts"
-
-    install_deploy(monkeypatch, report=Report())
-    result = runner.invoke(app, ["agent", "detect", "./mi-agente", "--framework", "strands-ts"])
+    install_deploy(monkeypatch, report=a_report("strands", "typescript"))
+    result = runner.invoke(app, ["agent", "detect", "./mi-agente", "--framework", "strands"])
     assert result.exit_code == 0, result.output
-    assert "detectado language: typescript" in result.output
+    assert "detectado lenguaje: typescript" in result.output
 
 
 def test_detect_json_and_write(
     monkeypatch: pytest.MonkeyPatch, runner: CliRunner, tmp_path: Path
 ) -> None:
-    @dataclass(frozen=True)
-    class Report:
-        framework: str = "strands"
-
+    report = a_report("strands")
     monkeypatch.setattr(
-        agent_cli, "project_for", lambda path, found, overrides: (real_project(), Report())
+        agent_cli,
+        "project_for",
+        lambda path, found, overrides, region=None: (real_project(), report),
     )
     result = runner.invoke(app, ["--json", "agent", "detect", str(tmp_path), "--write"])
     assert result.exit_code == 0, result.output
     document = json.loads(result.output)
-    assert document["detection"] == {"framework": "strands"}
+    assert document["detection"] == report.to_dict()
     assert document["written"] == "rayito-agent.json"
     assert (tmp_path / "rayito-agent.json").is_file()
     again = runner.invoke(app, ["agent", "detect", str(tmp_path), "--write"])
@@ -939,7 +941,7 @@ def test_detect_json_and_write(
 def test_detect_reports_an_ambiguous_project_as_a_usage_error(
     monkeypatch: pytest.MonkeyPatch, runner: CliRunner
 ) -> None:
-    def refuse(path: Any, found: Any, overrides: Any) -> None:
+    def refuse(path: Any, found: Any, overrides: Any, region: Any = None) -> None:
         raise InvalidArgumentException("hay dos frameworks: usa --framework")
 
     monkeypatch.setattr(agent_cli, "project_for", refuse)

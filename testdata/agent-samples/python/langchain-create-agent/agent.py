@@ -6,6 +6,8 @@ from langchain.agents import create_agent
 from langchain_aws import ChatBedrockConverse
 from langchain_core.tools import tool
 
+DEFAULT_MODEL_ID = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+
 SYSTEM_PROMPT = "You triage support tickets. Use the tools when they apply and answer in one short sentence."
 PRIORITIES = {"login": "high", "invoice": "medium"}
 
@@ -23,7 +25,7 @@ def ticket_priority(topic: str) -> str:
 
 
 agent = create_agent(
-    ChatBedrockConverse(model=os.environ["MODEL_ID"], region_name=os.environ.get("AWS_REGION")),
+    ChatBedrockConverse(model=os.environ.get("MODEL_ID", DEFAULT_MODEL_ID), region_name=os.environ.get("AWS_REGION")),
     tools=[add, ticket_priority],
     system_prompt=SYSTEM_PROMPT,
 )

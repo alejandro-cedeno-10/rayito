@@ -5,13 +5,16 @@
  * leen ficheros.
  */
 
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 import { detect } from "../../src/agent/detect-domain.js";
 import { LocalProjectTree } from "../../src/agent/detect-fs.js";
+import { AgentProject, AgentProjectError } from "../../src/agent/project.js";
 
 const ROOT = join(import.meta.dirname, "..", "..", "..", "..", "testdata", "agent-samples");
+const REGION = "us-east-1";
 const HTTP_ALTERNATIVE_WARNING = "http_app_alternative";
 
 interface Sample {
@@ -72,5 +75,55 @@ describe.each(manifest.samples)("agent sample $id", (sample) => {
     expect(app?.invokePath).toBe(sample.app.invoke);
     expect(app?.requestField).toBe(sample.app.requestField);
     expect(app?.responseField ?? null).toBe(sample.app.responseField);
+  });
+});
+
+describe("detected project", () => {
+  test.each(manifest.samples)("$id is the shared document", async (sample) => {
+    const [project] = await AgentProject.detect(join(ROOT, sample.dir), undefined, {
+      region: REGION,
+    });
+    const expected = JSON.parse(
+      readFileSync(join(ROOT, "expected", `${sample.id}.json`), "utf8"),
+    ) as unknown;
+    expect(project.toObject()).toEqual(expected);
+  });
+
+  test("a project without a model id names the key that fixes it", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "detect-"));
+    try {
+      writeFileSync(join(dir, "package-lock.json"), "{}");
+      writeFileSync(
+        join(dir, "package.json"),
+        JSON.stringify({ name: "x", type: "module", dependencies: { "@strands-agents/sdk": "1" } }),
+      );
+      writeFileSync(
+        join(dir, "agent.js"),
+        'import { Agent } from "@strands-agents/sdk";\nexport const agent = new Agent({});\n',
+      );
+      const failure = await AgentProject.detect(dir, undefined, { region: REGION }).catch(
+        (error: unknown) => error,
+      );
+      expect(failure).toBeInstanceOf(AgentProjectError);
+      expect((failure as AgentProjectError).code).toBe("not_detected");
+      expect((failure as AgentProjectError).path).toBe("model.id");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("the region is required by a Bedrock gateway", async () => {
+    const previous = { region: process.env.AWS_REGION, fallback: process.env.AWS_DEFAULT_REGION };
+    delete process.env.AWS_REGION;
+    delete process.env.AWS_DEFAULT_REGION;
+    try {
+      const failure = await AgentProject.detect(join(ROOT, "python", "strands")).catch(
+        (error: unknown) => error,
+      );
+      expect((failure as AgentProjectError).path).toBe("deploy.region");
+    } finally {
+      if (previous.region !== undefined) process.env.AWS_REGION = previous.region;
+      if (previous.fallback !== undefined) process.env.AWS_DEFAULT_REGION = previous.fallback;
+    }
   });
 });

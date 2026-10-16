@@ -8,20 +8,32 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import tomllib
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Final
+from typing import TYPE_CHECKING, Final
 
-from rayito._agent._project_domain import AgentProjectException
+from rayito._agent._project_domain import AgentProject, AgentProjectException
+from rayito._aws_region import resolve_region
 from rayito._limits import AGENT_PROJECT_FILE_NAMES
+
+if TYPE_CHECKING:
+    from rayito._agent._detect_report import DetectionReport, DetectOverrides
 
 #: Ruta que el error de un documento ilegible lleva: el documento entero.
 DOCUMENT_PATH: Final = "<fichero>"
 TOML_SUFFIX: Final = ".toml"
 JSON_SUFFIX: Final = ".json"
 INSTRUCTIONS_FILE_KEY: Final = "agent.instructions_file"
+FILE_NOT_FOUND_CODE: Final = "file_not_found"
+NOT_DETECTED_CODE: Final = "not_detected"
+#: Lo que no es válido en el nombre de un proyecto (`[a-z0-9_-]`) y el nombre
+#: que sale de un directorio sin nombre utilizable.
+_INVALID_NAME_CHARS: Final = re.compile(r"[^a-z0-9_-]+")
+DEFAULT_PROJECT_NAME: Final = "agent"
+MAX_PROJECT_NAME_CHARS: Final = 64
 
 
 @dataclass(frozen=True)
@@ -44,6 +56,63 @@ def read_project_document(path: str | os.PathLike[str]) -> ProjectDocument:
     return ProjectDocument(data=data, base_dir=base_dir, read_text=_reader(base_dir))
 
 
+def project_name_of(directory: Path) -> str:
+    """El nombre de proyecto que sale del nombre del directorio (`[a-z0-9_-]`,
+    empieza por letra o dígito, como mucho `MAX_PROJECT_NAME_CHARS`)."""
+    cleaned = _INVALID_NAME_CHARS.sub("-", directory.resolve().name.lower()).strip("-_")
+    return cleaned[:MAX_PROJECT_NAME_CHARS].strip("-_") or DEFAULT_PROJECT_NAME
+
+
+def detect_project(
+    path: str | os.PathLike[str],
+    overrides: DetectOverrides | None = None,
+    *,
+    region: str | None = None,
+) -> tuple[AgentProject, DetectionReport | None]:
+    """El `AgentProject` de `path` con lo que el fichero de proyecto (si lo
+    hay) no dice completado por la detección, y su informe. Lee ficheros
+    locales y no ejecuta nada del proyecto; no llama a AWS. Un fichero que ya
+    declara `[runtime] kind` basta por sí solo: si el directorio no tiene nada
+    que detectar, el informe es `None` y el proyecto es el del fichero."""
+    from rayito._agent._detect_domain import detect
+    from rayito._agent._detect_fs import LocalProjectTree
+    from rayito._agent._detect_project import detected_document
+
+    target = Path(path)
+    try:
+        located = read_project_document(target)
+        document, base_dir, read_text = dict(located.data), located.base_dir, located.read_text
+        directory = Path(base_dir)
+    except AgentProjectException as exc:
+        if exc.code != FILE_NOT_FOUND_CODE or not target.is_dir():
+            raise
+        document, directory = {}, target
+        base_dir = str(directory.resolve())
+        read_text = _reader(base_dir)
+    try:
+        report = detect(LocalProjectTree(directory), overrides)
+    except AgentProjectException as exc:
+        if exc.code != NOT_DETECTED_CODE or not _declares_runtime(document):
+            raise
+        return AgentProject.from_dict(document, base_dir=base_dir, read_text=read_text), None
+    chosen_region = region or _document_region(document) or resolve_region(None)
+    filled = detected_document(
+        document, report, name=project_name_of(directory), region=chosen_region
+    )
+    return AgentProject.from_dict(filled, base_dir=base_dir, read_text=read_text), report
+
+
+def _declares_runtime(document: Mapping[str, object]) -> bool:
+    runtime = document.get("runtime")
+    return isinstance(runtime, Mapping) and "kind" in runtime
+
+
+def _document_region(document: Mapping[str, object]) -> str | None:
+    deploy = document.get("deploy")
+    value = deploy.get("region") if isinstance(deploy, Mapping) else None
+    return value if isinstance(value, str) and value else None
+
+
 def _locate(target: Path) -> Path:
     if target.is_file():
         return target
@@ -56,7 +125,7 @@ def _locate(target: Path) -> Path:
     raise AgentProjectException(
         f"{DOCUMENT_PATH}: no hay ningún fichero {names} en la ruta",
         path=DOCUMENT_PATH,
-        code="file_not_found",
+        code=FILE_NOT_FOUND_CODE,
     )
 
 

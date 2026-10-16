@@ -33,6 +33,7 @@ import {
 import type { AgentEvent, AgentFailed, Done } from "./events.js";
 import {
   checkRequirementsPath,
+  DEFAULT_PYTHON_INSTALLER,
   PYTHON_INSTALLERS,
   pythonDependencySteps,
   pythonManifest,
@@ -84,7 +85,6 @@ export const DEEPAGENTS_REQUIREMENTS_NAME = "requirements-deepagents.txt";
 /** Nombre con el que se copian los ficheros de dependencias de tu proyecto y el
  * instalador por defecto (`pip`). */
 export const DEEPAGENTS_USER_SLUG = "deepagents";
-export const DEFAULT_PYTHON_INSTALLER = "pip";
 /** El runner en el contexto de build; se instala en `DEEPAGENTS_RUNNER_PATH`. */
 export const DEEPAGENTS_RUNNER_NAME = "deepagents_runner.py";
 /** Donde la plantilla instala el runner, de root y 0755. */

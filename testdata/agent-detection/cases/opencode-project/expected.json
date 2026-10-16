@@ -20,7 +20,9 @@
       ]
     }
   ],
-  "models": [],
+  "models": [
+    "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+  ],
   "evidence": [
     {
       "path": "opencode.json",

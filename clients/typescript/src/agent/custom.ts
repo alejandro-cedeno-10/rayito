@@ -67,6 +67,7 @@ import {
   checkNodeVersion,
   checkPythonVersion,
   checkRequirementsPath,
+  DEFAULT_PYTHON_INSTALLER,
   ecosystem,
   NODE_PACKAGE_MANAGERS,
   nodeBin,
@@ -119,7 +120,6 @@ export const DEFAULT_CUSTOM_ADAPTER: CustomAdapter = "callable";
  * puente de Node para los marcos sin memoria propia. */
 export const CUSTOM_SESSIONS_DIR_NAME = "sessions";
 /** El instalador de Python si `requirements` no trae `packageManager`. */
-export const DEFAULT_PYTHON_INSTALLER = "pip";
 /** El venv que crea `CustomRuntime({ requirements })`. */
 export const CUSTOM_VENV_NAME = "custom";
 /** Variables con el modelo que ve tu código, además de las estándar. */

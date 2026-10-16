@@ -6,6 +6,8 @@ from bedrock_agentcore.runtime import BedrockAgentCoreApp
 from strands import Agent, tool
 from strands.models import BedrockModel
 
+DEFAULT_MODEL_ID = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+
 app = BedrockAgentCoreApp()
 NOTES = {"standup": "09:30 daily", "retro": "every other friday"}
 
@@ -23,7 +25,7 @@ def meeting_time(name: str) -> str:
 
 
 agent = Agent(
-    model=BedrockModel(model_id=os.environ["MODEL_ID"], region_name=os.environ.get("AWS_REGION")),
+    model=BedrockModel(model_id=os.environ.get("MODEL_ID", DEFAULT_MODEL_ID), region_name=os.environ.get("AWS_REGION")),
     system_prompt="You keep meeting notes. Use the tools when they apply and answer in one short sentence.",
     tools=[add, meeting_time],
 )

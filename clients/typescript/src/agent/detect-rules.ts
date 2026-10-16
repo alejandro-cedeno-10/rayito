@@ -120,6 +120,17 @@ export interface ConfigProviderRule {
   readonly aliases: Readonly<Record<string, string>>;
 }
 
+export interface BridgeRules {
+  readonly modelProviders: Readonly<Record<string, string>>;
+  readonly nodeRuntimes: Readonly<
+    Record<string, { readonly kind: string; readonly adapter: string }>
+  >;
+  readonly installKinds: readonly string[];
+  readonly modulePathKinds: Readonly<Record<string, readonly string[]>>;
+  readonly defaultSource: string;
+  readonly defaultUvManifest: string;
+}
+
 export interface DetectionRules {
   readonly schema: string;
   readonly ignoredPathSegments: readonly string[];
@@ -140,6 +151,7 @@ export interface DetectionRules {
   readonly configProviders: readonly ConfigProviderRule[];
   readonly messages: Readonly<Record<string, string>>;
   readonly warnings: Readonly<Record<string, string>>;
+  readonly bridge: BridgeRules;
 }
 
 export const DETECTION_RULES: DetectionRules = JSON.parse(DETECTION_RULES_JSON) as DetectionRules;

@@ -5,6 +5,8 @@ import os
 from strands import tool
 from strands_harness import create_harness
 
+DEFAULT_MODEL_ID = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+
 INSTRUCTIONS = "You assist with operations questions. Use the tools when they apply and answer in one short sentence."
 RUNBOOKS = {"disk-full": "rotate the logs", "high-cpu": "scale the service out"}
 
@@ -22,7 +24,7 @@ def runbook(alert: str) -> str:
 
 
 agent = create_harness(
-    model=f"bedrock/{os.environ['MODEL_ID']}",
+    model=f"bedrock/{os.environ.get("MODEL_ID", DEFAULT_MODEL_ID)}",
     instructions=INSTRUCTIONS,
     tools=[add, runbook],
 )

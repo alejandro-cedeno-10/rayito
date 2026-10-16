@@ -16,7 +16,7 @@ import { validateAccessToken } from "../payload.js";
 import type { PoolBackend } from "../pool/backend.js";
 import { ACCESS_TOKEN_ENV_VAR } from "../sandbox/launch.js";
 import { BUCKET_ENV_VAR, type Environ } from "./aws-resolve.js";
-import type { DetectOverrides } from "./detect-report.js";
+import type { DetectionReport, DetectOverrides } from "./detect-report.js";
 import { AGENT_FLEET_WARM_READY_TIMEOUT_MS, fleetSettingsOf } from "./fleet-base.js";
 import { AgentProject } from "./project.js";
 import { copyProject } from "./project-copy.js";
@@ -338,23 +338,13 @@ export async function projectFor(
   path: string,
   project: AgentProject | undefined,
   overrides: DetectOverrides | undefined,
-): Promise<{ readonly project: AgentProject; readonly report: unknown }> {
+  region?: string | undefined,
+): Promise<{ readonly project: AgentProject; readonly report: DetectionReport | undefined }> {
   if (project !== undefined) {
     return { project, report: undefined };
   }
-  const detect = (
-    AgentProject as unknown as {
-      detect?: (
-        path: string,
-        overrides: DetectOverrides | undefined,
-      ) => Promise<readonly [AgentProject, unknown]>;
-    }
-  ).detect;
-  if (detect !== undefined) {
-    const [detected, report] = await detect.call(AgentProject, path, overrides);
-    return { project: detected, report };
-  }
-  return { project: await AgentProject.load(path), report: undefined };
+  const [detected, report] = await AgentProject.detect(path, overrides, { region });
+  return { project: detected, report };
 }
 
 /** La región de la llamada: argumento > `region` del proyecto > `AWS_REGION` /
