@@ -65,6 +65,11 @@
       "sdk_series": "0.13",
       "min_agent_version": "0.13.0",
       "note": "0.13: la CLI y el servidor MCP de TypeScript (ADR-027) y el formato de instantes en UTC de la CLI se validan con el rayd del tag rayd-v0.13.0"
+    },
+    {
+      "sdk_series": "0.14",
+      "min_agent_version": "0.14.0",
+      "note": "0.14: los runtimes de agente (Strands, Hermes, LangGraph, OpenCode o propio), el proyecto de agente y la CLI rayito agent se validan con el rayd del tag rayd-v0.14.0"
     }
   ],
   "assessments": [
