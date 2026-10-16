@@ -1,6 +1,7 @@
 ---
 title: Rayito
-description: Sandboxes for AI agents, E2B-compatible, inside your own AWS account.
+description: "Hardware-isolated sandboxes for AI agents on AWS Lambda MicroVMs, in your own AWS account. E2B-compatible API, no server and no API key."
+seo_title: "Rayito: AI agent sandboxes in your own AWS account"
 template: home.html
 hide:
   - navigation
@@ -21,10 +22,10 @@ the same API as E2B.
 
 <div class="rx-hero__actions" markdown>
 [Get started](primeros-pasos/index.md){ .md-button .md-button--primary }
-[View on GitHub](https://github.com/alejandro-cedeno-10/rayito){ .md-button }
+[:fontawesome-brands-github: View on GitHub](https://github.com/alejandro-cedeno-10/rayito){ .md-button }
 </div>
 
-Coming from E2B? [Change one import](migrar-desde-e2b/index.md).
+Coming from E2B? [Change one import](migrar-desde-e2b/index.md). Free and Apache-2.0: you only pay AWS.
 { .rx-hero__note }
 
 </div>
@@ -84,6 +85,8 @@ Coming from E2B? [Change one import](migrar-desde-e2b/index.md).
 <p class="rx-ruler__note">Medians measured on real AWS (us-east-1, 2026-09). Details in <a href="cost/#tiempos">Timings</a>.</p>
 </div>
 
+## Why Rayito { .rx-sr-only #por-que-rayito }
+
 <div class="rx-hooks" markdown>
 
 <div class="rx-hook" markdown>
@@ -102,7 +105,7 @@ under a second.
 ### A coding agent inside { #un-agente-de-codigo-dentro }
 
 `sbx.agent.run()` runs OpenCode or deepagents in the sandbox itself. The
-model (Bedrock, Anthropic, OpenAI and [more](guias/agente-proveedores.md)) is
+model (Bedrock, Anthropic, OpenAI and [more providers](guias/agente-proveedores.md)) is
 called through the secret gateway: the agent uses the credential but cannot
 read it.
 
@@ -123,6 +126,63 @@ approximated silently.
 
 [Migrate from E2B](migrar-desde-e2b/index.md) · [Parity, row by row](e2b-parity.md)
 
+</div>
+
+</div>
+
+<div class="rx-section" markdown>
+
+## How it works { #como-funciona }
+
+Your code asks for a sandbox; AWS Lambda starts it in your account and
+hands back the result.
+{ .rx-section__lead }
+
+<figure class="rx-art" data-rx-art data-pause-label="Pause animation" data-play-label="Play animation">
+<div class="rx-art__stage" role="img" aria-label="Rayito illustration: an agent sends code to three isolated sandboxes on AWS Lambda MicroVMs; two cats run the machine and the results leave on a conveyor belt.">
+<img class="rx-art__plate" src="../assets/rayito/art/plate-1672.webp" srcset="../assets/rayito/art/plate-960.webp 960w, ../assets/rayito/art/plate-1672.webp 1672w" sizes="(min-width: 76.25em) 1220px, 100vw" width="1672" height="941" loading="lazy" decoding="async" alt="Rayito illustration: an agent sends code to three isolated sandboxes on AWS Lambda MicroVMs; two cats run the machine and the results leave on a conveyor belt.">
+<img class="rx-art__l rx-art__gear rx-art__gear--1" src="../assets/rayito/art/gear-1.webp" width="69" height="70" loading="lazy" decoding="async" alt="" aria-hidden="true">
+<img class="rx-art__l rx-art__gear rx-art__gear--2" src="../assets/rayito/art/gear-2.webp" width="71" height="72" loading="lazy" decoding="async" alt="" aria-hidden="true">
+<img class="rx-art__l rx-art__gear rx-art__gear--3" src="../assets/rayito/art/gear-3.webp" width="71" height="72" loading="lazy" decoding="async" alt="" aria-hidden="true">
+<span class="rx-art__l rx-art__male" aria-hidden="true">
+<img class="rx-art__tail" src="../assets/rayito/art/male-tail.webp" width="300" height="270" loading="lazy" decoding="async" alt="" aria-hidden="true">
+<img src="../assets/rayito/art/male-body.webp" width="300" height="270" loading="lazy" decoding="async" alt="" aria-hidden="true">
+</span>
+<span class="rx-art__l rx-art__female" aria-hidden="true">
+<img class="rx-art__tail" src="../assets/rayito/art/female-tail.webp" width="205" height="235" loading="lazy" decoding="async" alt="" aria-hidden="true">
+<img src="../assets/rayito/art/female-body.webp" width="205" height="235" loading="lazy" decoding="async" alt="" aria-hidden="true">
+</span>
+<img class="rx-art__l rx-art__rail" src="../assets/rayito/art/rail-front.webp" width="165" height="96" loading="lazy" decoding="async" alt="" aria-hidden="true">
+<span class="rx-art__l rx-art__cube" aria-hidden="true"><span class="rx-art__cube-bob">
+<img class="rx-art__wing" src="../assets/rayito/art/cube-wing-l.webp" width="203" height="122" loading="lazy" decoding="async" alt="" aria-hidden="true">
+<img class="rx-art__wing" src="../assets/rayito/art/cube-wing-r.webp" width="203" height="122" loading="lazy" decoding="async" alt="" aria-hidden="true">
+<img src="../assets/rayito/art/cube-body.webp" width="203" height="122" loading="lazy" decoding="async" alt="" aria-hidden="true">
+</span></span>
+<img class="rx-art__l rx-art__belt" src="../assets/rayito/art/packet.webp" style="--i:0" width="90" height="86" loading="lazy" decoding="async" alt="" aria-hidden="true">
+<img class="rx-art__l rx-art__belt" src="../assets/rayito/art/packet.webp" style="--i:1" width="90" height="86" loading="lazy" decoding="async" alt="" aria-hidden="true">
+<img class="rx-art__l rx-art__belt" src="../assets/rayito/art/packet.webp" style="--i:2" width="90" height="86" loading="lazy" decoding="async" alt="" aria-hidden="true">
+<img class="rx-art__l rx-art__arrow rx-art__arrow--0" src="../assets/rayito/art/packet.webp" style="--i:0" width="90" height="86" loading="lazy" decoding="async" alt="" aria-hidden="true">
+<img class="rx-art__l rx-art__arrow rx-art__arrow--1" src="../assets/rayito/art/packet.webp" style="--i:1" width="90" height="86" loading="lazy" decoding="async" alt="" aria-hidden="true">
+<span class="rx-art__l rx-art__glow rx-art__glow--0" style="--i:0" aria-hidden="true"></span>
+<span class="rx-art__l rx-art__glow rx-art__glow--1" style="--i:1" aria-hidden="true"></span>
+<span class="rx-art__l rx-art__glow rx-art__glow--2" style="--i:2" aria-hidden="true"></span>
+<span class="rx-art__l rx-art__dot rx-art__dot--0" style="--n:0" aria-hidden="true"></span>
+<span class="rx-art__l rx-art__dot rx-art__dot--1" style="--n:1" aria-hidden="true"></span>
+<span class="rx-art__l rx-art__dot rx-art__dot--2" style="--n:2" aria-hidden="true"></span>
+<span class="rx-art__l rx-art__dot rx-art__dot--3" style="--n:1" aria-hidden="true"></span>
+<span class="rx-art__l rx-art__dot rx-art__dot--4" style="--n:2" aria-hidden="true"></span>
+<span class="rx-art__l rx-art__dot rx-art__dot--5" style="--n:3" aria-hidden="true"></span>
+<span class="rx-art__l rx-art__dot rx-art__dot--6" style="--n:2" aria-hidden="true"></span>
+<span class="rx-art__l rx-art__dot rx-art__dot--7" style="--n:3" aria-hidden="true"></span>
+<span class="rx-art__l rx-art__dot rx-art__dot--8" style="--n:4" aria-hidden="true"></span>
+<span class="rx-art__l rx-art__signal" aria-hidden="true"></span>
+</div>
+<figcaption><ol><li>Your agent or your code calls the SDK with your AWS credentials.</li><li>Every sandbox starts in its own hardware-isolated Lambda MicroVM.</li><li>Outputs, files and artifacts come back to your code; nothing goes through a Rayito server.</li></ol></figcaption>
+<button type="button" class="rx-art__toggle" data-rx-art-toggle aria-pressed="false" hidden>Pause animation</button>
+</figure>
+
+<div class="rx-actions" markdown>
+[Try it locally, no AWS account](guias/probar-en-local.md){ .md-button }
 </div>
 
 </div>
@@ -194,20 +254,16 @@ Save the code from the top in `first.py` (or `first.ts`) and run it.
 </div>
 </div>
 
+<div class="rx-actions" markdown>
+[Launch your first sandbox](quickstart.md){ .md-button .md-button--primary }
 </div>
 
-<div class="rx-section rx-split rx-split--stack" markdown>
+</div>
+
+<div class="rx-section rx-split" markdown>
 <div class="rx-split__copy" markdown>
 
-## A dashboard to see and operate your sandboxes { #un-panel-para-ver-y-operar-tus-sandboxes }
-
-`rayito dashboard` opens in your browser a local dashboard with your
-account's sandboxes, quotas, cost and images. It is read-only unless you
-pass `--allow-actions`, and there is no third-party server.
-[Step-by-step tour](funciones-opcionales/panel-de-gestion.md#recorrido) ·
-[Deploy it in your account](funciones-opcionales/panel-en-tu-cuenta.md#recorrido)
-
-![Overview of the Rayito management dashboard](assets/panel/panel-overview.png){ loading=lazy }
+<p class="rx-eyebrow">Agents</p>
 
 ## A coding agent inside the sandbox { #un-agente-de-codigo-dentro-del-sandbox }
 
@@ -221,13 +277,10 @@ or deepagents, and the provider is whichever you prefer (see
 [Fast start? Which one to use](guias/agente-en-el-sandbox.md#que-uso) ·
 [VM versus tokens](cost.md#coste-de-un-agente-vm-frente-a-modelo)
 
-<figure class="rayito-art" data-rayito-art data-play-label="Play animation" data-pause-label="Pause animation" data-play-aria="Play the sandbox animation" data-pause-aria="Pause the sandbox animation">
-<video class="rayito-art__media" width="1280" height="720" data-poster="../assets/rayito/rayito-motion-poster-1280.webp" controls muted loop playsinline preload="none" aria-label="Rayito flow: an agent sends code to three isolated sandboxes on Lambda microVMs; power and results move through the machine." data-rayito-video>
-<source data-src="../assets/rayito/rayito-live-1280.mp4" type="video/mp4">
-</video>
-<noscript><p>With JavaScript turned off, <a href="../assets/rayito/rayito-live-1280.mp4">open the animation as a video</a>.</p></noscript>
-<button type="button" class="rayito-art__toggle" data-rayito-toggle aria-label="Play the sandbox animation">Play animation</button>
-</figure>
+<div class="rx-actions" markdown>
+[Read the agent guide](guias/agente-en-el-sandbox.md){ .md-button .md-button--primary }
+[Choose a model provider](guias/agente-proveedores.md)
+</div>
 
 </div>
 <div class="rx-split__code" markdown>
@@ -269,6 +322,22 @@ or deepagents, and the provider is whichever you prefer (see
     const result = await sbx.agent.run("List the files in /home/user and summarize what is there.", { spec });
     console.log(result.text, result.usage.total);
     ```
+
+</div>
+</div>
+
+<div class="rx-section rx-split rx-split--stack" markdown>
+<div class="rx-split__copy" markdown>
+
+## A dashboard to see and operate your sandboxes { #un-panel-para-ver-y-operar-tus-sandboxes }
+
+`rayito dashboard` opens in your browser a local dashboard with your
+account's sandboxes, quotas, cost and images. It is read-only unless you
+pass `--allow-actions`, and there is no third-party server.
+[Step-by-step tour](funciones-opcionales/panel-de-gestion.md#recorrido) ·
+[Deploy it in your account](funciones-opcionales/panel-en-tu-cuenta.md#recorrido)
+
+![Overview of the Rayito management dashboard](assets/panel/panel-overview.png){ loading=lazy width=1280 height=760 }
 
 </div>
 </div>
@@ -337,7 +406,10 @@ import, prepare your account and run.
   link to the explanation.
 - The [parity table](e2b-parity.md) says it row by row.
 
+<div class="rx-actions" markdown>
 [Migrate from E2B](migrar-desde-e2b/index.md){ .md-button }
+[Parity, row by row](e2b-parity.md)
+</div>
 
 </div>
 <div class="rx-split__code" markdown>
@@ -501,6 +573,8 @@ us-east-1, list prices queried on 2026-10-06.
 ## Your first sandbox, in three steps { #tu-primer-sandbox-en-tres-pasos }
 
 [Get started](primeros-pasos/index.md){ .md-button .md-button--primary }
-[View on GitHub](https://github.com/alejandro-cedeno-10/rayito){ .md-button }
+[:fontawesome-brands-github: Star on GitHub](https://github.com/alejandro-cedeno-10/rayito){ .md-button }
+
+<p class="rx-cta__note">Apache-2.0 · no Rayito server · your account, your bill</p>
 
 </div>

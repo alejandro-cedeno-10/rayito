@@ -1,3 +1,7 @@
+---
+description: "Move your E2B 2.x SDK code to your AWS account by changing only the import: what changes, what does not and what Lambda lacks."
+---
+
 # Migrate from E2B
 
 If your code uses the E2B 2.x SDK (`e2b`, `e2b_code_interpreter`, `e2b` from

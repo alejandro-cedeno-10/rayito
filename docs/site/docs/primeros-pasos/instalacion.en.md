@@ -1,3 +1,7 @@
+---
+description: "Install the Rayito SDK for Python or TypeScript and its CLI, with the optional extras and the minimum Python and Node versions."
+---
+
 # Installation
 
 Rayito has two SDKs with the same surface, Python and TypeScript, and a CLI

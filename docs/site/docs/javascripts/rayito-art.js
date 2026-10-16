@@ -1,74 +1,56 @@
 /*
- * Ilustración animada de la portada: carga el vídeo al entrar en pantalla, lo
- * reproduce sin sonido sólo si el visitante no pidió menos movimiento y ofrece
- * un botón de pausa. Los textos salen de los atributos data-* de cada página,
- * así que sirve igual para español e inglés.
+ * Ilustración "Cómo funciona": mejora progresiva. La figura se dibuja y se anima
+ * sola con CSS; este script sólo ahorra trabajo (pausa fuera de pantalla y con
+ * la pestaña oculta) y añade el botón de pausa que exige WCAG 2.2.2 para un
+ * movimiento que dura más de 5 s. Los textos salen de los atributos data-*.
  */
 (() => {
-  const VISIBLE_RATIO = 0.2;
+  const reduced = window.matchMedia("(prefers-reduced-motion: reduce)");
 
   function mount() {
-    document.querySelectorAll("[data-rayito-art]").forEach((box) => {
-      if (box.dataset.ready) return;
-      const video = box.querySelector("[data-rayito-video]");
-      const button = box.querySelector("[data-rayito-toggle]");
-      if (!video || !button) return;
-      box.dataset.ready = "true";
+    document.querySelectorAll("[data-rx-art]").forEach((figure) => {
+      if (figure.dataset.ready) return;
+      figure.dataset.ready = "true";
+      const button = figure.querySelector("[data-rx-art-toggle]");
 
-      const reduced = window.matchMedia("(prefers-reduced-motion: reduce)");
-      let loaded = false;
+      figure.dataset.offscreen = "";
+      if ("IntersectionObserver" in window) {
+        new IntersectionObserver(
+          ([entry]) => {
+            if (entry.isIntersecting) delete figure.dataset.offscreen;
+            else figure.dataset.offscreen = "";
+          },
+          { rootMargin: "100px" },
+        ).observe(figure);
+      } else {
+        delete figure.dataset.offscreen;
+      }
 
-      const showPoster = () => {
-        if (video.dataset.poster && !video.poster) video.poster = video.dataset.poster;
-      };
-      const load = () => {
-        showPoster();
-        if (loaded) return;
-        loaded = true;
-        video.querySelectorAll("source[data-src]").forEach((source) => {
-          source.src = source.dataset.src;
-        });
-        video.load();
-      };
-      const play = () => {
-        load();
-        video.play().catch(() => {});
+      const label = () => {
+        const paused = "userPaused" in figure.dataset;
+        button.textContent = paused ? figure.dataset.playLabel : figure.dataset.pauseLabel;
+        button.setAttribute("aria-pressed", String(paused));
       };
       const sync = () => {
-        const key = video.paused ? "play" : "pause";
-        button.textContent = box.dataset[`${key}Label`] || button.textContent;
-        button.setAttribute("aria-label", box.dataset[`${key}Aria`] || button.textContent);
+        button.hidden = reduced.matches;
       };
-
-      button.addEventListener("click", () => (video.paused ? play() : video.pause()));
-      video.addEventListener("play", () => {
-        if (!loaded) play();
-        sync();
+      button.addEventListener("click", () => {
+        if ("userPaused" in figure.dataset) delete figure.dataset.userPaused;
+        else figure.dataset.userPaused = "";
+        label();
       });
-      video.addEventListener("pause", sync);
-      video.addEventListener("pointerdown", load, { once: true });
-      video.addEventListener("keydown", load, { once: true });
-      reduced.addEventListener("change", () => {
-        if (reduced.matches) video.pause();
-      });
-
-      if ("IntersectionObserver" in window) {
-        const observer = new IntersectionObserver(
-          (entries) => {
-            if (!entries.some((entry) => entry.isIntersecting)) return;
-            observer.disconnect();
-            showPoster();
-            if (!reduced.matches) play();
-          },
-          { threshold: VISIBLE_RATIO },
-        );
-        observer.observe(box);
-      } else {
-        showPoster();
-      }
+      reduced.addEventListener("change", sync);
       sync();
+      label();
     });
   }
+
+  document.addEventListener("visibilitychange", () => {
+    document.querySelectorAll("[data-rx-art]").forEach((figure) => {
+      if (document.visibilityState === "hidden") figure.dataset.hidden = "";
+      else delete figure.dataset.hidden;
+    });
+  });
 
   if (typeof document$ !== "undefined") document$.subscribe(mount);
   else if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", mount, { once: true });

@@ -1,3 +1,7 @@
+---
+description: "Prepara tu cuenta de AWS para Rayito una sola vez: la pila de IAM, el bucket de artefactos y la imagen rayito-base, con rayito doctor."
+---
+
 # Configurar AWS
 
 Antes del primer sandbox, tu cuenta necesita permisos (una pila de IAM), un

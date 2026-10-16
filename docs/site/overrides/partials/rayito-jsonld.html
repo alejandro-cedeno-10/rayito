@@ -1,0 +1,32 @@
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "WebSite",
+      "@id": "https://alejandro-cedeno-10.github.io/rayito/#website",
+      "url": "https://alejandro-cedeno-10.github.io/rayito/",
+      "name": "Rayito",
+      "inLanguage": ["es", "en"]
+    },
+    {
+      "@type": ["SoftwareApplication", "SoftwareSourceCode"],
+      "@id": "https://alejandro-cedeno-10.github.io/rayito/#software",
+      "name": "Rayito",
+      "description": {{ page.meta.description | tojson }},
+      "url": {{ page.canonical_url | tojson }},
+      "inLanguage": {{ config.theme.language | tojson }},
+      "applicationCategory": "DeveloperApplication",
+      "operatingSystem": "Linux, macOS, Windows",
+      "codeRepository": "https://github.com/alejandro-cedeno-10/rayito",
+      "license": "https://www.apache.org/licenses/LICENSE-2.0",
+      "programmingLanguage": ["Python", "TypeScript"],
+      "runtimePlatform": "AWS Lambda",
+      "isAccessibleForFree": true,
+      "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+      "image": {{ config.extra.social_image | tojson }},
+      "sameAs": ["https://pypi.org/project/rayito/", "https://www.npmjs.com/package/rayito"]
+    }
+  ]
+}
+</script>

@@ -1,3 +1,7 @@
+---
+description: "Lanza tu primer sandbox de Rayito en tu cuenta de AWS en unos 15 minutos: instala el SDK, prepara la cuenta y ejecuta código."
+---
+
 # Primeros pasos
 
 En unos 15 minutos tendrás un sandbox corriendo en tu cuenta de AWS (casi

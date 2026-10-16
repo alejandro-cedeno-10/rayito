@@ -76,6 +76,12 @@
   --rx-r-l: 0.8rem;
   --rx-art-bg: #fff;
   --rx-art-max: 64rem;
+  --rx-art-glow-core: rgb(255 247 185);
+  --rx-art-glow-mid: rgb(251 140 0 / 0.25);
+  --rx-art-glow-edge: rgb(251 140 0 / 0);
+  --rx-art-dot: rgb(83 194 255);
+  --rx-art-signal: #fff;
+  --rx-art-ease-sine: cubic-bezier(0.37, 0, 0.63, 1);
 }
 
 /* Mapeo a las variables de Material (paleta primary/accent: custom). */
@@ -1496,6 +1502,142 @@ body {
       animation-range: var(--rx-reveal-range);
     }
   }
+
+  /* Ilustración: bucle maestro de 6 s; todos los periodos lo dividen. Cada
+     seno se escribe con easeInOutSine y `alternate`, que da un seno exacto;
+     los retardos negativos hacen que el primer fotograma ya esté a mitad. */
+
+  .rx-art__gear { animation: rx-art-spin 3s linear infinite; }
+  .rx-art__gear--2 { animation-name: rx-art-spin-back; }
+
+  .rx-art__male {
+    animation:
+      rx-art-sway 1.5s var(--rx-art-ease-sine) -0.75s infinite alternate,
+      rx-art-breath 0.75s var(--rx-art-ease-sine) -0.375s infinite alternate;
+  }
+
+  .rx-art__male > .rx-art__tail {
+    animation: rx-art-tail-male 1.5s var(--rx-art-ease-sine) -0.75s infinite alternate;
+  }
+
+  .rx-art__female { animation: rx-art-sway 1.5s var(--rx-art-ease-sine) -2.5365s infinite alternate; }
+
+  .rx-art__female > .rx-art__tail {
+    animation: rx-art-tail-female 1.5s var(--rx-art-ease-sine) -1.323s infinite alternate;
+  }
+
+  .rx-art__cube { animation: rx-art-cube-x 3s var(--rx-art-ease-sine) -1.5s infinite alternate; }
+
+  .rx-art__cube-bob {
+    animation:
+      rx-art-cube-y 1.5s var(--rx-art-ease-sine) -0.75s infinite alternate,
+      rx-art-cube-tilt 3s var(--rx-art-ease-sine) -1.5s infinite alternate;
+  }
+
+  .rx-art__wing { animation: rx-art-flap 0.5s var(--rx-art-ease-sine) infinite alternate; }
+
+  .rx-art__belt { animation: rx-art-belt 3s linear calc(var(--i) * -1s) infinite; }
+  .rx-art__arrow { animation: rx-art-arrow 3s linear calc(var(--i) * -1.5s) infinite; }
+
+  .rx-art__glow {
+    animation: rx-art-glow 1.5s var(--rx-art-ease-sine) calc(var(--i) * 0.9549s - 3.75s) infinite alternate;
+  }
+
+  .rx-art__dot {
+    animation: rx-art-dot 0.75s var(--rx-art-ease-sine) calc(var(--n) * 0.23873s - 1.875s) infinite alternate;
+  }
+
+  .rx-art__signal { animation: rx-art-signal 3s linear infinite; }
+
+  @keyframes rx-art-spin { to { rotate: 360deg; } }
+  @keyframes rx-art-spin-back { to { rotate: -360deg; } }
+
+  @keyframes rx-art-sway {
+    from { rotate: -3.724deg; }
+    to { rotate: 3.724deg; }
+  }
+
+  @keyframes rx-art-breath {
+    from { scale: 1 0.988; }
+    to { scale: 1 1.012; }
+  }
+
+  @keyframes rx-art-tail-male {
+    from { rotate: -9deg; }
+    to { rotate: 9deg; }
+  }
+
+  @keyframes rx-art-tail-female {
+    from { rotate: -11deg; }
+    to { rotate: 11deg; }
+  }
+
+  @keyframes rx-art-cube-x {
+    from { translate: -4.787% 0; }
+    to { translate: 4.787% 0; }
+  }
+
+  @keyframes rx-art-cube-y {
+    from { translate: 0 -19.469%; }
+    to { translate: 0 19.469%; }
+  }
+
+  @keyframes rx-art-cube-tilt {
+    from { rotate: -4.011deg; }
+    to { rotate: 4.011deg; }
+  }
+
+  @keyframes rx-art-flap {
+    from { scale: 1 1; }
+    to { scale: 1 0.16; }
+  }
+
+  @keyframes rx-art-belt {
+    0% { translate: 0 0; opacity: 0; }
+    10% { opacity: 1; }
+    90% { opacity: 1; }
+    100% { translate: 381.17% 109.82%; opacity: 0; }
+  }
+
+  @keyframes rx-art-arrow {
+    0% { translate: 0% 0%; opacity: 0; }
+    5% { translate: 33% -2.4%; opacity: 0.156; }
+    10% { translate: 65% -6.6%; opacity: 0.309; }
+    15% { translate: 95.9% -12.6%; opacity: 0.454; }
+    20% { translate: 125.8% -20.4%; opacity: 0.588; }
+    25% { translate: 154.7% -30%; opacity: 0.707; }
+    30% { translate: 182.5% -41.4%; opacity: 0.809; }
+    35% { translate: 209.3% -54.6%; opacity: 0.891; }
+    40% { translate: 235% -69.6%; opacity: 0.951; }
+    45% { translate: 259.7% -86.3%; opacity: 0.988; }
+    50% { translate: 283.3% -104.9%; opacity: 1; }
+    55% { translate: 305.9% -125.2%; opacity: 0.988; }
+    60% { translate: 327.5% -147.4%; opacity: 0.951; }
+    65% { translate: 348% -171.3%; opacity: 0.891; }
+    70% { translate: 367.5% -197.1%; opacity: 0.809; }
+    75% { translate: 385.9% -224.6%; opacity: 0.707; }
+    80% { translate: 403.3% -253.9%; opacity: 0.588; }
+    85% { translate: 419.7% -285%; opacity: 0.454; }
+    90% { translate: 435% -317.9%; opacity: 0.309; }
+    95% { translate: 449.3% -352.6%; opacity: 0.156; }
+    100% { translate: 462.5% -389.1%; opacity: 0; }
+  }
+
+  @keyframes rx-art-glow {
+    from { opacity: 0.22; }
+    to { opacity: 0.5; }
+  }
+
+  @keyframes rx-art-dot {
+    from { opacity: 0.2; }
+    to { opacity: 1; }
+  }
+
+  @keyframes rx-art-signal {
+    0%, 100% { translate: 0 0; }
+    33.333% { translate: 440% -540%; }
+    66.667% { translate: 770% 20%; }
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1562,26 +1704,246 @@ body {
   max-width: 100%;
 }
 
-/* Ilustración animada: el dibujo es sobre blanco y lo sigue siendo en oscuro. */
+/* ------------------------------------------------------------------ */
+/* 8. Ilustración "Cómo funciona": capas HTML/CSS sobre la placa       */
+/* ------------------------------------------------------------------ */
 
-.rx-home .rayito-art {
+/*
+ * Cada capa es una caja en porcentaje de la placa (1672 x 941), así que todo
+ * escala con la figura. Sin animar, la escena es la imagen fija de reposo: es
+ * lo que ve quien pide menos movimiento. Las animaciones están en la sección 7.
+ * El dibujo es sobre blanco y lo sigue siendo en modo oscuro.
+ */
+
+.rx-art {
   width: 100%;
   max-width: var(--rx-art-max);
   margin: var(--rx-s8) auto;
 }
 
-.rx-home .rayito-art__media {
-  display: block;
-  width: 100%;
-  height: auto;
-  aspect-ratio: 16 / 9;
-  object-fit: contain;
+.rx-art__stage {
+  position: relative;
+  aspect-ratio: 1672 / 941;
+  overflow: hidden;
   background: var(--rx-art-bg);
-  border: 1px solid var(--rx-line);
   border-radius: var(--rx-r-m);
+  box-shadow: 0 0 0 1px var(--rx-line);
+  contain: layout paint;
+  isolation: isolate;
 }
 
-.rx-home .rayito-art__toggle {
+.rx-art__plate {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.rx-art__l {
+  position: absolute;
+  display: block;
+  pointer-events: none;
+  user-select: none;
+}
+
+.rx-art__l > img,
+.rx-art__cube-bob > img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.rx-art__cube-bob {
+  position: absolute;
+  inset: 0;
+}
+.rx-art__gear--1 {
+  left: 32.8349%; top: 31.9872%; width: 3.4689%; height: 6.1637%;
+  transform-origin: 50% 50%;
+}
+.rx-art__gear--2 {
+  left: 47.3684%; top: 33.5813%; width: 3.4689%; height: 6.1637%;
+  transform-origin: 50% 50%;
+}
+.rx-art__gear--3 {
+  left: 62.4402%; top: 35.2816%; width: 3.4689%; height: 6.1637%;
+  transform-origin: 50% 50%;
+}
+.rx-art__male {
+  left: 4.9043%; top: 62.1679%; width: 15.1914%; height: 24.3358%;
+  transform-origin: 39.370% 100%;
+}
+.rx-art__female {
+  left: 79.7249%; top: 36.6631%; width: 10.3469%; height: 21.0414%;
+  transform-origin: 43.931% 100%;
+}
+.rx-art__rail {
+  left: 78.3493%; top: 52.8162%; width: 9.8684%; height: 10.2019%;
+}
+.rx-art__cube {
+  left: 87.2010%; top: 29.4368%; width: 11.2440%; height: 12.0085%;
+}
+.rx-art__belt {
+  left: 78.6842%; top: 66.4655%; width: 3.8756%; height: 6.5802%;
+}
+.rx-art__arrow {
+  left: 78.3493%; top: 62.0616%; width: 2.8708%; height: 4.8884%;
+}
+.rx-art__signal {
+  left: 6.3397%; top: 45.2710%; width: 0.5981%; height: 1.0627%;
+}
+.rx-art__glow--0 {
+  left: 29.3660%; top: 57.2795%; width: 6.1005%; height: 10.8395%;
+}
+.rx-art__glow--1 {
+  left: 45.9330%; top: 60.7864%; width: 6.1005%; height: 10.8395%;
+}
+.rx-art__glow--2 {
+  left: 63.2177%; top: 64.2933%; width: 6.1005%; height: 10.8395%;
+}
+
+.rx-art__glow {
+  border-radius: 50%;
+  background: radial-gradient(circle closest-side, var(--rx-art-glow-core) 0 3.9%, var(--rx-art-glow-mid) 55%, var(--rx-art-glow-edge) 100%);
+  opacity: 0.36;
+}
+
+.rx-art__dot {
+  width: 0.2632%;
+  height: 0.4676%;
+  border-radius: 50%;
+  background: var(--rx-art-dot);
+  opacity: 0.6;
+}
+
+.rx-art__signal {
+  border-radius: 50%;
+  background: var(--rx-art-signal);
+}
+
+.rx-art__male > .rx-art__tail {
+  transform-origin: 25% 72.2%;
+}
+
+.rx-art__female > .rx-art__tail {
+  transform-origin: 25.4% 66%;
+}
+
+.rx-art__cube-bob {
+  transform-origin: 50% 51.327%;
+}
+
+.rx-art__wing {
+  transform-origin: 50% 50.44%;
+}
+
+.rx-art__gear--2 {
+  rotate: 0deg;
+}
+.rx-art__dot--0 {
+  left: 30.8493%;
+  top: 55.3454%;
+}
+.rx-art__dot--1 {
+  left: 31.3876%;
+  top: 55.3454%;
+}
+.rx-art__dot--2 {
+  left: 31.9258%;
+  top: 55.3454%;
+}
+.rx-art__dot--3 {
+  left: 47.1172%;
+  top: 58.2147%;
+}
+.rx-art__dot--4 {
+  left: 47.6555%;
+  top: 58.2147%;
+}
+.rx-art__dot--5 {
+  left: 48.1938%;
+  top: 58.2147%;
+}
+.rx-art__dot--6 {
+  left: 63.8038%;
+  top: 61.4028%;
+}
+.rx-art__dot--7 {
+  left: 64.3421%;
+  top: 61.4028%;
+}
+.rx-art__dot--8 {
+  left: 64.8804%;
+  top: 61.4028%;
+}
+
+/* Reposo de los paquetes: la cinta en u = 1/6, 1/2 y 5/6; la flecha en u = 1/2. */
+
+.rx-art__belt {
+  --u: calc((1 + 2 * var(--i)) / 6);
+  translate: calc(var(--u) * 381.17%) calc(var(--u) * 109.82%);
+}
+
+.rx-art__arrow {
+  translate: 283.3% -104.9%;
+}
+
+.rx-art__arrow--1 {
+  opacity: 0;
+}
+
+.rx-art:is([data-offscreen], [data-hidden], [data-user-paused]) .rx-art__stage * {
+  animation-play-state: paused;
+}
+
+.md-typeset .rx-art figcaption {
+  max-width: none;
+  margin: var(--rx-s4) 0 0;
+  color: var(--rx-ink-2);
+  font-size: 0.75rem;
+  font-style: normal;
+  text-align: left;
+}
+
+.rx-art figcaption ol {
+  display: grid;
+  gap: var(--rx-s3) var(--rx-s6);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: rx-art;
+}
+
+.rx-art figcaption li {
+  position: relative;
+  margin: 0;
+  padding-left: 1.6rem;
+  counter-increment: rx-art;
+}
+
+.rx-art figcaption li::before {
+  content: counter(rx-art);
+  position: absolute;
+  left: 0;
+  top: 0.05rem;
+  display: grid;
+  place-items: center;
+  width: 1.1rem;
+  height: 1.1rem;
+  border-radius: 50%;
+  background: var(--rx-volt);
+  color: var(--rx-on-volt);
+  font-size: 0.6rem;
+  font-weight: 800;
+}
+
+@media screen and (min-width: 60em) {
+  .rx-art figcaption ol {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+.rx-art__toggle {
   display: block;
   margin: var(--rx-s3) auto 0;
   padding: var(--rx-s2) var(--rx-s4);
@@ -1590,13 +1952,68 @@ body {
   color: var(--rx-ink);
   background: var(--rx-surface);
   font: inherit;
+  font-size: 0.7rem;
   cursor: pointer;
 }
 
-.rx-home .rayito-art__toggle:hover {
+.rx-art__toggle:hover {
   border-color: var(--rx-arc);
 }
 
-.rx-home .rayito-art:not([data-ready]) .rayito-art__toggle {
-  visibility: hidden;
+.rx-art__toggle[hidden] {
+  display: none;
+}
+
+/* Etiqueta de sección y fila de llamadas a la acción */
+
+.rx-eyebrow {
+  display: inline-block;
+  margin: 0 0 var(--rx-s2);
+  padding: 0.2rem 0.7rem;
+  border: 1px solid var(--rx-line);
+  border-radius: 999px;
+  background-color: var(--rx-surface);
+  color: var(--rx-volt-ink);
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.rx-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--rx-s3) var(--rx-s4);
+  margin-block: var(--rx-s6) 0;
+}
+
+.rx-actions p {
+  display: contents;
+}
+
+.md-typeset .rx-actions .md-button {
+  margin: 0;
+}
+
+.rx-art + .rx-actions,
+.rx-section > .rx-actions {
+  justify-content: center;
+}
+
+.rx-cta__note {
+  margin: var(--rx-s4) 0 0;
+  color: var(--rx-ink-2);
+  font-size: 0.7rem;
+}
+
+.md-typeset .rx-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }

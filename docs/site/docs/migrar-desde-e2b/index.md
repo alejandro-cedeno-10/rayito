@@ -1,3 +1,7 @@
+---
+description: "Lleva tu código del SDK de E2B 2.x a tu cuenta de AWS cambiando sólo el import: qué cambia, qué no y qué no existe en Lambda."
+---
+
 # Migrar desde E2B
 
 Si tu código usa el SDK de E2B 2.x (`e2b`, `e2b_code_interpreter`, `e2b` de

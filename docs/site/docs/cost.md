@@ -1,5 +1,6 @@
 ---
 title: Precios (MicroVMs, pool, agentes)
+description: "Cuánto cuesta un sandbox de Rayito en AWS: MicroVMs por hora, pool suspendido y agentes, con precios de lista y tiempos medidos."
 ---
 
 # Precios: MicroVMs, pool y agentes
