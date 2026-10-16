@@ -8,6 +8,25 @@ versionado [SemVer](https://semver.org/lang/es/).
 
 ### Añadido
 
+- **Opciones tipadas para servir un agente en varios VMs (`agent-zero-config`)**:
+  `ServeOptions` suma `queueMax` y `queueTimeoutMs` (la cola del host;
+  con 0, el valor por defecto, la llamada que no cabe recibe 429 como hasta
+  ahora) y `maxConcurrency` queda acotada por las conexiones que admite el
+  MicroVM de `memoryMib`. `AgentProject` suma `scaling` (`ScalingOptions`:
+  `minVms`, `maxVms`, `warmVms`, sesiones `shared` o `dedicated` y
+  `scaleInAfterMs`), `env` (sin secretos), `network` con `allowOut` y
+  `denyOut`, `region`, `bucket`, `baseImageVersion`, `language`, `framework`
+  y `versions` (`RuntimeVersions`). El fichero `rayito-agent.toml` admite las
+  tablas `[scaling]`, `[env]` y `[deploy]`, las claves `allow_out`, `deny_out`,
+  `queue_max` y `queue_timeout_seconds`, y en `[runtime]` las de `language`,
+  `framework`, `python_version` y `node_version`. Todo es aditivo y los valores
+  por defecto son los de un solo VM. Los errores de lectura suman los códigos
+  `ambiguous`, `not_detected` y `unsupported`. Además, la detección estática de
+  un proyecto de agente (lenguaje, framework, punto de entrada, app HTTP, plan
+  de instalación, versiones y proveedor, sin ejecutar su código) y las reglas
+  que comparten los dos SDK (`agent-detection.json`) quedan listas para
+  `deploy_agent`.
+
 - **Strands, Strands harness, Hermes, LangGraph y agentes propios como
   runtimes de primera clase (`agent-runtimes-byo`)**: `StrandsRuntime` (SDK y
   harness), `HermesRuntime` y `CustomRuntime` con `HttpApp` suman runtimes a
