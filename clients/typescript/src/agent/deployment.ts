@@ -103,6 +103,7 @@ export interface DeploymentSandbox {
   readonly accessToken: string;
   pause(options?: { readonly wait?: boolean | undefined }): Promise<boolean>;
   resume(options?: { readonly wait?: boolean | undefined }): Promise<void>;
+  setTimeout(timeoutMs: number): Promise<void>;
 }
 
 export interface AgentDeploymentOptions {
@@ -626,6 +627,13 @@ export class AgentDeployment {
    * sandbox suspendido ya lo reanuda. */
   async resume(options: { readonly wait?: boolean | undefined } = {}): Promise<void> {
     await this.#sandbox.resume(options);
+  }
+
+  /** Fija la vida restante del sandbox del despliegue (`Sandbox.setTimeout`):
+   * `rayd` lo termina solo al vencer. Una flota lo usa para que un VM sobrante
+   * desaparezca sin servidor propio. */
+  async setTimeout(timeoutMs: number): Promise<void> {
+    await this.#sandbox.setTimeout(timeoutMs);
   }
 
   /** Termina el sandbox del despliegue. Idempotente. */

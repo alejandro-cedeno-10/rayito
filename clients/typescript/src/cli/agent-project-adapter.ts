@@ -7,21 +7,27 @@
 
 import { CustomRuntime } from "../agent/custom.js";
 import type { AgentDeployment } from "../agent/deployment.js";
+import type { DetectOverrides } from "../agent/detect-report.js";
 import type { AgentProject } from "../agent/project.js";
 import { resolveRuntime } from "../agent/runtimes.js";
 import { type AwsClientSettings, awsClientSettingsOf } from "../aws/control-plane.js";
-import { SandboxNotFoundError } from "../errors.js";
+import { InvalidArgumentError, SandboxNotFoundError } from "../errors.js";
 import type { BuildInfo } from "../templates/build.js";
+import { describePlan, poolBackendFileFor } from "./agent-deploy.js";
 import type {
   AgentBuildRequest,
-  AgentDeployOverrides,
+  AgentDeployRequest,
+  AgentDetectOverrides,
   AgentExportRequest,
   AgentExportResult,
   AgentProjectRunRequest,
   AgentProjectTool,
   AgentProjectTools,
   DeployedAgent,
-  DeployedService,
+  DeployedFleetView,
+  DeployPlanView,
+  DetectedProject,
+  FleetClient,
   HiddenAppRoutes,
 } from "./ops-ports.js";
 import type { CliServices } from "./services.js";
@@ -86,27 +92,6 @@ class SdkAgentProjectTool implements AgentProjectTool {
     });
   }
 
-  async deploy(overrides: AgentDeployOverrides): Promise<DeployedService> {
-    const { serve } = this.#project;
-    const effective = {
-      ...serve,
-      ...(overrides.port === undefined ? {} : { port: overrides.port }),
-      ...(overrides.timeoutMs === undefined ? {} : { timeoutMs: overrides.timeoutMs }),
-    };
-    const { AgentProject } = await import("../agent/project.js");
-    const project = new AgentProject({ ...this.#project, serve: effective });
-    const deployment = await project.deploy({
-      ...(await this.#aws()),
-      accessToken: overrides.accessToken,
-      keepOnFailure: overrides.keepOnFailure,
-    });
-    return {
-      agent: deployedAgent(deployment),
-      port: effective.port,
-      hiddenRoutes: hiddenRoutesOf(this.#project),
-    };
-  }
-
   async export(options: AgentExportRequest): Promise<AgentExportResult> {
     return this.#project.export(options);
   }
@@ -114,9 +99,11 @@ class SdkAgentProjectTool implements AgentProjectTool {
 
 export class SdkAgentProjectTools implements AgentProjectTools {
   readonly #aws: () => Promise<AwsOptions>;
+  readonly #region: () => string | undefined;
 
-  constructor(services: () => Promise<CliServices>) {
+  constructor(services: () => Promise<CliServices>, region?: () => string | undefined) {
     this.#aws = () => awsOptionsOf(services);
+    this.#region = region ?? (() => undefined);
   }
 
   async load(file: string): Promise<AgentProjectTool> {
@@ -131,6 +118,85 @@ export class SdkAgentProjectTools implements AgentProjectTools {
     );
   }
 
+  async detect(path: string, overrides: AgentDetectOverrides): Promise<DetectedProject> {
+    const { projectFor } = await import("../agent/deploy-plan.js");
+    const { project, report } = await projectFor(path, undefined, overridesOf(overrides));
+    return { report, document: project.toObject() };
+  }
+
+  async writeDetected(path: string, overrides: AgentDetectOverrides): Promise<string> {
+    const { writeFileSync, existsSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const { AGENT_PROJECT_FILE_NAMES } = await import("../limits.js");
+    for (const name of AGENT_PROJECT_FILE_NAMES) {
+      if (existsSync(join(path, name))) {
+        throw new InvalidArgumentError(`ya existe ${name}; bórralo o edítalo a mano`);
+      }
+    }
+    const { document } = await this.detect(path, overrides);
+    const target = AGENT_PROJECT_FILE_NAMES[AGENT_PROJECT_FILE_NAMES.length - 1] ?? "";
+    writeFileSync(join(path, target), `${JSON.stringify(document, null, 2)}\n`);
+    return target;
+  }
+
+  async planDeploy(request: AgentDeployRequest): Promise<DeployPlanView> {
+    const { planDeploy } = await import("../agent/deploy.js");
+    const { project, report, options } = await prepared(request, false);
+    const plan = await planDeploy(request.path, {
+      project,
+      options,
+      region: this.#region(),
+    });
+    const { detection: _detection, ...rest } = plan;
+    return {
+      report,
+      document: { ...rest, scaling: { ...plan.scaling } },
+      lines: describePlan(plan),
+    };
+  }
+
+  async deployFleet(request: AgentDeployRequest): Promise<DeployedFleetView> {
+    const { deployAgent } = await import("../agent/deploy.js");
+    const { project, options } = await prepared(request, true);
+    const fleet = await deployAgent(request.path, { project, options, ...(await this.#aws()) });
+    await fleet.detach();
+    const [first] = fleet.deployments;
+    return {
+      name: fleet.name,
+      sandboxIds: fleet.sandboxIds,
+      url: first?.url ?? "",
+      port: project.serve.port,
+      hiddenRoutes: hiddenRoutesOf(project),
+    };
+  }
+
+  async connectFleet(name: string, accessToken: string | undefined): Promise<FleetClient> {
+    const { AgentFleet } = await import("../agent/fleet.js");
+    const aws = await this.#aws();
+    const fleet = await AgentFleet.connect(name, {
+      ...(accessToken === undefined ? {} : { accessToken }),
+      connection: { region: aws.region },
+    });
+    return {
+      invoke: (prompt, options) => fleet.invoke(prompt, withSession(options)),
+      stream: (prompt, options) => fleet.stream(prompt, withSession(options)),
+      status: async () => {
+        const status = await fleet.status();
+        return {
+          name: status.name,
+          minVms: status.minVms,
+          maxVms: status.maxVms,
+          members: status.members.map(({ sandboxId, state }) => ({ sandboxId, state })),
+        };
+      },
+      stop: async () => {
+        const count = fleet.sandboxIds.length;
+        await fleet.stop();
+        return count;
+      },
+    };
+  }
+
   async stop(sandboxId: string): Promise<boolean> {
     const { Sandbox } = await import("../sandbox/sandbox.js");
     try {
@@ -142,4 +208,55 @@ export class SdkAgentProjectTools implements AgentProjectTools {
       throw error;
     }
   }
+}
+
+function overridesOf(overrides: AgentDetectOverrides): DetectOverrides | undefined {
+  const none = Object.values(overrides).every((value) => value === undefined);
+  return none
+    ? undefined
+    : {
+        framework: overrides.framework,
+        language: overrides.language,
+        entrypoint: overrides.entry,
+        protocol: overrides.protocol,
+      };
+}
+
+/** El proyecto detectado con las banderas aplicadas, su informe y las
+ * `DeployOptions` de la petición. */
+async function prepared(request: AgentDeployRequest, park: boolean) {
+  const { projectFor } = await import("../agent/deploy-plan.js");
+  const { AgentDeployOptions } = await import("../agent/deploy-plan.js");
+  const { applyProjectFlags, applyServeFlags, scalingOf } = await import(
+    "./agent-project-flags.js"
+  );
+  const detected = await projectFor(request.path, undefined, overridesOf(request.overrides));
+  const project = applyProjectFlags(
+    applyServeFlags(detected.project, request.flags),
+    request.flags,
+  );
+  const { settings } = request;
+  const scaling = scalingOf(project, request.flags);
+  const { fleetSettingsOf } = await import("../agent/fleet-base.js");
+  const backendFile = park
+    ? poolBackendFileFor(fleetSettingsOf(project, scaling).scaling.warmVms)
+    : undefined;
+  const poolBackend =
+    backendFile === undefined
+      ? undefined
+      : new (await import("../pool/backend.js")).JsonFilePoolBackend(backendFile);
+  const options = new AgentDeployOptions({
+    bucket: settings.bucket,
+    secretNames: settings.secretNames,
+    createSecretFromEnv: settings.createSecretFromEnv,
+    basePublisher: settings.basePublisher,
+    accessToken: settings.accessToken,
+    keepOnFailure: settings.keepOnFailure,
+    buildImage: settings.buildImage,
+    scaling,
+    poolBackend,
+    onBuildLogs: settings.onBuildLogs,
+    onStep: settings.onStep,
+  });
+  return { project, report: detected.report, options };
 }

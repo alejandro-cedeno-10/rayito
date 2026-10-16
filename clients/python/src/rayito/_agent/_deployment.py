@@ -365,6 +365,13 @@ class AgentDeployment:
         petición a un sandbox suspendido ya lo reanuda."""
         self._sandbox.resume(wait=wait)
 
+    def set_timeout(self, timeout: int) -> None:
+        """Fija la vida restante del sandbox del despliegue
+        (`Sandbox.set_timeout`, segundos enteros): `rayd` lo termina solo al
+        vencer. Una flota lo usa para que un VM sobrante desaparezca sin
+        servidor propio."""
+        self._sandbox.set_timeout(timeout)
+
     def stop(self) -> None:
         """Termina el sandbox del despliegue. Idempotente."""
         self._sandbox.kill()

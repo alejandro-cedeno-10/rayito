@@ -149,7 +149,7 @@ const ENV_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
  */
 export class AgentProjectError extends InvalidArgumentError {
   readonly path: string;
-  readonly code: AgentProjectErrorCode;
+  override readonly code: AgentProjectErrorCode;
 
   constructor(
     message: string,

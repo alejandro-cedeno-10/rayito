@@ -16,7 +16,12 @@ import {
   type NetworkPolicyInput,
   validateIdlePolicy,
 } from "../models.js";
-import { validatedCpuTimeLimit, validatedStringMap } from "../payload.js";
+import {
+  generateAccessToken,
+  validateAccessToken,
+  validatedCpuTimeLimit,
+  validatedStringMap,
+} from "../payload.js";
 import {
   DEFAULT_READY_TIMEOUT_MS,
   type LoggingOption,
@@ -95,6 +100,14 @@ export interface PoolConfig {
    * pasarelas siguen aplicándose sólo en `take()`. */
   readonly allowInternetAccess?: boolean | undefined;
   readonly network?: NetworkPolicyInput | undefined;
+  /**
+   * El mismo access token para todas las plazas; sin él, cada plaza acuña el
+   * suyo (lo habitual y lo seguro: un pool compartido entre inquilinos nunca
+   * debe fijarlo, porque quien conozca el token abre cualquier plaza). Sólo
+   * lo usa una flota de agentes (`AgentFleet`), que tiene un único dueño y se
+   * reconecta con un solo token.
+   */
+  readonly accessToken?: string | undefined;
 }
 
 /** `PoolConfig` con todos los valores por defecto aplicados y validados. */
@@ -119,6 +132,7 @@ export interface ResolvedPoolConfig {
   readonly warmup: readonly WarmupStep[];
   readonly allowInternetAccess: boolean;
   readonly network: NetworkPolicyInput | undefined;
+  readonly accessToken: string | undefined;
 }
 
 /** `warmup` es una lista de `WarmupStep` (vacía por defecto). */
@@ -214,6 +228,9 @@ export function validatePoolConfig(config: PoolConfig): ResolvedPoolConfig {
     throw new InvalidArgumentError("allowInternetAccess debe ser un boolean");
   }
   validatePolicyShape(resolveNetwork(config.network, { allowInternetAccess }));
+  if (config.accessToken !== undefined) {
+    validateAccessToken(config.accessToken);
+  }
   return Object.freeze({
     size,
     template: config.template,
@@ -235,7 +252,13 @@ export function validatePoolConfig(config: PoolConfig): ResolvedPoolConfig {
     warmup,
     allowInternetAccess,
     network: config.network,
+    accessToken: config.accessToken,
   });
+}
+
+/** El token de una plaza nueva: el fijo del pool o uno recién acuñado. */
+export function slotAccessToken(config: ResolvedPoolConfig): string {
+  return config.accessToken ?? generateAccessToken();
 }
 
 /** `index`, `network` y `allowInternetAccess: false` sólo aparecen si el pool

@@ -16,7 +16,13 @@ from rayito._index import DynamoDbIndex, validate_index
 from rayito._limits import MAX_DURATION_SECONDS, POOL_SIZE_MAX
 from rayito._models import REDACTED, IdlePolicy, SandboxInfo
 from rayito._network_base import NetworkInput, checked_policy, resolve_network
-from rayito._payload import validated_cpu_time_limit, validated_envs, validated_metadata
+from rayito._payload import (
+    generate_access_token,
+    validate_access_token,
+    validated_cpu_time_limit,
+    validated_envs,
+    validated_metadata,
+)
 from rayito._sandbox_base import (
     DEFAULT_IDLE_POLICY,
     DEFAULT_READY_TIMEOUT_SECONDS,
@@ -57,8 +63,14 @@ class PoolConfig:
     `idle` es obligatorio y con `auto_resume=True`: sin política de idle el
     comportamiento de un VM suspendido por la API no está documentado y con
     ella una plaza olvidada se termina sola en `timeout`. No hay
-    `access_token` (uno por plaza) ni `allowed_ports` (`get_host(port)` acuña
-    por puerto tras la toma).
+    `allowed_ports` (`get_host(port)` acuña por puerto tras la toma).
+
+    `access_token` (`None` por defecto) fija el mismo access token para todas
+    las plazas; sin él, cada plaza acuña el suyo (lo habitual y lo seguro: un
+    pool compartido entre inquilinos nunca debe fijarlo, porque quien
+    conozca el token abre cualquier plaza). Sólo lo usa una flota de agentes
+    (`AgentFleet`), que tiene un único dueño y se reconecta con un solo
+    token.
 
     `index=DynamoDbIndex(...)` (`None` por defecto) escribe la fila del
     índice de metadatos de cada plaza al lanzarla, con la `metadata` del
@@ -115,9 +127,12 @@ class PoolConfig:
     warmup: Sequence[WarmupStep] = ()
     allow_internet_access: bool = True
     network: NetworkInput = None
+    access_token: str | None = None
 
     def __post_init__(self) -> None:
         validate_pool_size(self.size)
+        if self.access_token is not None:
+            validate_access_token(self.access_token)
         validate_timeout(self.timeout)
         validate_pool_idle(self.idle, self.timeout)
         validate_min_remaining(self.min_remaining_seconds, self.timeout)
@@ -262,6 +277,11 @@ def launch_kwargs(config: PoolConfig) -> dict[str, Any]:
     if not config.allow_internet_access:
         kwargs["allow_internet_access"] = False
     return kwargs
+
+
+def slot_access_token(config: PoolConfig) -> str:
+    """El token de una plaza nueva: el fijo del pool o uno recién acuñado."""
+    return config.access_token or generate_access_token()
 
 
 def resolved_pool_idle(config: PoolConfig) -> IdlePolicy:

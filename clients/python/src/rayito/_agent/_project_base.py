@@ -61,14 +61,18 @@ def template_name(project: AgentProject) -> str:
     return project.template or project.name
 
 
-def project_template(project: AgentProject, *, asynchronous: bool = False) -> AgentTemplate:
+def project_template(
+    project: AgentProject, *, asynchronous: bool = False, base_version: str | None = None
+) -> AgentTemplate:
     """El `AgentTemplate` de `project`: su runtime (ya comprobado como
-    instalable), su código y la memoria pedida."""
+    instalable), su código y la memoria pedida. `base_version` fija la versión
+    de la imagen base (`None`: la más reciente)."""
     installable_runtime(project)
     template_class = AsyncAgentTemplate if asynchronous else AgentTemplate
     return template_class(
         name=template_name(project),
         base=project.base,
+        base_version=base_version,
         runtimes=(project.runtime,),
         memory_mib=project.memory_mib,
         app=project.source,
@@ -109,22 +113,31 @@ def run_create_args(project: AgentProject) -> dict[str, Any]:
 
 
 def deploy_create_args(
-    project: AgentProject, *, raw: bool = False, access_token: str | None = None
+    project: AgentProject,
+    *,
+    raw: bool = False,
+    access_token: str | None = None,
+    metadata: Mapping[str, str] | None = None,
+    index: Any = None,
 ) -> dict[str, Any]:
     """Los de `deploy()`: la vida y la política de `idle` de
     `project.serve`, las etiquetas con las que `connect()` reconoce el
     despliegue y, si el llamador lo da, el access token con el que otro
-    proceso puede reconectarse."""
+    proceso puede reconectarse. `metadata` añade etiquetas (una flota marca
+    así la sesión de un VM dedicado) e `index` es el `DynamoDbIndex` que las
+    escribe para poder encontrarlo después."""
     serve = project.serve
-    metadata = {**serve.metadata, **labels_for(project.name, serve.port, raw=raw)}
+    labels = {**serve.metadata, **(metadata or {}), **labels_for(project.name, serve.port, raw=raw)}
     args: dict[str, Any] = {
         "timeout": seconds_ceiling(serve.timeout_seconds),
         "idle": serve.idle,
-        "metadata": metadata,
+        "metadata": labels,
         **_common_create_args(project),
     }
     if access_token is not None:
         args["access_token"] = access_token
+    if index is not None:
+        args["index"] = index
     return args
 
 

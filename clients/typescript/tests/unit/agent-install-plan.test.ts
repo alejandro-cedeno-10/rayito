@@ -98,7 +98,9 @@ describe("pinned builds", () => {
     expect(Object.keys(AGENT_PYTHON_BUILD_VERSIONS).sort()).toEqual(
       Object.keys(AGENT_PYTHON_BUILD_SHA256).sort(),
     );
-    expect(Object.keys(AGENT_NODE_BUILD_VERSIONS).sort()).toEqual(Object.keys(AGENT_NODE_BUILD_SHA256).sort());
+    expect(Object.keys(AGENT_NODE_BUILD_VERSIONS).sort()).toEqual(
+      Object.keys(AGENT_NODE_BUILD_SHA256).sort(),
+    );
     expect(AGENT_DEFAULT_NODE_MAJOR in AGENT_NODE_BUILD_VERSIONS).toBe(true);
     expect(AGENT_DEFAULT_PYTHON_MINOR in AGENT_PYTHON_BUILD_VERSIONS).toBe(true);
     for (const [minor, version] of Object.entries(AGENT_PYTHON_BUILD_VERSIONS)) {

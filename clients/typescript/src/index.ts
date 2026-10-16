@@ -18,11 +18,26 @@ export {
 } from "./agent/custom.js";
 export { DeepAgents, type DeepAgentsOptions } from "./agent/deepagents.js";
 export {
+  type DeployAgentOptions,
+  type DeployConnection,
+  deployAgent,
+  planDeploy,
+} from "./agent/deploy.js";
+export {
+  type AgentDeployCostEstimate,
+  AgentDeployOptions,
+  type AgentDeployOptionsInput,
+  type AgentDeployPlan,
+  type AgentDeployStep,
+  type AgentPlannedSecret,
+} from "./agent/deploy-plan.js";
+export {
   AgentDeployment,
   AgentDeploymentStream,
   type AgentInvokeOptions,
   type DeploymentStatus,
 } from "./agent/deployment.js";
+export type { DetectOverrides } from "./agent/detect-report.js";
 export {
   AgentLimits,
   type AgentLimitsOptions,
@@ -61,6 +76,13 @@ export {
   type ToolCall,
 } from "./agent/events.js";
 export type { AgentExport, AgentExportOptions } from "./agent/export.js";
+export {
+  AgentFleet,
+  type AgentFleetConnectOptions,
+  type AgentFleetOptions,
+  AgentFleetStream,
+} from "./agent/fleet.js";
+export type { FleetMemberStatus, FleetStatus } from "./agent/fleet-base.js";
 export {
   type AnthropicGatewayOptions,
   type AzureOpenaiGatewayOptions,
@@ -117,6 +139,11 @@ export {
   type TemplateStep,
   type WarmupStep,
 } from "./agent/runtime.js";
+export {
+  ScalingOptions,
+  type ScalingOptionsInput,
+  type SessionMode,
+} from "./agent/scaling-domain.js";
 export { StrandsRuntime, type StrandsRuntimeOptions } from "./agent/strands.js";
 export { AgentStream } from "./agent/stream.js";
 export {

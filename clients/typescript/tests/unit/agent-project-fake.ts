@@ -65,7 +65,7 @@ export interface FakeSandboxOptions {
 }
 
 export class FakeSandbox {
-  readonly sandboxId = SANDBOX_ID;
+  readonly sandboxId: string = SANDBOX_ID;
   readonly accessToken: string;
   readonly metadata: Record<string, string>;
   readonly gateways = {
@@ -86,6 +86,7 @@ export class FakeSandbox {
   kills = 0;
   readonly pauseCalls: Record<string, unknown>[] = [];
   readonly resumeCalls: Record<string, unknown>[] = [];
+  readonly timeoutCalls: number[] = [];
   readonly streamCloses = { count: 0 };
   refreshed = 0;
   readyPolls = 0;
@@ -170,6 +171,10 @@ export class FakeSandbox {
 
   async resume(options: Record<string, unknown> = {}): Promise<void> {
     this.resumeCalls.push(options);
+  }
+
+  async setTimeout(timeoutMs: number): Promise<void> {
+    this.timeoutCalls.push(timeoutMs);
   }
 
   async refreshProxyAccess(): Promise<void> {

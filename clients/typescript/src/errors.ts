@@ -15,6 +15,9 @@ export interface SandboxErrorOptions {
   readonly statusCode?: number | undefined;
   readonly grpcCode?: Code | undefined;
   readonly awsCode?: string | undefined;
+  /** Código propio de Rayito de una lista cerrada (`agent_vm_lost`: el
+   * MicroVM de un despliegue de agente desapareció). */
+  readonly code?: string | undefined;
   readonly cause?: unknown;
 }
 
@@ -22,6 +25,7 @@ export class SandboxError extends Error {
   readonly statusCode: number | undefined;
   readonly grpcCode: Code | undefined;
   readonly awsCode: string | undefined;
+  readonly code: string | undefined;
 
   constructor(message: string, options: SandboxErrorOptions = {}) {
     super(message, options.cause === undefined ? undefined : { cause: options.cause });
@@ -30,6 +34,7 @@ export class SandboxError extends Error {
     this.statusCode = options.statusCode;
     this.grpcCode = options.grpcCode;
     this.awsCode = options.awsCode;
+    this.code = options.code;
   }
 }
 
@@ -113,7 +118,7 @@ export interface PersistenceErrorOptions extends SandboxErrorOptions {
  * se reanuda) o `resource_exhausted`.
  */
 export class PersistenceError extends SandboxError {
-  readonly code: string;
+  override readonly code: string;
 
   constructor(message: string, options: PersistenceErrorOptions) {
     super(message, options);
@@ -142,7 +147,7 @@ export interface TransferErrorOptions extends SandboxErrorOptions {
  * clave ni una ruta.
  */
 export class TransferError extends SandboxError {
-  readonly code: string;
+  override readonly code: string;
   readonly reason: string;
 
   constructor(message: string, options: TransferErrorOptions) {
@@ -280,10 +285,16 @@ export class QuotaExceededError extends Error {
  * `SandboxError`.
  */
 export class CapacityError extends Error {
-  constructor(message: string) {
+  /** `agent_capacity` cuando es una flota de agentes la que no tiene cupo
+   * (todas las sesiones en uso y `maxVms` alcanzado hasta agotar el plazo de
+   * la cola); `undefined` en el resto. */
+  readonly code: string | undefined;
+
+  constructor(message: string, options: { readonly code?: string | undefined } = {}) {
     super(message);
     Object.setPrototypeOf(this, new.target.prototype);
     this.name = new.target.name;
+    this.code = options.code;
   }
 }
 
@@ -377,7 +388,7 @@ export interface MountErrorOptions extends SandboxErrorOptions {
  * agente manda y este SDK todavía no conoce).
  */
 export class MountError extends SandboxError {
-  readonly code: string;
+  override readonly code: string;
 
   constructor(message: string, options: MountErrorOptions) {
     super(message, options);
@@ -407,7 +418,7 @@ export interface VolumeMountErrorOptions extends SandboxErrorOptions {
  * `VolumeMountException` de Python.
  */
 export class VolumeMountError extends VolumeError {
-  readonly code: string;
+  override readonly code: string;
 
   constructor(message: string, options: VolumeMountErrorOptions) {
     super(message, options);
@@ -473,7 +484,7 @@ export interface StackErrorOptions extends SandboxErrorOptions {
  * `failed`; el mensaje nunca repite el de CloudFormation.
  */
 export class StackError extends SandboxError {
-  readonly code: string;
+  override readonly code: string;
 
   constructor(message: string, options: StackErrorOptions) {
     super(message, options);

@@ -134,7 +134,8 @@ def check_node_version(version: str) -> str:
     """`version` (la mayor de Node, `22`) si hay un build fijado."""
     if version not in AGENT_NODE_BUILD_VERSIONS:
         raise InvalidArgumentException(
-            f"node_version debe ser una de {sorted(AGENT_NODE_BUILD_VERSIONS)}, recibida {version!r}"
+            f"node_version debe ser una de {sorted(AGENT_NODE_BUILD_VERSIONS)}, "
+            f"recibida {version!r}"
         )
     return version
 

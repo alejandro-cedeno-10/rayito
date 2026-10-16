@@ -9,6 +9,7 @@
 
 import { posix } from "node:path";
 import { InvalidArgumentError, SandboxError, TimeoutError } from "../errors.js";
+import type { DynamoDbIndex } from "../index/dynamodb.js";
 import {
   AGENT_RUN_SANDBOX_MARGIN_SECONDS,
   AGENT_SERVICE_READY_MARKER_PATH,
@@ -79,6 +80,14 @@ export interface AgentProjectDeployOptions extends AgentProjectSandboxOptions {
   readonly keepOnFailure?: boolean | undefined;
 }
 
+/** Lo de `AgentProjectDeployOptions` más lo que sólo usa una flota:
+ * `metadata` (etiquetas del sandbox) e `index` (`DynamoDbIndex` que las
+ * escribe). */
+export interface ServiceDeployOptions extends AgentProjectDeployOptions {
+  readonly metadata?: Readonly<Record<string, string>> | undefined;
+  readonly index?: DynamoDbIndex | undefined;
+}
+
 export interface AgentProjectRunOptions extends AgentProjectSandboxOptions {
   readonly sessionId?: string | undefined;
   readonly model?: string | undefined;
@@ -138,12 +147,17 @@ export function servableRuntime(project: AgentProject): ServableRuntime {
 }
 
 /** El `AgentTemplate` de `project`: su runtime (ya comprobado como
- * instalable), su código y la memoria pedida. */
-export function projectTemplate(project: AgentProject): AgentTemplate {
+ * instalable), su código y la memoria pedida. `baseVersion` fija la versión de
+ * la imagen base (`undefined`: la más reciente). */
+export function projectTemplate(
+  project: AgentProject,
+  options: { readonly baseVersion?: string | undefined } = {},
+): AgentTemplate {
   installableRuntime(project);
   return new AgentTemplate({
     name: templateName(project),
     base: project.base,
+    baseVersion: options.baseVersion,
     runtimes: [project.runtime],
     memoryMib: project.memoryMib,
     app: project.source,
@@ -188,16 +202,27 @@ export function runCreateOptions(project: AgentProject): SandboxCreateOptions {
 }
 
 /** Los de `deploy()`: la vida y la política de `idle` de `project.serve` y
- * las etiquetas con las que `connect()` reconoce el despliegue. */
+ * las etiquetas con las que `connect()` reconoce el despliegue. `metadata`
+ * añade etiquetas (una flota marca así la sesión de un VM dedicado) e `index`
+ * es el `DynamoDbIndex` que las escribe para poder encontrarlo después. */
 export function deployCreateOptions(
   project: AgentProject,
-  options: { readonly raw: boolean },
+  options: {
+    readonly raw: boolean;
+    readonly metadata?: Readonly<Record<string, string>> | undefined;
+    readonly index?: DynamoDbIndex | undefined;
+  },
 ): SandboxCreateOptions {
   const serve = project.serve;
   return {
     timeoutMs: ceilToSeconds(serve.timeoutMs),
     idle: serve.idle,
-    metadata: { ...serve.metadata, ...labelsFor(project.name, serve.port, options) },
+    metadata: {
+      ...serve.metadata,
+      ...options.metadata,
+      ...labelsFor(project.name, serve.port, options),
+    },
+    ...(options.index === undefined ? {} : { index: options.index }),
     ...commonCreateOptions(project),
   };
 }
@@ -344,9 +369,13 @@ export class ProjectService {
     this.#options = options;
   }
 
-  /** Construye la imagen del proyecto con `AgentTemplate.build()`. */
-  async build(options: AgentTemplateBuildOptions): Promise<BuildInfo> {
-    return projectTemplate(this.#project).build(options);
+  /** Construye la imagen del proyecto con `AgentTemplate.build()`;
+   * `baseVersion` fija la versión de la base (`undefined`: la más reciente). */
+  async build(
+    options: AgentTemplateBuildOptions & { readonly baseVersion?: string | undefined },
+  ): Promise<BuildInfo> {
+    const { baseVersion, ...buildOptions } = options;
+    return projectTemplate(this.#project, { baseVersion }).build(buildOptions);
   }
 
   /** Un sandbox desde la imagen del proyecto, una ejecución con
@@ -380,40 +409,20 @@ export class ProjectService {
 
   /** Sirve el agente desde un MicroVM y devuelve su `AgentDeployment`. Si
    * cualquier paso falla, mata el sandbox antes de propagar (salvo con
-   * `keepOnFailure`, que lo deja vivo y lo anota en el mensaje del error). */
-  async deploy(options: AgentProjectDeployOptions = {}): Promise<AgentDeployment> {
+   * `keepOnFailure`, que lo deja vivo y lo anota en el mensaje del error).
+   * `metadata` e `index` son para una flota (ver `deployCreateOptions`). */
+  async deploy(options: ServiceDeployOptions = {}): Promise<AgentDeployment> {
     const project = this.#project;
-    const { keepOnFailure = false, ...sandboxOptions } = options;
+    const { keepOnFailure = false, metadata, index, ...sandboxOptions } = options;
     if (keepOnFailure) {
       requireReconnectableToken(options.accessToken);
     }
     const sandbox = await this.#create(
-      deployCreateOptions(project, { raw: isRawProject(project) }),
+      deployCreateOptions(project, { raw: isRawProject(project), metadata, index }),
       sandboxOptions,
     );
     try {
-      const host = hostConfigFor(project, sandbox);
-      await sandbox.files.writeFiles(hostEntries(project, host));
-      await sandbox.commands.run(clearMarkersCommand(), { user: AGENT_SERVE_USER });
-      const handle = await sandbox.commands.run(serveCommand(host, project.serve.port), {
-        background: true,
-        user: AGENT_SERVE_USER,
-        envs: { ...host.envs },
-        timeoutMs: 0,
-        tag: AGENT_SERVE_TAG,
-        killTree: true,
-      });
-      handle.disconnect();
-      await this.#waitReady(sandbox);
-      return new AgentDeployment({
-        sandbox,
-        port: project.serve.port,
-        hostAccess: await sandbox.getHost(project.serve.port),
-        project: project.name,
-        raw: isRawApp(host),
-        requestTimeoutMs: requestTimeoutMs(project),
-        fetch: this.#options.fetch,
-      });
+      return await this.serve(sandbox);
     } catch (error) {
       if (keepOnFailure && error instanceof Error) {
         error.message = `${error.message}\n${keptSandboxNote(sandbox)}`;
@@ -422,6 +431,35 @@ export class ProjectService {
       }
       throw error;
     }
+  }
+
+  /** Arranca el host del agente en un sandbox ya creado (o tomado de un pool
+   * con las pasarelas del proyecto) y espera su marcador de listo. No mata el
+   * sandbox si falla: lo decide quien lo creó. */
+  async serve(sandbox: ServiceSandbox): Promise<AgentDeployment> {
+    const project = this.#project;
+    const host = hostConfigFor(project, sandbox);
+    await sandbox.files.writeFiles(hostEntries(project, host));
+    await sandbox.commands.run(clearMarkersCommand(), { user: AGENT_SERVE_USER });
+    const handle = await sandbox.commands.run(serveCommand(host, project.serve.port), {
+      background: true,
+      user: AGENT_SERVE_USER,
+      envs: { ...host.envs },
+      timeoutMs: 0,
+      tag: AGENT_SERVE_TAG,
+      killTree: true,
+    });
+    handle.disconnect();
+    await this.#waitReady(sandbox);
+    return new AgentDeployment({
+      sandbox,
+      port: project.serve.port,
+      hostAccess: await sandbox.getHost(project.serve.port),
+      project: project.name,
+      raw: isRawApp(host),
+      requestTimeoutMs: requestTimeoutMs(project),
+      fetch: this.#options.fetch,
+    });
   }
 
   async #create(

@@ -9,6 +9,10 @@
   `AgentDeployment`. `init` y `export` no llaman a AWS. Códigos de salida: 1
   si la operación falla, 2 para uso (fichero de proyecto inválido, ficheros
   que `init` no sobrescribe sin `--force`, destino de `export` ocupado).
+- `agent detect` y `agent deploy [RUTA]` (ADR-029): detectan el proyecto sin
+  ejecutar su código y lo despliegan como una flota con `deploy_agent()`
+  (`--dry-run` sólo calcula el plan y el coste). `invoke`, `status` y `stop`
+  aceptan el nombre de la flota además del id de un sandbox.
 """
 
 from __future__ import annotations
@@ -23,9 +27,23 @@ from typing import Annotated, Any
 
 import typer
 
-from rayito import AgentDeployment, AgentProject, AgentResult
+from rayito import (
+    AgentDeployment,
+    AgentDeployOptions,
+    AgentDeployStep,
+    AgentFleet,
+    AgentProject,
+    AgentResult,
+    DetectOverrides,
+    ScalingOptions,
+    deploy_agent,
+    plan_deploy,
+)
+from rayito._agent._deploy_plan import project_for
 from rayito._agent._events import AgentEvent, AgentFailed, Text, TextDelta, ToolCall
+from rayito._agent._fleet_base import fleet_settings_of
 from rayito._agent._project_base import app_hiding_own_routes
+from rayito._agent._scaling_domain import SESSION_MODES
 from rayito._agent._template import (
     AGENT_TEMPLATE_RUNTIMES,
     DEFAULT_AGENT_TEMPLATE_BASE,
@@ -35,7 +53,17 @@ from rayito._agent._template import (
 from rayito._aws_region import resolve_region
 from rayito._images import DEFAULT_BUILD_TIMEOUT_SECONDS
 from rayito._limits import AGENT_MIN_MEMORY_MIB
-from rayito._payload import generate_access_token
+from rayito.cli._agent_deploy import (
+    AGENT_TOKEN_FILE_DEFAULT,
+    CompactBuildLog,
+    apply_project_flags,
+    apply_serve_flags,
+    deploy_token,
+    describe_plan,
+    detection_lines,
+    parse_pairs,
+    pool_backend_for,
+)
 from rayito.cli._agent_scaffold import (
     DEFAULT_PROVIDER,
     LANGUAGES,
@@ -52,11 +80,12 @@ from rayito.cli._agent_scaffold import (
 )
 from rayito.cli._console import EXIT_USAGE, echo, emit_json, fail, visible_controls
 from rayito.cli._session import clients_of, json_mode
-from rayito.cli._tokens import TOKEN_ENV_VAR, TokenFileError, write_token_file
+from rayito.cli._tokens import TOKEN_ENV_VAR, TokenFileError
 from rayito.cli.sandbox import TokenFileOption, kill_one, token_or_exit
 from rayito.exceptions import (
     AgentException,
     BuildException,
+    CapacityException,
     InvalidArgumentException,
     SandboxException,
 )
@@ -162,10 +191,6 @@ def build_command(
         echo(f"build_id={info.build_id}")
 
 
-DEPLOY_NEEDS_TOKEN_FILE_MESSAGE = (
-    f"sin {TOKEN_ENV_VAR}, deploy necesita --token-file para poder volver a conectarte "
-    "(invoke y status)"
-)
 CUSTOM_INIT_HINT = (
     'la app usa protocol = "raw": el despliegue reenvía tus rutas (/health, /invoke) con '
     'deployment.url y deployment.headers; deployment.invoke() es para protocol = "agentcore"'
@@ -454,9 +479,126 @@ def run_project_command(
     print_result(result, as_json=as_json)
 
 
+#: `--sessions`: los modos de `ScalingOptions.sessions`.
+SESSIONS_HELP = "Sesiones compartidas entre VMs (shared) o un MicroVM por sesión (dedicated)."
+DETECT_FLAGS_HELP = "Fija a mano lo que la detección decidiría."
+MICROVM_ID_PREFIX = "microvm-"
+STEP_MESSAGES = {
+    "base_image": "imagen base publicada",
+    "secret_created": (
+        "secreto creado para la pasarela {detail} (cuesta $0,40 al mes hasta que lo borres)"
+    ),
+    "image": "imagen lista: versión {detail}",
+    "fleet": "{detail} VM(s) listos",
+}
+
+
+def optional_choice_of(allowed: tuple[str, ...], flag: str) -> Callable[[str | None], str | None]:
+    """Como `choice_of`, para una bandera que puede faltar."""
+    check = choice_of(allowed, flag)
+
+    def verify(value: str | None) -> str | None:
+        return None if value is None else check(value)
+
+    return verify
+
+
+def detect_overrides_of(
+    framework: str | None, language: str | None, entry: str | None, protocol: str | None
+) -> DetectOverrides | None:
+    chosen = (framework, language, entry, protocol)
+    if all(value is None for value in chosen):
+        return None
+    return DetectOverrides(
+        framework=framework, language=language, entrypoint=entry, protocol=protocol
+    )
+
+
+def step_printer(deploy_json: bool) -> Callable[[AgentDeployStep], None]:
+    """Un paso de `deploy_agent()` por línea en stderr (stdout queda para el
+    resultado). El bucket se nombra porque quien despliega tiene que saber
+    dónde fue el artefacto; nunca se nombra un secreto."""
+
+    def show(step: AgentDeployStep) -> None:
+        if step.kind == "bucket":
+            origin, _, bucket = step.detail.partition(":")
+            echo(f"bucket del artefacto: {bucket} ({origin})", err=True)
+        elif step.kind == "warm":
+            ready = step.detail == "ready"
+            echo(
+                "plazas calientes aparcadas"
+                if ready
+                else "las plazas calientes siguen creándose; el despliegue ya sirve",
+                err=True,
+            )
+        else:
+            echo(STEP_MESSAGES[step.kind].format(detail=step.detail), err=True)
+
+    return show
+
+
+@agent_app.command("detect")
+def detect_command(
+    ctx: typer.Context,
+    path: Annotated[
+        Path, typer.Argument(help="Directorio del proyecto (por defecto, el actual).")
+    ] = Path(PROJECT_FILE_DEFAULT),
+    framework: Annotated[str | None, typer.Option("--framework", help=DETECT_FLAGS_HELP)] = None,
+    language: Annotated[str | None, typer.Option("--language", help=DETECT_FLAGS_HELP)] = None,
+    entry: Annotated[str | None, typer.Option("--entry", help=DETECT_FLAGS_HELP)] = None,
+    protocol: Annotated[str | None, typer.Option("--protocol", help=DETECT_FLAGS_HELP)] = None,
+    write: Annotated[
+        bool,
+        typer.Option("--write", help="Guarda el proyecto resuelto como rayito-agent.json."),
+    ] = False,
+) -> None:
+    """Detecta el proyecto de un agente sin ejecutar su código y lo describe.
+
+    Lee el fichero de proyecto (si lo hay) y los manifiestos del directorio;
+    lo que detecta se puede fijar con --framework, --language, --entry y
+    --protocol. No llama a AWS. Con --write guarda el resultado como
+    rayito-agent.json (no sobrescribe un fichero de proyecto existente).
+    """
+    overrides = detect_overrides_of(framework, language, entry, protocol)
+    try:
+        project, report = project_for(path, None, overrides)
+    except InvalidArgumentException as exc:
+        fail(str(exc), code=EXIT_USAGE)
+    written = write_detected_project(path, project) if write else None
+    if json_mode(ctx):
+        emit_json(
+            {
+                "detection": None if report is None else camel_keys(dataclasses.asdict(report)),  # type: ignore[call-overload]
+                "project": camel_keys(project.to_dict()),
+                "written": written,
+            }
+        )
+        return
+    for line in detection_lines(report) or [f"proyecto: {project.name} (fichero de proyecto)"]:
+        echo(line)
+    if written is not None:
+        echo(f"escrito {written}")
+
+
+def write_detected_project(directory: Path, project: AgentProject) -> str:
+    """Escribe `rayito-agent.json` en `directory`; un fichero de proyecto que ya
+    exista no se toca."""
+    from rayito._limits import AGENT_PROJECT_FILE_NAMES
+
+    for name in AGENT_PROJECT_FILE_NAMES:
+        if (directory / name).exists():
+            fail(f"ya existe {name}; bórralo o edítalo a mano", code=EXIT_USAGE)
+    target = directory / AGENT_PROJECT_FILE_NAMES[-1]
+    target.write_text(json.dumps(project.to_dict(), indent=2, ensure_ascii=False) + "\n")
+    return target.name
+
+
 @agent_app.command("deploy")
 def deploy_command(
     ctx: typer.Context,
+    path: Annotated[
+        Path | None, typer.Argument(help="Directorio del proyecto (por defecto, el actual).")
+    ] = None,
     file: Annotated[str, typer.Option("--file", help=PROJECT_FILE_HELP)] = PROJECT_FILE_DEFAULT,
     timeout: Annotated[
         float | None,
@@ -477,42 +619,193 @@ def deploy_command(
             "que lo termines con `rayito agent stop`).",
         ),
     ] = False,
+    framework: Annotated[str | None, typer.Option("--framework", help=DETECT_FLAGS_HELP)] = None,
+    language: Annotated[str | None, typer.Option("--language", help=DETECT_FLAGS_HELP)] = None,
+    entry: Annotated[str | None, typer.Option("--entry", help=DETECT_FLAGS_HELP)] = None,
+    protocol: Annotated[str | None, typer.Option("--protocol", help=DETECT_FLAGS_HELP)] = None,
+    memory: Annotated[
+        int | None,
+        typer.Option(
+            "--memory",
+            help="MiB de cada VM. Se fija en la imagen: cambiarla construye una versión nueva.",
+        ),
+    ] = None,
+    max_sessions: Annotated[
+        int | None, typer.Option("--max-sessions", help="Sesiones simultáneas por VM.")
+    ] = None,
+    sessions: Annotated[
+        str | None,
+        typer.Option(
+            "--sessions",
+            help=SESSIONS_HELP,
+            callback=optional_choice_of(SESSION_MODES, "--sessions"),
+        ),
+    ] = None,
+    min_vms: Annotated[int | None, typer.Option("--min-vms", help="VMs siempre vivos.")] = None,
+    max_vms: Annotated[int | None, typer.Option("--max-vms", help="VMs como máximo.")] = None,
+    warm: Annotated[
+        int | None, typer.Option("--warm", help="Plazas calientes (VMs aparcados).")
+    ] = None,
+    idle: Annotated[
+        int | None,
+        typer.Option("--idle", help="Segundos sin uso tras los que un VM se suspende."),
+    ] = None,
+    queue: Annotated[
+        int | None, typer.Option("--queue", help="Peticiones que esperan en la cola del host.")
+    ] = None,
+    queue_timeout: Annotated[
+        float | None,
+        typer.Option("--queue-timeout", help="Segundos máximos de espera en la cola."),
+    ] = None,
+    env: Annotated[
+        list[str] | None, typer.Option("--env", help="CLAVE=VALOR no secreto; repetible.")
+    ] = None,
+    allow_out: Annotated[
+        list[str] | None,
+        typer.Option("--allow-out", help="Destino de salida permitido; repetible."),
+    ] = None,
+    bucket: Annotated[
+        str | None,
+        typer.Option("--bucket", help="Bucket del artefacto (por defecto, RAYITO_BUCKET o CDK)."),
+    ] = None,
+    secret: Annotated[
+        list[str] | None,
+        typer.Option("--secret", help="proveedor=nombre de un secreto que ya existe; repetible."),
+    ] = None,
+    create_secret: Annotated[
+        bool,
+        typer.Option(
+            "--create-secret",
+            help="Crea el secreto que falte desde la variable del proveedor (cuesta $0,40/mes).",
+        ),
+    ] = False,
+    base_artifact: Annotated[
+        Path | None,
+        typer.Option(
+            "--base-artifact", help="Zip de la imagen base: se publica si no existe (pide --yes)."
+        ),
+    ] = None,
+    yes: Annotated[
+        bool, typer.Option("--yes", help="Confirma lo que cuesta sin preguntar.")
+    ] = False,
+    dry_run: Annotated[
+        bool,
+        typer.Option("--dry-run", help="Sólo detecta y calcula el plan y el coste, sin AWS."),
+    ] = False,
+    build: Annotated[
+        bool | None,
+        typer.Option(
+            "--build/--no-build",
+            help="Construye la imagen (por defecto, si hay bucket) o reutiliza la existente.",
+        ),
+    ] = None,
+    verbose: Annotated[
+        bool, typer.Option("--verbose", help="Imprime todos los logs del build.")
+    ] = False,
 ) -> None:
-    """Despliega el agente como servicio HTTP en un sandbox y deja la VM viva.
+    """Despliega el agente de un directorio como una flota de MicroVMs.
 
-    Imprime el id del sandbox y la URL; las cabeceras de acceso no se
-    imprimen nunca (se piden con AgentDeployment.headers). El access token
-    del sandbox se guarda en --token-file (o es el de RAYITO_ACCESS_TOKEN):
-    `invoke` y `status` lo necesitan. Vive como mucho 8 h: para pararlo,
-    `rayito agent stop`. Un arranque fallido imprime su causa (el final de la
-    salida de error de la app, sin valores de entorno ni credenciales) y
-    termina el sandbox, salvo con --keep-on-failure.
+    Detecta el lenguaje, el framework y la entrada de tu proyecto sin ejecutar
+    su código (o usa su rayito-agent.toml), construye la imagen sólo si
+    cambió, resuelve la región, la imagen base, el secreto del modelo y el
+    bucket, y deja `--min-vms` VMs vivos y `--warm` plazas aparcadas. Cada
+    valor sale de la bandera, del fichero, del entorno o del descubrimiento,
+    en ese orden; nada se crea en silencio (ni buckets, ni secretos sin
+    --create-secret, ni la imagen base sin --base-artifact y --yes).
+
+    Imprime el nombre de la flota, el sandbox y la URL; las cabeceras de
+    acceso no se imprimen nunca. El access token se guarda en --token-file (o
+    es el de RAYITO_ACCESS_TOKEN; si no hay ninguno, en .rayito/agent-token con
+    modo 0600, que se reutiliza al volver a desplegar). Vive como mucho 8 h:
+    `rayito agent stop <nombre>` lo termina. Con --dry-run no llama a AWS.
     """
-    token = deploy_token(token_file)
-    project = load_project(file)
-    serve = project.serve
-    if timeout is not None:
-        serve = dataclasses.replace(serve, timeout_seconds=timeout)
-    if port is not None:
-        serve = dataclasses.replace(serve, port=port)
-    clients = clients_of(ctx)
+    target = deploy_target(path, file)
+    overrides = detect_overrides_of(framework, language, entry, protocol)
     try:
-        deployment = dataclasses.replace(project, serve=serve).deploy(
-            region=clients.region,
-            session=clients.session,
+        project, report = project_for(target, None, overrides)
+        project = apply_serve_flags(
+            project,
+            max_sessions=max_sessions,
+            idle_seconds=idle,
+            queue=queue,
+            queue_timeout=queue_timeout,
+            timeout=timeout,
+            port=port,
+        )
+        project = apply_project_flags(
+            project,
+            memory=memory,
+            env=parse_pairs(env, "--env"),
+            allow_out=allow_out or [],
+        )
+        scaling = scaling_of(project, min_vms, max_vms, warm, sessions)
+        secret_names = parse_pairs(secret, "--secret")
+    except InvalidArgumentException as exc:
+        fail(str(exc), code=EXIT_USAGE)
+    as_json = json_mode(ctx)
+    compact = None if verbose else CompactBuildLog(lambda line: echo(line, err=True))
+
+    def options_with(
+        token: str | None, publisher: Callable[[], None] | None, pool_backend: Any = None
+    ) -> AgentDeployOptions:
+        return AgentDeployOptions(
+            bucket=bucket,
+            secret_names=secret_names,
+            create_secret_from_env=create_secret,
+            base_publisher=publisher,
             access_token=token,
             keep_on_failure=keep_on_failure,
+            build_image=build,
+            scaling=scaling,
+            pool_backend=pool_backend,
+            on_build_logs=(lambda line: echo(line, err=True)) if verbose else compact,
+            on_step=step_printer(as_json),
+        )
+
+    if dry_run:
+        print_plan(
+            plan_deploy(
+                project=project,
+                options=options_with(None, None),
+                region=ctx.meta.get("region"),
+            ),
+            report,
+            as_json=as_json,
+        )
+        return
+    try:
+        token, written_to = deploy_token(token_file)
+    except TokenFileError as exc:
+        fail(str(exc), code=EXIT_USAGE)
+    clients = clients_of(ctx)
+    publisher = base_publisher_of(clients, base_artifact, bucket, yes=yes)
+    for line in detection_lines(report):
+        echo(line, err=True)
+    try:
+        fleet = deploy_agent(
+            project=project,
+            options=options_with(
+                token,
+                publisher,
+                pool_backend_for(fleet_settings_of(project, scaling).scaling.warm_vms),
+            ),
+            region=clients.region,
+            session=clients.session,
         )
     except InvalidArgumentException as exc:
         fail(_with_notes(exc), code=EXIT_USAGE)
+    except BuildException as exc:
+        fail(f"build fallido: {exc}")
     except SandboxException as exc:
         fail(_with_notes(exc))
     except Exception as exc:
-        # Cualquier otro error (credenciales, botocore...) sigue su camino,
-        # pero un sandbox conservado por --keep-on-failure se nombra antes.
         for note in getattr(exc, "__notes__", []):
             echo(note, err=True)
         raise
+    finally:
+        if compact is not None:
+            compact.finish()
+    fleet.detach()
     hidden = app_hiding_own_routes(project)
     if hidden is not None:
         echo(
@@ -521,12 +814,119 @@ def deploy_command(
             ),
             err=True,
         )
-    if json_mode(ctx):
-        emit_json({"sandboxId": deployment.sandbox_id, "url": deployment.url, "port": serve.port})
-    else:
-        echo(f"sandbox_id={deployment.sandbox_id}")
-        echo(f"url={deployment.url}")
-        echo(f"port={serve.port}")
+    print_deployed(fleet, project.serve.port, written_to, as_json=as_json)
+
+
+def deploy_target(path: Path | None, file: str) -> Path:
+    """El directorio o fichero del proyecto: el argumento o `--file` (el
+    nombre de 0.13); los dos a la vez, con valores distintos, son ambiguos."""
+    if path is None:
+        return Path(file)
+    if file != PROJECT_FILE_DEFAULT and Path(file) != path:
+        fail("pasa la ruta del proyecto como argumento o con --file, no las dos", code=EXIT_USAGE)
+    return path
+
+
+def scaling_of(
+    project: AgentProject,
+    min_vms: int | None,
+    max_vms: int | None,
+    warm: int | None,
+    sessions: str | None,
+) -> ScalingOptions | None:
+    """El `ScalingOptions` de las banderas sobre el del proyecto; `None` si
+    no se pasó ninguna (el proyecto decide)."""
+    if all(value is None for value in (min_vms, max_vms, warm, sessions)):
+        return None
+    current = fleet_settings_of(project, None).scaling
+    return ScalingOptions(
+        min_vms=current.min_vms if min_vms is None else min_vms,
+        max_vms=current.max_vms if max_vms is None else max_vms,
+        warm_vms=current.warm_vms if warm is None else warm,
+        sessions=current.sessions if sessions is None else sessions,  # type: ignore[arg-type]
+        scale_in_after_seconds=current.scale_in_after_seconds,
+    )
+
+
+def print_plan(plan: Any, report: object, *, as_json: bool) -> None:
+    if as_json:
+        emit_json(
+            {
+                "dryRun": True,
+                "detection": None if report is None else camel_keys(dataclasses.asdict(report)),  # type: ignore[call-overload]
+                "plan": camel_keys(dataclasses.asdict(plan) | {"detection": None}),
+            }
+        )
+        return
+    for line in [*detection_lines(report), *describe_plan(plan)]:
+        echo(line)
+    echo("no se llamó a AWS (--dry-run)")
+
+
+def print_deployed(fleet: AgentFleet, port: int, token_file: Path | None, *, as_json: bool) -> None:
+    """El resultado de un despliegue: la flota, el primer VM con las claves de
+    0.13 (`sandbox_id`, `url`, `port`) y dónde quedó el token. Nunca las
+    cabeceras ni el token."""
+    first = fleet.deployments[0]
+    ids = list(fleet.sandbox_ids)
+    if as_json:
+        emit_json(
+            {
+                "name": fleet.name,
+                "sandboxId": first.sandbox_id,
+                "sandboxIds": ids,
+                "url": first.url,
+                "port": port,
+                "tokenFile": None if token_file is None else str(token_file),
+            }
+        )
+        return
+    echo(f"name={fleet.name}")
+    echo(f"sandbox_id={first.sandbox_id}")
+    echo(f"url={first.url}")
+    echo(f"port={port}")
+    echo(f"members={len(ids)}")
+    if token_file is not None:
+        echo(f"token_file={token_file}")
+
+
+def base_publisher_of(
+    clients: Any, artifact: Path | None, bucket: str | None, *, yes: bool
+) -> Callable[[], None] | None:
+    """Quién publica la imagen base si falta: sólo con `--base-artifact`, y
+    sólo tras confirmar el coste (`--yes`, o una respuesta en una terminal)."""
+    if artifact is None:
+        return None
+
+    def publish_base() -> None:
+        from rayito.cli.image import PublishRequest, resolve_bucket, run_publish
+
+        if not yes and not (sys.stdin.isatty() and typer.confirm(BASE_COST_QUESTION)):
+            fail(BASE_NEEDS_CONFIRMATION, code=EXIT_USAGE)
+        code = run_publish(
+            clients,
+            PublishRequest(
+                artifact=artifact,
+                base_image_version="latest",
+                bucket=resolve_bucket(bucket),
+                image_name=DEFAULT_AGENT_TEMPLATE_BASE,
+                os_capabilities="ALL",
+            ),
+            json_output=False,
+        )
+        if code:
+            fail("la publicación de la imagen base falló")
+
+    return publish_base
+
+
+BASE_COST_QUESTION = (
+    "La imagen base no existe: publicarla cuesta un build y almacenamiento de snapshot "
+    "(mínimo una semana). ¿Publicarla?"
+)
+BASE_NEEDS_CONFIRMATION = (
+    "publicar la imagen base cuesta dinero: confírmalo con --yes (o desde una terminal)"
+)
 
 
 @agent_app.command("export")
@@ -570,23 +970,6 @@ def export_command(
         echo(f"files={len(exported.files)} port={exported.port} platform={exported.platform}")
 
 
-def deploy_token(token_file: Path | None) -> str:
-    """El token del despliegue: `RAYITO_ACCESS_TOKEN` o uno nuevo. Se guarda
-    en `--token-file` antes de crear el sandbox, así un fallo al escribirlo
-    nunca deja un VM huérfano. Sin ninguno de los dos no habría forma de
-    volver a conectarse, y `deploy` no empieza."""
-    existing = os.environ.get(TOKEN_ENV_VAR) or None
-    if existing is None and token_file is None:
-        fail(DEPLOY_NEEDS_TOKEN_FILE_MESSAGE, code=EXIT_USAGE)
-    token = existing or generate_access_token()
-    if token_file is not None:
-        try:
-            write_token_file(token_file, token)
-        except TokenFileError as exc:
-            fail(str(exc), code=EXIT_USAGE)
-    return token
-
-
 def connect_deployment(
     ctx: typer.Context, sandbox_id: str, token_file: Path | None
 ) -> AgentDeployment:
@@ -599,10 +982,40 @@ def connect_deployment(
     )
 
 
+def is_fleet_name(target: str) -> bool:
+    """Un id de sandbox empieza por `microvm-`; cualquier otra cosa es el
+    nombre de una flota (el de su imagen)."""
+    return not target.startswith(MICROVM_ID_PREFIX)
+
+
+def fleet_token(token_file: Path | None) -> str:
+    """El token de una flota: `--token-file`, `RAYITO_ACCESS_TOKEN` o el
+    fichero por defecto de `deploy`."""
+    if (
+        token_file is None
+        and not os.environ.get(TOKEN_ENV_VAR)
+        and AGENT_TOKEN_FILE_DEFAULT.is_file()
+    ):
+        return token_or_exit(AGENT_TOKEN_FILE_DEFAULT)
+    return token_or_exit(token_file)
+
+
+def connect_fleet(ctx: typer.Context, name: str, token_file: Path | None) -> AgentFleet:
+    clients = clients_of(ctx)
+    return AgentFleet.connect(
+        name,
+        access_token=fleet_token(token_file),
+        region=clients.region,
+        session=clients.session,
+    )
+
+
 @agent_app.command("invoke")
 def invoke_command(
     ctx: typer.Context,
-    sandbox_id: Annotated[str, typer.Argument(help="Id del sandbox desplegado.")],
+    sandbox_id: Annotated[
+        str, typer.Argument(help="Id del sandbox desplegado o nombre de la flota.")
+    ],
     prompt: Annotated[str, typer.Argument(help="Lo que se le pide al agente.")],
     session_id: Annotated[
         str | None, typer.Option("--session-id", help="Continúa una sesión anterior.")
@@ -610,30 +1023,47 @@ def invoke_command(
     stream: Annotated[bool, typer.Option("--stream", help=STREAM_HELP)] = False,
     token_file: TokenFileOption = None,
 ) -> None:
-    """Llama a un agente desplegado con `rayito agent deploy`."""
-    deployment = connect_deployment(ctx, sandbox_id, token_file)
+    """Llama a un agente desplegado con `rayito agent deploy`.
+
+    Con el id de un sandbox habla con ese VM; con el nombre de la flota
+    reparte la sesión entre sus VMs (el `session_id` que devuelve identifica
+    el VM: pásalo con --session-id para seguir la conversación)."""
+    target: AgentDeployment | AgentFleet = (
+        connect_fleet(ctx, sandbox_id, token_file)
+        if is_fleet_name(sandbox_id)
+        else connect_deployment(ctx, sandbox_id, token_file)
+    )
     as_json = json_mode(ctx)
     try:
         if stream:
             printer = EventPrinter(as_json=as_json)
-            with deployment.stream(prompt, session_id=session_id) as events:
+            with target.stream(prompt, session_id=session_id) as events:
                 for event in events:
                     printer(event)
             printer.finish()
             return
-        result = deployment.invoke(prompt, session_id=session_id)
+        result = target.invoke(prompt, session_id=session_id)
     except AgentException as exc:
         run_failed(exc)
+    except (CapacityException, SandboxException) as exc:
+        fail(str(exc))
     print_result(result, as_json=as_json)
 
 
 @agent_app.command("status")
 def status_command(
     ctx: typer.Context,
-    sandbox_id: Annotated[str, typer.Argument(help="Id del sandbox desplegado.")],
+    sandbox_id: Annotated[
+        str, typer.Argument(help="Id del sandbox desplegado o nombre de la flota.")
+    ],
     token_file: TokenFileOption = None,
 ) -> None:
-    """Estado de un agente desplegado: si está listo y si está ocupado."""
+    """Estado de un agente desplegado: si está listo y si está ocupado. Con el
+    nombre de una flota, el de cada uno de sus VMs (uno que este proceso no
+    ha abierto figura como `unknown`: preguntarle lo reanudaría)."""
+    if is_fleet_name(sandbox_id):
+        print_fleet_status(connect_fleet(ctx, sandbox_id, token_file), as_json=json_mode(ctx))
+        return
     status = connect_deployment(ctx, sandbox_id, token_file).status()
     document = {
         "sandboxId": sandbox_id,
@@ -650,14 +1080,38 @@ def status_command(
             echo(f"{key}: {value}")
 
 
+def print_fleet_status(fleet: AgentFleet, *, as_json: bool) -> None:
+    status = fleet.status()
+    if as_json:
+        emit_json(camel_keys(dataclasses.asdict(status)))
+        return
+    echo(f"name: {status.name}")
+    echo(f"members: {len(status.members)} (min {status.min_vms}, max {status.max_vms})")
+    for member in status.members:
+        echo(f"sandbox_id={member.sandbox_id} state={member.state}")
+
+
 @agent_app.command("stop")
 def stop_command(
     ctx: typer.Context,
-    sandbox_id: Annotated[str, typer.Argument(help="Id del sandbox desplegado.")],
+    sandbox_id: Annotated[
+        str, typer.Argument(help="Id del sandbox desplegado o nombre de la flota.")
+    ],
 ) -> None:
-    """Para un agente desplegado: destruye su sandbox. No necesita el access
-    token: `terminate-microvm` basta."""
-    stopped = kill_one(clients_of(ctx), sandbox_id)
+    """Para un agente desplegado: destruye su sandbox, o todos los de la flota
+    si le pasas su nombre. No necesita el access token: `terminate-microvm`
+    basta."""
+    clients = clients_of(ctx)
+    if is_fleet_name(sandbox_id):
+        fleet = AgentFleet.connect(sandbox_id, region=clients.region, session=clients.session)
+        count = len(fleet.sandbox_ids)
+        fleet.stop()
+        if json_mode(ctx):
+            emit_json({"name": sandbox_id, "stopped": count})
+        else:
+            echo(f"parados {count} VM(s) de la flota name={sandbox_id}")
+        return
+    stopped = kill_one(clients, sandbox_id)
     if json_mode(ctx):
         emit_json({"sandboxId": sandbox_id, "stopped": stopped})
     else:

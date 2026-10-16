@@ -37,6 +37,7 @@ import {
 } from "../../images/publish-domain.js";
 import {
   ImagePublishError,
+  LATEST_BASE_IMAGE_VERSION,
   type PublishDeps,
   publish,
   publishWithSizes,
@@ -258,6 +259,51 @@ export const publishCommand = defineCommand({
     }
   },
 });
+
+/** Publica la imagen base que falta (`rayito agent deploy --base-artifact`):
+ * la misma publicación que `image publish --os-capabilities ALL` con la
+ * última base gestionada, bajo el nombre de la base de los agentes. Devuelve
+ * el error de publicación como `ImagePublishError`. */
+export async function publishBaseImage(
+  context: CommandContext,
+  request: { readonly artifact: string; readonly bucket: string; readonly imageName: string },
+): Promise<void> {
+  const services = await context.services();
+  const baseImageVersion = await resolveBaseImageVersion(
+    services.publishPorts,
+    LATEST_BASE_IMAGE_VERSION,
+  );
+  const settings: PublishSettings = {
+    artifact: request.artifact,
+    imageName: request.imageName,
+    variant: DEFAULT_VARIANT,
+    bucket: request.bucket,
+    stackName: DEFAULT_STACK_NAME,
+    buildRoleArn: undefined,
+    baseImageVersion,
+    memoryMib: DEFAULT_MEMORY_MIB,
+    force: false,
+    timeoutMs: DEFAULT_BUILD_TIMEOUT_MS,
+    osCapabilities: "ALL",
+    environmentVariables: {},
+    withEfs: false,
+    artifactRunId: undefined,
+  };
+  const summary = await publish(
+    {
+      ports: services.publishPorts,
+      artifacts: fileArtifacts,
+      sleep: context.sleep,
+      now: () => context.now().getTime(),
+      emit: progress(context),
+      utcNow: context.now,
+    },
+    settings,
+  );
+  if (!summary.launchable) {
+    throw new ImagePublishError("la publicación de la imagen base falló");
+  }
+}
 
 export const pruneCommand = defineCommand({
   path: ["image", "prune"],
