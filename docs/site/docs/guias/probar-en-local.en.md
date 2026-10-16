@@ -207,6 +207,26 @@ make local-providers-e2e
 make local-down
 ```
 
+### Your deployed agent: `AgentProject` { #tu-agente-desplegado-agentproject }
+
+`test_local_agent_project.py` tests `AgentProject`
+against the local `rayd`: `run()`, `deploy()`, `invoke()`, `stream()` and
+`stop()` with the custom runtime (`CustomRuntime`: a command that speaks v1
+and an HTTP app, both in `dev/local/agent/apps`) and, with the fake upstream
+of `make local-providers-up`, with OpenCode and deepagents. The guest shares
+the `runner` network namespace, so the deployment client talks to the agent
+host over loopback, without TLS; everything else (the sandbox, the gateways,
+the host in service mode, the limits) is the production code. It also checks
+that a second `invoke()` with the slot full gets `busy`, that the deployment
+does not hold the credential and that `stop()` terminates the sandbox. It
+runs with `make local-providers-e2e`, and skips itself when the guest is not
+the one from `make local-agent-up`.
+
+The container that `export()` writes is tested separately, with the host's
+Docker: `make agent-export-test` builds the exported context for
+`linux/arm64`, starts the container and probes `/ping` and `/invocations`
+(JSON, SSE and the token) inside it.
+
 ### Smoke test against the real APIs { #prueba-de-humo-contra-las-apis-reales }
 
 `test_local_agent_providers_smoke.py` (Python) and

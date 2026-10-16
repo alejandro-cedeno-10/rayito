@@ -215,6 +215,25 @@ rayito agent template build --bucket amzn-s3-demo-bucket --no-prefetch      # no
 rayito agent template build --bucket amzn-s3-demo-bucket --kernel-warmup    # run_code kernel warmed up, as in the base image
 ```
 
+## `AgentProject` images { #imagenes-de-agentproject }
+
+<small>Since 0.14.0.</small>
+
+`AgentProject.build()` ([Deploy your agent](../guias/despliega-tu-agente.md))
+builds its image with this same `AgentTemplate`: each runtime contributes its
+own install steps, instead of hand-written recipes. `runtimes` accepts the
+registry names (`opencode`, `deepagents`, `langgraph`, `strands`,
+`strands-harness`, `hermes`) or a runtime object, and the user's code is copied
+into the image with `app=` (root-owned, read-only for uid 1000). With the
+default values, the Dockerfile and the manifest are the same as ever, byte for
+byte.
+
+Everything that is downloaded is pinned and verified, as above: binaries and
+Node by sha256, Python environments with `--require-hashes` and Hermes cloned
+at a fixed commit and checked with `git rev-parse`. Heavy frameworks make the
+image larger: use one image per runtime and measure yours with
+`rayito image sizes`, because each version pays storage for at least a week.
+
 ## See also { #ver-tambien }
 
 - [Agent in the sandbox](../guias/agente-en-el-sandbox.md).

@@ -206,6 +206,33 @@
       "deepagents_operation": "/responses"
     }
   },
+  "_runtimes_comment": "Matriz runtime -> proveedor de agent-runtimes-byo (rama feat/agent-byo-frameworks), medida el 2026-10-16 en testdata/agent/strands-spike.json y hermes-v0.22.2-spike.json. `client` es la clase de modelo del framework y `base_path` la ruta que cuelga de la URL de la pasarela (null: la base_path de AgentModel, sólo openai-compatible). Una combinación con supported=false falla con InvalidArgumentException antes de cualquier RPC en los dos SDK. azure queda fuera de Strands y Hermes: la pasarela de Azure inyecta la cabecera `api-key` y esos clientes mandan `Authorization`.",
+  "runtimes": {
+    "strands": {
+      "bedrock": {"supported": true, "client": "BedrockModel", "base_path": ""},
+      "anthropic": {"supported": true, "client": "AnthropicModel", "base_path": ""},
+      "openai": {"supported": true, "client": "OpenAIModel", "base_path": "/v1"},
+      "openai-compatible": {"supported": true, "client": "OpenAIModel", "base_path": null},
+      "google": {"supported": true, "client": "GeminiModel", "base_path": ""},
+      "azure": {"supported": false}
+    },
+    "strands-ts": {
+      "bedrock": {"supported": true, "client": "BedrockModel", "base_path": ""},
+      "anthropic": {"supported": true, "client": "AnthropicModel", "base_path": ""},
+      "openai": {"supported": true, "client": "OpenAIModel", "base_path": "/v1"},
+      "openai-compatible": {"supported": true, "client": "OpenAIModel", "base_path": null},
+      "google": {"supported": true, "client": "GoogleModel", "base_path": ""},
+      "azure": {"supported": false}
+    },
+    "hermes": {
+      "bedrock": {"supported": true, "client": "bedrock", "base_path": ""},
+      "anthropic": {"supported": true, "client": "anthropic", "base_path": ""},
+      "openai": {"supported": true, "client": "custom", "base_path": "/v1"},
+      "openai-compatible": {"supported": true, "client": "custom", "base_path": null},
+      "google": {"supported": false},
+      "azure": {"supported": false}
+    }
+  },
   "refused": [
     {"id": "chatgpt-plan-opencode-oauth", "decision": "rechazado", "reason": "usa el client_id de otra app y el backend-api de ChatGPT, y exige el refresh token dentro del sandbox"},
     {"id": "chatgpt-plan-siwc", "decision": "aplazado", "reason": "el uso del plan en apps alojadas requiere aprobación de OpenAI; se espera su confirmación"},

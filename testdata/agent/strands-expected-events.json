@@ -1,0 +1,150 @@
+{
+  "_comment": "Eventos v1 que deben salir de los eventos grabados de Strands (`strands-python-events.jsonl` en Python, `strands-ts-events.jsonl` en el puente de Node): los mismos para los dos, con y sin `reasoning`. No incluye `session` ni `done`, que emiten el driver y el host.",
+  "plain": [
+    {
+      "v": 1,
+      "type": "step_started",
+      "index": 1
+    },
+    {
+      "v": 1,
+      "type": "text_delta",
+      "text": "Voy a sumar. "
+    },
+    {
+      "v": 1,
+      "type": "text",
+      "text": "Voy a sumar. "
+    },
+    {
+      "v": 1,
+      "type": "step_finished",
+      "index": 1,
+      "usage": {
+        "input": 100,
+        "output": 7,
+        "reasoning": 0,
+        "cache_read": 0,
+        "cache_write": 0
+      },
+      "finish_reason": "tool_use"
+    },
+    {
+      "v": 1,
+      "type": "tool_call",
+      "call_id": "t1",
+      "name": "add",
+      "status": "completed",
+      "input": {
+        "a": 2,
+        "b": 3
+      },
+      "output": "5",
+      "output_truncated": false
+    },
+    {
+      "v": 1,
+      "type": "step_started",
+      "index": 2
+    },
+    {
+      "v": 1,
+      "type": "text_delta",
+      "text": "El resultado es 5."
+    },
+    {
+      "v": 1,
+      "type": "text",
+      "text": "El resultado es 5."
+    },
+    {
+      "v": 1,
+      "type": "step_finished",
+      "index": 2,
+      "usage": {
+        "input": 200,
+        "output": 7,
+        "reasoning": 0,
+        "cache_read": 40,
+        "cache_write": 0
+      },
+      "finish_reason": "end_turn"
+    }
+  ],
+  "reasoning": [
+    {
+      "v": 1,
+      "type": "step_started",
+      "index": 1
+    },
+    {
+      "v": 1,
+      "type": "text_delta",
+      "text": "Voy a sumar. "
+    },
+    {
+      "v": 1,
+      "type": "text",
+      "text": "Voy a sumar. "
+    },
+    {
+      "v": 1,
+      "type": "reasoning",
+      "text": "Debo sumar dos y tres."
+    },
+    {
+      "v": 1,
+      "type": "step_finished",
+      "index": 1,
+      "usage": {
+        "input": 100,
+        "output": 7,
+        "reasoning": 0,
+        "cache_read": 0,
+        "cache_write": 0
+      },
+      "finish_reason": "tool_use"
+    },
+    {
+      "v": 1,
+      "type": "tool_call",
+      "call_id": "t1",
+      "name": "add",
+      "status": "completed",
+      "input": {
+        "a": 2,
+        "b": 3
+      },
+      "output": "5",
+      "output_truncated": false
+    },
+    {
+      "v": 1,
+      "type": "step_started",
+      "index": 2
+    },
+    {
+      "v": 1,
+      "type": "text_delta",
+      "text": "El resultado es 5."
+    },
+    {
+      "v": 1,
+      "type": "text",
+      "text": "El resultado es 5."
+    },
+    {
+      "v": 1,
+      "type": "step_finished",
+      "index": 2,
+      "usage": {
+        "input": 200,
+        "output": 7,
+        "reasoning": 0,
+        "cache_read": 40,
+        "cache_write": 0
+      },
+      "finish_reason": "end_turn"
+    }
+  ]
+}

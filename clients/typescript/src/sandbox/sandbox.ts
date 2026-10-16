@@ -1784,6 +1784,16 @@ export class Sandbox implements AsyncDisposable {
     return new HostAccess(this.endpoint, validated, () => this.#core.currentJwe(validated));
   }
 
+  /**
+   * Reacuña los JWE del proxy de todos los puertos con token. Lo llama
+   * `AgentDeployment` ante un `403` del proxy de AWS (JWE caducado); las
+   * `HostAccess` ya entregadas leen el nuevo token en el siguiente acceso a
+   * `headers`.
+   */
+  async refreshProxyAccess(): Promise<void> {
+    await this.#core.refresher.refreshAll();
+  }
+
   async getMetrics(options: RequestOptions = {}): Promise<SandboxMetrics> {
     const timeoutMs = this.#core.resolveRequestTimeout(options.requestTimeoutMs);
     const response = await this.#core.translatedUnary(

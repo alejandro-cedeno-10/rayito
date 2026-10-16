@@ -7,11 +7,13 @@
 
 import type { Logger } from "../logger.js";
 import { VERSION } from "../version.js";
+import { SdkAgentProjectTools } from "./agent-project-adapter.js";
 import type { CommandContext } from "./command.js";
 import { CliConsole, type Terminal } from "./console.js";
 import { EXIT_OK, EXIT_USAGE } from "./exit-codes.js";
 import { translateFailure, UsageError } from "./failures.js";
 import { helpFor } from "./help.js";
+import type { AgentProjectTools } from "./ops-ports.js";
 import { type CommandTree, parseInvocation } from "./parse.js";
 import { COMMAND_TREE } from "./registry.js";
 import type { CliServices, ServicesFactory } from "./services.js";
@@ -30,6 +32,8 @@ export interface CliRuntime {
   readonly createServices: ServicesFactory;
   /** Abre una URL en el navegador; sin él, `rayito dashboard --open` no hace nada. */
   readonly openUrl?: ((url: string) => Promise<void>) | undefined;
+  /** Sin él, `rayito agent` usa el SDK; los tests lo sustituyen por dobles. */
+  readonly agentProjects?: AgentProjectTools | undefined;
 }
 
 /** El logger de `--verbose`: INFO y más, a stderr, sólo con ids, estados y códigos. */
@@ -67,6 +71,15 @@ export async function runCli(
     const { command, values, globals } = invocation;
     verbose = globals.verbose;
     let services: Promise<CliServices> | undefined;
+    const servicesOf = (): Promise<CliServices> => {
+      services ??= runtime.createServices({
+        profile: globals.profile,
+        region: globals.region,
+        env: runtime.env,
+        logger: globals.verbose ? stderrLogger(console) : undefined,
+      });
+      return services;
+    };
     const context: CommandContext = {
       values,
       globals,
@@ -76,15 +89,8 @@ export async function runCli(
       sleep: (ms) => runtime.sleep(ms, runtime.signal),
       signal: runtime.signal,
       openUrl: runtime.openUrl ?? (async () => undefined),
-      services: () => {
-        services ??= runtime.createServices({
-          profile: globals.profile,
-          region: globals.region,
-          env: runtime.env,
-          logger: globals.verbose ? stderrLogger(console) : undefined,
-        });
-        return services;
-      },
+      services: servicesOf,
+      agentProjects: runtime.agentProjects ?? new SdkAgentProjectTools(servicesOf),
     };
     return (await command.run(context)) ?? EXIT_OK;
   } catch (error) {

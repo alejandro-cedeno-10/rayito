@@ -2810,3 +2810,129 @@ suministro para lo que cubre `parseArgs`.
 **Reversible.** Quitar `bin` y las entradas del empaquetador devuelve el
 paquete a ser sólo biblioteca; la CLI, el MCP y el panel de Python no
 cambian.
+
+## ADR-028 — agent-runtimes-byo: trae tu propio agente y despliégalo
+
+**Contexto.** ADR-025 dejó `sbx.agent` con un puerto `AgentRuntime` y dos
+adaptadores (OpenCode y deepagents), pero el resto está cerrado:
+`AgentTemplate` sólo acepta esos dos nombres y tiene su instalación escrita
+a mano, un agente sólo corre como tarea (`sbx.agent.run`) desde un proceso
+que tiene el handle del sandbox, y quien ya tiene un agente en Strands
+Agents (SDK o harness), Hermes Agent, LangGraph o su propio código no tiene
+cómo construirlo, configurarlo y servirlo sin rehacer la receta. Los tres
+estudios previos (Strands, Hermes y el resto de frameworks) coinciden en
+tres cosas: cada framework se puede apuntar a una URL base con una clave de
+marcador, así que la pasarela de secretos (ADR-023) sirve para todos; el
+contrato HTTP de Bedrock AgentCore (`GET /ping`, `POST /invocations`, JSON o
+SSE) ya lo hablan Strands y `bedrock-agentcore`, y es el único documentado
+que vale igual en una MicroVM, en Docker y en AgentCore; y todos traen
+valores por defecto peligrosos (telemetría hacia fuera, herramientas que
+ejecutan código del modelo sin aislar, memoria persistente, autoactualización)
+que hay que apagar.
+
+**Decisión.**
+
+1. **Un puerto, más runtimes.** `AgentRuntime` (ADR-025) no cambia de firma.
+   Se añaden dos puertos opcionales que un adaptador puede implementar:
+   `InstallableRuntime` (`install_steps(target)`, `manifest_entry()`: lo que
+   `AgentTemplate` instala y hornea en el manifiesto) y `ServableRuntime`
+   (`host_config(...)`: cómo lo sirve el host del agente). Un objeto que sólo
+   implemente `AgentRuntime` sigue valiendo para `sbx.agent.run`. El registro
+   suma `strands`, `strands-harness`, `hermes` y `langgraph` (alias de
+   `DeepAgents` con `entrypoint` obligatorio); `custom` no tiene entrada por
+   nombre porque necesita configuración (`CustomRuntime(...)`). OpenCode y
+   deepagents se reexpresan con esos puertos sin cambiar su comportamiento,
+   sus comandos ni sus vectores.
+2. **`AgentTemplate` deja de tener recetas a mano.** Compone los
+   `install_steps()` de cada runtime (objeto o nombre). Los valores por
+   defecto (`("opencode", "deepagents")`), el Dockerfile y el manifiesto de
+   esos dos no cambian; el manifiesto `rayito.agent-template/1` gana claves
+   aditivas (`runtimes`, `host_sha256`). Todo lo que se descarga va fijado:
+   binarios con sha256, venvs con `--require-hashes` desde ficheros de
+   paquete, Hermes por commit verificado con `git rev-parse` (no tiene
+   paquete en PyPI), Node por tarball con sha256. Las versiones viven en
+   `limits.json`.
+3. **Un host del agente dentro de la VM.** `deepagents_runner.py` se
+   generaliza en `agent_host` (biblioteca estándar, sin `rayito`, de root y
+   0755 bajo `/opt/agents/rayito/`). Habla el protocolo JSONL v1 (ADR-025)
+   por dos transportes: stdio (tarea, lo que hoy hace el runner) y HTTP
+   (servicio). Sus drivers: `deepagents`/`langgraph`, `strands` (SDK y
+   harness, en proceso), `strands-ts` (puente Node), `hermes` (su API server
+   en loopback, con clave aleatoria por arranque), `opencode` (traductor del
+   JSONL de `opencode run`), `callable` (función `módulo:atributo`),
+   `command` (proceso que habla v1 o texto plano) y `http-app` (servidor
+   propio del usuario detrás del host). La ruta `deepagents_runner.py` se
+   mantiene como envoltorio, así que una imagen nueva sirve a un SDK
+   anterior y al revés. Los límites de `AgentLimits` los aplica el host
+   cuando no hay SDK en el bucle (servicio), con la misma semántica y los
+   mismos vectores que el `LimitTracker` del SDK.
+4. **Un contrato de servicio canónico: `rayito.agent-service/1`.** El de
+   AgentCore: `GET /ping` (`Healthy`/`HealthyBusy`) y `POST /invocations` con
+   `{"prompt", "session_id"?, "model"?, "reasoning"?}`; con
+   `Accept: text/event-stream` responde SSE con un evento v1 por mensaje, y
+   si no, un JSON con `text`, `session_id`, `usage` y `failed`. En una
+   MicroVM escucha en `AGENT_SERVICE_PORT` (el 8080 y el 9000 son de
+   `rayd`); en un contenedor exportado, en el 8080 de AgentCore. Una
+   invocación a la vez por defecto (`HealthyBusy` y 429 por encima).
+5. **`AgentProject`: un objeto, un fichero.** Un value object que compone
+   lo que ya existe (`AgentSpec`, pasarelas, `AgentLimits`, opciones de red)
+   con el runtime, el código del usuario (`source`) y las opciones de
+   servicio. Se construye en código o se carga de `rayito-agent.toml` (o
+   `.json`, sin dependencias) con esquema `rayito.agent-project/1`: claves
+   desconocidas rechazadas con su ruta, y ningún campo admite el valor de un
+   secreto, sólo su nombre. Operaciones: `build()` (la imagen, vía
+   `AgentTemplate`), `run()` (una tarea en un sandbox efímero), `deploy()`
+   (una MicroVM que sirve el contrato y devuelve un `AgentDeployment` con
+   `url`, `headers`, `invoke()`, `stream()`, `status()` y `stop()`) y
+   `export()` (un contexto de build Docker o AgentCore, sin llamar a AWS).
+   Python síncrono y asíncrono (`AsyncAgentProject`, `AsyncAgentDeployment`)
+   y TypeScript con la misma superficie; la CLI de los dos SDKs suma
+   `rayito agent init|build|run|deploy|export|invoke|status|stop`.
+6. **Credenciales.** Dentro de Rayito, igual que ADR-025: el runtime recibe
+   la URL de la pasarela y `MODEL_CREDENTIAL_PLACEHOLDER`, nunca la clave;
+   Bedrock va con clave de API por la pasarela, no con SigV4 ni con IMDS.
+   Una combinación runtime/proveedor que no se pueda cablear así falla con
+   `InvalidArgumentException` antes de cualquier RPC (matriz en
+   `testdata/agent/provider-catalogue.json`). En `export()` no hay `rayd` ni
+   pasarela: el contenedor lee la credencial de la plataforma (variable de
+   entorno estándar del proveedor o la cadena de credenciales de AWS) y la
+   documentación dice que esa garantía pasa a ser de la plataforma.
+7. **Valores por defecto seguros.** Telemetría de los frameworks apagada
+   (sin `OTEL_TRACES_EXPORTER`, sin trazas a terceros); en el harness de
+   Strands, `programmatic_tool_caller` y la búsqueda web apagados y memoria y
+   sesiones bajo `AGENT_STATE_DIR`; Hermes con `HERMES_HOME` propio,
+   `HERMES_IGNORE_USER_CONFIG=1` y su API sólo en loopback; sin
+   autoactualización; egress cerrado (`allow_internet_access=False`) salvo
+   que el proyecto lo abra. Los permisos siguen sin ser frontera (T29).
+8. **Coste.** `build()`, `run()` y `deploy()` cuestan lo que el
+   `Template.build` y el `Sandbox.create` que hacen por debajo, más el
+   modelo; nada se llama sin invocarlas, y `export()`, `init` y cargar un
+   fichero no llaman a AWS. Caja "Coste y activación" en `AgentProject` y
+   en `deploy()`, y un test de cero llamadas en cada SDK.
+
+**Consecuencias.** Sin usar `AgentProject` ni los runtimes nuevos nada
+cambia: `sbx.agent.run`, `AgentTemplate()` y sus vectores quedan igual.
+`rayd` y el `.proto` no cambian. El traductor de OpenCode existe ahora tres
+veces (Python, TypeScript y el host) y las tres se prueban contra los mismos
+vectores (`testdata/agent/opencode-*`); es el precio de servir OpenCode sin
+SDK en el bucle. Un despliegue en una MicroVM vive como mucho 8 h (ADR-007)
+y sus cabeceras del proxy caducan a los 60 min: `AgentDeployment.connect()`
+las vuelve a acuñar desde cualquier proceso, pero rotarlo antes de las 8 h
+es cosa del llamante. Las imágenes con Hermes o Node pesan más y su primer
+arranque es más lento; se mide en AWS antes de cerrar.
+
+**Alternativas descartadas.** Un `Sandbox` de Strands que ejecute sólo las
+herramientas en Rayito y el agente fuera: útil y se documenta como ejemplo,
+pero no despliega el agente. Usar el servidor propio de cada framework
+(`langgraph-api`, `opencode serve`, `hermes gateway`) como contrato público:
+cinco contratos, y `langgraph-api` es Elastic-2.0 con clave de licencia.
+Desplegar en AgentCore, ECS o Lambda llamando a sus APIs: no están en
+`AWS_API_NOTES.md` y el usuario ya tiene sus herramientas; `export()` deja
+el artefacto listo. YAML como formato: necesita dependencia en los dos SDKs;
+TOML va con `tomllib` en Python y un peer opcional en TypeScript, y JSON
+sin nada.
+
+**Reversible.** Aditivo: módulos nuevos en cada SDK, entradas nuevas en el
+registro y en `limits.json`, y claves nuevas en el manifiesto. Quitar los
+runtimes nuevos devuelve `AgentTemplate` a sus dos runtimes sin tocar
+imágenes ya construidas.

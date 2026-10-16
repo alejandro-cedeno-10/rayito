@@ -1,4 +1,4 @@
-.PHONY: proto build test agent-runner-test test-python test-typescript test-sidecar test-e2e test-e2e-typescript test-bench lint lint-typescript limits fmt image-zip image-publish dev-hooks dev-run clean test-scripts bench-cold-start image-zip-slim image-publish-slim docs wheel image-publish-caps image-prune infra-lint sbom image-zip-poly image-publish-poly image-zip-efs image-publish-caps-efs require-bucket release-pr docs-examples local-guest-context local-up local-e2e local-agent-up local-bedrock-key local-providers-up local-providers-e2e local-providers-smoke local-litellm-up local-litellm-down local-down licenses require-cargo-about image-licenses
+.PHONY: proto build test agent-runner-test agent-export-test test-python test-typescript test-sidecar test-e2e test-e2e-typescript test-bench lint lint-typescript limits fmt image-zip image-publish dev-hooks dev-run clean test-scripts bench-cold-start image-zip-slim image-publish-slim docs wheel image-publish-caps image-prune infra-lint sbom image-zip-poly image-publish-poly image-zip-efs image-publish-caps-efs require-bucket release-pr docs-examples local-guest-context local-up local-e2e local-agent-up local-bedrock-key local-providers-up local-providers-e2e local-providers-smoke local-litellm-up local-litellm-down local-down licenses require-cargo-about image-licenses
 
 TARGET        := aarch64-unknown-linux-musl
 # Directorio de compilación efectivo (respeta CARGO_TARGET_DIR) y CARGO_HOME:
@@ -224,6 +224,13 @@ agent-runner-test:
 	    -r /src/clients/python/src/rayito/_agent/_assets/requirements-deepagents.txt && \
 	  /venv/bin/python /src/dev/local/agent/runner_smoke.py \
 	    /src/clients/python/src/rayito/_agent/_runner/deepagents_runner.py'
+
+# El contenedor que exporta `AgentProject.export()` (docs/site/docs/guias/probar-en-local.md),
+# construido para linux/arm64 y probado de verdad con el Docker del host: el contrato
+# `rayito.agent-service/1` (`/ping`, `/invocations` en JSON y SSE, el token) con una app HTTP
+# de ejemplo, sin modelo ni credenciales.
+agent-export-test:
+	cd $(PYTHON_CLIENT) && uv run pytest tests/container -m docker_export -p no:cacheprovider -v
 
 # Regenera _limits.py y limits.ts desde limits.json (fuente única de los
 # límites de la API que validan ambos SDKs).

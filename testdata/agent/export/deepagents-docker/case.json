@@ -1,0 +1,29 @@
+{
+  "target": "docker",
+  "project": {
+    "schema": "rayito.agent-project/1",
+    "name": "support-bot",
+    "runtime": {
+      "kind": "deepagents"
+    },
+    "source": {
+      "path": "app"
+    },
+    "model": {
+      "provider": "bedrock",
+      "id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+      "region": "us-east-1",
+      "gateway": "bedrock"
+    },
+    "gateways": {
+      "bedrock": {
+        "preset": "bedrock",
+        "secret": "rayito/bedrock-key",
+        "region": "us-east-1",
+        "models": [
+          "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+        ]
+      }
+    }
+  }
+}

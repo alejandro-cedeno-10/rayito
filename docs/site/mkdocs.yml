@@ -155,6 +155,7 @@ plugins:
             LangChain y Vercel AI: LangChain and Vercel AI
             Agente en el sandbox: Agent in the sandbox
             Proveedores del agente: Agent providers
+            Despliega tu agente: Deploy your agent
             Desarrollar: Develop
             Probar en local (Docker + Floci): Test locally (Docker + Floci)
             Funciones opcionales: Optional features
@@ -313,6 +314,7 @@ nav:
           - LangChain y Vercel AI: guias/langchain-y-vercel-ai.md
           - "Agente en el sandbox": guias/agente-en-el-sandbox.md
           - "Proveedores del agente": guias/agente-proveedores.md
+          - "Despliega tu agente": guias/despliega-tu-agente.md
       - Desarrollar:
           - Probar en local (Docker + Floci): guias/probar-en-local.md
   - Funciones opcionales:

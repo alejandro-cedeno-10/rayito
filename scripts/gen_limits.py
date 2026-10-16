@@ -369,6 +369,46 @@ GROUPS: tuple[tuple[str, ...], ...] = (
         "agentPrefetchBuildTimeoutSeconds",
     ),
     (
+        # agent-runtimes-byo (ADR-028): the contract of the HTTP service an
+        # agent exposes (the AgentCore runtime contract on `/ping` and
+        # `/invocations`, port 8088 inside a MicroVM because `rayd` owns 8080
+        # and 9000, 8080 in an exported container), its request bound and
+        # concurrency, the ready marker the host writes under
+        # `agentStateDir`, the default lifetime of a deployment and the
+        # margin `AgentProject.run()` adds to the sandbox lifetime, the
+        # pins of the framework runtimes (PyPI and npm, checked 2026-10-16;
+        # Hermes by tag and full commit; Node by the sha256 of the linux
+        # arm64 tarball in nodejs.org SHASUMS256), the base image of exported
+        # containers (name and digest, Docker Hub, checked 2026-10-16) and
+        # the names of the project file and service schemas. Not AWS
+        # properties.
+        "agentServicePort",
+        "agentServiceExportPort",
+        "agentServiceHealthPath",
+        "agentServiceInvokePath",
+        "agentServiceSessionHeader",
+        "agentServiceMaxConcurrency",
+        "agentServiceMaxRequestBytes",
+        "agentServiceReadyTimeoutSeconds",
+        "defaultAgentDeployTimeoutSeconds",
+        "agentRunSandboxMarginSeconds",
+        "agentServiceReadyMarkerPath",
+        "agentServiceSchema",
+        "agentHermesApiPort",
+        "agentStrandsVersion",
+        "agentStrandsHarnessVersion",
+        "agentStrandsTsVersion",
+        "agentStrandsTsHarnessVersion",
+        "agentHermesVersion",
+        "agentHermesCommit",
+        "agentNodeVersion",
+        "agentNodeSha256",
+        "agentExportBaseImage",
+        "agentExportBaseImageDigest",
+        "agentProjectSchema",
+        "agentProjectFileNames",
+    ),
+    (
         # typescript-cli-tools (ADR-027), the same on both CLIs: the MCP
         # server cuts every text output to `mcpMaxOutputChars` characters
         # (the `read_file` description quotes it) and `image publish --sizes`
@@ -377,6 +417,22 @@ GROUPS: tuple[tuple[str, ...], ...] = (
         # Not AWS properties.
         "mcpMaxOutputChars",
         "maxConcurrentImageBuilds",
+    ),
+    (
+        # agent-runtimes-byo (ADR-028), frameworks lane: the sha256 of the
+        # hashed requirements files of the Strands, Strands harness and
+        # Hermes runtimes (package data under `_agent/_assets/`), the pinned
+        # CPython 3.14 build Hermes v0.22.2 needs (python-build-standalone
+        # linux arm64 `install_only` tarball: version, release tag and the
+        # sha256 GitHub publishes for the asset, checked 2026-10-16) and the
+        # schema name of the host configuration file. Not AWS properties.
+        "agentStrandsRequirementsSha256",
+        "agentStrandsHarnessRequirementsSha256",
+        "agentHermesRequirementsSha256",
+        "agentHermesPythonVersion",
+        "agentHermesPythonBuildTag",
+        "agentHermesPythonSha256",
+        "agentHostSchema",
     ),
 )
 
@@ -406,6 +462,11 @@ CONSTANT_NAME_OVERRIDES = {
     "agentOpencodeSha256": "AGENT_OPENCODE_SHA256",
     "agentRipgrepSha256": "AGENT_RIPGREP_SHA256",
     "agentDeepagentsRequirementsSha256": "AGENT_DEEPAGENTS_REQUIREMENTS_SHA256",
+    "agentNodeSha256": "AGENT_NODE_SHA256",
+    "agentStrandsRequirementsSha256": "AGENT_STRANDS_REQUIREMENTS_SHA256",
+    "agentStrandsHarnessRequirementsSha256": "AGENT_STRANDS_HARNESS_REQUIREMENTS_SHA256",
+    "agentHermesRequirementsSha256": "AGENT_HERMES_REQUIREMENTS_SHA256",
+    "agentHermesPythonSha256": "AGENT_HERMES_PYTHON_SHA256",
 }
 
 

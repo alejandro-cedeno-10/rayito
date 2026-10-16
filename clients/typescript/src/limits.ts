@@ -332,5 +332,45 @@ export const AGENT_KERNEL_WARMUP_SLIM_VALUE = "slim" as const;
 export const AGENT_PREFETCH_BUILD_MARKER_PATH = "/tmp/rayito-agent-prefetch.ready" as const;
 export const AGENT_PREFETCH_BUILD_TIMEOUT_SECONDS = 300 as const;
 
+export const AGENT_SERVICE_PORT = 8088 as const;
+export const AGENT_SERVICE_EXPORT_PORT = 8080 as const;
+export const AGENT_SERVICE_HEALTH_PATH = "/ping" as const;
+export const AGENT_SERVICE_INVOKE_PATH = "/invocations" as const;
+export const AGENT_SERVICE_SESSION_HEADER = "X-Amzn-Bedrock-AgentCore-Runtime-Session-Id" as const;
+export const AGENT_SERVICE_MAX_CONCURRENCY = 1 as const;
+export const AGENT_SERVICE_MAX_REQUEST_BYTES = 1048576 as const;
+export const AGENT_SERVICE_READY_TIMEOUT_SECONDS = 120 as const;
+export const DEFAULT_AGENT_DEPLOY_TIMEOUT_SECONDS = 3600 as const;
+export const AGENT_RUN_SANDBOX_MARGIN_SECONDS = 60 as const;
+export const AGENT_SERVICE_READY_MARKER_PATH = "/home/user/.rayito/agent/host/ready" as const;
+export const AGENT_SERVICE_SCHEMA = "rayito.agent-service/1" as const;
+export const AGENT_HERMES_API_PORT = 8642 as const;
+export const AGENT_STRANDS_VERSION = "1.61.1" as const;
+export const AGENT_STRANDS_HARNESS_VERSION = "0.3.1" as const;
+export const AGENT_STRANDS_TS_VERSION = "1.21.0" as const;
+export const AGENT_STRANDS_TS_HARNESS_VERSION = "0.3.0" as const;
+export const AGENT_HERMES_VERSION = "0.22.2" as const;
+export const AGENT_HERMES_COMMIT = "d923a5eb487a17c0a68801bba9ef0f56c81040a8" as const;
+export const AGENT_NODE_VERSION = "22.23.3" as const;
+export const AGENT_NODE_SHA256 =
+  "5ced2d48d1d7198739b7f86804de0171aefb6823b684b12341d3321afc3cb0b2" as const;
+export const AGENT_EXPORT_BASE_IMAGE = "python:3.12-slim-bookworm" as const;
+export const AGENT_EXPORT_BASE_IMAGE_DIGEST =
+  "sha256:34386ef0cb081344d7ec1c103ba398e6e9f64e9ab3a1509accc92a4e24a07258" as const;
+export const AGENT_PROJECT_SCHEMA = "rayito.agent-project/1" as const;
+export const AGENT_PROJECT_FILE_NAMES = ["rayito-agent.toml", "rayito-agent.json"] as const;
+
 export const MCP_MAX_OUTPUT_CHARS = 100000 as const;
 export const MAX_CONCURRENT_IMAGE_BUILDS = 10 as const;
+
+export const AGENT_STRANDS_REQUIREMENTS_SHA256 =
+  "554a410059d58109d971d8c298137b475438e4a111ac2bd8e05c2893abbf48ab" as const;
+export const AGENT_STRANDS_HARNESS_REQUIREMENTS_SHA256 =
+  "a3714e7732bf2f32d65a10b76490757930e193123c2713004e994d44b3538d95" as const;
+export const AGENT_HERMES_REQUIREMENTS_SHA256 =
+  "216a22be69129215f1ddc2ee4d1dc0b401e02cf83121d3a865ffe16415540c54" as const;
+export const AGENT_HERMES_PYTHON_VERSION = "3.14.8" as const;
+export const AGENT_HERMES_PYTHON_BUILD_TAG = "20261013" as const;
+export const AGENT_HERMES_PYTHON_SHA256 =
+  "6c3cfb175acca2748d5a9e42208c523bfbc1099ddb928615b5f328ba7c106e83" as const;
+export const AGENT_HOST_SCHEMA = "rayito.agent-host/1" as const;

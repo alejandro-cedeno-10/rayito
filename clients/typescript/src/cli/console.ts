@@ -164,6 +164,15 @@ export class CliConsole {
     return input === undefined ? undefined : { input, output: this.#terminal.stdout };
   }
 
+  /**
+   * Texto sin salto de línea (los trozos de un stream). Hacia una terminal
+   * los caracteres de control salen visibles, como en `echo`.
+   */
+  write(text: string): void {
+    const stream = this.#terminal.stdout;
+    stream.write(stream.isTTY === true ? visibleControls(text) : text);
+  }
+
   /** Escribe tal cual, sin salto ni filtrado: la salida del sandbox en `exec`. */
   writeRaw(stream: "stdout" | "stderr", text: string): void {
     this.#terminal[stream].write(text);

@@ -1,11 +1,12 @@
 /**
- * Puertos de las órdenes `template`, `agent template`, `events` y `domain`:
- * lo que la CLI usa de las clases públicas del SDK (`Template`,
- * `AgentTemplate`, `LifecycleEvents`, `CustomDomain`). Los comandos sólo
+ * Puertos de las órdenes `template`, `agent`, `events` y `domain`: lo que la
+ * CLI usa de las clases públicas del SDK (`Template`, `AgentTemplate`,
+ * `AgentProject`, `AgentDeployment`, `LifecycleEvents`, `CustomDomain`). Los comandos sólo
  * conocen estas interfaces; `ops-adapters.ts` las cumple con el SDK y los
  * tests con dobles en memoria, nunca con AWS.
  */
 
+import type { AgentEvent, AgentResult } from "../agent/events.js";
 import type { AgentTemplate } from "../agent/template.js";
 import type { CustomDomain, DeployCustomDomainOptions } from "../custom-domain/service.js";
 import type { LifecycleEvents } from "../lifecycle-events/service.js";
@@ -64,4 +65,74 @@ export class TemplateSpecError extends Error {
     super(message);
     this.name = "TemplateSpecError";
   }
+}
+
+/** Lo que `rayito agent run` pasa a `AgentProject.run`. */
+export interface AgentProjectRunRequest {
+  readonly sessionId: string | undefined;
+  readonly model: string | undefined;
+  /** Cada evento a medida que llega; ausente sin `--stream`. */
+  readonly onEvent: ((event: AgentEvent) => void) | undefined;
+}
+
+/** Lo que `rayito agent deploy` cambia del `serve` del fichero; `undefined` deja el del fichero. */
+export interface AgentDeployOverrides {
+  readonly port: number | undefined;
+  readonly timeoutMs: number | undefined;
+  /** El access token del sandbox del despliegue, para que `invoke` y `status` se reconecten. */
+  readonly accessToken: string;
+}
+
+export interface AgentExportRequest {
+  readonly target: string;
+  readonly outDir: string;
+  readonly overwrite: boolean;
+}
+
+export interface AgentExportResult {
+  readonly path: string;
+  readonly files: readonly string[];
+  readonly port: number;
+  readonly platform: string;
+}
+
+/** Un agente desplegado: lo que la CLI usa de `AgentDeployment`. */
+export interface DeployedAgent {
+  readonly sandboxId: string;
+  readonly url: string;
+  invoke(prompt: string, options: { readonly sessionId: string | undefined }): Promise<AgentResult>;
+  stream(
+    prompt: string,
+    options: { readonly sessionId: string | undefined },
+  ): AsyncIterable<AgentEvent>;
+  status(): Promise<{
+    readonly state: string;
+    readonly ready: boolean;
+    readonly busy: boolean;
+    readonly port: number;
+    readonly project: string | undefined;
+  }>;
+}
+
+/** Lo que devuelve `deploy`: el agente y el puerto en el que sirve. Nunca lleva las cabeceras de acceso. */
+export interface DeployedService {
+  readonly agent: DeployedAgent;
+  readonly port: number;
+}
+
+/** Un `AgentProject` ya cargado: `rayito agent build|run|deploy|export`. */
+export interface AgentProjectTool {
+  build(options: AgentBuildRequest): Promise<BuildInfo>;
+  run(prompt: string, options: AgentProjectRunRequest): Promise<AgentResult>;
+  deploy(overrides: AgentDeployOverrides): Promise<DeployedService>;
+  export(options: AgentExportRequest): Promise<AgentExportResult>;
+}
+
+/** `rayito agent ...` sobre `AgentProject` y `AgentDeployment`; `init` no los usa. */
+export interface AgentProjectTools {
+  /** Lee el fichero de proyecto de `file` (un fichero o un directorio); no llama a AWS. */
+  load(file: string): Promise<AgentProjectTool>;
+  connect(sandboxId: string, accessToken: string): Promise<DeployedAgent>;
+  /** `terminate-microvm`: no necesita el access token. `false` si el sandbox ya no existe. */
+  stop(sandboxId: string): Promise<boolean>;
 }

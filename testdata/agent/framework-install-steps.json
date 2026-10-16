@@ -1,0 +1,512 @@
+{
+  "_comment": "Vectores compartidos de Python y TypeScript: pasos de instalación, ficheros de contexto (sha256 de su contenido), entrada del manifiesto, comprobaciones de humo, rutas de precarga y calentamiento de cada runtime de framework, en un MicroVM y en un contenedor exportado.",
+  "cases": [
+    {
+      "name": "strands",
+      "runtime": {
+        "kind": "strands",
+        "options": {}
+      },
+      "microvm": [
+        {
+          "op": "copy",
+          "args": {
+            "src": "requirements-strands.txt",
+            "dst": "/opt/agents/requirements-strands.txt"
+          }
+        },
+        {
+          "op": "run",
+          "args": {
+            "cmd": "echo '554a410059d58109d971d8c298137b475438e4a111ac2bd8e05c2893abbf48ab  /opt/agents/requirements-strands.txt' | sha256sum -c - && python3 -m venv /opt/agents/strands && /opt/agents/strands/bin/python -m pip install --no-cache-dir --require-hashes --no-deps --only-binary=:all: -r /opt/agents/requirements-strands.txt && /opt/agents/strands/bin/python -m pip check"
+          }
+        }
+      ],
+      "container": [
+        {
+          "op": "copy",
+          "args": {
+            "src": "requirements-strands.txt",
+            "dst": "/opt/agents/requirements-strands.txt"
+          }
+        },
+        {
+          "op": "run",
+          "args": {
+            "cmd": "echo '554a410059d58109d971d8c298137b475438e4a111ac2bd8e05c2893abbf48ab  /opt/agents/requirements-strands.txt' | sha256sum -c - && python3 -m venv /opt/agents/strands && /opt/agents/strands/bin/python -m pip install --no-cache-dir --require-hashes --no-deps --only-binary=:all: -r /opt/agents/requirements-strands.txt && /opt/agents/strands/bin/python -m pip check"
+          }
+        }
+      ],
+      "context_files": {
+        "requirements-strands.txt": "554a410059d58109d971d8c298137b475438e4a111ac2bd8e05c2893abbf48ab"
+      },
+      "manifest_entry": {
+        "language": "python",
+        "version": "1.61.1",
+        "requirements_sha256": "554a410059d58109d971d8c298137b475438e4a111ac2bd8e05c2893abbf48ab"
+      },
+      "smoke_checks": [
+        "su user -c \"/opt/agents/strands/bin/python -c 'import strands, boto3, anthropic, openai, google.genai'\""
+      ],
+      "prefetch_paths": [],
+      "warmup_steps": [
+        {
+          "cmd": "'/opt/agents/strands/bin/python' -c 'import strands, boto3' >/dev/null 2>&1 || true",
+          "background": false
+        }
+      ]
+    },
+    {
+      "name": "strands-requirements",
+      "runtime": {
+        "kind": "strands",
+        "options": {
+          "requirements": "requirements.txt"
+        }
+      },
+      "microvm": [
+        {
+          "op": "copy",
+          "args": {
+            "src": "requirements-strands.txt",
+            "dst": "/opt/agents/requirements-strands.txt"
+          }
+        },
+        {
+          "op": "run",
+          "args": {
+            "cmd": "echo '554a410059d58109d971d8c298137b475438e4a111ac2bd8e05c2893abbf48ab  /opt/agents/requirements-strands.txt' | sha256sum -c - && python3 -m venv /opt/agents/strands && /opt/agents/strands/bin/python -m pip install --no-cache-dir --require-hashes --no-deps --only-binary=:all: -r /opt/agents/requirements-strands.txt && /opt/agents/strands/bin/python -m pip check"
+          }
+        },
+        {
+          "op": "copy",
+          "args": {
+            "src": "app/requirements.txt",
+            "dst": "/opt/agents/requirements-user-strands.txt"
+          }
+        },
+        {
+          "op": "run",
+          "args": {
+            "cmd": "hashes=''; if grep -q -- '--hash=' /opt/agents/requirements-user-strands.txt; then hashes='--require-hashes'; fi && /opt/agents/strands/bin/python -m pip install --no-cache-dir --only-binary=:all: $hashes -r /opt/agents/requirements-user-strands.txt && /opt/agents/strands/bin/python -m pip check"
+          }
+        }
+      ],
+      "container": [
+        {
+          "op": "copy",
+          "args": {
+            "src": "requirements-strands.txt",
+            "dst": "/opt/agents/requirements-strands.txt"
+          }
+        },
+        {
+          "op": "run",
+          "args": {
+            "cmd": "echo '554a410059d58109d971d8c298137b475438e4a111ac2bd8e05c2893abbf48ab  /opt/agents/requirements-strands.txt' | sha256sum -c - && python3 -m venv /opt/agents/strands && /opt/agents/strands/bin/python -m pip install --no-cache-dir --require-hashes --no-deps --only-binary=:all: -r /opt/agents/requirements-strands.txt && /opt/agents/strands/bin/python -m pip check"
+          }
+        },
+        {
+          "op": "copy",
+          "args": {
+            "src": "app/requirements.txt",
+            "dst": "/opt/agents/requirements-user-strands.txt"
+          }
+        },
+        {
+          "op": "run",
+          "args": {
+            "cmd": "hashes=''; if grep -q -- '--hash=' /opt/agents/requirements-user-strands.txt; then hashes='--require-hashes'; fi && /opt/agents/strands/bin/python -m pip install --no-cache-dir --only-binary=:all: $hashes -r /opt/agents/requirements-user-strands.txt && /opt/agents/strands/bin/python -m pip check"
+          }
+        }
+      ],
+      "context_files": {
+        "requirements-strands.txt": "554a410059d58109d971d8c298137b475438e4a111ac2bd8e05c2893abbf48ab"
+      },
+      "manifest_entry": {
+        "language": "python",
+        "version": "1.61.1",
+        "requirements_sha256": "554a410059d58109d971d8c298137b475438e4a111ac2bd8e05c2893abbf48ab"
+      },
+      "smoke_checks": [
+        "su user -c \"/opt/agents/strands/bin/python -c 'import strands, boto3, anthropic, openai, google.genai'\""
+      ],
+      "prefetch_paths": [],
+      "warmup_steps": [
+        {
+          "cmd": "'/opt/agents/strands/bin/python' -c 'import strands, boto3' >/dev/null 2>&1 || true",
+          "background": false
+        }
+      ]
+    },
+    {
+      "name": "strands-harness",
+      "runtime": {
+        "kind": "strands-harness",
+        "options": {}
+      },
+      "microvm": [
+        {
+          "op": "copy",
+          "args": {
+            "src": "requirements-strands-harness.txt",
+            "dst": "/opt/agents/requirements-strands-harness.txt"
+          }
+        },
+        {
+          "op": "run",
+          "args": {
+            "cmd": "echo 'a3714e7732bf2f32d65a10b76490757930e193123c2713004e994d44b3538d95  /opt/agents/requirements-strands-harness.txt' | sha256sum -c - && python3 -m venv /opt/agents/strands-harness && /opt/agents/strands-harness/bin/python -m pip install --no-cache-dir --require-hashes --no-deps --only-binary=:all: -r /opt/agents/requirements-strands-harness.txt && /opt/agents/strands-harness/bin/python -m pip check"
+          }
+        }
+      ],
+      "container": [
+        {
+          "op": "copy",
+          "args": {
+            "src": "requirements-strands-harness.txt",
+            "dst": "/opt/agents/requirements-strands-harness.txt"
+          }
+        },
+        {
+          "op": "run",
+          "args": {
+            "cmd": "echo 'a3714e7732bf2f32d65a10b76490757930e193123c2713004e994d44b3538d95  /opt/agents/requirements-strands-harness.txt' | sha256sum -c - && python3 -m venv /opt/agents/strands-harness && /opt/agents/strands-harness/bin/python -m pip install --no-cache-dir --require-hashes --no-deps --only-binary=:all: -r /opt/agents/requirements-strands-harness.txt && /opt/agents/strands-harness/bin/python -m pip check"
+          }
+        }
+      ],
+      "context_files": {
+        "requirements-strands-harness.txt": "a3714e7732bf2f32d65a10b76490757930e193123c2713004e994d44b3538d95"
+      },
+      "manifest_entry": {
+        "language": "python",
+        "version": "1.61.1",
+        "harness_version": "0.3.1",
+        "requirements_sha256": "a3714e7732bf2f32d65a10b76490757930e193123c2713004e994d44b3538d95"
+      },
+      "smoke_checks": [
+        "su user -c \"/opt/agents/strands-harness/bin/python -c 'import strands, boto3, anthropic, openai, google.genai, strands_harness'\""
+      ],
+      "prefetch_paths": [],
+      "warmup_steps": [
+        {
+          "cmd": "'/opt/agents/strands-harness/bin/python' -c 'import strands, boto3' >/dev/null 2>&1 || true",
+          "background": false
+        }
+      ]
+    },
+    {
+      "name": "strands-typescript",
+      "runtime": {
+        "kind": "strands",
+        "options": {
+          "language": "typescript",
+          "entrypoint": "agent.ts"
+        }
+      },
+      "microvm": [
+        {
+          "op": "run",
+          "args": {
+            "cmd": "curl -fsSL --retry 3 -o /tmp/node.tar.gz https://nodejs.org/dist/v22.23.3/node-v22.23.3-linux-arm64.tar.gz && echo '5ced2d48d1d7198739b7f86804de0171aefb6823b684b12341d3321afc3cb0b2  /tmp/node.tar.gz' | sha256sum -c - && mkdir -p /opt/agents/node && tar -xzf /tmp/node.tar.gz -C /opt/agents/node --strip-components=1 && rm -f /tmp/node.tar.gz && ln -sf /opt/agents/node/bin/node /usr/local/bin/node"
+          }
+        },
+        {
+          "op": "copy",
+          "args": {
+            "src": "app/package.json",
+            "dst": "/opt/agents/package.json"
+          }
+        },
+        {
+          "op": "copy",
+          "args": {
+            "src": "app/package-lock.json",
+            "dst": "/opt/agents/package-lock.json"
+          }
+        },
+        {
+          "op": "run",
+          "args": {
+            "cmd": "cd /opt/agents && PATH=/opt/agents/node/bin:$PATH npm ci --ignore-scripts --omit=dev --no-audit --no-fund"
+          }
+        },
+        {
+          "op": "copy",
+          "args": {
+            "src": "strands_bridge.mjs",
+            "dst": "/opt/agents/rayito/strands_bridge.mjs"
+          }
+        }
+      ],
+      "container": [
+        {
+          "op": "run",
+          "args": {
+            "cmd": "apt-get update && apt-get install -y --no-install-recommends curl ca-certificates && rm -rf /var/lib/apt/lists/*"
+          }
+        },
+        {
+          "op": "run",
+          "args": {
+            "cmd": "curl -fsSL --retry 3 -o /tmp/node.tar.gz https://nodejs.org/dist/v22.23.3/node-v22.23.3-linux-arm64.tar.gz && echo '5ced2d48d1d7198739b7f86804de0171aefb6823b684b12341d3321afc3cb0b2  /tmp/node.tar.gz' | sha256sum -c - && mkdir -p /opt/agents/node && tar -xzf /tmp/node.tar.gz -C /opt/agents/node --strip-components=1 && rm -f /tmp/node.tar.gz && ln -sf /opt/agents/node/bin/node /usr/local/bin/node"
+          }
+        },
+        {
+          "op": "copy",
+          "args": {
+            "src": "app/package.json",
+            "dst": "/opt/agents/package.json"
+          }
+        },
+        {
+          "op": "copy",
+          "args": {
+            "src": "app/package-lock.json",
+            "dst": "/opt/agents/package-lock.json"
+          }
+        },
+        {
+          "op": "run",
+          "args": {
+            "cmd": "cd /opt/agents && PATH=/opt/agents/node/bin:$PATH npm ci --ignore-scripts --omit=dev --no-audit --no-fund"
+          }
+        },
+        {
+          "op": "copy",
+          "args": {
+            "src": "strands_bridge.mjs",
+            "dst": "/opt/agents/rayito/strands_bridge.mjs"
+          }
+        }
+      ],
+      "context_files": {
+        "strands_bridge.mjs": "35fbfda2f415de2fef3b237becbbe48989a9a02be954e4c54fc05e58088017aa"
+      },
+      "manifest_entry": {
+        "language": "typescript",
+        "node_version": "22.23.3",
+        "node_sha256": "5ced2d48d1d7198739b7f86804de0171aefb6823b684b12341d3321afc3cb0b2",
+        "tested_sdk_version": "1.21.0",
+        "tested_harness_version": "0.3.0",
+        "bridge_sha256": "35fbfda2f415de2fef3b237becbbe48989a9a02be954e4c54fc05e58088017aa"
+      },
+      "smoke_checks": [
+        "su user -c 'node --version'",
+        "su user -c \"cd /opt/agents && node --input-type=module -e 'import \\\"@strands-agents/sdk\\\"'\"",
+        "su user -c 'test -r /opt/agents/rayito/strands_bridge.mjs'"
+      ],
+      "prefetch_paths": [
+        "/opt/agents/node/bin/node"
+      ],
+      "warmup_steps": [
+        {
+          "cmd": "cd /opt/agents && node --input-type=module -e 'import \"@strands-agents/sdk\"' >/dev/null 2>&1 || true",
+          "background": false
+        }
+      ]
+    },
+    {
+      "name": "hermes",
+      "runtime": {
+        "kind": "hermes",
+        "options": {}
+      },
+      "microvm": [
+        {
+          "op": "run",
+          "args": {
+            "cmd": "mkdir -p /opt/agents/hermes && curl -fsSL --retry 3 -o /tmp/hermes-python.tar.gz https://github.com/astral-sh/python-build-standalone/releases/download/20261013/cpython-3.14.8%2B20261013-aarch64-unknown-linux-gnu-install_only.tar.gz && echo '6c3cfb175acca2748d5a9e42208c523bfbc1099ddb928615b5f328ba7c106e83  /tmp/hermes-python.tar.gz' | sha256sum -c - && tar -xzf /tmp/hermes-python.tar.gz -C /opt/agents/hermes && rm -f /tmp/hermes-python.tar.gz"
+          }
+        },
+        {
+          "op": "copy",
+          "args": {
+            "src": "requirements-hermes.txt",
+            "dst": "/opt/agents/requirements-hermes.txt"
+          }
+        },
+        {
+          "op": "run",
+          "args": {
+            "cmd": "echo '216a22be69129215f1ddc2ee4d1dc0b401e02cf83121d3a865ffe16415540c54  /opt/agents/requirements-hermes.txt' | sha256sum -c - && /opt/agents/hermes/python/bin/python3 -m venv /opt/agents/hermes/venv && /opt/agents/hermes/venv/bin/python -m pip install --no-cache-dir --require-hashes --no-deps --only-binary=:all: -r /opt/agents/requirements-hermes.txt && /opt/agents/hermes/venv/bin/python -m pip check"
+          }
+        },
+        {
+          "op": "run",
+          "args": {
+            "cmd": "git clone --depth 1 --branch v0.22.2 https://github.com/NousResearch/hermes-agent /opt/agents/hermes/src && test \"$(git -C /opt/agents/hermes/src rev-parse HEAD)\" = d923a5eb487a17c0a68801bba9ef0f56c81040a8 && cd /opt/agents/hermes/src && rm -rf .git tests tests-js apps website ui-tui web contributors evals docker nix"
+          }
+        }
+      ],
+      "container": [
+        {
+          "op": "run",
+          "args": {
+            "cmd": "apt-get update && apt-get install -y --no-install-recommends curl ca-certificates git && rm -rf /var/lib/apt/lists/*"
+          }
+        },
+        {
+          "op": "run",
+          "args": {
+            "cmd": "mkdir -p /opt/agents/hermes && curl -fsSL --retry 3 -o /tmp/hermes-python.tar.gz https://github.com/astral-sh/python-build-standalone/releases/download/20261013/cpython-3.14.8%2B20261013-aarch64-unknown-linux-gnu-install_only.tar.gz && echo '6c3cfb175acca2748d5a9e42208c523bfbc1099ddb928615b5f328ba7c106e83  /tmp/hermes-python.tar.gz' | sha256sum -c - && tar -xzf /tmp/hermes-python.tar.gz -C /opt/agents/hermes && rm -f /tmp/hermes-python.tar.gz"
+          }
+        },
+        {
+          "op": "copy",
+          "args": {
+            "src": "requirements-hermes.txt",
+            "dst": "/opt/agents/requirements-hermes.txt"
+          }
+        },
+        {
+          "op": "run",
+          "args": {
+            "cmd": "echo '216a22be69129215f1ddc2ee4d1dc0b401e02cf83121d3a865ffe16415540c54  /opt/agents/requirements-hermes.txt' | sha256sum -c - && /opt/agents/hermes/python/bin/python3 -m venv /opt/agents/hermes/venv && /opt/agents/hermes/venv/bin/python -m pip install --no-cache-dir --require-hashes --no-deps --only-binary=:all: -r /opt/agents/requirements-hermes.txt && /opt/agents/hermes/venv/bin/python -m pip check"
+          }
+        },
+        {
+          "op": "run",
+          "args": {
+            "cmd": "git clone --depth 1 --branch v0.22.2 https://github.com/NousResearch/hermes-agent /opt/agents/hermes/src && test \"$(git -C /opt/agents/hermes/src rev-parse HEAD)\" = d923a5eb487a17c0a68801bba9ef0f56c81040a8 && cd /opt/agents/hermes/src && rm -rf .git tests tests-js apps website ui-tui web contributors evals docker nix"
+          }
+        }
+      ],
+      "context_files": {
+        "requirements-hermes.txt": "216a22be69129215f1ddc2ee4d1dc0b401e02cf83121d3a865ffe16415540c54"
+      },
+      "manifest_entry": {
+        "version": "0.22.2",
+        "commit": "d923a5eb487a17c0a68801bba9ef0f56c81040a8",
+        "python_version": "3.14.8",
+        "python_sha256": "6c3cfb175acca2748d5a9e42208c523bfbc1099ddb928615b5f328ba7c106e83",
+        "requirements_sha256": "216a22be69129215f1ddc2ee4d1dc0b401e02cf83121d3a865ffe16415540c54",
+        "requirements_file_sha256": "216a22be69129215f1ddc2ee4d1dc0b401e02cf83121d3a865ffe16415540c54"
+      },
+      "smoke_checks": [
+        "su user -c \"cd /opt/agents/hermes/src && PYTHONPATH=/opt/agents/hermes/src /opt/agents/hermes/venv/bin/python -P -c 'import aiohttp, boto3, anthropic, hermes_cli.main, gateway.platforms.api_server'\""
+      ],
+      "prefetch_paths": [],
+      "warmup_steps": [
+        {
+          "cmd": "cd '/opt/agents/hermes/src' && PYTHONPATH='/opt/agents/hermes/src' '/opt/agents/hermes/venv/bin/python' -P -c 'import hermes_cli.main' >/dev/null 2>&1 || true",
+          "background": false
+        }
+      ]
+    },
+    {
+      "name": "custom-install",
+      "runtime": {
+        "kind": "custom",
+        "options": {
+          "install": [
+            "echo uno",
+            "echo dos"
+          ],
+          "command": [
+            "x"
+          ]
+        }
+      },
+      "microvm": [
+        {
+          "op": "run",
+          "args": {
+            "cmd": "echo uno"
+          }
+        },
+        {
+          "op": "run",
+          "args": {
+            "cmd": "echo dos"
+          }
+        }
+      ],
+      "container": [
+        {
+          "op": "run",
+          "args": {
+            "cmd": "echo uno"
+          }
+        },
+        {
+          "op": "run",
+          "args": {
+            "cmd": "echo dos"
+          }
+        }
+      ],
+      "context_files": {},
+      "manifest_entry": {
+        "driver": "command",
+        "install_sha256": "df6a7821dfff4baea5804a9e78d4b1f2ddb76ea67831a582c31b71cda01bf02f",
+        "requirements": null
+      },
+      "smoke_checks": [],
+      "prefetch_paths": [],
+      "warmup_steps": []
+    },
+    {
+      "name": "custom-requirements",
+      "runtime": {
+        "kind": "custom",
+        "options": {
+          "requirements": "requirements.txt",
+          "entrypoint": "a:b",
+          "python": "python3.12"
+        }
+      },
+      "microvm": [
+        {
+          "op": "run",
+          "args": {
+            "cmd": "python3.12 -m venv /opt/agents/custom"
+          }
+        },
+        {
+          "op": "copy",
+          "args": {
+            "src": "app/requirements.txt",
+            "dst": "/opt/agents/requirements-user-custom.txt"
+          }
+        },
+        {
+          "op": "run",
+          "args": {
+            "cmd": "hashes=''; if grep -q -- '--hash=' /opt/agents/requirements-user-custom.txt; then hashes='--require-hashes'; fi && /opt/agents/custom/bin/python -m pip install --no-cache-dir --only-binary=:all: $hashes -r /opt/agents/requirements-user-custom.txt && /opt/agents/custom/bin/python -m pip check"
+          }
+        }
+      ],
+      "container": [
+        {
+          "op": "run",
+          "args": {
+            "cmd": "python3.12 -m venv /opt/agents/custom"
+          }
+        },
+        {
+          "op": "copy",
+          "args": {
+            "src": "app/requirements.txt",
+            "dst": "/opt/agents/requirements-user-custom.txt"
+          }
+        },
+        {
+          "op": "run",
+          "args": {
+            "cmd": "hashes=''; if grep -q -- '--hash=' /opt/agents/requirements-user-custom.txt; then hashes='--require-hashes'; fi && /opt/agents/custom/bin/python -m pip install --no-cache-dir --only-binary=:all: $hashes -r /opt/agents/requirements-user-custom.txt && /opt/agents/custom/bin/python -m pip check"
+          }
+        }
+      ],
+      "context_files": {},
+      "manifest_entry": {
+        "driver": "callable",
+        "install_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "requirements": "requirements.txt"
+      },
+      "smoke_checks": [],
+      "prefetch_paths": [],
+      "warmup_steps": []
+    }
+  ]
+}

@@ -99,6 +99,7 @@
     "@aws-sdk/signature-v4a": "^3.1138.0",
     "@modelcontextprotocol/server": "^2.3.1",
     "@opentelemetry/api": "^1.9.0",
+    "smol-toml": "^1.9.0",
     "zod": "^4.2.0"
   },
   "peerDependenciesMeta": {
@@ -141,6 +142,9 @@
     "@opentelemetry/api": {
       "optional": true
     },
+    "smol-toml": {
+      "optional": true
+    },
     "zod": {
       "optional": true
     }
@@ -164,6 +168,7 @@
     "@opentelemetry/sdk-trace-base": "^2.11.0",
     "@types/node": "^20.19.43",
     "ajv": "8.17.1",
+    "smol-toml": "1.9.0",
     "tsdown": "^0.23.0",
     "typescript": "^7.0.2",
     "vitest": "^4.1.11",

@@ -1,0 +1,1229 @@
+"""`AgentProject`: la descripción declarativa y validada de un agente
+(ADR-028, `ai-agent-project`). Es un valor puro: construirlo, cargarlo
+(`load`, `from_dict`) y escribirlo (`to_dict`) no llaman a AWS, no crean
+clientes y no leen más que, vía el lector que se inyecta, el fichero de
+instrucciones. Las operaciones que cuestan (`build`, `run`, `deploy`) viven
+en los servicios que lo usan y no en este módulo.
+
+El proyecto contiene el `AgentSpec` existente (modelo, instrucciones, MCP,
+permisos) en vez de copiar sus campos, y las pasarelas del modelo por
+nombre. Ningún campo lleva un secreto: una pasarela nombra el secreto de
+Secrets Manager, nunca su valor.
+
+El documento es el de `rayito-agent.toml` / `rayito-agent.json` (esquema
+`rayito.agent-project/1`, `testdata/agent-project/schema.json`): una tabla
+anidada. `from_dict` rechaza toda clave desconocida con su ruta punteada y
+un `code` de la lista cerrada `AGENT_PROJECT_ERROR_CODES`.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import os
+import posixpath
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, field
+from types import MappingProxyType
+from typing import TYPE_CHECKING, Any, Final, Self, TypeVar
+
+from rayito._agent._domain import (
+    AgentLimits,
+    AgentModel,
+    AgentPermissions,
+    AgentSpec,
+    McpLocal,
+    McpRemote,
+    McpServer,
+    SubAgent,
+    validate_name,
+)
+from rayito._agent._gateways import (
+    anthropic_gateway,
+    azure_openai_gateway,
+    bedrock_gateway,
+    deepseek_gateway,
+    gemini_gateway,
+    groq_gateway,
+    litellm_gateway,
+    mistral_gateway,
+    openai_compatible_gateway,
+    openai_gateway,
+    openrouter_gateway,
+    xai_gateway,
+)
+from rayito._agent._runtime import AgentRuntime
+from rayito._agent._runtimes import (
+    RUNTIME_KINDS,
+    RUNTIME_OPTION_KEYS,
+    resolve_runtime,
+    runtime_from_options,
+    runtime_to_options,
+)
+from rayito._agent._template import DEFAULT_AGENT_TEMPLATE_BASE
+from rayito._images import DEFAULT_BUILD_TIMEOUT_SECONDS
+from rayito._lifecycle_base import DEFAULT_IDLE_POLICY
+from rayito._limits import (
+    AGENT_MIN_MEMORY_MIB,
+    AGENT_PROJECT_SCHEMA,
+    AGENT_SERVICE_MAX_CONCURRENCY,
+    AGENT_SERVICE_PORT,
+    DEFAULT_AGENT_DEPLOY_TIMEOUT_SECONDS,
+    DEFAULT_PORT,
+    HOOKS_PORT,
+    MAX_DURATION_SECONDS,
+    PORT_MAX,
+    PORT_MIN,
+)
+from rayito._models import IdlePolicy
+from rayito._secret_gateway._domain import SecretGateway
+from rayito.exceptions import InvalidArgumentException
+
+if TYPE_CHECKING:
+    from rayito._agent._deployment import AgentDeployment
+    from rayito._agent._deployment_async import AsyncAgentDeployment
+    from rayito._agent._events import AgentEvent, AgentResult
+    from rayito._agent._export import AgentExport
+    from rayito._secrets import SecretRef
+    from rayito._templates._models import BuildInfo
+
+#: Los códigos de error de lectura de un proyecto: lista cerrada que los dos
+#: SDK comparten (`testdata/agent-project/invalid/cases.json`).
+AGENT_PROJECT_ERROR_CODES: Final[tuple[str, ...]] = (
+    "unknown_key",
+    "missing_key",
+    "invalid_type",
+    "invalid_value",
+    "path_escape",
+    "conflict",
+    "secret_value",
+    "unsupported_schema",
+    "file_not_found",
+)
+#: Claves que, de aparecer sin estar declaradas, intentan meter un secreto
+#: en el fichero: el error es `secret_value` y no `unknown_key`.
+SECRET_LIKE_KEYS: Final[tuple[str, ...]] = (
+    "access_key",
+    "api_key",
+    "apikey",
+    "key",
+    "password",
+    "secret_access_key",
+    "secret_value",
+    "token",
+)
+#: Prefijos de credenciales conocidas: un nombre de secreto que empieza así
+#: es casi seguro el valor pegado en lugar del nombre.
+SECRET_VALUE_PREFIXES: Final[tuple[str, ...]] = (
+    "AIza",
+    "AKIA",
+    "ASIA",
+    "ABSK",
+    "Bearer",
+    "ghp_",
+    "gho_",
+    "sk-",
+    "xoxb-",
+)
+#: Pasarelas de `[gateways.<nombre>] preset = ...`, además de `"custom"`.
+CUSTOM_GATEWAY_PRESET: Final = "custom"
+_RATE_KEY: Final = "rate_per_minute"
+_T = TypeVar("_T")
+
+
+class AgentProjectException(InvalidArgumentException):
+    """Un documento de proyecto inválido. `path` es la ruta punteada de la
+    clave culpable (`runtime.entrpoint`) y `code` uno de
+    `AGENT_PROJECT_ERROR_CODES`. Es una `InvalidArgumentException`: quien ya
+    capturaba esa clase no necesita cambiar."""
+
+    def __init__(self, message: str, *, path: str, code: str) -> None:
+        super().__init__(message)
+        self.path = path
+        self.code = code
+
+
+def _error(path: str, code: str, detail: str) -> AgentProjectException:
+    return AgentProjectException(f"{path}: {detail}", path=path, code=code)
+
+
+@dataclass(frozen=True)
+class ServeOptions:
+    """Cómo se sirve el agente (`AgentProject.deploy()`): el `port` del
+    servicio (no 8080 ni 9000, que son de `rayd`), la vida del sandbox
+    (`timeout_seconds`, como mucho el máximo de la plataforma), la política
+    de `idle` (suspensión y reanudación automáticas; `None` la quita), la
+    concurrencia y las etiquetas `metadata` del sandbox."""
+
+    port: int = AGENT_SERVICE_PORT
+    timeout_seconds: float = DEFAULT_AGENT_DEPLOY_TIMEOUT_SECONDS
+    idle: IdlePolicy | None = DEFAULT_IDLE_POLICY
+    max_concurrency: int = AGENT_SERVICE_MAX_CONCURRENCY
+    metadata: Mapping[str, str] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if isinstance(self.port, bool) or not isinstance(self.port, int):
+            raise InvalidArgumentException("ServeOptions.port debe ser un entero")
+        if not PORT_MIN <= self.port <= PORT_MAX or self.port in (DEFAULT_PORT, HOOKS_PORT):
+            raise InvalidArgumentException(
+                f"ServeOptions.port debe estar en {PORT_MIN}..{PORT_MAX} y no ser "
+                f"{DEFAULT_PORT} ni {HOOKS_PORT}, que usa rayd"
+            )
+        if (
+            isinstance(self.timeout_seconds, bool)
+            or not isinstance(self.timeout_seconds, int | float)
+            or not 0 < self.timeout_seconds <= MAX_DURATION_SECONDS
+        ):
+            raise InvalidArgumentException(
+                f"ServeOptions.timeout_seconds debe estar en (0, {MAX_DURATION_SECONDS}]"
+            )
+        if self.idle is not None and not isinstance(self.idle, IdlePolicy):
+            raise InvalidArgumentException("ServeOptions.idle debe ser una IdlePolicy o None")
+        if (
+            isinstance(self.max_concurrency, bool)
+            or not isinstance(self.max_concurrency, int)
+            or self.max_concurrency < 1
+        ):
+            raise InvalidArgumentException("ServeOptions.max_concurrency debe ser un entero >= 1")
+        if not isinstance(self.metadata, Mapping) or not all(
+            isinstance(key, str) and isinstance(value, str) for key, value in self.metadata.items()
+        ):
+            raise InvalidArgumentException("ServeOptions.metadata debe mapear cadenas a cadenas")
+        object.__setattr__(self, "metadata", MappingProxyType(dict(self.metadata)))
+
+
+@dataclass(frozen=True)
+class AgentProject:
+    """Un agente descrito una vez: runtime, `AgentSpec`, pasarelas del
+    modelo, código (`source`), red e imagen. Construirlo valida todo antes de
+    llamar a nadie: `name`, que cada pasarela que el `spec` necesita esté en
+    `gateways`, `serve` y la memoria.
+
+    `runtime` es un nombre del registro (`"opencode"`, `"deepagents"`,
+    `"langgraph"`...) o un objeto de runtime. `source` es el directorio con
+    el código del agente (se copia a `AGENT_APP_DIR` con `exclude`);
+    `requirements`, un fichero de requisitos suyo. `base_dir` es el
+    directorio contra el que `to_dict()` escribe las rutas relativas.
+    `template` es el nombre de una imagen ya construida (por defecto,
+    `name`).
+
+    Coste y activación
+    -------------------
+    Activa: nada; `AgentProject(...)`, `AgentProject.load()`, `from_dict()` y
+        `to_dict()` son puros. Lo que cuesta son `build()`, `run()` y
+        `deploy()`.
+    Recursos y llamadas AWS: ninguno aquí; ni se crea un cliente de AWS.
+    Coste aproximado: ninguno; el de las operaciones está en la
+        documentación de `AgentTemplate` (`build()`), de `Sandbox.create()`
+        (`run()`) y de `deploy()`.
+    IAM: ninguna para este valor.
+    Cómo apagarla: no llames a `build()`, `run()` ni `deploy()`.
+    Ejemplo:
+        project = AgentProject.load("./support-bot")
+        project.to_dict()
+    """
+
+    name: str
+    runtime: str | AgentRuntime
+    spec: AgentSpec
+    gateways: Mapping[str, SecretGateway] = field(default_factory=dict)
+    source: str | None = None
+    exclude: Sequence[str] = ()
+    requirements: str | None = None
+    limits: AgentLimits = field(default_factory=AgentLimits)
+    serve: ServeOptions = field(default_factory=ServeOptions)
+    allow_internet_access: bool = False
+    egress: Sequence[str] | None = None
+    memory_mib: int = AGENT_MIN_MEMORY_MIB
+    base: str = DEFAULT_AGENT_TEMPLATE_BASE
+    template: str | None = None
+    base_dir: str = "."
+
+    def __post_init__(self) -> None:
+        validate_name(self.name, "AgentProject.name")
+        resolve_runtime(self.runtime)
+        if not isinstance(self.spec, AgentSpec):
+            raise InvalidArgumentException("AgentProject.spec debe ser un AgentSpec")
+        gateways = _validated_gateways(self.gateways)
+        self.spec.require_gateways(gateways)
+        object.__setattr__(self, "gateways", MappingProxyType(dict(gateways)))
+        _optional_text(self.source, "AgentProject.source")
+        _optional_text(self.requirements, "AgentProject.requirements")
+        _optional_text(self.template, "AgentProject.template")
+        object.__setattr__(self, "exclude", _text_tuple(self.exclude, "AgentProject.exclude"))
+        if self.egress is not None:
+            object.__setattr__(self, "egress", _text_tuple(self.egress, "AgentProject.egress"))
+        if not isinstance(self.limits, AgentLimits):
+            raise InvalidArgumentException("AgentProject.limits debe ser un AgentLimits")
+        if not isinstance(self.serve, ServeOptions):
+            raise InvalidArgumentException("AgentProject.serve debe ser un ServeOptions")
+        if not isinstance(self.allow_internet_access, bool):
+            raise InvalidArgumentException("AgentProject.allow_internet_access debe ser un bool")
+        if (
+            isinstance(self.memory_mib, bool)
+            or not isinstance(self.memory_mib, int)
+            or self.memory_mib < AGENT_MIN_MEMORY_MIB
+        ):
+            raise InvalidArgumentException(
+                f"AgentProject.memory_mib debe ser un entero >= {AGENT_MIN_MEMORY_MIB}"
+            )
+        if not self.base or not self.base_dir:
+            raise InvalidArgumentException("AgentProject.base y base_dir no pueden ser vacíos")
+
+    @classmethod
+    def load(cls, path: str | os.PathLike[str] = ".") -> Self:
+        """Lee `rayito-agent.toml` o `rayito-agent.json` de `path` (un
+        fichero, o un directorio donde se busca el primero de
+        `AGENT_PROJECT_FILE_NAMES`)."""
+        from rayito._agent._project_file import read_project_document
+
+        document = read_project_document(path)
+        return cls.from_dict(
+            document.data, base_dir=document.base_dir, read_text=document.read_text
+        )
+
+    @classmethod
+    def from_dict(
+        cls,
+        data: Mapping[str, object],
+        *,
+        base_dir: str,
+        read_text: Callable[[str], str] | None = None,
+    ) -> Self:
+        """El proyecto de un documento ya leído. Puro: las rutas relativas
+        se resuelven contra `base_dir` sin tocar el disco, y
+        `instructions_file` pasa por `read_text` (el lector que inyecta
+        `load`; sin él, esa clave es un error)."""
+        return cls(**_project_kwargs(data, base_dir, read_text), base_dir=base_dir)
+
+    def to_dict(self) -> dict[str, object]:
+        """La forma canónica del documento, la que `from_dict` vuelve a leer
+        y que comparten los dos SDK. Omite lo que vale su valor por defecto;
+        el texto de las instrucciones va en línea."""
+        document: dict[str, object] = {"schema": AGENT_PROJECT_SCHEMA, "name": self.name}
+        document["runtime"] = runtime_to_options(self.runtime)
+        source = _source_to_dict(self)
+        if source:
+            document["source"] = source
+        document["model"] = _model_to_dict(self.spec.model)
+        if self.gateways:
+            document["gateways"] = {
+                name: _gateway_to_dict(gateway) for name, gateway in sorted(self.gateways.items())
+            }
+        for key, table in (
+            ("agent", _agent_to_dict(self.spec)),
+            ("limits", _limits_to_dict(self.limits)),
+            ("serve", _serve_to_dict(self.serve)),
+            ("network", _network_to_dict(self)),
+            ("image", _image_to_dict(self)),
+        ):
+            if table:
+                document[key] = table
+        return document
+
+    def build(
+        self,
+        *,
+        bucket: str,
+        force: bool = False,
+        timeout: float = DEFAULT_BUILD_TIMEOUT_SECONDS,
+        on_build_logs: Callable[[str], None] | None = None,
+        region: str | None = None,
+        session: Any = None,
+    ) -> BuildInfo:
+        """Construye la imagen del proyecto con `AgentTemplate` (su runtime,
+        su código y su memoria). Cuesta un build de imagen: ver el bloque
+        "Coste y activación" de `AgentTemplate`."""
+        from rayito._agent._project_service import ProjectService
+
+        return ProjectService(self).build(
+            bucket=bucket,
+            force=force,
+            timeout=timeout,
+            on_build_logs=on_build_logs,
+            region=region,
+            session=session,
+        )
+
+    def run(
+        self,
+        prompt: str,
+        *,
+        session_id: str | None = None,
+        model: str | None = None,
+        reasoning: bool = False,
+        on_event: Callable[[AgentEvent], None] | None = None,
+        region: str | None = None,
+        session: Any = None,
+    ) -> AgentResult:
+        """Una ejecución del agente en un sandbox efímero: lo crea desde la
+        imagen del proyecto con sus pasarelas y su red, llama a
+        `sbx.agent.run()` y lo termina siempre, también ante un error. Para
+        que el sandbox sobreviva, usa `deploy()`."""
+        from rayito._agent._project_service import ProjectService
+
+        return ProjectService(self).run(
+            prompt,
+            session_id=session_id,
+            model=model,
+            reasoning=reasoning,
+            on_event=on_event,
+            region=region,
+            session=session,
+        )
+
+    def deploy(
+        self, *, region: str | None = None, session: Any = None, access_token: str | None = None
+    ) -> AgentDeployment:
+        """Sirve el agente desde un MicroVM y devuelve su `AgentDeployment`:
+        crea un sandbox desde la imagen del proyecto (con `serve.timeout_seconds`,
+        `serve.idle` y las etiquetas de despliegue), escribe la configuración
+        del host, lo arranca en modo servicio y espera su marcador de listo.
+        Si cualquier paso falla, termina el sandbox antes de lanzar.
+
+        `access_token` es el del sandbox (como el de `Sandbox.create()`; sin
+        él, `RAYITO_ACCESS_TOKEN` o uno nuevo). Quien quiera reconectarse
+        desde otro proceso (`AgentDeployment.connect`, `rayito agent invoke`)
+        lo guarda: sin él sólo `Sandbox.kill(sandbox_id)` llega al sandbox.
+
+        Coste y activación
+        -------------------
+        Activa: llamar a `deploy()` (o `rayito agent deploy`); nada más lo
+            crea.
+        Recursos y llamadas AWS: un sandbox (`run-microvm`) que vive hasta
+            `serve.timeout_seconds` (como mucho 8 horas) o hasta
+            `AgentDeployment.stop()`, y el token del proxy
+            (`CreateMicrovmAuthToken`, gratuito); el modelo lo llama la
+            pasarela del sandbox.
+        Coste aproximado: el del MicroVM por segundo mientras vive (2 GB:
+            ≈ $0,14 por hora en us-east-1, consultado 2026-10-06 en
+            https://aws.amazon.com/lambda/pricing/; `serve.idle` lo suspende
+            y la suspensión no factura cómputo) más el del modelo del agente.
+        IAM: los de `Sandbox.create()` (`RayitoSandboxRunner`) y, por cada
+            pasarela, `secretsmanager:GetSecretValue`.
+        Cómo apagarla: `AgentDeployment.stop()` o `rayito agent stop`; no
+            llames a `deploy()` y nada se crea.
+        Ejemplo:
+            deployment = AgentProject.load("./support-bot").deploy()
+            deployment.invoke("Resume el README.").text
+            deployment.stop()
+        """
+        from rayito._agent._project_service import ProjectService
+
+        return ProjectService(self).deploy(
+            region=region, session=session, access_token=access_token
+        )
+
+    def export(
+        self,
+        *,
+        target: str = "docker",
+        out_dir: str | os.PathLike[str],
+        overwrite: bool = False,
+    ) -> AgentExport:
+        """Escribe en `out_dir` un contexto de build de contenedor
+        `linux/arm64` (`target="docker"` o `"agentcore"`) sin ninguna
+        llamada de red ni de AWS. Falla si `out_dir` no está vacío, salvo con
+        `overwrite=True`. Fuera de Rayito no hay pasarela de secretos: la
+        credencial del modelo la pone la plataforma."""
+        from rayito._agent._export import export_project
+
+        return export_project(self, target=target, out_dir=out_dir, overwrite=overwrite)
+
+
+@dataclass(frozen=True)
+class AsyncAgentProject(AgentProject):
+    """`AgentProject` con las operaciones `async`: el mismo constructor y la
+    misma superficie (`build`, `run`, `deploy`, `export`) como corrutinas."""
+
+    async def build(  # type: ignore[override]
+        self,
+        *,
+        bucket: str,
+        force: bool = False,
+        timeout: float = DEFAULT_BUILD_TIMEOUT_SECONDS,
+        on_build_logs: Callable[[str], None] | None = None,
+        region: str | None = None,
+        session: Any = None,
+    ) -> BuildInfo:
+        from rayito._agent._project_service_async import AsyncProjectService
+
+        return await AsyncProjectService(self).build(
+            bucket=bucket,
+            force=force,
+            timeout=timeout,
+            on_build_logs=on_build_logs,
+            region=region,
+            session=session,
+        )
+
+    async def run(  # type: ignore[override]
+        self,
+        prompt: str,
+        *,
+        session_id: str | None = None,
+        model: str | None = None,
+        reasoning: bool = False,
+        on_event: Callable[[AgentEvent], None] | None = None,
+        region: str | None = None,
+        session: Any = None,
+    ) -> AgentResult:
+        from rayito._agent._project_service_async import AsyncProjectService
+
+        return await AsyncProjectService(self).run(
+            prompt,
+            session_id=session_id,
+            model=model,
+            reasoning=reasoning,
+            on_event=on_event,
+            region=region,
+            session=session,
+        )
+
+    async def deploy(  # type: ignore[override]
+        self, *, region: str | None = None, session: Any = None, access_token: str | None = None
+    ) -> AsyncAgentDeployment:
+        """Como `AgentProject.deploy()`, con `AsyncAgentDeployment`. Mismo
+        bloque de coste: crea un sandbox que vive hasta `stop()` o hasta
+        `serve.timeout_seconds`.
+
+        Coste y activación
+        -------------------
+        Activa: `await deploy()` (o `rayito agent deploy`); nada más lo crea.
+        Recursos y llamadas AWS: un sandbox (`run-microvm`) que vive hasta
+            `serve.timeout_seconds` (como mucho 8 horas) o hasta
+            `await AsyncAgentDeployment.stop()`, y el token del proxy
+            (`CreateMicrovmAuthToken`, gratuito); el modelo lo llama la
+            pasarela del sandbox.
+        Coste aproximado: el del MicroVM por segundo mientras vive (2 GB:
+            ≈ $0,14 por hora en us-east-1, consultado 2026-10-06 en
+            https://aws.amazon.com/lambda/pricing/) más el del modelo.
+        IAM: los de `AsyncSandbox.create()` y, por cada pasarela,
+            `secretsmanager:GetSecretValue`.
+        Cómo apagarla: `await deployment.stop()`; no llames a `deploy()` y
+            nada se crea.
+        Ejemplo:
+            deployment = await AsyncAgentProject.load("./support-bot").deploy()
+            (await deployment.invoke("Resume el README.")).text
+            await deployment.stop()
+        """
+        from rayito._agent._project_service_async import AsyncProjectService
+
+        return await AsyncProjectService(self).deploy(
+            region=region, session=session, access_token=access_token
+        )
+
+    async def export(  # type: ignore[override]
+        self,
+        *,
+        target: str = "docker",
+        out_dir: str | os.PathLike[str],
+        overwrite: bool = False,
+    ) -> AgentExport:
+        """Como `AgentProject.export()`; la escritura de ficheros corre en un
+        hilo para no bloquear el bucle de eventos."""
+        return await asyncio.to_thread(
+            super().export, target=target, out_dir=out_dir, overwrite=overwrite
+        )
+
+
+# ------------------------------------------------------------------ validation
+
+
+def _optional_text(value: object, label: str) -> None:
+    if value is not None and (not isinstance(value, str) or not value):
+        raise InvalidArgumentException(f"{label} debe ser una cadena no vacía")
+
+
+def _text_tuple(values: object, label: str) -> tuple[str, ...]:
+    if isinstance(values, str) or not isinstance(values, Sequence):
+        raise InvalidArgumentException(f"{label} debe ser una lista de cadenas")
+    if not all(isinstance(item, str) and item for item in values):
+        raise InvalidArgumentException(f"{label} sólo admite cadenas no vacías")
+    return tuple(values)
+
+
+def _validated_gateways(gateways: object) -> Mapping[str, SecretGateway]:
+    if not isinstance(gateways, Mapping):
+        raise InvalidArgumentException("AgentProject.gateways debe ser un dict nombre -> pasarela")
+    for name, gateway in gateways.items():
+        validate_name(name, "AgentProject.gateways")
+        if not isinstance(gateway, SecretGateway):
+            raise InvalidArgumentException(
+                "cada valor de AgentProject.gateways debe ser un SecretGateway"
+            )
+    return gateways
+
+
+# --------------------------------------------------------------------- reading
+
+
+class _Table:
+    """Lectura estricta de una tabla: cada clave que se pide queda marcada
+    y `finish()` falla con la primera que sobra."""
+
+    def __init__(self, data: object, path: str) -> None:
+        if not isinstance(data, Mapping):
+            raise _error(path or "<raíz>", "invalid_type", "debe ser una tabla")
+        self._data = data
+        self.path = path
+        self._used: set[str] = set()
+
+    def at(self, key: str) -> str:
+        return f"{self.path}.{key}" if self.path else key
+
+    def has(self, key: str) -> bool:
+        return key in self._data
+
+    def raw(self, key: str) -> object:
+        self._used.add(key)
+        return self._data.get(key)
+
+    def text(self, key: str, *, required: bool = False) -> str | None:
+        value = self._value(key, required)
+        if value is None:
+            return None
+        if not isinstance(value, str) or not value:
+            raise _error(self.at(key), "invalid_type", "debe ser una cadena no vacía")
+        return value
+
+    def boolean(self, key: str) -> bool | None:
+        value = self._value(key, False)
+        if value is not None and not isinstance(value, bool):
+            raise _error(self.at(key), "invalid_type", "debe ser true o false")
+        return value
+
+    def integer(self, key: str) -> int | None:
+        value = self._value(key, False)
+        if value is not None and (isinstance(value, bool) or not isinstance(value, int)):
+            raise _error(self.at(key), "invalid_type", "debe ser un entero")
+        return value
+
+    def number(self, key: str) -> float | None:
+        value = self._value(key, False)
+        if value is not None and (isinstance(value, bool) or not isinstance(value, int | float)):
+            raise _error(self.at(key), "invalid_type", "debe ser un número")
+        return value
+
+    def texts(self, key: str) -> tuple[str, ...] | None:
+        value = self._value(key, False)
+        if value is None:
+            return None
+        if (
+            isinstance(value, str)
+            or not isinstance(value, Sequence)
+            or not all(isinstance(item, str) and item for item in value)
+        ):
+            raise _error(self.at(key), "invalid_type", "debe ser una lista de cadenas")
+        return tuple(value)
+
+    def table(self, key: str) -> _Table | None:
+        value = self._value(key, False)
+        return None if value is None else _Table(value, self.at(key))
+
+    def entries(self, key: str) -> list[tuple[str, _Table]]:
+        table = self.table(key)
+        if table is None:
+            return []
+        return [(name, _Table(table.raw(name), table.at(name))) for name in sorted(table.keys())]
+
+    def keys(self) -> list[str]:
+        return list(self._data)
+
+    def _value(self, key: str, required: bool) -> object:
+        self._used.add(key)
+        value = self._data.get(key)
+        if value is None and required:
+            raise _error(self.at(key), "missing_key", "es obligatoria")
+        return value
+
+    def finish(self) -> None:
+        for key in sorted(set(self._data) - self._used):
+            code = "secret_value" if key.lower() in SECRET_LIKE_KEYS else "unknown_key"
+            detail = (
+                "un fichero de proyecto nunca lleva un secreto; usa el nombre de un secreto"
+                if code == "secret_value"
+                else "clave desconocida"
+            )
+            raise _error(self.at(key), code, detail)
+
+
+def _guard(path: str, build: Callable[[], _T]) -> _T:
+    try:
+        return build()
+    except AgentProjectException:
+        raise
+    except InvalidArgumentException as exc:
+        raise _error(path, "invalid_value", str(exc)) from exc
+
+
+def _inside(base_dir: str, relative: str, path: str) -> str:
+    """`relative` resuelto contra `base_dir` sin tocar el disco; una ruta
+    absoluta o que sale de `base_dir` es `path_escape`."""
+    if posixpath.isabs(relative) or os.path.isabs(relative):
+        raise _error(path, "path_escape", "debe ser relativa al directorio del fichero")
+    root = os.path.abspath(base_dir)
+    resolved = os.path.abspath(os.path.join(root, relative))
+    if os.path.commonpath([root, resolved]) != root:
+        raise _error(path, "path_escape", "sale del directorio del fichero")
+    return resolved
+
+
+def _project_kwargs(
+    data: Mapping[str, object], base_dir: str, read_text: Callable[[str], str] | None
+) -> dict[str, Any]:
+    root = _Table(data, "")
+    schema = root.text("schema", required=True)
+    if schema != AGENT_PROJECT_SCHEMA:
+        raise _error("schema", "unsupported_schema", f"debe ser {AGENT_PROJECT_SCHEMA!r}")
+    name = root.text("name", required=True)
+    runtime = _read_runtime(root.table("runtime"))
+    kwargs: dict[str, Any] = {"name": name, "runtime": runtime}
+    kwargs.update(_read_source(root.table("source"), base_dir))
+    gateways = _read_gateways(root)
+    model_table = root.table("model")
+    if model_table is None:
+        raise _error("model", "missing_key", "es obligatoria")
+    model = _read_model(model_table)
+    kwargs["gateways"] = gateways
+    kwargs["spec"] = _read_agent(root.table("agent"), model, read_text, base_dir)
+    kwargs.update(_read_limits(root.table("limits")))
+    kwargs.update(_read_serve(root.table("serve")))
+    kwargs.update(_read_network(root.table("network")))
+    kwargs.update(_read_image(root.table("image")))
+    root.finish()
+    _check_gateways(kwargs["spec"], gateways)
+    return kwargs
+
+
+def _check_gateways(spec: AgentSpec, gateways: Mapping[str, SecretGateway]) -> None:
+    """Cada pasarela que el agente necesita debe estar en `[gateways]`; el
+    error nombra la clave que la pide."""
+    if spec.model.gateway not in gateways:
+        raise _error(
+            "model.gateway", "invalid_value", "la pasarela no está declarada en [gateways]"
+        )
+    for name, server in sorted(spec.mcp.items()):
+        if isinstance(server, McpRemote) and server.gateway not in gateways:
+            raise _error(
+                f"agent.mcp.{name}.gateway",
+                "invalid_value",
+                "la pasarela no está declarada en [gateways]",
+            )
+
+
+def _read_runtime(table: _Table | None) -> AgentRuntime:
+    if table is None:
+        raise _error("runtime", "missing_key", "es obligatoria")
+    kind = table.text("kind", required=True)
+    if kind not in RUNTIME_KINDS:
+        raise _error("runtime.kind", "invalid_value", f"debe ser uno de {list(RUNTIME_KINDS)}")
+    options = {key: table.raw(key) for key in RUNTIME_OPTION_KEYS[kind]}
+    table.finish()
+    present = {key: value for key, value in options.items() if value is not None}
+    return _guard("runtime", lambda: runtime_from_options(str(kind), present))
+
+
+def _read_source(table: _Table | None, base_dir: str) -> dict[str, object]:
+    if table is None:
+        return {}
+    path = table.text("path") or "."
+    requirements = table.text("requirements")
+    exclude = table.texts("exclude") or ()
+    table.finish()
+    kwargs: dict[str, object] = {
+        "source": _inside(base_dir, path, "source.path"),
+        "exclude": exclude,
+    }
+    if requirements is not None:
+        kwargs["requirements"] = _inside(base_dir, requirements, "source.requirements")
+    return kwargs
+
+
+def _read_model(table: _Table) -> AgentModel:
+    provider = table.text("provider", required=True)
+    model_id = table.text("id", required=True)
+    gateway = table.text("gateway", required=True)
+    region = table.text("region")
+    base_path = table.text("base_path")
+    caching = table.boolean("prompt_caching")
+    table.finish()
+    extra: dict[str, object] = {}
+    if caching is not None:
+        extra["prompt_caching"] = caching
+    return _guard(
+        "model",
+        lambda: AgentModel(
+            provider=provider,  # type: ignore[arg-type]
+            id=str(model_id),
+            gateway=str(gateway),
+            region=region,
+            base_path=base_path or "",
+            **extra,  # type: ignore[arg-type]
+        ),
+    )
+
+
+def _read_agent(
+    table: _Table | None,
+    model: AgentModel,
+    read_text: Callable[[str], str] | None,
+    base_dir: str,
+) -> AgentSpec:
+    if table is None:
+        return AgentSpec(model=model)
+    instructions = _read_instructions(table, read_text, base_dir)
+    small_model = table.text("small_model")
+    runtime_version = table.text("runtime_version")
+    permissions = _read_permissions(table.table("permissions"), table.at("permissions"))
+    mcp = {name: _read_mcp(entry) for name, entry in table.entries("mcp")}
+    agents = {name: _read_subagent(entry) for name, entry in table.entries("agents")}
+    raw_config = table.raw("raw_config")
+    if raw_config is not None and not isinstance(raw_config, Mapping):
+        raise _error(table.at("raw_config"), "invalid_type", "debe ser una tabla")
+    table.finish()
+    return _guard(
+        table.path,
+        lambda: AgentSpec(
+            model=model,
+            small_model=small_model,
+            instructions=instructions,
+            mcp=mcp,
+            permissions=permissions,
+            agents=agents,
+            raw_config=raw_config,
+            runtime_version=runtime_version,
+        ),
+    )
+
+
+def _read_instructions(
+    table: _Table, read_text: Callable[[str], str] | None, base_dir: str
+) -> str | None:
+    inline = table.text("instructions")
+    file = table.text("instructions_file")
+    if inline is not None and file is not None:
+        raise _error(
+            table.at("instructions_file"), "conflict", "es excluyente con agent.instructions"
+        )
+    if file is None:
+        return inline
+    resolved = _inside(base_dir, file, table.at("instructions_file"))
+    if read_text is None:
+        raise _error(
+            table.at("instructions_file"), "invalid_value", "no hay lector de ficheros disponible"
+        )
+    return read_text(resolved)
+
+
+def _read_permissions(table: _Table | None, path: str) -> AgentPermissions:
+    if table is None:
+        return AgentPermissions()
+    default = table.text("default")
+    tools = table.raw("tools")
+    if tools is not None and not isinstance(tools, Mapping):
+        raise _error(table.at("tools"), "invalid_type", "debe ser una tabla")
+    table.finish()
+    kwargs: dict[str, object] = {}
+    if default is not None:
+        kwargs["default"] = default
+    if tools is not None:
+        kwargs["tools"] = tools
+    return _guard(path, lambda: AgentPermissions(**kwargs))  # type: ignore[arg-type]
+
+
+def _read_mcp(entry: _Table) -> McpServer:
+    kind = entry.text("type", required=True)
+    if kind == "local":
+        command = entry.texts("command")
+        envs = entry.raw("envs")
+        timeout = entry.number("timeout_seconds")
+        entry.finish()
+        if envs is not None and not isinstance(envs, Mapping):
+            raise _error(entry.at("envs"), "invalid_type", "debe ser una tabla")
+        return _guard(
+            entry.path,
+            lambda: McpLocal(command=command or (), envs=envs or {}, timeout_seconds=timeout),
+        )
+    if kind == "remote":
+        gateway = entry.text("gateway", required=True)
+        remote_path = entry.text("path")
+        entry.finish()
+        return _guard(entry.path, lambda: McpRemote(gateway=str(gateway), path=remote_path or "/"))
+    raise _error(entry.at("type"), "invalid_value", "debe ser 'local' o 'remote'")
+
+
+def _read_subagent(entry: _Table) -> SubAgent:
+    description = entry.text("description", required=True)
+    instructions = entry.text("instructions", required=True)
+    model = entry.text("model")
+    permissions = entry.table("permissions")
+    parsed = None if permissions is None else _read_permissions(permissions, permissions.path)
+    entry.finish()
+    return _guard(
+        entry.path,
+        lambda: SubAgent(
+            description=str(description),
+            instructions=str(instructions),
+            model=model,
+            permissions=parsed,
+        ),
+    )
+
+
+def _read_limits(table: _Table | None) -> dict[str, object]:
+    if table is None:
+        return {}
+    kwargs: dict[str, object] = {}
+    for key, value in (
+        ("max_steps", table.integer("max_steps")),
+        ("timeout_seconds", table.number("timeout_seconds")),
+        ("max_output_bytes", table.integer("max_output_bytes")),
+    ):
+        if value is not None:
+            kwargs[key] = value
+    max_total_tokens = table.integer("max_total_tokens")
+    if max_total_tokens is not None:
+        kwargs["max_total_tokens"] = max_total_tokens or None
+    table.finish()
+    return {"limits": _guard("limits", lambda: AgentLimits(**kwargs))}  # type: ignore[arg-type]
+
+
+def _read_serve(table: _Table | None) -> dict[str, object]:
+    if table is None:
+        return {}
+    kwargs: dict[str, object] = {}
+    for key in ("port", "max_concurrency"):
+        value = table.integer(key)
+        if value is not None:
+            kwargs[key] = value
+    timeout = table.number("timeout_seconds")
+    if timeout is not None:
+        kwargs["timeout_seconds"] = timeout
+    idle_seconds = table.integer("idle_seconds")
+    if idle_seconds is not None:
+        kwargs["idle"] = (
+            None
+            if idle_seconds == 0
+            else _guard("serve.idle_seconds", lambda: IdlePolicy(max_idle_seconds=idle_seconds))
+        )
+    metadata = table.raw("metadata")
+    if metadata is not None:
+        kwargs["metadata"] = metadata
+    table.finish()
+    return {"serve": _guard("serve", lambda: ServeOptions(**kwargs))}  # type: ignore[arg-type]
+
+
+def _read_network(table: _Table | None) -> dict[str, object]:
+    if table is None:
+        return {}
+    internet = table.boolean("allow_internet_access")
+    egress = table.texts("egress")
+    table.finish()
+    kwargs: dict[str, object] = {}
+    if internet is not None:
+        kwargs["allow_internet_access"] = internet
+    if egress is not None:
+        kwargs["egress"] = egress
+    return kwargs
+
+
+def _read_image(table: _Table | None) -> dict[str, object]:
+    if table is None:
+        return {}
+    kwargs: dict[str, object] = {}
+    for key in ("base", "template"):
+        value = table.text(key)
+        if value is not None:
+            kwargs[key] = value
+    memory = table.integer("memory_mib")
+    if memory is not None:
+        kwargs["memory_mib"] = memory
+    table.finish()
+    return kwargs
+
+
+# -------------------------------------------------------------------- gateways
+
+
+def _secret_name(value: object, path: str) -> str:
+    if not isinstance(value, str) or not value:
+        raise _error(path, "invalid_type", "debe ser el nombre de un secreto")
+    if any(char.isspace() for char in value) or value.startswith(SECRET_VALUE_PREFIXES):
+        raise _error(
+            path, "secret_value", "parece un valor y no el nombre de un secreto; escribe el nombre"
+        )
+    return value
+
+
+@dataclass(frozen=True)
+class _Preset:
+    keys: tuple[str, ...]
+    required: tuple[str, ...]
+    build: Callable[..., SecretGateway]
+
+
+#: `preset` -> claves que admite (además de `secret` y `rate_per_minute`),
+#: cuáles son obligatorias y la función de `_gateways.py` que lo construye.
+_GATEWAY_PRESETS: Final[Mapping[str, _Preset]] = {
+    "bedrock": _Preset(("region", "models"), ("region", "models"), bedrock_gateway),
+    "anthropic": _Preset((), (), anthropic_gateway),
+    "openai": _Preset((), (), openai_gateway),
+    "openai-compatible": _Preset(
+        ("upstream", "base_path"), ("upstream",), openai_compatible_gateway
+    ),
+    "gemini": _Preset(("models",), ("models",), gemini_gateway),
+    "azure": _Preset(("resource",), ("resource",), azure_openai_gateway),
+    "openrouter": _Preset((), (), openrouter_gateway),
+    "groq": _Preset((), (), groq_gateway),
+    "mistral": _Preset((), (), mistral_gateway),
+    "deepseek": _Preset((), (), deepseek_gateway),
+    "xai": _Preset((), (), xai_gateway),
+    "litellm": _Preset(("upstream", "base_path"), ("upstream",), litellm_gateway),
+}
+
+
+def _read_gateways(root: _Table) -> dict[str, SecretGateway]:
+    return {name: _read_gateway(name, entry) for name, entry in root.entries("gateways")}
+
+
+def _read_gateway(name: str, entry: _Table) -> SecretGateway:
+    preset = entry.text("preset", required=True)
+    rate = entry.integer(_RATE_KEY)
+    if preset == CUSTOM_GATEWAY_PRESET:
+        return _read_custom_gateway(entry, rate)
+    spec = _GATEWAY_PRESETS.get(str(preset))
+    if spec is None:
+        allowed = [*_GATEWAY_PRESETS, CUSTOM_GATEWAY_PRESET]
+        raise _error(entry.at("preset"), "invalid_value", f"debe ser uno de {allowed}")
+    secret = _secret_name(entry.text("secret", required=True), entry.at("secret"))
+    options: dict[str, object] = {}
+    for key in spec.keys:
+        value = entry.texts(key) if key == "models" else entry.text(key)
+        if value is None and key in spec.required:
+            raise _error(entry.at(key), "missing_key", "es obligatoria con este preset")
+        if value is not None:
+            options[key] = value
+    entry.finish()
+    if rate is not None:
+        options[_RATE_KEY] = rate
+    return _guard(entry.path, lambda: spec.build(secret, **options))
+
+
+def _read_custom_gateway(entry: _Table, rate: int | None) -> SecretGateway:
+    upstream = entry.text("upstream", required=True)
+    headers = entry.table("headers")
+    if headers is None:
+        raise _error(entry.at("headers"), "missing_key", "es obligatoria con preset 'custom'")
+    secrets = {
+        header: _secret_name(headers.raw(header), headers.at(header))
+        for header in sorted(headers.keys())
+    }
+    allow = _read_allow(entry.raw("allow"), entry.at("allow"))
+    entry.finish()
+    kwargs: dict[str, object] = {} if rate is None else {_RATE_KEY: rate}
+    return _guard(
+        entry.path,
+        lambda: SecretGateway(
+            upstream=str(upstream),
+            headers=secrets,
+            allow=allow,
+            **kwargs,  # type: ignore[arg-type]
+        ),
+    )
+
+
+def _read_allow(value: object, path: str) -> list[tuple[str, str]]:
+    if value is None:
+        raise _error(path, "missing_key", "es obligatoria con preset 'custom'")
+    if isinstance(value, str) or not isinstance(value, Sequence):
+        raise _error(path, "invalid_type", "debe ser una lista de [método, ruta]")
+    rules: list[tuple[str, str]] = []
+    for rule in value:
+        if (
+            isinstance(rule, str)
+            or not isinstance(rule, Sequence)
+            or len(rule) != 2
+            or not all(isinstance(part, str) for part in rule)
+        ):
+            raise _error(path, "invalid_type", "cada regla debe ser [método, ruta]")
+        rules.append((rule[0], rule[1]))
+    return rules
+
+
+# ---------------------------------------------------------------------- writing
+
+
+def _relative(path: str, base_dir: str) -> str:
+    return os.path.relpath(path, base_dir).replace(os.sep, "/")
+
+
+def _source_to_dict(project: AgentProject) -> dict[str, object]:
+    table: dict[str, object] = {}
+    if project.source is not None:
+        table["path"] = _relative(project.source, project.base_dir)
+    if project.requirements is not None:
+        table["requirements"] = _relative(project.requirements, project.base_dir)
+    if project.exclude:
+        table["exclude"] = list(project.exclude)
+    return table
+
+
+def _model_to_dict(model: AgentModel) -> dict[str, object]:
+    table: dict[str, object] = {
+        "provider": model.provider,
+        "id": model.id,
+        "gateway": model.gateway,
+    }
+    if model.region is not None:
+        table["region"] = model.region
+    if model.base_path:
+        table["base_path"] = model.base_path
+    if not model.prompt_caching:
+        table["prompt_caching"] = False
+    return table
+
+
+def _secret_ref_name(value: str | SecretRef) -> str:
+    if isinstance(value, str):
+        return value
+    if value.version_id is not None or value.version_stage is not None:
+        raise InvalidArgumentException(
+            "una pasarela con un SecretRef de versión fija no se puede escribir en el fichero"
+        )
+    return value.name
+
+
+def _gateway_to_dict(gateway: SecretGateway) -> dict[str, object]:
+    table: dict[str, object] = {
+        "preset": CUSTOM_GATEWAY_PRESET,
+        "upstream": gateway.upstream,
+        "headers": {name: _secret_ref_name(ref) for name, ref in sorted(gateway.headers.items())},
+        "allow": [[method, route] for method, route in gateway.allow],
+    }
+    if gateway.rate_per_minute:
+        table[_RATE_KEY] = gateway.rate_per_minute
+    return table
+
+
+def _permissions_to_dict(permissions: AgentPermissions) -> dict[str, object]:
+    table: dict[str, object] = {}
+    if permissions.default != AgentPermissions().default:
+        table["default"] = permissions.default
+    if permissions.tools:
+        table["tools"] = {
+            tool: rule if isinstance(rule, str) else dict(rule)
+            for tool, rule in sorted(permissions.tools.items())
+        }
+    return table
+
+
+def _mcp_to_dict(server: McpServer) -> dict[str, object]:
+    if isinstance(server, McpRemote):
+        remote: dict[str, object] = {"type": "remote", "gateway": server.gateway}
+        if server.path != "/":
+            remote["path"] = server.path
+        return remote
+    local: dict[str, object] = {"type": "local", "command": list(server.command)}
+    if server.envs:
+        local["envs"] = dict(server.envs)
+    if server.timeout_seconds is not None:
+        local["timeout_seconds"] = server.timeout_seconds
+    return local
+
+
+def _subagent_to_dict(agent: SubAgent) -> dict[str, object]:
+    table: dict[str, object] = {
+        "description": agent.description,
+        "instructions": agent.instructions,
+    }
+    if agent.model is not None:
+        table["model"] = agent.model
+    if agent.permissions is not None:
+        table["permissions"] = _permissions_to_dict(agent.permissions)
+    return table
+
+
+def _agent_to_dict(spec: AgentSpec) -> dict[str, object]:
+    table: dict[str, object] = {}
+    if spec.instructions is not None:
+        table["instructions"] = spec.instructions
+    if spec.small_model is not None:
+        table["small_model"] = spec.small_model
+    if spec.runtime_version is not None:
+        table["runtime_version"] = spec.runtime_version
+    permissions = _permissions_to_dict(spec.permissions)
+    if permissions:
+        table["permissions"] = permissions
+    if spec.mcp:
+        table["mcp"] = {name: _mcp_to_dict(server) for name, server in sorted(spec.mcp.items())}
+    if spec.agents:
+        table["agents"] = {
+            name: _subagent_to_dict(agent) for name, agent in sorted(spec.agents.items())
+        }
+    if spec.raw_config:
+        table["raw_config"] = dict(spec.raw_config)
+    return table
+
+
+def _limits_to_dict(limits: AgentLimits) -> dict[str, object]:
+    defaults = AgentLimits()
+    table: dict[str, object] = {}
+    for key in ("max_steps", "timeout_seconds", "max_output_bytes"):
+        if getattr(limits, key) != getattr(defaults, key):
+            table[key] = getattr(limits, key)
+    if limits.max_total_tokens != defaults.max_total_tokens:
+        table["max_total_tokens"] = limits.max_total_tokens or 0
+    return table
+
+
+def _serve_to_dict(serve: ServeOptions) -> dict[str, object]:
+    defaults = ServeOptions()
+    table: dict[str, object] = {}
+    for key in ("port", "timeout_seconds", "max_concurrency"):
+        if getattr(serve, key) != getattr(defaults, key):
+            table[key] = getattr(serve, key)
+    if serve.idle is not DEFAULT_IDLE_POLICY:
+        table["idle_seconds"] = _idle_seconds(serve.idle)
+    if serve.metadata:
+        table["metadata"] = dict(sorted(serve.metadata.items()))
+    return table
+
+
+def _idle_seconds(idle: IdlePolicy | None) -> int:
+    if idle is None:
+        return 0
+    if idle.suspended_duration_seconds is not None or not idle.auto_resume:
+        raise InvalidArgumentException(
+            "ServeOptions.idle con suspended_duration_seconds o sin auto_resume no se puede "
+            "escribir en el fichero"
+        )
+    return idle.max_idle_seconds
+
+
+def _network_to_dict(project: AgentProject) -> dict[str, object]:
+    table: dict[str, object] = {}
+    if project.allow_internet_access:
+        table["allow_internet_access"] = True
+    if project.egress is not None:
+        table["egress"] = list(project.egress)
+    return table
+
+
+def _image_to_dict(project: AgentProject) -> dict[str, object]:
+    table: dict[str, object] = {}
+    if project.base != DEFAULT_AGENT_TEMPLATE_BASE:
+        table["base"] = project.base
+    if project.template is not None:
+        table["template"] = project.template
+    if project.memory_mib != AGENT_MIN_MEMORY_MIB:
+        table["memory_mib"] = project.memory_mib
+    return table
+
+
+__all__ = [
+    "AGENT_PROJECT_ERROR_CODES",
+    "AgentProject",
+    "AgentProjectException",
+    "AsyncAgentProject",
+    "ServeOptions",
+]

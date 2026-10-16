@@ -1,0 +1,40 @@
+{
+  "schema": "rayito.agent-project/1",
+  "name": "research-agent",
+  "runtime": {
+    "kind": "deepagents"
+  },
+  "model": {
+    "provider": "openai",
+    "id": "gpt-5-mini",
+    "gateway": "openai"
+  },
+  "gateways": {
+    "openai": {
+      "preset": "custom",
+      "upstream": "https://api.openai.com",
+      "headers": {
+        "authorization": "rayito/openai-key"
+      },
+      "allow": [
+        [
+          "POST",
+          "/v1/responses"
+        ],
+        [
+          "POST",
+          "/v1/chat/completions"
+        ]
+      ]
+    }
+  },
+  "agent": {
+    "instructions": "Investiga y resume."
+  },
+  "limits": {
+    "max_total_tokens": 0
+  },
+  "serve": {
+    "idle_seconds": 0
+  }
+}

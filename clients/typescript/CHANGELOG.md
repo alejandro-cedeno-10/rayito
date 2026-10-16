@@ -6,6 +6,67 @@ versionado [SemVer](https://semver.org/lang/es/).
 
 ## [Unreleased]
 
+### Añadido
+
+- **Strands, Strands harness, Hermes, LangGraph y agentes propios como
+  runtimes de primera clase (`agent-runtimes-byo`)**: `StrandsRuntime` (SDK y
+  harness), `HermesRuntime` y `CustomRuntime` con `HttpApp` suman runtimes a
+  `AgentTemplate`, `Agent` y `AgentPool`, y el tipo de proyecto `langgraph`
+  cubre un grafo propio. Cada runtime instala sus dependencias con hashes
+  fijados, el modelo sale por la pasarela de secretos (el agente nunca lee la
+  credencial) y todo lo que sale a Internet queda apagado por defecto. Los
+  puertos nuevos `InstallableRuntime` y `ServableRuntime` (con `HostConfig`,
+  `GatewayWiring`/`DirectWiring` e `InstallTarget`) describen cómo se instala y cómo se sirve un
+  runtime sin tocar el puerto `AgentRuntime`, así que los runtimes de 0.13
+  siguen funcionando. `AgentTemplate` acepta nombres del registro u objetos
+  runtime.
+
+- **`AgentProject` y `AgentDeployment`: del fichero `rayito-agent.toml` a un
+  agente desplegado o exportado**: `AgentProject` construye la imagen,
+  ejecuta una vez, despliega un servicio (`rayito.agent-service/1`, el contrato
+  HTTP de AgentCore: `GET /ping` y `POST /invocations`, con SSE) o exporta un
+  contexto Docker/AgentCore (arm64, puerto 8080) sin llamar a AWS.
+  `AgentDeployment` invoca, consulta `DeploymentStatus` y detiene el
+  servicio. Es una función con coste (build, run y deploy crean imágenes y
+  MicroVMs), apagada por defecto: nada corre sin llamar al método.
+
+- **Peer opcional `smol-toml`**: se carga de forma perezosa sólo al leer un
+  `rayito-agent.toml`; sin él, el resto del SDK no cambia.
+
+- **`AgentProject` y `rayito agent`: describe un agente en un fichero y
+  construye, ejecuta, despliega o exporta (`agent-runtimes-byo`)**: la CLI suma
+  `rayito agent init`, `build`, `run`, `deploy`, `export`, `invoke`, `status` y
+  `stop`, conchas sobre `AgentProject` y `AgentDeployment` con `--json`, los
+  valores por defecto del SDK y salida 2 para un fichero de proyecto inválido.
+  `init` escribe `rayito-agent.toml` y un andamiaje por runtime (Strands,
+  Strands harness, Hermes, LangGraph, deepagents, OpenCode o propio) sin
+  sobrescribir nada sin `--force`; `export` y `init` no llaman a AWS, y
+  `deploy` nunca imprime las cabeceras de acceso. El andamiaje de `init` se
+  comparte con la CLI de Python en `testdata/cli/agent-scaffold/`. Guía
+  nueva, [Despliega tu agente](https://github.com/alejandro-cedeno-10/rayito/blob/main/docs/site/docs/guias/despliega-tu-agente.md),
+  y un adaptador de Strands `Sandbox` sobre Rayito en
+  `docs/examples/strands_rayito_sandbox.py`.
+
+- **`AgentProject.deploy()` acepta el access token del sandbox y `rayito agent
+  deploy|invoke|status|stop` se pueden encadenar entre procesos**: `deploy({
+  accessToken })` lo pasa a `Sandbox.create()`, y la CLI guarda el token en
+  `--token-file` (o usa `RAYITO_ACCESS_TOKEN`) antes de crear el sandbox, igual
+  que `sandbox create --detach`. Sin ninguno de los dos, `deploy` sale con 2 sin
+  crear nada: antes dejaba un MicroVM que ni `invoke`, ni `status` ni `stop`
+  podían volver a abrir. `invoke` y `status` leen el token con `--token-file` y
+  sin él salen con 2; `stop` ya no lo necesita (`terminate-microvm` por id).
+
+### Cambiado
+
+- `AgentTemplate.runtimes` y `AgentTemplateOptions.runtimes` pasan de
+  `readonly AgentTemplateRuntime[]` a `readonly (string | AgentRuntime)[]`:
+  quien sólo lee la propiedad como `string` debe tratar también objetos.
+
+### Obsoleto
+
+- `AgentTemplateRuntime`: usa `string | AgentRuntime`. Sigue exportado y se
+  retira en una versión posterior.
+
 ## [0.13.0] - 2026-10-16
 
 ### Añadido

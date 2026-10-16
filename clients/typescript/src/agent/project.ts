@@ -1,0 +1,1334 @@
+/**
+ * `AgentProject`: la descripción declarativa y validada de un agente
+ * (ADR-028, `ai-agent-project`). Espejo de `rayito._agent._project_domain`:
+ * un valor puro; construirlo, cargarlo (`load`, `fromObject`) y escribirlo
+ * (`toObject`) no llaman a AWS, no crean clientes y no leen más que, vía el
+ * lector que se inyecta, el fichero de instrucciones. Las operaciones que
+ * cuestan (`build`, `run`, `deploy`) viven en los servicios que lo usan.
+ *
+ * El proyecto contiene el `AgentSpec` existente en vez de copiar sus campos,
+ * y las pasarelas del modelo por nombre. Ningún campo lleva un secreto: una
+ * pasarela nombra el secreto de Secrets Manager, nunca su valor.
+ *
+ * El documento es el de `rayito-agent.toml` / `rayito-agent.json` (esquema
+ * `rayito.agent-project/1`, `testdata/agent-project/schema.json`): una tabla
+ * anidada. `fromObject` rechaza toda clave desconocida con su ruta punteada y
+ * un `code` de la lista cerrada `AGENT_PROJECT_ERROR_CODES`. En el fichero
+ * los tiempos van en segundos; aquí se convierten a milisegundos.
+ */
+
+import { isAbsolute, relative, resolve, sep } from "node:path";
+import { InvalidArgumentError } from "../errors.js";
+import {
+  AGENT_MIN_MEMORY_MIB,
+  AGENT_PROJECT_SCHEMA,
+  AGENT_SERVICE_MAX_CONCURRENCY,
+  AGENT_SERVICE_PORT,
+  DEFAULT_AGENT_DEPLOY_TIMEOUT_SECONDS,
+  DEFAULT_PORT,
+  HOOKS_PORT,
+  MAX_DURATION_SECONDS,
+  PORT_MAX,
+  PORT_MIN,
+} from "../limits.js";
+import { type IdlePolicy, validateIdlePolicy } from "../models.js";
+import { SecretGateway } from "../secret-gateway/domain.js";
+import type { SecretLike } from "../secrets/names.js";
+import type { BuildInfo } from "../templates/build.js";
+import type { AgentDeployment } from "./deployment.js";
+import {
+  AgentLimits,
+  AgentModel,
+  AgentPermissions,
+  AgentSpec,
+  McpLocal,
+  McpRemote,
+  type McpServer,
+  type ModelProvider,
+  SubAgent,
+  validateName,
+} from "./domain.js";
+import type { AgentResult } from "./events.js";
+import type { AgentExport, AgentExportOptions } from "./export.js";
+import {
+  anthropicGateway,
+  azureOpenaiGateway,
+  bedrockGateway,
+  deepseekGateway,
+  geminiGateway,
+  groqGateway,
+  litellmGateway,
+  mistralGateway,
+  openaiCompatibleGateway,
+  openaiGateway,
+  openrouterGateway,
+  xaiGateway,
+} from "./gateways.js";
+import type { AgentProjectDeployOptions, AgentProjectRunOptions } from "./project-service.js";
+import type { AgentRuntime } from "./runtime.js";
+import {
+  RUNTIME_KINDS,
+  RUNTIME_OPTION_KEYS,
+  resolveRuntime,
+  runtimeFromOptions,
+  runtimeToOptions,
+} from "./runtimes.js";
+import { type AgentTemplateBuildOptions, DEFAULT_AGENT_TEMPLATE_BASE } from "./template.js";
+
+/** Los códigos de error de lectura de un proyecto: lista cerrada que los dos
+ * SDK comparten (`testdata/agent-project/invalid/cases.json`). */
+export const AGENT_PROJECT_ERROR_CODES = [
+  "unknown_key",
+  "missing_key",
+  "invalid_type",
+  "invalid_value",
+  "path_escape",
+  "conflict",
+  "secret_value",
+  "unsupported_schema",
+  "file_not_found",
+] as const;
+export type AgentProjectErrorCode = (typeof AGENT_PROJECT_ERROR_CODES)[number];
+/** Claves que, de aparecer sin estar declaradas, intentan meter un secreto en
+ * el fichero: el error es `secret_value` y no `unknown_key`. */
+export const SECRET_LIKE_KEYS = [
+  "access_key",
+  "api_key",
+  "apikey",
+  "key",
+  "password",
+  "secret_access_key",
+  "secret_value",
+  "token",
+] as const;
+/** Prefijos de credenciales conocidas: un nombre de secreto que empieza así
+ * es casi seguro el valor pegado en lugar del nombre. */
+export const SECRET_VALUE_PREFIXES = [
+  "AIza",
+  "AKIA",
+  "ASIA",
+  "ABSK",
+  "Bearer",
+  "ghp_",
+  "gho_",
+  "sk-",
+  "xoxb-",
+] as const;
+/** Pasarela de `[gateways.<nombre>] preset = "custom"`. */
+export const CUSTOM_GATEWAY_PRESET = "custom";
+/** Milisegundos por segundo: el fichero habla en segundos. */
+const MS_PER_SECOND = 1000;
+const RATE_KEY = "rate_per_minute";
+const DEFAULT_SERVE_TIMEOUT_MS = DEFAULT_AGENT_DEPLOY_TIMEOUT_SECONDS * MS_PER_SECOND;
+
+/**
+ * Un documento de proyecto inválido. `path` es la ruta punteada de la clave
+ * culpable (`runtime.entrpoint`) y `code` uno de `AGENT_PROJECT_ERROR_CODES`.
+ * Es un `InvalidArgumentError`: quien ya capturaba esa clase no necesita
+ * cambiar.
+ */
+export class AgentProjectError extends InvalidArgumentError {
+  readonly path: string;
+  readonly code: AgentProjectErrorCode;
+
+  constructor(
+    message: string,
+    options: { readonly path: string; readonly code: AgentProjectErrorCode },
+  ) {
+    super(message);
+    this.path = options.path;
+    this.code = options.code;
+  }
+}
+
+function fail(path: string, code: AgentProjectErrorCode, detail: string): AgentProjectError {
+  return new AgentProjectError(`${path}: ${detail}`, { path, code });
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value);
+}
+
+export interface ServeOptionsInput {
+  readonly port?: number | undefined;
+  readonly timeoutMs?: number | undefined;
+  /** `undefined` es la política por defecto; `null` la quita. */
+  readonly idle?: IdlePolicy | null | undefined;
+  readonly maxConcurrency?: number | undefined;
+  readonly metadata?: Readonly<Record<string, string>> | undefined;
+}
+
+/**
+ * Cómo se sirve el agente (`AgentProject.deploy()`): el `port` del servicio
+ * (no 8080 ni 9000, que son de `rayd`), la vida del sandbox (`timeoutMs`,
+ * como mucho el máximo de la plataforma), la política de `idle` (suspensión y
+ * reanudación automáticas; `null` la quita), la concurrencia y las etiquetas
+ * `metadata` del sandbox.
+ */
+export class ServeOptions {
+  readonly port: number;
+  readonly timeoutMs: number;
+  readonly idle: IdlePolicy | null | undefined;
+  readonly maxConcurrency: number;
+  readonly metadata: Readonly<Record<string, string>>;
+
+  constructor(options: ServeOptionsInput = {}) {
+    const port = options.port ?? AGENT_SERVICE_PORT;
+    if (!isInteger(port)) {
+      throw new InvalidArgumentError("ServeOptions.port debe ser un entero");
+    }
+    if (port < PORT_MIN || port > PORT_MAX || port === DEFAULT_PORT || port === HOOKS_PORT) {
+      throw new InvalidArgumentError(
+        `ServeOptions.port debe estar en ${PORT_MIN}..${PORT_MAX} y no ser ${DEFAULT_PORT} ni ${HOOKS_PORT}, que usa rayd`,
+      );
+    }
+    const timeoutMs = options.timeoutMs ?? DEFAULT_SERVE_TIMEOUT_MS;
+    if (
+      typeof timeoutMs !== "number" ||
+      !(timeoutMs > 0) ||
+      timeoutMs > MAX_DURATION_SECONDS * MS_PER_SECOND
+    ) {
+      throw new InvalidArgumentError(
+        `ServeOptions.timeoutMs debe estar en (0, ${MAX_DURATION_SECONDS * MS_PER_SECOND}]`,
+      );
+    }
+    const maxConcurrency = options.maxConcurrency ?? AGENT_SERVICE_MAX_CONCURRENCY;
+    if (!isInteger(maxConcurrency) || maxConcurrency < 1) {
+      throw new InvalidArgumentError("ServeOptions.maxConcurrency debe ser un entero >= 1");
+    }
+    const metadata = options.metadata ?? {};
+    if (
+      !isRecord(metadata) ||
+      !Object.values(metadata).every((value) => typeof value === "string")
+    ) {
+      throw new InvalidArgumentError("ServeOptions.metadata debe mapear cadenas a cadenas");
+    }
+    this.port = port;
+    this.timeoutMs = timeoutMs;
+    this.idle = options.idle === null ? null : options.idle;
+    this.maxConcurrency = maxConcurrency;
+    this.metadata = Object.freeze({ ...metadata });
+  }
+}
+
+export interface AgentProjectOptions {
+  readonly name: string;
+  readonly runtime: string | AgentRuntime;
+  readonly spec: AgentSpec;
+  readonly gateways?: Readonly<Record<string, SecretGateway>> | undefined;
+  readonly source?: string | undefined;
+  readonly exclude?: readonly string[] | undefined;
+  readonly requirements?: string | undefined;
+  readonly limits?: AgentLimits | undefined;
+  readonly serve?: ServeOptions | ServeOptionsInput | undefined;
+  readonly allowInternetAccess?: boolean | undefined;
+  readonly egress?: readonly string[] | undefined;
+  readonly memoryMib?: number | undefined;
+  readonly base?: string | undefined;
+  readonly template?: string | undefined;
+  readonly baseDir?: string | undefined;
+}
+
+/** El lector de ficheros de texto que `fromObject` usa para
+ * `agent.instructions_file`. */
+export type TextReader = (path: string) => string;
+
+/**
+ * Un agente descrito una vez: runtime, `AgentSpec`, pasarelas del modelo,
+ * código (`source`), red e imagen. Construirlo valida todo antes de llamar a
+ * nadie: `name`, que cada pasarela que el `spec` necesita esté en
+ * `gateways`, `serve` y la memoria.
+ *
+ * `runtime` es un nombre del registro (`"opencode"`, `"deepagents"`,
+ * `"langgraph"`...) o un objeto de runtime. `source` es el directorio con el
+ * código del agente (se copia a `AGENT_APP_DIR` con `exclude`);
+ * `requirements`, un fichero de requisitos suyo. `baseDir` es el directorio
+ * contra el que `toObject()` escribe las rutas relativas. `template` es el
+ * nombre de una imagen ya construida (por defecto, `name`).
+ *
+ * Coste y activación
+ * -------------------
+ * Activa: nada; `new AgentProject(...)`, `AgentProject.load()`,
+ *   `fromObject()` y `toObject()` son puros. Lo que cuesta son `build()`,
+ *   `run()` y `deploy()`.
+ * Recursos y llamadas AWS: ninguno aquí; ni se crea un cliente de AWS.
+ * Coste aproximado: ninguno; el de las operaciones está en la documentación
+ *   de `AgentTemplate` (`build()`), de `Sandbox.create()` (`run()`) y de
+ *   `deploy()`.
+ * IAM: ninguna para este valor.
+ * Cómo apagarla: no llames a `build()`, `run()` ni `deploy()`.
+ * Ejemplo:
+ *   const project = await AgentProject.load("./support-bot");
+ *   project.toObject();
+ */
+export class AgentProject {
+  readonly name: string;
+  readonly runtime: string | AgentRuntime;
+  readonly spec: AgentSpec;
+  readonly gateways: Readonly<Record<string, SecretGateway>>;
+  readonly source: string | undefined;
+  readonly exclude: readonly string[];
+  readonly requirements: string | undefined;
+  readonly limits: AgentLimits;
+  readonly serve: ServeOptions;
+  readonly allowInternetAccess: boolean;
+  readonly egress: readonly string[] | undefined;
+  readonly memoryMib: number;
+  readonly base: string;
+  readonly template: string | undefined;
+  readonly baseDir: string;
+
+  constructor(options: AgentProjectOptions) {
+    validateName(options.name, "AgentProject.name");
+    resolveRuntime(options.runtime);
+    if (!(options.spec instanceof AgentSpec)) {
+      throw new InvalidArgumentError("AgentProject.spec debe ser un AgentSpec");
+    }
+    const gateways = validatedGateways(options.gateways ?? {});
+    options.spec.requireGateways(Object.keys(gateways));
+    optionalText(options.source, "AgentProject.source");
+    optionalText(options.requirements, "AgentProject.requirements");
+    optionalText(options.template, "AgentProject.template");
+    const limits = options.limits ?? new AgentLimits();
+    if (!(limits instanceof AgentLimits)) {
+      throw new InvalidArgumentError("AgentProject.limits debe ser un AgentLimits");
+    }
+    const serve = options.serve ?? new ServeOptions();
+    const allowInternetAccess = options.allowInternetAccess ?? false;
+    if (typeof allowInternetAccess !== "boolean") {
+      throw new InvalidArgumentError("AgentProject.allowInternetAccess debe ser un bool");
+    }
+    const memoryMib = options.memoryMib ?? AGENT_MIN_MEMORY_MIB;
+    if (!isInteger(memoryMib) || memoryMib < AGENT_MIN_MEMORY_MIB) {
+      throw new InvalidArgumentError(
+        `AgentProject.memoryMib debe ser un entero >= ${AGENT_MIN_MEMORY_MIB}`,
+      );
+    }
+    const base = options.base ?? DEFAULT_AGENT_TEMPLATE_BASE;
+    const baseDir = options.baseDir ?? ".";
+    if (!base || !baseDir) {
+      throw new InvalidArgumentError("AgentProject.base y baseDir no pueden ser vacíos");
+    }
+    this.name = options.name;
+    this.runtime = options.runtime;
+    this.spec = options.spec;
+    this.gateways = Object.freeze({ ...gateways });
+    this.source = options.source;
+    this.exclude = textList(options.exclude ?? [], "AgentProject.exclude");
+    this.requirements = options.requirements;
+    this.limits = limits;
+    this.serve = serve instanceof ServeOptions ? serve : new ServeOptions(serve);
+    this.allowInternetAccess = allowInternetAccess;
+    this.egress =
+      options.egress === undefined ? undefined : textList(options.egress, "AgentProject.egress");
+    this.memoryMib = memoryMib;
+    this.base = base;
+    this.template = options.template;
+    this.baseDir = baseDir;
+  }
+
+  /** Lee `rayito-agent.toml` o `rayito-agent.json` de `path` (un fichero, o
+   * un directorio donde se busca el primero de `AGENT_PROJECT_FILE_NAMES`).
+   * Un `.toml` carga el peer opcional `smol-toml`; el JSON no necesita nada. */
+  static async load(path = "."): Promise<AgentProject> {
+    const { readProjectDocument } = await import("./project-file.js");
+    const document = await readProjectDocument(path);
+    return AgentProject.fromObject(document.data, {
+      baseDir: document.baseDir,
+      readText: document.readText,
+    });
+  }
+
+  /** El proyecto de un documento ya leído. Puro: las rutas relativas se
+   * resuelven contra `baseDir` sin tocar el disco, y `instructions_file` pasa
+   * por `readText` (el lector que inyecta `load`; sin él, esa clave es un
+   * error). */
+  static fromObject(
+    data: Readonly<Record<string, unknown>>,
+    options: { readonly baseDir: string; readonly readText?: TextReader | undefined },
+  ): AgentProject {
+    return new AgentProject({
+      ...projectOptions(data, options.baseDir, options.readText),
+      baseDir: options.baseDir,
+    });
+  }
+
+  /** La forma canónica del documento, la que `fromObject` vuelve a leer y que
+   * comparten los dos SDK. Omite lo que vale su valor por defecto; el texto
+   * de las instrucciones va en línea; los tiempos van en segundos. */
+  toObject(): Record<string, unknown> {
+    const document: Record<string, unknown> = {
+      schema: AGENT_PROJECT_SCHEMA,
+      name: this.name,
+      runtime: runtimeToOptions(this.runtime),
+    };
+    const tables: Array<[string, Record<string, unknown>]> = [
+      ["source", sourceToObject(this)],
+      ["model", modelToObject(this.spec.model)],
+      ["gateways", gatewaysToObject(this.gateways)],
+      ["agent", agentToObject(this.spec)],
+      ["limits", limitsToObject(this.limits)],
+      ["serve", serveToObject(this.serve)],
+      ["network", networkToObject(this)],
+      ["image", imageToObject(this)],
+    ];
+    for (const [key, table] of tables) {
+      if (key === "model" || Object.keys(table).length > 0) {
+        document[key] = table;
+      }
+    }
+    return document;
+  }
+
+  /** Construye la imagen del proyecto con `AgentTemplate` (su runtime, su
+   * código y su memoria). Cuesta un build de imagen: ver el bloque "Coste y
+   * activación" de `AgentTemplate`. */
+  async build(options: AgentTemplateBuildOptions): Promise<BuildInfo> {
+    const { ProjectService } = await import("./project-service.js");
+    return new ProjectService(this).build(options);
+  }
+
+  /** Una ejecución del agente en un sandbox efímero: lo crea desde la imagen
+   * del proyecto con sus pasarelas y su red, llama a `sbx.agent.run()` y lo
+   * termina siempre, también ante un error. Para que el sandbox sobreviva,
+   * usa `deploy()`. */
+  async run(prompt: string, options: AgentProjectRunOptions = {}): Promise<AgentResult> {
+    const { ProjectService } = await import("./project-service.js");
+    return new ProjectService(this).run(prompt, options);
+  }
+
+  /**
+   * Sirve el agente desde un MicroVM y devuelve su `AgentDeployment`: crea un
+   * sandbox desde la imagen del proyecto (con `serve.timeoutMs`, `serve.idle`
+   * y las etiquetas de despliegue), escribe la configuración del host, lo
+   * arranca en modo servicio y espera su marcador de listo. Si cualquier paso
+   * falla, termina el sandbox antes de lanzar.
+   *
+   * `accessToken` es el del sandbox (como el de `Sandbox.create()`; sin él,
+   * `RAYITO_ACCESS_TOKEN` o uno nuevo). Quien quiera reconectarse desde otro
+   * proceso (`AgentDeployment.connect`, `rayito agent invoke`) lo guarda: sin
+   * él sólo `Sandbox.kill(sandboxId)` llega al sandbox.
+   *
+   * Coste y activación
+   * -------------------
+   * Activa: `await project.deploy()` (o `rayito agent deploy`); nada más lo
+   *     crea.
+   * Recursos y llamadas AWS: un sandbox (`run-microvm`) que vive hasta
+   *     `serve.timeoutMs` (como mucho 8 horas) o hasta
+   *     `AgentDeployment.stop()`, y el token del proxy
+   *     (`CreateMicrovmAuthToken`, gratuito); el modelo lo llama la pasarela
+   *     del sandbox.
+   * Coste aproximado: el del MicroVM por segundo mientras vive (2 GB: ≈ $0,14
+   *     por hora en us-east-1, consultado 2026-10-06 en
+   *     https://aws.amazon.com/lambda/pricing/; `serve.idle` lo suspende y la
+   *     suspensión no factura cómputo) más el del modelo del agente.
+   * IAM: los de `Sandbox.create()` (`RayitoSandboxRunner`) y, por cada
+   *     pasarela, `secretsmanager:GetSecretValue`.
+   * Cómo apagarla: `AgentDeployment.stop()` o `rayito agent stop`; no llames
+   *     a `deploy()` y nada se crea.
+   * Ejemplo:
+   *   const deployment = await (await AgentProject.load("./support-bot")).deploy();
+   *   (await deployment.invoke("Resume el README.")).text;
+   *   await deployment.stop();
+   */
+  async deploy(options: AgentProjectDeployOptions = {}): Promise<AgentDeployment> {
+    const { ProjectService } = await import("./project-service.js");
+    return new ProjectService(this).deploy(options);
+  }
+
+  /** Escribe en `outDir` un contexto de build de contenedor `linux/arm64`
+   * (`target: "docker"` o `"agentcore"`) sin ninguna llamada de red ni de
+   * AWS. Falla si `outDir` no está vacío, salvo con `overwrite: true`. Fuera
+   * de Rayito no hay pasarela de secretos: la credencial del modelo la pone
+   * la plataforma. */
+  async export(options: AgentExportOptions): Promise<AgentExport> {
+    const { exportProject } = await import("./export.js");
+    return exportProject(this, options);
+  }
+}
+
+// ------------------------------------------------------------------ validation
+
+function optionalText(value: unknown, label: string): void {
+  if (value !== undefined && (typeof value !== "string" || value === "")) {
+    throw new InvalidArgumentError(`${label} debe ser una cadena no vacía`);
+  }
+}
+
+function textList(values: unknown, label: string): readonly string[] {
+  if (!Array.isArray(values)) {
+    throw new InvalidArgumentError(`${label} debe ser una lista de cadenas`);
+  }
+  if (!values.every((item) => typeof item === "string" && item !== "")) {
+    throw new InvalidArgumentError(`${label} sólo admite cadenas no vacías`);
+  }
+  return Object.freeze([...values]);
+}
+
+function validatedGateways(gateways: unknown): Readonly<Record<string, SecretGateway>> {
+  if (!isRecord(gateways)) {
+    throw new InvalidArgumentError("AgentProject.gateways debe ser un objeto nombre -> pasarela");
+  }
+  for (const [name, gateway] of Object.entries(gateways)) {
+    validateName(name, "AgentProject.gateways");
+    if (!(gateway instanceof SecretGateway)) {
+      throw new InvalidArgumentError(
+        "cada valor de AgentProject.gateways debe ser un SecretGateway",
+      );
+    }
+  }
+  return gateways as Readonly<Record<string, SecretGateway>>;
+}
+
+// --------------------------------------------------------------------- reading
+
+/** Lectura estricta de una tabla: cada clave que se pide queda marcada y
+ * `finish()` falla con la primera que sobra. */
+class Table {
+  readonly path: string;
+  readonly #data: Record<string, unknown>;
+  readonly #used = new Set<string>();
+
+  constructor(data: unknown, path: string) {
+    if (!isRecord(data)) {
+      throw fail(path === "" ? "<raíz>" : path, "invalid_type", "debe ser una tabla");
+    }
+    this.#data = data;
+    this.path = path;
+  }
+
+  at(key: string): string {
+    return this.path === "" ? key : `${this.path}.${key}`;
+  }
+
+  raw(key: string): unknown {
+    this.#used.add(key);
+    return this.#data[key];
+  }
+
+  text(key: string, required = false): string | undefined {
+    const value = this.#value(key, required);
+    if (value === undefined) {
+      return undefined;
+    }
+    if (typeof value !== "string" || value === "") {
+      throw fail(this.at(key), "invalid_type", "debe ser una cadena no vacía");
+    }
+    return value;
+  }
+
+  boolean(key: string): boolean | undefined {
+    const value = this.#value(key, false);
+    if (value !== undefined && typeof value !== "boolean") {
+      throw fail(this.at(key), "invalid_type", "debe ser true o false");
+    }
+    return value;
+  }
+
+  integer(key: string): number | undefined {
+    const value = this.#value(key, false);
+    if (value !== undefined && !isInteger(value)) {
+      throw fail(this.at(key), "invalid_type", "debe ser un entero");
+    }
+    return value;
+  }
+
+  number(key: string): number | undefined {
+    const value = this.#value(key, false);
+    if (value !== undefined && typeof value !== "number") {
+      throw fail(this.at(key), "invalid_type", "debe ser un número");
+    }
+    return value;
+  }
+
+  texts(key: string): readonly string[] | undefined {
+    const value = this.#value(key, false);
+    if (value === undefined) {
+      return undefined;
+    }
+    if (!Array.isArray(value) || !value.every((item) => typeof item === "string" && item !== "")) {
+      throw fail(this.at(key), "invalid_type", "debe ser una lista de cadenas");
+    }
+    return value;
+  }
+
+  table(key: string): Table | undefined {
+    const value = this.#value(key, false);
+    return value === undefined ? undefined : new Table(value, this.at(key));
+  }
+
+  entries(key: string): Array<[string, Table]> {
+    const table = this.table(key);
+    if (table === undefined) {
+      return [];
+    }
+    return table
+      .keys()
+      .sort()
+      .map((name) => [name, new Table(table.raw(name), table.at(name))]);
+  }
+
+  keys(): string[] {
+    return Object.keys(this.#data);
+  }
+
+  #value(key: string, required: boolean): unknown {
+    this.#used.add(key);
+    const value = this.#data[key];
+    if (value === undefined || value === null) {
+      if (required) {
+        throw fail(this.at(key), "missing_key", "es obligatoria");
+      }
+      return undefined;
+    }
+    return value;
+  }
+
+  finish(): void {
+    const unknown = this.keys()
+      .filter((key) => !this.#used.has(key))
+      .sort();
+    const key = unknown[0];
+    if (key === undefined) {
+      return;
+    }
+    if ((SECRET_LIKE_KEYS as readonly string[]).includes(key.toLowerCase())) {
+      throw fail(
+        this.at(key),
+        "secret_value",
+        "un fichero de proyecto nunca lleva un secreto; usa el nombre de un secreto",
+      );
+    }
+    throw fail(this.at(key), "unknown_key", "clave desconocida");
+  }
+}
+
+function guard<T>(path: string, build: () => T): T {
+  try {
+    return build();
+  } catch (error) {
+    if (error instanceof AgentProjectError || !(error instanceof InvalidArgumentError)) {
+      throw error;
+    }
+    throw fail(path, "invalid_value", error.message);
+  }
+}
+
+/** `relative` resuelto contra `baseDir` sin tocar el disco; una ruta absoluta
+ * o que sale de `baseDir` es `path_escape`. */
+function inside(baseDir: string, target: string, path: string): string {
+  if (isAbsolute(target)) {
+    throw fail(path, "path_escape", "debe ser relativa al directorio del fichero");
+  }
+  const root = resolve(baseDir);
+  const resolved = resolve(root, target);
+  if (resolved !== root && !resolved.startsWith(root + sep)) {
+    throw fail(path, "path_escape", "sale del directorio del fichero");
+  }
+  return resolved;
+}
+
+function projectOptions(
+  data: Readonly<Record<string, unknown>>,
+  baseDir: string,
+  readText: TextReader | undefined,
+): AgentProjectOptions {
+  const root = new Table(data, "");
+  const schema = root.text("schema", true);
+  if (schema !== AGENT_PROJECT_SCHEMA) {
+    throw fail("schema", "unsupported_schema", `debe ser '${AGENT_PROJECT_SCHEMA}'`);
+  }
+  const name = root.text("name", true) as string;
+  const runtime = readRuntime(root.table("runtime"));
+  const source = readSource(root.table("source"), baseDir);
+  const gateways = readGateways(root);
+  const modelTable = root.table("model");
+  if (modelTable === undefined) {
+    throw fail("model", "missing_key", "es obligatoria");
+  }
+  const model = readModel(modelTable);
+  const spec = readAgent(root.table("agent"), model, readText, baseDir);
+  const limits = readLimits(root.table("limits"));
+  const serve = readServe(root.table("serve"));
+  const network = readNetwork(root.table("network"));
+  const image = readImage(root.table("image"));
+  root.finish();
+  checkGateways(spec, gateways);
+  return { name, runtime, spec, gateways, ...source, ...limits, ...serve, ...network, ...image };
+}
+
+function checkGateways(spec: AgentSpec, gateways: Readonly<Record<string, SecretGateway>>): void {
+  if (!(spec.model.gateway in gateways)) {
+    throw fail("model.gateway", "invalid_value", "la pasarela no está declarada en [gateways]");
+  }
+  for (const [name, server] of Object.entries(spec.mcp).sort(([a], [b]) => (a < b ? -1 : 1))) {
+    if (server instanceof McpRemote && !(server.gateway in gateways)) {
+      throw fail(
+        `agent.mcp.${name}.gateway`,
+        "invalid_value",
+        "la pasarela no está declarada en [gateways]",
+      );
+    }
+  }
+}
+
+function readRuntime(table: Table | undefined): AgentRuntime {
+  if (table === undefined) {
+    throw fail("runtime", "missing_key", "es obligatoria");
+  }
+  const kind = table.text("kind", true) as string;
+  if (!(RUNTIME_KINDS as readonly string[]).includes(kind)) {
+    throw fail("runtime.kind", "invalid_value", `debe ser uno de ${RUNTIME_KINDS.join(", ")}`);
+  }
+  const options: Record<string, unknown> = {};
+  for (const key of RUNTIME_OPTION_KEYS[kind] ?? []) {
+    const value = table.raw(key);
+    if (value !== undefined && value !== null) {
+      options[key] = value;
+    }
+  }
+  table.finish();
+  return guard("runtime", () => runtimeFromOptions(kind, options));
+}
+
+type Fields = Record<string, unknown>;
+
+function readSource(table: Table | undefined, baseDir: string): Fields {
+  if (table === undefined) {
+    return {};
+  }
+  const path = table.text("path") ?? ".";
+  const requirements = table.text("requirements");
+  const exclude = table.texts("exclude") ?? [];
+  table.finish();
+  const fields: Fields = { source: inside(baseDir, path, "source.path"), exclude };
+  if (requirements !== undefined) {
+    fields.requirements = inside(baseDir, requirements, "source.requirements");
+  }
+  return fields;
+}
+
+function readModel(table: Table): AgentModel {
+  const provider = table.text("provider", true) as string;
+  const id = table.text("id", true) as string;
+  const gateway = table.text("gateway", true) as string;
+  const region = table.text("region");
+  const basePath = table.text("base_path");
+  const caching = table.boolean("prompt_caching");
+  table.finish();
+  return guard(
+    "model",
+    () =>
+      new AgentModel({
+        provider: provider as ModelProvider,
+        id,
+        gateway,
+        region,
+        basePath: basePath ?? "",
+        promptCaching: caching,
+      }),
+  );
+}
+
+function readAgent(
+  table: Table | undefined,
+  model: AgentModel,
+  readText: TextReader | undefined,
+  baseDir: string,
+): AgentSpec {
+  if (table === undefined) {
+    return new AgentSpec({ model });
+  }
+  const instructions = readInstructions(table, readText, baseDir);
+  const smallModel = table.text("small_model");
+  const runtimeVersion = table.text("runtime_version");
+  const permissionsTable = table.table("permissions");
+  const permissions = readPermissions(permissionsTable, table.at("permissions"));
+  const mcp = Object.fromEntries(
+    table.entries("mcp").map(([name, entry]) => [name, readMcp(entry)]),
+  );
+  const agents = Object.fromEntries(
+    table.entries("agents").map(([name, entry]) => [name, readSubagent(entry)]),
+  );
+  const rawConfig = table.raw("raw_config");
+  if (rawConfig !== undefined && rawConfig !== null && !isRecord(rawConfig)) {
+    throw fail(table.at("raw_config"), "invalid_type", "debe ser una tabla");
+  }
+  table.finish();
+  return guard(
+    table.path,
+    () =>
+      new AgentSpec({
+        model,
+        smallModel,
+        instructions,
+        mcp,
+        permissions,
+        agents,
+        rawConfig: (rawConfig ?? undefined) as Record<string, unknown> | undefined,
+        runtimeVersion,
+      }),
+  );
+}
+
+function readInstructions(
+  table: Table,
+  readText: TextReader | undefined,
+  baseDir: string,
+): string | undefined {
+  const inline = table.text("instructions");
+  const file = table.text("instructions_file");
+  if (inline !== undefined && file !== undefined) {
+    throw fail(table.at("instructions_file"), "conflict", "es excluyente con agent.instructions");
+  }
+  if (file === undefined) {
+    return inline;
+  }
+  const resolved = inside(baseDir, file, table.at("instructions_file"));
+  if (readText === undefined) {
+    throw fail(
+      table.at("instructions_file"),
+      "invalid_value",
+      "no hay lector de ficheros disponible",
+    );
+  }
+  return readText(resolved);
+}
+
+function readPermissions(table: Table | undefined, path: string): AgentPermissions {
+  if (table === undefined) {
+    return new AgentPermissions();
+  }
+  const permissionDefault = table.text("default");
+  const tools = table.raw("tools");
+  if (tools !== undefined && tools !== null && !isRecord(tools)) {
+    throw fail(table.at("tools"), "invalid_type", "debe ser una tabla");
+  }
+  table.finish();
+  return guard(
+    path,
+    () =>
+      new AgentPermissions({
+        default: permissionDefault as "allow" | "deny" | undefined,
+        tools: (tools ?? undefined) as Record<string, never> | undefined,
+      }),
+  );
+}
+
+function readMcp(entry: Table): McpServer {
+  const kind = entry.text("type", true);
+  if (kind === "local") {
+    const command = entry.texts("command");
+    const envs = entry.raw("envs");
+    const timeout = entry.number("timeout_seconds");
+    entry.finish();
+    if (envs !== undefined && envs !== null && !isRecord(envs)) {
+      throw fail(entry.at("envs"), "invalid_type", "debe ser una tabla");
+    }
+    return guard(
+      entry.path,
+      () =>
+        new McpLocal({
+          command: command ?? [],
+          envs: (envs ?? undefined) as Record<string, string> | undefined,
+          timeoutMs: timeout === undefined ? undefined : timeout * MS_PER_SECOND,
+        }),
+    );
+  }
+  if (kind === "remote") {
+    const gateway = entry.text("gateway", true) as string;
+    const path = entry.text("path");
+    entry.finish();
+    return guard(entry.path, () => new McpRemote({ gateway, path: path ?? "/" }));
+  }
+  throw fail(entry.at("type"), "invalid_value", "debe ser 'local' o 'remote'");
+}
+
+function readSubagent(entry: Table): SubAgent {
+  const description = entry.text("description", true) as string;
+  const instructions = entry.text("instructions", true) as string;
+  const model = entry.text("model");
+  const permissionsTable = entry.table("permissions");
+  const permissions =
+    permissionsTable === undefined
+      ? undefined
+      : readPermissions(permissionsTable, permissionsTable.path);
+  entry.finish();
+  return guard(entry.path, () => new SubAgent({ description, instructions, model, permissions }));
+}
+
+function readLimits(table: Table | undefined): Fields {
+  if (table === undefined) {
+    return {};
+  }
+  const maxSteps = table.integer("max_steps");
+  const timeout = table.number("timeout_seconds");
+  const maxOutputBytes = table.integer("max_output_bytes");
+  const maxTotalTokens = table.integer("max_total_tokens");
+  table.finish();
+  const options: Record<string, unknown> = {};
+  if (maxSteps !== undefined) {
+    options.maxSteps = maxSteps;
+  }
+  if (timeout !== undefined) {
+    options.timeoutMs = timeout * MS_PER_SECOND;
+  }
+  if (maxOutputBytes !== undefined) {
+    options.maxOutputBytes = maxOutputBytes;
+  }
+  if (maxTotalTokens !== undefined) {
+    options.maxTotalTokens = maxTotalTokens === 0 ? null : maxTotalTokens;
+  }
+  return { limits: guard("limits", () => new AgentLimits(options)) };
+}
+
+function readServe(table: Table | undefined): Fields {
+  if (table === undefined) {
+    return {};
+  }
+  const options: Record<string, unknown> = {};
+  const port = table.integer("port");
+  const maxConcurrency = table.integer("max_concurrency");
+  const timeout = table.number("timeout_seconds");
+  const idleSeconds = table.integer("idle_seconds");
+  const metadata = table.raw("metadata");
+  table.finish();
+  if (port !== undefined) {
+    options.port = port;
+  }
+  if (maxConcurrency !== undefined) {
+    options.maxConcurrency = maxConcurrency;
+  }
+  if (timeout !== undefined) {
+    options.timeoutMs = timeout * MS_PER_SECOND;
+  }
+  if (idleSeconds !== undefined) {
+    options.idle =
+      idleSeconds === 0
+        ? null
+        : guard("serve.idle_seconds", () => validateIdlePolicy({ maxIdleSeconds: idleSeconds }));
+  }
+  if (metadata !== undefined && metadata !== null) {
+    options.metadata = metadata;
+  }
+  return { serve: guard("serve", () => new ServeOptions(options as ServeOptionsInput)) };
+}
+
+function readNetwork(table: Table | undefined): Fields {
+  if (table === undefined) {
+    return {};
+  }
+  const internet = table.boolean("allow_internet_access");
+  const egress = table.texts("egress");
+  table.finish();
+  const fields: Fields = {};
+  if (internet !== undefined) {
+    fields.allowInternetAccess = internet;
+  }
+  if (egress !== undefined) {
+    fields.egress = egress;
+  }
+  return fields;
+}
+
+function readImage(table: Table | undefined): Fields {
+  if (table === undefined) {
+    return {};
+  }
+  const fields: Fields = {};
+  const base = table.text("base");
+  const template = table.text("template");
+  const memory = table.integer("memory_mib");
+  table.finish();
+  if (base !== undefined) {
+    fields.base = base;
+  }
+  if (template !== undefined) {
+    fields.template = template;
+  }
+  if (memory !== undefined) {
+    fields.memoryMib = memory;
+  }
+  return fields;
+}
+
+// -------------------------------------------------------------------- gateways
+
+function secretName(value: unknown, path: string): string {
+  if (typeof value !== "string" || value === "") {
+    throw fail(path, "invalid_type", "debe ser el nombre de un secreto");
+  }
+  if (/\s/.test(value) || SECRET_VALUE_PREFIXES.some((prefix) => value.startsWith(prefix))) {
+    throw fail(
+      path,
+      "secret_value",
+      "parece un valor y no el nombre de un secreto; escribe el nombre",
+    );
+  }
+  return value;
+}
+
+interface Preset {
+  readonly keys: readonly string[];
+  readonly required: readonly string[];
+  readonly build: (secret: string, options: Record<string, unknown>) => SecretGateway;
+}
+
+type AnyOptions = Record<string, unknown>;
+
+/** `preset` -> claves que admite (además de `secret` y `rate_per_minute`),
+ * cuáles son obligatorias y la función de `gateways.ts` que lo construye. */
+const GATEWAY_PRESETS: Readonly<Record<string, Preset>> = Object.freeze({
+  bedrock: {
+    keys: ["region", "models"],
+    required: ["region", "models"],
+    build: (secret, o) =>
+      bedrockGateway(secret, o as unknown as Parameters<typeof bedrockGateway>[1]),
+  },
+  anthropic: { keys: [], required: [], build: (secret, o) => anthropicGateway(secret, o) },
+  openai: { keys: [], required: [], build: (secret, o) => openaiGateway(secret, o) },
+  "openai-compatible": {
+    keys: ["upstream", "base_path"],
+    required: ["upstream"],
+    build: (secret, o) =>
+      openaiCompatibleGateway(
+        secret,
+        o as unknown as Parameters<typeof openaiCompatibleGateway>[1],
+      ),
+  },
+  gemini: {
+    keys: ["models"],
+    required: ["models"],
+    build: (secret, o) =>
+      geminiGateway(secret, o as unknown as Parameters<typeof geminiGateway>[1]),
+  },
+  azure: {
+    keys: ["resource"],
+    required: ["resource"],
+    build: (secret, o) =>
+      azureOpenaiGateway(secret, o as unknown as Parameters<typeof azureOpenaiGateway>[1]),
+  },
+  openrouter: { keys: [], required: [], build: (secret, o) => openrouterGateway(secret, o) },
+  groq: { keys: [], required: [], build: (secret, o) => groqGateway(secret, o) },
+  mistral: { keys: [], required: [], build: (secret, o) => mistralGateway(secret, o) },
+  deepseek: { keys: [], required: [], build: (secret, o) => deepseekGateway(secret, o) },
+  xai: { keys: [], required: [], build: (secret, o) => xaiGateway(secret, o) },
+  litellm: {
+    keys: ["upstream", "base_path"],
+    required: ["upstream"],
+    build: (secret, o) =>
+      litellmGateway(secret, o as unknown as Parameters<typeof litellmGateway>[1]),
+  },
+});
+
+/** El nombre de cada opción del fichero (snake_case) en `gateways.ts`. */
+const GATEWAY_OPTION_NAMES: Readonly<Record<string, string>> = Object.freeze({
+  base_path: "basePath",
+  [RATE_KEY]: "ratePerMinute",
+});
+
+function readGateways(root: Table): Record<string, SecretGateway> {
+  return Object.fromEntries(
+    root.entries("gateways").map(([name, entry]) => [name, readGateway(entry)]),
+  );
+}
+
+function readGateway(entry: Table): SecretGateway {
+  const preset = entry.text("preset", true) as string;
+  const rate = entry.integer(RATE_KEY);
+  if (preset === CUSTOM_GATEWAY_PRESET) {
+    return readCustomGateway(entry, rate);
+  }
+  const spec = Object.hasOwn(GATEWAY_PRESETS, preset) ? GATEWAY_PRESETS[preset] : undefined;
+  if (spec === undefined) {
+    const allowed = [...Object.keys(GATEWAY_PRESETS), CUSTOM_GATEWAY_PRESET];
+    throw fail(entry.at("preset"), "invalid_value", `debe ser uno de ${allowed.join(", ")}`);
+  }
+  const secret = secretName(entry.text("secret", true), entry.at("secret"));
+  const options: AnyOptions = {};
+  for (const key of spec.keys) {
+    const value = key === "models" ? entry.texts(key) : entry.text(key);
+    if (value === undefined && spec.required.includes(key)) {
+      throw fail(entry.at(key), "missing_key", "es obligatoria con este preset");
+    }
+    if (value !== undefined) {
+      options[GATEWAY_OPTION_NAMES[key] ?? key] = value;
+    }
+  }
+  entry.finish();
+  if (rate !== undefined) {
+    options[GATEWAY_OPTION_NAMES[RATE_KEY] as string] = rate;
+  }
+  return guard(entry.path, () => spec.build(secret, options));
+}
+
+function readCustomGateway(entry: Table, rate: number | undefined): SecretGateway {
+  const upstream = entry.text("upstream", true) as string;
+  const headers = entry.table("headers");
+  if (headers === undefined) {
+    throw fail(entry.at("headers"), "missing_key", "es obligatoria con preset 'custom'");
+  }
+  const secrets: Record<string, string> = {};
+  for (const header of headers.keys().sort()) {
+    secrets[header] = secretName(headers.raw(header), headers.at(header));
+  }
+  const allow = readAllow(entry.raw("allow"), entry.at("allow"));
+  entry.finish();
+  return guard(
+    entry.path,
+    () => new SecretGateway({ upstream, headers: secrets, allow, ratePerMinute: rate }),
+  );
+}
+
+function readAllow(value: unknown, path: string): Array<readonly [string, string]> {
+  if (value === undefined || value === null) {
+    throw fail(path, "missing_key", "es obligatoria con preset 'custom'");
+  }
+  if (!Array.isArray(value)) {
+    throw fail(path, "invalid_type", "debe ser una lista de [método, ruta]");
+  }
+  return value.map((rule) => {
+    if (
+      !Array.isArray(rule) ||
+      rule.length !== 2 ||
+      !rule.every((part) => typeof part === "string")
+    ) {
+      throw fail(path, "invalid_type", "cada regla debe ser [método, ruta]");
+    }
+    return [rule[0] as string, rule[1] as string] as const;
+  });
+}
+
+// ---------------------------------------------------------------------- writing
+
+function relativeTo(path: string, baseDir: string): string {
+  const shown = relative(resolve(baseDir), resolve(path)).split(sep).join("/");
+  return shown === "" ? "." : shown;
+}
+
+function sourceToObject(project: AgentProject): Record<string, unknown> {
+  const table: Record<string, unknown> = {};
+  if (project.source !== undefined) {
+    table.path = relativeTo(project.source, project.baseDir);
+  }
+  if (project.requirements !== undefined) {
+    table.requirements = relativeTo(project.requirements, project.baseDir);
+  }
+  if (project.exclude.length > 0) {
+    table.exclude = [...project.exclude];
+  }
+  return table;
+}
+
+function modelToObject(model: AgentModel): Record<string, unknown> {
+  const table: Record<string, unknown> = {
+    provider: model.provider,
+    id: model.id,
+    gateway: model.gateway,
+  };
+  if (model.region !== undefined) {
+    table.region = model.region;
+  }
+  if (model.basePath !== "") {
+    table.base_path = model.basePath;
+  }
+  if (!model.promptCaching) {
+    table.prompt_caching = false;
+  }
+  return table;
+}
+
+function secretRefName(value: SecretLike): string {
+  if (typeof value === "string") {
+    return value;
+  }
+  if (value.versionId !== undefined || value.versionStage !== undefined) {
+    throw new InvalidArgumentError(
+      "una pasarela con un SecretRef de versión fija no se puede escribir en el fichero",
+    );
+  }
+  return value.name;
+}
+
+function sortedEntries<T>(record: Readonly<Record<string, T>>): Array<[string, T]> {
+  return Object.entries(record).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+}
+
+function gatewaysToObject(
+  gateways: Readonly<Record<string, SecretGateway>>,
+): Record<string, unknown> {
+  return Object.fromEntries(
+    sortedEntries(gateways).map(([name, gateway]) => {
+      const table: Record<string, unknown> = {
+        preset: CUSTOM_GATEWAY_PRESET,
+        upstream: gateway.upstream,
+        headers: Object.fromEntries(
+          sortedEntries(gateway.headers).map(([header, ref]) => [header, secretRefName(ref)]),
+        ),
+        allow: gateway.allow.map((rule) => [rule.method, rule.path]),
+      };
+      if (gateway.ratePerMinute !== 0) {
+        table[RATE_KEY] = gateway.ratePerMinute;
+      }
+      return [name, table];
+    }),
+  );
+}
+
+function permissionsToObject(permissions: AgentPermissions): Record<string, unknown> {
+  const table: Record<string, unknown> = {};
+  if (permissions.default !== new AgentPermissions().default) {
+    table.default = permissions.default;
+  }
+  if (Object.keys(permissions.tools).length > 0) {
+    table.tools = Object.fromEntries(
+      sortedEntries(permissions.tools).map(([tool, rule]) => [
+        tool,
+        typeof rule === "string" ? rule : { ...rule },
+      ]),
+    );
+  }
+  return table;
+}
+
+function mcpToObject(server: McpServer): Record<string, unknown> {
+  if (server instanceof McpRemote) {
+    const remote: Record<string, unknown> = { type: "remote", gateway: server.gateway };
+    if (server.path !== "/") {
+      remote.path = server.path;
+    }
+    return remote;
+  }
+  const local: Record<string, unknown> = { type: "local", command: [...server.command] };
+  if (Object.keys(server.envs).length > 0) {
+    local.envs = { ...server.envs };
+  }
+  if (server.timeoutMs !== undefined) {
+    local.timeout_seconds = server.timeoutMs / MS_PER_SECOND;
+  }
+  return local;
+}
+
+function subagentToObject(agent: SubAgent): Record<string, unknown> {
+  const table: Record<string, unknown> = {
+    description: agent.description,
+    instructions: agent.instructions,
+  };
+  if (agent.model !== undefined) {
+    table.model = agent.model;
+  }
+  if (agent.permissions !== undefined) {
+    table.permissions = permissionsToObject(agent.permissions);
+  }
+  return table;
+}
+
+function agentToObject(spec: AgentSpec): Record<string, unknown> {
+  const table: Record<string, unknown> = {};
+  if (spec.instructions !== undefined) {
+    table.instructions = spec.instructions;
+  }
+  if (spec.smallModel !== undefined) {
+    table.small_model = spec.smallModel;
+  }
+  if (spec.runtimeVersion !== undefined) {
+    table.runtime_version = spec.runtimeVersion;
+  }
+  const permissions = permissionsToObject(spec.permissions);
+  if (Object.keys(permissions).length > 0) {
+    table.permissions = permissions;
+  }
+  if (Object.keys(spec.mcp).length > 0) {
+    table.mcp = Object.fromEntries(
+      sortedEntries(spec.mcp).map(([name, server]) => [name, mcpToObject(server)]),
+    );
+  }
+  if (Object.keys(spec.agents).length > 0) {
+    table.agents = Object.fromEntries(
+      sortedEntries(spec.agents).map(([name, agent]) => [name, subagentToObject(agent)]),
+    );
+  }
+  if (spec.rawConfig !== undefined && Object.keys(spec.rawConfig).length > 0) {
+    table.raw_config = { ...spec.rawConfig };
+  }
+  return table;
+}
+
+function limitsToObject(limits: AgentLimits): Record<string, unknown> {
+  const defaults = new AgentLimits();
+  const table: Record<string, unknown> = {};
+  if (limits.maxSteps !== defaults.maxSteps) {
+    table.max_steps = limits.maxSteps;
+  }
+  if (limits.timeoutMs !== defaults.timeoutMs) {
+    table.timeout_seconds = limits.timeoutMs / MS_PER_SECOND;
+  }
+  if (limits.maxOutputBytes !== defaults.maxOutputBytes) {
+    table.max_output_bytes = limits.maxOutputBytes;
+  }
+  if (limits.maxTotalTokens !== defaults.maxTotalTokens) {
+    table.max_total_tokens = limits.maxTotalTokens ?? 0;
+  }
+  return table;
+}
+
+function idleSeconds(idle: IdlePolicy | null): number {
+  if (idle === null) {
+    return 0;
+  }
+  if (idle.suspendedDurationSeconds !== undefined || !idle.autoResume) {
+    throw new InvalidArgumentError(
+      "ServeOptions.idle con suspendedDurationSeconds o sin autoResume no se puede escribir en el fichero",
+    );
+  }
+  return idle.maxIdleSeconds;
+}
+
+function serveToObject(serve: ServeOptions): Record<string, unknown> {
+  const table: Record<string, unknown> = {};
+  if (serve.port !== AGENT_SERVICE_PORT) {
+    table.port = serve.port;
+  }
+  if (serve.timeoutMs !== DEFAULT_SERVE_TIMEOUT_MS) {
+    table.timeout_seconds = serve.timeoutMs / MS_PER_SECOND;
+  }
+  if (serve.maxConcurrency !== AGENT_SERVICE_MAX_CONCURRENCY) {
+    table.max_concurrency = serve.maxConcurrency;
+  }
+  if (serve.idle !== undefined) {
+    table.idle_seconds = idleSeconds(serve.idle);
+  }
+  if (Object.keys(serve.metadata).length > 0) {
+    table.metadata = Object.fromEntries(sortedEntries(serve.metadata));
+  }
+  return table;
+}
+
+function networkToObject(project: AgentProject): Record<string, unknown> {
+  const table: Record<string, unknown> = {};
+  if (project.allowInternetAccess) {
+    table.allow_internet_access = true;
+  }
+  if (project.egress !== undefined) {
+    table.egress = [...project.egress];
+  }
+  return table;
+}
+
+function imageToObject(project: AgentProject): Record<string, unknown> {
+  const table: Record<string, unknown> = {};
+  if (project.base !== DEFAULT_AGENT_TEMPLATE_BASE) {
+    table.base = project.base;
+  }
+  if (project.template !== undefined) {
+    table.template = project.template;
+  }
+  if (project.memoryMib !== AGENT_MIN_MEMORY_MIB) {
+    table.memory_mib = project.memoryMib;
+  }
+  return table;
+}

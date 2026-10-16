@@ -1,0 +1,167 @@
+{
+  "_comment": "Resultado del spike de la tarea 2.1 de agent-runtimes-byo (rama feat/agent-byo-frameworks), medido el 2026-10-16 contra las versiones fijadas y un servidor HTTP local que registra la petición (sin AWS ni claves reales). Lo leen los tests de Python y TypeScript para que ninguna tabla de código se desvíe de lo medido. `request` es lo que llegó al servidor: método, ruta, y la cabecera que lleva la credencial (siempre el marcador, nunca una clave).",
+  "checked": "2026-10-16",
+  "versions": {
+    "python": {
+      "strands-agents": "1.61.1",
+      "strands-harness": "0.3.1"
+    },
+    "typescript": {
+      "@strands-agents/sdk": "1.21.0",
+      "@strands-agents/harness": "0.3.0"
+    }
+  },
+  "python": {
+    "bedrock": {
+      "client": "BedrockModel",
+      "endpoint_override": "BedrockModel(endpoint_url=<pasarela>) o AWS_ENDPOINT_URL_BEDROCK_RUNTIME",
+      "bearer": "BedrockModel(api_key=<marcador>) o AWS_BEARER_TOKEN_BEDROCK, sin SigV4 y sin credenciales de AWS",
+      "request": {
+        "method": "POST",
+        "path": "/model/{model}/converse-stream",
+        "credential_header": "authorization",
+        "sigv4": false
+      }
+    },
+    "anthropic": {
+      "client": "AnthropicModel",
+      "constructor": {
+        "client_args": {
+          "base_url": "<pasarela>",
+          "api_key": "<marcador>"
+        }
+      },
+      "request": {
+        "method": "POST",
+        "path": "/v1/messages",
+        "credential_header": "x-api-key"
+      }
+    },
+    "openai": {
+      "client": "OpenAIModel",
+      "constructor": {
+        "client_args": {
+          "base_url": "<pasarela>/v1",
+          "api_key": "<marcador>"
+        }
+      },
+      "request": {
+        "method": "POST",
+        "path": "/v1/chat/completions",
+        "credential_header": "authorization"
+      }
+    },
+    "google": {
+      "client": "GeminiModel",
+      "constructor": {
+        "client_args": {
+          "api_key": "<marcador>",
+          "http_options": {
+            "base_url": "<pasarela>"
+          }
+        }
+      },
+      "request": {
+        "method": "POST",
+        "path": "/v1beta/models/{model}:streamGenerateContent",
+        "query": "alt=sse",
+        "credential_header": "x-goog-api-key"
+      }
+    }
+  },
+  "typescript": {
+    "bedrock": {
+      "client": "BedrockModel",
+      "endpoint_override": "clientConfig.endpoint o AWS_ENDPOINT_URL_BEDROCK_RUNTIME",
+      "bearer": "AWS_BEARER_TOKEN_BEDROCK en el entorno; BedrockModel({apiKey}) sin credenciales de AWS falla con 'Could not load credentials' antes de enviar nada",
+      "request": {
+        "method": "POST",
+        "path": "/model/{model}/converse-stream",
+        "credential_header": "authorization",
+        "sigv4": false,
+        "transport": "http2"
+      }
+    },
+    "anthropic": {
+      "client": "AnthropicModel",
+      "module": "@strands-agents/sdk/models/anthropic",
+      "constructor": {
+        "apiKey": "<marcador>",
+        "clientConfig": {
+          "baseURL": "<pasarela>"
+        }
+      },
+      "request": {
+        "method": "POST",
+        "path": "/v1/messages",
+        "credential_header": "x-api-key"
+      }
+    },
+    "openai": {
+      "client": "OpenAIModel",
+      "module": "@strands-agents/sdk/models/openai",
+      "constructor": {
+        "api": "chat",
+        "apiKey": "<marcador>",
+        "clientConfig": {
+          "baseURL": "<pasarela>/v1"
+        }
+      },
+      "request": {
+        "method": "POST",
+        "path": "/v1/chat/completions",
+        "credential_header": "authorization"
+      },
+      "default_api": "responses (/v1/responses); el adaptador fija api: 'chat'"
+    },
+    "google": {
+      "client": "GoogleModel",
+      "module": "@strands-agents/sdk/models/google",
+      "constructor": {
+        "apiKey": "<marcador>",
+        "clientConfig": {
+          "httpOptions": {
+            "baseUrl": "<pasarela>"
+          }
+        }
+      },
+      "request": {
+        "method": "POST",
+        "path": "/v1beta/models/{model}:streamGenerateContent",
+        "query": "alt=sse",
+        "credential_header": "x-goog-api-key"
+      }
+    }
+  },
+  "harness": {
+    "builtin_tool_names": [
+      "shell",
+      "read",
+      "write",
+      "edit",
+      "web_fetch",
+      "web_search",
+      "programmatic_tool_caller",
+      "subagent"
+    ],
+    "default_enabled": "todas (web_search sólo donde el modelo tiene búsqueda nativa)",
+    "builtin_plugin_names": [
+      "todos",
+      "environment"
+    ],
+    "python_option": "builtin_tools: lista (fija exactamente esos nombres) o mapa que edita el conjunto por defecto; la clave '*' en False parte de cero",
+    "typescript_option": "builtinTools, con los mismos nombres",
+    "state_options": {
+      "session": "{id, dir}",
+      "memory": "{dir}"
+    },
+    "defaults_off_by_rayito": [
+      "programmatic_tool_caller",
+      "web_search"
+    ]
+  },
+  "events": {
+    "python": "stream_async: `data` (delta de texto), `event.messageStart|messageStop|metadata` (usage: inputTokens, outputTokens, cacheReadInputTokens, cacheWriteInputTokens), `message` (rol assistant con text/toolUse, rol user con toolResult)",
+    "typescript": "stream: modelStreamUpdateEvent.event (modelMessageStartEvent, modelContentBlockDeltaEvent con textDelta, modelMessageStopEvent, modelMetadataEvent), afterToolCallEvent (toolUse y result), agentResultEvent"
+  }
+}

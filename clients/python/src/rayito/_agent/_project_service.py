@@ -1,0 +1,196 @@
+"""`AgentProject.build()`, `run()` y `deploy()` síncronos (ADR-028, D6):
+la capa de aplicación sobre `AgentTemplate`, `Sandbox` y `AgentDeployment`.
+Nada aquí se ejecuta al construir o cargar un proyecto; cada operación es
+la única que crea recursos y `deploy()` mata su sandbox ante cualquier
+fallo.
+"""
+
+from __future__ import annotations
+
+import logging
+import time
+from typing import TYPE_CHECKING, Any, Final
+
+from rayito._agent._deployment import AgentDeployment, default_transport
+from rayito._agent._events import AgentEvent, AgentResult
+from rayito._agent._project_base import (
+    AGENT_HOST_FAILED_SUFFIX,
+    AGENT_SERVE_TAG,
+    AGENT_SERVICE_READY_POLL_SECONDS,
+    clear_markers_command,
+    deploy_create_args,
+    failed_marker_path,
+    host_config_for,
+    host_entries,
+    is_raw_app,
+    is_raw_project,
+    project_template,
+    request_timeout,
+    run_create_args,
+    serve_command,
+    template_name,
+)
+from rayito._images import DEFAULT_BUILD_TIMEOUT_SECONDS
+from rayito._limits import AGENT_SERVICE_READY_MARKER_PATH, AGENT_SERVICE_READY_TIMEOUT_SECONDS
+from rayito.exceptions import SandboxException, TimeoutException
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from rayito._agent._project_domain import AgentProject
+    from rayito._templates._models import BuildInfo
+
+logger = logging.getLogger("rayito.agent")
+
+#: Usuario con el que corre el host del agente (uid 1000): nunca root.
+AGENT_SERVE_USER: Final = "user"
+
+
+class ProjectService:
+    """Las tres operaciones que cuestan de un `AgentProject`. El proyecto,
+    la clase de sandbox y el transporte llegan por constructor, así que los
+    tests usan dobles y nunca AWS."""
+
+    def __init__(
+        self,
+        project: AgentProject,
+        *,
+        sandbox_class: Any = None,
+        transport_factory: Any = default_transport,
+        sleep: Callable[[float], None] = time.sleep,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self._project = project
+        self._sandbox_class = sandbox_class
+        self._transport_factory = transport_factory
+        self._sleep = sleep
+        self._clock = clock
+
+    def build(
+        self,
+        *,
+        bucket: str,
+        force: bool = False,
+        timeout: float = DEFAULT_BUILD_TIMEOUT_SECONDS,
+        on_build_logs: Callable[[str], None] | None = None,
+        region: str | None = None,
+        session: Any = None,
+    ) -> BuildInfo:
+        """Construye la imagen del proyecto con `AgentTemplate.build()`."""
+        return project_template(self._project).build(
+            bucket=bucket,
+            force=force,
+            timeout=timeout,
+            on_build_logs=on_build_logs,
+            region=region,
+            session=session,
+        )
+
+    def run(
+        self,
+        prompt: str,
+        *,
+        session_id: str | None = None,
+        model: str | None = None,
+        reasoning: bool = False,
+        on_event: Callable[[AgentEvent], None] | None = None,
+        region: str | None = None,
+        session: Any = None,
+    ) -> AgentResult:
+        """Un sandbox desde la imagen del proyecto, una ejecución con
+        `sbx.agent.run()` y `kill()` siempre, también ante un error."""
+        project = self._project
+        sandbox = self._create(run_create_args(project), region, session)
+        try:
+            with sandbox.agent.stream(
+                prompt,
+                spec=project.spec,
+                runtime=project.runtime,
+                session_id=session_id,
+                model=model,
+                limits=project.limits,
+                reasoning=reasoning,
+            ) as stream:
+                if on_event is not None:
+                    for event in stream:
+                        on_event(event)
+                return stream.result()  # type: ignore[no-any-return]
+        finally:
+            self._kill(sandbox)
+
+    def deploy(
+        self, *, region: str | None = None, session: Any = None, access_token: str | None = None
+    ) -> AgentDeployment:
+        """Sirve el agente desde un MicroVM y devuelve su
+        `AgentDeployment`. Si cualquier paso falla, mata el sandbox antes de
+        propagar."""
+        project = self._project
+        sandbox = self._create(
+            deploy_create_args(project, raw=is_raw_project(project), access_token=access_token),
+            region,
+            session,
+        )
+        try:
+            host = host_config_for(project, sandbox.gateways)
+            sandbox.files.write_files(host_entries(project, host))
+            sandbox.commands.run(clear_markers_command(), user=AGENT_SERVE_USER)
+            handle = sandbox.commands.run(
+                serve_command(host, project.serve.port),
+                background=True,
+                user=AGENT_SERVE_USER,
+                envs=dict(host.envs),
+                timeout=None,
+                tag=AGENT_SERVE_TAG,
+                kill_tree=True,
+            )
+            handle.disconnect()
+            self._wait_ready(sandbox)
+            return AgentDeployment(
+                sandbox,
+                port=project.serve.port,
+                project=project.name,
+                raw=is_raw_app(host),
+                request_timeout=request_timeout(project),
+                transport_factory=self._transport_factory,
+            )
+        except BaseException:
+            self._kill(sandbox)
+            raise
+
+    def _create(self, arguments: dict[str, Any], region: str | None, session: Any) -> Any:
+        sandbox_class = self._sandbox_class
+        if sandbox_class is None:
+            from rayito.sandbox_sync import Sandbox
+
+            sandbox_class = Sandbox
+        extra = {key: value for key, value in (("region", region), ("session", session)) if value}
+        return sandbox_class.create(template_name(self._project), **arguments, **extra)
+
+    def _wait_ready(self, sandbox: Any) -> None:
+        """Espera al marcador de listo del host: `TimeoutException` al
+        agotar `AGENT_SERVICE_READY_TIMEOUT_SECONDS` y `SandboxException` si
+        el host dejó un marcador de arranque fallido."""
+        deadline = self._clock() + AGENT_SERVICE_READY_TIMEOUT_SECONDS
+        while True:
+            if sandbox.files.exists(AGENT_SERVICE_READY_MARKER_PATH):
+                return
+            if sandbox.files.exists(failed_marker_path()):
+                code = sandbox.files.read(failed_marker_path()).strip()
+                raise SandboxException(
+                    f"el host del agente no pudo arrancar ({code or AGENT_HOST_FAILED_SUFFIX})"
+                )
+            if self._clock() >= deadline:
+                raise TimeoutException("el host del agente no estuvo listo a tiempo")
+            self._sleep(AGENT_SERVICE_READY_POLL_SECONDS)
+
+    @staticmethod
+    def _kill(sandbox: Any) -> None:
+        """Mata el sandbox sin tapar la excepción original; un fallo del
+        propio `kill()` se registra (sin datos del sandbox)."""
+        try:
+            sandbox.kill()
+        except Exception:
+            logger.warning("no se pudo terminar el sandbox del agente", exc_info=True)
+
+
+__all__ = ["ProjectService"]

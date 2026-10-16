@@ -13,7 +13,8 @@ import {
   DEEPAGENTS_RUNNER_SHA256,
   DEEPAGENTS_RUNNER_SOURCE,
 } from "../../src/agent/assets/deepagents-runner.js";
-import { DEEPAGENTS_CONFIG_PATH, type DeepAgentsState } from "../../src/agent/deepagents.js";
+import { DEEPAGENTS_CONFIG_PATH } from "../../src/agent/deepagents.js";
+import type { ProtocolV1State } from "../../src/agent/protocol-v1.js";
 import type { RunRequest } from "../../src/agent/runtime.js";
 import { AGENT_RUNTIMES, resolveRuntime } from "../../src/agent/runtimes.js";
 import {
@@ -220,7 +221,7 @@ describe("deepagents events", () => {
       events.push(...runtime.parseLine(UTF8.encode(line), state).map(snake));
     }
     expect(events).toEqual(expected.events);
-    const typed = state as DeepAgentsState;
+    const typed = state as ProtocolV1State;
     expect(typed.sessionId).toBe(expected.session_id);
     expect(typed.ignoredLines).toBe(expected.ignored_lines);
     expect(snake(runtime.finish(state, 0))).toEqual(expected.done);

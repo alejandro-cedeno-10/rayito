@@ -1,11 +1,17 @@
-"""Agente de IA dentro del sandbox (`ai-agent-core`, ADR-025). Ver
+"""Agente de IA dentro del sandbox (`ai-agent-core`, ADR-025, ADR-028). Ver
 `_domain.py` (puro: `AgentSpec`, `AgentModel`, permisos, límites),
 `_events.py` (eventos, `TokenUsage`, `AgentResult`, tabla de fallos) y
-`_gateways.py` (pasarelas ya hechas para el modelo)."""
+`_gateways.py` (pasarelas ya hechas para el modelo), `_runtime.py` (los puertos
+`AgentRuntime`, `InstallableRuntime` y `ServableRuntime`) y
+`_project_domain.py` (`AgentProject`)."""
 
 from __future__ import annotations
 
+from rayito._agent._custom import CustomRuntime, HttpApp
 from rayito._agent._deepagents import DeepAgents
+from rayito._agent._deployment import AgentDeployment, AgentDeploymentStream
+from rayito._agent._deployment_async import AsyncAgentDeployment, AsyncAgentDeploymentStream
+from rayito._agent._deployment_base import DeploymentStatus
 from rayito._agent._domain import (
     DEFAULT_AGENT_RUNTIME,
     DEFAULT_DENIED_TOOLS,
@@ -37,6 +43,7 @@ from rayito._agent._events import (
     failure_message,
     truncate_tool_output,
 )
+from rayito._agent._export import AgentExport
 from rayito._agent._gateways import (
     anthropic_gateway,
     azure_openai_gateway,
@@ -51,7 +58,21 @@ from rayito._agent._gateways import (
     openrouter_gateway,
     xai_gateway,
 )
-from rayito._agent._runtime import WarmupStep
+from rayito._agent._hermes import HermesRuntime
+from rayito._agent._project_domain import AgentProject, AsyncAgentProject, ServeOptions
+from rayito._agent._runtime import (
+    DirectWiring,
+    GatewayWiring,
+    HostConfig,
+    InstallableRuntime,
+    InstallTarget,
+    ModelWiring,
+    ServableRuntime,
+    WarmupStep,
+    is_installable,
+    is_servable,
+)
+from rayito._agent._strands import StrandsRuntime
 from rayito._agent._template import AgentTemplate, AsyncAgentTemplate
 from rayito._agent._warmup import agent_pool_warmup
 
@@ -62,23 +83,43 @@ __all__ = [
     "DEFAULT_AGENT_RUNTIME",
     "DEFAULT_DENIED_TOOLS",
     "RESERVED_CONFIG_KEYS",
+    "AgentDeployment",
+    "AgentDeploymentStream",
     "AgentEvent",
+    "AgentExport",
     "AgentFailed",
     "AgentLimits",
     "AgentModel",
     "AgentPermissions",
+    "AgentProject",
     "AgentResult",
     "AgentSpec",
     "AgentTemplate",
+    "AsyncAgentDeployment",
+    "AsyncAgentDeploymentStream",
+    "AsyncAgentProject",
     "AsyncAgentTemplate",
+    "CustomRuntime",
     "DeepAgents",
+    "DeploymentStatus",
+    "DirectWiring",
     "Done",
+    "GatewayWiring",
+    "HermesRuntime",
+    "HostConfig",
+    "HttpApp",
+    "InstallTarget",
+    "InstallableRuntime",
     "McpLocal",
     "McpRemote",
     "McpServer",
+    "ModelWiring",
     "Reasoning",
+    "ServableRuntime",
+    "ServeOptions",
     "StepFinished",
     "StepStarted",
+    "StrandsRuntime",
     "SubAgent",
     "Text",
     "TextDelta",
@@ -93,6 +134,8 @@ __all__ = [
     "failure_message",
     "gemini_gateway",
     "groq_gateway",
+    "is_installable",
+    "is_servable",
     "litellm_gateway",
     "mistral_gateway",
     "openai_compatible_gateway",

@@ -28,6 +28,7 @@ from rayito._agent._domain import (
     AgentPermissions,
     AgentSpec,
     McpLocal,
+    McpRemote,
     ToolPermission,
 )
 from rayito._agent._events import (
@@ -42,7 +43,13 @@ from rayito._agent._events import (
     ToolCall,
     truncate_tool_output,
 )
+from rayito._agent._recipes import AGENT_BIN_DIR
 from rayito._agent._runtime import (
+    DEFAULT_INSTALL_PYTHON,
+    DirectWiring,
+    HostConfig,
+    InstallTarget,
+    ModelWiring,
     RunCommand,
     RunRequest,
     RuntimeFile,
@@ -50,8 +57,14 @@ from rayito._agent._runtime import (
     RuntimeState,
     TemplateStep,
     WarmupStep,
+    run_step,
+    wiring_urls,
 )
 from rayito._limits import (
+    AGENT_OPENCODE_SHA256,
+    AGENT_OPENCODE_VERSION,
+    AGENT_RIPGREP_SHA256,
+    AGENT_RIPGREP_VERSION,
     AGENT_STATE_DIR,
     DEFAULT_AGENT_WORKDIR,
     MODEL_CREDENTIAL_PLACEHOLDER,
@@ -124,6 +137,18 @@ OPENCODE_FLAG_ENVS: Final[Mapping[str, str]] = {
 }
 #: Un `sessionID` de OpenCode (`ses_…`): sólo así se mete en un comando.
 _SESSION_ID_PATTERN: Final = re.compile(r"[A-Za-z0-9_-]{1,128}")
+OPENCODE_BINARY_PATH: Final = f"{AGENT_BIN_DIR}/opencode"
+RIPGREP_BINARY_PATH: Final = f"{AGENT_BIN_DIR}/rg"
+#: Asset de la release de OpenCode (linux arm64 glibc, binario único).
+OPENCODE_RELEASE_URL: Final = (
+    "https://github.com/anomalyco/opencode/releases/download/"
+    f"v{AGENT_OPENCODE_VERSION}/opencode-linux-arm64.tar.gz"
+)
+RIPGREP_RELEASE_DIR: Final = f"ripgrep-{AGENT_RIPGREP_VERSION}-aarch64-unknown-linux-gnu"
+RIPGREP_RELEASE_URL: Final = (
+    "https://github.com/BurntSushi/ripgrep/releases/download/"
+    f"{AGENT_RIPGREP_VERSION}/{RIPGREP_RELEASE_DIR}.tar.gz"
+)
 
 
 @dataclass
@@ -177,33 +202,45 @@ def _permission_rule(rule: ToolPermission) -> object:
     return rule if isinstance(rule, str) else dict(rule)
 
 
-def _provider(spec: AgentSpec, gateway_url: str) -> dict[str, object]:
+def _endpoint_options(base_url: str | None) -> dict[str, object]:
+    """`baseURL` y la clave de marcador sólo con pasarela; sin ella (`base_url`
+    es `None`) OpenCode usa el endpoint y la credencial estándar del
+    proveedor."""
+    if base_url is None:
+        return {}
+    return {"baseURL": base_url, "apiKey": MODEL_CREDENTIAL_PLACEHOLDER}
+
+
+def _provider(spec: AgentSpec, gateway_url: str | None) -> dict[str, object]:
     model = spec.model
     if model.provider == "bedrock":
-        return {"options": {"region": model.region, "endpoint": gateway_url}}
+        options: dict[str, object] = {"region": model.region}
+        if gateway_url is not None:
+            options["endpoint"] = gateway_url
+        return {"options": options}
     if model.provider == "anthropic":
         return {
-            "options": {
-                "baseURL": _join_url(gateway_url, ANTHROPIC_BASE_PATH),
-                "apiKey": MODEL_CREDENTIAL_PLACEHOLDER,
-            }
+            "options": _endpoint_options(
+                None if gateway_url is None else _join_url(gateway_url, ANTHROPIC_BASE_PATH)
+            )
         }
     native_base_path = OPENCODE_NATIVE_BASE_PATHS.get(model.provider)
     if native_base_path is not None:
         return {
             "npm": OPENCODE_NATIVE_NPM[model.provider],
-            "options": {
-                "baseURL": _join_url(gateway_url, native_base_path),
-                "apiKey": MODEL_CREDENTIAL_PLACEHOLDER,
-            },
+            "options": _endpoint_options(
+                None if gateway_url is None else _join_url(gateway_url, native_base_path)
+            ),
             "models": _models(spec),
         }
+    if gateway_url is None:
+        raise InvalidArgumentException(
+            f"el proveedor {model.provider!r} no tiene un endpoint estándar: "
+            "sin pasarela necesita una URL explícita"
+        )
     return {
         "npm": OPENAI_COMPATIBLE_NPM,
-        "options": {
-            "baseURL": _join_url(gateway_url, model.base_path),
-            "apiKey": MODEL_CREDENTIAL_PLACEHOLDER,
-        },
+        "options": _endpoint_options(_join_url(gateway_url, model.base_path)),
         "models": _models(spec),
     }
 
@@ -269,9 +306,19 @@ def _deep_merge(base: dict[str, object], extra: Mapping[str, object]) -> dict[st
     return merged
 
 
-def build_opencode_config(spec: AgentSpec, *, gateway_urls: Mapping[str, str]) -> dict[str, object]:
-    """El `opencode.json` de `spec` como diccionario (design.md §3)."""
-    spec.require_gateways(gateway_urls.keys())
+def build_opencode_config(
+    spec: AgentSpec, *, gateway_urls: Mapping[str, str] | None
+) -> dict[str, object]:
+    """El `opencode.json` de `spec` como diccionario (design.md §3).
+    `gateway_urls=None` es la configuración sin pasarela de un contenedor
+    exportado: el proveedor usa su endpoint y credencial estándar, y un
+    `McpRemote` (que sólo existe tras una pasarela) falla."""
+    if gateway_urls is None:
+        _require_no_remote_mcp(spec)
+        gateway_url = None
+    else:
+        spec.require_gateways(gateway_urls.keys())
+        gateway_url = gateway_urls[spec.model.gateway]
     provider_id = OPENCODE_PROVIDER_IDS[spec.model.provider]
     config: dict[str, object] = {
         "$schema": OPENCODE_CONFIG_SCHEMA,
@@ -281,16 +328,23 @@ def build_opencode_config(spec: AgentSpec, *, gateway_urls: Mapping[str, str]) -
         "share": "disabled",
         "snapshot": False,
         "enabled_providers": [provider_id],
-        "provider": {provider_id: _provider(spec, gateway_urls[spec.model.gateway])},
+        "provider": {provider_id: _provider(spec, gateway_url)},
         "agent": _agents(spec, provider_id),
     }
     if spec.instructions is not None:
         config["instructions"] = [OPENCODE_INSTRUCTIONS_PATH]
     if spec.mcp:
-        config["mcp"] = _mcp(spec, gateway_urls)
+        config["mcp"] = _mcp(spec, gateway_urls or {})
     if spec.raw_config:
         config = _deep_merge(config, spec.raw_config)
     return config
+
+
+def _require_no_remote_mcp(spec: AgentSpec) -> None:
+    if any(isinstance(server, McpRemote) for server in spec.mcp.values()):
+        raise InvalidArgumentException(
+            "AgentSpec.mcp con McpRemote necesita una pasarela: no existe sin ella"
+        )
 
 
 def _failed(reason: str, state: OpenCodeState, **extra: object) -> AgentFailed:
@@ -349,15 +403,7 @@ class OpenCodeRuntime:
         """`opencode.json` y, si hay `instructions`, su `AGENTS.md`.
         `workdir` no entra en la configuración: va en `--dir`."""
         del workdir
-        files = [
-            RuntimeFile(
-                OPENCODE_CONFIG_PATH,
-                canonical_json(build_opencode_config(spec, gateway_urls=gateway_urls)),
-            )
-        ]
-        if spec.instructions is not None:
-            files.append(RuntimeFile(OPENCODE_INSTRUCTIONS_PATH, spec.instructions.encode()))
-        return RuntimeFiles(files=tuple(files), config_sha256=files_sha256(files))
+        return _config_files(spec, gateway_urls)
 
     def command(self, request: RunRequest) -> RunCommand:
         """El script de una ejecución: cerrojo, comprobación del binario y
@@ -477,11 +523,77 @@ class OpenCodeRuntime:
         """Carga el binario en la caché de páginas."""
         return (WarmupStep(cmd="opencode --version >/dev/null"),)
 
+    def install_steps(self, target: InstallTarget) -> Sequence[TemplateStep]:
+        """OpenCode y ripgrep desde sus assets de release, comprobados con
+        `sha256sum -c` contra los pines de `limits.json`."""
+        return (run_step(_opencode_install(target)),)
 
-def _run_envs(spec: AgentSpec) -> dict[str, str]:
+    def context_files(self) -> Mapping[str, bytes]:
+        """Nada: todo se descarga y se comprueba en el build."""
+        return {}
+
+    def manifest_entry(self) -> Mapping[str, object]:
+        """Versión y sha256 de OpenCode para el manifiesto de la imagen."""
+        return {"version": AGENT_OPENCODE_VERSION, "sha256": AGENT_OPENCODE_SHA256}
+
+    def smoke_checks(self) -> Sequence[str]:
+        """Prueba de humo, como `user`, de los dos binarios."""
+        return ("su user -c 'opencode --version'", "su user -c 'rg --version'")
+
+    def prefetch_paths(self) -> Sequence[str]:
+        """Los binarios que el demonio de precarga lee tras cada restauración."""
+        return (OPENCODE_BINARY_PATH, RIPGREP_BINARY_PATH)
+
+    def host_config(self, spec: AgentSpec, *, wiring: ModelWiring, workdir: str) -> HostConfig:
+        """La configuración del host para el driver `opencode`: los mismos
+        ficheros y variables que `build_config()` y `command()`."""
+        return HostConfig(
+            driver="opencode",
+            python=DEFAULT_INSTALL_PYTHON,
+            files=_config_files(spec, wiring_urls(wiring)),
+            envs=_run_envs(spec, direct=isinstance(wiring, DirectWiring)),
+            options={"workdir": workdir},
+        )
+
+
+def _config_files(spec: AgentSpec, gateway_urls: Mapping[str, str] | None) -> RuntimeFiles:
+    files = [
+        RuntimeFile(
+            OPENCODE_CONFIG_PATH,
+            canonical_json(build_opencode_config(spec, gateway_urls=gateway_urls)),
+        )
+    ]
+    if spec.instructions is not None:
+        files.append(RuntimeFile(OPENCODE_INSTRUCTIONS_PATH, spec.instructions.encode()))
+    return RuntimeFiles(files=tuple(files), config_sha256=files_sha256(files))
+
+
+def _opencode_install(target: InstallTarget) -> str:
+    bin_dir = f"{target.install_dir}/bin"
+    opencode = f"{bin_dir}/opencode"
+    ripgrep = f"{bin_dir}/rg"
+    return (
+        f"curl -fsSL --retry 3 -o /tmp/opencode.tar.gz {OPENCODE_RELEASE_URL}"
+        f" && echo '{AGENT_OPENCODE_SHA256}  /tmp/opencode.tar.gz' | sha256sum -c -"
+        f" && curl -fsSL --retry 3 -o /tmp/ripgrep.tar.gz {RIPGREP_RELEASE_URL}"
+        f" && echo '{AGENT_RIPGREP_SHA256}  /tmp/ripgrep.tar.gz' | sha256sum -c -"
+        f" && mkdir -p {bin_dir}"
+        f" && tar -xzf /tmp/opencode.tar.gz -C {bin_dir} opencode"
+        f" && tar -xzf /tmp/ripgrep.tar.gz -C /tmp"
+        f" && mv /tmp/{RIPGREP_RELEASE_DIR}/rg {ripgrep}"
+        f" && rm -rf /tmp/opencode.tar.gz /tmp/ripgrep.tar.gz /tmp/{RIPGREP_RELEASE_DIR}"
+        f" && chown -R root:root {target.install_dir}"
+        f" && chmod 0755 {target.install_dir} {bin_dir} {opencode}"
+        f" {ripgrep}"
+        f" && ln -sf {opencode} /usr/local/bin/opencode"
+        f" && ln -sf {ripgrep} /usr/local/bin/rg"
+    )
+
+
+def _run_envs(spec: AgentSpec, *, direct: bool = False) -> dict[str, str]:
     envs = {"HOME": DEFAULT_AGENT_WORKDIR, "OPENCODE_CONFIG": OPENCODE_CONFIG_PATH}
     envs.update(OPENCODE_FLAG_ENVS)
-    if spec.model.provider == "bedrock":
+    if spec.model.provider == "bedrock" and not direct:
         envs["AWS_BEARER_TOKEN_BEDROCK"] = MODEL_CREDENTIAL_PLACEHOLDER
     if spec.model.region is not None:
         envs["AWS_REGION"] = spec.model.region

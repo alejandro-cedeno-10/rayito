@@ -1,11 +1,12 @@
 """`AgentTemplate`: la plantilla de imagen con los runtimes de agente de IA
-(`ai-agent-fast-start`, design.md §5). Compone el DSL de `Template` con la
-receta del spike (docs/research/2026-10-agent-spike.md): OpenCode y
-ripgrep fijados por versión y sha256 (`limits.json`), el venv de
+(`ai-agent-fast-start`, design.md §5; ADR-028). Compone el DSL de `Template`
+con los `install_steps()` de cada runtime (el puerto `InstallableRuntime`):
+OpenCode y ripgrep fijados por versión y sha256 (`limits.json`), el venv de
 deepagents con `--require-hashes` y todo de root con 0755, para que el
 uid 1000 del sandbox no pueda reemplazar nada. Hornea además el manifiesto
-`rayito.agent-template/1` y, con `prefetch=True`, el demonio de precarga
-como `start_cmd` (opción A del diseño).
+`rayito.agent-template/1`, el código del usuario (`app=`) en
+`AGENT_APP_DIR` y, con `prefetch=True`, el demonio de precarga como
+`start_cmd` (opción A del diseño).
 
 La composición es pura (`to_template()`, `manifest()`); sólo `build()`
 escribe el contexto en un directorio temporal y llama a `Template.build`.
@@ -13,38 +14,57 @@ escribe el contexto en un directorio temporal y llama a `Template.build`.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import tempfile
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from importlib import resources
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final
 
-from rayito._agent._deepagents import DEEPAGENTS_RUNNER_PATH
+from rayito._agent._deepagents import deepagents_requirements, deepagents_runner
 from rayito._agent._opencode import OPENCODE_FLAG_ENVS
+from rayito._agent._recipes import (
+    AGENT_APP_CONTEXT_DIR,
+    AGENT_APP_DIR,
+    AGENT_BIN_DIR,
+    AGENT_HOST_CONTEXT_DIR,
+    AGENT_HOST_DIR,
+    AGENT_INSTALL_DIR,
+    PREFETCH_SCRIPT_NAME,
+    PREFETCH_SCRIPT_PATH,
+    agent_host_files,
+    host_sha256,
+    prefetch_script,
+)
+from rayito._agent._runtime import (
+    STEP_COPY,
+    STEP_RUN,
+    AgentRuntime,
+    InstallableRuntime,
+    InstallTarget,
+    TemplateStep,
+    require_installable,
+)
+from rayito._agent._runtimes import RUNTIME_KINDS, resolve_runtime
 from rayito._images import DEFAULT_BUILD_TIMEOUT_SECONDS
 from rayito._limits import (
-    AGENT_DEEPAGENTS_REQUIREMENTS_SHA256,
     AGENT_KERNEL_WARMUP_MARKER_PATH,
     AGENT_KERNEL_WARMUP_SLIM_VALUE,
     AGENT_MIN_MEMORY_MIB,
-    AGENT_OPENCODE_SHA256,
-    AGENT_OPENCODE_VERSION,
     AGENT_PREFETCH_BUILD_MARKER_PATH,
     AGENT_PREFETCH_BUILD_TIMEOUT_SECONDS,
     AGENT_PREFETCH_INTERVAL_SECONDS,
     AGENT_PREFETCH_RESTORE_JUMP_SECONDS,
     AGENT_PROTOCOL_VERSION,
-    AGENT_RIPGREP_SHA256,
-    AGENT_RIPGREP_VERSION,
     AGENT_TEMPLATE_MANIFEST_PATH,
     AGENT_TEMPLATE_MANIFEST_SCHEMA,
 )
+from rayito._templates._context import collect_context_files
+from rayito._templates._dockerignore import DOCKERIGNORE_FILENAME, DockerIgnore
 from rayito._templates._dsl import AsyncTemplate, Template
+from rayito._templates._instructions import CopyStep
 from rayito._templates._ready_cmds import ReadyCommand, wait_for_file
-from rayito.exceptions import InvalidArgumentException
+from rayito.exceptions import InvalidArgumentException, UnimplementedError
 
 if TYPE_CHECKING:
     from rayito._templates._models import BuildInfo
@@ -57,105 +77,16 @@ DEFAULT_AGENT_TEMPLATE_NAME: Final = "rayito-agent"
 DEFAULT_AGENT_TEMPLATE_BASE: Final = "rayito-base-caps"
 #: Runtimes que la plantilla instala si no se dice otra cosa.
 AGENT_TEMPLATE_RUNTIMES: Final = ("opencode", "deepagents")
-#: Directorio raíz de todo lo que la plantilla instala (root, 0755).
-AGENT_INSTALL_DIR: Final = "/opt/agents"
-AGENT_BIN_DIR: Final = f"{AGENT_INSTALL_DIR}/bin"
-OPENCODE_BINARY_PATH: Final = f"{AGENT_BIN_DIR}/opencode"
-RIPGREP_BINARY_PATH: Final = f"{AGENT_BIN_DIR}/rg"
-DEEPAGENTS_VENV_DIR: Final = f"{AGENT_INSTALL_DIR}/deepagents"
-DEEPAGENTS_PYTHON_PATH: Final = f"{DEEPAGENTS_VENV_DIR}/bin/python"
-DEEPAGENTS_REQUIREMENTS_NAME: Final = "requirements-deepagents.txt"
-#: Lo que el build importa como prueba de humo del venv: deepagents y las
-#: clases de modelo de cada proveedor (`langchain_openai` para OpenAI,
-#: xAI, Azure y las APIs compatibles; `langchain_google_genai` para Gemini).
-DEEPAGENTS_SMOKE_MODULES: Final = (
-    "deepagents, langchain_aws, langchain_anthropic, langchain_openai, langchain_google_genai"
-)
-PREFETCH_SCRIPT_NAME: Final = "rayito-agent-prefetch"
-PREFETCH_SCRIPT_PATH: Final = f"{AGENT_BIN_DIR}/{PREFETCH_SCRIPT_NAME}"
 MANIFEST_CONTEXT_NAME: Final = "rayito-agent.json"
-#: El runner de deepagents (dato de paquete de `_agent/_runner/`) en el
-#: contexto de build; la plantilla lo instala en `DEEPAGENTS_RUNNER_PATH`.
-DEEPAGENTS_RUNNER_NAME: Final = "deepagents_runner.py"
-#: Asset de la release de OpenCode (linux arm64 glibc, binario único).
-OPENCODE_RELEASE_URL: Final = (
-    "https://github.com/anomalyco/opencode/releases/download/"
-    f"v{AGENT_OPENCODE_VERSION}/opencode-linux-arm64.tar.gz"
+#: Las claves del manifiesto `rayito.agent-template/1` que existían antes de
+#: ADR-028 y que el demonio de precarga y los SDK anteriores leen.
+LEGACY_OPENCODE_RUNTIME: Final = "opencode"
+LEGACY_DEEPAGENTS_RUNTIME: Final = "deepagents"
+#: Los modos de un directorio y de un fichero de lo instalado: de root,
+#: sin escritura para grupo ni otros.
+_PERMISSIONS_CMD: Final = (
+    f"chown -R root:root {AGENT_INSTALL_DIR} && chmod -R a+rX,go-w {AGENT_INSTALL_DIR}"
 )
-RIPGREP_RELEASE_DIR: Final = f"ripgrep-{AGENT_RIPGREP_VERSION}-aarch64-unknown-linux-gnu"
-RIPGREP_RELEASE_URL: Final = (
-    "https://github.com/BurntSushi/ripgrep/releases/download/"
-    f"{AGENT_RIPGREP_VERSION}/{RIPGREP_RELEASE_DIR}.tar.gz"
-)
-_ASSETS_PACKAGE: Final = "rayito._agent"
-_ASSETS_DIR: Final = "_assets"
-_RUNNER_DIR: Final = "_runner"
-
-
-def _asset_bytes(name: str) -> bytes:
-    return resources.files(_ASSETS_PACKAGE).joinpath(_ASSETS_DIR, name).read_bytes()
-
-
-def deepagents_requirements() -> bytes:
-    """El fichero de requisitos con hash del venv de deepagents (dato de
-    paquete; su sha256 está en `limits.json`)."""
-    return _asset_bytes(DEEPAGENTS_REQUIREMENTS_NAME)
-
-
-def deepagents_runner() -> bytes:
-    """El runner de deepagents que la plantilla instala (su sha256 va en el
-    manifiesto como `runner_sha256`)."""
-    return (
-        resources.files(_ASSETS_PACKAGE).joinpath(_RUNNER_DIR, DEEPAGENTS_RUNNER_NAME).read_bytes()
-    )
-
-
-def prefetch_script() -> bytes:
-    """El demonio de precarga (`rayito-agent-prefetch`)."""
-    return _asset_bytes(PREFETCH_SCRIPT_NAME)
-
-
-def _opencode_install() -> str:
-    return (
-        f"curl -fsSL --retry 3 -o /tmp/opencode.tar.gz {OPENCODE_RELEASE_URL}"
-        f" && echo '{AGENT_OPENCODE_SHA256}  /tmp/opencode.tar.gz' | sha256sum -c -"
-        f" && curl -fsSL --retry 3 -o /tmp/ripgrep.tar.gz {RIPGREP_RELEASE_URL}"
-        f" && echo '{AGENT_RIPGREP_SHA256}  /tmp/ripgrep.tar.gz' | sha256sum -c -"
-        f" && mkdir -p {AGENT_BIN_DIR}"
-        f" && tar -xzf /tmp/opencode.tar.gz -C {AGENT_BIN_DIR} opencode"
-        f" && tar -xzf /tmp/ripgrep.tar.gz -C /tmp"
-        f" && mv /tmp/{RIPGREP_RELEASE_DIR}/rg {RIPGREP_BINARY_PATH}"
-        f" && rm -rf /tmp/opencode.tar.gz /tmp/ripgrep.tar.gz /tmp/{RIPGREP_RELEASE_DIR}"
-        f" && chown -R root:root {AGENT_INSTALL_DIR}"
-        f" && chmod 0755 {AGENT_INSTALL_DIR} {AGENT_BIN_DIR} {OPENCODE_BINARY_PATH}"
-        f" {RIPGREP_BINARY_PATH}"
-        f" && ln -sf {OPENCODE_BINARY_PATH} /usr/local/bin/opencode"
-        f" && ln -sf {RIPGREP_BINARY_PATH} /usr/local/bin/rg"
-    )
-
-
-def _deepagents_install() -> str:
-    requirements = f"{AGENT_INSTALL_DIR}/{DEEPAGENTS_REQUIREMENTS_NAME}"
-    return (
-        f"echo '{AGENT_DEEPAGENTS_REQUIREMENTS_SHA256}  {requirements}' | sha256sum -c -"
-        f" && python3 -m venv {DEEPAGENTS_VENV_DIR}"
-        f" && {DEEPAGENTS_PYTHON_PATH} -m pip install --no-cache-dir"
-        " --require-hashes --no-deps --only-binary=:all:"
-        f" -r {requirements}"
-        f" && {DEEPAGENTS_PYTHON_PATH} -m pip check"
-    )
-
-
-def _smoke_test(runtimes: Sequence[str]) -> str:
-    checks = []
-    if "opencode" in runtimes:
-        checks += ["su user -c 'opencode --version'", "su user -c 'rg --version'"]
-    if "deepagents" in runtimes:
-        checks.append(
-            f"su user -c \"{DEEPAGENTS_PYTHON_PATH} -c 'import {DEEPAGENTS_SMOKE_MODULES}'\""
-        )
-        checks.append(f"su user -c 'test -r {DEEPAGENTS_RUNNER_PATH}'")
-    return " && ".join(checks)
 
 
 def _slim_kernel_cmd() -> str:
@@ -186,11 +117,32 @@ def prefetch_ready_cmd() -> ReadyCommand:
     )
 
 
+def _installable(item: str | AgentRuntime | InstallableRuntime) -> InstallableRuntime:
+    if isinstance(item, str):
+        try:
+            runtime: object = resolve_runtime(item)
+        except UnimplementedError:
+            if item in RUNTIME_KINDS:
+                raise
+            raise InvalidArgumentException(
+                f"runtime de plantilla desconocido: {item!r} "
+                f"(admitidos: {', '.join(RUNTIME_KINDS)})"
+            ) from None
+    else:
+        runtime = item
+    return require_installable(runtime)
+
+
 @dataclass(frozen=True)
 class AgentTemplate:
     """Plantilla de imagen con los runtimes del agente de IA.
 
-    `runtimes` elige qué se instala (`"opencode"`, `"deepagents"`);
+    `runtimes` elige qué se instala: nombres del registro (`"opencode"`,
+    `"deepagents"`, `"langgraph"`...) u objetos que implementen
+    `InstallableRuntime`; la imagen se compone con los `install_steps()` de
+    cada uno. `app` es un directorio local con el código del agente: se copia
+    a `AGENT_APP_DIR` (de root, sin escritura para `user`) con las reglas de
+    su `.dockerignore` más `app_exclude` (patrones de `.dockerignore`).
     `prefetch=True` hornea el demonio que precarga los binarios en la caché
     de páginas tras cada restauración del snapshot. `kernel_warmup=False`
     (por defecto) apaga el calentamiento del kernel de `run_code` (numpy,
@@ -226,11 +178,13 @@ class AgentTemplate:
 
     name: str = DEFAULT_AGENT_TEMPLATE_NAME
     base: str = DEFAULT_AGENT_TEMPLATE_BASE
-    runtimes: tuple[str, ...] = AGENT_TEMPLATE_RUNTIMES
+    runtimes: tuple[str | AgentRuntime, ...] = AGENT_TEMPLATE_RUNTIMES
     prefetch: bool = True
     kernel_warmup: bool = False
     memory_mib: int = AGENT_MIN_MEMORY_MIB
     base_version: str | None = None
+    app: str | None = None
+    app_exclude: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if isinstance(self.memory_mib, bool) or not isinstance(self.memory_mib, int):
@@ -243,47 +197,50 @@ class AgentTemplate:
         runtimes = tuple(self.runtimes)
         if not runtimes:
             raise InvalidArgumentException("runtimes no puede ser vacío")
-        unknown = [name for name in runtimes if name not in AGENT_TEMPLATE_RUNTIMES]
-        if unknown:
-            raise InvalidArgumentException(
-                f"runtime de plantilla desconocido: {unknown[0]!r} "
-                f"(admitidos: {', '.join(AGENT_TEMPLATE_RUNTIMES)})"
-            )
-        if len(set(runtimes)) != len(runtimes):
+        names = [_installable(item).name for item in runtimes]
+        if len(set(names)) != len(names):
             raise InvalidArgumentException("runtimes no puede repetir un nombre")
         if not self.name or not self.base:
             raise InvalidArgumentException("name y base no pueden ser vacíos")
+        if self.app is not None and not Path(self.app).is_dir():
+            raise InvalidArgumentException("app debe ser un directorio existente")
         object.__setattr__(self, "runtimes", runtimes)
+        object.__setattr__(self, "app_exclude", tuple(self.app_exclude))
+
+    def installables(self) -> tuple[InstallableRuntime, ...]:
+        """Los runtimes de la plantilla, ya resueltos."""
+        return tuple(_installable(item) for item in self.runtimes)
 
     def manifest(self) -> dict[str, object]:
         """El manifiesto `rayito.agent-template/1` que se hornea en
         `AGENT_TEMPLATE_MANIFEST_PATH`: versiones y hashes de lo instalado,
-        protocolo y las rutas que precarga el demonio."""
-        prefetch_paths: list[str] = []
-        opencode: dict[str, str] | None = None
-        deepagents: dict[str, str] | None = None
-        runner_sha256: str | None = None
-        if "opencode" in self.runtimes:
-            opencode = {"version": AGENT_OPENCODE_VERSION, "sha256": AGENT_OPENCODE_SHA256}
-            prefetch_paths += [OPENCODE_BINARY_PATH, RIPGREP_BINARY_PATH]
-        if "deepagents" in self.runtimes:
-            deepagents = {"requirements_sha256": AGENT_DEEPAGENTS_REQUIREMENTS_SHA256}
-            runner_sha256 = hashlib.sha256(deepagents_runner()).hexdigest()
+        protocolo, las rutas que precarga el demonio y, desde ADR-028, la
+        entrada de cada runtime (`runtimes`) y el sha256 del host del agente
+        (`host_sha256`)."""
+        runtimes = self.installables()
+        entries = {runtime.name: dict(runtime.manifest_entry()) for runtime in runtimes}
+        deepagents = entries.get(LEGACY_DEEPAGENTS_RUNTIME)
         return {
             "schema": AGENT_TEMPLATE_MANIFEST_SCHEMA,
             "protocol": AGENT_PROTOCOL_VERSION,
-            "opencode": opencode,
-            "deepagents": deepagents,
-            "runner_sha256": runner_sha256,
-            "prefetch_paths": prefetch_paths,
+            "opencode": entries.get(LEGACY_OPENCODE_RUNTIME),
+            "deepagents": None
+            if deepagents is None
+            else {"requirements_sha256": deepagents["requirements_sha256"]},
+            "runner_sha256": None if deepagents is None else deepagents["runner_sha256"],
+            "prefetch_paths": [path for runtime in runtimes for path in runtime.prefetch_paths()],
+            "runtimes": entries,
+            "host_sha256": host_sha256(agent_host_files()),
         }
 
     def context_files(self) -> dict[str, bytes]:
-        """Los ficheros del contexto de build (nombre relativo -> bytes)."""
+        """Los ficheros del contexto de build (nombre relativo -> bytes). El
+        código del usuario (`app`) no entra aquí: lo escribe `build()`."""
         files = {MANIFEST_CONTEXT_NAME: _manifest_bytes(self.manifest())}
-        if "deepagents" in self.runtimes:
-            files[DEEPAGENTS_REQUIREMENTS_NAME] = deepagents_requirements()
-            files[DEEPAGENTS_RUNNER_NAME] = deepagents_runner()
+        for runtime in self.installables():
+            files.update(runtime.context_files())
+        for relative, data in agent_host_files().items():
+            files[f"{AGENT_HOST_CONTEXT_DIR}/{relative}"] = data
         if self.prefetch:
             files[PREFETCH_SCRIPT_NAME] = prefetch_script()
         return files
@@ -291,30 +248,31 @@ class AgentTemplate:
     def to_template(self, template_class: type[Template] = Template) -> Template:
         """El `Template` equivalente (puro: no lee ni escribe nada)."""
         tpl = template_class().from_base_image(self.base, version=self.base_version)
-        if "opencode" in self.runtimes:
-            tpl = tpl.run_cmd(_opencode_install())
-        if "deepagents" in self.runtimes:
-            requirements = f"{AGENT_INSTALL_DIR}/{DEEPAGENTS_REQUIREMENTS_NAME}"
-            tpl = (
-                tpl.copy(DEEPAGENTS_REQUIREMENTS_NAME, requirements)
-                .run_cmd(_deepagents_install())
-                .copy(DEEPAGENTS_RUNNER_NAME, DEEPAGENTS_RUNNER_PATH)
-            )
+        executables: list[str] = []
+        target = InstallTarget()
+        for runtime in self.installables():
+            tpl, runtime_executables = _apply_steps(tpl, runtime.install_steps(target))
+            executables += runtime_executables
         tpl = tpl.copy(MANIFEST_CONTEXT_NAME, AGENT_TEMPLATE_MANIFEST_PATH)
         if self.prefetch:
             tpl = tpl.copy(PREFETCH_SCRIPT_NAME, PREFETCH_SCRIPT_PATH)
-        executables = [DEEPAGENTS_RUNNER_PATH] if "deepagents" in self.runtimes else []
-        if self.prefetch:
             executables.append(PREFETCH_SCRIPT_PATH)
+        if agent_host_files():
+            tpl = tpl.copy(AGENT_HOST_CONTEXT_DIR, AGENT_HOST_DIR)
+        if self.app is not None:
+            tpl = tpl.copy(AGENT_APP_CONTEXT_DIR, AGENT_APP_DIR)
         tpl = tpl.run_cmd(
-            f"mkdir -p {AGENT_BIN_DIR} && chown -R root:root {AGENT_INSTALL_DIR}"
-            f" && chmod -R a+rX,go-w {AGENT_INSTALL_DIR}"
+            f"mkdir -p {AGENT_BIN_DIR} && {_PERMISSIONS_CMD}"
             + (f" && chmod 0755 {' '.join(executables)}" if executables else "")
         )
         if not self.kernel_warmup:
             tpl = tpl.run_cmd(_slim_kernel_cmd())
         tpl = tpl.set_envs(dict(OPENCODE_FLAG_ENVS))
-        tpl = tpl.run_cmd(_smoke_test(self.runtimes))
+        smoke = " && ".join(
+            check for runtime in self.installables() for check in runtime.smoke_checks()
+        )
+        if smoke:
+            tpl = tpl.run_cmd(smoke)
         if self.prefetch:
             tpl = tpl.set_start_cmd(prefetch_start_cmd(), prefetch_ready_cmd())
         return tpl
@@ -335,7 +293,7 @@ class AgentTemplate:
         """Construye la imagen `name` con `Template.build` (ver el bloque
         de coste de la clase)."""
         with tempfile.TemporaryDirectory(prefix="rayito-agent-") as tmp:
-            context = _write_context(Path(tmp), self.context_files())
+            context = _write_context(Path(tmp), self.context_files(), self.app, self.app_exclude)
             return Template.build(
                 self.to_template(),
                 self.name,
@@ -365,7 +323,7 @@ class AsyncAgentTemplate(AgentTemplate):
         session: Any = None,
     ) -> BuildInfo:
         with tempfile.TemporaryDirectory(prefix="rayito-agent-") as tmp:
-            context = _write_context(Path(tmp), self.context_files())
+            context = _write_context(Path(tmp), self.context_files(), self.app, self.app_exclude)
             return await AsyncTemplate.build(
                 self.to_template(AsyncTemplate),
                 self.name,
@@ -380,13 +338,51 @@ class AsyncAgentTemplate(AgentTemplate):
             )
 
 
+def _apply_steps(tpl: Any, steps: Sequence[TemplateStep]) -> tuple[Any, list[str]]:
+    """Aplica los pasos de un runtime al `Template`; devuelve también los
+    destinos que deben quedar 0755."""
+    executables: list[str] = []
+    for step in steps:
+        if step.op == STEP_RUN:
+            tpl = tpl.run_cmd(str(step.args["cmd"]))
+        elif step.op == STEP_COPY:
+            destination = str(step.args["dst"])
+            tpl = tpl.copy(str(step.args["src"]), destination)
+            if step.args.get("executable") is True:
+                executables.append(destination)
+    return tpl, executables
+
+
 def _manifest_bytes(manifest: Mapping[str, object]) -> bytes:
     return (json.dumps(manifest, indent=2, sort_keys=True) + "\n").encode()
 
 
-def _write_context(directory: Path, files: Mapping[str, bytes]) -> Path:
+def _app_files(app: str, exclude: Sequence[str]) -> tuple[tuple[str, bytes], ...]:
+    """Los ficheros del código del usuario, sin lo que ignoran su
+    `.dockerignore` y `exclude`."""
+    source = Path(app)
+    extra = DockerIgnore.from_text("\n".join(exclude))
+    entries = collect_context_files(
+        source,
+        [CopyStep(".", AGENT_APP_DIR)],
+        ignore=DockerIgnore.from_file(source / DOCKERIGNORE_FILENAME),
+    )
+    return tuple((relative, data) for relative, data in entries if not extra.matches(relative))
+
+
+def _write_context(
+    directory: Path, files: Mapping[str, bytes], app: str | None, exclude: Sequence[str]
+) -> Path:
     for name, data in files.items():
-        (directory / name).write_bytes(data)
+        target = directory / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(data)
+    if app is not None:
+        (directory / AGENT_APP_CONTEXT_DIR).mkdir()
+        for relative, data in _app_files(app, exclude):
+            target = directory / AGENT_APP_CONTEXT_DIR / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(data)
     return directory
 
 
@@ -397,6 +393,7 @@ __all__ = [
     "AgentTemplate",
     "AsyncAgentTemplate",
     "deepagents_requirements",
+    "deepagents_runner",
     "prefetch_ready_cmd",
     "prefetch_script",
     "prefetch_start_cmd",

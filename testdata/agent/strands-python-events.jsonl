@@ -1,0 +1,30 @@
+{"init_event_loop": true}
+{"start": true}
+{"start_event_loop": true}
+{"event": {"messageStart": {"role": "assistant"}}}
+{"event": {"contentBlockStart": {"start": {}}}}
+{"event": {"contentBlockDelta": {"delta": {"reasoningContent": {"text": "Debo sumar dos y tres."}}}}}
+{"delta": {"reasoningContent": {"text": "Debo sumar dos y tres."}}, "reasoning": true, "reasoningText": "Debo sumar dos y tres."}
+{"event": {"contentBlockStop": {}}}
+{"event": {"contentBlockDelta": {"delta": {"text": "Voy a sumar. "}}}}
+{"data": "Voy a sumar. ", "delta": {"text": "Voy a sumar. "}}
+{"event": {"contentBlockStop": {}}}
+{"event": {"contentBlockStart": {"start": {"toolUse": {"name": "add", "toolUseId": "t1"}}}}}
+{"event": {"contentBlockDelta": {"delta": {"toolUse": {"input": "{\"a\": 2, \"b\": 3}"}}}}}
+{"current_tool_use": {"input": "{\"a\": 2, \"b\": 3}", "name": "add", "toolUseId": "t1"}, "delta": {"toolUse": {"input": "{\"a\": 2, \"b\": 3}"}}, "type": "tool_use_stream"}
+{"event": {"contentBlockStop": {}}}
+{"event": {"messageStop": {"stopReason": "tool_use"}}}
+{"event": {"metadata": {"usage": {"cacheReadInputTokens": 0, "cacheWriteInputTokens": 0, "inputTokens": 100, "outputTokens": 7, "totalTokens": 107}}}}
+{"message": {"content": [{"reasoningContent": {"reasoningText": {"text": "Debo sumar dos y tres."}}}, {"text": "Voy a sumar. "}, {"toolUse": {"input": {"a": 2, "b": 3}, "name": "add", "toolUseId": "t1"}}], "metadata": {"usage": {"cacheReadInputTokens": 0, "cacheWriteInputTokens": 0, "inputTokens": 100, "outputTokens": 7, "totalTokens": 107}}, "role": "assistant"}}
+{"message": {"content": [{"toolResult": {"content": [{"text": "5"}], "status": "success", "toolUseId": "t1"}}], "role": "user"}}
+{"start": true}
+{"start": true}
+{"start_event_loop": true}
+{"event": {"messageStart": {"role": "assistant"}}}
+{"event": {"contentBlockDelta": {"delta": {"text": "El resultado es 5."}}}}
+{"data": "El resultado es 5.", "delta": {"text": "El resultado es 5."}}
+{"event": {"contentBlockStop": {}}}
+{"event": {"messageStop": {"stopReason": "end_turn"}}}
+{"event": {"metadata": {"usage": {"cacheReadInputTokens": 40, "cacheWriteInputTokens": 0, "inputTokens": 200, "outputTokens": 7, "totalTokens": 207}}}}
+{"message": {"content": [{"text": "El resultado es 5."}], "metadata": {"usage": {"cacheReadInputTokens": 40, "cacheWriteInputTokens": 0, "inputTokens": 200, "outputTokens": 7, "totalTokens": 207}}, "role": "assistant"}}
+{"result": {"stop_reason": "end_turn"}}

@@ -1,0 +1,1022 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rayito.dev/schemas/rayito.agent-project.1.json",
+  "title": "rayito.agent-project/1",
+  "description": "El documento de rayito-agent.toml y rayito-agent.json. Describe un agente sin ningún secreto: una pasarela nombra el secreto, nunca lo contiene.",
+  "type": "object",
+  "required": [
+    "schema",
+    "name",
+    "runtime",
+    "model"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema": {
+      "const": "rayito.agent-project/1"
+    },
+    "name": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$"
+    },
+    "runtime": {
+      "type": "object",
+      "required": [
+        "kind"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "opencode",
+            "deepagents",
+            "langgraph",
+            "strands",
+            "strands-harness",
+            "hermes",
+            "custom"
+          ]
+        },
+        "entrypoint": {
+          "type": "string",
+          "minLength": 1
+        },
+        "language": {
+          "enum": [
+            "python",
+            "typescript"
+          ]
+        },
+        "toolsets": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "skills_dir": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^(?!/)(?!.*(^|/)\\.\\.(/|$)).+$",
+          "description": "Ruta relativa al directorio del fichero que no sale de él."
+        },
+        "install": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "requirements": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^(?!/)(?!.*(^|/)\\.\\.(/|$)).+$",
+          "description": "Ruta relativa al directorio del fichero que no sale de él."
+        },
+        "command": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "app": {
+          "type": "object"
+        },
+        "protocol": {
+          "type": "string",
+          "minLength": 1
+        },
+        "python": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "opencode"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "propertyNames": {
+              "enum": [
+                "kind"
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "deepagents"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "propertyNames": {
+              "enum": [
+                "kind"
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "langgraph"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "propertyNames": {
+              "enum": [
+                "kind",
+                "entrypoint"
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "strands"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "propertyNames": {
+              "enum": [
+                "kind",
+                "entrypoint",
+                "language"
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "strands-harness"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "propertyNames": {
+              "enum": [
+                "kind",
+                "entrypoint",
+                "language"
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "hermes"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "propertyNames": {
+              "enum": [
+                "kind",
+                "toolsets",
+                "skills_dir"
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "custom"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "propertyNames": {
+              "enum": [
+                "kind",
+                "install",
+                "requirements",
+                "command",
+                "entrypoint",
+                "app",
+                "protocol",
+                "python"
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "langgraph"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "required": [
+              "entrypoint"
+            ]
+          }
+        }
+      ]
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^(?!/)(?!.*(^|/)\\.\\.(/|$)).+$",
+          "description": "Ruta relativa al directorio del fichero que no sale de él."
+        },
+        "requirements": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^(?!/)(?!.*(^|/)\\.\\.(/|$)).+$",
+          "description": "Ruta relativa al directorio del fichero que no sale de él."
+        },
+        "exclude": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "model": {
+      "type": "object",
+      "required": [
+        "provider",
+        "id",
+        "gateway"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "provider": {
+          "enum": [
+            "bedrock",
+            "anthropic",
+            "openai-compatible",
+            "openai",
+            "google",
+            "azure"
+          ]
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "gateway": {
+          "type": "string",
+          "minLength": 1
+        },
+        "region": {
+          "type": "string",
+          "minLength": 1
+        },
+        "base_path": {
+          "type": "string"
+        },
+        "prompt_caching": {
+          "type": "boolean"
+        }
+      }
+    },
+    "gateways": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": [
+          "preset"
+        ],
+        "properties": {
+          "preset": {
+            "enum": [
+              "bedrock",
+              "anthropic",
+              "openai",
+              "openai-compatible",
+              "gemini",
+              "azure",
+              "openrouter",
+              "groq",
+              "mistral",
+              "deepseek",
+              "xai",
+              "litellm",
+              "custom"
+            ]
+          },
+          "secret": {
+            "type": "string",
+            "pattern": "^(?!Bearer)(?!sk-)(?!AIza)(?!AKIA)(?!ASIA)(?!ABSK)(?!ghp_)(?!gho_)(?!xoxb-)\\S+$",
+            "description": "El nombre de un secreto de Secrets Manager, nunca su valor."
+          },
+          "rate_per_minute": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 6000
+          },
+          "region": {
+            "type": "string",
+            "minLength": 1
+          },
+          "models": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "upstream": {
+            "type": "string",
+            "minLength": 1
+          },
+          "base_path": {
+            "type": "string"
+          },
+          "resource": {
+            "type": "string",
+            "minLength": 1
+          },
+          "headers": {
+            "type": "object",
+            "minProperties": 1,
+            "additionalProperties": {
+              "type": "string",
+              "pattern": "^(?!Bearer)(?!sk-)(?!AIza)(?!AKIA)(?!ASIA)(?!ABSK)(?!ghp_)(?!gho_)(?!xoxb-)\\S+$",
+              "description": "El nombre de un secreto de Secrets Manager, nunca su valor."
+            }
+          },
+          "allow": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "array",
+              "minItems": 2,
+              "maxItems": 2,
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        },
+        "additionalProperties": false,
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "preset": {
+                  "const": "bedrock"
+                }
+              },
+              "required": [
+                "preset"
+              ]
+            },
+            "then": {
+              "required": [
+                "secret",
+                "region",
+                "models"
+              ],
+              "propertyNames": {
+                "enum": [
+                  "preset",
+                  "secret",
+                  "rate_per_minute",
+                  "region",
+                  "models"
+                ]
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "preset": {
+                  "const": "anthropic"
+                }
+              },
+              "required": [
+                "preset"
+              ]
+            },
+            "then": {
+              "required": [
+                "secret"
+              ],
+              "propertyNames": {
+                "enum": [
+                  "preset",
+                  "secret",
+                  "rate_per_minute"
+                ]
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "preset": {
+                  "const": "openai"
+                }
+              },
+              "required": [
+                "preset"
+              ]
+            },
+            "then": {
+              "required": [
+                "secret"
+              ],
+              "propertyNames": {
+                "enum": [
+                  "preset",
+                  "secret",
+                  "rate_per_minute"
+                ]
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "preset": {
+                  "const": "openai-compatible"
+                }
+              },
+              "required": [
+                "preset"
+              ]
+            },
+            "then": {
+              "required": [
+                "secret",
+                "upstream"
+              ],
+              "propertyNames": {
+                "enum": [
+                  "preset",
+                  "secret",
+                  "rate_per_minute",
+                  "upstream",
+                  "base_path"
+                ]
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "preset": {
+                  "const": "gemini"
+                }
+              },
+              "required": [
+                "preset"
+              ]
+            },
+            "then": {
+              "required": [
+                "secret",
+                "models"
+              ],
+              "propertyNames": {
+                "enum": [
+                  "preset",
+                  "secret",
+                  "rate_per_minute",
+                  "models"
+                ]
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "preset": {
+                  "const": "azure"
+                }
+              },
+              "required": [
+                "preset"
+              ]
+            },
+            "then": {
+              "required": [
+                "secret",
+                "resource"
+              ],
+              "propertyNames": {
+                "enum": [
+                  "preset",
+                  "secret",
+                  "rate_per_minute",
+                  "resource"
+                ]
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "preset": {
+                  "const": "openrouter"
+                }
+              },
+              "required": [
+                "preset"
+              ]
+            },
+            "then": {
+              "required": [
+                "secret"
+              ],
+              "propertyNames": {
+                "enum": [
+                  "preset",
+                  "secret",
+                  "rate_per_minute"
+                ]
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "preset": {
+                  "const": "groq"
+                }
+              },
+              "required": [
+                "preset"
+              ]
+            },
+            "then": {
+              "required": [
+                "secret"
+              ],
+              "propertyNames": {
+                "enum": [
+                  "preset",
+                  "secret",
+                  "rate_per_minute"
+                ]
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "preset": {
+                  "const": "mistral"
+                }
+              },
+              "required": [
+                "preset"
+              ]
+            },
+            "then": {
+              "required": [
+                "secret"
+              ],
+              "propertyNames": {
+                "enum": [
+                  "preset",
+                  "secret",
+                  "rate_per_minute"
+                ]
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "preset": {
+                  "const": "deepseek"
+                }
+              },
+              "required": [
+                "preset"
+              ]
+            },
+            "then": {
+              "required": [
+                "secret"
+              ],
+              "propertyNames": {
+                "enum": [
+                  "preset",
+                  "secret",
+                  "rate_per_minute"
+                ]
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "preset": {
+                  "const": "xai"
+                }
+              },
+              "required": [
+                "preset"
+              ]
+            },
+            "then": {
+              "required": [
+                "secret"
+              ],
+              "propertyNames": {
+                "enum": [
+                  "preset",
+                  "secret",
+                  "rate_per_minute"
+                ]
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "preset": {
+                  "const": "litellm"
+                }
+              },
+              "required": [
+                "preset"
+              ]
+            },
+            "then": {
+              "required": [
+                "secret",
+                "upstream"
+              ],
+              "propertyNames": {
+                "enum": [
+                  "preset",
+                  "secret",
+                  "rate_per_minute",
+                  "upstream",
+                  "base_path"
+                ]
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "preset": {
+                  "const": "custom"
+                }
+              },
+              "required": [
+                "preset"
+              ]
+            },
+            "then": {
+              "required": [
+                "upstream",
+                "headers",
+                "allow"
+              ],
+              "propertyNames": {
+                "enum": [
+                  "preset",
+                  "upstream",
+                  "headers",
+                  "allow",
+                  "rate_per_minute"
+                ]
+              }
+            }
+          }
+        ]
+      }
+    },
+    "agent": {
+      "type": "object",
+      "additionalProperties": false,
+      "not": {
+        "required": [
+          "instructions",
+          "instructions_file"
+        ]
+      },
+      "properties": {
+        "instructions": {
+          "type": "string",
+          "minLength": 1
+        },
+        "instructions_file": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^(?!/)(?!.*(^|/)\\.\\.(/|$)).+$",
+          "description": "Ruta relativa al directorio del fichero que no sale de él."
+        },
+        "small_model": {
+          "type": "string",
+          "minLength": 1
+        },
+        "runtime_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "permissions": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "default": {
+              "enum": [
+                "allow",
+                "deny"
+              ]
+            },
+            "tools": {
+              "type": "object",
+              "additionalProperties": {
+                "oneOf": [
+                  {
+                    "enum": [
+                      "allow",
+                      "deny"
+                    ]
+                  },
+                  {
+                    "type": "object",
+                    "minProperties": 1,
+                    "additionalProperties": {
+                      "enum": [
+                        "allow",
+                        "deny"
+                      ]
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "mcp": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "oneOf": [
+              {
+                "properties": {
+                  "type": {
+                    "const": "local"
+                  },
+                  "command": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "envs": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string"
+                    }
+                  },
+                  "timeout_seconds": {
+                    "type": "number",
+                    "exclusiveMinimum": 0
+                  }
+                },
+                "required": [
+                  "command"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "properties": {
+                  "type": {
+                    "const": "remote"
+                  },
+                  "gateway": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "path": {
+                    "type": "string",
+                    "pattern": "^/"
+                  }
+                },
+                "required": [
+                  "gateway"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          }
+        },
+        "agents": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "required": [
+              "description",
+              "instructions"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "description": {
+                "type": "string",
+                "minLength": 1
+              },
+              "instructions": {
+                "type": "string",
+                "minLength": 1
+              },
+              "model": {
+                "type": "string",
+                "minLength": 1
+              },
+              "permissions": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "default": {
+                    "enum": [
+                      "allow",
+                      "deny"
+                    ]
+                  },
+                  "tools": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "oneOf": [
+                        {
+                          "enum": [
+                            "allow",
+                            "deny"
+                          ]
+                        },
+                        {
+                          "type": "object",
+                          "minProperties": 1,
+                          "additionalProperties": {
+                            "enum": [
+                              "allow",
+                              "deny"
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "raw_config": {
+          "type": "object"
+        }
+      }
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_steps": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "timeout_seconds": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "max_output_bytes": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_total_tokens": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "0 desactiva el presupuesto de tokens."
+        }
+      }
+    },
+    "serve": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535,
+          "not": {
+            "enum": [
+              8080,
+              9000
+            ]
+          }
+        },
+        "timeout_seconds": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 28800
+        },
+        "idle_seconds": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max_concurrency": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "metadata": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "network": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "allow_internet_access": {
+          "type": "boolean"
+        },
+        "egress": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "image": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "base": {
+          "type": "string",
+          "minLength": 1
+        },
+        "template": {
+          "type": "string",
+          "minLength": 1
+        },
+        "memory_mib": {
+          "type": "integer",
+          "minimum": 2048
+        }
+      }
+    }
+  }
+}

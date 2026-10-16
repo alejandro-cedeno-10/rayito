@@ -19,5 +19,6 @@ services:
       additional_contexts:
         agentassets: ../../clients/python/src/rayito/_agent/_assets
         agentrunner: ../../clients/python/src/rayito/_agent/_runner
+        agentapps: ./agent/apps
     image: rayito-local-guest-agent:dev
     cap_add: [NET_ADMIN]

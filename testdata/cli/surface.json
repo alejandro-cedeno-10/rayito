@@ -85,6 +85,498 @@
     {
       "path": [
         "agent",
+        "build"
+      ],
+      "group": false,
+      "invoke_without_command": false,
+      "hidden": false,
+      "parameters": [
+        {
+          "name": "bucket",
+          "kind": "option",
+          "flags": [
+            "--bucket"
+          ],
+          "type": "str",
+          "required": true,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "file",
+          "kind": "option",
+          "flags": [
+            "--file"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": false,
+          "default": ".",
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "force",
+          "kind": "option",
+          "flags": [
+            "--force"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "default": false,
+          "is_flag": true,
+          "envvar": null
+        },
+        {
+          "name": "timeout",
+          "kind": "option",
+          "flags": [
+            "--timeout"
+          ],
+          "type": "float",
+          "required": false,
+          "multiple": false,
+          "default": 1800.0,
+          "is_flag": false,
+          "envvar": null
+        }
+      ]
+    },
+    {
+      "path": [
+        "agent",
+        "deploy"
+      ],
+      "group": false,
+      "invoke_without_command": false,
+      "hidden": false,
+      "parameters": [
+        {
+          "name": "file",
+          "kind": "option",
+          "flags": [
+            "--file"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": false,
+          "default": ".",
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "timeout",
+          "kind": "option",
+          "flags": [
+            "--timeout"
+          ],
+          "type": "float",
+          "required": false,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "port",
+          "kind": "option",
+          "flags": [
+            "--port"
+          ],
+          "type": "int",
+          "required": false,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "token_file",
+          "kind": "option",
+          "flags": [
+            "--token-file"
+          ],
+          "type": "path",
+          "required": false,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        }
+      ]
+    },
+    {
+      "path": [
+        "agent",
+        "export"
+      ],
+      "group": false,
+      "invoke_without_command": false,
+      "hidden": false,
+      "parameters": [
+        {
+          "name": "out",
+          "kind": "option",
+          "flags": [
+            "--out"
+          ],
+          "type": "path",
+          "required": true,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "target",
+          "kind": "option",
+          "flags": [
+            "--target"
+          ],
+          "type": "str",
+          "required": true,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "file",
+          "kind": "option",
+          "flags": [
+            "--file"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": false,
+          "default": ".",
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "overwrite",
+          "kind": "option",
+          "flags": [
+            "--overwrite"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "default": false,
+          "is_flag": true,
+          "envvar": null
+        }
+      ]
+    },
+    {
+      "path": [
+        "agent",
+        "init"
+      ],
+      "group": false,
+      "invoke_without_command": false,
+      "hidden": false,
+      "parameters": [
+        {
+          "name": "directory",
+          "kind": "argument",
+          "flags": [
+            "directory"
+          ],
+          "type": "path",
+          "required": false,
+          "multiple": false,
+          "default": "."
+        },
+        {
+          "name": "runtime",
+          "kind": "option",
+          "flags": [
+            "--runtime"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": false,
+          "default": "strands",
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "language",
+          "kind": "option",
+          "flags": [
+            "--language"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": false,
+          "default": "python",
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "provider",
+          "kind": "option",
+          "flags": [
+            "--provider"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": false,
+          "default": "bedrock",
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "model",
+          "kind": "option",
+          "flags": [
+            "--model"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "region",
+          "kind": "option",
+          "flags": [
+            "--region"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "force",
+          "kind": "option",
+          "flags": [
+            "--force"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "default": false,
+          "is_flag": true,
+          "envvar": null
+        }
+      ]
+    },
+    {
+      "path": [
+        "agent",
+        "invoke"
+      ],
+      "group": false,
+      "invoke_without_command": false,
+      "hidden": false,
+      "parameters": [
+        {
+          "name": "sandbox_id",
+          "kind": "argument",
+          "flags": [
+            "sandbox_id"
+          ],
+          "type": "str",
+          "required": true,
+          "multiple": false,
+          "default": null
+        },
+        {
+          "name": "prompt",
+          "kind": "argument",
+          "flags": [
+            "prompt"
+          ],
+          "type": "str",
+          "required": true,
+          "multiple": false,
+          "default": null
+        },
+        {
+          "name": "session_id",
+          "kind": "option",
+          "flags": [
+            "--session-id"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "stream",
+          "kind": "option",
+          "flags": [
+            "--stream"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "default": false,
+          "is_flag": true,
+          "envvar": null
+        },
+        {
+          "name": "token_file",
+          "kind": "option",
+          "flags": [
+            "--token-file"
+          ],
+          "type": "path",
+          "required": false,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        }
+      ]
+    },
+    {
+      "path": [
+        "agent",
+        "run"
+      ],
+      "group": false,
+      "invoke_without_command": false,
+      "hidden": false,
+      "parameters": [
+        {
+          "name": "prompt",
+          "kind": "argument",
+          "flags": [
+            "prompt"
+          ],
+          "type": "str",
+          "required": true,
+          "multiple": false,
+          "default": null
+        },
+        {
+          "name": "file",
+          "kind": "option",
+          "flags": [
+            "--file"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": false,
+          "default": ".",
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "session_id",
+          "kind": "option",
+          "flags": [
+            "--session-id"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "model",
+          "kind": "option",
+          "flags": [
+            "--model"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "stream",
+          "kind": "option",
+          "flags": [
+            "--stream"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "default": false,
+          "is_flag": true,
+          "envvar": null
+        }
+      ]
+    },
+    {
+      "path": [
+        "agent",
+        "status"
+      ],
+      "group": false,
+      "invoke_without_command": false,
+      "hidden": false,
+      "parameters": [
+        {
+          "name": "sandbox_id",
+          "kind": "argument",
+          "flags": [
+            "sandbox_id"
+          ],
+          "type": "str",
+          "required": true,
+          "multiple": false,
+          "default": null
+        },
+        {
+          "name": "token_file",
+          "kind": "option",
+          "flags": [
+            "--token-file"
+          ],
+          "type": "path",
+          "required": false,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        }
+      ]
+    },
+    {
+      "path": [
+        "agent",
+        "stop"
+      ],
+      "group": false,
+      "invoke_without_command": false,
+      "hidden": false,
+      "parameters": [
+        {
+          "name": "sandbox_id",
+          "kind": "argument",
+          "flags": [
+            "sandbox_id"
+          ],
+          "type": "str",
+          "required": true,
+          "multiple": false,
+          "default": null
+        }
+      ]
+    },
+    {
+      "path": [
+        "agent",
         "template"
       ],
       "group": true,

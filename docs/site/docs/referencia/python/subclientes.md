@@ -135,6 +135,62 @@ con ella, el arranque normal es `Sandbox.create(...)` + `sbx.agent.run(...)`.
 
 ::: rayito.WarmupStep
 
+### Runtimes y despliegue de agentes
+
+Los runtimes que `AgentTemplate`, `Agent` y `AgentProject` aceptan. Instalan sus dependencias con hashes fijados y sacan el modelo por la pasarela de secretos ([Despliega tu agente](../../guias/despliega-tu-agente.md)).
+
+::: rayito.StrandsRuntime
+
+::: rayito.HermesRuntime
+
+::: rayito.CustomRuntime
+
+::: rayito.HttpApp
+
+#### Proyecto y despliegue
+
+`AgentProject` construye, ejecuta, despliega o exporta un agente descrito en `rayito-agent.toml`; `AgentDeployment` lo invoca, consulta su `DeploymentStatus` y lo detiene. Cuestan (imágenes y MicroVMs) y no hacen nada hasta llamar al método.
+
+::: rayito.AgentProject
+
+::: rayito.AsyncAgentProject
+
+::: rayito.ServeOptions
+
+::: rayito.AgentExport
+
+::: rayito.AgentDeployment
+
+::: rayito.AgentDeploymentStream
+
+::: rayito.AsyncAgentDeployment
+
+::: rayito.AsyncAgentDeploymentStream
+
+::: rayito.DeploymentStatus
+
+#### Puertos de runtime
+
+Describen cómo se instala y cómo se sirve un runtime sin cambiar el puerto `AgentRuntime`.
+
+::: rayito.InstallableRuntime
+
+::: rayito.ServableRuntime
+
+::: rayito.HostConfig
+
+::: rayito.GatewayWiring
+
+::: rayito.DirectWiring
+
+::: rayito.ModelWiring
+
+::: rayito.InstallTarget
+
+::: rayito.is_installable
+
+::: rayito.is_servable
+
 ## Listado
 
 ::: rayito.SandboxListPaginator

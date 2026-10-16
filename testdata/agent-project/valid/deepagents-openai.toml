@@ -1,0 +1,23 @@
+schema = "rayito.agent-project/1"
+name = "research-agent"
+
+[runtime]
+kind = "deepagents"
+
+[model]
+provider = "openai"
+id = "gpt-5-mini"
+gateway = "openai"
+
+[gateways.openai]
+preset = "openai"
+secret = "rayito/openai-key"
+
+[agent]
+instructions = "Investiga y resume."
+
+[serve]
+idle_seconds = 0
+
+[limits]
+max_total_tokens = 0
