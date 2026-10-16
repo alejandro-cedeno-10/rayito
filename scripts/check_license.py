@@ -35,7 +35,7 @@ VENDORED_MENTION = "e2b_charts"
 FORBIDDEN_LICENSE_TOKEN = "MIT"
 CRLF = b"\r\n"
 CRLF_HINT = (
-    " (tiene finales CRLF: el checkout ignoró .gitattributes, ver CONTRIBUTING.md §3)"
+    " (tiene finales CRLF: el checkout ignoró .gitattributes, ver CONTRIBUTING.md §1.3)"
 )
 
 CARGO_MANIFEST = "Cargo.toml"

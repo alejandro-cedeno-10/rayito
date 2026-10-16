@@ -28,7 +28,7 @@ el propietario de `.github/CODEOWNERS` y el contacto de `SECURITY.md` y
   decisiones cerradas, `tasks.md`, especificaciones delta). Un cambio se
   implementa cuando `openspec validate --strict` pasa y se archiva cuando
   su aceptación es verde contra AWS real (o su conjunto de gates, si no toca
-  runtime). El detalle del flujo está en `CONTRIBUTING.md` §2.
+  runtime). El detalle del flujo está en `CONTRIBUTING.md` §3.
 - **Las fuentes de verdad mandan**: `proto/rayito/v1/` para el contrato y
   `AWS_API_NOTES.md` para la API de AWS. Si un documento las contradice, se
   corrige el documento. Nada de lo que no esté en `AWS_API_NOTES.md` se

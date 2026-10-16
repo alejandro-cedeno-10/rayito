@@ -1,7 +1,7 @@
 # Gates locales
 
 Son las mismas cadenas `run:` de `.github/workflows/ci.yml`; si cambian allí,
-cambian también aquí y en `CONTRIBUTING.md` §3. Corre los del lenguaje que
+cambian también aquí y en `CONTRIBUTING.md` §7. Corre los del lenguaje que
 tocaste, y además OpenSpec, docs y los de la raíz. Indica en el PR en qué
 sistema corrieron.
 
@@ -82,7 +82,7 @@ uv run pytest tests/unit
 uv run ruff check .
 uv run ruff format --check .
 uv run mypy src tests
-uv run pytest ../../scripts/tests ../../infra/lambdas/events_webhooks/tests -p no:cacheprovider
+uv run pytest ../../scripts/tests ../../infra/lambdas/events_webhooks/tests ../../infra/lambdas/dashboard/tests ../../infra/lambdas/quota_alerts/tests -p no:cacheprovider
 ```
 
 Versiones declaradas, sin tocar `.venv` (CI: el job `python-versions`):

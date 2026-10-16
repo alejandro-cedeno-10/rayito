@@ -253,7 +253,7 @@ versión: [Novedades](https://alejandro-cedeno-10.github.io/rayito/novedades/) y
 | `MILESTONES.md` | Hitos y criterios de aceptación |
 | `infra/` | Plantillas de CloudFormation: IAM de build, ejecución y cliente (`iam.yaml`), conector de egress, rol OIDC del e2e ([`infra/README.md`](infra/README.md)) |
 | `CLAUDE.md` | Reglas para trabajar con Claude Code |
-| `CONTRIBUTING.md` | Cómo contribuir: flujo OpenSpec, gates en Linux/WSL2, macOS (VM Linux) y Windows, e2e en tu cuenta, convenciones, DCO y commits firmados |
+| `CONTRIBUTING.md` | Cómo contribuir: requisitos, puesta en marcha (SDK y entorno local con Docker + Floci), GitHub Issues y OpenSpec, ramas trunk-based, Conventional Commits, DCO y commits firmados, PR, gates y revisión |
 | `SECURITY.md` | Cómo reportar una vulnerabilidad, versiones soportadas y el modelo de amenazas |
 | `SUPPORT.md` | Dónde pedir ayuda (documentación, `rayito doctor`, issues) |
 | `CODE_OF_CONDUCT.md` | Contributor Covenant 3.0 |
@@ -289,7 +289,7 @@ openspec/                specs y changes archivados de cada hito
 - **Licencia**: [Apache-2.0](LICENSE). Las atribuciones de terceros (código
   vendorizado o adaptado) están en [`NOTICE`](NOTICE), que viaja con el
   wheel de PyPI y el paquete de npm.
-- **Contribuir**: [`CONTRIBUTING.md`](CONTRIBUTING.md) (flujo OpenSpec,
+- **Contribuir**: [`CONTRIBUTING.md`](CONTRIBUTING.md) (puesta en marcha,
   gates, DCO y commits firmados) y [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md).
 - **Ayuda y seguridad**: [`SUPPORT.md`](SUPPORT.md); las vulnerabilidades se
   reportan en privado según [`SECURITY.md`](SECURITY.md).
