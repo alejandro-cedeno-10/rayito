@@ -1,5 +1,6 @@
 ---
 title: Pricing (MicroVMs, pool, agents)
+description: "What a Rayito sandbox costs on AWS: MicroVMs per hour, the suspended pool and agents, with list prices and measured timings."
 ---
 
 # Pricing: MicroVMs, pool and agents

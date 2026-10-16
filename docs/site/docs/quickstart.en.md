@@ -1,3 +1,7 @@
+---
+description: "Create a sandbox, run commands and stateful Python code, read and write files and reconnect, in Python or TypeScript."
+---
+
 # First sandbox
 
 <a id="quickstart"></a><a id="instalacion"></a><a id="credenciales"></a><a id="la-imagen"></a>

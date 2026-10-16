@@ -1,3 +1,7 @@
+---
+description: "Crea un sandbox, ejecuta comandos y código Python con estado, lee y escribe ficheros y reconéctate, en Python o TypeScript."
+---
+
 # Primer sandbox
 
 <a id="quickstart"></a><a id="instalacion"></a><a id="credenciales"></a><a id="la-imagen"></a>

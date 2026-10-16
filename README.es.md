@@ -12,18 +12,17 @@ propia cuenta de AWS sobre Lambda MicroVMs.
 
 > Sandboxes que aparecen en un destello. Dentro de tu propia cuenta de AWS.
 
-Documentación completa: **https://alejandro-cedeno-10.github.io/rayito/**
-
-**Empieza aquí** (unos 15 minutos, en tu cuenta):
-[Primeros pasos](https://alejandro-cedeno-10.github.io/rayito/primeros-pasos/)
-→ [Configurar AWS](https://alejandro-cedeno-10.github.io/rayito/primeros-pasos/configurar-aws/)
-→ [Primer sandbox](https://alejandro-cedeno-10.github.io/rayito/quickstart/).
-¿Vienes de E2B? [Migrar desde E2B](https://alejandro-cedeno-10.github.io/rayito/migrar-desde-e2b/).
-Una guía por función en [Guías](https://alejandro-cedeno-10.github.io/rayito/guias/) y la API de Python, TypeScript
-y la CLI en [Referencia](https://alejandro-cedeno-10.github.io/rayito/referencia/).
-
 La ergonomía de E2B sin que el código de tus clientes salga de tu cuenta, y sin
 clúster que operar: el SDK habla directamente con la API de Lambda MicroVMs.
+
+**[Empezar](https://alejandro-cedeno-10.github.io/rayito/primeros-pasos/)** ·
+[Documentación](https://alejandro-cedeno-10.github.io/rayito/) ·
+[Instalar](#instalar) ·
+[Migrar desde E2B](https://alejandro-cedeno-10.github.io/rayito/migrar-desde-e2b/) ·
+[Agente en el sandbox](https://alejandro-cedeno-10.github.io/rayito/guias/agente-en-el-sandbox/)
+
+Unos 15 minutos para preparar tu cuenta. Si Rayito te sirve, una estrella en
+GitHub ayuda a que otras personas lo encuentren.
 
 <p align="center">
   <img src="docs/site/docs/assets/rayito/rayito-readme-960.gif" width="800" alt="Flujo animado de Rayito: dos gatos amarillos operan tres sandboxes sobre AWS Lambda microVMs, con un agente que envía código y salida de artefactos.">

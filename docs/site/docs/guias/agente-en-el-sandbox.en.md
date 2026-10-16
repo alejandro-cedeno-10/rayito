@@ -1,6 +1,6 @@
 ---
 title: Agent in the sandbox
-description: Run a coding agent (OpenCode or deepagents) inside the sandbox, calling a model on Bedrock, Anthropic, OpenAI, Gemini, Azure OpenAI, OpenRouter, Groq, Mistral, DeepSeek, xAI, LiteLLM or an OpenAI-compatible endpoint only through the secrets gateway.
+description: "Run a coding agent (OpenCode or deepagents) inside the sandbox and call the model you prefer only through the secrets gateway."
 ---
 
 # Agent in the sandbox

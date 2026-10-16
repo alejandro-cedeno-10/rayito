@@ -7,7 +7,8 @@ repo_url: https://github.com/alejandro-cedeno-10/rayito
 repo_name: alejandro-cedeno-10/rayito
 edit_uri: edit/main/docs/site/docs/
 strict: true
-# El GIF sólo lo usa el README del repositorio: el sitio sirve el vídeo.
+# El GIF sólo lo usa el README del repositorio: el sitio dibuja la ilustración
+# con capas HTML y CSS.
 exclude_docs: |
   assets/rayito/rayito-readme-960.gif
 copyright: >-
@@ -267,6 +268,10 @@ markdown_extensions:
       emoji_generator: !!python/name:material.extensions.emoji.to_svg
 
 extra:
+  social_image: https://alejandro-cedeno-10.github.io/rayito/assets/rayito/og-card.jpg
+  social_image_alt:
+    es: Ilustración de Rayito, una máquina con tres sandboxes sobre MicroVMs de AWS Lambda operada por dos gatos
+    en: Rayito illustration, a machine with three sandboxes on AWS Lambda MicroVMs run by two cats
   social:
     - icon: fontawesome/brands/github
       link: https://github.com/alejandro-cedeno-10/rayito

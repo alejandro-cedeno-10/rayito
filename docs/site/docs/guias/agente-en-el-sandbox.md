@@ -1,6 +1,6 @@
 ---
 title: Agente en el sandbox
-description: Correr un agente de código (OpenCode o deepagents) dentro del sandbox, llamando a un modelo en Bedrock, Anthropic, OpenAI, Gemini, Azure OpenAI, OpenRouter, Groq, Mistral, DeepSeek, xAI, LiteLLM o un endpoint compatible con OpenAI sólo a través de la pasarela de secretos.
+description: "Corre un agente de código (OpenCode o deepagents) dentro del sandbox y llama al modelo que prefieras sólo a través de la pasarela de secretos."
 ---
 
 # Agente en el sandbox

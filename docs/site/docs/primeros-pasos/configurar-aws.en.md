@@ -1,3 +1,7 @@
+---
+description: "Prepare your AWS account for Rayito once: the IAM stack, the artifacts bucket and the rayito-base image, checked with rayito doctor."
+---
+
 # Set up AWS
 
 Before the first sandbox, your account needs permissions (an IAM stack), a

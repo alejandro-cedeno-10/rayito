@@ -1,3 +1,7 @@
+---
+description: "Launch your first Rayito sandbox in your AWS account in about 15 minutes: install the SDK, prepare the account and run code."
+---
+
 # Getting started
 
 In about 15 minutes you will have a sandbox running in your AWS account (most

@@ -60,6 +60,7 @@
   --rx-fs-h3: 0.95rem;
   --rx-fs-lead: clamp(0.85rem, 0.8rem + 0.3vw, 1rem);
   --rx-fs-small: 0.65rem;
+  --rx-fs-caption: 0.75rem;
   --rx-measure: 34em;
 
   --rx-s1: 0.2rem;
@@ -74,8 +75,27 @@
   --rx-r-s: 0.2rem;
   --rx-r-m: 0.4rem;
   --rx-r-l: 0.8rem;
+  --rx-r-pill: 999px;
   --rx-art-bg: #fff;
-  --rx-art-max: 64rem;
+  --rx-art-max: 46rem;
+  --rx-art-loop: 6s;
+  --rx-art-half: calc(var(--rx-art-loop) / 2);
+  --rx-art-quarter: calc(var(--rx-art-loop) / 4);
+  --rx-art-eighth: calc(var(--rx-art-loop) / 8);
+  --rx-art-sway: 3.724deg;
+  --rx-art-breath: 0.012;
+  --rx-art-tail-swing: 6deg;
+  --rx-art-flap-swing: 10deg;
+  --rx-art-badge: 1.1rem;
+  --rx-art-toggle: 2rem;
+  --rx-art-toggle-ink: #12152a;
+  --rx-art-toggle-bg: rgb(255 255 255 / 0.88);
+  --rx-art-glow-core: rgb(255 247 185);
+  --rx-art-glow-mid: rgb(251 140 0 / 0.25);
+  --rx-art-glow-edge: rgb(251 140 0 / 0);
+  --rx-art-dot: rgb(83 194 255);
+  --rx-art-signal: #fff;
+  --rx-art-ease-sine: cubic-bezier(0.37, 0, 0.63, 1);
 }
 
 /* Mapeo a las variables de Material (paleta primary/accent: custom). */
@@ -1496,6 +1516,140 @@ body {
       animation-range: var(--rx-reveal-range);
     }
   }
+
+  /* Ilustración: un bucle maestro (--rx-art-loop) y todos los periodos son
+     fracciones suyas, así que el dibujo cierra el ciclo sin saltos. Cada seno
+     se escribe con easeInOutSine y `alternate`, que da un seno exacto; los
+     retardos negativos hacen que el primer fotograma ya esté a mitad. */
+
+  .rx-art__gear { animation: rx-art-spin var(--rx-art-half) linear infinite; }
+  .rx-art__gear--2 { animation-name: rx-art-spin-back; }
+
+  .rx-art__male {
+    animation:
+      rx-art-sway var(--rx-art-quarter) var(--rx-art-ease-sine) calc(var(--rx-art-eighth) * -1) infinite alternate,
+      rx-art-breath var(--rx-art-eighth) var(--rx-art-ease-sine) calc(var(--rx-art-eighth) / -2) infinite alternate;
+  }
+
+  .rx-art__male > .rx-art__tail {
+    animation: rx-art-tail var(--rx-art-quarter) var(--rx-art-ease-sine) calc(var(--rx-art-eighth) * -1) infinite alternate;
+  }
+
+  .rx-art__female {
+    animation: rx-art-sway var(--rx-art-quarter) var(--rx-art-ease-sine) calc(var(--rx-art-loop) * -0.42275) infinite alternate;
+  }
+
+  .rx-art__female > .rx-art__tail {
+    animation: rx-art-tail var(--rx-art-quarter) var(--rx-art-ease-sine) calc(var(--rx-art-loop) * -0.2205) infinite alternate;
+  }
+
+  .rx-art__cube { animation: rx-art-cube-x var(--rx-art-half) var(--rx-art-ease-sine) calc(var(--rx-art-quarter) * -1) infinite alternate; }
+
+  .rx-art__cube-bob {
+    animation:
+      rx-art-cube-y var(--rx-art-quarter) var(--rx-art-ease-sine) calc(var(--rx-art-eighth) * -1) infinite alternate,
+      rx-art-cube-tilt var(--rx-art-half) var(--rx-art-ease-sine) calc(var(--rx-art-quarter) * -1) infinite alternate;
+  }
+
+  .rx-art__wing { animation: rx-art-flap calc(var(--rx-art-loop) / 12) var(--rx-art-ease-sine) infinite alternate; }
+
+  .rx-art__belt { animation: rx-art-belt var(--rx-art-half) linear calc(var(--i) * var(--rx-art-loop) / -6) infinite; }
+  .rx-art__arrow { animation: rx-art-arrow var(--rx-art-half) linear calc(var(--i) * var(--rx-art-quarter) * -1) infinite; }
+
+  .rx-art__glow {
+    animation: rx-art-glow var(--rx-art-quarter) var(--rx-art-ease-sine) calc(var(--i) * var(--rx-art-loop) * 0.15915 - var(--rx-art-loop) * 0.625) infinite alternate;
+  }
+
+  .rx-art__dot {
+    animation: rx-art-dot var(--rx-art-eighth) var(--rx-art-ease-sine) calc(var(--n) * var(--rx-art-loop) * 0.039788 - var(--rx-art-loop) * 0.3125) infinite alternate;
+  }
+
+  .rx-art__signal { animation: rx-art-signal var(--rx-art-half) linear infinite; }
+
+  @keyframes rx-art-spin { to { rotate: 360deg; } }
+  @keyframes rx-art-spin-back { to { rotate: -360deg; } }
+
+  @keyframes rx-art-sway {
+    from { rotate: calc(var(--rx-art-sway) * -1); }
+    to { rotate: var(--rx-art-sway); }
+  }
+
+  @keyframes rx-art-breath {
+    from { scale: 1 calc(1 - var(--rx-art-breath)); }
+    to { scale: 1 calc(1 + var(--rx-art-breath)); }
+  }
+
+  @keyframes rx-art-tail {
+    from { rotate: calc(var(--rx-art-tail-swing) * -1); }
+    to { rotate: var(--rx-art-tail-swing); }
+  }
+
+  @keyframes rx-art-cube-x {
+    from { translate: -4.787% 0; }
+    to { translate: 4.787% 0; }
+  }
+
+  @keyframes rx-art-cube-y {
+    from { translate: 0 -19.469%; }
+    to { translate: 0 19.469%; }
+  }
+
+  @keyframes rx-art-cube-tilt {
+    from { rotate: -4.011deg; }
+    to { rotate: 4.011deg; }
+  }
+
+  @keyframes rx-art-flap {
+    from { rotate: calc(var(--rx-art-flap-swing) * var(--dir) * -1); }
+    to { rotate: calc(var(--rx-art-flap-swing) * var(--dir)); }
+  }
+
+  @keyframes rx-art-belt {
+    0% { translate: 0 0; opacity: 0; }
+    10% { opacity: 1; }
+    90% { opacity: 1; }
+    100% { translate: 381.17% 109.82%; opacity: 0; }
+  }
+
+  @keyframes rx-art-arrow {
+    0% { translate: 0% 0%; opacity: 0; }
+    5% { translate: 33% -2.4%; opacity: 0.156; }
+    10% { translate: 65% -6.6%; opacity: 0.309; }
+    15% { translate: 95.9% -12.6%; opacity: 0.454; }
+    20% { translate: 125.8% -20.4%; opacity: 0.588; }
+    25% { translate: 154.7% -30%; opacity: 0.707; }
+    30% { translate: 182.5% -41.4%; opacity: 0.809; }
+    35% { translate: 209.3% -54.6%; opacity: 0.891; }
+    40% { translate: 235% -69.6%; opacity: 0.951; }
+    45% { translate: 259.7% -86.3%; opacity: 0.988; }
+    50% { translate: 283.3% -104.9%; opacity: 1; }
+    55% { translate: 305.9% -125.2%; opacity: 0.988; }
+    60% { translate: 327.5% -147.4%; opacity: 0.951; }
+    65% { translate: 348% -171.3%; opacity: 0.891; }
+    70% { translate: 367.5% -197.1%; opacity: 0.809; }
+    75% { translate: 385.9% -224.6%; opacity: 0.707; }
+    80% { translate: 403.3% -253.9%; opacity: 0.588; }
+    85% { translate: 419.7% -285%; opacity: 0.454; }
+    90% { translate: 435% -317.9%; opacity: 0.309; }
+    95% { translate: 449.3% -352.6%; opacity: 0.156; }
+    100% { translate: 462.5% -389.1%; opacity: 0; }
+  }
+
+  @keyframes rx-art-glow {
+    from { opacity: 0.22; }
+    to { opacity: 0.5; }
+  }
+
+  @keyframes rx-art-dot {
+    from { opacity: 0.2; }
+    to { opacity: 1; }
+  }
+
+  @keyframes rx-art-signal {
+    0%, 100% { translate: 0 0; }
+    33.333% { translate: 440% -540%; }
+    66.667% { translate: 770% 20%; }
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1562,41 +1716,356 @@ body {
   max-width: 100%;
 }
 
-/* Ilustración animada: el dibujo es sobre blanco y lo sigue siendo en oscuro. */
+/* ------------------------------------------------------------------ */
+/* 8. Ilustración "Cómo funciona": capas HTML/CSS sobre la placa       */
+/* ------------------------------------------------------------------ */
 
-.rx-home .rayito-art {
+/*
+ * Cada capa es una caja en porcentaje de la placa (1672 x 941), así que todo
+ * escala con la figura. Sin animar, la escena es la imagen fija de reposo: es
+ * lo que ve quien pide menos movimiento. Las animaciones están en la sección 7.
+ * El dibujo es sobre blanco y lo sigue siendo en modo oscuro.
+ */
+
+.md-typeset .rx-art {
+  position: relative;
   width: 100%;
   max-width: var(--rx-art-max);
   margin: var(--rx-s8) auto;
 }
 
-.rx-home .rayito-art__media {
+.rx-art__stage {
+  position: relative;
+  aspect-ratio: 1672 / 941;
+  overflow: hidden;
+  background: var(--rx-art-bg);
+  border-radius: var(--rx-r-m);
+  box-shadow: 0 0 0 1px var(--rx-line);
+  contain: layout paint;
+  isolation: isolate;
+}
+
+.rx-art__plate {
   display: block;
   width: 100%;
-  height: auto;
-  aspect-ratio: 16 / 9;
-  object-fit: contain;
-  background: var(--rx-art-bg);
-  border: 1px solid var(--rx-line);
-  border-radius: var(--rx-r-m);
+  height: 100%;
 }
 
-.rx-home .rayito-art__toggle {
+.rx-art__l {
+  position: absolute;
   display: block;
-  margin: var(--rx-s3) auto 0;
-  padding: var(--rx-s2) var(--rx-s4);
-  border: 1px solid var(--rx-line);
-  border-radius: var(--rx-r-s);
-  color: var(--rx-ink);
-  background: var(--rx-surface);
-  font: inherit;
+  pointer-events: none;
+  user-select: none;
+}
+
+.rx-art__l > img,
+.rx-art__cube-bob > img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.rx-art__cube-bob {
+  position: absolute;
+  inset: 0;
+}
+.rx-art__gear--1 {
+  left: 32.8349%; top: 31.9872%; width: 3.4689%; height: 6.1637%;
+  transform-origin: 50% 50%;
+}
+.rx-art__gear--2 {
+  left: 47.3684%; top: 33.5813%; width: 3.4689%; height: 6.1637%;
+  transform-origin: 50% 50%;
+}
+.rx-art__gear--3 {
+  left: 62.4402%; top: 35.2816%; width: 3.4689%; height: 6.1637%;
+  transform-origin: 50% 50%;
+}
+.rx-art__male {
+  left: 4.9043%; top: 62.1679%; width: 15.1914%; height: 24.3358%;
+  transform-origin: 39.370% 100%;
+}
+.rx-art__female {
+  left: 79.7249%; top: 36.6631%; width: 10.3469%; height: 21.0414%;
+  transform-origin: 43.931% 100%;
+}
+.rx-art__rail {
+  left: 78.3493%; top: 52.8162%; width: 9.8684%; height: 10.2019%;
+}
+.rx-art__cube {
+  left: 87.2010%; top: 29.4368%; width: 11.2440%; height: 12.0085%;
+}
+.rx-art__belt {
+  left: 78.6842%; top: 66.4655%; width: 3.8756%; height: 6.5802%;
+}
+.rx-art__arrow {
+  left: 78.3493%; top: 62.0616%; width: 2.8708%; height: 4.8884%;
+}
+.rx-art__signal {
+  left: 6.3397%; top: 45.2710%; width: 0.5981%; height: 1.0627%;
+}
+.rx-art__glow--0 {
+  left: 29.3660%; top: 57.2795%; width: 6.1005%; height: 10.8395%;
+}
+.rx-art__glow--1 {
+  left: 45.9330%; top: 60.7864%; width: 6.1005%; height: 10.8395%;
+}
+.rx-art__glow--2 {
+  left: 63.2177%; top: 64.2933%; width: 6.1005%; height: 10.8395%;
+}
+
+.rx-art__glow {
+  border-radius: 50%;
+  background: radial-gradient(circle closest-side, var(--rx-art-glow-core) 0 3.9%, var(--rx-art-glow-mid) 55%, var(--rx-art-glow-edge) 100%);
+  opacity: 0.36;
+}
+
+.rx-art__dot {
+  width: 0.2632%;
+  height: 0.4676%;
+  border-radius: 50%;
+  background: var(--rx-art-dot);
+  opacity: 0.6;
+}
+
+.rx-art__signal {
+  border-radius: 50%;
+  background: var(--rx-art-signal);
+}
+
+.rx-art__male > .rx-art__tail {
+  transform-origin: 25% 72.2%;
+}
+
+.rx-art__female > .rx-art__tail {
+  transform-origin: 25.4% 66%;
+}
+
+.rx-art__cube-bob {
+  transform-origin: 50% 51.327%;
+}
+
+.rx-art__wing--l {
+  --dir: 1;
+  transform-origin: 37.438% 55.738%;
+}
+
+.rx-art__wing--r {
+  --dir: -1;
+  transform-origin: 78.818% 45.082%;
+}
+
+.rx-art__gear--2 {
+  rotate: 0deg;
+}
+.rx-art__dot--0 {
+  left: 30.8493%;
+  top: 55.3454%;
+}
+.rx-art__dot--1 {
+  left: 31.3876%;
+  top: 55.3454%;
+}
+.rx-art__dot--2 {
+  left: 31.9258%;
+  top: 55.3454%;
+}
+.rx-art__dot--3 {
+  left: 47.1172%;
+  top: 58.2147%;
+}
+.rx-art__dot--4 {
+  left: 47.6555%;
+  top: 58.2147%;
+}
+.rx-art__dot--5 {
+  left: 48.1938%;
+  top: 58.2147%;
+}
+.rx-art__dot--6 {
+  left: 63.8038%;
+  top: 61.4028%;
+}
+.rx-art__dot--7 {
+  left: 64.3421%;
+  top: 61.4028%;
+}
+.rx-art__dot--8 {
+  left: 64.8804%;
+  top: 61.4028%;
+}
+
+/* Reposo de los paquetes: la cinta en u = 1/6, 1/2 y 5/6; la flecha en u = 1/2. */
+
+.rx-art__belt {
+  --u: calc((1 + 2 * var(--i)) / 6);
+  translate: calc(var(--u) * 381.17%) calc(var(--u) * 109.82%);
+}
+
+.rx-art__arrow {
+  translate: 283.3% -104.9%;
+}
+
+.rx-art__arrow--1 {
+  opacity: 0;
+}
+
+.rx-art:is([data-offscreen], [data-hidden], [data-user-paused]) .rx-art__stage * {
+  animation-play-state: paused;
+}
+
+.md-typeset .rx-art figcaption {
+  max-width: none;
+  margin: var(--rx-s4) 0 0;
+  color: var(--rx-ink-2);
+  font-size: var(--rx-fs-caption);
+  font-style: normal;
+  text-align: left;
+}
+
+.rx-art figcaption ol {
+  display: grid;
+  gap: var(--rx-s3) var(--rx-s6);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: rx-art;
+}
+
+.rx-art figcaption li {
+  position: relative;
+  margin: 0;
+  padding-left: var(--rx-s8);
+  counter-increment: rx-art;
+}
+
+.rx-art figcaption li::before {
+  content: counter(rx-art);
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: grid;
+  place-items: center;
+  width: var(--rx-art-badge);
+  height: var(--rx-art-badge);
+  border-radius: 50%;
+  background: var(--rx-volt);
+  color: var(--rx-on-volt);
+  font-size: var(--rx-fs-small);
+  font-weight: 800;
+}
+
+@media screen and (min-width: 60em) {
+  .rx-art figcaption ol {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+.rx-art__toggle {
+  position: absolute;
+  top: var(--rx-s2);
+  right: var(--rx-s2);
+  display: grid;
+  place-items: center;
+  width: var(--rx-art-toggle);
+  height: var(--rx-art-toggle);
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  color: var(--rx-art-toggle-ink);
+  background: var(--rx-art-toggle-bg);
+  box-shadow: 0 0 0 1px rgb(18 21 42 / 0.16);
+  opacity: 0.7;
   cursor: pointer;
+  transition: opacity var(--rx-dur-fast);
 }
 
-.rx-home .rayito-art__toggle:hover {
-  border-color: var(--rx-arc);
+.rx-art__toggle:is(:hover, :focus-visible) {
+  opacity: 1;
 }
 
-.rx-home .rayito-art:not([data-ready]) .rayito-art__toggle {
-  visibility: hidden;
+.rx-art__toggle[hidden] {
+  display: none;
+}
+
+.rx-art__icon {
+  width: var(--rx-s3);
+  height: var(--rx-s3);
+  background: linear-gradient(90deg, currentColor 0 36%, transparent 36% 64%, currentColor 64%);
+}
+
+.rx-art__toggle[aria-pressed="true"] .rx-art__icon {
+  background: currentColor;
+  clip-path: polygon(10% 0, 100% 50%, 10% 100%);
+}
+
+/* Etiqueta de sección y fila de llamadas a la acción */
+
+.rx-eyebrow {
+  display: inline-block;
+  margin: 0 0 var(--rx-s2);
+  padding: var(--rx-s1) var(--rx-s3);
+  border: 1px solid var(--rx-line);
+  border-radius: var(--rx-r-pill);
+  background-color: var(--rx-surface);
+  color: var(--rx-volt-ink);
+  font-size: var(--rx-fs-small);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.rx-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--rx-s3) var(--rx-s4);
+  margin-block: var(--rx-s6) 0;
+}
+
+.rx-actions p {
+  display: contents;
+}
+
+.md-typeset .rx-actions .md-button {
+  margin: 0;
+}
+
+.md-typeset .md-button .twemoji {
+  margin-inline-end: var(--rx-s2);
+}
+
+@media screen and (max-width: 59.99em) {
+  .md-typeset .rx-actions--steps .md-button--primary {
+    background-color: transparent;
+    border-color: var(--rx-line);
+    color: var(--rx-ink);
+  }
+
+  .rx-actions--steps {
+    margin-block-end: var(--rx-s8);
+  }
+}
+
+.rx-art + .rx-actions,
+.rx-section > .rx-actions {
+  justify-content: center;
+}
+
+.rx-cta__note {
+  margin: var(--rx-s4) 0 0;
+  color: var(--rx-ink-2);
+  font-size: var(--rx-fs-small);
+}
+
+.md-typeset .rx-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }

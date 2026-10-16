@@ -1,3 +1,7 @@
+---
+description: "Sandboxes in under a second with SandboxPool: suspended, already warm MicroVMs, what they cost and how to size the pool."
+---
+
 # Sandbox pool
 
 A `SandboxPool` keeps N **suspended** MicroVMs that are already warm

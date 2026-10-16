@@ -1,3 +1,7 @@
+---
+description: "Sandboxes en menos de un segundo con SandboxPool: MicroVMs suspendidas y ya calentadas, su coste y cómo dimensionar el pool."
+---
+
 # Pool de sandboxes
 
 Un `SandboxPool` mantiene N MicroVMs **suspendidos** y ya calientes

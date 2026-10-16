@@ -4,3 +4,49 @@
   {{ super() }}
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,650;12..96,800&display=swap">
 {% endblock %}
+
+{% block htmltitle %}
+  {% if page and page.meta and page.meta.seo_title %}
+    <title>{{ page.meta.seo_title }}</title>
+  {% else %}
+    {{ super() }}
+  {% endif %}
+{% endblock %}
+
+{#
+  La portada es la página con `seo_title` en su front matter (la de /en/ no es
+  `is_homepage` para MkDocs). Open Graph, Twitter y JSON-LD. Sin <link rel="alternate" hreflang>: Material
+  pide un sitemap.xml junto a cada uno y el sitemap ya lleva los alternates
+  absolutos de cada idioma.
+#}
+{% block extrahead %}
+  {{ super() }}
+  {% set lang = config.theme.language %}
+  {% set is_home = page and page.meta and page.meta.seo_title %}
+  {% set desc = page.meta.description if page and page.meta and page.meta.description else config.site_description %}
+  {% if page and page.meta and page.meta.seo_title %}
+    {% set ttl = page.meta.seo_title %}
+  {% elif page and page.title %}
+    {% set ttl = page.title ~ " · " ~ config.site_name %}
+  {% else %}
+    {% set ttl = config.site_name %}
+  {% endif %}
+  <meta property="og:type" content="{{ 'website' if is_home else 'article' }}">
+  <meta property="og:site_name" content="{{ config.site_name }}">
+  <meta property="og:locale" content="{{ 'es_ES' if lang == 'es' else 'en_US' }}">
+  <meta property="og:locale:alternate" content="{{ 'en_US' if lang == 'es' else 'es_ES' }}">
+  <meta property="og:title" content="{{ ttl | striptags }}">
+  <meta property="og:description" content="{{ desc }}">
+  {% if page and page.canonical_url %}<meta property="og:url" content="{{ page.canonical_url }}">{% endif %}
+  <meta property="og:image" content="{{ config.extra.social_image }}">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:type" content="image/jpeg">
+  <meta property="og:image:alt" content="{{ config.extra.social_image_alt[lang] }}">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="{{ ttl | striptags }}">
+  <meta name="twitter:description" content="{{ desc }}">
+  <meta name="twitter:image" content="{{ config.extra.social_image }}">
+  {% if not page or not page.file %}<meta name="robots" content="noindex">{% endif %}
+  {% if is_home and page.file %}{% include "partials/rayito-jsonld.html" %}{% endif %}
+{% endblock %}
