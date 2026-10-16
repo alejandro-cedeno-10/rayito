@@ -513,8 +513,12 @@ def apply_release(plan: ReleasePlan, manifest: dict, version: str, date: str) ->
 
 def check_release_please_scope(plan: ReleasePlan) -> None:
     """Si release-please movió un fichero que el plan no conoce, una versión
-    quedaría sin subir: se para."""
-    unknown = unexpected_paths(release_please_paths(), plan.allowed_paths)
+    quedaría sin subir: se para. Los activos generados de las pilas se
+    admiten: se rehacen siempre desde `origin/main`, y una rama ya preparada
+    por una ejecución anterior los lleva."""
+    unknown = unexpected_paths(
+        release_please_paths(), plan.allowed_paths, STACK_ASSET_DIRS
+    )
     if unknown:
         raise ReleaseError(
             f"{RELEASE_BRANCH} cambia ficheros que el plan no deriva de {CONFIG}: "

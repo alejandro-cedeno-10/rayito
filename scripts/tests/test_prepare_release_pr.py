@@ -546,19 +546,19 @@ def test_a_stray_file_next_to_the_stack_assets_still_aborts(
     assert _remote_release(repo) == before
 
 
-def test_release_please_cannot_change_stack_assets(
-    repo: Path, capsys: pytest.CaptureFixture[str]
+def test_a_branch_already_prepared_with_stack_assets_can_be_prepared_again(
+    repo: Path,
 ) -> None:
     _run(repo, "switch", "--quiet", "-c", "rp", f"origin/{prp.RELEASE_BRANCH}")
-    _write(repo, {STACK_ASSET: "from release-please\n"})
+    _write(repo, {STACK_ASSET: "from a previous run\n"})
     _commit(repo, "chore: release main")
     _run(repo, "push", "--quiet", "--force", "origin", f"HEAD:{prp.RELEASE_BRANCH}")
     _run(repo, "switch", "--quiet", "main")
-    before = _remote_release(repo)
 
-    assert prp.main(["--date", DATE]) == prp.EXIT_ABORT
-    assert STACK_ASSET in capsys.readouterr().err
-    assert _remote_release(repo) == before
+    assert prp.main(["--date", DATE]) == 0
+    _run(repo, "fetch", "--quiet", "origin")
+    ref = f"origin/{prp.RELEASE_BRANCH}"
+    assert _run(repo, "show", f"{ref}:{STACK_ASSET}") == f"generated for {NEW}"
 
 
 def test_stack_asset_directories_are_allowed_only_as_directories() -> None:
