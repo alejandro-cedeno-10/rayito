@@ -1,56 +1,114 @@
 {
   "schema": "rayito.agent-samples/1",
-  "_comment": "Los quince agentes de ejemplo que despliega la aceptación de 0.14 sin tocar su código. Ninguno importa rayito y cada uno trae su propio lockfile (Hermes y OpenCode son sólo configuración, sin lockfile). `expected` es lo que debe decidir la detección sin opciones; `custom` es la combinación de opciones de la segunda pasada. Lo leen los tests de Python y de TypeScript.",
+  "_comment": "Los quince agentes de ejemplo que despliega la aceptación de 0.14 sin tocar su código. Ninguno importa rayito y cada uno trae su propio lockfile (Hermes y OpenCode son sólo configuración, sin lockfile). `expected` es lo que debe decidir la detección sin opciones (`framework`, `kind` del runtime, protocolo, punto de entrada y gestor de instalación); `httpAlternative` es la app HTTP que la detección lista como alternativa y que `--entry http` sirve; `custom` es la combinación de opciones de la segunda pasada. Lo leen los tests de Python y de TypeScript.",
   "model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
   "prompt": "What is 17 plus 25? Use the add tool if you have one and reply with the number.",
   "expectedAnswer": "42",
-  "custom": { "memoryMib": 4096, "maxSessions": 2, "minVms": 1, "maxVms": 2, "warmVms": 1 },
+  "custom": {
+    "memoryMib": 4096,
+    "maxSessions": 2,
+    "minVms": 1,
+    "maxVms": 2,
+    "warmVms": 1
+  },
   "samples": [
     {
       "id": "python-langgraph-fastapi",
       "language": "python",
       "dir": "python/langgraph-fastapi",
       "lockfile": "uv.lock",
-      "tools": ["add", "order_status"],
+      "tools": [
+        "add",
+        "order_status"
+      ],
       "toolUse": true,
-      "expected": { "framework": "langgraph", "protocol": "framework", "entry": "graph:build_graph" },
-      "alternatives": [{ "kind": "http-app", "health": "/health", "invoke": "/chat", "requestField": "message", "responseField": "answer", "protocol": "json" }]
+      "expected": {
+        "framework": "langgraph",
+        "kind": "langgraph",
+        "protocol": "framework",
+        "entry": "graph:build_graph",
+        "installManager": "uv"
+      },
+      "httpAlternative": {
+        "framework": "fastapi",
+        "protocol": "json",
+        "health": "/health",
+        "invoke": "/chat",
+        "requestField": "message",
+        "responseField": "answer"
+      }
     },
     {
       "id": "python-langchain-create-agent",
       "language": "python",
       "dir": "python/langchain-create-agent",
       "lockfile": "uv.lock",
-      "tools": ["add", "ticket_priority"],
+      "tools": [
+        "add",
+        "ticket_priority"
+      ],
       "toolUse": true,
-      "expected": { "framework": "langchain", "protocol": "framework", "entry": "agent:agent" }
+      "expected": {
+        "framework": "langgraph",
+        "kind": "langgraph",
+        "protocol": "framework",
+        "entry": "agent:agent",
+        "installManager": "uv"
+      }
     },
     {
       "id": "python-deepagents",
       "language": "python",
       "dir": "python/deepagents",
       "lockfile": "uv.lock",
-      "tools": ["add", "define"],
+      "tools": [
+        "add",
+        "define"
+      ],
       "toolUse": true,
-      "expected": { "framework": "deepagents", "protocol": "framework", "entry": "agent:agent" }
+      "expected": {
+        "framework": "deepagents",
+        "kind": "langgraph",
+        "protocol": "framework",
+        "entry": "agent:agent",
+        "installManager": "uv"
+      }
     },
     {
       "id": "python-strands",
       "language": "python",
       "dir": "python/strands",
       "lockfile": "uv.lock",
-      "tools": ["add", "tax_rate"],
+      "tools": [
+        "add",
+        "tax_rate"
+      ],
       "toolUse": true,
-      "expected": { "framework": "strands", "protocol": "framework", "entry": "agent:agent" }
+      "expected": {
+        "framework": "strands",
+        "kind": "strands",
+        "protocol": "framework",
+        "entry": "agent:agent",
+        "installManager": "uv"
+      }
     },
     {
       "id": "python-strands-harness",
       "language": "python",
       "dir": "python/strands-harness",
       "lockfile": "uv.lock",
-      "tools": ["add", "runbook"],
+      "tools": [
+        "add",
+        "runbook"
+      ],
       "toolUse": true,
-      "expected": { "framework": "strands-harness", "protocol": "framework", "entry": "agent:agent" }
+      "expected": {
+        "framework": "strands-harness",
+        "kind": "strands-harness",
+        "protocol": "framework",
+        "entry": "agent:agent",
+        "installManager": "uv"
+      }
     },
     {
       "id": "python-hermes",
@@ -60,7 +118,13 @@
       "lockfileReason": "Hermes no es un paquete del proyecto: lo instala la imagen, fijado por commit; el proyecto sólo trae configuración y habilidades.",
       "tools": [],
       "toolUse": false,
-      "expected": { "framework": "hermes", "protocol": "framework", "entry": null }
+      "expected": {
+        "framework": "hermes",
+        "kind": "hermes",
+        "protocol": "framework",
+        "entry": null,
+        "installManager": null
+      }
     },
     {
       "id": "python-flask-custom",
@@ -69,63 +133,135 @@
       "lockfile": "uv.lock",
       "tools": [],
       "toolUse": false,
-      "expected": { "framework": "custom", "protocol": "json", "entry": "app:app" },
-      "app": { "health": "/healthz", "invoke": "/chat", "requestField": "prompt", "responseField": "text" }
+      "expected": {
+        "framework": "flask",
+        "kind": "custom",
+        "protocol": "json",
+        "entry": "app:app",
+        "installManager": "uv"
+      },
+      "app": {
+        "health": "/healthz",
+        "invoke": "/chat",
+        "requestField": "prompt",
+        "responseField": "text"
+      }
     },
     {
       "id": "python-agentcore-native",
       "language": "python",
       "dir": "python/agentcore-native",
       "lockfile": "uv.lock",
-      "tools": ["add", "meeting_time"],
+      "tools": [
+        "add",
+        "meeting_time"
+      ],
       "toolUse": true,
-      "expected": { "framework": "custom", "protocol": "agentcore", "entry": "main:app" },
-      "app": { "health": "/ping", "invoke": "/invocations", "requestField": "prompt", "responseField": "result" }
+      "expected": {
+        "framework": "strands",
+        "kind": "strands",
+        "protocol": "framework",
+        "entry": "main:agent",
+        "installManager": "uv"
+      },
+      "httpAlternative": {
+        "framework": "agentcore",
+        "protocol": "agentcore",
+        "health": "/ping",
+        "invoke": "/invocations",
+        "requestField": "prompt",
+        "responseField": "result"
+      }
     },
     {
       "id": "typescript-langgraph-js",
       "language": "typescript",
       "dir": "typescript/langgraph-js",
       "lockfile": "package-lock.json",
-      "tools": ["add", "order_status"],
+      "tools": [
+        "add",
+        "order_status"
+      ],
       "toolUse": true,
-      "expected": { "framework": "langgraph-js", "protocol": "framework", "entry": "agent.js#graph" }
+      "expected": {
+        "framework": "langgraph",
+        "kind": "langgraph",
+        "protocol": "framework",
+        "entry": "agent.js#graph",
+        "installManager": "npm"
+      }
     },
     {
       "id": "typescript-deepagents-js",
       "language": "typescript",
       "dir": "typescript/deepagents-js",
       "lockfile": "package-lock.json",
-      "tools": ["add", "define"],
+      "tools": [
+        "add",
+        "define"
+      ],
       "toolUse": true,
-      "expected": { "framework": "deepagents-js", "protocol": "framework", "entry": "agent.js#agent" }
+      "expected": {
+        "framework": "deepagents",
+        "kind": "langgraph",
+        "protocol": "framework",
+        "entry": "agent.js#agent",
+        "installManager": "npm"
+      }
     },
     {
       "id": "typescript-strands-ts",
       "language": "typescript",
       "dir": "typescript/strands-ts",
       "lockfile": "package-lock.json",
-      "tools": ["add", "tax_rate"],
+      "tools": [
+        "add",
+        "tax_rate"
+      ],
       "toolUse": true,
-      "expected": { "framework": "strands-ts", "protocol": "framework", "entry": "agent.js#agent" }
+      "expected": {
+        "framework": "strands",
+        "kind": "strands",
+        "protocol": "framework",
+        "entry": "agent.js#agent",
+        "installManager": "npm"
+      }
     },
     {
       "id": "typescript-strands-harness-ts",
       "language": "typescript",
       "dir": "typescript/strands-harness-ts",
       "lockfile": "package-lock.json",
-      "tools": ["add", "runbook"],
+      "tools": [
+        "add",
+        "runbook"
+      ],
       "toolUse": true,
-      "expected": { "framework": "strands-harness-ts", "protocol": "framework", "entry": "agent.js#createAgent" }
+      "expected": {
+        "framework": "strands-harness",
+        "kind": "strands",
+        "protocol": "framework",
+        "entry": "agent.js#createAgent",
+        "installManager": "npm"
+      }
     },
     {
       "id": "typescript-vercel-ai-sdk",
       "language": "typescript",
       "dir": "typescript/vercel-ai-sdk",
       "lockfile": "package-lock.json",
-      "tools": ["add", "meetingTime"],
+      "tools": [
+        "add",
+        "meetingTime"
+      ],
       "toolUse": true,
-      "expected": { "framework": "vercel-ai", "protocol": "framework", "entry": "agent.js#agent" }
+      "expected": {
+        "framework": "vercel-ai",
+        "kind": "custom",
+        "protocol": "framework",
+        "entry": "agent.js#agent",
+        "installManager": "npm"
+      }
     },
     {
       "id": "typescript-express-custom",
@@ -134,8 +270,19 @@
       "lockfile": "package-lock.json",
       "tools": [],
       "toolUse": false,
-      "expected": { "framework": "custom", "protocol": "json", "entry": null },
-      "app": { "health": "/healthz", "invoke": "/chat", "requestField": "prompt", "responseField": "text" }
+      "expected": {
+        "framework": "express",
+        "kind": "custom",
+        "protocol": "json",
+        "entry": "app.js#app",
+        "installManager": "npm"
+      },
+      "app": {
+        "health": "/healthz",
+        "invoke": "/chat",
+        "requestField": "prompt",
+        "responseField": "text"
+      }
     },
     {
       "id": "opencode",
@@ -145,8 +292,17 @@
       "lockfileReason": "OpenCode lo instala la imagen, fijado por versión y sha256; el proyecto sólo trae opencode.json y AGENTS.md.",
       "tools": [],
       "toolUse": false,
-      "expected": { "framework": "opencode", "protocol": "framework", "entry": null },
-      "deployFrom": ["python", "typescript"]
+      "expected": {
+        "framework": "opencode",
+        "kind": "opencode",
+        "protocol": "framework",
+        "entry": null,
+        "installManager": null
+      },
+      "deployFrom": [
+        "python",
+        "typescript"
+      ]
     }
   ]
 }
