@@ -20,7 +20,7 @@ import type { SandboxListItem } from "../../models.js";
 import { pythonStringRepr } from "../../strings.js";
 import { MS_PER_SECOND } from "../../units.js";
 import { VERSION } from "../../version.js";
-import { isoUtc } from "../format.js";
+import { isoUtc, pythonGeneralText } from "../format.js";
 import { assess } from "./compat.js";
 import {
   ACCESS_DENIED,
@@ -175,19 +175,21 @@ async function checkQuotas(aws: DoctorAws): Promise<CheckResult> {
   }));
   const entries = buildQuotaEntries(applied, aws.region);
   const byCode = new Map(listed.map((quota) => [quota.code, quota]));
-  const below = entries
-    .filter((entry) => entry.belowDefault)
-    .map((entry) => ({
-      ...byCode.get(entry.code),
-      short_name: entry.name,
-      default: entry.defaultValue,
-    }));
+  const below = entries.flatMap((entry) => {
+    const quota = byCode.get(entry.code);
+    return entry.belowDefault && quota !== undefined
+      ? [{ ...quota, short_name: entry.name, default: entry.defaultValue }]
+      : [];
+  });
   const missing = entries
     .filter((entry) => entry.value === undefined)
     .map((entry) => `${entry.code} (${entry.name})`);
   const details = { quotas: listed, below_default: below, missing };
   if (below.length > 0 || missing.length > 0) {
-    const named = below.map((quota) => `${quota.short_name} ${quota.value} < ${quota.default}`);
+    const named = below.map(
+      (quota) =>
+        `${quota.short_name} ${pythonGeneralText(quota.value)} < ${pythonGeneralText(quota.default)}`,
+    );
     if (missing.length > 0) {
       named.push(`sin listar: ${missing.join(", ")}`);
     }

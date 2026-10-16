@@ -25,6 +25,7 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from typer.testing import CliRunner
 
+from rayito._sizing import SIZE_NAMES
 from rayito.cli._session import Clients
 from rayito.cli.app import app
 
@@ -34,7 +35,6 @@ from .guest import LocalGuestControlPlane
 
 pytestmark = pytest.mark.local
 
-SIZE_NAMES_COUNT: Final = 5
 EXEC_FAILURE_CODE: Final = 7
 EXEC_TIMEOUT_CODE: Final = 124
 EXEC_TIMEOUT_SECONDS: Final = 2
@@ -85,7 +85,7 @@ def test_image_list_and_sizes_read_the_catalogue(clients: Clients) -> None:
     assert LOCAL_IMAGE_NAME in [image["name"] for image in images]
     code, sizes = invoke_json(clients, "image", "sizes")
     assert code == 0
-    assert len(sizes) == SIZE_NAMES_COUNT
+    assert len(sizes) == len(SIZE_NAMES)
 
 
 def test_a_sandbox_end_to_end_from_the_cli(

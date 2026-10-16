@@ -19,6 +19,7 @@ import pytest
 from rayito._cloudwatch_logs import epoch_ms, event_timestamp, parse_since
 from rayito._models import IdlePolicy, SandboxInfo, SandboxLifecycle, SandboxMetrics
 from rayito.cli import _console as console
+from rayito.cli._checks import quota_text
 from rayito.cli._console import age, emit_json, iso_utc, python_text, table, visible_controls
 from rayito.cli._tokens import InvalidPairError, parse_pairs
 from rayito.cli.sandbox import info_document, launch_document, metrics_document
@@ -53,6 +54,11 @@ def test_iso_utc(case: dict[str, Any]) -> None:
 @pytest.mark.parametrize("case", FORMAT["pythonDatetimeText"])
 def test_datetime_text(case: dict[str, Any]) -> None:
     assert python_text(instant(case["instant"])) == case["expected"]
+
+
+@pytest.mark.parametrize("case", FORMAT["generalText"], ids=lambda case: str(case["value"]))
+def test_quota_text(case: dict[str, Any]) -> None:
+    assert quota_text(case["value"]) == case["expected"]
 
 
 @pytest.mark.parametrize("case", FORMAT["jsonDocuments"], ids=lambda case: case["name"])

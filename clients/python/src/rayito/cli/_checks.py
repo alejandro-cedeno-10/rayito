@@ -239,6 +239,13 @@ def quota_row(quota: AppliedQuota) -> dict[str, Any]:
     }
 
 
+def quota_text(value: float) -> str:
+    """Un número de cuota como lo imprime el doctor (`format(value, "g")`);
+    los vectores `generalText` de `format-vectors.json` lo comparten con
+    TypeScript."""
+    return f"{value:g}"
+
+
 def check_quotas(clients: Clients, ctx: DoctorContext) -> CheckResult:
     applied = list_microvm_quotas(clients.quotas)
     listed = [quota_row(quota) for quota in applied]
@@ -252,7 +259,10 @@ def check_quotas(clients: Clients, ctx: DoctorContext) -> CheckResult:
     missing = [f"{entry.code} ({entry.name})" for entry in entries if entry.value is None]
     details: dict[str, Any] = {"quotas": listed, "below_default": below, "missing": missing}
     if below or missing:
-        named = ", ".join(f"{q['short_name']} {q['value']:g} < {q['default']:g}" for q in below)
+        named = ", ".join(
+            f"{q['short_name']} {quota_text(q['value'])} < {quota_text(q['default'])}"
+            for q in below
+        )
         if missing:
             named = ", ".join(filter(None, [named, f"sin listar: {', '.join(missing)}"]))
         return CheckResult(
