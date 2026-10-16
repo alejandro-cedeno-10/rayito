@@ -11,7 +11,7 @@ hide:
 <div class="rx-hero" markdown>
 <div class="rx-hero__copy" markdown>
 
-[Nuevo en 0.12: el panel de gestión de tus sandboxes, local o en tu cuenta](novedades/0.12.0.md){ .rx-pill }
+[Nuevo en 0.13: la CLI, el servidor MCP y el panel local también en TypeScript](novedades/0.13.0.md){ .rx-pill }
 
 # Sandboxes para agentes de IA, en tu propia cuenta de AWS { .rx-hero__title }
 

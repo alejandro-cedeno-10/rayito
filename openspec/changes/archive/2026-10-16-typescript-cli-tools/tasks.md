@@ -79,7 +79,7 @@
 
 ## 10. Acceptance
 
-- [ ] 10.1 One real-AWS pass after every phase is merged into the integration
+- [x] 10.1 One real-AWS pass after every phase is merged into the integration
       branch (`cli`, `cli-proxy`, `cli-templates`, `mcp` over stdio and
       `--http`, read-only dashboard); data only through `RAYITO_E2E_*`. Delete
       only the VMs and image versions of that run.

@@ -12,7 +12,18 @@ actualizar. El detalle completo, cambio a cambio, está en el
 
 <div class="grid cards" markdown>
 
--   :material-tag:{ .lg .middle } **0.12.0** · 2026-10-15 · actual
+-   :material-tag:{ .lg .middle } **0.13.0** · 2026-10-16 · actual
+
+    ---
+
+    La CLI `rayito`, el servidor MCP `rayito-mcp` y el panel local también en
+    TypeScript (`npx rayito`), con la misma superficie, salida y códigos de
+    salida que en Python. `rayito --version`, instantes en UTC en la CLI de
+    Python y un proxy más estricto. Sin cambios que rompan la API.
+
+    [:octicons-arrow-right-24: Novedades de 0.13.0](0.13.0.md)
+
+-   :material-tag:{ .lg .middle } **0.12.0** · 2026-10-15
 
     ---
 
@@ -126,7 +137,7 @@ actualizar. El detalle completo, cambio a cambio, está en el
     ```python
     import rayito
 
-    print(rayito.__version__)  # "0.12.0"
+    print(rayito.__version__)  # "0.13.0"
     ```
 
 === "TypeScript"
@@ -134,7 +145,7 @@ actualizar. El detalle completo, cambio a cambio, está en el
     ```ts
     import { VERSION } from "rayito";
 
-    console.log(VERSION); // "0.12.0"
+    console.log(VERSION); // "0.13.0"
     ```
 
 === "CLI"
