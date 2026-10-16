@@ -5,7 +5,19 @@
  */
 
 import type { CommandDefinition, GroupDefinition } from "./command.js";
-import { agentGroup, agentTemplateBuildCommand, agentTemplateGroup } from "./commands/agent.js";
+import {
+  agentBuildCommand,
+  agentDeployCommand,
+  agentExportCommand,
+  agentGroup,
+  agentInitCommand,
+  agentInvokeCommand,
+  agentRunCommand,
+  agentStatusCommand,
+  agentStopCommand,
+  agentTemplateBuildCommand,
+  agentTemplateGroup,
+} from "./commands/agent.js";
 import { dashboardGroup } from "./commands/dashboard.js";
 import { cloudwatchCommand } from "./commands/dashboard-cloudwatch.js";
 import { doctorCommand } from "./commands/doctor.js";
@@ -91,6 +103,14 @@ export const COMMANDS: readonly CommandDefinition[] = [
   templateStatus,
   templateLogs,
   agentTemplateBuildCommand,
+  agentInitCommand,
+  agentBuildCommand,
+  agentRunCommand,
+  agentDeployCommand,
+  agentExportCommand,
+  agentInvokeCommand,
+  agentStatusCommand,
+  agentStopCommand,
   eventsDeploy,
   eventsStatus,
   eventsDestroy,

@@ -1,0 +1,5 @@
+[
+  { "name": "class StrandsRuntime", "pattern": "^(export )?declare class StrandsRuntime\\b" },
+  { "name": "class HermesRuntime", "pattern": "^(export )?declare class HermesRuntime\\b" },
+  { "name": "class CustomRuntime", "pattern": "^(export )?declare class CustomRuntime\\b" }
+]

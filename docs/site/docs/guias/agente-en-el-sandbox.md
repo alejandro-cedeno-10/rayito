@@ -16,6 +16,13 @@ comandos y el mismo egress que cualquier otro código que ejecutes con
 [pasarela de secretos](../funciones-opcionales/pasarela-de-secretos.md): el
 agente **usa** la credencial del modelo, pero nunca puede **leerla**.
 
+!!! tip "¿Prefieres describir el agente en un fichero?"
+    Desde 0.14.0, [Despliega tu agente](despliega-tu-agente.md) construye la
+    imagen, ejecuta el agente y lo sirve como servicio HTTP desde un
+    `rayito-agent.toml`, con Strands, Hermes, LangGraph, deepagents, OpenCode o
+    tu propio framework. Esta página sigue siendo la referencia de
+    `sbx.agent`, el motor que usan por debajo.
+
 La forma normal de usarlo son dos llamadas: `Sandbox.create(...)` con la
 pasarela del modelo y `sbx.agent.run(...)` ([sección 2](#2-arranque-normal-crear-el-sandbox-y-ejecutar)).
 No hace falta ningún pool ni ningún calentamiento: el
@@ -978,6 +985,11 @@ rayito agent template build --bucket amzn-s3-demo-bucket
 Opciones (`--name`, `--base`, `--memory-mb`, `--no-deepagents`,
 `--no-prefetch`, `--force`, `--timeout`) en
 [Templates de agente](../funciones-opcionales/templates-de-agente.md).
+
+Para describir el agente en un fichero y construirlo, ejecutarlo o
+desplegarlo desde la CLI, mira `rayito agent init`, `build`, `run`, `deploy`,
+`invoke`, `status`, `stop` y `export` en
+[Despliega tu agente](despliega-tu-agente.md).
 
 ## El shim de E2B
 

@@ -1,0 +1,18 @@
+{"type":"beforeInvocationEvent"}
+{"type":"modelStreamUpdateEvent","event":{"type":"modelMessageStartEvent","role":"assistant"}}
+{"type":"modelStreamUpdateEvent","event":{"type":"modelContentBlockDeltaEvent","delta":{"type":"reasoningContentDelta","text":"Debo sumar dos y tres."}}}
+{"type":"modelStreamUpdateEvent","event":{"type":"modelContentBlockDeltaEvent","delta":{"type":"textDelta","text":"Voy a sumar. "}}}
+{"type":"modelStreamUpdateEvent","event":{"type":"modelContentBlockStartEvent","start":{"type":"toolUseStart","toolUseId":"t1","name":"add"}}}
+{"type":"modelStreamUpdateEvent","event":{"type":"modelContentBlockDeltaEvent","delta":{"type":"toolUseInputDelta","input":"{\"a\":2,\"b\":3}"}}}
+{"type":"modelStreamUpdateEvent","event":{"type":"modelContentBlockStopEvent"}}
+{"type":"modelStreamUpdateEvent","event":{"type":"modelMessageStopEvent","stopReason":"toolUse"}}
+{"type":"modelStreamUpdateEvent","event":{"type":"modelMetadataEvent","usage":{"inputTokens":100,"outputTokens":7,"totalTokens":107,"cacheReadInputTokens":0,"cacheWriteInputTokens":0}}}
+{"type":"modelMessageEvent","message":{"role":"assistant","content":[{"toolUse":{"name":"add","toolUseId":"t1","input":{"a":2,"b":3}}}],"metadata":{"usage":{"inputTokens":100,"outputTokens":7,"totalTokens":107,"cacheReadInputTokens":0,"cacheWriteInputTokens":0}}},"stopReason":"toolUse"}
+{"type":"afterToolCallEvent","toolUse":{"name":"add","toolUseId":"t1","input":{"a":2,"b":3}},"result":{"toolResult":{"toolUseId":"t1","status":"success","content":[{"text":"5"}]}}}
+{"type":"modelStreamUpdateEvent","event":{"type":"modelMessageStartEvent","role":"assistant"}}
+{"type":"modelStreamUpdateEvent","event":{"type":"modelContentBlockDeltaEvent","delta":{"type":"textDelta","text":"El resultado es 5."}}}
+{"type":"modelStreamUpdateEvent","event":{"type":"modelContentBlockStopEvent"}}
+{"type":"modelStreamUpdateEvent","event":{"type":"modelMessageStopEvent","stopReason":"endTurn"}}
+{"type":"modelStreamUpdateEvent","event":{"type":"modelMetadataEvent","usage":{"inputTokens":200,"outputTokens":7,"totalTokens":207,"cacheReadInputTokens":40,"cacheWriteInputTokens":0}}}
+{"type":"modelMessageEvent","message":{"role":"assistant","content":[{"text":"El resultado es 5."}],"metadata":{"usage":{"inputTokens":200,"outputTokens":7,"totalTokens":207,"cacheReadInputTokens":40,"cacheWriteInputTokens":0}}},"stopReason":"endTurn"}
+{"type":"agentResultEvent","result":{"stopReason":"endTurn"}}

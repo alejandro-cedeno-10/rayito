@@ -204,6 +204,26 @@ make local-providers-e2e
 make local-down
 ```
 
+### Tu agente desplegado: `AgentProject`
+
+`test_local_agent_project.py` prueba `AgentProject`
+contra el `rayd` local: `run()`, `deploy()`, `invoke()`, `stream()` y
+`stop()` con el runtime a medida (`CustomRuntime`: un comando que habla v1 y
+una app HTTP, las dos de `dev/local/agent/apps`) y, con el upstream falso de
+`make local-providers-up`, con OpenCode y deepagents. El guest comparte el
+espacio de red del `runner`, así que el cliente del despliegue habla con el
+host del agente por el loopback, sin TLS; lo demás (el sandbox, las pasarelas,
+el host en modo servicio, los límites) es el de producción. Comprueba además
+que un segundo `invoke()` con el cupo lleno recibe `busy`, que el despliegue
+no guarda la credencial y que `stop()` termina el sandbox. Corre con
+`make local-providers-e2e`, y se salta si el guest no es el de
+`make local-agent-up`.
+
+El contenedor de `export()` se prueba aparte, con el Docker del host:
+`make agent-export-test` construye el contexto exportado para
+`linux/arm64`, arranca el contenedor y sondea `/ping` y `/invocations` (JSON,
+SSE y el token) dentro de él.
+
 ### Prueba de humo contra las APIs reales
 
 `test_local_agent_providers_smoke.py` (Python) y

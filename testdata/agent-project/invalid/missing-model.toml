@@ -1,0 +1,9 @@
+schema = "rayito.agent-project/1"
+name = "demo"
+
+[runtime]
+kind = "opencode"
+
+[gateways.anthropic]
+preset = "anthropic"
+secret = "rayito/anthropic-key"

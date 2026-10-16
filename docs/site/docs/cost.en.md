@@ -303,6 +303,25 @@ noise. C is the recommended one for minimum latency; see
 [Pool](pool.md#resultado-de-la-medida-en-aws) and the full table in
 [Agent in the sandbox](guias/agente-en-el-sandbox.md#arranque-rapido).
 
+### Cost of a deployed agent { #coste-de-un-agente-desplegado }
+
+[`AgentProject`](guias/despliega-tu-agente.md) adds two ways of keeping an
+agent alive, and both bill like any sandbox: per second while it is `RUNNING`
+and for snapshot storage while it is suspended. The numbers are arithmetic on
+the list price (**List**, 2 GB and 1 vCPU VM); there is no real invoice for a
+deployment yet.
+
+| Scenario | Approximate cost |
+|---|---|
+| A 60 s `run()` | 60 s × $0.126/h + $0.0014 ≈ **$0.0035**, plus the model tokens |
+| A deployment active for 1 hour | **$0.126** + $0.0014 |
+| A deployment active for the 8 h maximum | 8 × $0.126 + $0.0014 ≈ **$1.01** |
+| A deployment with `idle`: 1 h active and 7 h suspended | $0.126 + 7 h × $0.0001 + one suspend/resume cycle ($0.0049) + $0.0014 ≈ **$0.133** |
+| An `AgentProject` image version | the `rayito-agent` one is ≈ **$0.056/week**; with Hermes or Node the snapshot weighs more (measure it with `rayito image sizes`) |
+
+A deployment nobody calls keeps costing until it suspends: leave `idle` on
+(the default), or stop it with `rayito agent stop`.
+
 ??? info "Sources and measurements (agents)"
     - Design: `design.md` of `ai-agent-core` in
       [`openspec/changes/`](https://github.com/alejandro-cedeno-10/rayito/tree/main/openspec/changes).

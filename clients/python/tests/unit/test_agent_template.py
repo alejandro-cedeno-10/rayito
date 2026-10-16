@@ -19,6 +19,15 @@ from typer.testing import CliRunner
 
 from rayito import AgentTemplate, AsyncAgentTemplate, Template
 from rayito._agent import _template
+from rayito._agent._deepagents import DEEPAGENTS_RUNNER_NAME, DeepAgents
+from rayito._agent._opencode import OpenCodeRuntime
+from rayito._agent._recipes import (
+    AGENT_APP_DIR,
+    PREFETCH_SCRIPT_NAME,
+    agent_host_files,
+    host_sha256,
+)
+from rayito._agent._runtime import copy_step, run_step
 from rayito._limits import (
     AGENT_DEEPAGENTS_REQUIREMENTS_SHA256,
     AGENT_KERNEL_WARMUP_MARKER_PATH,
@@ -35,6 +44,7 @@ from rayito.cli._artifact import WARMUP_MARKER_ENTRY
 from rayito.exceptions import InvalidArgumentException
 
 SENTINEL = object()
+HOST_DIGEST_VECTOR = "d117cfc5d0205cd37922effa154432631131df48d5047972b1b1be53aab25660"
 VECTORS = json.loads(
     (Path(__file__).parents[4] / "testdata" / "agent" / "agent-template" / "cases.json").read_text(
         encoding="utf-8"
@@ -59,11 +69,33 @@ def _from_options(options: dict[str, Any]) -> AgentTemplate:
 def test_shared_vectors(case: dict[str, Any]) -> None:
     template = _from_options(case["options"])
     assert template.to_dockerfile() == case["dockerfile"]
-    assert template.manifest() == case["manifest"]
+    manifest = template.manifest()
+    assert {key: manifest[key] for key in case["manifest"]} == case["manifest"]
     start = template.to_template().spec.start
     assert (start.start_cmd if start else None) == case["startCmd"]
     assert (start.ready_cmd if start else None) == case["readyCmd"]
-    assert sorted(template.context_files()) == case["contextFiles"]
+    assert [
+        name for name in sorted(template.context_files()) if not name.startswith("agent_host/")
+    ] == case["contextFiles"]
+
+
+def test_manifest_adds_runtimes_and_host_digest_without_moving_the_old_keys() -> None:
+    """`runtimes` y `host_sha256` son aditivos: el demonio de precarga y los
+    SDK anteriores siguen leyendo `opencode`, `deepagents`, `runner_sha256` y
+    `prefetch_paths`."""
+    manifest = AgentTemplate().manifest()
+    assert set(manifest["runtimes"]) == {"opencode", "deepagents"}  # type: ignore[call-overload]
+    assert manifest["runtimes"]["deepagents"]["runner_sha256"] == manifest["runner_sha256"]  # type: ignore[index]
+    assert manifest["host_sha256"] == host_sha256(agent_host_files())
+    only = AgentTemplate(runtimes=("opencode",)).manifest()
+    assert set(only["runtimes"]) == {"opencode"}  # type: ignore[call-overload]
+
+
+def test_host_digest_is_a_fixed_function_of_path_and_content() -> None:
+    """El mismo vector lo comprueba `agent-template.test.ts`."""
+    assert host_sha256({}) is None
+    digest = host_sha256({"b.py": b"two", "a/__main__.py": b"one"})
+    assert digest == HOST_DIGEST_VECTOR
 
 
 def test_recipe_pins_come_from_limits() -> None:
@@ -128,7 +160,7 @@ def test_kernel_warmup_marker_is_the_one_the_sidecar_reads() -> None:
 def test_prefetch_off_has_no_start_cmd_nor_script() -> None:
     template = AgentTemplate(prefetch=False)
     assert template.to_template().spec.start is None
-    assert _template.PREFETCH_SCRIPT_NAME not in template.context_files()
+    assert PREFETCH_SCRIPT_NAME not in template.context_files()
 
 
 @pytest.mark.parametrize(
@@ -138,8 +170,11 @@ def test_prefetch_off_has_no_start_cmd_nor_script() -> None:
         {"memory_mib": True},
         {"runtimes": ()},
         {"runtimes": ("claude",)},
+        {"runtimes": ("custom",)},
         {"runtimes": ("opencode", "opencode")},
+        {"runtimes": ("deepagents", "langgraph")},
         {"name": ""},
+        {"app": "/nonexistent/rayito-app-dir"},
     ],
 )
 def test_validation(kwargs: dict[str, Any]) -> None:
@@ -166,6 +201,7 @@ def test_build_passes_context_and_memory(monkeypatch: pytest.MonkeyPatch) -> Non
     assert seen["memory_mb"] == 4096
     assert seen["bucket"] == "amzn-s3-demo-bucket"
     assert seen["files"] == [
+        "agent_host",
         "deepagents_runner.py",
         "rayito-agent-prefetch",
         "rayito-agent.json",
@@ -190,7 +226,7 @@ async def test_async_build_uses_async_template(monkeypatch: pytest.MonkeyPatch) 
 
     assert result is SENTINEL
     assert isinstance(seen["template"], AsyncTemplate)
-    assert seen["files"] == ["rayito-agent.json"]
+    assert seen["files"] == ["agent_host", "rayito-agent.json"]
 
 
 def _start_prefetch(
@@ -351,11 +387,125 @@ def test_deepagents_runner_is_installed_and_pinned_in_the_manifest() -> None:
     deepagents, ni el fichero ni el hash."""
     template = AgentTemplate()
     runner = _template.deepagents_runner()
-    assert template.context_files()[_template.DEEPAGENTS_RUNNER_NAME] == runner
+    assert template.context_files()[DEEPAGENTS_RUNNER_NAME] == runner
     assert template.manifest()["runner_sha256"] == hashlib.sha256(runner).hexdigest()
     dockerfile = template.to_dockerfile()
     assert '"/opt/agents/rayito/deepagents_runner.py"]' in dockerfile
     assert "chmod 0755 /opt/agents/rayito/deepagents_runner.py" in dockerfile
     only = AgentTemplate(runtimes=("opencode",))
     assert only.manifest()["runner_sha256"] is None
-    assert _template.DEEPAGENTS_RUNNER_NAME not in only.context_files()
+    assert DEEPAGENTS_RUNNER_NAME not in only.context_files()
+
+
+class FakeInstallable:
+    """Un runtime de doble que sólo implementa `InstallableRuntime`."""
+
+    name = "fake"
+
+    def install_steps(self, target: Any) -> tuple[Any, ...]:
+        return (
+            copy_step("fake.bin", f"{target.install_dir}/fake/fake.bin", executable=True),
+            run_step("echo instalado"),
+        )
+
+    def context_files(self) -> dict[str, bytes]:
+        return {"fake.bin": b"\x00"}
+
+    def manifest_entry(self) -> dict[str, object]:
+        return {"version": "0"}
+
+    def smoke_checks(self) -> tuple[str, ...]:
+        return ("test -x /opt/agents/fake/fake.bin",)
+
+    def prefetch_paths(self) -> tuple[str, ...]:
+        return ("/opt/agents/fake/fake.bin",)
+
+
+def test_runtime_objects_compose_the_image_from_their_install_steps() -> None:
+    template = AgentTemplate(runtimes=(FakeInstallable(),))  # type: ignore[arg-type]
+    dockerfile = template.to_dockerfile()
+    assert 'COPY ["__rayito_context/fake.bin", "/opt/agents/fake/fake.bin"]' in dockerfile
+    assert (
+        "chmod 0755 /opt/agents/fake/fake.bin /opt/agents/bin/rayito-agent-prefetch" in dockerfile
+    )
+    assert "su user -c" not in dockerfile
+    assert "RUN test -x /opt/agents/fake/fake.bin" in dockerfile
+    manifest = template.manifest()
+    assert manifest["runtimes"] == {"fake": {"version": "0"}}
+    assert manifest["opencode"] is None and manifest["deepagents"] is None
+    assert manifest["prefetch_paths"] == ["/opt/agents/fake/fake.bin"]
+    assert "fake.bin" in template.context_files()
+
+
+def test_a_task_only_runtime_cannot_be_installed() -> None:
+    class TaskOnly:
+        name = "task-only"
+
+    with pytest.raises(InvalidArgumentException):
+        AgentTemplate(runtimes=(TaskOnly(),))  # type: ignore[arg-type]
+    with pytest.raises(InvalidArgumentException, match="InstallableRuntime"):
+        AgentTemplate(runtimes=(object(),))  # type: ignore[arg-type]
+
+
+def test_the_framework_runtime_names_resolve_and_an_unknown_one_is_rejected() -> None:
+    with pytest.raises(InvalidArgumentException):
+        AgentTemplate(runtimes=("crewai",))
+    for name in ("strands", "strands-harness", "hermes"):
+        AgentTemplate(runtimes=(name,))
+
+
+def test_runtime_objects_and_names_are_equivalent() -> None:
+    by_name = AgentTemplate(runtimes=("opencode", "deepagents"))
+    by_object = AgentTemplate(runtimes=(OpenCodeRuntime(), DeepAgents()))
+    assert by_name.to_dockerfile() == by_object.to_dockerfile()
+    assert by_name.manifest() == by_object.manifest()
+
+
+def _make_app(root: Path) -> Path:
+    app = root / "app-src"
+    (app / "pkg").mkdir(parents=True)
+    (app / "pkg" / "agent.py").write_text("agent = None\n")
+    (app / "keep.txt").write_text("keep\n")
+    (app / "skip.log").write_text("log\n")
+    (app / ".venv").mkdir()
+    (app / ".venv" / "pyvenv.cfg").write_text("home = /usr\n")
+    (app / ".dockerignore").write_text("*.log\n")
+    return app
+
+
+def test_app_is_copied_to_the_app_dir_as_root() -> None:
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        template = AgentTemplate(app=str(_make_app(Path(tmp))))
+        dockerfile = template.to_dockerfile()
+    assert f'COPY ["__rayito_context/app", "{AGENT_APP_DIR}"]' in dockerfile
+    assert dockerfile.index('COPY ["__rayito_context/app"') < dockerfile.index(
+        "chown -R root:root /opt/agents && chmod -R a+rX,go-w /opt/agents"
+    )
+
+
+def test_build_writes_the_app_honouring_dockerignore_and_exclude(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    seen: dict[str, Any] = {}
+
+    def fake_build(template: Template, name: str, **kwargs: Any) -> object:
+        context: Path = kwargs["context_dir"]
+        seen["app"] = sorted(
+            p.relative_to(context / "app").as_posix()
+            for p in (context / "app").rglob("*")
+            if p.is_file()
+        )
+        return SENTINEL
+
+    monkeypatch.setattr(Template, "build", staticmethod(fake_build))
+    AgentTemplate(app=str(_make_app(tmp_path)), app_exclude=(".venv",), prefetch=False).build(
+        bucket="amzn-s3-demo-bucket"
+    )
+
+    assert seen["app"] == [".dockerignore", "keep.txt", "pkg/agent.py"]
+
+
+def test_without_app_there_is_no_app_copy() -> None:
+    assert "__rayito_context/app" not in AgentTemplate().to_dockerfile()

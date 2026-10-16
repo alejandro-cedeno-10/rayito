@@ -22,10 +22,8 @@ from rayito import (
     SubAgent,
     ToolCall,
 )
-from rayito._agent._deepagents import (
-    DEEPAGENTS_CONFIG_PATH,
-    DeepAgentsState,
-)
+from rayito._agent._deepagents import DEEPAGENTS_CONFIG_PATH
+from rayito._agent._protocol_v1 import ProtocolV1State
 from rayito._agent._runtime import RunRequest
 from rayito._agent._runtimes import AGENT_RUNTIMES, resolve_runtime
 
@@ -187,7 +185,7 @@ def test_events_match_golden() -> None:
     for line in (TESTDATA / "rayito-protocol-v1.jsonl").read_bytes().splitlines():
         events.extend(dataclasses.asdict(event) for event in runtime.parse_line(line, state))
     assert events == expected["events"]
-    assert isinstance(state, DeepAgentsState)
+    assert isinstance(state, ProtocolV1State)
     assert state.session_id == expected["session_id"]
     assert state.ignored_lines == expected["ignored_lines"]
     assert dataclasses.asdict(runtime.finish(state, 0)) == expected["done"]

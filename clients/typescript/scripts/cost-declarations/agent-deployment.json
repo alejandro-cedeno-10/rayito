@@ -1,0 +1,7 @@
+[
+  { "name": "class AgentDeployment", "pattern": "^(export )?declare class AgentDeployment\\b" },
+  {
+    "name": "AgentProject.deploy",
+    "pattern": "^\\s*deploy\\(options\\?: AgentProjectDeployOptions\\b"
+  }
+]

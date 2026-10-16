@@ -13,37 +13,56 @@
  * `InvalidArgumentError` antes de cualquier RPC.
  */
 
+import { createHash } from "node:crypto";
 import { InvalidArgumentError } from "../errors.js";
 import {
+  AGENT_DEEPAGENTS_REQUIREMENTS_SHA256,
   AGENT_PROTOCOL_VERSION,
   AGENT_STATE_DIR,
   DEFAULT_AGENT_WORKDIR,
   MODEL_CREDENTIAL_PLACEHOLDER,
 } from "../limits.js";
+import { DEEPAGENTS_RUNNER_SOURCE } from "./assets/deepagents-runner.js";
+import { DEEPAGENTS_REQUIREMENTS } from "./assets/template-assets.gen.js";
 import {
   type AgentPermissions,
   type AgentSpec,
   DEFAULT_DENIED_TOOLS,
   validateModelId,
 } from "./domain.js";
-import {
-  type AgentEvent,
-  type AgentFailed,
-  agentFailed,
-  type Done,
-  TokenUsage,
-  truncateToolOutput,
-} from "./events.js";
+import type { AgentEvent, AgentFailed, Done } from "./events.js";
 import { AGENT_RUN_LOCK_PATH, canonicalJson, filesSha256, shellQuote } from "./opencode.js";
-import type {
-  AgentRuntime,
-  RunCommand,
-  RunRequest,
-  RuntimeFile,
-  RuntimeFiles,
-  RuntimeState,
-  TemplateStep,
-  WarmupStep,
+import {
+  finishV1,
+  newProtocolV1State,
+  type ProtocolV1State,
+  parseV1Line,
+  SESSION_ID_PATTERN,
+} from "./protocol-v1.js";
+import {
+  AGENT_APP_DIR,
+  AGENT_INSTALL_DIR,
+  AGENT_RAYITO_DIR,
+  hashedVenvInstall,
+} from "./recipes.js";
+import {
+  type AgentRuntime,
+  copyStep,
+  type HostConfig,
+  hostConfig,
+  type InstallableRuntime,
+  type InstallTarget,
+  type ModelWiring,
+  type RunCommand,
+  type RunRequest,
+  type RuntimeFile,
+  type RuntimeFiles,
+  type RuntimeState,
+  runStep,
+  type ServableRuntime,
+  type TemplateStep,
+  type WarmupStep,
+  wiringUrls,
 } from "./runtime.js";
 
 /** Estado de deepagents dentro de `AGENT_STATE_DIR`. */
@@ -52,10 +71,21 @@ export const DEEPAGENTS_STATE_DIR = `${AGENT_STATE_DIR}/deepagents`;
 export const DEEPAGENTS_CONFIG_PATH = `${DEEPAGENTS_STATE_DIR}/config.json`;
 /** Historial de cada sesión, `<id>.json`. */
 export const DEEPAGENTS_SESSIONS_DIR = `${DEEPAGENTS_STATE_DIR}/sessions`;
-/** El Python del venv de deepagents de la plantilla. */
-export const DEEPAGENTS_PYTHON = "/opt/agents/deepagents/bin/python";
+/** El venv de deepagents de la plantilla y su Python. */
+export const DEEPAGENTS_VENV_DIR = `${AGENT_INSTALL_DIR}/deepagents`;
+export const DEEPAGENTS_PYTHON = `${DEEPAGENTS_VENV_DIR}/bin/python`;
+export const DEEPAGENTS_REQUIREMENTS_NAME = "requirements-deepagents.txt";
+/** El runner en el contexto de build; se instala en `DEEPAGENTS_RUNNER_PATH`. */
+export const DEEPAGENTS_RUNNER_NAME = "deepagents_runner.py";
 /** Donde la plantilla instala el runner, de root y 0755. */
-export const DEEPAGENTS_RUNNER_PATH = "/opt/agents/rayito/deepagents_runner.py";
+export const DEEPAGENTS_RUNNER_PATH = `${AGENT_RAYITO_DIR}/${DEEPAGENTS_RUNNER_NAME}`;
+/**
+ * Lo que el build importa como prueba de humo del venv: deepagents y las
+ * clases de modelo de cada proveedor (`langchain_openai` para OpenAI, xAI,
+ * Azure y las APIs compatibles; `langchain_google_genai` para Gemini).
+ */
+export const DEEPAGENTS_SMOKE_MODULES =
+  "deepagents, langchain_aws, langchain_anthropic, langchain_openai, langchain_google_genai";
 /** Herramienta de `AgentPermissions` -> herramientas de deepagents 0.7. */
 export const DEEPAGENTS_TOOL_NAMES: Readonly<Record<string, readonly string[]>> = Object.freeze({
   read: ["read_file"],
@@ -74,9 +104,6 @@ export const DEEPAGENTS_FLAG_ENVS: Readonly<Record<string, string>> = Object.fre
   PYTHONDONTWRITEBYTECODE: "1",
   PYTHONUNBUFFERED: "1",
 });
-/** Fallos que el runner puede declarar; el resto sólo los decide el SDK. */
-export const RUNNER_FAILURE_REASONS = ["model_error", "runtime_error", "protocol_error"] as const;
-
 /** Lo que la clase de LangChain espera en `base_url` con los proveedores
  * nativos (`ChatOpenAI` y `AzureChatOpenAI` añaden `/responses`;
  * `ChatGoogleGenerativeAI`, su `/v1beta/models/...`). Con
@@ -88,9 +115,7 @@ export const DEEPAGENTS_NATIVE_BASE_PATHS: Readonly<Record<string, string>> = Ob
 });
 
 const ENTRYPOINT_PATTERN = /^[A-Za-z_][A-Za-z0-9_.]*:[A-Za-z_][A-Za-z0-9_]*$/;
-const SESSION_ID_PATTERN = /^rda_[0-9a-f]{32}$/;
 const UTF8 = new TextEncoder();
-const UTF8_DECODER = new TextDecoder();
 
 /** Opciones de `new DeepAgents(...)`. */
 export interface DeepAgentsOptions {
@@ -98,19 +123,9 @@ export interface DeepAgentsOptions {
    * directorio de trabajo, que recibe un `RunnerContext` y devuelve un grafo
    * compilado. Sin ella, el runner usa `create_deep_agent`. */
   readonly entrypoint?: string | undefined;
-}
-
-export interface DeepAgentsState extends RuntimeState {
-  sessionId: string | undefined;
-  steps: number;
-  usage: TokenUsage;
-  done: boolean;
-  failed: AgentFailed | undefined;
-  ignoredLines: number;
-}
-
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+  /** `true` es el runtime registrado como `"langgraph"`: sin `entrypoint` no
+   * hay agente que construir y `buildConfig()` / `hostConfig()` fallan. */
+  readonly requireEntrypoint?: boolean | undefined;
 }
 
 function toolRules(permissions: AgentPermissions, label: string): Record<string, unknown> {
@@ -140,16 +155,21 @@ function toolRules(permissions: AgentPermissions, label: string): Record<string,
   return { default: permissions.default, tools };
 }
 
-/** La configuración que lee el runner, como objeto. */
+/**
+ * La configuración que lee el runner, como objeto. `gatewayUrls` ausente es
+ * la configuración sin pasarela de un contenedor exportado: `base_url` y
+ * `credential_placeholder` van a `null` y el proveedor usa su endpoint y
+ * credencial estándar.
+ */
 export function buildDeepAgentsConfig(
   spec: AgentSpec,
   options: {
-    readonly gatewayUrls: Readonly<Record<string, string>>;
+    readonly gatewayUrls: Readonly<Record<string, string>> | undefined;
     readonly workdir: string;
     readonly entrypoint: string | undefined;
   },
 ): Record<string, unknown> {
-  spec.requireGateways(Object.keys(options.gatewayUrls));
+  const baseUrl = baseUrlOf(spec, options.gatewayUrls);
   if (Object.keys(spec.mcp).length > 0) {
     throw new InvalidArgumentError("deepagents no admite AgentSpec.mcp; usa runtime 'opencode'");
   }
@@ -159,8 +179,6 @@ export function buildDeepAgentsConfig(
     );
   }
   const model = spec.model;
-  const gatewayUrl = options.gatewayUrls[model.gateway] as string;
-  const basePath = DEEPAGENTS_NATIVE_BASE_PATHS[model.provider] ?? model.basePath;
   const subagents = Object.entries(spec.agents).map(([name, sub]) => ({
     name,
     description: sub.description,
@@ -176,16 +194,39 @@ export function buildDeepAgentsConfig(
     provider: model.provider,
     model: model.id,
     region: model.region ?? null,
-    base_url: stripTrailingSlashes(gatewayUrl) + basePath,
-    credential_placeholder: MODEL_CREDENTIAL_PLACEHOLDER,
+    base_url: baseUrl ?? null,
+    credential_placeholder: baseUrl === undefined ? null : MODEL_CREDENTIAL_PLACEHOLDER,
     prompt_caching: model.promptCaching,
     instructions: spec.instructions ?? null,
     workdir: options.workdir,
+    app_dir: AGENT_APP_DIR,
     sessions_dir: DEEPAGENTS_SESSIONS_DIR,
     entrypoint: options.entrypoint ?? null,
     permissions: toolRules(spec.permissions, "AgentSpec.permissions"),
     subagents,
   };
+}
+
+function baseUrlOf(
+  spec: AgentSpec,
+  gatewayUrls: Readonly<Record<string, string>> | undefined,
+): string | undefined {
+  const model = spec.model;
+  if (gatewayUrls === undefined) {
+    if (
+      !(model.provider in DEEPAGENTS_NATIVE_BASE_PATHS) &&
+      !["bedrock", "anthropic"].includes(model.provider)
+    ) {
+      throw new InvalidArgumentError(
+        `el proveedor ${JSON.stringify(model.provider)} no tiene un endpoint estándar: ` +
+          "sin pasarela necesita una URL explícita",
+      );
+    }
+    return undefined;
+  }
+  spec.requireGateways(Object.keys(gatewayUrls));
+  const basePath = DEEPAGENTS_NATIVE_BASE_PATHS[model.provider] ?? model.basePath;
+  return stripTrailingSlashes(gatewayUrls[model.gateway] as string) + basePath;
 }
 
 function stripTrailingSlashes(url: string): string {
@@ -212,27 +253,6 @@ function runScript(configPath: string): string {
   return `${lines.join("\n")}\n`;
 }
 
-function count(value: unknown): number {
-  return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : 0;
-}
-
-function usageOf(raw: unknown): TokenUsage {
-  if (!isPlainObject(raw)) {
-    return new TokenUsage();
-  }
-  return new TokenUsage({
-    input: count(raw.input),
-    output: count(raw.output),
-    reasoning: count(raw.reasoning),
-    cacheRead: count(raw.cache_read),
-    cacheWrite: count(raw.cache_write),
-  });
-}
-
-function asState(state: RuntimeState): DeepAgentsState {
-  return state as DeepAgentsState;
-}
-
 /**
  * `AgentRuntime` de deepagents (`runtime: new DeepAgents(...)` o
  * `runtime: "deepagents"`).
@@ -248,9 +268,10 @@ function asState(state: RuntimeState): DeepAgentsState {
  * deepagents marca puntos de caché de prompts para Claude;
  * `AgentModel({ promptCaching: false })` lo apaga.
  */
-export class DeepAgents implements AgentRuntime {
+export class DeepAgents implements AgentRuntime, InstallableRuntime, ServableRuntime {
   readonly name = "deepagents";
   readonly entrypoint: string | undefined;
+  readonly requireEntrypoint: boolean;
 
   constructor(options: DeepAgentsOptions = {}) {
     const entrypoint = options.entrypoint;
@@ -263,13 +284,31 @@ export class DeepAgents implements AgentRuntime {
       );
     }
     this.entrypoint = entrypoint;
+    this.requireEntrypoint = options.requireEntrypoint ?? false;
   }
 
   buildConfig(
     spec: AgentSpec,
     options: { readonly gatewayUrls: Readonly<Record<string, string>>; readonly workdir: string },
   ): RuntimeFiles {
-    const config = buildDeepAgentsConfig(spec, { ...options, entrypoint: this.entrypoint });
+    return this.#configFiles(spec, options.gatewayUrls, options.workdir);
+  }
+
+  #configFiles(
+    spec: AgentSpec,
+    gatewayUrls: Readonly<Record<string, string>> | undefined,
+    workdir: string,
+  ): RuntimeFiles {
+    if (this.requireEntrypoint && this.entrypoint === undefined) {
+      throw new InvalidArgumentError(
+        "el runtime 'langgraph' necesita un entrypoint 'paquete.modulo:funcion'",
+      );
+    }
+    const config = buildDeepAgentsConfig(spec, {
+      gatewayUrls,
+      workdir,
+      entrypoint: this.entrypoint,
+    });
     const files: RuntimeFile[] = [
       { path: DEEPAGENTS_CONFIG_PATH, data: canonicalJson(config), mode: 0o600 },
     ];
@@ -292,130 +331,26 @@ export class DeepAgents implements AgentRuntime {
       model: request.model ?? null,
       reasoning: request.reasoning ?? false,
     };
-    const envs: Record<string, string> = { HOME: DEFAULT_AGENT_WORKDIR, ...DEEPAGENTS_FLAG_ENVS };
-    if (request.spec.model.provider === "bedrock") {
-      envs.AWS_BEARER_TOKEN_BEDROCK = MODEL_CREDENTIAL_PLACEHOLDER;
-    }
-    if (request.spec.model.region !== undefined) {
-      envs.AWS_REGION = request.spec.model.region;
-    }
     return {
       script: runScript(DEEPAGENTS_CONFIG_PATH),
-      envs,
+      envs: runEnvs(request.spec, false),
       stdin: UTF8.encode(JSON.stringify(payload)),
     };
   }
 
   newState(): RuntimeState {
-    const state: DeepAgentsState = {
-      sessionId: undefined,
-      steps: 0,
-      usage: new TokenUsage(),
-      done: false,
-      failed: undefined,
-      ignoredLines: 0,
-    };
-    return state;
+    return newProtocolV1State();
   }
 
   /** Una línea del protocolo v1 a cero o un evento; lo ilegible, de otra
    * versión o de tipo desconocido se ignora y se cuenta. */
-  parseLine(line: Uint8Array, rawState: RuntimeState): readonly AgentEvent[] {
-    const state = asState(rawState);
-    let payload: unknown;
-    try {
-      payload = JSON.parse(UTF8_DECODER.decode(line));
-    } catch {
-      state.ignoredLines += 1;
-      return [];
-    }
-    if (!isPlainObject(payload) || payload.v !== AGENT_PROTOCOL_VERSION) {
-      state.ignoredLines += 1;
-      return [];
-    }
-    const events = this.map(payload, state);
-    if (events === undefined) {
-      state.ignoredLines += 1;
-      return [];
-    }
-    return events;
-  }
-
-  private map(payload: Record<string, unknown>, state: DeepAgentsState): AgentEvent[] | undefined {
-    const kind = payload.type;
-    switch (kind) {
-      case "rayito.busy":
-      case "rayito.runtime_missing":
-        state.failed = agentFailed(kind.slice("rayito.".length));
-        return [state.failed];
-      case "session": {
-        const sessionId = payload.session_id;
-        if (typeof sessionId !== "string" || !SESSION_ID_PATTERN.test(sessionId)) {
-          return undefined;
-        }
-        state.sessionId = sessionId;
-        return [];
-      }
-      case "step_started":
-        state.steps += 1;
-        return [Object.freeze({ type: "step_started", index: state.steps })];
-      case "step_finished": {
-        const usage = usageOf(payload.usage);
-        state.usage = state.usage.plus(usage);
-        return [
-          Object.freeze({
-            type: "step_finished",
-            index: state.steps,
-            usage,
-            finishReason:
-              typeof payload.finish_reason === "string" ? payload.finish_reason : undefined,
-          }),
-        ];
-      }
-      case "text_delta":
-      case "text":
-      case "reasoning": {
-        const text = payload.text;
-        return typeof text === "string" ? [Object.freeze({ type: kind, text })] : undefined;
-      }
-      case "tool_call":
-        return toolCallOf(payload);
-      case "agent_failed": {
-        const reason = (RUNNER_FAILURE_REASONS as readonly unknown[]).includes(payload.reason)
-          ? (payload.reason as string)
-          : "protocol_error";
-        state.failed = agentFailed(reason, {
-          detailCode: typeof payload.detail_code === "string" ? payload.detail_code : undefined,
-          sessionId: state.sessionId,
-        });
-        return [state.failed];
-      }
-      case "done":
-        state.done = true;
-        return [];
-      default:
-        return undefined;
-    }
+  parseLine(line: Uint8Array, state: RuntimeState): readonly AgentEvent[] {
+    return parseV1Line(line, state as ProtocolV1State);
   }
 
   /** `Done` sólo con salida 0, el `done` del runner y una sesión. */
-  finish(rawState: RuntimeState, exitCode: number): Done | AgentFailed {
-    const state = asState(rawState);
-    if (state.failed !== undefined) {
-      return state.failed;
-    }
-    if (exitCode !== 0) {
-      return agentFailed("runtime_error", { exitCode, sessionId: state.sessionId });
-    }
-    if (!state.done || state.sessionId === undefined) {
-      return agentFailed("protocol_error", { exitCode, sessionId: state.sessionId });
-    }
-    return Object.freeze({
-      type: "done",
-      sessionId: state.sessionId,
-      exitCode,
-      usage: state.usage,
-    });
+  finish(state: RuntimeState, exitCode: number): Done | AgentFailed {
+    return finishV1(state as ProtocolV1State, exitCode);
   }
 
   /** Vacío: la plantilla de agente declara sus propios pasos. */
@@ -431,29 +366,79 @@ export class DeepAgents implements AgentRuntime {
       },
     ];
   }
+
+  /** Copia los requisitos con hash, crea el venv con `--require-hashes` y
+   * copia el runner (0755). */
+  installSteps(target: InstallTarget): readonly TemplateStep[] {
+    const requirements = `${target.installDir}/${DEEPAGENTS_REQUIREMENTS_NAME}`;
+    return [
+      copyStep(DEEPAGENTS_REQUIREMENTS_NAME, requirements),
+      runStep(
+        hashedVenvInstall(target, {
+          venvDir: `${target.installDir}/deepagents`,
+          requirementsPath: requirements,
+          requirementsSha256: AGENT_DEEPAGENTS_REQUIREMENTS_SHA256,
+        }),
+      ),
+      copyStep(DEEPAGENTS_RUNNER_NAME, `${target.installDir}/rayito/${DEEPAGENTS_RUNNER_NAME}`, {
+        executable: true,
+      }),
+    ];
+  }
+
+  /** Los requisitos con hash y el runner (datos de paquete). */
+  contextFiles(): Readonly<Record<string, string>> {
+    return {
+      [DEEPAGENTS_REQUIREMENTS_NAME]: DEEPAGENTS_REQUIREMENTS,
+      [DEEPAGENTS_RUNNER_NAME]: DEEPAGENTS_RUNNER_SOURCE,
+    };
+  }
+
+  /** El sha256 de los requisitos y el del runner, para el manifiesto. */
+  manifestEntry(): Readonly<Record<string, unknown>> {
+    return {
+      requirements_sha256: AGENT_DEEPAGENTS_REQUIREMENTS_SHA256,
+      runner_sha256: createHash("sha256").update(DEEPAGENTS_RUNNER_SOURCE, "utf8").digest("hex"),
+    };
+  }
+
+  /** Importa deepagents y los modelos de cada proveedor, y comprueba que el
+   * runner es legible, todo como `user`. */
+  smokeChecks(): readonly string[] {
+    return [
+      `su user -c "${DEEPAGENTS_PYTHON} -c 'import ${DEEPAGENTS_SMOKE_MODULES}'"`,
+      `su user -c 'test -r ${DEEPAGENTS_RUNNER_PATH}'`,
+    ];
+  }
+
+  /** Ninguna: el venv se carga con `warmupSteps()`. */
+  prefetchPaths(): readonly string[] {
+    return [];
+  }
+
+  /** La configuración del host para el driver `deepagents`: el mismo
+   * fichero de configuración y las mismas variables que `command()`. */
+  hostConfig(
+    spec: AgentSpec,
+    options: { readonly wiring: ModelWiring; readonly workdir: string },
+  ): HostConfig {
+    return hostConfig({
+      driver: "deepagents",
+      python: DEEPAGENTS_PYTHON,
+      files: this.#configFiles(spec, wiringUrls(options.wiring), options.workdir),
+      envs: runEnvs(spec, options.wiring.kind === "direct"),
+      options: { config_path: DEEPAGENTS_CONFIG_PATH },
+    });
+  }
 }
 
-function toolCallOf(payload: Record<string, unknown>): AgentEvent[] | undefined {
-  const status = payload.status;
-  if (status !== "completed" && status !== "error") {
-    return undefined;
+function runEnvs(spec: AgentSpec, direct: boolean): Record<string, string> {
+  const envs: Record<string, string> = { HOME: DEFAULT_AGENT_WORKDIR, ...DEEPAGENTS_FLAG_ENVS };
+  if (spec.model.provider === "bedrock" && !direct) {
+    envs.AWS_BEARER_TOKEN_BEDROCK = MODEL_CREDENTIAL_PLACEHOLDER;
   }
-  let output: string | undefined;
-  let truncated = false;
-  if (typeof payload.output === "string") {
-    const cut = truncateToolOutput(payload.output);
-    output = cut.text;
-    truncated = cut.truncated;
+  if (spec.model.region !== undefined) {
+    envs.AWS_REGION = spec.model.region;
   }
-  return [
-    Object.freeze({
-      type: "tool_call",
-      callId: String(payload.call_id ?? ""),
-      name: String(payload.name ?? ""),
-      status,
-      input: isPlainObject(payload.input) ? { ...payload.input } : undefined,
-      output,
-      outputTruncated: truncated || payload.output_truncated === true,
-    }),
-  ];
+  return envs;
 }

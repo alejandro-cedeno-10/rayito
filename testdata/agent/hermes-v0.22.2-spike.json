@@ -1,0 +1,184 @@
+{
+  "_comment": "Resultado del spike de la tarea 2.1 para Hermes Agent v0.22.2 (MIT), medido el 2026-10-16 en Docker local (arm64) con un servidor de modelo falso, sin AWS. Lo leen los tests del adaptador y del driver de Hermes para que los pines y las claves de configuración no se desvíen de lo medido.",
+  "checked": "2026-10-16",
+  "tag": "v0.22.2",
+  "commit": "d923a5eb487a17c0a68801bba9ef0f56c81040a8",
+  "python": {
+    "required": "3.14",
+    "why": "el uv.lock de Hermes sólo cubre CPython 3.14 (todas las dependencias llevan `python_version >= '3.14'`); la imagen base trae 3.12",
+    "interpreter": "python-build-standalone 3.14.8 (20261013) linux aarch64 install_only, comprobado en amazonlinux:2023",
+    "extras_needed": {
+      "slack": "sólo aiohttp (la API HTTP del gateway lo necesita y no está en el núcleo)",
+      "bedrock": "boto3",
+      "anthropic": "anthropic"
+    },
+    "run_flags": [
+      "-P"
+    ],
+    "run_flags_why": "-P evita que el directorio de trabajo del agente (que puede tener un `tools/` o un `agent/`) tape los paquetes de Hermes"
+  },
+  "install": {
+    "from_source": true,
+    "entrypoint": [
+      "-m",
+      "hermes_cli.main",
+      "gateway",
+      "run"
+    ],
+    "pythonpath": "el checkout (sin instalar el paquete: el build backend necesita setuptools)",
+    "prune": [
+      ".git",
+      "tests",
+      "tests-js",
+      "apps",
+      "website",
+      "ui-tui",
+      "web",
+      "contributors",
+      "evals",
+      "docker",
+      "nix"
+    ],
+    "sizes_mib": {
+      "venv": 239,
+      "source_after_prune": 86,
+      "python": 183
+    }
+  },
+  "api": {
+    "host_env": "API_SERVER_HOST",
+    "port_env": "API_SERVER_PORT",
+    "key_env": "API_SERVER_KEY",
+    "enable_env": "API_SERVER_ENABLED",
+    "default_host": "127.0.0.1",
+    "default_port": 8642,
+    "key_min_length": 16,
+    "key_rule": "sin clave de 16 o más caracteres el gateway se niega a arrancar, también en loopback",
+    "health": {
+      "method": "GET",
+      "path": "/health",
+      "response": {
+        "status": "ok",
+        "platform": "hermes-agent"
+      },
+      "cold_start_seconds": 5
+    },
+    "start_run": {
+      "method": "POST",
+      "path": "/v1/runs",
+      "auth": "Authorization: Bearer <API_SERVER_KEY>",
+      "body": {
+        "input": "<prompt>",
+        "session_id": "<opcional>"
+      },
+      "response": {
+        "status": "started"
+      },
+      "response_status": 202
+    },
+    "events": {
+      "method": "GET",
+      "path": "/v1/runs/{run_id}/events",
+      "format": "SSE: `id: <seq>` y `data: <json>`; comentarios `: open`, `: keepalive`, `: stream closed`"
+    },
+    "event_types": [
+      "tool.started",
+      "tool.completed",
+      "message.delta",
+      "message.interim",
+      "reasoning.available",
+      "subagent.start",
+      "subagent.complete",
+      "run.completed",
+      "run.failed",
+      "run.cancelled",
+      "run.interrupted"
+    ],
+    "terminal_events": [
+      "run.completed",
+      "run.failed",
+      "run.cancelled",
+      "run.interrupted"
+    ],
+    "stop": {
+      "method": "POST",
+      "path": "/v1/runs/{run_id}/stop"
+    },
+    "usage_keys": [
+      "input_tokens",
+      "output_tokens",
+      "total_tokens",
+      "cache_read_tokens",
+      "cache_write_tokens"
+    ],
+    "no_tool_arguments": "tool.started sólo lleva `tool` y `preview`; no hay argumentos ni id de llamada"
+  },
+  "config": {
+    "file": "$HERMES_HOME/config.yaml",
+    "model": {
+      "provider": "custom",
+      "default": "<modelo>",
+      "base_url": "<pasarela>/v1",
+      "api_key": "<marcador>"
+    },
+    "toolsets_key": "platform_toolsets.api_server",
+    "toolsets_measured": {
+      "terminal+file": [
+        "patch",
+        "read_file",
+        "search_files",
+        "terminal",
+        "write_file",
+        "tool_search",
+        "tool_describe",
+        "tool_call"
+      ]
+    },
+    "off_switches": {
+      "updates.check": false,
+      "telemetry.shared_metrics.enabled": false,
+      "telemetry.shared_metrics.send": false,
+      "auth.adopt_external_logins": false,
+      "auxiliary.title_generation.enabled": false
+    },
+    "terminal": {
+      "backend": "local",
+      "cwd": "<workdir>"
+    },
+    "ignore_user_config_env": "HERMES_IGNORE_USER_CONFIG=1 sólo afecta a la CLI; el gateway lee igual $HERMES_HOME/config.yaml"
+  },
+  "providers": {
+    "custom": {
+      "supported": true,
+      "measured": "las llamadas llegan a <base_url>/chat/completions con Authorization: Bearer <marcador>"
+    },
+    "anthropic": {
+      "supported": true,
+      "env": {
+        "ANTHROPIC_BASE_URL": "<pasarela>",
+        "ANTHROPIC_API_KEY": "<marcador>"
+      },
+      "measured": "el cliente conecta a ANTHROPIC_BASE_URL"
+    },
+    "bedrock": {
+      "supported": true,
+      "env": {
+        "AWS_ENDPOINT_URL_BEDROCK_RUNTIME": "<pasarela>",
+        "AWS_BEARER_TOKEN_BEDROCK": "<marcador>",
+        "AWS_REGION": "<region>"
+      },
+      "config": {
+        "model.provider": "bedrock",
+        "bedrock.region": "<region>"
+      },
+      "measured": "POST /model/{model}/converse-stream con Authorization: Bearer <marcador>, sin SigV4: el cliente boto3 de Hermes respeta el endpoint por variable de entorno aunque su código no pase endpoint_url",
+      "risk_closed": "el riesgo 4 de design.md (Bedrock sin pasarela) queda cerrado"
+    },
+    "google": {
+      "supported": false
+    },
+    "azure": {
+      "supported": false
+    }
+  }
+}

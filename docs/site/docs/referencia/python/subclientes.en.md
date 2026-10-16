@@ -134,6 +134,62 @@ with it, the normal start is `Sandbox.create(...)` + `sbx.agent.run(...)`.
 
 ::: rayito.WarmupStep
 
+### Agent runtimes and deployment { #runtimes-y-despliegue-de-agentes }
+
+The runtimes that `AgentTemplate`, `Agent` and `AgentProject` accept. They install their dependencies with pinned hashes and send the model through the secrets gateway ([Deploy your agent](../../guias/despliega-tu-agente.md)).
+
+::: rayito.StrandsRuntime
+
+::: rayito.HermesRuntime
+
+::: rayito.CustomRuntime
+
+::: rayito.HttpApp
+
+#### Project and deployment { #proyecto-y-despliegue }
+
+`AgentProject` builds, runs, deploys or exports an agent described in `rayito-agent.toml`; `AgentDeployment` invokes it, reads its `DeploymentStatus` and stops it. They cost (images and MicroVMs) and do nothing until you call the method.
+
+::: rayito.AgentProject
+
+::: rayito.AsyncAgentProject
+
+::: rayito.ServeOptions
+
+::: rayito.AgentExport
+
+::: rayito.AgentDeployment
+
+::: rayito.AgentDeploymentStream
+
+::: rayito.AsyncAgentDeployment
+
+::: rayito.AsyncAgentDeploymentStream
+
+::: rayito.DeploymentStatus
+
+#### Runtime ports { #puertos-de-runtime }
+
+They describe how a runtime is installed and served without changing the `AgentRuntime` port.
+
+::: rayito.InstallableRuntime
+
+::: rayito.ServableRuntime
+
+::: rayito.HostConfig
+
+::: rayito.GatewayWiring
+
+::: rayito.DirectWiring
+
+::: rayito.ModelWiring
+
+::: rayito.InstallTarget
+
+::: rayito.is_installable
+
+::: rayito.is_servable
+
 ## Listing { #listado }
 
 ::: rayito.SandboxListPaginator

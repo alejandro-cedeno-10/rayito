@@ -1,0 +1,120 @@
+{
+  "schema": "rayito.agent-project/1",
+  "name": "support-bot",
+  "runtime": {
+    "kind": "langgraph",
+    "entrypoint": "agent.graph:build"
+  },
+  "source": {
+    "path": "app",
+    "requirements": "app/requirements.txt",
+    "exclude": [
+      ".venv",
+      "node_modules"
+    ]
+  },
+  "model": {
+    "provider": "anthropic",
+    "id": "claude-haiku-4-5",
+    "gateway": "anthropic",
+    "prompt_caching": false
+  },
+  "gateways": {
+    "anthropic": {
+      "preset": "custom",
+      "upstream": "https://api.anthropic.com",
+      "headers": {
+        "x-api-key": "rayito/anthropic-key"
+      },
+      "allow": [
+        [
+          "POST",
+          "/v1/messages"
+        ]
+      ],
+      "rate_per_minute": 120
+    },
+    "docs": {
+      "preset": "custom",
+      "upstream": "https://docs.example.com",
+      "headers": {
+        "authorization": "rayito/docs-token"
+      },
+      "allow": [
+        [
+          "GET",
+          "/v1/search"
+        ],
+        [
+          "POST",
+          "/v1/query"
+        ]
+      ],
+      "rate_per_minute": 60
+    }
+  },
+  "agent": {
+    "instructions": "Responde en español y con brevedad.\n",
+    "small_model": "claude-haiku-4-5",
+    "runtime_version": "1.0",
+    "permissions": {
+      "tools": {
+        "bash": {
+          "git *": "allow",
+          "*": "deny"
+        },
+        "webfetch": "deny"
+      }
+    },
+    "mcp": {
+      "notes": {
+        "type": "local",
+        "command": [
+          "notes-server",
+          "--stdio"
+        ],
+        "timeout_seconds": 30
+      },
+      "search": {
+        "type": "remote",
+        "gateway": "docs",
+        "path": "/mcp"
+      }
+    },
+    "agents": {
+      "reviewer": {
+        "description": "Revisa respuestas antes de enviarlas",
+        "instructions": "Comprueba hechos y tono.",
+        "model": "claude-haiku-4-5",
+        "permissions": {
+          "default": "deny"
+        }
+      }
+    }
+  },
+  "limits": {
+    "max_steps": 30,
+    "timeout_seconds": 300,
+    "max_output_bytes": 1048576,
+    "max_total_tokens": 200000
+  },
+  "serve": {
+    "port": 8090,
+    "timeout_seconds": 7200,
+    "max_concurrency": 2,
+    "idle_seconds": 120,
+    "metadata": {
+      "team": "support"
+    }
+  },
+  "network": {
+    "allow_internet_access": true,
+    "egress": [
+      "docs.example.com"
+    ]
+  },
+  "image": {
+    "template": "support-bot-image",
+    "memory_mib": 4096
+  }
+}

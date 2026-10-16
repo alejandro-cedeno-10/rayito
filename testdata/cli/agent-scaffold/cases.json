@@ -1,0 +1,128 @@
+[
+  {
+    "case": "opencode-python-bedrock",
+    "request": {
+      "name": "support-bot",
+      "runtime": "opencode",
+      "language": "python",
+      "provider": "bedrock",
+      "model_id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+      "region": "us-east-1"
+    },
+    "files": {
+      "rayito-agent.toml": "schema = \"rayito.agent-project/1\"\nname = \"support-bot\"\n\n[runtime]\nkind = \"opencode\"\n\n[source]\npath = \".\"\nexclude = [\".venv\", \"node_modules\", \"__pycache__\", \".git\"]\n\n[model]\nprovider = \"bedrock\"\nid = \"us.anthropic.claude-haiku-4-5-20251001-v1:0\"\nregion = \"us-east-1\"\ngateway = \"model\"\n\n[gateways.model]\npreset = \"bedrock\"\nsecret = \"provider-key\"\nregion = \"us-east-1\"\nmodels = [\"us.anthropic.claude-haiku-4-5-20251001-v1:0\"]\n\n[agent]\ninstructions_file = \"AGENTS.md\"\n",
+      "AGENTS.md": "Responde en español, con frases cortas.\n"
+    }
+  },
+  {
+    "case": "deepagents-python-anthropic",
+    "request": {
+      "name": "support-bot",
+      "runtime": "deepagents",
+      "language": "python",
+      "provider": "anthropic",
+      "model_id": "claude-haiku-4-5",
+      "region": "us-east-1"
+    },
+    "files": {
+      "rayito-agent.toml": "schema = \"rayito.agent-project/1\"\nname = \"support-bot\"\n\n[runtime]\nkind = \"deepagents\"\n\n[source]\npath = \".\"\nexclude = [\".venv\", \"node_modules\", \"__pycache__\", \".git\"]\n\n[model]\nprovider = \"anthropic\"\nid = \"claude-haiku-4-5\"\ngateway = \"model\"\n\n[gateways.model]\npreset = \"anthropic\"\nsecret = \"provider-key\"\n\n[agent]\ninstructions_file = \"AGENTS.md\"\n",
+      "AGENTS.md": "Responde en español, con frases cortas.\n"
+    }
+  },
+  {
+    "case": "langgraph-python-bedrock",
+    "request": {
+      "name": "support-bot",
+      "runtime": "langgraph",
+      "language": "python",
+      "provider": "bedrock",
+      "model_id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+      "region": "us-east-1"
+    },
+    "files": {
+      "rayito-agent.toml": "schema = \"rayito.agent-project/1\"\nname = \"support-bot\"\n\n[runtime]\nkind = \"langgraph\"\nentrypoint = \"graph:build\"\n\n[source]\npath = \".\"\nexclude = [\".venv\", \"node_modules\", \"__pycache__\", \".git\"]\n\n[model]\nprovider = \"bedrock\"\nid = \"us.anthropic.claude-haiku-4-5-20251001-v1:0\"\nregion = \"us-east-1\"\ngateway = \"model\"\n\n[gateways.model]\npreset = \"bedrock\"\nsecret = \"provider-key\"\nregion = \"us-east-1\"\nmodels = [\"us.anthropic.claude-haiku-4-5-20251001-v1:0\"]\n\n[agent]\ninstructions_file = \"AGENTS.md\"\n",
+      "AGENTS.md": "Responde en español, con frases cortas.\n",
+      "graph.py": "\"\"\"Grafo del agente. `ctx` trae el modelo ya cableado a la pasarela.\"\"\"\n\nfrom deepagents import create_deep_agent\n\n\ndef build(ctx):\n    return create_deep_agent(\n        model=ctx.model,\n        system_prompt=ctx.instructions,\n        subagents=ctx.subagents,\n        backend=ctx.backend,\n        middleware=ctx.middleware,\n    )\n"
+    }
+  },
+  {
+    "case": "strands-python-bedrock",
+    "request": {
+      "name": "support-bot",
+      "runtime": "strands",
+      "language": "python",
+      "provider": "bedrock",
+      "model_id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+      "region": "us-east-1"
+    },
+    "files": {
+      "rayito-agent.toml": "schema = \"rayito.agent-project/1\"\nname = \"support-bot\"\n\n[runtime]\nkind = \"strands\"\nentrypoint = \"agent:agent\"\n\n[source]\npath = \".\"\nrequirements = \"requirements.txt\"\nexclude = [\".venv\", \"node_modules\", \"__pycache__\", \".git\"]\n\n[model]\nprovider = \"bedrock\"\nid = \"us.anthropic.claude-haiku-4-5-20251001-v1:0\"\nregion = \"us-east-1\"\ngateway = \"model\"\n\n[gateways.model]\npreset = \"bedrock\"\nsecret = \"provider-key\"\nregion = \"us-east-1\"\nmodels = [\"us.anthropic.claude-haiku-4-5-20251001-v1:0\"]\n\n[agent]\ninstructions_file = \"AGENTS.md\"\n",
+      "AGENTS.md": "Responde en español, con frases cortas.\n",
+      "agent.py": "\"\"\"Agente de Strands. `ctx.model` ya apunta a la pasarela del modelo.\"\"\"\n\nfrom strands import Agent, tool\n\n\n@tool\ndef word_count(text: str) -> int:\n    \"\"\"Cuenta las palabras de un texto.\"\"\"\n    return len(text.split())\n\n\ndef agent(ctx):\n    return Agent(model=ctx.model, tools=[word_count])\n",
+      "requirements.txt": "strands-agents\n"
+    }
+  },
+  {
+    "case": "strands-typescript-openai",
+    "request": {
+      "name": "support-bot",
+      "runtime": "strands",
+      "language": "typescript",
+      "provider": "openai",
+      "model_id": "gpt-4.1-mini",
+      "region": "us-east-1"
+    },
+    "files": {
+      "rayito-agent.toml": "schema = \"rayito.agent-project/1\"\nname = \"support-bot\"\n\n[runtime]\nkind = \"strands\"\nentrypoint = \"agent.ts\"\nlanguage = \"typescript\"\n\n[source]\npath = \".\"\nexclude = [\".venv\", \"node_modules\", \"__pycache__\", \".git\"]\n\n[model]\nprovider = \"openai\"\nid = \"gpt-4.1-mini\"\ngateway = \"model\"\n\n[gateways.model]\npreset = \"openai\"\nsecret = \"provider-key\"\n\n[agent]\ninstructions_file = \"AGENTS.md\"\n",
+      "AGENTS.md": "Responde en español, con frases cortas.\n",
+      "agent.ts": "import { Agent, type Model, tool } from \"@strands-agents/sdk\";\nimport { z } from \"zod\";\n\nconst wordCount = tool({\n  name: \"word_count\",\n  description: \"Cuenta las palabras de un texto.\",\n  inputSchema: z.object({ text: z.string() }),\n  callback: ({ text }) => text.split(/\\s+/).filter(Boolean).length,\n});\n\nexport function agent(ctx: { model: Model }): Agent {\n  return new Agent({ model: ctx.model, tools: [wordCount] });\n}\n",
+      "package.json": "{\n  \"name\": \"agent\",\n  \"private\": true,\n  \"type\": \"module\",\n  \"dependencies\": {\n    \"@strands-agents/sdk\": \"1.21.0\",\n    \"zod\": \"^4.5.4\"\n  }\n}\n"
+    }
+  },
+  {
+    "case": "strands-harness-python-anthropic",
+    "request": {
+      "name": "support-bot",
+      "runtime": "strands-harness",
+      "language": "python",
+      "provider": "anthropic",
+      "model_id": "claude-haiku-4-5",
+      "region": "us-east-1"
+    },
+    "files": {
+      "rayito-agent.toml": "schema = \"rayito.agent-project/1\"\nname = \"support-bot\"\n\n[runtime]\nkind = \"strands-harness\"\n\n[source]\npath = \".\"\nexclude = [\".venv\", \"node_modules\", \"__pycache__\", \".git\"]\n\n[model]\nprovider = \"anthropic\"\nid = \"claude-haiku-4-5\"\ngateway = \"model\"\n\n[gateways.model]\npreset = \"anthropic\"\nsecret = \"provider-key\"\n\n[agent]\ninstructions_file = \"AGENTS.md\"\n",
+      "AGENTS.md": "Responde en español, con frases cortas.\n"
+    }
+  },
+  {
+    "case": "hermes-python-anthropic",
+    "request": {
+      "name": "support-bot",
+      "runtime": "hermes",
+      "language": "python",
+      "provider": "anthropic",
+      "model_id": "claude-haiku-4-5",
+      "region": "us-east-1"
+    },
+    "files": {
+      "rayito-agent.toml": "schema = \"rayito.agent-project/1\"\nname = \"support-bot\"\n\n[runtime]\nkind = \"hermes\"\n\n[source]\npath = \".\"\nexclude = [\".venv\", \"node_modules\", \"__pycache__\", \".git\"]\n\n[model]\nprovider = \"anthropic\"\nid = \"claude-haiku-4-5\"\ngateway = \"model\"\n\n[gateways.model]\npreset = \"anthropic\"\nsecret = \"provider-key\"\n\n[agent]\ninstructions_file = \"AGENTS.md\"\n",
+      "AGENTS.md": "Responde en español, con frases cortas.\n"
+    }
+  },
+  {
+    "case": "custom-python-bedrock",
+    "request": {
+      "name": "support-bot",
+      "runtime": "custom",
+      "language": "python",
+      "provider": "bedrock",
+      "model_id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+      "region": "us-east-1"
+    },
+    "files": {
+      "rayito-agent.toml": "schema = \"rayito.agent-project/1\"\nname = \"support-bot\"\n\n[runtime]\nkind = \"custom\"\ncommand = [\"bash\", \"run.sh\"]\nprotocol = \"text\"\n\n[source]\npath = \".\"\nexclude = [\".venv\", \"node_modules\", \"__pycache__\", \".git\"]\n\n[model]\nprovider = \"bedrock\"\nid = \"us.anthropic.claude-haiku-4-5-20251001-v1:0\"\nregion = \"us-east-1\"\ngateway = \"model\"\n\n[gateways.model]\npreset = \"bedrock\"\nsecret = \"provider-key\"\nregion = \"us-east-1\"\nmodels = [\"us.anthropic.claude-haiku-4-5-20251001-v1:0\"]\n\n[agent]\ninstructions_file = \"AGENTS.md\"\n",
+      "AGENTS.md": "Responde en español, con frases cortas.\n",
+      "run.sh": "#!/usr/bin/env bash\nset -euo pipefail\npython3 -c 'import json, sys; request = json.loads(sys.stdin.readline()); print(request[\"prompt\"])'\n"
+    }
+  }
+]

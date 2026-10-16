@@ -5,8 +5,8 @@ prunes old versions, lists, inspects and kills sandboxes, reads their
 CloudWatch logs and diagnoses an account before the first
 `Sandbox.create()`. It also deploys the optional stacks
 (`rayito stack`, `rayito events`, `rayito domain`), builds declarative
-templates (`rayito template`) and the AI agent image
-(`rayito agent template build`). There is no `rayito.toml`: configuration is
+templates (`rayito template`) and the AI agent as a project
+(`rayito agent`). There is no `rayito.toml`: configuration is
 options and environment variables.
 
 !!! note "Messages stay in Spanish"
@@ -23,7 +23,7 @@ options and environment variables.
 | [`rayito domain`](#rayito-domain) (experimental) | `deploy`, `status`, `destroy` |
 | [`rayito events`](#rayito-events) | `deploy`, `status`, `destroy`, `list`, `webhook add`, `webhook list`, `webhook remove` |
 | [`rayito template`](#rayito-template) | `build`, `status`, `logs` |
-| [`rayito agent`](#rayito-agent) | `template build` |
+| [`rayito agent`](#rayito-agent) | `init`, `build`, `run`, `deploy`, `export`, `invoke`, `status`, `stop`, `template build` |
 | [`rayito dashboard`](#rayito-dashboard) | — |
 | [`rayito doctor`](#rayito-doctor) | — |
 
@@ -496,9 +496,30 @@ without `--version`, the most recent version.
 ## `rayito agent` { #rayito-agent }
 
 ```bash
+rayito agent init [DIR] [--runtime R] [--language python|typescript] [--provider P] [--model ID]
+                  [--region R] [--force]
+rayito agent build --bucket B [--file PATH] [--force] [--timeout 1800]
+rayito agent run PROMPT [--file PATH] [--session-id ID] [--model ID] [--stream]
+rayito agent deploy [--file PATH] [--timeout S] [--port N] [--token-file F]
+rayito agent export --target docker|agentcore --out DIR [--file PATH] [--overwrite]
+rayito agent invoke SANDBOX_ID PROMPT [--session-id ID] [--stream] [--token-file F]
+rayito agent status SANDBOX_ID [--token-file F]
+rayito agent stop SANDBOX_ID
 rayito agent template build --bucket B [--name rayito-agent] [--base rayito-base-caps] [--memory-mb 2048]
                             [--no-deepagents] [--no-prefetch] [--force] [--timeout 1800]
 ```
+
+Since 0.14.0 the `init`, `build`, `run`, `deploy`, `export`, `invoke`,
+`status` and `stop` commands work with an agent project (`rayito-agent.toml`,
+`--file` defaults to the current directory): see
+[Deploy your agent](guias/despliega-tu-agente.md). `init` and `export` make no
+AWS call; `init` overwrites nothing without `--force` (exit code 2), `deploy`
+prints the sandbox id, the URL and the port (with `--json`, `sandboxId`, `url`
+and `port`) and never the access headers, and `--stream` prints the events as
+they arrive (with `--json`, one JSON line per event). `deploy` saves the
+sandbox access token to `--token-file` (or uses `RAYITO_ACCESS_TOKEN`) and
+exits with 2 without creating anything if it has neither; `invoke` and `status`
+read it the same way, and `stop` does not need it.
 
 Builds the `AgentTemplate` image
 ([Agent templates](funciones-opcionales/templates-de-agente.md)): it starts

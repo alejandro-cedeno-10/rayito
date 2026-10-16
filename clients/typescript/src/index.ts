@@ -10,7 +10,19 @@
 
 (Symbol as { asyncDispose?: symbol }).asyncDispose ??= Symbol.for("Symbol.asyncDispose");
 
+export {
+  CustomRuntime,
+  type CustomRuntimeOptions,
+  HttpApp,
+  type HttpAppOptions,
+} from "./agent/custom.js";
 export { DeepAgents, type DeepAgentsOptions } from "./agent/deepagents.js";
+export {
+  AgentDeployment,
+  AgentDeploymentStream,
+  type AgentInvokeOptions,
+  type DeploymentStatus,
+} from "./agent/deployment.js";
 export {
   AgentLimits,
   type AgentLimitsOptions,
@@ -48,6 +60,7 @@ export {
   type TokenUsageOptions,
   type ToolCall,
 } from "./agent/events.js";
+export type { AgentExport, AgentExportOptions } from "./agent/export.js";
 export {
   type AnthropicGatewayOptions,
   type AzureOpenaiGatewayOptions,
@@ -69,16 +82,42 @@ export {
   type ProviderGatewayOptions,
   xaiGateway,
 } from "./agent/gateways.js";
+export { HermesRuntime, type HermesRuntimeOptions } from "./agent/hermes.js";
+export {
+  AgentProject,
+  type AgentProjectOptions,
+  ServeOptions,
+  type ServeOptionsInput,
+} from "./agent/project.js";
 export type {
-  AgentRuntime,
-  RunCommand,
-  RunRequest,
-  RuntimeFile,
-  RuntimeFiles,
-  RuntimeState,
-  TemplateStep,
-  WarmupStep,
+  AgentProjectDeployOptions,
+  AgentProjectRunOptions,
+  AgentProjectSandboxOptions,
+} from "./agent/project-service.js";
+export {
+  type AgentRuntime,
+  type DirectWiring,
+  directWiring,
+  type GatewayWiring,
+  gatewayWiring,
+  type HostConfig,
+  hostConfig,
+  type InstallableRuntime,
+  type InstallTarget,
+  installTarget,
+  isInstallable,
+  isServable,
+  type ModelWiring,
+  type RunCommand,
+  type RunRequest,
+  type RuntimeFile,
+  type RuntimeFiles,
+  type RuntimeState,
+  type ServableRuntime,
+  type TemplateStep,
+  type WarmupStep,
 } from "./agent/runtime.js";
+export { StrandsRuntime, type StrandsRuntimeOptions } from "./agent/strands.js";
 export { AgentStream } from "./agent/stream.js";
 export {
   AGENT_TEMPLATE_RUNTIMES,

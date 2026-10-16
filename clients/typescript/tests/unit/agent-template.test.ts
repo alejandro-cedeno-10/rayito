@@ -8,14 +8,19 @@
  */
 
 import { createHash } from "node:crypto";
-import { readdir, readFile, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { DEEPAGENTS_REQUIREMENTS } from "../../src/agent/assets/template-assets.gen.js";
+import { DeepAgents } from "../../src/agent/deepagents.js";
+import { OpenCodeRuntime } from "../../src/agent/opencode.js";
+import { AGENT_APP_DIR, hostSha256 } from "../../src/agent/recipes.js";
+import { copyStep, runStep } from "../../src/agent/runtime.js";
 import {
   AgentTemplate,
-  type AgentTemplateRuntime,
   agentPoolWarmup,
+  type InstallableRuntime,
   InvalidArgumentError,
   Template,
 } from "../../src/index.js";
@@ -34,7 +39,7 @@ const TESTDATA = join(import.meta.dirname, "..", "..", "..", "..", "testdata", "
 interface TemplateCase {
   readonly name: string;
   readonly options: {
-    runtimes?: AgentTemplateRuntime[];
+    runtimes?: string[];
     prefetch?: boolean;
     kernelWarmup?: boolean;
   };
@@ -65,10 +70,15 @@ describe("AgentTemplate", () => {
     for (const c of cases) {
       const template = new AgentTemplate(c.options);
       expect(template.toDockerfile(), c.name).toBe(c.dockerfile);
-      expect(template.manifest(), c.name).toEqual(c.manifest);
+      expect(template.manifest(), c.name).toMatchObject(c.manifest as object);
       expect(template.toTemplate().spec.start?.startCmd ?? null, c.name).toBe(c.startCmd);
       expect(template.toTemplate().spec.start?.readyCmd ?? null, c.name).toBe(c.readyCmd);
-      expect(Object.keys(template.contextFiles()).sort(), c.name).toEqual(c.contextFiles);
+      expect(
+        Object.keys(template.contextFiles())
+          .filter((name) => !name.startsWith("agent_host/"))
+          .sort(),
+        c.name,
+      ).toEqual(c.contextFiles);
     }
   });
 
@@ -93,8 +103,11 @@ describe("AgentTemplate", () => {
       { memoryMib: 2048.5 },
       { runtimes: [] },
       { runtimes: ["claude"] },
+      { runtimes: ["custom"] },
       { runtimes: ["opencode", "opencode"] },
+      { runtimes: ["deepagents", "langgraph"] },
       { name: "" },
+      { app: "/nonexistent/rayito-app-dir" },
     ];
     for (const options of bad) {
       expect(() => new AgentTemplate(options as never)).toThrow(InvalidArgumentError);
@@ -149,6 +162,7 @@ describe("AgentTemplate", () => {
     expect(info.templateId).toBe("mi-agente");
     expect(seen.memoryMb).toBe(4096);
     expect(seen.files).toEqual([
+      "agent_host",
       "deepagents_runner.py",
       "rayito-agent-prefetch",
       "rayito-agent.json",
@@ -168,5 +182,133 @@ describe("agentPoolWarmup", () => {
         steps.map((s) => ({ cmd: s.cmd, background: s.background ?? false, tag: s.tag ?? null })),
       ).toEqual(c.steps);
     }
+  });
+});
+
+const HOST_DIGEST_VECTOR = "d117cfc5d0205cd37922effa154432631131df48d5047972b1b1be53aab25660";
+
+const fakeInstallable: InstallableRuntime = {
+  name: "fake",
+  installSteps: (target) => [
+    copyStep("fake.bin", `${target.installDir}/fake/fake.bin`, { executable: true }),
+    runStep("echo instalado"),
+  ],
+  contextFiles: () => ({ "fake.bin": "\u0000" }),
+  manifestEntry: () => ({ version: "0" }),
+  smokeChecks: () => ["test -x /opt/agents/fake/fake.bin"],
+  prefetchPaths: () => ["/opt/agents/fake/fake.bin"],
+};
+
+describe("AgentTemplate with runtime objects and an app", () => {
+  test("the manifest adds runtimes and the host digest without moving the old keys", () => {
+    const manifest = new AgentTemplate().manifest();
+    expect(Object.keys(manifest.runtimes).sort()).toEqual(["deepagents", "opencode"]);
+    expect(manifest.runtimes.deepagents?.runner_sha256).toBe(manifest.runner_sha256);
+    expect(Object.keys(new AgentTemplate({ runtimes: ["opencode"] }).manifest().runtimes)).toEqual([
+      "opencode",
+    ]);
+  });
+
+  test("the host digest is a fixed function of path and content", () => {
+    expect(hostSha256({})).toBeUndefined();
+    expect(hostSha256({ "b.py": "two", "a/__main__.py": "one" })).toBe(HOST_DIGEST_VECTOR);
+  });
+
+  test("runtime objects compose the image from their install steps", () => {
+    const template = new AgentTemplate({ runtimes: [fakeInstallable as never] });
+    const dockerfile = template.toDockerfile();
+    expect(dockerfile).toContain('COPY ["__rayito_context/fake.bin", "/opt/agents/fake/fake.bin"]');
+    expect(dockerfile).toContain(
+      "chmod 0755 /opt/agents/fake/fake.bin /opt/agents/bin/rayito-agent-prefetch",
+    );
+    expect(dockerfile).not.toContain("su user -c");
+    expect(dockerfile).toContain("RUN test -x /opt/agents/fake/fake.bin");
+    const manifest = template.manifest();
+    expect(manifest.runtimes).toEqual({ fake: { version: "0" } });
+    expect(manifest.opencode).toBeNull();
+    expect(manifest.deepagents).toBeNull();
+    expect(manifest.prefetch_paths).toEqual(["/opt/agents/fake/fake.bin"]);
+    expect(Object.keys(template.contextFiles())).toContain("fake.bin");
+  });
+
+  test("a task-only runtime cannot be installed", () => {
+    expect(() => new AgentTemplate({ runtimes: [{ name: "task-only" } as never] })).toThrow(
+      /InstallableRuntime/,
+    );
+  });
+
+  test("the framework runtime names resolve and an unknown one is rejected", () => {
+    expect(() => new AgentTemplate({ runtimes: ["crewai"] })).toThrow(InvalidArgumentError);
+    for (const name of ["strands", "strands-harness", "hermes"]) {
+      expect(() => new AgentTemplate({ runtimes: [name] })).not.toThrow();
+    }
+  });
+
+  test("runtime objects and names are equivalent", () => {
+    const byName = new AgentTemplate({ runtimes: ["opencode", "deepagents"] });
+    const byObject = new AgentTemplate({ runtimes: [new OpenCodeRuntime(), new DeepAgents()] });
+    expect(byName.toDockerfile()).toBe(byObject.toDockerfile());
+    expect(byName.manifest()).toEqual(byObject.manifest());
+  });
+
+  async function makeApp(root: string): Promise<string> {
+    const app = join(root, "app-src");
+    await mkdir(join(app, "pkg"), { recursive: true });
+    await mkdir(join(app, ".venv"), { recursive: true });
+    await writeFile(join(app, "pkg", "agent.py"), "agent = None\n");
+    await writeFile(join(app, "keep.txt"), "keep\n");
+    await writeFile(join(app, "skip.log"), "log\n");
+    await writeFile(join(app, ".venv", "pyvenv.cfg"), "home = /usr\n");
+    await writeFile(join(app, ".dockerignore"), "*.log\n");
+    return app;
+  }
+
+  test("the app is copied to the app dir as root", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rayito-app-"));
+    try {
+      const dockerfile = new AgentTemplate({ app: await makeApp(root) }).toDockerfile();
+      expect(dockerfile).toContain(`COPY ["__rayito_context/app", "${AGENT_APP_DIR}"]`);
+      expect(dockerfile.indexOf('COPY ["__rayito_context/app"')).toBeLessThan(
+        dockerfile.indexOf("chown -R root:root /opt/agents && chmod -R a+rX,go-w /opt/agents"),
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("build writes the app honouring dockerignore and exclude", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rayito-app-"));
+    let appFiles: string[] = [];
+    vi.spyOn(Template, "build").mockImplementation(async (_template, name, options) => {
+      const appDir = join(options.contextDir ?? "", "app");
+      const walk = async (dir: string, prefix: string): Promise<string[]> => {
+        const out: string[] = [];
+        for (const entry of await readdir(dir, { withFileTypes: true })) {
+          const relative = prefix === "" ? entry.name : `${prefix}/${entry.name}`;
+          if (entry.isDirectory()) {
+            out.push(...(await walk(join(dir, entry.name), relative)));
+          } else {
+            out.push(relative);
+          }
+        }
+        return out;
+      };
+      appFiles = (await walk(appDir, "")).sort();
+      return { templateId: name, buildId: "1", alias: name };
+    });
+    try {
+      await new AgentTemplate({
+        app: await makeApp(root),
+        appExclude: [".venv"],
+        prefetch: false,
+      }).build({ bucket: "amzn-s3-demo-bucket" });
+      expect(appFiles).toEqual([".dockerignore", "keep.txt", "pkg/agent.py"]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("without an app there is no app copy", () => {
+    expect(new AgentTemplate().toDockerfile()).not.toContain("__rayito_context/app");
   });
 });

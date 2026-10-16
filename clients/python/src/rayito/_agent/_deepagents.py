@@ -19,10 +19,10 @@ RPC.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
 from typing import Final
 
 from rayito._agent._domain import (
@@ -31,27 +31,32 @@ from rayito._agent._domain import (
     AgentSpec,
     validate_model_id,
 )
-from rayito._agent._events import (
-    AGENT_FAILURE_REASONS,
-    AgentEvent,
-    AgentFailed,
-    Done,
-    Reasoning,
-    StepFinished,
-    StepStarted,
-    Text,
-    TextDelta,
-    TokenUsage,
-    ToolCall,
-    truncate_tool_output,
-)
+from rayito._agent._events import AgentEvent, AgentFailed, Done
 from rayito._agent._opencode import (
     AGENT_RUN_LOCK_PATH,
     canonical_json,
     files_sha256,
     shell_quote,
 )
+from rayito._agent._protocol_v1 import (
+    SESSION_ID_PATTERN,
+    ProtocolV1State,
+    finish_v1,
+    parse_v1_line,
+)
+from rayito._agent._recipes import (
+    AGENT_APP_DIR,
+    AGENT_INSTALL_DIR,
+    AGENT_RAYITO_DIR,
+    asset_bytes,
+    hashed_venv_install,
+    runner_bytes,
+)
 from rayito._agent._runtime import (
+    DirectWiring,
+    HostConfig,
+    InstallTarget,
+    ModelWiring,
     RunCommand,
     RunRequest,
     RuntimeFile,
@@ -59,8 +64,12 @@ from rayito._agent._runtime import (
     RuntimeState,
     TemplateStep,
     WarmupStep,
+    copy_step,
+    run_step,
+    wiring_urls,
 )
 from rayito._limits import (
+    AGENT_DEEPAGENTS_REQUIREMENTS_SHA256,
     AGENT_PROTOCOL_VERSION,
     AGENT_STATE_DIR,
     DEFAULT_AGENT_WORKDIR,
@@ -74,11 +83,21 @@ DEEPAGENTS_STATE_DIR: Final = f"{AGENT_STATE_DIR}/deepagents"
 DEEPAGENTS_CONFIG_PATH: Final = f"{DEEPAGENTS_STATE_DIR}/config.json"
 #: Historial de cada sesión, `<id>.json` con `messages_to_dict`.
 DEEPAGENTS_SESSIONS_DIR: Final = f"{DEEPAGENTS_STATE_DIR}/sessions"
-#: El Python del venv de deepagents de la plantilla
+#: El venv de deepagents de la plantilla y su Python
 #: (`dev/local/agent/Dockerfile`, docs/research/2026-10-agent-spike.md).
-DEEPAGENTS_PYTHON: Final = "/opt/agents/deepagents/bin/python"
+DEEPAGENTS_VENV_DIR: Final = f"{AGENT_INSTALL_DIR}/deepagents"
+DEEPAGENTS_PYTHON: Final = f"{DEEPAGENTS_VENV_DIR}/bin/python"
+DEEPAGENTS_REQUIREMENTS_NAME: Final = "requirements-deepagents.txt"
+#: El runner (dato de paquete de `_agent/_runner/`) en el contexto de build.
+DEEPAGENTS_RUNNER_NAME: Final = "deepagents_runner.py"
 #: Donde la plantilla instala el runner, de root y 0755 (design.md §3).
-DEEPAGENTS_RUNNER_PATH: Final = "/opt/agents/rayito/deepagents_runner.py"
+DEEPAGENTS_RUNNER_PATH: Final = f"{AGENT_RAYITO_DIR}/{DEEPAGENTS_RUNNER_NAME}"
+#: Lo que el build importa como prueba de humo del venv: deepagents y las
+#: clases de modelo de cada proveedor (`langchain_openai` para OpenAI,
+#: xAI, Azure y las APIs compatibles; `langchain_google_genai` para Gemini).
+DEEPAGENTS_SMOKE_MODULES: Final = (
+    "deepagents, langchain_aws, langchain_anthropic, langchain_openai, langchain_google_genai"
+)
 #: Nombre de herramienta de `AgentPermissions` (el vocabulario de OpenCode)
 #: -> herramientas de deepagents 0.7 (`create_deep_agent`).
 DEEPAGENTS_TOOL_NAMES: Final[Mapping[str, tuple[str, ...]]] = {
@@ -100,25 +119,6 @@ DEEPAGENTS_FLAG_ENVS: Final[Mapping[str, str]] = {
     "PYTHONDONTWRITEBYTECODE": "1",
     "PYTHONUNBUFFERED": "1",
 }
-#: Tipos del protocolo v1 que el adaptador acepta del runner.
-PROTOCOL_EVENT_TYPES: Final[tuple[str, ...]] = (
-    "session",
-    "text_delta",
-    "text",
-    "reasoning",
-    "tool_call",
-    "step_started",
-    "step_finished",
-    "agent_failed",
-    "done",
-)
-#: Fallos que el runner puede declarar; el resto (`timeout`, `max_steps`…)
-#: sólo los decide el SDK.
-RUNNER_FAILURE_REASONS: Final[tuple[str, ...]] = (
-    "model_error",
-    "runtime_error",
-    "protocol_error",
-)
 #: `pkg.mod:build`: un módulo importable desde el directorio de trabajo y
 #: una función que recibe un `RunnerContext` y devuelve un grafo compilado.
 #: Lo que la clase de LangChain espera en `base_url` con los proveedores
@@ -133,20 +133,6 @@ DEEPAGENTS_NATIVE_BASE_PATHS: Final[Mapping[str, str]] = {
     "azure": "/openai/v1",
 }
 _ENTRYPOINT_PATTERN: Final = re.compile(r"[A-Za-z_][A-Za-z0-9_.]*:[A-Za-z_][A-Za-z0-9_]*")
-_SESSION_ID_PATTERN: Final = re.compile(r"rda_[0-9a-f]{32}")
-_USAGE_KEYS: Final = ("input", "output", "reasoning", "cache_read", "cache_write")
-
-
-@dataclass
-class DeepAgentsState:
-    """Lo que el adaptador acumula de una ejecución."""
-
-    session_id: str | None = None
-    steps: int = 0
-    usage: TokenUsage = field(default_factory=TokenUsage)
-    done: bool = False
-    failed: AgentFailed | None = None
-    ignored_lines: int = 0
 
 
 def _tool_rules(permissions: AgentPermissions, label: str) -> dict[str, object]:
@@ -170,10 +156,17 @@ def _tool_rules(permissions: AgentPermissions, label: str) -> dict[str, object]:
 
 
 def build_deepagents_config(
-    spec: AgentSpec, *, gateway_urls: Mapping[str, str], workdir: str, entrypoint: str | None
+    spec: AgentSpec,
+    *,
+    gateway_urls: Mapping[str, str] | None,
+    workdir: str,
+    entrypoint: str | None,
 ) -> dict[str, object]:
-    """La configuración que lee el runner, como diccionario."""
-    spec.require_gateways(gateway_urls.keys())
+    """La configuración que lee el runner, como diccionario.
+    `gateway_urls=None` es la configuración sin pasarela de un contenedor
+    exportado: `base_url` y `credential_placeholder` van a `null` y el
+    proveedor usa su endpoint y credencial estándar."""
+    base_url = _base_url(spec, gateway_urls)
     if spec.mcp:
         raise InvalidArgumentException("deepagents no admite AgentSpec.mcp; usa runtime='opencode'")
     if spec.raw_config:
@@ -181,8 +174,6 @@ def build_deepagents_config(
             "AgentSpec.raw_config es configuración de OpenCode; deepagents no la admite"
         )
     model = spec.model
-    base_path = DEEPAGENTS_NATIVE_BASE_PATHS.get(model.provider, model.base_path)
-    base_url = gateway_urls[model.gateway].rstrip("/") + base_path
     subagents: list[dict[str, object]] = []
     for name, sub in spec.agents.items():
         subagents.append(
@@ -202,10 +193,11 @@ def build_deepagents_config(
         "model": model.id,
         "region": model.region,
         "base_url": base_url,
-        "credential_placeholder": MODEL_CREDENTIAL_PLACEHOLDER,
+        "credential_placeholder": MODEL_CREDENTIAL_PLACEHOLDER if base_url is not None else None,
         "prompt_caching": model.prompt_caching,
         "instructions": spec.instructions,
         "workdir": workdir,
+        "app_dir": AGENT_APP_DIR,
         "sessions_dir": DEEPAGENTS_SESSIONS_DIR,
         "entrypoint": entrypoint,
         "permissions": _tool_rules(spec.permissions, "AgentSpec.permissions"),
@@ -213,18 +205,21 @@ def build_deepagents_config(
     }
 
 
-def _int(value: object) -> int:
-    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else 0
-
-
-def _usage(raw: object) -> TokenUsage:
-    if not isinstance(raw, Mapping):
-        return TokenUsage()
-    return TokenUsage(**{key: _int(raw.get(key)) for key in _USAGE_KEYS})
-
-
-def _optional_str(value: object) -> str | None:
-    return value if isinstance(value, str) else None
+def _base_url(spec: AgentSpec, gateway_urls: Mapping[str, str] | None) -> str | None:
+    model = spec.model
+    if gateway_urls is None:
+        if model.provider not in DEEPAGENTS_NATIVE_BASE_PATHS and model.provider not in (
+            "bedrock",
+            "anthropic",
+        ):
+            raise InvalidArgumentException(
+                f"el proveedor {model.provider!r} no tiene un endpoint estándar: "
+                "sin pasarela necesita una URL explícita"
+            )
+        return None
+    spec.require_gateways(gateway_urls.keys())
+    base_path = DEEPAGENTS_NATIVE_BASE_PATHS.get(model.provider, model.base_path)
+    return gateway_urls[model.gateway].rstrip("/") + base_path
 
 
 def _protocol_line(kind: str) -> str:
@@ -259,6 +254,10 @@ class DeepAgents:
     compilado. Si no pasa `ctx.middleware` a su grafo, se pierden los
     permisos de `AgentSpec`.
 
+    `require_entrypoint=True` es el runtime registrado como `"langgraph"`: el
+    mismo adaptador, pero sin `entrypoint` no hay agente que construir y
+    `build_config()` / `host_config()` fallan con `InvalidArgumentException`.
+
     El modelo siempre llega por la pasarela (`ChatBedrockConverse`,
     `ChatAnthropic` o `ChatOpenAI` con la URL de la pasarela y un marcador
     como clave). deepagents marca puntos de caché de prompts para Claude
@@ -266,7 +265,7 @@ class DeepAgents:
 
     name: str = "deepagents"
 
-    def __init__(self, entrypoint: str | None = None) -> None:
+    def __init__(self, entrypoint: str | None = None, *, require_entrypoint: bool = False) -> None:
         if entrypoint is not None and (
             not isinstance(entrypoint, str) or not _ENTRYPOINT_PATTERN.fullmatch(entrypoint)
         ):
@@ -274,6 +273,7 @@ class DeepAgents:
                 "DeepAgents.entrypoint debe tener la forma 'paquete.modulo:funcion'"
             )
         self.entrypoint = entrypoint
+        self.require_entrypoint = require_entrypoint
 
     def __repr__(self) -> str:
         return f"DeepAgents(entrypoint={self.entrypoint!r})"
@@ -281,6 +281,15 @@ class DeepAgents:
     def build_config(
         self, spec: AgentSpec, *, gateway_urls: Mapping[str, str], workdir: str
     ) -> RuntimeFiles:
+        return self._config_files(spec, gateway_urls, workdir)
+
+    def _config_files(
+        self, spec: AgentSpec, gateway_urls: Mapping[str, str] | None, workdir: str
+    ) -> RuntimeFiles:
+        if self.require_entrypoint and self.entrypoint is None:
+            raise InvalidArgumentException(
+                "el runtime 'langgraph' necesita un entrypoint 'paquete.modulo:funcion'"
+            )
         config = build_deepagents_config(
             spec, gateway_urls=gateway_urls, workdir=workdir, entrypoint=self.entrypoint
         )
@@ -290,7 +299,7 @@ class DeepAgents:
     def command(self, request: RunRequest) -> RunCommand:
         """El script (cerrojo, comprobación del runner, `exec` del Python
         del venv) y la petición JSON por stdin."""
-        if request.session_id is not None and not _SESSION_ID_PATTERN.fullmatch(request.session_id):
+        if request.session_id is not None and not SESSION_ID_PATTERN.fullmatch(request.session_id):
             raise InvalidArgumentException("session_id de deepagents debe tener la forma rda_<hex>")
         if request.model is not None:
             validate_model_id(request.model, "model")
@@ -301,123 +310,25 @@ class DeepAgents:
             "model": request.model,
             "reasoning": request.reasoning,
         }
-        envs = {"HOME": DEFAULT_AGENT_WORKDIR, **DEEPAGENTS_FLAG_ENVS}
-        if request.spec.model.provider == "bedrock":
-            envs["AWS_BEARER_TOKEN_BEDROCK"] = MODEL_CREDENTIAL_PLACEHOLDER
-        if request.spec.model.region is not None:
-            envs["AWS_REGION"] = request.spec.model.region
         return RunCommand(
             script=_run_script(DEEPAGENTS_CONFIG_PATH),
-            envs=envs,
+            envs=_run_envs(request.spec),
             stdin=json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8"),
         )
 
     def new_state(self) -> RuntimeState:
-        return DeepAgentsState()
+        return ProtocolV1State()
 
     def parse_line(self, line: bytes, state: RuntimeState) -> Sequence[AgentEvent]:
         """Una línea del protocolo v1 a cero o un evento. Lo que no es JSON,
         otra versión o un tipo desconocido se ignora y se cuenta."""
-        assert isinstance(state, DeepAgentsState)
-        try:
-            payload = json.loads(line)
-        except ValueError:
-            state.ignored_lines += 1
-            return ()
-        if not isinstance(payload, Mapping) or payload.get("v") != AGENT_PROTOCOL_VERSION:
-            state.ignored_lines += 1
-            return ()
-        events = self._map(payload, state)
-        if events is None:
-            state.ignored_lines += 1
-            return ()
-        return events
-
-    def _map(
-        self, payload: Mapping[str, object], state: DeepAgentsState
-    ) -> list[AgentEvent] | None:
-        kind = payload.get("type")
-        if kind in ("rayito.busy", "rayito.runtime_missing"):
-            state.failed = AgentFailed(reason=str(kind).removeprefix("rayito."))  # type: ignore[arg-type]
-            return [state.failed]
-        if kind not in PROTOCOL_EVENT_TYPES:
-            return None
-        if kind == "session":
-            session_id = payload.get("session_id")
-            if not isinstance(session_id, str) or not _SESSION_ID_PATTERN.fullmatch(session_id):
-                return None
-            state.session_id = session_id
-            return []
-        if kind == "step_started":
-            state.steps += 1
-            return [StepStarted(index=state.steps)]
-        if kind == "step_finished":
-            usage = _usage(payload.get("usage"))
-            state.usage = state.usage + usage
-            return [
-                StepFinished(
-                    index=state.steps,
-                    usage=usage,
-                    finish_reason=_optional_str(payload.get("finish_reason")),
-                )
-            ]
-        if kind in ("text_delta", "text", "reasoning"):
-            text = payload.get("text")
-            if not isinstance(text, str):
-                return None
-            if kind == "text_delta":
-                return [TextDelta(text=text)]
-            return [Text(text=text) if kind == "text" else Reasoning(text=text)]
-        if kind == "tool_call":
-            return self._tool_call(payload)
-        if kind == "agent_failed":
-            reason = payload.get("reason")
-            if reason not in RUNNER_FAILURE_REASONS or reason not in AGENT_FAILURE_REASONS:
-                reason = "protocol_error"
-            state.failed = AgentFailed(
-                reason=reason,  # type: ignore[arg-type]
-                detail_code=_optional_str(payload.get("detail_code")),
-                session_id=state.session_id,
-            )
-            return [state.failed]
-        state.done = True
-        return []
-
-    @staticmethod
-    def _tool_call(payload: Mapping[str, object]) -> list[AgentEvent] | None:
-        status = payload.get("status")
-        if status not in ("completed", "error"):
-            return None
-        raw_input = payload.get("input")
-        raw_output = payload.get("output")
-        output, truncated = (None, False)
-        if isinstance(raw_output, str):
-            output, truncated = truncate_tool_output(raw_output)
-        return [
-            ToolCall(
-                call_id=str(payload.get("call_id", "")),
-                name=str(payload.get("name", "")),
-                status="completed" if status == "completed" else "error",
-                input=dict(raw_input) if isinstance(raw_input, Mapping) else None,
-                output=output,
-                output_truncated=truncated or payload.get("output_truncated") is True,
-            )
-        ]
+        assert isinstance(state, ProtocolV1State)
+        return parse_v1_line(line, state)
 
     def finish(self, state: RuntimeState, exit_code: int) -> Done | AgentFailed:
         """`Done` sólo con salida 0, el `done` del runner y una sesión."""
-        assert isinstance(state, DeepAgentsState)
-        if state.failed is not None:
-            return state.failed
-        if exit_code != 0:
-            return AgentFailed(
-                reason="runtime_error", exit_code=exit_code, session_id=state.session_id
-            )
-        if not state.done or state.session_id is None:
-            return AgentFailed(
-                reason="protocol_error", exit_code=exit_code, session_id=state.session_id
-            )
-        return Done(session_id=state.session_id, exit_code=exit_code, usage=state.usage)
+        assert isinstance(state, ProtocolV1State)
+        return finish_v1(state, exit_code)
 
     def template_steps(self) -> Sequence[TemplateStep]:
         """Vacío: la plantilla de agente (`ai-agent-fast-start`) declara sus
@@ -433,6 +344,85 @@ class DeepAgents:
             ),
         )
 
+    def install_steps(self, target: InstallTarget) -> Sequence[TemplateStep]:
+        """Copia los requisitos con hash, crea el venv con `--require-hashes`
+        y copia el runner (0755)."""
+        requirements = f"{target.install_dir}/{DEEPAGENTS_REQUIREMENTS_NAME}"
+        return (
+            copy_step(DEEPAGENTS_REQUIREMENTS_NAME, requirements),
+            run_step(
+                hashed_venv_install(
+                    target,
+                    venv_dir=f"{target.install_dir}/deepagents",
+                    requirements_path=requirements,
+                    requirements_sha256=AGENT_DEEPAGENTS_REQUIREMENTS_SHA256,
+                )
+            ),
+            copy_step(
+                DEEPAGENTS_RUNNER_NAME,
+                f"{target.install_dir}/rayito/{DEEPAGENTS_RUNNER_NAME}",
+                executable=True,
+            ),
+        )
+
+    def context_files(self) -> Mapping[str, bytes]:
+        """Los requisitos con hash y el runner (datos de paquete)."""
+        return {
+            DEEPAGENTS_REQUIREMENTS_NAME: deepagents_requirements(),
+            DEEPAGENTS_RUNNER_NAME: deepagents_runner(),
+        }
+
+    def manifest_entry(self) -> Mapping[str, object]:
+        """El sha256 de los requisitos y el del runner, para el manifiesto."""
+        return {
+            "requirements_sha256": AGENT_DEEPAGENTS_REQUIREMENTS_SHA256,
+            "runner_sha256": hashlib.sha256(deepagents_runner()).hexdigest(),
+        }
+
+    def smoke_checks(self) -> Sequence[str]:
+        """Importa deepagents y los modelos de cada proveedor, y comprueba
+        que el runner es legible, todo como `user`."""
+        return (
+            f"su user -c \"{DEEPAGENTS_PYTHON} -c 'import {DEEPAGENTS_SMOKE_MODULES}'\"",
+            f"su user -c 'test -r {DEEPAGENTS_RUNNER_PATH}'",
+        )
+
+    def prefetch_paths(self) -> Sequence[str]:
+        """Ninguna: el venv se carga con `warmup_steps()`."""
+        return ()
+
+    def host_config(self, spec: AgentSpec, *, wiring: ModelWiring, workdir: str) -> HostConfig:
+        """La configuración del host para el driver `deepagents`: el mismo
+        fichero de configuración y las mismas variables que `command()`."""
+        return HostConfig(
+            driver="deepagents",
+            python=DEEPAGENTS_PYTHON,
+            files=self._config_files(spec, wiring_urls(wiring), workdir),
+            envs=_run_envs(spec, direct=isinstance(wiring, DirectWiring)),
+            options={"config_path": DEEPAGENTS_CONFIG_PATH},
+        )
+
+
+def deepagents_requirements() -> bytes:
+    """El fichero de requisitos con hash del venv de deepagents (dato de
+    paquete; su sha256 está en `limits.json`)."""
+    return asset_bytes(DEEPAGENTS_REQUIREMENTS_NAME)
+
+
+def deepagents_runner() -> bytes:
+    """El runner de deepagents que la plantilla instala (su sha256 va en el
+    manifiesto como `runner_sha256`)."""
+    return runner_bytes(DEEPAGENTS_RUNNER_NAME)
+
+
+def _run_envs(spec: AgentSpec, *, direct: bool = False) -> dict[str, str]:
+    envs = {"HOME": DEFAULT_AGENT_WORKDIR, **DEEPAGENTS_FLAG_ENVS}
+    if spec.model.provider == "bedrock" and not direct:
+        envs["AWS_BEARER_TOKEN_BEDROCK"] = MODEL_CREDENTIAL_PLACEHOLDER
+    if spec.model.region is not None:
+        envs["AWS_REGION"] = spec.model.region
+    return envs
+
 
 __all__ = [
     "DEEPAGENTS_CONFIG_PATH",
@@ -440,6 +430,7 @@ __all__ = [
     "DEEPAGENTS_SESSIONS_DIR",
     "DEEPAGENTS_TOOL_NAMES",
     "DeepAgents",
-    "DeepAgentsState",
     "build_deepagents_config",
+    "deepagents_requirements",
+    "deepagents_runner",
 ]

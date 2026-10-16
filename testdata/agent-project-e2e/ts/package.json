@@ -1,0 +1,8 @@
+{
+  "name": "agent-project-e2e",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@strands-agents/sdk": "1.21.0"
+  }
+}

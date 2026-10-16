@@ -1,0 +1,17 @@
+schema = "rayito.agent-project/1"
+name = "hello-agent"
+
+[runtime]
+kind = "opencode"
+
+[model]
+provider = "bedrock"
+id = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+region = "us-east-1"
+gateway = "bedrock"
+
+[gateways.bedrock]
+preset = "bedrock"
+secret = "rayito/bedrock-key"
+region = "us-east-1"
+models = ["us.anthropic.claude-haiku-4-5-20251001-v1:0"]

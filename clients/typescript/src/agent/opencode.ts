@@ -16,12 +16,16 @@
 import { createHash } from "node:crypto";
 import { InvalidArgumentError } from "../errors.js";
 import {
+  AGENT_OPENCODE_SHA256,
+  AGENT_OPENCODE_VERSION,
+  AGENT_RIPGREP_SHA256,
+  AGENT_RIPGREP_VERSION,
   AGENT_STATE_DIR,
   DEFAULT_AGENT_WORKDIR,
   MODEL_CREDENTIAL_PLACEHOLDER,
   OPENCODE_SESSION_TITLE,
 } from "../limits.js";
-import { type AgentPermissions, type AgentSpec, McpLocal } from "./domain.js";
+import { type AgentPermissions, type AgentSpec, McpLocal, McpRemote } from "./domain.js";
 import {
   type AgentEvent,
   type AgentFailed,
@@ -32,15 +36,25 @@ import {
   type ToolCall,
   truncateToolOutput,
 } from "./events.js";
-import type {
-  AgentRuntime,
-  RunCommand,
-  RunRequest,
-  RuntimeFile,
-  RuntimeFiles,
-  RuntimeState,
-  TemplateStep,
-  WarmupStep,
+import { AGENT_BIN_DIR } from "./recipes.js";
+import {
+  type AgentRuntime,
+  DEFAULT_INSTALL_PYTHON,
+  type HostConfig,
+  hostConfig,
+  type InstallableRuntime,
+  type InstallTarget,
+  type ModelWiring,
+  type RunCommand,
+  type RunRequest,
+  type RuntimeFile,
+  type RuntimeFiles,
+  type RuntimeState,
+  runStep,
+  type ServableRuntime,
+  type TemplateStep,
+  type WarmupStep,
+  wiringUrls,
 } from "./runtime.js";
 
 /** Directorio de OpenCode dentro de `AGENT_STATE_DIR`. */
@@ -107,6 +121,16 @@ export const OPENCODE_FLAG_ENVS: Readonly<Record<string, string>> = Object.freez
   OPENCODE_EXPERIMENTAL_WEBSOCKETS: "0",
 });
 const SESSION_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
+export const OPENCODE_BINARY_PATH = `${AGENT_BIN_DIR}/opencode`;
+export const RIPGREP_BINARY_PATH = `${AGENT_BIN_DIR}/rg`;
+/** Asset de la release de OpenCode (linux arm64 glibc, binario único). */
+export const OPENCODE_RELEASE_URL =
+  "https://github.com/anomalyco/opencode/releases/download/" +
+  `v${AGENT_OPENCODE_VERSION}/opencode-linux-arm64.tar.gz`;
+export const RIPGREP_RELEASE_DIR = `ripgrep-${AGENT_RIPGREP_VERSION}-aarch64-unknown-linux-gnu`;
+export const RIPGREP_RELEASE_URL =
+  "https://github.com/BurntSushi/ripgrep/releases/download/" +
+  `${AGENT_RIPGREP_VERSION}/${RIPGREP_RELEASE_DIR}.tar.gz`;
 const UTF8 = new TextEncoder();
 const UTF8_DECODER = new TextDecoder();
 
@@ -175,33 +199,50 @@ function permission(permissions: AgentPermissions): Record<string, unknown> {
   return rules;
 }
 
-function provider(spec: AgentSpec, gatewayUrl: string): Record<string, unknown> {
+/** `baseURL` y la clave de marcador sólo con pasarela; sin ella (`baseUrl`
+ * ausente) OpenCode usa el endpoint y la credencial estándar del proveedor. */
+function endpointOptions(baseUrl: string | undefined): Record<string, unknown> {
+  if (baseUrl === undefined) {
+    return {};
+  }
+  return { baseURL: baseUrl, apiKey: MODEL_CREDENTIAL_PLACEHOLDER };
+}
+
+function provider(spec: AgentSpec, gatewayUrl: string | undefined): Record<string, unknown> {
   const model = spec.model;
   if (model.provider === "bedrock") {
-    return { options: { region: model.region, endpoint: gatewayUrl } };
+    const options: Record<string, unknown> = { region: model.region };
+    if (gatewayUrl !== undefined) {
+      options.endpoint = gatewayUrl;
+    }
+    return { options };
   }
   if (model.provider === "anthropic") {
     return {
-      options: {
-        baseURL: joinUrl(gatewayUrl, ANTHROPIC_BASE_PATH),
-        apiKey: MODEL_CREDENTIAL_PLACEHOLDER,
-      },
+      options: endpointOptions(
+        gatewayUrl === undefined ? undefined : joinUrl(gatewayUrl, ANTHROPIC_BASE_PATH),
+      ),
     };
   }
   const nativeBasePath = OPENCODE_NATIVE_BASE_PATHS[model.provider];
   if (nativeBasePath !== undefined) {
     return {
       npm: OPENCODE_NATIVE_NPM[model.provider],
-      options: {
-        baseURL: joinUrl(gatewayUrl, nativeBasePath),
-        apiKey: MODEL_CREDENTIAL_PLACEHOLDER,
-      },
+      options: endpointOptions(
+        gatewayUrl === undefined ? undefined : joinUrl(gatewayUrl, nativeBasePath),
+      ),
       models: models(spec),
     };
   }
+  if (gatewayUrl === undefined) {
+    throw new InvalidArgumentError(
+      `el proveedor ${JSON.stringify(model.provider)} no tiene un endpoint estándar: ` +
+        "sin pasarela necesita una URL explícita",
+    );
+  }
   return {
     npm: OPENAI_COMPATIBLE_NPM,
-    options: { baseURL: joinUrl(gatewayUrl, model.basePath), apiKey: MODEL_CREDENTIAL_PLACEHOLDER },
+    options: endpointOptions(joinUrl(gatewayUrl, model.basePath)),
     models: models(spec),
   };
 }
@@ -286,13 +327,32 @@ function deepMerge(
   return merged;
 }
 
-/** El `opencode.json` de `spec` como objeto (design.md §3). */
+function requireNoRemoteMcp(spec: AgentSpec): void {
+  if (Object.values(spec.mcp).some((server) => server instanceof McpRemote)) {
+    throw new InvalidArgumentError(
+      "AgentSpec.mcp con McpRemote necesita una pasarela: no existe sin ella",
+    );
+  }
+}
+
+/**
+ * El `opencode.json` de `spec` como objeto (design.md §3). `gatewayUrls`
+ * ausente es la configuración sin pasarela de un contenedor exportado: el
+ * proveedor usa su endpoint y credencial estándar, y un `McpRemote` (que sólo
+ * existe tras una pasarela) falla.
+ */
 export function buildOpenCodeConfig(
   spec: AgentSpec,
-  options: { readonly gatewayUrls: Readonly<Record<string, string>> },
+  options: { readonly gatewayUrls: Readonly<Record<string, string>> | undefined },
 ): Record<string, unknown> {
   const gatewayUrls = options.gatewayUrls;
-  spec.requireGateways(Object.keys(gatewayUrls));
+  let gatewayUrl: string | undefined;
+  if (gatewayUrls === undefined) {
+    requireNoRemoteMcp(spec);
+  } else {
+    spec.requireGateways(Object.keys(gatewayUrls));
+    gatewayUrl = gatewayUrls[spec.model.gateway] ?? "";
+  }
   const providerId = providerIdOf(spec);
   let config: Record<string, unknown> = {
     // biome-ignore lint/style/useNamingConvention: clave fija del esquema de OpenCode.
@@ -303,14 +363,14 @@ export function buildOpenCodeConfig(
     share: "disabled",
     snapshot: false,
     enabled_providers: [providerId],
-    provider: { [providerId]: provider(spec, gatewayUrls[spec.model.gateway] ?? "") },
+    provider: { [providerId]: provider(spec, gatewayUrl) },
     agent: agents(spec, providerId),
   };
   if (spec.instructions !== undefined) {
     config.instructions = [OPENCODE_INSTRUCTIONS_PATH];
   }
   if (Object.keys(spec.mcp).length > 0) {
-    config.mcp = mcp(spec, gatewayUrls);
+    config.mcp = mcp(spec, gatewayUrls ?? {});
   }
   if (spec.rawConfig !== undefined && Object.keys(spec.rawConfig).length > 0) {
     config = deepMerge(config, spec.rawConfig);
@@ -358,13 +418,13 @@ function toolCallOf(part: Record<string, unknown>): ToolCall | undefined {
   });
 }
 
-function runEnvs(spec: AgentSpec): Record<string, string> {
+function runEnvs(spec: AgentSpec, direct = false): Record<string, string> {
   const envs: Record<string, string> = {
     HOME: DEFAULT_AGENT_WORKDIR,
     OPENCODE_CONFIG: OPENCODE_CONFIG_PATH,
     ...OPENCODE_FLAG_ENVS,
   };
-  if (spec.model.provider === "bedrock") {
+  if (spec.model.provider === "bedrock" && !direct) {
     envs.AWS_BEARER_TOKEN_BEDROCK = MODEL_CREDENTIAL_PLACEHOLDER;
   }
   if (spec.model.region !== undefined) {
@@ -407,7 +467,7 @@ function failed(
 }
 
 /** `AgentRuntime` de OpenCode; lo de cada ejecución vive en su `OpenCodeState`. */
-export class OpenCodeRuntime implements AgentRuntime {
+export class OpenCodeRuntime implements AgentRuntime, InstallableRuntime, ServableRuntime {
   readonly name = "opencode";
 
   /** `opencode.json` y, si hay `instructions`, su `AGENTS.md`. */
@@ -415,21 +475,7 @@ export class OpenCodeRuntime implements AgentRuntime {
     spec: AgentSpec,
     options: { readonly gatewayUrls: Readonly<Record<string, string>>; readonly workdir: string },
   ): RuntimeFiles {
-    const files: RuntimeFile[] = [
-      {
-        path: OPENCODE_CONFIG_PATH,
-        data: canonicalJson(buildOpenCodeConfig(spec, { gatewayUrls: options.gatewayUrls })),
-        mode: 0o644,
-      },
-    ];
-    if (spec.instructions !== undefined) {
-      files.push({
-        path: OPENCODE_INSTRUCTIONS_PATH,
-        data: UTF8.encode(spec.instructions),
-        mode: 0o644,
-      });
-    }
-    return { files, configSha256: filesSha256(files) };
+    return configFiles(spec, options.gatewayUrls);
   }
 
   /** El script de una ejecución: cerrojo, comprobación del binario y `exec opencode run`. */
@@ -599,4 +645,88 @@ export class OpenCodeRuntime implements AgentRuntime {
   warmupSteps(): readonly WarmupStep[] {
     return [{ cmd: "opencode --version >/dev/null" }];
   }
+
+  /** OpenCode y ripgrep desde sus assets de release, comprobados con
+   * `sha256sum -c` contra los pines de `limits.json`. */
+  installSteps(target: InstallTarget): readonly TemplateStep[] {
+    return [runStep(opencodeInstall(target))];
+  }
+
+  /** Nada: todo se descarga y se comprueba en el build. */
+  contextFiles(): Readonly<Record<string, string>> {
+    return {};
+  }
+
+  /** Versión y sha256 de OpenCode para el manifiesto de la imagen. */
+  manifestEntry(): Readonly<Record<string, unknown>> {
+    return { version: AGENT_OPENCODE_VERSION, sha256: AGENT_OPENCODE_SHA256 };
+  }
+
+  /** Prueba de humo, como `user`, de los dos binarios. */
+  smokeChecks(): readonly string[] {
+    return ["su user -c 'opencode --version'", "su user -c 'rg --version'"];
+  }
+
+  /** Los binarios que el demonio de precarga lee tras cada restauración. */
+  prefetchPaths(): readonly string[] {
+    return [OPENCODE_BINARY_PATH, RIPGREP_BINARY_PATH];
+  }
+
+  /** La configuración del host para el driver `opencode`: los mismos ficheros
+   * y variables que `buildConfig()` y `command()`. */
+  hostConfig(
+    spec: AgentSpec,
+    options: { readonly wiring: ModelWiring; readonly workdir: string },
+  ): HostConfig {
+    return hostConfig({
+      driver: "opencode",
+      python: DEFAULT_INSTALL_PYTHON,
+      files: configFiles(spec, wiringUrls(options.wiring)),
+      envs: runEnvs(spec, options.wiring.kind === "direct"),
+      options: { workdir: options.workdir },
+    });
+  }
+}
+
+function configFiles(
+  spec: AgentSpec,
+  gatewayUrls: Readonly<Record<string, string>> | undefined,
+): RuntimeFiles {
+  const files: RuntimeFile[] = [
+    {
+      path: OPENCODE_CONFIG_PATH,
+      data: canonicalJson(buildOpenCodeConfig(spec, { gatewayUrls })),
+      mode: 0o644,
+    },
+  ];
+  if (spec.instructions !== undefined) {
+    files.push({
+      path: OPENCODE_INSTRUCTIONS_PATH,
+      data: UTF8.encode(spec.instructions),
+      mode: 0o644,
+    });
+  }
+  return { files, configSha256: filesSha256(files) };
+}
+
+function opencodeInstall(target: InstallTarget): string {
+  const binDir = `${target.installDir}/bin`;
+  const opencode = `${binDir}/opencode`;
+  const ripgrep = `${binDir}/rg`;
+  return (
+    `curl -fsSL --retry 3 -o /tmp/opencode.tar.gz ${OPENCODE_RELEASE_URL}` +
+    ` && echo '${AGENT_OPENCODE_SHA256}  /tmp/opencode.tar.gz' | sha256sum -c -` +
+    ` && curl -fsSL --retry 3 -o /tmp/ripgrep.tar.gz ${RIPGREP_RELEASE_URL}` +
+    ` && echo '${AGENT_RIPGREP_SHA256}  /tmp/ripgrep.tar.gz' | sha256sum -c -` +
+    ` && mkdir -p ${binDir}` +
+    ` && tar -xzf /tmp/opencode.tar.gz -C ${binDir} opencode` +
+    " && tar -xzf /tmp/ripgrep.tar.gz -C /tmp" +
+    ` && mv /tmp/${RIPGREP_RELEASE_DIR}/rg ${ripgrep}` +
+    ` && rm -rf /tmp/opencode.tar.gz /tmp/ripgrep.tar.gz /tmp/${RIPGREP_RELEASE_DIR}` +
+    ` && chown -R root:root ${target.installDir}` +
+    ` && chmod 0755 ${target.installDir} ${binDir} ${opencode}` +
+    ` ${ripgrep}` +
+    ` && ln -sf ${opencode} /usr/local/bin/opencode` +
+    ` && ln -sf ${ripgrep} /usr/local/bin/rg`
+  );
 }

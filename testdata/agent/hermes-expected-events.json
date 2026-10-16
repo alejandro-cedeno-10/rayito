@@ -1,0 +1,97 @@
+{
+  "_comment": "Eventos v1 que debe producir el driver de Hermes con los eventos grabados de `/v1/runs/{id}/events` (`hermes-v0.22.2-events.jsonl`): `ok` es la ejecución con una herramienta y `failed` la que termina en `run.failed`. `failure` es el `agent_failed` (reason, detail_code) que cierra la segunda; el texto del error de Hermes nunca sale. No incluye `session`, `step_started` ni `done`, que emiten el driver y el host.",
+  "ok": [
+    {
+      "v": 1,
+      "type": "tool_call",
+      "call_id": "hermes_1",
+      "name": "read_file",
+      "status": "completed",
+      "input": {
+        "preview": "hostname"
+      },
+      "output": "{\"content\": \"1|rayito-host\", \"total_lines\": 1, \"file_size\": 13, \"truncated\": false, \"is_binary\": false, \"is_image\": false, \"not_found\": false}",
+      "output_truncated": false
+    },
+    {
+      "v": 1,
+      "type": "text_delta",
+      "text": "\n\nEl resultado "
+    },
+    {
+      "v": 1,
+      "type": "text_delta",
+      "text": "es 5."
+    },
+    {
+      "v": 1,
+      "type": "text",
+      "text": "El resultado es 5."
+    },
+    {
+      "v": 1,
+      "type": "step_finished",
+      "index": 1,
+      "usage": {
+        "input": 22,
+        "output": 14,
+        "reasoning": 0,
+        "cache_read": 0,
+        "cache_write": 0
+      },
+      "finish_reason": "stop"
+    }
+  ],
+  "ok_reasoning": [
+    {
+      "v": 1,
+      "type": "tool_call",
+      "call_id": "hermes_1",
+      "name": "read_file",
+      "status": "completed",
+      "input": {
+        "preview": "hostname"
+      },
+      "output": "{\"content\": \"1|rayito-host\", \"total_lines\": 1, \"file_size\": 13, \"truncated\": false, \"is_binary\": false, \"is_image\": false, \"not_found\": false}",
+      "output_truncated": false
+    },
+    {
+      "v": 1,
+      "type": "text_delta",
+      "text": "\n\nEl resultado "
+    },
+    {
+      "v": 1,
+      "type": "text_delta",
+      "text": "es 5."
+    },
+    {
+      "v": 1,
+      "type": "text",
+      "text": "El resultado es 5."
+    },
+    {
+      "v": 1,
+      "type": "reasoning",
+      "text": "El resultado es 5."
+    },
+    {
+      "v": 1,
+      "type": "step_finished",
+      "index": 1,
+      "usage": {
+        "input": 22,
+        "output": 14,
+        "reasoning": 0,
+        "cache_read": 0,
+        "cache_write": 0
+      },
+      "finish_reason": "stop"
+    }
+  ],
+  "failed": [],
+  "failure": {
+    "reason": "runtime_error",
+    "detail_code": "run_failed"
+  }
+}

@@ -1,0 +1,9 @@
+[
+  ".dockerignore",
+  "Dockerfile",
+  "README.md",
+  "app/.dockerignore",
+  "app/agent.py",
+  "config/0",
+  "host.json"
+]

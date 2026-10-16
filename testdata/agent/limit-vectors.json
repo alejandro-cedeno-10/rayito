@@ -1,0 +1,341 @@
+{
+  "comment": "Vectores del LimitTracker (ai-agent-core): cómo `max_steps` y `max_total_tokens` convierten una secuencia de eventos en la que entrega el SDK. Los leen los tests de los dos SDK y los del host del agente. `events` usa los nombres de campo del protocolo v1. En `expected` se compara `type` y, cuando la clave existe, `index`, `reason` y `session_id` (`null` significa sin sesión). `final` es el estado del tracker al terminar.",
+  "cases": [
+    {
+      "name": "within-limits",
+      "limits": {
+        "max_steps": 2,
+        "max_total_tokens": 100
+      },
+      "session_id": null,
+      "events": [
+        {
+          "type": "step_started",
+          "index": 1
+        },
+        {
+          "type": "step_finished",
+          "usage": {
+            "input": 10,
+            "output": 5
+          },
+          "finish_reason": "stop"
+        },
+        {
+          "type": "text",
+          "text": "hola"
+        },
+        {
+          "type": "done",
+          "session_id": "rda_00000000000000000000000000000001",
+          "exit_code": 0
+        }
+      ],
+      "expected": [
+        {
+          "type": "step_started",
+          "index": 1
+        },
+        {
+          "type": "step_finished"
+        },
+        {
+          "type": "text"
+        },
+        {
+          "type": "done"
+        }
+      ],
+      "final": {
+        "steps": 1,
+        "total_tokens": 15,
+        "last_text": "hola",
+        "tool_calls": 0,
+        "session_id": "rda_00000000000000000000000000000001"
+      }
+    },
+    {
+      "name": "max-steps-fails-at-step-n-plus-one",
+      "limits": {
+        "max_steps": 2,
+        "max_total_tokens": null
+      },
+      "session_id": "rda_00000000000000000000000000000001",
+      "events": [
+        {
+          "type": "step_started",
+          "index": 1
+        },
+        {
+          "type": "step_finished",
+          "usage": {
+            "input": 1,
+            "output": 1
+          },
+          "finish_reason": "stop"
+        },
+        {
+          "type": "step_started",
+          "index": 2
+        },
+        {
+          "type": "step_finished",
+          "usage": {
+            "input": 1,
+            "output": 1
+          },
+          "finish_reason": "stop"
+        },
+        {
+          "type": "step_started",
+          "index": 3
+        },
+        {
+          "type": "text",
+          "text": "tarde"
+        }
+      ],
+      "expected": [
+        {
+          "type": "step_started",
+          "index": 1
+        },
+        {
+          "type": "step_finished"
+        },
+        {
+          "type": "step_started",
+          "index": 2
+        },
+        {
+          "type": "step_finished"
+        },
+        {
+          "type": "agent_failed",
+          "reason": "max_steps",
+          "session_id": "rda_00000000000000000000000000000001"
+        },
+        {
+          "type": "text"
+        }
+      ],
+      "final": {
+        "steps": 3,
+        "total_tokens": 4,
+        "last_text": "tarde",
+        "tool_calls": 0,
+        "session_id": "rda_00000000000000000000000000000001"
+      }
+    },
+    {
+      "name": "token-budget-checked-after-each-step",
+      "limits": {
+        "max_steps": 10,
+        "max_total_tokens": 20
+      },
+      "session_id": null,
+      "events": [
+        {
+          "type": "step_started",
+          "index": 1
+        },
+        {
+          "type": "step_finished",
+          "usage": {
+            "input": 8,
+            "output": 2
+          },
+          "finish_reason": "stop"
+        },
+        {
+          "type": "step_started",
+          "index": 2
+        },
+        {
+          "type": "step_finished",
+          "usage": {
+            "input": 8,
+            "output": 3
+          },
+          "finish_reason": "stop"
+        }
+      ],
+      "expected": [
+        {
+          "type": "step_started",
+          "index": 1
+        },
+        {
+          "type": "step_finished"
+        },
+        {
+          "type": "step_started",
+          "index": 2
+        },
+        {
+          "type": "agent_failed",
+          "reason": "token_budget",
+          "session_id": null
+        }
+      ],
+      "final": {
+        "steps": 2,
+        "total_tokens": 21,
+        "last_text": "",
+        "tool_calls": 0,
+        "session_id": null
+      }
+    },
+    {
+      "name": "token-budget-may-overshoot-in-one-step",
+      "limits": {
+        "max_steps": 10,
+        "max_total_tokens": 10
+      },
+      "session_id": null,
+      "events": [
+        {
+          "type": "step_started",
+          "index": 1
+        },
+        {
+          "type": "step_finished",
+          "usage": {
+            "input": 500,
+            "output": 500
+          },
+          "finish_reason": "stop"
+        }
+      ],
+      "expected": [
+        {
+          "type": "step_started",
+          "index": 1
+        },
+        {
+          "type": "agent_failed",
+          "reason": "token_budget",
+          "session_id": null
+        }
+      ],
+      "final": {
+        "steps": 1,
+        "total_tokens": 1000,
+        "last_text": "",
+        "tool_calls": 0,
+        "session_id": null
+      }
+    },
+    {
+      "name": "no-token-limit",
+      "limits": {
+        "max_steps": 10,
+        "max_total_tokens": null
+      },
+      "session_id": null,
+      "events": [
+        {
+          "type": "step_started",
+          "index": 1
+        },
+        {
+          "type": "step_finished",
+          "usage": {
+            "input": 5000000,
+            "output": 5000000
+          },
+          "finish_reason": "stop"
+        }
+      ],
+      "expected": [
+        {
+          "type": "step_started",
+          "index": 1
+        },
+        {
+          "type": "step_finished"
+        }
+      ],
+      "final": {
+        "steps": 1,
+        "total_tokens": 10000000,
+        "last_text": "",
+        "tool_calls": 0,
+        "session_id": null
+      }
+    },
+    {
+      "name": "failure-takes-the-known-session",
+      "limits": {
+        "max_steps": 10,
+        "max_total_tokens": null
+      },
+      "session_id": "rda_00000000000000000000000000000001",
+      "events": [
+        {
+          "type": "agent_failed",
+          "reason": "model_error"
+        }
+      ],
+      "expected": [
+        {
+          "type": "agent_failed",
+          "reason": "model_error",
+          "session_id": "rda_00000000000000000000000000000001"
+        }
+      ],
+      "final": {
+        "steps": 0,
+        "total_tokens": 0,
+        "last_text": "",
+        "tool_calls": 0,
+        "session_id": "rda_00000000000000000000000000000001"
+      }
+    },
+    {
+      "name": "tool-calls-are-counted",
+      "limits": {
+        "max_steps": 10,
+        "max_total_tokens": null
+      },
+      "session_id": null,
+      "events": [
+        {
+          "type": "step_started",
+          "index": 1
+        },
+        {
+          "type": "tool_call",
+          "call_id": "c1",
+          "name": "read",
+          "status": "completed"
+        },
+        {
+          "type": "tool_call",
+          "call_id": "c2",
+          "name": "grep",
+          "status": "error"
+        }
+      ],
+      "expected": [
+        {
+          "type": "step_started",
+          "index": 1
+        },
+        {
+          "type": "tool_call"
+        },
+        {
+          "type": "tool_call"
+        }
+      ],
+      "final": {
+        "steps": 1,
+        "total_tokens": 0,
+        "last_text": "",
+        "tool_calls": 2,
+        "session_id": null
+      }
+    }
+  ]
+}

@@ -1,0 +1,131 @@
+{
+  "comment": "Casos inválidos de rayito-agent.toml: la ruta punteada y el código del error que los dos SDK deben producir. `schema` vale `rejects` si testdata/agent-project/schema.json también debe rechazarlo, y `semantic` si depende de algo que un JSON Schema no expresa (existencia de un fichero, referencias cruzadas o reglas de un runtime).",
+  "cases": [
+    {
+      "case": "unknown-runtime-key",
+      "file": "unknown-runtime-key.toml",
+      "path": "runtime.entrpoint",
+      "code": "unknown_key",
+      "schema": "rejects"
+    },
+    {
+      "case": "unknown-top-level-key",
+      "file": "unknown-top-level-key.toml",
+      "path": "colour",
+      "code": "unknown_key",
+      "schema": "rejects"
+    },
+    {
+      "case": "unsupported-schema",
+      "file": "unsupported-schema.toml",
+      "path": "schema",
+      "code": "unsupported_schema",
+      "schema": "rejects"
+    },
+    {
+      "case": "missing-name",
+      "file": "missing-name.toml",
+      "path": "name",
+      "code": "missing_key",
+      "schema": "rejects"
+    },
+    {
+      "case": "missing-model",
+      "file": "missing-model.toml",
+      "path": "model",
+      "code": "missing_key",
+      "schema": "rejects"
+    },
+    {
+      "case": "bad-runtime-kind",
+      "file": "bad-runtime-kind.toml",
+      "path": "runtime.kind",
+      "code": "invalid_value",
+      "schema": "rejects"
+    },
+    {
+      "case": "wrong-type-limit",
+      "file": "wrong-type-limit.toml",
+      "path": "limits.max_steps",
+      "code": "invalid_type",
+      "schema": "rejects"
+    },
+    {
+      "case": "source-escapes-directory",
+      "file": "source-escapes-directory.toml",
+      "path": "source.path",
+      "code": "path_escape",
+      "schema": "rejects"
+    },
+    {
+      "case": "source-is-absolute",
+      "file": "source-is-absolute.toml",
+      "path": "source.path",
+      "code": "path_escape",
+      "schema": "rejects"
+    },
+    {
+      "case": "secret-key-in-gateway",
+      "file": "secret-key-in-gateway.toml",
+      "path": "gateways.anthropic.api_key",
+      "code": "secret_value",
+      "schema": "rejects"
+    },
+    {
+      "case": "secret-name-looks-like-value",
+      "file": "secret-name-looks-like-value.toml",
+      "path": "gateways.anthropic.secret",
+      "code": "secret_value",
+      "schema": "rejects"
+    },
+    {
+      "case": "instructions-conflict",
+      "file": "instructions-conflict.toml",
+      "path": "agent.instructions_file",
+      "code": "conflict",
+      "schema": "rejects"
+    },
+    {
+      "case": "instructions-file-escapes-directory",
+      "file": "instructions-file-escapes-directory.toml",
+      "path": "agent.instructions_file",
+      "code": "path_escape",
+      "schema": "rejects"
+    },
+    {
+      "case": "instructions-file-missing",
+      "file": "instructions-file-missing.toml",
+      "path": "agent.instructions_file",
+      "code": "file_not_found",
+      "schema": "semantic"
+    },
+    {
+      "case": "gateway-not-declared",
+      "file": "gateway-not-declared.toml",
+      "path": "model.gateway",
+      "code": "invalid_value",
+      "schema": "semantic"
+    },
+    {
+      "case": "unknown-preset",
+      "file": "unknown-preset.toml",
+      "path": "gateways.anthropic.preset",
+      "code": "invalid_value",
+      "schema": "rejects"
+    },
+    {
+      "case": "reserved-serve-port",
+      "file": "reserved-serve-port.toml",
+      "path": "serve",
+      "code": "invalid_value",
+      "schema": "rejects"
+    },
+    {
+      "case": "langgraph-without-entrypoint",
+      "file": "langgraph-without-entrypoint.toml",
+      "path": "runtime",
+      "code": "invalid_value",
+      "schema": "rejects"
+    }
+  ]
+}

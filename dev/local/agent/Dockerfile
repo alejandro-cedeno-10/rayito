@@ -17,7 +17,12 @@
 #   - El runner de deepagents del SDK (`rayito/_agent/_runner`, contexto
 #     adicional `agentrunner`) donde lo instala AgentTemplate
 #     (`DEEPAGENTS_RUNNER_PATH`), para que `sbx.agent` con
-#     `runtime="deepagents"` lo encuentre.
+#     `runtime="deepagents"` lo encuentre, y el host del agente
+#     (`agent_host`, su vecino: el runner es un envoltorio de su modo
+#     `task`) que sirve `AgentProject.deploy()`.
+#   - Dos agentes de ejemplo en `/opt/agents/app` (contexto adicional
+#     `agentapps`, `dev/local/agent/apps`): un comando que habla v1 y una app
+#     HTTP, para los tests `local` de `CustomRuntime`.
 #
 # Las variables OPENCODE_* apagan todo lo que OpenCode intentaría bajar de
 # Internet en el arranque (autoupdate, catálogo de models.dev, servidores
@@ -57,6 +62,9 @@ RUN python3 -m venv /opt/agents/deepagents \
     && chmod -R a+rX,go-w /opt/agents
 
 COPY --from=agentrunner --chown=root:root --chmod=0755 deepagents_runner.py /opt/agents/rayito/deepagents_runner.py
+COPY --from=agentrunner --chown=root:root agent_host /opt/agents/rayito/agent_host
+COPY --from=agentapps --chown=root:root . /opt/agents/app
+RUN chmod -R a+rX,go-w /opt/agents/rayito /opt/agents/app
 
 ENV OPENCODE_DISABLE_AUTOUPDATE=1 \
     OPENCODE_DISABLE_MODELS_FETCH=1 \

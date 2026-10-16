@@ -16,6 +16,13 @@ commands and the same egress as any other code you run with
 [secrets gateway](../funciones-opcionales/pasarela-de-secretos.md): the
 agent **uses** the model credential, but can never **read** it.
 
+!!! tip "Prefer to describe the agent in a file?"
+    Since 0.14.0, [Deploy your agent](despliega-tu-agente.md) builds the image,
+    runs the agent and serves it as an HTTP service from a `rayito-agent.toml`,
+    with Strands, Hermes, LangGraph, deepagents, OpenCode or your own
+    framework. This page remains the reference for `sbx.agent`, the engine they
+    use underneath.
+
 The normal way to use it is two calls: `Sandbox.create(...)` with the
 model's gateway and `sbx.agent.run(...)` ([section 2](#2-arranque-normal-crear-el-sandbox-y-ejecutar)).
 No pool and no warm-up is needed: the
@@ -976,6 +983,10 @@ rayito agent template build --bucket amzn-s3-demo-bucket
 Options (`--name`, `--base`, `--memory-mb`, `--no-deepagents`,
 `--no-prefetch`, `--force`, `--timeout`) in
 [Agent templates](../funciones-opcionales/templates-de-agente.md).
+
+To describe the agent in a file and build, run or deploy it from the CLI,
+see `rayito agent init`, `build`, `run`, `deploy`, `invoke`, `status`, `stop`
+and `export` in [Deploy your agent](despliega-tu-agente.md).
 
 ## The E2B shim { #el-shim-de-e2b }
 

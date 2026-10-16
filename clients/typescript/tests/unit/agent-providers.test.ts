@@ -9,10 +9,10 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, test, vi } from "vitest";
-import { DEEPAGENTS_RUNNER_SOURCE } from "../../src/agent/assets/deepagents-runner.js";
 import { DeepAgents } from "../../src/agent/deepagents.js";
 import { MODEL_PROVIDERS, type ModelProvider } from "../../src/agent/domain.js";
 import { OPENCODE_CONFIG_PATH, OpenCodeRuntime } from "../../src/agent/opencode.js";
+import { agentHostFiles } from "../../src/agent/recipes.js";
 import { startAttributes } from "../../src/agent/telemetry.js";
 import * as rayito from "../../src/index.js";
 import {
@@ -319,9 +319,9 @@ describe("deepagents model vectors", () => {
   });
 
   test.each(vectors.cases.map((c) => [c.provider, c.class]))(
-    "the shipped runner builds %s with %s",
+    "the shipped deepagents driver builds %s with %s",
     (_provider, cls) => {
-      expect(DEEPAGENTS_RUNNER_SOURCE).toContain(`module.${cls}(`);
+      expect(agentHostFiles()["drivers/deepagents.py"]).toContain(`module.${cls}(`);
     },
   );
 });

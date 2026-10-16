@@ -1,0 +1,11 @@
+[
+  ".dockerignore",
+  "Dockerfile",
+  "README.md",
+  "app/.dockerignore",
+  "app/agent.py",
+  "config/0",
+  "deepagents_runner.py",
+  "host.json",
+  "requirements-deepagents.txt"
+]

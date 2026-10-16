@@ -1,0 +1,85 @@
+schema = "rayito.agent-project/1"
+name = "support-bot"
+
+[runtime]
+kind = "langgraph"
+entrypoint = "agent.graph:build"
+
+[source]
+path = "app"
+requirements = "app/requirements.txt"
+exclude = [".venv", "node_modules"]
+
+[model]
+provider = "anthropic"
+id = "claude-haiku-4-5"
+gateway = "anthropic"
+prompt_caching = false
+
+[gateways.anthropic]
+preset = "anthropic"
+secret = "rayito/anthropic-key"
+rate_per_minute = 120
+
+[gateways.docs]
+preset = "custom"
+upstream = "https://docs.example.com"
+allow = [["GET", "/v1/search"], ["POST", "/v1/query"]]
+rate_per_minute = 60
+
+[gateways.docs.headers]
+authorization = "rayito/docs-token"
+
+[agent]
+instructions_file = "files/AGENTS.md"
+small_model = "claude-haiku-4-5"
+runtime_version = "1.0"
+
+[agent.permissions]
+default = "allow"
+
+[agent.permissions.tools]
+webfetch = "deny"
+bash = { "git *" = "allow", "*" = "deny" }
+
+[agent.mcp.notes]
+type = "local"
+command = ["notes-server", "--stdio"]
+timeout_seconds = 30
+
+[agent.mcp.search]
+type = "remote"
+gateway = "docs"
+path = "/mcp"
+
+[agent.agents.reviewer]
+description = "Revisa respuestas antes de enviarlas"
+instructions = "Comprueba hechos y tono."
+model = "claude-haiku-4-5"
+
+[agent.agents.reviewer.permissions]
+default = "deny"
+
+[limits]
+max_steps = 30
+timeout_seconds = 300
+max_output_bytes = 1048576
+max_total_tokens = 200000
+
+[serve]
+port = 8090
+timeout_seconds = 7200
+idle_seconds = 120
+max_concurrency = 2
+
+[serve.metadata]
+team = "support"
+
+[network]
+allow_internet_access = true
+egress = ["docs.example.com"]
+
+[image]
+base = "rayito-base-caps"
+template = "support-bot-image"
+memory_mib = 4096

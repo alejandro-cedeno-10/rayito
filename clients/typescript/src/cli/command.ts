@@ -7,6 +7,7 @@
  */
 
 import type { CliConsole } from "./console.js";
+import type { AgentProjectTools } from "./ops-ports.js";
 import type { CliServices } from "./services.js";
 
 export type ParameterType = "str" | "int" | "float" | "boolean" | "path";
@@ -202,6 +203,12 @@ export interface CommandContext {
   readonly services: () => Promise<CliServices>;
   /** Abre una URL en el navegador del usuario (`rayito dashboard --open`). */
   readonly openUrl: (url: string) => Promise<void>;
+  /**
+   * `AgentProject` y `AgentDeployment` para `rayito agent`. Cargar un proyecto
+   * no pide la sesión de AWS (`init` y `export` no la necesitan); sólo
+   * `build`, `run`, `deploy` y `connect` la construyen.
+   */
+  readonly agentProjects: AgentProjectTools;
 }
 
 export interface CommandDefinition {
