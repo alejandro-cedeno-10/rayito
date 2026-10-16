@@ -186,3 +186,4 @@ diverjan, y una release que suba un mínimo añade la fila en los dos sitios.
 | `0.10` | `0.10.0` | 0.10: el timeout y abort() del agente paran todo el árbol de procesos (kill_tree) y los proveedores del agente se validan con el rayd del tag rayd-v0.10.0 |
 | `0.11` | `0.11.0` | 0.11: el arranque rápido de AgentTemplate (kernel_warmup=False por defecto) y las claves de artefacto por ejecución se validan con el rayd del tag rayd-v0.11.0 |
 | `0.12` | `0.12.0` | 0.12: el panel de gestión (rayito dashboard y la pila dashboard) se validan con el rayd del tag rayd-v0.12.0 |
+| `0.13` | `0.13.0` | 0.13: la CLI y el servidor MCP de TypeScript (ADR-027) y el formato de instantes en UTC de la CLI se validan con el rayd del tag rayd-v0.13.0 |

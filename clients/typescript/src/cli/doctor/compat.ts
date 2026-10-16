@@ -102,6 +102,13 @@ export const COMPATIBILITY: readonly CompatibilityRow[] = [
       "0.12: el panel de gestión (rayito dashboard y la pila dashboard) se validan con el " +
       "rayd del tag rayd-v0.12.0",
   },
+  {
+    sdkSeries: "0.13",
+    minAgentVersion: "0.13.0",
+    note:
+      "0.13: la CLI y el servidor MCP de TypeScript (ADR-027) y el formato de instantes en UTC " +
+      "de la CLI se validan con el rayd del tag rayd-v0.13.0",
+  },
 ];
 
 export interface Assessment {
