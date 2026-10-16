@@ -15,7 +15,7 @@
  */
 
 import { mkdir, readdir, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname, join, posix } from "node:path";
 import { InvalidArgumentError } from "../errors.js";
 import {
   AGENT_EXPORT_BASE_IMAGE,
@@ -145,6 +145,7 @@ function dockerfile(
   steps: readonly TemplateStep[],
 ): string {
   const { lines: installLines, executables } = stepLines(steps);
+  const configDirs = [...new Set(host.files.files.map((file) => posix.dirname(file.path)))].sort();
   const copyFiles = host.files.files.map((file, index) => {
     const mode = (file.mode ?? DEFAULT_FILE_MODE).toString(OCTAL).padStart(MODE_DIGITS, "0");
     return (
@@ -170,7 +171,8 @@ function dockerfile(
     `#   docker buildx build --platform ${EXPORT_PLATFORM} -t ${project.name} .`,
     `FROM --platform=${EXPORT_PLATFORM} ${BASE_IMAGE_REFERENCE}`,
     `RUN useradd --create-home --uid ${AGENT_UID} --shell /bin/bash ${AGENT_USER}` +
-      ` && mkdir -p ${AGENT_STATE_DIR} && chown -R ${AGENT_USER}:${AGENT_USER} ${RAYITO_HOME_DIR}`,
+      ` && mkdir -p ${AGENT_STATE_DIR} ${configDirs.join(" ")}` +
+      ` && chown -R ${AGENT_USER}:${AGENT_USER} ${RAYITO_HOME_DIR}`,
     ...installLines,
     `COPY ${AGENT_HOST_CONTEXT_DIR} ${AGENT_HOST_DIR}`,
     `COPY ${HOST_CONFIG_NAME} ${HOST_CONFIG_PATH}`,

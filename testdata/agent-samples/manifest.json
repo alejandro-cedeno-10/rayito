@@ -1,6 +1,6 @@
 {
   "schema": "rayito.agent-samples/1",
-  "_comment": "Los quince agentes de ejemplo que despliega la aceptación de 0.14 sin tocar su código. Ninguno importa rayito y cada uno trae su propio lockfile (Hermes y OpenCode son sólo configuración, sin lockfile). `expected` es lo que debe decidir la detección sin opciones (`framework`, `kind` del runtime, protocolo, punto de entrada y gestor de instalación); `httpAlternative` es la app HTTP que la detección lista como alternativa y que `--entry http` sirve; `custom` es la combinación de opciones de la segunda pasada. Lo leen los tests de Python y de TypeScript.",
+  "_comment": "Los quince agentes de ejemplo que despliega la aceptación de 0.14 sin tocar su código. Ninguno importa rayito y cada uno trae su propio lockfile (Hermes y OpenCode son sólo configuración, sin lockfile). `expected` es lo que debe decidir la detección sin opciones (`framework`, `kind` del runtime, protocolo, punto de entrada y gestor de instalación); `httpAlternative` es la app HTTP que la detección lista como alternativa y que `--entry http` sirve; `custom` es la combinación de opciones de la segunda pasada. Lo leen los tests de Python y de TypeScript. `bedrockTransport: h2c` marca los ejemplos de JavaScript cuyo cliente de AWS habla HTTP/2 en texto plano con el endpoint (medido el 2026-10-16 con un servidor h2c falso): el Bedrock falso local necesita delante `dev/local/providers/h2c_front.mjs` para ellos.",
   "model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
   "prompt": "What is 17 plus 25? Use the add tool if you have one and reply with the number.",
   "expectedAnswer": "42",
@@ -189,7 +189,8 @@
         "protocol": "framework",
         "entry": "agent.js#graph",
         "installManager": "npm"
-      }
+      },
+      "bedrockTransport": "h2c"
     },
     {
       "id": "typescript-deepagents-js",
@@ -207,7 +208,8 @@
         "protocol": "framework",
         "entry": "agent.js#agent",
         "installManager": "npm"
-      }
+      },
+      "bedrockTransport": "h2c"
     },
     {
       "id": "typescript-strands-ts",
@@ -225,7 +227,8 @@
         "protocol": "framework",
         "entry": "agent.js#agent",
         "installManager": "npm"
-      }
+      },
+      "bedrockTransport": "h2c"
     },
     {
       "id": "typescript-strands-harness-ts",
@@ -243,7 +246,8 @@
         "protocol": "framework",
         "entry": "agent.js#createAgent",
         "installManager": "npm"
-      }
+      },
+      "bedrockTransport": "h2c"
     },
     {
       "id": "typescript-vercel-ai-sdk",

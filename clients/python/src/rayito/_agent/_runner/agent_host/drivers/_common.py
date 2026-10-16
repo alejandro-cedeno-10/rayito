@@ -6,8 +6,10 @@ de `rayito`."""
 
 from __future__ import annotations
 
+import asyncio
 import fnmatch
 import importlib
+import inspect
 import json
 import os
 import re
@@ -112,6 +114,34 @@ def load_attribute(entrypoint: str) -> Any:
         return getattr(importlib.import_module(module_name), attr)
     except (ImportError, AttributeError):
         raise AgentFailure("runtime_error", "entrypoint_not_found") from None
+
+
+def requires_context(target: Any) -> bool:
+    """Si `target` pide algún argumento obligatorio (el contexto del runtime):
+    una fábrica sin argumentos se llama sin él."""
+    try:
+        parameters = inspect.signature(target).parameters.values()
+    except (TypeError, ValueError):
+        return True
+    positional = (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+    return any(p.default is inspect.Parameter.empty and p.kind in positional for p in parameters)
+
+
+async def _awaited(value: Any) -> Any:
+    return await value
+
+
+def entry_value(target: Any, context: Any, *, ready_attributes: Sequence[str]) -> Any:
+    """El agente que describe un `entrypoint`: el propio objeto si ya lo es
+    (tiene alguno de `ready_attributes`, como un grafo compilado), el resultado
+    de llamar a una fábrica (con el contexto si lo pide, sin él si no) y, si
+    esa fábrica es `async`, lo que resuelve. Lo demás es `invalid_entrypoint`."""
+    if any(hasattr(target, name) for name in ready_attributes):
+        return target
+    if not callable(target):
+        raise AgentFailure("runtime_error", "invalid_entrypoint")
+    built = target(context) if requires_context(target) else target()
+    return asyncio.run(_awaited(built)) if inspect.isawaitable(built) else built
 
 
 def detail_code_of(exc: BaseException) -> str:

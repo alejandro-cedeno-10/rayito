@@ -35,7 +35,7 @@ function asTable(value: unknown): Table {
     : {};
 }
 
-function failure(path: string, code: "missing_key" | "not_detected" | "ambiguous", text: string) {
+function failure(path: string, code: "missing_key" | "not_detected", text: string) {
   return new AgentProjectError(`${path}: ${text}`, { path, code });
 }
 
@@ -125,9 +125,8 @@ function modelTables(
   region: string | undefined,
   bridge: BridgeRules,
 ): [Table, Table] {
-  const presets = [...new Set(report.providers.map((provider) => provider.preset))].sort();
-  const [preset] = presets;
-  if (preset === undefined) {
+  const [provider] = report.providers;
+  if (provider === undefined) {
     throw failure(
       MODEL_PATH,
       "not_detected",
@@ -135,14 +134,7 @@ function modelTables(
         "rayito-agent.toml (rayito agent detect --write)",
     );
   }
-  if (presets.length > 1) {
-    throw failure(
-      MODEL_PATH,
-      "ambiguous",
-      `el proyecto usa varios proveedores de modelo (${presets.join(", ")}): elige uno ` +
-        "escribiendo [model] y [gateways] en rayito-agent.toml",
-    );
-  }
+  const preset = provider.preset;
   const [modelId] = report.models;
   if (modelId === undefined) {
     throw failure(

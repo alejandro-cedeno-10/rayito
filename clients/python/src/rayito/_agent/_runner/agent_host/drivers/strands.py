@@ -50,6 +50,7 @@ from ._common import (
     add_import_roots,
     classify_chain,
     decide,
+    entry_value,
     load_attribute,
     load_config,
     resolve_session_id,
@@ -58,6 +59,9 @@ from ._common import (
 #: `max_tokens` de `AnthropicModel`, que Strands exige (la API de Mensajes de
 #: Anthropic lo requiere en cada petición).
 ANTHROPIC_MAX_TOKENS: Final = 8192
+#: Lo que tiene un `Agent` de Strands ya construido (un `entrypoint` que es el
+#: agente y no una fábrica).
+AGENT_ATTRIBUTES: Final = ("stream_async",)
 #: Excepciones del propio Strands que son del modelo (sin importar su módulo).
 MODEL_EXCEPTION_NAMES: Final = frozenset(
     {"ModelThrottledException", "ContextWindowOverflowException", "MaxTokensReachedException"}
@@ -268,12 +272,11 @@ def _context(config: Mapping[str, Any], model: Any, session_id: str) -> SimpleNa
 
 
 def _entrypoint_agent(config: Mapping[str, Any], model: Any, session_id: str) -> Any:
-    target = load_attribute(str(config["entrypoint"]))
-    if hasattr(target, "stream_async"):
-        return target
-    if not callable(target):
-        raise AgentFailure("runtime_error", "invalid_entrypoint")
-    return target(_context(config, model, session_id))
+    return entry_value(
+        load_attribute(str(config["entrypoint"])),
+        _context(config, model, session_id),
+        ready_attributes=AGENT_ATTRIBUTES,
+    )
 
 
 def _default_agent(config: Mapping[str, Any], model: Any, session_id: str) -> Any:

@@ -117,22 +117,14 @@ def _gateway_table(
 def _model_tables(
     report: DetectionReport, name: str, region: str | None, bridge: Mapping[str, Any]
 ) -> tuple[dict[str, object], dict[str, object]]:
-    presets = sorted({provider.preset for provider in report.providers})
-    if not presets:
+    if not report.providers:
         raise _error(
             _MODEL_PATH,
             "not_detected",
             "no se detectó el proveedor del modelo: escribe [model] y [gateways] en "
             "rayito-agent.toml (rayito agent detect --write)",
         )
-    if len(presets) > 1:
-        raise _error(
-            _MODEL_PATH,
-            "ambiguous",
-            f"el proyecto usa varios proveedores de modelo ({', '.join(presets)}): "
-            "elige uno escribiendo [model] y [gateways] en rayito-agent.toml",
-        )
-    preset = presets[0]
+    preset = report.providers[0].preset
     if not report.models:
         raise _error(
             _MODEL_ID_PATH,

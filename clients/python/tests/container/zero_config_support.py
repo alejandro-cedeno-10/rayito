@@ -21,6 +21,7 @@ import sys
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Final
@@ -103,10 +104,21 @@ def docker_binary() -> str:
     return path
 
 
+STDERR_TAIL_CHARS: Final = 3000
+
+
 def run(*args: str, timeout: int = EXEC_TIMEOUT_SECONDS, stdin: str | None = None) -> str:
-    return subprocess.run(
-        args, check=True, capture_output=True, text=True, timeout=timeout, input=stdin
-    ).stdout.strip()
+    """Corre un comando; si falla, el error lleva el final de su salida de
+    error (el de un `docker build` es lo único que explica el fallo)."""
+    done = subprocess.run(
+        args, capture_output=True, text=True, timeout=timeout, input=stdin, check=False
+    )
+    if done.returncode != 0:
+        raise RuntimeError(
+            f"{args[1] if len(args) > 1 else args[0]} falló ({done.returncode}):\n"
+            f"{done.stderr[-STDERR_TAIL_CHARS:]}\n{done.stdout[-STDERR_TAIL_CHARS:]}"
+        )
+    return done.stdout.strip()
 
 
 def detected_project(sample: dict[str, Any]) -> AgentProject:
@@ -130,17 +142,48 @@ def _load_fake_upstream() -> Any:
     return fake_upstream
 
 
+H2C_FRONT: Final = PROVIDERS_DIR / "h2c_front.mjs"
+H2C_START_TIMEOUT_SECONDS: Final = 15
+
+
+@dataclass(frozen=True)
+class FakeBedrock:
+    """Los puertos del host donde contesta el Bedrock falso: `http1` siempre
+    y `h2c` si hay `node` (los ejemplos con `bedrockTransport: h2c`)."""
+
+    http1: int
+    h2c: int | None
+
+    def port_for(self, sample: dict[str, Any]) -> int:
+        if sample.get("bedrockTransport") == "h2c":
+            if self.h2c is None:
+                raise RuntimeError("este ejemplo necesita node para el front h2c")
+            return self.h2c
+        return self.http1
+
+
 @contextmanager
-def fake_bedrock() -> Iterator[int]:
-    """El Bedrock falso del entorno local en un puerto libre del host, para
-    que los contenedores lo alcancen por `RAYITO_ZC_ENDPOINT_HOST`."""
+def fake_bedrock() -> Iterator[FakeBedrock]:
+    """El Bedrock falso del entorno local en puertos libres del host, para que
+    los contenedores lo alcancen por `RAYITO_ZC_ENDPOINT_HOST`."""
     fake = _load_fake_upstream()
     server = ThreadingHTTPServer(("0.0.0.0", 0), fake.UpstreamHandler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
+    http1 = int(server.server_address[1])
+    node = shutil.which("node")
+    front = (
+        subprocess.Popen([node, str(H2C_FRONT), "0", str(http1)], stdout=subprocess.PIPE, text=True)
+        if node
+        else None
+    )
     try:
-        yield int(server.server_address[1])
+        h2c = None if front is None or front.stdout is None else int(front.stdout.readline())
+        yield FakeBedrock(http1=http1, h2c=h2c)
     finally:
+        if front is not None:
+            front.terminate()
+            front.wait(timeout=H2C_START_TIMEOUT_SECONDS)
         server.shutdown()
         server.server_close()
 

@@ -34,6 +34,7 @@ from .zero_config_support import (
     SERVICE_TOKEN,
     SLOW_SECONDS,
     Container,
+    FakeBedrock,
     detected_project,
     docker_binary,
     endpoint_url,
@@ -62,7 +63,7 @@ def docker() -> str:
 
 
 @pytest.fixture(scope="module")
-def bedrock() -> Iterator[int]:
+def bedrock() -> Iterator[FakeBedrock]:
     with fake_bedrock() as port:
         yield port
 
@@ -77,7 +78,7 @@ def wait_ready(container: Container) -> None:
             status, _ = container.call("/invocations", {"prompt": "hola"}, timeout=60)
             if status == 200:
                 return
-        except subprocess.CalledProcessError:
+        except RuntimeError:
             pass
         if time.monotonic() >= deadline:
             raise AssertionError(f"el agente no quedó listo:\n{container.logs()[-2000:]}")
@@ -88,7 +89,7 @@ def wait_ready(container: Container) -> None:
 def container(
     request: pytest.FixtureRequest,
     docker: str,
-    bedrock: int,
+    bedrock: FakeBedrock,
     tmp_path_factory: pytest.TempPathFactory,
 ) -> Iterator[tuple[dict[str, Any], Container]]:
     sample = SAMPLES[request.param]
@@ -109,7 +110,7 @@ def container(
     run(
         docker, "run", "-d", "--rm", "--name", name, "--platform", "linux/arm64",
         "-e", f"RAYITO_AGENT_SERVICE_TOKEN={SERVICE_TOKEN}",
-        "-e", f"AWS_ENDPOINT_URL_BEDROCK_RUNTIME={endpoint_url(bedrock)}",
+        "-e", f"AWS_ENDPOINT_URL_BEDROCK_RUNTIME={endpoint_url(bedrock.port_for(sample))}",
         "-e", f"AWS_BEARER_TOKEN_BEDROCK={PLACEHOLDER_KEY}",
         tag,
     )  # fmt: skip
@@ -159,7 +160,7 @@ def test_a_custom_http_app_keeps_its_own_routes(
     app = sample.get("app")
     if app is None or sample["expected"]["protocol"] != "json":
         pytest.skip("no es una app HTTP con el protocolo json")
-    status, body = handle.call(app["health"], auth=False)
+    status, body = handle.call(app["health"])
     assert status == 200, body
     status, body = handle.call(app["invoke"], {app["requestField"]: PROMPT})
     assert status == 200, body
@@ -193,7 +194,7 @@ def test_the_host_restarts_an_app_that_dies(container: tuple[dict[str, Any], Con
             status, body = handle.call("/ping", auth=False, timeout=10)
             if status == 200 and json.loads(body).get("status") == "Healthy":
                 break
-        except subprocess.CalledProcessError:
+        except RuntimeError:
             pass
         time.sleep(POLL_SECONDS)
     else:
