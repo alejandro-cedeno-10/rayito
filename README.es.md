@@ -240,7 +240,7 @@ coste de un agente (VM frente a tokens del modelo), en
 
 ## Estado
 
-**Alfa, serie 0.12** ([Licencia, estado y soporte](#licencia-estado-y-soporte)).
+**Alfa, serie 0.13** ([Licencia, estado y soporte](#licencia-estado-y-soporte)).
 Los SDK de Python y TypeScript y `rayd` avanzan en lockstep de
 `MAJOR.MINOR`: cada SDK exige una imagen construida con el `rayd` de su
 misma serie, y `rayito doctor` lo comprueba (tabla en

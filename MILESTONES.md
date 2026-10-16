@@ -1955,6 +1955,73 @@ release `rayd-v0.12.0` (`rayito image publish --base-image-version 1`),
 
 ---
 
+## 0.13.0 — CLI, servidor MCP y panel local en TypeScript (2026-10-16)
+
+Publicada el 2026-10-16 en PyPI, npm y la GitHub Release `rayd-v0.13.0`
+(firmas de cosign, attestations de PyPI y proveniencia de npm verificadas con
+`docs/site/docs/verify.md`). El cambio OpenSpec `typescript-cli-tools` se
+archivó tras esta aceptación. Sigue abierto `m15-custom-domain` (ver 0.7.0).
+
+- **CLI `rayito` en TypeScript** (ADR-027, fases 1 a 5): el ejecutable
+  `rayito` del paquete npm (`npx rayito ...`) con la misma superficie, salida
+  y códigos de salida que la de Python: `doctor`, `template`, `agent
+  template`, `events`, `domain`, `stack`, `image publish|prune|zip`,
+  `sandbox` (con `connect` y `create` en una terminal real y `sandbox proxy`)
+  y `dashboard cloudwatch`. Los contratos puros (formato, compatibilidad,
+  vectores del proxy, planes de `image`) se comparten con Python en
+  `testdata/` y los ejecutan las dos CLI.
+- **Servidor MCP `rayito-mcp` en TypeScript** (fase 6): las mismas seis
+  herramientas, anotaciones y variables que el de Python, por stdio y con
+  `--http`; `@modelcontextprotocol/server` y `zod` son peers opcionales.
+- **Panel local en TypeScript** (fases 7 y 8): `npx rayito dashboard` sirve la
+  misma SPA y el mismo contrato `/api/v1` que el de Python, con las mismas
+  defensas y de sólo lectura por defecto.
+- **Documentación en español e inglés** (i18n) y pestañas Python y TypeScript
+  en la CLI, MCP y el panel (fase 9, #229).
+- **`rayito --version`** en las dos CLI (`rayito 0.13.0 (python)` o
+  `(node)`), y la CLI escribe siempre los instantes en UTC.
+- **`rayito sandbox proxy`** recorta sólo `OWS` y valida el tamaño de trozo
+  antes de reenviarlo (ADR-027), con los mismos vectores en las dos CLI.
+- **Fila 0.13 de compatibilidad** en `rayito doctor` y en `limits.md`.
+
+**Aceptación de la release (2026-10-16, cuenta de pruebas, us-east-1)**,
+sobre el árbol del PR de release, con `rayd` 0.13.0 compilado en la VM Linux
+e imágenes desechables propias de cada carril (base, caps, poly y caps con
+EFS, en Python y en TypeScript):
+
+- Python: la regresión completa, corpus de E2B incluido, 114 passed en la
+  primera pasada. Los 7 fallos y 12 errores eran de la configuración de la
+  ejecución, no del código: un prefijo de staging de S3 que se solapaba con el
+  espacio de artefactos `rayito`, los permisos del bucket de staging y una
+  sesión SSO caducada. Repetidos esos tests con la configuración corregida:
+  26 passed.
+- TypeScript: 114 passed en la primera pasada; los 13 fallos eran el mismo
+  prefijo de staging y, repetidos, 14 passed.
+- La CLI y el panel de TypeScript contra AWS real: `doctor --launch` sobre las
+  cuatro imágenes, servidor MCP por stdio, panel local (todas las rutas de
+  lectura en 200 y la acción rechazada en sólo lectura) y la comparación de
+  salida entre las dos CLI (24 de 26 órdenes idénticas; las dos que difieren
+  son la sintaxis de ejemplo propia de cada lenguaje en una descripción y las
+  mediciones de tiempo de `doctor`).
+- Lo que cuesta sigue apagado por defecto: un `create()` sin opciones sólo
+  llama a `lambda-microvms` y STS, en Python y en TypeScript.
+- Coste: sólo imágenes desechables, MicroVM-segundos y las pilas opcionales
+  de las pruebas, todo borrado al terminar; Cost Explorer llega con
+  retraso, así que la cifra facturada no está todavía.
+- Limpieza: sólo se borró lo creado por cada ejecución; el inventario final
+  no tiene nada de los prefijos de la release.
+
+**Imagen publicada (2026-10-16)**: `rayito-base` **37.0** desde el zip de la
+release `rayd-v0.13.0` (`rayito image publish --base-image-version 1`),
+`SUCCESSFUL` y `ACTIVE`, construida en unos 216 s. `rayito doctor --launch`
+sobre ella termina 9 OK / 1 WARN / 0 FAIL / 0 SKIP (el WARN es la simulación
+IAM orientativa), con `rayd` 0.13.0 `agent_ready` y la comprobación de
+compatibilidad en verde (una primera ejecución dio un FAIL puntual, sin
+causa registrada, que no se repitió en las tres siguientes). La 36.0 se queda
+como estaba.
+
+---
+
 ## Orden de trabajo dentro de cada hito
 
 1. Escribir el test de aceptación primero. Debe fallar.

@@ -16,7 +16,7 @@ Acknowledgement within 7 days and a fix or mitigation within 90; there is no
 bounty program.
 
 **Supported versions**: only the latest `MAJOR.MINOR` line, today
-**0.12.x** (Python and TypeScript SDKs, and an image with `rayd` 0.12.x);
+**0.13.x** (Python and TypeScript SDKs, and an image with `rayd` 0.13.x);
 while the project is 0.x there are no maintenance branches for earlier lines
 ([Versioning and support](limits.md#versionado-y-soporte),
 [SDK ↔ rayd ↔ image compatibility](limits.md#compatibilidad-sdk-rayd-imagen)).

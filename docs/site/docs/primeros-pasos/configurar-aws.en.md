@@ -121,7 +121,7 @@ release, without building anything:
 === "From the release (recommended)"
 
     ```bash
-    RAYD_VERSION=0.12.0     # the same version as your SDK: python -c "import rayito; print(rayito.__version__)"  (TypeScript: npm ls rayito)
+    RAYD_VERSION=0.13.0     # the same version as your SDK: python -c "import rayito; print(rayito.__version__)"  (TypeScript: npm ls rayito)
     BASE=https://github.com/alejandro-cedeno-10/rayito/releases/download/rayd-v${RAYD_VERSION}
     curl -fsSLO "$BASE/rayito-image.zip"
     curl -fsSLO "$BASE/rayito-image.zip.sigstore.json"    # its Sigstore signature
