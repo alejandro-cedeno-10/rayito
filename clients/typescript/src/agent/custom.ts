@@ -45,8 +45,8 @@ import { createHash } from "node:crypto";
 import { InvalidArgumentError } from "../errors.js";
 import {
   AGENT_DEFAULT_NODE_MAJOR,
-  AGENT_NODE_SHA256S,
-  AGENT_NODE_VERSIONS,
+  AGENT_NODE_BUILD_SHA256,
+  AGENT_NODE_BUILD_VERSIONS,
   AGENT_PROTOCOL_VERSION,
   AGENT_SERVICE_HEALTH_PATH,
   AGENT_SERVICE_INVOKE_PATH,
@@ -706,8 +706,8 @@ export class CustomRuntime extends HostBackedRuntime implements InstallableRunti
     }
     if (this.#node) {
       const major = this.nodeVersion ?? AGENT_DEFAULT_NODE_MAJOR;
-      entry.node_version = AGENT_NODE_VERSIONS[major];
-      entry.node_sha256 = AGENT_NODE_SHA256S[major];
+      entry.node_version = AGENT_NODE_BUILD_VERSIONS[major];
+      entry.node_sha256 = AGENT_NODE_BUILD_SHA256[major];
     }
     return entry;
   }

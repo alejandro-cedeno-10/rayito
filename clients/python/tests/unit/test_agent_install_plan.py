@@ -18,9 +18,9 @@ from rayito._agent._runtime import InstallTarget
 from rayito._limits import (
     AGENT_DEFAULT_NODE_MAJOR,
     AGENT_DEFAULT_PYTHON_MINOR,
-    AGENT_NODE_SHA256S,
-    AGENT_NODE_VERSIONS,
-    AGENT_PYTHON_BUILD_SHA256S,
+    AGENT_NODE_BUILD_SHA256,
+    AGENT_NODE_BUILD_VERSIONS,
+    AGENT_PYTHON_BUILD_SHA256,
     AGENT_PYTHON_BUILD_VERSIONS,
 )
 from rayito.exceptions import InvalidArgumentException
@@ -76,22 +76,22 @@ def test_the_plan_matches_the_shared_vectors(case: dict[str, Any]) -> None:
 
 
 def test_every_pinned_build_has_a_version_and_a_sha256() -> None:
-    assert set(AGENT_PYTHON_BUILD_VERSIONS) == set(AGENT_PYTHON_BUILD_SHA256S)
-    assert set(AGENT_NODE_VERSIONS) == set(AGENT_NODE_SHA256S)
-    assert AGENT_DEFAULT_NODE_MAJOR in AGENT_NODE_VERSIONS
+    assert set(AGENT_PYTHON_BUILD_VERSIONS) == set(AGENT_PYTHON_BUILD_SHA256)
+    assert set(AGENT_NODE_BUILD_VERSIONS) == set(AGENT_NODE_BUILD_SHA256)
+    assert AGENT_DEFAULT_NODE_MAJOR in AGENT_NODE_BUILD_VERSIONS
     assert AGENT_DEFAULT_PYTHON_MINOR in AGENT_PYTHON_BUILD_VERSIONS
     for minor, version in AGENT_PYTHON_BUILD_VERSIONS.items():
         assert version.startswith(f"{minor}.")
-    for major, version in AGENT_NODE_VERSIONS.items():
+    for major, version in AGENT_NODE_BUILD_VERSIONS.items():
         assert version.startswith(f"{major}.")
-    for digest in (*AGENT_PYTHON_BUILD_SHA256S.values(), *AGENT_NODE_SHA256S.values()):
+    for digest in (*AGENT_PYTHON_BUILD_SHA256.values(), *AGENT_NODE_BUILD_SHA256.values()):
         assert len(digest) == 64
 
 
 def test_hermes_uses_the_shared_pinned_python() -> None:
     steps = HermesRuntime().install_steps(InstallTarget())
     command = str(steps[0].args["cmd"])
-    assert AGENT_PYTHON_BUILD_SHA256S[HERMES_PYTHON_MINOR] in command
+    assert AGENT_PYTHON_BUILD_SHA256[HERMES_PYTHON_MINOR] in command
     assert f"cpython-{AGENT_PYTHON_BUILD_VERSIONS[HERMES_PYTHON_MINOR]}%2B" in command
 
 

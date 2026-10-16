@@ -79,8 +79,8 @@ from rayito._agent._recipes import (
 from rayito._agent._runtime import InstallTarget, TemplateStep, copy_step, run_step
 from rayito._limits import (
     AGENT_DEFAULT_NODE_MAJOR,
-    AGENT_NODE_SHA256S,
-    AGENT_NODE_VERSIONS,
+    AGENT_NODE_BUILD_SHA256,
+    AGENT_NODE_BUILD_VERSIONS,
     AGENT_PROTOCOL_VERSION,
     AGENT_SERVICE_HEALTH_PATH,
     AGENT_SERVICE_INVOKE_PATH,
@@ -569,8 +569,8 @@ class CustomRuntime(HostBackedRuntime):
             entry["python_version"] = self.python_version
         if self._node:
             major = self.node_version or AGENT_DEFAULT_NODE_MAJOR
-            entry["node_version"] = AGENT_NODE_VERSIONS[major]
-            entry["node_sha256"] = AGENT_NODE_SHA256S[major]
+            entry["node_version"] = AGENT_NODE_BUILD_VERSIONS[major]
+            entry["node_sha256"] = AGENT_NODE_BUILD_SHA256[major]
         return entry
 
     def host_setup_driver(self) -> str:

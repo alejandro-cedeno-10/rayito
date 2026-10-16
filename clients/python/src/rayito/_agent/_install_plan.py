@@ -16,7 +16,7 @@ Reglas:
   base (`AGENT_DEFAULT_PYTHON_MINOR`), no se descarga nada. Con otra, se
   baja el tarball `install_only` de python-build-standalone (linux arm64)
   de `AGENT_PYTHON_BUILD_VERSIONS` y se comprueba su sha256.
-- Node: tarball oficial de nodejs.org (linux arm64) de `AGENT_NODE_VERSIONS`
+- Node: tarball oficial de nodejs.org (linux arm64) de `AGENT_NODE_BUILD_VERSIONS`
   con su sha256; `pnpm` y `yarn` se instalan con `npm install -g
   --ignore-scripts` a la versión fijada.
 - Un lockfile ausente no se inventa: `npm ci`, `pnpm install
@@ -34,15 +34,15 @@ from rayito._agent._runtime import InstallTarget, TemplateStep, copy_step, run_s
 from rayito._limits import (
     AGENT_DEFAULT_NODE_MAJOR,
     AGENT_DEFAULT_PYTHON_MINOR,
-    AGENT_NODE_SHA256S,
-    AGENT_NODE_VERSIONS,
+    AGENT_NODE_BUILD_SHA256,
+    AGENT_NODE_BUILD_VERSIONS,
     AGENT_PNPM_VERSION,
-    AGENT_PYTHON_BUILD_SHA256S,
+    AGENT_PYTHON_BUILD_SHA256,
     AGENT_PYTHON_BUILD_TAG,
     AGENT_PYTHON_BUILD_VERSIONS,
     AGENT_UV_SHA256,
     AGENT_UV_VERSION,
-    AGENT_YARN_VERSION,
+    AGENT_YARN_CLASSIC_VERSION,
 )
 from rayito.exceptions import InvalidArgumentException
 
@@ -132,9 +132,9 @@ def check_python_version(version: str) -> str:
 
 def check_node_version(version: str) -> str:
     """`version` (la mayor de Node, `22`) si hay un build fijado."""
-    if version not in AGENT_NODE_VERSIONS:
+    if version not in AGENT_NODE_BUILD_VERSIONS:
         raise InvalidArgumentException(
-            f"node_version debe ser una de {sorted(AGENT_NODE_VERSIONS)}, recibida {version!r}"
+            f"node_version debe ser una de {sorted(AGENT_NODE_BUILD_VERSIONS)}, recibida {version!r}"
         )
     return version
 
@@ -149,7 +149,7 @@ def python_download_command(minor: str, parent_dir: str, tarball_path: str) -> s
     return (
         f"mkdir -p {parent_dir}"
         f" && curl -fsSL --retry 3 -o {tarball_path} {url}"
-        f" && echo '{AGENT_PYTHON_BUILD_SHA256S[minor]}  {tarball_path}' | sha256sum -c -"
+        f" && echo '{AGENT_PYTHON_BUILD_SHA256[minor]}  {tarball_path}' | sha256sum -c -"
         f" && tar -xzf {tarball_path} -C {parent_dir}"
         f" && rm -f {tarball_path}"
     )
@@ -289,14 +289,14 @@ def node_runtime_steps(target: InstallTarget, node_version: str | None) -> list[
     """Node (tarball oficial linux arm64, sha256 fijado) en
     `install_dir/node`, con `node` enlazado en `/usr/local/bin`."""
     major = check_node_version(node_version or AGENT_DEFAULT_NODE_MAJOR)
-    version = AGENT_NODE_VERSIONS[major]
+    version = AGENT_NODE_BUILD_VERSIONS[major]
     archive = f"node-v{version}-linux-arm64.tar.gz"
     directory = node_directory(target)
     steps = list(container_packages_step(target, DOWNLOAD_PACKAGES))
     steps.append(
         run_step(
             f"curl -fsSL --retry 3 -o {NODE_TARBALL_PATH} {NODE_DIST_URL}/v{version}/{archive}"
-            f" && echo '{AGENT_NODE_SHA256S[major]}  {NODE_TARBALL_PATH}' | sha256sum -c -"
+            f" && echo '{AGENT_NODE_BUILD_SHA256[major]}  {NODE_TARBALL_PATH}' | sha256sum -c -"
             f" && mkdir -p {directory}"
             f" && tar -xzf {NODE_TARBALL_PATH} -C {directory} --strip-components=1"
             f" && rm -f {NODE_TARBALL_PATH}"
@@ -321,7 +321,7 @@ _NODE_INSTALL_COMMANDS: Final[dict[str, str]] = {
 }
 _NODE_MANAGER_VERSIONS: Final[dict[str, str]] = {
     "pnpm": AGENT_PNPM_VERSION,
-    "yarn": AGENT_YARN_VERSION,
+    "yarn": AGENT_YARN_CLASSIC_VERSION,
 }
 
 

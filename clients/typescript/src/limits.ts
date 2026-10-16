@@ -428,13 +428,13 @@ export const AGENT_NODE_BUILD_SHA256: Readonly<Record<string, string>> = {
   "22": "5ced2d48d1d7198739b7f86804de0171aefb6823b684b12341d3321afc3cb0b2",
   "24": "b7e7991d5407815adfa74a2a9cd4db683552c8ce32ff4a295c22e972849c3f5d",
 };
-export const AGENT_DEFAULT_NODE_MAJOR = 22 as const;
+export const AGENT_DEFAULT_NODE_MAJOR = "22" as const;
 export const AGENT_UV_VERSION = "0.13.1" as const;
 export const AGENT_UV_SHA256 =
   "9041c73c99fdc5892cf128140beb354eca9231d502068cc36e6cb53a8e59ad14" as const;
-export const AGENT_PNPM_VERSION = "10.34.7" as const;
+export const AGENT_PNPM_VERSION = "12.14.0" as const;
 export const AGENT_PNPM_INTEGRITY =
-  "sha512-upirxYVTmTM3W1lx9LxtbHOhtLftxKh559EC/lQj0eAjCdZ8YKEfBJVQk6luUhrZw7E4zdZUylvlY/N4s65IvQ==" as const;
+  "sha512-wYum2HmT09Fky16JSPMrLAbuhUSH4GzY2GeBNC+z5btGNDZwNHEehoArqpw3vqkGzhkprQjXCITJfYAd8TOJpg==" as const;
 export const AGENT_YARN_CLASSIC_VERSION = "1.22.22" as const;
 export const AGENT_YARN_CLASSIC_INTEGRITY =
   "sha512-prL3kGtyG7o9Z9Sv8IPfBNrWTDmXB4Qbes8A9rEzt6wkJV8mUvoirjU0Mp3GGAU06Y0XQyA3/2/RQFVuK7MTfg==" as const;

@@ -22,15 +22,15 @@ import { InvalidArgumentError } from "../errors.js";
 import {
   AGENT_DEFAULT_NODE_MAJOR,
   AGENT_DEFAULT_PYTHON_MINOR,
-  AGENT_NODE_SHA256S,
-  AGENT_NODE_VERSIONS,
+  AGENT_NODE_BUILD_SHA256,
+  AGENT_NODE_BUILD_VERSIONS,
   AGENT_PNPM_VERSION,
-  AGENT_PYTHON_BUILD_SHA256S,
+  AGENT_PYTHON_BUILD_SHA256,
   AGENT_PYTHON_BUILD_TAG,
   AGENT_PYTHON_BUILD_VERSIONS,
   AGENT_UV_SHA256,
   AGENT_UV_VERSION,
-  AGENT_YARN_VERSION,
+  AGENT_YARN_CLASSIC_VERSION,
 } from "../limits.js";
 import { containerPackagesStep, userRequirementsSteps } from "./host-runtime.js";
 import { copyStep, type InstallTarget, runStep, type TemplateStep } from "./runtime.js";
@@ -81,7 +81,7 @@ const NODE_INSTALL_COMMANDS: Readonly<Record<NodePackageManager, string>> = {
 };
 const NODE_MANAGER_VERSIONS: Readonly<Partial<Record<NodePackageManager, string>>> = {
   pnpm: AGENT_PNPM_VERSION,
-  yarn: AGENT_YARN_VERSION,
+  yarn: AGENT_YARN_CLASSIC_VERSION,
 };
 
 const REQUIREMENTS_PATH_PATTERN = /^[A-Za-z0-9_][A-Za-z0-9_./-]*$/;
@@ -138,9 +138,9 @@ export function checkPythonVersion(version: string): string {
 
 /** `version` (la mayor de Node, `22`) si hay un build fijado. */
 export function checkNodeVersion(version: string): string {
-  if (!(version in AGENT_NODE_VERSIONS)) {
+  if (!(version in AGENT_NODE_BUILD_VERSIONS)) {
     throw new InvalidArgumentError(
-      `node_version debe ser una de ${JSON.stringify(Object.keys(AGENT_NODE_VERSIONS).sort())}, recibida ${JSON.stringify(version)}`,
+      `node_version debe ser una de ${JSON.stringify(Object.keys(AGENT_NODE_BUILD_VERSIONS).sort())}, recibida ${JSON.stringify(version)}`,
     );
   }
   return version;
@@ -160,7 +160,7 @@ export function pythonDownloadCommand(
   return (
     `mkdir -p ${parentDir}` +
     ` && curl -fsSL --retry 3 -o ${tarballPath} ${url}` +
-    ` && echo '${AGENT_PYTHON_BUILD_SHA256S[minor]}  ${tarballPath}' | sha256sum -c -` +
+    ` && echo '${AGENT_PYTHON_BUILD_SHA256[minor]}  ${tarballPath}' | sha256sum -c -` +
     ` && tar -xzf ${tarballPath} -C ${parentDir}` +
     ` && rm -f ${tarballPath}`
   );
@@ -327,14 +327,14 @@ export function nodeRuntimeSteps(
   nodeVersion?: string,
 ): readonly TemplateStep[] {
   const major = checkNodeVersion(nodeVersion ?? AGENT_DEFAULT_NODE_MAJOR);
-  const version = AGENT_NODE_VERSIONS[major];
+  const version = AGENT_NODE_BUILD_VERSIONS[major];
   const archive = `node-v${version}-linux-arm64.tar.gz`;
   const directory = nodeDirectory(target);
   return [
     ...containerPackagesStep(target, DOWNLOAD_PACKAGES),
     runStep(
       `curl -fsSL --retry 3 -o ${NODE_TARBALL_PATH} ${NODE_DIST_URL}/v${version}/${archive}` +
-        ` && echo '${AGENT_NODE_SHA256S[major]}  ${NODE_TARBALL_PATH}' | sha256sum -c -` +
+        ` && echo '${AGENT_NODE_BUILD_SHA256[major]}  ${NODE_TARBALL_PATH}' | sha256sum -c -` +
         ` && mkdir -p ${directory}` +
         ` && tar -xzf ${NODE_TARBALL_PATH} -C ${directory} --strip-components=1` +
         ` && rm -f ${NODE_TARBALL_PATH}` +

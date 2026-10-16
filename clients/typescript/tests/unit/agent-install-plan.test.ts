@@ -26,9 +26,9 @@ import { InvalidArgumentError } from "../../src/errors.js";
 import {
   AGENT_DEFAULT_NODE_MAJOR,
   AGENT_DEFAULT_PYTHON_MINOR,
-  AGENT_NODE_SHA256S,
-  AGENT_NODE_VERSIONS,
-  AGENT_PYTHON_BUILD_SHA256S,
+  AGENT_NODE_BUILD_SHA256,
+  AGENT_NODE_BUILD_VERSIONS,
+  AGENT_PYTHON_BUILD_SHA256,
   AGENT_PYTHON_BUILD_VERSIONS,
 } from "../../src/limits.js";
 
@@ -96,20 +96,20 @@ describe("install plan vectors", () => {
 describe("pinned builds", () => {
   test("every pinned build has a version and a sha256", () => {
     expect(Object.keys(AGENT_PYTHON_BUILD_VERSIONS).sort()).toEqual(
-      Object.keys(AGENT_PYTHON_BUILD_SHA256S).sort(),
+      Object.keys(AGENT_PYTHON_BUILD_SHA256).sort(),
     );
-    expect(Object.keys(AGENT_NODE_VERSIONS).sort()).toEqual(Object.keys(AGENT_NODE_SHA256S).sort());
-    expect(AGENT_DEFAULT_NODE_MAJOR in AGENT_NODE_VERSIONS).toBe(true);
+    expect(Object.keys(AGENT_NODE_BUILD_VERSIONS).sort()).toEqual(Object.keys(AGENT_NODE_BUILD_SHA256).sort());
+    expect(AGENT_DEFAULT_NODE_MAJOR in AGENT_NODE_BUILD_VERSIONS).toBe(true);
     expect(AGENT_DEFAULT_PYTHON_MINOR in AGENT_PYTHON_BUILD_VERSIONS).toBe(true);
     for (const [minor, version] of Object.entries(AGENT_PYTHON_BUILD_VERSIONS)) {
       expect(version.startsWith(`${minor}.`)).toBe(true);
     }
-    for (const [major, version] of Object.entries(AGENT_NODE_VERSIONS)) {
+    for (const [major, version] of Object.entries(AGENT_NODE_BUILD_VERSIONS)) {
       expect(version.startsWith(`${major}.`)).toBe(true);
     }
     for (const digest of [
-      ...Object.values(AGENT_PYTHON_BUILD_SHA256S),
-      ...Object.values(AGENT_NODE_SHA256S),
+      ...Object.values(AGENT_PYTHON_BUILD_SHA256),
+      ...Object.values(AGENT_NODE_BUILD_SHA256),
     ]) {
       expect(digest).toHaveLength(64);
     }
@@ -118,7 +118,7 @@ describe("pinned builds", () => {
   test("Hermes uses the shared pinned Python", () => {
     const [first] = new HermesRuntime().installSteps(installTarget());
     const command = String(first?.args?.cmd);
-    expect(command).toContain(AGENT_PYTHON_BUILD_SHA256S[HERMES_PYTHON_MINOR]);
+    expect(command).toContain(AGENT_PYTHON_BUILD_SHA256[HERMES_PYTHON_MINOR]);
     expect(command).toContain(`cpython-${AGENT_PYTHON_BUILD_VERSIONS[HERMES_PYTHON_MINOR]}%2B`);
   });
 });

@@ -26,7 +26,7 @@ import {
   AGENT_HERMES_REQUIREMENTS_SHA256,
   AGENT_HERMES_VERSION,
   AGENT_PROTOCOL_VERSION,
-  AGENT_PYTHON_BUILD_SHA256S,
+  AGENT_PYTHON_BUILD_SHA256,
   AGENT_PYTHON_BUILD_VERSIONS,
   AGENT_STATE_DIR,
   MODEL_CREDENTIAL_PLACEHOLDER,
@@ -336,7 +336,7 @@ export class HermesRuntime extends HostBackedRuntime implements InstallableRunti
       version: AGENT_HERMES_VERSION,
       commit: AGENT_HERMES_COMMIT,
       python_version: AGENT_PYTHON_BUILD_VERSIONS[HERMES_PYTHON_MINOR],
-      python_sha256: AGENT_PYTHON_BUILD_SHA256S[HERMES_PYTHON_MINOR],
+      python_sha256: AGENT_PYTHON_BUILD_SHA256[HERMES_PYTHON_MINOR],
       requirements_sha256: AGENT_HERMES_REQUIREMENTS_SHA256,
       requirements_file_sha256: createHash("sha256")
         .update(hermesRequirements(), "utf8")

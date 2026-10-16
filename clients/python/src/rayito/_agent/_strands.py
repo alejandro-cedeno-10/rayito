@@ -70,8 +70,8 @@ from rayito._agent._runtime import (
 )
 from rayito._limits import (
     AGENT_DEFAULT_NODE_MAJOR,
-    AGENT_NODE_SHA256S,
-    AGENT_NODE_VERSIONS,
+    AGENT_NODE_BUILD_SHA256,
+    AGENT_NODE_BUILD_VERSIONS,
     AGENT_PROTOCOL_VERSION,
     AGENT_STATE_DIR,
     AGENT_STRANDS_HARNESS_REQUIREMENTS_SHA256,
@@ -450,8 +450,8 @@ class StrandsRuntime(HostBackedRuntime):
             major = self.node_version or AGENT_DEFAULT_NODE_MAJOR
             return {
                 "language": "typescript",
-                "node_version": AGENT_NODE_VERSIONS[major],
-                "node_sha256": AGENT_NODE_SHA256S[major],
+                "node_version": AGENT_NODE_BUILD_VERSIONS[major],
+                "node_sha256": AGENT_NODE_BUILD_SHA256[major],
                 "tested_sdk_version": AGENT_STRANDS_TS_VERSION,
                 "tested_harness_version": AGENT_STRANDS_TS_HARNESS_VERSION,
                 "bridge_sha256": hashlib.sha256(node_bridge()).hexdigest(),
