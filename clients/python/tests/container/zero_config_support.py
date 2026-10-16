@@ -21,7 +21,6 @@ import sys
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Final
@@ -142,48 +141,17 @@ def _load_fake_upstream() -> Any:
     return fake_upstream
 
 
-H2C_FRONT: Final = PROVIDERS_DIR / "h2c_front.mjs"
-H2C_START_TIMEOUT_SECONDS: Final = 15
-
-
-@dataclass(frozen=True)
-class FakeBedrock:
-    """Los puertos del host donde contesta el Bedrock falso: `http1` siempre
-    y `h2c` si hay `node` (los ejemplos con `bedrockTransport: h2c`)."""
-
-    http1: int
-    h2c: int | None
-
-    def port_for(self, sample: dict[str, Any]) -> int:
-        if sample.get("bedrockTransport") == "h2c":
-            if self.h2c is None:
-                raise RuntimeError("este ejemplo necesita node para el front h2c")
-            return self.h2c
-        return self.http1
-
-
 @contextmanager
-def fake_bedrock() -> Iterator[FakeBedrock]:
-    """El Bedrock falso del entorno local en puertos libres del host, para que
+def fake_bedrock() -> Iterator[int]:
+    """El Bedrock falso del entorno local en un puerto libre del host, para que
     los contenedores lo alcancen por `RAYITO_ZC_ENDPOINT_HOST`."""
     fake = _load_fake_upstream()
     server = ThreadingHTTPServer(("0.0.0.0", 0), fake.UpstreamHandler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
-    http1 = int(server.server_address[1])
-    node = shutil.which("node")
-    front = (
-        subprocess.Popen([node, str(H2C_FRONT), "0", str(http1)], stdout=subprocess.PIPE, text=True)
-        if node
-        else None
-    )
     try:
-        h2c = None if front is None or front.stdout is None else int(front.stdout.readline())
-        yield FakeBedrock(http1=http1, h2c=h2c)
+        yield int(server.server_address[1])
     finally:
-        if front is not None:
-            front.terminate()
-            front.wait(timeout=H2C_START_TIMEOUT_SECONDS)
         server.shutdown()
         server.server_close()
 

@@ -34,7 +34,6 @@ from .zero_config_support import (
     SERVICE_TOKEN,
     SLOW_SECONDS,
     Container,
-    FakeBedrock,
     detected_project,
     docker_binary,
     endpoint_url,
@@ -63,7 +62,7 @@ def docker() -> str:
 
 
 @pytest.fixture(scope="module")
-def bedrock() -> Iterator[FakeBedrock]:
+def bedrock() -> Iterator[int]:
     with fake_bedrock() as port:
         yield port
 
@@ -89,7 +88,7 @@ def wait_ready(container: Container) -> None:
 def container(
     request: pytest.FixtureRequest,
     docker: str,
-    bedrock: FakeBedrock,
+    bedrock: int,
     tmp_path_factory: pytest.TempPathFactory,
 ) -> Iterator[tuple[dict[str, Any], Container]]:
     sample = SAMPLES[request.param]
@@ -110,7 +109,7 @@ def container(
     run(
         docker, "run", "-d", "--rm", "--name", name, "--platform", "linux/arm64",
         "-e", f"RAYITO_AGENT_SERVICE_TOKEN={SERVICE_TOKEN}",
-        "-e", f"AWS_ENDPOINT_URL_BEDROCK_RUNTIME={endpoint_url(bedrock.port_for(sample))}",
+        "-e", f"AWS_ENDPOINT_URL_BEDROCK_RUNTIME={endpoint_url(bedrock)}",
         "-e", f"AWS_BEARER_TOKEN_BEDROCK={PLACEHOLDER_KEY}",
         tag,
     )  # fmt: skip

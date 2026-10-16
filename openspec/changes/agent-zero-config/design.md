@@ -106,10 +106,18 @@ Verified on 2026-10-16 by reading the published packages (versions
 | `@aws-sdk/client-bedrock-runtime` | yes (`fromEnvSigningName` for `bedrock`) | yes (standard endpoint configuration) |
 
 All four therefore reach the secrets gateway with the same two variables the
-Python providers use, with no code change in the agent. The local end-to-end
-suite repeats the check at run time against a fake Bedrock route. A provider
-that failed it would be reported by detection as `unsupported` with the
-one-line change, and never wired by giving the agent the key.
+Python providers use, with no code change in the agent. A second check at run
+time, against a fake Bedrock endpoint, found one transport difference: the AWS
+SDK for JavaScript (`@langchain/aws`, `@strands-agents/sdk` and the other
+clients that build on `@aws-sdk/client-bedrock-runtime`) speaks HTTP/2 in clear
+text to an `http://` endpoint, while `@ai-sdk/amazon-bedrock` uses `fetch` over
+HTTP/1.1, and the sandbox gateway serves HTTP/1.1. The Node bridge of the host
+therefore swaps the HTTP/2 request handler for the HTTP/1.1 one, which keeps the
+agent code unchanged. The local end-to-end suite builds every sample into a
+container and exercises that path against a scripted Bedrock; the AWS run
+confirms it through the real gateway. A provider that failed it would be
+reported by detection as `unsupported` with the one-line change, and never
+wired by giving the agent the key.
 
 ## Risks
 

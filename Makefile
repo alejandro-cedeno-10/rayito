@@ -1,4 +1,4 @@
-.PHONY: proto build test agent-runner-test agent-export-test test-python test-typescript test-sidecar test-e2e test-e2e-typescript test-bench lint lint-typescript limits agent-detection fmt image-zip image-publish dev-hooks dev-run clean test-scripts bench-cold-start image-zip-slim image-publish-slim docs wheel image-publish-caps image-prune infra-lint sbom image-zip-poly image-publish-poly image-zip-efs image-publish-caps-efs require-bucket release-pr docs-examples local-guest-context local-up local-e2e local-agent-up local-bedrock-key local-providers-up local-providers-e2e local-providers-smoke local-litellm-up local-litellm-down local-down licenses require-cargo-about image-licenses
+.PHONY: proto build test agent-runner-test agent-export-test agent-zero-config-test test-python test-typescript test-sidecar test-e2e test-e2e-typescript test-bench lint lint-typescript limits agent-detection fmt image-zip image-publish dev-hooks dev-run clean test-scripts bench-cold-start image-zip-slim image-publish-slim docs wheel image-publish-caps image-prune infra-lint sbom image-zip-poly image-publish-poly image-zip-efs image-publish-caps-efs require-bucket release-pr docs-examples local-guest-context local-up local-e2e local-agent-up local-bedrock-key local-providers-up local-providers-e2e local-providers-smoke local-litellm-up local-litellm-down local-down licenses require-cargo-about image-licenses
 
 TARGET        := aarch64-unknown-linux-musl
 # Directorio de compilación efectivo (respeta CARGO_TARGET_DIR) y CARGO_HOME:
@@ -232,6 +232,16 @@ agent-runner-test:
 # de ejemplo, sin modelo ni credenciales.
 agent-export-test:
 	cd $(PYTHON_CLIENT) && uv run pytest tests/container -m docker_export -p no:cacheprovider -v
+
+# Los quince agentes de ejemplo (testdata/agent-samples/) de la detección al
+# contenedor: cada uno se detecta, se exporta, se construye con el Docker del
+# host (linux/arm64) y se prueba contra el Bedrock falso del entorno local
+# (dev/local/providers/fake_bedrock.py): ping, invocación con herramienta, SSE,
+# cola y 429 y reinicio de la app. Sin AWS ni claves. RAYITO_ZC_SAMPLES=a,b
+# elige ejemplos y RAYITO_ZC_ENDPOINT_HOST el nombre del host visto desde el
+# contenedor (host.docker.internal por defecto).
+agent-zero-config-test:
+	cd $(PYTHON_CLIENT) && uv run pytest tests/container/test_agent_zero_config_container.py -m docker_export -p no:cacheprovider -v
 
 # Regenera _limits.py y limits.ts desde limits.json (fuente única de los
 # límites de la API que validan ambos SDKs).
