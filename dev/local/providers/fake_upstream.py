@@ -15,6 +15,9 @@ secretos y los dos runtimes sin claves reales ni Internet:
   Completions y Responses (con y sin `stream`) y `generateContent` /
   `streamGenerateContent` de Gemini (con y sin `alt=sse`). El texto es
   siempre `REPLY_TEXT`.
+- Con `fake_bedrock.py`, también `bedrock-runtime` (Converse y
+  ConverseStream, con un guion mínimo que llama a la herramienta `add`), para
+  los agentes de ejemplo.
 - En `ADMIN_PORT` (HTTP, sólo en la red `providers`) `GET /requests`
   devuelve lo recibido (método, host, ruta, cabeceras y cuerpo) y
   `DELETE /requests` lo vacía: los tests miran ahí qué cabecera llegó.
@@ -26,6 +29,7 @@ nada fuera de sus volúmenes ni llama a ningún sitio.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import ssl
 import subprocess
@@ -36,6 +40,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Final
 from urllib.parse import urlsplit
+
+import fake_bedrock
 
 CATALOGUE: Final = Path("/src/testdata/agent/provider-catalogue.json")
 TLS_DIR: Final = Path("/tls")
@@ -56,10 +62,21 @@ CHAT_COMPLETIONS: Final = "/chat/completions"
 RESPONSES: Final = "/responses"
 GEMINI_STREAM: Final = ":streamGenerateContent"
 GEMINI_UNARY: Final = ":generateContent"
+DEFAULT_REGION: Final = "us-east-1"
+BEDROCK_HOST_TEMPLATE: Final = "bedrock-runtime.{region}.amazonaws.com"
+
+
+def bedrock_host() -> str:
+    """El host de `bedrock-runtime` de la región del entorno local, que el
+    preset `bedrock_gateway` usa de upstream y que no está en el catálogo
+    porque lleva la región."""
+    region = os.environ.get("RAYITO_LOCAL_REGION") or DEFAULT_REGION
+    return BEDROCK_HOST_TEMPLATE.format(region=region)
 
 
 def catalogue_hosts() -> list[str]:
     hosts = {urlsplit(preset["upstream"]).hostname for preset in load_catalogue()["presets"]}
+    hosts.add(bedrock_host())
     return sorted(host for host in hosts if host)
 
 
@@ -300,7 +317,10 @@ class UpstreamHandler(BaseHTTPRequestHandler):
         path, query = url.path, url.query
         model = str(payload.get("model") or path.rsplit("/", 1)[-1].split(":", 1)[0])
         stream = bool(payload.get("stream"))
-        if path.endswith(CHAT_COMPLETIONS):
+        bedrock_kind = fake_bedrock.model_path_kind(path)
+        if bedrock_kind is not None:
+            self._bedrock(bedrock_kind, payload)
+        elif path.endswith(CHAT_COMPLETIONS):
             if stream:
                 self._sse([("", chunk) for chunk in chat_chunks(model)], done_marker=True)
             else:
@@ -319,6 +339,19 @@ class UpstreamHandler(BaseHTTPRequestHandler):
             self._json(gemini_response(model))
         else:
             self._json({"error": {"message": "ruta desconocida en el upstream falso"}}, 404)
+
+    def _bedrock(self, kind: str, payload: dict[str, Any]) -> None:
+        turn = fake_bedrock.turn_for(payload)
+        time.sleep(turn.delay_seconds)
+        if kind == "converse":
+            self._json(fake_bedrock.converse_response(turn))
+            return
+        data = fake_bedrock.encode_stream(turn)
+        self.send_response(200)
+        self.send_header("content-type", fake_bedrock.EVENT_STREAM_TYPE)
+        self.send_header("content-length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
 
     def _read_body(self) -> bytes:
         if self.headers.get("transfer-encoding", "").lower() == "chunked":
