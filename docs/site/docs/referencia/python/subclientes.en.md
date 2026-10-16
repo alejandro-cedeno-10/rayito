@@ -168,6 +168,40 @@ The runtimes that `AgentTemplate`, `Agent` and `AgentProject` accept. They insta
 
 ::: rayito.DeploymentStatus
 
+#### Zero-config deploy and fleets { #despliegue-sin-configuracion-y-flotas }
+
+`deploy_agent()` detects an agent project you already have, deploys it and returns an `AgentFleet`: several MicroVMs of the same image with the sessions spread across them ([Deploy your agent](../../guias/despliega-tu-agente.md#sin-escribir-nada), [Several sessions and several VMs](../../guias/flota-de-agentes.md)). They cost (images and MicroVMs) and do nothing until you call them; `plan_deploy()` and `AgentProject.detect()` make no AWS call.
+
+::: rayito.deploy_agent
+
+::: rayito.deploy_agent_async
+
+::: rayito.plan_deploy
+
+::: rayito.AgentDeployOptions
+
+::: rayito.AgentDeployPlan
+
+::: rayito.AgentDeployStep
+
+::: rayito.AgentDeployCostEstimate
+
+::: rayito.ScalingOptions
+
+::: rayito.DetectOverrides
+
+::: rayito.AgentFleet
+
+::: rayito.AsyncAgentFleet
+
+::: rayito.AgentFleetStream
+
+::: rayito.AsyncAgentFleetStream
+
+::: rayito.FleetStatus
+
+::: rayito.FleetMemberStatus
+
 #### Runtime ports { #puertos-de-runtime }
 
 They describe how a runtime is installed and served without changing the `AgentRuntime` port.
