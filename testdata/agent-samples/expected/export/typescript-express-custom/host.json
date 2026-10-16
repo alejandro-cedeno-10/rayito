@@ -1,0 +1,33 @@
+{
+  "driver": "http-app",
+  "limits": {
+    "max_output_bytes": 16777216,
+    "max_steps": 50,
+    "max_total_tokens": 1000000,
+    "timeout_seconds": 600
+  },
+  "max_concurrency": 1,
+  "options": {
+    "app_dir": "/opt/agents/app",
+    "command": [
+      "npm",
+      "run",
+      "start"
+    ],
+    "health_path": "/healthz",
+    "invoke_path": "/chat",
+    "model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+    "path_prepend": [
+      "/opt/agents/node/bin"
+    ],
+    "port": 8000,
+    "protocol": "json",
+    "request_field": "prompt",
+    "workdir": "/home/user"
+  },
+  "queue_max": 0,
+  "queue_timeout_seconds": 30,
+  "schema": "rayito.agent-host/1",
+  "session_header": "X-Amzn-Bedrock-AgentCore-Runtime-Session-Id",
+  "v": 1
+}
