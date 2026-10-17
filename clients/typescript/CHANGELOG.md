@@ -6,6 +6,8 @@ versionado [SemVer](https://semver.org/lang/es/).
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-10-17
+
 ### Añadido
 
 - **`AgentProject.detect()` une la detección con `deployAgent`**: devuelve
@@ -1730,7 +1732,8 @@ AWS real en M6 (`MILESTONES.md`), en camelCase y milisegundos, sólo async.
 
 Builds internos de los hitos M1-M5, nunca publicados.
 
-[Unreleased]: https://github.com/alejandro-cedeno-10/rayito/compare/typescript-v0.13.0...HEAD
+[Unreleased]: https://github.com/alejandro-cedeno-10/rayito/compare/typescript-v0.14.0...HEAD
+[0.14.0]: https://github.com/alejandro-cedeno-10/rayito/compare/typescript-v0.13.0...typescript-v0.14.0
 [0.13.0]: https://github.com/alejandro-cedeno-10/rayito/compare/typescript-v0.12.0...typescript-v0.13.0
 [0.12.0]: https://github.com/alejandro-cedeno-10/rayito/compare/typescript-v0.11.0...typescript-v0.12.0
 [0.11.0]: https://github.com/alejandro-cedeno-10/rayito/compare/typescript-v0.10.0...typescript-v0.11.0
