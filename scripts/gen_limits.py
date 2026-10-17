@@ -374,7 +374,8 @@ GROUPS: tuple[tuple[str, ...], ...] = (
         # `/invocations`, port 8088 inside a MicroVM because `rayd` owns 8080
         # and 9000, 8080 in an exported container), its request bound and
         # concurrency, the ready marker the host writes under
-        # `agentStateDir`, the default lifetime of a deployment and the
+        # `agentStateDir` and the bound of the redacted stderr tail it leaves
+        # in the failed marker, the default lifetime of a deployment and the
         # margin `AgentProject.run()` adds to the sandbox lifetime, the
         # pins of the framework runtimes (PyPI and npm, checked 2026-10-16;
         # Hermes by tag and full commit; Node by the sha256 of the linux
@@ -393,6 +394,7 @@ GROUPS: tuple[tuple[str, ...], ...] = (
         "defaultAgentDeployTimeoutSeconds",
         "agentRunSandboxMarginSeconds",
         "agentServiceReadyMarkerPath",
+        "agentStartupDiagnosticsMaxBytes",
         "agentServiceSchema",
         "agentHermesApiPort",
         "agentStrandsVersion",
@@ -401,8 +403,6 @@ GROUPS: tuple[tuple[str, ...], ...] = (
         "agentStrandsTsHarnessVersion",
         "agentHermesVersion",
         "agentHermesCommit",
-        "agentNodeVersion",
-        "agentNodeSha256",
         "agentExportBaseImage",
         "agentExportBaseImageDigest",
         "agentProjectSchema",
@@ -422,17 +422,82 @@ GROUPS: tuple[tuple[str, ...], ...] = (
         # agent-runtimes-byo (ADR-028), frameworks lane: the sha256 of the
         # hashed requirements files of the Strands, Strands harness and
         # Hermes runtimes (package data under `_agent/_assets/`), the pinned
-        # CPython 3.14 build Hermes v0.22.2 needs (python-build-standalone
-        # linux arm64 `install_only` tarball: version, release tag and the
-        # sha256 GitHub publishes for the asset, checked 2026-10-16) and the
-        # schema name of the host configuration file. Not AWS properties.
+        # schema name of the host configuration file. The CPython 3.14 build
+        # Hermes v0.22.2 needs is the `3.14` entry of `agentPythonBuild*`
+        # below. Not AWS properties.
         "agentStrandsRequirementsSha256",
         "agentStrandsHarnessRequirementsSha256",
         "agentHermesRequirementsSha256",
-        "agentHermesPythonVersion",
-        "agentHermesPythonBuildTag",
-        "agentHermesPythonSha256",
         "agentHostSchema",
+    ),
+    (
+        # agent-zero-config (ADR-029), lane A: the pool-size cap the warm
+        # fleet and `Pool` share, the scaling defaults of one VM (today's
+        # behaviour) and their bounds, the host queue and its timeout, the
+        # connections kept for `/ping` and control (the per-VM session cap
+        # derives from `maxConcurrentConnections1Vcpu` and
+        # `baselineMibPerVcpu`), the fleet's ping cache and unhealthy
+        # threshold, the app-supervision budget, the internal port and port
+        # env var of a detected HTTP app, the routable session handle prefix
+        # and the scan bounds, the default source excludes, the schema names
+        # of the detection report and its rules file. Not AWS properties,
+        # except the connection cap they derive from (AWS_API_NOTES quotas).
+        "poolSizeMax",
+        "agentScalingMinVmsDefault",
+        "agentScalingMaxVmsDefault",
+        "agentScalingWarmVmsDefault",
+        "agentScaleInAfterSecondsDefault",
+        "agentScaleInAfterSecondsMin",
+        "agentServiceQueueMaxDefault",
+        "agentServiceQueueMax",
+        "agentServiceQueueTimeoutSecondsDefault",
+        "agentServiceQueueTimeoutSecondsMax",
+        "agentServiceReservedConnections",
+        "agentFleetPingTtlSeconds",
+        "agentFleetUnhealthyPings",
+        "agentAppRestartMax",
+        "agentAppRestartWindowSeconds",
+        "agentAppRestartBackoffSeconds",
+        "agentAppRestartBackoffMaxSeconds",
+        "agentAppInternalPort",
+        "agentAppPortEnv",
+        "agentSessionHandlePrefix",
+        "agentDetectionMaxFiles",
+        "agentDetectionMaxDepth",
+        "agentDetectionMaxFileBytes",
+        "agentSourceDefaultExcludes",
+        "agentDetectionSchema",
+        "agentDetectionRulesSchema",
+    ),
+    (
+        # agent-zero-config (ADR-029), lane A: the pinned toolchains an
+        # install plan may download, each with the digest its publisher
+        # states (checked 2026-10-16): CPython builds of python-build-
+        # standalone (one release tag, linux arm64 `install_only` tarball
+        # sha256 from the GitHub release assets), Node tarballs (sha256 from
+        # nodejs.org SHASUMS256.txt), the uv release tarball and the
+        # corepack integrity of pnpm and yarn (npm registry `dist.integrity`).
+        # The default minor is the base image interpreter, which needs no
+        # download; the default Node major is the one Strands TypeScript
+        # requires. Keyed by minor ("3.12") or major ("22"). Not AWS
+        # properties.
+        "agentPythonBuildTag",
+        "agentPythonBuildVersions",
+        "agentPythonBuildSha256",
+        "agentDefaultPythonMinor",
+        "agentNodeBuildVersions",
+        "agentNodeBuildSha256",
+        "agentDefaultNodeMajor",
+        "agentUvVersion",
+        "agentUvSha256",
+        "agentPnpmVersion",
+        "agentPnpmIntegrity",
+        "agentYarnClassicVersion",
+        "agentYarnClassicIntegrity",
+        "agentYarnBerryVersion",
+        "agentYarnBerryIntegrity",
+        "agentSecretNameTemplate",
+        "agentTokenFileDefault",
     ),
 )
 
@@ -462,11 +527,13 @@ CONSTANT_NAME_OVERRIDES = {
     "agentOpencodeSha256": "AGENT_OPENCODE_SHA256",
     "agentRipgrepSha256": "AGENT_RIPGREP_SHA256",
     "agentDeepagentsRequirementsSha256": "AGENT_DEEPAGENTS_REQUIREMENTS_SHA256",
-    "agentNodeSha256": "AGENT_NODE_SHA256",
     "agentStrandsRequirementsSha256": "AGENT_STRANDS_REQUIREMENTS_SHA256",
     "agentStrandsHarnessRequirementsSha256": "AGENT_STRANDS_HARNESS_REQUIREMENTS_SHA256",
     "agentHermesRequirementsSha256": "AGENT_HERMES_REQUIREMENTS_SHA256",
     "agentHermesPythonSha256": "AGENT_HERMES_PYTHON_SHA256",
+    "agentPythonBuildSha256": "AGENT_PYTHON_BUILD_SHA256",
+    "agentNodeBuildSha256": "AGENT_NODE_BUILD_SHA256",
+    "agentUvSha256": "AGENT_UV_SHA256",
 }
 
 
@@ -577,7 +644,7 @@ def python_line(key: str, value: object) -> str:
             return f"{name}: Final = ({elements[0]},)"
         return python_collection(f"{name}: Final = ", elements, "(", ")")
     line = f"{name}: Final = {python_scalar(value)}"
-    if len(line) <= LINE_WIDTH:
+    if len(line) <= LINE_WIDTH or len(f"{INDENT}{python_scalar(value)}") > LINE_WIDTH:
         return line
     return f"{name}: Final = (\n{INDENT}{python_scalar(value)}\n)"
 

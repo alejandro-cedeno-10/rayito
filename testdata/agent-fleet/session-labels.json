@@ -1,0 +1,13 @@
+{
+  "schema": "rayito.agent-fleet-session-labels/1",
+  "sessionLabels": [
+    {
+      "sessionId": "chat-1",
+      "label": "eaeb9111b1c6744278e803977dbf25fb"
+    },
+    {
+      "sessionId": "conversación-ñ",
+      "label": "2afb457d73ca197d86c5c6547416e478"
+    }
+  ]
+}

@@ -6,6 +6,7 @@ y los traductores contra los eventos grabados de Strands y de Hermes
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import re
@@ -13,6 +14,7 @@ import shutil
 import subprocess
 import sys
 import textwrap
+import threading
 import types
 from collections.abc import AsyncIterator, Callable, Iterator
 from pathlib import Path
@@ -23,6 +25,7 @@ import pytest
 from rayito._agent._runner.agent_host.drivers import (
     _common,
     hermes,
+    node_callable,
     strands,
     strands_ts,
 )
@@ -380,6 +383,40 @@ def test_strands_entrypoint_instance_and_factory(
         _collect(strands.create(missing), _request())
 
 
+def test_strands_serves_concurrent_sessions_of_a_shared_agent_one_at_a_time(
+    fake_strands: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = fake_strands["tmp"] / "app"
+    app.mkdir()
+    (app / "mi_agente.py").write_text("from strands import Agent\nagent = Agent()\n")
+    monkeypatch.syspath_prepend(str(app))
+    active: list[int] = []
+    overlaps: list[int] = []
+    starts: list[list[Any]] = []
+
+    async def exclusive(self: Any, prompt: str, **kwargs: Any) -> AsyncIterator[Any]:
+        if active:
+            overlaps.append(len(active))
+        active.append(1)
+        starts.append(list(self.messages))
+        await asyncio.sleep(0.05)
+        self.messages.append({"role": "user", "content": [{"text": prompt}]})
+        active.pop()
+        yield {}
+
+    monkeypatch.setattr(_FakeAgent, "stream_async", exclusive)
+    driver = strands.create(_strands_config(fake_strands["tmp"], entrypoint="mi_agente:agent"))
+    threads = [
+        threading.Thread(target=_collect, args=(driver, _request(f"sesion {n}"))) for n in range(3)
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert overlaps == []
+    assert starts == [[], [], []]
+
+
 def test_strands_model_errors_are_classified_by_origin_without_the_message(
     fake_strands: dict[str, Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -423,9 +460,7 @@ def test_the_node_bridge_shares_its_constants_with_the_host() -> None:
     un cambio en uno sin el otro rompe esta prueba."""
     from rayito._agent._runner.agent_host import protocol
 
-    source = (Path(strands.__file__).parents[3] / "_assets" / "strands_bridge.mjs").read_text(
-        "utf-8"
-    )
+    source = (Path(strands.__file__).parents[3] / "_assets" / "node_bridge.mjs").read_text("utf-8")
 
     def constant(name: str) -> str:
         match = re.search(rf"export const {name} = (.+);", source)
@@ -796,24 +831,41 @@ def test_the_prompt_never_reaches_the_command_argv(tmp_path: Path) -> None:
     assert "clave-secreta" not in events[-1]["text"]
 
 
-# ---- strands-ts ----
+# ---- node-callable (y su alias strands-ts) ----
 
 
-def test_strands_ts_driver_is_the_command_driver_over_the_node_bridge(tmp_path: Path) -> None:
+@pytest.mark.parametrize("module", [node_callable, strands_ts])
+def test_node_callable_driver_is_the_command_driver_over_the_node_bridge(
+    tmp_path: Path, module: Any
+) -> None:
     config_path = tmp_path / "config.json"
     config_path.write_text(
-        json.dumps({"bridge": "/opt/agents/rayito/strands_bridge.mjs", "workdir": "/home/user"})
+        json.dumps(
+            {
+                "bridge": "/opt/agents/rayito/node_bridge.mjs",
+                "adapter": "langgraph",
+                "workdir": "/home/user",
+            }
+        )
     )
-    driver = strands_ts.create({"config_path": str(config_path)})
+    driver = module.create({"config_path": str(config_path)})
     assert isinstance(driver, command_driver.Driver)
     assert driver._config["command"] == [
         "node",
-        "/opt/agents/rayito/strands_bridge.mjs",
+        "/opt/agents/rayito/node_bridge.mjs",
         str(config_path),
     ]
     assert driver._config["protocol"] == "rayito-v1"
+    assert driver._config["workdir"] == "/home/user"
     with pytest.raises(AgentFailure, match="invalid_input"):
-        strands_ts.create({"bridge": "x"})
+        module.create({"bridge": "x"})
+
+
+def test_the_default_adapter_is_the_one_the_bridge_uses() -> None:
+    source = (Path(strands.__file__).parents[3] / "_assets" / "node_bridge.mjs").read_text("utf-8")
+    match = re.search(r'export const DEFAULT_ADAPTER = "([^"]+)";', source)
+    assert match is not None
+    assert match.group(1) == node_callable.DEFAULT_ADAPTER
 
 
 # ---- el host completo, por su línea de órdenes ----

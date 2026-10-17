@@ -349,7 +349,10 @@ generic gateway is created with `SecretGateway` (see
 `dropped_lines`/`droppedLines`, the runtime lines that were discarded) or
 raises `AgentException`/`AgentError`. `stream()` **never** raises because
 of an agent failure: the last event is `Done` or `AgentFailed`. Sandbox or
-transport errors do propagate.
+transport errors do propagate. `usage_reported`/`usageReported` (also on
+`Done`) is `False` if the agent did not report tokens (an app, a command or a
+function of your own that returns no `usage`): `usage` is then zero because it
+is unknown, not because nothing was spent.
 
 Events (`event.type`): `step_started` (`StepStarted`), `text` (`Text`, the
 full text of a part; OpenCode does not emit deltas), `text_delta`

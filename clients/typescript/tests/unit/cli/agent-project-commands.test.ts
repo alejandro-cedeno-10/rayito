@@ -10,11 +10,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { agentFailed, TokenUsage } from "../../../src/agent/events.js";
-import { AgentError, InvalidArgumentError } from "../../../src/errors.js";
+import { AgentError, InvalidArgumentError, SandboxError } from "../../../src/errors.js";
 import {
   DEFAULT_SERVICE_PORT,
   DEPLOYMENT_URL,
   FakeAgentProjects,
+  FLEET_NAME,
+  RESULT,
   SANDBOX_ID,
   USAGE,
 } from "./agent-project-fakes.js";
@@ -92,6 +94,32 @@ describe("agent init", () => {
     ]);
     expect(outcome.exitCode).toBe(0);
     expect(readFileSync(join(directory, "rayito-agent.toml"), "utf8")).toMatch(/^schema =/);
+  });
+
+  it("custom escribe una app con [runtime.app], requisitos e install, y explica raw", async () => {
+    const directory = tempDirectory();
+    const outcome = await invoke(new FakeAgentProjects(), [
+      "agent",
+      "init",
+      directory,
+      "--runtime",
+      "custom",
+    ]);
+    expect(outcome.exitCode).toBe(0);
+    expect(outcome.stdout).toContain('protocol = "raw"');
+    const projectFile = readFileSync(join(directory, "rayito-agent.toml"), "utf8");
+    for (const key of ['requirements = "requirements.txt"', "install = []", "[runtime.app]"]) {
+      expect(projectFile).toContain(key);
+    }
+    expect(readFileSync(join(directory, "serve.py"), "utf8")).toContain("/invoke");
+  });
+
+  it("langgraph escribe un grafo de LangGraph a secas", async () => {
+    const directory = tempDirectory();
+    await invoke(new FakeAgentProjects(), ["agent", "init", directory, "--runtime", "langgraph"]);
+    const graph = readFileSync(join(directory, "graph.py"), "utf8");
+    expect(graph).toContain("create_react_agent");
+    expect(graph).not.toContain("deepagents");
   });
 
   it("--json lista los ficheros escritos", async () => {
@@ -175,8 +203,22 @@ describe("agent run", () => {
       text: "hola",
       steps: 2,
       usage: { input: 10, output: 5, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 15 },
+      usageReported: true,
       exitCode: 0,
     });
+  });
+
+  it("dice desconocido cuando el agente no informó de tokens", async () => {
+    const projects = new FakeAgentProjects();
+    projects.project.runResult = {
+      ...RESULT,
+      usage: new TokenUsage(),
+      usageReported: false,
+    };
+    const text = await invoke(projects, ["agent", "run", "hola"]);
+    expect(text.stderr).toContain("tokens=desconocido");
+    const document = await invoke(projects, ["--json", "agent", "run", "hola"]);
+    expect(JSON.parse(document.stdout).usageReported).toBe(false);
   });
 
   it("--stream escribe los deltas y un salto de línea", async () => {
@@ -240,8 +282,22 @@ describe("agent run", () => {
   });
 });
 
+/** El nombre de un secreto que ya existe (un nombre, no un valor). */
+const OWN_SECRET = `nombre-${"propio"}`;
+const REFUSE_AWS = "dry-run no debía desplegar";
+
+async function inTemporaryDirectory<T>(action: () => Promise<T>): Promise<T> {
+  const previous = process.cwd();
+  process.chdir(tempDirectory());
+  try {
+    return await action();
+  } finally {
+    process.chdir(previous);
+  }
+}
+
 describe("agent deploy", () => {
-  it("--json imprime sandboxId, url y puerto, y nunca las cabeceras", async () => {
+  it("--json imprime la flota y nunca las cabeceras", async () => {
     const outcome = await invoke(
       new FakeAgentProjects(),
       ["--json", "agent", "deploy"],
@@ -249,22 +305,167 @@ describe("agent deploy", () => {
     );
     expect(outcome.exitCode).toBe(0);
     expect(JSON.parse(outcome.stdout)).toEqual({
+      name: FLEET_NAME,
       sandboxId: SANDBOX_ID,
+      sandboxIds: [SANDBOX_ID],
       url: DEPLOYMENT_URL,
       port: DEFAULT_SERVICE_PORT,
+      tokenFile: null,
     });
     expect(outcome.stdout).not.toContain(PROXY_HEADER_VALUE);
     expect(outcome.stdout.toLowerCase()).not.toContain("authorization");
   });
 
-  it("sólo cambia lo que se pasó", async () => {
+  it("el texto conserva las claves de 0.13 y añade la flota", async () => {
+    const outcome = await invoke(new FakeAgentProjects(), ["agent", "deploy"], WITH_TOKEN);
+    expect(outcome.stdout).toContain(`sandbox_id=${SANDBOX_ID}`);
+    expect(outcome.stdout).toContain(`url=${DEPLOYMENT_URL}`);
+    expect(outcome.stdout).toContain(`port=${DEFAULT_SERVICE_PORT}`);
+    expect(outcome.stdout).toContain(`name=${FLEET_NAME}`);
+    expect(outcome.stdout).toContain("members=1");
+  });
+
+  it("toma la ruta como argumento o como --file, y los dos distintos son ambiguos", async () => {
+    const projects = new FakeAgentProjects();
+    await invoke(projects, ["agent", "deploy", "./mi-agente"], WITH_TOKEN);
+    await invoke(projects, ["agent", "deploy", "--file", "./otro"], WITH_TOKEN);
+    await invoke(projects, ["agent", "deploy"], WITH_TOKEN);
+    const clash = await invoke(
+      projects,
+      ["agent", "deploy", "./uno", "--file", "./dos"],
+      WITH_TOKEN,
+    );
+    expect(projects.deployRequests.map((request) => request.path)).toEqual([
+      "./mi-agente",
+      "./otro",
+      ".",
+    ]);
+    expect(clash.exitCode).toBe(2);
+  });
+
+  it("pasa los overrides de la detección", async () => {
+    const projects = new FakeAgentProjects();
+    await invoke(
+      projects,
+      ["agent", "deploy", "--framework", "strands", "--entry", "a:b"],
+      WITH_TOKEN,
+    );
+    expect(projects.deployRequests[0]?.overrides).toEqual({
+      framework: "strands",
+      language: undefined,
+      entry: "a:b",
+      protocol: undefined,
+    });
+  });
+
+  it("mapea cada bandera de escalado y de servicio", async () => {
+    const projects = new FakeAgentProjects();
+    const outcome = await invoke(
+      projects,
+      [
+        "agent", "deploy", "--memory", "4096", "--max-sessions", "2", "--sessions", "dedicated",
+        "--min-vms", "1", "--max-vms", "3", "--warm", "1", "--idle", "120", "--queue", "8",
+        "--queue-timeout", "45", "--env", "MODEL_ID=x", "--env", "A=b", "--allow-out",
+        "api.example.com", "--port", "9100", "--timeout", "120",
+      ],
+      WITH_TOKEN,
+    ); // biome-ignore format: una bandera por pareja
+    expect(outcome.exitCode).toBe(0);
+    expect(projects.deployRequests[0]?.flags).toEqual({
+      port: 9100,
+      timeoutMs: 120 * MS_PER_SECOND,
+      memory: 4096,
+      maxSessions: 2,
+      idleSeconds: 120,
+      queue: 8,
+      queueTimeoutMs: 45 * MS_PER_SECOND,
+      env: { MODEL_ID: "x", A: "b" },
+      allowOut: ["api.example.com"],
+      minVms: 1,
+      maxVms: 3,
+      warm: 1,
+      sessions: "dedicated",
+    });
+  });
+
+  it("sin banderas no cambia nada del proyecto", async () => {
     const projects = new FakeAgentProjects();
     await invoke(projects, ["agent", "deploy"], WITH_TOKEN);
-    await invoke(projects, ["agent", "deploy", "--port", "9100", "--timeout", "120"], WITH_TOKEN);
-    expect(projects.project.calls).toEqual([
-      ["deploy", undefined, undefined, ACCESS_TOKEN],
-      ["deploy", 9100, 120 * MS_PER_SECOND, ACCESS_TOKEN],
+    expect(projects.deployRequests[0]?.flags).toEqual({
+      port: undefined,
+      timeoutMs: undefined,
+      memory: undefined,
+      maxSessions: undefined,
+      idleSeconds: undefined,
+      queue: undefined,
+      queueTimeoutMs: undefined,
+      env: {},
+      allowOut: [],
+      minVms: undefined,
+      maxVms: undefined,
+      warm: undefined,
+      sessions: undefined,
+    });
+  });
+
+  it("rechaza --sessions desconocido y un --secret mal formado sin repetir su valor", async () => {
+    const projects = new FakeAgentProjects();
+    const sessions = await invoke(projects, ["agent", "deploy", "--sessions", "otro"], WITH_TOKEN);
+    const secret = await invoke(
+      projects,
+      ["agent", "deploy", "--secret", "valor-pegado"],
+      WITH_TOKEN,
+    );
+    expect(sessions.exitCode).toBe(2);
+    expect(secret.exitCode).toBe(2);
+    expect(secret.stderr).not.toContain("valor-pegado");
+    expect(projects.deployRequests).toEqual([]);
+  });
+
+  it("pasa las opciones de AWS al SDK", async () => {
+    const projects = new FakeAgentProjects();
+    await invoke(
+      projects,
+      [
+        "agent", "deploy", "--bucket", "amzn-s3-demo-bucket", "--secret", `bedrock=${OWN_SECRET}`,
+        "--create-secret", "--no-build", "--keep-on-failure",
+      ],
+      WITH_TOKEN,
+    ); // biome-ignore format: una bandera por pareja
+    const { settings } = projects.deployRequests[0] ?? {};
+    expect(settings?.bucket).toBe("amzn-s3-demo-bucket");
+    expect(settings?.secretNames).toEqual({ bedrock: OWN_SECRET });
+    expect(settings?.createSecretFromEnv).toBe(true);
+    expect(settings?.buildImage).toBe(false);
+    expect(settings?.keepOnFailure).toBe(true);
+    expect(settings?.accessToken).toBe(ACCESS_TOKEN);
+  });
+
+  it("construye por defecto sólo si hay bucket (--build/--no-build son tres estados)", async () => {
+    const projects = new FakeAgentProjects();
+    await invoke(projects, ["agent", "deploy"], WITH_TOKEN);
+    await invoke(projects, ["agent", "deploy", "--build"], WITH_TOKEN);
+    await invoke(projects, ["agent", "deploy", "--no-build"], WITH_TOKEN);
+    expect(projects.deployRequests.map((request) => request.settings.buildImage)).toEqual([
+      undefined,
+      true,
+      false,
     ]);
+  });
+
+  it("avisa cuando las rutas de la app no se exponen", async () => {
+    const projects = new FakeAgentProjects();
+    projects.hiddenRoutes = {
+      protocol: "agentcore",
+      healthPath: "/health",
+      invokePath: "/invoke",
+    };
+    const warned = await invoke(projects, ["agent", "deploy"], WITH_TOKEN);
+    expect(warned.stderr).toContain('protocol = "raw"');
+    expect(warned.stderr).toContain("/health");
+    projects.hiddenRoutes = undefined;
+    const quiet = await invoke(projects, ["agent", "deploy"], WITH_TOKEN);
+    expect(quiet.stderr).not.toContain("aviso");
   });
 
   it("guarda un token nuevo en --token-file y lo pasa al despliegue", async () => {
@@ -276,15 +477,24 @@ describe("agent deploy", () => {
     expect(token).not.toBe("");
     expect(outcome.stdout).not.toContain(token);
     expect(statSync(tokenFile).mode & 0o777).toBe(0o600);
-    expect(projects.project.calls).toEqual([["deploy", undefined, undefined, token]]);
+    expect(projects.deployRequests[0]?.settings.accessToken).toBe(token);
   });
 
-  it("sin forma de reconectarse no crea nada y sale con 2", async () => {
-    const projects = new FakeAgentProjects();
-    const outcome = await invoke(projects, ["agent", "deploy"]);
-    expect(outcome.exitCode).toBe(2);
-    expect(outcome.stderr).toContain("--token-file");
-    expect(projects.project.calls).toEqual([]);
+  it("sin token usa .rayito/agent-token con modo 0600 y lo reutiliza", async () => {
+    await inTemporaryDirectory(async () => {
+      const projects = new FakeAgentProjects();
+      const first = await invoke(projects, ["agent", "deploy"]);
+      await invoke(projects, ["agent", "deploy"]);
+      const token = readFileSync(".rayito/agent-token", "utf8");
+      expect(first.exitCode).toBe(0);
+      expect(first.stdout).toContain("token_file=.rayito/agent-token");
+      expect(first.stdout).not.toContain(token);
+      expect(statSync(".rayito/agent-token").mode & 0o777).toBe(0o600);
+      expect(projects.deployRequests.map((request) => request.settings.accessToken)).toEqual([
+        token,
+        token,
+      ]);
+    });
   });
 
   it("no toca un --token-file que ya existe", async () => {
@@ -294,7 +504,97 @@ describe("agent deploy", () => {
     const outcome = await invoke(projects, ["agent", "deploy", "--token-file", tokenFile]);
     expect(outcome.exitCode).toBe(2);
     expect(readFileSync(tokenFile, "utf8")).toBe("old");
-    expect(projects.project.calls).toEqual([]);
+    expect(projects.deployRequests).toEqual([]);
+  });
+
+  it("un fallo de despliegue imprime su causa y sale con 1", async () => {
+    const projects = new FakeAgentProjects();
+    projects.deployFailure = new SandboxError(
+      "el host del agente no pudo arrancar (app_exited). Final de la salida de error de la app:\nModuleNotFoundError: agent",
+    );
+    const outcome = await invoke(projects, ["agent", "deploy"], WITH_TOKEN);
+    expect(outcome.exitCode).toBe(1);
+    expect(outcome.stderr).toContain("ModuleNotFoundError: agent");
+  });
+
+  it("un argumento inválido sale con 2", async () => {
+    const projects = new FakeAgentProjects();
+    projects.deployFailure = new InvalidArgumentError("pasarela sin configurar");
+    const outcome = await invoke(projects, ["agent", "deploy"], WITH_TOKEN);
+    expect(outcome.exitCode).toBe(2);
+    expect(outcome.stderr).toContain("pasarela sin configurar");
+  });
+
+  it("imprime cada paso en stderr sin nombrar un secreto", async () => {
+    const outcome = await invoke(new FakeAgentProjects(), ["agent", "deploy"], WITH_TOKEN);
+    expect(outcome.stderr).toContain("imagen lista: versión 3.0");
+  });
+
+  it("imprime la detección antes de desplegar", async () => {
+    const projects = new FakeAgentProjects();
+    projects.detectionReport = { language: "python", framework: "langgraph", evidence: ["a"] };
+    const outcome = await invoke(projects, ["agent", "deploy"], WITH_TOKEN);
+    expect(outcome.stderr).toContain("detectado framework: langgraph");
+    expect(outcome.stderr).not.toContain("evidence");
+  });
+
+  it("--dry-run no despliega, no pide AWS y no escribe el token", async () => {
+    await inTemporaryDirectory(async () => {
+      const projects = new FakeAgentProjects();
+      const outcome = await invoke(projects, ["agent", "deploy", "--dry-run", "--max-vms", "2"]);
+      expect(outcome.exitCode).toBe(0);
+      expect(projects.deployRequests, REFUSE_AWS).toEqual([]);
+      expect(projects.planRequests).toHaveLength(1);
+      expect(() => statSync(".rayito")).toThrow();
+      expect(outcome.stdout).toContain("VMs: máximo 2");
+      expect(outcome.stdout).toContain("no se llamó a AWS");
+    });
+  });
+
+  it("--dry-run --json es un documento", async () => {
+    const outcome = await invoke(new FakeAgentProjects(), [
+      "--json",
+      "agent",
+      "deploy",
+      "--dry-run",
+    ]);
+    const document = JSON.parse(outcome.stdout);
+    expect(document.dryRun).toBe(true);
+    expect(document.plan.scaling.maxVms).toBe(1);
+  });
+});
+
+describe("agent detect", () => {
+  it("describe el proyecto sin AWS", async () => {
+    const projects = new FakeAgentProjects();
+    projects.detectionReport = { language: "typescript", framework: "strands-ts" };
+    const outcome = await invoke(projects, [
+      "agent",
+      "detect",
+      "./mi-agente",
+      "--framework",
+      "strands-ts",
+    ]);
+    expect(outcome.exitCode).toBe(0);
+    expect(outcome.stdout).toContain("detectado language: typescript");
+    expect(projects.calls).toEqual([["detect", "./mi-agente", "strands-ts", undefined]]);
+  });
+
+  it("--json y --write", async () => {
+    const projects = new FakeAgentProjects();
+    projects.detectionReport = { framework: "strands" };
+    const outcome = await invoke(projects, ["--json", "agent", "detect", "--write"]);
+    const document = JSON.parse(outcome.stdout);
+    expect(document.detection).toEqual({ framework: "strands" });
+    expect(document.written).toBe("rayito-agent.json");
+  });
+
+  it("un proyecto ambiguo sale con 2", async () => {
+    const projects = new FakeAgentProjects();
+    projects.loadFailure = new InvalidArgumentError("hay dos frameworks: usa --framework");
+    const outcome = await invoke(projects, ["agent", "detect"]);
+    expect(outcome.exitCode).toBe(2);
+    expect(outcome.stderr).toContain("--framework");
   });
 });
 
@@ -331,7 +631,7 @@ describe("agent export", () => {
 describe("agent invoke | status | stop", () => {
   it("invoke llama a invoke o a stream", async () => {
     const projects = new FakeAgentProjects();
-    projects.project.deployed.events = [
+    projects.deployed.events = [
       { type: "text_delta", text: "hi" },
       { type: "done", sessionId: "ses_1", exitCode: 0, usage: USAGE },
     ];
@@ -347,7 +647,7 @@ describe("agent invoke | status | stop", () => {
     );
     expect(plain.stdout).toBe("hola\n");
     expect(streamed.stdout).toBe("hi\n");
-    expect(projects.project.deployed.calls).toEqual([
+    expect(projects.deployed.calls).toEqual([
       ["invoke", "hola", "s"],
       ["stream", "hola", undefined],
     ]);

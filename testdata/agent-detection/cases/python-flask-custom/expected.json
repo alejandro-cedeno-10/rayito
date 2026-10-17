@@ -1,0 +1,64 @@
+{
+  "schema": "rayito.agent-detection/1",
+  "language": "python",
+  "framework": "flask",
+  "kind": "custom",
+  "entrypoint": "app:app",
+  "entrypoint_kind": "object",
+  "protocol": "json",
+  "options": {},
+  "app": {
+    "framework": "flask",
+    "command": [
+      "python",
+      "-m",
+      "flask",
+      "--app",
+      "app:app",
+      "run",
+      "--host",
+      "127.0.0.1",
+      "--port",
+      "8000"
+    ],
+    "port": 8000,
+    "port_env": null,
+    "health_path": "/healthz",
+    "invoke_path": "/chat",
+    "request_field": "message",
+    "response_field": "output"
+  },
+  "install": {
+    "manager": "pip",
+    "lockfile": null,
+    "requirements": "requirements.txt",
+    "require_hashes": false,
+    "reproducible": true,
+    "build_script": false,
+    "python_version": "3.12",
+    "node_version": null
+  },
+  "providers": [],
+  "models": [],
+  "evidence": [
+    {
+      "path": "requirements.txt",
+      "rule": "dep:flask"
+    },
+    {
+      "path": "app.py",
+      "rule": "entry:py-flask-app"
+    },
+    {
+      "path": "requirements.txt",
+      "rule": "install:pip"
+    }
+  ],
+  "warnings": [
+    {
+      "code": "no_provider",
+      "detail": "no se detecta ningún proveedor de modelo; indícalo con --secret proveedor=nombre"
+    }
+  ],
+  "alternatives": []
+}

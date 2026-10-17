@@ -105,6 +105,9 @@ en `CLAUDE.md`; esta skill las concreta y añade el cómo. Detalle en:
   `scripts/gen_limits.py` genera `_limits.py` y `limits.ts`, que nunca se
   editan a mano. Las plantillas de `infra/*.yaml` se renderizan con
   `scripts/gen_stack_assets.py`.
+- Las reglas de detección de proyectos de agente (frameworks, patrones, planes de
+  instalación) son datos en `agent-detection.json`; `scripts/gen_agent_detection.py`
+  los renderiza en los dos SDK y sus vectores viven en `testdata/agent-detection/`.
 - Los valores por defecto de la CLI son las constantes del SDK, nunca
   literales repetidos.
 
@@ -192,7 +195,8 @@ Las órdenes exactas están en [reference/gates.md](reference/gates.md).
 - TypeScript: `pnpm lint`, `typecheck`, `build`, `test` y `pack:check`.
 - Docs: `mkdocs --strict`. OpenSpec:
   `npx -y @fission-ai/openspec@1.10.0 validate --all --strict --no-interactive`.
-- Raíz: `check_hygiene.py`, `check_pins.py` y `gen_limits.py --check`.
+- Raíz: `check_hygiene.py`, `check_pins.py`, `gen_limits.py --check` y
+  `gen_agent_detection.py --check`.
 
 ## Flujo OpenSpec
 

@@ -49,12 +49,28 @@ CUSTOM_RUNTIME_KIND: Final = "custom"
 RUNTIME_OPTION_KEYS: Final[Mapping[str, frozenset[str]]] = {
     "opencode": frozenset(),
     "deepagents": frozenset(),
-    "langgraph": frozenset({"entrypoint"}),
-    "strands": frozenset({"entrypoint", "language", "requirements"}),
-    "strands-harness": frozenset({"entrypoint", "language", "requirements"}),
+    "langgraph": frozenset({"entrypoint", "requirements", "package_manager"}),
+    "strands": frozenset(
+        {"entrypoint", "language", "requirements", "package_manager", "node_version"}
+    ),
+    "strands-harness": frozenset(
+        {"entrypoint", "language", "requirements", "package_manager", "node_version"}
+    ),
     "hermes": frozenset({"toolsets", "skills_dir"}),
     "custom": frozenset(
-        {"install", "requirements", "command", "entrypoint", "app", "protocol", "python"}
+        {
+            "install",
+            "requirements",
+            "command",
+            "entrypoint",
+            "app",
+            "protocol",
+            "python",
+            "package_manager",
+            "python_version",
+            "node_version",
+            "adapter",
+        }
     ),
 }
 
@@ -96,7 +112,18 @@ def _langgraph(options: Mapping[str, object]) -> AgentRuntime:
         raise InvalidArgumentException("entrypoint es obligatorio con kind='langgraph'")
     if not isinstance(entrypoint, str):
         raise InvalidArgumentException("entrypoint debe ser una cadena")
-    return DeepAgents(entrypoint, require_entrypoint=True)
+    for key in ("requirements", "package_manager"):
+        value = options.get(key)
+        if value is not None and not isinstance(value, str):
+            raise InvalidArgumentException(f"runtime.{key} debe ser una cadena")
+    requirements = options.get("requirements")
+    manager = options.get("package_manager")
+    return DeepAgents(
+        entrypoint,
+        require_entrypoint=True,
+        requirements=requirements if isinstance(requirements, str) else None,
+        package_manager=manager if isinstance(manager, str) else None,
+    )
 
 
 #: `kind` -> constructor desde la tabla `[runtime]`. Un `kind` sin entrada
@@ -133,7 +160,12 @@ def runtime_to_options(runtime: str | AgentRuntime) -> dict[str, object]:
     if isinstance(runtime, DeepAgents):
         if runtime.entrypoint is None:
             return {"kind": "deepagents"}
-        return {"kind": "langgraph", "entrypoint": runtime.entrypoint}
+        table: dict[str, object] = {"kind": "langgraph", "entrypoint": runtime.entrypoint}
+        if runtime.requirements is not None:
+            table["requirements"] = runtime.requirements
+        if runtime.package_manager is not None:
+            table["package_manager"] = runtime.package_manager
+        return table
     if isinstance(runtime, (StrandsRuntime, HermesRuntime, CustomRuntime)):
         return runtime.to_options()
     raise InvalidArgumentException(

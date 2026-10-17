@@ -81,10 +81,17 @@ class FakeFiles:
     """`exists()` contesta según `ready_after` consultas del marcador de
     listo, y `failed_code` simula un arranque fallido del host."""
 
-    def __init__(self, *, ready_after: int | None = 0, failed_code: str | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        ready_after: int | None = 0,
+        failed_code: str | None = None,
+        failed_marker: str | None = None,
+    ) -> None:
         self.written: list[Any] = []
         self.ready_after = ready_after
         self.failed_code = failed_code
+        self.failed_marker = failed_marker
         self.ready_polls = 0
 
     def write_files(self, entries: Sequence[Any]) -> None:
@@ -94,11 +101,12 @@ class FakeFiles:
         if path == AGENT_SERVICE_READY_MARKER_PATH:
             self.ready_polls += 1
             return self.ready_after is not None and self.ready_polls > self.ready_after
-        return path == FAILED_MARKER and self.failed_code is not None
+        has_failed = self.failed_code is not None or self.failed_marker is not None
+        return path == FAILED_MARKER and has_failed
 
     def read(self, path: str) -> str:
         assert path == FAILED_MARKER
-        return f"{self.failed_code}\n"
+        return self.failed_marker or f"{self.failed_code}\n"
 
 
 class AsyncFakeFiles(FakeFiles):
@@ -217,6 +225,9 @@ class FakeSandbox:
         kill_error: Exception | None = None,
     ) -> None:
         self.sandbox_id = SANDBOX_ID
+        self.access_token = "fake-access-token"
+        self.pause_calls: list[dict[str, Any]] = []
+        self.resume_calls: list[dict[str, Any]] = []
         self.gateways = {"bedrock": GatewayStatus(port=GATEWAY_PORT)}
         self.metadata = dict(metadata or {})
         self.files = files or self.files_class()
@@ -238,6 +249,13 @@ class FakeSandbox:
             raise self.kill_error
         return True
 
+    def pause(self, **kwargs: Any) -> bool:
+        self.pause_calls.append(kwargs)
+        return True
+
+    def resume(self, **kwargs: Any) -> None:
+        self.resume_calls.append(kwargs)
+
 
 class AsyncFakeSandbox(FakeSandbox):
     files_class = AsyncFakeFiles
@@ -250,6 +268,12 @@ class AsyncFakeSandbox(FakeSandbox):
 
     async def kill(self) -> bool:  # type: ignore[override]
         return FakeSandbox.kill(self)
+
+    async def pause(self, **kwargs: Any) -> bool:  # type: ignore[override]
+        return FakeSandbox.pause(self, **kwargs)
+
+    async def resume(self, **kwargs: Any) -> None:  # type: ignore[override]
+        FakeSandbox.resume(self, **kwargs)
 
 
 class FakeSandboxClass:

@@ -46,6 +46,7 @@ from rayito._agent._events import (
 from rayito._agent._recipes import AGENT_BIN_DIR
 from rayito._agent._runtime import (
     DEFAULT_INSTALL_PYTHON,
+    DOWNLOAD_PACKAGES,
     DirectWiring,
     HostConfig,
     InstallTarget,
@@ -57,6 +58,7 @@ from rayito._agent._runtime import (
     RuntimeState,
     TemplateStep,
     WarmupStep,
+    container_packages_step,
     run_step,
     wiring_urls,
 )
@@ -526,7 +528,10 @@ class OpenCodeRuntime:
     def install_steps(self, target: InstallTarget) -> Sequence[TemplateStep]:
         """OpenCode y ripgrep desde sus assets de release, comprobados con
         `sha256sum -c` contra los pines de `limits.json`."""
-        return (run_step(_opencode_install(target)),)
+        return (
+            *container_packages_step(target, DOWNLOAD_PACKAGES),
+            run_step(_opencode_install(target)),
+        )
 
     def context_files(self) -> Mapping[str, bytes]:
         """Nada: todo se descarga y se comprueba en el build."""

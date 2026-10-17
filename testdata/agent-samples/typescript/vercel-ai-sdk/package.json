@@ -1,0 +1,13 @@
+{
+  "name": "meetings-assistant",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Asistente de reuniones con el Vercel AI SDK y Bedrock",
+  "engines": { "node": ">=22" },
+  "dependencies": {
+    "@ai-sdk/amazon-bedrock": "^5.0.0",
+    "ai": "^7.0.0",
+    "zod": "^4.0.0"
+  }
+}

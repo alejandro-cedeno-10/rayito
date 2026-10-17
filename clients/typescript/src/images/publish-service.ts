@@ -28,6 +28,7 @@ import {
   type VersionGate,
   waitForGate,
 } from "./gateway.js";
+import { baseImageArn } from "./managed.js";
 import {
   aggregateSummary,
   artifactKey,
@@ -68,6 +69,8 @@ export interface PublishPorts extends ImageBuildClients {
   /** La salida `BuildRoleArn` de la pila `stackName`; `undefined` si la pila no la tiene. */
   buildRoleArnOfStack(stackName: string): Promise<string | undefined>;
   latestBuild(arn: string, version: string): Promise<Record<string, unknown>>;
+  /** La versión más reciente de la imagen base gestionada `arn` (`list-managed-microvm-image-versions`); `undefined` si no lista ninguna. */
+  newestManagedVersion(arn: string): Promise<string | undefined>;
   recentLogs(group: string, streams: number, events: number): Promise<RecentLogs>;
 }
 
@@ -324,6 +327,32 @@ export async function buildOrReuse(
   const started = deps.now();
   const submitted = await submitBuild(deps, settings, prepared);
   return finalizeBuild(deps, settings, submitted, prepared, started);
+}
+
+/** Con `--base-image-version latest` se publica sobre la versión más reciente de la base gestionada. */
+export const LATEST_BASE_IMAGE_VERSION = "latest";
+
+/**
+ * La `baseImageVersion` sobre la que se publica: `requested` tal cual, o, con
+ * `latest`, la más reciente que liste la base gestionada. Quien llama imprime
+ * el valor resuelto, de modo que el cambio de la base gestionada nunca pasa en
+ * silencio; un número explícito es lo que fija una build reproducible.
+ */
+export async function resolveBaseImageVersion(
+  ports: PublishPorts,
+  requested: string,
+): Promise<string> {
+  if (requested !== LATEST_BASE_IMAGE_VERSION) {
+    return requested;
+  }
+  const newest = await ports.newestManagedVersion(baseImageArn(ports.region));
+  if (newest === undefined) {
+    throw new ImagePublishError(
+      "la base gestionada no lista ninguna versión: pasa --base-image-version con una versión " +
+        "de list-managed-microvm-image-versions",
+    );
+  }
+  return newest;
 }
 
 /** `rayito image publish` sin `--sizes`: el baseline, tras comprobar que el artefacto casa con la variante. */

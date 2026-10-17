@@ -1,0 +1,18 @@
+{
+  "driver": "node-callable",
+  "limits": {
+    "max_output_bytes": 16777216,
+    "max_steps": 50,
+    "max_total_tokens": 1000000,
+    "timeout_seconds": 600
+  },
+  "max_concurrency": 1,
+  "options": {
+    "config_path": "/home/user/.rayito/agent/strands/config.json"
+  },
+  "queue_max": 0,
+  "queue_timeout_seconds": 30,
+  "schema": "rayito.agent-host/1",
+  "session_header": "X-Amzn-Bedrock-AgentCore-Runtime-Session-Id",
+  "v": 1
+}

@@ -23,19 +23,17 @@ import { InvalidArgumentError } from "../errors.js";
 import {
   AGENT_HERMES_API_PORT,
   AGENT_HERMES_COMMIT,
-  AGENT_HERMES_PYTHON_BUILD_TAG,
-  AGENT_HERMES_PYTHON_SHA256,
-  AGENT_HERMES_PYTHON_VERSION,
   AGENT_HERMES_REQUIREMENTS_SHA256,
   AGENT_HERMES_VERSION,
   AGENT_PROTOCOL_VERSION,
+  AGENT_PYTHON_BUILD_SHA256,
+  AGENT_PYTHON_BUILD_VERSIONS,
   AGENT_STATE_DIR,
   MODEL_CREDENTIAL_PLACEHOLDER,
 } from "../limits.js";
 import { HERMES_REQUIREMENTS } from "./assets/template-assets.gen.js";
 import type { AgentSpec } from "./domain.js";
 import {
-  containerPackagesStep,
   HostBackedRuntime,
   type HostSetup,
   type ProviderClient,
@@ -44,9 +42,11 @@ import {
   requireSupportedProvider,
   standardModelEnvs,
 } from "./host-runtime.js";
+import { pythonDownloadCommand } from "./install-plan.js";
 import { shellQuote } from "./opencode.js";
 import { AGENT_APP_DIR, AGENT_INSTALL_DIR, hashedVenvInstall } from "./recipes.js";
 import {
+  containerPackagesStep,
   copyStep,
   type InstallableRuntime,
   type InstallTarget,
@@ -67,11 +67,9 @@ export const HERMES_PYTHON = `${HERMES_VENV_DIR}/bin/python`;
 export const HERMES_SOURCE_DIR = `${HERMES_INSTALL_DIR}/src`;
 export const HERMES_REQUIREMENTS_NAME = "requirements-hermes.txt";
 export const HERMES_REPOSITORY_URL = "https://github.com/NousResearch/hermes-agent";
-/** Tarball `install_only` de python-build-standalone para linux arm64 glibc. */
-export const HERMES_PYTHON_TARBALL_URL =
-  "https://github.com/astral-sh/python-build-standalone/releases/download/" +
-  `${AGENT_HERMES_PYTHON_BUILD_TAG}/cpython-${AGENT_HERMES_PYTHON_VERSION}` +
-  `%2B${AGENT_HERMES_PYTHON_BUILD_TAG}-aarch64-unknown-linux-gnu-install_only.tar.gz`;
+/** La versión menor de CPython que necesita Hermes; el build es el fijado en
+ * `AGENT_PYTHON_BUILD_VERSIONS`. */
+export const HERMES_PYTHON_MINOR = "3.14";
 export const PYTHON_TARBALL_PATH = "/tmp/hermes-python.tar.gz";
 /** Lo que sobra del checkout en una imagen (medido: 379 MiB -> 86 MiB). */
 export const HERMES_PRUNED_PATHS = [
@@ -315,13 +313,7 @@ export class HermesRuntime extends HostBackedRuntime implements InstallableRunti
     const interpreter: InstallTarget = { ...target, python: `${hermesDir}/python/bin/python3` };
     return [
       ...containerPackagesStep(target, ["curl", "ca-certificates", "git"]),
-      runStep(
-        `mkdir -p ${hermesDir}` +
-          ` && curl -fsSL --retry 3 -o ${PYTHON_TARBALL_PATH} ${HERMES_PYTHON_TARBALL_URL}` +
-          ` && echo '${AGENT_HERMES_PYTHON_SHA256}  ${PYTHON_TARBALL_PATH}' | sha256sum -c -` +
-          ` && tar -xzf ${PYTHON_TARBALL_PATH} -C ${hermesDir}` +
-          ` && rm -f ${PYTHON_TARBALL_PATH}`,
-      ),
+      runStep(pythonDownloadCommand(HERMES_PYTHON_MINOR, hermesDir, PYTHON_TARBALL_PATH)),
       copyStep(HERMES_REQUIREMENTS_NAME, requirements),
       runStep(
         hashedVenvInstall(interpreter, {
@@ -343,8 +335,8 @@ export class HermesRuntime extends HostBackedRuntime implements InstallableRunti
     return {
       version: AGENT_HERMES_VERSION,
       commit: AGENT_HERMES_COMMIT,
-      python_version: AGENT_HERMES_PYTHON_VERSION,
-      python_sha256: AGENT_HERMES_PYTHON_SHA256,
+      python_version: AGENT_PYTHON_BUILD_VERSIONS[HERMES_PYTHON_MINOR],
+      python_sha256: AGENT_PYTHON_BUILD_SHA256[HERMES_PYTHON_MINOR],
       requirements_sha256: AGENT_HERMES_REQUIREMENTS_SHA256,
       requirements_file_sha256: createHash("sha256")
         .update(hermesRequirements(), "utf8")

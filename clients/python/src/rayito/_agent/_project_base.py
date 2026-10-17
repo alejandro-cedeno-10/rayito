@@ -8,10 +8,12 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import posixpath
 from collections.abc import Mapping
 from typing import Any, Final
 
+from rayito._agent._custom import CustomRuntime, HttpApp
 from rayito._agent._deployment_base import labels_for
 from rayito._agent._opencode import shell_quote
 from rayito._agent._project_domain import AgentProject
@@ -31,9 +33,12 @@ from rayito._limits import (
     AGENT_RUN_SANDBOX_MARGIN_SECONDS,
     AGENT_SERVICE_READY_MARKER_PATH,
     AGENT_SERVICE_SESSION_HEADER,
+    AGENT_STARTUP_DIAGNOSTICS_MAX_BYTES,
     DEFAULT_AGENT_WORKDIR,
 )
 from rayito._models import WriteEntry
+from rayito._sandbox_base import ACCESS_TOKEN_ENV_VAR
+from rayito.exceptions import InvalidArgumentException
 
 #: Esquema del `host.json` que lee `agent_host` (`rayito.agent-host/1`).
 AGENT_HOST_SCHEMA: Final = "rayito.agent-host/1"
@@ -56,14 +61,18 @@ def template_name(project: AgentProject) -> str:
     return project.template or project.name
 
 
-def project_template(project: AgentProject, *, asynchronous: bool = False) -> AgentTemplate:
+def project_template(
+    project: AgentProject, *, asynchronous: bool = False, base_version: str | None = None
+) -> AgentTemplate:
     """El `AgentTemplate` de `project`: su runtime (ya comprobado como
-    instalable), su código y la memoria pedida."""
+    instalable), su código y la memoria pedida. `base_version` fija la versión
+    de la imagen base (`None`: la más reciente)."""
     installable_runtime(project)
     template_class = AsyncAgentTemplate if asynchronous else AgentTemplate
     return template_class(
         name=template_name(project),
         base=project.base,
+        base_version=base_version,
         runtimes=(project.runtime,),
         memory_mib=project.memory_mib,
         app=project.source,
@@ -104,22 +113,31 @@ def run_create_args(project: AgentProject) -> dict[str, Any]:
 
 
 def deploy_create_args(
-    project: AgentProject, *, raw: bool = False, access_token: str | None = None
+    project: AgentProject,
+    *,
+    raw: bool = False,
+    access_token: str | None = None,
+    metadata: Mapping[str, str] | None = None,
+    index: Any = None,
 ) -> dict[str, Any]:
     """Los de `deploy()`: la vida y la política de `idle` de
     `project.serve`, las etiquetas con las que `connect()` reconoce el
     despliegue y, si el llamador lo da, el access token con el que otro
-    proceso puede reconectarse."""
+    proceso puede reconectarse. `metadata` añade etiquetas (una flota marca
+    así la sesión de un VM dedicado) e `index` es el `DynamoDbIndex` que las
+    escribe para poder encontrarlo después."""
     serve = project.serve
-    metadata = {**serve.metadata, **labels_for(project.name, serve.port, raw=raw)}
+    labels = {**serve.metadata, **(metadata or {}), **labels_for(project.name, serve.port, raw=raw)}
     args: dict[str, Any] = {
         "timeout": seconds_ceiling(serve.timeout_seconds),
         "idle": serve.idle,
-        "metadata": metadata,
+        "metadata": labels,
         **_common_create_args(project),
     }
     if access_token is not None:
         args["access_token"] = access_token
+    if index is not None:
+        args["index"] = index
     return args
 
 
@@ -130,6 +148,10 @@ def _common_create_args(project: AgentProject) -> dict[str, Any]:
     }
     if project.egress is not None:
         args["egress"] = list(project.egress)
+    if project.env:
+        args["envs"] = dict(project.env)
+    if project.network is not None:
+        args["network"] = project.network
     return args
 
 
@@ -150,6 +172,14 @@ def is_raw_project(project: AgentProject) -> bool:
     return is_raw_app(host)
 
 
+def app_hiding_own_routes(project: AgentProject) -> HttpApp | None:
+    """La `HttpApp` del proyecto si sus rutas propias no se alcanzan desde
+    fuera (`HttpApp.hides_own_routes`), para avisar al desplegar."""
+    runtime = resolve_runtime(project.runtime)
+    app = runtime.app if isinstance(runtime, CustomRuntime) else None
+    return app if app is not None and app.hides_own_routes else None
+
+
 def host_config_for(project: AgentProject, sandbox_gateways: Mapping[str, Any]) -> HostConfig:
     """La `HostConfig` del runtime con las URLs de las pasarelas del sandbox
     recién creado; falla con `InvalidArgumentException` si falta una."""
@@ -161,7 +191,7 @@ def host_config_for(project: AgentProject, sandbox_gateways: Mapping[str, Any]) 
 
 def host_document(project: AgentProject, host: HostConfig) -> dict[str, object]:
     """El `host.json`: el driver, sus opciones, los topes de `AgentLimits`,
-    la concurrencia y dónde dejar el marcador de listo."""
+    la concurrencia con su cola y dónde dejar el marcador de listo."""
     limits = project.limits
     return {
         "schema": AGENT_HOST_SCHEMA,
@@ -175,6 +205,8 @@ def host_document(project: AgentProject, host: HostConfig) -> dict[str, object]:
             "max_total_tokens": limits.max_total_tokens,
         },
         "max_concurrency": project.serve.max_concurrency,
+        "queue_max": project.serve.queue_max,
+        "queue_timeout_seconds": project.serve.queue_timeout_seconds,
         "session_header": AGENT_SERVICE_SESSION_HEADER,
         "ready_marker": AGENT_SERVICE_READY_MARKER_PATH,
     }
@@ -208,4 +240,40 @@ def clear_markers_command() -> str:
     `deploy()` diera por listo un host que aún no escucha."""
     return (
         f"rm -f {shell_quote(AGENT_SERVICE_READY_MARKER_PATH)} {shell_quote(failed_marker_path())}"
+    )
+
+
+def startup_failure_message(marker: str) -> str:
+    """El mensaje de un arranque fallido a partir del contenido del marcador
+    de fallo: la primera línea es el código y, si hay, el resto es el final de
+    la salida de error de la app que el host ya saneó. Se vuelve a acotar aquí
+    por si el marcador viene de un host más viejo o de otro escritor."""
+    code, _, detail = marker.strip().partition("\n")
+    message = f"el host del agente no pudo arrancar ({code.strip() or AGENT_HOST_FAILED_SUFFIX})"
+    tail = (
+        detail.strip()
+        .encode("utf-8")[-AGENT_STARTUP_DIAGNOSTICS_MAX_BYTES:]
+        .decode("utf-8", errors="ignore")
+    )
+    return f"{message}. Final de la salida de error de la app:\n{tail}" if tail else message
+
+
+def require_reconnectable_token(access_token: str | None) -> None:
+    """`keep_on_failure=True` conserva un sandbox al que sólo se llega con
+    su access token: sin uno que el llamador conozca (argumento o
+    `RAYITO_ACCESS_TOKEN`), conservarlo no sirve de nada."""
+    if not access_token and not os.environ.get(ACCESS_TOKEN_ENV_VAR):
+        raise InvalidArgumentException(
+            "deploy(keep_on_failure=True) necesita access_token (o "
+            f"{ACCESS_TOKEN_ENV_VAR}) para poder conectarte al sandbox que se conserva"
+        )
+
+
+def kept_sandbox_note(sandbox: Any) -> str:
+    """La nota que lleva el error de un despliegue con `keep_on_failure`:
+    qué sandbox quedó vivo y cómo terminarlo. Sólo el id, nunca el token."""
+    return (
+        f"keep_on_failure=True: el sandbox {sandbox.sandbox_id} sigue vivo; conéctate con "
+        "Sandbox.connect(sandbox_id, access_token=...) para depurarlo y termínalo con "
+        "Sandbox.kill(sandbox_id) al acabar."
     )

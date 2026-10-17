@@ -1,0 +1,51 @@
+{
+  "schema": "rayito.agent-detection/1",
+  "language": "typescript",
+  "framework": "deepagents",
+  "kind": "langgraph",
+  "entrypoint": "src/agent.ts#agent",
+  "entrypoint_kind": "object",
+  "protocol": "framework",
+  "options": {},
+  "app": null,
+  "install": {
+    "manager": "npm",
+    "lockfile": "package-lock.json",
+    "requirements": null,
+    "require_hashes": false,
+    "reproducible": true,
+    "build_script": false,
+    "python_version": null,
+    "node_version": "22"
+  },
+  "providers": [
+    {
+      "preset": "anthropic",
+      "evidence": [
+        {
+          "path": "package.json",
+          "rule": "dep:@langchain/anthropic"
+        }
+      ]
+    }
+  ],
+  "models": [
+    "claude-haiku-4-5"
+  ],
+  "evidence": [
+    {
+      "path": "package.json",
+      "rule": "dep:deepagents"
+    },
+    {
+      "path": "src/agent.ts",
+      "rule": "entry:ts-create-deep-agent"
+    },
+    {
+      "path": "package-lock.json",
+      "rule": "install:npm"
+    }
+  ],
+  "warnings": [],
+  "alternatives": []
+}

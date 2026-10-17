@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "unsupported",
+    "path": "runtime.node_version"
+  }
+}

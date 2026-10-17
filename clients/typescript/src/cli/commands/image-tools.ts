@@ -37,9 +37,11 @@ import {
 } from "../../images/publish-domain.js";
 import {
   ImagePublishError,
+  LATEST_BASE_IMAGE_VERSION,
   type PublishDeps,
   publish,
   publishWithSizes,
+  resolveBaseImageVersion,
 } from "../../images/publish-service.js";
 import { MS_PER_SECOND } from "../../units.js";
 import { argument, type CommandContext, defineCommand, flag, option } from "../command.js";
@@ -125,7 +127,10 @@ export const publishCommand = defineCommand({
     }),
     option(["--base-image-version"], {
       required: true,
-      help: "baseImageVersion de la base gestionada (imageVersion de list-managed-microvm-image-versions).",
+      help:
+        "baseImageVersion de la base gestionada (imageVersion de " +
+        "list-managed-microvm-image-versions), o `latest` para la más reciente que liste la " +
+        "base gestionada (se imprime la elegida).",
     }),
     option(["--bucket"], { help: `Bucket de artefactos; por defecto ${BUCKET_ENV_VAR}.` }),
     option(["--image-name"], { help: "Sustituye el nombre por defecto de la variante." }),
@@ -183,6 +188,20 @@ export const publishCommand = defineCommand({
     if (withEfs) {
       validated(() => requireEfsCombination(variant, osCapabilities), "--with-efs");
     }
+    const services = await context.services();
+    const requestedVersion = values.string("base_image_version") ?? "";
+    let baseImageVersion: string;
+    try {
+      baseImageVersion = await resolveBaseImageVersion(services.publishPorts, requestedVersion);
+    } catch (error) {
+      if (error instanceof ImagePublishError) {
+        return failure(context, error.message);
+      }
+      throw error;
+    }
+    if (baseImageVersion !== requestedVersion) {
+      context.console.echo(`base_image_version=${baseImageVersion}`, { err: true });
+    }
     const settings: PublishSettings = {
       artifact: values.string("artifact") ?? "",
       imageName: values.string("image_name") ?? defaultImageName(variant, withEfs),
@@ -190,7 +209,7 @@ export const publishCommand = defineCommand({
       bucket: resolveBucket(context),
       stackName: values.string("stack_name") ?? DEFAULT_STACK_NAME,
       buildRoleArn: values.string("build_role_arn"),
-      baseImageVersion: values.string("base_image_version") ?? "",
+      baseImageVersion,
       memoryMib: values.number("memory_mib"),
       force: values.flag("force"),
       timeoutMs: values.number("timeout_seconds") * MS_PER_SECOND,
@@ -199,7 +218,6 @@ export const publishCommand = defineCommand({
       withEfs,
       artifactRunId,
     };
-    const services = await context.services();
     const deps: PublishDeps = {
       ports: services.publishPorts,
       artifacts: fileArtifacts,
@@ -241,6 +259,51 @@ export const publishCommand = defineCommand({
     }
   },
 });
+
+/** Publica la imagen base que falta (`rayito agent deploy --base-artifact`):
+ * la misma publicación que `image publish --os-capabilities ALL` con la
+ * última base gestionada, bajo el nombre de la base de los agentes. Devuelve
+ * el error de publicación como `ImagePublishError`. */
+export async function publishBaseImage(
+  context: CommandContext,
+  request: { readonly artifact: string; readonly bucket: string; readonly imageName: string },
+): Promise<void> {
+  const services = await context.services();
+  const baseImageVersion = await resolveBaseImageVersion(
+    services.publishPorts,
+    LATEST_BASE_IMAGE_VERSION,
+  );
+  const settings: PublishSettings = {
+    artifact: request.artifact,
+    imageName: request.imageName,
+    variant: DEFAULT_VARIANT,
+    bucket: request.bucket,
+    stackName: DEFAULT_STACK_NAME,
+    buildRoleArn: undefined,
+    baseImageVersion,
+    memoryMib: DEFAULT_MEMORY_MIB,
+    force: false,
+    timeoutMs: DEFAULT_BUILD_TIMEOUT_MS,
+    osCapabilities: "ALL",
+    environmentVariables: {},
+    withEfs: false,
+    artifactRunId: undefined,
+  };
+  const summary = await publish(
+    {
+      ports: services.publishPorts,
+      artifacts: fileArtifacts,
+      sleep: context.sleep,
+      now: () => context.now().getTime(),
+      emit: progress(context),
+      utcNow: context.now,
+    },
+    settings,
+  );
+  if (!summary.launchable) {
+    throw new ImagePublishError("la publicación de la imagen base falló");
+  }
+}
 
 export const pruneCommand = defineCommand({
   path: ["image", "prune"],

@@ -574,6 +574,7 @@ python3 scripts/check_pins.py
 python3 scripts/check_hygiene.py
 uvx ruff==0.16.7 check scripts
 python3 scripts/gen_limits.py --check
+python3 scripts/gen_agent_detection.py --check
 python3 scripts/check_license.py
 ```
 

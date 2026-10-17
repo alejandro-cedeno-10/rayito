@@ -30,8 +30,18 @@ from rayito.exceptions import InvalidArgumentException
 STEP_RUN: Final = "run"
 STEP_COPY: Final = "copy"
 #: Los drivers del host del agente (ADR-028, design.md D3): lista cerrada.
+#: `strands-ts` es el nombre antiguo de `node-callable` con el adaptador
+#: `strands` y sólo se mantiene para leer una configuración ya escrita.
 HostDriver: TypeAlias = Literal[
-    "deepagents", "opencode", "strands", "strands-ts", "hermes", "callable", "command", "http-app"
+    "deepagents",
+    "opencode",
+    "strands",
+    "strands-ts",
+    "node-callable",
+    "hermes",
+    "callable",
+    "command",
+    "http-app",
 ]
 HOST_DRIVERS: Final[tuple[str, ...]] = get_args(HostDriver)
 #: Dónde se instala: un MicroVM de Rayito o un contenedor exportado.
@@ -107,6 +117,27 @@ class TemplateStep:
 def run_step(cmd: str) -> TemplateStep:
     """Un paso `RUN`."""
     return TemplateStep(STEP_RUN, {"cmd": cmd})
+
+
+DOWNLOAD_PACKAGES: Final[tuple[str, ...]] = ("curl", "ca-certificates")
+"""Herramientas de descarga que una imagen Debian de contenedor no trae."""
+
+
+def container_packages_step(
+    target: InstallTarget, packages: Sequence[str]
+) -> tuple[TemplateStep, ...]:
+    """El `RUN` de `apt-get` con las herramientas de build que una imagen
+    Debian de un contenedor exportado no trae; vacío en un MicroVM, cuya
+    base ya las tiene."""
+    if target.platform != "container":
+        return ()
+    names = " ".join(packages)
+    return (
+        run_step(
+            "apt-get update && apt-get install -y --no-install-recommends "
+            f"{names} && rm -rf /var/lib/apt/lists/*"
+        ),
+    )
 
 
 def copy_step(src: str, dst: str, *, executable: bool = False) -> TemplateStep:

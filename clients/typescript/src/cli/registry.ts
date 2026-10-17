@@ -8,6 +8,7 @@ import type { CommandDefinition, GroupDefinition } from "./command.js";
 import {
   agentBuildCommand,
   agentDeployCommand,
+  agentDetectCommand,
   agentExportCommand,
   agentGroup,
   agentInitCommand,
@@ -104,6 +105,7 @@ export const COMMANDS: readonly CommandDefinition[] = [
   templateLogs,
   agentTemplateBuildCommand,
   agentInitCommand,
+  agentDetectCommand,
   agentBuildCommand,
   agentRunCommand,
   agentDeployCommand,

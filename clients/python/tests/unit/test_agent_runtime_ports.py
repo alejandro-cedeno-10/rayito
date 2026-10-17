@@ -183,7 +183,7 @@ def test_opencode_host_config_matches_its_run_command() -> None:
     assert host.options == {"workdir": "/home/user"}
 
 
-def test_deepagents_host_config_matches_its_run_command() -> None:
+def test_deepagents_host_config_adds_the_standard_provider_variables() -> None:
     runtime = DeepAgents()
     spec = _bedrock()
     host = runtime.host_config(spec, wiring=GatewayWiring(URLS), workdir="/home/user")
@@ -192,7 +192,7 @@ def test_deepagents_host_config_matches_its_run_command() -> None:
     assert host.driver == "deepagents"
     assert host.python == DEEPAGENTS_PYTHON
     assert host.files == config
-    assert host.envs == command.envs
+    assert host.envs == {**command.envs, "AWS_ENDPOINT_URL_BEDROCK_RUNTIME": URLS["bedrock"]}
     assert host.options == {"config_path": DEEPAGENTS_CONFIG_PATH}
 
 

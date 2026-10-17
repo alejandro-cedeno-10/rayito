@@ -13,13 +13,15 @@ stdout a eventos del protocolo v1.
 
 Una salida distinta de 0 sin un `agent_failed` propio es `runtime_error`
 (ADR-025). El prompt nunca va en argv. Configuración: `command` (lista),
-`protocol` y `workdir`.
+`protocol`, `workdir`, `path_prepend` (directorios que van al principio del
+`PATH`, el `bin` del venv de `requirements`) y `app_dir` (el código copiado,
+que va al principio del `PYTHONPATH`). Con `protocol="text"` el hijo no
+informa de tokens: el uso es desconocido, no cero.
 """
 
 from __future__ import annotations
 
 import json
-import os
 import threading
 from collections.abc import Mapping
 from typing import Any, Final
@@ -34,7 +36,13 @@ from ..protocol import (
     RunState,
     build_event,
 )
-from ._common import load_config, resolve_session_id, sanitize_detail_code
+from ._common import (
+    child_argv,
+    child_environment,
+    load_config,
+    resolve_session_id,
+    sanitize_detail_code,
+)
 
 #: Una línea más larga se descarta (`MAX_AGENT_EVENT_LINE_BYTES` de
 #: `limits.json`).
@@ -59,8 +67,8 @@ def _request_line(request: Request, session_id: str) -> bytes:
     return (json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8")
 
 
-def _child_env(request: Request, session_id: str) -> dict[str, str]:
-    env = dict(os.environ)
+def _child_env(config: Mapping[str, Any], request: Request, session_id: str) -> dict[str, str]:
+    env = child_environment(config)
     env[SESSION_ID_ENV] = session_id
     env[REASONING_ENV] = "1" if request.reasoning else "0"
     if request.model is not None:
@@ -122,11 +130,11 @@ class Driver:
     def run(self, request: Request, emit: Emit, state: RunState) -> None:
         state.session_id = resolve_session_id(request.session_id)
         emit(build_event("session", session_id=state.session_id))
-        argv = [str(part) for part in self._config["command"]]
+        env = _child_env(self._config, request, state.session_id)
         with self._lock:
             self._child = ChildProcess(
-                argv,
-                env=_child_env(request, state.session_id),
+                child_argv(self._config["command"], env),
+                env=env,
                 cwd=str(self._config["workdir"]) if self._config.get("workdir") else None,
                 stdin=True,
             )
@@ -173,7 +181,7 @@ class Driver:
             parts.append(chunk)
             emit(build_event("text_delta", text=chunk))
         emit(build_event("text", text="".join(parts)))
-        emit(build_event("step_finished", index=1, usage={}, finish_reason=FINISH_REASON))
+        emit(build_event("step_finished", index=1, usage=None, finish_reason=FINISH_REASON))
 
     @staticmethod
     def _finish_v1(relay: Relay, exit_code: int) -> None:

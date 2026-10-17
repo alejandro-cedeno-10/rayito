@@ -6,7 +6,8 @@
 `host.json` (esquema `rayito.agent-host/1`) lleva `driver` (una clave de
 `DRIVERS`), `options` (las opciones del driver de `HostConfig.options`, que
 el driver recibe como su configuración) y, opcionalmente, `limits`,
-`max_concurrency`, `max_request_bytes`, `session_header` y `ready_marker`.
+`max_concurrency`, `queue_max`, `queue_timeout_seconds`, `max_request_bytes`,
+`session_header` y `ready_marker`.
 Las variables de entorno de `HostConfig.envs` las pone quien lanza el host
 (el comando del SDK o el `ENV` del Dockerfile exportado). En `task` la
 petición llega por stdin y las líneas v1 salen por un descriptor privado; en
@@ -39,6 +40,7 @@ DRIVERS: Final[dict[str, str]] = {
     "callable": "drivers.callable",
     "command": "drivers.command",
     "strands": "drivers.strands",
+    "node-callable": "drivers.node_callable",
     "strands-ts": "drivers.strands_ts",
     "hermes": "drivers.hermes",
 }
@@ -124,6 +126,14 @@ def serve(package: str, args: argparse.Namespace) -> int:
     config = serving.ServiceConfig(
         limits=limits.Limits.from_config(host.get("limits")),
         max_concurrency=int(host.get("max_concurrency", serving.MAX_CONCURRENCY)),
+        queue_max=_bounded(host.get("queue_max"), serving.QUEUE_MAX_DEFAULT, serving.QUEUE_MAX),
+        queue_timeout_seconds=float(
+            _bounded(
+                host.get("queue_timeout_seconds"),
+                serving.QUEUE_TIMEOUT_SECONDS_DEFAULT,
+                serving.QUEUE_TIMEOUT_SECONDS_MAX,
+            )
+        ),
         max_request_bytes=int(host.get("max_request_bytes", serving.MAX_REQUEST_BYTES)),
         token=os.environ.get(serving.TOKEN_ENV) or None,
         session_header=str(host.get("session_header", serving.SESSION_HEADER)),
@@ -132,11 +142,13 @@ def serve(package: str, args: argparse.Namespace) -> int:
     if config.ready_marker is not None:
         Path(config.ready_marker).unlink(missing_ok=True)
         Path(config.ready_marker + serving.FAILED_SUFFIX).unlink(missing_ok=True)
+    diagnostics = importlib.import_module(".diagnostics", package)
     try:
         driver = create_driver(package, host["driver"], host["options"])
     except Exception as exc:
-        log.error("driver_unavailable code=%s", type(exc).__name__)
-        serving.write_failed_marker(config, type(exc).__name__)
+        code, detail = startup_failure(exc, diagnostics)
+        log.error("driver_unavailable code=%s", code)
+        serving.write_failed_marker(config, code, detail)
         return 1
     service = serving.Service(driver, config)
     server = serving.build_server(service, args.port)
@@ -144,19 +156,42 @@ def serve(package: str, args: argparse.Namespace) -> int:
         signal.SIGTERM, lambda *_: threading.Thread(target=server.shutdown, daemon=True).start()
     )
     warm_failed = threading.Event()
-    threading.Thread(target=_warm, args=(service, server, log, warm_failed), daemon=True).start()
+    threading.Thread(
+        target=_warm, args=(service, server, log, warm_failed, diagnostics), daemon=True
+    ).start()
     log.info("listening port=%d driver=%s", args.port, host["driver"])
     server.serve_forever()
     return 1 if warm_failed.is_set() else 0
 
 
-def _warm(service: Any, server: Any, log: logging.Logger, failed: threading.Event) -> None:
+def _bounded(value: Any, default: Any, ceiling: Any) -> Any:
+    """`value` si es un número no negativo (sin pasar de `ceiling`), si no
+    `default`: un valor inválido de `host.json` nunca deja el host sin
+    arrancar."""
+    valid = isinstance(value, int | float) and not isinstance(value, bool) and value >= 0
+    return min(value, ceiling) if valid else default
+
+
+def startup_failure(exc: Exception, diagnostics: Any) -> tuple[str, str | None]:
+    """El código y el diagnóstico saneado de un arranque fallido: el
+    `detail_code` de un `AgentFailure` y la cola de la salida de error de la
+    app, o el nombre de la clase de cualquier otra excepción y su mensaje."""
+    code = getattr(exc, "detail_code", None)
+    text = getattr(exc, "diagnostics", None) if code is not None else str(exc)
+    detail = diagnostics.sanitize_diagnostics(text, os.environ) if text else ""
+    return str(code if code is not None else type(exc).__name__), detail or None
+
+
+def _warm(
+    service: Any, server: Any, log: logging.Logger, failed: threading.Event, diagnostics: Any
+) -> None:
     try:
         service.driver.warm()
         service.mark_ready()
     except Exception as exc:
-        log.error("warm_failed code=%s", type(exc).__name__)
-        service.mark_failed(type(exc).__name__)
+        code, detail = startup_failure(exc, diagnostics)
+        log.error("warm_failed code=%s", code)
+        service.mark_failed(code, detail)
         failed.set()
         server.shutdown()
         return

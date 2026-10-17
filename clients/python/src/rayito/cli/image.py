@@ -5,6 +5,8 @@ from __future__ import annotations
 import os
 import re
 import time
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -40,6 +42,7 @@ from rayito.cli._publish import (
     publish,
     publish_with_sizes,
     require_efs_combination,
+    resolve_base_image_version,
     validate_run_id,
 )
 from rayito.cli._session import Clients, clients_of, json_mode
@@ -205,8 +208,9 @@ def publish_command(
         typer.Option(
             "--base-image-version",
             help=(
-                "baseImageVersion de la base gestionada "
-                "(imageVersion de list-managed-microvm-image-versions)."
+                "baseImageVersion de la base gestionada (imageVersion de "
+                "list-managed-microvm-image-versions), o `latest` para la más reciente "
+                "que liste la base gestionada (se imprime la elegida)."
             ),
         ),
     ],
@@ -284,29 +288,82 @@ def publish_command(
     environment_variables = parse_environment_assignments(env)
     capabilities = validate_os_capabilities(os_capabilities)
     validate_efs_combination(with_efs, validate_variant(variant), capabilities)
-    settings = PublishSettings(
-        artifact=artifact,
-        image_name=image_name or default_image_name(variant, with_efs=with_efs),
-        variant=variant,
-        bucket=resolve_bucket(bucket),
-        stack_name=stack_name,
-        build_role_arn=build_role_arn,
-        base_image_version=base_image_version,
-        memory_mib=memory_mib,
-        force=force,
-        timeout_seconds=timeout_seconds,
-        os_capabilities=capabilities,
-        environment_variables=environment_variables,
-        with_efs=with_efs,
-        artifact_run_id=run_id,
-    )
-    code = (
-        publish_with_sizes(clients_of(ctx), settings, size_names, json_output=json_mode(ctx))
-        if size_names
-        else publish(clients_of(ctx), settings, json_output=json_mode(ctx))
+    code = run_publish(
+        clients_of(ctx),
+        PublishRequest(
+            artifact=artifact,
+            base_image_version=base_image_version,
+            bucket=resolve_bucket(bucket),
+            image_name=image_name,
+            variant=variant,
+            os_capabilities=capabilities,
+            build_role_arn=build_role_arn,
+            stack_name=stack_name,
+            memory_mib=memory_mib,
+            timeout_seconds=timeout_seconds,
+            force=force,
+            size_names=size_names,
+            environment_variables=environment_variables,
+            with_efs=with_efs,
+            artifact_run_id=run_id,
+        ),
+        json_output=json_mode(ctx),
     )
     if code:
         raise typer.Exit(code)
+
+
+@dataclass(frozen=True)
+class PublishRequest:
+    """Lo que `rayito image publish` pide, ya validado: la publicación de una
+    imagen y, con `size_names`, la de sus tamaños extra. Lo comparten el
+    comando y `rayito agent deploy --base-artifact` (la imagen base que falta)."""
+
+    artifact: Path
+    base_image_version: str
+    bucket: str
+    image_name: str | None = None
+    variant: str = "full"
+    os_capabilities: str | None = None
+    build_role_arn: str | None = None
+    stack_name: str = DEFAULT_STACK_NAME
+    memory_mib: int = DEFAULT_MEMORY_MIB
+    timeout_seconds: float = DEFAULT_BUILD_TIMEOUT_SECONDS
+    force: bool = False
+    size_names: tuple[str, ...] = ()
+    environment_variables: Mapping[str, str] = field(default_factory=dict)
+    with_efs: bool = False
+    artifact_run_id: str | None = None
+
+
+def run_publish(clients: Clients, request: PublishRequest, *, json_output: bool) -> int:
+    """Resuelve la versión de la base (`latest` incluido) y publica; devuelve
+    el código de salida de la publicación."""
+    resolved_version = resolve_base_image_version(
+        clients.microvms, clients.region, request.base_image_version
+    )
+    if resolved_version != request.base_image_version:
+        echo(f"base_image_version={resolved_version}", err=True)
+    settings = PublishSettings(
+        artifact=request.artifact,
+        image_name=request.image_name
+        or default_image_name(request.variant, with_efs=request.with_efs),
+        variant=request.variant,
+        bucket=request.bucket,
+        stack_name=request.stack_name,
+        build_role_arn=request.build_role_arn,
+        base_image_version=resolved_version,
+        memory_mib=request.memory_mib,
+        force=request.force,
+        timeout_seconds=request.timeout_seconds,
+        os_capabilities=request.os_capabilities,
+        environment_variables=request.environment_variables,
+        with_efs=request.with_efs,
+        artifact_run_id=request.artifact_run_id,
+    )
+    if request.size_names:
+        return publish_with_sizes(clients, settings, request.size_names, json_output=json_output)
+    return publish(clients, settings, json_output=json_output)
 
 
 def listed_images(clients: Clients, name_filter: str | None) -> list[dict[str, Any]]:

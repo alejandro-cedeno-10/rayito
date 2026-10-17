@@ -26,19 +26,25 @@ uso de `run.completed`) y un `tool_call` por pareja `tool.started` /
 
 from __future__ import annotations
 
-import atexit
 import http.client
 import json
 import os
 import secrets
 import threading
-import time
 from collections.abc import Iterator, Mapping
 from http import HTTPStatus
 from pathlib import Path
 from typing import Any, Final
 
-from ..process import ChildProcess
+from ..process import (
+    DEFAULT_START_TIMEOUT_SECONDS,
+    STATE_FAILED,
+    STATE_RESTARTING,
+    ChildProcess,
+    FailureListener,
+    RestartPolicy,
+    Supervisor,
+)
 from ..protocol import (
     AgentFailure,
     Emit,
@@ -56,8 +62,6 @@ HEALTH_PATH: Final = "/health"
 RUNS_PATH: Final = "/v1/runs"
 STOP_SUFFIX: Final = "/stop"
 EVENTS_SUFFIX: Final = "/events"
-DEFAULT_START_TIMEOUT_SECONDS: Final = 90.0
-HEALTH_POLL_SECONDS: Final = 0.2
 #: Hermes manda un comentario `: keepalive` cada 10 s; más de este silencio
 #: sin un solo byte es un cuelgue.
 STREAM_IDLE_TIMEOUT_SECONDS: Final = 120.0
@@ -254,7 +258,8 @@ class Driver:
     def __init__(self, config: Mapping[str, Any]) -> None:
         self._config = config
         self._api_key = secrets.token_urlsafe(API_KEY_BYTES)
-        self._child: ChildProcess | None = None
+        self._supervisor: Supervisor | None = None
+        self._listeners: list[FailureListener] = []
         self._run_id: str | None = None
         self._lock = threading.Lock()
 
@@ -267,47 +272,64 @@ class Driver:
     def warm(self) -> None:
         self._ensure_started()
 
+    def add_failure_listener(self, listener: FailureListener) -> None:
+        """Quien se entera de un bucle de caídas (`app_crashloop`)."""
+        self._listeners.append(listener)
+        if self._supervisor is not None:
+            self._supervisor.add_failure_listener(listener)
+
+    def availability(self) -> str:
+        """`ready`, `restarting` (Hermes murió y se relanza) o `failed`."""
+        supervisor = self._supervisor
+        state = "" if supervisor is None else supervisor.state
+        if state == STATE_RESTARTING:
+            return "restarting"
+        return "failed" if state == STATE_FAILED else "ready"
+
     def _ensure_started(self) -> None:
         with self._lock:
-            if self._child is not None:
+            if self._supervisor is not None:
                 return
-            write_home(self._config)
-            argv = [
-                str(self._config["python"]),
-                "-P",
-                "-m",
-                "hermes_cli.main",
-                "gateway",
-                "run",
-            ]
-            self._child = ChildProcess(
-                argv,
-                env=child_env(self._config, self._api_key),
-                cwd=str(self._config["workdir"]),
-                capture_stdout=False,
+            supervisor = Supervisor(
+                self._spawn,
+                self._healthy,
+                failure_codes=("hermes_exited", "hermes_not_ready"),
+                environ=child_env(self._config, self._api_key),
+                policy=RestartPolicy.from_config(self._config),
+                start_timeout_seconds=float(
+                    self._config.get("start_timeout_seconds", DEFAULT_START_TIMEOUT_SECONDS)
+                ),
             )
-            atexit.register(self._child.kill)
-        self._wait_healthy()
+            for listener in self._listeners:
+                supervisor.add_failure_listener(listener)
+            self._supervisor = supervisor
+        write_home(self._config)
+        try:
+            supervisor.start()
+        except AgentFailure:
+            with self._lock:
+                self._supervisor = None
+            raise
 
-    def _wait_healthy(self) -> None:
-        deadline = time.monotonic() + float(
-            self._config.get("start_timeout_seconds", DEFAULT_START_TIMEOUT_SECONDS)
+    def _spawn(self) -> ChildProcess:
+        argv = [str(self._config["python"]), "-P", "-m", "hermes_cli.main", "gateway", "run"]
+        return ChildProcess(
+            argv,
+            env=child_env(self._config, self._api_key),
+            cwd=str(self._config["workdir"]),
+            capture_stdout=False,
+            capture_stderr_tail=True,
         )
-        while time.monotonic() < deadline:
-            child = self._child
-            if child is None or child.poll() is not None:
-                raise AgentFailure("runtime_error", "hermes_exited")
-            try:
-                connection = self._connection(REQUEST_TIMEOUT_SECONDS)
-                connection.request("GET", HEALTH_PATH)
-                status = connection.getresponse().status
-                connection.close()
-                if status == HTTPStatus.OK:
-                    return
-            except OSError:
-                pass
-            time.sleep(HEALTH_POLL_SECONDS)
-        raise AgentFailure("runtime_error", "hermes_not_ready")
+
+    def _healthy(self) -> bool:
+        try:
+            connection = self._connection(REQUEST_TIMEOUT_SECONDS)
+            connection.request("GET", HEALTH_PATH)
+            status = connection.getresponse().status
+            connection.close()
+        except OSError:
+            return False
+        return status == HTTPStatus.OK
 
     def run(self, request: Request, emit: Emit, state: RunState) -> None:
         self._ensure_started()
@@ -385,10 +407,9 @@ class Driver:
             except OSError:
                 pass
         with self._lock:
-            child = self._child
-            self._child = None
-        if child is not None:
-            child.kill()
+            supervisor, self._supervisor = self._supervisor, None
+        if supervisor is not None:
+            supervisor.stop()
 
 
 def create(options: Mapping[str, Any]) -> Driver:

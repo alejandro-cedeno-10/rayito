@@ -1,0 +1,73 @@
+{
+  "schema": "rayito.agent-detection/1",
+  "language": "python",
+  "framework": "fastapi",
+  "kind": "custom",
+  "entrypoint": "server:app",
+  "entrypoint_kind": "object",
+  "protocol": "json",
+  "options": {},
+  "app": {
+    "framework": "fastapi",
+    "command": [
+      "python",
+      "-m",
+      "uvicorn",
+      "server:app",
+      "--host",
+      "127.0.0.1",
+      "--port",
+      "8000"
+    ],
+    "port": 8000,
+    "port_env": null,
+    "health_path": "/health",
+    "invoke_path": "/chat",
+    "request_field": "message",
+    "response_field": "answer"
+  },
+  "install": {
+    "manager": "uv",
+    "lockfile": "uv.lock",
+    "requirements": null,
+    "require_hashes": false,
+    "reproducible": true,
+    "build_script": false,
+    "python_version": "3.12",
+    "node_version": null
+  },
+  "providers": [
+    {
+      "preset": "bedrock",
+      "evidence": [
+        {
+          "path": "pyproject.toml",
+          "rule": "dep:langchain-aws"
+        }
+      ]
+    }
+  ],
+  "models": [
+    "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+  ],
+  "evidence": [
+    {
+      "path": "pyproject.toml",
+      "rule": "dep:fastapi"
+    },
+    {
+      "path": "server.py",
+      "rule": "entry:py-fastapi-app"
+    },
+    {
+      "path": "uv.lock",
+      "rule": "install:uv"
+    },
+    {
+      "path": "pyproject.toml",
+      "rule": "version:specifier"
+    }
+  ],
+  "warnings": [],
+  "alternatives": []
+}

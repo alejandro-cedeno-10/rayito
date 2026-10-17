@@ -21,11 +21,16 @@ from __future__ import annotations
 import asyncio
 import os
 import posixpath
+import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, Final, Self, TypeVar
+from typing import TYPE_CHECKING, Any, Final, Self, TypeVar, cast
 
+from rayito._agent._deploy_domain import (
+    validate_bucket_hint,
+    validate_image_version,
+)
 from rayito._agent._domain import (
     AgentLimits,
     AgentModel,
@@ -59,28 +64,38 @@ from rayito._agent._runtimes import (
     runtime_from_options,
     runtime_to_options,
 )
+from rayito._agent._scaling_domain import ScalingOptions, max_sessions_for_memory
 from rayito._agent._template import DEFAULT_AGENT_TEMPLATE_BASE
 from rayito._images import DEFAULT_BUILD_TIMEOUT_SECONDS
 from rayito._lifecycle_base import DEFAULT_IDLE_POLICY
 from rayito._limits import (
     AGENT_MIN_MEMORY_MIB,
+    AGENT_NODE_BUILD_VERSIONS,
     AGENT_PROJECT_SCHEMA,
+    AGENT_PYTHON_BUILD_VERSIONS,
     AGENT_SERVICE_MAX_CONCURRENCY,
     AGENT_SERVICE_PORT,
+    AGENT_SERVICE_QUEUE_MAX,
+    AGENT_SERVICE_QUEUE_MAX_DEFAULT,
+    AGENT_SERVICE_QUEUE_TIMEOUT_SECONDS_DEFAULT,
+    AGENT_SERVICE_QUEUE_TIMEOUT_SECONDS_MAX,
     DEFAULT_AGENT_DEPLOY_TIMEOUT_SECONDS,
     DEFAULT_PORT,
+    EGRESS_HOSTNAME_MAX_CHARS,
+    EGRESS_MAX_ENTRIES_PER_LIST,
     HOOKS_PORT,
     MAX_DURATION_SECONDS,
     PORT_MAX,
     PORT_MIN,
 )
-from rayito._models import IdlePolicy
+from rayito._models import IdlePolicy, NetworkPolicy
 from rayito._secret_gateway._domain import SecretGateway
 from rayito.exceptions import InvalidArgumentException
 
 if TYPE_CHECKING:
     from rayito._agent._deployment import AgentDeployment
     from rayito._agent._deployment_async import AsyncAgentDeployment
+    from rayito._agent._detect_report import DetectionReport, DetectOverrides
     from rayito._agent._events import AgentEvent, AgentResult
     from rayito._agent._export import AgentExport
     from rayito._secrets import SecretRef
@@ -98,6 +113,9 @@ AGENT_PROJECT_ERROR_CODES: Final[tuple[str, ...]] = (
     "secret_value",
     "unsupported_schema",
     "file_not_found",
+    "ambiguous",
+    "not_detected",
+    "unsupported",
 )
 #: Claves que, de aparecer sin estar declaradas, intentan meter un secreto
 #: en el fichero: el error es `secret_value` y no `unknown_key`.
@@ -127,6 +145,7 @@ SECRET_VALUE_PREFIXES: Final[tuple[str, ...]] = (
 #: Pasarelas de `[gateways.<nombre>] preset = ...`, además de `"custom"`.
 CUSTOM_GATEWAY_PRESET: Final = "custom"
 _RATE_KEY: Final = "rate_per_minute"
+_ENV_NAME_PATTERN: Final = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 _T = TypeVar("_T")
 
 
@@ -152,13 +171,19 @@ class ServeOptions:
     servicio (no 8080 ni 9000, que son de `rayd`), la vida del sandbox
     (`timeout_seconds`, como mucho el máximo de la plataforma), la política
     de `idle` (suspensión y reanudación automáticas; `None` la quita), la
-    concurrencia y las etiquetas `metadata` del sandbox."""
+    concurrencia por VM (`max_concurrency`, acotada por las conexiones que
+    admite el MicroVM de `AgentProject.memory_mib`), las etiquetas `metadata`
+    del sandbox y la cola del host: `queue_max` llamadas esperan hasta
+    `queue_timeout_seconds` cuando el VM está lleno (con `queue_max=0`, el
+    valor por defecto, la llamada que no cabe recibe 429 enseguida)."""
 
     port: int = AGENT_SERVICE_PORT
     timeout_seconds: float = DEFAULT_AGENT_DEPLOY_TIMEOUT_SECONDS
     idle: IdlePolicy | None = DEFAULT_IDLE_POLICY
     max_concurrency: int = AGENT_SERVICE_MAX_CONCURRENCY
     metadata: Mapping[str, str] = field(default_factory=dict)
+    queue_max: int = AGENT_SERVICE_QUEUE_MAX_DEFAULT
+    queue_timeout_seconds: float = AGENT_SERVICE_QUEUE_TIMEOUT_SECONDS_DEFAULT
 
     def __post_init__(self) -> None:
         if isinstance(self.port, bool) or not isinstance(self.port, int):
@@ -189,6 +214,108 @@ class ServeOptions:
         ):
             raise InvalidArgumentException("ServeOptions.metadata debe mapear cadenas a cadenas")
         object.__setattr__(self, "metadata", MappingProxyType(dict(self.metadata)))
+        if (
+            isinstance(self.queue_max, bool)
+            or not isinstance(self.queue_max, int)
+            or not 0 <= self.queue_max <= AGENT_SERVICE_QUEUE_MAX
+        ):
+            raise InvalidArgumentException(
+                f"ServeOptions.queue_max debe ser un entero en 0..{AGENT_SERVICE_QUEUE_MAX}"
+            )
+        if (
+            isinstance(self.queue_timeout_seconds, bool)
+            or not isinstance(self.queue_timeout_seconds, int | float)
+            or not 0 < self.queue_timeout_seconds <= AGENT_SERVICE_QUEUE_TIMEOUT_SECONDS_MAX
+        ):
+            raise InvalidArgumentException(
+                "ServeOptions.queue_timeout_seconds debe estar en "
+                f"(0, {AGENT_SERVICE_QUEUE_TIMEOUT_SECONDS_MAX}]"
+            )
+
+
+#: Los lenguajes de un proyecto de agente.
+AGENT_LANGUAGES: Final[tuple[str, ...]] = ("python", "typescript")
+
+
+@dataclass(frozen=True)
+class RuntimeVersions:
+    """Las versiones de intérprete del agente: `python` (la menor, `"3.12"`) y
+    `node` (la mayor, `"22"`) entre las compilaciones fijadas de
+    `limits.json`. `None` es la de por defecto: la del intérprete de la
+    imagen base (sin descarga) y la que exige Strands para TypeScript."""
+
+    python: str | None = None
+    node: str | None = None
+
+    def __post_init__(self) -> None:
+        _supported_version(self.python, AGENT_PYTHON_BUILD_VERSIONS, "RuntimeVersions.python")
+        _supported_version(self.node, AGENT_NODE_BUILD_VERSIONS, "RuntimeVersions.node")
+
+    @property
+    def is_default(self) -> bool:
+        return self.python is None and self.node is None
+
+
+def _supported_version(value: object, builds: Mapping[str, str], label: str) -> None:
+    if value is not None and value not in builds:
+        raise InvalidArgumentException(f"{label} debe ser una de {sorted(builds)}")
+
+
+def _concurrency_problem(serve: ServeOptions, memory_mib: int) -> str | None:
+    """Por qué `serve.max_concurrency` no cabe en las conexiones de un VM de
+    `memory_mib`, o `None` si cabe."""
+    cap = max_sessions_for_memory(memory_mib)
+    if serve.max_concurrency <= cap:
+        return None
+    return (
+        f"admite como mucho {cap} con memory_mib={memory_mib} (conexiones del MicroVM menos "
+        "las reservadas); sube la memoria o baja la concurrencia"
+    )
+
+
+def _secret_like_env_name(name: str) -> bool:
+    lowered = name.lower()
+    return any(lowered == word or lowered.endswith(f"_{word}") for word in SECRET_LIKE_KEYS)
+
+
+def _validated_env(env: object) -> Mapping[str, str]:
+    """`AgentProject.env`: nombres de variable válidos, valores de texto y
+    nada que parezca un secreto (un secreto va por una pasarela)."""
+    if not isinstance(env, Mapping):
+        raise InvalidArgumentException("AgentProject.env debe mapear cadenas a cadenas")
+    for name, value in env.items():
+        if not isinstance(name, str) or not _ENV_NAME_PATTERN.fullmatch(name):
+            raise InvalidArgumentException(
+                "AgentProject.env: cada nombre debe ser un identificador de variable de entorno"
+            )
+        if not isinstance(value, str):
+            raise InvalidArgumentException("AgentProject.env debe mapear cadenas a cadenas")
+        if _secret_like_env_name(name) or value.startswith(SECRET_VALUE_PREFIXES):
+            raise InvalidArgumentException(
+                "AgentProject.env no puede llevar secretos: usa una pasarela para las credenciales"
+            )
+    return env
+
+
+def _validated_network(network: object) -> NetworkPolicy | None:
+    if network is None:
+        return None
+    if not isinstance(network, NetworkPolicy):
+        raise InvalidArgumentException("AgentProject.network debe ser un NetworkPolicy o None")
+    for label, entries in (("allow_out", network.allow_out), ("deny_out", network.deny_out)):
+        if len(entries) > EGRESS_MAX_ENTRIES_PER_LIST or not all(
+            isinstance(entry, str) and 0 < len(entry) <= EGRESS_HOSTNAME_MAX_CHARS
+            for entry in entries
+        ):
+            raise InvalidArgumentException(
+                f"AgentProject.network.{label} admite como mucho {EGRESS_MAX_ENTRIES_PER_LIST} "
+                "cadenas no vacías"
+            )
+    if network.egress_proxy is not None:
+        raise InvalidArgumentException(
+            "AgentProject.network no admite egress_proxy: sus credenciales no van en el proyecto"
+        )
+    return network
 
 
 @dataclass(frozen=True)
@@ -205,6 +332,13 @@ class AgentProject:
     directorio contra el que `to_dict()` escribe las rutas relativas.
     `template` es el nombre de una imagen ya construida (por defecto,
     `name`).
+
+    Para servir el agente en varios VMs: `scaling` (`ScalingOptions`),
+    `env` (variables no secretas del agente), `network` (política
+    `allow_out`/`deny_out` del sandbox, que necesita `rayito-base-caps`),
+    `region`, `bucket` y `base_image_version` (los valores por defecto de
+    `deploy_agent()`), `language` y `framework` (lo que la detección o el
+    fichero declaran del proyecto) y `versions` (`RuntimeVersions`).
 
     Coste y activación
     -------------------
@@ -237,6 +371,15 @@ class AgentProject:
     base: str = DEFAULT_AGENT_TEMPLATE_BASE
     template: str | None = None
     base_dir: str = "."
+    scaling: ScalingOptions = field(default_factory=ScalingOptions)
+    env: Mapping[str, str] = field(default_factory=dict)
+    network: NetworkPolicy | None = None
+    region: str | None = None
+    bucket: str | None = None
+    base_image_version: str | None = None
+    language: str | None = None
+    framework: str | None = None
+    versions: RuntimeVersions = field(default_factory=RuntimeVersions)
 
     def __post_init__(self) -> None:
         validate_name(self.name, "AgentProject.name")
@@ -268,6 +411,28 @@ class AgentProject:
             )
         if not self.base or not self.base_dir:
             raise InvalidArgumentException("AgentProject.base y base_dir no pueden ser vacíos")
+        self._validate_fleet_options()
+
+    def _validate_fleet_options(self) -> None:
+        if not isinstance(self.scaling, ScalingOptions):
+            raise InvalidArgumentException("AgentProject.scaling debe ser un ScalingOptions")
+        if not isinstance(self.versions, RuntimeVersions):
+            raise InvalidArgumentException("AgentProject.versions debe ser un RuntimeVersions")
+        problem = _concurrency_problem(self.serve, self.memory_mib)
+        if problem is not None:
+            raise InvalidArgumentException(f"ServeOptions.max_concurrency {problem}")
+        object.__setattr__(self, "env", MappingProxyType(dict(_validated_env(self.env))))
+        object.__setattr__(self, "network", _validated_network(self.network))
+        for label, value in (("region", self.region), ("framework", self.framework)):
+            _optional_text(value, f"AgentProject.{label}")
+        if self.bucket is not None:
+            validate_bucket_hint(self.bucket, "AgentProject.bucket")
+        if self.base_image_version is not None:
+            validate_image_version(self.base_image_version, "AgentProject.base_image_version")
+        if self.language is not None and self.language not in AGENT_LANGUAGES:
+            raise InvalidArgumentException(
+                f"AgentProject.language debe ser uno de {list(AGENT_LANGUAGES)}"
+            )
 
     @classmethod
     def load(cls, path: str | os.PathLike[str] = ".") -> Self:
@@ -280,6 +445,28 @@ class AgentProject:
         return cls.from_dict(
             document.data, base_dir=document.base_dir, read_text=document.read_text
         )
+
+    @classmethod
+    def detect(
+        cls,
+        path: str | os.PathLike[str] = ".",
+        overrides: DetectOverrides | None = None,
+        *,
+        region: str | None = None,
+    ) -> tuple[Self, DetectionReport | None]:
+        """El proyecto de un agente que ya tienes y su `DetectionReport`
+        (`None` si un fichero de proyecto completo no necesitó detectar nada),
+        sin ejecutar su código ni llamar a AWS. El fichero de proyecto, si
+        existe, gana clave por clave; lo que calla lo completa la detección
+        (lenguaje, framework, punto de entrada, instalación, proveedor y
+        modelo) y `overrides` fuerza lo que tú indiques. Si el caso no es
+        claro lanza `AgentProjectException` con `code` `ambiguous`,
+        `not_detected` o `unsupported` y la clave o bandera que lo resuelve.
+        """
+        from rayito._agent._project_file import detect_project
+
+        project, report = detect_project(path, overrides, region=region)
+        return cast(Self, project), report
 
     @classmethod
     def from_dict(
@@ -300,7 +487,7 @@ class AgentProject:
         y que comparten los dos SDK. Omite lo que vale su valor por defecto;
         el texto de las instrucciones va en línea."""
         document: dict[str, object] = {"schema": AGENT_PROJECT_SCHEMA, "name": self.name}
-        document["runtime"] = runtime_to_options(self.runtime)
+        document["runtime"] = _runtime_to_dict(self)
         source = _source_to_dict(self)
         if source:
             document["source"] = source
@@ -313,7 +500,10 @@ class AgentProject:
             ("agent", _agent_to_dict(self.spec)),
             ("limits", _limits_to_dict(self.limits)),
             ("serve", _serve_to_dict(self.serve)),
+            ("scaling", _scaling_to_dict(self.scaling)),
+            ("env", dict(sorted(self.env.items()))),
             ("network", _network_to_dict(self)),
+            ("deploy", _deploy_to_dict(self)),
             ("image", _image_to_dict(self)),
         ):
             if table:
@@ -372,18 +562,34 @@ class AgentProject:
         )
 
     def deploy(
-        self, *, region: str | None = None, session: Any = None, access_token: str | None = None
+        self,
+        *,
+        region: str | None = None,
+        session: Any = None,
+        access_token: str | None = None,
+        keep_on_failure: bool = False,
     ) -> AgentDeployment:
         """Sirve el agente desde un MicroVM y devuelve su `AgentDeployment`:
         crea un sandbox desde la imagen del proyecto (con `serve.timeout_seconds`,
         `serve.idle` y las etiquetas de despliegue), escribe la configuración
         del host, lo arranca en modo servicio y espera su marcador de listo.
-        Si cualquier paso falla, termina el sandbox antes de lanzar.
+        Si cualquier paso falla, termina el sandbox antes de lanzar (salvo
+        con `keep_on_failure=True`).
 
         `access_token` es el del sandbox (como el de `Sandbox.create()`; sin
-        él, `RAYITO_ACCESS_TOKEN` o uno nuevo). Quien quiera reconectarse
-        desde otro proceso (`AgentDeployment.connect`, `rayito agent invoke`)
-        lo guarda: sin él sólo `Sandbox.kill(sandbox_id)` llega al sandbox.
+        él, `RAYITO_ACCESS_TOKEN` o uno nuevo). Con uno nuevo, el valor está en
+        `AgentDeployment.access_token`: guárdalo para reconectarte desde otro
+        proceso (`AgentDeployment.connect(sandbox_id, access_token=...)`,
+        `rayito agent invoke`); sin él sólo `Sandbox.kill(sandbox_id)` llega al
+        sandbox.
+
+        Un arranque fallido lanza `SandboxException` con el código del fallo
+        y el final de la salida de error de la app, sin valores de entorno ni
+        credenciales. Con `keep_on_failure=True` el sandbox no se termina
+        (para entrar a depurarlo: el error lleva su id en una nota) y hace
+        falta `access_token` (o `RAYITO_ACCESS_TOKEN`) para poder
+        conectarse; termínalo tú con `Sandbox.kill(sandbox_id)`, porque sigue
+        facturando. Por defecto es `False`.
 
         Coste y activación
         -------------------
@@ -410,7 +616,10 @@ class AgentProject:
         from rayito._agent._project_service import ProjectService
 
         return ProjectService(self).deploy(
-            region=region, session=session, access_token=access_token
+            region=region,
+            session=session,
+            access_token=access_token,
+            keep_on_failure=keep_on_failure,
         )
 
     def export(
@@ -480,7 +689,12 @@ class AsyncAgentProject(AgentProject):
         )
 
     async def deploy(  # type: ignore[override]
-        self, *, region: str | None = None, session: Any = None, access_token: str | None = None
+        self,
+        *,
+        region: str | None = None,
+        session: Any = None,
+        access_token: str | None = None,
+        keep_on_failure: bool = False,
     ) -> AsyncAgentDeployment:
         """Como `AgentProject.deploy()`, con `AsyncAgentDeployment`. Mismo
         bloque de coste: crea un sandbox que vive hasta `stop()` o hasta
@@ -509,7 +723,10 @@ class AsyncAgentProject(AgentProject):
         from rayito._agent._project_service_async import AsyncProjectService
 
         return await AsyncProjectService(self).deploy(
-            region=region, session=session, access_token=access_token
+            region=region,
+            session=session,
+            access_token=access_token,
+            keep_on_failure=keep_on_failure,
         )
 
     async def export(  # type: ignore[override]
@@ -676,8 +893,8 @@ def _project_kwargs(
     if schema != AGENT_PROJECT_SCHEMA:
         raise _error("schema", "unsupported_schema", f"debe ser {AGENT_PROJECT_SCHEMA!r}")
     name = root.text("name", required=True)
-    runtime = _read_runtime(root.table("runtime"))
-    kwargs: dict[str, Any] = {"name": name, "runtime": runtime}
+    runtime, runtime_extras = _read_runtime(root.table("runtime"))
+    kwargs: dict[str, Any] = {"name": name, "runtime": runtime, **runtime_extras}
     kwargs.update(_read_source(root.table("source"), base_dir))
     gateways = _read_gateways(root)
     model_table = root.table("model")
@@ -688,11 +905,22 @@ def _project_kwargs(
     kwargs["spec"] = _read_agent(root.table("agent"), model, read_text, base_dir)
     kwargs.update(_read_limits(root.table("limits")))
     kwargs.update(_read_serve(root.table("serve")))
+    kwargs.update(_read_scaling(root.table("scaling")))
+    kwargs.update(_read_env(root.table("env")))
     kwargs.update(_read_network(root.table("network")))
+    kwargs.update(_read_deploy(root.table("deploy")))
     kwargs.update(_read_image(root.table("image")))
     root.finish()
     _check_gateways(kwargs["spec"], gateways)
+    _check_concurrency(kwargs)
     return kwargs
+
+
+def _check_concurrency(kwargs: Mapping[str, Any]) -> None:
+    serve = kwargs.get("serve", ServeOptions())
+    problem = _concurrency_problem(serve, kwargs.get("memory_mib", AGENT_MIN_MEMORY_MIB))
+    if problem is not None:
+        raise _error("serve.max_concurrency", "invalid_value", problem)
 
 
 def _check_gateways(spec: AgentSpec, gateways: Mapping[str, SecretGateway]) -> None:
@@ -711,16 +939,44 @@ def _check_gateways(spec: AgentSpec, gateways: Mapping[str, SecretGateway]) -> N
             )
 
 
-def _read_runtime(table: _Table | None) -> AgentRuntime:
+def _read_runtime(table: _Table | None) -> tuple[AgentRuntime, dict[str, object]]:
     if table is None:
         raise _error("runtime", "missing_key", "es obligatoria")
     kind = table.text("kind", required=True)
     if kind not in RUNTIME_KINDS:
         raise _error("runtime.kind", "invalid_value", f"debe ser uno de {list(RUNTIME_KINDS)}")
+    extras = _read_runtime_extras(table)
     options = {key: table.raw(key) for key in RUNTIME_OPTION_KEYS[kind]}
     table.finish()
     present = {key: value for key, value in options.items() if value is not None}
-    return _guard("runtime", lambda: runtime_from_options(str(kind), present))
+    runtime = _guard("runtime", lambda: runtime_from_options(str(kind), present))
+    return runtime, extras
+
+
+def _read_runtime_extras(table: _Table) -> dict[str, object]:
+    """Las claves de `[runtime]` que son del proyecto y no de un runtime:
+    `language`, `framework` y las versiones de intérprete."""
+    extras: dict[str, object] = {}
+    for key in ("language", "framework"):
+        value = table.text(key)
+        if value is not None:
+            extras[key] = value
+    if extras.get("language", AGENT_LANGUAGES[0]) not in AGENT_LANGUAGES:
+        raise _error(
+            table.at("language"), "invalid_value", f"debe ser uno de {list(AGENT_LANGUAGES)}"
+        )
+    python = _read_version(table, "python_version", "python")
+    node = _read_version(table, "node_version", "node")
+    if python is not None or node is not None:
+        extras["versions"] = RuntimeVersions(python=python, node=node)
+    return extras
+
+
+def _read_version(table: _Table, key: str, field_name: str) -> str | None:
+    value = table.text(key)
+    if value is not None:
+        _guard(table.at(key), lambda: RuntimeVersions(**{field_name: value}))
+    return value
 
 
 def _read_source(table: _Table | None, base_dir: str) -> dict[str, object]:
@@ -892,13 +1148,14 @@ def _read_serve(table: _Table | None) -> dict[str, object]:
     if table is None:
         return {}
     kwargs: dict[str, object] = {}
-    for key in ("port", "max_concurrency"):
+    for key in ("port", "max_concurrency", "queue_max"):
         value = table.integer(key)
         if value is not None:
             kwargs[key] = value
-    timeout = table.number("timeout_seconds")
-    if timeout is not None:
-        kwargs["timeout_seconds"] = timeout
+    for key in ("timeout_seconds", "queue_timeout_seconds"):
+        number = table.number(key)
+        if number is not None:
+            kwargs[key] = number
     idle_seconds = table.integer("idle_seconds")
     if idle_seconds is not None:
         kwargs["idle"] = (
@@ -918,12 +1175,78 @@ def _read_network(table: _Table | None) -> dict[str, object]:
         return {}
     internet = table.boolean("allow_internet_access")
     egress = table.texts("egress")
+    allow_out = table.texts("allow_out")
+    deny_out = table.texts("deny_out")
     table.finish()
     kwargs: dict[str, object] = {}
     if internet is not None:
         kwargs["allow_internet_access"] = internet
     if egress is not None:
         kwargs["egress"] = egress
+    if allow_out is not None or deny_out is not None:
+        kwargs["network"] = NetworkPolicy(allow_out=allow_out or (), deny_out=deny_out or ())
+    return kwargs
+
+
+def _read_scaling(table: _Table | None) -> dict[str, object]:
+    if table is None:
+        return {}
+    kwargs: dict[str, object] = {}
+    for key in ("min_vms", "max_vms", "warm_vms"):
+        value = table.integer(key)
+        if value is not None:
+            kwargs[key] = value
+    sessions = table.text("sessions")
+    if sessions is not None:
+        kwargs["sessions"] = sessions
+    seconds = table.number("scale_in_after_seconds")
+    if seconds is not None:
+        kwargs["scale_in_after_seconds"] = seconds
+    table.finish()
+    return {"scaling": _guard("scaling", lambda: ScalingOptions(**kwargs))}  # type: ignore[arg-type]
+
+
+def _read_env(table: _Table | None) -> dict[str, object]:
+    if table is None:
+        return {}
+    env: dict[str, str] = {}
+    for name in sorted(table.keys()):
+        path = table.at(name)
+        value = table.raw(name)
+        if not isinstance(value, str):
+            raise _error(path, "invalid_type", "debe ser una cadena")
+        if _secret_like_env_name(name) or value.startswith(SECRET_VALUE_PREFIXES):
+            raise _error(
+                path,
+                "secret_value",
+                "un fichero de proyecto nunca lleva un secreto; usa una pasarela",
+            )
+        env[name] = value
+    table.finish()
+    return {"env": _guard("env", lambda: _validated_env(env))}
+
+
+_DEPLOY_CHECKS: Final[Mapping[str, Callable[[object, str], str]]] = {
+    "bucket": validate_bucket_hint,
+    "base_image_version": validate_image_version,
+}
+
+
+def _checked(path: str, check: Callable[[object, str], str], value: str) -> str:
+    return _guard(path, lambda: check(value, path))
+
+
+def _read_deploy(table: _Table | None) -> dict[str, object]:
+    if table is None:
+        return {}
+    kwargs: dict[str, object] = {}
+    for key in ("region", "bucket", "base_image_version"):
+        value = table.text(key)
+        if value is None:
+            continue
+        check = _DEPLOY_CHECKS.get(key)
+        kwargs[key] = value if check is None else _checked(table.at(key), check, value)
+    table.finish()
     return kwargs
 
 
@@ -1176,10 +1499,50 @@ def _limits_to_dict(limits: AgentLimits) -> dict[str, object]:
     return table
 
 
+def _runtime_to_dict(project: AgentProject) -> dict[str, object]:
+    table = runtime_to_options(project.runtime)
+    for key, value in (
+        ("language", project.language),
+        ("framework", project.framework),
+        ("python_version", project.versions.python),
+        ("node_version", project.versions.node),
+    ):
+        if value is not None and key not in table:
+            table[key] = value
+    return table
+
+
+def _scaling_to_dict(scaling: ScalingOptions) -> dict[str, object]:
+    defaults = ScalingOptions()
+    return {
+        key: getattr(scaling, key)
+        for key in ("min_vms", "max_vms", "warm_vms", "sessions", "scale_in_after_seconds")
+        if getattr(scaling, key) != getattr(defaults, key)
+    }
+
+
+def _deploy_to_dict(project: AgentProject) -> dict[str, object]:
+    return {
+        key: value
+        for key, value in (
+            ("region", project.region),
+            ("bucket", project.bucket),
+            ("base_image_version", project.base_image_version),
+        )
+        if value is not None
+    }
+
+
 def _serve_to_dict(serve: ServeOptions) -> dict[str, object]:
     defaults = ServeOptions()
     table: dict[str, object] = {}
-    for key in ("port", "timeout_seconds", "max_concurrency"):
+    for key in (
+        "port",
+        "timeout_seconds",
+        "max_concurrency",
+        "queue_max",
+        "queue_timeout_seconds",
+    ):
         if getattr(serve, key) != getattr(defaults, key):
             table[key] = getattr(serve, key)
     if serve.idle is not DEFAULT_IDLE_POLICY:
@@ -1206,6 +1569,11 @@ def _network_to_dict(project: AgentProject) -> dict[str, object]:
         table["allow_internet_access"] = True
     if project.egress is not None:
         table["egress"] = list(project.egress)
+    if project.network is not None:
+        if project.network.allow_out:
+            table["allow_out"] = list(project.network.allow_out)
+        if project.network.deny_out:
+            table["deny_out"] = list(project.network.deny_out)
     return table
 
 
@@ -1221,9 +1589,11 @@ def _image_to_dict(project: AgentProject) -> dict[str, object]:
 
 
 __all__ = [
+    "AGENT_LANGUAGES",
     "AGENT_PROJECT_ERROR_CODES",
     "AgentProject",
     "AgentProjectException",
     "AsyncAgentProject",
+    "RuntimeVersions",
     "ServeOptions",
 ]

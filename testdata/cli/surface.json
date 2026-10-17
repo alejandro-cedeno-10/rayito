@@ -155,6 +155,17 @@
       "hidden": false,
       "parameters": [
         {
+          "name": "path",
+          "kind": "argument",
+          "flags": [
+            "path"
+          ],
+          "type": "path",
+          "required": false,
+          "multiple": false,
+          "default": null
+        },
+        {
           "name": "file",
           "kind": "option",
           "flags": [
@@ -204,6 +215,406 @@
           "multiple": false,
           "default": null,
           "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "keep_on_failure",
+          "kind": "option",
+          "flags": [
+            "--keep-on-failure"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "default": false,
+          "is_flag": true,
+          "envvar": null
+        },
+        {
+          "name": "framework",
+          "kind": "option",
+          "flags": [
+            "--framework"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "language",
+          "kind": "option",
+          "flags": [
+            "--language"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "entry",
+          "kind": "option",
+          "flags": [
+            "--entry"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "protocol",
+          "kind": "option",
+          "flags": [
+            "--protocol"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "memory",
+          "kind": "option",
+          "flags": [
+            "--memory"
+          ],
+          "type": "int",
+          "required": false,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "max_sessions",
+          "kind": "option",
+          "flags": [
+            "--max-sessions"
+          ],
+          "type": "int",
+          "required": false,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "sessions",
+          "kind": "option",
+          "flags": [
+            "--sessions"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "min_vms",
+          "kind": "option",
+          "flags": [
+            "--min-vms"
+          ],
+          "type": "int",
+          "required": false,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "max_vms",
+          "kind": "option",
+          "flags": [
+            "--max-vms"
+          ],
+          "type": "int",
+          "required": false,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "warm",
+          "kind": "option",
+          "flags": [
+            "--warm"
+          ],
+          "type": "int",
+          "required": false,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "idle",
+          "kind": "option",
+          "flags": [
+            "--idle"
+          ],
+          "type": "int",
+          "required": false,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "queue",
+          "kind": "option",
+          "flags": [
+            "--queue"
+          ],
+          "type": "int",
+          "required": false,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "queue_timeout",
+          "kind": "option",
+          "flags": [
+            "--queue-timeout"
+          ],
+          "type": "float",
+          "required": false,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "env",
+          "kind": "option",
+          "flags": [
+            "--env"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": true,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "allow_out",
+          "kind": "option",
+          "flags": [
+            "--allow-out"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": true,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "bucket",
+          "kind": "option",
+          "flags": [
+            "--bucket"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "secret",
+          "kind": "option",
+          "flags": [
+            "--secret"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": true,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "create_secret",
+          "kind": "option",
+          "flags": [
+            "--create-secret"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "default": false,
+          "is_flag": true,
+          "envvar": null
+        },
+        {
+          "name": "base_artifact",
+          "kind": "option",
+          "flags": [
+            "--base-artifact"
+          ],
+          "type": "path",
+          "required": false,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "yes",
+          "kind": "option",
+          "flags": [
+            "--yes"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "default": false,
+          "is_flag": true,
+          "envvar": null
+        },
+        {
+          "name": "dry_run",
+          "kind": "option",
+          "flags": [
+            "--dry-run"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "default": false,
+          "is_flag": true,
+          "envvar": null
+        },
+        {
+          "name": "build",
+          "kind": "option",
+          "flags": [
+            "--build",
+            "--no-build"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "default": null,
+          "is_flag": true,
+          "envvar": null
+        },
+        {
+          "name": "verbose",
+          "kind": "option",
+          "flags": [
+            "--verbose"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "default": false,
+          "is_flag": true,
+          "envvar": null
+        }
+      ]
+    },
+    {
+      "path": [
+        "agent",
+        "detect"
+      ],
+      "group": false,
+      "invoke_without_command": false,
+      "hidden": false,
+      "parameters": [
+        {
+          "name": "path",
+          "kind": "argument",
+          "flags": [
+            "path"
+          ],
+          "type": "path",
+          "required": false,
+          "multiple": false,
+          "default": "."
+        },
+        {
+          "name": "framework",
+          "kind": "option",
+          "flags": [
+            "--framework"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "language",
+          "kind": "option",
+          "flags": [
+            "--language"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "entry",
+          "kind": "option",
+          "flags": [
+            "--entry"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "protocol",
+          "kind": "option",
+          "flags": [
+            "--protocol"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "write",
+          "kind": "option",
+          "flags": [
+            "--write"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "default": false,
+          "is_flag": true,
           "envvar": null
         }
       ]

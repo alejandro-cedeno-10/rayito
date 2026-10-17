@@ -3,18 +3,22 @@
  * aplicación sobre `AgentTemplate`, `Sandbox` y `AgentDeployment`. Espejo de
  * `rayito._agent._project_base` y `_project_service_async`. Nada aquí se
  * ejecuta al construir o cargar un proyecto; cada operación es la única que
- * crea recursos y `deploy()` mata su sandbox ante cualquier fallo.
+ * crea recursos y `deploy()` mata su sandbox ante cualquier fallo (salvo
+ * `keepOnFailure`).
  */
 
 import { posix } from "node:path";
-import { SandboxError, TimeoutError } from "../errors.js";
+import { InvalidArgumentError, SandboxError, TimeoutError } from "../errors.js";
+import type { DynamoDbIndex } from "../index/dynamodb.js";
 import {
   AGENT_RUN_SANDBOX_MARGIN_SECONDS,
   AGENT_SERVICE_READY_MARKER_PATH,
   AGENT_SERVICE_READY_TIMEOUT_SECONDS,
   AGENT_SERVICE_SESSION_HEADER,
+  AGENT_STARTUP_DIAGNOSTICS_MAX_BYTES,
   DEFAULT_AGENT_WORKDIR,
 } from "../limits.js";
+import { ACCESS_TOKEN_ENV_VAR } from "../sandbox/launch.js";
 import type { SandboxConnectOptions, SandboxCreateOptions } from "../sandbox/sandbox.js";
 import type { BuildInfo } from "../templates/build.js";
 import { AgentDeployment, type DeploymentSandbox, labelsFor } from "./deployment.js";
@@ -63,10 +67,25 @@ export type AgentProjectSandboxOptions = Pick<
 /** Lo de `AgentProjectSandboxOptions` más el access token del sandbox del
  * despliegue (el de `Sandbox.create()`; sin él, `RAYITO_ACCESS_TOKEN` o uno
  * nuevo). Quien quiera reconectarse desde otro proceso
- * (`AgentDeployment.connect`, `rayito agent invoke`) lo guarda: sin él sólo
- * `Sandbox.kill(sandboxId)` llega al sandbox. */
+ * (`AgentDeployment.connect`, `rayito agent invoke`) lo guarda (con uno nuevo,
+ * el valor está en `AgentDeployment.accessToken`): sin él sólo
+ * `Sandbox.kill(sandboxId)` llega al sandbox.
+ *
+ * `keepOnFailure` (`false` por defecto) deja vivo el sandbox si el despliegue
+ * falla, para depurarlo: el error lleva su id en el mensaje, hace falta
+ * `accessToken` (o `RAYITO_ACCESS_TOKEN`) para poder conectarse y lo
+ * terminas tú con `Sandbox.kill(sandboxId)`, porque sigue facturando. */
 export interface AgentProjectDeployOptions extends AgentProjectSandboxOptions {
   readonly accessToken?: string | undefined;
+  readonly keepOnFailure?: boolean | undefined;
+}
+
+/** Lo de `AgentProjectDeployOptions` más lo que sólo usa una flota:
+ * `metadata` (etiquetas del sandbox) e `index` (`DynamoDbIndex` que las
+ * escribe). */
+export interface ServiceDeployOptions extends AgentProjectDeployOptions {
+  readonly metadata?: Readonly<Record<string, string>> | undefined;
+  readonly index?: DynamoDbIndex | undefined;
 }
 
 export interface AgentProjectRunOptions extends AgentProjectSandboxOptions {
@@ -128,12 +147,17 @@ export function servableRuntime(project: AgentProject): ServableRuntime {
 }
 
 /** El `AgentTemplate` de `project`: su runtime (ya comprobado como
- * instalable), su código y la memoria pedida. */
-export function projectTemplate(project: AgentProject): AgentTemplate {
+ * instalable), su código y la memoria pedida. `baseVersion` fija la versión de
+ * la imagen base (`undefined`: la más reciente). */
+export function projectTemplate(
+  project: AgentProject,
+  options: { readonly baseVersion?: string | undefined } = {},
+): AgentTemplate {
   installableRuntime(project);
   return new AgentTemplate({
     name: templateName(project),
     base: project.base,
+    baseVersion: options.baseVersion,
     runtimes: [project.runtime],
     memoryMib: project.memoryMib,
     app: project.source,
@@ -165,6 +189,8 @@ function commonCreateOptions(project: AgentProject): Partial<Mutable<SandboxCrea
     gateways: { ...project.gateways },
     allowInternetAccess: project.allowInternetAccess,
     ...(project.egress === undefined ? {} : { egress: [...project.egress] }),
+    ...(Object.keys(project.env).length === 0 ? {} : { envs: { ...project.env } }),
+    ...(project.network === undefined ? {} : { network: project.network }),
   };
 }
 
@@ -178,16 +204,27 @@ export function runCreateOptions(project: AgentProject): SandboxCreateOptions {
 }
 
 /** Los de `deploy()`: la vida y la política de `idle` de `project.serve` y
- * las etiquetas con las que `connect()` reconoce el despliegue. */
+ * las etiquetas con las que `connect()` reconoce el despliegue. `metadata`
+ * añade etiquetas (una flota marca así la sesión de un VM dedicado) e `index`
+ * es el `DynamoDbIndex` que las escribe para poder encontrarlo después. */
 export function deployCreateOptions(
   project: AgentProject,
-  options: { readonly raw: boolean },
+  options: {
+    readonly raw: boolean;
+    readonly metadata?: Readonly<Record<string, string>> | undefined;
+    readonly index?: DynamoDbIndex | undefined;
+  },
 ): SandboxCreateOptions {
   const serve = project.serve;
   return {
     timeoutMs: ceilToSeconds(serve.timeoutMs),
     idle: serve.idle,
-    metadata: { ...serve.metadata, ...labelsFor(project.name, serve.port, options) },
+    metadata: {
+      ...serve.metadata,
+      ...options.metadata,
+      ...labelsFor(project.name, serve.port, options),
+    },
+    ...(options.index === undefined ? {} : { index: options.index }),
     ...commonCreateOptions(project),
   };
 }
@@ -223,7 +260,7 @@ export function hostConfigFor(project: AgentProject, sandbox: ServiceSandbox): H
 }
 
 /** El `host.json`: el driver, sus opciones, los topes de `AgentLimits`, la
- * concurrencia y dónde dejar el marcador de listo. */
+ * concurrencia con su cola y dónde dejar el marcador de listo. */
 export function hostDocument(project: AgentProject, host: HostConfig): Record<string, unknown> {
   const limits = project.limits;
   return {
@@ -238,6 +275,8 @@ export function hostDocument(project: AgentProject, host: HostConfig): Record<st
       max_total_tokens: limits.maxTotalTokens,
     },
     max_concurrency: project.serve.maxConcurrency,
+    queue_max: project.serve.queueMax,
+    queue_timeout_seconds: project.serve.queueTimeoutMs / MS_PER_SECOND,
     session_header: AGENT_SERVICE_SESSION_HEADER,
     ready_marker: AGENT_SERVICE_READY_MARKER_PATH,
   };
@@ -268,6 +307,45 @@ export function serveCommand(host: HostConfig, port: number): string {
   );
 }
 
+/** El mensaje de un arranque fallido a partir del contenido del marcador de
+ * fallo: la primera línea es el código y, si hay, el resto es el final de la
+ * salida de error de la app que el host ya saneó. Se vuelve a acotar aquí por
+ * si el marcador viene de un host más viejo o de otro escritor. */
+export function startupFailureMessage(marker: string): string {
+  const trimmed = marker.trim();
+  const newline = trimmed.indexOf("\n");
+  const code = (newline < 0 ? trimmed : trimmed.slice(0, newline)).trim();
+  const detail = newline < 0 ? "" : trimmed.slice(newline + 1).trim();
+  const message = `el host del agente no pudo arrancar (${code === "" ? AGENT_HOST_FAILED_SUFFIX : code})`;
+  const bytes = new TextEncoder().encode(detail);
+  const tail = new TextDecoder("utf-8", { fatal: false })
+    .decode(bytes.slice(-AGENT_STARTUP_DIAGNOSTICS_MAX_BYTES))
+    .replaceAll("\uFFFD", "");
+  return tail === "" ? message : `${message}. Final de la salida de error de la app:\n${tail}`;
+}
+
+/** `keepOnFailure` conserva un sandbox al que sólo se llega con su access
+ * token: sin uno que el llamador conozca (opción o `RAYITO_ACCESS_TOKEN`),
+ * conservarlo no sirve de nada. */
+export function requireReconnectableToken(accessToken: string | undefined): void {
+  if (!accessToken && !process.env[ACCESS_TOKEN_ENV_VAR]) {
+    throw new InvalidArgumentError(
+      "deploy({ keepOnFailure: true }) necesita accessToken (o " +
+        `${ACCESS_TOKEN_ENV_VAR}) para poder conectarte al sandbox que se conserva`,
+    );
+  }
+}
+
+/** La nota que lleva el error de un despliegue con `keepOnFailure`: qué
+ * sandbox quedó vivo y cómo terminarlo. Sólo el id, nunca el token. */
+export function keptSandboxNote(sandbox: { readonly sandboxId: string }): string {
+  return (
+    `keepOnFailure: el sandbox ${sandbox.sandboxId} sigue vivo; conéctate con ` +
+    "Sandbox.connect(sandboxId, { accessToken }) para depurarlo y termínalo con " +
+    "Sandbox.kill(sandboxId) al acabar."
+  );
+}
+
 export function failedMarkerPath(): string {
   return AGENT_SERVICE_READY_MARKER_PATH + AGENT_HOST_FAILED_SUFFIX;
 }
@@ -295,9 +373,13 @@ export class ProjectService {
     this.#options = options;
   }
 
-  /** Construye la imagen del proyecto con `AgentTemplate.build()`. */
-  async build(options: AgentTemplateBuildOptions): Promise<BuildInfo> {
-    return projectTemplate(this.#project).build(options);
+  /** Construye la imagen del proyecto con `AgentTemplate.build()`;
+   * `baseVersion` fija la versión de la base (`undefined`: la más reciente). */
+  async build(
+    options: AgentTemplateBuildOptions & { readonly baseVersion?: string | undefined },
+  ): Promise<BuildInfo> {
+    const { baseVersion, ...buildOptions } = options;
+    return projectTemplate(this.#project, { baseVersion }).build(buildOptions);
   }
 
   /** Un sandbox desde la imagen del proyecto, una ejecución con
@@ -330,40 +412,58 @@ export class ProjectService {
   }
 
   /** Sirve el agente desde un MicroVM y devuelve su `AgentDeployment`. Si
-   * cualquier paso falla, mata el sandbox antes de propagar. */
-  async deploy(options: AgentProjectDeployOptions = {}): Promise<AgentDeployment> {
+   * cualquier paso falla, mata el sandbox antes de propagar (salvo con
+   * `keepOnFailure`, que lo deja vivo y lo anota en el mensaje del error).
+   * `metadata` e `index` son para una flota (ver `deployCreateOptions`). */
+  async deploy(options: ServiceDeployOptions = {}): Promise<AgentDeployment> {
     const project = this.#project;
+    const { keepOnFailure = false, metadata, index, ...sandboxOptions } = options;
+    if (keepOnFailure) {
+      requireReconnectableToken(options.accessToken);
+    }
     const sandbox = await this.#create(
-      deployCreateOptions(project, { raw: isRawProject(project) }),
-      options,
+      deployCreateOptions(project, { raw: isRawProject(project), metadata, index }),
+      sandboxOptions,
     );
     try {
-      const host = hostConfigFor(project, sandbox);
-      await sandbox.files.writeFiles(hostEntries(project, host));
-      await sandbox.commands.run(clearMarkersCommand(), { user: AGENT_SERVE_USER });
-      const handle = await sandbox.commands.run(serveCommand(host, project.serve.port), {
-        background: true,
-        user: AGENT_SERVE_USER,
-        envs: { ...host.envs },
-        timeoutMs: 0,
-        tag: AGENT_SERVE_TAG,
-        killTree: true,
-      });
-      handle.disconnect();
-      await this.#waitReady(sandbox);
-      return new AgentDeployment({
-        sandbox,
-        port: project.serve.port,
-        hostAccess: await sandbox.getHost(project.serve.port),
-        project: project.name,
-        raw: isRawApp(host),
-        requestTimeoutMs: requestTimeoutMs(project),
-        fetch: this.#options.fetch,
-      });
+      return await this.serve(sandbox);
     } catch (error) {
-      await this.#kill(sandbox);
+      if (keepOnFailure && error instanceof Error) {
+        error.message = `${error.message}\n${keptSandboxNote(sandbox)}`;
+      } else {
+        await this.#kill(sandbox);
+      }
       throw error;
     }
+  }
+
+  /** Arranca el host del agente en un sandbox ya creado (o tomado de un pool
+   * con las pasarelas del proyecto) y espera su marcador de listo. No mata el
+   * sandbox si falla: lo decide quien lo creó. */
+  async serve(sandbox: ServiceSandbox): Promise<AgentDeployment> {
+    const project = this.#project;
+    const host = hostConfigFor(project, sandbox);
+    await sandbox.files.writeFiles(hostEntries(project, host));
+    await sandbox.commands.run(clearMarkersCommand(), { user: AGENT_SERVE_USER });
+    const handle = await sandbox.commands.run(serveCommand(host, project.serve.port), {
+      background: true,
+      user: AGENT_SERVE_USER,
+      envs: { ...host.envs },
+      timeoutMs: 0,
+      tag: AGENT_SERVE_TAG,
+      killTree: true,
+    });
+    handle.disconnect();
+    await this.#waitReady(sandbox);
+    return new AgentDeployment({
+      sandbox,
+      port: project.serve.port,
+      hostAccess: await sandbox.getHost(project.serve.port),
+      project: project.name,
+      raw: isRawApp(host),
+      requestTimeoutMs: requestTimeoutMs(project),
+      fetch: this.#options.fetch,
+    });
   }
 
   async #create(
@@ -391,10 +491,7 @@ export class ProjectService {
         return;
       }
       if (await sandbox.files.exists(failedMarkerPath())) {
-        const code = (await sandbox.files.read(failedMarkerPath())).trim();
-        throw new SandboxError(
-          `el host del agente no pudo arrancar (${code === "" ? AGENT_HOST_FAILED_SUFFIX : code})`,
-        );
+        throw new SandboxError(startupFailureMessage(await sandbox.files.read(failedMarkerPath())));
       }
       if (now() >= deadline) {
         throw new TimeoutError("el host del agente no estuvo listo a tiempo");

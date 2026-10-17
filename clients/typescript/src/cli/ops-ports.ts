@@ -75,12 +75,11 @@ export interface AgentProjectRunRequest {
   readonly onEvent: ((event: AgentEvent) => void) | undefined;
 }
 
-/** Lo que `rayito agent deploy` cambia del `serve` del fichero; `undefined` deja el del fichero. */
-export interface AgentDeployOverrides {
-  readonly port: number | undefined;
-  readonly timeoutMs: number | undefined;
-  /** El access token del sandbox del despliegue, para que `invoke` y `status` se reconecten. */
-  readonly accessToken: string;
+/** Las rutas de una `HttpApp` que el despliegue no expone (`HttpApp.hidesOwnRoutes`). */
+export interface HiddenAppRoutes {
+  readonly protocol: string;
+  readonly healthPath: string;
+  readonly invokePath: string;
 }
 
 export interface AgentExportRequest {
@@ -114,18 +113,106 @@ export interface DeployedAgent {
   }>;
 }
 
-/** Lo que devuelve `deploy`: el agente y el puerto en el que sirve. Nunca lleva las cabeceras de acceso. */
-export interface DeployedService {
-  readonly agent: DeployedAgent;
-  readonly port: number;
-}
-
-/** Un `AgentProject` ya cargado: `rayito agent build|run|deploy|export`. */
+/** Un `AgentProject` ya cargado: `rayito agent build|run|export`. */
 export interface AgentProjectTool {
   build(options: AgentBuildRequest): Promise<BuildInfo>;
   run(prompt: string, options: AgentProjectRunRequest): Promise<AgentResult>;
-  deploy(overrides: AgentDeployOverrides): Promise<DeployedService>;
   export(options: AgentExportRequest): Promise<AgentExportResult>;
+}
+
+/** Lo que la detección fija a mano (`--framework`, `--language`, `--entry`,
+ * `--protocol`); `undefined` deja decidir a la detección. */
+export interface AgentDetectOverrides {
+  readonly framework: string | undefined;
+  readonly language: string | undefined;
+  readonly entry: string | undefined;
+  readonly protocol: string | undefined;
+}
+
+/** Lo que las banderas de `rayito agent deploy` cambian del proyecto
+ * detectado; `undefined` (o vacío) deja el valor del fichero o de la
+ * detección. */
+export interface AgentDeployFlags {
+  readonly port: number | undefined;
+  readonly timeoutMs: number | undefined;
+  readonly memory: number | undefined;
+  readonly maxSessions: number | undefined;
+  readonly idleSeconds: number | undefined;
+  readonly queue: number | undefined;
+  readonly queueTimeoutMs: number | undefined;
+  readonly env: Readonly<Record<string, string>>;
+  readonly allowOut: readonly string[];
+  readonly minVms: number | undefined;
+  readonly maxVms: number | undefined;
+  readonly warm: number | undefined;
+  readonly sessions: string | undefined;
+}
+
+/** Dónde y cómo despliega `rayito agent deploy`: lo de `DeployOptions` que
+ * sale de las banderas, más los avisos de progreso. */
+export interface AgentDeploySettings {
+  readonly bucket: string | undefined;
+  readonly secretNames: Readonly<Record<string, string>>;
+  readonly createSecretFromEnv: boolean;
+  /** Quien publica la imagen base si falta (`--base-artifact`); `undefined` sin la bandera. */
+  readonly basePublisher: (() => Promise<void>) | undefined;
+  readonly accessToken: string | undefined;
+  readonly keepOnFailure: boolean;
+  readonly buildImage: boolean | undefined;
+  readonly onBuildLogs: ((line: string) => void) | undefined;
+  readonly onStep: ((step: { readonly kind: string; readonly detail: string }) => void) | undefined;
+}
+
+export interface AgentDeployRequest {
+  readonly path: string;
+  readonly overrides: AgentDetectOverrides;
+  readonly flags: AgentDeployFlags;
+  readonly settings: AgentDeploySettings;
+}
+
+/** Lo que `agent detect` devuelve: el informe de la detección (o `undefined`
+ * si el proyecto salió de su fichero) y el proyecto resuelto como documento. */
+export interface DetectedProject {
+  readonly report: unknown;
+  readonly document: Record<string, unknown>;
+}
+
+/** El plan de un despliegue (`--dry-run`): sin AWS. `document` es el plan
+ * serializable, `lines` el texto. */
+export interface DeployPlanView {
+  readonly report: unknown;
+  readonly document: Record<string, unknown>;
+  readonly lines: readonly string[];
+}
+
+/** Una flota desplegada: lo que `agent deploy` imprime. Nunca lleva las
+ * cabeceras de acceso. */
+export interface DeployedFleetView {
+  readonly name: string;
+  readonly sandboxIds: readonly string[];
+  readonly url: string;
+  readonly port: number;
+  readonly hiddenRoutes: HiddenAppRoutes | undefined;
+}
+
+/** El estado de una flota, para `agent status <nombre>`. */
+export interface FleetStatusView {
+  readonly name: string;
+  readonly minVms: number;
+  readonly maxVms: number;
+  readonly members: readonly { readonly sandboxId: string; readonly state: string }[];
+}
+
+/** Una flota reconectada: lo que la CLI usa de `AgentFleet`. */
+export interface FleetClient {
+  invoke(prompt: string, options: { readonly sessionId: string | undefined }): Promise<AgentResult>;
+  stream(
+    prompt: string,
+    options: { readonly sessionId: string | undefined },
+  ): Promise<AsyncIterable<AgentEvent>>;
+  status(): Promise<FleetStatusView>;
+  /** Termina todos los VMs de la flota; devuelve cuántos eran. */
+  stop(): Promise<number>;
 }
 
 /** `rayito agent ...` sobre `AgentProject` y `AgentDeployment`; `init` no los usa. */
@@ -133,6 +220,16 @@ export interface AgentProjectTools {
   /** Lee el fichero de proyecto de `file` (un fichero o un directorio); no llama a AWS. */
   load(file: string): Promise<AgentProjectTool>;
   connect(sandboxId: string, accessToken: string): Promise<DeployedAgent>;
+  /** Detecta el proyecto de `path` sin ejecutar su código; no llama a AWS. */
+  detect(path: string, overrides: AgentDetectOverrides): Promise<DetectedProject>;
+  /** Guarda el proyecto detectado como `rayito-agent.json` en `path`; devuelve el nombre del fichero. */
+  writeDetected(path: string, overrides: AgentDetectOverrides): Promise<string>;
+  /** El plan y el coste de `deploy`, sin AWS. */
+  planDeploy(request: AgentDeployRequest): Promise<DeployPlanView>;
+  /** Detecta, resuelve y despliega la flota (`deployAgent`); la deja viva al volver. */
+  deployFleet(request: AgentDeployRequest): Promise<DeployedFleetView>;
+  /** Reconecta la flota de la imagen `name`; sin token sólo puede listarse o terminarse. */
+  connectFleet(name: string, accessToken: string | undefined): Promise<FleetClient>;
   /** `terminate-microvm`: no necesita el access token. `false` si el sandbox ya no existe. */
   stop(sandboxId: string): Promise<boolean>;
 }

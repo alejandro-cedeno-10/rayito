@@ -94,11 +94,12 @@ export function flag(
 
 /**
  * Una opción booleana con su negación (`--prefetch/--no-prefetch`): la primera
- * bandera larga la enciende y la segunda la apaga; sin ninguna vale `default`.
+ * bandera larga la enciende y la segunda la apaga; sin ninguna vale `default`
+ * (sin `default`, `optionalFlag` da `undefined`).
  */
 export function toggle(
   flags: readonly [string, string],
-  settings: { readonly help: string; readonly default: boolean },
+  settings: { readonly help: string; readonly default?: boolean | undefined },
 ): ParameterSpec {
   return {
     name: nameFromFlags(flags),
@@ -107,7 +108,7 @@ export function toggle(
     type: "boolean",
     required: false,
     multiple: false,
-    default: settings.default,
+    default: settings.default ?? null,
     isFlag: true,
     envvar: null,
     variadic: false,
@@ -177,6 +178,12 @@ export class CommandValues {
 
   flag(name: string): boolean {
     return this.#values[name] === true;
+  }
+
+  /** `true`/`false` si se pasó la bandera o su negación; `undefined` si ninguna. */
+  optionalFlag(name: string): boolean | undefined {
+    const value = this.#values[name];
+    return typeof value === "boolean" ? value : undefined;
   }
 }
 

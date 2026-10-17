@@ -1,0 +1,57 @@
+{
+  "schema": "rayito.agent-detection/1",
+  "language": "typescript",
+  "framework": "express",
+  "kind": "custom",
+  "entrypoint": "src/server.ts#app",
+  "entrypoint_kind": "object",
+  "protocol": "json",
+  "options": {},
+  "app": {
+    "framework": "express",
+    "command": [
+      "npm",
+      "run",
+      "start"
+    ],
+    "port": 8000,
+    "port_env": "PORT",
+    "health_path": "/health",
+    "invoke_path": "/chat",
+    "request_field": "message",
+    "response_field": null
+  },
+  "install": {
+    "manager": "npm",
+    "lockfile": "package-lock.json",
+    "requirements": null,
+    "require_hashes": false,
+    "reproducible": true,
+    "build_script": true,
+    "python_version": null,
+    "node_version": "22"
+  },
+  "providers": [],
+  "models": [],
+  "evidence": [
+    {
+      "path": "package.json",
+      "rule": "dep:express"
+    },
+    {
+      "path": "src/server.ts",
+      "rule": "entry:ts-express-app"
+    },
+    {
+      "path": "package-lock.json",
+      "rule": "install:npm"
+    }
+  ],
+  "warnings": [
+    {
+      "code": "no_provider",
+      "detail": "no se detecta ningún proveedor de modelo; indícalo con --secret proveedor=nombre"
+    }
+  ],
+  "alternatives": []
+}

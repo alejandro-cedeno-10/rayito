@@ -1,0 +1,80 @@
+{
+  "ownedIds": [
+    {
+      "name": "labels of a deployment",
+      "items": [
+        {"id": "a", "metadata": {"rayito.agent.deployment": "support-bot", "rayito.agent.port": "8088"}}
+      ],
+      "expected": ["a"]
+    },
+    {
+      "name": "empty or missing metadata is not an agent",
+      "items": [
+        {"id": "a", "metadata": {}},
+        {"id": "b", "metadata": null}
+      ],
+      "expected": []
+    },
+    {
+      "name": "the port label is required and numeric",
+      "items": [
+        {"id": "a", "metadata": {"rayito.agent.deployment": "support-bot"}},
+        {"id": "b", "metadata": {"rayito.agent.deployment": "support-bot", "rayito.agent.port": "http"}}
+      ],
+      "expected": []
+    },
+    {
+      "name": "any project name counts: the image name may differ",
+      "items": [
+        {"id": "a", "metadata": {"rayito.agent.deployment": "other-name", "rayito.agent.port": "8088"}}
+      ],
+      "expected": ["a"]
+    }
+  ],
+  "selectMembers": [
+    {
+      "name": "only agents",
+      "items": [
+        {"id": "a", "state": "RUNNING"},
+        {"id": "b", "state": "SUSPENDED"}
+      ],
+      "owned": ["a"],
+      "expected": ["a", "b"]
+    },
+    {
+      "name": "a running vm without the labels is never a member",
+      "items": [
+        {"id": "a", "state": "RUNNING"},
+        {"id": "b", "state": "RUNNING"}
+      ],
+      "owned": ["a"],
+      "expected": ["a"]
+    },
+    {
+      "name": "a shared image drops the vms that cannot be probed",
+      "items": [
+        {"id": "a", "state": "RUNNING"},
+        {"id": "b", "state": "RUNNING"},
+        {"id": "c", "state": "SUSPENDED"},
+        {"id": "d", "state": "PENDING"}
+      ],
+      "owned": ["a"],
+      "expected": ["a"]
+    },
+    {
+      "name": "a fleet that is all suspended is taken as it is",
+      "items": [
+        {"id": "a", "state": "SUSPENDED"},
+        {"id": "b", "state": "SUSPENDING"}
+      ],
+      "owned": [],
+      "expected": ["a", "b"]
+    },
+    {
+      "name": "nothing listed",
+      "items": [],
+      "owned": [],
+      "expected": []
+    }
+  ]
+}

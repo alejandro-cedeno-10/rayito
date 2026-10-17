@@ -1,0 +1,56 @@
+{
+  "_comment": "Vectores del adaptador `callable` de `node_bridge.mjs`: lo que devuelve tu función (`kind`) y los eventos v1 que deben salir (sin `session` ni `done`). `chunks` es un iterable de cadenas (uno asíncrono si `async`).",
+  "cases": [
+    {
+      "name": "a-string",
+      "returns": { "kind": "string", "value": "hola" },
+      "events": [
+        { "v": 1, "type": "step_started", "index": 1 },
+        { "v": 1, "type": "text", "text": "hola" },
+        { "v": 1, "type": "step_finished", "index": 1, "usage": null, "finish_reason": "end_turn" }
+      ]
+    },
+    {
+      "name": "an-object-with-text-and-usage",
+      "returns": { "kind": "object", "value": { "text": "hola", "usage": { "input": 3, "output": 2, "cache_read": 1 } } },
+      "events": [
+        { "v": 1, "type": "step_started", "index": 1 },
+        { "v": 1, "type": "text", "text": "hola" },
+        {
+          "v": 1,
+          "type": "step_finished",
+          "index": 1,
+          "usage": { "input": 3, "output": 2, "reasoning": 0, "cache_read": 1, "cache_write": 0 },
+          "finish_reason": "end_turn"
+        }
+      ]
+    },
+    {
+      "name": "an-iterable-of-chunks-streams-deltas",
+      "returns": { "kind": "chunks", "value": ["ho", "", "la"], "async": false },
+      "events": [
+        { "v": 1, "type": "step_started", "index": 1 },
+        { "v": 1, "type": "text_delta", "text": "ho" },
+        { "v": 1, "type": "text_delta", "text": "la" },
+        { "v": 1, "type": "text", "text": "hola" },
+        { "v": 1, "type": "step_finished", "index": 1, "usage": null, "finish_reason": "end_turn" }
+      ]
+    },
+    {
+      "name": "an-async-iterable-of-chunks",
+      "returns": { "kind": "chunks", "value": ["a", "b"], "async": true },
+      "events": [
+        { "v": 1, "type": "step_started", "index": 1 },
+        { "v": 1, "type": "text_delta", "text": "a" },
+        { "v": 1, "type": "text_delta", "text": "b" },
+        { "v": 1, "type": "text", "text": "ab" },
+        { "v": 1, "type": "step_finished", "index": 1, "usage": null, "finish_reason": "end_turn" }
+      ]
+    }
+  ],
+  "invalid_returns": [
+    { "kind": "number", "value": 3 },
+    { "kind": "object", "value": { "texto": "x" } },
+    { "kind": "chunks", "value": ["a", 1], "async": false }
+  ]
+}
