@@ -86,6 +86,23 @@ export interface ScalingOptionsInput {
  *
  * Los valores por defecto son los de un solo VM: nada cambia para quien no
  * pasa `ScalingOptions`.
+ *
+ * Coste y activación
+ * -------------------
+ * Activa: `deployAgent()` (`rayito agent deploy`) con `maxVms` mayor que 1, o
+ *     con `warmVms` mayor que 0; por sí sola, esta clase no crea nada.
+ * Recursos y llamadas AWS: `minVms` MicroVMs en marcha (`run-microvm`),
+ *     `warmVms` plazas suspendidas de un pool y los VMs extra que cree el
+ *     reparto hasta `maxVms`.
+ * Coste aproximado: el del MicroVM por segundo mientras vive (2 GB: ≈ $0,126
+ *     por hora en us-east-1, consultado 2026-10-06 en
+ *     https://aws.amazon.com/lambda/pricing/), por cada VM; una plaza aparcada
+ *     o un VM suspendido sólo pagan el almacenamiento de su snapshot.
+ * IAM: los de `Sandbox.create()`, `Sandbox.list()` y `Sandbox.connect()`.
+ * Cómo apagarla: los valores por defecto (`minVms: 1, maxVms: 1, warmVms: 0`)
+ *     son un solo VM; `fleet.stop()` termina todos los VMs.
+ * Ejemplo:
+ *   new ScalingOptions({ minVms: 1, maxVms: 3, warmVms: 1 });
  */
 export class ScalingOptions {
   readonly minVms: number;
