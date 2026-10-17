@@ -1989,3 +1989,52 @@ una sola región (us-east-1).
   «alguien con sesión de este pool», y el usuario lo decide el token. El
   grupo de usuarios de la pila pide un correo como nombre de usuario.
 
+- **Q170 — Reanudar un VM suspendido y la primera llamada.** Con `idle` de 60 s
+  y una espera de 150 s, el VM de la flota pasa a `SUSPENDED`; la siguiente
+  `invoke()` lo reanuda y contesta en **1,9 a 4,0 s** en total (reanudar más la
+  primera llamada al modelo), medido en 31 despliegues de 4096 MiB de los
+  quince ejemplos (Python y TypeScript, 2026-10-16). Un VM terminado sigue en
+  el listado como `SUSPENDED` hasta unos segundos (en un caso, más de 90 s)
+  después de `stop()`: quien comprueba que no queda ninguno espera, no lee una
+  vez.
+- **Q171 — Una flota de 1 a 2 VMs con una plaza caliente.** Cinco llamadas a la
+  vez a una flota de `max_concurrency=2` y cola de 2 se reparten entre dos VMs
+  (el asa `rs1.<sandbox>.<sesión>` nombra a cada uno); las mismas cinco por la
+  URL de un solo VM dan respuestas y `429` (`busy`) con el sobrante. La plaza
+  caliente aparcada se recicla cuando le quedan menos de 3540 s de vida: el
+  pool crea otra y termina la vieja. Reconectar con `AgentFleet.connect` y el
+  mismo `scaling` devuelve las respuestas con el asa; sin él, el id de sesión
+  viaja sin asa.
+- **Q172 — El modelo desde el grafo del usuario.** Un grafo de LangGraph o
+  DeepAgents que crea su propio `ChatBedrockConverse` sólo pasa por la pasarela
+  si el host exporta `AWS_ENDPOINT_URL_BEDROCK_RUNTIME`; sin esa variable el
+  cliente sale por el proxy de salida del sandbox (`HTTPS_PROXY`) y falla con
+  `ProxyConnectionError`. El SDK de AWS para JavaScript habla HTTP/2 en claro con
+  un endpoint `http://` (nunca ocurre contra AWS, que es TLS) y un Bedrock falso
+  en HTTP/1.1 no le contesta.
+
+
+## Despliegue de agentes de cero configuración (0.14, `deploy_agent`)
+
+Las llamadas de lectura que `deploy_agent()` hace antes de crear nada. Todas
+las de la tabla salvo `HeadBucket` ya estaban documentadas arriba; la tabla
+dice dónde. Consultado el 2026-10-16.
+
+| Operación | Parámetros de entrada (y sólo estos) | Salida que se lee | IAM | Dónde |
+|---|---|---|---|---|
+| `GetCallerIdentity` | — | `Account` | ninguna | tabla de GetCallerIdentity de arriba |
+| `HeadBucket` (`head_bucket` / `HeadBucketCommand`) | `Bucket` | sólo el código HTTP: 200 existe y es accesible; 404 (`NoSuchBucket`) no existe; 403 existe sin acceso (S3 no distingue ausente de ajeno); 400 nombre o región inválidos | `s3:ListBucket` sobre el bucket | <https://docs.aws.amazon.com/AmazonS3/latest/API/API_HeadBucket.html> |
+| `GetMicrovmImage` | `imageIdentifier` | existe o `ResourceNotFoundException` | `lambda:GetMicrovmImage` | §4 |
+| `ListMicrovms` | `imageIdentifier` (ARN de la imagen), paginación | `items[].microvmId`, `state`, `imageArn`, `startedAt` | `lambda:ListMicrovms` | §6: filtra por imagen y los items traen el ARN de la imagen y el estado, así que la flota se reconstruye sin sondear ningún VM |
+| `DescribeSecret` / `CreateSecret` | los de `SecretStore` | ver la tabla de Secrets Manager | `secretsmanager:DescribeSecret`, `secretsmanager:CreateSecret` | §19 |
+
+- El bucket por defecto es el de activos del bootstrap de CDK de la cuenta y la
+  región, `cdk-<calificador>-assets-<cuenta>-<región>` con el calificador por
+  defecto `hnb659fds`; sólo se comprueba con `HeadBucket`. Rayito nunca llama a
+  `CreateBucket`.
+- Un MicroVM no se puede etiquetar (§1): la pertenencia a una flota es la
+  imagen. `rayd` fija la vida de un VM sobrante con `set_timeout`, sin llamada
+  al plano de control.
+- Pendiente de medir en AWS real (nueva fila Q al aceptar 0.14): el tope de
+  conexiones simultáneas por MicroVM por debajo de 2 GB (se asume el de 2 GB,
+  conservador) y la latencia de reanudar una plaza aparcada y arrancar el host.

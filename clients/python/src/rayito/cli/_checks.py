@@ -36,6 +36,7 @@ from rayito.cli._publish import (
     S3_KEY_PREFIX,
     base_image_arn,
     latest_build,
+    newest_managed_version,
 )
 from rayito.cli._session import Clients
 from rayito.exceptions import AuthenticationException, SandboxNotFoundException
@@ -194,15 +195,11 @@ def check_credentials(clients: Clients, ctx: DoctorContext) -> CheckResult:
     return CheckResult("credentials", "OK", summary, details)
 
 
-def newest_managed_version(clients: Clients, arn: str) -> dict[str, Any] | None:
-    paginator = clients.microvms.get_paginator("list_managed_microvm_image_versions")
-    versions = [
-        item for page in paginator.paginate(imageIdentifier=arn) for item in page.get("items", [])
-    ]
-    if not versions:
+def newest_managed_version_details(clients: Clients, arn: str) -> dict[str, Any] | None:
+    newest = newest_managed_version(clients.microvms, arn)
+    if newest is None:
         return None
-    newest = max(versions, key=lambda item: item["createdAt"])
-    return {"imageVersion": str(newest["imageVersion"]), "createdAt": iso_utc(newest["createdAt"])}
+    return {"imageVersion": newest[0], "createdAt": iso_utc(newest[1])}
 
 
 def check_managed_images(clients: Clients, ctx: DoctorContext) -> CheckResult:
@@ -219,7 +216,7 @@ def check_managed_images(clients: Clients, ctx: DoctorContext) -> CheckResult:
             f"list-managed-microvm-images responde pero {MANAGED_BASE_IMAGE_NAME} no está",
             details,
         )
-    details["newest_version"] = newest_managed_version(clients, expected)
+    details["newest_version"] = newest_managed_version_details(clients, expected)
     newest = details["newest_version"]
     version = newest["imageVersion"] if newest else "?"
     return CheckResult(

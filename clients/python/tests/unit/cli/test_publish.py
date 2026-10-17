@@ -669,3 +669,121 @@ def test_build_role_from_stack_output(clients: Clients, stubbed_clients: Stubs) 
         {"StackName": "stack"},
     )
     assert _publish.build_role_arn(clients, settings(build_role_arn=None)) == BUILD_ROLE
+
+
+class FakeManagedImages:
+    """`list_managed_microvm_image_versions` con las versiones dadas."""
+
+    def __init__(self, *versions: tuple[str, datetime]) -> None:
+        self._items = [{"imageVersion": v, "createdAt": created} for v, created in versions]
+        self.identifiers: list[str] = []
+
+    def get_paginator(self, operation: str) -> FakeManagedImages:
+        assert operation == "list_managed_microvm_image_versions"
+        return self
+
+    def paginate(self, *, imageIdentifier: str) -> list[dict[str, Any]]:
+        self.identifiers.append(imageIdentifier)
+        return [{"items": self._items}]
+
+
+NEWER = datetime(2026, 10, 2, tzinfo=UTC)
+OLDER = datetime(2026, 9, 1, tzinfo=UTC)
+
+
+def test_latest_base_image_version_is_the_newest_the_managed_image_lists() -> None:
+    managed = FakeManagedImages(("1", OLDER), ("3", NEWER), ("2", OLDER))
+    resolved = _publish.resolve_base_image_version(
+        managed, REGION, _publish.LATEST_BASE_IMAGE_VERSION
+    )
+    assert resolved == "3"
+    assert managed.identifiers == [_publish.base_image_arn(REGION)]
+
+
+def test_an_explicit_base_image_version_is_used_as_given_without_any_call() -> None:
+    managed = FakeManagedImages(("9", NEWER))
+    assert _publish.resolve_base_image_version(managed, REGION, "1") == "1"
+    assert managed.identifiers == []
+
+
+def test_a_managed_image_with_no_versions_is_a_failure_that_names_the_flag(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(SystemExit) as raised:
+        _publish.resolve_base_image_version(
+            FakeManagedImages(), REGION, _publish.LATEST_BASE_IMAGE_VERSION
+        )
+    assert raised.value.code == 1
+    assert "--base-image-version" in capsys.readouterr().err
+
+
+def test_the_cli_prints_the_version_it_resolved_and_publishes_on_it(
+    runner: CliRunner,
+    clients: Clients,
+    stubbed_clients: Stubs,
+    artifact: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("RAYITO_BUCKET", "bucket")
+    key = _publish.artifact_key(artifact.read_bytes())
+    stubbed_clients.microvms.add_response(
+        "list_managed_microvm_image_versions",
+        {
+            "items": [
+                {
+                    "imageArn": _publish.base_image_arn(REGION),
+                    "imageVersion": "1",
+                    "createdAt": OLDER,
+                    "status": "ACTIVE",
+                }
+            ]
+        },
+        {"imageIdentifier": _publish.base_image_arn(REGION)},
+    )
+    stubbed_clients.s3.add_response("head_object", {}, {"Bucket": "bucket", "Key": key})
+    stubbed_clients.microvms.add_response(
+        "get_microvm_image", image_response(), {"imageIdentifier": IMAGE_ARN}
+    )
+    stubbed_clients.microvms.add_response(
+        "list_microvm_image_versions",
+        {"items": [version_item(3, artifact_uri=f"s3://bucket/{key}", base_image_version="1.0")]},
+        {"imageIdentifier": IMAGE_ARN},
+    )
+    stub_latest_build(stubbed_clients, "3.0")
+    arguments = [
+        "image",
+        "publish",
+        "--artifact",
+        str(artifact),
+        "--base-image-version",
+        "latest",
+        "--build-role-arn",
+        BUILD_ROLE,
+    ]
+    result = runner.invoke(app, arguments, obj=clients)
+    assert result.exit_code == 0, result.stderr
+    assert "base_image_version=1" in result.stderr
+
+
+def test_an_explicit_version_prints_nothing_extra_and_asks_no_one(
+    runner: CliRunner,
+    clients: Clients,
+    stubbed_clients: Stubs,
+    artifact: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("RAYITO_BUCKET", "bucket")
+    key = _publish.artifact_key(artifact.read_bytes())
+    stubbed_clients.s3.add_response("head_object", {}, {"Bucket": "bucket", "Key": key})
+    stubbed_clients.microvms.add_response(
+        "get_microvm_image", image_response(), {"imageIdentifier": IMAGE_ARN}
+    )
+    stubbed_clients.microvms.add_response(
+        "list_microvm_image_versions",
+        {"items": [version_item(3, artifact_uri=f"s3://bucket/{key}", base_image_version="1.0")]},
+        {"imageIdentifier": IMAGE_ARN},
+    )
+    stub_latest_build(stubbed_clients, "3.0")
+    result = runner.invoke(app, publish_args(artifact), obj=clients)
+    assert result.exit_code == 0, result.stderr
+    assert "base_image_version=" not in result.stderr

@@ -8,7 +8,8 @@ middleware de permisos, el protocolo JSONL y las sesiones de verdad. Además
 construye el grafo por defecto con los tres proveedores (sin llamarlos),
 comprueba que `task` -> `general-purpose` -> `execute` respeta un `bash`
 denegado y que `DEEPAGENTS_TOOL_NAMES` cubre todas las herramientas de
-sistema de ficheros del deepagents fijado.
+sistema de ficheros del deepagents fijado. También ejecuta un grafo de
+LangGraph a secas (`create_react_agent`, cuyo nodo del modelo se llama `agent`).
 
 Uso: `python runner_smoke.py <runner.py>`. Sale con 0 si todo cuadra.
 """
@@ -123,6 +124,53 @@ def build(ctx):
 '''
 
 
+PLAIN_GRAPH_MODULE = '''
+from langchain_core.language_models import BaseChatModel
+from langchain_core.messages import AIMessage
+from langchain_core.outputs import ChatGeneration, ChatResult
+from langchain_core.tools import tool
+from langgraph.prebuilt import create_react_agent
+
+
+class FakeModel(BaseChatModel):
+    """Una llamada a la herramienta y un final, como un `create_react_agent`
+    de LangGraph a secas (su nodo del modelo se llama `agent`)."""
+
+    replies: list = []
+
+    @property
+    def _llm_type(self):
+        return "fake"
+
+    def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+        return ChatResult(generations=[ChatGeneration(message=self.replies.pop(0))])
+
+    def bind_tools(self, tools, **kwargs):
+        return self
+
+
+@tool
+def doubled(value: int) -> int:
+    """El doble de un número."""
+    return value * 2
+
+
+def build(ctx):
+    replies = [
+        AIMessage(
+            content="",
+            tool_calls=[{"name": "doubled", "args": {"value": 21}, "id": "p1"}],
+            usage_metadata={"input_tokens": 40, "output_tokens": 3, "total_tokens": 43},
+        ),
+        AIMessage(
+            content="Son 42.",
+            usage_metadata={"input_tokens": 60, "output_tokens": 4, "total_tokens": 64},
+        ),
+    ]
+    return create_react_agent(FakeModel(replies=replies), [doubled], prompt=ctx.instructions)
+'''
+
+
 def _config(root: Path, **overrides: object) -> dict[str, object]:
     config: dict[str, object] = {
         "v": 1,
@@ -226,6 +274,28 @@ def _check_subagent_permissions(runner: str, root: Path) -> None:
     assert usages[-1]["input"] == 30 + 70 + 9, usages
 
 
+def _check_plain_react_graph(runner: str, root: Path) -> None:
+    work = root / "plain-work"
+    work.mkdir()
+    (work / "smoke_plain.py").write_text(PLAIN_GRAPH_MODULE, encoding="utf-8")
+    config_path = root / "plain-config.json"
+    config_path.write_text(
+        json.dumps(_config(root, workdir=str(work), entrypoint="smoke_plain:build")),
+        encoding="utf-8",
+    )
+    request = {"v": 1, "prompt": "hola", "session_id": None, "model": None, "reasoning": False}
+    events = _run(runner, config_path, request)
+    kinds = [event["type"] for event in events]
+    assert kinds[0] == "session" and kinds[-1] == "done", kinds
+    assert kinds.count("step_finished") == 2, kinds
+    (call,) = [event for event in events if event["type"] == "tool_call"]
+    assert (call["name"], call["output"], call["status"]) == ("doubled", "42", "completed"), call
+    text = [event["text"] for event in events if event["type"] == "text"]
+    assert text == ["Son 42."], text
+    usages = [event["usage"] for event in events if event["type"] == "step_finished"]
+    assert [(u["input"], u["output"]) for u in usages] == [(40, 3), (60, 4)], usages
+
+
 def _check_tool_names_cover_deepagents(runner: str) -> None:
     from deepagents.backends import LocalShellBackend
     from deepagents.middleware.filesystem import FilesystemMiddleware
@@ -264,6 +334,7 @@ def main(argv: list[str]) -> int:
     with tempfile.TemporaryDirectory() as tmp:
         _check_entrypoint(runner, Path(tmp))
         _check_subagent_permissions(runner, Path(tmp))
+        _check_plain_react_graph(runner, Path(tmp))
         _check_default_graphs(runner, Path(tmp))
     _check_tool_names_cover_deepagents(runner)
     sys.stdout.write("runner_smoke: ok\n")

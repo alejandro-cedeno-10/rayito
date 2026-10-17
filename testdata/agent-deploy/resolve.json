@@ -1,0 +1,190 @@
+{
+  "schema": "rayito.agent-deploy-resolve/1",
+  "buckets": [
+    {
+      "name": "the argument wins over everything",
+      "explicit": "amzn-s3-demo-bucket",
+      "projectFile": "file-bucket",
+      "environment": "env-bucket",
+      "discovered": "cdk-bucket",
+      "expected": {
+        "bucket": "amzn-s3-demo-bucket",
+        "source": "argument"
+      }
+    },
+    {
+      "name": "the project file wins over the environment",
+      "explicit": null,
+      "projectFile": "file-bucket",
+      "environment": "env-bucket",
+      "discovered": "cdk-bucket",
+      "expected": {
+        "bucket": "file-bucket",
+        "source": "project_file"
+      }
+    },
+    {
+      "name": "the environment wins over discovery",
+      "explicit": null,
+      "projectFile": null,
+      "environment": "env-bucket",
+      "discovered": "cdk-bucket",
+      "expected": {
+        "bucket": "env-bucket",
+        "source": "environment"
+      }
+    },
+    {
+      "name": "discovery is the last resort",
+      "explicit": null,
+      "projectFile": null,
+      "environment": null,
+      "discovered": "cdk-bucket",
+      "expected": {
+        "bucket": "cdk-bucket",
+        "source": "discovered"
+      }
+    },
+    {
+      "name": "no bucket anywhere is an error",
+      "explicit": null,
+      "projectFile": null,
+      "environment": null,
+      "discovered": null,
+      "expected": null
+    }
+  ],
+  "secretNames": [
+    {
+      "project": "support-bot",
+      "gateway": "bedrock",
+      "name": "agents/support-bot/bedrock"
+    },
+    {
+      "project": "mi-agente",
+      "gateway": "openai",
+      "name": "agents/mi-agente/openai"
+    }
+  ],
+  "secretValues": [
+    {
+      "gateway": "bedrock",
+      "header": "authorization",
+      "environment": {
+        "AWS_BEARER_TOKEN_BEDROCK": "abskexample"
+      },
+      "expected": "Bearer abskexample"
+    },
+    {
+      "gateway": "bedrock",
+      "header": "authorization",
+      "environment": {
+        "AWS_BEARER_TOKEN_BEDROCK": "Bearer abskexample"
+      },
+      "expected": "Bearer abskexample"
+    },
+    {
+      "gateway": "anthropic",
+      "header": "x-api-key",
+      "environment": {
+        "ANTHROPIC_API_KEY": "valor-de-prueba"
+      },
+      "expected": "valor-de-prueba"
+    },
+    {
+      "gateway": "gemini",
+      "header": "x-goog-api-key",
+      "environment": {
+        "GEMINI_API_KEY": "valor-de-prueba"
+      },
+      "expected": "valor-de-prueba"
+    },
+    {
+      "gateway": "azure_openai",
+      "header": "api-key",
+      "environment": {
+        "AZURE_OPENAI_API_KEY": "valor-de-prueba"
+      },
+      "expected": "valor-de-prueba"
+    },
+    {
+      "gateway": "openai",
+      "header": "authorization",
+      "environment": {},
+      "expected": null
+    },
+    {
+      "gateway": "openai",
+      "header": "authorization",
+      "environment": {
+        "OPENAI_API_KEY": ""
+      },
+      "expected": null
+    },
+    {
+      "gateway": "desconocida",
+      "header": "authorization",
+      "environment": {
+        "OPENAI_API_KEY": "valor-de-prueba"
+      },
+      "expected": null
+    }
+  ],
+  "cdkBuckets": [
+    {
+      "account": "123456789012",
+      "region": "us-east-1",
+      "template": "cdk-{qualifier}-assets-{account}-{region}",
+      "qualifier": "hnb659fds"
+    }
+  ],
+  "costs": [
+    {
+      "memoryMib": 2048,
+      "scaling": {
+        "minVms": 1,
+        "maxVms": 1,
+        "warmVms": 0
+      },
+      "runningUsdPerHour": 0.1261,
+      "parkedUsdPerDay": 0.0,
+      "imageBuildUsd": 0.0114,
+      "imageStorageUsdPerWeek": 0.056
+    },
+    {
+      "memoryMib": 4096,
+      "scaling": {
+        "minVms": 2,
+        "maxVms": 3,
+        "warmVms": 1
+      },
+      "runningUsdPerHour": 0.5044,
+      "parkedUsdPerDay": 0.010667,
+      "imageBuildUsd": 0.0114,
+      "imageStorageUsdPerWeek": 0.056
+    },
+    {
+      "memoryMib": 8192,
+      "scaling": {
+        "minVms": 1,
+        "maxVms": 4,
+        "warmVms": 2
+      },
+      "runningUsdPerHour": 0.5044,
+      "parkedUsdPerDay": 0.042667,
+      "imageBuildUsd": 0.0114,
+      "imageStorageUsdPerWeek": 0.056
+    }
+  ],
+  "sourceExcludes": [
+    ".git",
+    ".env",
+    ".env.*",
+    ".venv",
+    "venv",
+    "node_modules",
+    "__pycache__",
+    "*.pyc",
+    ".rayito"
+  ]
+}

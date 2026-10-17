@@ -234,8 +234,8 @@
         {
           "op": "copy",
           "args": {
-            "src": "strands_bridge.mjs",
-            "dst": "/opt/agents/rayito/strands_bridge.mjs"
+            "src": "node_bridge.mjs",
+            "dst": "/opt/agents/rayito/node_bridge.mjs"
           }
         }
       ],
@@ -275,13 +275,13 @@
         {
           "op": "copy",
           "args": {
-            "src": "strands_bridge.mjs",
-            "dst": "/opt/agents/rayito/strands_bridge.mjs"
+            "src": "node_bridge.mjs",
+            "dst": "/opt/agents/rayito/node_bridge.mjs"
           }
         }
       ],
       "context_files": {
-        "strands_bridge.mjs": "35fbfda2f415de2fef3b237becbbe48989a9a02be954e4c54fc05e58088017aa"
+        "node_bridge.mjs": "e42ada65f69a8d2044394fc54e5ae9bc785a2390a2fa0f901f79cd1994b4241f"
       },
       "manifest_entry": {
         "language": "typescript",
@@ -289,12 +289,12 @@
         "node_sha256": "5ced2d48d1d7198739b7f86804de0171aefb6823b684b12341d3321afc3cb0b2",
         "tested_sdk_version": "1.21.0",
         "tested_harness_version": "0.3.0",
-        "bridge_sha256": "35fbfda2f415de2fef3b237becbbe48989a9a02be954e4c54fc05e58088017aa"
+        "bridge_sha256": "e42ada65f69a8d2044394fc54e5ae9bc785a2390a2fa0f901f79cd1994b4241f"
       },
       "smoke_checks": [
         "su user -c 'node --version'",
         "su user -c \"cd /opt/agents && node --input-type=module -e 'import \\\"@strands-agents/sdk\\\"'\"",
-        "su user -c 'test -r /opt/agents/rayito/strands_bridge.mjs'"
+        "su user -c 'test -r /opt/agents/rayito/node_bridge.mjs'"
       ],
       "prefetch_paths": [
         "/opt/agents/node/bin/node"
@@ -507,6 +507,961 @@
       "smoke_checks": [],
       "prefetch_paths": [],
       "warmup_steps": []
+    },
+    {
+      "name": "custom-node-vercel-pnpm",
+      "runtime": {
+        "kind": "custom",
+        "options": {
+          "entrypoint": "src/agent.ts#agent",
+          "package_manager": "pnpm",
+          "node_version": "24",
+          "adapter": "vercel-ai"
+        }
+      },
+      "microvm": [
+        {
+          "op": "run",
+          "args": {
+            "cmd": "curl -fsSL --retry 3 -o /tmp/node.tar.gz https://nodejs.org/dist/v24.22.0/node-v24.22.0-linux-arm64.tar.gz && echo 'b7e7991d5407815adfa74a2a9cd4db683552c8ce32ff4a295c22e972849c3f5d  /tmp/node.tar.gz' | sha256sum -c - && mkdir -p /opt/agents/node && tar -xzf /tmp/node.tar.gz -C /opt/agents/node --strip-components=1 && rm -f /tmp/node.tar.gz && ln -sf /opt/agents/node/bin/node /usr/local/bin/node"
+          }
+        },
+        {
+          "op": "copy",
+          "args": {
+            "src": "app/package.json",
+            "dst": "/opt/agents/package.json"
+          }
+        },
+        {
+          "op": "copy",
+          "args": {
+            "src": "app/pnpm-lock.yaml",
+            "dst": "/opt/agents/pnpm-lock.yaml"
+          }
+        },
+        {
+          "op": "run",
+          "args": {
+            "cmd": "PATH=/opt/agents/node/bin:$PATH npm install -g --ignore-scripts --no-audit --no-fund pnpm@12.14.0 && cd /opt/agents && PATH=/opt/agents/node/bin:$PATH pnpm install --frozen-lockfile --prod --ignore-scripts"
+          }
+        },
+        {
+          "op": "copy",
+          "args": {
+            "src": "node_bridge.mjs",
+            "dst": "/opt/agents/rayito/node_bridge.mjs"
+          }
+        }
+      ],
+      "container": [
+        {
+          "op": "run",
+          "args": {
+            "cmd": "apt-get update && apt-get install -y --no-install-recommends curl ca-certificates && rm -rf /var/lib/apt/lists/*"
+          }
+        },
+        {
+          "op": "run",
+          "args": {
+            "cmd": "curl -fsSL --retry 3 -o /tmp/node.tar.gz https://nodejs.org/dist/v24.22.0/node-v24.22.0-linux-arm64.tar.gz && echo 'b7e7991d5407815adfa74a2a9cd4db683552c8ce32ff4a295c22e972849c3f5d  /tmp/node.tar.gz' | sha256sum -c - && mkdir -p /opt/agents/node && tar -xzf /tmp/node.tar.gz -C /opt/agents/node --strip-components=1 && rm -f /tmp/node.tar.gz && ln -sf /opt/agents/node/bin/node /usr/local/bin/node"
+          }
+        },
+        {
+          "op": "copy",
+          "args": {
+            "src": "app/package.json",
+            "dst": "/opt/agents/package.json"
+          }
+        },
+        {
+          "op": "copy",
+          "args": {
+            "src": "app/pnpm-lock.yaml",
+            "dst": "/opt/agents/pnpm-lock.yaml"
+          }
+        },
+        {
+          "op": "run",
+          "args": {
+            "cmd": "PATH=/opt/agents/node/bin:$PATH npm install -g --ignore-scripts --no-audit --no-fund pnpm@12.14.0 && cd /opt/agents && PATH=/opt/agents/node/bin:$PATH pnpm install --frozen-lockfile --prod --ignore-scripts"
+          }
+        },
+        {
+          "op": "copy",
+          "args": {
+            "src": "node_bridge.mjs",
+            "dst": "/opt/agents/rayito/node_bridge.mjs"
+          }
+        }
+      ],
+      "context_files": {
+        "node_bridge.mjs": "e42ada65f69a8d2044394fc54e5ae9bc785a2390a2fa0f901f79cd1994b4241f"
+      },
+      "manifest_entry": {
+        "driver": "node-callable",
+        "install_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "requirements": null,
+        "package_manager": "pnpm",
+        "node_version": "24.22.0",
+        "node_sha256": "b7e7991d5407815adfa74a2a9cd4db683552c8ce32ff4a295c22e972849c3f5d"
+      },
+      "smoke_checks": [
+        "su user -c 'node --version'"
+      ],
+      "prefetch_paths": [],
+      "warmup_steps": []
+    },
+    {
+      "name": "custom-node-http-yarn",
+      "runtime": {
+        "kind": "custom",
+        "options": {
+          "package_manager": "yarn",
+          "app": {
+            "command": [
+              "node",
+              "server.js"
+            ],
+            "port": 8000,
+            "protocol": "json"
+          }
+        }
+      },
+      "microvm": [
+        {
+          "op": "run",
+          "args": {
+            "cmd": "curl -fsSL --retry 3 -o /tmp/node.tar.gz https://nodejs.org/dist/v22.23.3/node-v22.23.3-linux-arm64.tar.gz && echo '5ced2d48d1d7198739b7f86804de0171aefb6823b684b12341d3321afc3cb0b2  /tmp/node.tar.gz' | sha256sum -c - && mkdir -p /opt/agents/node && tar -xzf /tmp/node.tar.gz -C /opt/agents/node --strip-components=1 && rm -f /tmp/node.tar.gz && ln -sf /opt/agents/node/bin/node /usr/local/bin/node"
+          }
+        },
+        {
+          "op": "copy",
+          "args": {
+            "src": "app/package.json",
+            "dst": "/opt/agents/package.json"
+          }
+        },
+        {
+          "op": "copy",
+          "args": {
+            "src": "app/yarn.lock",
+            "dst": "/opt/agents/yarn.lock"
+          }
+        },
+        {
+          "op": "run",
+          "args": {
+            "cmd": "PATH=/opt/agents/node/bin:$PATH npm install -g --ignore-scripts --no-audit --no-fund yarn@1.22.22 && cd /opt/agents && PATH=/opt/agents/node/bin:$PATH yarn install --frozen-lockfile --production --ignore-scripts"
+          }
+        }
+      ],
+      "container": [
+        {
+          "op": "run",
+          "args": {
+            "cmd": "apt-get update && apt-get install -y --no-install-recommends curl ca-certificates && rm -rf /var/lib/apt/lists/*"
+          }
+        },
+        {
+          "op": "run",
+          "args": {
+            "cmd": "curl -fsSL --retry 3 -o /tmp/node.tar.gz https://nodejs.org/dist/v22.23.3/node-v22.23.3-linux-arm64.tar.gz && echo '5ced2d48d1d7198739b7f86804de0171aefb6823b684b12341d3321afc3cb0b2  /tmp/node.tar.gz' | sha256sum -c - && mkdir -p /opt/agents/node && tar -xzf /tmp/node.tar.gz -C /opt/agents/node --strip-components=1 && rm -f /tmp/node.tar.gz && ln -sf /opt/agents/node/bin/node /usr/local/bin/node"
+          }
+        },
+        {
+          "op": "copy",
+          "args": {
+            "src": "app/package.json",
+            "dst": "/opt/agents/package.json"
+          }
+        },
+        {
+          "op": "copy",
+          "args": {
+            "src": "app/yarn.lock",
+            "dst": "/opt/agents/yarn.lock"
+          }
+        },
+        {
+          "op": "run",
+          "args": {
+            "cmd": "PATH=/opt/agents/node/bin:$PATH npm install -g --ignore-scripts --no-audit --no-fund yarn@1.22.22 && cd /opt/agents && PATH=/opt/agents/node/bin:$PATH yarn install --frozen-lockfile --production --ignore-scripts"
+          }
+        }
+      ],
+      "context_files": {},
+      "manifest_entry": {
+        "driver": "http-app",
+        "install_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "requirements": null,
+        "package_manager": "yarn",
+        "node_version": "22.23.3",
+        "node_sha256": "5ced2d48d1d7198739b7f86804de0171aefb6823b684b12341d3321afc3cb0b2"
+      },
+      "smoke_checks": [
+        "su user -c 'node --version'"
+      ],
+      "prefetch_paths": [],
+      "warmup_steps": []
+    },
+    {
+      "name": "custom-uv-lock-python-3.13",
+      "runtime": {
+        "kind": "custom",
+        "options": {
+          "entrypoint": "agente:responde",
+          "requirements": "uv.lock",
+          "package_manager": "uv",
+          "python_version": "3.13"
+        }
+      },
+      "microvm": [
+        {
+          "op": "run",
+          "args": {
+            "cmd": "mkdir -p /opt/agents/python-3.13 && curl -fsSL --retry 3 -o /tmp/pinned-python.tar.gz https://github.com/astral-sh/python-build-standalone/releases/download/20261013/cpython-3.13.16%2B20261013-aarch64-unknown-linux-gnu-install_only.tar.gz && echo '0fce0605da7b6532d5bdaec185336ffaaddd02ec04e27382014952ca4857ed6d  /tmp/pinned-python.tar.gz' | sha256sum -c - && tar -xzf /tmp/pinned-python.tar.gz -C /opt/agents/python-3.13 && rm -f /tmp/pinned-python.tar.gz"
+          }
+        },
+        {
+          "op": "run",
+          "args": {
+            "cmd": "curl -fsSL --retry 3 -o /tmp/uv.tar.gz https://github.com/astral-sh/uv/releases/download/0.13.1/uv-aarch64-unknown-linux-gnu.tar.gz && echo '9041c73c99fdc5892cf128140beb354eca9231d502068cc36e6cb53a8e59ad14  /tmp/uv.tar.gz' | sha256sum -c - && mkdir -p /opt/agents/uv && tar -xzf /tmp/uv.tar.gz -C /opt/agents/uv --strip-components=1 && rm -f /tmp/uv.tar.gz"
+          }
+        },
+        {
+          "op": "run",
+          "args": {
+            "cmd": "/opt/agents/uv/uv venv --python /opt/agents/python-3.13/python/bin/python3 /opt/agents/custom"
+          }
+        },
+        {
+          "op": "copy",
+          "args": {
+            "src": "app/pyproject.toml",
+            "dst": "/opt/agents/custom-project/pyproject.toml"
+          }
+        },
+        {
+          "op": "copy",
+          "args": {
+            "src": "app/uv.lock",
+            "dst": "/opt/agents/custom-project/uv.lock"
+          }
+        },
+        {
+          "op": "run",
+          "args": {
+            "cmd": "cd /opt/agents/custom-project && UV_PROJECT_ENVIRONMENT=/opt/agents/custom UV_PYTHON_DOWNLOADS=never /opt/agents/uv/uv sync --frozen --no-dev --no-install-project --python /opt/agents/python-3.13/python/bin/python3"
+          }
+        }
+      ],
+      "container": [
+        {
+          "op": "run",
+          "args": {
+            "cmd": "apt-get update && apt-get install -y --no-install-recommends curl ca-certificates && rm -rf /var/lib/apt/lists/*"
+          }
+        },
+        {
+          "op": "run",
+          "args": {
+            "cmd": "mkdir -p /opt/agents/python-3.13 && curl -fsSL --retry 3 -o /tmp/pinned-python.tar.gz https://github.com/astral-sh/python-build-standalone/releases/download/20261013/cpython-3.13.16%2B20261013-aarch64-unknown-linux-gnu-install_only.tar.gz && echo '0fce0605da7b6532d5bdaec185336ffaaddd02ec04e27382014952ca4857ed6d  /tmp/pinned-python.tar.gz' | sha256sum -c - && tar -xzf /tmp/pinned-python.tar.gz -C /opt/agents/python-3.13 && rm -f /tmp/pinned-python.tar.gz"
+          }
+        },
+        {
+          "op": "run",
+          "args": {
+            "cmd": "apt-get update && apt-get install -y --no-install-recommends curl ca-certificates && rm -rf /var/lib/apt/lists/*"
+          }
+        },
+        {
+          "op": "run",
+          "args": {
+            "cmd": "curl -fsSL --retry 3 -o /tmp/uv.tar.gz https://github.com/astral-sh/uv/releases/download/0.13.1/uv-aarch64-unknown-linux-gnu.tar.gz && echo '9041c73c99fdc5892cf128140beb354eca9231d502068cc36e6cb53a8e59ad14  /tmp/uv.tar.gz' | sha256sum -c - && mkdir -p /opt/agents/uv && tar -xzf /tmp/uv.tar.gz -C /opt/agents/uv --strip-components=1 && rm -f /tmp/uv.tar.gz"
+          }
+        },
+        {
+          "op": "run",
+          "args": {
+            "cmd": "/opt/agents/uv/uv venv --python /opt/agents/python-3.13/python/bin/python3 /opt/agents/custom"
+          }
+        },
+        {
+          "op": "copy",
+          "args": {
+            "src": "app/pyproject.toml",
+            "dst": "/opt/agents/custom-project/pyproject.toml"
+          }
+        },
+        {
+          "op": "copy",
+          "args": {
+            "src": "app/uv.lock",
+            "dst": "/opt/agents/custom-project/uv.lock"
+          }
+        },
+        {
+          "op": "run",
+          "args": {
+            "cmd": "cd /opt/agents/custom-project && UV_PROJECT_ENVIRONMENT=/opt/agents/custom UV_PYTHON_DOWNLOADS=never /opt/agents/uv/uv sync --frozen --no-dev --no-install-project --python /opt/agents/python-3.13/python/bin/python3"
+          }
+        }
+      ],
+      "context_files": {},
+      "manifest_entry": {
+        "driver": "callable",
+        "install_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "requirements": "uv.lock",
+        "package_manager": "uv",
+        "python_version": "3.13"
+      },
+      "smoke_checks": [
+        "su user -c '/opt/agents/python-3.13/python/bin/python3 --version'"
+      ],
+      "prefetch_paths": [],
+      "warmup_steps": []
+    },
+    {
+      "name": "custom-uv-requirements",
+      "runtime": {
+        "kind": "custom",
+        "options": {
+          "entrypoint": "agente:responde",
+          "requirements": "requirements.txt",
+          "package_manager": "uv"
+        }
+      },
+      "microvm": [
+        {
+          "op": "run",
+          "args": {
+            "cmd": "curl -fsSL --retry 3 -o /tmp/uv.tar.gz https://github.com/astral-sh/uv/releases/download/0.13.1/uv-aarch64-unknown-linux-gnu.tar.gz && echo '9041c73c99fdc5892cf128140beb354eca9231d502068cc36e6cb53a8e59ad14  /tmp/uv.tar.gz' | sha256sum -c - && mkdir -p /opt/agents/uv && tar -xzf /tmp/uv.tar.gz -C /opt/agents/uv --strip-components=1 && rm -f /tmp/uv.tar.gz"
+          }
+        },
+        {
+          "op": "run",
+          "args": {
+            "cmd": "/opt/agents/uv/uv venv --python python3 /opt/agents/custom"
+          }
+        },
+        {
+          "op": "copy",
+          "args": {
+            "src": "app/requirements.txt",
+            "dst": "/opt/agents/custom-requirements.txt"
+          }
+        },
+        {
+          "op": "run",
+          "args": {
+            "cmd": "hashes=''; if grep -q -- '--hash=' /opt/agents/custom-requirements.txt; then hashes='--require-hashes'; fi && /opt/agents/uv/uv pip install --python /opt/agents/custom/bin/python --no-cache $hashes -r /opt/agents/custom-requirements.txt && /opt/agents/uv/uv pip check --python /opt/agents/custom/bin/python"
+          }
+        }
+      ],
+      "container": [
+        {
+          "op": "run",
+          "args": {
+            "cmd": "apt-get update && apt-get install -y --no-install-recommends curl ca-certificates && rm -rf /var/lib/apt/lists/*"
+          }
+        },
+        {
+          "op": "run",
+          "args": {
+            "cmd": "curl -fsSL --retry 3 -o /tmp/uv.tar.gz https://github.com/astral-sh/uv/releases/download/0.13.1/uv-aarch64-unknown-linux-gnu.tar.gz && echo '9041c73c99fdc5892cf128140beb354eca9231d502068cc36e6cb53a8e59ad14  /tmp/uv.tar.gz' | sha256sum -c - && mkdir -p /opt/agents/uv && tar -xzf /tmp/uv.tar.gz -C /opt/agents/uv --strip-components=1 && rm -f /tmp/uv.tar.gz"
+          }
+        },
+        {
+          "op": "run",
+          "args": {
+            "cmd": "/opt/agents/uv/uv venv --python python3 /opt/agents/custom"
+          }
+        },
+        {
+          "op": "copy",
+          "args": {
+            "src": "app/requirements.txt",
+            "dst": "/opt/agents/custom-requirements.txt"
+          }
+        },
+        {
+          "op": "run",
+          "args": {
+            "cmd": "hashes=''; if grep -q -- '--hash=' /opt/agents/custom-requirements.txt; then hashes='--require-hashes'; fi && /opt/agents/uv/uv pip install --python /opt/agents/custom/bin/python --no-cache $hashes -r /opt/agents/custom-requirements.txt && /opt/agents/uv/uv pip check --python /opt/agents/custom/bin/python"
+          }
+        }
+      ],
+      "context_files": {},
+      "manifest_entry": {
+        "driver": "callable",
+        "install_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "requirements": "requirements.txt",
+        "package_manager": "uv"
+      },
+      "smoke_checks": [],
+      "prefetch_paths": [],
+      "warmup_steps": []
+    },
+    {
+      "name": "custom-pip-python-3.11",
+      "runtime": {
+        "kind": "custom",
+        "options": {
+          "command": [
+            "python",
+            "agent.py"
+          ],
+          "requirements": "requirements.txt",
+          "python_version": "3.11"
+        }
+      },
+      "microvm": [
+        {
+          "op": "run",
+          "args": {
+            "cmd": "mkdir -p /opt/agents/python-3.11 && curl -fsSL --retry 3 -o /tmp/pinned-python.tar.gz https://github.com/astral-sh/python-build-standalone/releases/download/20261013/cpython-3.11.17%2B20261013-aarch64-unknown-linux-gnu-install_only.tar.gz && echo '643954c07b04c18e215f812691cd5fa15d924fec1f3a5fdd9c1789484382ac24  /tmp/pinned-python.tar.gz' | sha256sum -c - && tar -xzf /tmp/pinned-python.tar.gz -C /opt/agents/python-3.11 && rm -f /tmp/pinned-python.tar.gz"
+          }
+        },
+        {
+          "op": "run",
+          "args": {
+            "cmd": "/opt/agents/python-3.11/python/bin/python3 -m venv /opt/agents/custom"
+          }
+        },
+        {
+          "op": "copy",
+          "args": {
+            "src": "app/requirements.txt",
+            "dst": "/opt/agents/requirements-user-custom.txt"
+          }
+        },
+        {
+          "op": "run",
+          "args": {
+            "cmd": "hashes=''; if grep -q -- '--hash=' /opt/agents/requirements-user-custom.txt; then hashes='--require-hashes'; fi && /opt/agents/custom/bin/python -m pip install --no-cache-dir --only-binary=:all: $hashes -r /opt/agents/requirements-user-custom.txt && /opt/agents/custom/bin/python -m pip check"
+          }
+        }
+      ],
+      "container": [
+        {
+          "op": "run",
+          "args": {
+            "cmd": "apt-get update && apt-get install -y --no-install-recommends curl ca-certificates && rm -rf /var/lib/apt/lists/*"
+          }
+        },
+        {
+          "op": "run",
+          "args": {
+            "cmd": "mkdir -p /opt/agents/python-3.11 && curl -fsSL --retry 3 -o /tmp/pinned-python.tar.gz https://github.com/astral-sh/python-build-standalone/releases/download/20261013/cpython-3.11.17%2B20261013-aarch64-unknown-linux-gnu-install_only.tar.gz && echo '643954c07b04c18e215f812691cd5fa15d924fec1f3a5fdd9c1789484382ac24  /tmp/pinned-python.tar.gz' | sha256sum -c - && tar -xzf /tmp/pinned-python.tar.gz -C /opt/agents/python-3.11 && rm -f /tmp/pinned-python.tar.gz"
+          }
+        },
+        {
+          "op": "run",
+          "args": {
+            "cmd": "/opt/agents/python-3.11/python/bin/python3 -m venv /opt/agents/custom"
+          }
+        },
+        {
+          "op": "copy",
+          "args": {
+            "src": "app/requirements.txt",
+            "dst": "/opt/agents/requirements-user-custom.txt"
+          }
+        },
+        {
+          "op": "run",
+          "args": {
+            "cmd": "hashes=''; if grep -q -- '--hash=' /opt/agents/requirements-user-custom.txt; then hashes='--require-hashes'; fi && /opt/agents/custom/bin/python -m pip install --no-cache-dir --only-binary=:all: $hashes -r /opt/agents/requirements-user-custom.txt && /opt/agents/custom/bin/python -m pip check"
+          }
+        }
+      ],
+      "context_files": {},
+      "manifest_entry": {
+        "driver": "command",
+        "install_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "requirements": "requirements.txt",
+        "python_version": "3.11"
+      },
+      "smoke_checks": [
+        "su user -c '/opt/agents/python-3.11/python/bin/python3 --version'"
+      ],
+      "prefetch_paths": [],
+      "warmup_steps": []
+    },
+    {
+      "name": "strands-typescript-pnpm-node24",
+      "runtime": {
+        "kind": "strands",
+        "options": {
+          "language": "typescript",
+          "entrypoint": "src/agent.ts",
+          "package_manager": "pnpm",
+          "node_version": "24"
+        }
+      },
+      "microvm": [
+        {
+          "op": "run",
+          "args": {
+            "cmd": "curl -fsSL --retry 3 -o /tmp/node.tar.gz https://nodejs.org/dist/v24.22.0/node-v24.22.0-linux-arm64.tar.gz && echo 'b7e7991d5407815adfa74a2a9cd4db683552c8ce32ff4a295c22e972849c3f5d  /tmp/node.tar.gz' | sha256sum -c - && mkdir -p /opt/agents/node && tar -xzf /tmp/node.tar.gz -C /opt/agents/node --strip-components=1 && rm -f /tmp/node.tar.gz && ln -sf /opt/agents/node/bin/node /usr/local/bin/node"
+          }
+        },
+        {
+          "op": "copy",
+          "args": {
+            "src": "app/package.json",
+            "dst": "/opt/agents/package.json"
+          }
+        },
+        {
+          "op": "copy",
+          "args": {
+            "src": "app/pnpm-lock.yaml",
+            "dst": "/opt/agents/pnpm-lock.yaml"
+          }
+        },
+        {
+          "op": "run",
+          "args": {
+            "cmd": "PATH=/opt/agents/node/bin:$PATH npm install -g --ignore-scripts --no-audit --no-fund pnpm@12.14.0 && cd /opt/agents && PATH=/opt/agents/node/bin:$PATH pnpm install --frozen-lockfile --prod --ignore-scripts"
+          }
+        },
+        {
+          "op": "copy",
+          "args": {
+            "src": "node_bridge.mjs",
+            "dst": "/opt/agents/rayito/node_bridge.mjs"
+          }
+        }
+      ],
+      "container": [
+        {
+          "op": "run",
+          "args": {
+            "cmd": "apt-get update && apt-get install -y --no-install-recommends curl ca-certificates && rm -rf /var/lib/apt/lists/*"
+          }
+        },
+        {
+          "op": "run",
+          "args": {
+            "cmd": "curl -fsSL --retry 3 -o /tmp/node.tar.gz https://nodejs.org/dist/v24.22.0/node-v24.22.0-linux-arm64.tar.gz && echo 'b7e7991d5407815adfa74a2a9cd4db683552c8ce32ff4a295c22e972849c3f5d  /tmp/node.tar.gz' | sha256sum -c - && mkdir -p /opt/agents/node && tar -xzf /tmp/node.tar.gz -C /opt/agents/node --strip-components=1 && rm -f /tmp/node.tar.gz && ln -sf /opt/agents/node/bin/node /usr/local/bin/node"
+          }
+        },
+        {
+          "op": "copy",
+          "args": {
+            "src": "app/package.json",
+            "dst": "/opt/agents/package.json"
+          }
+        },
+        {
+          "op": "copy",
+          "args": {
+            "src": "app/pnpm-lock.yaml",
+            "dst": "/opt/agents/pnpm-lock.yaml"
+          }
+        },
+        {
+          "op": "run",
+          "args": {
+            "cmd": "PATH=/opt/agents/node/bin:$PATH npm install -g --ignore-scripts --no-audit --no-fund pnpm@12.14.0 && cd /opt/agents && PATH=/opt/agents/node/bin:$PATH pnpm install --frozen-lockfile --prod --ignore-scripts"
+          }
+        },
+        {
+          "op": "copy",
+          "args": {
+            "src": "node_bridge.mjs",
+            "dst": "/opt/agents/rayito/node_bridge.mjs"
+          }
+        }
+      ],
+      "context_files": {
+        "node_bridge.mjs": "e42ada65f69a8d2044394fc54e5ae9bc785a2390a2fa0f901f79cd1994b4241f"
+      },
+      "manifest_entry": {
+        "language": "typescript",
+        "node_version": "24.22.0",
+        "node_sha256": "b7e7991d5407815adfa74a2a9cd4db683552c8ce32ff4a295c22e972849c3f5d",
+        "tested_sdk_version": "1.21.0",
+        "tested_harness_version": "0.3.0",
+        "bridge_sha256": "e42ada65f69a8d2044394fc54e5ae9bc785a2390a2fa0f901f79cd1994b4241f"
+      },
+      "smoke_checks": [
+        "su user -c 'node --version'",
+        "su user -c \"cd /opt/agents && node --input-type=module -e 'import \\\"@strands-agents/sdk\\\"'\"",
+        "su user -c 'test -r /opt/agents/rayito/node_bridge.mjs'"
+      ],
+      "prefetch_paths": [
+        "/opt/agents/node/bin/node"
+      ],
+      "warmup_steps": [
+        {
+          "cmd": "cd /opt/agents && node --input-type=module -e 'import \"@strands-agents/sdk\"' >/dev/null 2>&1 || true",
+          "background": false
+        }
+      ]
+    },
+    {
+      "name": "langgraph-requirements",
+      "runtime": {
+        "kind": "langgraph",
+        "options": {
+          "entrypoint": "agente:crea",
+          "requirements": "requirements.txt"
+        }
+      },
+      "microvm": [
+        {
+          "op": "copy",
+          "args": {
+            "src": "requirements-deepagents.txt",
+            "dst": "/opt/agents/requirements-deepagents.txt"
+          }
+        },
+        {
+          "op": "run",
+          "args": {
+            "cmd": "echo 'b73cb891e585c59f532eed1bfe5cf2d903ab4585d50249ae6d3e3246a205a8a3  /opt/agents/requirements-deepagents.txt' | sha256sum -c - && python3 -m venv /opt/agents/deepagents && /opt/agents/deepagents/bin/python -m pip install --no-cache-dir --require-hashes --no-deps --only-binary=:all: -r /opt/agents/requirements-deepagents.txt && /opt/agents/deepagents/bin/python -m pip check"
+          }
+        },
+        {
+          "op": "copy",
+          "args": {
+            "src": "app/requirements.txt",
+            "dst": "/opt/agents/requirements-user-deepagents.txt"
+          }
+        },
+        {
+          "op": "run",
+          "args": {
+            "cmd": "hashes=''; if grep -q -- '--hash=' /opt/agents/requirements-user-deepagents.txt; then hashes='--require-hashes'; fi && /opt/agents/deepagents/bin/python -m pip install --no-cache-dir --only-binary=:all: $hashes -r /opt/agents/requirements-user-deepagents.txt && /opt/agents/deepagents/bin/python -m pip check"
+          }
+        },
+        {
+          "op": "copy",
+          "args": {
+            "src": "deepagents_runner.py",
+            "dst": "/opt/agents/rayito/deepagents_runner.py",
+            "executable": true
+          }
+        }
+      ],
+      "container": [
+        {
+          "op": "copy",
+          "args": {
+            "src": "requirements-deepagents.txt",
+            "dst": "/opt/agents/requirements-deepagents.txt"
+          }
+        },
+        {
+          "op": "run",
+          "args": {
+            "cmd": "echo 'b73cb891e585c59f532eed1bfe5cf2d903ab4585d50249ae6d3e3246a205a8a3  /opt/agents/requirements-deepagents.txt' | sha256sum -c - && python3 -m venv /opt/agents/deepagents && /opt/agents/deepagents/bin/python -m pip install --no-cache-dir --require-hashes --no-deps --only-binary=:all: -r /opt/agents/requirements-deepagents.txt && /opt/agents/deepagents/bin/python -m pip check"
+          }
+        },
+        {
+          "op": "copy",
+          "args": {
+            "src": "app/requirements.txt",
+            "dst": "/opt/agents/requirements-user-deepagents.txt"
+          }
+        },
+        {
+          "op": "run",
+          "args": {
+            "cmd": "hashes=''; if grep -q -- '--hash=' /opt/agents/requirements-user-deepagents.txt; then hashes='--require-hashes'; fi && /opt/agents/deepagents/bin/python -m pip install --no-cache-dir --only-binary=:all: $hashes -r /opt/agents/requirements-user-deepagents.txt && /opt/agents/deepagents/bin/python -m pip check"
+          }
+        },
+        {
+          "op": "copy",
+          "args": {
+            "src": "deepagents_runner.py",
+            "dst": "/opt/agents/rayito/deepagents_runner.py",
+            "executable": true
+          }
+        }
+      ],
+      "context_files": {
+        "deepagents_runner.py": "db83255bb04b522fb2caa4271462b0a4c2bf2425e7ceeede06eee563cf2c82b1",
+        "requirements-deepagents.txt": "b73cb891e585c59f532eed1bfe5cf2d903ab4585d50249ae6d3e3246a205a8a3"
+      },
+      "manifest_entry": {
+        "requirements_sha256": "b73cb891e585c59f532eed1bfe5cf2d903ab4585d50249ae6d3e3246a205a8a3",
+        "runner_sha256": "db83255bb04b522fb2caa4271462b0a4c2bf2425e7ceeede06eee563cf2c82b1",
+        "user_requirements": "requirements.txt",
+        "package_manager": "pip"
+      },
+      "smoke_checks": [
+        "su user -c \"/opt/agents/deepagents/bin/python -c 'import deepagents, langchain_aws, langchain_anthropic, langchain_openai, langchain_google_genai'\"",
+        "su user -c 'test -r /opt/agents/rayito/deepagents_runner.py'"
+      ],
+      "prefetch_paths": [],
+      "warmup_steps": [
+        {
+          "cmd": "'/opt/agents/deepagents/bin/python' -c 'import deepagents, langchain_aws' >/dev/null 2>&1 || true",
+          "background": false
+        }
+      ]
+    },
+    {
+      "name": "langgraph-uv-lock",
+      "runtime": {
+        "kind": "langgraph",
+        "options": {
+          "entrypoint": "agente:crea",
+          "requirements": "uv.lock",
+          "package_manager": "uv"
+        }
+      },
+      "microvm": [
+        {
+          "op": "copy",
+          "args": {
+            "src": "requirements-deepagents.txt",
+            "dst": "/opt/agents/requirements-deepagents.txt"
+          }
+        },
+        {
+          "op": "run",
+          "args": {
+            "cmd": "echo 'b73cb891e585c59f532eed1bfe5cf2d903ab4585d50249ae6d3e3246a205a8a3  /opt/agents/requirements-deepagents.txt' | sha256sum -c - && python3 -m venv /opt/agents/deepagents && /opt/agents/deepagents/bin/python -m pip install --no-cache-dir --require-hashes --no-deps --only-binary=:all: -r /opt/agents/requirements-deepagents.txt && /opt/agents/deepagents/bin/python -m pip check"
+          }
+        },
+        {
+          "op": "run",
+          "args": {
+            "cmd": "curl -fsSL --retry 3 -o /tmp/uv.tar.gz https://github.com/astral-sh/uv/releases/download/0.13.1/uv-aarch64-unknown-linux-gnu.tar.gz && echo '9041c73c99fdc5892cf128140beb354eca9231d502068cc36e6cb53a8e59ad14  /tmp/uv.tar.gz' | sha256sum -c - && mkdir -p /opt/agents/uv && tar -xzf /tmp/uv.tar.gz -C /opt/agents/uv --strip-components=1 && rm -f /tmp/uv.tar.gz"
+          }
+        },
+        {
+          "op": "copy",
+          "args": {
+            "src": "app/pyproject.toml",
+            "dst": "/opt/agents/deepagents-project/pyproject.toml"
+          }
+        },
+        {
+          "op": "copy",
+          "args": {
+            "src": "app/uv.lock",
+            "dst": "/opt/agents/deepagents-project/uv.lock"
+          }
+        },
+        {
+          "op": "run",
+          "args": {
+            "cmd": "cd /opt/agents/deepagents-project && UV_PROJECT_ENVIRONMENT=/opt/agents/deepagents UV_PYTHON_DOWNLOADS=never /opt/agents/uv/uv sync --frozen --no-dev --no-install-project --inexact --python /opt/agents/deepagents/bin/python"
+          }
+        },
+        {
+          "op": "copy",
+          "args": {
+            "src": "deepagents_runner.py",
+            "dst": "/opt/agents/rayito/deepagents_runner.py",
+            "executable": true
+          }
+        }
+      ],
+      "container": [
+        {
+          "op": "copy",
+          "args": {
+            "src": "requirements-deepagents.txt",
+            "dst": "/opt/agents/requirements-deepagents.txt"
+          }
+        },
+        {
+          "op": "run",
+          "args": {
+            "cmd": "echo 'b73cb891e585c59f532eed1bfe5cf2d903ab4585d50249ae6d3e3246a205a8a3  /opt/agents/requirements-deepagents.txt' | sha256sum -c - && python3 -m venv /opt/agents/deepagents && /opt/agents/deepagents/bin/python -m pip install --no-cache-dir --require-hashes --no-deps --only-binary=:all: -r /opt/agents/requirements-deepagents.txt && /opt/agents/deepagents/bin/python -m pip check"
+          }
+        },
+        {
+          "op": "run",
+          "args": {
+            "cmd": "apt-get update && apt-get install -y --no-install-recommends curl ca-certificates && rm -rf /var/lib/apt/lists/*"
+          }
+        },
+        {
+          "op": "run",
+          "args": {
+            "cmd": "curl -fsSL --retry 3 -o /tmp/uv.tar.gz https://github.com/astral-sh/uv/releases/download/0.13.1/uv-aarch64-unknown-linux-gnu.tar.gz && echo '9041c73c99fdc5892cf128140beb354eca9231d502068cc36e6cb53a8e59ad14  /tmp/uv.tar.gz' | sha256sum -c - && mkdir -p /opt/agents/uv && tar -xzf /tmp/uv.tar.gz -C /opt/agents/uv --strip-components=1 && rm -f /tmp/uv.tar.gz"
+          }
+        },
+        {
+          "op": "copy",
+          "args": {
+            "src": "app/pyproject.toml",
+            "dst": "/opt/agents/deepagents-project/pyproject.toml"
+          }
+        },
+        {
+          "op": "copy",
+          "args": {
+            "src": "app/uv.lock",
+            "dst": "/opt/agents/deepagents-project/uv.lock"
+          }
+        },
+        {
+          "op": "run",
+          "args": {
+            "cmd": "cd /opt/agents/deepagents-project && UV_PROJECT_ENVIRONMENT=/opt/agents/deepagents UV_PYTHON_DOWNLOADS=never /opt/agents/uv/uv sync --frozen --no-dev --no-install-project --inexact --python /opt/agents/deepagents/bin/python"
+          }
+        },
+        {
+          "op": "copy",
+          "args": {
+            "src": "deepagents_runner.py",
+            "dst": "/opt/agents/rayito/deepagents_runner.py",
+            "executable": true
+          }
+        }
+      ],
+      "context_files": {
+        "deepagents_runner.py": "db83255bb04b522fb2caa4271462b0a4c2bf2425e7ceeede06eee563cf2c82b1",
+        "requirements-deepagents.txt": "b73cb891e585c59f532eed1bfe5cf2d903ab4585d50249ae6d3e3246a205a8a3"
+      },
+      "manifest_entry": {
+        "requirements_sha256": "b73cb891e585c59f532eed1bfe5cf2d903ab4585d50249ae6d3e3246a205a8a3",
+        "runner_sha256": "db83255bb04b522fb2caa4271462b0a4c2bf2425e7ceeede06eee563cf2c82b1",
+        "user_requirements": "uv.lock",
+        "package_manager": "uv"
+      },
+      "smoke_checks": [
+        "su user -c \"/opt/agents/deepagents/bin/python -c 'import deepagents, langchain_aws, langchain_anthropic, langchain_openai, langchain_google_genai'\"",
+        "su user -c 'test -r /opt/agents/rayito/deepagents_runner.py'"
+      ],
+      "prefetch_paths": [],
+      "warmup_steps": [
+        {
+          "cmd": "'/opt/agents/deepagents/bin/python' -c 'import deepagents, langchain_aws' >/dev/null 2>&1 || true",
+          "background": false
+        }
+      ]
+    },
+    {
+      "name": "langgraph-uv-requirements",
+      "runtime": {
+        "kind": "langgraph",
+        "options": {
+          "entrypoint": "agente:crea",
+          "requirements": "deploy/requirements.txt",
+          "package_manager": "uv"
+        }
+      },
+      "microvm": [
+        {
+          "op": "copy",
+          "args": {
+            "src": "requirements-deepagents.txt",
+            "dst": "/opt/agents/requirements-deepagents.txt"
+          }
+        },
+        {
+          "op": "run",
+          "args": {
+            "cmd": "echo 'b73cb891e585c59f532eed1bfe5cf2d903ab4585d50249ae6d3e3246a205a8a3  /opt/agents/requirements-deepagents.txt' | sha256sum -c - && python3 -m venv /opt/agents/deepagents && /opt/agents/deepagents/bin/python -m pip install --no-cache-dir --require-hashes --no-deps --only-binary=:all: -r /opt/agents/requirements-deepagents.txt && /opt/agents/deepagents/bin/python -m pip check"
+          }
+        },
+        {
+          "op": "run",
+          "args": {
+            "cmd": "curl -fsSL --retry 3 -o /tmp/uv.tar.gz https://github.com/astral-sh/uv/releases/download/0.13.1/uv-aarch64-unknown-linux-gnu.tar.gz && echo '9041c73c99fdc5892cf128140beb354eca9231d502068cc36e6cb53a8e59ad14  /tmp/uv.tar.gz' | sha256sum -c - && mkdir -p /opt/agents/uv && tar -xzf /tmp/uv.tar.gz -C /opt/agents/uv --strip-components=1 && rm -f /tmp/uv.tar.gz"
+          }
+        },
+        {
+          "op": "copy",
+          "args": {
+            "src": "app/deploy/requirements.txt",
+            "dst": "/opt/agents/deepagents-requirements.txt"
+          }
+        },
+        {
+          "op": "run",
+          "args": {
+            "cmd": "hashes=''; if grep -q -- '--hash=' /opt/agents/deepagents-requirements.txt; then hashes='--require-hashes'; fi && /opt/agents/uv/uv pip install --python /opt/agents/deepagents/bin/python --no-cache $hashes -r /opt/agents/deepagents-requirements.txt && /opt/agents/uv/uv pip check --python /opt/agents/deepagents/bin/python"
+          }
+        },
+        {
+          "op": "copy",
+          "args": {
+            "src": "deepagents_runner.py",
+            "dst": "/opt/agents/rayito/deepagents_runner.py",
+            "executable": true
+          }
+        }
+      ],
+      "container": [
+        {
+          "op": "copy",
+          "args": {
+            "src": "requirements-deepagents.txt",
+            "dst": "/opt/agents/requirements-deepagents.txt"
+          }
+        },
+        {
+          "op": "run",
+          "args": {
+            "cmd": "echo 'b73cb891e585c59f532eed1bfe5cf2d903ab4585d50249ae6d3e3246a205a8a3  /opt/agents/requirements-deepagents.txt' | sha256sum -c - && python3 -m venv /opt/agents/deepagents && /opt/agents/deepagents/bin/python -m pip install --no-cache-dir --require-hashes --no-deps --only-binary=:all: -r /opt/agents/requirements-deepagents.txt && /opt/agents/deepagents/bin/python -m pip check"
+          }
+        },
+        {
+          "op": "run",
+          "args": {
+            "cmd": "apt-get update && apt-get install -y --no-install-recommends curl ca-certificates && rm -rf /var/lib/apt/lists/*"
+          }
+        },
+        {
+          "op": "run",
+          "args": {
+            "cmd": "curl -fsSL --retry 3 -o /tmp/uv.tar.gz https://github.com/astral-sh/uv/releases/download/0.13.1/uv-aarch64-unknown-linux-gnu.tar.gz && echo '9041c73c99fdc5892cf128140beb354eca9231d502068cc36e6cb53a8e59ad14  /tmp/uv.tar.gz' | sha256sum -c - && mkdir -p /opt/agents/uv && tar -xzf /tmp/uv.tar.gz -C /opt/agents/uv --strip-components=1 && rm -f /tmp/uv.tar.gz"
+          }
+        },
+        {
+          "op": "copy",
+          "args": {
+            "src": "app/deploy/requirements.txt",
+            "dst": "/opt/agents/deepagents-requirements.txt"
+          }
+        },
+        {
+          "op": "run",
+          "args": {
+            "cmd": "hashes=''; if grep -q -- '--hash=' /opt/agents/deepagents-requirements.txt; then hashes='--require-hashes'; fi && /opt/agents/uv/uv pip install --python /opt/agents/deepagents/bin/python --no-cache $hashes -r /opt/agents/deepagents-requirements.txt && /opt/agents/uv/uv pip check --python /opt/agents/deepagents/bin/python"
+          }
+        },
+        {
+          "op": "copy",
+          "args": {
+            "src": "deepagents_runner.py",
+            "dst": "/opt/agents/rayito/deepagents_runner.py",
+            "executable": true
+          }
+        }
+      ],
+      "context_files": {
+        "deepagents_runner.py": "db83255bb04b522fb2caa4271462b0a4c2bf2425e7ceeede06eee563cf2c82b1",
+        "requirements-deepagents.txt": "b73cb891e585c59f532eed1bfe5cf2d903ab4585d50249ae6d3e3246a205a8a3"
+      },
+      "manifest_entry": {
+        "requirements_sha256": "b73cb891e585c59f532eed1bfe5cf2d903ab4585d50249ae6d3e3246a205a8a3",
+        "runner_sha256": "db83255bb04b522fb2caa4271462b0a4c2bf2425e7ceeede06eee563cf2c82b1",
+        "user_requirements": "deploy/requirements.txt",
+        "package_manager": "uv"
+      },
+      "smoke_checks": [
+        "su user -c \"/opt/agents/deepagents/bin/python -c 'import deepagents, langchain_aws, langchain_anthropic, langchain_openai, langchain_google_genai'\"",
+        "su user -c 'test -r /opt/agents/rayito/deepagents_runner.py'"
+      ],
+      "prefetch_paths": [],
+      "warmup_steps": [
+        {
+          "cmd": "'/opt/agents/deepagents/bin/python' -c 'import deepagents, langchain_aws' >/dev/null 2>&1 || true",
+          "background": false
+        }
+      ]
     }
   ]
 }

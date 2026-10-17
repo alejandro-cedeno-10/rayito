@@ -1,0 +1,12 @@
+{
+  "name": "billing-helper-js",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Agente de facturación con Strands Agents para TypeScript",
+  "engines": { "node": ">=22" },
+  "dependencies": {
+    "@strands-agents/sdk": "^1.21.0",
+    "zod": "^4.0.0"
+  }
+}

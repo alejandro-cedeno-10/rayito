@@ -1,0 +1,9 @@
+{
+  "name": "demo-agent",
+  "version": "0.1.0",
+  "type": "module",
+  "dependencies": {
+    "ai": "*",
+    "@ai-sdk/amazon-bedrock": "*"
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "name": "research-notes-js",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Agente de investigación con deepagents para JavaScript",
+  "engines": { "node": ">=22" },
+  "dependencies": {
+    "@langchain/aws": "^1.0.0",
+    "@langchain/core": "^1.0.0",
+    "deepagents": "^1.0.0",
+    "zod": "^4.0.0"
+  }
+}

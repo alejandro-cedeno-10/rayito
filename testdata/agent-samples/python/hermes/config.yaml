@@ -1,0 +1,9 @@
+model:
+  provider: bedrock
+  default: us.anthropic.claude-haiku-4-5-20251001-v1:0
+bedrock:
+  region: us-east-1
+agent:
+  max_turns: 8
+toolsets:
+  - skills

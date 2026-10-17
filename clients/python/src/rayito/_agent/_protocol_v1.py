@@ -68,6 +68,7 @@ class ProtocolV1State:
     session_id: str | None = None
     steps: int = 0
     usage: TokenUsage = field(default_factory=TokenUsage)
+    usage_reported: bool = False
     done: bool = False
     failed: AgentFailed | None = None
     ignored_lines: int = 0
@@ -101,7 +102,12 @@ def finish_v1(state: ProtocolV1State, exit_code: int) -> Done | AgentFailed:
         return AgentFailed(
             reason="protocol_error", exit_code=exit_code, session_id=state.session_id
         )
-    return Done(session_id=state.session_id, exit_code=exit_code, usage=state.usage)
+    return Done(
+        session_id=state.session_id,
+        exit_code=exit_code,
+        usage=state.usage,
+        usage_reported=state.usage_reported,
+    )
 
 
 def _int(value: object) -> int:
@@ -136,6 +142,7 @@ def _map(payload: Mapping[str, object], state: ProtocolV1State) -> list[AgentEve
         return [StepStarted(index=state.steps)]
     if kind == "step_finished":
         usage = _usage(payload.get("usage"))
+        state.usage_reported = state.usage_reported or isinstance(payload.get("usage"), Mapping)
         state.usage = state.usage + usage
         return [
             StepFinished(

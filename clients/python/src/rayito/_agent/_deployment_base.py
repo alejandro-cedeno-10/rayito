@@ -150,6 +150,7 @@ def result_from_body(body: bytes) -> AgentResult:
     session_id = payload.get("session_id")
     session = session_id if isinstance(session_id, str) else None
     usage = _usage(payload.get("usage"))
+    reported = payload.get("usage_reported", True) is not False
     failed = payload.get("failed")
     if isinstance(failed, Mapping):
         raise _failure(failed, session_id=session).to_exception(usage)
@@ -161,6 +162,7 @@ def result_from_body(body: bytes) -> AgentResult:
         steps=steps if isinstance(steps, int) and not isinstance(steps, bool) else 0,
         usage=usage,
         exit_code=0,
+        usage_reported=reported,
     )
 
 
@@ -190,7 +192,14 @@ class EventDecoder:
         if kind == "session":
             return []
         if kind == "done":
-            return [Done(session_id=self.session_id or "", exit_code=0, usage=self.state.usage)]
+            return [
+                Done(
+                    session_id=self.session_id or "",
+                    exit_code=0,
+                    usage=self.state.usage,
+                    usage_reported=self.state.usage_reported,
+                )
+            ]
         if kind == "agent_failed":
             return [_failure(payload, session_id=self.session_id)]
         return list(parse_v1_line(message.data.encode("utf-8"), self.state))
@@ -228,6 +237,7 @@ class ResultBuilder:
                 exit_code=final.exit_code,
                 tool_calls=tuple(self.tool_calls),
                 dropped_lines=dropped_lines,
+                usage_reported=final.usage_reported,
             )
         failed = final or AgentFailed(reason="protocol_error")
         raise failed.to_exception()

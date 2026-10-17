@@ -1,0 +1,12 @@
+{
+  "name": "demo-agent",
+  "version": "0.1.0",
+  "type": "module",
+  "dependencies": {
+    "@langchain/langgraph": "*",
+    "@langchain/aws": "*"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

@@ -1,0 +1,9 @@
+[project]
+name = "agentcore-notes"
+version = "0.1.0"
+description = "Agente escrito para Bedrock AgentCore con BedrockAgentCoreApp y Strands"
+requires-python = ">=3.11"
+dependencies = [
+    "bedrock-agentcore>=1.0",
+    "strands-agents>=1.0",
+]

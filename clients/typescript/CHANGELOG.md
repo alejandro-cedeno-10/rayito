@@ -8,6 +8,95 @@ versionado [SemVer](https://semver.org/lang/es/).
 
 ### Añadido
 
+- **`AgentProject.detect()` une la detección con `deployAgent`**: devuelve
+  `[proyecto, informe]` a partir de una carpeta, sin ejecutar su código, con
+  el proveedor y el modelo que encuentra (también en los ficheros de
+  configuración de Hermes y OpenCode), la pasarela del modelo y los plugins de
+  Node de LangGraph, DeepAgents y Vercel AI SDK como `custom` con su
+  adaptador. Strands instala con `uv` cuando el proyecto lo usa, y el host
+  recibe `queue_max` y `queue_timeout_seconds` en `host.json`. La detección
+  de una app HTTP que lee su puerto de `PORT` ahora lo declara (`port_env`),
+  de modo que el host se lo pasa y la app escucha donde él la espera.
+- **Opciones tipadas para servir un agente en varios VMs (`agent-zero-config`)**:
+  `ServeOptions` suma `queueMax` y `queueTimeoutMs` (la cola del host;
+  con 0, el valor por defecto, la llamada que no cabe recibe 429 como hasta
+  ahora) y `maxConcurrency` queda acotada por las conexiones que admite el
+  MicroVM de `memoryMib`. `AgentProject` suma `scaling` (`ScalingOptions`:
+  `minVms`, `maxVms`, `warmVms`, sesiones `shared` o `dedicated` y
+  `scaleInAfterMs`), `env` (sin secretos), `network` con `allowOut` y
+  `denyOut`, `region`, `bucket`, `baseImageVersion`, `language`, `framework`
+  y `versions` (`RuntimeVersions`). El fichero `rayito-agent.toml` admite las
+  tablas `[scaling]`, `[env]` y `[deploy]`, las claves `allow_out`, `deny_out`,
+  `queue_max` y `queue_timeout_seconds`, y en `[runtime]` las de `language`,
+  `framework`, `python_version` y `node_version`. Todo es aditivo y los valores
+  por defecto son los de un solo VM. Los errores de lectura suman los códigos
+  `ambiguous`, `not_detected` y `unsupported`. Además, la detección estática de
+  un proyecto de agente (lenguaje, framework, punto de entrada, app HTTP, plan
+  de instalación, versiones y proveedor, sin ejecutar su código) y las reglas
+  que comparten los dos SDK (`agent-detection.json`) quedan listas para
+  `deploy_agent`.
+- **Host y adaptadores de instalación del agente**:
+  el host del agente sirve una cola FIFO acotada (`queue_max` y
+  `queue_timeout_seconds` de `host.json`; sin cola por defecto: la llamada que
+  no cabe recibe 429, como hasta ahora)
+  y supervisa las apps de larga vida (`http-app` y Hermes): una app que muere
+  se relanza con espera creciente, `/ping` es `HealthyBusy` y las invocaciones
+  reciben `503` con `Retry-After` mientras tanto, y agotado el presupuesto el
+  marcador de fallo lleva `app_crashloop` con la cola saneada de su salida de
+  error. `new HttpApp({ protocol: "json" })` traduce `/invocations` al contrato propio de
+  una app (`requestField` y `responseField`) y reenvía sus demás rutas;
+  `agentcore` sigue siendo el valor por defecto de un `HttpApp` explícito. Un
+  único puente de Node (`node_bridge.mjs`, driver `node-callable`) ejecuta
+  agentes de Strands (el antiguo `strands-ts`, que sigue como alias),
+  LangGraph.js y deepagents-js (`adapter: "langgraph"`), el AI SDK de Vercel
+  (`adapter: "vercel-ai"`) y una función propia (`adapter: "callable"`) con
+  `new CustomRuntime({ entrypoint: "ruta.ts#exportacion", packageManager })`. Y
+  `CustomRuntime` y `StrandsRuntime({ language: "typescript" })` aceptan
+  `packageManager` (`pip`, `uv`, `npm`, `pnpm`, `yarn`), `pythonVersion` y
+  `nodeVersion`: el plan de instalación (`install-plan.ts`) baja CPython y Node
+  con sha256 fijado en `limits.json` y hace la instalación congelada del gestor.
+  Cuando el modelo va por la pasarela, el puente fuerza HTTP/1.1 en el AWS SDK de
+  JavaScript, que de otro modo habla HTTP/2 con Bedrock. Nada cambia para los
+  runtimes y los ficheros de proyecto de 0.13.
+- **`deployAgent()` y `AgentFleet`: despliega el agente que ya tienes con una
+  llamada (`agent-zero-config`)**: `deployAgent(ruta)` (y
+  `deploy_agent_async()`) detecta el proyecto sin ejecutar su código, resuelve
+  la región, la imagen base, el secreto del modelo, el bucket del artefacto
+  (el de `RAYITO_BUCKET` o el de activos del bootstrap de CDK; nunca crea un
+  bucket) y el access token, construye la imagen sólo si cambió y devuelve un
+  `AgentFleet`: uno o varios MicroVMs que sirven el agente. `ScalingOptions`
+  fija `minVms`, `maxVms`, las plazas calientes (`warmVms`, del pool de
+  plazas aparcadas) y si las sesiones se comparten o cada una tiene su VM
+  (`dedicated`). Con más de un VM posible, el `sessionId` del resultado es un
+  handle `rs1.<sandbox>.<sesión>` que enruta derecho a su VM sin servidor
+  propio; una flota llena espera en una cola cliente y, al agotarse, lanza
+  `CapacityError` con `code: "agent_capacity"`; un VM que desaparece es
+  `SandboxError` con `code: "agent_vm_lost"`. Los VMs por encima de
+  `minVms` se terminan solos (`setTimeout`), un VM que deja de contestar se
+  sustituye y `AgentFleet.connect()` reconstruye la flota en otro proceso.
+  `planDeploy()` calcula el plan y el coste de lista sin llamar a AWS.
+  `AgentDeployOptions`, `DetectOverrides` y
+  `PoolConfig.accessToken` son aditivos: `AgentProject.deploy()` no cambia.
+  Nada que cueste se crea sin pedirlo: un secreto sólo con
+  `createSecretFromEnv: true`, la imagen base sólo con un publicador.
+
+- **`rayito agent detect` y `rayito agent deploy [RUTA]`**: la CLI detecta el
+  proyecto y lo despliega como una flota con `--min-vms`, `--max-vms`,
+  `--warm`, `--sessions`, `--max-sessions`, `--memory`, `--idle`, `--queue`,
+  `--env`, `--allow-out`, `--bucket`, `--secret proveedor=nombre`,
+  `--create-secret`, `--base-artifact` con `--yes`, `--build/--no-build`,
+  `--dry-run` (sólo plan y coste, sin AWS) y `--verbose`. El token se guarda
+  en `.rayito/agent-token` (modo 0600) si no se pasa `--token-file` ni
+  `RAYITO_ACCESS_TOKEN`, y los logs del build salen resumidos. `invoke`,
+  `status` y `stop` aceptan el nombre de la flota además del id de un sandbox;
+  de los VMs de esa imagen sólo cuentan los que son de un agente (los `RUNNING`
+  con las etiquetas de un despliegue de Rayito, sondeados con un `Health` sin
+  token), y si la imagen tiene un `RUNNING` que no lo es, tampoco se cuentan los
+  suspendidos, que no se pueden sondear sin reanudarlos: `stop` nunca termina un
+  sandbox ajeno.
+  La salida de 0.13 de `agent deploy` se conserva (mismas claves, con otras
+  añadidas) y `--file` sigue valiendo; lo que cambia está en "Cambiado".
+
 - **Strands, Strands harness, Hermes, LangGraph y agentes propios como
   runtimes de primera clase (`agent-runtimes-byo`)**: `StrandsRuntime` (SDK y
   harness), `HermesRuntime` y `CustomRuntime` con `HttpApp` suman runtimes a
@@ -56,11 +145,108 @@ versionado [SemVer](https://semver.org/lang/es/).
   podían volver a abrir. `invoke` y `status` leen el token con `--token-file` y
   sin él salen con 2; `stop` ya no lo necesita (`terminate-microvm` por id).
 
+- **`AgentDeployment.pause()`, `resume()` y `accessToken`, y `deploy({ keepOnFailure })`
+  (`agent-runtimes-dx`)**: `AgentDeployment` suspende y reanuda el sandbox del
+  despliegue (`Sandbox.pause()` y `resume()`) y expone el access token con el que
+  se creó, también el que se generó cuando no se pasó `accessToken`, para
+  reconectarse con `AgentDeployment.connect(sandboxId, { accessToken })`.
+  `AgentProject.deploy({ keepOnFailure: true })` deja vivo el sandbox de un
+  despliegue que falla (apagado por defecto: sigue facturando hasta que lo
+  termines), exige un `accessToken` que el llamador conozca y
+  anota el id del sandbox en el error. `rayito agent deploy --keep-on-failure`
+  hace lo mismo.
+
+- **`AgentResult.usageReported` y `Done.usageReported`**: `false` cuando el
+  agente no informó de tokens (una `HttpApp` cuya respuesta no lleva `usage`, un
+  comando con `protocol: "text"` o una función que no lo devuelve). `usage` vale
+  entonces cero porque se desconoce, no porque no se gastara nada, y la CLI
+  imprime `tokens=desconocido` y `usageReported` en `--json`. Una `HttpApp`
+  informa de `usage` si su respuesta lo trae (`input`/`output`,
+  `input_tokens`/`output_tokens` o `prompt_tokens`/`completion_tokens`).
+
+- **`HttpApp.hidesOwnRoutes` y el aviso de `rayito agent deploy`**: con
+  `protocol: "agentcore"` u `"openai-chat"` el despliegue sólo expone `/ping` y
+  `/invocations`; si tu `healthPath` o `invokePath` son otros, esas rutas no
+  se alcanzan desde fuera (404). `rayito agent deploy` lo avisa y apunta a
+  `protocol: "raw"`; la guía explica cuándo usar cada protocolo.
+
+- **`rayito image publish --base-image-version latest`**: resuelve la versión
+  más reciente que lista `list-managed-microvm-image-versions` y la imprime
+  (`base_image_version=...`), así no hay que buscarla a mano y el cambio de la
+  base nunca pasa en silencio; la opción sigue siendo obligatoria y un número
+  explícito sigue fijándola para una build reproducible.
+
 ### Cambiado
+
+- **`rayito agent deploy` ahora despliega una flota, con más llamadas a AWS
+  (`agent-zero-config`)**: el mismo comando con un `--file` de 0.13 ya no crea
+  un VM suelto sin más: comprueba la imagen base (`GetMicrovmImage`) y el
+  secreto del modelo (`DescribeSecret`), resuelve el bucket (`HeadBucket` y
+  `GetCallerIdentity`, y el de activos del bootstrap de CDK si no pasas
+  `--bucket` ni `RAYITO_BUCKET`), construye la imagen del proyecto si su
+  contenido cambió (excluye por defecto `.git`, `.env*`, `.venv`, `venv`,
+  `node_modules`, `__pycache__`, `*.pyc` y `.rayito`, así que un proyecto que
+  los subía a la imagen la reconstruye) y devuelve una flota. Las credenciales
+  necesitan por tanto `sts:GetCallerIdentity`, `s3:ListBucket` sobre el bucket,
+  `lambda-microvms:GetMicrovmImage` y `secretsmanager:DescribeSecret`, además
+  de las de 0.13. Con `--no-build` y sin bucket reutiliza la imagen existente
+  sin construir nada.
+
+- **`ServeOptions({ maxConcurrency })` queda acotada por la memoria de la VM**:
+  un MicroVM de `memoryMib` admite un número limitado de conexiones (7 con los
+  2048 MiB por defecto, 15 con 4096 y 31 con 8192); 0.13 aceptaba cualquier
+  valor desde 1. Un proyecto de 0.13 con un valor mayor falla al cargarse con
+  `InvalidArgumentError`: baja `maxConcurrency` o sube `memoryMib`.
 
 - `AgentTemplate.runtimes` y `AgentTemplateOptions.runtimes` pasan de
   `readonly AgentTemplateRuntime[]` a `readonly (string | AgentRuntime)[]`:
   quien sólo lee la propiedad como `string` debe tratar también objetos.
+
+- **`CustomRuntime` corre tu app y tu comando desde el código copiado, con su
+  venv primero en el `PATH` (`agent-runtimes-dx`)**: el directorio de trabajo de
+  una `HttpApp` es el del `source` copiado (`/opt/agents/app`) y va el primero en
+  su `PYTHONPATH`, así que `python -m paquete.modulo` funciona; con
+  `requirements`, `python` y `pip` son los del venv, y sin él `python` es el
+  intérprete de la imagen (que sólo trae `python3`). Los `command` de un
+  `CustomRuntime` reciben el mismo `PATH` y `PYTHONPATH`, y el directorio de
+  trabajo de un `command` no cambia. Hace falta reconstruir la imagen para que
+  una ya construida lo use.
+
+- **El uso de un agente que no informa de tokens es desconocido, no cero**: el
+  host marca `usage_reported` en `POST /invocations` y deja `usage` sin valor en
+  el `step_finished` de un comando con `protocol: "text"` o de una función sin
+  `usage`. Un cliente de 0.13 que no conoce el campo sigue leyendo `usage`.
+
+- **Un arranque fallido del host cuenta qué falló**: el marcador de fallo lleva el
+  `detail_code` (`app_exited`, `app_not_ready`, la clase de la excepción) y, en
+  una `HttpApp`, el final de su salida de error (acotado a
+  `AGENT_STARTUP_DIAGNOSTICS_MAX_BYTES`, sin valores de entorno ni credenciales);
+  `deploy()` lo incluye en la `SandboxException` en vez del nombre de clase
+  opaco `AgentFailure`.
+
+- **`rayito agent init --runtime custom` escribe una app HTTP y `langgraph` un
+  grafo de LangGraph a secas**: `custom` escribe `[runtime.app]` (con `protocol =
+  "raw"`, sus rutas `/health` e `/invoke`), `requirements`, `install` y un
+  `serve.py` mínimo; `langgraph`, un `create_react_agent` en vez de
+  `create_deep_agent`. El runtime `langgraph` traduce además el nodo `agent` de
+  `create_react_agent` (antes sólo `model`), así que un grafo de LangGraph a
+  secas devuelve texto, pasos, herramientas y uso.
+
+### Corregido
+
+- **Exportar a Docker**: el contexto crea los directorios de configuración del
+  agente con permisos de lectura para el usuario sin privilegios (BuildKit
+  los dejaba en `0600` con `--chmod`), la imagen de OpenCode instala `curl`
+  antes de descargar los binarios y los módulos y fábricas de un grafo se
+  resuelven como punto de entrada.
+- **El host relanzado mata antes lo que dejó el hijo muerto en su grupo**: un
+  envoltorio como `npm run start` que muere dejaba al servidor huérfano
+  ocupando el puerto y el relanzado nunca quedaba listo.
+- **`exclude` de un `AgentProject`/`AgentTemplate({ appExclude })` filtra antes de
+  leer**: un `.venv` excluido se leía entero y luego se descartaba (y su
+  `cacert.pem` disparaba el aviso de ficheros con secretos). Ahora los patrones
+  de `exclude` se suman a los de `.dockerignore` y filtran antes de leer ningún
+  fichero.
 
 ### Obsoleto
 

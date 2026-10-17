@@ -1,0 +1,40 @@
+{
+  "schema": "rayito.agent-project/1",
+  "name": "strands-harness-ts",
+  "runtime": {
+    "kind": "strands",
+    "entrypoint": "agent.js",
+    "language": "typescript",
+    "package_manager": "npm",
+    "node_version": "22",
+    "framework": "strands-harness"
+  },
+  "source": {
+    "path": "."
+  },
+  "model": {
+    "provider": "bedrock",
+    "id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+    "gateway": "bedrock",
+    "region": "us-east-1"
+  },
+  "gateways": {
+    "bedrock": {
+      "preset": "custom",
+      "upstream": "https://bedrock-runtime.us-east-1.amazonaws.com",
+      "headers": {
+        "authorization": "rayito/agents/strands-harness-ts/bedrock"
+      },
+      "allow": [
+        [
+          "POST",
+          "/model/us.anthropic.claude-haiku-4-5-20251001-v1%3A0/converse-stream"
+        ],
+        [
+          "POST",
+          "/model/us.anthropic.claude-haiku-4-5-20251001-v1%3A0/converse"
+        ]
+      ]
+    }
+  }
+}

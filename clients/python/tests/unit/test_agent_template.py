@@ -507,5 +507,25 @@ def test_build_writes_the_app_honouring_dockerignore_and_exclude(
     assert seen["app"] == [".dockerignore", "keep.txt", "pkg/agent.py"]
 
 
+def test_excluded_paths_are_never_read_nor_warned_about(tmp_path: Path) -> None:
+    """`exclude` filtra antes de leer: un `.venv` con un `.pem` ilegible ni
+    se lee ni dispara el aviso de ficheros con secretos."""
+    import warnings
+
+    from rayito._agent._template import _app_files
+
+    app = _make_app(tmp_path)
+    certificate = app / ".venv" / "cacert.pem"
+    certificate.write_text("-----BEGIN CERTIFICATE-----\n")
+    certificate.chmod(0)
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            files = [name for name, _ in _app_files(str(app), (".venv",))]
+    finally:
+        certificate.chmod(0o600)
+    assert files == [".dockerignore", "keep.txt", "pkg/agent.py"]
+
+
 def test_without_app_there_is_no_app_copy() -> None:
     assert "__rayito_context/app" not in AgentTemplate().to_dockerfile()

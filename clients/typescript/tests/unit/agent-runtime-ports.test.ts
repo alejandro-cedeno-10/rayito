@@ -159,7 +159,7 @@ describe("runtime ports", () => {
     expect(host.options).toEqual({ workdir: "/home/user" });
   });
 
-  test("deepagents host config matches its run command", () => {
+  test("deepagents host config adds the standard provider variables", () => {
     const runtime = new DeepAgents();
     const spec = bedrock();
     const host = runtime.hostConfig(spec, {
@@ -171,7 +171,10 @@ describe("runtime ports", () => {
     expect(host.driver).toBe("deepagents");
     expect(host.python).toBe(DEEPAGENTS_PYTHON);
     expect(host.files).toEqual(config);
-    expect(host.envs).toEqual(command.envs);
+    expect(host.envs).toEqual({
+      ...command.envs,
+      AWS_ENDPOINT_URL_BEDROCK_RUNTIME: URLS.bedrock,
+    });
     expect(host.options).toEqual({ config_path: DEEPAGENTS_CONFIG_PATH });
   });
 

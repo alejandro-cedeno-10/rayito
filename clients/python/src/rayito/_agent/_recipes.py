@@ -31,6 +31,10 @@ AGENT_HOST_DIR: Final = f"{AGENT_RAYITO_DIR}/agent_host"
 #: Nombres de las carpetas del contexto de build que `AgentTemplate` copia.
 AGENT_HOST_CONTEXT_DIR: Final = "agent_host"
 AGENT_APP_CONTEXT_DIR: Final = "app"
+#: El puente de Node de los agentes de JavaScript y TypeScript (dato de
+#: paquete) y dónde lo instala la plantilla.
+NODE_BRIDGE_NAME: Final = "node_bridge.mjs"
+NODE_BRIDGE_PATH: Final = f"{AGENT_RAYITO_DIR}/{NODE_BRIDGE_NAME}"
 PREFETCH_SCRIPT_NAME: Final = "rayito-agent-prefetch"
 PREFETCH_SCRIPT_PATH: Final = f"{AGENT_BIN_DIR}/{PREFETCH_SCRIPT_NAME}"
 _ASSETS_PACKAGE: Final = "rayito._agent"
@@ -49,6 +53,11 @@ def asset_bytes(name: str) -> bytes:
 def runner_bytes(name: str) -> bytes:
     """Un fichero de `_agent/_runner/` (datos de paquete)."""
     return resources.files(_ASSETS_PACKAGE).joinpath(_RUNNER_DIR, name).read_bytes()
+
+
+def node_bridge() -> bytes:
+    """El puente de Node (`node_bridge.mjs`)."""
+    return asset_bytes(NODE_BRIDGE_NAME)
 
 
 def prefetch_script() -> bytes:

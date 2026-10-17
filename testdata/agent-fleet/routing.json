@@ -1,0 +1,133 @@
+{
+  "comment": "Vectores compartidos de la lógica pura del escalado de agentes (límite de sesiones por memoria, asa enrutable y salud) (`_scaling_domain.py`, `agent/scaling-domain.ts`). `memory` sale de las conexiones por vCPU de base de AWS_API_NOTES (8) menos la reservada del servicio (1). Los instantes están en segundos desde la época.",
+  "memory": [
+    {
+      "memory_mib": 2048,
+      "max_sessions": 7
+    },
+    {
+      "memory_mib": 4096,
+      "max_sessions": 15
+    },
+    {
+      "memory_mib": 8192,
+      "max_sessions": 31
+    },
+    {
+      "memory_mib": 1024,
+      "max_sessions": 7
+    },
+    {
+      "memory_mib": 3072,
+      "max_sessions": 7
+    }
+  ],
+  "handles": {
+    "encode": [
+      {
+        "sandbox_id": "microvm-00000000-0000-0000-0000-000000000001",
+        "session_id": "chat-7",
+        "handle": "rs1.microvm-00000000-0000-0000-0000-000000000001.chat-7"
+      },
+      {
+        "sandbox_id": "microvm-00000000-0000-0000-0000-000000000001",
+        "session_id": "a.b.c",
+        "handle": "rs1.microvm-00000000-0000-0000-0000-000000000001.a.b.c"
+      }
+    ],
+    "decode": [
+      {
+        "value": "rs1.microvm-00000000-0000-0000-0000-000000000001.chat-7",
+        "handle": {
+          "sandbox_id": "microvm-00000000-0000-0000-0000-000000000001",
+          "session_id": "chat-7"
+        }
+      },
+      {
+        "value": "rs1.microvm-00000000-0000-0000-0000-000000000001.a.b.c",
+        "handle": {
+          "sandbox_id": "microvm-00000000-0000-0000-0000-000000000001",
+          "session_id": "a.b.c"
+        }
+      },
+      {
+        "value": "chat-7",
+        "handle": null
+      },
+      {
+        "value": "rs1.",
+        "handle": null
+      },
+      {
+        "value": "rs1.microvm-00000000-0000-0000-0000-000000000001",
+        "handle": null
+      },
+      {
+        "value": "rs1..chat-7",
+        "handle": null
+      },
+      {
+        "value": "rs1.microvm-00000000-0000-0000-0000-000000000001.",
+        "handle": null
+      }
+    ],
+    "encode_invalid": [
+      {
+        "sandbox_id": "",
+        "session_id": "x"
+      },
+      {
+        "sandbox_id": "a.b",
+        "session_id": "x"
+      },
+      {
+        "sandbox_id": "a",
+        "session_id": ""
+      }
+    ],
+    "caller_valid": [
+      "chat-7",
+      "rs1x",
+      "rs2.a.b",
+      "rs1.microvm-00000000-0000-0000-0000-000000000001.chat-7"
+    ],
+    "caller_invalid": [
+      "",
+      "rs1.",
+      "rs1.only-one-part"
+    ]
+  },
+  "health": {
+    "threshold_offsets": [
+      {
+        "offset": -1,
+        "unhealthy": false
+      },
+      {
+        "offset": 0,
+        "unhealthy": true
+      },
+      {
+        "offset": 5,
+        "unhealthy": true
+      }
+    ],
+    "replacements": [
+      {
+        "healthy_running": 0,
+        "min_vms": 2,
+        "needed": 2
+      },
+      {
+        "healthy_running": 2,
+        "min_vms": 2,
+        "needed": 0
+      },
+      {
+        "healthy_running": 3,
+        "min_vms": 2,
+        "needed": 0
+      }
+    ]
+  }
+}

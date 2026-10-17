@@ -1,0 +1,51 @@
+{
+  "schema": "rayito.agent-detection/1",
+  "language": "typescript",
+  "framework": "vercel-ai",
+  "kind": "custom",
+  "entrypoint": "agent.ts#agent",
+  "entrypoint_kind": "object",
+  "protocol": "framework",
+  "options": {},
+  "app": null,
+  "install": {
+    "manager": "npm",
+    "lockfile": "package-lock.json",
+    "requirements": null,
+    "require_hashes": false,
+    "reproducible": true,
+    "build_script": false,
+    "python_version": null,
+    "node_version": "22"
+  },
+  "providers": [
+    {
+      "preset": "bedrock",
+      "evidence": [
+        {
+          "path": "package.json",
+          "rule": "dep:@ai-sdk/amazon-bedrock"
+        }
+      ]
+    }
+  ],
+  "models": [
+    "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+  ],
+  "evidence": [
+    {
+      "path": "package.json",
+      "rule": "dep:ai"
+    },
+    {
+      "path": "agent.ts",
+      "rule": "entry:ts-tool-loop-agent"
+    },
+    {
+      "path": "package-lock.json",
+      "rule": "install:npm"
+    }
+  ],
+  "warnings": [],
+  "alternatives": []
+}

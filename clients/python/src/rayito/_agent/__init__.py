@@ -9,9 +9,22 @@ from __future__ import annotations
 
 from rayito._agent._custom import CustomRuntime, HttpApp
 from rayito._agent._deepagents import DeepAgents
+from rayito._agent._deploy_facade import (
+    deploy_agent,
+    deploy_agent_async,
+    plan_deploy,
+)
+from rayito._agent._deploy_plan import (
+    AgentDeployCostEstimate,
+    AgentDeployOptions,
+    AgentDeployPlan,
+    AgentDeployStep,
+    AgentPlannedSecret,
+)
 from rayito._agent._deployment import AgentDeployment, AgentDeploymentStream
 from rayito._agent._deployment_async import AsyncAgentDeployment, AsyncAgentDeploymentStream
 from rayito._agent._deployment_base import DeploymentStatus
+from rayito._agent._detect_domain import DetectOverrides
 from rayito._agent._domain import (
     DEFAULT_AGENT_RUNTIME,
     DEFAULT_DENIED_TOOLS,
@@ -44,6 +57,9 @@ from rayito._agent._events import (
     truncate_tool_output,
 )
 from rayito._agent._export import AgentExport
+from rayito._agent._fleet import AgentFleet, AgentFleetStream
+from rayito._agent._fleet_async import AsyncAgentFleet, AsyncAgentFleetStream
+from rayito._agent._fleet_base import FleetMemberStatus, FleetStatus
 from rayito._agent._gateways import (
     anthropic_gateway,
     azure_openai_gateway,
@@ -72,6 +88,7 @@ from rayito._agent._runtime import (
     is_installable,
     is_servable,
 )
+from rayito._agent._scaling_domain import ScalingOptions
 from rayito._agent._strands import StrandsRuntime
 from rayito._agent._template import AgentTemplate, AsyncAgentTemplate
 from rayito._agent._warmup import agent_pool_warmup
@@ -83,27 +100,39 @@ __all__ = [
     "DEFAULT_AGENT_RUNTIME",
     "DEFAULT_DENIED_TOOLS",
     "RESERVED_CONFIG_KEYS",
+    "AgentDeployCostEstimate",
+    "AgentDeployOptions",
+    "AgentDeployPlan",
+    "AgentDeployStep",
     "AgentDeployment",
     "AgentDeploymentStream",
     "AgentEvent",
     "AgentExport",
     "AgentFailed",
+    "AgentFleet",
+    "AgentFleetStream",
     "AgentLimits",
     "AgentModel",
     "AgentPermissions",
+    "AgentPlannedSecret",
     "AgentProject",
     "AgentResult",
     "AgentSpec",
     "AgentTemplate",
     "AsyncAgentDeployment",
     "AsyncAgentDeploymentStream",
+    "AsyncAgentFleet",
+    "AsyncAgentFleetStream",
     "AsyncAgentProject",
     "AsyncAgentTemplate",
     "CustomRuntime",
     "DeepAgents",
     "DeploymentStatus",
+    "DetectOverrides",
     "DirectWiring",
     "Done",
+    "FleetMemberStatus",
+    "FleetStatus",
     "GatewayWiring",
     "HermesRuntime",
     "HostConfig",
@@ -115,6 +144,7 @@ __all__ = [
     "McpServer",
     "ModelWiring",
     "Reasoning",
+    "ScalingOptions",
     "ServableRuntime",
     "ServeOptions",
     "StepFinished",
@@ -131,6 +161,8 @@ __all__ = [
     "azure_openai_gateway",
     "bedrock_gateway",
     "deepseek_gateway",
+    "deploy_agent",
+    "deploy_agent_async",
     "failure_message",
     "gemini_gateway",
     "groq_gateway",
@@ -141,6 +173,7 @@ __all__ = [
     "openai_compatible_gateway",
     "openai_gateway",
     "openrouter_gateway",
+    "plan_deploy",
     "truncate_tool_output",
     "xai_gateway",
 ]

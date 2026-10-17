@@ -1,0 +1,8 @@
+[project]
+name = "billing-helper"
+version = "0.1.0"
+description = "Agente de facturación con Strands Agents"
+requires-python = ">=3.11"
+dependencies = [
+    "strands-agents>=1.0",
+]

@@ -1,0 +1,154 @@
+{
+  "_comment": "Vectores del adaptador `langgraph` de `node_bridge.mjs` (LangGraph.js y deepagents-js): los fragmentos que devuelve `graph.stream(..., { streamMode: \"updates\" })` y los eventos v1 que deben salir (sin `session` ni `done`, que emiten el driver y el host). Las formas son las de `AIMessage` y `ToolMessage` de @langchain/core y la de un mensaje plano `{ role, content }`.",
+  "cases": [
+    {
+      "name": "tool-call-and-answer",
+      "chunks": [
+        {
+          "agent": {
+            "messages": [
+              {
+                "type": "ai",
+                "content": "",
+                "tool_calls": [{ "id": "call_1", "name": "add", "args": { "a": 2, "b": 3 } }],
+                "usage_metadata": {
+                  "input_tokens": 10,
+                  "output_tokens": 5,
+                  "input_token_details": { "cache_read": 2 }
+                }
+              }
+            ]
+          }
+        },
+        {
+          "tools": {
+            "messages": [
+              { "type": "tool", "name": "add", "tool_call_id": "call_1", "content": "5", "status": "success" }
+            ]
+          }
+        },
+        {
+          "agent": {
+            "messages": [
+              {
+                "type": "ai",
+                "content": "La suma es 5",
+                "tool_calls": [],
+                "usage_metadata": { "input_tokens": 20, "output_tokens": 7 }
+              }
+            ]
+          }
+        }
+      ],
+      "events": [
+        { "v": 1, "type": "step_started", "index": 1 },
+        {
+          "v": 1,
+          "type": "step_finished",
+          "index": 1,
+          "usage": { "input": 10, "output": 5, "reasoning": 0, "cache_read": 2, "cache_write": 0 },
+          "finish_reason": "tool_use"
+        },
+        {
+          "v": 1,
+          "type": "tool_call",
+          "call_id": "call_1",
+          "name": "add",
+          "status": "completed",
+          "input": { "a": 2, "b": 3 },
+          "output": "5",
+          "output_truncated": false
+        },
+        { "v": 1, "type": "step_started", "index": 2 },
+        { "v": 1, "type": "text", "text": "La suma es 5" },
+        {
+          "v": 1,
+          "type": "step_finished",
+          "index": 2,
+          "usage": { "input": 20, "output": 7, "reasoning": 0, "cache_read": 0, "cache_write": 0 },
+          "finish_reason": "end_turn"
+        }
+      ],
+      "answer": "La suma es 5"
+    },
+    {
+      "name": "content-blocks-and-a-failed-tool",
+      "chunks": [
+        {
+          "model": {
+            "messages": [
+              {
+                "type": "ai",
+                "content": [
+                  { "type": "text", "text": "Voy a " },
+                  { "type": "tool_use", "id": "t1", "name": "lookup", "input": {} },
+                  { "type": "text", "text": "buscarlo" }
+                ],
+                "tool_calls": [{ "id": "t1", "name": "lookup", "args": {} }]
+              }
+            ]
+          }
+        },
+        {
+          "tools": {
+            "messages": [
+              { "type": "tool", "tool_call_id": "t1", "content": [{ "type": "text", "text": "no existe" }], "status": "error" }
+            ]
+          }
+        }
+      ],
+      "events": [
+        { "v": 1, "type": "step_started", "index": 1 },
+        { "v": 1, "type": "text", "text": "Voy a buscarlo" },
+        {
+          "v": 1,
+          "type": "step_finished",
+          "index": 1,
+          "usage": { "input": 0, "output": 0, "reasoning": 0, "cache_read": 0, "cache_write": 0 },
+          "finish_reason": "tool_use"
+        },
+        {
+          "v": 1,
+          "type": "tool_call",
+          "call_id": "t1",
+          "name": "lookup",
+          "status": "error",
+          "input": {},
+          "output": "no existe",
+          "output_truncated": false
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "name": "plain-role-messages-and-a-single-message-object",
+      "chunks": [
+        { "agent": { "messages": { "role": "assistant", "content": "Hola" } } }
+      ],
+      "events": [
+        { "v": 1, "type": "step_started", "index": 1 },
+        { "v": 1, "type": "text", "text": "Hola" },
+        {
+          "v": 1,
+          "type": "step_finished",
+          "index": 1,
+          "usage": { "input": 0, "output": 0, "reasoning": 0, "cache_read": 0, "cache_write": 0 },
+          "finish_reason": "end_turn"
+        }
+      ],
+      "answer": "Hola"
+    },
+    {
+      "name": "human-messages-interrupts-and-empty-updates-are-ignored",
+      "chunks": [
+        { "start": { "messages": [{ "type": "human", "content": "hola" }] } },
+        { "__interrupt__": [{ "value": "aprobar" }] },
+        { "agent": null },
+        { "agent": { "messages": [] } },
+        { "agent": { "other": 1 } }
+      ],
+      "events": [],
+      "answer": ""
+    }
+  ]
+}

@@ -1,0 +1,5 @@
+{
+  "node_version": "22",
+  "dependencies": ["."],
+  "graphs": { "agent": "./agent.js:graph" }
+}

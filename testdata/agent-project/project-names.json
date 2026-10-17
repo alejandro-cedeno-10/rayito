@@ -1,0 +1,31 @@
+{
+  "description": "El nombre de proyecto que sale del nombre de un directorio; lo leen los tests de los dos SDK.",
+  "maxLength": 63,
+  "defaultName": "my-agent",
+  "cases": [
+    {
+      "directory": "demo",
+      "name": "demo"
+    },
+    {
+      "directory": "My_Agent v2",
+      "name": "my-agent-v2"
+    },
+    {
+      "directory": "--edge--",
+      "name": "edge"
+    },
+    {
+      "directory": "___",
+      "name": "my-agent"
+    },
+    {
+      "directory": "a-----------------------------------------------------------------------b",
+      "name": "a-b"
+    },
+    {
+      "directory": "agent-with-a-very-long-name-that-keeps-going-and-going-and-going-until-cut",
+      "name": "agent-with-a-very-long-name-that-keeps-going-and-going-and-goin"
+    }
+  ]
+}

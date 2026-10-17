@@ -235,11 +235,15 @@ class AgentFailed:
 
 @dataclass(frozen=True)
 class Done:
-    """Último evento de una ejecución correcta, con los tokens acumulados."""
+    """Último evento de una ejecución correcta, con los tokens acumulados.
+    `usage_reported` es `False` cuando el agente no informó de tokens (una app
+    HTTP, un comando o una función propios): `usage` es entonces cero porque
+    se desconoce, no porque no se gastara nada."""
 
     session_id: str
     exit_code: int
     usage: TokenUsage
+    usage_reported: bool = True
     type: Literal["done"] = field(default="done", init=False)
 
 
@@ -252,7 +256,10 @@ AgentEvent: TypeAlias = (
 class AgentResult:
     """El resultado de `sbx.agent.run()`. `text` es el último `Text` del
     asistente; `dropped_lines` cuenta las líneas del runtime descartadas
-    (tipo desconocido o más largas que `MAX_AGENT_EVENT_LINE_BYTES`)."""
+    (tipo desconocido o más largas que `MAX_AGENT_EVENT_LINE_BYTES`).
+    `usage_reported` es `False` si el agente no informó de tokens (una app
+    HTTP, un comando o una función propios que no devuelven `usage`): `usage`
+    vale entonces cero porque se desconoce, no porque no se gastara nada."""
 
     session_id: str
     text: str
@@ -261,3 +268,4 @@ class AgentResult:
     exit_code: int
     tool_calls: tuple[ToolCall, ...] = ()
     dropped_lines: int = 0
+    usage_reported: bool = True

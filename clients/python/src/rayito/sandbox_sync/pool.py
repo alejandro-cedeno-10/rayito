@@ -39,7 +39,6 @@ from rayito._aws import ControlPlane, LaunchRequest, PortSpec, control_plane_ses
 from rayito._feature_options import FeatureOptions, plan_features
 from rayito._limits import DEFAULT_PORT, TERMINAL_STATES
 from rayito._models import ImageVersionInfo, MicrovmListPage, SandboxInfo, SandboxListItem
-from rayito._payload import generate_access_token
 from rayito._pool_backends import InMemoryPoolBackend, PoolBackend
 from rayito._pool_base import (
     FillBackoff,
@@ -56,6 +55,7 @@ from rayito._pool_base import (
     reconcile_action,
     record_from_info,
     sandbox_info_from_record,
+    slot_access_token,
     slot_is_stale,
     stats_from_records,
 )
@@ -465,7 +465,7 @@ class SandboxPool:
         try:
             sandbox = Sandbox.create(
                 **{**self._launch_kwargs, "ready_timeout": ready_timeout},
-                access_token=generate_access_token(),
+                access_token=slot_access_token(self._config),
                 keep_on_failure=False,
                 control_plane=plane,
                 transport=self._transport,
@@ -554,7 +554,7 @@ class SandboxPool:
                 self._cond.notify_all()
 
     def _warm_up_once(self) -> None:
-        token = generate_access_token()
+        token = slot_access_token(self._config)
         started = self._monotonic()
         launched: list[str] = []
 

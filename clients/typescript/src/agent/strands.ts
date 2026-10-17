@@ -25,8 +25,9 @@
 import { createHash } from "node:crypto";
 import { InvalidArgumentError } from "../errors.js";
 import {
-  AGENT_NODE_SHA256,
-  AGENT_NODE_VERSION,
+  AGENT_DEFAULT_NODE_MAJOR,
+  AGENT_NODE_BUILD_SHA256,
+  AGENT_NODE_BUILD_VERSIONS,
   AGENT_PROTOCOL_VERSION,
   AGENT_STATE_DIR,
   AGENT_STRANDS_HARNESS_REQUIREMENTS_SHA256,
@@ -38,13 +39,11 @@ import {
   MODEL_CREDENTIAL_PLACEHOLDER,
 } from "../limits.js";
 import {
-  STRANDS_BRIDGE,
   STRANDS_HARNESS_REQUIREMENTS,
   STRANDS_REQUIREMENTS,
 } from "./assets/template-assets.gen.js";
 import type { AgentSpec } from "./domain.js";
 import {
-  containerPackagesStep,
   HostBackedRuntime,
   type HostSetup,
   type ProviderClient,
@@ -54,19 +53,37 @@ import {
   requireSupportedProvider,
   standardModelEnvs,
   toolAllowed,
-  userRequirementsSteps,
 } from "./host-runtime.js";
+import {
+  checkNodeVersion,
+  checkRequirementsPath,
+  DEFAULT_NODE_PACKAGE_MANAGER,
+  DEFAULT_PYTHON_INSTALLER,
+  NODE_PACKAGE_MANAGERS,
+  type NodePackageManager,
+  nodeBin,
+  nodeDependencySteps,
+  nodeRuntimeSteps,
+  type PackageManager,
+  PYTHON_INSTALLERS,
+  type PythonInstaller,
+  pythonDependencySteps,
+  pythonManifest,
+} from "./install-plan.js";
 import { shellQuote } from "./opencode.js";
 import {
   AGENT_APP_DIR,
   AGENT_INSTALL_DIR,
-  AGENT_RAYITO_DIR,
   hashedVenvInstall,
+  NODE_BRIDGE_NAME,
+  NODE_BRIDGE_PATH,
+  nodeBridge,
 } from "./recipes.js";
 import {
   copyStep,
   type InstallableRuntime,
   type InstallTarget,
+  installTarget,
   runStep,
   type TemplateStep,
   type WarmupStep,
@@ -76,6 +93,8 @@ export const STRANDS_LANGUAGES = ["python", "typescript"] as const;
 export type StrandsLanguage = (typeof STRANDS_LANGUAGES)[number];
 /** Nombres con los que el registro y la telemetría conocen al adaptador. */
 export const STRANDS_NAME = "strands";
+/** El adaptador del puente de Node y el gestor de paquetes por defecto. */
+export const STRANDS_ADAPTER = "strands";
 export const STRANDS_HARNESS_NAME = "strands-harness";
 /** Estado del runtime dentro de `AGENT_STATE_DIR` (sesiones y memoria). */
 export const STRANDS_STATE_NAME = "strands";
@@ -87,15 +106,6 @@ export const STRANDS_VENV_NAME = "strands";
 export const STRANDS_HARNESS_VENV_NAME = "strands-harness";
 export const STRANDS_REQUIREMENTS_NAME = "requirements-strands.txt";
 export const STRANDS_HARNESS_REQUIREMENTS_NAME = "requirements-strands-harness.txt";
-/** El puente de Node (dato de paquete) y dónde lo instala la plantilla. */
-export const STRANDS_BRIDGE_NAME = "strands_bridge.mjs";
-export const STRANDS_BRIDGE_PATH = `${AGENT_RAYITO_DIR}/${STRANDS_BRIDGE_NAME}`;
-/** Node: tarball oficial linux arm64 (SHASUMS256 de nodejs.org) en `node/`. */
-export const NODE_DIR_NAME = "node";
-export const NODE_TARBALL_URL = `https://nodejs.org/dist/v${AGENT_NODE_VERSION}/node-v${AGENT_NODE_VERSION}-linux-arm64.tar.gz`;
-/** El `package.json` y el lockfile del usuario (`app/` del contexto de build)
- * que `npm ci` instala junto a Node. */
-export const NODE_PACKAGE_FILES = ["package.json", "package-lock.json"] as const;
 export const STRANDS_SMOKE_MODULES = "strands, boto3, anthropic, openai, google.genai";
 export const STRANDS_HARNESS_SMOKE_MODULES = `${STRANDS_SMOKE_MODULES}, strands_harness`;
 export const TS_SMOKE_MODULE = "@strands-agents/sdk";
@@ -140,7 +150,6 @@ export const STRANDS_TS_PROVIDERS: Readonly<Record<string, ProviderClient>> = Ob
 
 const PYTHON_ENTRYPOINT_PATTERN = /^[A-Za-z_][A-Za-z0-9_.]*:[A-Za-z_][A-Za-z0-9_]*$/;
 const TS_ENTRYPOINT_PATTERN = /^[A-Za-z0-9_][A-Za-z0-9_./-]*\.(?:ts|mts|js|mjs)$/;
-const REQUIREMENTS_PATTERN = /^[A-Za-z0-9_][A-Za-z0-9_./-]*$/;
 
 /** Los requisitos con hash del venv de Strands (dato de paquete). */
 export function strandsRequirements(): string {
@@ -150,11 +159,6 @@ export function strandsRequirements(): string {
 /** Los requisitos con hash del venv del harness de Strands. */
 export function strandsHarnessRequirements(): string {
   return STRANDS_HARNESS_REQUIREMENTS;
-}
-
-/** El puente de Node que importa tu agente y habla el protocolo v1. */
-export function strandsBridge(): string {
-  return STRANDS_BRIDGE;
 }
 
 /** Nombre de herramienta integrada del harness -> herramienta de
@@ -199,13 +203,20 @@ export interface StrandsRuntimeOptions {
   /** Un fichero de requisitos de tu `source` (`app/<requirements>`) que se
    * instala en el venv después de los pines de Rayito (sólo Python). */
   readonly requirements?: string | undefined;
+  /** Con `language: "python"`: `pip` (por defecto) o `uv` (entonces
+   * `requirements` puede ser `pyproject.toml` o `uv.lock`). Con
+   * `language: "typescript"`: `npm` (por defecto), `pnpm` o `yarn`. */
+  readonly packageManager?: PackageManager | undefined;
+  /** Con `language: "typescript"`: la versión mayor de Node (`"22"`, `"24"`). */
+  readonly nodeVersion?: string | undefined;
 }
 
 /**
  * `AgentRuntime` de Strands Agents (`runtime: new StrandsRuntime(...)`;
  * `"strands"` y `"strands-harness"` en el registro). Con `language:
- * "typescript"` el `source` debe llevar `package.json` y `package-lock.json`:
- * el build ejecuta `npm ci --ignore-scripts` con ellos y falla si faltan.
+ * "typescript"` el `source` debe llevar `package.json` y el lockfile del gestor
+ * (`npm`, `pnpm` o `yarn`): el build ejecuta su instalación congelada con
+ * `--ignore-scripts` y falla si faltan.
  *
  * Coste y activación
  * -------------------
@@ -230,6 +241,8 @@ export class StrandsRuntime extends HostBackedRuntime implements InstallableRunt
   readonly harness: boolean;
   readonly language: StrandsLanguage;
   readonly requirements: string | undefined;
+  readonly packageManager: PackageManager | undefined;
+  readonly nodeVersion: string | undefined;
 
   constructor(options: StrandsRuntimeOptions = {}) {
     super();
@@ -251,21 +264,14 @@ export class StrandsRuntime extends HostBackedRuntime implements InstallableRunt
     }
     checkEntrypoint(options.entrypoint, language);
     const requirements = options.requirements;
-    if (
-      requirements !== undefined &&
-      (language === "typescript" ||
-        !REQUIREMENTS_PATTERN.test(requirements) ||
-        requirements.split("/").includes(".."))
-    ) {
-      throw new InvalidArgumentError(
-        "StrandsRuntime.requirements es una ruta relativa dentro de source " +
-          "y sólo existe con language 'python'",
-      );
-    }
+    checkRequirements(language, requirements, options.packageManager);
+    checkNodeOptions(language, options.packageManager, options.nodeVersion);
     this.entrypoint = options.entrypoint;
     this.harness = harness;
     this.language = language;
     this.requirements = requirements;
+    this.packageManager = options.packageManager;
+    this.nodeVersion = options.nodeVersion;
     this.name = harness ? STRANDS_HARNESS_NAME : STRANDS_NAME;
   }
 
@@ -284,6 +290,8 @@ export class StrandsRuntime extends HostBackedRuntime implements InstallableRunt
       harness: kind === STRANDS_HARNESS_NAME,
       language: (text("language") ?? "python") as StrandsLanguage,
       requirements: text("requirements"),
+      packageManager: text("package_manager") as PackageManager | undefined,
+      nodeVersion: text("node_version"),
     });
   }
 
@@ -298,6 +306,12 @@ export class StrandsRuntime extends HostBackedRuntime implements InstallableRunt
     }
     if (this.requirements !== undefined) {
       options.requirements = this.requirements;
+    }
+    if (this.packageManager !== undefined) {
+      options.package_manager = this.packageManager;
+    }
+    if (this.nodeVersion !== undefined) {
+      options.node_version = this.nodeVersion;
     }
     return options;
   }
@@ -360,8 +374,9 @@ export class StrandsRuntime extends HostBackedRuntime implements InstallableRunt
       permissions: permissionRules(spec.permissions),
     };
     if (this.#typescript) {
-      config.bridge = STRANDS_BRIDGE_PATH;
-      return { driver: "strands-ts", config };
+      config.bridge = NODE_BRIDGE_PATH;
+      config.adapter = STRANDS_ADAPTER;
+      return { driver: "node-callable", config };
     }
     config.harness = this.harness;
     config.memory_dir = STRANDS_MEMORY_DIR;
@@ -394,47 +409,42 @@ export class StrandsRuntime extends HostBackedRuntime implements InstallableRunt
       ),
     ];
     if (this.requirements !== undefined) {
-      steps.push(
-        ...userRequirementsSteps(target, {
-          venvDir,
-          requirements: this.requirements,
-          slug: this.#venvName,
-        }),
-      );
+      steps.push(...this.#userDependencySteps(target, venvDir, this.requirements));
     }
     return steps;
   }
 
+  #userDependencySteps(
+    target: InstallTarget,
+    venvDir: string,
+    requirements: string,
+  ): readonly TemplateStep[] {
+    const manifest = pythonManifest(requirements);
+    return pythonDependencySteps(target, {
+      installer: (this.packageManager ?? DEFAULT_PYTHON_INSTALLER) as PythonInstaller,
+      manifest,
+      path: manifest === "requirements" ? requirements : undefined,
+      python: `${venvDir}/bin/python`,
+      venvDir,
+      slug: this.#venvName,
+      createVenv: false,
+    });
+  }
+
   #typescriptSteps(target: InstallTarget): TemplateStep[] {
-    const nodeDir = `${target.installDir}/${NODE_DIR_NAME}`;
-    const nodeBin = `${nodeDir}/bin`;
-    const steps: TemplateStep[] = [...containerPackagesStep(target, ["curl", "ca-certificates"])];
-    steps.push(
-      runStep(
-        `curl -fsSL --retry 3 -o /tmp/node.tar.gz ${NODE_TARBALL_URL}` +
-          ` && echo '${AGENT_NODE_SHA256}  /tmp/node.tar.gz' | sha256sum -c -` +
-          ` && mkdir -p ${nodeDir}` +
-          ` && tar -xzf /tmp/node.tar.gz -C ${nodeDir} --strip-components=1` +
-          " && rm -f /tmp/node.tar.gz" +
-          ` && ln -sf ${nodeBin}/node /usr/local/bin/node`,
+    return [
+      ...nodeRuntimeSteps(target, this.nodeVersion),
+      ...nodeDependencySteps(
+        target,
+        (this.packageManager ?? DEFAULT_NODE_PACKAGE_MANAGER) as NodePackageManager,
       ),
-    );
-    for (const name of NODE_PACKAGE_FILES) {
-      steps.push(copyStep(`app/${name}`, `${target.installDir}/${name}`));
-    }
-    steps.push(
-      runStep(
-        `cd ${target.installDir} && PATH=${nodeBin}:$PATH` +
-          " npm ci --ignore-scripts --omit=dev --no-audit --no-fund",
-      ),
-    );
-    steps.push(copyStep(STRANDS_BRIDGE_NAME, STRANDS_BRIDGE_PATH));
-    return steps;
+      copyStep(NODE_BRIDGE_NAME, NODE_BRIDGE_PATH),
+    ];
   }
 
   contextFiles(): Readonly<Record<string, string>> {
     if (this.#typescript) {
-      return { [STRANDS_BRIDGE_NAME]: strandsBridge() };
+      return { [NODE_BRIDGE_NAME]: nodeBridge() };
     }
     if (this.harness) {
       return { [STRANDS_HARNESS_REQUIREMENTS_NAME]: strandsHarnessRequirements() };
@@ -445,13 +455,14 @@ export class StrandsRuntime extends HostBackedRuntime implements InstallableRunt
   /** Versiones y hashes de lo instalado, para el manifiesto. */
   manifestEntry(): Readonly<Record<string, unknown>> {
     if (this.#typescript) {
+      const major = this.nodeVersion ?? AGENT_DEFAULT_NODE_MAJOR;
       return {
         language: "typescript",
-        node_version: AGENT_NODE_VERSION,
-        node_sha256: AGENT_NODE_SHA256,
+        node_version: AGENT_NODE_BUILD_VERSIONS[major],
+        node_sha256: AGENT_NODE_BUILD_SHA256[major],
         tested_sdk_version: AGENT_STRANDS_TS_VERSION,
         tested_harness_version: AGENT_STRANDS_TS_HARNESS_VERSION,
-        bridge_sha256: createHash("sha256").update(strandsBridge(), "utf8").digest("hex"),
+        bridge_sha256: createHash("sha256").update(nodeBridge(), "utf8").digest("hex"),
       };
     }
     if (this.harness) {
@@ -476,7 +487,7 @@ export class StrandsRuntime extends HostBackedRuntime implements InstallableRunt
         "su user -c 'node --version'",
         `su user -c "cd ${AGENT_INSTALL_DIR} && node --input-type=module -e ` +
           `'import \\"${TS_SMOKE_MODULE}\\"'"`,
-        `su user -c 'test -r ${STRANDS_BRIDGE_PATH}'`,
+        `su user -c 'test -r ${NODE_BRIDGE_PATH}'`,
       ];
     }
     const modules = this.harness ? STRANDS_HARNESS_SMOKE_MODULES : STRANDS_SMOKE_MODULES;
@@ -486,7 +497,7 @@ export class StrandsRuntime extends HostBackedRuntime implements InstallableRunt
   /** El binario de Node (TypeScript); el venv de Python se carga con
    * `warmupSteps()`. */
   prefetchPaths(): readonly string[] {
-    return this.#typescript ? [`${AGENT_INSTALL_DIR}/${NODE_DIR_NAME}/bin/node`] : [];
+    return this.#typescript ? [`${nodeBin(installTarget())}/node`] : [];
   }
 
   /** Carga Strands (o Node con el SDK) en la caché de páginas. */
@@ -505,6 +516,65 @@ export class StrandsRuntime extends HostBackedRuntime implements InstallableRunt
         cmd: `${shellQuote(this.venvPython())} -c 'import strands, boto3' >/dev/null 2>&1 || true`,
       },
     ];
+  }
+}
+
+/** `requirements` (y, con `uv`, `pyproject.toml` o `uv.lock`) sólo existe con
+ * `language: "python"`; el `packageManager` de Python es `pip` o `uv` y necesita
+ * `requirements`. */
+function checkRequirements(
+  language: string,
+  requirements: string | undefined,
+  packageManager: string | undefined,
+): void {
+  if (language === "typescript") {
+    if (requirements !== undefined) {
+      throw new InvalidArgumentError(
+        "StrandsRuntime.requirements sólo existe con language 'python'",
+      );
+    }
+    return;
+  }
+  if (
+    packageManager !== undefined &&
+    !(PYTHON_INSTALLERS as readonly string[]).includes(packageManager)
+  ) {
+    throw new InvalidArgumentError(
+      `StrandsRuntime.packageManager debe ser uno de ${JSON.stringify(PYTHON_INSTALLERS)}`,
+    );
+  }
+  if (requirements === undefined) {
+    if (packageManager !== undefined) {
+      throw new InvalidArgumentError("StrandsRuntime.packageManager necesita requirements");
+    }
+    return;
+  }
+  checkRequirementsPath("StrandsRuntime", requirements, packageManager);
+}
+
+function checkNodeOptions(
+  language: string,
+  packageManager: string | undefined,
+  nodeVersion: string | undefined,
+): void {
+  if (language !== "typescript") {
+    if (nodeVersion !== undefined) {
+      throw new InvalidArgumentError(
+        "StrandsRuntime.nodeVersion sólo existe con language 'typescript'",
+      );
+    }
+    return;
+  }
+  if (
+    packageManager !== undefined &&
+    !(NODE_PACKAGE_MANAGERS as readonly string[]).includes(packageManager)
+  ) {
+    throw new InvalidArgumentError(
+      `StrandsRuntime.packageManager debe ser uno de ${JSON.stringify(NODE_PACKAGE_MANAGERS)}`,
+    );
+  }
+  if (nodeVersion !== undefined) {
+    checkNodeVersion(nodeVersion);
   }
 }
 

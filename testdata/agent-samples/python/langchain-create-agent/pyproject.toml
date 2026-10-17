@@ -1,0 +1,9 @@
+[project]
+name = "support-triage"
+version = "0.1.0"
+description = "Agente de soporte con create_agent de LangChain"
+requires-python = ">=3.11"
+dependencies = [
+    "langchain>=1.0",
+    "langchain-aws>=1.0",
+]

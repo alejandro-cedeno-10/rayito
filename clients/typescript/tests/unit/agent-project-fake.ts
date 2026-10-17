@@ -54,6 +54,9 @@ export interface FakeSandboxOptions {
   readonly metadata?: Record<string, string>;
   readonly readyAfter?: number | null;
   readonly failedCode?: string;
+  /** Todo el contenido del marcador de fallo (código y diagnóstico). */
+  readonly failedMarker?: string;
+  readonly accessToken?: string;
   readonly agentResult?: unknown;
   readonly agentError?: Error;
   readonly agentEvents?: readonly unknown[];
@@ -62,7 +65,8 @@ export interface FakeSandboxOptions {
 }
 
 export class FakeSandbox {
-  readonly sandboxId = SANDBOX_ID;
+  readonly sandboxId: string = SANDBOX_ID;
+  readonly accessToken: string;
   readonly metadata: Record<string, string>;
   readonly gateways = {
     get: (name: string) => (name === "bedrock" ? gatewayStatus(GATEWAY_PORT) : undefined),
@@ -80,6 +84,9 @@ export class FakeSandbox {
     },
   };
   kills = 0;
+  readonly pauseCalls: Record<string, unknown>[] = [];
+  readonly resumeCalls: Record<string, unknown>[] = [];
+  readonly timeoutCalls: number[] = [];
   readonly streamCloses = { count: 0 };
   refreshed = 0;
   readyPolls = 0;
@@ -88,6 +95,7 @@ export class FakeSandbox {
   constructor(options: FakeSandboxOptions = {}) {
     this.#options = options;
     this.metadata = options.metadata ?? {};
+    this.accessToken = options.accessToken ?? "access-token-de-prueba";
   }
 
   readonly agent = {
@@ -134,9 +142,13 @@ export class FakeSandbox {
         const after = this.#options.readyAfter === undefined ? 0 : this.#options.readyAfter;
         return after !== null && this.readyPolls > after;
       }
-      return path === FAILED_MARKER && this.#options.failedCode !== undefined;
+      return (
+        path === FAILED_MARKER &&
+        (this.#options.failedCode !== undefined || this.#options.failedMarker !== undefined)
+      );
     },
-    read: async (): Promise<string> => `${this.#options.failedCode}\n`,
+    read: async (): Promise<string> =>
+      this.#options.failedMarker ?? `${this.#options.failedCode}\n`,
   };
 
   async getHost(port: number): Promise<HostAccess> {
@@ -150,6 +162,19 @@ export class FakeSandbox {
       throw this.#options.killError;
     }
     return true;
+  }
+
+  async pause(options: Record<string, unknown> = {}): Promise<boolean> {
+    this.pauseCalls.push(options);
+    return true;
+  }
+
+  async resume(options: Record<string, unknown> = {}): Promise<void> {
+    this.resumeCalls.push(options);
+  }
+
+  async setTimeout(timeoutMs: number): Promise<void> {
+    this.timeoutCalls.push(timeoutMs);
   }
 
   async refreshProxyAccess(): Promise<void> {

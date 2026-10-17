@@ -48,6 +48,8 @@ export class FakePublishPorts implements PublishPorts {
   readonly objects = new Map<string, Uint8Array>();
   readonly requests: Array<{ readonly operation: string; readonly body: Item }> = [];
   stackRole: string | undefined = BUILD_ROLE;
+  /** La versión más reciente de la base gestionada; `undefined` si no lista ninguna. */
+  managedVersion: string | undefined = "1";
   recent: RecentLogs = { kind: "streams", streams: [] };
   /** Lecturas del gate (imagen más versión) que tardan en asentarse tras enviar un build. */
   pendingReads = 1;
@@ -65,6 +67,11 @@ export class FakePublishPorts implements PublishPorts {
   async buildRoleArnOfStack(stackName: string): Promise<string | undefined> {
     this.calls.push(`buildRoleArnOfStack:${stackName}`);
     return this.stackRole;
+  }
+
+  async newestManagedVersion(arn: string): Promise<string | undefined> {
+    this.calls.push(`newestManagedVersion:${arn}`);
+    return this.managedVersion;
   }
 
   async getMicrovmImage(arn: string): Promise<{ state: string } | undefined> {

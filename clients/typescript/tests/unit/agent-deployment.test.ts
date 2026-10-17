@@ -284,6 +284,58 @@ describe("status", () => {
   });
 });
 
+describe("access token, pause and resume", () => {
+  test("exposes the access token of the sandbox to reconnect", async () => {
+    const { deployment, sandbox } = await make();
+    expect(deployment.accessToken).toBe(sandbox.accessToken);
+  });
+
+  test("pause and resume map to the sandbox", async () => {
+    const { deployment, sandbox } = await make();
+    expect(await deployment.pause()).toBe(true);
+    await deployment.pause({ wait: false });
+    await deployment.resume();
+    await deployment.resume({ wait: false });
+    expect(sandbox.pauseCalls).toEqual([{}, { wait: false }]);
+    expect(sandbox.resumeCalls).toEqual([{}, { wait: false }]);
+    expect(sandbox.kills).toBe(0);
+  });
+});
+
+describe("usage reported", () => {
+  const Zero = { input: 0, output: 0 };
+
+  test("the result says when the agent reported no usage", async () => {
+    const { deployment } = await make(json({ ...RESULT_BODY, usage: Zero, usage_reported: false }));
+    const result = await deployment.invoke(PROMPT);
+    expect(result.usageReported).toBe(false);
+    expect(result.usage.total).toBe(0);
+  });
+
+  test("an older service without the field reports usage", async () => {
+    const { deployment } = await make(json(RESULT_BODY));
+    expect((await deployment.invoke(PROMPT)).usageReported).toBe(true);
+  });
+
+  test("a stream without usage in its steps is unreported", async () => {
+    const unreported = sse(
+      ["step_started", { index: 1 }],
+      ["text", { text: "listo" }],
+      ["step_finished", { index: 1, usage: null }],
+      ["done", { session_id: SESSION }],
+    );
+    const reported = sse(
+      ["step_started", { index: 1 }],
+      ["step_finished", { index: 1, usage: { input: 3 } }],
+      ["done", { session_id: SESSION }],
+    );
+    const first = await make({ body: unreported });
+    expect((await first.deployment.stream("hola").result()).usageReported).toBe(false);
+    const second = await make({ body: reported });
+    expect((await second.deployment.stream("hola").result()).usageReported).toBe(true);
+  });
+});
+
 describe("stop", () => {
   test("kills the sandbox", async () => {
     const { deployment, sandbox } = await make();

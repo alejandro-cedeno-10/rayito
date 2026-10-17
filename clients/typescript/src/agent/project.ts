@@ -21,11 +21,19 @@ import { isAbsolute, relative, resolve, sep } from "node:path";
 import { InvalidArgumentError } from "../errors.js";
 import {
   AGENT_MIN_MEMORY_MIB,
+  AGENT_NODE_BUILD_VERSIONS,
   AGENT_PROJECT_SCHEMA,
+  AGENT_PYTHON_BUILD_VERSIONS,
   AGENT_SERVICE_MAX_CONCURRENCY,
   AGENT_SERVICE_PORT,
+  AGENT_SERVICE_QUEUE_MAX,
+  AGENT_SERVICE_QUEUE_MAX_DEFAULT,
+  AGENT_SERVICE_QUEUE_TIMEOUT_SECONDS_DEFAULT,
+  AGENT_SERVICE_QUEUE_TIMEOUT_SECONDS_MAX,
   DEFAULT_AGENT_DEPLOY_TIMEOUT_SECONDS,
   DEFAULT_PORT,
+  EGRESS_HOSTNAME_MAX_CHARS,
+  EGRESS_MAX_ENTRIES_PER_LIST,
   HOOKS_PORT,
   MAX_DURATION_SECONDS,
   PORT_MAX,
@@ -35,7 +43,9 @@ import { type IdlePolicy, validateIdlePolicy } from "../models.js";
 import { SecretGateway } from "../secret-gateway/domain.js";
 import type { SecretLike } from "../secrets/names.js";
 import type { BuildInfo } from "../templates/build.js";
+import { validateBucketHint, validateImageVersion } from "./deploy-domain.js";
 import type { AgentDeployment } from "./deployment.js";
+import type { DetectionReport, DetectOverrides } from "./detect-report.js";
 import {
   AgentLimits,
   AgentModel,
@@ -73,6 +83,11 @@ import {
   runtimeFromOptions,
   runtimeToOptions,
 } from "./runtimes.js";
+import {
+  maxSessionsForMemory,
+  ScalingOptions,
+  type ScalingOptionsInput,
+} from "./scaling-domain.js";
 import { type AgentTemplateBuildOptions, DEFAULT_AGENT_TEMPLATE_BASE } from "./template.js";
 
 /** Los códigos de error de lectura de un proyecto: lista cerrada que los dos
@@ -87,6 +102,9 @@ export const AGENT_PROJECT_ERROR_CODES = [
   "secret_value",
   "unsupported_schema",
   "file_not_found",
+  "ambiguous",
+  "not_detected",
+  "unsupported",
 ] as const;
 export type AgentProjectErrorCode = (typeof AGENT_PROJECT_ERROR_CODES)[number];
 /** Claves que, de aparecer sin estar declaradas, intentan meter un secreto en
@@ -120,6 +138,10 @@ export const CUSTOM_GATEWAY_PRESET = "custom";
 const MS_PER_SECOND = 1000;
 const RATE_KEY = "rate_per_minute";
 const DEFAULT_SERVE_TIMEOUT_MS = DEFAULT_AGENT_DEPLOY_TIMEOUT_SECONDS * MS_PER_SECOND;
+/** Plazo por defecto de la cola del servicio (y de la del cliente de una flota). */
+export const DEFAULT_QUEUE_TIMEOUT_MS = AGENT_SERVICE_QUEUE_TIMEOUT_SECONDS_DEFAULT * MS_PER_SECOND;
+const MAX_QUEUE_TIMEOUT_MS = AGENT_SERVICE_QUEUE_TIMEOUT_SECONDS_MAX * MS_PER_SECOND;
+const ENV_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 /**
  * Un documento de proyecto inválido. `path` es la ruta punteada de la clave
@@ -129,7 +151,7 @@ const DEFAULT_SERVE_TIMEOUT_MS = DEFAULT_AGENT_DEPLOY_TIMEOUT_SECONDS * MS_PER_S
  */
 export class AgentProjectError extends InvalidArgumentError {
   readonly path: string;
-  readonly code: AgentProjectErrorCode;
+  override readonly code: AgentProjectErrorCode;
 
   constructor(
     message: string,
@@ -160,14 +182,20 @@ export interface ServeOptionsInput {
   readonly idle?: IdlePolicy | null | undefined;
   readonly maxConcurrency?: number | undefined;
   readonly metadata?: Readonly<Record<string, string>> | undefined;
+  readonly queueMax?: number | undefined;
+  readonly queueTimeoutMs?: number | undefined;
 }
 
 /**
  * Cómo se sirve el agente (`AgentProject.deploy()`): el `port` del servicio
  * (no 8080 ni 9000, que son de `rayd`), la vida del sandbox (`timeoutMs`,
  * como mucho el máximo de la plataforma), la política de `idle` (suspensión y
- * reanudación automáticas; `null` la quita), la concurrencia y las etiquetas
- * `metadata` del sandbox.
+ * reanudación automáticas; `null` la quita), la concurrencia por VM
+ * (`maxConcurrency`, acotada por las conexiones que admite el MicroVM de
+ * `AgentProject.memoryMib`), las etiquetas `metadata` del sandbox y la cola
+ * del host: `queueMax` llamadas esperan hasta `queueTimeoutMs` cuando el VM
+ * está lleno (con `queueMax: 0`, el valor por defecto, la llamada que no cabe
+ * recibe 429 enseguida).
  */
 export class ServeOptions {
   readonly port: number;
@@ -175,6 +203,8 @@ export class ServeOptions {
   readonly idle: IdlePolicy | null | undefined;
   readonly maxConcurrency: number;
   readonly metadata: Readonly<Record<string, string>>;
+  readonly queueMax: number;
+  readonly queueTimeoutMs: number;
 
   constructor(options: ServeOptionsInput = {}) {
     const port = options.port ?? AGENT_SERVICE_PORT;
@@ -212,7 +242,163 @@ export class ServeOptions {
     this.idle = options.idle === null ? null : options.idle;
     this.maxConcurrency = maxConcurrency;
     this.metadata = Object.freeze({ ...metadata });
+    const queueMax = options.queueMax ?? AGENT_SERVICE_QUEUE_MAX_DEFAULT;
+    if (!isInteger(queueMax) || queueMax < 0 || queueMax > AGENT_SERVICE_QUEUE_MAX) {
+      throw new InvalidArgumentError(
+        `ServeOptions.queueMax debe ser un entero en 0..${AGENT_SERVICE_QUEUE_MAX}`,
+      );
+    }
+    const queueTimeoutMs = options.queueTimeoutMs ?? DEFAULT_QUEUE_TIMEOUT_MS;
+    if (
+      typeof queueTimeoutMs !== "number" ||
+      !(queueTimeoutMs > 0) ||
+      queueTimeoutMs > MAX_QUEUE_TIMEOUT_MS
+    ) {
+      throw new InvalidArgumentError(
+        `ServeOptions.queueTimeoutMs debe estar en (0, ${MAX_QUEUE_TIMEOUT_MS}]`,
+      );
+    }
+    this.queueMax = queueMax;
+    this.queueTimeoutMs = queueTimeoutMs;
   }
+}
+
+/** Los lenguajes de un proyecto de agente. */
+export const AGENT_LANGUAGES = ["python", "typescript"] as const;
+export type AgentLanguage = (typeof AGENT_LANGUAGES)[number];
+
+export interface RuntimeVersionsInput {
+  readonly python?: string | undefined;
+  readonly node?: string | undefined;
+}
+
+function supportedVersion(
+  value: unknown,
+  builds: Readonly<Record<string, string>>,
+  label: string,
+): string | undefined {
+  if (value !== undefined && (typeof value !== "string" || !(value in builds))) {
+    throw new InvalidArgumentError(
+      `${label} debe ser una de ${Object.keys(builds).sort().join(", ")}`,
+    );
+  }
+  return value as string | undefined;
+}
+
+/**
+ * Las versiones de intérprete del agente: `python` (la menor, `"3.12"`) y
+ * `node` (la mayor, `"22"`) entre las compilaciones fijadas de `limits.json`.
+ * `undefined` es la de por defecto: la del intérprete de la imagen base (sin
+ * descarga) y la que exige Strands para TypeScript.
+ */
+export class RuntimeVersions {
+  readonly python: string | undefined;
+  readonly node: string | undefined;
+
+  constructor(options: RuntimeVersionsInput = {}) {
+    if (typeof options !== "object" || options === null) {
+      throw new InvalidArgumentError("RuntimeVersions necesita un objeto de opciones");
+    }
+    this.python = supportedVersion(
+      options.python,
+      AGENT_PYTHON_BUILD_VERSIONS,
+      "RuntimeVersions.python",
+    );
+    this.node = supportedVersion(options.node, AGENT_NODE_BUILD_VERSIONS, "RuntimeVersions.node");
+  }
+
+  get isDefault(): boolean {
+    return this.python === undefined && this.node === undefined;
+  }
+}
+
+/** La política de egress `allowOut` / `denyOut` del sandbox del agente (necesita
+ * `rayito-base-caps`); sin `egressProxy`, porque sus credenciales no van en el
+ * proyecto. */
+export interface AgentNetwork {
+  readonly allowOut: readonly string[];
+  readonly denyOut: readonly string[];
+}
+
+export interface AgentNetworkInput {
+  readonly allowOut?: readonly string[] | undefined;
+  readonly denyOut?: readonly string[] | undefined;
+}
+
+function concurrencyProblem(serve: ServeOptions, memoryMib: number): string | undefined {
+  const cap = maxSessionsForMemory(memoryMib);
+  if (serve.maxConcurrency <= cap) {
+    return undefined;
+  }
+  return `admite como mucho ${cap} con memoryMib=${memoryMib} (conexiones del MicroVM menos las reservadas); sube la memoria o baja la concurrencia`;
+}
+
+function secretLikeEnvName(name: string): boolean {
+  const lowered = name.toLowerCase();
+  return (SECRET_LIKE_KEYS as readonly string[]).some(
+    (word) => lowered === word || lowered.endsWith(`_${word}`),
+  );
+}
+
+/** `AgentProject.env`: nombres de variable válidos, valores de texto y nada que
+ * parezca un secreto (un secreto va por una pasarela). */
+function validatedEnv(env: unknown): Readonly<Record<string, string>> {
+  if (!isRecord(env)) {
+    throw new InvalidArgumentError("AgentProject.env debe mapear cadenas a cadenas");
+  }
+  for (const [name, value] of Object.entries(env)) {
+    if (!ENV_NAME_PATTERN.test(name)) {
+      throw new InvalidArgumentError(
+        "AgentProject.env: cada nombre debe ser un identificador de variable de entorno",
+      );
+    }
+    if (typeof value !== "string") {
+      throw new InvalidArgumentError("AgentProject.env debe mapear cadenas a cadenas");
+    }
+    if (
+      secretLikeEnvName(name) ||
+      SECRET_VALUE_PREFIXES.some((prefix) => value.startsWith(prefix))
+    ) {
+      throw new InvalidArgumentError(
+        "AgentProject.env no puede llevar secretos: usa una pasarela para las credenciales",
+      );
+    }
+  }
+  return env as Readonly<Record<string, string>>;
+}
+
+function validatedNetwork(network: AgentNetworkInput | undefined): AgentNetwork | undefined {
+  if (network === undefined) {
+    return undefined;
+  }
+  if (typeof network !== "object" || network === null || Array.isArray(network)) {
+    throw new InvalidArgumentError("AgentProject.network debe ser un objeto { allowOut, denyOut }");
+  }
+  const allowOut = network.allowOut ?? [];
+  const denyOut = network.denyOut ?? [];
+  for (const [label, entries] of [
+    ["allowOut", allowOut],
+    ["denyOut", denyOut],
+  ] as const) {
+    if (
+      !Array.isArray(entries) ||
+      entries.length > EGRESS_MAX_ENTRIES_PER_LIST ||
+      !entries.every(
+        (entry) =>
+          typeof entry === "string" &&
+          entry.length > 0 &&
+          entry.length <= EGRESS_HOSTNAME_MAX_CHARS,
+      )
+    ) {
+      throw new InvalidArgumentError(
+        `AgentProject.network.${label} admite como mucho ${EGRESS_MAX_ENTRIES_PER_LIST} cadenas no vacías`,
+      );
+    }
+  }
+  return Object.freeze({
+    allowOut: Object.freeze([...allowOut]),
+    denyOut: Object.freeze([...denyOut]),
+  });
 }
 
 export interface AgentProjectOptions {
@@ -231,6 +417,15 @@ export interface AgentProjectOptions {
   readonly base?: string | undefined;
   readonly template?: string | undefined;
   readonly baseDir?: string | undefined;
+  readonly scaling?: ScalingOptions | ScalingOptionsInput | undefined;
+  readonly env?: Readonly<Record<string, string>> | undefined;
+  readonly network?: AgentNetworkInput | undefined;
+  readonly region?: string | undefined;
+  readonly bucket?: string | undefined;
+  readonly baseImageVersion?: string | undefined;
+  readonly language?: AgentLanguage | undefined;
+  readonly framework?: string | undefined;
+  readonly versions?: RuntimeVersions | RuntimeVersionsInput | undefined;
 }
 
 /** El lector de ficheros de texto que `fromObject` usa para
@@ -249,6 +444,13 @@ export type TextReader = (path: string) => string;
  * `requirements`, un fichero de requisitos suyo. `baseDir` es el directorio
  * contra el que `toObject()` escribe las rutas relativas. `template` es el
  * nombre de una imagen ya construida (por defecto, `name`).
+ *
+ * Para servir el agente en varios VMs: `scaling` (`ScalingOptions`), `env`
+ * (variables no secretas del agente), `network` (política `allowOut`/`denyOut`
+ * del sandbox, que necesita `rayito-base-caps`), `region`, `bucket` y
+ * `baseImageVersion` (los valores por defecto de `deployAgent()`), `language` y
+ * `framework` (lo que la detección o el fichero declaran del proyecto) y
+ * `versions` (`RuntimeVersions`).
  *
  * Coste y activación
  * -------------------
@@ -281,6 +483,15 @@ export class AgentProject {
   readonly base: string;
   readonly template: string | undefined;
   readonly baseDir: string;
+  readonly scaling: ScalingOptions;
+  readonly env: Readonly<Record<string, string>>;
+  readonly network: AgentNetwork | undefined;
+  readonly region: string | undefined;
+  readonly bucket: string | undefined;
+  readonly baseImageVersion: string | undefined;
+  readonly language: AgentLanguage | undefined;
+  readonly framework: string | undefined;
+  readonly versions: RuntimeVersions;
 
   constructor(options: AgentProjectOptions) {
     validateName(options.name, "AgentProject.name");
@@ -329,6 +540,41 @@ export class AgentProject {
     this.base = base;
     this.template = options.template;
     this.baseDir = baseDir;
+    const problem = concurrencyProblem(this.serve, memoryMib);
+    if (problem !== undefined) {
+      throw new InvalidArgumentError(`ServeOptions.maxConcurrency ${problem}`);
+    }
+    this.scaling =
+      options.scaling instanceof ScalingOptions
+        ? options.scaling
+        : new ScalingOptions(options.scaling);
+    this.versions =
+      options.versions instanceof RuntimeVersions
+        ? options.versions
+        : new RuntimeVersions(options.versions);
+    this.env = Object.freeze({ ...validatedEnv(options.env ?? {}) });
+    this.network = validatedNetwork(options.network);
+    optionalText(options.region, "AgentProject.region");
+    optionalText(options.framework, "AgentProject.framework");
+    this.region = options.region;
+    this.framework = options.framework;
+    this.bucket =
+      options.bucket === undefined
+        ? undefined
+        : validateBucketHint(options.bucket, "AgentProject.bucket");
+    this.baseImageVersion =
+      options.baseImageVersion === undefined
+        ? undefined
+        : validateImageVersion(options.baseImageVersion, "AgentProject.baseImageVersion");
+    if (
+      options.language !== undefined &&
+      !(AGENT_LANGUAGES as readonly string[]).includes(options.language)
+    ) {
+      throw new InvalidArgumentError(
+        `AgentProject.language debe ser uno de ${AGENT_LANGUAGES.join(", ")}`,
+      );
+    }
+    this.language = options.language;
   }
 
   /** Lee `rayito-agent.toml` o `rayito-agent.json` de `path` (un fichero, o
@@ -341,6 +587,23 @@ export class AgentProject {
       baseDir: document.baseDir,
       readText: document.readText,
     });
+  }
+
+  /** El proyecto de un agente que ya tienes y su `DetectionReport` (`undefined`
+   * si un fichero de proyecto completo no necesitó detectar nada), sin ejecutar
+   * su código ni llamar a AWS. El fichero de proyecto, si existe, gana
+   * clave por clave; lo que calla lo completa la detección (lenguaje,
+   * framework, punto de entrada, instalación, proveedor y modelo) y
+   * `overrides` fuerza lo que tú indiques. Si el caso no es claro lanza
+   * `AgentProjectError` con `code` `ambiguous`, `not_detected` o `unsupported` y
+   * la clave o bandera que lo resuelve. */
+  static async detect(
+    path = ".",
+    overrides?: DetectOverrides,
+    options: { readonly region?: string | undefined } = {},
+  ): Promise<readonly [AgentProject, DetectionReport | undefined]> {
+    const { detectProject } = await import("./project-file.js");
+    return detectProject(path, overrides, options);
   }
 
   /** El proyecto de un documento ya leído. Puro: las rutas relativas se
@@ -364,7 +627,7 @@ export class AgentProject {
     const document: Record<string, unknown> = {
       schema: AGENT_PROJECT_SCHEMA,
       name: this.name,
-      runtime: runtimeToOptions(this.runtime),
+      runtime: runtimeToObject(this),
     };
     const tables: Array<[string, Record<string, unknown>]> = [
       ["source", sourceToObject(this)],
@@ -373,7 +636,10 @@ export class AgentProject {
       ["agent", agentToObject(this.spec)],
       ["limits", limitsToObject(this.limits)],
       ["serve", serveToObject(this.serve)],
+      ["scaling", scalingToObject(this.scaling)],
+      ["env", Object.fromEntries(sortedEntries(this.env))],
       ["network", networkToObject(this)],
+      ["deploy", deployToObject(this)],
       ["image", imageToObject(this)],
     ];
     for (const [key, table] of tables) {
@@ -412,6 +678,10 @@ export class AgentProject {
    * `RAYITO_ACCESS_TOKEN` o uno nuevo). Quien quiera reconectarse desde otro
    * proceso (`AgentDeployment.connect`, `rayito agent invoke`) lo guarda: sin
    * él sólo `Sandbox.kill(sandboxId)` llega al sandbox.
+   *
+   * Si el despliegue falla, el sandbox se mata. Con `keepOnFailure: true` (hace
+   * falta `accessToken`) se deja vivo para depurarlo, sigue facturando hasta
+   * que lo termines, y el mensaje del error dice cuál es.
    *
    * Coste y activación
    * -------------------
@@ -643,7 +913,7 @@ function projectOptions(
     throw fail("schema", "unsupported_schema", `debe ser '${AGENT_PROJECT_SCHEMA}'`);
   }
   const name = root.text("name", true) as string;
-  const runtime = readRuntime(root.table("runtime"));
+  const { runtime, ...runtimeExtras } = readRuntime(root.table("runtime"));
   const source = readSource(root.table("source"), baseDir);
   const gateways = readGateways(root);
   const modelTable = root.table("model");
@@ -654,11 +924,38 @@ function projectOptions(
   const spec = readAgent(root.table("agent"), model, readText, baseDir);
   const limits = readLimits(root.table("limits"));
   const serve = readServe(root.table("serve"));
+  const scaling = readScaling(root.table("scaling"));
+  const env = readEnv(root.table("env"));
   const network = readNetwork(root.table("network"));
+  const deploy = readDeploy(root.table("deploy"));
   const image = readImage(root.table("image"));
   root.finish();
   checkGateways(spec, gateways);
-  return { name, runtime, spec, gateways, ...source, ...limits, ...serve, ...network, ...image };
+  checkConcurrency(serve, image);
+  return {
+    name,
+    runtime,
+    ...runtimeExtras,
+    spec,
+    gateways,
+    ...source,
+    ...limits,
+    ...serve,
+    ...scaling,
+    ...env,
+    ...network,
+    ...deploy,
+    ...image,
+  };
+}
+
+function checkConcurrency(serveFields: Fields, imageFields: Fields): void {
+  const serve = (serveFields.serve as ServeOptions | undefined) ?? new ServeOptions();
+  const memoryMib = (imageFields.memoryMib as number | undefined) ?? AGENT_MIN_MEMORY_MIB;
+  const problem = concurrencyProblem(serve, memoryMib);
+  if (problem !== undefined) {
+    throw fail("serve.max_concurrency", "invalid_value", problem);
+  }
 }
 
 function checkGateways(spec: AgentSpec, gateways: Readonly<Record<string, SecretGateway>>): void {
@@ -676,7 +973,14 @@ function checkGateways(spec: AgentSpec, gateways: Readonly<Record<string, Secret
   }
 }
 
-function readRuntime(table: Table | undefined): AgentRuntime {
+interface RuntimeRead {
+  readonly runtime: AgentRuntime;
+  readonly language?: AgentLanguage;
+  readonly framework?: string;
+  readonly versions?: RuntimeVersions;
+}
+
+function readRuntime(table: Table | undefined): RuntimeRead {
   if (table === undefined) {
     throw fail("runtime", "missing_key", "es obligatoria");
   }
@@ -684,6 +988,7 @@ function readRuntime(table: Table | undefined): AgentRuntime {
   if (!(RUNTIME_KINDS as readonly string[]).includes(kind)) {
     throw fail("runtime.kind", "invalid_value", `debe ser uno de ${RUNTIME_KINDS.join(", ")}`);
   }
+  const extras = readRuntimeExtras(table);
   const options: Record<string, unknown> = {};
   for (const key of RUNTIME_OPTION_KEYS[kind] ?? []) {
     const value = table.raw(key);
@@ -692,7 +997,42 @@ function readRuntime(table: Table | undefined): AgentRuntime {
     }
   }
   table.finish();
-  return guard("runtime", () => runtimeFromOptions(kind, options));
+  return { runtime: guard("runtime", () => runtimeFromOptions(kind, options)), ...extras };
+}
+
+/** Las claves de `[runtime]` que son del proyecto y no de un runtime:
+ * `language`, `framework` y las versiones de intérprete. */
+function readRuntimeExtras(table: Table): Omit<RuntimeRead, "runtime"> {
+  const language = table.text("language");
+  if (language !== undefined && !(AGENT_LANGUAGES as readonly string[]).includes(language)) {
+    throw fail(
+      table.at("language"),
+      "invalid_value",
+      `debe ser uno de ${AGENT_LANGUAGES.join(", ")}`,
+    );
+  }
+  const framework = table.text("framework");
+  const python = readVersion(table, "python_version", "python");
+  const node = readVersion(table, "node_version", "node");
+  const extras: { -readonly [K in keyof Omit<RuntimeRead, "runtime">]: RuntimeRead[K] } = {};
+  if (language !== undefined) {
+    extras.language = language as AgentLanguage;
+  }
+  if (framework !== undefined) {
+    extras.framework = framework;
+  }
+  if (python !== undefined || node !== undefined) {
+    extras.versions = new RuntimeVersions({ python, node });
+  }
+  return extras;
+}
+
+function readVersion(table: Table, key: string, field: "python" | "node"): string | undefined {
+  const value = table.text(key);
+  if (value !== undefined) {
+    guard(table.at(key), () => new RuntimeVersions({ [field]: value }));
+  }
+  return value;
 }
 
 type Fields = Record<string, unknown>;
@@ -896,6 +1236,8 @@ function readServe(table: Table | undefined): Fields {
   const timeout = table.number("timeout_seconds");
   const idleSeconds = table.integer("idle_seconds");
   const metadata = table.raw("metadata");
+  const queueMax = table.integer("queue_max");
+  const queueTimeout = table.number("queue_timeout_seconds");
   table.finish();
   if (port !== undefined) {
     options.port = port;
@@ -915,6 +1257,12 @@ function readServe(table: Table | undefined): Fields {
   if (metadata !== undefined && metadata !== null) {
     options.metadata = metadata;
   }
+  if (queueMax !== undefined) {
+    options.queueMax = queueMax;
+  }
+  if (queueTimeout !== undefined) {
+    options.queueTimeoutMs = queueTimeout * MS_PER_SECOND;
+  }
   return { serve: guard("serve", () => new ServeOptions(options as ServeOptionsInput)) };
 }
 
@@ -924,6 +1272,8 @@ function readNetwork(table: Table | undefined): Fields {
   }
   const internet = table.boolean("allow_internet_access");
   const egress = table.texts("egress");
+  const allowOut = table.texts("allow_out");
+  const denyOut = table.texts("deny_out");
   table.finish();
   const fields: Fields = {};
   if (internet !== undefined) {
@@ -932,6 +1282,90 @@ function readNetwork(table: Table | undefined): Fields {
   if (egress !== undefined) {
     fields.egress = egress;
   }
+  if (allowOut !== undefined || denyOut !== undefined) {
+    fields.network = { allowOut: allowOut ?? [], denyOut: denyOut ?? [] };
+  }
+  return fields;
+}
+
+function readScaling(table: Table | undefined): Fields {
+  if (table === undefined) {
+    return {};
+  }
+  const options: Record<string, unknown> = {};
+  for (const [key, field] of [
+    ["min_vms", "minVms"],
+    ["max_vms", "maxVms"],
+    ["warm_vms", "warmVms"],
+  ] as const) {
+    const value = table.integer(key);
+    if (value !== undefined) {
+      options[field] = value;
+    }
+  }
+  const sessions = table.text("sessions");
+  if (sessions !== undefined) {
+    options.sessions = sessions;
+  }
+  const seconds = table.number("scale_in_after_seconds");
+  if (seconds !== undefined) {
+    options.scaleInAfterMs = seconds * MS_PER_SECOND;
+  }
+  table.finish();
+  return { scaling: guard("scaling", () => new ScalingOptions(options as ScalingOptionsInput)) };
+}
+
+function readEnv(table: Table | undefined): Fields {
+  if (table === undefined) {
+    return {};
+  }
+  const env: Record<string, string> = {};
+  for (const name of table.keys().sort()) {
+    const path = table.at(name);
+    const value = table.raw(name);
+    if (typeof value !== "string") {
+      throw fail(path, "invalid_type", "debe ser una cadena");
+    }
+    if (
+      secretLikeEnvName(name) ||
+      SECRET_VALUE_PREFIXES.some((prefix) => value.startsWith(prefix))
+    ) {
+      throw fail(
+        path,
+        "secret_value",
+        "un fichero de proyecto nunca lleva un secreto; usa una pasarela",
+      );
+    }
+    env[name] = value;
+  }
+  table.finish();
+  return { env: guard("env", () => validatedEnv(env)) };
+}
+
+const DEPLOY_CHECKS: Readonly<Record<string, (value: string, label: string) => string>> = {
+  bucket: validateBucketHint,
+  base_image_version: validateImageVersion,
+};
+
+function readDeploy(table: Table | undefined): Fields {
+  if (table === undefined) {
+    return {};
+  }
+  const fields: Fields = {};
+  for (const [key, field] of [
+    ["region", "region"],
+    ["bucket", "bucket"],
+    ["base_image_version", "baseImageVersion"],
+  ] as const) {
+    const value = table.text(key);
+    if (value === undefined) {
+      continue;
+    }
+    const check = DEPLOY_CHECKS[key];
+    fields[field] =
+      check === undefined ? value : guard(table.at(key), () => check(value, table.at(key)));
+  }
+  table.finish();
   return fields;
 }
 
@@ -1024,6 +1458,12 @@ const GATEWAY_PRESETS: Readonly<Record<string, Preset>> = Object.freeze({
       litellmGateway(secret, o as unknown as Parameters<typeof litellmGateway>[1]),
   },
 });
+
+/** Las claves de un preset de pasarela (además de `secret` y `rate_per_minute`):
+ * lo que `AgentProject.detect` tiene que rellenar con la región y los modelos. */
+export function gatewayPresetKeys(preset: string): readonly string[] {
+  return Object.hasOwn(GATEWAY_PRESETS, preset) ? (GATEWAY_PRESETS[preset]?.keys ?? []) : [];
+}
 
 /** El nombre de cada opción del fichero (snake_case) en `gateways.ts`. */
 const GATEWAY_OPTION_NAMES: Readonly<Record<string, string>> = Object.freeze({
@@ -1288,6 +1728,54 @@ function idleSeconds(idle: IdlePolicy | null): number {
   return idle.maxIdleSeconds;
 }
 
+function runtimeToObject(project: AgentProject): Record<string, unknown> {
+  const table = runtimeToOptions(project.runtime);
+  for (const [key, value] of [
+    ["language", project.language],
+    ["framework", project.framework],
+    ["python_version", project.versions.python],
+    ["node_version", project.versions.node],
+  ] as const) {
+    if (value !== undefined && !(key in table)) {
+      table[key] = value;
+    }
+  }
+  return table;
+}
+
+function scalingToObject(scaling: ScalingOptions): Record<string, unknown> {
+  const defaults = new ScalingOptions();
+  const table: Record<string, unknown> = {};
+  for (const [key, field] of [
+    ["min_vms", "minVms"],
+    ["max_vms", "maxVms"],
+    ["warm_vms", "warmVms"],
+    ["sessions", "sessions"],
+  ] as const) {
+    if (scaling[field] !== defaults[field]) {
+      table[key] = scaling[field];
+    }
+  }
+  if (scaling.scaleInAfterMs !== defaults.scaleInAfterMs) {
+    table.scale_in_after_seconds = scaling.scaleInAfterMs / MS_PER_SECOND;
+  }
+  return table;
+}
+
+function deployToObject(project: AgentProject): Record<string, unknown> {
+  const table: Record<string, unknown> = {};
+  for (const [key, value] of [
+    ["region", project.region],
+    ["bucket", project.bucket],
+    ["base_image_version", project.baseImageVersion],
+  ] as const) {
+    if (value !== undefined) {
+      table[key] = value;
+    }
+  }
+  return table;
+}
+
 function serveToObject(serve: ServeOptions): Record<string, unknown> {
   const table: Record<string, unknown> = {};
   if (serve.port !== AGENT_SERVICE_PORT) {
@@ -1305,6 +1793,12 @@ function serveToObject(serve: ServeOptions): Record<string, unknown> {
   if (Object.keys(serve.metadata).length > 0) {
     table.metadata = Object.fromEntries(sortedEntries(serve.metadata));
   }
+  if (serve.queueMax !== AGENT_SERVICE_QUEUE_MAX_DEFAULT) {
+    table.queue_max = serve.queueMax;
+  }
+  if (serve.queueTimeoutMs !== DEFAULT_QUEUE_TIMEOUT_MS) {
+    table.queue_timeout_seconds = serve.queueTimeoutMs / MS_PER_SECOND;
+  }
   return table;
 }
 
@@ -1315,6 +1809,14 @@ function networkToObject(project: AgentProject): Record<string, unknown> {
   }
   if (project.egress !== undefined) {
     table.egress = [...project.egress];
+  }
+  if (project.network !== undefined) {
+    if (project.network.allowOut.length > 0) {
+      table.allow_out = [...project.network.allowOut];
+    }
+    if (project.network.denyOut.length > 0) {
+      table.deny_out = [...project.network.denyOut];
+    }
   }
   return table;
 }

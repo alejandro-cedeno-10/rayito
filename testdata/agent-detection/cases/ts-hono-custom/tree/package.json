@@ -1,0 +1,12 @@
+{
+  "name": "demo-agent",
+  "version": "0.1.0",
+  "type": "module",
+  "dependencies": {
+    "hono": "*",
+    "@hono/node-server": "*"
+  },
+  "scripts": {
+    "start": "node server.js"
+  }
+}

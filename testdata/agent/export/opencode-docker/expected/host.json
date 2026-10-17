@@ -10,6 +10,8 @@
   "options": {
     "workdir": "/home/user"
   },
+  "queue_max": 0,
+  "queue_timeout_seconds": 30,
   "schema": "rayito.agent-host/1",
   "session_header": "X-Amzn-Bedrock-AgentCore-Runtime-Session-Id",
   "v": 1

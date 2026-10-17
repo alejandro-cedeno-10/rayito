@@ -100,6 +100,10 @@ export interface DeploymentSandbox {
   getHost(port: number): Promise<HostAccess>;
   kill(): Promise<boolean>;
   refreshProxyAccess(): Promise<void>;
+  readonly accessToken: string;
+  pause(options?: { readonly wait?: boolean | undefined }): Promise<boolean>;
+  resume(options?: { readonly wait?: boolean | undefined }): Promise<void>;
+  setTimeout(timeoutMs: number): Promise<void>;
 }
 
 export interface AgentDeploymentOptions {
@@ -257,6 +261,7 @@ export function resultFromBody(body: string): AgentResult {
     exitCode: 0,
     toolCalls: Object.freeze([]),
     droppedLines: 0,
+    usageReported: payload.usage_reported !== false,
   });
 }
 
@@ -294,6 +299,7 @@ export class EventDecoder {
             sessionId: this.sessionId ?? "",
             exitCode: 0,
             usage: this.state.usage,
+            usageReported: this.state.usageReported,
           }),
         ];
       case "agent_failed":
@@ -336,6 +342,7 @@ export class ResultBuilder {
         exitCode: final.exitCode,
         toolCalls: Object.freeze([...this.toolCalls]),
         droppedLines,
+        usageReported: final.usageReported !== false,
       });
     }
     throw agentFailedToError(final ?? agentFailed("protocol_error"));
@@ -485,7 +492,8 @@ export class AgentDeploymentStream implements AsyncIterable<AgentEvent> {
  *     `AgentProject.deploy()`).
  * IAM: `GetMicrovm` y `CreateMicrovmAuthToken` para `connect()` y para el
  *     token del proxy; nada más.
- * Cómo apagarla: `stop()` termina el sandbox y con él el despliegue.
+ * Cómo apagarla: `stop()` termina el sandbox y con él el despliegue;
+ *     `pause()` deja de facturar cómputo sin perder el servicio.
  * Ejemplo:
  *   const deployment = await AgentDeployment.connect(sandboxId);
  *   (await deployment.invoke("Resume el README.")).text;
@@ -531,6 +539,15 @@ export class AgentDeployment {
 
   get sandboxId(): string {
     return this.#sandbox.sandboxId;
+  }
+
+  /** El access token del sandbox del despliegue. Con el que pasaste a
+   * `deploy({ accessToken })` o, si no pasaste ninguno, el que se generó:
+   * guárdalo (nunca lo imprimas ni lo versiones) para reconectarte desde otro
+   * proceso con `AgentDeployment.connect(sandboxId, { accessToken })` o con
+   * `rayito agent invoke --token-file`. */
+  get accessToken(): string {
+    return this.#sandbox.accessToken;
   }
 
   get url(): string {
@@ -595,6 +612,28 @@ export class AgentDeployment {
       throw error;
     }
     return statusFromPing(response.status, await response.text(), target);
+  }
+
+  /** Suspende el sandbox del despliegue (`Sandbox.pause()`): mientras duerme
+   * no factura cómputo y el servicio conserva su estado. `false` si ya estaba
+   * suspendido. La siguiente petición (o `resume()`) lo reanuda; con `idle`
+   * (activo por defecto) también se suspende solo. */
+  async pause(options: { readonly wait?: boolean | undefined } = {}): Promise<boolean> {
+    return this.#sandbox.pause(options);
+  }
+
+  /** Reanuda el sandbox suspendido (`Sandbox.resume()`) y, con `wait`, espera
+   * a que esté listo. No hace falta antes de `invoke()`: una petición a un
+   * sandbox suspendido ya lo reanuda. */
+  async resume(options: { readonly wait?: boolean | undefined } = {}): Promise<void> {
+    await this.#sandbox.resume(options);
+  }
+
+  /** Fija la vida restante del sandbox del despliegue (`Sandbox.setTimeout`):
+   * `rayd` lo termina solo al vencer. Una flota lo usa para que un VM sobrante
+   * desaparezca sin servidor propio. */
+  async setTimeout(timeoutMs: number): Promise<void> {
+    await this.#sandbox.setTimeout(timeoutMs);
   }
 
   /** Termina el sandbox del despliegue. Idempotente. */
