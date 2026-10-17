@@ -192,3 +192,4 @@ diverjan, y una release que suba un mínimo añade la fila en los dos sitios.
 | `0.11` | `0.11.0` | 0.11: el arranque rápido de AgentTemplate (kernel_warmup=False por defecto) y las claves de artefacto por ejecución se validan con el rayd del tag rayd-v0.11.0 |
 | `0.12` | `0.12.0` | 0.12: el panel de gestión (rayito dashboard y la pila dashboard) se validan con el rayd del tag rayd-v0.12.0 |
 | `0.13` | `0.13.0` | 0.13: la CLI y el servidor MCP de TypeScript (ADR-027) y el formato de instantes en UTC de la CLI se validan con el rayd del tag rayd-v0.13.0 |
+| `0.14` | `0.14.0` | 0.14: el despliegue sin configuración de un agente que ya tienes (Strands, Hermes, LangGraph, OpenCode o propio), sus opciones tipadas de escalado y la CLI rayito agent se validan con el rayd del tag rayd-v0.14.0 |
