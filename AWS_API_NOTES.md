@@ -1989,6 +1989,30 @@ una sola región (us-east-1).
   «alguien con sesión de este pool», y el usuario lo decide el token. El
   grupo de usuarios de la pila pide un correo como nombre de usuario.
 
+- **Q170 — Reanudar un VM suspendido y la primera llamada.** Con `idle` de 60 s
+  y una espera de 150 s, el VM de la flota pasa a `SUSPENDED`; la siguiente
+  `invoke()` lo reanuda y contesta en **1,9 a 4,0 s** en total (reanudar más la
+  primera llamada al modelo), medido en 31 despliegues de 4096 MiB de los
+  quince ejemplos (Python y TypeScript, 2026-10-16). Un VM terminado sigue en
+  el listado como `SUSPENDED` hasta unos segundos (en un caso, más de 90 s)
+  después de `stop()`: quien comprueba que no queda ninguno espera, no lee una
+  vez.
+- **Q171 — Una flota de 1 a 2 VMs con una plaza caliente.** Cinco llamadas a la
+  vez a una flota de `max_concurrency=2` y cola de 2 se reparten entre dos VMs
+  (el asa `rs1.<sandbox>.<sesión>` nombra a cada uno); las mismas cinco por la
+  URL de un solo VM dan respuestas y `429` (`busy`) con el sobrante. La plaza
+  caliente aparcada se recicla cuando le quedan menos de 3540 s de vida: el
+  pool crea otra y termina la vieja. Reconectar con `AgentFleet.connect` y el
+  mismo `scaling` devuelve las respuestas con el asa; sin él, el id de sesión
+  viaja sin asa.
+- **Q172 — El modelo desde el grafo del usuario.** Un grafo de LangGraph o
+  DeepAgents que crea su propio `ChatBedrockConverse` sólo pasa por la pasarela
+  si el host exporta `AWS_ENDPOINT_URL_BEDROCK_RUNTIME`; sin esa variable el
+  cliente sale por el proxy de salida del sandbox (`HTTPS_PROXY`) y falla con
+  `ProxyConnectionError`. El SDK de AWS para JavaScript habla HTTP/2 en claro con
+  un endpoint `http://` (nunca ocurre contra AWS, que es TLS) y un Bedrock falso
+  en HTTP/1.1 no le contesta.
+
 
 ## Despliegue de agentes de cero configuración (0.14, `deploy_agent`)
 

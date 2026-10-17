@@ -167,6 +167,16 @@ after the deadline, raises `CapacityException` (`code = "agent_capacity"`;
       and the defaults leave no slots or extra VMs.
     - **Example:** `deploy_agent("./mi-agente", options=AgentDeployOptions(scaling=ScalingOptions(max_vms=3)))`.
 
+!!! info "Measured on real AWS"
+    In the 0.14 acceptance (2026-10-16, us-east-1, Claude Haiku 4.5) the fifteen
+    sample agents were deployed without touching their code, in Python and in
+    TypeScript, with no options and with 4096 MiB, 2 sessions per VM, a queue of
+    2 and 1 to 2 VMs with one warm. Five simultaneous calls spread over two VMs;
+    through the URL of a single VM, the overflow got `429`. Resuming a suspended
+    VM and making the first call took between 1.9 and 4.0 s. The whole cycle (65
+    images) cost about $5 and ended with the AWS inventory the same as at the
+    start. Details in `AWS_API_NOTES.md` (Q170 to Q172).
+
 ## See also { #ver-tambien }
 
 - [Deploy your agent](despliega-tu-agente.md): the full guide and the project file.

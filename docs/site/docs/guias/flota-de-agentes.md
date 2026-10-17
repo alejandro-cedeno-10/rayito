@@ -168,6 +168,16 @@ pasado el plazo, lanza `CapacityException` (`code = "agent_capacity"`;
       valores por defecto no dejan plazas ni VMs extra.
     - **Ejemplo:** `deploy_agent("./mi-agente", options=AgentDeployOptions(scaling=ScalingOptions(max_vms=3)))`.
 
+!!! info "Medido en AWS real"
+    En la aceptación de 0.14 (2026-10-16, us-east-1, Claude Haiku 4.5) los quince
+    agentes de ejemplo se desplegaron sin tocar su código, en Python y en
+    TypeScript, sin opciones y con 4096 MiB, 2 sesiones por VM, cola de 2 y de
+    1 a 2 VMs con una caliente. Cinco llamadas a la vez se repartieron entre dos
+    VMs; por la URL de un solo VM, el sobrante recibió `429`. Reanudar un VM
+    suspendido y hacer la primera llamada tardó entre 1,9 y 4,0 s. Todo el
+    ciclo (65 imágenes) costó unos $5 y terminó con el inventario de AWS igual
+    que al empezar. Detalle en `AWS_API_NOTES.md` (Q170 a Q172).
+
 ## Ver también { #ver-tambien }
 
 - [Despliega tu agente](despliega-tu-agente.md): la guía completa y el fichero de proyecto.
