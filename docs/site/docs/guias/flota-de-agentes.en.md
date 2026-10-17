@@ -119,6 +119,13 @@ from the non-terminated MicroVMs of its image without resuming any, and a
 session id from the first call still leads to its VM. For the reconnected fleet's
 replies to return the handle too, pass the same `scaling` you deployed it with.
 
+A fleet reconnected without `project=` routes and queries, but it cannot start
+a warm slot or create a VM: the first session that needs one raises
+`InvalidArgumentException`. For it to scale too, pass the project
+(`AgentProject.detect(folder)` or `AgentProject.load(...)`) to
+`AgentFleet.connect()`. Measured on real AWS with a CLI deploy using
+`--warm 1`.
+
 A session id you choose yourself (a chat thread) is only remembered inside the
 process that deployed the fleet. To find it from another process in `dedicated`
 mode, turn on the optional metadata index

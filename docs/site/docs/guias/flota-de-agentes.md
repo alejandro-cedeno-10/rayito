@@ -119,6 +119,13 @@ de la primera llamada sigue llevando a su VM. Para que las respuestas de la
 flota reconectada también devuelvan el asa, pasa el mismo `scaling` con el que
 la desplegaste.
 
+Una flota reconectada sin `project=` enruta y consulta, pero no puede arrancar
+una plaza caliente ni crear un VM: la primera sesión que necesite uno lanza
+`InvalidArgumentException`. Para que también escale, pasa el proyecto
+(`AgentProject.detect(carpeta)` o `AgentProject.load(...)`) a
+`AgentFleet.connect()`. Medido en AWS real con un despliegue de la CLI con
+`--warm 1`.
+
 Un id de sesión que elijas tú (el hilo de un chat) sólo se recuerda dentro del
 proceso que desplegó la flota. Para encontrarlo desde otro proceso en modo
 `dedicated`, activa el índice opcional de metadatos
