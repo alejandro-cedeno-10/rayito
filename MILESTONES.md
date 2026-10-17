@@ -2048,14 +2048,15 @@ rayito[cli]==0.14.0 rayito --version` responden 0.14.0). Los cambios OpenSpec
   TypeScript. El host sirve una cola FIFO acotada y supervisa las apps de larga
   vida.
 - **Opciones tipadas**: `memory`, `sessions`, `pool` (`ScalingOptions`),
-  `queue`, `env` y `network` en `AgentDeployOptions`, en `rayito-agent.toml`
-  y en la CLI, con los mismos nombres en los dos SDK.
+  `queue`, `env` y `network` en `AgentProject` (`ServeOptions` y
+  `ScalingOptions`), en `rayito-agent.toml` y en la CLI;
+  `AgentDeployOptions.scaling` gana al del proyecto.
 - **`rayito agent`**: `init`, `detect`, `build`, `run`, `deploy`, `export`,
   `invoke`, `status` y `stop` en las dos CLI.
 - **Cambios de comportamiento** (sin romper la API): `agent deploy` despliega
   una flota y hace más llamadas a AWS; `max_concurrency` queda acotada por la
   memoria del VM; el código copiado excluye `.git`, `.env*`, `.venv`,
-  `node_modules`, `__pycache__` y `.rayito`. Fila 0.14 de compatibilidad en
+  `venv`, `node_modules`, `__pycache__`, `*.pyc` y `.rayito`. Fila 0.14 de compatibilidad en
   `rayito doctor` y en `limits.md`.
 
 **Aceptación de la release (2026-10-17, cuenta de pruebas, us-east-1)**:
