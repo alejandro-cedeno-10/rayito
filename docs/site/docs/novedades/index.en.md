@@ -12,7 +12,19 @@ detail, change by change, is in each component's
 
 <div class="grid cards" markdown>
 
--   :material-tag:{ .lg .middle } **0.13.0** · 2026-10-16 · current
+-   :material-tag:{ .lg .middle } **0.14.0** · 2026-10-17 · current
+
+    ---
+
+    Deploy the agent you already have with zero config, in Python and
+    TypeScript (`deploy_agent()`, `deployAgent()` and `rayito agent deploy`):
+    adapters for LangGraph, LangChain, deepagents, Strands, Hermes, OpenCode,
+    the Vercel AI SDK or your own app, and typed options for memory, sessions,
+    pool, queue, environment and network. No API-breaking changes.
+
+    [:octicons-arrow-right-24: What's new in 0.14.0](0.14.0.md)
+
+-   :material-tag:{ .lg .middle } **0.13.0** · 2026-10-16
 
     ---
 
@@ -134,7 +146,7 @@ detail, change by change, is in each component's
     ```python
     import rayito
 
-    print(rayito.__version__)  # "0.13.0"
+    print(rayito.__version__)  # "0.14.0"
     ```
 
 === "TypeScript"
@@ -142,7 +154,7 @@ detail, change by change, is in each component's
     ```ts
     import { VERSION } from "rayito";
 
-    console.log(VERSION); // "0.13.0"
+    console.log(VERSION); // "0.14.0"
     ```
 
 === "CLI"

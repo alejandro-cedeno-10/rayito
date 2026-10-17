@@ -431,3 +431,68 @@ The npm package `rayito` SHALL declare a `rayito` executable and the Python pack
 #### Scenario: a command prints what Python prints
 - **WHEN** a command case runs on the TypeScript CLI
 - **THEN** the exit code, the stdout (parsed JSON when it is a document) and the effects equal the ones the Python CLI produced for the same world
+
+### Requirement: rayito agent manages a project from the command line in both CLIs
+The Python and TypeScript CLIs SHALL provide `rayito agent init [DIR] --runtime R [--language] [--provider] [--model] [--region] [--force]`, `rayito agent build [--file] --bucket B [--force] [--timeout]`, `rayito agent run PROMPT [--file] [--session-id] [--model] [--stream]`, `rayito agent deploy [--file] [--timeout] [--port] [--token-file]`, `rayito agent export [--file] --target docker|agentcore --out DIR [--overwrite]`, `rayito agent invoke SANDBOX_ID PROMPT [--session-id] [--stream] [--token-file]`, `rayito agent status SANDBOX_ID [--token-file]` and `rayito agent stop SANDBOX_ID`, as shells over `AgentProject` and `AgentDeployment`, with `--file` defaulting to the current directory, defaults taken from SDK constants, `--json` output and the existing exit codes. `rayito agent template build` SHALL keep its surface. `init` SHALL write `rayito-agent.toml` and a minimal scaffold for the chosen runtime and SHALL NOT overwrite an existing file without `--force`; `init`, `export` and loading SHALL make no AWS call. `testdata/cli/surface.json` SHALL list the new commands and both CLIs SHALL match it.
+
+#### Scenario: surface golden
+- **WHEN** the Python surface test regenerates `testdata/cli/surface.json` and the TypeScript surface test compares its command tree
+- **THEN** both include every `rayito agent` command above with the same options and defaults
+
+#### Scenario: init does not overwrite
+- **WHEN** `rayito agent init --runtime strands` runs in a directory that already has `rayito-agent.toml`
+- **THEN** it exits with code 2, leaves the file unchanged and prints that `--force` overwrites it
+
+#### Scenario: deploy prints the endpoint
+- **WHEN** a unit test runs `rayito agent deploy --json` with `AgentProject.deploy` replaced by a spy returning a fake deployment
+- **THEN** the JSON has `sandboxId`, `url` and `port`, and never the proxy headers
+
+### Requirement: A deployment can be reopened from another process with its access token
+`AgentProject.deploy()` SHALL accept the sandbox access token (`access_token` in Python, `accessToken` in TypeScript) and pass it to `Sandbox.create()` only when given. `rayito agent deploy` SHALL use `RAYITO_ACCESS_TOKEN` or a new token, SHALL write it to `--token-file` (a new file with mode `0600`, never overwritten, never printed, never in argv) before creating the sandbox, and SHALL exit with code 2 without creating anything when it has neither. `rayito agent invoke` and `rayito agent status` SHALL read the token from `--token-file` or `RAYITO_ACCESS_TOKEN` and exit with code 2 without connecting when there is none. `rayito agent stop` SHALL NOT need the token: it terminates the sandbox by id and is idempotent.
+
+#### Scenario: deploy without a way back
+- **WHEN** `rayito agent deploy` runs with no `RAYITO_ACCESS_TOKEN` and no `--token-file`
+- **THEN** it exits with code 2 and `AgentProject.deploy` is never called
+
+#### Scenario: deploy then invoke from another process
+- **WHEN** `rayito agent deploy --token-file F` finishes and a second process runs `rayito agent invoke SANDBOX_ID PROMPT --token-file F`
+- **THEN** the second process reaches the deployment with the saved token and `rayito agent stop SANDBOX_ID` terminates it without any token
+
+### Requirement: rayito agent init scaffolds an HTTP app for custom and a plain graph for langgraph
+`rayito agent init --runtime custom` SHALL write `rayito-agent.toml` with `[runtime]` (`kind`, `requirements`, `install = []`) and `[runtime.app]` (`command`, `port`, `health_path`, `invoke_path`, `protocol = "raw"`), a minimal `serve.py` with the declared routes and a `requirements.txt`, and SHALL print a line explaining `raw`. `--runtime langgraph` SHALL write a `create_react_agent` graph. Both CLIs SHALL write the same files, checked against `testdata/cli/agent-scaffold/cases.json`, and the written project SHALL load.
+
+#### Scenario: custom scaffold loads
+- **WHEN** `rayito agent init DIR --runtime custom` runs and `AgentProject.load(DIR)` reads the result
+- **THEN** the runtime is a `CustomRuntime` with an `HttpApp` of protocol `raw` and `requirements` set
+
+### Requirement: rayito agent deploy can keep a failed sandbox and explains the failure
+`rayito agent deploy` SHALL accept `--keep-on-failure`, print the message and notes of a `SandboxException` and exit 1, and print the unknown-usage label `tokens=desconocido` in `run` and `invoke`. The surface golden SHALL list the new option in both CLIs.
+
+#### Scenario: failed startup
+- **WHEN** the deployment fails with the host's diagnostics
+- **THEN** the CLI prints them to stderr and exits 1
+
+### Requirement: rayito image publish accepts latest as the base image version
+`--base-image-version latest` SHALL resolve the newest version `list-managed-microvm-image-versions` returns for the managed base of the region and print `base_image_version=<version>` to stderr before publishing on it. The option SHALL stay required, an explicit value SHALL be used as given with no extra call, and a managed image that lists no version SHALL fail with exit 1 naming the option.
+
+#### Scenario: latest
+- **WHEN** `--base-image-version latest` runs and the managed image lists versions 1 and 3
+- **THEN** the publish uses `3` and prints `base_image_version=3`
+
+### Requirement: rayito agent deploy deploys a project with no project file
+`rayito agent deploy [PATH]` SHALL detect the project when `rayito-agent.toml` is absent, print the detection summary before building, and accept `--framework`, `--language`, `--entry`, `--protocol`, `--memory`, `--max-sessions`, `--sessions`, `--min-vms`, `--max-vms`, `--warm`, `--idle`, `--queue`, `--queue-timeout`, `--env K=V`, `--allow-out`, `--region`, `--bucket`, `--secret provider=name`, `--create-secret`, `--yes`, `--dry-run` and `--write`. Help text and messages SHALL be in Spanish and defaults SHALL be the SDK constants. `--dry-run` SHALL make no AWS call.
+
+#### Scenario: dry run prints plan and cost
+- **WHEN** `rayito agent deploy PATH --dry-run` runs
+- **THEN** it prints the detection, the plan and a cost estimate, exits 0 and creates nothing
+
+#### Scenario: flag overrides detection
+- **WHEN** `--max-sessions 2 --min-vms 1 --max-vms 3 --warm 1 --memory 4096` are passed
+- **THEN** the resolved plan shows those values
+
+### Requirement: The CLI surface golden lists the new commands and options
+`testdata/cli/surface.json` SHALL list `agent detect` and the options above, and both the Python CLI and the TypeScript CLI that exists for agents SHALL match it.
+
+#### Scenario: surface
+- **WHEN** the surface test runs
+- **THEN** the listed options match the CLI
