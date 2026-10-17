@@ -1,0 +1,62 @@
+{
+  "schema": "rayito.agent-project/1",
+  "name": "fleet-bot",
+  "runtime": {
+    "kind": "langgraph",
+    "entrypoint": "agent:graph",
+    "language": "python",
+    "framework": "langgraph",
+    "python_version": "3.13"
+  },
+  "model": {
+    "provider": "anthropic",
+    "id": "claude-haiku-4-5",
+    "gateway": "anthropic"
+  },
+  "gateways": {
+    "anthropic": {
+      "preset": "custom",
+      "upstream": "https://api.anthropic.com",
+      "headers": {
+        "x-api-key": "rayito/agents/fleet-bot/anthropic"
+      },
+      "allow": [
+        [
+          "POST",
+          "/v1/messages"
+        ]
+      ]
+    }
+  },
+  "serve": {
+    "max_concurrency": 8,
+    "queue_max": 16,
+    "queue_timeout_seconds": 45
+  },
+  "scaling": {
+    "max_vms": 4,
+    "warm_vms": 1,
+    "sessions": "dedicated",
+    "scale_in_after_seconds": 600
+  },
+  "env": {
+    "LOG_LEVEL": "info",
+    "REGION_LABEL": "east"
+  },
+  "network": {
+    "allow_out": [
+      "example.com"
+    ],
+    "deny_out": [
+      "0.0.0.0/0"
+    ]
+  },
+  "deploy": {
+    "region": "us-east-1",
+    "bucket": "amzn-s3-demo-bucket",
+    "base_image_version": "latest"
+  },
+  "image": {
+    "memory_mib": 4096
+  }
+}

@@ -1,0 +1,36 @@
+{
+  "schema": "rayito.agent-project/1",
+  "name": "opencode",
+  "runtime": {
+    "kind": "opencode",
+    "framework": "opencode"
+  },
+  "source": {
+    "path": "."
+  },
+  "model": {
+    "provider": "bedrock",
+    "id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+    "gateway": "bedrock",
+    "region": "us-east-1"
+  },
+  "gateways": {
+    "bedrock": {
+      "preset": "custom",
+      "upstream": "https://bedrock-runtime.us-east-1.amazonaws.com",
+      "headers": {
+        "authorization": "rayito/agents/opencode/bedrock"
+      },
+      "allow": [
+        [
+          "POST",
+          "/model/us.anthropic.claude-haiku-4-5-20251001-v1%3A0/converse-stream"
+        ],
+        [
+          "POST",
+          "/model/us.anthropic.claude-haiku-4-5-20251001-v1%3A0/converse"
+        ]
+      ]
+    }
+  }
+}

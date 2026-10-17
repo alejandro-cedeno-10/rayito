@@ -227,6 +227,23 @@ Docker: `make agent-export-test` builds the exported context for
 `linux/arm64`, starts the container and probes `/ping` and `/invocations`
 (JSON, SSE and the token) inside it.
 
+### The sample agents, from detection to the container { #los-agentes-de-ejemplo }
+
+`make agent-zero-config-test` takes the fifteen agents in
+`testdata/agent-samples/` (LangGraph with FastAPI, LangChain, deepagents, Strands,
+Strands harness, Hermes, a Flask app, a native AgentCore agent, LangGraph.js,
+deepagents-js, Strands TypeScript and its harness, the Vercel AI SDK, an Express
+app and OpenCode), detects them with no options, exports their Docker context,
+builds it for `linux/arm64` with the host's Docker and tests it against a fake
+Bedrock (`dev/local/providers/fake_bedrock.py`, which calls the `add` tool and
+answers with its result): `/ping`, an invocation with a tool, the SSE stream, the
+service token, the host queue and the `429` with three simultaneous requests, and
+the restart of an app that dies. It uses no AWS and no keys. `RAYITO_ZC_SAMPLES=a,b`
+picks samples and `RAYITO_ZC_ENDPOINT_HOST` is the name the container uses to see
+the host (`host.docker.internal` by default; `host.lima.internal` with Lima). A Docker
+with BuildKit is required: the host's Docker client may not ship `buildx`, in which
+case run it with the virtual machine's `docker`.
+
 ### Smoke test against the real APIs { #prueba-de-humo-contra-las-apis-reales }
 
 `test_local_agent_providers_smoke.py` (Python) and

@@ -11,7 +11,8 @@ import { join } from "node:path";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { parse as parseToml } from "smol-toml";
 import { describe, expect, test } from "vitest";
-import { AgentProjectError } from "../../src/agent/project.js";
+import { AgentProjectError, RuntimeVersions } from "../../src/agent/project.js";
+import { ScalingOptions } from "../../src/agent/scaling-domain.js";
 import {
   AgentLimits,
   AgentModel,
@@ -280,5 +281,83 @@ describe("construction", () => {
       globalThis.fetch = originalFetch;
     }
     expect(calls).toEqual([]);
+  });
+});
+
+describe("fleet options", () => {
+  test("a project defaults to one VM without extras", () => {
+    const built = project();
+    expect(built.scaling).toEqual(new ScalingOptions());
+    expect(built.env).toEqual({});
+    expect(built.network).toBeUndefined();
+    expect([built.region, built.bucket, built.baseImageVersion]).toEqual([
+      undefined,
+      undefined,
+      undefined,
+    ]);
+    expect([built.language, built.framework]).toEqual([undefined, undefined]);
+    expect(built.versions.isDefault).toBe(true);
+  });
+
+  test("they survive the canonical form", () => {
+    const built = project({
+      scaling: { minVms: 1, maxVms: 3, warmVms: 1, sessions: "dedicated" },
+      env: { LOG_LEVEL: "info" },
+      network: { allowOut: ["example.com"], denyOut: ["0.0.0.0/0"] },
+      region: "us-east-1",
+      bucket: "amzn-s3-demo-bucket",
+      baseImageVersion: "latest",
+      language: "python",
+      framework: "langgraph",
+      versions: { python: "3.13" },
+      serve: new ServeOptions({ queueMax: 4, queueTimeoutMs: 12_000 }),
+    });
+    const again = AgentProject.fromObject(built.toObject(), { baseDir: built.baseDir });
+    expect(again.toObject()).toEqual(built.toObject());
+    expect(again.scaling).toEqual(built.scaling);
+    expect(again.network).toEqual(built.network);
+    expect(again.versions).toEqual(built.versions);
+    expect(again.serve.queueMax).toBe(4);
+  });
+
+  test.each([
+    { scaling: "dedicated" },
+    { versions: { python: "3.12.4" } },
+    { env: { API_KEY: "x" } },
+    { env: { GITHUB_TOKEN: "x" } },
+    { env: { GREETING: "Bearer demo" } },
+    { env: { "1BAD": "x" } },
+    { env: { COUNT: 3 } },
+    { network: { allowOut: [""] } },
+    { language: "go" },
+    { region: "" },
+    { bucket: "has space" },
+    { baseImageVersion: "" },
+    { serve: new ServeOptions({ maxConcurrency: 16 }) },
+  ])("invalid %j fails before calling anyone", (overrides) => {
+    expect(() => project(overrides)).toThrow(InvalidArgumentError);
+  });
+
+  test("the session cap grows with the memory of the VM", () => {
+    expect(
+      project({ serve: new ServeOptions({ maxConcurrency: 15 }), memoryMib: 4096 }).memoryMib,
+    ).toBe(4096);
+    expect(() => project({ serve: new ServeOptions({ maxConcurrency: 8 }) })).toThrow(
+      InvalidArgumentError,
+    );
+  });
+
+  test("RuntimeVersions only accepts a pinned build", () => {
+    for (const version of ["2.7", "3", "3.12.4"]) {
+      expect(() => new RuntimeVersions({ python: version })).toThrow(InvalidArgumentError);
+    }
+  });
+
+  test("the env of a project is copied and frozen", () => {
+    const env = { LOG_LEVEL: "info" };
+    const built = project({ env });
+    env.LOG_LEVEL = "debug";
+    expect(built.env.LOG_LEVEL).toBe("info");
+    expect(Object.isFrozen(built.env)).toBe(true);
   });
 });

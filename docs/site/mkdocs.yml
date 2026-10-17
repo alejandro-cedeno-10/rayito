@@ -129,6 +129,7 @@ plugins:
             Instalación: Installation
             Configurar AWS: Set up AWS
             Primer sandbox: First sandbox
+            Tu agente en 5 minutos: Your agent in 5 minutes
             Conceptos: Concepts
             Guías: Guides
             Sandbox: Sandbox
@@ -156,6 +157,7 @@ plugins:
             Agente en el sandbox: Agent in the sandbox
             Proveedores del agente: Agent providers
             Despliega tu agente: Deploy your agent
+            Varias sesiones y varias VMs: Several sessions and several VMs
             Desarrollar: Develop
             Probar en local (Docker + Floci): Test locally (Docker + Floci)
             Funciones opcionales: Optional features
@@ -287,6 +289,7 @@ nav:
       - Instalación: primeros-pasos/instalacion.md
       - Configurar AWS: primeros-pasos/configurar-aws.md
       - Primer sandbox: quickstart.md
+      - Tu agente en 5 minutos: primeros-pasos/agente-en-cinco-minutos.md
       - Conceptos: concepts.md
   - Guías:
       - guias/index.md
@@ -315,6 +318,7 @@ nav:
           - "Agente en el sandbox": guias/agente-en-el-sandbox.md
           - "Proveedores del agente": guias/agente-proveedores.md
           - "Despliega tu agente": guias/despliega-tu-agente.md
+          - "Varias sesiones y varias VMs": guias/flota-de-agentes.md
       - Desarrollar:
           - Probar en local (Docker + Floci): guias/probar-en-local.md
   - Funciones opcionales:

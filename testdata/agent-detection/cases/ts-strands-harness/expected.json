@@ -1,0 +1,55 @@
+{
+  "schema": "rayito.agent-detection/1",
+  "language": "typescript",
+  "framework": "strands-harness",
+  "kind": "strands",
+  "entrypoint": "src/agent.ts#buildAgent",
+  "entrypoint_kind": "factory",
+  "protocol": "framework",
+  "options": {},
+  "app": null,
+  "install": {
+    "manager": "npm",
+    "lockfile": "package-lock.json",
+    "requirements": null,
+    "require_hashes": false,
+    "reproducible": true,
+    "build_script": false,
+    "python_version": null,
+    "node_version": "22"
+  },
+  "providers": [
+    {
+      "preset": "bedrock",
+      "evidence": [
+        {
+          "path": "package.json",
+          "rule": "dep:@strands-agents/sdk"
+        },
+        {
+          "path": "package.json",
+          "rule": "dep:@strands-agents/harness"
+        }
+      ]
+    }
+  ],
+  "models": [
+    "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+  ],
+  "evidence": [
+    {
+      "path": "package.json",
+      "rule": "dep:@strands-agents/harness"
+    },
+    {
+      "path": "src/agent.ts",
+      "rule": "entry:ts-factory-noargs"
+    },
+    {
+      "path": "package-lock.json",
+      "rule": "install:npm"
+    }
+  ],
+  "warnings": [],
+  "alternatives": []
+}

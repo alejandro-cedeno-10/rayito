@@ -1,0 +1,38 @@
+{
+  "schema": "rayito.agent-detection/1",
+  "language": null,
+  "framework": "hermes",
+  "kind": "hermes",
+  "entrypoint": null,
+  "entrypoint_kind": null,
+  "protocol": "framework",
+  "options": {
+    "skills_dir": "skills"
+  },
+  "app": null,
+  "install": null,
+  "providers": [
+    {
+      "preset": "openrouter",
+      "evidence": [
+        {
+          "path": "config.yaml",
+          "rule": "config"
+        }
+      ]
+    }
+  ],
+  "models": [],
+  "evidence": [
+    {
+      "path": "SOUL.md",
+      "rule": "file:SOUL.md"
+    },
+    {
+      "path": "config.yaml",
+      "rule": "file:config.yaml"
+    }
+  ],
+  "warnings": [],
+  "alternatives": []
+}

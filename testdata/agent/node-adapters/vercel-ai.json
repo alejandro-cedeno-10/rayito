@@ -1,0 +1,205 @@
+{
+  "_comment": "Vectores del adaptador `vercel-ai` de `node_bridge.mjs` (AI SDK): las partes de `result.fullStream` y los eventos v1 que deben salir (sin `session` ni `done`). `reasoning` dice si la petición lo pidió. Las formas son las del AI SDK v5/v6 (`text-delta` con `text`, `tool-call` con `input`, `finish-step` con `usage` y `finishReason`).",
+  "cases": [
+    {
+      "name": "tool-call-then-answer",
+      "reasoning": false,
+      "parts": [
+        { "type": "start" },
+        { "type": "start-step" },
+        { "type": "tool-call", "toolCallId": "c1", "toolName": "add", "input": { "a": 2, "b": 3 } },
+        { "type": "tool-result", "toolCallId": "c1", "toolName": "add", "input": { "a": 2, "b": 3 }, "output": 5 },
+        {
+          "type": "finish-step",
+          "finishReason": "tool-calls",
+          "usage": { "inputTokens": 10, "outputTokens": 5, "cachedInputTokens": 2 }
+        },
+        { "type": "start-step" },
+        { "type": "text-delta", "id": "t", "text": "La suma " },
+        { "type": "text-delta", "id": "t", "text": "es 5" },
+        {
+          "type": "finish-step",
+          "finishReason": "stop",
+          "usage": { "inputTokens": 20, "outputTokens": 7, "reasoningTokens": 3 }
+        },
+        { "type": "finish" }
+      ],
+      "events": [
+        { "v": 1, "type": "step_started", "index": 1 },
+        {
+          "v": 1,
+          "type": "tool_call",
+          "call_id": "c1",
+          "name": "add",
+          "status": "completed",
+          "input": { "a": 2, "b": 3 },
+          "output": "5",
+          "output_truncated": false
+        },
+        {
+          "v": 1,
+          "type": "step_finished",
+          "index": 1,
+          "usage": { "input": 10, "output": 5, "reasoning": 0, "cache_read": 2, "cache_write": 0 },
+          "finish_reason": "tool_use"
+        },
+        { "v": 1, "type": "step_started", "index": 2 },
+        { "v": 1, "type": "text_delta", "text": "La suma " },
+        { "v": 1, "type": "text_delta", "text": "es 5" },
+        { "v": 1, "type": "text", "text": "La suma es 5" },
+        {
+          "v": 1,
+          "type": "step_finished",
+          "index": 2,
+          "usage": { "input": 20, "output": 7, "reasoning": 3, "cache_read": 0, "cache_write": 0 },
+          "finish_reason": "end_turn"
+        }
+      ],
+      "answer": "La suma es 5"
+    },
+    {
+      "name": "reasoning-is-only-emitted-when-requested",
+      "reasoning": true,
+      "parts": [
+        { "type": "start-step" },
+        { "type": "reasoning-delta", "id": "r", "text": "pienso " },
+        { "type": "reasoning-delta", "id": "r", "text": "bien" },
+        { "type": "text-delta", "id": "t", "text": "listo" },
+        { "type": "finish-step", "finishReason": "length", "usage": { "inputTokens": 1, "outputTokens": 1 } }
+      ],
+      "events": [
+        { "v": 1, "type": "step_started", "index": 1 },
+        { "v": 1, "type": "text_delta", "text": "listo" },
+        { "v": 1, "type": "text", "text": "listo" },
+        { "v": 1, "type": "reasoning", "text": "pienso bien" },
+        {
+          "v": 1,
+          "type": "step_finished",
+          "index": 1,
+          "usage": { "input": 1, "output": 1, "reasoning": 0, "cache_read": 0, "cache_write": 0 },
+          "finish_reason": "max_tokens"
+        }
+      ],
+      "answer": "listo"
+    },
+    {
+      "name": "a-failed-tool",
+      "reasoning": false,
+      "parts": [
+        { "type": "start-step" },
+        { "type": "tool-call", "toolCallId": "c9", "toolName": "fetch", "input": { "url": "x" } },
+        { "type": "tool-error", "toolCallId": "c9", "toolName": "fetch", "input": { "url": "x" }, "error": { "message": "sin red" } },
+        { "type": "finish-step", "finishReason": "tool-calls", "usage": {} }
+      ],
+      "events": [
+        { "v": 1, "type": "step_started", "index": 1 },
+        {
+          "v": 1,
+          "type": "tool_call",
+          "call_id": "c9",
+          "name": "fetch",
+          "status": "error",
+          "input": { "url": "x" },
+          "output": "sin red",
+          "output_truncated": false
+        },
+        {
+          "v": 1,
+          "type": "step_finished",
+          "index": 1,
+          "usage": { "input": 0, "output": 0, "reasoning": 0, "cache_read": 0, "cache_write": 0 },
+          "finish_reason": "tool_use"
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "name": "older-text-delta-field-names",
+      "reasoning": false,
+      "parts": [
+        { "type": "start-step" },
+        { "type": "text-delta", "textDelta": "viejo" },
+        { "type": "text-delta", "delta": " y nuevo" },
+        { "type": "finish-step", "finishReason": "content-filter", "usage": {} }
+      ],
+      "events": [
+        { "v": 1, "type": "step_started", "index": 1 },
+        { "v": 1, "type": "text_delta", "text": "viejo" },
+        { "v": 1, "type": "text_delta", "text": " y nuevo" },
+        { "v": 1, "type": "text", "text": "viejo y nuevo" },
+        {
+          "v": 1,
+          "type": "step_finished",
+          "index": 1,
+          "usage": { "input": 0, "output": 0, "reasoning": 0, "cache_read": 0, "cache_write": 0 },
+          "finish_reason": "content_filtered"
+        }
+      ],
+      "answer": "viejo y nuevo"
+    }
+  ],
+  "generate_cases": [
+    {
+      "name": "steps-from-generate",
+      "result": {
+        "steps": [
+          {
+            "toolCalls": [{ "toolCallId": "c1", "toolName": "add", "input": { "a": 1 } }],
+            "toolResults": [{ "toolCallId": "c1", "toolName": "add", "output": { "sum": 1 } }],
+            "usage": { "inputTokens": 4, "outputTokens": 2 },
+            "finishReason": "tool-calls"
+          },
+          { "text": "uno", "usage": { "inputTokens": 5, "outputTokens": 1 }, "finishReason": "stop" }
+        ]
+      },
+      "events": [
+        { "v": 1, "type": "step_started", "index": 1 },
+        {
+          "v": 1,
+          "type": "tool_call",
+          "call_id": "c1",
+          "name": "add",
+          "status": "completed",
+          "input": { "a": 1 },
+          "output": "{\"sum\":1}",
+          "output_truncated": false
+        },
+        {
+          "v": 1,
+          "type": "step_finished",
+          "index": 1,
+          "usage": { "input": 4, "output": 2, "reasoning": 0, "cache_read": 0, "cache_write": 0 },
+          "finish_reason": "tool_use"
+        },
+        { "v": 1, "type": "step_started", "index": 2 },
+        { "v": 1, "type": "text_delta", "text": "uno" },
+        { "v": 1, "type": "text", "text": "uno" },
+        {
+          "v": 1,
+          "type": "step_finished",
+          "index": 2,
+          "usage": { "input": 5, "output": 1, "reasoning": 0, "cache_read": 0, "cache_write": 0 },
+          "finish_reason": "end_turn"
+        }
+      ],
+      "answer": "uno"
+    },
+    {
+      "name": "a-result-without-steps-is-one-step",
+      "result": { "text": "hola", "usage": { "inputTokens": 3, "outputTokens": 1 }, "finishReason": "stop" },
+      "events": [
+        { "v": 1, "type": "step_started", "index": 1 },
+        { "v": 1, "type": "text_delta", "text": "hola" },
+        { "v": 1, "type": "text", "text": "hola" },
+        {
+          "v": 1,
+          "type": "step_finished",
+          "index": 1,
+          "usage": { "input": 3, "output": 1, "reasoning": 0, "cache_read": 0, "cache_write": 0 },
+          "finish_reason": "end_turn"
+        }
+      ],
+      "answer": "hola"
+    }
+  ]
+}

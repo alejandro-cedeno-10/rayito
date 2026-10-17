@@ -48,7 +48,6 @@ import { planFeatures } from "../feature-options.js";
 import { DEFAULT_PORT, DEFAULT_WARMUP_STEP_TIMEOUT_SECONDS, TERMINAL_STATES } from "../limits.js";
 import type { Logger } from "../logger.js";
 import type { MicrovmListPage, SandboxInfo, SandboxListItem } from "../models.js";
-import { generateAccessToken } from "../payload.js";
 import {
   DEFAULT_READY_TIMEOUT_MS,
   DEFAULT_RECONNECT_TIMEOUT_MS,
@@ -65,6 +64,7 @@ import {
   launchOptions,
   type PoolConfig,
   type ResolvedPoolConfig,
+  slotAccessToken,
   validatePoolConfig,
 } from "./config.js";
 import {
@@ -499,7 +499,7 @@ export class SandboxPool implements AsyncDisposable {
         readyTimeoutMs: options.readyTimeoutMs ?? this.#config.readyTimeoutMs,
         requestTimeoutMs: options.requestTimeoutMs,
         reconnectTimeoutMs: options.reconnectTimeoutMs,
-        accessToken: generateAccessToken(),
+        accessToken: slotAccessToken(this.#config),
         keepOnFailure: false,
         controlPlane: plane,
         transport: this.#transport,
@@ -701,7 +701,7 @@ export class SandboxPool implements AsyncDisposable {
   }
 
   async #warmUpOnce(): Promise<void> {
-    const token = generateAccessToken();
+    const token = slotAccessToken(this.#config);
     const started = this.#monotonic();
     let launchedId: string | undefined;
     const plane = new LaunchObserver(this.#plane, async (info) => {

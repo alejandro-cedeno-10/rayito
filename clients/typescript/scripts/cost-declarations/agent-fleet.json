@@ -1,0 +1,16 @@
+[
+  { "name": "class AgentFleet", "pattern": "^(export )?declare class AgentFleet\\b" },
+  {
+    "name": "class AgentDeployOptions",
+    "pattern": "^(export )?declare class AgentDeployOptions\\b"
+  },
+  { "name": "class ScalingOptions", "pattern": "^(export )?declare class ScalingOptions\\b" },
+  {
+    "name": "deployAgent",
+    "pattern": "^(export )?declare function deployAgent\\b"
+  },
+  {
+    "name": "planDeploy",
+    "pattern": "^(export )?declare function planDeploy\\b"
+  }
+]

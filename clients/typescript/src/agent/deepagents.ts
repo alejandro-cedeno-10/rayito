@@ -31,6 +31,14 @@ import {
   validateModelId,
 } from "./domain.js";
 import type { AgentEvent, AgentFailed, Done } from "./events.js";
+import { standardModelEnvs } from "./host-runtime.js";
+import {
+  checkRequirementsPath,
+  DEFAULT_PYTHON_INSTALLER,
+  PYTHON_INSTALLERS,
+  pythonDependencySteps,
+  pythonManifest,
+} from "./install-plan.js";
 import { AGENT_RUN_LOCK_PATH, canonicalJson, filesSha256, shellQuote } from "./opencode.js";
 import {
   finishV1,
@@ -75,6 +83,9 @@ export const DEEPAGENTS_SESSIONS_DIR = `${DEEPAGENTS_STATE_DIR}/sessions`;
 export const DEEPAGENTS_VENV_DIR = `${AGENT_INSTALL_DIR}/deepagents`;
 export const DEEPAGENTS_PYTHON = `${DEEPAGENTS_VENV_DIR}/bin/python`;
 export const DEEPAGENTS_REQUIREMENTS_NAME = "requirements-deepagents.txt";
+/** Nombre con el que se copian los ficheros de dependencias de tu proyecto y el
+ * instalador por defecto (`pip`). */
+export const DEEPAGENTS_USER_SLUG = "deepagents";
 /** El runner en el contexto de build; se instala en `DEEPAGENTS_RUNNER_PATH`. */
 export const DEEPAGENTS_RUNNER_NAME = "deepagents_runner.py";
 /** Donde la plantilla instala el runner, de root y 0755. */
@@ -117,6 +128,34 @@ export const DEEPAGENTS_NATIVE_BASE_PATHS: Readonly<Record<string, string>> = Ob
 const ENTRYPOINT_PATTERN = /^[A-Za-z_][A-Za-z0-9_.]*:[A-Za-z_][A-Za-z0-9_]*$/;
 const UTF8 = new TextEncoder();
 
+function checkUserRequirements(
+  entrypoint: string | undefined,
+  requirements: string | undefined,
+  packageManager: string | undefined,
+): void {
+  if (requirements === undefined && packageManager === undefined) {
+    return;
+  }
+  if (entrypoint === undefined) {
+    throw new InvalidArgumentError(
+      "DeepAgents.requirements y packageManager necesitan un entrypoint: " +
+        "sin código tuyo no hay dependencias que instalar",
+    );
+  }
+  if (
+    packageManager !== undefined &&
+    !(PYTHON_INSTALLERS as readonly string[]).includes(packageManager)
+  ) {
+    throw new InvalidArgumentError(
+      `DeepAgents.packageManager debe ser uno de ${JSON.stringify(PYTHON_INSTALLERS)}`,
+    );
+  }
+  if (requirements === undefined) {
+    throw new InvalidArgumentError("DeepAgents.packageManager necesita requirements");
+  }
+  checkRequirementsPath("DeepAgents", requirements, packageManager);
+}
+
 /** Opciones de `new DeepAgents(...)`. */
 export interface DeepAgentsOptions {
   /** `"pkg.mod:build"`: una función de Python, importable desde el
@@ -126,6 +165,13 @@ export interface DeepAgentsOptions {
   /** `true` es el runtime registrado como `"langgraph"`: sin `entrypoint` no
    * hay agente que construir y `buildConfig()` / `hostConfig()` fallan. */
   readonly requireEntrypoint?: boolean | undefined;
+  /** Un fichero de dependencias de tu `source` (`app/<requirements>`:
+   * `requirements.txt` o, con `packageManager: "uv"`, `pyproject.toml` o
+   * `uv.lock`) que se instala en el venv sin quitar lo que ya hay. Necesita un
+   * `entrypoint`. */
+  readonly requirements?: string | undefined;
+  /** `pip` (por defecto) o `uv`. */
+  readonly packageManager?: string | undefined;
 }
 
 function toolRules(permissions: AgentPermissions, label: string): Record<string, unknown> {
@@ -272,6 +318,8 @@ export class DeepAgents implements AgentRuntime, InstallableRuntime, ServableRun
   readonly name = "deepagents";
   readonly entrypoint: string | undefined;
   readonly requireEntrypoint: boolean;
+  readonly requirements: string | undefined;
+  readonly packageManager: string | undefined;
 
   constructor(options: DeepAgentsOptions = {}) {
     const entrypoint = options.entrypoint;
@@ -283,8 +331,11 @@ export class DeepAgents implements AgentRuntime, InstallableRuntime, ServableRun
         "DeepAgents.entrypoint debe tener la forma 'paquete.modulo:funcion'",
       );
     }
+    checkUserRequirements(entrypoint, options.requirements, options.packageManager);
     this.entrypoint = entrypoint;
     this.requireEntrypoint = options.requireEntrypoint ?? false;
+    this.requirements = options.requirements;
+    this.packageManager = options.packageManager;
   }
 
   buildConfig(
@@ -371,19 +422,35 @@ export class DeepAgents implements AgentRuntime, InstallableRuntime, ServableRun
    * copia el runner (0755). */
   installSteps(target: InstallTarget): readonly TemplateStep[] {
     const requirements = `${target.installDir}/${DEEPAGENTS_REQUIREMENTS_NAME}`;
+    const venvDir = `${target.installDir}/deepagents`;
     return [
       copyStep(DEEPAGENTS_REQUIREMENTS_NAME, requirements),
       runStep(
         hashedVenvInstall(target, {
-          venvDir: `${target.installDir}/deepagents`,
+          venvDir,
           requirementsPath: requirements,
           requirementsSha256: AGENT_DEEPAGENTS_REQUIREMENTS_SHA256,
         }),
       ),
+      ...(this.requirements === undefined ? [] : this.#userDependencySteps(target, venvDir)),
       copyStep(DEEPAGENTS_RUNNER_NAME, `${target.installDir}/rayito/${DEEPAGENTS_RUNNER_NAME}`, {
         executable: true,
       }),
     ];
+  }
+
+  #userDependencySteps(target: InstallTarget, venvDir: string): readonly TemplateStep[] {
+    const requirements = this.requirements as string;
+    const manifest = pythonManifest(requirements);
+    return pythonDependencySteps(target, {
+      installer: this.packageManager ?? DEFAULT_PYTHON_INSTALLER,
+      manifest,
+      path: manifest === "requirements" ? requirements : undefined,
+      python: `${venvDir}/bin/python`,
+      venvDir,
+      slug: DEEPAGENTS_USER_SLUG,
+      createVenv: false,
+    });
   }
 
   /** Los requisitos con hash y el runner (datos de paquete). */
@@ -394,12 +461,18 @@ export class DeepAgents implements AgentRuntime, InstallableRuntime, ServableRun
     };
   }
 
-  /** El sha256 de los requisitos y el del runner, para el manifiesto. */
+  /** El sha256 de los requisitos y el del runner, para el manifiesto, y los de
+   * tu proyecto si los pediste. */
   manifestEntry(): Readonly<Record<string, unknown>> {
-    return {
+    const entry: Record<string, unknown> = {
       requirements_sha256: AGENT_DEEPAGENTS_REQUIREMENTS_SHA256,
       runner_sha256: createHash("sha256").update(DEEPAGENTS_RUNNER_SOURCE, "utf8").digest("hex"),
     };
+    if (this.requirements !== undefined) {
+      entry.user_requirements = this.requirements;
+      entry.package_manager = this.packageManager ?? DEFAULT_PYTHON_INSTALLER;
+    }
+    return entry;
   }
 
   /** Importa deepagents y los modelos de cada proveedor, y comprueba que el
@@ -417,16 +490,22 @@ export class DeepAgents implements AgentRuntime, InstallableRuntime, ServableRun
   }
 
   /** La configuración del host para el driver `deepagents`: el mismo
-   * fichero de configuración y las mismas variables que `command()`. */
+   * fichero de configuración y las mismas variables que `command()`, más las
+   * estándar del proveedor apuntadas a la pasarela, para que también el
+   * cliente de modelo que crea tu grafo pase por ella. */
   hostConfig(
     spec: AgentSpec,
     options: { readonly wiring: ModelWiring; readonly workdir: string },
   ): HostConfig {
+    const urls = wiringUrls(options.wiring);
     return hostConfig({
       driver: "deepagents",
       python: DEEPAGENTS_PYTHON,
-      files: this.#configFiles(spec, wiringUrls(options.wiring), options.workdir),
-      envs: runEnvs(spec, options.wiring.kind === "direct"),
+      files: this.#configFiles(spec, urls, options.workdir),
+      envs: {
+        ...runEnvs(spec, options.wiring.kind === "direct"),
+        ...standardModelEnvs(spec, urls),
+      },
       options: { config_path: DEEPAGENTS_CONFIG_PATH },
     });
   }

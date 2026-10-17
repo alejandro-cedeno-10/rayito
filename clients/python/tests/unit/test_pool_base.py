@@ -9,6 +9,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from rayito import IdlePolicy, PoolConfig, PoolStats
+from rayito._payload import generate_access_token
 from rayito._pool_base import (
     POOL_REJECTED_KWARGS,
     FillBackoff,
@@ -24,6 +25,7 @@ from rayito._pool_base import (
     reject_launch_kwargs_with_pool,
     resolved_pool_idle,
     sandbox_info_from_record,
+    slot_access_token,
     slot_is_stale,
     stats_from_records,
 )
@@ -72,8 +74,17 @@ def test_defaults_park_for_the_whole_wall() -> None:
     assert config.sweep_interval_seconds == 30.0
     assert config.ready_timeout == 90.0
     assert resolved_pool_idle(config).suspended_duration_seconds == 28800 - 300
-    assert not hasattr(config, "access_token")
+    assert config.access_token is None
     assert not hasattr(config, "allowed_ports")
+
+
+def test_a_fixed_access_token_is_validated_and_shared_by_every_slot() -> None:
+    token = generate_access_token()
+
+    assert slot_access_token(PoolConfig(size=2, access_token=token)) == token
+    assert slot_access_token(PoolConfig(size=2)) != slot_access_token(PoolConfig(size=2))
+    with pytest.raises(InvalidArgumentException):
+        PoolConfig(size=1, access_token="demasiado-corto")
 
 
 def test_launch_kwargs_map_one_to_one_onto_create() -> None:

@@ -1,0 +1,67 @@
+{
+  "schema": "rayito.agent-detection/1",
+  "language": "python",
+  "framework": "langgraph",
+  "kind": "langgraph",
+  "entrypoint": "agent:build_graph",
+  "entrypoint_kind": "factory",
+  "protocol": "framework",
+  "options": {},
+  "app": null,
+  "install": {
+    "manager": "uv",
+    "lockfile": "uv.lock",
+    "requirements": null,
+    "require_hashes": false,
+    "reproducible": true,
+    "build_script": false,
+    "python_version": "3.12",
+    "node_version": null
+  },
+  "providers": [
+    {
+      "preset": "bedrock",
+      "evidence": [
+        {
+          "path": "pyproject.toml",
+          "rule": "dep:langchain-aws"
+        }
+      ]
+    }
+  ],
+  "models": [
+    "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+  ],
+  "evidence": [
+    {
+      "path": "pyproject.toml",
+      "rule": "dep:langgraph"
+    },
+    {
+      "path": "agent.py",
+      "rule": "entry:py-factory-noargs"
+    },
+    {
+      "path": "uv.lock",
+      "rule": "install:uv"
+    },
+    {
+      "path": "pyproject.toml",
+      "rule": "version:specifier"
+    }
+  ],
+  "warnings": [
+    {
+      "code": "http_app_alternative",
+      "detail": "el proyecto también tiene una app HTTP (fastapi); se sirve el framework del agente, y --entry http sirve la app"
+    }
+  ],
+  "alternatives": [
+    {
+      "framework": "fastapi",
+      "kind": "custom",
+      "language": "python",
+      "entrypoint": "server:app"
+    }
+  ]
+}

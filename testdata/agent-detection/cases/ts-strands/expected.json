@@ -1,0 +1,49 @@
+{
+  "schema": "rayito.agent-detection/1",
+  "language": "typescript",
+  "framework": "strands",
+  "kind": "strands",
+  "entrypoint": "src/agent.ts#agent",
+  "entrypoint_kind": "object",
+  "protocol": "framework",
+  "options": {},
+  "app": null,
+  "install": {
+    "manager": "pnpm",
+    "lockfile": "pnpm-lock.yaml",
+    "requirements": null,
+    "require_hashes": false,
+    "reproducible": true,
+    "build_script": false,
+    "python_version": null,
+    "node_version": "22"
+  },
+  "providers": [
+    {
+      "preset": "bedrock",
+      "evidence": [
+        {
+          "path": "package.json",
+          "rule": "dep:@strands-agents/sdk"
+        }
+      ]
+    }
+  ],
+  "models": [],
+  "evidence": [
+    {
+      "path": "package.json",
+      "rule": "dep:@strands-agents/sdk"
+    },
+    {
+      "path": "src/agent.ts",
+      "rule": "entry:ts-strands-agent"
+    },
+    {
+      "path": "pnpm-lock.yaml",
+      "rule": "install:pnpm"
+    }
+  ],
+  "warnings": [],
+  "alternatives": []
+}

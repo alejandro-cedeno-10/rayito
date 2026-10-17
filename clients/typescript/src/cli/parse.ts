@@ -195,13 +195,22 @@ function defaultValue(parameter: ParameterSpec): ParsedValue {
   return Array.isArray(value) ? [...value] : (value as ParsedValue);
 }
 
-/** Una bandera simple vale `true` si se pasó; con negación, la negación gana y sin ninguna vale su `default`. */
-function flagValue(parameter: ParameterSpec, parsed: Readonly<Record<string, RawOption>>): boolean {
+/** Una bandera simple vale `true` si se pasó; con negación, la negación gana y sin ninguna vale su `default` (`undefined` si éste es nulo: ni sí ni no). */
+function flagValue(
+  parameter: ParameterSpec,
+  parsed: Readonly<Record<string, RawOption>>,
+): boolean | undefined {
   const [positive = "", ...negatives] = longNames(parameter);
   if (negatives.some((name) => parsed[name] === true)) {
     return false;
   }
-  return parsed[positive] === true || (negatives.length > 0 && parameter.default === true);
+  if (parsed[positive] === true) {
+    return true;
+  }
+  if (negatives.length > 0 && parameter.default === null) {
+    return undefined;
+  }
+  return negatives.length > 0 && parameter.default === true;
 }
 
 /** Una opción repetible lee su variable de entorno como entradas separadas por espacios (como Typer). */

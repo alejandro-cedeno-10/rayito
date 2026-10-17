@@ -359,15 +359,16 @@ def _manifest_bytes(manifest: Mapping[str, object]) -> bytes:
 
 def _app_files(app: str, exclude: Sequence[str]) -> tuple[tuple[str, bytes], ...]:
     """Los ficheros del código del usuario, sin lo que ignoran su
-    `.dockerignore` y `exclude`."""
+    `.dockerignore` y `exclude`. Los dos filtran antes de leer ningún
+    fichero: un `.venv` excluido ni se lee ni dispara el aviso de secretos."""
     source = Path(app)
-    extra = DockerIgnore.from_text("\n".join(exclude))
-    entries = collect_context_files(
+    dockerignore = source / DOCKERIGNORE_FILENAME
+    patterns = dockerignore.read_text(encoding="utf-8") if dockerignore.is_file() else ""
+    return collect_context_files(
         source,
         [CopyStep(".", AGENT_APP_DIR)],
-        ignore=DockerIgnore.from_file(source / DOCKERIGNORE_FILENAME),
+        ignore=DockerIgnore.from_text("\n".join([patterns, *exclude])),
     )
-    return tuple((relative, data) for relative, data in entries if not extra.matches(relative))
 
 
 def _write_context(

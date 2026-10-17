@@ -1,0 +1,34 @@
+{
+  "schema": "rayito.agent-detection/1",
+  "language": null,
+  "framework": "opencode",
+  "kind": "opencode",
+  "entrypoint": null,
+  "entrypoint_kind": null,
+  "protocol": "framework",
+  "options": {},
+  "app": null,
+  "install": null,
+  "providers": [
+    {
+      "preset": "bedrock",
+      "evidence": [
+        {
+          "path": "opencode.json",
+          "rule": "config"
+        }
+      ]
+    }
+  ],
+  "models": [
+    "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+  ],
+  "evidence": [
+    {
+      "path": "opencode.json",
+      "rule": "file:opencode.json"
+    }
+  ],
+  "warnings": [],
+  "alternatives": []
+}

@@ -98,7 +98,12 @@ def test_operations_delegate_to_the_services(monkeypatch: pytest.MonkeyPatch) ->
     assert cast(Any, the_project.deploy(region="us-east-1", access_token="dG9rZW4")) == "deploy"
     assert calls[0][2]["bucket"] == "b" and calls[0][2]["force"] is True
     assert calls[1][1] == ("hola",) and calls[1][2]["session_id"] == "s"
-    assert calls[2][2] == {"region": "us-east-1", "session": None, "access_token": "dG9rZW4"}
+    assert calls[2][2] == {
+        "region": "us-east-1",
+        "session": None,
+        "access_token": "dG9rZW4",
+        "keep_on_failure": False,
+    }
     async_project = AsyncAgentProject(**_fields(the_project))
     assert cast(Any, asyncio.run(async_project.build(bucket="b"))) == "build"
     assert cast(Any, asyncio.run(async_project.run("hola"))) == "run"

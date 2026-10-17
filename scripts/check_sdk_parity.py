@@ -104,6 +104,7 @@ CLI_PHASES: Final[dict[int, tuple[str, ...]]] = {
         "template logs",
         "agent template build",
         "agent init",
+        "agent detect",
         "agent build",
         "agent run",
         "agent deploy",
@@ -143,6 +144,7 @@ PYTHON_ONLY: Final[dict[str, dict[str, str]]] = {
         "NetworkPolicy": "en TypeScript es el tipo `NetworkPolicyInput` de la opción `network`",
         "EgressProxy": "en TypeScript es el tipo `EgressProxyInput` de la opción `egressProxy`",
         "RayitoCompatWarning": "en TypeScript es `process.emitWarning` con `COMPAT_WARNING_TYPE`",
+        "deploy_agent_async": "TypeScript es sólo asíncrono: `deployAgent` es la única función",
     },
     "rayito.e2b": {
         "RayitoCompatWarning": "en TypeScript es `process.emitWarning` con `COMPAT_WARNING_TYPE`",

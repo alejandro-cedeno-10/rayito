@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import os
+import posixpath
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -185,6 +186,7 @@ def _env_lines(envs: Mapping[str, str]) -> list[str]:
 
 def _dockerfile(project: AgentProject, host: HostConfig, steps: Sequence[TemplateStep]) -> str:
     install_lines, executables = _step_lines(steps)
+    config_dirs = sorted({posixpath.dirname(file.path) for file in host.files.files})
     copy_files = [
         f"COPY --chown={AGENT_USER}:{AGENT_USER} --chmod={file.mode:04o} "
         f"{RUNTIME_FILES_CONTEXT_DIR}/{index} {file.path}"
@@ -209,7 +211,8 @@ def _dockerfile(project: AgentProject, host: HostConfig, steps: Sequence[Templat
         f"#   docker buildx build --platform {EXPORT_PLATFORM} -t {project.name} .",
         f"FROM --platform={EXPORT_PLATFORM} {BASE_IMAGE_REFERENCE}",
         f"RUN useradd --create-home --uid {AGENT_UID} --shell /bin/bash {AGENT_USER}"
-        f" && mkdir -p {AGENT_STATE_DIR} && chown -R {AGENT_USER}:{AGENT_USER} {RAYITO_HOME_DIR}",
+        f" && mkdir -p {AGENT_STATE_DIR} {' '.join(config_dirs)}"
+        f" && chown -R {AGENT_USER}:{AGENT_USER} {RAYITO_HOME_DIR}",
         *install_lines,
         f"COPY {AGENT_HOST_CONTEXT_DIR} {AGENT_HOST_DIR}",
         f"COPY {HOST_CONFIG_NAME} {HOST_CONFIG_PATH}",

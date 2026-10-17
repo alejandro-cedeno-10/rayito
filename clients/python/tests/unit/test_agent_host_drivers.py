@@ -468,6 +468,7 @@ def test_host_driver_registry_has_one_line_per_driver() -> None:
         "deepagents",
         "hermes",
         "http-app",
+        "node-callable",
         "opencode",
         "strands",
         "strands-ts",
@@ -490,7 +491,7 @@ def test_host_serve_mode_exits_nonzero_when_the_driver_cannot_warm(tmp_path: Pat
         timeout=60,
     )
     assert process.returncode == 1
-    assert b"warm_failed code=AgentFailure" in process.stderr
+    assert b"warm_failed code=app_exited" in process.stderr
 
 
 def test_a_host_json_with_another_schema_is_invalid(tmp_path: Path) -> None:

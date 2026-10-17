@@ -1,0 +1,143 @@
+"""Lógica pura del escalado de agentes: los vectores compartidos con
+TypeScript (`testdata/agent-fleet/routing.json`) y las invariantes de
+`ScalingOptions` y `ServeOptions`."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from rayito._agent._project_domain import ServeOptions
+from rayito._agent._scaling_domain import (
+    ScalingOptions,
+    decode_handle,
+    encode_handle,
+    is_unhealthy,
+    max_sessions_for_memory,
+    replacements_needed,
+    validate_caller_session_id,
+)
+from rayito._limits import (
+    AGENT_FLEET_UNHEALTHY_PINGS,
+    AGENT_SCALING_MAX_VMS_DEFAULT,
+    AGENT_SCALING_MIN_VMS_DEFAULT,
+    AGENT_SCALING_WARM_VMS_DEFAULT,
+    POOL_SIZE_MAX,
+)
+from rayito.exceptions import InvalidArgumentException
+
+VECTORS = json.loads(
+    (Path(__file__).resolve().parents[4] / "testdata" / "agent-fleet" / "routing.json").read_text(
+        encoding="utf-8"
+    )
+)
+
+
+@pytest.mark.parametrize("entry", VECTORS["memory"], ids=lambda e: str(e["memory_mib"]))
+def test_the_session_cap_follows_the_connection_cap_of_the_vm(entry: dict[str, int]) -> None:
+    assert max_sessions_for_memory(entry["memory_mib"]) == entry["max_sessions"]
+
+
+@pytest.mark.parametrize("value", [0, -1, True, "2048", 2.5])
+def test_the_session_cap_rejects_a_bad_memory(value: Any) -> None:
+    with pytest.raises(InvalidArgumentException):
+        max_sessions_for_memory(value)
+
+
+@pytest.mark.parametrize("entry", VECTORS["handles"]["encode"])
+def test_encoding_a_handle_matches_the_vector(entry: dict[str, str]) -> None:
+    handle = encode_handle(entry["sandbox_id"], entry["session_id"])
+    assert handle == entry["handle"]
+    decoded = decode_handle(handle)
+    assert decoded is not None
+    assert (decoded.sandbox_id, decoded.session_id) == (entry["sandbox_id"], entry["session_id"])
+
+
+@pytest.mark.parametrize("entry", VECTORS["handles"]["decode"], ids=lambda e: e["value"])
+def test_decoding_a_value_matches_the_vector(entry: dict[str, Any]) -> None:
+    decoded = decode_handle(entry["value"])
+    expected = entry["handle"]
+    if expected is None:
+        assert decoded is None
+    else:
+        assert decoded is not None
+        assert {"sandbox_id": decoded.sandbox_id, "session_id": decoded.session_id} == expected
+
+
+@pytest.mark.parametrize("entry", VECTORS["handles"]["encode_invalid"])
+def test_an_unroutable_handle_cannot_be_encoded(entry: dict[str, str]) -> None:
+    with pytest.raises(InvalidArgumentException):
+        encode_handle(entry["sandbox_id"], entry["session_id"])
+
+
+@pytest.mark.parametrize("value", VECTORS["handles"]["caller_valid"])
+def test_a_caller_session_id_is_accepted(value: str) -> None:
+    assert validate_caller_session_id(value) == value
+
+
+@pytest.mark.parametrize("value", VECTORS["handles"]["caller_invalid"])
+def test_a_caller_session_id_cannot_fake_the_reserved_prefix(value: str) -> None:
+    with pytest.raises(InvalidArgumentException):
+        validate_caller_session_id(value)
+
+
+@pytest.mark.parametrize("entry", VECTORS["health"]["threshold_offsets"], ids=str)
+def test_a_vm_is_unhealthy_after_the_ping_threshold(entry: dict[str, Any]) -> None:
+    assert is_unhealthy(AGENT_FLEET_UNHEALTHY_PINGS + entry["offset"]) is entry["unhealthy"]
+
+
+@pytest.mark.parametrize("entry", VECTORS["health"]["replacements"], ids=str)
+def test_replacements_bring_the_fleet_back_to_its_minimum(entry: dict[str, int]) -> None:
+    scaling = ScalingOptions(min_vms=entry["min_vms"], max_vms=entry["min_vms"])
+    assert replacements_needed(entry["healthy_running"], scaling) == entry["needed"]
+
+
+def test_the_default_scaling_is_a_single_vm() -> None:
+    scaling = ScalingOptions()
+    assert (scaling.min_vms, scaling.max_vms, scaling.warm_vms) == (
+        AGENT_SCALING_MIN_VMS_DEFAULT,
+        AGENT_SCALING_MAX_VMS_DEFAULT,
+        AGENT_SCALING_WARM_VMS_DEFAULT,
+    )
+    assert scaling.sessions == "shared"
+    assert scaling.routes_by_handle is False
+
+
+def test_more_than_one_vm_routes_by_handle() -> None:
+    assert ScalingOptions(max_vms=2).routes_by_handle is True
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"min_vms": -1},
+        {"min_vms": 2, "max_vms": 1},
+        {"max_vms": 0},
+        {"max_vms": POOL_SIZE_MAX + 1},
+        {"min_vms": 1, "max_vms": 2, "warm_vms": 2},
+        {"sessions": "exclusive"},
+        {"scale_in_after_seconds": 1},
+        {"scale_in_after_seconds": True},
+        {"max_vms": True},
+        {"max_vms": 2.0},
+    ],
+    ids=str,
+)
+def test_scaling_options_are_validated(kwargs: dict[str, Any]) -> None:
+    with pytest.raises(InvalidArgumentException):
+        ScalingOptions(**kwargs)
+
+
+@pytest.mark.parametrize(
+    "kwargs", [{"queue_max": -1}, {"queue_max": True}, {"queue_timeout_seconds": 0}], ids=str
+)
+def test_serve_queue_options_are_validated(kwargs: dict[str, Any]) -> None:
+    with pytest.raises(InvalidArgumentException):
+        ServeOptions(**kwargs)
+
+
+def test_serve_queue_defaults_keep_the_zero_queue_behaviour() -> None:
+    assert ServeOptions().queue_max == 0

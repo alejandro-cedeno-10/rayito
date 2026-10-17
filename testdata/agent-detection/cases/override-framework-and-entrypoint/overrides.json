@@ -1,0 +1,4 @@
+{
+  "framework": "langgraph",
+  "entrypoint": "agent:graph"
+}

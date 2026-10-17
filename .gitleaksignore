@@ -50,3 +50,5 @@ b30bfb69773c86c6274be949ac056b784a17c018:clients/typescript/src/stacks/component
 85790b8f410339dc7f86379b75a0f172cc22455c:clients/python/src/rayito/_stacks/components/dashboard.py:generic-api-key:151
 85790b8f410339dc7f86379b75a0f172cc22455c:clients/typescript/src/stacks/components/dashboard.ts:generic-api-key:140
 d4876aa7af7f58e136dec539b936b09d9ddc3596:clients/typescript/tests/unit/cli/agent-project-commands.test.ts:generic-api-key:26
+8c7521612ab2df358acaf0c0f90db951001951b2:clients/python/tests/unit/test_agent_host_app_startup.py:generic-api-key:80
+8c7521612ab2df358acaf0c0f90db951001951b2:clients/python/tests/unit/test_agent_host_app_startup.py:generic-api-key:85

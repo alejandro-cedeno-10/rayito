@@ -126,6 +126,83 @@
       "path": "runtime",
       "code": "invalid_value",
       "schema": "rejects"
+    },
+    {
+      "case": "scaling-min-above-max",
+      "file": "scaling-min-above-max.toml",
+      "path": "scaling",
+      "code": "invalid_value",
+      "schema": "semantic"
+    },
+    {
+      "case": "scaling-warm-too-large",
+      "file": "scaling-warm-too-large.toml",
+      "path": "scaling",
+      "code": "invalid_value",
+      "schema": "semantic"
+    },
+    {
+      "case": "scaling-unknown-sessions",
+      "file": "scaling-unknown-sessions.toml",
+      "path": "scaling",
+      "code": "invalid_value",
+      "schema": "rejects"
+    },
+    {
+      "case": "serve-queue-too-large",
+      "file": "serve-queue-too-large.toml",
+      "path": "serve",
+      "code": "invalid_value",
+      "schema": "rejects"
+    },
+    {
+      "case": "serve-concurrency-above-cap",
+      "file": "serve-concurrency-above-cap.toml",
+      "path": "serve.max_concurrency",
+      "code": "invalid_value",
+      "schema": "semantic"
+    },
+    {
+      "case": "env-secret-name",
+      "file": "env-secret-name.toml",
+      "path": "env.API_KEY",
+      "code": "secret_value",
+      "schema": "semantic"
+    },
+    {
+      "case": "env-secret-value",
+      "file": "env-secret-value.toml",
+      "path": "env.GREETING",
+      "code": "secret_value",
+      "schema": "semantic"
+    },
+    {
+      "case": "env-wrong-type",
+      "file": "env-wrong-type.toml",
+      "path": "env.COUNT",
+      "code": "invalid_type",
+      "schema": "rejects"
+    },
+    {
+      "case": "deploy-bucket-has-spaces",
+      "file": "deploy-bucket-has-spaces.toml",
+      "path": "deploy.bucket",
+      "code": "invalid_value",
+      "schema": "rejects"
+    },
+    {
+      "case": "runtime-version-unsupported",
+      "file": "runtime-version-unsupported.toml",
+      "path": "runtime.python_version",
+      "code": "invalid_value",
+      "schema": "rejects"
+    },
+    {
+      "case": "runtime-language-unknown",
+      "file": "runtime-language-unknown.toml",
+      "path": "runtime.language",
+      "code": "invalid_value",
+      "schema": "rejects"
     }
   ]
 }

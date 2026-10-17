@@ -1,0 +1,1022 @@
+{
+  "_comment": "Vectores compartidos de Python y TypeScript (`_install_plan.py` e `install-plan.ts`): para cada llamada con su destino de instalación (`target`) y sus argumentos, los pasos (`op` y `args`) o el valor que produce, o `error` si es InvalidArgumentException antes de cualquier RPC. Los pines (versiones y sha256) son los de limits.json.",
+  "cases": [
+    {
+      "name": "node-runtime-default-microvm",
+      "call": {
+        "fn": "node_runtime_steps",
+        "target": {
+          "platform": "microvm",
+          "python": "python3",
+          "install_dir": "/opt/agents"
+        },
+        "args": {}
+      },
+      "expected": {
+        "steps": [
+          {
+            "op": "run",
+            "args": {
+              "cmd": "curl -fsSL --retry 3 -o /tmp/node.tar.gz https://nodejs.org/dist/v22.23.3/node-v22.23.3-linux-arm64.tar.gz && echo '5ced2d48d1d7198739b7f86804de0171aefb6823b684b12341d3321afc3cb0b2  /tmp/node.tar.gz' | sha256sum -c - && mkdir -p /opt/agents/node && tar -xzf /tmp/node.tar.gz -C /opt/agents/node --strip-components=1 && rm -f /tmp/node.tar.gz && ln -sf /opt/agents/node/bin/node /usr/local/bin/node"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "node-runtime-22-container",
+      "call": {
+        "fn": "node_runtime_steps",
+        "target": {
+          "platform": "container",
+          "python": "python3",
+          "install_dir": "/opt/agents"
+        },
+        "args": {
+          "node_version": "22"
+        }
+      },
+      "expected": {
+        "steps": [
+          {
+            "op": "run",
+            "args": {
+              "cmd": "apt-get update && apt-get install -y --no-install-recommends curl ca-certificates && rm -rf /var/lib/apt/lists/*"
+            }
+          },
+          {
+            "op": "run",
+            "args": {
+              "cmd": "curl -fsSL --retry 3 -o /tmp/node.tar.gz https://nodejs.org/dist/v22.23.3/node-v22.23.3-linux-arm64.tar.gz && echo '5ced2d48d1d7198739b7f86804de0171aefb6823b684b12341d3321afc3cb0b2  /tmp/node.tar.gz' | sha256sum -c - && mkdir -p /opt/agents/node && tar -xzf /tmp/node.tar.gz -C /opt/agents/node --strip-components=1 && rm -f /tmp/node.tar.gz && ln -sf /opt/agents/node/bin/node /usr/local/bin/node"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "node-runtime-24-microvm",
+      "call": {
+        "fn": "node_runtime_steps",
+        "target": {
+          "platform": "microvm",
+          "python": "python3",
+          "install_dir": "/opt/agents"
+        },
+        "args": {
+          "node_version": "24"
+        }
+      },
+      "expected": {
+        "steps": [
+          {
+            "op": "run",
+            "args": {
+              "cmd": "curl -fsSL --retry 3 -o /tmp/node.tar.gz https://nodejs.org/dist/v24.22.0/node-v24.22.0-linux-arm64.tar.gz && echo 'b7e7991d5407815adfa74a2a9cd4db683552c8ce32ff4a295c22e972849c3f5d  /tmp/node.tar.gz' | sha256sum -c - && mkdir -p /opt/agents/node && tar -xzf /tmp/node.tar.gz -C /opt/agents/node --strip-components=1 && rm -f /tmp/node.tar.gz && ln -sf /opt/agents/node/bin/node /usr/local/bin/node"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "node-runtime-unknown-version",
+      "call": {
+        "fn": "node_runtime_steps",
+        "target": {
+          "platform": "microvm",
+          "python": "python3",
+          "install_dir": "/opt/agents"
+        },
+        "args": {
+          "node_version": "21"
+        }
+      },
+      "expected": {
+        "error": "invalid_argument"
+      }
+    },
+    {
+      "name": "node-deps-npm",
+      "call": {
+        "fn": "node_dependency_steps",
+        "target": {
+          "platform": "microvm",
+          "python": "python3",
+          "install_dir": "/opt/agents"
+        },
+        "args": {
+          "manager": "npm"
+        }
+      },
+      "expected": {
+        "steps": [
+          {
+            "op": "copy",
+            "args": {
+              "src": "app/package.json",
+              "dst": "/opt/agents/package.json"
+            }
+          },
+          {
+            "op": "copy",
+            "args": {
+              "src": "app/package-lock.json",
+              "dst": "/opt/agents/package-lock.json"
+            }
+          },
+          {
+            "op": "run",
+            "args": {
+              "cmd": "cd /opt/agents && PATH=/opt/agents/node/bin:$PATH npm ci --ignore-scripts --omit=dev --no-audit --no-fund"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "node-deps-pnpm",
+      "call": {
+        "fn": "node_dependency_steps",
+        "target": {
+          "platform": "microvm",
+          "python": "python3",
+          "install_dir": "/opt/agents"
+        },
+        "args": {
+          "manager": "pnpm"
+        }
+      },
+      "expected": {
+        "steps": [
+          {
+            "op": "copy",
+            "args": {
+              "src": "app/package.json",
+              "dst": "/opt/agents/package.json"
+            }
+          },
+          {
+            "op": "copy",
+            "args": {
+              "src": "app/pnpm-lock.yaml",
+              "dst": "/opt/agents/pnpm-lock.yaml"
+            }
+          },
+          {
+            "op": "run",
+            "args": {
+              "cmd": "PATH=/opt/agents/node/bin:$PATH npm install -g --ignore-scripts --no-audit --no-fund pnpm@12.14.0 && cd /opt/agents && PATH=/opt/agents/node/bin:$PATH pnpm install --frozen-lockfile --prod --ignore-scripts"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "node-deps-yarn",
+      "call": {
+        "fn": "node_dependency_steps",
+        "target": {
+          "platform": "microvm",
+          "python": "python3",
+          "install_dir": "/opt/agents"
+        },
+        "args": {
+          "manager": "yarn"
+        }
+      },
+      "expected": {
+        "steps": [
+          {
+            "op": "copy",
+            "args": {
+              "src": "app/package.json",
+              "dst": "/opt/agents/package.json"
+            }
+          },
+          {
+            "op": "copy",
+            "args": {
+              "src": "app/yarn.lock",
+              "dst": "/opt/agents/yarn.lock"
+            }
+          },
+          {
+            "op": "run",
+            "args": {
+              "cmd": "PATH=/opt/agents/node/bin:$PATH npm install -g --ignore-scripts --no-audit --no-fund yarn@1.22.22 && cd /opt/agents && PATH=/opt/agents/node/bin:$PATH yarn install --frozen-lockfile --production --ignore-scripts"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "node-deps-unknown-manager",
+      "call": {
+        "fn": "node_dependency_steps",
+        "target": {
+          "platform": "microvm",
+          "python": "python3",
+          "install_dir": "/opt/agents"
+        },
+        "args": {
+          "manager": "bun"
+        }
+      },
+      "expected": {
+        "error": "invalid_argument"
+      }
+    },
+    {
+      "name": "node-deps-python-manager",
+      "call": {
+        "fn": "node_dependency_steps",
+        "target": {
+          "platform": "microvm",
+          "python": "python3",
+          "install_dir": "/opt/agents"
+        },
+        "args": {
+          "manager": "uv"
+        }
+      },
+      "expected": {
+        "error": "invalid_argument"
+      }
+    },
+    {
+      "name": "python-runtime-image-default",
+      "call": {
+        "fn": "python_runtime_steps",
+        "target": {
+          "platform": "microvm",
+          "python": "python3",
+          "install_dir": "/opt/agents"
+        },
+        "args": {}
+      },
+      "expected": {
+        "steps": []
+      }
+    },
+    {
+      "name": "python-runtime-same-minor-as-image",
+      "call": {
+        "fn": "python_runtime_steps",
+        "target": {
+          "platform": "microvm",
+          "python": "python3",
+          "install_dir": "/opt/agents"
+        },
+        "args": {
+          "python_version": "3.12"
+        }
+      },
+      "expected": {
+        "steps": []
+      }
+    },
+    {
+      "name": "python-runtime-3.13-microvm",
+      "call": {
+        "fn": "python_runtime_steps",
+        "target": {
+          "platform": "microvm",
+          "python": "python3",
+          "install_dir": "/opt/agents"
+        },
+        "args": {
+          "python_version": "3.13"
+        }
+      },
+      "expected": {
+        "steps": [
+          {
+            "op": "run",
+            "args": {
+              "cmd": "mkdir -p /opt/agents/python-3.13 && curl -fsSL --retry 3 -o /tmp/pinned-python.tar.gz https://github.com/astral-sh/python-build-standalone/releases/download/20261013/cpython-3.13.16%2B20261013-aarch64-unknown-linux-gnu-install_only.tar.gz && echo '0fce0605da7b6532d5bdaec185336ffaaddd02ec04e27382014952ca4857ed6d  /tmp/pinned-python.tar.gz' | sha256sum -c - && tar -xzf /tmp/pinned-python.tar.gz -C /opt/agents/python-3.13 && rm -f /tmp/pinned-python.tar.gz"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "python-runtime-3.14-container",
+      "call": {
+        "fn": "python_runtime_steps",
+        "target": {
+          "platform": "container",
+          "python": "python3",
+          "install_dir": "/opt/agents"
+        },
+        "args": {
+          "python_version": "3.14"
+        }
+      },
+      "expected": {
+        "steps": [
+          {
+            "op": "run",
+            "args": {
+              "cmd": "apt-get update && apt-get install -y --no-install-recommends curl ca-certificates && rm -rf /var/lib/apt/lists/*"
+            }
+          },
+          {
+            "op": "run",
+            "args": {
+              "cmd": "mkdir -p /opt/agents/python-3.14 && curl -fsSL --retry 3 -o /tmp/pinned-python.tar.gz https://github.com/astral-sh/python-build-standalone/releases/download/20261013/cpython-3.14.8%2B20261013-aarch64-unknown-linux-gnu-install_only.tar.gz && echo '6c3cfb175acca2748d5a9e42208c523bfbc1099ddb928615b5f328ba7c106e83  /tmp/pinned-python.tar.gz' | sha256sum -c - && tar -xzf /tmp/pinned-python.tar.gz -C /opt/agents/python-3.14 && rm -f /tmp/pinned-python.tar.gz"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "python-runtime-3.11-microvm",
+      "call": {
+        "fn": "python_runtime_steps",
+        "target": {
+          "platform": "microvm",
+          "python": "python3",
+          "install_dir": "/opt/agents"
+        },
+        "args": {
+          "python_version": "3.11"
+        }
+      },
+      "expected": {
+        "steps": [
+          {
+            "op": "run",
+            "args": {
+              "cmd": "mkdir -p /opt/agents/python-3.11 && curl -fsSL --retry 3 -o /tmp/pinned-python.tar.gz https://github.com/astral-sh/python-build-standalone/releases/download/20261013/cpython-3.11.17%2B20261013-aarch64-unknown-linux-gnu-install_only.tar.gz && echo '643954c07b04c18e215f812691cd5fa15d924fec1f3a5fdd9c1789484382ac24  /tmp/pinned-python.tar.gz' | sha256sum -c - && tar -xzf /tmp/pinned-python.tar.gz -C /opt/agents/python-3.11 && rm -f /tmp/pinned-python.tar.gz"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "python-runtime-unknown-version",
+      "call": {
+        "fn": "python_runtime_steps",
+        "target": {
+          "platform": "microvm",
+          "python": "python3",
+          "install_dir": "/opt/agents"
+        },
+        "args": {
+          "python_version": "3.9"
+        }
+      },
+      "expected": {
+        "error": "invalid_argument"
+      }
+    },
+    {
+      "name": "python-interpreter-image-default",
+      "call": {
+        "fn": "python_interpreter",
+        "target": {
+          "platform": "microvm",
+          "python": "python3",
+          "install_dir": "/opt/agents"
+        },
+        "args": {}
+      },
+      "expected": {
+        "value": "python3"
+      }
+    },
+    {
+      "name": "python-interpreter-same-minor-as-image",
+      "call": {
+        "fn": "python_interpreter",
+        "target": {
+          "platform": "microvm",
+          "python": "python3",
+          "install_dir": "/opt/agents"
+        },
+        "args": {
+          "python_version": "3.12"
+        }
+      },
+      "expected": {
+        "value": "python3"
+      }
+    },
+    {
+      "name": "python-interpreter-pinned",
+      "call": {
+        "fn": "python_interpreter",
+        "target": {
+          "platform": "microvm",
+          "python": "python3",
+          "install_dir": "/opt/agents"
+        },
+        "args": {
+          "python_version": "3.13"
+        }
+      },
+      "expected": {
+        "value": "/opt/agents/python-3.13/python/bin/python3"
+      }
+    },
+    {
+      "name": "python-interpreter-unknown-version",
+      "call": {
+        "fn": "python_interpreter",
+        "target": {
+          "platform": "microvm",
+          "python": "python3",
+          "install_dir": "/opt/agents"
+        },
+        "args": {
+          "python_version": "3.9"
+        }
+      },
+      "expected": {
+        "error": "invalid_argument"
+      }
+    },
+    {
+      "name": "python-download-command-3.14",
+      "call": {
+        "fn": "python_download_command",
+        "target": {
+          "platform": "microvm",
+          "python": "python3",
+          "install_dir": "/opt/agents"
+        },
+        "args": {
+          "minor": "3.14",
+          "parent_dir": "/opt/agents/hermes",
+          "tarball_path": "/tmp/hermes-python.tar.gz"
+        }
+      },
+      "expected": {
+        "value": "mkdir -p /opt/agents/hermes && curl -fsSL --retry 3 -o /tmp/hermes-python.tar.gz https://github.com/astral-sh/python-build-standalone/releases/download/20261013/cpython-3.14.8%2B20261013-aarch64-unknown-linux-gnu-install_only.tar.gz && echo '6c3cfb175acca2748d5a9e42208c523bfbc1099ddb928615b5f328ba7c106e83  /tmp/hermes-python.tar.gz' | sha256sum -c - && tar -xzf /tmp/hermes-python.tar.gz -C /opt/agents/hermes && rm -f /tmp/hermes-python.tar.gz"
+      }
+    },
+    {
+      "name": "uv-microvm",
+      "call": {
+        "fn": "uv_steps",
+        "target": {
+          "platform": "microvm",
+          "python": "python3",
+          "install_dir": "/opt/agents"
+        },
+        "args": {}
+      },
+      "expected": {
+        "steps": [
+          {
+            "op": "run",
+            "args": {
+              "cmd": "curl -fsSL --retry 3 -o /tmp/uv.tar.gz https://github.com/astral-sh/uv/releases/download/0.13.1/uv-aarch64-unknown-linux-gnu.tar.gz && echo '9041c73c99fdc5892cf128140beb354eca9231d502068cc36e6cb53a8e59ad14  /tmp/uv.tar.gz' | sha256sum -c - && mkdir -p /opt/agents/uv && tar -xzf /tmp/uv.tar.gz -C /opt/agents/uv --strip-components=1 && rm -f /tmp/uv.tar.gz"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "uv-container",
+      "call": {
+        "fn": "uv_steps",
+        "target": {
+          "platform": "container",
+          "python": "python3",
+          "install_dir": "/opt/agents"
+        },
+        "args": {}
+      },
+      "expected": {
+        "steps": [
+          {
+            "op": "run",
+            "args": {
+              "cmd": "apt-get update && apt-get install -y --no-install-recommends curl ca-certificates && rm -rf /var/lib/apt/lists/*"
+            }
+          },
+          {
+            "op": "run",
+            "args": {
+              "cmd": "curl -fsSL --retry 3 -o /tmp/uv.tar.gz https://github.com/astral-sh/uv/releases/download/0.13.1/uv-aarch64-unknown-linux-gnu.tar.gz && echo '9041c73c99fdc5892cf128140beb354eca9231d502068cc36e6cb53a8e59ad14  /tmp/uv.tar.gz' | sha256sum -c - && mkdir -p /opt/agents/uv && tar -xzf /tmp/uv.tar.gz -C /opt/agents/uv --strip-components=1 && rm -f /tmp/uv.tar.gz"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "python-deps-pip-requirements",
+      "call": {
+        "fn": "python_dependency_steps",
+        "target": {
+          "platform": "microvm",
+          "python": "python3",
+          "install_dir": "/opt/agents"
+        },
+        "args": {
+          "installer": "pip",
+          "manifest": "requirements",
+          "path": "requirements.txt",
+          "python": "python3",
+          "venv_dir": "/opt/agents/custom",
+          "slug": "custom"
+        }
+      },
+      "expected": {
+        "steps": [
+          {
+            "op": "run",
+            "args": {
+              "cmd": "python3 -m venv /opt/agents/custom"
+            }
+          },
+          {
+            "op": "copy",
+            "args": {
+              "src": "app/requirements.txt",
+              "dst": "/opt/agents/requirements-user-custom.txt"
+            }
+          },
+          {
+            "op": "run",
+            "args": {
+              "cmd": "hashes=''; if grep -q -- '--hash=' /opt/agents/requirements-user-custom.txt; then hashes='--require-hashes'; fi && /opt/agents/custom/bin/python -m pip install --no-cache-dir --only-binary=:all: $hashes -r /opt/agents/requirements-user-custom.txt && /opt/agents/custom/bin/python -m pip check"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "python-deps-pip-nested-requirements",
+      "call": {
+        "fn": "python_dependency_steps",
+        "target": {
+          "platform": "microvm",
+          "python": "python3",
+          "install_dir": "/opt/agents"
+        },
+        "args": {
+          "installer": "pip",
+          "manifest": "requirements",
+          "path": "deploy/requirements.txt",
+          "python": "/opt/agents/python-3.13/python/bin/python3",
+          "venv_dir": "/opt/agents/custom",
+          "slug": "custom"
+        }
+      },
+      "expected": {
+        "steps": [
+          {
+            "op": "run",
+            "args": {
+              "cmd": "/opt/agents/python-3.13/python/bin/python3 -m venv /opt/agents/custom"
+            }
+          },
+          {
+            "op": "copy",
+            "args": {
+              "src": "app/deploy/requirements.txt",
+              "dst": "/opt/agents/requirements-user-custom.txt"
+            }
+          },
+          {
+            "op": "run",
+            "args": {
+              "cmd": "hashes=''; if grep -q -- '--hash=' /opt/agents/requirements-user-custom.txt; then hashes='--require-hashes'; fi && /opt/agents/custom/bin/python -m pip install --no-cache-dir --only-binary=:all: $hashes -r /opt/agents/requirements-user-custom.txt && /opt/agents/custom/bin/python -m pip check"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "python-deps-pip-rejects-pyproject",
+      "call": {
+        "fn": "python_dependency_steps",
+        "target": {
+          "platform": "microvm",
+          "python": "python3",
+          "install_dir": "/opt/agents"
+        },
+        "args": {
+          "installer": "pip",
+          "manifest": "pyproject",
+          "path": null,
+          "python": "python3",
+          "venv_dir": "/opt/agents/custom",
+          "slug": "custom"
+        }
+      },
+      "expected": {
+        "error": "invalid_argument"
+      }
+    },
+    {
+      "name": "python-deps-uv-requirements",
+      "call": {
+        "fn": "python_dependency_steps",
+        "target": {
+          "platform": "microvm",
+          "python": "python3",
+          "install_dir": "/opt/agents"
+        },
+        "args": {
+          "installer": "uv",
+          "manifest": "requirements",
+          "path": "requirements.txt",
+          "python": "python3",
+          "venv_dir": "/opt/agents/custom",
+          "slug": "custom"
+        }
+      },
+      "expected": {
+        "steps": [
+          {
+            "op": "run",
+            "args": {
+              "cmd": "curl -fsSL --retry 3 -o /tmp/uv.tar.gz https://github.com/astral-sh/uv/releases/download/0.13.1/uv-aarch64-unknown-linux-gnu.tar.gz && echo '9041c73c99fdc5892cf128140beb354eca9231d502068cc36e6cb53a8e59ad14  /tmp/uv.tar.gz' | sha256sum -c - && mkdir -p /opt/agents/uv && tar -xzf /tmp/uv.tar.gz -C /opt/agents/uv --strip-components=1 && rm -f /tmp/uv.tar.gz"
+            }
+          },
+          {
+            "op": "run",
+            "args": {
+              "cmd": "/opt/agents/uv/uv venv --python python3 /opt/agents/custom"
+            }
+          },
+          {
+            "op": "copy",
+            "args": {
+              "src": "app/requirements.txt",
+              "dst": "/opt/agents/custom-requirements.txt"
+            }
+          },
+          {
+            "op": "run",
+            "args": {
+              "cmd": "hashes=''; if grep -q -- '--hash=' /opt/agents/custom-requirements.txt; then hashes='--require-hashes'; fi && /opt/agents/uv/uv pip install --python /opt/agents/custom/bin/python --no-cache $hashes -r /opt/agents/custom-requirements.txt && /opt/agents/uv/uv pip check --python /opt/agents/custom/bin/python"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "python-deps-uv-lock",
+      "call": {
+        "fn": "python_dependency_steps",
+        "target": {
+          "platform": "microvm",
+          "python": "python3",
+          "install_dir": "/opt/agents"
+        },
+        "args": {
+          "installer": "uv",
+          "manifest": "uv-lock",
+          "path": null,
+          "python": "python3",
+          "venv_dir": "/opt/agents/custom",
+          "slug": "custom"
+        }
+      },
+      "expected": {
+        "steps": [
+          {
+            "op": "run",
+            "args": {
+              "cmd": "curl -fsSL --retry 3 -o /tmp/uv.tar.gz https://github.com/astral-sh/uv/releases/download/0.13.1/uv-aarch64-unknown-linux-gnu.tar.gz && echo '9041c73c99fdc5892cf128140beb354eca9231d502068cc36e6cb53a8e59ad14  /tmp/uv.tar.gz' | sha256sum -c - && mkdir -p /opt/agents/uv && tar -xzf /tmp/uv.tar.gz -C /opt/agents/uv --strip-components=1 && rm -f /tmp/uv.tar.gz"
+            }
+          },
+          {
+            "op": "run",
+            "args": {
+              "cmd": "/opt/agents/uv/uv venv --python python3 /opt/agents/custom"
+            }
+          },
+          {
+            "op": "copy",
+            "args": {
+              "src": "app/pyproject.toml",
+              "dst": "/opt/agents/custom-project/pyproject.toml"
+            }
+          },
+          {
+            "op": "copy",
+            "args": {
+              "src": "app/uv.lock",
+              "dst": "/opt/agents/custom-project/uv.lock"
+            }
+          },
+          {
+            "op": "run",
+            "args": {
+              "cmd": "cd /opt/agents/custom-project && UV_PROJECT_ENVIRONMENT=/opt/agents/custom UV_PYTHON_DOWNLOADS=never /opt/agents/uv/uv sync --frozen --no-dev --no-install-project --python python3"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "python-deps-uv-lock-pinned-container",
+      "call": {
+        "fn": "python_dependency_steps",
+        "target": {
+          "platform": "container",
+          "python": "python3",
+          "install_dir": "/opt/agents"
+        },
+        "args": {
+          "installer": "uv",
+          "manifest": "uv-lock",
+          "path": null,
+          "python": "/opt/agents/python-3.13/python/bin/python3",
+          "venv_dir": "/opt/agents/custom",
+          "slug": "custom"
+        }
+      },
+      "expected": {
+        "steps": [
+          {
+            "op": "run",
+            "args": {
+              "cmd": "apt-get update && apt-get install -y --no-install-recommends curl ca-certificates && rm -rf /var/lib/apt/lists/*"
+            }
+          },
+          {
+            "op": "run",
+            "args": {
+              "cmd": "curl -fsSL --retry 3 -o /tmp/uv.tar.gz https://github.com/astral-sh/uv/releases/download/0.13.1/uv-aarch64-unknown-linux-gnu.tar.gz && echo '9041c73c99fdc5892cf128140beb354eca9231d502068cc36e6cb53a8e59ad14  /tmp/uv.tar.gz' | sha256sum -c - && mkdir -p /opt/agents/uv && tar -xzf /tmp/uv.tar.gz -C /opt/agents/uv --strip-components=1 && rm -f /tmp/uv.tar.gz"
+            }
+          },
+          {
+            "op": "run",
+            "args": {
+              "cmd": "/opt/agents/uv/uv venv --python /opt/agents/python-3.13/python/bin/python3 /opt/agents/custom"
+            }
+          },
+          {
+            "op": "copy",
+            "args": {
+              "src": "app/pyproject.toml",
+              "dst": "/opt/agents/custom-project/pyproject.toml"
+            }
+          },
+          {
+            "op": "copy",
+            "args": {
+              "src": "app/uv.lock",
+              "dst": "/opt/agents/custom-project/uv.lock"
+            }
+          },
+          {
+            "op": "run",
+            "args": {
+              "cmd": "cd /opt/agents/custom-project && UV_PROJECT_ENVIRONMENT=/opt/agents/custom UV_PYTHON_DOWNLOADS=never /opt/agents/uv/uv sync --frozen --no-dev --no-install-project --python /opt/agents/python-3.13/python/bin/python3"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "python-deps-uv-pyproject",
+      "call": {
+        "fn": "python_dependency_steps",
+        "target": {
+          "platform": "microvm",
+          "python": "python3",
+          "install_dir": "/opt/agents"
+        },
+        "args": {
+          "installer": "uv",
+          "manifest": "pyproject",
+          "path": null,
+          "python": "python3",
+          "venv_dir": "/opt/agents/custom",
+          "slug": "custom"
+        }
+      },
+      "expected": {
+        "steps": [
+          {
+            "op": "run",
+            "args": {
+              "cmd": "curl -fsSL --retry 3 -o /tmp/uv.tar.gz https://github.com/astral-sh/uv/releases/download/0.13.1/uv-aarch64-unknown-linux-gnu.tar.gz && echo '9041c73c99fdc5892cf128140beb354eca9231d502068cc36e6cb53a8e59ad14  /tmp/uv.tar.gz' | sha256sum -c - && mkdir -p /opt/agents/uv && tar -xzf /tmp/uv.tar.gz -C /opt/agents/uv --strip-components=1 && rm -f /tmp/uv.tar.gz"
+            }
+          },
+          {
+            "op": "run",
+            "args": {
+              "cmd": "/opt/agents/uv/uv venv --python python3 /opt/agents/custom"
+            }
+          },
+          {
+            "op": "copy",
+            "args": {
+              "src": "app/pyproject.toml",
+              "dst": "/opt/agents/custom-project/pyproject.toml"
+            }
+          },
+          {
+            "op": "run",
+            "args": {
+              "cmd": "hashes=''; if grep -q -- '--hash=' /opt/agents/custom-project/pyproject.toml; then hashes='--require-hashes'; fi && /opt/agents/uv/uv pip install --python /opt/agents/custom/bin/python --no-cache $hashes -r /opt/agents/custom-project/pyproject.toml && /opt/agents/uv/uv pip check --python /opt/agents/custom/bin/python"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "python-deps-requirements-without-path",
+      "call": {
+        "fn": "python_dependency_steps",
+        "target": {
+          "platform": "microvm",
+          "python": "python3",
+          "install_dir": "/opt/agents"
+        },
+        "args": {
+          "installer": "uv",
+          "manifest": "requirements",
+          "path": null,
+          "python": "python3",
+          "venv_dir": "/opt/agents/custom",
+          "slug": "custom"
+        }
+      },
+      "expected": {
+        "error": "invalid_argument"
+      }
+    },
+    {
+      "name": "python-deps-unknown-installer",
+      "call": {
+        "fn": "python_dependency_steps",
+        "target": {
+          "platform": "microvm",
+          "python": "python3",
+          "install_dir": "/opt/agents"
+        },
+        "args": {
+          "installer": "poetry",
+          "manifest": "requirements",
+          "path": "requirements.txt",
+          "python": "python3",
+          "venv_dir": "/opt/agents/custom",
+          "slug": "custom"
+        }
+      },
+      "expected": {
+        "error": "invalid_argument"
+      }
+    },
+    {
+      "name": "python-deps-existing-venv-pip",
+      "call": {
+        "fn": "python_dependency_steps",
+        "target": {
+          "platform": "microvm",
+          "python": "python3",
+          "install_dir": "/opt/agents"
+        },
+        "args": {
+          "installer": "pip",
+          "manifest": "requirements",
+          "path": "requirements.txt",
+          "python": "/opt/agents/deepagents/bin/python",
+          "venv_dir": "/opt/agents/deepagents",
+          "slug": "deepagents",
+          "create_venv": false
+        }
+      },
+      "expected": {
+        "steps": [
+          {
+            "op": "copy",
+            "args": {
+              "src": "app/requirements.txt",
+              "dst": "/opt/agents/requirements-user-deepagents.txt"
+            }
+          },
+          {
+            "op": "run",
+            "args": {
+              "cmd": "hashes=''; if grep -q -- '--hash=' /opt/agents/requirements-user-deepagents.txt; then hashes='--require-hashes'; fi && /opt/agents/deepagents/bin/python -m pip install --no-cache-dir --only-binary=:all: $hashes -r /opt/agents/requirements-user-deepagents.txt && /opt/agents/deepagents/bin/python -m pip check"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "python-deps-existing-venv-uv-requirements",
+      "call": {
+        "fn": "python_dependency_steps",
+        "target": {
+          "platform": "microvm",
+          "python": "python3",
+          "install_dir": "/opt/agents"
+        },
+        "args": {
+          "installer": "uv",
+          "manifest": "requirements",
+          "path": "requirements.txt",
+          "python": "/opt/agents/deepagents/bin/python",
+          "venv_dir": "/opt/agents/deepagents",
+          "slug": "deepagents",
+          "create_venv": false
+        }
+      },
+      "expected": {
+        "steps": [
+          {
+            "op": "run",
+            "args": {
+              "cmd": "curl -fsSL --retry 3 -o /tmp/uv.tar.gz https://github.com/astral-sh/uv/releases/download/0.13.1/uv-aarch64-unknown-linux-gnu.tar.gz && echo '9041c73c99fdc5892cf128140beb354eca9231d502068cc36e6cb53a8e59ad14  /tmp/uv.tar.gz' | sha256sum -c - && mkdir -p /opt/agents/uv && tar -xzf /tmp/uv.tar.gz -C /opt/agents/uv --strip-components=1 && rm -f /tmp/uv.tar.gz"
+            }
+          },
+          {
+            "op": "copy",
+            "args": {
+              "src": "app/requirements.txt",
+              "dst": "/opt/agents/deepagents-requirements.txt"
+            }
+          },
+          {
+            "op": "run",
+            "args": {
+              "cmd": "hashes=''; if grep -q -- '--hash=' /opt/agents/deepagents-requirements.txt; then hashes='--require-hashes'; fi && /opt/agents/uv/uv pip install --python /opt/agents/deepagents/bin/python --no-cache $hashes -r /opt/agents/deepagents-requirements.txt && /opt/agents/uv/uv pip check --python /opt/agents/deepagents/bin/python"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "python-deps-existing-venv-uv-lock",
+      "call": {
+        "fn": "python_dependency_steps",
+        "target": {
+          "platform": "microvm",
+          "python": "python3",
+          "install_dir": "/opt/agents"
+        },
+        "args": {
+          "installer": "uv",
+          "manifest": "uv-lock",
+          "path": null,
+          "python": "/opt/agents/deepagents/bin/python",
+          "venv_dir": "/opt/agents/deepagents",
+          "slug": "deepagents",
+          "create_venv": false
+        }
+      },
+      "expected": {
+        "steps": [
+          {
+            "op": "run",
+            "args": {
+              "cmd": "curl -fsSL --retry 3 -o /tmp/uv.tar.gz https://github.com/astral-sh/uv/releases/download/0.13.1/uv-aarch64-unknown-linux-gnu.tar.gz && echo '9041c73c99fdc5892cf128140beb354eca9231d502068cc36e6cb53a8e59ad14  /tmp/uv.tar.gz' | sha256sum -c - && mkdir -p /opt/agents/uv && tar -xzf /tmp/uv.tar.gz -C /opt/agents/uv --strip-components=1 && rm -f /tmp/uv.tar.gz"
+            }
+          },
+          {
+            "op": "copy",
+            "args": {
+              "src": "app/pyproject.toml",
+              "dst": "/opt/agents/deepagents-project/pyproject.toml"
+            }
+          },
+          {
+            "op": "copy",
+            "args": {
+              "src": "app/uv.lock",
+              "dst": "/opt/agents/deepagents-project/uv.lock"
+            }
+          },
+          {
+            "op": "run",
+            "args": {
+              "cmd": "cd /opt/agents/deepagents-project && UV_PROJECT_ENVIRONMENT=/opt/agents/deepagents UV_PYTHON_DOWNLOADS=never /opt/agents/uv/uv sync --frozen --no-dev --no-install-project --inexact --python /opt/agents/deepagents/bin/python"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "python-deps-unknown-manifest",
+      "call": {
+        "fn": "python_dependency_steps",
+        "target": {
+          "platform": "microvm",
+          "python": "python3",
+          "install_dir": "/opt/agents"
+        },
+        "args": {
+          "installer": "uv",
+          "manifest": "pipfile",
+          "path": null,
+          "python": "python3",
+          "venv_dir": "/opt/agents/custom",
+          "slug": "custom"
+        }
+      },
+      "expected": {
+        "error": "invalid_argument"
+      }
+    }
+  ]
+}

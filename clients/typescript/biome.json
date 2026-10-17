@@ -8,6 +8,7 @@
       "**",
       "!src/gen",
       "!src/agent/assets",
+      "!src/agent/detection-rules.gen.ts",
       "!dist",
       "!node_modules",
       "!coverage",

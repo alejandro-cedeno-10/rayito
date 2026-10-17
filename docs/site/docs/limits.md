@@ -38,6 +38,11 @@ Cuotas y límites de Lambda MicroVMs tal como los ve el SDK. Fuente:
 | Agente de IA (`AgentLimits`, desde 0.8.0) | por defecto 50 pasos (`max_steps`), 1 000 000 tokens (`max_total_tokens`; `None`/`null` lo desactiva), 600 s (`timeout_seconds` / `timeoutMs: 600_000`) y 16 MiB de salida (`max_output_bytes`, como mucho 64 MiB) | `AgentException` con `reason` `max_steps`, `token_budget` o `timeout` ([Errores](referencia/errores.md#agentexception-agenterror)) |
 | Línea de evento del agente | ≤ 4 MiB; una más larga se descarta y cuenta en `dropped_lines` | — |
 | Memoria de una imagen de agente (`AgentTemplate`) | ≥ 2048 MiB | `InvalidArgumentException` |
+| Concurrencia por VM de un agente servido (desde 0.14.0) | por defecto 1 (`max_concurrency`); como mucho las conexiones del tamaño menos una reservada para `/ping`: 7 con 2 GB, 15 con 4 GB, 31 con 8 GB (por debajo de 2 GB se cuenta una vCPU, un valor conservador) | `InvalidArgumentException` |
+| Cola del host de un agente (desde 0.14.0) | `queue_max` 0 por defecto y como mucho 256; espera `queue_timeout_seconds` (30 s por defecto, como mucho 900 s) | `429` con `Retry-After`; `CapacityException` (`agent_capacity`) tras el plazo |
+| Flota de agentes (desde 0.14.0) | de `min_vms` a `max_vms`, hasta 64 por flota; `warm_vms` ≤ `max_vms - min_vms`; `scale_in_after_seconds` de 60 s a 8 h (900 s por defecto) | `InvalidArgumentException` |
+| Reinicio de la app de un agente (desde 0.14.0) | hasta 3 reinicios en 300 s, con espera de 2 s hasta 30 s | `/ping` 503 y `app_crashloop` en el marcador de fallo |
+| Análisis de la detección (desde 0.14.0) | hasta 5000 ficheros, 6 niveles de carpetas y 256 KiB por fichero | aviso `scan_truncated` |
 
 Las cuotas TPS son por cuenta y región (`AWS_API_NOTES.md` §11); cuentas
 nuevas pueden empezar con valores menores.

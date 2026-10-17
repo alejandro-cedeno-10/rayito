@@ -31,7 +31,6 @@ import {
   AGENT_TEMPLATE_MANIFEST_SCHEMA,
 } from "../limits.js";
 import type { BuildInfo, BuildOptions } from "../templates/build.js";
-import { DockerIgnore } from "../templates/context.js";
 import { collectContextFiles } from "../templates/context-node.js";
 import { Template } from "../templates/dsl.js";
 import { type ReadyCommand, waitForFile } from "../templates/ready-cmds.js";
@@ -412,9 +411,7 @@ export async function appFiles(
   app: string,
   exclude: readonly string[],
 ): Promise<Array<[string, Uint8Array]>> {
-  const extra = DockerIgnore.fromText(exclude.join("\n"));
-  const entries = await collectContextFiles(app, [{ kind: "copy", src: ".", dst: AGENT_APP_DIR }]);
-  return entries.filter(([relative]) => !extra.matches(relative));
+  return collectContextFiles(app, [{ kind: "copy", src: ".", dst: AGENT_APP_DIR }], exclude);
 }
 
 async function writeContext(

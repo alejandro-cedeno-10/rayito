@@ -31,8 +31,9 @@ from rayito._limits import (
     AGENT_SERVICE_PORT,
     AGENT_SERVICE_READY_MARKER_PATH,
     AGENT_SERVICE_READY_TIMEOUT_SECONDS,
+    AGENT_STARTUP_DIAGNOSTICS_MAX_BYTES,
 )
-from rayito._models import IdlePolicy
+from rayito._models import ALL_TRAFFIC, IdlePolicy, NetworkPolicy
 from rayito.exceptions import (
     AgentException,
     InvalidArgumentException,
@@ -258,6 +259,8 @@ def test_deploy_writes_the_host_and_starts_it(flavor: Callable[..., Flavor]) -> 
             idle=IdlePolicy(max_idle_seconds=120),
             metadata={"team": "soporte"},
             max_concurrency=2,
+            queue_max=3,
+            queue_timeout_seconds=45,
         ),
         allow_internet_access=True,
     )
@@ -276,6 +279,7 @@ def test_deploy_writes_the_host_and_starts_it(flavor: Callable[..., Flavor]) -> 
     host_json = json.loads(written[AGENT_HOST_CONFIG_PATH].data)
     assert host_json["driver"] == "deepagents"
     assert host_json["max_concurrency"] == 2
+    assert (host_json["queue_max"], host_json["queue_timeout_seconds"]) == (3, 45)
     assert host_json["ready_marker"] == AGENT_SERVICE_READY_MARKER_PATH
     assert host_json["limits"]["max_steps"] == the_project.limits.max_steps
     assert host_json["options"]["config_path"] in written
@@ -295,6 +299,27 @@ def test_deploy_writes_the_host_and_starts_it(flavor: Callable[..., Flavor]) -> 
     assert deployment.sandbox_id == SANDBOX_ID
     assert deployment.port == AGENT_SERVICE_PORT
     assert flav.sandbox.kills == 0
+
+
+def test_run_and_deploy_hand_the_project_env_and_network_to_the_sandbox(
+    flavor: Callable[..., Flavor],
+) -> None:
+    flav = flavor()
+    policy = NetworkPolicy(allow_out=("api.example.com",), deny_out=(ALL_TRAFFIC,))
+    the_project = project(env={"LOG_LEVEL": "debug"}, network=policy)
+    flav.call(flav.service(the_project), "run", "hola")
+    flav.call(flav.service(the_project), "deploy")
+    (_, ran), (_, deployed) = flav.klass.created
+    for kwargs in (ran, deployed):
+        assert kwargs["envs"] == {"LOG_LEVEL": "debug"}
+        assert kwargs["network"] == policy
+
+
+def test_a_project_without_env_or_network_sends_neither(flavor: Callable[..., Flavor]) -> None:
+    flav = flavor()
+    flav.call(flav.service(project()), "deploy")
+    ((_, kwargs),) = flav.klass.created
+    assert "envs" not in kwargs and "network" not in kwargs
 
 
 def test_deploy_hands_the_access_token_to_the_sandbox_only_when_given(
@@ -343,6 +368,82 @@ def test_deploy_fails_fast_when_the_host_left_a_failed_marker(
         flav.call(flav.service(project()), "deploy")
     assert flav.sandbox.kills == 1
     assert flav.ticks == 0
+
+
+def test_a_failed_startup_shows_the_end_of_the_apps_stderr(
+    flavor: Callable[..., Flavor],
+) -> None:
+    marker = "app_exited\nTraceback (most recent call last):\nModuleNotFoundError: agent\n"
+    flav = flavor(files={"ready_after": None, "failed_marker": marker})
+    with pytest.raises(SandboxException) as raised:
+        flav.call(flav.service(project()), "deploy")
+    message = str(raised.value)
+    assert message.startswith("el host del agente no pudo arrancar (app_exited)")
+    assert "ModuleNotFoundError: agent" in message
+    assert flav.sandbox.kills == 1
+
+
+def test_a_failed_marker_is_bounded_again_by_the_sdk(flavor: Callable[..., Flavor]) -> None:
+    marker = "app_exited\n" + "inicio " * 3000 + "fin-visible"
+    flav = flavor(files={"ready_after": None, "failed_marker": marker})
+    with pytest.raises(SandboxException) as raised:
+        flav.call(flav.service(project()), "deploy")
+    message = str(raised.value)
+    assert message.endswith("fin-visible")
+    assert len(message.encode("utf-8")) < AGENT_STARTUP_DIAGNOSTICS_MAX_BYTES + 200
+
+
+def test_keep_on_failure_leaves_the_sandbox_alive_and_names_it(
+    flavor: Callable[..., Flavor],
+) -> None:
+    flav = flavor(files={"ready_after": None, "failed_marker": "app_exited\nboom\n"})
+    with pytest.raises(SandboxException) as raised:
+        flav.call(flav.service(project()), "deploy", access_token="dG9rZW4", keep_on_failure=True)
+    assert flav.sandbox.kills == 0
+    notes = " ".join(getattr(raised.value, "__notes__", []))
+    assert SANDBOX_ID in notes
+    assert "dG9rZW4" not in notes
+    assert "Sandbox.kill" in notes
+
+
+def test_keep_on_failure_needs_a_token_the_caller_knows(
+    flavor: Callable[..., Flavor], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("RAYITO_ACCESS_TOKEN", raising=False)
+    flav = flavor()
+    with pytest.raises(InvalidArgumentException, match="access_token"):
+        flav.call(flav.service(project()), "deploy", keep_on_failure=True)
+    assert flav.klass.created == []
+    monkeypatch.setenv("RAYITO_ACCESS_TOKEN", "dG9rZW4")
+    flav.call(flav.service(project()), "deploy", keep_on_failure=True)
+    assert len(flav.klass.created) == 1
+
+
+def test_keep_on_failure_is_off_by_default_and_a_success_never_kills(
+    flavor: Callable[..., Flavor],
+) -> None:
+    flav = flavor(files={"ready_after": None, "failed_code": "AgentFailure"})
+    with pytest.raises(SandboxException):
+        flav.call(flav.service(project()), "deploy")
+    assert flav.sandbox.kills == 1
+    ok = flavor()
+    ok.call(ok.service(project()), "deploy", access_token="dG9rZW4", keep_on_failure=True)
+    assert ok.sandbox.kills == 0
+
+
+def test_keep_on_failure_still_kills_on_a_base_exception(flavor: Callable[..., Flavor]) -> None:
+    flav = flavor()
+
+    def interrupted(*_: Any, **__: Any) -> None:
+        raise KeyboardInterrupt
+
+    async def ainterrupted(*_: Any, **__: Any) -> None:
+        interrupted()
+
+    flav.sandbox.files.write_files = ainterrupted if flav.asynchronous else interrupted  # type: ignore[method-assign, assignment]
+    with pytest.raises(KeyboardInterrupt):
+        flav.call(flav.service(project()), "deploy", access_token="dG9rZW4", keep_on_failure=True)
+    assert flav.sandbox.kills == 1
 
 
 def test_deploy_kills_the_sandbox_on_any_step_failure(flavor: Callable[..., Flavor]) -> None:

@@ -167,6 +167,12 @@ espera a que la versión sea lanzable (unos 10 minutos). La última línea es
 `RAYITO_TEMPLATE=<arn>`. Cada versión publicada cuesta ≈ $0,04 por semana de
 almacenamiento ([Precios](../cost.md#componentes-del-precio)).
 
+`--base-image-version` es la versión de la base gestionada de AWS sobre la que
+se construye. No hace falta buscarla a mano: con `--base-image-version latest`,
+`rayito image publish` usa la más reciente que lista AWS y la imprime
+(`base_image_version=1`); un número explícito (`--base-image-version 1`) fija
+una build reproducible.
+
 ??? example "Las otras variantes: `-caps`, `-poly` y la imagen del agente"
     - `rayito-base-caps` es el mismo zip publicado con
       `additionalOsCapabilities ALL`; hace falta para la

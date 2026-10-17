@@ -36,6 +36,7 @@ export interface ProtocolV1State {
   sessionId: string | undefined;
   steps: number;
   usage: TokenUsage;
+  usageReported: boolean;
   done: boolean;
   failed: AgentFailed | undefined;
   ignoredLines: number;
@@ -47,6 +48,7 @@ export function newProtocolV1State(): ProtocolV1State {
     sessionId: undefined,
     steps: 0,
     usage: new TokenUsage(),
+    usageReported: false,
     done: false,
     failed: undefined,
     ignoredLines: 0,
@@ -112,6 +114,7 @@ export function finishV1(state: ProtocolV1State, exitCode: number): Done | Agent
     sessionId: state.sessionId,
     exitCode,
     usage: state.usage,
+    usageReported: state.usageReported,
   });
 }
 
@@ -158,6 +161,7 @@ function mapPayload(
 
 function stepFinished(payload: Record<string, unknown>, state: ProtocolV1State): AgentEvent {
   const usage = usageOf(payload.usage);
+  state.usageReported = state.usageReported || isPlainObject(payload.usage);
   state.usage = state.usage.plus(usage);
   return Object.freeze({
     type: "step_finished",

@@ -207,12 +207,17 @@ export interface AgentFailed {
   readonly sessionId: string | undefined;
 }
 
-/** Último evento de una ejecución correcta, con los tokens acumulados. */
+/** Último evento de una ejecución correcta, con los tokens acumulados.
+ * `usageReported` es `false` cuando el agente no informó de tokens (una app
+ * HTTP, un comando o una función propios): `usage` es entonces cero porque se
+ * desconoce, no porque no se gastara nada. Ausente vale `true`, como en los
+ * eventos de 0.13. */
 export interface Done {
   readonly type: "done";
   readonly sessionId: string;
   readonly exitCode: number;
   readonly usage: TokenUsage;
+  readonly usageReported?: boolean | undefined;
 }
 
 export type AgentEvent =
@@ -262,6 +267,10 @@ export function agentFailedToError(event: AgentFailed, usage?: TokenUsage): Agen
 /**
  * El resultado de `sbx.agent.run()`. `text` es el último `Text` del
  * asistente; `droppedLines` cuenta las líneas del runtime descartadas.
+ * `usageReported` es `false` si el agente no informó de tokens (una app HTTP,
+ * un comando o una función propios que no devuelven `usage`): `usage` vale
+ * entonces cero porque se desconoce, no porque no se gastara nada. Ausente
+ * vale `true`.
  */
 export interface AgentResult {
   readonly sessionId: string;
@@ -271,4 +280,5 @@ export interface AgentResult {
   readonly exitCode: number;
   readonly toolCalls: readonly ToolCall[];
   readonly droppedLines: number;
+  readonly usageReported?: boolean | undefined;
 }

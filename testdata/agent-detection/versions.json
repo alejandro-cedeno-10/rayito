@@ -1,0 +1,554 @@
+{
+  "comment": "Vectores compartidos de las restricciones de versión (`_detect_versions.py`, `detect-versions.ts`): `satisfied` dice si una versión completa cumple una restricción (`null` si no se entiende) y `resolve` qué compilación fijada se elige (la de por defecto si cumple; si no, la más alta).",
+  "satisfied": [
+    {
+      "kind": "specifier",
+      "constraint": ">=3.11,<3.14",
+      "version": "3.12.15",
+      "expect": true
+    },
+    {
+      "kind": "specifier",
+      "constraint": ">=3.11,<3.14",
+      "version": "3.14.8",
+      "expect": false
+    },
+    {
+      "kind": "specifier",
+      "constraint": ">=3.13",
+      "version": "3.12.15",
+      "expect": false
+    },
+    {
+      "kind": "specifier",
+      "constraint": ">3.12",
+      "version": "3.12.15",
+      "expect": true
+    },
+    {
+      "kind": "specifier",
+      "constraint": "<=3.12",
+      "version": "3.12.15",
+      "expect": false
+    },
+    {
+      "kind": "specifier",
+      "constraint": "<=3.12.15",
+      "version": "3.12.15",
+      "expect": true
+    },
+    {
+      "kind": "specifier",
+      "constraint": "~=3.12",
+      "version": "3.12.15",
+      "expect": true
+    },
+    {
+      "kind": "specifier",
+      "constraint": "~=3.12",
+      "version": "3.13.16",
+      "expect": true
+    },
+    {
+      "kind": "specifier",
+      "constraint": "~=3.12.2",
+      "version": "3.12.15",
+      "expect": true
+    },
+    {
+      "kind": "specifier",
+      "constraint": "~=3.12.20",
+      "version": "3.12.15",
+      "expect": false
+    },
+    {
+      "kind": "specifier",
+      "constraint": "==3.12.*",
+      "version": "3.12.15",
+      "expect": true
+    },
+    {
+      "kind": "specifier",
+      "constraint": "==3.12.*",
+      "version": "3.13.16",
+      "expect": false
+    },
+    {
+      "kind": "specifier",
+      "constraint": "==3.12.15",
+      "version": "3.12.15",
+      "expect": true
+    },
+    {
+      "kind": "specifier",
+      "constraint": "==3.12",
+      "version": "3.12.15",
+      "expect": false
+    },
+    {
+      "kind": "specifier",
+      "constraint": "!=3.12.*",
+      "version": "3.12.15",
+      "expect": false
+    },
+    {
+      "kind": "specifier",
+      "constraint": "!=3.12.*",
+      "version": "3.13.16",
+      "expect": true
+    },
+    {
+      "kind": "specifier",
+      "constraint": "^3.11",
+      "version": "3.14.8",
+      "expect": true
+    },
+    {
+      "kind": "specifier",
+      "constraint": "^3.11",
+      "version": "4.0.1",
+      "expect": false
+    },
+    {
+      "kind": "specifier",
+      "constraint": "~3.12",
+      "version": "3.12.15",
+      "expect": true
+    },
+    {
+      "kind": "specifier",
+      "constraint": "~3.12",
+      "version": "3.13.16",
+      "expect": false
+    },
+    {
+      "kind": "specifier",
+      "constraint": "3.12.15",
+      "version": "3.12.15",
+      "expect": true
+    },
+    {
+      "kind": "specifier",
+      "constraint": ">= 3.11",
+      "version": "3.12.15",
+      "expect": true
+    },
+    {
+      "kind": "specifier",
+      "constraint": "not a version",
+      "version": "3.12.15",
+      "expect": null
+    },
+    {
+      "kind": "specifier",
+      "constraint": ">=3.11,",
+      "version": "3.12.15",
+      "expect": null
+    },
+    {
+      "kind": "semver",
+      "constraint": ">=20",
+      "version": "22.23.3",
+      "expect": true
+    },
+    {
+      "kind": "semver",
+      "constraint": ">=24",
+      "version": "22.23.3",
+      "expect": false
+    },
+    {
+      "kind": "semver",
+      "constraint": "^22",
+      "version": "22.23.3",
+      "expect": true
+    },
+    {
+      "kind": "semver",
+      "constraint": "^22",
+      "version": "24.22.0",
+      "expect": false
+    },
+    {
+      "kind": "semver",
+      "constraint": "^22.1.0",
+      "version": "22.23.3",
+      "expect": true
+    },
+    {
+      "kind": "semver",
+      "constraint": "^0.2.3",
+      "version": "0.2.9",
+      "expect": true
+    },
+    {
+      "kind": "semver",
+      "constraint": "^0.2.3",
+      "version": "0.3.0",
+      "expect": false
+    },
+    {
+      "kind": "semver",
+      "constraint": "^0.0.3",
+      "version": "0.0.4",
+      "expect": false
+    },
+    {
+      "kind": "semver",
+      "constraint": "~22.1",
+      "version": "22.23.3",
+      "expect": false
+    },
+    {
+      "kind": "semver",
+      "constraint": "~22.23",
+      "version": "22.23.3",
+      "expect": true
+    },
+    {
+      "kind": "semver",
+      "constraint": "~22",
+      "version": "22.23.3",
+      "expect": true
+    },
+    {
+      "kind": "semver",
+      "constraint": "22.x",
+      "version": "22.23.3",
+      "expect": true
+    },
+    {
+      "kind": "semver",
+      "constraint": "22.*",
+      "version": "24.22.0",
+      "expect": false
+    },
+    {
+      "kind": "semver",
+      "constraint": "22.23.x",
+      "version": "22.23.3",
+      "expect": true
+    },
+    {
+      "kind": "semver",
+      "constraint": "22",
+      "version": "22.23.3",
+      "expect": true
+    },
+    {
+      "kind": "semver",
+      "constraint": "22.23",
+      "version": "22.23.3",
+      "expect": true
+    },
+    {
+      "kind": "semver",
+      "constraint": "22.23.3",
+      "version": "22.23.3",
+      "expect": true
+    },
+    {
+      "kind": "semver",
+      "constraint": "=22.23.3",
+      "version": "22.23.3",
+      "expect": true
+    },
+    {
+      "kind": "semver",
+      "constraint": "20 || 22",
+      "version": "22.23.3",
+      "expect": true
+    },
+    {
+      "kind": "semver",
+      "constraint": "20 || 24",
+      "version": "22.23.3",
+      "expect": false
+    },
+    {
+      "kind": "semver",
+      "constraint": ">=18 <23",
+      "version": "22.23.3",
+      "expect": true
+    },
+    {
+      "kind": "semver",
+      "constraint": ">=18 <22",
+      "version": "22.23.3",
+      "expect": false
+    },
+    {
+      "kind": "semver",
+      "constraint": ">= 18 < 23",
+      "version": "22.23.3",
+      "expect": true
+    },
+    {
+      "kind": "semver",
+      "constraint": ">22",
+      "version": "22.23.3",
+      "expect": false
+    },
+    {
+      "kind": "semver",
+      "constraint": ">22",
+      "version": "24.22.0",
+      "expect": true
+    },
+    {
+      "kind": "semver",
+      "constraint": "<=22",
+      "version": "22.23.3",
+      "expect": true
+    },
+    {
+      "kind": "semver",
+      "constraint": "<22",
+      "version": "22.23.3",
+      "expect": false
+    },
+    {
+      "kind": "semver",
+      "constraint": "<23",
+      "version": "22.23.3",
+      "expect": true
+    },
+    {
+      "kind": "semver",
+      "constraint": "*",
+      "version": "22.23.3",
+      "expect": true
+    },
+    {
+      "kind": "semver",
+      "constraint": "x",
+      "version": "22.23.3",
+      "expect": true
+    },
+    {
+      "kind": "semver",
+      "constraint": "18 - 22",
+      "version": "22.23.3",
+      "expect": null
+    },
+    {
+      "kind": "semver",
+      "constraint": "lts/*",
+      "version": "22.23.3",
+      "expect": null
+    },
+    {
+      "kind": "minor",
+      "constraint": "3.12",
+      "version": "3.12.15",
+      "expect": true
+    },
+    {
+      "kind": "minor",
+      "constraint": "3.11",
+      "version": "3.12.15",
+      "expect": false
+    },
+    {
+      "kind": "major",
+      "constraint": "22",
+      "version": "22.23.3",
+      "expect": true
+    },
+    {
+      "kind": "major",
+      "constraint": "24",
+      "version": "22.23.3",
+      "expect": false
+    },
+    {
+      "kind": "specifier",
+      "constraint": "~=3.12.2",
+      "version": "3.13.16",
+      "expect": false
+    }
+  ],
+  "resolve": [
+    {
+      "kind": "specifier",
+      "constraint": ">=3.11,<3.14",
+      "builds": {
+        "3.11": "3.11.17",
+        "3.12": "3.12.15",
+        "3.13": "3.13.16",
+        "3.14": "3.14.8"
+      },
+      "default": "3.12",
+      "key": "3.12",
+      "understood": true
+    },
+    {
+      "kind": "specifier",
+      "constraint": ">=3.13",
+      "builds": {
+        "3.11": "3.11.17",
+        "3.12": "3.12.15",
+        "3.13": "3.13.16",
+        "3.14": "3.14.8"
+      },
+      "default": "3.12",
+      "key": "3.14",
+      "understood": true
+    },
+    {
+      "kind": "specifier",
+      "constraint": "<3.12",
+      "builds": {
+        "3.11": "3.11.17",
+        "3.12": "3.12.15",
+        "3.13": "3.13.16",
+        "3.14": "3.14.8"
+      },
+      "default": "3.12",
+      "key": "3.11",
+      "understood": true
+    },
+    {
+      "kind": "specifier",
+      "constraint": "==3.13.*",
+      "builds": {
+        "3.11": "3.11.17",
+        "3.12": "3.12.15",
+        "3.13": "3.13.16",
+        "3.14": "3.14.8"
+      },
+      "default": "3.12",
+      "key": "3.13",
+      "understood": true
+    },
+    {
+      "kind": "specifier",
+      "constraint": ">=3.15",
+      "builds": {
+        "3.11": "3.11.17",
+        "3.12": "3.12.15",
+        "3.13": "3.13.16",
+        "3.14": "3.14.8"
+      },
+      "default": "3.12",
+      "key": null,
+      "understood": true
+    },
+    {
+      "kind": "specifier",
+      "constraint": "???",
+      "builds": {
+        "3.11": "3.11.17",
+        "3.12": "3.12.15",
+        "3.13": "3.13.16",
+        "3.14": "3.14.8"
+      },
+      "default": "3.12",
+      "key": null,
+      "understood": false
+    },
+    {
+      "kind": "minor",
+      "constraint": "3.11",
+      "builds": {
+        "3.11": "3.11.17",
+        "3.12": "3.12.15",
+        "3.13": "3.13.16",
+        "3.14": "3.14.8"
+      },
+      "default": "3.12",
+      "key": "3.11",
+      "understood": true
+    },
+    {
+      "kind": "minor",
+      "constraint": "3.10",
+      "builds": {
+        "3.11": "3.11.17",
+        "3.12": "3.12.15",
+        "3.13": "3.13.16",
+        "3.14": "3.14.8"
+      },
+      "default": "3.12",
+      "key": null,
+      "understood": true
+    },
+    {
+      "kind": "semver",
+      "constraint": ">=20",
+      "builds": {
+        "22": "22.23.3",
+        "24": "24.22.0"
+      },
+      "default": "22",
+      "key": "22",
+      "understood": true
+    },
+    {
+      "kind": "semver",
+      "constraint": ">=24",
+      "builds": {
+        "22": "22.23.3",
+        "24": "24.22.0"
+      },
+      "default": "22",
+      "key": "24",
+      "understood": true
+    },
+    {
+      "kind": "semver",
+      "constraint": "^24",
+      "builds": {
+        "22": "22.23.3",
+        "24": "24.22.0"
+      },
+      "default": "22",
+      "key": "24",
+      "understood": true
+    },
+    {
+      "kind": "semver",
+      "constraint": "<20",
+      "builds": {
+        "22": "22.23.3",
+        "24": "24.22.0"
+      },
+      "default": "22",
+      "key": null,
+      "understood": true
+    },
+    {
+      "kind": "semver",
+      "constraint": "18 - 22",
+      "builds": {
+        "22": "22.23.3",
+        "24": "24.22.0"
+      },
+      "default": "22",
+      "key": null,
+      "understood": false
+    },
+    {
+      "kind": "major",
+      "constraint": "24",
+      "builds": {
+        "22": "22.23.3",
+        "24": "24.22.0"
+      },
+      "default": "22",
+      "key": "24",
+      "understood": true
+    },
+    {
+      "kind": "major",
+      "constraint": "20",
+      "builds": {
+        "22": "22.23.3",
+        "24": "24.22.0"
+      },
+      "default": "22",
+      "key": null,
+      "understood": true
+    }
+  ]
+}

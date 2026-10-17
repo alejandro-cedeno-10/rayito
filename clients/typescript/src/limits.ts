@@ -343,6 +343,7 @@ export const AGENT_SERVICE_READY_TIMEOUT_SECONDS = 120 as const;
 export const DEFAULT_AGENT_DEPLOY_TIMEOUT_SECONDS = 3600 as const;
 export const AGENT_RUN_SANDBOX_MARGIN_SECONDS = 60 as const;
 export const AGENT_SERVICE_READY_MARKER_PATH = "/home/user/.rayito/agent/host/ready" as const;
+export const AGENT_STARTUP_DIAGNOSTICS_MAX_BYTES = 2048 as const;
 export const AGENT_SERVICE_SCHEMA = "rayito.agent-service/1" as const;
 export const AGENT_HERMES_API_PORT = 8642 as const;
 export const AGENT_STRANDS_VERSION = "1.61.1" as const;
@@ -351,9 +352,6 @@ export const AGENT_STRANDS_TS_VERSION = "1.21.0" as const;
 export const AGENT_STRANDS_TS_HARNESS_VERSION = "0.3.0" as const;
 export const AGENT_HERMES_VERSION = "0.22.2" as const;
 export const AGENT_HERMES_COMMIT = "d923a5eb487a17c0a68801bba9ef0f56c81040a8" as const;
-export const AGENT_NODE_VERSION = "22.23.3" as const;
-export const AGENT_NODE_SHA256 =
-  "5ced2d48d1d7198739b7f86804de0171aefb6823b684b12341d3321afc3cb0b2" as const;
 export const AGENT_EXPORT_BASE_IMAGE = "python:3.12-slim-bookworm" as const;
 export const AGENT_EXPORT_BASE_IMAGE_DIGEST =
   "sha256:34386ef0cb081344d7ec1c103ba398e6e9f64e9ab3a1509accc92a4e24a07258" as const;
@@ -369,8 +367,79 @@ export const AGENT_STRANDS_HARNESS_REQUIREMENTS_SHA256 =
   "a3714e7732bf2f32d65a10b76490757930e193123c2713004e994d44b3538d95" as const;
 export const AGENT_HERMES_REQUIREMENTS_SHA256 =
   "216a22be69129215f1ddc2ee4d1dc0b401e02cf83121d3a865ffe16415540c54" as const;
-export const AGENT_HERMES_PYTHON_VERSION = "3.14.8" as const;
-export const AGENT_HERMES_PYTHON_BUILD_TAG = "20261013" as const;
-export const AGENT_HERMES_PYTHON_SHA256 =
-  "6c3cfb175acca2748d5a9e42208c523bfbc1099ddb928615b5f328ba7c106e83" as const;
 export const AGENT_HOST_SCHEMA = "rayito.agent-host/1" as const;
+
+export const POOL_SIZE_MAX = 64 as const;
+export const AGENT_SCALING_MIN_VMS_DEFAULT = 1 as const;
+export const AGENT_SCALING_MAX_VMS_DEFAULT = 1 as const;
+export const AGENT_SCALING_WARM_VMS_DEFAULT = 0 as const;
+export const AGENT_SCALE_IN_AFTER_SECONDS_DEFAULT = 900 as const;
+export const AGENT_SCALE_IN_AFTER_SECONDS_MIN = 60 as const;
+export const AGENT_SERVICE_QUEUE_MAX_DEFAULT = 0 as const;
+export const AGENT_SERVICE_QUEUE_MAX = 256 as const;
+export const AGENT_SERVICE_QUEUE_TIMEOUT_SECONDS_DEFAULT = 30 as const;
+export const AGENT_SERVICE_QUEUE_TIMEOUT_SECONDS_MAX = 900 as const;
+export const AGENT_SERVICE_RESERVED_CONNECTIONS = 1 as const;
+export const AGENT_FLEET_PING_TTL_SECONDS = 5 as const;
+export const AGENT_FLEET_UNHEALTHY_PINGS = 3 as const;
+export const AGENT_APP_RESTART_MAX = 3 as const;
+export const AGENT_APP_RESTART_WINDOW_SECONDS = 300 as const;
+export const AGENT_APP_RESTART_BACKOFF_SECONDS = 2 as const;
+export const AGENT_APP_RESTART_BACKOFF_MAX_SECONDS = 30 as const;
+export const AGENT_APP_INTERNAL_PORT = 8000 as const;
+export const AGENT_APP_PORT_ENV = "PORT" as const;
+export const AGENT_SESSION_HANDLE_PREFIX = "rs1" as const;
+export const AGENT_DETECTION_MAX_FILES = 5000 as const;
+export const AGENT_DETECTION_MAX_DEPTH = 6 as const;
+export const AGENT_DETECTION_MAX_FILE_BYTES = 262144 as const;
+export const AGENT_SOURCE_DEFAULT_EXCLUDES = [
+  ".git",
+  ".env",
+  ".env.*",
+  ".venv",
+  "venv",
+  "node_modules",
+  "__pycache__",
+  "*.pyc",
+  ".rayito",
+] as const;
+export const AGENT_DETECTION_SCHEMA = "rayito.agent-detection/1" as const;
+export const AGENT_DETECTION_RULES_SCHEMA = "rayito.agent-detection-rules/1" as const;
+
+export const AGENT_PYTHON_BUILD_TAG = "20261013" as const;
+export const AGENT_PYTHON_BUILD_VERSIONS: Readonly<Record<string, string>> = {
+  "3.11": "3.11.17",
+  "3.12": "3.12.15",
+  "3.13": "3.13.16",
+  "3.14": "3.14.8",
+};
+export const AGENT_PYTHON_BUILD_SHA256: Readonly<Record<string, string>> = {
+  "3.11": "643954c07b04c18e215f812691cd5fa15d924fec1f3a5fdd9c1789484382ac24",
+  "3.12": "34a43010cc05982d8b5debbad7d09f7b1200117ebf018f7acfd656895e408205",
+  "3.13": "0fce0605da7b6532d5bdaec185336ffaaddd02ec04e27382014952ca4857ed6d",
+  "3.14": "6c3cfb175acca2748d5a9e42208c523bfbc1099ddb928615b5f328ba7c106e83",
+};
+export const AGENT_DEFAULT_PYTHON_MINOR = "3.12" as const;
+export const AGENT_NODE_BUILD_VERSIONS: Readonly<Record<string, string>> = {
+  "22": "22.23.3",
+  "24": "24.22.0",
+};
+export const AGENT_NODE_BUILD_SHA256: Readonly<Record<string, string>> = {
+  "22": "5ced2d48d1d7198739b7f86804de0171aefb6823b684b12341d3321afc3cb0b2",
+  "24": "b7e7991d5407815adfa74a2a9cd4db683552c8ce32ff4a295c22e972849c3f5d",
+};
+export const AGENT_DEFAULT_NODE_MAJOR = "22" as const;
+export const AGENT_UV_VERSION = "0.13.1" as const;
+export const AGENT_UV_SHA256 =
+  "9041c73c99fdc5892cf128140beb354eca9231d502068cc36e6cb53a8e59ad14" as const;
+export const AGENT_PNPM_VERSION = "12.14.0" as const;
+export const AGENT_PNPM_INTEGRITY =
+  "sha512-wYum2HmT09Fky16JSPMrLAbuhUSH4GzY2GeBNC+z5btGNDZwNHEehoArqpw3vqkGzhkprQjXCITJfYAd8TOJpg==" as const;
+export const AGENT_YARN_CLASSIC_VERSION = "1.22.22" as const;
+export const AGENT_YARN_CLASSIC_INTEGRITY =
+  "sha512-prL3kGtyG7o9Z9Sv8IPfBNrWTDmXB4Qbes8A9rEzt6wkJV8mUvoirjU0Mp3GGAU06Y0XQyA3/2/RQFVuK7MTfg==" as const;
+export const AGENT_YARN_BERRY_VERSION = "4.18.1" as const;
+export const AGENT_YARN_BERRY_INTEGRITY =
+  "sha512-EH+A4TxAtBWXKE0DGQxW9Bo9crXHLJ73mfxjTQJuv8XonNWWTpei8BQ5JjczHJNU9GROTycwMFn8iOvRIZXUcA==" as const;
+export const AGENT_SECRET_NAME_TEMPLATE = "rayito/agents/{project}/{provider}" as const;
+export const AGENT_TOKEN_FILE_DEFAULT = ".rayito/agent-token" as const;

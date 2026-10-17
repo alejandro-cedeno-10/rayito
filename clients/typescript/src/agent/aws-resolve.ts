@@ -1,0 +1,378 @@
+/**
+ * Los valores por defecto de AWS de `deployAgent()` (ADR-029, D7). Espejo de
+ * `rayito._agent._aws_resolve`: la región, el bucket del artefacto, la imagen
+ * base, el secreto del modelo y el access token. Cada uno se resuelve en el
+ * mismo orden (argumento explícito, fichero de proyecto, variable de entorno,
+ * descubrimiento) y ninguno crea nada en silencio: el bucket nunca se crea
+ * (`CreateBucket` no se llama), un secreto sólo se crea con
+ * `createSecretFromEnv: true`, y una imagen base ausente se publica sólo si el
+ * llamante pasó quien la publique.
+ *
+ * Este módulo reparte la decisión (puras: `resolveBucket`, `resolveToken`,
+ * `secretNameFor`, `secretValueFromEnv`) y la E/S sobre AWS (`AwsResolver`:
+ * `sts`, `s3` y la imagen base) y sobre `SecretStore`. Construir el resolvedor
+ * no llama a AWS: los clientes son perezosos.
+ */
+
+import { clientConfig } from "../aws/control-plane.js";
+import { awsCode } from "../aws/optional-client.js";
+import { sanitizeAwsError } from "../aws/sanitize.js";
+import { InvalidArgumentError } from "../errors.js";
+import { accountImageArn } from "../images/gateway.js";
+import { generateAccessToken } from "../payload.js";
+import { ACCESS_TOKEN_ENV_VAR } from "../sandbox/launch.js";
+import { SecretGateway } from "../secret-gateway/domain.js";
+import { SecretRef } from "../secrets/names.js";
+import { AwsBuildClients } from "../templates/build.js";
+import type { AgentProject } from "./project.js";
+
+/** Variable con el bucket de artefactos, la misma de `rayito image publish`. */
+export const BUCKET_ENV_VAR = "RAYITO_BUCKET";
+/** Calificador por defecto del bootstrap de CDK
+ * (docs.aws.amazon.com/cdk/v2/guide/bootstrapping-env.html, consultado
+ * 2026-10-16): el bucket de activos es `cdk-<calificador>-assets-<cuenta>-<región>`. */
+export const CDK_BOOTSTRAP_QUALIFIER = "hnb659fds";
+export const BEARER_PREFIX = "Bearer ";
+export const AUTHORIZATION_HEADER = "authorization";
+/** Códigos de `HeadBucket` que dan el bucket por inexistente o ajeno: sin
+ * `s3:ListBucket` S3 contesta 403 a un HEAD, y un bucket que no se puede leer
+ * tampoco sirve para el artefacto. */
+const BUCKET_MISSING_CODES: ReadonlySet<string> = new Set([
+  "404",
+  "NoSuchBucket",
+  "NotFound",
+  "403",
+  "Forbidden",
+]);
+/** La variable de entorno estándar de cada pasarela de modelo
+ * (`testdata/agent-deploy/secret-env.json`, la misma tabla en Python). */
+export const GATEWAY_SECRET_ENV_VARS: Readonly<Record<string, string>> = Object.freeze({
+  bedrock: "AWS_BEARER_TOKEN_BEDROCK",
+  openai: "OPENAI_API_KEY",
+  anthropic: "ANTHROPIC_API_KEY",
+  gemini: "GEMINI_API_KEY",
+  azure_openai: "AZURE_OPENAI_API_KEY",
+  openrouter: "OPENROUTER_API_KEY",
+  groq: "GROQ_API_KEY",
+  mistral: "MISTRAL_API_KEY",
+  deepseek: "DEEPSEEK_API_KEY",
+  xai: "XAI_API_KEY",
+  litellm: "LITELLM_API_KEY",
+});
+
+export type BucketSource = "argument" | "project_file" | "environment" | "discovered";
+
+export interface BucketChoice {
+  readonly bucket: string;
+  readonly source: BucketSource;
+}
+
+export type Environ = Readonly<Record<string, string | undefined>>;
+
+/** Lo que `deployAgent()` pregunta a AWS antes de crear nada: la región
+ * efectiva, la cuenta (`GetCallerIdentity`), si un bucket existe
+ * (`HeadBucket`) y si una imagen existe (`GetMicrovmImage`). */
+export interface DeployAws {
+  resolvedRegion(): string;
+  accountId(): Promise<string>;
+  bucketExists(bucket: string): Promise<boolean>;
+  imageExists(name: string): Promise<boolean>;
+}
+
+/** Lo que `deployAgent()` usa de `SecretStore`. */
+export interface SecretStorePort {
+  exists(name: string): Promise<boolean>;
+  create(name: string, value: string): Promise<unknown>;
+}
+
+/** Las pasarelas del proyecto con el nombre de secreto que se usará, y las
+ * pasarelas cuyo secreto creó esta resolución (para avisar del coste; nunca el
+ * nombre del secreto). */
+export interface ResolvedSecrets {
+  readonly gateways: Readonly<Record<string, SecretGateway>>;
+  readonly created: readonly string[];
+}
+
+// ------------------------------------------------------------------- puras
+
+/** El nombre convencional del secreto de la pasarela `gateway` del proyecto
+ * `project`, bajo el prefijo `rayito/` de `SecretStore` (el secreto queda en
+ * `rayito/agents/<proyecto>/<pasarela>`). */
+export function secretNameFor(project: string, gateway: string): string {
+  return `agents/${project}/${gateway}`;
+}
+
+export function cdkBucketName(account: string, region: string): string {
+  return `cdk-${CDK_BOOTSTRAP_QUALIFIER}-assets-${account}-${region}`;
+}
+
+/** El bucket del artefacto: argumento > `[deploy].bucket` del fichero de
+ * proyecto > `RAYITO_BUCKET` > el bucket de activos del bootstrap de CDK de la
+ * cuenta y la región (si existe). Sin ninguno, `InvalidArgumentError` con las
+ * opciones; nunca se crea un bucket. */
+export async function resolveBucket(
+  explicit: string | undefined,
+  projectFile: string | undefined,
+  environ: Environ,
+  discover: () => Promise<string | undefined>,
+): Promise<BucketChoice> {
+  if (explicit) {
+    return { bucket: explicit, source: "argument" };
+  }
+  if (projectFile) {
+    return { bucket: projectFile, source: "project_file" };
+  }
+  const fromEnvironment = environ[BUCKET_ENV_VAR];
+  if (fromEnvironment) {
+    return { bucket: fromEnvironment, source: "environment" };
+  }
+  const discovered = await discover();
+  if (discovered) {
+    return { bucket: discovered, source: "discovered" };
+  }
+  throw new InvalidArgumentError(
+    "no hay bucket para el artefacto de la imagen: pasa bucket (--bucket), " +
+      `[deploy].bucket en el fichero del proyecto o exporta ${BUCKET_ENV_VAR}; ` +
+      "Rayito no crea buckets",
+  );
+}
+
+/** El access token de la flota: argumento > `RAYITO_ACCESS_TOKEN` > uno nuevo
+ * (que quien despliega debe guardar: `AgentFleet.accessToken`). */
+export function resolveToken(explicit: string | undefined, environ: Environ): string {
+  return explicit || environ[ACCESS_TOKEN_ENV_VAR] || generateAccessToken();
+}
+
+/** El valor que se guardaría en el secreto de `gateway` a partir de su
+ * variable de entorno estándar: `Bearer <clave>` para la cabecera
+ * `authorization` (salvo que ya lo traiga) y la clave tal cual para las demás.
+ * `undefined` si la variable no está o está vacía. */
+export function secretValueFromEnv(
+  gateway: string,
+  header: string,
+  environ: Environ,
+): string | undefined {
+  const variable = GATEWAY_SECRET_ENV_VARS[gateway];
+  const value = variable === undefined ? "" : (environ[variable] ?? "");
+  if (value === "") {
+    return undefined;
+  }
+  if (header.toLowerCase() === AUTHORIZATION_HEADER && !value.startsWith(BEARER_PREFIX)) {
+    return BEARER_PREFIX + value;
+  }
+  return value;
+}
+
+function secretNameOf(value: string | SecretRef): string {
+  return typeof value === "string" ? value : value.name;
+}
+
+function renamed(value: string | SecretRef, name: string): string | SecretRef {
+  if (typeof value === "string") {
+    return name;
+  }
+  return new SecretRef(name, {
+    versionId: value.versionId,
+    versionStage: value.versionStage,
+  });
+}
+
+function missingSecretMessage(gateway: string): string {
+  const variable = GATEWAY_SECRET_ENV_VARS[gateway];
+  const creation =
+    variable === undefined
+      ? "crea el secreto tú mismo con SecretStore"
+      : `--create-secret (createSecretFromEnv: true) lo crea desde ${variable}`;
+  return (
+    `falta el secreto de la pasarela '${gateway}': pasa uno que ya exista con ` +
+    `--secret ${gateway}=<nombre> (secretNames), o ${creation}`
+  );
+}
+
+function missingValueMessage(gateway: string): string {
+  const variable = GATEWAY_SECRET_ENV_VARS[gateway];
+  return variable === undefined
+    ? `no se puede crear el secreto de la pasarela '${gateway}' desde el entorno`
+    : `no se puede crear el secreto de la pasarela '${gateway}': la variable ${variable} no está definida`;
+}
+
+function overrideTarget(gateway: string, definition: SecretGateway): string {
+  const headers = Object.keys(definition.headers);
+  const [header] = headers;
+  if (headers.length !== 1 || header === undefined) {
+    throw new InvalidArgumentError(
+      `la pasarela '${gateway}' lleva varias cabeceras: --secret no puede elegir cuál`,
+    );
+  }
+  return header;
+}
+
+function withHeaders(
+  definition: SecretGateway,
+  headers: Readonly<Record<string, string | SecretRef>>,
+): SecretGateway {
+  return new SecretGateway({
+    upstream: definition.upstream,
+    headers,
+    allow: definition.allow.map((rule) => [rule.method, rule.path] as const),
+    ratePerMinute: definition.ratePerMinute,
+  });
+}
+
+/** Las pasarelas con el nombre de secreto de `secretNames` (pasarela →
+ * nombre) en lugar del que traía el proyecto. Una pasarela que no existe es un
+ * error, no se ignora. */
+export function applySecretNames(
+  gateways: Readonly<Record<string, SecretGateway>>,
+  secretNames: Readonly<Record<string, string>>,
+): Record<string, SecretGateway> {
+  const unknown = Object.keys(secretNames)
+    .filter((gateway) => !(gateway in gateways))
+    .sort();
+  if (unknown.length > 0) {
+    throw new InvalidArgumentError(
+      `secretNames nombra pasarelas que el proyecto no tiene: ${unknown.join(", ")}`,
+    );
+  }
+  const result: Record<string, SecretGateway> = { ...gateways };
+  for (const [gateway, name] of Object.entries(secretNames)) {
+    const original = gateways[gateway] as SecretGateway;
+    const header = overrideTarget(gateway, original);
+    const current = original.headers[header] as string | SecretRef;
+    result[gateway] = withHeaders(original, { [header]: renamed(current, name) });
+  }
+  return result;
+}
+
+// ------------------------------------------------------------- con E/S
+
+/** Comprueba que existe el secreto de cada pasarela del proyecto
+ * (`DescribeSecret`) y, sólo con `createFromEnv`, crea el que falte con el
+ * valor de la variable estándar de su proveedor (`CreateSecret`). El valor
+ * sale de `environ` a Secrets Manager y no se escribe en disco ni en logs; los
+ * errores nombran la pasarela, nunca el secreto. */
+export async function ensureModelSecrets(
+  project: AgentProject,
+  options: {
+    readonly secretNames: Readonly<Record<string, string>>;
+    readonly createFromEnv: boolean;
+    readonly store: SecretStorePort;
+    readonly environ: Environ;
+  },
+): Promise<ResolvedSecrets> {
+  const gateways = applySecretNames(project.gateways, options.secretNames);
+  const created: string[] = [];
+  for (const [gateway, definition] of Object.entries(gateways)) {
+    for (const [header, reference] of Object.entries(definition.headers)) {
+      const name = secretNameOf(reference);
+      if (await options.store.exists(name)) {
+        continue;
+      }
+      if (!options.createFromEnv) {
+        throw new InvalidArgumentError(missingSecretMessage(gateway));
+      }
+      const value = secretValueFromEnv(gateway, header, options.environ);
+      if (value === undefined) {
+        throw new InvalidArgumentError(missingValueMessage(gateway));
+      }
+      await options.store.create(name, value);
+      created.push(gateway);
+    }
+  }
+  return { gateways: Object.freeze(gateways), created };
+}
+
+/** El adaptador de `DeployAws` sobre el SDK de AWS v3. Los clientes `sts`,
+ * `s3` y `lambda-microvms` se crean en la primera llamada que los necesita. */
+export class AwsResolver implements DeployAws {
+  readonly #region: string | undefined;
+  readonly #credentials: ConstructorParameters<typeof AwsBuildClients>[1];
+  #build: AwsBuildClients | undefined;
+
+  constructor(options: {
+    readonly region?: string | undefined;
+    readonly credentials?: ConstructorParameters<typeof AwsBuildClients>[1];
+  }) {
+    this.#region = options.region;
+    this.#credentials = options.credentials;
+  }
+
+  resolvedRegion(): string {
+    const resolved = this.#region ?? process.env.AWS_REGION ?? process.env.AWS_DEFAULT_REGION;
+    if (!resolved) {
+      throw new InvalidArgumentError(
+        "no hay región de AWS: pasa region (--region) o exporta AWS_REGION",
+      );
+    }
+    return resolved;
+  }
+
+  #clients(): AwsBuildClients {
+    this.#build ??= new AwsBuildClients(this.resolvedRegion(), this.#credentials);
+    return this.#build;
+  }
+
+  accountId(): Promise<string> {
+    return this.#clients().accountId();
+  }
+
+  async bucketExists(bucket: string): Promise<boolean> {
+    const sdk = await import("@aws-sdk/client-s3");
+    const client = new sdk.S3Client(
+      clientConfig(
+        this.resolvedRegion(),
+        this.#credentials === undefined ? {} : { credentials: this.#credentials },
+      ),
+    );
+    try {
+      await client.send(new sdk.HeadBucketCommand({ Bucket: bucket }));
+    } catch (error) {
+      const code = awsCode(error);
+      if (code !== undefined && BUCKET_MISSING_CODES.has(code)) {
+        return false;
+      }
+      throw sanitizeAwsError(error, { includeMessage: true });
+    }
+    return true;
+  }
+
+  async imageExists(name: string): Promise<boolean> {
+    const arn = accountImageArn(this.resolvedRegion(), await this.accountId(), name);
+    return (await this.#clients().getMicrovmImage(arn)) !== undefined;
+  }
+}
+
+/** El bucket de activos del bootstrap de CDK de la cuenta y la región, si
+ * existe (`GetCallerIdentity` y `HeadBucket`; nunca se crea). */
+export async function discoverBucket(aws: DeployAws, region: string): Promise<string | undefined> {
+  const candidate = cdkBucketName(await aws.accountId(), region);
+  return (await aws.bucketExists(candidate)) ? candidate : undefined;
+}
+
+/** Si la imagen base existe. Si no, la publica con `publisher` (que el
+ * llamante dio y que costó una confirmación suya) y vuelve a comprobar; sin
+ * `publisher` o con `ensure: false` es `InvalidArgumentError` con el comando
+ * que la publica. Devuelve si hubo que publicarla. */
+export async function ensureBaseImage(
+  aws: DeployAws,
+  base: string,
+  publisher: (() => Promise<void>) | undefined,
+  options: { readonly ensure: boolean },
+): Promise<boolean> {
+  if (await aws.imageExists(base)) {
+    return false;
+  }
+  if (!options.ensure || publisher === undefined) {
+    throw new InvalidArgumentError(
+      `la imagen base '${base}' no existe en esta cuenta y región: publícala con ` +
+        "`rayito image publish --os-capabilities ALL --artifact <zip> " +
+        "--base-image-version latest` (ver la guía de instalación) o pasa " +
+        "basePublisher a deployAgent()",
+    );
+  }
+  await publisher();
+  if (!(await aws.imageExists(base))) {
+    throw new InvalidArgumentError(`la imagen base '${base}' sigue sin existir tras publicarla`);
+  }
+  return true;
+}

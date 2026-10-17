@@ -51,12 +51,15 @@ Emit = Callable[[Event], None]
 
 class AgentFailure(Exception):
     """Un fallo con `reason` y `detail_code` del protocolo, nunca con texto
-    del proveedor ni contenido."""
+    del proveedor ni contenido. `diagnostics` es la cola de la salida de
+    error de la app del usuario en un arranque fallido: no viaja por el
+    protocolo, sólo la lee el host para el marcador de fallo."""
 
-    def __init__(self, reason: str, detail_code: str) -> None:
+    def __init__(self, reason: str, detail_code: str, diagnostics: str | None = None) -> None:
         super().__init__(detail_code)
         self.reason = reason
         self.detail_code = detail_code
+        self.diagnostics = diagnostics
 
 
 class LimitExceeded(BaseException):

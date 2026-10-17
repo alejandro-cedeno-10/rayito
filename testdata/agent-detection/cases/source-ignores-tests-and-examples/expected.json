@@ -1,0 +1,49 @@
+{
+  "schema": "rayito.agent-detection/1",
+  "language": "python",
+  "framework": "strands",
+  "kind": "strands",
+  "entrypoint": "agent:agent",
+  "entrypoint_kind": "object",
+  "protocol": "framework",
+  "options": {},
+  "app": null,
+  "install": {
+    "manager": "pip",
+    "lockfile": null,
+    "requirements": "requirements.txt",
+    "require_hashes": false,
+    "reproducible": true,
+    "build_script": false,
+    "python_version": "3.12",
+    "node_version": null
+  },
+  "providers": [
+    {
+      "preset": "bedrock",
+      "evidence": [
+        {
+          "path": "requirements.txt",
+          "rule": "dep:strands-agents"
+        }
+      ]
+    }
+  ],
+  "models": [],
+  "evidence": [
+    {
+      "path": "requirements.txt",
+      "rule": "dep:strands-agents"
+    },
+    {
+      "path": "agent.py",
+      "rule": "entry:py-strands-agent"
+    },
+    {
+      "path": "requirements.txt",
+      "rule": "install:pip"
+    }
+  ],
+  "warnings": [],
+  "alternatives": []
+}

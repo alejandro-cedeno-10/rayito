@@ -46,10 +46,13 @@ from ..protocol import (
     run_to_terminal,
     truncate_output,
 )
-from ._common import add_import_roots
+from ._common import add_import_roots, entry_value, load_attribute
 
 #: Prefijo de los ids de sesión de deepagents (design.md §3).
 SESSION_ID_PREFIX: Final = "rda_"
+#: Lo que tiene un grafo de LangGraph ya compilado (un `entrypoint` que es el
+#: grafo y no una fábrica).
+GRAPH_ATTRIBUTES: Final = ("astream", "stream")
 #: El SDK impone `max_steps` matando el proceso; este tope sólo evita que
 #: el `recursion_limit` de LangGraph (25 por defecto) corte antes que él.
 RECURSION_LIMIT: Final = 10_000
@@ -73,13 +76,15 @@ MODEL_ERROR_MODULES: Final = (
 #: OpenAI acepta (learn.microsoft.com/azure/ai-foundry/openai/api-version-lifecycle,
 #: consultado el 2026-10-07: la v1 ya no necesita versiones con fecha).
 AZURE_OPENAI_V1_API_VERSION: Final = "v1"
-#: El nodo del modelo en los grafos de `langchain.agents.create_agent`.
-MODEL_NODE: Final = "model"
-#: El nodo de herramientas en esos mismos grafos.
+#: Los nodos del modelo: `model` en los grafos de
+#: `langchain.agents.create_agent` (y deepagents) y `agent` en los de
+#: `langgraph.prebuilt.create_react_agent`; un `StateGraph` propio que los
+#: llame así se traduce igual.
+MODEL_NODES: Final = ("model", "agent")
+#: El nodo de herramientas en todos esos grafos.
 TOOLS_NODE: Final = "tools"
 
 _SESSION_ID_PATTERN: Final = re.compile(r"rda_[0-9a-f]{32}")
-_ENTRYPOINT_PATTERN: Final = re.compile(r"[A-Za-z_][A-Za-z0-9_.]*:[A-Za-z_][A-Za-z0-9_]*")
 _REASONING_BLOCK_TYPES: Final = ("reasoning", "thinking", "reasoning_content")
 
 
@@ -211,7 +216,7 @@ class Translator:
         return [{"type": "step_started", "index": self.steps}]
 
     def on_chunk(self, chunk: Any, metadata: Mapping[str, Any]) -> list[dict[str, Any]]:
-        if metadata.get("langgraph_node") != MODEL_NODE:
+        if metadata.get("langgraph_node") not in MODEL_NODES:
             return []
         if "|" in str(metadata.get("langgraph_checkpoint_ns", "")):
             return []
@@ -225,7 +230,7 @@ class Translator:
             return []
         events: list[dict[str, Any]] = []
         for node, value in update.items():
-            if node == MODEL_NODE:
+            if node in MODEL_NODES:
                 for message in _messages_of(value):
                     events.extend(self._model_message(message))
             elif node == TOOLS_NODE:
@@ -236,9 +241,10 @@ class Translator:
     def on_nested_update(self, update: object) -> None:
         if not isinstance(update, Mapping):
             return
-        for message in _messages_of(update.get(MODEL_NODE)):
-            for key, value in usage_of(message).items():
-                self.nested_usage[key] = self.nested_usage.get(key, 0) + value
+        for node in MODEL_NODES:
+            for message in _messages_of(update.get(node)):
+                for key, value in usage_of(message).items():
+                    self.nested_usage[key] = self.nested_usage.get(key, 0) + value
 
     def _model_message(self, message: Any) -> list[dict[str, Any]]:
         self.new_messages.append(message)
@@ -438,23 +444,13 @@ def default_graph(ctx: RunnerContext) -> Any:
     )
 
 
-def load_entrypoint(
-    entrypoint: str, workdir: str, app_dir: str | None = None
-) -> Callable[[RunnerContext], Any]:
-    """`pkg.mod:build`, importable desde `app_dir` (el código que
+def load_entrypoint(entrypoint: str, workdir: str, app_dir: str | None = None) -> Any:
+    """El atributo `pkg.mod:attr`, importable desde `app_dir` (el código que
     `AgentTemplate(app=...)` deja en la imagen) y desde el directorio de
-    trabajo (el `source` que sube el proyecto)."""
-    if not _ENTRYPOINT_PATTERN.fullmatch(entrypoint):
-        raise AgentFailure("runtime_error", "invalid_entrypoint")
-    module_name, attr = entrypoint.split(":", 1)
+    trabajo (el `source` que sube el proyecto): un grafo ya compilado o una
+    fábrica (`fn(ctx)` o sin argumentos, también `async`)."""
     add_import_roots(app_dir, workdir)
-    try:
-        builder = getattr(importlib.import_module(module_name), attr)
-    except (ImportError, AttributeError):
-        raise AgentFailure("runtime_error", "entrypoint_not_found") from None
-    if not callable(builder):
-        raise AgentFailure("runtime_error", "invalid_entrypoint")
-    return builder  # type: ignore[no-any-return]
+    return load_attribute(entrypoint)
 
 
 def load_history(sessions_dir: Path, session_id: str | None) -> tuple[str, list[Any]]:
@@ -530,10 +526,14 @@ def execute(config: Mapping[str, Any], request: Request, emit: Emit, state: RunS
     ctx = build_context(config, request.model or config["model"])
     entrypoint = config.get("entrypoint")
     graph = (
-        load_entrypoint(entrypoint, ctx.workdir, config.get("app_dir"))
+        entry_value(
+            load_entrypoint(entrypoint, ctx.workdir, config.get("app_dir")),
+            ctx,
+            ready_attributes=GRAPH_ATTRIBUTES,
+        )
         if entrypoint
-        else default_graph
-    )(ctx)
+        else default_graph(ctx)
+    )
     messages = importlib.import_module("langchain_core.messages")
     history.append(messages.HumanMessage(content=request.prompt))
     translator = Translator(reasoning=request.reasoning)

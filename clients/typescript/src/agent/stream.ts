@@ -357,6 +357,7 @@ export class AgentStream implements AsyncIterable<AgentEvent> {
       exitCode: final.exitCode,
       toolCalls: [...this.#tracker.toolCalls],
       droppedLines: this.#buffer.dropped,
+      usageReported: final.usageReported !== false,
     };
   }
 

@@ -26,8 +26,14 @@ from rayito import (
     UnimplementedError,
     anthropic_gateway,
 )
-from rayito._agent._project_domain import AGENT_PROJECT_ERROR_CODES, AgentProjectException
+from rayito._agent._project_domain import (
+    AGENT_PROJECT_ERROR_CODES,
+    AgentProjectException,
+    RuntimeVersions,
+)
+from rayito._agent._scaling_domain import ScalingOptions
 from rayito._limits import AGENT_PROJECT_FILE_NAMES, MAX_DURATION_SECONDS
+from rayito._models import NetworkPolicy
 
 ROOT = Path(__file__).parents[4] / "testdata" / "agent-project"
 VALID = sorted((ROOT / "valid").glob("*.toml"))
@@ -245,3 +251,83 @@ def test_loading_and_writing_make_no_aws_call(monkeypatch: pytest.MonkeyPatch) -
         AgentProject.load(path).to_dict()
     _project().to_dict()
     assert calls == []
+
+
+# ---------------------------------------------------------------- fleet options
+
+
+def test_a_project_defaults_to_one_vm_without_extras() -> None:
+    project = _project()
+    assert project.scaling == ScalingOptions()
+    assert project.env == {}
+    assert project.network is None
+    assert (project.region, project.bucket, project.base_image_version) == (None, None, None)
+    assert (project.language, project.framework) == (None, None)
+    assert project.versions == RuntimeVersions()
+
+
+def test_fleet_options_survive_the_canonical_form() -> None:
+    project = _project(
+        scaling=ScalingOptions(min_vms=1, max_vms=3, warm_vms=1, sessions="dedicated"),
+        env={"LOG_LEVEL": "info"},
+        network=NetworkPolicy(allow_out=("example.com",), deny_out=("0.0.0.0/0",)),
+        region="us-east-1",
+        bucket="amzn-s3-demo-bucket",
+        base_image_version="latest",
+        language="python",
+        framework="langgraph",
+        versions=RuntimeVersions(python="3.13"),
+        serve=ServeOptions(queue_max=4, queue_timeout_seconds=12),
+    )
+    again = AgentProject.from_dict(project.to_dict(), base_dir=project.base_dir)
+    assert again.to_dict() == project.to_dict()
+    assert again.scaling == project.scaling
+    assert again.network == project.network
+    assert again.versions == project.versions
+    assert again.serve.queue_max == 4
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"scaling": "dedicated"},
+        {"versions": "3.12"},
+        {"env": {"API_KEY": "x"}},
+        {"env": {"GITHUB_TOKEN": "x"}},
+        {"env": {"GREETING": "Bearer demo"}},
+        {"env": {"1BAD": "x"}},
+        {"env": {"COUNT": 3}},
+        {"network": {"allow_out": ["example.com"]}},
+        {"network": NetworkPolicy(allow_out=("",))},
+        {"language": "go"},
+        {"region": ""},
+        {"bucket": "has space"},
+        {"base_image_version": ""},
+        {"serve": ServeOptions(max_concurrency=16)},
+    ],
+    ids=str,
+)
+def test_invalid_fleet_options_fail_before_calling_anyone(overrides: dict[str, Any]) -> None:
+    with pytest.raises(InvalidArgumentException):
+        _project(**overrides)
+
+
+def test_the_session_cap_grows_with_the_memory_of_the_vm() -> None:
+    assert _project(serve=ServeOptions(max_concurrency=15), memory_mib=4096).memory_mib == 4096
+    with pytest.raises(InvalidArgumentException):
+        _project(serve=ServeOptions(max_concurrency=8))
+
+
+@pytest.mark.parametrize("version", ["2.7", "3", "3.12.4"])
+def test_runtime_versions_must_be_a_pinned_build(version: str) -> None:
+    with pytest.raises(InvalidArgumentException):
+        RuntimeVersions(python=version)
+
+
+def test_the_env_of_a_project_is_copied_and_frozen() -> None:
+    env = {"LOG_LEVEL": "info"}
+    project = _project(env=env)
+    env["LOG_LEVEL"] = "debug"
+    assert project.env["LOG_LEVEL"] == "info"
+    with pytest.raises(TypeError):
+        project.env["X"] = "y"  # type: ignore[index]

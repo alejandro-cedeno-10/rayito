@@ -1,0 +1,60 @@
+{
+  "schema": "rayito.agent-project/1",
+  "name": "flask-custom",
+  "runtime": {
+    "kind": "custom",
+    "requirements": "uv.lock",
+    "app": {
+      "command": [
+        "python",
+        "-m",
+        "flask",
+        "--app",
+        "app:app",
+        "run",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "8000"
+      ],
+      "port": 8000,
+      "health_path": "/healthz",
+      "invoke_path": "/chat",
+      "protocol": "json",
+      "request_field": "prompt",
+      "response_field": "text"
+    },
+    "package_manager": "uv",
+    "python_version": "3.12",
+    "language": "python",
+    "framework": "flask"
+  },
+  "source": {
+    "path": "."
+  },
+  "model": {
+    "provider": "bedrock",
+    "id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+    "gateway": "bedrock",
+    "region": "us-east-1"
+  },
+  "gateways": {
+    "bedrock": {
+      "preset": "custom",
+      "upstream": "https://bedrock-runtime.us-east-1.amazonaws.com",
+      "headers": {
+        "authorization": "rayito/agents/flask-custom/bedrock"
+      },
+      "allow": [
+        [
+          "POST",
+          "/model/us.anthropic.claude-haiku-4-5-20251001-v1%3A0/converse-stream"
+        ],
+        [
+          "POST",
+          "/model/us.anthropic.claude-haiku-4-5-20251001-v1%3A0/converse"
+        ]
+      ]
+    }
+  }
+}

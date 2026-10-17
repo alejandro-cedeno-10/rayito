@@ -7,7 +7,6 @@ que las dos escriban exactamente lo mismo."""
 from __future__ import annotations
 
 import json
-import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -17,8 +16,6 @@ SCHEMA: Final = "rayito.agent-project/1"
 PROJECT_FILE_NAME: Final = "rayito-agent.toml"
 INSTRUCTIONS_FILE_NAME: Final = "AGENTS.md"
 REQUIREMENTS_FILE_NAME: Final = "requirements.txt"
-DEFAULT_PROJECT_NAME: Final = "my-agent"
-MAX_PROJECT_NAME_LENGTH: Final = 63
 SCAFFOLD_FALLBACK_REGION: Final = "us-east-1"
 PYTHON_LANGUAGE: Final = "python"
 TYPESCRIPT_LANGUAGE: Final = "typescript"
@@ -51,7 +48,12 @@ PYTHON_ENTRYPOINTS: Final[Mapping[str, str]] = {
 TYPESCRIPT_ENTRYPOINT: Final = "agent.ts"
 EXCLUDES: Final = (".venv", "node_modules", "__pycache__", ".git")
 INSTRUCTIONS_TEXT: Final = "Responde en español, con frases cortas.\n"
-CUSTOM_COMMAND: Final = ("bash", "run.sh")
+CUSTOM_APP_COMMAND: Final = ("python", "serve.py")
+CUSTOM_APP_PORT: Final = 9100
+CUSTOM_APP_HEALTH_PATH: Final = "/health"
+CUSTOM_APP_INVOKE_PATH: Final = "/invoke"
+CUSTOM_APP_PROTOCOL: Final = "raw"
+SERVE_FILE_NAME: Final = "serve.py"
 
 STRANDS_PY: Final = '''"""Agente de Strands. `ctx.model` ya apunta a la pasarela del modelo."""
 
@@ -94,25 +96,70 @@ STRANDS_PACKAGE_JSON: Final = """{
 }
 """
 
-LANGGRAPH_PY: Final = '''"""Grafo del agente. `ctx` trae el modelo ya cableado a la pasarela."""
+LANGGRAPH_PY: Final = '''"""Grafo del agente. `ctx` trae el modelo ya cableado a la pasarela.
 
-from deepagents import create_deep_agent
+Un grafo de LangGraph a secas: `create_react_agent` (o un `StateGraph` cuyos
+nodos se llamen `agent` y `tools`). Si quieres los permisos del `AgentSpec`,
+usa `langchain.agents.create_agent(..., middleware=ctx.middleware)`.
+"""
+
+from langchain_core.tools import tool
+from langgraph.prebuilt import create_react_agent
+
+
+@tool
+def word_count(text: str) -> int:
+    """Cuenta las palabras de un texto."""
+    return len(text.split())
 
 
 def build(ctx):
-    return create_deep_agent(
-        model=ctx.model,
-        system_prompt=ctx.instructions,
-        subagents=ctx.subagents,
-        backend=ctx.backend,
-        middleware=ctx.middleware,
-    )
+    return create_react_agent(ctx.model, [word_count], prompt=ctx.instructions)
 '''
 
-CUSTOM_RUN_SH: Final = """#!/usr/bin/env bash
-set -euo pipefail
-python3 -c 'import json, sys; request = json.loads(sys.stdin.readline()); print(request["prompt"])'
-"""
+CUSTOM_SERVE_PY: Final = '''"""Tu app HTTP. Rayito la arranca con `python serve.py` desde el
+directorio del código copiado y, con `protocol = "raw"`, expone tus rutas tal
+cual: `GET /health` y `POST /invoke`. Sustitúyela por tu servidor (FastAPI,
+Flask...) y añade sus dependencias a `requirements.txt`."""
+
+import json
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+PORT = 9100
+
+
+class Handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path == "/health":
+            self._reply(200, {"status": "ok"})
+        else:
+            self._reply(404, {"error": "not_found"})
+
+    def do_POST(self):
+        if self.path != "/invoke":
+            self._reply(404, {"error": "not_found"})
+            return
+        length = int(self.headers.get("Content-Length", 0))
+        prompt = json.loads(self.rfile.read(length) or b"{}").get("prompt", "")
+        self._reply(200, {"answer": f"Recibido: {prompt}"})
+
+    def _reply(self, status, body):
+        payload = json.dumps(body).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def log_message(self, *args):
+        pass
+
+
+if __name__ == "__main__":
+    ThreadingHTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
+'''
+
+CUSTOM_REQUIREMENTS: Final = "# Dependencias de tu app, una por línea (fastapi, langgraph...).\n"
 
 STRANDS_REQUIREMENTS: Final = "strands-agents\n"
 
@@ -136,13 +183,6 @@ class ScaffoldRequest:
     region: str
 
 
-def project_name_of(directory: Path) -> str:
-    """El nombre del proyecto: el del directorio en minúsculas, con `-` en
-    lugar de cualquier otro carácter, y `my-agent` si no queda nada."""
-    slug = re.sub(r"[^a-z0-9]+", "-", directory.resolve().name.lower()).strip("-")
-    return slug[:MAX_PROJECT_NAME_LENGTH].strip("-") or DEFAULT_PROJECT_NAME
-
-
 def _quoted(value: str) -> str:
     return json.dumps(value, ensure_ascii=False)
 
@@ -159,8 +199,18 @@ def _runtime_table(request: ScaffoldRequest) -> list[str]:
     if request.runtime == "strands" and request.language == TYPESCRIPT_LANGUAGE:
         lines.append(f"language = {_quoted(TYPESCRIPT_LANGUAGE)}")
     if request.runtime == "custom":
-        command = ", ".join(_quoted(part) for part in CUSTOM_COMMAND)
-        lines += [f"command = [{command}]", 'protocol = "text"']
+        command = ", ".join(_quoted(part) for part in CUSTOM_APP_COMMAND)
+        lines += [
+            f"requirements = {_quoted(REQUIREMENTS_FILE_NAME)}",
+            "install = []",
+            "",
+            "[runtime.app]",
+            f"command = [{command}]",
+            f"port = {CUSTOM_APP_PORT}",
+            f"health_path = {_quoted(CUSTOM_APP_HEALTH_PATH)}",
+            f"invoke_path = {_quoted(CUSTOM_APP_INVOKE_PATH)}",
+            f"protocol = {_quoted(CUSTOM_APP_PROTOCOL)}",
+        ]
     return lines
 
 
@@ -221,7 +271,8 @@ def scaffold_files(request: ScaffoldRequest) -> dict[str, str]:
     elif request.runtime == "langgraph":
         files["graph.py"] = LANGGRAPH_PY
     elif request.runtime == "custom":
-        files["run.sh"] = CUSTOM_RUN_SH
+        files[SERVE_FILE_NAME] = CUSTOM_SERVE_PY
+        files[REQUIREMENTS_FILE_NAME] = CUSTOM_REQUIREMENTS
     return files
 
 
