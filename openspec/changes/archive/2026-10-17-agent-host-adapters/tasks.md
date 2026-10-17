@@ -24,4 +24,4 @@
 
 - [x] 3.1 Python and TypeScript unit tests; the host against a real Node.
 - [x] 3.2 Real LangGraph.js, deepagents-js and AI SDK graphs through the bridge.
-- [ ] 3.3 AWS acceptance on the release tree (outside this change's branch).
+- [x] 3.3 AWS acceptance on the release tree (outside this change's branch).

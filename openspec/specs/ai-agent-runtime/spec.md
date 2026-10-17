@@ -77,15 +77,23 @@ Events SHALL be a union discriminated by `type`, one of `text_delta`, `text`, `r
 - **THEN** it raises `InvalidArgumentException`
 
 ### Requirement: The AgentRuntime port resolves by name or by object
-Both SDKs SHALL define a pure `AgentRuntime` port (`build_config`/`buildConfig`, `command`, `new_state`/`newState`, `parse_line`/`parseLine`, `finish`, `template_steps`/`templateSteps`, `warmup_steps`/`warmupSteps`) and a `nombre -> AgentRuntime` registry. `warmup_steps()`/`warmupSteps()` SHALL take no argument. `runtime=`/`runtime` SHALL accept either a registered name or any object that implements the port. An unregistered name SHALL raise `UnimplementedError`/`UnimplementedError` naming the runtime, never a raw `KeyError`/`undefined` access; any other value SHALL raise `InvalidArgumentException`/`InvalidArgumentError`.
+Both SDKs SHALL define a pure `AgentRuntime` port (`build_config`/`buildConfig`, `command`, `new_state`/`newState`, `parse_line`/`parseLine`, `finish`, `template_steps`/`templateSteps`, `warmup_steps`/`warmupSteps`) and a `nombre -> AgentRuntime` registry. `warmup_steps()`/`warmupSteps()` SHALL take no argument. `runtime=`/`runtime` SHALL accept either a registered name or any object that implements the port. An unregistered name SHALL raise `UnimplementedError`/`UnimplementedError` naming the runtime, never a raw `KeyError`/`undefined` access; any other value SHALL raise `InvalidArgumentException`/`InvalidArgumentError`. The registry SHALL contain `opencode`, `deepagents`, `langgraph`, `strands`, `strands-harness` and `hermes`; `custom` SHALL NOT be a registry name because `CustomRuntime` needs configuration, and `"custom"` SHALL raise `InvalidArgumentException`/`InvalidArgumentError` telling the caller to pass a `CustomRuntime` object. The signature of `AgentRuntime` SHALL NOT change in this version, so an object written for 0.13 keeps working with `sbx.agent.run`.
 
 #### Scenario: an unregistered runtime name
-- **WHEN** `sbx.agent.run(prompt, spec=spec, runtime="opencode")` is called before any adapter registers `"opencode"`
-- **THEN** it raises `UnimplementedError` naming `runtime="opencode"`, before any RPC
+- **WHEN** `sbx.agent.run(prompt, spec=spec, runtime="crewai")` is called
+- **THEN** it raises `UnimplementedError` naming `runtime="crewai"`, before any RPC
 
 #### Scenario: a caller's own runtime object
 - **WHEN** `runtime=` is an object that implements every method of `AgentRuntime`
 - **THEN** `sbx.agent.run()` uses it directly, with no registry lookup
+
+#### Scenario: the new names resolve
+- **WHEN** a unit test resolves `"langgraph"`, `"strands"`, `"strands-harness"` and `"hermes"` in each SDK
+- **THEN** it gets a `DeepAgents` with a required entrypoint, a `StrandsRuntime`, a `StrandsRuntime` with `harness` true and a `HermesRuntime`
+
+#### Scenario: custom needs an object
+- **WHEN** a caller passes `runtime="custom"`
+- **THEN** it raises `InvalidArgumentException` / `InvalidArgumentError` and no RPC is made
 
 ### Requirement: The agent run span never carries content, only with tracer_provider
 With `tracer_provider=`/`tracerProvider`, `sbx.agent.run()`/`stream()` SHALL open one span `rayito.agent.run` with `gen_ai.operation.name`, `gen_ai.provider.name`, `gen_ai.request.model`, `gen_ai.agent.name` at start and, when the run ends, `gen_ai.conversation.id`, `gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens` and the `rayito.agent.*` attributes from `ALLOWED_SPAN_ATTRIBUTES`. Without the option, no span SHALL be created. No attribute SHALL ever carry the prompt, the response text or a tool argument.
@@ -222,3 +230,131 @@ For `openai`, `google` and `azure`, the OpenCode adapter SHALL write the provide
 #### Scenario: no subscription credential
 - **WHEN** the adapter builds the files for any provider
 - **THEN** the only file is `opencode.json` (plus `AGENTS.md` with instructions) and it has no `auth` or `plugin` key
+
+### Requirement: Optional InstallableRuntime and ServableRuntime ports
+Both SDKs SHALL define two optional, pure ports next to `AgentRuntime`: `InstallableRuntime` (`install_steps(target)`/`installSteps(target)`, `context_files`/`contextFiles`, `manifest_entry`/`manifestEntry`, `smoke_checks`/`smokeChecks`, `prefetch_paths`/`prefetchPaths`) and `ServableRuntime` (`host_config(spec, wiring=, workdir=)`/`hostConfig(spec, { wiring, workdir })`). `InstallTarget` SHALL distinguish `microvm` and `container`; `ModelWiring` SHALL be `GatewayWiring` (gateway URLs by name) or `DirectWiring` (export, no gateway). `OpenCodeRuntime` and `DeepAgents` SHALL implement both ports without changing any command, configuration file or event they produce, so `testdata/agent/opencode-run-commands.json`, `deepagents-run-commands.json`, `opencode-config/` and `deepagents-config.json` stay byte-identical. Passing a runtime that lacks a port to an operation that needs it (`AgentTemplate`, `AgentProject.deploy`, `AgentProject.export`) SHALL raise `InvalidArgumentException`/`InvalidArgumentError` naming the missing port, before any RPC.
+
+#### Scenario: existing vectors do not move
+- **WHEN** the unit tests of both SDKs run the existing OpenCode and deepagents vectors after the change
+- **THEN** every vector passes unchanged
+
+#### Scenario: a task-only runtime cannot be deployed
+- **WHEN** a caller deploys an `AgentProject` whose runtime object implements only `AgentRuntime`
+- **THEN** it raises `InvalidArgumentException` naming `ServableRuntime` and no sandbox is created
+
+### Requirement: Strands Agents runs through the same contract
+Both SDKs SHALL export `StrandsRuntime(entrypoint=None, harness=False, language="python")` (TypeScript options object). It SHALL run through the agent host and the Rayito JSONL protocol v1, in task mode (`sbx.agent.run`) and in service mode. Without `entrypoint` the host SHALL build a Strands `Agent` (or, with `harness=True`, `create_harness(...)`) from `AgentSpec`; with `entrypoint="module:attr"` the attribute SHALL be an agent instance or a factory receiving a context whose `model` is already wired to the gateway. `language="typescript"` SHALL run the user's module through the Node bridge and require Node in the image. Installs SHALL use the pinned, hash-checked requirements whose versions and sha256 are in `limits.json`.
+
+#### Scenario: Strands over a Bedrock gateway
+- **WHEN** a unit test builds the host configuration of `StrandsRuntime()` for an `AgentSpec` with `provider="bedrock"` and a gateway URL
+- **THEN** the configuration points the Bedrock client's endpoint at the gateway URL, sets the bearer token to `MODEL_CREDENTIAL_PLACEHOLDER` and contains no other credential
+
+#### Scenario: invalid entrypoint
+- **WHEN** a caller builds `StrandsRuntime(entrypoint="not a path")`
+- **THEN** it raises `InvalidArgumentException` / `InvalidArgumentError` before any RPC
+
+### Requirement: Hermes Agent runs through the same contract
+Both SDKs SHALL export `HermesRuntime(toolsets=HERMES_DEFAULT_TOOLSETS, skills_dir=None)`. The host SHALL drive Hermes through its API server bound to `127.0.0.1` on `AGENT_HERMES_API_PORT`, with an `API_SERVER_KEY` generated at random on every start and passed only through the child's environment, and SHALL never put the prompt in argv. Hermes SHALL run as `user` with `HERMES_HOME` under `AGENT_STATE_DIR`, `HERMES_IGNORE_USER_CONFIG=1` and only the configured toolsets. Hermes SHALL be installed from the pinned commit verified with `git rev-parse HEAD` and a hash-checked requirements file. A provider that cannot be reached through a gateway with a placeholder key SHALL raise `InvalidArgumentException` / `InvalidArgumentError` before any RPC.
+
+#### Scenario: Hermes with an Anthropic gateway
+- **WHEN** a unit test builds the host configuration of `HermesRuntime()` for `provider="anthropic"`
+- **THEN** `ANTHROPIC_BASE_URL` is the gateway URL, `ANTHROPIC_API_KEY` is `MODEL_CREDENTIAL_PLACEHOLDER`, and the API server host is `127.0.0.1`
+
+#### Scenario: Hermes events become Rayito events
+- **WHEN** the host's Hermes driver replays `testdata/agent/hermes-v0.22.2-events.jsonl`
+- **THEN** it emits the v1 events of the matching expected file, ending with `done`
+
+### Requirement: CustomRuntime runs the user's own agent
+Both SDKs SHALL export `CustomRuntime(install=(), requirements=None, command=None, entrypoint=None, app=None, protocol="rayito-v1", python=None)` and `HttpApp(command, port, health_path="/ping", invoke_path="/invocations", protocol="agentcore")`. Exactly one of `command`, `entrypoint` and `app` SHALL be set. `command` SHALL receive the request on stdin and either write v1 lines (`rayito-v1`) or plain text (`text`, wrapped as `text_delta`, `text` and `done`); `entrypoint` SHALL be a Python `module:attr` callable hosted in process; `app` SHALL be a server the host starts, health-checks and proxies, translating `openai-chat` streams, while `raw` is exposed without translation. `HttpApp.port` SHALL NOT be 8080, 9000 or `AGENT_SERVICE_PORT`.
+
+#### Scenario: more than one entry kind
+- **WHEN** a caller builds `CustomRuntime(command=["./run.sh"], entrypoint="app:main")`
+- **THEN** it raises `InvalidArgumentException` / `InvalidArgumentError`
+
+#### Scenario: plain text command
+- **WHEN** the host runs a `command` runtime with `protocol="text"` that prints `hola` and exits 0
+- **THEN** the events are `text_delta("hola")`, `text("hola")` and `done`
+
+### Requirement: Framework defaults are safe and content-free
+The adapters and the host SHALL turn off what sends data out or runs model-written code unisolated by default: no `OTEL_*` exporter for Strands; for the Strands harness `programmatic_tool_caller` and web search off, `web_fetch` and the other built-in tools following `AgentPermissions` (with `DEFAULT_DENIED_TOOLS`), sessions and memory under `AGENT_STATE_DIR`, and no `"ask"` intervention; for Hermes the settings of its requirement; and `allow_internet_access=False` unless the project opens it. Logs of the host SHALL carry only ids, states, durations, byte counts and codes.
+
+#### Scenario: harness defaults
+- **WHEN** a unit test builds the host configuration of `StrandsRuntime(harness=True)` with default permissions
+- **THEN** `programmatic_tool_caller` and `web_search` are false, `web_fetch` is false, and the session and memory directories are under `AGENT_STATE_DIR`
+
+### Requirement: One Node bridge runs JavaScript agents through adapters
+The host SHALL provide the driver `node-callable`, which runs `node node_bridge.mjs <config>` and speaks protocol v1, and SHALL keep `strands-ts` as an alias of it. The bridge SHALL select an adapter from `config.adapter`: `strands` (the default), `langgraph` (a compiled LangGraph.js or deepagents-js graph, run with `graph.stream({messages}, {configurable: {thread_id}, streamMode: "updates"})`), `vercel-ai` (an AI SDK agent, run with `stream()` or, without it, `generate()`) and `callable` (a function receiving `{prompt, session_id, model, reasoning}` and returning a string, an iterable of strings or `{text, usage}`). `entrypoint` SHALL be a path under the copied source, optionally followed by `#export`; a named export that does not exist SHALL fail with `entrypoint_not_found`, an unknown adapter with `unknown_adapter` and an export of the wrong shape with `invalid_entrypoint`. Messages SHALL map to events by shape: an AI message is a step with its text and usage, a tool message a `tool_call` with the arguments the AI message asked for. A framework without its own memory (the AI SDK, a graph without a checkpointer) SHALL keep the last `HISTORY_MAX_MESSAGES` turns of each session in a `0600` file under `sessions_dir`. Tool permissions SHALL be enforced only by the `strands` adapter. When `AWS_ENDPOINT_URL_BEDROCK_RUNTIME` is set the bridge SHALL replace `NodeHttp2Handler` by `NodeHttpHandler` in every loaded copy of `@smithy/node-http-handler`; otherwise it SHALL change nothing. The Python and TypeScript SDKs SHALL generate the same `CustomRuntime` and `StrandsRuntime` host configuration for the cases of `testdata/agent/framework-host-config.json`.
+
+#### Scenario: a graph without a checkpointer keeps the conversation
+- **WHEN** a `langgraph` agent runs twice with the same session id
+- **THEN** the second call receives the first turn's user and assistant text before the new prompt
+
+#### Scenario: real frameworks
+- **WHEN** a graph built with LangChain `createAgent`, one built with `createDeepAgent` and a `ToolLoopAgent` run through the bridge with a scripted model
+- **THEN** each produces `step_started`, `tool_call`, `step_finished` and `text` events with the model's usage
+
+#### Scenario: HTTP/1.1 behind the gateway
+- **WHEN** the bridge starts with `AWS_ENDPOINT_URL_BEDROCK_RUNTIME` set and user code loads the AWS SDK
+- **THEN** the SDK client reaches an HTTP/1.1-only endpoint
+
+### Requirement: The install plan brings the interpreter, the package manager and the dependencies of a project
+`CustomRuntime` SHALL accept `package_manager` (`pip`, `uv`, `npm`, `pnpm`, `yarn`), `python_version` (`3.11` to `3.14`), `node_version` (`22`, `24`) and `adapter` (`callable`, `langgraph`, `vercel-ai`, only with an `entrypoint` and a Node package manager); `StrandsRuntime(language="typescript")` SHALL accept `package_manager` and `node_version`; the `langgraph` runtime SHALL accept `requirements` and `package_manager`. A version other than the image's CPython SHALL be installed from the pinned python-build-standalone build and Node from the pinned nodejs.org build, both checked against the sha256 in `limits.json`; `uv`, `pnpm` and `yarn` SHALL be installed at the pinned version. Node dependencies SHALL be installed with the manager's frozen lockfile command and `--ignore-scripts`. `requirements` SHALL be `requirements.txt`-style, or with `uv` `pyproject.toml` or `uv.lock` at the source root; `pip` SHALL NOT accept the last two. With a venv that already has Rayito's pins, dependencies SHALL be added without removing anything. Combinations that contradict each other SHALL raise `InvalidArgumentException` before any call. Both SDKs SHALL produce the same steps for the cases of `testdata/agent/install-plans/` and `testdata/agent/framework-install-steps.json`, and Hermes SHALL use the same CPython download.
+
+#### Scenario: uv with a lockfile and a pinned Python
+- **WHEN** a project uses `package_manager="uv"`, `requirements="uv.lock"` and `python_version="3.13"`
+- **THEN** the image downloads the pinned CPython 3.13, installs the pinned `uv` and runs `uv sync --frozen --no-dev --no-install-project`
+
+#### Scenario: a contradiction
+- **WHEN** `python_version` is combined with a Node package manager, or `node_version` with a Python one
+- **THEN** `InvalidArgumentException` is raised before any RPC
+
+### Requirement: CustomRuntime runs the user's app and command from the copied source with its venv first
+`CustomRuntime.host_setup` SHALL add `app_dir` (`AGENT_APP_DIR`) to the options of the `http-app` and `command` drivers and, when `requirements` is set, `path_prepend` with the `bin` directory of the runtime's venv. The `http-app` driver SHALL start the app with its working directory set to `app_dir` (or `workdir` when `app_dir` is absent) and the `command` driver SHALL keep `workdir`. Both drivers SHALL start the child with `path_prepend` first in `PATH` and `app_dir` first in `PYTHONPATH`. When `argv[0]` is `python` and no `python` is on the child `PATH`, the driver SHALL run the interpreter that runs the host instead. Both SDKs SHALL produce the same options for the cases of `testdata/agent/framework-host-config.json`.
+
+#### Scenario: an app started as a module from the source directory
+- **WHEN** an `HttpApp(command=["python", "-m", "agent.server"])` is started with `app_dir` set to a directory holding the package `agent`
+- **THEN** the app runs with that directory as its working directory and first in `PYTHONPATH`, and the import of `agent` succeeds
+
+#### Scenario: the venv python wins
+- **WHEN** `requirements` is set and the command starts with `python`
+- **THEN** the first `PATH` entry is `<install_dir>/custom/bin` and `python` resolves to the venv interpreter
+
+#### Scenario: no python on the path
+- **WHEN** the command starts with `python`, no `requirements` is set and the image has only `python3`
+- **THEN** the driver runs the host interpreter and the app starts
+
+### Requirement: The langgraph runtime translates a plain LangGraph graph
+The deepagents driver SHALL treat `model` and `agent` as the model nodes and `tools` as the tools node, so a graph built with `langgraph.prebuilt.create_react_agent` (or a `StateGraph` with nodes of those names) produces text, steps, tool calls and usage. A node with any other name SHALL NOT be read as the model. `rayito agent init --runtime langgraph` SHALL write a plain `create_react_agent` graph and the guide SHALL show it.
+
+#### Scenario: create_react_agent graph
+- **WHEN** a graph whose model node is named `agent` streams an `AIMessage` with a tool call, a `ToolMessage` and a final `AIMessage`
+- **THEN** the driver emits two steps, one `tool_call` event with the tool output and the usage of each step
+
+#### Scenario: unrelated node
+- **WHEN** a graph streams messages from a node named `planner`
+- **THEN** the driver emits no text, step or tool event for them
+
+### Requirement: A generic Node driver hosts JavaScript agent frameworks
+The host SHALL provide a `node-callable` driver that loads a JavaScript module export and runs it through one adapter per framework: LangGraph.js and deepagents-js (`invoke` and `stream` with `thread_id`), the Vercel AI SDK (`generate` and `stream`) and Strands TypeScript. `strands-ts` SHALL remain an accepted name for the Strands TypeScript driver. A driver SHALL report usage when the framework returns it and unknown usage otherwise.
+
+#### Scenario: LangGraph.js
+- **WHEN** a compiled LangGraph.js graph is the entrypoint
+- **THEN** an invocation returns the final text and the session id is the thread id
+
+#### Scenario: alias
+- **WHEN** a project declares the `strands-ts` runtime
+- **THEN** it runs on the Strands TypeScript adapter as before
+
+### Requirement: JavaScript Bedrock providers reach the gateway with the standard variables
+For an agent whose provider package is `@ai-sdk/amazon-bedrock`, `@langchain/aws`, `@strands-agents/sdk` or `@aws-sdk/client-bedrock-runtime`, the host SHALL set `AWS_BEARER_TOKEN_BEDROCK` to the placeholder and `AWS_ENDPOINT_URL_BEDROCK_RUNTIME` to the gateway URL, and SHALL never set the real key. A package that cannot be wired this way SHALL be reported by detection as `unsupported`.
+
+#### Scenario: gateway variables
+- **WHEN** a sample using `@ai-sdk/amazon-bedrock` is served through the local gateway
+- **THEN** its request reaches the fake Bedrock route with the placeholder as bearer token
+
+### Requirement: Samples of existing agents run without rayito code
+The repository SHALL hold fifteen sample agents under `testdata/agent-samples/` that import nothing from rayito and have their own lockfile: Python LangGraph with FastAPI, LangChain `create_agent`, deepagents, Strands, Strands harness, Hermes, Flask custom HTTP and AgentCore-native; TypeScript LangGraph.js, deepagents-js, Strands TypeScript, Strands harness TypeScript, Vercel AI SDK and Express or Hono custom HTTP; and OpenCode. A test SHALL fail when a sample imports rayito, lacks a lockfile or holds a secret-like value.
+
+#### Scenario: no rayito import
+- **WHEN** the sample check runs
+- **THEN** no sample file mentions `rayito` and every sample has a lockfile

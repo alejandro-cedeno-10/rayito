@@ -2022,6 +2022,75 @@ como estaba.
 
 ---
 
+## 0.14.0 — Despliegue del agente sin configuración y runtimes propios (2026-10-17)
+
+Publicada el 2026-10-17 en PyPI, npm y la GitHub Release `rayd-v0.14.0`
+(firmas de cosign de `rayd`, `rayito-image.zip` y `SHA256SUMS`, `sha256sum -c`,
+attestations de PyPI y proveniencia de npm verificadas con
+`docs/site/docs/verify.md`; `npx rayito@0.14.0 --version` y `uvx --from
+rayito[cli]==0.14.0 rayito --version` responden 0.14.0). Los cambios OpenSpec
+`agent-runtimes-byo`, `agent-host-adapters`, `agent-runtimes-dx` y
+`agent-zero-config` se archivaron tras esta aceptación. Sigue abierto
+`m15-custom-domain` (ver 0.7.0).
+
+- **Despliegue sin configuración**: `deploy_agent()` / `deployAgent()` y
+  `rayito agent deploy [RUTA]` detectan el proyecto sin ejecutar su código
+  (lenguaje, framework, punto de entrada, instalación desde el fichero de
+  bloqueo, versiones, proveedor del modelo), construyen la imagen sólo si
+  cambió y devuelven una flota (`AgentFleet`) de uno o varios MicroVMs, con
+  sesiones compartidas o dedicadas, cola y plazas aparcadas. `--dry-run` y
+  `detect` no llaman a AWS.
+- **Adaptadores `AgentRuntime`** (`agent-runtimes-byo`, `agent-host-adapters`,
+  `agent-runtimes-dx`): LangGraph, LangChain, deepagents, Strands, Strands
+  harness, Hermes, OpenCode, el AI SDK de Vercel y un `CustomRuntime` con
+  `HttpApp` o función propia, en Python y TypeScript, con el modelo siempre por
+  la pasarela de secretos y un único puente de Node para los agentes de
+  TypeScript. El host sirve una cola FIFO acotada y supervisa las apps de larga
+  vida.
+- **Opciones tipadas**: `memory`, `sessions`, `pool` (`ScalingOptions`),
+  `queue`, `env` y `network` en `AgentDeployOptions`, en `rayito-agent.toml`
+  y en la CLI, con los mismos nombres en los dos SDK.
+- **`rayito agent`**: `init`, `detect`, `build`, `run`, `deploy`, `export`,
+  `invoke`, `status` y `stop` en las dos CLI.
+- **Cambios de comportamiento** (sin romper la API): `agent deploy` despliega
+  una flota y hace más llamadas a AWS; `max_concurrency` queda acotada por la
+  memoria del VM; el código copiado excluye `.git`, `.env*`, `.venv`,
+  `node_modules`, `__pycache__` y `.rayito`. Fila 0.14 de compatibilidad en
+  `rayito doctor` y en `limits.md`.
+
+**Aceptación de la release (2026-10-17, cuenta de pruebas, us-east-1)**:
+
+- **Matriz de 36 celdas, 36 de 36** (18 en el carril Python y 18 en el de
+  TypeScript): cada framework en variante zero-config y custom, más una celda
+  de sesiones dedicadas por carril, con el modelo por la pasarela (la clave no
+  se lee desde el agente: entorno, `/proc`, ficheros ni IMDS) y la parada con
+  cero MicroVMs. Las celdas custom añaden cinco invocaciones paralelas por la
+  flota, la cola, la reconexión con la misma sesión, el reinicio de la app tras
+  matar a su hijo, la suspensión por inactividad y la reanudación. Ningún fallo
+  del SDK ni de la imagen en la pasada final.
+- **Humo zero-config sobre el árbol de la release, 17 de 17**: un despliegue
+  sin fichero de proyecto por cada ejemplo (nueve de Python por la CLI y ocho
+  de TypeScript por la API), con `rayd` 0.14.0 compilado del árbol. Todos
+  sanos, con la primera y la segunda llamada, la clave oculta y cero MicroVMs
+  al parar. Inventario de antes y después idéntico: sólo se borró lo creado
+  por la ejecución.
+- Lo que cuesta sigue apagado por defecto: sin `deploy_agent()` no se crea
+  nada, y `--dry-run` no llama a AWS.
+- Coste: sólo imágenes desechables, MicroVM-segundos y el modelo por tokens
+  (unos 5 USD estimados para la matriz, por debajo del tope fijado); Cost
+  Explorer llega con retraso, así que la cifra facturada no está todavía.
+
+**Imagen publicada (2026-10-17)**: `rayito-base` **38.0** desde el
+`rayito-image.zip` firmado de la release `rayd-v0.14.0`, cuyo sha256 consta en
+el `SHA256SUMS` firmado (`rayito image publish --base-image-version 1`),
+`SUCCESSFUL` y `ACTIVE`, construida en unos 216 s. `rayito doctor --launch`
+con el SDK 0.14.0 sobre ella termina 9 OK / 1 WARN / 0 FAIL / 0 SKIP (el WARN
+es la simulación IAM orientativa), con `rayd` 0.14.0 `agent_ready` y la
+comprobación de compatibilidad en verde; el sandbox de la prueba se terminó.
+La 37.0 se queda como estaba.
+
+---
+
 ## Orden de trabajo dentro de cada hito
 
 1. Escribir el test de aceptación primero. Debe fallar.

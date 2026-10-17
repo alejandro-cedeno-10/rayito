@@ -102,11 +102,11 @@
 
 - [x] 5.1 Gates of every touched language, OpenSpec `--all`, hygiene, pins,
       limits, licences.
-- [ ] 5.2 Full regression tier in AWS on top of lane D, within the budget cap;
+- [x] 5.2 Full regression tier in AWS on top of lane D, within the budget cap;
       inventory before and after; only the run's resources deleted; measured
       cold starts recorded in `AWS_API_NOTES.md`. Moved to the acceptance of the
       0.14.0 release PR (task 5.3): the agent-runtime e2e of both SDKs already
       ran on this change, and the release PR runs the Python e2e, the TypeScript
       e2e and the E2B corpus on the final tree.
-- [ ] 5.3 After 0.13.0 is published: release PR for 0.14.0, CI green, merge,
+- [x] 5.3 After 0.13.0 is published: release PR for 0.14.0, CI green, merge,
       publish, verify; archive this change.
