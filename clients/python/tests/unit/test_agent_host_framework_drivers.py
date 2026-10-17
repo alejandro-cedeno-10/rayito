@@ -6,6 +6,7 @@ y los traductores contra los eventos grabados de Strands y de Hermes
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import re
@@ -13,6 +14,7 @@ import shutil
 import subprocess
 import sys
 import textwrap
+import threading
 import types
 from collections.abc import AsyncIterator, Callable, Iterator
 from pathlib import Path
@@ -379,6 +381,40 @@ def test_strands_entrypoint_instance_and_factory(
     missing = config | {"entrypoint": "no_existe:build"}
     with pytest.raises(AgentFailure, match="entrypoint_not_found"):
         _collect(strands.create(missing), _request())
+
+
+def test_strands_serves_concurrent_sessions_of_a_shared_agent_one_at_a_time(
+    fake_strands: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = fake_strands["tmp"] / "app"
+    app.mkdir()
+    (app / "mi_agente.py").write_text("from strands import Agent\nagent = Agent()\n")
+    monkeypatch.syspath_prepend(str(app))
+    active: list[int] = []
+    overlaps: list[int] = []
+    starts: list[list[Any]] = []
+
+    async def exclusive(self: Any, prompt: str, **kwargs: Any) -> AsyncIterator[Any]:
+        if active:
+            overlaps.append(len(active))
+        active.append(1)
+        starts.append(list(self.messages))
+        await asyncio.sleep(0.05)
+        self.messages.append({"role": "user", "content": [{"text": prompt}]})
+        active.pop()
+        yield {}
+
+    monkeypatch.setattr(_FakeAgent, "stream_async", exclusive)
+    driver = strands.create(_strands_config(fake_strands["tmp"], entrypoint="mi_agente:agent"))
+    threads = [
+        threading.Thread(target=_collect, args=(driver, _request(f"sesion {n}"))) for n in range(3)
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert overlaps == []
+    assert starts == [[], [], []]
 
 
 def test_strands_model_errors_are_classified_by_origin_without_the_message(

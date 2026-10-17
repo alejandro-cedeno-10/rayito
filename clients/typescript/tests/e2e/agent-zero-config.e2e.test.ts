@@ -14,6 +14,7 @@ import { randomBytes } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { shellQuote } from "../../src/agent/opencode.js";
 import { decodeHandle } from "../../src/agent/scaling-domain.js";
 import { AgentError, AgentFleet, AgentProject, deployAgent, Sandbox } from "../../src/index.js";
 import { modelCredential, sandboxExposesKey } from "./agent-project-support.js";
@@ -237,7 +238,7 @@ describe.runIf(READY)("agent-zero-config en AWS real (Bedrock)", () => {
       accessToken,
       region: BEDROCK_REGION,
     });
-    const found = await sandbox.commands.run(`python3 -c ${JSON.stringify(CHILDREN_SCRIPT)}`);
+    const found = await sandbox.commands.run(`python3 -c ${shellQuote(CHILDREN_SCRIPT)}`);
     const children = found.stdout.split(/\s+/).filter(Boolean);
     if (children.length === 0) {
       return;
@@ -249,7 +250,7 @@ describe.runIf(READY)("agent-zero-config en AWS real (Bedrock)", () => {
     let healthy = false;
     while (!healthy && Date.now() < deadline) {
       const ping = await sandbox.commands
-        .run(`python3 -c ${JSON.stringify(PING_SCRIPT)}`)
+        .run(`python3 -c ${shellQuote(PING_SCRIPT)}`)
         .catch(() => undefined);
       healthy = ping?.stdout.includes('"Healthy"') ?? false;
       if (!healthy) {

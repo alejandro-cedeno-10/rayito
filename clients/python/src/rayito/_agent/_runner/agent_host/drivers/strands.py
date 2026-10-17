@@ -27,6 +27,7 @@ mismo `id`. Sólo biblioteca estándar en el arranque: Strands se importa con
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import importlib
 import json
 import os
@@ -300,6 +301,15 @@ def _default_agent(config: Mapping[str, Any], model: Any, session_id: str) -> An
     )
 
 
+def is_prebuilt(config: Mapping[str, Any]) -> bool:
+    """`True` si el `entrypoint` es un `Agent` ya construido y no una fábrica:
+    todas las sesiones lo comparten."""
+    entry = config.get("entrypoint")
+    return bool(entry) and any(
+        hasattr(load_attribute(str(entry)), name) for name in AGENT_ATTRIBUTES
+    )
+
+
 def build_agent(config: Mapping[str, Any], model: Any, session_id: str) -> Any:
     """El agente de la ejecución: el de tu `entrypoint` o el por defecto."""
     if config.get("entrypoint"):
@@ -362,6 +372,7 @@ class Driver:
     def __init__(self, config: Mapping[str, Any]) -> None:
         self._config = config
         self._cancel = threading.Event()
+        self._shared = threading.Lock()
 
     def warm(self) -> None:
         importlib.import_module("strands")
@@ -382,16 +393,18 @@ class Driver:
             register_permissions(
                 agent, config.get("permissions", {}), config.get("permission_aliases", {})
             )
-            if history and _uses_own_history(config):
-                agent.messages[:] = history
-            translator = Translator(reasoning=request.reasoning)
-            asyncio.run(stream_events(agent, request.prompt, translator, emit, self._cancel))
+            prebuilt = is_prebuilt(config)
+            with self._shared if prebuilt else contextlib.nullcontext():
+                if (history or prebuilt) and _uses_own_history(config):
+                    agent.messages[:] = history
+                translator = Translator(reasoning=request.reasoning)
+                asyncio.run(stream_events(agent, request.prompt, translator, emit, self._cancel))
+                save_history(config, session_id, list(agent.messages))
         except AgentFailure:
             raise
         except Exception as exc:
             reason, detail = classify_chain(exc, MODEL_EXCEPTION_NAMES)
             raise AgentFailure(reason, detail) from None
-        save_history(config, session_id, list(agent.messages))
 
     def cancel(self) -> None:
         self._cancel.set()
