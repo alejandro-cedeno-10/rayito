@@ -113,8 +113,9 @@ export const COMPATIBILITY: readonly CompatibilityRow[] = [
     sdkSeries: "0.14",
     minAgentVersion: "0.14.0",
     note:
-      "0.14: los runtimes de agente (Strands, Hermes, LangGraph, OpenCode o propio), el " +
-      "proyecto de agente y la CLI rayito agent se validan con el rayd del tag rayd-v0.14.0",
+      "0.14: el despliegue sin configuración de un agente que ya tienes (Strands, Hermes, " +
+      "LangGraph, OpenCode o propio), sus opciones tipadas de escalado y la CLI rayito agent " +
+      "se validan con el rayd del tag rayd-v0.14.0",
   },
 ];
 
