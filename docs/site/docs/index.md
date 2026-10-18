@@ -326,6 +326,74 @@ o deepagents, y el proveedor, el que prefieras (ver
 </div>
 </div>
 
+<div class="rx-section rx-split" markdown>
+<div class="rx-split__copy" markdown>
+
+<p class="rx-eyebrow">Despliegue</p>
+
+## Despliega tu agente en un comando { #despliega-tu-agente-en-un-comando }
+
+Instala el SDK y ejecuta `rayito agent deploy ./mi-agente` (o `deploy_agent` /
+`deployAgent`). El SDK detecta el framework, el punto de entrada y el
+protocolo leyendo tus ficheros, sin ejecutar tu código. El modelo se llama por
+la pasarela de secretos, así que el agente nunca ve la credencial. Y ajustas lo
+que importa: memoria, sesiones simultáneas, cola, pool de MicroVMs, variables
+de entorno y salida a internet.
+
+<ul class="rx-chips" aria-label="Frameworks compatibles">
+<li>LangGraph y LangGraph.js</li>
+<li>LangChain</li>
+<li>Deep Agents</li>
+<li>Strands y Strands harness</li>
+<li>Hermes</li>
+<li>OpenCode</li>
+<li>Vercel AI SDK</li>
+<li>Tu propia app HTTP</li>
+</ul>
+
+<div class="rx-actions" markdown>
+[Despliega tu agente](guias/despliega-tu-agente.md){ .md-button .md-button--primary }
+[Flota de agentes](guias/flota-de-agentes.md)
+</div>
+
+</div>
+<div class="rx-split__code" markdown>
+
+=== "CLI"
+
+    ```bash
+    rayito agent deploy ./mi-agente --dry-run   # qué detectó; no llama a AWS
+    rayito agent deploy ./mi-agente --memory 4096 --max-sessions 2 --queue 4
+    ```
+
+=== "Python"
+
+    ```python
+    from rayito import AgentDeployOptions, deploy_agent
+
+    fleet = deploy_agent("./mi-agente", options=AgentDeployOptions(bucket="amzn-s3-demo-bucket"))
+    try:
+        print(fleet.invoke("Resume el README.").text)
+    finally:
+        fleet.stop()
+    ```
+
+=== "TypeScript"
+
+    ```ts
+    import { deployAgent } from "rayito";
+
+    const fleet = await deployAgent("./mi-agente", { options: { bucket: "amzn-s3-demo-bucket" } });
+    try {
+      console.log((await fleet.invoke("Resume el README.")).text);
+    } finally {
+      await fleet.stop();
+    }
+    ```
+
+</div>
+</div>
+
 <div class="rx-section rx-split rx-split--stack" markdown>
 <div class="rx-split__copy" markdown>
 

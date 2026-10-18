@@ -2016,6 +2016,28 @@ body {
   text-transform: uppercase;
 }
 
+.md-typeset ul.rx-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--rx-s2);
+  margin: var(--rx-s4) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.md-typeset ul.rx-chips li {
+  width: fit-content;
+  margin: 0;
+  list-style: none;
+  padding: var(--rx-s1) var(--rx-s3);
+  border: 1px solid var(--rx-line);
+  border-radius: var(--rx-r-pill);
+  background-color: var(--rx-surface);
+  color: var(--rx-ink);
+  font-size: var(--rx-fs-caption);
+  line-height: 1.4;
+}
+
 .rx-actions {
   display: flex;
   flex-wrap: wrap;
