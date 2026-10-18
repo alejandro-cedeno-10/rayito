@@ -362,7 +362,7 @@ variables and internet egress.
 === "CLI"
 
     ```bash
-    rayito agent deploy ./my-agent --dry-run   # what it detected; no AWS calls
+    rayito agent deploy ./my-agent --dry-run   # detection only, no AWS
     rayito agent deploy ./my-agent --memory 4096 --max-sessions 2 --queue 4
     ```
 
