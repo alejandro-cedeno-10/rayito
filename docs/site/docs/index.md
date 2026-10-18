@@ -362,7 +362,7 @@ de entorno y salida a internet.
 === "CLI"
 
     ```bash
-    rayito agent deploy ./mi-agente --dry-run   # qué detectó; no llama a AWS
+    rayito agent deploy ./mi-agente --dry-run   # solo detección, sin AWS
     rayito agent deploy ./mi-agente --memory 4096 --max-sessions 2 --queue 4
     ```
 
