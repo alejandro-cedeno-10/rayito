@@ -28,6 +28,18 @@ GitHub ayuda a que otras personas lo encuentren.
   <img src="docs/site/docs/assets/rayito/rayito-readme-960.gif" width="800" alt="Flujo animado de Rayito: dos gatos amarillos operan tres sandboxes sobre AWS Lambda microVMs, con un agente que envía código y salida de artefactos.">
 </p>
 
+## Despliega tu agente en un comando
+
+¿Ya tienes un agente (LangGraph, LangChain, Deep Agents, Strands, Hermes,
+OpenCode, Vercel AI SDK o tu propia app HTTP)? Instala el SDK y ejecuta
+`rayito agent deploy ./mi-agente` (Python: `deploy_agent`, TypeScript:
+`deployAgent`). El SDK detecta el framework, el punto de entrada y el
+protocolo, y el modelo se llama por la pasarela de secretos. Puedes ajustar
+memoria, sesiones simultáneas, cola, pool de MicroVMs, variables de entorno y
+salida a internet.
+Guía: [Despliega tu agente](https://alejandro-cedeno-10.github.io/rayito/guias/despliega-tu-agente/) ·
+[Flota de agentes](https://alejandro-cedeno-10.github.io/rayito/guias/flota-de-agentes/).
+
 ## Instalar
 
 ```bash
