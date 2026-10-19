@@ -14,6 +14,12 @@
  * no llama a AWS: los clientes son perezosos.
  */
 
+import {
+  BUCKET_ENV_VAR,
+  CDK_BOOTSTRAP_QUALIFIER,
+  cdkBucketName,
+  withSetupHint,
+} from "../account-setup/domain.js";
 import { clientConfig } from "../aws/control-plane.js";
 import { awsCode } from "../aws/optional-client.js";
 import { sanitizeAwsError } from "../aws/sanitize.js";
@@ -26,18 +32,12 @@ import { SecretRef } from "../secrets/names.js";
 import { AwsBuildClients } from "../templates/build.js";
 import type { AgentProject } from "./project.js";
 
-/** Variable con el bucket de artefactos, la misma de `rayito image publish`. */
-export const BUCKET_ENV_VAR = "RAYITO_BUCKET";
-/** Calificador por defecto del bootstrap de CDK
- * (docs.aws.amazon.com/cdk/v2/guide/bootstrapping-env.html, consultado
- * 2026-10-16): el bucket de activos es `cdk-<calificador>-assets-<cuenta>-<región>`. */
-export const CDK_BOOTSTRAP_QUALIFIER = "hnb659fds";
 export const BEARER_PREFIX = "Bearer ";
 export const AUTHORIZATION_HEADER = "authorization";
 /** Códigos de `HeadBucket` que dan el bucket por inexistente o ajeno: sin
  * `s3:ListBucket` S3 contesta 403 a un HEAD, y un bucket que no se puede leer
  * tampoco sirve para el artefacto. */
-const BUCKET_MISSING_CODES: ReadonlySet<string> = new Set([
+export const BUCKET_MISSING_CODES: ReadonlySet<string> = new Set([
   "404",
   "NoSuchBucket",
   "NotFound",
@@ -59,6 +59,9 @@ export const GATEWAY_SECRET_ENV_VARS: Readonly<Record<string, string>> = Object.
   xai: "XAI_API_KEY",
   litellm: "LITELLM_API_KEY",
 });
+
+/** `BUCKET_ENV_VAR` (el bucket de artefactos, el mismo de `rayito image publish`) y las reglas del bucket del bootstrap de CDK viven en `account-setup/domain.ts`. */
+export { BUCKET_ENV_VAR, CDK_BOOTSTRAP_QUALIFIER, cdkBucketName };
 
 export type BucketSource = "argument" | "project_file" | "environment" | "discovered";
 
@@ -102,10 +105,6 @@ export function secretNameFor(project: string, gateway: string): string {
   return `agents/${project}/${gateway}`;
 }
 
-export function cdkBucketName(account: string, region: string): string {
-  return `cdk-${CDK_BOOTSTRAP_QUALIFIER}-assets-${account}-${region}`;
-}
-
 /** El bucket del artefacto: argumento > `[deploy].bucket` del fichero de
  * proyecto > `RAYITO_BUCKET` > el bucket de activos del bootstrap de CDK de la
  * cuenta y la región (si existe). Sin ninguno, `InvalidArgumentError` con las
@@ -131,9 +130,11 @@ export async function resolveBucket(
     return { bucket: discovered, source: "discovered" };
   }
   throw new InvalidArgumentError(
-    "no hay bucket para el artefacto de la imagen: pasa bucket (--bucket), " +
-      `[deploy].bucket en el fichero del proyecto o exporta ${BUCKET_ENV_VAR}; ` +
-      "Rayito no crea buckets",
+    withSetupHint(
+      "no hay bucket para el artefacto de la imagen: pasa bucket (--bucket), " +
+        `[deploy].bucket en el fichero del proyecto o exporta ${BUCKET_ENV_VAR}; ` +
+        "Rayito no crea buckets",
+    ),
   );
 }
 
@@ -364,10 +365,12 @@ export async function ensureBaseImage(
   }
   if (!options.ensure || publisher === undefined) {
     throw new InvalidArgumentError(
-      `la imagen base '${base}' no existe en esta cuenta y región: publícala con ` +
-        "`rayito image publish --os-capabilities ALL --artifact <zip> " +
-        "--base-image-version latest` (ver la guía de instalación) o pasa " +
-        "basePublisher a deployAgent()",
+      withSetupHint(
+        `la imagen base '${base}' no existe en esta cuenta y región: publícala con ` +
+          "`rayito image publish --os-capabilities ALL --artifact <zip> " +
+          "--base-image-version latest` (ver la guía de instalación) o pasa " +
+          "basePublisher a deployAgent()",
+      ),
     );
   }
   await publisher();
