@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any, Final, Literal, Protocol
 
 from botocore.exceptions import ClientError
 
+from rayito._account_setup._domain import cdk_bucket_name, with_setup_hint
 from rayito._agent._project_domain import AgentProject
 from rayito._aws import LazyClient
 from rayito._aws_region import aws_session, resolve_region
@@ -37,11 +38,6 @@ if TYPE_CHECKING:
 
 #: Variable con el bucket de artefactos, la misma de `rayito image publish`.
 BUCKET_ENV_VAR: Final = "RAYITO_BUCKET"
-#: Calificador por defecto del bootstrap de CDK
-#: (docs.aws.amazon.com/cdk/v2/guide/bootstrapping-env.html, consultado
-#: 2026-10-16): el bucket de activos es `cdk-<calificador>-assets-<cuenta>-<región>`.
-CDK_BOOTSTRAP_QUALIFIER: Final = "hnb659fds"
-CDK_ASSETS_BUCKET_TEMPLATE: Final = "cdk-{qualifier}-assets-{account}-{region}"
 #: El nombre convencional del secreto de una pasarela, bajo el prefijo
 #: `rayito/` de `SecretStore` (el secreto queda en `rayito/agents/<proyecto>/<pasarela>`).
 AGENT_SECRET_NAME_TEMPLATE: Final = "agents/{project}/{gateway}"
@@ -120,12 +116,6 @@ def secret_name_for(project: str, gateway: str) -> str:
     return AGENT_SECRET_NAME_TEMPLATE.format(project=project, gateway=gateway)
 
 
-def cdk_bucket_name(account: str, region: str) -> str:
-    return CDK_ASSETS_BUCKET_TEMPLATE.format(
-        qualifier=CDK_BOOTSTRAP_QUALIFIER, account=account, region=region
-    )
-
-
 def resolve_bucket(
     explicit: str | None,
     project_file: str | None,
@@ -147,9 +137,11 @@ def resolve_bucket(
     if discovered:
         return BucketChoice(discovered, "discovered")
     raise InvalidArgumentException(
-        "no hay bucket para el artefacto de la imagen: pasa bucket= (--bucket), "
-        f"[deploy].bucket en el fichero del proyecto o exporta {BUCKET_ENV_VAR}; "
-        "Rayito no crea buckets"
+        with_setup_hint(
+            "no hay bucket para el artefacto de la imagen: pasa bucket= (--bucket), "
+            f"[deploy].bucket en el fichero del proyecto o exporta {BUCKET_ENV_VAR}; "
+            "Rayito no crea buckets"
+        )
     )
 
 
@@ -333,10 +325,12 @@ def ensure_base_image(
         return False
     if not ensure or publisher is None:
         raise InvalidArgumentException(
-            f"la imagen base {base!r} no existe en esta cuenta y región: publícala con "
-            "`rayito image publish --os-capabilities ALL --artifact <zip> "
-            "--base-image-version latest` (ver la guía de instalación) o pasa "
-            "base_publisher= a deploy_agent()"
+            with_setup_hint(
+                f"la imagen base {base!r} no existe en esta cuenta y región: publícala con "
+                "`rayito image publish --os-capabilities ALL --artifact <zip> "
+                "--base-image-version latest` (ver la guía de instalación) o pasa "
+                "base_publisher= a deploy_agent()"
+            )
         )
     publisher()
     if not aws.image_exists(base):
