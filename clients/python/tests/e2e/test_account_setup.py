@@ -12,13 +12,18 @@ Variables (todas genéricas, nada de la cuenta va en el repositorio):
 - `RAYITO_E2E_SETUP_ARTIFACT` (opcional): zip de la imagen ya construido
   (`--artifact`); sin él se descarga la release `rayd-v<versión>`, que no
   existe todavía durante la aceptación de una release.
+- `RAYITO_E2E_SETUP_CREATE_BUCKET=1` (opcional): activa el test que crea el
+  bucket con la pila `rayito-m0-artifacts` (`--bucket rayito-e2e-setup-<hex>`,
+  un nombre sin cuenta); se salta si esa pila ya existe en la región.
 - `RAYITO_TEMPLATE` y `AWS_REGION`: los del resto de los e2e; sólo para el test
   de la región por defecto, que no escribe nada.
 
 La CLI corre como la usaría cualquiera, `sys.executable -m rayito.cli` en un
 subproceso. El teardown borra sólo lo que esta corrida creó: la imagen (con su
 grupo de logs, `image_cleanup.BuiltImages`), la pila y la clave del artefacto
-únicamente si `artifactUploaded` fue verdadero.
+únicamente si `artifactUploaded` fue verdadero; en el test del bucket, además
+la pila `rayito-m0-artifacts` y el bucket retenido (vaciado antes, con el zip
+dentro).
 
 Cada test que crea construye `rayito-base` (≈ 10 min y ≈ $0,04 por semana de
 almacenamiento de la versión, borrada al terminar).
@@ -28,6 +33,7 @@ from __future__ import annotations
 
 import json
 import os
+import secrets
 import subprocess
 import sys
 import time
@@ -40,7 +46,7 @@ import boto3
 import pytest
 from botocore.exceptions import ClientError
 
-from rayito._account_setup._domain import BASE_IMAGE_NAME, IAM_STACK_NAME
+from rayito._account_setup._domain import ARTIFACT_STACK_NAME, BASE_IMAGE_NAME, IAM_STACK_NAME
 from rayito._images import BUILDING_VERSION_STATES, DEFAULT_BUILD_TIMEOUT_SECONDS, account_image_arn
 from rayito._stacks._cloudformation import CloudFormationProvisioner
 from rayito._stacks._service import DEFAULT_WAIT_TIMEOUT_SECONDS
@@ -60,6 +66,8 @@ SETUP_BUDGET_SECONDS = DEFAULT_BUILD_TIMEOUT_SECONDS + DEFAULT_WAIT_TIMEOUT_SECO
 DRY_RUN_BUDGET_SECONDS = 120.0
 BUILD_POLL_SECONDS = 15.0
 STACK_NOT_FOUND_MARKER = "does not exist"
+CREATE_BUCKET_VAR = "RAYITO_E2E_SETUP_CREATE_BUCKET"
+RANDOM_NAME_BYTES = 6
 
 
 def setup_region() -> str:
@@ -102,9 +110,9 @@ class Account:
         self.account_id = str(session.client("sts").get_caller_identity()["Account"])
         self.image_arn = account_image_arn(region, self.account_id, BASE_IMAGE_NAME)
 
-    def stack_exists(self) -> bool:
+    def stack_exists(self, name: str = IAM_STACK_NAME) -> bool:
         try:
-            self.cloudformation.describe_stacks(StackName=IAM_STACK_NAME)
+            self.cloudformation.describe_stacks(StackName=name)
         except ClientError as exc:
             if STACK_NOT_FOUND_MARKER in str(exc):
                 return False
@@ -268,3 +276,44 @@ def test_a_prepared_default_region_is_three_reuse_and_no_write(e2e_settings: E2E
     assert actions(document) == ["reuse", "reuse", "reuse"]
     assert document["ready"] is True
     assert len(account.versions()) == versions_before
+
+
+def empty_and_delete_bucket(account: Account, bucket: str) -> None:
+    objects = account.s3.get_paginator("list_objects_v2")
+    for page in objects.paginate(Bucket=bucket):
+        for item in page.get("Contents", []):
+            account.s3.delete_object(Bucket=bucket, Key=item["Key"])
+    account.s3.delete_bucket(Bucket=bucket)
+
+
+def test_setup_creates_the_artifact_bucket_and_a_second_run_reuses_it(
+    clean_account: Created, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    if os.environ.get(CREATE_BUCKET_VAR) != "1":
+        pytest.skip(f"este e2e necesita {CREATE_BUCKET_VAR}=1")
+    account = clean_account.account
+    if account.stack_exists(ARTIFACT_STACK_NAME):
+        pytest.skip(f"{ARTIFACT_STACK_NAME} ya existe: no se toca lo que había")
+    bucket = f"rayito-e2e-setup-{secrets.token_hex(RANDOM_NAME_BYTES)}"
+    monkeypatch.setenv(BUCKET_VAR, bucket)
+    try:
+        code, document, stderr = run_setup(account.region, "--yes", budget=SETUP_BUDGET_SECONDS)
+        assert code == 0, stderr
+        assert actions(document)[0] == "create"
+        assert document["result"]["bucket"] == bucket
+        stack = account.cloudformation.describe_stacks(StackName=ARTIFACT_STACK_NAME)["Stacks"][0]
+        outputs = {item["OutputKey"]: item["OutputValue"] for item in stack["Outputs"]}
+        assert stack["StackStatus"] == "CREATE_COMPLETE"
+        assert outputs["BucketName"] == bucket
+        assert account.s3.head_bucket(Bucket=bucket)["BucketRegion"] == account.region
+
+        code, document, stderr = run_setup(
+            account.region, "--dry-run", budget=DRY_RUN_BUDGET_SECONDS
+        )
+        assert code == 0, stderr
+        assert actions(document) == ["reuse", "reuse", "reuse"]
+    finally:
+        provisioner = CloudFormationProvisioner(region=account.region)
+        provisioner.delete(ARTIFACT_STACK_NAME)
+        provisioner.wait(ARTIFACT_STACK_NAME, "deleted", DEFAULT_WAIT_TIMEOUT_SECONDS)
+        empty_and_delete_bucket(account, bucket)
