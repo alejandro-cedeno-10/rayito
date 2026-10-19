@@ -202,7 +202,7 @@ The runtimes that `AgentTemplate`, `Agent` and `AgentProject` accept. They insta
 
 ::: rayito.FleetMemberStatus
 
-#### AgentCore deploy
+#### AgentCore deploy { #despliegue-en-agentcore }
 
 `deploy_agent(target="agentcore")` deploys the same project to Amazon Bedrock AgentCore Runtime and returns an `AgentCoreFleet` with the same `invoke()` and `stream()` as `AgentFleet` ([Deploy to AgentCore](../../guias/desplegar-en-agentcore.md)). Without `target`, `deploy_agent()`, `deploy_agent_async()` and `plan_deploy()` do what they always did.
 
