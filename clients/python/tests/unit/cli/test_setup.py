@@ -47,7 +47,16 @@ VECTORS = {case["name"]: case["input"] for case in load_cases("plan-vectors.json
 FRESH = VECTORS["cuenta nueva con el bucket del bootstrap de CDK"]
 PREPARED = VECTORS["cuenta preparada a mano: todo se reutiliza"]
 NO_BUCKET = VECTORS["sin ningún bucket: se crea uno con el nombre por defecto"]
-WRITING_CALLS = {"create", "update", "wait", "download", "publish", "gate"}
+WRITING_CALLS = {
+    "create",
+    "update",
+    "wait",
+    "create_artifact_stack",
+    "wait_artifact_stack",
+    "download",
+    "publish",
+    "gate",
+}
 
 
 @pytest.fixture(autouse=True)
@@ -114,6 +123,13 @@ def test_a_dry_run_only_reads() -> None:
         "head_bucket",
         "get_image",
     }
+
+
+def test_a_dry_run_that_would_create_the_bucket_only_reads() -> None:
+    result, account = run(NO_BUCKET, "setup", "--dry-run")
+    assert result.exit_code == 0, result.stderr
+    assert "describe_artifact_stack" in {call[0] for call in account.calls}
+    assert not WRITING_CALLS & {call[0] for call in account.calls}
 
 
 def test_the_bucket_variable_is_read_by_the_command(monkeypatch: pytest.MonkeyPatch) -> None:

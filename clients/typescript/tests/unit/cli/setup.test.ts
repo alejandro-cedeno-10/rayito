@@ -158,6 +158,16 @@ describe("rayito setup: shared CLI cases", () => {
       "get_image",
     ]);
   });
+
+  it("a dry run that would create the bucket only reads", async () => {
+    const outcome = await invoke({
+      args: ["setup", "--dry-run"],
+      input: { ...FRESH, buckets: {} },
+    });
+    expect(outcome.exitCode).toBe(0);
+    expect(outcome.fake.calls.map(([name]) => name)).toContain("describe_artifact_stack");
+    expect(outcome.fake.writes).toEqual([]);
+  });
 });
 
 describe("rayito setup: output templates", () => {
