@@ -214,7 +214,18 @@ key). La receta completa, con cada orden, está en
 
    Con el SDK de TypeScript solo: `npx rayito setup`. La comprobación del hash
    prueba integridad, no autenticidad: para la firma de cosign, verifica el zip
-   a mano y pásalo con `--artifact` ([Verificar una release](https://alejandro-cedeno-10.github.io/rayito/verify/)).
+   a mano y pásalo con `--artifact` ([Verificar una release](https://alejandro-cedeno-10.github.io/rayito/verify/)):
+
+   ```bash
+   RAYD_VERSION=$(python -c "import rayito; print(rayito.__version__)")   # la del SDK instalado
+   curl -fsSLO "https://github.com/alejandro-cedeno-10/rayito/releases/download/rayd-v${RAYD_VERSION}/rayito-image.zip"
+   curl -fsSLO "https://github.com/alejandro-cedeno-10/rayito/releases/download/rayd-v${RAYD_VERSION}/rayito-image.zip.sigstore.json"
+   cosign verify-blob --bundle rayito-image.zip.sigstore.json \
+     --certificate-identity "https://github.com/alejandro-cedeno-10/rayito/.github/workflows/release.yml@refs/tags/rayd-v${RAYD_VERSION}" \
+     --certificate-oidc-issuer https://token.actions.githubusercontent.com rayito-image.zip
+   rayito setup --bucket amzn-s3-demo-bucket --artifact rayito-image.zip
+   ```
+
    El camino a mano (bucket, `aws cloudformation deploy`, descarga con cosign
    y `rayito image publish`) está en
    [Configurar AWS](https://alejandro-cedeno-10.github.io/rayito/primeros-pasos/configurar-aws/#a-mano-sin-rayito-setup);

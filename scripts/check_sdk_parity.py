@@ -97,7 +97,7 @@ CLI_PHASES: Final[dict[int, tuple[str, ...]]] = {
         "image list",
         "image sizes",
     ),
-    2: ("doctor",),
+    2: ("doctor", "setup"),
     3: (
         "template build",
         "template status",
