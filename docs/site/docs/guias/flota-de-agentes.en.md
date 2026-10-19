@@ -188,8 +188,20 @@ after the deadline, raises `CapacityException` (`code = "agent_capacity"`;
     images) cost about $5 and ended with the AWS inventory the same as at the
     start. Details in `AWS_API_NOTES.md` (Q170 to Q172).
 
+## There is no fleet on AgentCore { #en-agentcore }
+
+With `--target agentcore` the agent runs on
+[Amazon Bedrock AgentCore Runtime](desplegar-en-agentcore.md), which creates one
+microVM per session and scales on its own: `min_vms`, `max_vms`, `warm_vms` and
+the rest of the options on this page that size a fleet do not exist there.
+Passing them in the call is an error (`option_not_supported`) and, if they come
+from the project file, a warning: Rayito never approximates them silently.
+`invoke()`, `stream()` and the `session_id` are the same. The full table is in
+[Deploy to AgentCore](desplegar-en-agentcore.md#opciones-que-no-aplican).
+
 ## See also { #ver-tambien }
 
 - [Deploy your agent](despliega-tu-agente.md): the full guide and the project file.
+- [Deploy to AgentCore](desplegar-en-agentcore.md): the same agent on Amazon Bedrock AgentCore Runtime.
 - [Limits](../limits.md): the quotas and caps on this page.
 - [Pool](../pool.md): the parked slots a fleet uses.

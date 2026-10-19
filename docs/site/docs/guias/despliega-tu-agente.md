@@ -91,6 +91,23 @@ Lo que devuelve es una [flota](flota-de-agentes.md) (`AgentFleet`): uno o varios
 MicroVMs que sirven el agente, con las sesiones repartidas entre ellos. Con los
 valores por defecto es un solo VM, igual que `AgentProject.deploy()`.
 
+### ¿Prefieres Amazon Bedrock AgentCore? { #desplegar-en-agentcore }
+
+El mismo proyecto se despliega en
+[Amazon Bedrock AgentCore Runtime](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/agents-tools-runtime.html)
+con `--target agentcore` (`target="agentcore"` en Python y `target: "agentcore"`
+en TypeScript), sin Docker local: Rayito construye la imagen arm64 con
+CodeBuild, crea el runtime con un rol de mínimo privilegio y devuelve un objeto
+con el mismo `invoke()` y las mismas sesiones que una flota. El destino por
+defecto sigue siendo `microvm`. Una diferencia importante: AgentCore no tiene
+la pasarela de secretos de Rayito, así que el agente puede leer las
+credenciales del rol del runtime. Todo en
+[Desplegar en AgentCore](desplegar-en-agentcore.md).
+
+```bash
+rayito agent deploy ./mi-agente --target agentcore --dry-run
+```
+
 ### Qué detecta y de dónde { #que-detecta-y-de-donde }
 
 | Qué | De dónde sale |
@@ -958,6 +975,15 @@ con las órdenes exactas. Con `agentcore` comprueba además las restricciones de
 contrato de AgentCore (arm64 y puerto 8080). No sobrescribe un directorio con
 contenido salvo con `overwrite`.
 
+Con `agentcore`, el `Dockerfile` toma la imagen base de un argumento de build,
+`AGENT_BASE_IMAGE`, con la referencia fijada por digest como valor por defecto:
+sirve para bajar la misma imagen, con el mismo digest, de otro registro (por
+ejemplo, `public.ecr.aws/docker/library/python`). El `README.md` exportado
+explica cómo desplegar el contexto en AgentCore y la diferencia de seguridad. Si
+no quieres construir la imagen ni crear el runtime a mano,
+[`rayito agent deploy --target agentcore`](desplegar-en-agentcore.md) hace las
+dos cosas. El destino `docker` no cambia.
+
 === "Python"
 
     ```python
@@ -1180,6 +1206,7 @@ Los mensajes nunca llevan el prompt, las cabeceras ni el nombre de un secreto.
 
 ## Ver también
 
+- [Desplegar en AgentCore](desplegar-en-agentcore.md)
 - [Agente en el sandbox](agente-en-el-sandbox.md)
 - [Proveedores del agente](agente-proveedores.md)
 - [Templates de agente](../funciones-opcionales/templates-de-agente.md)

@@ -91,6 +91,22 @@ What it returns is a [fleet](flota-de-agentes.md) (`AgentFleet`): one or more
 MicroVMs serving the agent, with the sessions spread across them. With the
 defaults it is a single VM, the same as `AgentProject.deploy()`.
 
+### Prefer Amazon Bedrock AgentCore? { #desplegar-en-agentcore }
+
+The same project deploys to
+[Amazon Bedrock AgentCore Runtime](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/agents-tools-runtime.html)
+with `--target agentcore` (`target="agentcore"` in Python and
+`target: "agentcore"` in TypeScript), with no local Docker: Rayito builds the
+arm64 image with CodeBuild, creates the runtime with a least-privilege role and
+returns an object with the same `invoke()` and the same sessions as a fleet. The
+default target is still `microvm`. One important difference: AgentCore has no
+Rayito secrets gateway, so the agent can read the runtime role's credentials.
+Everything is in [Deploy to AgentCore](desplegar-en-agentcore.md).
+
+```bash
+rayito agent deploy ./my-agent --target agentcore --dry-run
+```
+
 ### What it detects and from where { #que-detecta-y-de-donde }
 
 | What | Where it comes from |
@@ -958,6 +974,15 @@ with the exact commands. With `agentcore` it also checks the AgentCore contract
 constraints (arm64 and port 8080). It does not overwrite a non-empty directory
 unless `overwrite` is set.
 
+With `agentcore`, the `Dockerfile` takes its base image from a build argument,
+`AGENT_BASE_IMAGE`, whose default is the reference pinned by digest: use it to
+pull the same image, with the same digest, from another registry (for example,
+`public.ecr.aws/docker/library/python`). The exported `README.md` explains how
+to deploy the context to AgentCore and the security difference. If you do not
+want to build the image or create the runtime by hand,
+[`rayito agent deploy --target agentcore`](desplegar-en-agentcore.md) does both.
+The `docker` target is unchanged.
+
 === "Python"
 
     ```python
@@ -1178,6 +1203,7 @@ Messages never carry the prompt, the headers or the name of a secret.
 
 ## See also { #ver-tambien }
 
+- [Deploy to AgentCore](desplegar-en-agentcore.md)
 - [Agent in the sandbox](agente-en-el-sandbox.md)
 - [Agent providers](agente-proveedores.md)
 - [Agent templates](../funciones-opcionales/templates-de-agente.md)
