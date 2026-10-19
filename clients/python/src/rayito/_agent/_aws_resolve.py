@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any, Final, Literal, Protocol
 
 from botocore.exceptions import ClientError
 
+from rayito._account_setup._domain import BUCKET_ENV_VAR as BUCKET_ENV_VAR
 from rayito._account_setup._domain import cdk_bucket_name as cdk_bucket_name
 from rayito._account_setup._domain import with_setup_hint
 from rayito._agent._project_domain import AgentProject
@@ -37,8 +38,6 @@ from rayito.exceptions import InvalidArgumentException
 if TYPE_CHECKING:
     import boto3
 
-#: Variable con el bucket de artefactos, la misma de `rayito image publish`.
-BUCKET_ENV_VAR: Final = "RAYITO_BUCKET"
 #: El nombre convencional del secreto de una pasarela, bajo el prefijo
 #: `rayito/` de `SecretStore` (el secreto queda en `rayito/agents/<proyecto>/<pasarela>`).
 AGENT_SECRET_NAME_TEMPLATE: Final = "agents/{project}/{gateway}"
