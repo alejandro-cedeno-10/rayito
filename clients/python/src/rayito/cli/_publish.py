@@ -107,7 +107,9 @@ from typing import Any, Protocol
 from botocore.exceptions import ClientError
 
 from rayito._images import (
-    BUILD_ROLE_OUTPUT_KEY,
+    BUILD_ROLE_OUTPUT_KEY as BUILD_ROLE_OUTPUT_KEY,
+)
+from rayito._images import (
     DEFAULT_BASE_IMAGE_NAME,
     DEFAULT_IAM_STACK_NAME,
     LOG_GROUP_PREFIX,

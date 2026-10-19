@@ -22,7 +22,8 @@ from typing import TYPE_CHECKING, Any, Final, Literal, Protocol
 
 from botocore.exceptions import ClientError
 
-from rayito._account_setup._domain import cdk_bucket_name, with_setup_hint
+from rayito._account_setup._domain import cdk_bucket_name as cdk_bucket_name
+from rayito._account_setup._domain import with_setup_hint
 from rayito._agent._project_domain import AgentProject
 from rayito._aws import LazyClient
 from rayito._aws_region import aws_session, resolve_region
