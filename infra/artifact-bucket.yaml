@@ -1,0 +1,86 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  Rayito artifact bucket: the S3 bucket that holds the image zip artifacts
+  (rayito/images/*), created by `rayito setup` as the rayito-m0-artifacts
+  stack only when no bucket can be reused (--bucket, RAYITO_BUCKET, the
+  ArtifactBucket of rayito-m0-iam or the cdk bootstrap bucket; ADR-030).
+  S3-managed encryption, every public access blocked, ACLs disabled, TLS
+  only, and the image artifacts expire after ArtifactExpirationDays: a zip is
+  only read while its image version builds, and `rayito image publish`
+  uploads it again when it is missing. Property names: AWS_API_NOTES.md,
+  "Preparación de la cuenta". Deleting the stack keeps the bucket.
+
+Parameters:
+  BucketName:
+    Type: String
+    MinLength: 3
+    MaxLength: 63
+    AllowedPattern: "^[a-z0-9][a-z0-9.-]*[a-z0-9]$"
+    Description: >-
+      Name of the bucket, in the region of the stack. `rayito setup` passes
+      --bucket or RAYITO_BUCKET when they name a bucket that does not exist,
+      otherwise rayito-artifacts-<account>-<region>.
+  ArtifactExpirationDays:
+    Type: Number
+    Default: 7
+    MinValue: 1
+    Description: >-
+      Days after which an object under rayito/images/ is deleted. A build
+      takes about 10 minutes; a week leaves room to retry a failed build
+      without uploading the zip again.
+
+Resources:
+  # Always `DeletionPolicy: Retain` / `UpdateReplacePolicy: Retain`, as
+  # literals: the bucket is referenced by the rayito-m0-iam stack (the build
+  # role reads it) and may hold objects of other Rayito features, and
+  # CloudFormation cannot delete a bucket that still has objects. Deleting
+  # it is an explicit step outside this stack.
+  ArtifactBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Ref BucketName
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      LifecycleConfiguration:
+        Rules:
+          - Id: expire-image-artifacts
+            Status: Enabled
+            Prefix: rayito/images/
+            ExpirationInDays: !Ref ArtifactExpirationDays
+
+  ArtifactBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref ArtifactBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: "*"
+            Action: "s3:*"
+            Resource:
+              - !GetAtt ArtifactBucket.Arn
+              - !Sub "${ArtifactBucket.Arn}/*"
+            Condition:
+              Bool:
+                aws:SecureTransport: "false"
+
+Outputs:
+  BucketName:
+    Description: Pass it as ArtifactBucket to rayito-m0-iam and as RAYITO_BUCKET.
+    Value: !Ref ArtifactBucket
+  BucketArn:
+    Value: !GetAtt ArtifactBucket.Arn

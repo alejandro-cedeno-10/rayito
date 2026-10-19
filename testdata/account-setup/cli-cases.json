@@ -1,5 +1,5 @@
 {
-  "description": "Casos de `rayito setup` que no llegan a crear nada (plan, --dry-run y errores tempranos), con la salida exacta. Los dos SDK los ejecutan con dobles construidos desde `input` (el mismo formato que plan-vectors.json); stdin nunca es una terminal. `stdout`/`stderr` son texto exacto; `json` se compara ya parseado. Los marcadores `{sdkVersion}` y `{cdkBucket}` se sustituyen como en plan-vectors.json.",
+  "description": "Casos de `rayito setup` que no llegan a crear nada (plan, --dry-run y errores tempranos), con la salida exacta. Los dos SDK los ejecutan con dobles construidos desde `input` (el mismo formato que plan-vectors.json); stdin nunca es una terminal. `stdout`/`stderr` son texto exacto; `json` se compara ya parseado. Los marcadores `{sdkVersion}`, `{cdkBucket}` y `{defaultBucket}` se sustituyen como en plan-vectors.json.",
   "cases": [
     {
       "name": "dry-run en una cuenta nueva",
@@ -17,6 +17,8 @@
         "buckets": {
           "{cdkBucket}": "us-east-1"
         },
+        "forbiddenBuckets": [],
+        "artifactStack": null,
         "image": null
       },
       "expected": {
@@ -42,6 +44,8 @@
         "buckets": {
           "{cdkBucket}": "us-east-1"
         },
+        "forbiddenBuckets": [],
+        "artifactStack": null,
         "image": null
       },
       "expected": {
@@ -121,6 +125,8 @@
         "buckets": {
           "amzn-s3-demo-bucket": "us-east-1"
         },
+        "forbiddenBuckets": [],
+        "artifactStack": null,
         "image": {
           "state": "UPDATED",
           "versions": [
@@ -154,6 +160,8 @@
         "buckets": {
           "{cdkBucket}": "us-east-1"
         },
+        "forbiddenBuckets": [],
+        "artifactStack": null,
         "image": null
       },
       "expected": {
@@ -178,6 +186,8 @@
         "buckets": {
           "{cdkBucket}": "us-east-1"
         },
+        "forbiddenBuckets": [],
+        "artifactStack": null,
         "image": null
       },
       "expected": {
@@ -237,7 +247,7 @@
       }
     },
     {
-      "name": "sin bucket",
+      "name": "dry-run sin ningún bucket: se crea uno",
       "args": [
         "setup",
         "--dry-run"
@@ -250,12 +260,87 @@
         "artifact": null,
         "stack": null,
         "buckets": {},
+        "forbiddenBuckets": [],
+        "artifactStack": null,
         "image": null
       },
       "expected": {
-        "exitCode": 2,
-        "stdout": "",
-        "stderr": "rayito: no hay bucket para el artefacto de la imagen: pasa --bucket, exporta RAYITO_BUCKET o ejecuta `cdk bootstrap` en esta cuenta y región; Rayito no crea buckets\n"
+        "exitCode": 0,
+        "stdout": "rayito setup: cuenta 123456789012, región us-east-1\n  bucket {defaultBucket}: crear con la pila rayito-m0-artifacts (nombre por defecto de Rayito)\n  pila de IAM rayito-m0-iam: crear\n  imagen rayito-base: publicar desde rayd-v{sdkVersion} (≈ 10 min)\nCoste aproximado:\n  bucket de artefactos: los zips de la imagen caducan a los 7 días (regla de ciclo de vida)\n  pila de IAM: gratis\n  imagen: ≈ $0,04 por semana por versión publicada (mínimo una semana)\n  zip de la imagen en el bucket: céntimos\nno se creó ni cambió nada (--dry-run)\n",
+        "stderr": ""
+      }
+    },
+    {
+      "name": "dry-run sin ningún bucket con --json",
+      "args": [
+        "--json",
+        "setup",
+        "--dry-run"
+      ],
+      "input": {
+        "region": "us-east-1",
+        "account": "123456789012",
+        "bucket": null,
+        "environmentBucket": null,
+        "artifact": null,
+        "stack": null,
+        "buckets": {},
+        "forbiddenBuckets": [],
+        "artifactStack": null,
+        "image": null
+      },
+      "expected": {
+        "exitCode": 0,
+        "json": {
+          "rayito": "{sdkVersion}",
+          "region": "us-east-1",
+          "account": "123456789012",
+          "dryRun": true,
+          "ready": false,
+          "steps": [
+            {
+              "resource": "bucket",
+              "name": "{defaultBucket}",
+              "action": "create",
+              "source": "rayitoDefault",
+              "status": null,
+              "imageVersion": null,
+              "release": null,
+              "previousBucket": null
+            },
+            {
+              "resource": "iamStack",
+              "name": "rayito-m0-iam",
+              "action": "create",
+              "source": null,
+              "status": null,
+              "imageVersion": null,
+              "release": null,
+              "previousBucket": null
+            },
+            {
+              "resource": "baseImage",
+              "name": "rayito-base",
+              "action": "publish",
+              "source": "release",
+              "status": null,
+              "imageVersion": null,
+              "release": "rayd-v{sdkVersion}",
+              "previousBucket": null
+            }
+          ],
+          "cost": [
+            "bucket de artefactos: los zips de la imagen caducan a los 7 días (regla de ciclo de vida)",
+            "pila de IAM: gratis",
+            "imagen: ≈ $0,04 por semana por versión publicada (mínimo una semana)",
+            "zip de la imagen en el bucket: céntimos"
+          ],
+          "result": null,
+          "doctor": null,
+          "error": null,
+          "exitCode": 0
+        },
+        "stderr": ""
       }
     },
     {
@@ -272,6 +357,8 @@
         "artifact": null,
         "stack": null,
         "buckets": {},
+        "forbiddenBuckets": [],
+        "artifactStack": null,
         "image": null
       },
       "expected": {
@@ -302,6 +389,8 @@
         "buckets": {
           "amzn-s3-demo-bucket": "us-east-1"
         },
+        "forbiddenBuckets": [],
+        "artifactStack": null,
         "image": null
       },
       "expected": {
@@ -328,12 +417,68 @@
         "buckets": {
           "amzn-s3-demo-bucket": "eu-west-1"
         },
+        "forbiddenBuckets": [],
+        "artifactStack": null,
         "image": null
       },
       "expected": {
         "exitCode": 2,
         "stdout": "",
         "stderr": "rayito: el bucket amzn-s3-demo-bucket está en eu-west-1, no en us-east-1: el build fallaría con S3_CROSS_REGION_ACCESS_DENIED\n"
+      }
+    },
+    {
+      "name": "--bucket que existe sin acceso",
+      "args": [
+        "setup",
+        "--dry-run",
+        "--bucket",
+        "amzn-s3-demo-bucket1"
+      ],
+      "input": {
+        "region": "us-east-1",
+        "account": "123456789012",
+        "bucket": "amzn-s3-demo-bucket1",
+        "environmentBucket": null,
+        "artifact": null,
+        "stack": null,
+        "buckets": {},
+        "forbiddenBuckets": [
+          "amzn-s3-demo-bucket1"
+        ],
+        "artifactStack": null,
+        "image": null
+      },
+      "expected": {
+        "exitCode": 2,
+        "stdout": "",
+        "stderr": "rayito: el bucket amzn-s3-demo-bucket1 (--bucket) existe pero no es accesible con estas credenciales: puede ser de otra cuenta; pasa otro nombre con --bucket\n"
+      }
+    },
+    {
+      "name": "nombre por defecto ocupado fuera de la pila",
+      "args": [
+        "setup",
+        "--dry-run"
+      ],
+      "input": {
+        "region": "us-east-1",
+        "account": "123456789012",
+        "bucket": null,
+        "environmentBucket": null,
+        "artifact": null,
+        "stack": null,
+        "buckets": {
+          "{defaultBucket}": "us-east-1"
+        },
+        "forbiddenBuckets": [],
+        "artifactStack": null,
+        "image": null
+      },
+      "expected": {
+        "exitCode": 2,
+        "stdout": "",
+        "stderr": "rayito: el nombre {defaultBucket} ya lo usa un bucket que no creó la pila rayito-m0-artifacts: si es tuyo, pásalo con --bucket {defaultBucket}; si no, elige otro nombre con --bucket\n"
       }
     }
   ]

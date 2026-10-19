@@ -40,6 +40,7 @@ PRUNE_ARGS    ?= --keep 5
 EGRESS_TEMPLATE := infra/egress-connector.yaml
 CI_OIDC_TEMPLATE := infra/ci-oidc-role.yaml
 IAM_TEMPLATE  := infra/iam.yaml
+ARTIFACT_BUCKET_TEMPLATE := infra/artifact-bucket.yaml
 SECRETS_TEMPLATE := infra/secrets-access.yaml
 METADATA_INDEX_TEMPLATE := infra/metadata-index.yaml
 CUSTOM_DOMAIN_TEMPLATE := infra/custom-domain.yaml
@@ -329,7 +330,8 @@ image-prune:
 
 # Valida las plantillas de infra/ (conector de egress, rol OIDC del e2e, el
 # IAM de build/ejecución/cliente con los parámetros de persistencia y
-# transferencias, las políticas opcionales de secretos de M13a y la tabla
+# transferencias, el bucket de artefactos de `rayito setup`, las políticas
+# opcionales de secretos de M13a y la tabla
 # opcional del índice de metadatos de M14, y los volúmenes EFS de M15):
 # validate-template (servidor, gratis) + cfn-lint (desde
 # .github/release/requirements-cfn-lint.txt, con --hash). cfn-lint 1.56.3 ya conoce
@@ -339,6 +341,7 @@ infra-lint:
 	aws cloudformation validate-template --template-body file://$(EGRESS_TEMPLATE) >/dev/null && echo "validate-template ok: $(EGRESS_TEMPLATE)"
 	aws cloudformation validate-template --template-body file://$(CI_OIDC_TEMPLATE) >/dev/null && echo "validate-template ok: $(CI_OIDC_TEMPLATE)"
 	aws cloudformation validate-template --template-body file://$(IAM_TEMPLATE) >/dev/null && echo "validate-template ok: $(IAM_TEMPLATE)"
+	aws cloudformation validate-template --template-body file://$(ARTIFACT_BUCKET_TEMPLATE) >/dev/null && echo "validate-template ok: $(ARTIFACT_BUCKET_TEMPLATE)"
 	aws cloudformation validate-template --template-body file://$(SECRETS_TEMPLATE) >/dev/null && echo "validate-template ok: $(SECRETS_TEMPLATE)"
 	aws cloudformation validate-template --template-body file://$(METADATA_INDEX_TEMPLATE) >/dev/null && echo "validate-template ok: $(METADATA_INDEX_TEMPLATE)"
 	aws cloudformation validate-template --template-body file://$(CUSTOM_DOMAIN_TEMPLATE) >/dev/null && echo "validate-template ok: $(CUSTOM_DOMAIN_TEMPLATE)"
@@ -351,7 +354,7 @@ infra-lint:
 	tools="$$(mktemp -d)" && trap 'rm -rf "$$tools"' EXIT && \
 	  $(call hashed-tool,cfn-lint,"$$tools") && \
 	  "$$tools/bin/cfn-lint" --version && \
-	  "$$tools/bin/cfn-lint" -- $(EGRESS_TEMPLATE) $(CI_OIDC_TEMPLATE) $(IAM_TEMPLATE) $(SECRETS_TEMPLATE) $(METADATA_INDEX_TEMPLATE) $(CUSTOM_DOMAIN_TEMPLATE) $(EVENTS_WEBHOOKS_TEMPLATE) $(EFS_VOLUMES_TEMPLATE) $(DASHBOARD_TEMPLATE) $(DASHBOARD_CLOUDWATCH_TEMPLATE) $(DASHBOARD_READ_ROLE_TEMPLATE) $(QUOTA_ALERTS_TEMPLATE)
+	  "$$tools/bin/cfn-lint" -- $(EGRESS_TEMPLATE) $(CI_OIDC_TEMPLATE) $(IAM_TEMPLATE) $(ARTIFACT_BUCKET_TEMPLATE) $(SECRETS_TEMPLATE) $(METADATA_INDEX_TEMPLATE) $(CUSTOM_DOMAIN_TEMPLATE) $(EVENTS_WEBHOOKS_TEMPLATE) $(EFS_VOLUMES_TEMPLATE) $(DASHBOARD_TEMPLATE) $(DASHBOARD_CLOUDWATCH_TEMPLATE) $(DASHBOARD_READ_ROLE_TEMPLATE) $(QUOTA_ALERTS_TEMPLATE)
 
 # Aceptación contra AWS real (~$0.03 por sandbox). Se niega a correr sin las
 # dos variables; RAYITO_EXECUTION_ROLE_ARN activa los logs de runtime.

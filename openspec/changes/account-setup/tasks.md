@@ -6,7 +6,10 @@ Three lanes run in parallel and never edit the same file: **Track PY**
 its own branch cut from `feat/rayito-setup` and opens a pull request back
 into it; nothing is merged without the maintainer's review, and nothing goes
 to `main` from a lane. The AWS acceptance (section 4) runs once, on the tip of
-`feat/rayito-setup`, after the three lanes merge.
+`feat/rayito-setup`, after the three lanes merge. Section 5 ("Bucket
+creation", the maintainer's decision of 2026-10-19) is a second round with
+the same three lanes and the same rules; its shared part (template,
+packaging, contract, vectors) is already committed (0.6, 0.7).
 
 Every lane reads `proposal.md`, `design.md`, `specs/account-setup/spec.md`,
 the shared contract below and `testdata/account-setup/*.json` before writing
@@ -36,6 +39,26 @@ commits `git commit -s -S`, Conventional Commits.
       generated `clients/python/src/rayito/_stacks/_templates/iam.yaml` and
       `clients/typescript/src/stacks/templates/iam.gen.ts` are committed
       (`python3 scripts/gen_stack_assets.py --check` passes).
+- [x] 0.6 Bucket creation, shared part: `infra/artifact-bucket.yaml`
+      (design D10; `cfn-lint` 1.56.3 clean), rendered by
+      `scripts/gen_stack_assets.py` into
+      `clients/python/src/rayito/_stacks/_templates/artifact-bucket.yaml` and
+      `clients/typescript/src/stacks/templates/artifact-bucket.gen.ts`
+      (committed; the generator docstring names both setup templates), its
+      `make infra-lint` entry (`ARTIFACT_BUCKET_TEMPLATE`), and
+      `scripts/tests/test_artifact_bucket_template.py` (properties pinned,
+      days/parameter/output/prefix/default-name checked against the
+      contract and `limits.json`).
+- [x] 0.7 Bucket creation, contract: `contract.json` (help texts, error
+      codes and exit codes without `no_bucket` and with `bucket_taken`,
+      `artifact_stack_conflict`; new constants, `resourceActions`,
+      `bucketSources`, `bucketProbeStates`, action, cost, progress and error
+      templates), `plan-vectors.json` (29 cases; every input has
+      `forbiddenBuckets` and `artifactStack`, every expected has
+      `bucketReads`; placeholder `{defaultBucket}`), `cli-cases.json`
+      (12 cases: the old "sin bucket" error is now a dry run that creates
+      one, plus its `--json` twin, a 403 `--bucket` and a taken default
+      name).
 
 ## Shared contract (Python and TypeScript must match exactly)
 
@@ -53,10 +76,10 @@ texts are the `help` strings of the contract, identical in both CLIs.
 1 failure (`stack_blocked`, `stack_incomplete`, `release_download`,
 `checksum_missing`, `checksum_mismatch`, `image_build_failed`, a "no" at
 the prompt, a doctor `FAIL`, an untranslated AWS error); 2 usage or
-environment (`unsupported_region`, `no_bucket`, `bucket_unavailable`,
-`bucket_region`, `artifact_missing`, `artifact_variant`,
-`needs_confirmation`, and the existing no region/profile/credentials
-errors).
+environment (`unsupported_region`, `bucket_unavailable`, `bucket_region`,
+`bucket_taken`, `artifact_stack_conflict`, `artifact_missing`,
+`artifact_variant`, `needs_confirmation`, and the existing no
+region/profile/credentials errors). `no_bucket` was removed by section 5.
 
 **Errors**: Python `AccountSetupException(code, message)`, TypeScript
 `AccountSetupError` (`code`, `message`, `exitCode` from `errorExitCodes`).
@@ -84,11 +107,15 @@ rayito setup: rayito doctor encontró algún FAIL; la cuenta no está lista   # 
 ```
 
 Action texts: `bucketReuse` with the source label (`--bucket`,
-`RAYITO_BUCKET`, `el de la pila de IAM`, `bootstrap de CDK`), `stackCreate`,
+`RAYITO_BUCKET`, `el de la pila de IAM`, `bootstrap de CDK`, `el de la pila
+de artefactos`, `nombre por defecto de Rayito`), `bucketCreate`
+(`{stack}` = `rayito-m0-artifacts`, `{source}` = the label), `bucketWait`
+(`{stack}`, `{status}`), `stackCreate`,
 `stackUpdate`, `stackReuse`, `stackWait`, `imagePublishRelease`,
 `imagePublishArtifact`, `imageReuse`, `imageWait`. Cost lines, in this order:
-`iamStack` when the stack action is `create` or `update`; `image` and
-`artifact` when the image action is `publish`.
+`bucket` (with `{days}` = `artifactExpirationDays`) when the bucket action
+is `create`; `iamStack` when the stack action is `create` or `update`;
+`image` and `artifact` when the image action is `publish`.
 
 **JSON document** (one object, `json.dumps(indent=2)` formatting already used
 by the CLIs, keys in this order):
@@ -103,7 +130,7 @@ by the CLIs, keys in this order):
   "steps": [
     {"resource": "bucket|iamStack|baseImage", "name": "...",
      "action": "create|update|reuse|wait|publish",
-     "source": "argument|environment|iamStack|cdkBootstrap|release|artifact|null",
+     "source": "argument|environment|iamStack|cdkBootstrap|artifactStack|rayitoDefault|release|artifact|null",
      "status": "<StackStatus>|null", "imageVersion": "<x.y>|null",
      "release": "rayd-v<version>|null", "previousBucket": "<bucket>|null"}
   ],
@@ -133,7 +160,14 @@ assets `rayito-image.zip` and `SHA256SUMS`, download deadline 600 s per asset
 (`RELEASE_DOWNLOAD_TIMEOUT_SECONDS` / `RELEASE_DOWNLOAD_TIMEOUT_MS`), usable
 stack states `CREATE_COMPLETE`, `UPDATE_COMPLETE`, `UPDATE_ROLLBACK_COMPLETE`,
 in-progress suffix `_IN_PROGRESS`, deleting state `DELETE_IN_PROGRESS`,
-building version states `PENDING`, `IN_PROGRESS`.
+building version states `PENDING`, `IN_PROGRESS`. Bucket creation (section
+5): stack `rayito-m0-artifacts`, component `artifact-bucket`, template
+`infra/artifact-bucket.yaml`, parameter and output `BucketName`, default
+name `rayito-artifacts-{account}-{region}`, expiration 7 days, image prefix
+`rayito/images/`, explicit sources `argument` and `environment`, probe
+states `found`, `missing`, `forbidden`, IAM template path `infra/iam.yaml`
+(for the `stack_incomplete` message, which now names `{output}` and
+`{template}`).
 
 **Hint for unprepared accounts**: `ACCOUNT_SETUP_HINT` appended as
 `"{message} ({hint})"`.
@@ -146,6 +180,12 @@ building version states `PENDING`, `IN_PROGRESS`.
 functions in camelCase (`plan_setup` → `planSetup`, `choose_bucket_candidate`
 → `chooseBucketCandidate`, `decide_bucket` → `decideBucket`,
 `classify_stack` → `classifyStack`, `plan_stack` → `planStack`,
+`bucket_candidates` → `bucketCandidates`, `creation_target` →
+`creationTarget`, `needs_default_probe` → `needsDefaultProbe`,
+`plan_bucket_creation` → `planBucketCreation`, `stack_output` →
+`stackOutput`, `default_artifact_bucket_name` → `defaultArtifactBucketName`,
+`ArtifactStackGateway`, `ARTIFACT_STACK_COMPONENT`, `BucketState` keep their
+names,
 `classify_image` → `classifyImage`, `plan_image` → `planImage`, `cost_lines`
 → `costLines`, `parse_checksums` → `parseChecksums`, `checksum_for` →
 `checksumFor`, `verify_checksum` → `verifyChecksum`, `release_tag` →
@@ -662,13 +702,300 @@ targeted AWS check per language lane, with inventory before and after.
 - [ ] 4.6 Review sweep (`reference/review-checklist.md`), then archive this
       change (`openspec archive account-setup --yes`).
 
+## 5. Bucket creation (maintainer decision 2026-10-19)
+
+`rayito setup` creates the artifact bucket when none can be reused, through
+`infra/artifact-bucket.yaml` deployed as `rayito-m0-artifacts` (design D2
+"Bucket", D4, D10; spec "The artifact bucket is reused when possible and
+otherwise created through CloudFormation"). The shared part is done (0.6,
+0.7): do not edit `infra/`, `scripts/`, `Makefile` or `testdata/` in a lane;
+report a contract mismatch instead. Three lanes, each on its own branch cut
+from `feat/rayito-setup` after 0.6/0.7, never touching each other's files.
+Same gates as sections 1, 2 and 3. Until 5.PY and 5.TS land, these tests fail
+against the updated contract (expected): Python
+`tests/unit/test_account_setup_domain.py` (plan vectors, contract constants
+and messages), `tests/unit/cli/test_setup.py` (CLI cases);
+TypeScript `tests/unit/account-setup.test.ts`, `tests/unit/cli/setup.test.ts`.
+
+### 5.PY Track PY (`clients/python/` only)
+
+- [ ] 5.PY.1 `src/rayito/_account_setup/_domain.py`:
+      - Types: `BucketSource` adds `"artifactStack"`, `"rayitoDefault"`; new
+        `BucketState = Literal["found", "missing", "forbidden"]`;
+        `ErrorCode` drops `"no_bucket"`, adds `"bucket_taken"`,
+        `"artifact_stack_conflict"`.
+      - `ALLOWED_ACTIONS["bucket"] = frozenset({"create", "reuse", "wait"})`.
+      - Constants (docstrings cite the contract and design D4/D10):
+        `ARTIFACT_STACK_NAME: Final = "rayito-m0-artifacts"`,
+        `ARTIFACT_COMPONENT_NAME: Final = "artifact-bucket"`,
+        `BUCKET_NAME_PARAMETER: Final = "BucketName"`,
+        `BUCKET_NAME_OUTPUT_KEY: Final = "BucketName"`,
+        `DEFAULT_ARTIFACT_BUCKET_TEMPLATE: Final = "rayito-artifacts-{account}-{region}"`,
+        `ARTIFACT_EXPIRATION_DAYS: Final = 7` (equals the template default;
+        `scripts/tests/test_artifact_bucket_template.py` enforces it through
+        the contract), `IAM_TEMPLATE_PATH: Final = "infra/iam.yaml"`,
+        `ARTIFACT_TEMPLATE_PATH: Final = "infra/artifact-bucket.yaml"`,
+        `EXPLICIT_BUCKET_SOURCES: Final = frozenset({"argument", "environment"})`.
+      - `BUCKET_SOURCE_LABELS` adds the two labels; `COST_TEXTS` adds
+        `"bucket"` (template with `{days}`, formatted by `cost_lines`);
+        `ERROR_MESSAGES`, `ERROR_EXIT_CODES` and `PROGRESS_MESSAGES`
+        (`bucketCreate`, `bucketWait`, `bucketReady`) exactly as the contract.
+      - `BucketProbe(state: BucketState, region: str | None)` replaces
+        `exists: bool`.
+      - New pure functions: `default_artifact_bucket_name(account, region) ->
+        str`; `bucket_candidates(request, stack, account) ->
+        tuple[BucketCandidate, ...]` (replaces `choose_bucket_candidate`,
+        which is removed: explicit name alone, else IAM stack bucket if the
+        stack exists and has it, then the CDK bucket); `decide_bucket(
+        candidate, probe, region) -> SetupStep | None` (`None` = next
+        candidate or the creation phase; rules of design D2);
+        `creation_target(request, account) -> BucketCandidate` (explicit
+        name with its source, else the default with `rayitoDefault`);
+        `needs_default_probe(target, artifact_stack: StackObservation) ->
+        bool` (`rayitoDefault` and no stack); `plan_bucket_creation(target,
+        artifact_stack, probe: BucketProbe | None, region) -> SetupStep`
+        (`reuse`/`wait` from the stack with source `artifactStack` and the
+        stack `status`, `create` with the target's source, or
+        `stack_blocked`, `stack_incomplete`, `artifact_stack_conflict`,
+        `bucket_taken`); `stack_output(observation, key, template) -> str`
+        (raises `stack_incomplete` with `name`, `output`, `template`; used for
+        `BuildRoleArn` and `BucketName`).
+      - Changed: `plan_stack` raises `stack_incomplete` through the new
+        fields; `plan_setup(request, account, stack, bucket_step, image)`
+        takes the decided bucket step (no candidate/probe); `cost_lines`
+        puts the `bucket` line first when the bucket action is `create`.
+- [ ] 5.PY.2 New `src/rayito/_account_setup/_artifact_stack.py`:
+      `ARTIFACT_STACK_COMPONENT: Final = StackComponent(name=
+      ARTIFACT_COMPONENT_NAME, description=..., parameters=(StackParameter(
+      BUCKET_NAME_PARAMETER, ..., required=True), StackParameter(
+      "ArtifactExpirationDays", ...)), capabilities=(), cost=CostStatement(
+      creates=("AWS::S3::Bucket", "AWS::S3::BucketPolicy"), idle_monthly=
+      <the zips' storage, "céntimos", expiring after 7 days>, removal=<the
+      stack and the policy are deleted, the bucket is kept (Retain)>,
+      source="AWS_API_NOTES.md, Preparación de la cuenta"))`. Not in
+      `_stacks/_registry.COMPONENTS`.
+- [ ] 5.PY.3 `src/rayito/_account_setup/_ports.py`: `ArtifactStackGateway`
+      (`observe() -> StackObservation`, `create(bucket: str) ->
+      StackObservation`, `wait() -> StackObservation`; no update: the bucket
+      name of the stack never changes); `AccountSetupGateways.artifact_stack`
+      right after `iam_stack`.
+- [ ] 5.PY.4 `src/rayito/_account_setup/_service.py`: `plan` = region check,
+      `account_id`, IAM `observe`, `_resolve_bucket` (probe each
+      `bucket_candidates` until `decide_bucket` returns a step; else
+      `creation_target`, artifact stack `observe`, the default probe only if
+      `needs_default_probe`, `plan_bucket_creation`), image `observe`,
+      `plan_setup`. `apply` = `_apply_bucket(plan, on_progress) -> str`
+      (`create` → progress `bucketCreate`, `artifact_stack.create(name)`;
+      `wait` → `bucketWait`, `artifact_stack.wait()`; both then
+      `stack_output(..., BUCKET_NAME_OUTPUT_KEY, ARTIFACT_TEMPLATE_PATH)` and
+      `bucketReady`; `reuse` → `plan.bucket`), then `_apply_stack(plan,
+      bucket, on_progress)` and the image with that bucket; `SetupResult.bucket`
+      is that bucket. `_build_role_of` becomes `stack_output(...,
+      BUILD_ROLE_OUTPUT_KEY, IAM_TEMPLATE_PATH)`. The "Coste y activación"
+      docstring names the extra reads, the bucket stack and the
+      bootstrap-level IAM requirement.
+- [ ] 5.PY.5 `src/rayito/_account_setup/_aws.py`: `CloudFormationIamStack`
+      becomes `CloudFormationSetupStack(provisioner, *, component,
+      stack_name, bucket_parameter, wait_timeout_seconds=
+      DEFAULT_WAIT_TIMEOUT_SECONDS)` (same `observe`/`create`/
+      `update_bucket`/`wait`; `_observation(status, stack_name)`), with two
+      factories `iam_stack_gateway(provisioner, **kw)` and
+      `artifact_stack_gateway(provisioner, **kw)`. `S3ArtifactBuckets.probe`
+      returns the three states: `BUCKET_NOT_FOUND_CODES: Final =
+      frozenset({"404", "NoSuchBucket", "NotFound"})` → `missing`,
+      `BUCKET_FORBIDDEN_CODES: Final = frozenset({"403"})` → `forbidden`
+      (docstrings cite the `HeadBucket` row of `AWS_API_NOTES.md`), any other
+      `ClientError` propagates. `_agent._aws_resolve.BUCKET_MISSING_CODES`
+      stays as it is for `deploy_agent`.
+- [ ] 5.PY.6 `src/rayito/cli/setup.py`: `gateways_for` builds one
+      `CloudFormationProvisioner` and passes it to both factories; the
+      command help and the `--bucket` help are the contract's strings.
+      `cli/_setup_output.py`: `ACTION_TEMPLATES` adds `bucketCreate`,
+      `bucketWait`; `action_text` renders the bucket step by action
+      (`stack=ARTIFACT_STACK_NAME`, the source label, the status).
+- [ ] 5.PY.7 Tests (`tests/unit/`):
+      - `fake_account_setup.py`: `FakeArtifactStack` recording
+        `("describe_artifact_stack",)`, `("create_artifact_stack", bucket)`,
+        `("wait_artifact_stack",)`; `FakeBuckets.probe` answers from
+        `buckets`/`forbiddenBuckets`; `from_vector_input` reads
+        `artifactStack`; `fill_placeholders` also replaces
+        `{defaultBucket}`; helper `bucket_reads(calls) -> list[str]`
+        (`head:<name>` and `artifactStack`).
+      - `test_account_setup_domain.py`: plan vectors through
+        `AccountSetup(gateways).plan(request)` (not `plan_setup`), with
+        `bucketReads`; every contract constant (except `imageArtifactPrefix`,
+        checked by the scripts test), `resourceActions`, `bucketSources`,
+        `bucketProbeStates` and every message against the domain;
+        `default_artifact_bucket_name`.
+      - `test_account_setup_service.py`: fresh account without bucket →
+        calls in order `create_artifact_stack(<default>)`, IAM `create(<default>)`,
+        downloads, `publish(bucket=<default>)`; `--bucket` 404 creates that
+        name; bucket `wait` never creates; a created bucket stack without the
+        `BucketName` output raises `stack_incomplete`; an account with a
+        reusable bucket records no `describe_artifact_stack` (0.14
+        behaviour).
+      - `test_account_setup_adapters.py`: `ARTIFACT_STACK_COMPONENT`
+        parameters equal the packaged `artifact-bucket.yaml` parameters;
+        `artifact-bucket` not in `COMPONENTS`; the artifact gateway's
+        `create` sends only `{"BucketName": ...}` and no capabilities (over
+        `fake_stacks.py`); `probe` 200 → `found` with region, 404 →
+        `missing`, 403 → `forbidden`, other error propagates; default
+        gateways construction still makes zero calls.
+      - `cli/test_setup.py`: the 12 `cli-cases.json`; an apply on an account
+        without bucket prints the `bucketCreate`/`bucketReady` progress and
+        ends with `RAYITO_BUCKET=<default>`.
+- [ ] 5.PY.8 `tests/e2e/test_account_setup.py`: one more test behind
+      `RAYITO_E2E_SETUP_CREATE_BUCKET=1`: `setup --yes --bucket
+      rayito-e2e-setup-<random hex>` (a name with no account) creates
+      `rayito-m0-artifacts` and the bucket; the bucket has the template's
+      stack `CREATE_COMPLETE` with the `BucketName` output, and `HeadBucket`
+      finds the bucket in the region (its configuration is pinned by
+      `scripts/tests/test_artifact_bucket_template.py`; no new S3 read API);
+      a second `--dry-run` plans `reuse`. Skip if
+      `rayito-m0-artifacts` already exists in the region. Teardown deletes
+      what the run created only: the image and the IAM stack as today, then
+      `rayito-m0-artifacts`, then the retained bucket (emptied first).
+- [ ] 5.PY.9 `clients/python/CHANGELOG.md` `## [Unreleased]`: `### Añadido`
+      "rayito setup crea el bucket de artefactos con la pila
+      rayito-m0-artifacts cuando no hay ninguno"; `### Cambiado` the error
+      codes (`no_bucket` removed, `bucket_unavailable` only for 403, new
+      `bucket_taken`, `artifact_stack_conflict`).
+
+### 5.TS Track TS (`clients/typescript/` only)
+
+- [ ] 5.TS.1 `src/account-setup/domain.ts`: the same types, constants,
+      messages and pure functions as 5.PY.1 with the name map
+      (`BucketProbe { state: BucketState; region: string | undefined }`;
+      `chooseBucketCandidate` removed; `planSetup({ request, account, stack,
+      bucketStep, image })`; `ARTIFACT_EXPIRATION_DAYS = 7`).
+- [ ] 5.TS.2 New `src/account-setup/artifact-stack.ts`:
+      `ARTIFACT_STACK_COMPONENT: StackComponent` (as 5.PY.2); not in
+      `src/stacks/registry.ts`.
+- [ ] 5.TS.3 `src/stacks/packaging.ts`: `"artifact-bucket"` in `ASSETS`
+      (import of `./templates/artifact-bucket.gen.js`, already generated).
+- [ ] 5.TS.4 `src/account-setup/ports.ts`: `ArtifactStackGateway`
+      (`observe`, `create(bucket)`, `wait`, all async);
+      `AccountSetupGateways.artifactStack`.
+- [ ] 5.TS.5 `src/account-setup/service.ts`: `plan`/`apply` as 5.PY.4
+      (`#resolveBucket`, `#applyBucket`), same progress lines and TSDoc
+      "Coste y activación" update.
+- [ ] 5.TS.6 `src/cli/setup-adapters.ts`: `SdkIamStack` becomes
+      `SdkSetupStack(provisioner, { component, stackName, bucketParameter,
+      waitTimeoutMs })` with `sdkIamStack(provisioner)` and
+      `sdkArtifactStack(provisioner)`; `SdkArtifactBuckets.probe` returns
+      the three states with `BUCKET_NOT_FOUND_CODES` and
+      `BUCKET_FORBIDDEN_CODES` (exported `ReadonlySet<string>` in this file;
+      `agent/aws-resolve.ts` `BUCKET_MISSING_CODES` unchanged);
+      `sdkAccountSetupGateways` builds one `CloudFormationProvisioner` for
+      both stacks.
+- [ ] 5.TS.7 `src/cli/setup-output.ts`: `bucketCreate`/`bucketWait` action
+      texts; `src/cli/commands/setup.ts`: command and `--bucket` help from
+      the contract.
+- [ ] 5.TS.8 Tests: `tests/unit/account-setup-fakes.ts` (as 5.PY.7 fakes,
+      `{defaultBucket}`, `bucketReads`), `tests/unit/account-setup.test.ts`
+      (plan vectors through `AccountSetup.plan`, contract, service flows of
+      5.PY.7), `tests/unit/cli/setup-adapters.test.ts` (component parameters
+      equal `artifact-bucket.gen.ts`, not in the registry, `create` sends
+      only `BucketName`, probe states), `tests/unit/cli/setup.test.ts`
+      (12 CLI cases, apply without bucket), `tests/e2e/account-setup.e2e.test.ts`
+      (as 5.PY.8, `RAYITO_E2E_SETUP_CREATE_BUCKET=1`, own hook timeouts).
+- [ ] 5.TS.9 `clients/typescript/CHANGELOG.md`, same entries as 5.PY.9.
+
+### 5.DOCS Track DOCS (no file under `clients/`, `infra/`, `scripts/`, `testdata/`, `Makefile`)
+
+- [ ] 5.D.1 `ARCHITECTURE.md` ADR-030: amend point 4 ("nunca crea un
+      bucket") with the new rule and the reuse/creation phases (design D2,
+      D4), add the template (D10), the new alternatives (raw S3 calls,
+      bucket inside the IAM stack, adopting the default name, KMS,
+      versioning, `Delete`), consequences and the permissions risk. Dated
+      "Enmienda 2026-10-19".
+- [ ] 5.D.2 `AWS_API_NOTES.md`: in "Despliegue de agentes de cero
+      configuración", say the "nunca llama a `CreateBucket`" rule is about
+      the SDK's own calls (`deploy_agent` still only reuses). In
+      "Preparación de la cuenta": the bucket row lists up to three
+      `HeadBucket` and the 404/403 split; a new row for
+      `rayito-m0-artifacts` (`DescribeStacks`/`CreateStack` with only
+      `BucketName`, no `Capabilities`, §21); a sub-table "Plantilla
+      `infra/artifact-bucket.yaml`" with the resource types and exactly the
+      properties of design D10, verified offline against the CloudFormation
+      schemas bundled with cfn-lint 1.56.3 (2026-10-19), and the S3
+      permissions the schemas' handlers list for `AWS::S3::Bucket` create
+      (`s3:CreateBucket`, `s3:PutEncryptionConfiguration`,
+      `s3:PutBucketPublicAccessBlock`, `s3:PutBucketOwnershipControls`,
+      `s3:PutLifecycleConfiguration`, `s3:PutBucketTagging` among others)
+      and `AWS::S3::BucketPolicy` (`s3:GetBucketPolicy`,
+      `s3:PutBucketPolicy`). Nothing else.
+- [ ] 5.D.3 `docs/site/docs/primeros-pasos/configurar-aws.md` / `.en.md`:
+      the bucket is no longer a prerequisite; the plan example of an account
+      without a bucket (from `cli-cases.json` "dry-run sin ningún bucket",
+      the bucket name written as `rayito-artifacts-<cuenta>-<región>` /
+      `rayito-artifacts-<account>-<region>`); what the created bucket is
+      (encrypted, private, TLS only, 7-day expiry, kept when the stack is
+      deleted); credentials: run setup once with administrator or bootstrap
+      credentials (CloudFormation, IAM, and S3 when it creates the bucket),
+      `CallerPolicy` is not enough; "Coste y activación" box updated.
+- [ ] 5.D.4 `docs/site/docs/cli.md` / `.en.md`: `rayito setup` section:
+      bucket resolution (reuse then creation, `--bucket`/`RAYITO_BUCKET`
+      that do not exist are created with that name), the new actions,
+      sources and error codes, exit codes.
+- [ ] 5.D.5 `docs/site/docs/operacion/solucion-de-problemas.md` / `.en.md`:
+      remove `no_bucket`; `bucket_unavailable` (403), `bucket_taken`,
+      `artifact_stack_conflict`, `stack_blocked`/`stack_incomplete` for
+      `rayito-m0-artifacts`, each with exit code and fix (delete the stack,
+      the retained bucket, pass `--bucket`).
+- [ ] 5.D.6 `docs/site/docs/cost.md` / `.en.md`: the `rayito setup` row
+      adds the created bucket (no figure: zips expire after 7 days; the zip
+      is the existing "céntimos").
+- [ ] 5.D.7 `docs/site/docs/index.md` / `.en.md`,
+      `docs/site/docs/migrar-desde-e2b/index.md` / `.en.md`,
+      `docs/site/docs/guias/despliega-tu-agente.md` / `.en.md`: drop "you
+      need a bucket first" / "Rayito no crea buckets" where it refers to
+      setup (`rayito agent deploy` still does not create one; say so
+      there and point to `rayito setup`).
+- [ ] 5.D.8 `README.md` / `README.es.md`: `rayito setup` also creates the
+      bucket when needed.
+- [ ] 5.D.9 `infra/README.md`: a section for `artifact-bucket.yaml` (what
+      it creates, `Retain`, deployed by `rayito setup` as
+      `rayito-m0-artifacts`, or by hand with `aws cloudformation deploy
+      --stack-name rayito-m0-artifacts --parameter-overrides
+      BucketName=<name>`), and that it is not a `rayito stack` component.
+      (Docs-only edit of `infra/README.md`; the template itself is 0.6.)
+- [ ] 5.D.10 `SECURITY.md`: the created bucket's controls (SSE-S3, public
+      access block, ACLs disabled, TLS-only policy) and why an unmanaged
+      bucket with the default name is never adopted (`bucket_taken`).
+      `CONTRIBUTING.md`: the e2e cleanup of `rayito-m0-artifacts` and its
+      retained bucket.
+- [ ] 5.D.11 `git grep -n -i -E "no crea buckets|nunca crea|never creates? a bucket|no_bucket"`
+      outside `clients/`, `openspec/` and `testdata/` shows only statements
+      about `rayito agent deploy`.
+
+### 5.AWS Acceptance additions (with section 4)
+
+- [ ] 5.AWS.1 4.1 also simulates `s3:CreateBucket`,
+      `s3:PutEncryptionConfiguration`, `s3:PutBucketPolicy`,
+      `s3:PutLifecycleConfiguration` (SCP risk) before any write.
+- [ ] 5.AWS.2 4.2/4.5 inventories include S3 buckets and the
+      `rayito-m0-artifacts` stack; the run deletes the stack and then the
+      retained bucket it created (emptied first), and nothing else.
+- [ ] 5.AWS.3 Python and TypeScript e2e of 5.PY.8/5.TS.8 in their own
+      regions; the prepared-account check (4.4) still reads no
+      `rayito-m0-artifacts` (zero new reads on an account with a bucket).
+- [ ] 5.AWS.4 Regression level: `infra/` changed (one new template), so the
+      targeted checks above plus the release's full regression
+      (`reference/release-and-aws.md`); record the stack create time and
+      any SCP finding as the next free Q row of `AWS_API_NOTES.md`.
+
 ## Open questions (defaults already chosen; change only if the maintainer says so)
 
-1. **Bucket creation.** Default: never create a bucket (0.14 rule, D4);
-   without `--bucket`, `RAYITO_BUCKET`, an IAM stack or `cdk bootstrap`,
-   setup stops with `no_bucket`. Creating one (encrypted, public access
-   blocked, lifecycle on `rayito/images/`) would be a follow-up change with
-   an `artifact-bucket` template and a new `AWS_API_NOTES.md` section.
+1. **Bucket creation.** Resolved by the maintainer on 2026-10-19: setup
+   creates the bucket when none can be reused, through the
+   `rayito-m0-artifacts` stack (design D4, D10; section 5).
 2. **Updating an old `rayito-base`.** Default: a launchable image is reused
    whatever `rayd` it holds; upgrading stays `rayito image publish`. A
    `--update-image` flag could be a follow-up.
+3. **`rayito agent deploy` and the created bucket.** Default: unchanged
+   (`RAYITO_BUCKET`, then the CDK bootstrap bucket); setup prints
+   `RAYITO_BUCKET=<bucket>` for it. Teaching `resolve_bucket`/`resolveBucket`
+   to read the `ArtifactBucket` of `rayito-m0-iam` would let it find a
+   setup-created bucket without the variable; a follow-up if the maintainer
+   wants it.

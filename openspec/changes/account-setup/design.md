@@ -13,11 +13,16 @@ This design is the ADR for `rayito setup` (to be copied as ADR-030 into
 | Doctor | `cli/doctor.run_doctor`, `render_human`, `render_json` | `cli/doctor/checks.ts` `runDoctor`, `render.ts` | The final check and its output |
 | Confirmation | `typer.confirm`, `agent.base_publisher_of` | `CliConsole.confirm` | The prompt and the `--yes` rule |
 
-What does **not** exist and is not added here: any code path that creates an
-S3 bucket. `AWS_API_NOTES.md` ("Despliegue de agentes de cero
-configuración") states "Rayito nunca llama a `CreateBucket`", and no
-`CreateBucket`, `PutBucketEncryption`, `PutPublicAccessBlock` or
-`AWS::S3::Bucket` appears in the notes or the code. `rayito image publish`
+Before this change no code path created an S3 bucket: `AWS_API_NOTES.md`
+("Despliegue de agentes de cero configuración") states "Rayito nunca llama a
+`CreateBucket`", and no `CreateBucket`, `PutBucketEncryption`,
+`PutPublicAccessBlock` or `AWS::S3::Bucket` appeared in the notes or the
+code. The maintainer decided on 2026-10-19 that `rayito setup` must prepare
+everything in one command, like `cdk bootstrap`: when no bucket can be
+reused, it **creates one through a CloudFormation stack**
+(`rayito-m0-artifacts`, template `infra/artifact-bucket.yaml`, D4 and D10).
+The SDK itself still never calls `CreateBucket` or any S3 bucket-configuration
+API; CloudFormation does, with the caller's credentials. `rayito image publish`
 also does not verify `SHA256SUMS` today: the tutorial tells the user to run
 `cosign verify-blob` and `sha256sum -c` by hand.
 
@@ -47,15 +52,18 @@ Layers (Python `rayito/_account_setup/`, TypeScript `src/account-setup/`):
   Application       |  AccountSetup  (_service.py | service.ts)      |
                     +---+----------+-----------+-----------+---------+
                         |          |           |           |
-  Domain (pure)     _domain.py | domain.ts: classify_stack, choose_bucket_candidate,
-                    decide_bucket, classify_image, plan_setup, parse_checksums,
+  Domain (pure)     _domain.py | domain.ts: classify_stack, bucket_candidates,
+                    decide_bucket, creation_target, plan_bucket_creation,
+                    classify_image, plan_setup, parse_checksums,
                     verify_checksum, release_tag, release_asset_url,
                     AccountSetupException/AccountSetupError, messages, constants
                         |          |           |           |
-  Ports             IamStackGateway  ArtifactBucketGateway  BaseImageGateway
-                    BaseImagePublisher  ReleaseArtifactSource   (_ports.py | ports.ts)
+  Ports             IamStackGateway  ArtifactStackGateway  ArtifactBucketGateway
+                    BaseImageGateway  BaseImagePublisher  ReleaseArtifactSource
+                    (_ports.py | ports.ts)
                         |          |           |           |
-  Adapters (out)    CloudFormationIamStack  -> OptionalStacks -> StackProvisioner (CFN)
+  Adapters (out)    CloudFormationSetupStack (iam | artifact-bucket)
+                                            -> OptionalStacks -> StackProvisioner (CFN)
                     S3ArtifactBuckets       -> HeadBucket (+ GetCallerIdentity)
                     MicrovmBaseImages       -> _images / images/gateway (GetMicrovmImage,
                                                ListMicrovmImageVersions, wait_for_gate)
@@ -94,7 +102,7 @@ The plan is a list of exactly three steps, always in this order:
 
 | Resource | Possible actions | Write? | Needs confirmation? |
 |---|---|---|---|
-| `bucket` | `reuse` | never | no |
+| `bucket` | `create`, `reuse`, `wait` | `create` (the `rayito-m0-artifacts` stack) | `create` |
 | `iamStack` | `create`, `update`, `reuse`, `wait` | `create`, `update` | `create`, `update` |
 | `baseImage` | `publish`, `reuse`, `wait` | `publish` | `publish` |
 
@@ -102,21 +110,63 @@ The plan is a list of exactly three steps, always in this order:
 least one step is `create`, `update` or `publish`. `wait` costs nothing new:
 it waits for something already started.
 
-**Bucket** (`choose_bucket_candidate`, then `decide_bucket`). Exactly one
-candidate, the first present of: `--bucket` (`argument`), `RAYITO_BUCKET`
-(`environment`), the `ArtifactBucket` parameter of an existing IAM stack
-(`iamStack`), the CDK bootstrap bucket `cdk-<qualifier>-assets-<account>-<region>` (default qualifier `hnb659fds`)
-(`cdkBootstrap`). It is probed once with `HeadBucket`:
+**Bucket** (`bucket_candidates`, `decide_bucket`, then, only when no
+candidate is reusable, `creation_target` and `plan_bucket_creation`). A
+`HeadBucket` probe has three outcomes (`BucketProbe.state`): `found` (200,
+with `BucketRegion`), `missing` (404, `NoSuchBucket`, `NotFound`) and
+`forbidden` (403: it exists and these credentials cannot list it, usually
+because another account owns it; `AWS_API_NOTES.md`, `HeadBucket`).
 
-- not found or 403 (`BUCKET_MISSING_CODES`): `no_bucket` for `cdkBootstrap`,
-  `bucket_unavailable` for any other source;
-- found with `BucketRegion` different from the region: `bucket_region`;
-- otherwise `reuse`.
+1. **Reuse phase.** The candidates, in order: `--bucket` (`argument`) or,
+   without it, `RAYITO_BUCKET` (`environment`); when neither is given, the
+   `ArtifactBucket` parameter of an existing IAM stack (`iamStack`) and then
+   the CDK bootstrap bucket `cdk-<qualifier>-assets-<account>-<region>`
+   (default qualifier `hnb659fds`, `cdkBootstrap`). An explicit name
+   (`argument`/`environment`) is the only candidate. Each is probed once, in
+   order, until one decides:
+   - `found` in the region: `reuse` (this is the whole 0.14 behaviour, and
+     the only path an account with a bucket ever takes: no new read, no new
+     stack);
+   - `found` in another region: `bucket_region` (any source);
+   - `forbidden`: `bucket_unavailable` for `argument`, `environment` and
+     `iamStack`; for `cdkBootstrap` the next phase (Rayito does not need
+     that bucket);
+   - `missing`: for `argument`/`environment`, the creation phase with that
+     name; for `iamStack` and `cdkBootstrap`, the next candidate (a deleted
+     stack bucket is replaced, and the IAM stack is then updated to the new
+     one by the `update` rule below).
+2. **Creation phase** (reached only when nothing was reused). The target is
+   the explicit name, or the default `rayito-artifacts-<account>-<region>`
+   (`rayitoDefault`; `default_artifact_bucket_name`). `DescribeStacks` on
+   `rayito-m0-artifacts`, classified with the same `classify_stack` as the
+   IAM stack:
+   - `usable` with a `BucketName` output: `reuse` that bucket (`artifactStack`,
+     with the stack `status`), unless the target is an explicit name that
+     differs from it: `artifact_stack_conflict` (the stack holds one bucket
+     and setup never renames it, which would replace it); without the
+     output: `stack_incomplete`;
+   - `in_progress`: `wait` (`artifactStack`, the name is the stack's
+     `BucketName` parameter), with the same conflict rule;
+   - `blocked`: `stack_blocked` naming `rayito-m0-artifacts`;
+   - `missing` and an explicit target: `create` with that name (its probe
+     already said `missing`);
+   - `missing` and the default target: one more `HeadBucket` on the default
+     name. `missing`: `create`. `found` or `forbidden`: `bucket_taken`. An
+     unmanaged bucket with the default name is never adopted silently: it is
+     either one this account kept after deleting the stack (the user passes
+     it with `--bucket`, which reuses it) or a bucket another account created
+     with a name derived from ours, which must never receive our artifacts.
+
+At most three `HeadBucket` and one extra `DescribeStacks`, and only on an
+account that has no usable bucket. `plan_setup` receives the decided bucket
+step; the read order is part of `testdata/account-setup/plan-vectors.json`
+(`bucketReads`).
 
 **IAM stack** (`classify_stack`, then the plan). `DescribeStacks` on
 `rayito-m0-iam`:
 
-- absent: `create` with `ArtifactBucket=<bucket>`; every other template
+- absent: `create` with `ArtifactBucket=<bucket>` (the reused bucket, or the
+  one the `bucket` step creates or waits for); every other template
   parameter is left to the template default;
 - `CREATE_COMPLETE`, `UPDATE_COMPLETE` or `UPDATE_ROLLBACK_COMPLETE` (rolled
   back to the last working template, still usable) with a `BuildRoleArn`
@@ -176,15 +226,45 @@ this change: `CAPABILITY_IAM`, `CAPABILITY_NAMED_IAM`,
 `CAPABILITY_AUTO_EXPAND`); task D.4 records it in `AWS_API_NOTES.md` §21,
 next to `CAPABILITY_IAM`.
 
-### D4. Never create a bucket
+### D4. Create the bucket only when none can be reused, through CloudFormation
 
-`rayito setup` reuses a bucket and never creates one, so it keeps the 0.14
-rule and calls no S3 write API that is not already in `AWS_API_NOTES.md`.
-Without any candidate it stops with `no_bucket`, which names the three ways
-out (`--bucket`, `RAYITO_BUCKET`, `cdk bootstrap`). Because the chosen bucket
-is written into the IAM stack, the next run finds it there even without
-`RAYITO_BUCKET`; the final output prints `RAYITO_BUCKET=<bucket>` for
-`rayito agent deploy`, which still resolves its own bucket as in 0.14.
+`rayito setup` keeps reusing a bucket whenever one is available (D2, reuse
+phase), so every account that worked with 0.14 plans exactly what it did
+before and no new stack appears. Only when nothing is reusable does the plan
+gain a `bucket` `create` step, and the bucket is created by deploying
+`infra/artifact-bucket.yaml` as the stack `rayito-m0-artifacts` through the
+same `OptionalStacks.deploy` that creates the IAM stack (D3), with the single
+parameter `BucketName`. The SDK never calls `CreateBucket` or any
+`PutBucket*` API itself: CloudFormation does, with the caller's credentials,
+and the SDK only uses the CloudFormation calls already in `AWS_API_NOTES.md`
+§21 (no `Capabilities`: the template creates no IAM resource).
+
+- **Name.** `--bucket NAME` or `RAYITO_BUCKET=NAME` that does not exist
+  (404) is created with that name: the user asked for it explicitly, and the
+  plan shows `crear con la pila rayito-m0-artifacts (--bucket)` before the
+  confirmation. A name that exists but is not accessible (403) stays an
+  error (`bucket_unavailable`), and one in another region stays
+  `bucket_region`. Without an explicit name the bucket is
+  `rayito-artifacts-<account>-<region>` (`DEFAULT_ARTIFACT_BUCKET_TEMPLATE`):
+  deterministic, so a re-run finds it, and unique per account and region
+  (bucket names are global; at most 44 characters in every supported
+  region, under the 63 limit).
+- **Stack.** `rayito-m0-artifacts`, next to `rayito-m0-iam`; component
+  `artifact-bucket` (`ARTIFACT_BUCKET_COMPONENT`), passed to `OptionalStacks`
+  as an object like the IAM component and **not** in the `rayito stack`
+  catalog, for the same reasons (D3).
+- **Order.** Bucket stack, then the IAM stack with `ArtifactBucket` = the
+  stack's `BucketName` output, then the image (D6).
+- **Idempotency and resume.** A re-run after success finds the bucket
+  through the IAM stack's `ArtifactBucket` (reuse phase) and never reads the
+  bucket stack again. A run interrupted after the bucket stack and before
+  the IAM stack finds it in the creation phase: `reuse` if complete, `wait`
+  if in progress.
+- **Hand-prepared accounts** never reach the creation phase: they have a
+  reusable bucket by definition.
+- **`rayito agent deploy`** keeps resolving its bucket as in 0.14
+  (`RAYITO_BUCKET`, then the CDK bootstrap bucket); the final output of setup
+  still prints `RAYITO_BUCKET=<bucket>` for it.
 
 ### D5. The release artifact, checked against `SHA256SUMS`
 
@@ -217,15 +297,22 @@ plainly (task D.6), and SECURITY.md T10 gains the same sentence.
 ```text
 CLI                      AccountSetup                     ports
  |  region in SUPPORTED_REGIONS? (pure, before any call)
- |--plan(request)-------->| iam_stack.observe()          -> DescribeStacks
- |                        | buckets.account_id()         -> GetCallerIdentity
- |                        | buckets.probe(candidate)     -> HeadBucket
+ |--plan(request)-------->| buckets.account_id()         -> GetCallerIdentity
+ |                        | iam_stack.observe()          -> DescribeStacks rayito-m0-iam
+ |                        | for candidate in bucket_candidates(...):
+ |                        |   buckets.probe(candidate)   -> HeadBucket   (stop at the first decision)
+ |                        | only if nothing was reused:
+ |                        |   artifact_stack.observe()   -> DescribeStacks rayito-m0-artifacts
+ |                        |   buckets.probe(default)     -> HeadBucket   (default name, no stack)
  |                        | images.observe(name)         -> GetMicrovmImage, ListMicrovmImageVersions
  |<-----SetupPlan---------| plan_setup(...) (pure)
  | print plan + cost; --dry-run: stop (exit 0)
  | confirmation if needed (--yes / terminal; else needs_confirmation, exit 2)
  |--apply(plan, workdir, emit)->|
- |                        | 1. bucket: nothing to write
+ |                        | 1. bucket: create -> CreateStack rayito-m0-artifacts (BucketName) + wait
+ |                        |            wait   -> wait("deployed"), re-observe
+ |                        |            -> BucketName output (stack_incomplete if absent)
+ |                        |            reuse  -> nothing to write
  |                        | 2. iam stack: create | update -> CreateStack/UpdateStack + wait
  |                        |               wait            -> wait("deployed"), re-observe
  |                        |               -> BuildRoleArn output (stack_incomplete if absent)
@@ -245,10 +332,14 @@ Rules:
 - **Read before write.** Every write is decided from a fresh observation in
   the same invocation. Re-running after success observes three `reuse` steps
   and writes nothing.
-- **Stack.** `create` and `update` use `OptionalStacks.deploy`, which already
-  treats "No updates are to be performed" as success and keeps unlisted
-  parameters. An interrupted run leaves the stack `*_IN_PROGRESS`; the next
-  run plans `wait`.
+- **Stacks.** `create` and `update` use `OptionalStacks.deploy`, which
+  already treats "No updates are to be performed" as success and keeps
+  unlisted parameters. An interrupted run leaves a stack `*_IN_PROGRESS`; the
+  next run plans `wait`. The bucket stack is only ever created or waited
+  for, never updated: its `BucketName` is fixed for its life.
+- **Bucket.** The IAM stack and the publisher use the bucket the `bucket`
+  step returns (the reused name, or the `BucketName` output of
+  `rayito-m0-artifacts` after `create`/`wait`).
 - **Artifact.** The S3 key is content-addressed
   (`rayito/images/rayd-<sha12>.zip`); an interrupted upload is redone, a
   finished one is skipped (`upload_if_absent`).
@@ -272,7 +363,7 @@ Rules:
 | Condition | Python | TypeScript | Exit |
 |---|---|---|---|
 | Success, dry run, nothing to do, doctor without `FAIL` | — | — | 0 |
-| `unsupported_region`, `no_bucket`, `bucket_unavailable`, `bucket_region`, `artifact_missing`, `artifact_variant`, `needs_confirmation` | `AccountSetupException(code=…)` | `AccountSetupError` | 2 |
+| `unsupported_region`, `bucket_unavailable`, `bucket_region`, `bucket_taken`, `artifact_stack_conflict`, `artifact_missing`, `artifact_variant`, `needs_confirmation` | `AccountSetupException(code=…)` | `AccountSetupError` | 2 |
 | `stack_blocked`, `stack_incomplete`, `release_download`, `checksum_missing`, `checksum_mismatch`, `image_build_failed` | `AccountSetupException(code=…)` | `AccountSetupError` | 1 |
 | User answers "no" at the prompt | `typer.Exit(1)` | `return EXIT_FAILURE` | 1 |
 | Doctor reports a `FAIL` | — | — | 1 |
@@ -283,9 +374,18 @@ Rules:
 here is attributable to a sandbox) and is private (`_account_setup._domain`),
 like the CLI's own `UsageError`. Its `code` is one of the closed list above
 and its message never carries a URL, a presigned link, a token or the raw
-AWS message. `stack_blocked` names the stack and its status; the bucket name
-appears in bucket errors because the user typed or owns it (the same as
-`rayito doctor`'s `bucket` check).
+AWS message. `stack_blocked` and `stack_incomplete` name the stack (either
+`rayito-m0-iam` or `rayito-m0-artifacts`; `stack_incomplete` also names the
+missing output and the template); the bucket name appears in bucket errors
+because the user typed or owns it, or because it is the deterministic
+default (the same as `rayito doctor`'s `bucket` check).
+
+`no_bucket` no longer exists: without a reusable bucket setup creates one.
+`bucket_unavailable` now only means "exists but these credentials cannot
+reach it" (403) for an explicit or IAM-stack bucket; a missing explicit
+bucket is created. `bucket_taken` covers the default name already used
+outside `rayito-m0-artifacts` (200 or 403), and `artifact_stack_conflict` an
+explicit new name while `rayito-m0-artifacts` already holds another bucket.
 
 In `--json` mode an `AccountSetupException` still produces the single JSON
 document, with `error: {code, message}` and `exitCode`, plus the usual
@@ -320,6 +420,10 @@ them:
   (`cost.md`, row "Mantener publicada una versión de imagen");
 - IAM stack: "gratis" (`configurar-aws.md`, step 3);
 - artifact zip in the bucket: "céntimos" (`configurar-aws.md`, step 2);
+- a created bucket: no figure, only what the template does ("los zips de la
+  imagen caducan a los 7 días (regla de ciclo de vida)", with the days from
+  `ARTIFACT_EXPIRATION_DAYS`, which equals the template default); the zip
+  itself is already the "céntimos" line;
 - build time: "≈ 10 min" (`configurar-aws.md`, step 4).
 
 `rayito setup` is not an optional feature (it creates nothing that a sandbox
@@ -327,15 +431,82 @@ needs at runtime beyond what the tutorial already makes the user create), so
 it gets no row in `optional-features.md`; its CLI reference and the tutorial
 carry the "Coste y activación" box.
 
+### D10. `infra/artifact-bucket.yaml`
+
+One `AWS::S3::Bucket` and its `AWS::S3::BucketPolicy`, nothing else. Every
+property name and value below was checked offline against the
+CloudFormation resource schemas bundled with cfn-lint 1.56.3 (the version
+pinned in `.github/release/requirements-cfn-lint.txt`), and the template
+passes `cfn-lint`; `scripts/tests/test_artifact_bucket_template.py` pins the
+policy-relevant values, which cfn-lint does not judge.
+
+| What | Property | Why |
+|---|---|---|
+| Name | `BucketName: !Ref BucketName` (parameter, `MinLength` 3, `MaxLength` 63, lowercase pattern) | The SDK must know the name before the stack exists (it probes it first), so it always passes it |
+| Encryption | `BucketEncryption.ServerSideEncryptionConfiguration[].ServerSideEncryptionByDefault.SSEAlgorithm: AES256` | SSE-S3: no key to pay for, no `kms:*` for the build role |
+| No public access | `PublicAccessBlockConfiguration` with `BlockPublicAcls`, `BlockPublicPolicy`, `IgnorePublicAcls`, `RestrictPublicBuckets` all `true` | The zips are private build inputs |
+| No ACLs | `OwnershipControls.Rules[].ObjectOwnership: BucketOwnerEnforced` | Every object belongs to the account; the SDK never sends an ACL |
+| Expiry | `LifecycleConfiguration.Rules[]`: `Id: expire-image-artifacts`, `Status: Enabled`, `Prefix: rayito/images/`, `ExpirationInDays: !Ref ArtifactExpirationDays` | A zip is read only while its image version builds (§4 "Cómo construye AWS la imagen"); `upload_if_absent` uploads it again when it is missing. Only the image prefix: `rayito/stacks/` and anything else are never expired |
+| TLS only | bucket policy `Deny` `s3:*` for `Principal: "*"` on the bucket and `/*` when `aws:SecureTransport` is `"false"` | Same pattern as the `DenyNonTls` statement of `infra/efs-volumes.yaml` |
+| Lifecycle of the stack | `DeletionPolicy: Retain`, `UpdateReplacePolicy: Retain` on the bucket | See the `DeletionPolicy: Delete` alternative |
+| Output | `BucketName` (and `BucketArn`) | Read by setup after `create`/`wait` |
+
+`ArtifactExpirationDays` is a `Number` parameter, `Default: 7`, `MinValue: 1`,
+mirrored as `ARTIFACT_EXPIRATION_DAYS` in both SDKs and as
+`constants.artifactExpirationDays` in the contract (the scripts test checks
+they are equal). Seven days: a build takes about 10 minutes, and a week
+leaves room to retry a failed build, or to publish the same zip again, without
+uploading it; after that a re-upload costs the same "céntimos". Setup never
+passes it, so the template default applies; a user who wants another value
+deploys the template by hand. No versioning, no access logging (another
+bucket to create and pay for), no `AbortIncompleteMultipartUpload` (the
+image upload is a single `PutObject`).
+
 ## Alternatives considered
 
-- **Create the bucket when none exists** (encryption, public access block,
-  lifecycle), as `cdk bootstrap` does. Rejected for this change: it needs S3
-  write APIs or an `AWS::S3::Bucket` template that `AWS_API_NOTES.md` does not
-  document, and 0.14 deliberately states that Rayito never creates buckets.
-  It can be a follow-up (an `artifact-bucket` template rendered like `iam`,
-  with its properties verified offline and recorded in the notes) if the
-  maintainer approves it (open question 1 in `tasks.md`).
+- **Never create a bucket** (the first version of this design): stop with
+  `no_bucket` and ask for `--bucket`, `RAYITO_BUCKET` or `cdk bootstrap`.
+  Superseded by the maintainer's decision of 2026-10-19: one command must
+  prepare everything, as `cdk bootstrap` does.
+- **Create the bucket with raw S3 calls** (`CreateBucket`,
+  `PutBucketEncryption`, `PutPublicAccessBlock`, `PutBucketOwnershipControls`,
+  `PutBucketPolicy`, `PutBucketLifecycleConfiguration`). Rejected: six new
+  write APIs with their parameters in both SDKs (and in `AWS_API_NOTES.md`),
+  a partial failure leaves a half-configured bucket with no record of what
+  was applied, and Rayito provisions every other resource through
+  CloudFormation (`OptionalStacks`, ADR-016). A template is one reviewed,
+  lintable file, rendered into both SDKs by `gen_stack_assets.py`, and the
+  stack is the record (`DescribeStacks`, drift detection, `delete-stack`).
+- **Add the bucket to `infra/iam.yaml`** (one stack). Rejected: the IAM
+  stack takes `ArtifactBucket` as a parameter precisely so that any bucket
+  works (CDK's, one of the user's); a conditional bucket resource would turn
+  "change the bucket" into a replacement of a retained resource inside the
+  IAM stack, would make every hand-deployed `rayito-m0-iam` drift from the
+  template, and would mix a data resource (retained) with IAM resources
+  (deleted with the stack). Two small stacks keep each lifecycle simple.
+- **Adopt an existing bucket with the default name** without a stack.
+  Rejected: the name is derivable from the account ID, so another account
+  can create it first and grant us access; the image `PutObject` does not
+  send `ExpectedBucketOwner`, so our artifacts would land in their bucket
+  and the build role would read what they put there. `bucket_taken` asks
+  the user to pass it with `--bucket` if it is really theirs.
+- **SSE-KMS with a customer key.** Rejected: a key costs per month and per
+  request, and the build role and every publisher would need `kms:Decrypt`
+  and `kms:GenerateDataKey`. SSE-S3 (`AES256`) encrypts at rest at no cost,
+  and is what S3 applies by default to new objects anyway; the template
+  states it explicitly so a later bucket policy cannot change it silently.
+- **Versioning.** Rejected: the keys are content-addressed, so a version
+  history adds nothing, and expired objects would linger as noncurrent
+  versions that cost storage.
+- **`DeletionPolicy: Delete`.** Rejected: CloudFormation cannot delete a
+  bucket that still holds objects (the stack would end `DELETE_FAILED`), and
+  the bucket may also hold `rayito/stacks/` artifacts of optional components
+  or data of `persist=`/`transfer=` if the user points them at it.
+  `Retain` (and `UpdateReplacePolicy: Retain`) as literals, as
+  `infra/efs-volumes.yaml` does; deleting the bucket is an explicit step.
+- **`BucketNamespace: account-regional`.** The CloudFormation schema bundled
+  with cfn-lint 1.56.3 lists the property with values `global` and
+  `account-regional` but no description; left out until it is documented.
 - **Make the IAM stack an `OptionalStack` catalog component**
   (`rayito stack deploy iam`). Rejected: the catalog is for optional,
   cost-bearing features, its default stack name would be `rayito-iam`
@@ -358,15 +529,22 @@ carry the "Coste y activación" box.
 
 ## Consequences
 
-- One command prepares an account where a bucket can be found; otherwise the
-  user still runs one `cdk bootstrap` or passes `--bucket`.
+- One command prepares any supported account and region: a bucket is
+  reused when one exists, and created (encrypted, private, TLS only, image
+  zips expiring after 7 days) through `rayito-m0-artifacts` when none does.
+- Accounts that worked with 0.14 plan exactly what they planned before; the
+  bucket stack only appears on accounts without a usable bucket.
+- Deleting `rayito-m0-artifacts` keeps the bucket (`Retain`); the next
+  `rayito setup` then reports `bucket_taken` for the default name until the
+  user passes it with `--bucket` or deletes it.
 - `rayito setup` never changes a working, manually prepared account, and
   never upgrades `rayito-base` to a newer `rayd`; both stay explicit
   (`rayito image publish`).
 - Users who prefer cosign-verified artifacts keep that path through
   `--artifact`.
-- The SDK now ships `infra/iam.yaml`; a template change in `infra/` reaches
-  users through `gen_stack_assets.py --check`, already a gate.
+- The SDK now ships `infra/iam.yaml` and `infra/artifact-bucket.yaml`; a
+  template change in `infra/` reaches users through
+  `gen_stack_assets.py --check`, already a gate.
 - Python and TypeScript keep one shared contract (`testdata/account-setup/`),
   so output, JSON and exit codes cannot drift silently.
 
@@ -374,8 +552,8 @@ carry the "Coste y activación" box.
 
 - **Test account SCP.** The organisation SCP of the test account denied
   `cloudfront:CreateDistribution` before (Q141). It may also deny
-  `iam:CreateRole` with fixed names, or `cloudformation:CreateStack` with
-  `CAPABILITY_NAMED_IAM`, in some regions. The AWS acceptance (task 4.x)
+  `iam:CreateRole` with fixed names, `cloudformation:CreateStack` with
+  `CAPABILITY_NAMED_IAM`, or `s3:CreateBucket`, in some regions. The AWS acceptance (task 4.x)
   checks first, read-only, with `rayito doctor`'s IAM simulation, and records
   the result as a new `AWS_API_NOTES.md` Q row.
 - **Network.** Corporate proxies: `urllib` honours `HTTPS_PROXY`; Node's
@@ -387,3 +565,19 @@ carry the "Coste y activación" box.
   `rayito-m0-*-<region>`, so stacks in two regions never collide, but a
   half-deleted stack in one region can leave a role name taken; the
   `stack_blocked` message tells the user to delete the stack first.
+- **Permissions.** `rayito setup` runs with the caller's credentials and
+  needs bootstrap-level rights, as `cdk bootstrap` does: CloudFormation on
+  `rayito-m0-iam` and `rayito-m0-artifacts`, IAM role and policy creation,
+  and, only when it creates the bucket, what the CloudFormation S3 handlers
+  call. The schemas bundled with cfn-lint 1.56.3 list, among others,
+  `s3:CreateBucket`, `s3:PutEncryptionConfiguration`,
+  `s3:PutBucketPublicAccessBlock`, `s3:PutBucketOwnershipControls`,
+  `s3:PutLifecycleConfiguration`, `s3:PutBucketTagging` (the stack tags
+  propagate) for `AWS::S3::Bucket`, and `s3:GetBucketPolicy`,
+  `s3:PutBucketPolicy` for `AWS::S3::BucketPolicy`. `CallerPolicy` and
+  `ImagePublisherPolicy` of `infra/iam.yaml` are runtime policies and grant
+  none of this; the docs say to run setup with administrator or
+  bootstrap credentials once, then use the narrow policies.
+- **Retained bucket after an AWS acceptance.** The run's cleanup deletes
+  `rayito-m0-artifacts` and then, explicitly, the bucket it created (empty
+  it first); the inventory includes S3 buckets.
