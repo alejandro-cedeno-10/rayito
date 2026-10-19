@@ -5,7 +5,8 @@ IAM mínimo del SDK (`iam.yaml`) y las piezas opcionales de egress y de CI.
 
 | Plantilla | Qué crea | Cuándo |
 |---|---|---|
-| `iam.yaml` | Build role, execution role (sólo logs; S3 con `PersistenceBucket`; siempre un `Deny` sobre `rayito/*` del bucket de artefactos) y tres managed policies del llamante: `SandboxLauncherPolicy` (sólo lanzar sandboxes: la del rol de un servicio en producción), `ImagePublisherPolicy` (sólo publicar imágenes) y `CallerPolicy` (las dos juntas, para una máquina de desarrollo); S3 de transferencias con `TransferBucket` | Siempre, antes de publicar la primera imagen. `rayito setup` la despliega (sobre un bucket que ya exista, sin crearlo) o se despliega a mano con `aws cloudformation deploy`, como en este documento. La pila y los recursos conservan los nombres `rayito-m0-iam` / `rayito-m0-*` con los que nacieron en M0: renombrarlos rompería los despliegues existentes |
+| `iam.yaml` | Build role, execution role (sólo logs; S3 con `PersistenceBucket`; siempre un `Deny` sobre `rayito/*` del bucket de artefactos) y tres managed policies del llamante: `SandboxLauncherPolicy` (sólo lanzar sandboxes: la del rol de un servicio en producción), `ImagePublisherPolicy` (sólo publicar imágenes) y `CallerPolicy` (las dos juntas, para una máquina de desarrollo); S3 de transferencias con `TransferBucket` | Siempre, antes de publicar la primera imagen. `rayito setup` la despliega (sobre el bucket que reutiliza o que crea con `artifact-bucket.yaml`) o se despliega a mano con `aws cloudformation deploy`, como en este documento. La pila y los recursos conservan los nombres `rayito-m0-iam` / `rayito-m0-*` con los que nacieron en M0: renombrarlos rompería los despliegues existentes |
+| `artifact-bucket.yaml` | Un `AWS::S3::Bucket` para los zips de la imagen (SSE-S3, todo el acceso público bloqueado, ACL desactivadas, los objetos de `rayito/images/` caducan a los 7 días) y su `AWS::S3::BucketPolicy` que niega el tráfico sin TLS; `DeletionPolicy: Retain` | Sólo cuando no hay ningún bucket que reutilizar: `rayito setup` la despliega como `rayito-m0-artifacts`, o a mano (sección siguiente). No es un componente de `rayito stack` |
 | `egress-connector.yaml` | `AWS::Lambda::NetworkConnector` de egress por VPC + security group allowlist + rol operador | Cuando un sandbox no debe salir a Internet libremente (SECURITY.md T8) |
 | `secrets-access.yaml` | Opcional (M13a, $0): dos managed policies, `RayitoSecretsReader` y `RayitoSecretsAdmin`, sobre `secret:<SecretPrefix>*` (y KMS sólo con `KmsKeyArn`) | Sólo si usas `secrets=` / `SecretStore` / `Secret`: se adjuntan a las credenciales del llamante del SDK ([Secretos](#secretos-infrasecrets-accessyaml-m13a)) |
 | `metadata-index.yaml` | Opcional (M14, on-demand, $0 en reposo): tabla DynamoDB `PAY_PER_REQUEST` con TTL + políticas `RayitoIndexWriter` / `RayitoIndexReader` | Sólo si listas por metadatos con `index=DynamoDbIndex(...)` / `--index-table`, también sobre `SUSPENDED` ([Índice de metadatos](#índice-de-metadatos-inframetadata-indexyaml-m14)) |
@@ -16,6 +17,46 @@ IAM mínimo del SDK (`iam.yaml`) y las piezas opcionales de egress y de CI.
 | `dashboard-read-role.yaml` | Opcional (fase 3, $0): un rol de IAM de sólo lectura en una cuenta destino, para `rayito dashboard --account` | Sólo en las cuentas que quieres ver desde el panel local |
 | `quota-alerts.yaml` | Opcional (fase 3, ≈ $0,30/mes): Lambda programada, regla de EventBridge, tema SNS y tabla de estado que avisan cuando la memoria asignada cruza un umbral de la cuota | Sólo si quieres avisos de cuota ([guía](../docs/site/docs/funciones-opcionales/panel-extras.md#avisos-de-cuota)) |
 | `events-webhooks.yaml` | Opcional (M15, m15-events-webhooks): secreto HMAC del stack, tabla DynamoDB, tres Lambdas (forwarder/deliverer/reconciliador), suscripción de CloudWatch Logs y regla de EventBridge Scheduler | Sólo si usas `events=LifecycleEvents(...)` / `LifecycleEvents` para eventos de ciclo de vida firmados y webhooks ([Eventos y webhooks](#eventos-y-webhooks-infraevents-webhooksyaml-m15)) |
+
+## Bucket de artefactos (`artifact-bucket.yaml`, ADR-030)
+
+El bucket donde `rayito image publish` y `rayito setup` suben el zip de la
+imagen (`rayito/images/rayd-<sha12>.zip`). Sólo hace falta si no tienes ya un
+bucket en la región de los sandboxes (el tuyo, el de la pila de IAM o el de
+`cdk bootstrap` sirven igual): `rayito setup` lo despliega solo cuando no
+encuentra ninguno, como la pila `rayito-m0-artifacts`, con el nombre
+`rayito-artifacts-<cuenta>-<región>` (o el de `--bucket` / `RAYITO_BUCKET` si no
+existe).
+
+Crea dos recursos y nada más:
+
+- el bucket, con cifrado SSE-S3 (`AES256`), los cuatro bloqueos de acceso
+  público, ACL desactivadas (`BucketOwnerEnforced`) y una regla que borra los
+  objetos de `rayito/images/` a los `ArtifactExpirationDays` días (7 por
+  defecto; un zip sólo se lee mientras se construye la versión de la imagen y
+  `rayito image publish` lo vuelve a subir si falta);
+- una política de bucket que niega `s3:*` a cualquiera cuando
+  `aws:SecureTransport` es `false`.
+
+El bucket lleva `DeletionPolicy: Retain` y `UpdateReplacePolicy: Retain`:
+borrar la pila **conserva** el bucket (CloudFormation no borra uno con objetos,
+y puede guardar artefactos de otras funciones). Para quitarlo, vacíalo y
+bórralo después a mano. No crea recursos de IAM, así que se despliega sin
+`--capabilities`. La salida `BucketName` es la que lee `rayito setup` y la que
+va en `ArtifactBucket` de `rayito-m0-iam` y en `RAYITO_BUCKET`.
+
+A mano, equivalente a lo que hace `rayito setup`:
+
+```bash
+aws cloudformation deploy --stack-name rayito-m0-artifacts \
+  --template-file infra/artifact-bucket.yaml \
+  --parameter-overrides BucketName=<nombre-del-bucket>
+```
+
+No es un componente del catálogo (`rayito stack list`, que es para funciones
+opcionales con coste), igual que `iam.yaml`. Las propiedades están en
+`AWS_API_NOTES.md` ("Preparación de la cuenta") y los valores que `cfn-lint` no
+juzga los fija `scripts/tests/test_artifact_bucket_template.py`.
 
 ## Egress allowlist (`egress-connector.yaml`)
 

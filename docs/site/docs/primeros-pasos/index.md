@@ -13,7 +13,7 @@ siguiente.
 
 | Requisito | Detalle |
 |---|---|
-| Una cuenta de AWS | con permisos para desplegar una pila de CloudFormation (IAM) y crear un bucket de S3 |
+| Una cuenta de AWS | con permisos de administración o de *bootstrap* una vez, para que `rayito setup` despliegue pilas de CloudFormation (IAM y, si no tienes bucket, uno de S3) |
 | Una región con Lambda MicroVMs | `us-east-1`, `us-east-2`, `us-west-2`, `eu-west-1`, `eu-central-1`, `eu-north-1`, `ap-northeast-1`, `ap-south-1`, `ap-southeast-1` o `ap-southeast-2` |
 | La AWS CLI v2 | `aws --version`; la usan los pasos de [Configurar AWS](configurar-aws.md) (`aws sts`, `aws s3 mb`, `aws cloudformation deploy`). [Instalarla](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html) |
 | `curl` | para descargar la plantilla de IAM y la imagen de la release (viene con macOS y casi todas las distribuciones Linux) |
@@ -32,8 +32,8 @@ otro sitio.
 
 1. [**Instalación**](instalacion.md): el SDK, la CLI y los extras
    opcionales.
-2. [**Configurar AWS**](configurar-aws.md): IAM, un bucket y la imagen
-   `rayito-base` en tu cuenta. Se hace una vez por cuenta y región.
+2. [**Configurar AWS**](configurar-aws.md): IAM, el bucket (lo reutiliza o lo
+   crea) y la imagen `rayito-base` en tu cuenta. Se hace una vez por cuenta y región.
 3. [**Primer sandbox**](../quickstart.md): comandos, ficheros, código y
    reconexión desde otro proceso.
 4. [**Conceptos**](../concepts.md): qué corre dónde, los tres relojes de un

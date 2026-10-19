@@ -219,9 +219,11 @@ Python ≥ 3.11 o Node ≥ 20. La CLI (`rayito doctor`) se instala con pip.
 ### Prepara tu cuenta, una vez { #prepara-tu-cuenta-una-vez }
 
 Una sola orden, `rayito setup`, prepara la cuenta y la región: pila de IAM,
-imagen `rayito-base` y el bucket que ya tengas (no crea buckets). Muestra el
-plan y el coste y pide confirmación. La imagen tarda unos 10 minutos en
-construirse, una vez por cuenta y región. `rayito doctor` es la comprobación.
+imagen `rayito-base` y el bucket de artefactos (reutiliza el que ya tengas y, si
+no hay ninguno, lo crea). Muestra el plan y el coste y pide confirmación. La
+primera ejecución tarda unos 10–12 minutos, casi todo el snapshot de la imagen
+en AWS, una vez por cuenta y región; las siguientes, segundos. `rayito doctor`
+es la comprobación.
 
 === "Python"
 

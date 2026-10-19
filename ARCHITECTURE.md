@@ -3109,8 +3109,9 @@ casi todas las piezas: el bucket de `cdk bootstrap` que reutiliza
 `rayito agent deploy`, `rayito image publish` idempotente, `OptionalStacks` y
 `rayito doctor`. Esta decisión las pone detrás de una orden idempotente, como
 `cdk bootstrap` prepara un entorno para CDK. Lo que no existe y no se añade:
-ningún camino de código que cree un bucket de S3 (`AWS_API_NOTES.md`: «Rayito
-nunca llama a `CreateBucket`»).
+ningún camino de código del SDK que llame a `CreateBucket` (`AWS_API_NOTES.md`);
+la enmienda del 2026-10-19 (al final de este ADR) hace que `setup` cree el
+bucket cuando no hay ninguno, pero con CloudFormation, no con llamadas de S3.
 
 **Decisión.**
 
@@ -3118,16 +3119,16 @@ nunca llama a `CreateBucket`»).
    `rayito setup` es una orden de la CLI sobre un servicio privado, como
    `rayito doctor`; no se exporta nada de `rayito/__init__.py` ni de
    `src/index.ts`, porque una API pública (síncrona y asíncrona, shim, docs) no
-   la pidió nadie. El dominio (`classify_stack`, `choose_bucket_candidate`,
-   `decide_bucket`, `classify_image`, `plan_setup`, `parse_checksums`,
+   la pidió nadie. El dominio (`classify_stack`, `bucket_candidates`,
+   `decide_bucket`, `plan_bucket_creation`, `classify_image`, `plan_setup`, `parse_checksums`,
    `verify_checksum`) no importa `boto3`, `@aws-sdk/*`, `typer`, HTTP ni
-   sistema de ficheros; el servicio sólo llama a cinco puertos (pila de IAM,
-   bucket, imagen base, publicador, descarga de la release) y los adaptadores
+   sistema de ficheros; el servicio sólo llama a puertos (pila de IAM, pila
+   del bucket, bucket, imagen base, publicador, descarga de la release) y los adaptadores
    traducen los fallos a `AccountSetupException` / `AccountSetupError`, con un
    `code` cerrado. Python y TypeScript tienen las mismas capas y el mismo
    comportamiento.
 2. **Tres recursos, cinco acciones, un plan.** El plan son siempre tres pasos,
-   en este orden: `bucket` (sólo `reuse`), `iamStack` (`create`, `update`,
+   en este orden: `bucket` (`reuse`, `wait` y, desde la enmienda, `create`), `iamStack` (`create`, `update`,
    `reuse`, `wait`) y `baseImage` (`publish`, `reuse`, `wait`). Está `ready`
    cuando los tres son `reuse` y pide confirmación si algún paso es `create`,
    `update` o `publish`; un `wait` no cuesta nada nuevo. Primero lee (un
@@ -3156,15 +3157,27 @@ nunca llama a `CreateBucket`»).
    entra en `_registry.COMPONENTS`: `rayito stack list` muestra funciones
    opcionales con coste, y esta pila es un prerrequisito con su nombre
    histórico `rayito-m0-iam`.
-4. **Nunca crear un bucket.** Hay un solo candidato: el primero que exista de
-   `--bucket`, `RAYITO_BUCKET`, el `ArtifactBucket` de la pila o el bucket de
-   `cdk bootstrap` (`cdk-<calificador>-assets-<cuenta>-<región>`, calificador
-   `hnb659fds`). Se comprueba con un `HeadBucket`: inexistente o 403 es
-   `no_bucket` (para el de `cdk bootstrap`) o `bucket_unavailable`; en otra
-   región, `bucket_region`. Sin candidato se detiene y nombra las tres salidas
-   (`--bucket`, `RAYITO_BUCKET`, `cdk bootstrap`). Como el bucket elegido se
-   escribe en la pila, la siguiente ejecución lo encuentra aunque no esté
-   `RAYITO_BUCKET`.
+4. **Reutilizar un bucket y, sólo si no hay ninguno, crearlo** (redactado de
+   nuevo en la enmienda del 2026-10-19; el texto original prohibía crear un
+   bucket). Dos fases. *Reutilización*: los candidatos, en orden, son
+   `--bucket` o `RAYITO_BUCKET` (si se da uno explícito es el único), el
+   `ArtifactBucket` de la pila de IAM y el bucket de `cdk bootstrap`
+   (`cdk-<calificador>-assets-<cuenta>-<región>`, calificador `hnb659fds`). Cada
+   uno se comprueba con un `HeadBucket` con tres resultados: existe (en otra
+   región, `bucket_region`), no existe, o 403 (`bucket_unavailable`, salvo para
+   el de `cdk bootstrap`, que se salta porque Rayito no lo necesita). Una
+   cuenta con bucket nunca sale de esta fase: no hay lecturas ni pilas nuevas.
+   *Creación*: si ninguno sirve, el destino es el nombre explícito (si no
+   existía) o `rayito-artifacts-<cuenta>-<región>`, y `setup` despliega la
+   pila `rayito-m0-artifacts` con `infra/artifact-bucket.yaml` (un
+   `AWS::S3::Bucket` y su política) pasando sólo `BucketName`. Antes mira esa
+   pila: usable, la reutiliza; en curso, espera; bloqueada, `stack_blocked`;
+   gestiona otro bucket que el pedido, `artifact_stack_conflict`. Un bucket
+   que ya existe con el nombre por defecto y no es de esa pila nunca se adopta
+   (`bucket_taken`): el nombre se deduce del número de cuenta, así que otra
+   cuenta podría haberlo creado antes y recibir nuestros zips; si es tuyo, lo
+   pasas con `--bucket`. Como el bucket elegido se escribe en la pila de IAM, la
+   siguiente ejecución lo encuentra aunque no esté `RAYITO_BUCKET`.
 5. **El artefacto de la release, comprobado contra `SHA256SUMS`.** Sin
    `--artifact`, descarga por HTTPS `SHA256SUMS` y `rayito-image.zip` de la
    release `rayd-v<versión del SDK>` a un directorio temporal que la CLI borra
@@ -3194,8 +3207,9 @@ nunca llama a `CreateBucket`»).
    cuesta un sandbox que nadie pidió) y publica `RAYITO_TEMPLATE` y
    `RAYITO_BUCKET`.
 7. **Códigos de salida y errores.** `0`: éxito, `--dry-run`, nada que hacer con
-   el doctor limpio. `2`: uso o entorno (`unsupported_region`, `no_bucket`,
-   `bucket_unavailable`, `bucket_region`, `artifact_missing`,
+   el doctor limpio. `2`: uso o entorno (`unsupported_region`,
+   `bucket_unavailable`, `bucket_region`, `bucket_taken`,
+   `artifact_stack_conflict`, `artifact_missing`,
    `artifact_variant`, `needs_confirmation`, y los de siempre sin región,
    perfil o credenciales). `1`: `stack_blocked`, `stack_incomplete`,
    `release_download`, `checksum_missing`, `checksum_mismatch`,
@@ -3223,8 +3237,8 @@ nunca llama a `CreateBucket`»).
    ayuda, salida humana, documento JSON, constantes, errores) vive en
    `testdata/account-setup/` y los dos SDK lo comparan en sus tests.
 
-**Consecuencias.** Una orden prepara una cuenta donde se encuentra un bucket;
-si no, el usuario ejecuta un `cdk bootstrap` o pasa `--bucket`. `rayito setup`
+**Consecuencias.** Una orden prepara una cuenta, tenga o no bucket (ver la
+enmienda). `rayito setup`
 nunca cambia una cuenta preparada a mano que funciona ni sube `rayito-base` a un
 `rayd` más nuevo: las dos cosas siguen siendo explícitas (`rayito image
 publish`). Quien prefiere artefactos verificados con cosign conserva ese camino
@@ -3240,11 +3254,8 @@ y la prueba usa `--artifact`; los roles se llaman `rayito-m0-*-<región>`, así
 que dos regiones no chocan, pero una pila a medio borrar puede dejar un nombre
 ocupado, y `stack_blocked` manda borrar la pila primero.
 
-**Alternativas descartadas.** Crear el bucket si falta (cifrado, bloqueo de
-acceso público, ciclo de vida) como hace `cdk bootstrap`: necesita APIs de
-escritura de S3 o una plantilla con `AWS::S3::Bucket` que `AWS_API_NOTES.md` no
-documenta, y 0.14 dice que Rayito nunca crea buckets; puede ser un seguimiento
-si el mantenedor lo aprueba. Hacer de la pila de IAM un componente del catálogo
+**Alternativas descartadas.** Crear el bucket si falta: descartada en la
+redacción original y aprobada después por el mantenedor (enmienda). Hacer de la pila de IAM un componente del catálogo
 (`rayito stack deploy iam`): el catálogo es para funciones opcionales con coste,
 su nombre por defecto sería `rayito-iam` y no `rayito-m0-iam`, y habría dos
 formas de desplegar la misma pila. Un `UpdateStack` siempre, para llevar las
@@ -3260,7 +3271,47 @@ el pipeline de release. Ejecutar `rayito doctor --launch` al final: cuesta un
 sandbox (≈ $0,002) que el usuario no pidió; el mensaje final lo sugiere. Una API
 pública `AccountSetup`: especulativa.
 
-**Reversible.** Aditivo: una orden, un paquete privado en cada SDK, una
-plantilla empaquetada, una frase añadida a tres mensajes y el contrato de
+**Reversible.** Aditivo: una orden, un paquete privado en cada SDK, dos
+plantillas empaquetadas, una frase añadida a tres mensajes y el contrato de
 pruebas; quitar `rayito setup` deja el 0.14 anterior intacto y el camino a mano
 sigue documentado. Detalle en `openspec/changes/account-setup/design.md`.
+
+**Enmienda 2026-10-19: `rayito setup` crea el bucket de artefactos cuando no
+hay ninguno.** El mantenedor decidió que una sola orden debe dejar la cuenta
+lista, como `cdk bootstrap`; esto sustituye al punto 4 original (que
+prohibía crear un bucket) y a la alternativa descartada «crear el bucket si falta».
+
+- *Cuándo.* Sólo si ni `--bucket`, ni `RAYITO_BUCKET`, ni el bucket de la pila
+  de IAM, ni el de `cdk bootstrap` sirven (fases de reutilización y de creación
+  del punto 4). `rayito agent deploy` no cambia: reutiliza, no crea.
+- *Cómo.* Con la pila `rayito-m0-artifacts` y `infra/artifact-bucket.yaml`
+  (nombre por defecto `rayito-artifacts-<cuenta>-<región>`), no con llamadas de
+  S3: el SDK sigue sin llamar a `CreateBucket`; lo hace CloudFormation con las
+  credenciales de quien ejecuta `setup`. Un `AWS::S3::Bucket` con SSE-S3
+  (`AES256`), bloqueo de todo acceso público, ACL desactivadas
+  (`BucketOwnerEnforced`) y los objetos de `rayito/images/` caducando a los 7
+  días (un zip sólo se lee mientras se construye la versión de la imagen, y
+  `rayito image publish` lo vuelve a subir si falta); un `AWS::S3::BucketPolicy`
+  que niega todo acceso sin TLS. `DeletionPolicy` y `UpdateReplacePolicy` son
+  `Retain`: borrar la pila conserva el bucket. Una plantilla propia y no un
+  componente del catálogo (`rayito stack list`), igual que la de IAM.
+- *Alternativas descartadas.* Llamadas S3 directas (`CreateBucket`,
+  `PutBucketEncryption`, `PutPublicAccessBlock`, `PutBucketOwnershipControls`,
+  `PutBucketPolicy`, `PutBucketLifecycleConfiguration`): seis APIs de escritura
+  nuevas en los dos SDK y un fallo a medias deja un bucket a medio configurar
+  sin registro de lo aplicado; la pila es ese registro. El bucket dentro de la
+  pila de IAM: mezcla un recurso de datos que se conserva con roles que se
+  borran, y haría derivar toda `rayito-m0-iam` desplegada a mano. Adoptar el
+  bucket con el nombre por defecto sin pila: ver `bucket_taken` arriba. SSE-KMS:
+  una clave cuesta y obliga a dar `kms:*` al rol de build. Versionado: las
+  claves son por contenido y las versiones no vigentes seguirían costando.
+  `DeletionPolicy: Delete`: CloudFormation no borra un bucket con objetos.
+- *Consecuencias.* `setup` necesita permisos de administrador o de bootstrap una
+  vez, como `cdk bootstrap`: CloudFormation, IAM y, cuando crea el bucket, S3;
+  la política `CallerPolicy` del tutorial no alcanza. Un bucket creado por
+  `setup` sigue ahí al borrar la pila: se vacía y se borra a mano. Errores
+  nuevos: `bucket_taken` y `artifact_stack_conflict` (código de salida 2);
+  `no_bucket` desaparece y `bucket_unavailable` queda sólo para el 403.
+- *Riesgo.* Una SCP de la organización puede denegar `s3:CreateBucket` o
+  `s3:PutBucketPolicy`; la aceptación lo simula antes de escribir nada.
+- Detalle (D2, D4, D10) en `openspec/changes/account-setup/design.md`.

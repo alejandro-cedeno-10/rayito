@@ -2030,8 +2030,11 @@ dice dónde. Consultado el 2026-10-16.
 
 - El bucket por defecto es el de activos del bootstrap de CDK de la cuenta y la
   región, `cdk-<calificador>-assets-<cuenta>-<región>` con el calificador por
-  defecto `hnb659fds`; sólo se comprueba con `HeadBucket`. Rayito nunca llama a
-  `CreateBucket`.
+  defecto `hnb659fds`; sólo se comprueba con `HeadBucket`. `deploy_agent` nunca
+  llama a `CreateBucket` y sigue sin crear ningún bucket; la regla es sobre las
+  llamadas propias del SDK (que sigue sin hacer ninguna de S3 de escritura de
+  buckets): `rayito setup` crea el bucket con una pila de CloudFormation, no con
+  `CreateBucket` (siguiente sección).
 - Un MicroVM no se puede etiquetar (§1): la pertenencia a una flota es la
   imagen. `rayd` fija la vida de un VM sobrante con `set_timeout`, sin llamada
   al plano de control.
@@ -2050,10 +2053,31 @@ parámetros. Consultado el 2026-10-19.
 | Cuenta | `GetCallerIdentity` (`Account`) | §21, tabla de `GetCallerIdentity` |
 | Pila de IAM, lectura | `DescribeStacks` (`Stacks[0].{StackStatus, Outputs, Parameters}`; ausencia = `ValidationError` con «does not exist») | §21 |
 | Pila de IAM, escritura | `CreateStack` / `UpdateStack` con `Capabilities=["CAPABILITY_NAMED_IAM"]`; sólo `ArtifactBucket` como parámetro propio, el resto con el valor por defecto o `UsePreviousValue`; la espera sondea `DescribeStacks` | §21 |
-| Bucket | `HeadBucket` (un solo candidato; la región sale de `x-amz-bucket-region`, como en la comprobación `bucket` de `rayito doctor`); nunca `CreateBucket` | «Despliegue de agentes de cero configuración» y `docs/site/docs/cli.md` |
+| Bucket, lectura | `HeadBucket` hasta tres veces, una por candidato (`--bucket`/`RAYITO_BUCKET`; el `ArtifactBucket` de la pila de IAM; el de `cdk bootstrap`; o, sin ninguno, el nombre por defecto). La región sale de `x-amz-bucket-region`, como en la comprobación `bucket` de `rayito doctor`. 200 = existe y es accesible; 404 (`NoSuchBucket`, `NotFound`) = no existe; 403 = existe sin acceso (S3 no distingue ausente de ajeno); cualquier otro error se propaga | «Despliegue de agentes de cero configuración» y `docs/site/docs/cli.md` |
+| Bucket, creación | `DescribeStacks` y `CreateStack` sobre `rayito-m0-artifacts` con la plantilla `infra/artifact-bucket.yaml` y **sólo** `BucketName` como parámetro (`ArtifactExpirationDays` queda en su valor por defecto); **sin `Capabilities`** (la plantilla no crea recursos IAM); la espera sondea `DescribeStacks` y la salida `BucketName` es el bucket. El SDK no llama a `CreateBucket`: lo hace CloudFormation con las credenciales del llamante | §21 |
 | Imagen, lectura | `GetMicrovmImage` y `ListMicrovmImageVersions` (`items[].{imageVersion, state, status, createdAt}`) | §4 y §30 |
 | Imagen, publicación | `PutObject` del zip (clave por contenido `rayito/images/rayd-<sha12>.zip`), `CreateMicrovmImage` o `UpdateMicrovmImage`, la compuerta de tres estados, y la versión `latest` de la base gestionada | §4 y §27 (el mismo camino que `rayito image publish`) |
 | Doctor | las comprobaciones de `rayito doctor`, sin `--launch` | `docs/site/docs/cli.md` |
+
+### Plantilla `infra/artifact-bucket.yaml`
+
+Dos recursos y nada más. Los nombres de recurso y de propiedad se verificaron
+sin red contra los esquemas de CloudFormation que trae cfn-lint 1.56.3 el
+2026-10-19; `scripts/tests/test_artifact_bucket_template.py` fija los valores
+que cfn-lint no juzga.
+
+| Recurso | Propiedades | Efecto |
+|---|---|---|
+| `AWS::S3::Bucket` (`DeletionPolicy: Retain`, `UpdateReplacePolicy: Retain`) | `BucketName`; `BucketEncryption.ServerSideEncryptionConfiguration[].ServerSideEncryptionByDefault.SSEAlgorithm: AES256`; `PublicAccessBlockConfiguration` con `BlockPublicAcls`, `BlockPublicPolicy`, `IgnorePublicAcls` y `RestrictPublicBuckets` en `true`; `OwnershipControls.Rules[].ObjectOwnership: BucketOwnerEnforced`; `LifecycleConfiguration.Rules[]` con `Id: expire-image-artifacts`, `Status: Enabled`, `Prefix: rayito/images/` y `ExpirationInDays` (parámetro `ArtifactExpirationDays`, 7 por defecto) | Cifrado SSE-S3, sin acceso público, sin ACL, los zips de la imagen caducan; borrar la pila conserva el bucket |
+| `AWS::S3::BucketPolicy` | `Bucket`; `PolicyDocument` con un `Deny` de `s3:*` a `Principal: "*"` sobre el bucket y `/*` cuando `aws:SecureTransport` es `"false"` | Sólo TLS |
+
+Salidas: `BucketName` y `BucketArn`. Permisos que el manejador de
+CloudFormation necesita según esos esquemas, además de los de
+`cloudformation:*` sobre la pila: para crear `AWS::S3::Bucket`,
+`s3:CreateBucket`, `s3:PutEncryptionConfiguration`,
+`s3:PutBucketPublicAccessBlock`, `s3:PutBucketOwnershipControls`,
+`s3:PutLifecycleConfiguration` y `s3:PutBucketTagging`, entre otros; para
+`AWS::S3::BucketPolicy`, `s3:GetBucketPolicy` y `s3:PutBucketPolicy`.
 
 Lo que sí es nuevo y **no es una API de AWS**: la descarga HTTPS de dos assets de
 la release de GitHub, `rayito-image.zip` y `SHA256SUMS`, desde

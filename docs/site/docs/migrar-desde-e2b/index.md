@@ -19,8 +19,8 @@ implementan la misma API sobre Lambda MicroVMs.
 ### 1. Prepara tu cuenta de AWS
 
 Ejecuta `rayito setup` ([Configurar AWS](../primeros-pasos/configurar-aws.md)):
-deja lista la pila de IAM y la imagen `rayito-base` publicada, sobre un bucket
-que ya tengas (no crea buckets). Es el equivalente a tener una cuenta de E2B
+deja lista la pila de IAM y la imagen `rayito-base` publicada, sobre el bucket
+que ya tengas o, si no hay ninguno, uno que crea ella. Es el equivalente a tener una cuenta de E2B
 con su template por defecto.
 
 ### 2. Instala Rayito
