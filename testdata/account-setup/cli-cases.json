@@ -1,0 +1,340 @@
+{
+  "description": "Casos de `rayito setup` que no llegan a crear nada (plan, --dry-run y errores tempranos), con la salida exacta. Los dos SDK los ejecutan con dobles construidos desde `input` (el mismo formato que plan-vectors.json); stdin nunca es una terminal. `stdout`/`stderr` son texto exacto; `json` se compara ya parseado. Los marcadores `{sdkVersion}` y `{cdkBucket}` se sustituyen como en plan-vectors.json.",
+  "cases": [
+    {
+      "name": "dry-run en una cuenta nueva",
+      "args": [
+        "setup",
+        "--dry-run"
+      ],
+      "input": {
+        "region": "us-east-1",
+        "account": "123456789012",
+        "bucket": null,
+        "environmentBucket": null,
+        "artifact": null,
+        "stack": null,
+        "buckets": {
+          "{cdkBucket}": "us-east-1"
+        },
+        "image": null
+      },
+      "expected": {
+        "exitCode": 0,
+        "stdout": "rayito setup: cuenta 123456789012, región us-east-1\n  bucket {cdkBucket}: reutilizar (bootstrap de CDK)\n  pila de IAM rayito-m0-iam: crear\n  imagen rayito-base: publicar desde rayd-v{sdkVersion} (≈ 10 min)\nCoste aproximado:\n  pila de IAM: gratis\n  imagen: ≈ $0,04 por semana por versión publicada (mínimo una semana)\n  zip de la imagen en el bucket: céntimos\nno se creó ni cambió nada (--dry-run)\n",
+        "stderr": ""
+      }
+    },
+    {
+      "name": "dry-run en una cuenta nueva con --json",
+      "args": [
+        "--json",
+        "setup",
+        "--dry-run"
+      ],
+      "input": {
+        "region": "us-east-1",
+        "account": "123456789012",
+        "bucket": null,
+        "environmentBucket": null,
+        "artifact": null,
+        "stack": null,
+        "buckets": {
+          "{cdkBucket}": "us-east-1"
+        },
+        "image": null
+      },
+      "expected": {
+        "exitCode": 0,
+        "json": {
+          "rayito": "{sdkVersion}",
+          "region": "us-east-1",
+          "account": "123456789012",
+          "dryRun": true,
+          "ready": false,
+          "steps": [
+            {
+              "resource": "bucket",
+              "name": "{cdkBucket}",
+              "action": "reuse",
+              "source": "cdkBootstrap",
+              "status": null,
+              "imageVersion": null,
+              "release": null,
+              "previousBucket": null
+            },
+            {
+              "resource": "iamStack",
+              "name": "rayito-m0-iam",
+              "action": "create",
+              "source": null,
+              "status": null,
+              "imageVersion": null,
+              "release": null,
+              "previousBucket": null
+            },
+            {
+              "resource": "baseImage",
+              "name": "rayito-base",
+              "action": "publish",
+              "source": "release",
+              "status": null,
+              "imageVersion": null,
+              "release": "rayd-v{sdkVersion}",
+              "previousBucket": null
+            }
+          ],
+          "cost": [
+            "pila de IAM: gratis",
+            "imagen: ≈ $0,04 por semana por versión publicada (mínimo una semana)",
+            "zip de la imagen en el bucket: céntimos"
+          ],
+          "result": null,
+          "doctor": null,
+          "error": null,
+          "exitCode": 0
+        },
+        "stderr": ""
+      }
+    },
+    {
+      "name": "dry-run en una cuenta preparada a mano",
+      "args": [
+        "setup",
+        "--dry-run"
+      ],
+      "input": {
+        "region": "us-east-1",
+        "account": "123456789012",
+        "bucket": null,
+        "environmentBucket": null,
+        "artifact": null,
+        "stack": {
+          "status": "CREATE_COMPLETE",
+          "outputs": {
+            "BuildRoleArn": "arn:aws:iam::123456789012:role/rayito-m0-build-us-east-1"
+          },
+          "parameters": {
+            "ArtifactBucket": "amzn-s3-demo-bucket"
+          }
+        },
+        "buckets": {
+          "amzn-s3-demo-bucket": "us-east-1"
+        },
+        "image": {
+          "state": "UPDATED",
+          "versions": [
+            {
+              "imageVersion": "1.0",
+              "state": "SUCCESSFUL",
+              "status": "ACTIVE",
+              "createdAt": "2026-10-01T00:00:00Z"
+            }
+          ]
+        }
+      },
+      "expected": {
+        "exitCode": 0,
+        "stdout": "rayito setup: cuenta 123456789012, región us-east-1\n  bucket amzn-s3-demo-bucket: reutilizar (el de la pila de IAM)\n  pila de IAM rayito-m0-iam: ya existe (CREATE_COMPLETE)\n  imagen rayito-base: ya existe (versión 1.0 lanzable)\nLa cuenta ya está preparada: no hay nada que crear.\nno se creó ni cambió nada (--dry-run)\n",
+        "stderr": ""
+      }
+    },
+    {
+      "name": "sin --yes y sin terminal",
+      "args": [
+        "setup"
+      ],
+      "input": {
+        "region": "us-east-1",
+        "account": "123456789012",
+        "bucket": null,
+        "environmentBucket": null,
+        "artifact": null,
+        "stack": null,
+        "buckets": {
+          "{cdkBucket}": "us-east-1"
+        },
+        "image": null
+      },
+      "expected": {
+        "exitCode": 2,
+        "stdout": "rayito setup: cuenta 123456789012, región us-east-1\n  bucket {cdkBucket}: reutilizar (bootstrap de CDK)\n  pila de IAM rayito-m0-iam: crear\n  imagen rayito-base: publicar desde rayd-v{sdkVersion} (≈ 10 min)\nCoste aproximado:\n  pila de IAM: gratis\n  imagen: ≈ $0,04 por semana por versión publicada (mínimo una semana)\n  zip de la imagen en el bucket: céntimos\n",
+        "stderr": "rayito: preparar la cuenta crea recursos con coste: confírmalo con --yes (o desde una terminal)\n"
+      }
+    },
+    {
+      "name": "sin --yes con --json",
+      "args": [
+        "--json",
+        "setup"
+      ],
+      "input": {
+        "region": "us-east-1",
+        "account": "123456789012",
+        "bucket": null,
+        "environmentBucket": null,
+        "artifact": null,
+        "stack": null,
+        "buckets": {
+          "{cdkBucket}": "us-east-1"
+        },
+        "image": null
+      },
+      "expected": {
+        "exitCode": 2,
+        "json": {
+          "rayito": "{sdkVersion}",
+          "region": "us-east-1",
+          "account": "123456789012",
+          "dryRun": false,
+          "ready": false,
+          "steps": [
+            {
+              "resource": "bucket",
+              "name": "{cdkBucket}",
+              "action": "reuse",
+              "source": "cdkBootstrap",
+              "status": null,
+              "imageVersion": null,
+              "release": null,
+              "previousBucket": null
+            },
+            {
+              "resource": "iamStack",
+              "name": "rayito-m0-iam",
+              "action": "create",
+              "source": null,
+              "status": null,
+              "imageVersion": null,
+              "release": null,
+              "previousBucket": null
+            },
+            {
+              "resource": "baseImage",
+              "name": "rayito-base",
+              "action": "publish",
+              "source": "release",
+              "status": null,
+              "imageVersion": null,
+              "release": "rayd-v{sdkVersion}",
+              "previousBucket": null
+            }
+          ],
+          "cost": [
+            "pila de IAM: gratis",
+            "imagen: ≈ $0,04 por semana por versión publicada (mínimo una semana)",
+            "zip de la imagen en el bucket: céntimos"
+          ],
+          "result": null,
+          "doctor": null,
+          "error": {
+            "code": "needs_confirmation",
+            "message": "preparar la cuenta crea recursos con coste: confírmalo con --yes (o desde una terminal)"
+          },
+          "exitCode": 2
+        },
+        "stderr": "rayito: preparar la cuenta crea recursos con coste: confírmalo con --yes (o desde una terminal)\n"
+      }
+    },
+    {
+      "name": "sin bucket",
+      "args": [
+        "setup",
+        "--dry-run"
+      ],
+      "input": {
+        "region": "us-east-1",
+        "account": "123456789012",
+        "bucket": null,
+        "environmentBucket": null,
+        "artifact": null,
+        "stack": null,
+        "buckets": {},
+        "image": null
+      },
+      "expected": {
+        "exitCode": 2,
+        "stdout": "",
+        "stderr": "rayito: no hay bucket para el artefacto de la imagen: pasa --bucket, exporta RAYITO_BUCKET o ejecuta `cdk bootstrap` en esta cuenta y región; Rayito no crea buckets\n"
+      }
+    },
+    {
+      "name": "región sin Lambda MicroVMs",
+      "args": [
+        "setup",
+        "--dry-run"
+      ],
+      "input": {
+        "region": "sa-east-1",
+        "account": "123456789012",
+        "bucket": null,
+        "environmentBucket": null,
+        "artifact": null,
+        "stack": null,
+        "buckets": {},
+        "image": null
+      },
+      "expected": {
+        "exitCode": 2,
+        "stdout": "",
+        "stderr": "rayito: la región sa-east-1 no tiene Lambda MicroVMs: usa una de us-east-1, us-east-2, us-west-2, eu-west-1, ap-northeast-1, ap-south-1, ap-southeast-1, ap-southeast-2, eu-central-1, eu-north-1\n"
+      }
+    },
+    {
+      "name": "pila bloqueada",
+      "args": [
+        "setup",
+        "--dry-run"
+      ],
+      "input": {
+        "region": "us-east-1",
+        "account": "123456789012",
+        "bucket": null,
+        "environmentBucket": null,
+        "artifact": null,
+        "stack": {
+          "status": "ROLLBACK_COMPLETE",
+          "outputs": {},
+          "parameters": {
+            "ArtifactBucket": "amzn-s3-demo-bucket"
+          }
+        },
+        "buckets": {
+          "amzn-s3-demo-bucket": "us-east-1"
+        },
+        "image": null
+      },
+      "expected": {
+        "exitCode": 1,
+        "stdout": "",
+        "stderr": "rayito: la pila rayito-m0-iam está en ROLLBACK_COMPLETE: bórrala (aws cloudformation delete-stack --stack-name rayito-m0-iam), espera a que desaparezca y vuelve a ejecutar `rayito setup`\n"
+      }
+    },
+    {
+      "name": "bucket de otra región",
+      "args": [
+        "setup",
+        "--dry-run",
+        "--bucket",
+        "amzn-s3-demo-bucket"
+      ],
+      "input": {
+        "region": "us-east-1",
+        "account": "123456789012",
+        "bucket": "amzn-s3-demo-bucket",
+        "environmentBucket": null,
+        "artifact": null,
+        "stack": null,
+        "buckets": {
+          "amzn-s3-demo-bucket": "eu-west-1"
+        },
+        "image": null
+      },
+      "expected": {
+        "exitCode": 2,
+        "stdout": "",
+        "stderr": "rayito: el bucket amzn-s3-demo-bucket está en eu-west-1, no en us-east-1: el build fallaría con S3_CROSS_REGION_ACCESS_DENIED\n"
+      }
+    }
+  ]
+}

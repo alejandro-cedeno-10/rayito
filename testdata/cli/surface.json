@@ -3123,6 +3123,68 @@
     },
     {
       "path": [
+        "setup"
+      ],
+      "group": false,
+      "invoke_without_command": false,
+      "hidden": false,
+      "parameters": [
+        {
+          "name": "bucket",
+          "kind": "option",
+          "flags": [
+            "--bucket"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "artifact",
+          "kind": "option",
+          "flags": [
+            "--artifact"
+          ],
+          "type": "path",
+          "required": false,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "yes",
+          "kind": "option",
+          "flags": [
+            "--yes"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "default": false,
+          "is_flag": true,
+          "envvar": null
+        },
+        {
+          "name": "dry_run",
+          "kind": "option",
+          "flags": [
+            "--dry-run"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "default": false,
+          "is_flag": true,
+          "envvar": null
+        }
+      ]
+    },
+    {
+      "path": [
         "stack"
       ],
       "group": true,

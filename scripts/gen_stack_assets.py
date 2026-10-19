@@ -5,8 +5,10 @@ Single source: `infra/<component>.yaml`, plus `infra/lambdas/<component>/`
 when the component bundles Lambda code. Output, deterministic and per
 component (a feature adding its own `infra/<component>.yaml` needs no edit
 here — this script discovers every CloudFormation template under `infra/`
-except the three that predate the `OptionalStack` convention and are
-deployed by hand, per `infra/README.md`):
+except the two that predate the `OptionalStack` convention and are deployed
+by hand, per `infra/README.md`). `infra/iam.yaml` is rendered too: it is not
+an `OptionalStack` component, but `rayito setup` deploys it as the
+`rayito-m0-iam` stack (ADR-030):
 
 - ``clients/python/src/rayito/_stacks/_templates/<component>.yaml`` (the
   template, copied verbatim)
@@ -46,7 +48,8 @@ TYPESCRIPT_TEMPLATES_DIR = (
 
 #: Pre-date the `OptionalStack` convention (ADR-016) and are deployed by
 #: hand (`infra/README.md`), not through `rayito stack`/`OptionalStacks`.
-EXCLUDED_TEMPLATES = frozenset({"iam", "egress-connector", "ci-oidc-role"})
+#: `iam` is not listed: `rayito setup` deploys it (ADR-030).
+EXCLUDED_TEMPLATES = frozenset({"egress-connector", "ci-oidc-role"})
 
 
 def discover_components() -> list[str]:
