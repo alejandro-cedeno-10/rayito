@@ -543,8 +543,9 @@ sin llamar a AWS. `deploy` despliega una **flota**
 vivos y `--warm` plazas aparcadas; con `--secret proveedor=nombre` usa un
 secreto que ya existe y con `--create-secret` crea el que falte desde la
 variable estándar del proveedor (cuesta $0,40 al mes); no crea buckets (eso lo
-hace `rayito setup`; usa `--bucket`, `RAYITO_BUCKET`, el de `cdk bootstrap` o el
-que creó `rayito setup`), y sólo
+hace `rayito setup`; usa `--bucket`, `RAYITO_BUCKET`, el de `cdk bootstrap` y, si
+no existe, la salida `BucketName` de la pila `rayito-m0-artifacts` que creó
+`rayito setup`), y sólo
 publica la imagen base con `--base-artifact` y `--yes`. `invoke`, `status` y
 `stop` aceptan el nombre de la flota (`rayito agent stop <nombre>` termina todos
 sus VMs); el `session_id` que devuelve `invoke` en una flota con varios VMs

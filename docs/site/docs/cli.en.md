@@ -555,8 +555,9 @@ AWS. `deploy` deploys a **fleet**
 live VMs and `--warm` parked slots; with `--secret provider=name` it uses an
 existing secret and with `--create-secret` it creates a missing one from the
 provider's standard variable (it costs $0.40 per month); it creates no buckets
-(`rayito setup` does; use `--bucket`, `RAYITO_BUCKET`, the `cdk bootstrap` one or
-the one `rayito setup` created) and only publishes the base image with `--base-artifact` and `--yes`. `invoke`,
+(`rayito setup` does; use `--bucket`, `RAYITO_BUCKET`, the `cdk bootstrap` one
+and, if it does not exist, the `BucketName` output of the `rayito-m0-artifacts`
+stack that `rayito setup` created) and only publishes the base image with `--base-artifact` and `--yes`. `invoke`,
 `status` and `stop` accept the fleet name (`rayito agent stop <name>` terminates
 all its VMs); the `session_id` that `invoke` returns on a fleet with several VMs
 identifies the VM, and passing it with `--session-id` continues the

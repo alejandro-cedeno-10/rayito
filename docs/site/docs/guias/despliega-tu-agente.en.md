@@ -143,8 +143,11 @@ environment variable and discovery; none of them creates anything silently:
 - The **region** is `--region`, `[deploy] region`, `AWS_REGION` or your profile's.
 - The **base image** is the newest version of `rayito-base-caps`. If it does not
   exist it is published only with `--base-artifact` and `--yes`.
-- The artifact **bucket** is `--bucket`, `[deploy] bucket`, `RAYITO_BUCKET`, the
-  account's CDK bootstrap bucket or the one `rayito setup` created.
+- The artifact **bucket** is, in this order, `--bucket`, `[deploy] bucket`,
+  `RAYITO_BUCKET`, the account's CDK bootstrap bucket if it exists (`HeadBucket`)
+  and, otherwise, the one `rayito setup` created: the `BucketName` output of the
+  `rayito-m0-artifacts` stack when it is ready (`DescribeStacks`, read-only;
+  skipped without permission to read it).
   `rayito agent deploy` does not create buckets: if there is none, run
   [`rayito setup`](../primeros-pasos/configurar-aws.md#2-prepara-la-cuenta-con-rayito-setup)
   first, which creates one if needed.

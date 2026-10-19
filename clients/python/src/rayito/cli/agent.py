@@ -667,7 +667,12 @@ def deploy_command(
     ] = None,
     bucket: Annotated[
         str | None,
-        typer.Option("--bucket", help="Bucket del artefacto (por defecto, RAYITO_BUCKET o CDK)."),
+        typer.Option(
+            "--bucket",
+            help=(
+                "Bucket del artefacto (por defecto, RAYITO_BUCKET, el de CDK o el de rayito setup)."
+            ),
+        ),
     ] = None,
     secret: Annotated[
         list[str] | None,

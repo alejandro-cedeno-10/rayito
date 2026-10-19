@@ -664,7 +664,7 @@ export const agentDeployCommand = defineCommand({
     option(["--env"], { multiple: true, help: "CLAVE=VALOR no secreto; repetible." }),
     option(["--allow-out"], { multiple: true, help: "Destino de salida permitido; repetible." }),
     option(["--bucket"], {
-      help: "Bucket del artefacto (por defecto, RAYITO_BUCKET o CDK).",
+      help: "Bucket del artefacto (por defecto, RAYITO_BUCKET, el de CDK o el de rayito setup).",
     }),
     option(["--secret"], {
       multiple: true,
