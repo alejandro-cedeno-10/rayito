@@ -17,6 +17,7 @@ import os
 import sys
 import tempfile
 import zipfile
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Annotated, Final
 
@@ -65,6 +66,7 @@ from rayito.cli._setup_output import (
 )
 from rayito.cli._setup_publisher import PipelineImagePublisher
 from rayito.cli.doctor import doctor_document, exit_code_for, render_human, run_doctor
+from rayito.cli.stack import parse_pairs
 from rayito.exceptions import SandboxException, UnimplementedError
 
 #: El contrato de `rayito setup` no tiene código para un fallo ajeno a él
@@ -74,16 +76,17 @@ UNTRANSLATED_FAILURE_CODE: Final = "stack_blocked"
 UNTRANSLATED_USAGE_CODE: Final = "bucket_unavailable"
 
 
-def gateways_for(clients: Clients) -> AccountSetupGateways:
+def gateways_for(clients: Clients, tags: Mapping[str, str] | None = None) -> AccountSetupGateways:
     """Los puertos de `AccountSetup`: los dobles de los tests si
     `Clients.account_setup_override` los trae; si no, los adaptadores de AWS,
-    que no llaman a nada al construirse."""
+    que no llaman a nada al construirse. `tags` son las de `--tag`, para las
+    pilas que `setup` crea o actualiza."""
     if clients.account_setup_override is not None:
         return clients.account_setup_override
     provisioner = CloudFormationProvisioner(region=clients.region, session=clients.session)
     return AccountSetupGateways(
-        iam_stack=iam_stack_gateway(provisioner),
-        artifact_stack=artifact_stack_gateway(provisioner),
+        iam_stack=iam_stack_gateway(provisioner, tags=tags),
+        artifact_stack=artifact_stack_gateway(provisioner, tags=tags),
         buckets=S3ArtifactBuckets(clients),
         images=MicrovmBaseImages(clients, clients.region, lambda: clients.account_id),
         publisher=PipelineImagePublisher(clients),
@@ -252,6 +255,17 @@ def setup(
             ),
         ),
     ] = None,
+    tag: Annotated[
+        list[str],
+        typer.Option(
+            "--tag",
+            help=(
+                "Etiqueta K=V; repetible. Se aplica a las pilas que crea setup "
+                "(rayito-m0-artifacts y rayito-m0-iam) y CloudFormation la propaga a sus "
+                "recursos; útil si la organización exige etiquetas."
+            ),
+        ),
+    ] = [],  # noqa: B006
     yes: Annotated[
         bool,
         typer.Option(
@@ -280,9 +294,10 @@ def setup(
     clients = clients_of(ctx)
     json_output = json_mode(ctx)
     plan: SetupPlan | None = None
+    stack_tags = parse_pairs(tag, option="--tag")
     try:
         require_usable_artifact(artifact)
-        service = AccountSetup(gateways_for(clients))
+        service = AccountSetup(gateways_for(clients, stack_tags))
         plan = service.plan(
             SetupRequest(
                 region=clients.region,

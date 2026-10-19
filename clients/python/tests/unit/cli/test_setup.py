@@ -115,6 +115,28 @@ def test_an_unsupported_region_makes_no_call() -> None:
     assert account.calls == []
 
 
+def test_the_tags_reach_the_stack_gateways(monkeypatch: pytest.MonkeyPatch) -> None:
+    received: list[dict[str, str] | None] = []
+    clients, account = clients_for(FRESH)
+
+    def gateways(_clients: Clients, tags: dict[str, str] | None = None) -> Any:
+        received.append(tags)
+        return account.gateways
+
+    monkeypatch.setattr("rayito.cli.setup.gateways_for", gateways)
+    result = CliRunner().invoke(
+        app, ["setup", "--dry-run", "--tag", "team=platform", "--tag", "env=test"], obj=clients
+    )
+    assert result.exit_code == 0, result.stderr
+    assert received == [{"team": "platform", "env": "test"}]
+
+
+def test_a_tag_without_a_value_separator_is_a_usage_error_before_any_call() -> None:
+    result, account = run(FRESH, "setup", "--tag", "team")
+    assert result.exit_code == 2
+    assert account.calls == []
+
+
 def test_a_dry_run_only_reads() -> None:
     _result, account = run(FRESH, "setup", "--dry-run")
     assert {call[0] for call in account.calls} == {
@@ -348,7 +370,8 @@ def test_the_command_help_and_options_match_the_contract() -> None:
     assert [option.name for option in options] == [o["name"] for o in CONTRACT["options"]]
     for option, expected in zip(options, CONTRACT["options"], strict=True):
         assert option.opts == expected["flags"]
-        assert option.type.name == expected["type"]
+        declared_type = f"list[{option.type.name}]" if option.multiple else option.type.name
+        assert declared_type == expected["type"]
         assert option.default == expected["default"]
         assert option.is_flag == expected["isFlag"]
         assert option.envvar is None

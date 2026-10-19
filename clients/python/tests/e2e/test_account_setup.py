@@ -12,6 +12,9 @@ Variables (todas genéricas, nada de la cuenta va en el repositorio):
 - `RAYITO_E2E_SETUP_ARTIFACT` (opcional): zip de la imagen ya construido
   (`--artifact`); sin él se descarga la release `rayd-v<versión>`, que no
   existe todavía durante la aceptación de una release.
+- `RAYITO_E2E_SETUP_TAGS` (opcional): etiquetas `K=V` separadas por comas
+  (`--tag`, una por cada una) para las pilas que crea `setup`; útil si una SCP
+  de la organización exige etiquetas al crear recursos. Nunca van en el código.
 - `RAYITO_E2E_SETUP_CREATE_BUCKET=1` (opcional): activa el test que crea el
   bucket con la pila `rayito-m0-artifacts` (`--bucket rayito-e2e-setup-<hex>`,
   un nombre sin cuenta); se salta si esa pila ya existe en la región.
@@ -59,6 +62,7 @@ pytestmark = pytest.mark.e2e
 REGION_VAR = "RAYITO_E2E_SETUP_REGION"
 BUCKET_VAR = "RAYITO_E2E_SETUP_BUCKET"
 ARTIFACT_VAR = "RAYITO_E2E_SETUP_ARTIFACT"
+TAGS_VAR = "RAYITO_E2E_SETUP_TAGS"
 CLI = (sys.executable, "-m", "rayito.cli")
 #: Un `setup` completo: pila (segundos), descarga y build de la imagen (≈ 10 min)
 #: más la cola de builds de la cuenta.
@@ -83,6 +87,8 @@ def cli_arguments(region: str, *arguments: str) -> list[str]:
         extra += ["--bucket", bucket]
     if artifact := os.environ.get(ARTIFACT_VAR):
         extra += ["--artifact", artifact]
+    for tag in filter(None, os.environ.get(TAGS_VAR, "").split(",")):
+        extra += ["--tag", tag.strip()]
     return [*CLI, "--region", region, "--json", "setup", *arguments, *extra]
 
 

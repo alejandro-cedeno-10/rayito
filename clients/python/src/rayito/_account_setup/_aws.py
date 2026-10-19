@@ -12,7 +12,7 @@ CloudFormation, §4 y §27 imágenes, `HeadBucket`) o ya lo usa el SDK
 from __future__ import annotations
 
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Any, Final, Protocol
 
 from botocore.exceptions import ClientError
@@ -60,7 +60,9 @@ class CloudFormationSetupStack:
     `OptionalStacks.status/deploy`: crear y actualizar son el mismo `deploy`,
     que decide por el estado actual y, al actualizar, conserva con
     `UsePreviousValue` todo parámetro que no se manda (sólo se manda el del
-    bucket: `ArtifactBucket` o `BucketName`)."""
+    bucket: `ArtifactBucket` o `BucketName`). `tags` (`--tag`) se manda como
+    etiquetas de la pila al crearla o actualizarla; CloudFormation las propaga
+    a sus recursos."""
 
     def __init__(
         self,
@@ -69,6 +71,7 @@ class CloudFormationSetupStack:
         component: StackComponent,
         stack_name: str,
         bucket_parameter: str,
+        tags: Mapping[str, str] | None = None,
         wait_timeout_seconds: float = DEFAULT_WAIT_TIMEOUT_SECONDS,
     ) -> None:
         self._provisioner = provisioner
@@ -76,6 +79,7 @@ class CloudFormationSetupStack:
         self._component = component
         self._stack_name = stack_name
         self._bucket_parameter = bucket_parameter
+        self._tags = dict(tags or {})
         self._wait_timeout = wait_timeout_seconds
 
     def observe(self) -> StackObservation:
@@ -104,6 +108,7 @@ class CloudFormationSetupStack:
                 self._component,
                 stack_name=self._stack_name,
                 parameters={self._bucket_parameter: bucket},
+                tags=self._tags,
                 wait_timeout=self._wait_timeout,
             ),
             self._stack_name,
@@ -111,7 +116,10 @@ class CloudFormationSetupStack:
 
 
 def iam_stack_gateway(
-    provisioner: StackProvisioner, *, wait_timeout_seconds: float = DEFAULT_WAIT_TIMEOUT_SECONDS
+    provisioner: StackProvisioner,
+    *,
+    tags: Mapping[str, str] | None = None,
+    wait_timeout_seconds: float = DEFAULT_WAIT_TIMEOUT_SECONDS,
 ) -> CloudFormationSetupStack:
     """La pila `rayito-m0-iam`, que recibe el bucket como `ArtifactBucket`."""
     return CloudFormationSetupStack(
@@ -119,12 +127,16 @@ def iam_stack_gateway(
         component=IAM_STACK_COMPONENT,
         stack_name=IAM_STACK_NAME,
         bucket_parameter=ARTIFACT_BUCKET_PARAMETER,
+        tags=tags,
         wait_timeout_seconds=wait_timeout_seconds,
     )
 
 
 def artifact_stack_gateway(
-    provisioner: StackProvisioner, *, wait_timeout_seconds: float = DEFAULT_WAIT_TIMEOUT_SECONDS
+    provisioner: StackProvisioner,
+    *,
+    tags: Mapping[str, str] | None = None,
+    wait_timeout_seconds: float = DEFAULT_WAIT_TIMEOUT_SECONDS,
 ) -> CloudFormationSetupStack:
     """La pila `rayito-m0-artifacts`, que recibe el bucket como `BucketName`."""
     return CloudFormationSetupStack(
@@ -132,6 +144,7 @@ def artifact_stack_gateway(
         component=ARTIFACT_STACK_COMPONENT,
         stack_name=ARTIFACT_STACK_NAME,
         bucket_parameter=BUCKET_NAME_PARAMETER,
+        tags=tags,
         wait_timeout_seconds=wait_timeout_seconds,
     )
 

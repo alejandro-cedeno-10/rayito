@@ -163,6 +163,33 @@ def test_the_artifact_stack_create_sends_only_the_bucket_name_and_no_capabilitie
     assert (observed.name, observed.status) == (ARTIFACT_STACK, "CREATE_COMPLETE")
 
 
+ORG_TAGS = {"team": "platform", "cost-center": "1234"}
+
+
+def test_the_tags_reach_the_create_of_both_stacks() -> None:
+    for gateway in (iam_stack_gateway, artifact_stack_gateway):
+        provisioner = FakeStackProvisioner()
+        gateway(provisioner, tags=ORG_TAGS).create(BUCKET)
+        assert ORG_TAGS.items() <= provisioner.sent_tags.items()
+
+
+def test_the_tags_reach_the_update_of_the_iam_stack() -> None:
+    provisioner = FakeStackProvisioner(stacks={STACK: deployed_stack()})
+    iam_stack_gateway(provisioner, tags=ORG_TAGS).update_bucket(OTHER_BUCKET)
+    assert ("update", STACK) in provisioner.calls
+    assert ORG_TAGS.items() <= provisioner.sent_tags.items()
+
+
+def test_without_tags_only_the_fixed_rayito_tags_are_sent() -> None:
+    provisioner = FakeStackProvisioner()
+    iam_stack_gateway(provisioner).create(BUCKET)
+    assert set(provisioner.sent_tags) == {
+        "rayito:component",
+        "rayito:managed-by",
+        "rayito:sdk-version",
+    }
+
+
 def stubbed(service: str) -> Any:
     session = boto3.session.Session(
         region_name=REGION, aws_access_key_id="testing", aws_secret_access_key="testing"

@@ -3156,6 +3156,19 @@
           "envvar": null
         },
         {
+          "name": "tag",
+          "kind": "option",
+          "flags": [
+            "--tag"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": true,
+          "default": [],
+          "is_flag": false,
+          "envvar": null
+        },
+        {
           "name": "yes",
           "kind": "option",
           "flags": [
