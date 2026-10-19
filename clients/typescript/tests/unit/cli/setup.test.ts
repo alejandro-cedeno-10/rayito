@@ -295,6 +295,32 @@ describe("rayito setup: an account without a bucket", () => {
   });
 });
 
+describe("rayito setup: --tag", () => {
+  it("passes every --tag to the stacks it creates and not to --json", async () => {
+    const outcome = await invoke({
+      args: ["--json", "setup", "--yes", "--tag", "Owner=team", "--tag", "Env=test"],
+      input: { ...FRESH, buckets: {} },
+    });
+    expect(outcome.exitCode).toBe(0);
+    const expected = { Owner: "team", Env: "test" };
+    expect(outcome.fake.tagsByCall.get("create_artifact_stack")).toEqual(expected);
+    expect(outcome.fake.tagsByCall.get("create")).toEqual(expected);
+    expect(Object.keys(JSON.parse(outcome.stdout))).toEqual(contract.json.documentKeys);
+  });
+
+  it("without --tag the stacks get no tags", async () => {
+    const outcome = await invoke({ args: ["setup", "--yes"], input: { ...FRESH, buckets: {} } });
+    expect(outcome.fake.tagsByCall.get("create")).toEqual({});
+  });
+
+  it("a malformed tag is a usage error before any AWS call", async () => {
+    const outcome = await invoke({ args: ["setup", "--yes", "--tag", "sin-igual"] });
+    expect(outcome.exitCode).toBe(2);
+    expect(outcome.stderr).toContain("--tag");
+    expect(outcome.fake.calls).toEqual([]);
+  });
+});
+
 describe("rayito setup: confirmation", () => {
   it("asks on a terminal and 'n' exits 1 without writing", async () => {
     const outcome = await invoke({ args: ["setup"], stdin: "n\n", terminal: true });

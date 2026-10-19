@@ -16,6 +16,8 @@ export class FakeStackProvisioner implements StackProvisioner {
   /** Los `parameters`/`keepPrevious` de la última `create`/`update`. */
   sentParameters: Readonly<Record<string, string>> = {};
   sentKeepPrevious: readonly string[] = [];
+  /** Las `tags` de la última `create`/`update`. */
+  sentTags: Readonly<Record<string, string>> = {};
   failWait = false;
   /** Cada `timeoutMs` que `wait()` recibió, en orden; espejo de
    * `fake_stacks.FakeStackProvisioner.wait_timeouts`. */
@@ -31,9 +33,11 @@ export class FakeStackProvisioner implements StackProvisioner {
     options: {
       readonly stackName: string;
       readonly parameters: Readonly<Record<string, string>>;
+      readonly tags?: Readonly<Record<string, string>>;
     },
   ): Promise<void> {
     this.calls.push(["create", options.stackName]);
+    this.sentTags = { ...options.tags };
     this.sentParameters = { ...options.parameters };
     this.sentKeepPrevious = [];
     this.stacks.set(options.stackName, {
@@ -50,9 +54,11 @@ export class FakeStackProvisioner implements StackProvisioner {
       readonly stackName: string;
       readonly parameters: Readonly<Record<string, string>>;
       readonly keepPrevious?: readonly string[];
+      readonly tags?: Readonly<Record<string, string>>;
     },
   ): Promise<UpdateOutcome> {
     this.calls.push(["update", options.stackName]);
+    this.sentTags = { ...options.tags };
     const keepPrevious = options.keepPrevious ?? [];
     this.sentParameters = { ...options.parameters };
     this.sentKeepPrevious = keepPrevious;

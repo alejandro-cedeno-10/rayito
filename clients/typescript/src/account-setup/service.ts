@@ -71,12 +71,14 @@ import {
   stepOf,
   verifyChecksum,
 } from "./domain.js";
-import type { AccountSetupGateways, Progress } from "./ports.js";
+import type { AccountSetupGateways, Progress, StackTags } from "./ports.js";
 
 export interface ApplyOptions {
   /** Directorio temporal propio de la invocación, donde se descarga la release. */
   readonly workdir: string;
   readonly onProgress: Progress;
+  /** Etiquetas de `--tag` para las pilas que `apply` crea o actualiza; sin ellas, ninguna. */
+  readonly tags?: StackTags;
 }
 
 export class AccountSetup {
@@ -99,8 +101,9 @@ export class AccountSetup {
 
   /** Aplica el plan: el bucket (si falta), luego la pila de IAM y por último la imagen. */
   async apply(plan: SetupPlan, options: ApplyOptions): Promise<SetupResult> {
-    const bucket = await this.#applyBucket(plan, options.onProgress);
-    const stack = await this.#applyStack(plan, bucket, options.onProgress);
+    const tags = options.tags ?? {};
+    const bucket = await this.#applyBucket(plan, options.onProgress, tags);
+    const stack = await this.#applyStack(plan, bucket, options.onProgress, tags);
     return this.#applyImage(plan, bucket, stack, options);
   }
 
@@ -129,14 +132,14 @@ export class AccountSetup {
   }
 
   /** Crea o espera la pila del bucket y devuelve su `BucketName`; un bucket reutilizado no se escribe. */
-  async #applyBucket(plan: SetupPlan, onProgress: Progress): Promise<string> {
+  async #applyBucket(plan: SetupPlan, onProgress: Progress, tags: StackTags): Promise<string> {
     const step = stepOf(plan, "bucket");
     const { artifactStack } = this.#gateways;
     const stack = { name: ARTIFACT_STACK_NAME };
     let observed: StackObservation;
     if (step.action === "create") {
       onProgress(formatTemplate(PROGRESS_MESSAGES.bucketCreate, { ...stack, bucket: step.name }));
-      observed = await artifactStack.create(step.name);
+      observed = await artifactStack.create(step.name, tags);
     } else if (step.action === "wait") {
       onProgress(
         formatTemplate(PROGRESS_MESSAGES.bucketWait, { ...stack, status: step.status ?? "" }),
@@ -154,6 +157,7 @@ export class AccountSetup {
     plan: SetupPlan,
     bucket: string,
     onProgress: Progress,
+    tags: StackTags,
   ): Promise<StackObservation | undefined> {
     const step = stepOf(plan, "iamStack");
     const { iamStack } = this.#gateways;
@@ -161,10 +165,10 @@ export class AccountSetup {
     let observed: StackObservation;
     if (step.action === "create") {
       onProgress(formatTemplate(PROGRESS_MESSAGES.stackCreate, name));
-      observed = await iamStack.create(bucket);
+      observed = await iamStack.create(bucket, tags);
     } else if (step.action === "update") {
       onProgress(formatTemplate(PROGRESS_MESSAGES.stackUpdate, name));
-      observed = await iamStack.updateBucket(bucket);
+      observed = await iamStack.updateBucket(bucket, tags);
     } else if (step.action === "wait") {
       onProgress(
         formatTemplate(PROGRESS_MESSAGES.stackWait, { ...name, status: step.status ?? "" }),

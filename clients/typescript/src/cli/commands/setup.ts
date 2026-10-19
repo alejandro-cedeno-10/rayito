@@ -33,6 +33,7 @@ import {
   type SetupFailure,
   setupDocument,
 } from "../setup-output.js";
+import { pairsOrUsage } from "./sandbox.js";
 
 const WORKDIR_PREFIX = "rayito-setup-";
 
@@ -85,10 +86,11 @@ async function applyPlan(
   context: CommandContext,
   plan: SetupPlan,
   setup: AccountSetup,
+  tags: Readonly<Record<string, string>>,
 ): Promise<SetupResult> {
   const workdir = await mkdtemp(join(tmpdir(), WORKDIR_PREFIX));
   try {
-    return await setup.apply(plan, { workdir, onProgress: progress(context) });
+    return await setup.apply(plan, { workdir, onProgress: progress(context), tags });
   } finally {
     await rm(workdir, { recursive: true, force: true });
   }
@@ -194,6 +196,7 @@ async function runSetup(
   const { values, console } = context;
   const artifact = values.string("artifact");
   const dryRun = values.flag("dry_run");
+  const tags = pairsOrUsage(values.strings("tag"), "--tag");
   if (artifact !== undefined) {
     requireFullArtifact(artifact);
   }
@@ -231,7 +234,7 @@ async function runSetup(
   if (!(await confirmed(context, plan, values.flag("yes")))) {
     return EXIT_FAILURE;
   }
-  return finish(context, services, plan, await applyPlan(context, plan, setup));
+  return finish(context, services, plan, await applyPlan(context, plan, setup, tags));
 }
 
 export const setupCommand = defineCommand({
@@ -249,6 +252,14 @@ export const setupCommand = defineCommand({
       help:
         "Zip de la imagen ya verificado (p. ej. con cosign); sin él se descarga " +
         "rayito-image.zip de la release rayd-v<versión del SDK> y se comprueba contra su SHA256SUMS.",
+    }),
+    option(["--tag"], {
+      multiple: true,
+      default: [],
+      help:
+        "Etiqueta K=V; repetible. Se aplica a las pilas que crea setup (rayito-m0-artifacts y " +
+        "rayito-m0-iam) y CloudFormation la propaga a sus recursos; útil si la organización " +
+        "exige etiquetas.",
     }),
     flag(["--yes"], {
       help: "No pedir confirmación (hace falta sin terminal o con --json si hay algo que crear).",
