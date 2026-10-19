@@ -57,6 +57,11 @@ for *using* the SDK afterwards, not for preparing it. You do not need to create
 a bucket first: if you already have one, `rayito setup` reuses it, and if not,
 it creates one.
 
+If your organization requires tags to create resources (an SCP that denies
+`s3:CreateBucket` or `cloudformation:CreateStack` without them), pass them with
+`--tag K=V`, repeatable: `rayito setup` puts them on the stacks it creates and
+CloudFormation propagates them to their resources.
+
 ## 2. Prepare the account with `rayito setup` { #2-prepara-la-cuenta-con-rayito-setup }
 
 `rayito setup` looks at your account and region, shows the plan and the cost,

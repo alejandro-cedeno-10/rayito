@@ -78,6 +78,12 @@ or bucket, the message ends with the hint "si la cuenta o la región aún no
 están preparadas, ejecuta `rayito setup`" (if the account or region are not
 prepared yet, run `rayito setup`).
 
+If `setup` fails with `AccessDenied` or an explicit deny on `s3:CreateBucket` or `cloudformation:CreateStack` (or `stack_blocked` with that reason in `describe-stack-events`) because an SCP in your organization requires tags, run it again with the ones it asks for, one `--tag` for each (the values here are examples):
+
+```bash
+rayito setup --tag Owner=platform --tag Project=agents
+```
+
 ## Credentials and region { #credenciales-y-region }
 
 **`ExpiredTokenException`, `Token has expired`, `UnauthorizedSSOTokenError`.**

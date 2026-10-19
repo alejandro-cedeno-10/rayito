@@ -614,7 +614,7 @@ siempre disponible dentro de tu cuenta, con inicio de sesión y auditoría:
 
 ```bash
 rayito [--profile P] [--region R] [--json] [--verbose] setup
-       [--bucket BUCKET] [--artifact PATH] [--yes] [--dry-run]
+       [--bucket BUCKET] [--artifact PATH] [--tag K=V ...] [--yes] [--dry-run]
 ```
 
 Prepara la cuenta y la región para Rayito en una orden idempotente, como
@@ -624,10 +624,17 @@ Prepara la cuenta y la región para Rayito en una orden idempotente, como
 |---|---|
 | `--bucket BUCKET` | Bucket de artefactos en la misma región; por defecto `RAYITO_BUCKET`, el de la pila de IAM, el del bootstrap de CDK o uno nuevo `rayito-artifacts-<cuenta>-<región>`. Si no existe, se crea con ese nombre (pila `rayito-m0-artifacts`). |
 | `--artifact PATH` | Zip de la imagen ya verificado (p. ej. con cosign); sin él se descarga `rayito-image.zip` de la release `rayd-v<versión del SDK>` y se comprueba contra su `SHA256SUMS`. Sólo vale el zip de la variante `full`, sin EFS. |
+| `--tag K=V` | Etiqueta K=V; repetible. Se aplica a las pilas que crea setup (rayito-m0-artifacts y rayito-m0-iam) y CloudFormation la propaga a sus recursos; útil si la organización exige etiquetas. Una pila reutilizada no se reetiqueta y la imagen no recibe etiquetas. |
 | `--yes` | No pedir confirmación (hace falta sin terminal o con `--json` si hay algo que crear). |
 | `--dry-run` | Sólo lee la cuenta y muestra el plan; no crea ni cambia nada. |
 
 `RAYITO_BUCKET` lo lee la orden, no el parser, igual que `rayito doctor`.
+
+Con etiquetas, si tu organización las exige:
+
+```bash
+rayito setup --tag Owner=platform --tag Project=agents
+```
 
 **El plan** son siempre tres pasos, en este orden:
 

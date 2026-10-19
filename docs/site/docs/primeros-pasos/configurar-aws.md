@@ -58,6 +58,11 @@ alcanza para esto: es la mínima para *usar* el SDK después, no para prepararlo
 No necesitas crear ningún bucket antes: si ya tienes uno, `rayito setup` lo
 reutiliza, y si no, lo crea.
 
+Si tu organización exige etiquetas para crear recursos (una SCP que deniega
+`s3:CreateBucket` o `cloudformation:CreateStack` sin ellas), pásalas con
+`--tag K=V`, repetible: `rayito setup` las pone en las pilas que crea y
+CloudFormation las propaga a sus recursos.
+
 ## 2. Prepara la cuenta con `rayito setup` { #2-prepara-la-cuenta-con-rayito-setup }
 
 `rayito setup` mira tu cuenta y tu región, enseña el plan y el coste, pide

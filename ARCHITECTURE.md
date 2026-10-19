@@ -3314,4 +3314,9 @@ prohibía crear un bucket) y a la alternativa descartada «crear el bucket si fa
   `no_bucket` desaparece y `bucket_unavailable` queda sólo para el 403.
 - *Riesgo.* Una SCP de la organización puede denegar `s3:CreateBucket` o
   `s3:PutBucketPolicy`; la aceptación lo simula antes de escribir nada.
-- Detalle (D2, D4, D10) en `openspec/changes/account-setup/design.md`.
+- *Etiquetas de pila.* `rayito setup --tag K=V` (repetible) pasa las etiquetas
+  como `Tags` de `CreateStack`/`UpdateStack` de `rayito-m0-artifacts` y
+  `rayito-m0-iam`; CloudFormation las propaga a los recursos. Una pila
+  reutilizada no se reetiqueta y la imagen no las recibe. Existe porque una SCP
+  que exige etiquetas deniega `s3:CreateBucket` sin ellas (D11).
+- Detalle (D2, D4, D10, D11) en `openspec/changes/account-setup/design.md`.

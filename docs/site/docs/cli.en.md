@@ -628,7 +628,7 @@ available inside your account, with sign-in and audit:
 
 ```bash
 rayito [--profile P] [--region R] [--json] [--verbose] setup
-       [--bucket BUCKET] [--artifact PATH] [--yes] [--dry-run]
+       [--bucket BUCKET] [--artifact PATH] [--tag K=V ...] [--yes] [--dry-run]
 ```
 
 Prepares the account and region for Rayito in one idempotent command, like
@@ -638,10 +638,17 @@ Prepares the account and region for Rayito in one idempotent command, like
 |---|---|
 | `--bucket BUCKET` | Artifacts bucket in the same region; by default `RAYITO_BUCKET`, the IAM stack's one, the CDK bootstrap one or a new `rayito-artifacts-<account>-<region>`. If it does not exist, it is created with that name (`rayito-m0-artifacts` stack). |
 | `--artifact PATH` | Already verified image zip (e.g. with cosign); without it, `rayito-image.zip` is downloaded from the `rayd-v<SDK version>` release and checked against its `SHA256SUMS`. Only the `full` variant zip, without EFS, is valid. |
+| `--tag K=V` | Etiqueta K=V; repetible. Se aplica a las pilas que crea setup (rayito-m0-artifacts y rayito-m0-iam) y CloudFormation la propaga a sus recursos; útil si la organización exige etiquetas. (Help text, in Spanish like the rest of the CLI: K=V tag, repeatable; applied to the stacks setup creates and propagated by CloudFormation to their resources; useful if your organization requires tags. Reused stacks are not retagged and the image gets none.) |
 | `--yes` | Do not ask for confirmation (required without a terminal or with `--json` if there is anything to create). |
 | `--dry-run` | Only reads the account and shows the plan; creates or changes nothing. |
 
 `RAYITO_BUCKET` is read by the command, not by the parser, like `rayito doctor`.
+
+With tags, if your organization requires them:
+
+```bash
+rayito setup --tag Owner=platform --tag Project=agents
+```
 
 **The plan** is always three steps, in this order:
 

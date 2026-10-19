@@ -462,6 +462,31 @@ deploys the template by hand. No versioning, no access logging (another
 bucket to create and pay for), no `AbortIncompleteMultipartUpload` (the
 image upload is a single `PutObject`).
 
+### D11. Stack tags for tag-enforcing SCPs
+
+`rayito setup` accepts `--tag K=V`, repeatable. Every tag is passed as a
+CloudFormation stack `Tags` entry in the `CreateStack` and `UpdateStack` calls
+of the two stacks setup owns (`rayito-m0-artifacts` and `rayito-m0-iam`);
+CloudFormation propagates stack tags to the resources it creates, so the
+bucket, the roles and the policies carry them without any per-resource call.
+A reused stack is not retagged (setup makes no write on it), and the tags are
+not applied to the MicroVM image (`CreateMicrovmImage` is unchanged). Without
+`--tag` the calls are byte-for-byte the ones of D1-D10. The option and its
+`K=V` parsing are the same as in `rayito stack deploy` and
+`rayito events deploy`; a malformed value is a usage error (exit 2) before any
+AWS call. The help text lives in `testdata/account-setup/contract.json`.
+
+Why: the acceptance run found that the test account's SCP denies
+`s3:CreateBucket` when the request carries no organization tags, so the
+bucket stack failed with an explicit deny. The same SCP shape applies to
+other creating actions. Stack tags are the smallest fix: no new IAM or S3
+call, and CloudFormation is already the record of what setup created (D4).
+
+Alternatives: tagging the bucket with `PutBucketTagging` after creation (too
+late for a deny on `CreateBucket`, and a new write API); a template parameter
+per tag (the tag keys are not known in advance); tagging the image (not
+needed by the SCP finding, and `CreateMicrovmImage` stays out of scope).
+
 ## Alternatives considered
 
 - **Never create a bucket** (the first version of this design): stop with
