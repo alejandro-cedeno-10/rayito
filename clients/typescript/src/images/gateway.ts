@@ -30,6 +30,12 @@ const BASE_IMAGE_VERSION_KEY = "baseImageVersion";
 export const LAUNCHABLE_IMAGE_STATES: ReadonlySet<string> = new Set(["CREATED", "UPDATED"]);
 /** Imagen que ya no va a terminar: sondearla hasta el timeout sería esperar en vano. */
 export const FAILED_IMAGE_STATES: ReadonlySet<string> = new Set(["CREATE_FAILED", "UPDATE_FAILED"]);
+/**
+ * Versiones de imagen cuyo build sigue en marcha (`MicrovmImageVersionState`,
+ * `AWS_API_NOTES.md` §4): `rayito setup` espera a la más nueva en vez de
+ * lanzar un segundo build.
+ */
+export const BUILDING_VERSION_STATES: ReadonlySet<string> = new Set(["PENDING", "IN_PROGRESS"]);
 const SETTLED_VERSION_STATES: ReadonlySet<string> = new Set([
   SUCCESSFUL_VERSION_STATE,
   FAILED_VERSION_STATE,

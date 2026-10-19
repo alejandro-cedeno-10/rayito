@@ -5,6 +5,7 @@
  * espejo de `clients/python/tests/unit/cli/command_cases_runner.py`.
  */
 
+import type { AccountSetupGateways } from "../../../src/account-setup/ports.js";
 import type {
   ControlPlane,
   ListMicrovmsOptions,
@@ -282,6 +283,7 @@ export function buildWorld(world: CaseWorld): BuiltWorld {
     logs: new CaseLogs(world),
     doctor: unused<DoctorAws>("doctor"),
     publishPorts: unused<PublishPorts>("image publish"),
+    accountSetup: unused<AccountSetupGateways>("setup"),
     prunePorts: unused<PrunePorts>("image prune"),
     templates: unused<TemplateTools>("template"),
     lifecycleEvents: (stackName) =>

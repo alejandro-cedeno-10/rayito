@@ -52,6 +52,7 @@ import {
   listCommand as sandboxList,
 } from "./commands/sandbox.js";
 import { connectCommand, proxyCommand } from "./commands/sandbox-interactive.js";
+import { setupCommand } from "./commands/setup.js";
 import {
   deployCommand,
   destroyCommand,
@@ -100,6 +101,7 @@ export const COMMANDS: readonly CommandDefinition[] = [
   pruneCommand,
   zipCommand,
   doctorCommand,
+  setupCommand,
   templateBuild,
   templateStatus,
   templateLogs,

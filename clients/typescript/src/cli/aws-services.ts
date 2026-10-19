@@ -46,6 +46,7 @@ import type {
   SandboxListQuery,
   SessionSettings,
 } from "./services.js";
+import { sdkAccountSetupGateways } from "./setup-adapters.js";
 
 const PROFILE_ENV_VAR = "AWS_PROFILE";
 const REGION_ENV_VAR = "AWS_REGION";
@@ -195,6 +196,7 @@ export async function createAwsServices(settings: SessionSettings): Promise<CliS
       return sts.send(command);
     },
   };
+  const doctor = new SdkDoctorAws({ region, credentials, plane: controlPlane });
   return {
     region,
     controlPlane,
@@ -204,8 +206,9 @@ export async function createAwsServices(settings: SessionSettings): Promise<CliS
     images: catalog,
     imageArtifacts: catalog,
     logs: new CloudWatchLogsApi(region, credentials),
-    doctor: new SdkDoctorAws({ region, credentials, plane: controlPlane }),
+    doctor,
     publishPorts,
+    accountSetup: sdkAccountSetupGateways({ region, credentials, doctor, publishPorts }),
     prunePorts: new SdkPrunePorts({
       region,
       credentials,

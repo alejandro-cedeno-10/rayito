@@ -22,6 +22,7 @@ import {
 import { GetCallerIdentityCommand, STSClient } from "@aws-sdk/client-sts";
 import { NodeHttpHandler } from "@smithy/node-http-handler";
 import { abortReasonOr, raceAbort } from "../abort.js";
+import { withSetupHint } from "../account-setup/domain.js";
 import {
   AuthenticationError,
   CapacityError,
@@ -534,9 +535,25 @@ export class LambdaMicrovmsControlPlane implements ControlPlane {
     return `arn:${identity.partition}:lambda:${this.region}:${identity.account}:microvm-image:${template}`;
   }
 
+  /**
+   * Una imagen o una cuenta sin preparar da `ResourceNotFoundException`: el
+   * mensaje añade la pista de `rayito setup` y la clase, el código y la causa
+   * quedan como estaban.
+   */
   async runMicrovm(request: LaunchRequest): Promise<SandboxInfo> {
-    const response = await this.#invoke("RunMicrovm", new RunMicrovmCommand(request.toApi()));
-    return sandboxInfoFromResponse(response as MicrovmResponse);
+    try {
+      const response = await this.#invoke("RunMicrovm", new RunMicrovmCommand(request.toApi()));
+      return sandboxInfoFromResponse(response as MicrovmResponse);
+    } catch (error) {
+      if (error instanceof SandboxNotFoundError) {
+        throw new SandboxNotFoundError(withSetupHint(error.message), {
+          statusCode: error.statusCode,
+          awsCode: error.awsCode,
+          cause: error.cause,
+        });
+      }
+      throw error;
+    }
   }
 
   async getMicrovm(sandboxId: string, options: ControlPlaneCallOptions = {}): Promise<SandboxInfo> {
