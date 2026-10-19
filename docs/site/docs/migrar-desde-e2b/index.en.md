@@ -19,8 +19,8 @@ changing **one import line**. `rayito.e2b` (Python) and `rayito/e2b`
 ### 1. Prepare your AWS account { #1-prepara-tu-cuenta-de-aws }
 
 Run `rayito setup` ([Set up AWS](../primeros-pasos/configurar-aws.md)): it
-leaves the IAM stack and the published `rayito-base` image ready, on a bucket
-you already have (it never creates buckets). It is the equivalent of having an
+leaves the IAM stack and the published `rayito-base` image ready, on the bucket
+you already have or, if there is none, one it creates. It is the equivalent of having an
 E2B account with its default template.
 
 ### 2. Install Rayito { #2-instala-rayito }

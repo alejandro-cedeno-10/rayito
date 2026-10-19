@@ -143,8 +143,11 @@ environment variable and discovery; none of them creates anything silently:
 - The **region** is `--region`, `[deploy] region`, `AWS_REGION` or your profile's.
 - The **base image** is the newest version of `rayito-base-caps`. If it does not
   exist it is published only with `--base-artifact` and `--yes`.
-- The artifact **bucket** is `--bucket`, `[deploy] bucket`, `RAYITO_BUCKET` or the
-  account's CDK bootstrap bucket. Rayito does not create buckets.
+- The artifact **bucket** is `--bucket`, `[deploy] bucket`, `RAYITO_BUCKET`, the
+  account's CDK bootstrap bucket or the one `rayito setup` created.
+  `rayito agent deploy` does not create buckets: if there is none, run
+  [`rayito setup`](../primeros-pasos/configurar-aws.md#2-prepara-la-cuenta-con-rayito-setup)
+  first, which creates one if needed.
 - The **model secret** is `--secret`, the file's, or the one with the
   conventional name `rayito/agents/<project>/<provider>`. Only with
   `--create-secret` is a missing one created, from the provider's standard
@@ -262,7 +265,7 @@ these three shapes, those of [`CustomRuntime`](#otros-frameworks-customruntime):
    calls the SDK ([Agent in the sandbox](agente-en-el-sandbox.md#1-el-secreto-y-la-pasarela)).
 3. Access to the model at your provider
    ([Agent providers](agente-proveedores.md)).
-4. An S3 bucket for the build artifact and `RayitoTemplateBuilder` for whoever
+4. An S3 bucket for the build artifact (the one `rayito setup` leaves) and `RayitoTemplateBuilder` for whoever
    builds ([Agent templates](../funciones-opcionales/templates-de-agente.md)).
 
 `rayito agent init` and `rayito agent export` work without any of this: they
@@ -277,7 +280,7 @@ your requirements) and deploying it (≈ 20 seconds until the service answers).
 
 | What | How | How long |
 |---|---|---|
-| An S3 bucket for the build artifact | `export RAYITO_BUCKET=amzn-s3-demo-bucket` ([Configure AWS](../primeros-pasos/configurar-aws.md#2-prepara-la-cuenta-con-rayito-setup)) | 1 min |
+| An S3 bucket for the build artifact | `rayito setup` reuses or creates one and prints `RAYITO_BUCKET=<bucket>`; if you prefer your own, `export RAYITO_BUCKET=amzn-s3-demo-bucket` ([Configure AWS](../primeros-pasos/configurar-aws.md#2-prepara-la-cuenta-con-rayito-setup)) | included in `rayito setup` |
 | The `rayito-base-caps` base image | publish it from the release `rayito-image.zip` ([Configure AWS](../primeros-pasos/configurar-aws.md#a-mano-sin-rayito-setup)) | ≈ 4 min |
 | The version of the AWS managed base | no need to look it up by hand: with `--base-image-version latest`, `rayito image publish` uses the newest one AWS lists and prints it; an explicit number pins a reproducible build | — |
 
