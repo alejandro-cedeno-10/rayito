@@ -16,6 +16,15 @@ import {
 } from "../images/gateway.js";
 import { BUILD_ROLE_OUTPUT_KEY, DEFAULT_STACK_NAME } from "../images/publish-domain.js";
 import { SUPPORTED_REGIONS } from "../limits.js";
+import {
+  classifyStack,
+  DELETING_STACK_STATE,
+  IN_PROGRESS_STACK_SUFFIX,
+  type StackCondition,
+  type StackObservation,
+  USABLE_STACK_STATES,
+} from "../stacks/condition.js";
+import { formatTemplate, type TemplateFields } from "../template-text.js";
 
 /** La pila de IAM de `infra/iam.yaml` con su nombre histórico. */
 export const IAM_STACK_NAME = DEFAULT_STACK_NAME;
@@ -58,15 +67,6 @@ export const IMAGE_ASSET_NAME = "rayito-image.zip";
 export const CHECKSUMS_ASSET_NAME = "SHA256SUMS";
 /** El plazo de cada descarga de la release, en milisegundos (600 s). */
 export const RELEASE_DOWNLOAD_TIMEOUT_MS = 600_000;
-/** Estados de pila que sirven tal cual (`UPDATE_ROLLBACK_COMPLETE` vuelve a la última plantilla buena). */
-export const USABLE_STACK_STATES: ReadonlySet<string> = new Set([
-  "CREATE_COMPLETE",
-  "UPDATE_COMPLETE",
-  "UPDATE_ROLLBACK_COMPLETE",
-]);
-export const IN_PROGRESS_STACK_SUFFIX = "_IN_PROGRESS";
-/** Esperar a que una pila que se borra "esté desplegada" no terminaría nunca. */
-export const DELETING_STACK_STATE = "DELETE_IN_PROGRESS";
 /** Una línea de `sha256sum`: 64 hexadecimales en minúsculas, un espacio y el modo (espacio o `*`). */
 const CHECKSUM_LINE_PATTERN = /^([0-9a-f]{64}) [ *](\S.*)$/;
 
@@ -82,7 +82,6 @@ export type BucketSource =
 /** El resultado de un `HeadBucket`: 200, 404 (`NoSuchBucket`, `NotFound`) o 403 (existe pero no es accesible). */
 export type BucketState = "found" | "missing" | "forbidden";
 export type ImageSource = "release" | "artifact";
-export type StackCondition = "missing" | "usable" | "in_progress" | "blocked";
 export type ImageCondition = "missing" | "launchable" | "building" | "unlaunchable";
 export type ErrorCode =
   | "unsupported_region"
@@ -198,18 +197,17 @@ export const ACCOUNT_SETUP_HINT =
   "si la cuenta o la región aún no están preparadas, ejecuta `rayito setup`";
 export const HINT_TEMPLATE = "{message} ({hint})";
 
-export type TemplateFields = Readonly<Record<string, string | number>>;
-
-/** Rellena los `{campo}` de `template`; un campo sin valor es un error de programación. */
-export function formatTemplate(template: string, fields: TemplateFields): string {
-  return template.replace(/\{(\w+)\}/g, (_match, key: string) => {
-    const value = fields[key];
-    if (value === undefined) {
-      throw new Error(`falta el campo ${key} del mensaje`);
-    }
-    return String(value);
-  });
-}
+/** Los estados, la clasificación y la observación de una pila viven en `stacks/condition.ts`; `rayito setup` y `--target agentcore` comparten una sola definición. */
+export {
+  classifyStack,
+  DELETING_STACK_STATE,
+  formatTemplate,
+  IN_PROGRESS_STACK_SUFFIX,
+  type StackCondition,
+  type StackObservation,
+  type TemplateFields,
+  USABLE_STACK_STATES,
+};
 
 /** Un fallo de `rayito setup`; `code` es una lista cerrada y `exitCode` el de la CLI. */
 export class AccountSetupError extends Error {
@@ -230,14 +228,6 @@ export interface SetupRequest {
   readonly environmentBucket: string | undefined;
   readonly artifact: string | undefined;
   readonly sdkVersion: string;
-}
-
-export interface StackObservation {
-  readonly name: string;
-  /** `undefined` si la pila no existe. */
-  readonly status: string | undefined;
-  readonly outputs: Readonly<Record<string, string>>;
-  readonly parameters: Readonly<Record<string, string>>;
 }
 
 export interface BucketCandidate {
@@ -472,20 +462,6 @@ export function creationTarget(request: SetupRequest, account: string): BucketCa
       source: "rayitoDefault",
     }
   );
-}
-
-export function classifyStack(stack: StackObservation): StackCondition {
-  const status = stack.status;
-  if (status === undefined) {
-    return "missing";
-  }
-  if (USABLE_STACK_STATES.has(status)) {
-    return "usable";
-  }
-  if (status !== DELETING_STACK_STATE && status.endsWith(IN_PROGRESS_STACK_SUFFIX)) {
-    return "in_progress";
-  }
-  return "blocked";
 }
 
 /** La salida `key` de una pila; sin ella no es la plantilla `template` de Rayito (`stack_incomplete`). */
