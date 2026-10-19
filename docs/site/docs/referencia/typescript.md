@@ -209,6 +209,66 @@ El arranque rápido (`prefetch`, `agentPoolWarmup` y un `SandboxPool`
 caliente) es opcional: [¿Qué uso?](../guias/agente-en-el-sandbox.md#que-uso).
 Guía completa: [Agente en el sandbox](../guias/agente-en-el-sandbox.md).
 
+## Desplegar en AgentCore (`deployAgent`) { #agentcore }
+
+Desde 0.15.0 (todavía sin publicar). `deployAgent()` y `planDeploy()` aceptan
+`target: "agentcore"` y `agentcore` (las opciones del destino). Sin `target`, o
+con `"microvm"`, devuelven lo de siempre (`AgentFleet`, `AgentDeployPlan`) y no
+se carga ningún cliente de AgentCore, CodeBuild ni ECR. Con `"agentcore"` hacen
+falta, como peers opcionales, `@aws-sdk/client-bedrock-agentcore-control`,
+`@aws-sdk/client-bedrock-agentcore`, `@aws-sdk/client-codebuild` y
+`@aws-sdk/client-ecr`. Guía:
+[Desplegar en AgentCore](../guias/desplegar-en-agentcore.md).
+
+!!! info "Coste y activación"
+    - **Activa:** `target: "agentcore"` en `deployAgent()`. `planDeploy()` no llama a AWS.
+    - **Recursos y llamadas AWS:** una pila de CloudFormation por agente, un build
+      de CodeBuild por cada contenido nuevo y un runtime de AgentCore.
+    - **Coste aproximado** (us-east-1, precios de lista, 2026-10-19): runtime a
+      $0,0895 por vCPU-hora y $0,00945 por GB-hora de uso real; build a $0,0034
+      por minuto; imagen en ECR a $0,10 por GB-mes
+      ([Precios](../cost.md#coste-de-un-agente-en-agentcore)).
+    - **IAM:** [los permisos de la guía](../guias/desplegar-en-agentcore.md#antes-de-empezar).
+    - **Cómo apagarla:** `await fleet.delete()`.
+    - **Ejemplo:** el de abajo.
+
+| TypeScript | Python | Devuelve |
+|---|---|---|
+| `deployAgent(path, { target: "agentcore", options?, agentcore? })` | `deploy_agent(path, target="agentcore", agentcore=...)` | `AgentCoreFleet` |
+| `planDeploy(path, { target: "agentcore", ... })` | `plan_deploy(path, target="agentcore", ...)` | `AgentCoreDeployPlan` (no llama a AWS) |
+| `AgentCoreFleet.connect(name, { region?, credentials? })` | `AgentCoreFleet.connect(name, region=..., session=...)` | `AgentCoreFleet` |
+| `fleet.invoke(prompt, { sessionId?, model?, reasoning? })` | `fleet.invoke(prompt, session_id=..., model=..., reasoning=...)` | `AgentResult`; la misma firma que `AgentFleet` |
+| `fleet.stream(prompt, opts?)` | `fleet.stream(prompt, ...)` | `AgentCoreFleetStream` (`AsyncIterable<AgentEvent>`, `sessionId`, `result()`, `close()`) |
+| `fleet.status()` | `fleet.status()` | `AgentCoreStatus` |
+| `fleet.stopSession(sessionId)` | `fleet.stop_session(session_id)` | `boolean` |
+| `fleet.delete()` | `fleet.delete()` | `AgentCoreDeleteResult` |
+
+`AgentCoreOptions`: `bedrockModels`, `readableSecrets`, `idleSessionTimeoutMs`,
+`maxSessionLifetimeMs` (milisegundos, convertidos a segundos enteros: un valor
+que no es múltiplo de 1000 es `lifecycle_invalid`) y `tags`. `AgentCoreFleet`
+tiene `name`, `region`, `runtimeName`, `runtimeId`, `runtimeArn`,
+`runtimeVersion`, `imageUri` y `logGroup`; `AgentCoreStatus` añade `status`, y
+`AgentCoreDeleteResult` lleva `runtimeDeleted`, `stackDeleted` y
+`logGroupDeleted`. Los fallos propios son `AgentCoreError` (`code`, `exitCode`;
+[Errores](errores.md#agentcore)).
+
+```ts
+import { deployAgent } from "rayito";
+
+const fleet = await deployAgent("./mi-agente", {
+  options: { bucket: "amzn-s3-demo-bucket" },
+  target: "agentcore",
+  agentcore: {
+    bedrockModels: ["us.anthropic.claude-haiku-4-5-20251001-v1:0"],
+    readableSecrets: ["mi-app/clave-externa"],
+    idleSessionTimeoutMs: 600_000,
+    maxSessionLifetimeMs: 3_600_000,
+    tags: { Owner: "plataforma" },
+  },
+});
+console.log(fleet.runtimeArn, fleet.runtimeVersion);
+```
+
 ## Pool { #pool }
 
 | TypeScript | Python |
@@ -249,7 +309,7 @@ Apagadas por defecto; cada una carga su *peerDependency* sólo al activarse.
 ## Errores { #errores }
 
 `SandboxError` y sus subclases, `AuthenticationError`, `QuotaExceededError`,
-`CapacityError` y `UnimplementedError`. Tabla completa con su equivalente en
+`CapacityError`, `UnimplementedError` y `AgentCoreError` (el despliegue en AgentCore). Tabla completa con su equivalente en
 Python: [Errores](errores.md).
 
 ```ts
@@ -292,9 +352,10 @@ aquí es privado.
 | Modelos | `Execution`, `Result`, `FileType`, `FilesystemEventType`, `EgressEnforcement`, `HostAccess`, `S3Prefix`, `ALL_TRAFFIC`, `DEFAULT_PERSIST_TIMEOUT_MS`, `defaultIdlePolicy` |
 | Gráficos | `ChartType`, `ScaleType`, `parseChart` |
 | Agente de IA | `AgentSpec`, `AgentModel`, `AgentLimits`, `AgentPermissions`, `SubAgent`, `McpLocal`, `McpRemote`, `DeepAgents`, `TokenUsage`, `agentFailed`, `bedrockGateway`, `anthropicGateway`, `openaiCompatibleGateway`, `AgentTemplate`, `AGENT_TEMPLATE_RUNTIMES`, `DEFAULT_AGENT_TEMPLATE_BASE`, `DEFAULT_AGENT_TEMPLATE_NAME`, `agentPoolWarmup` |
+| Despliegue en AgentCore | `AgentCoreFleet`, `AgentCoreFleetStream` |
 | Pool | `SandboxPool`, `InMemoryPoolBackend`, `JsonFilePoolBackend`, `validatePoolConfig` |
 | Funciones opcionales | `SecretStore`, `SecretCache`, `SecretRef`, `DynamoDbIndex`, `S3Mount`, `LifecycleEvents`, `TelemetryExport`, `OtlpAuth`, `DEFAULT_INTERVAL_S`, `MIN_INTERVAL_S`, `MAX_INTERVAL_S`, `DEFAULT_SERVICE_NAME`, `SecretGateway`, `GatewayStatus`, `GatewayHandle`, `Template`, `ReadyCommand`, `waitForPort`, `waitForUrl`, `waitForProcess`, `waitForFile`, `OptionalStacks`, `Quotas`, `UsageCost`, `Fleet`, `QuotaReport`, `QuotaEntry`, `BulkResult`, `VolumeStore`, `EfsVolume`, `EfsVolumes` (experimentales), `CustomDomain` (experimental) |
-| Errores | `SandboxError`, `TimeoutError`, `InvalidArgumentError`, `NotFoundError`, `FileNotFoundError`, `SandboxNotFoundError`, `SandboxNotReadyError`, `SandboxStateError`, `SandboxLifetimeError`, `PoolClosedError`, `CommandExitError`, `PersistenceError`, `DiskFullError`, `TransferError`, `FileUploadError`, `RateLimitError`, `GitUpstreamError`, `SecretError`, `SecretNotFoundError`, `SandboxIndexError`, `IndexWriteError`, `MountError`, `VolumeError`, `VolumeMountError`, `VolumeNotFoundError`, `VolumePathNotFoundError`, `BuildError`, `TemplateError`, `StackError`, `WebhookError`, `DashboardError`, `CustomDomainError`, `AgentError`, `AuthenticationError`, `GitAuthError`, `QuotaExceededError`, `CapacityError`, `UnimplementedError`, `LifecycleUnsupportedError` ([Errores](errores.md)) |
+| Errores | `SandboxError`, `TimeoutError`, `InvalidArgumentError`, `NotFoundError`, `FileNotFoundError`, `SandboxNotFoundError`, `SandboxNotReadyError`, `SandboxStateError`, `SandboxLifetimeError`, `PoolClosedError`, `CommandExitError`, `PersistenceError`, `DiskFullError`, `TransferError`, `FileUploadError`, `RateLimitError`, `GitUpstreamError`, `SecretError`, `SecretNotFoundError`, `SandboxIndexError`, `IndexWriteError`, `MountError`, `VolumeError`, `VolumeMountError`, `VolumeNotFoundError`, `VolumePathNotFoundError`, `BuildError`, `TemplateError`, `StackError`, `WebhookError`, `DashboardError`, `CustomDomainError`, `AgentError`, `AgentCoreError`, `AuthenticationError`, `GitAuthError`, `QuotaExceededError`, `CapacityError`, `UnimplementedError`, `LifecycleUnsupportedError` ([Errores](errores.md)) |
 
 ### `rayito`: tipos
 
@@ -308,6 +369,7 @@ aquí es privado.
 | Git | `GitStatus`, `GitFileStatus`, `GitBranches`, `GitResetMode`, `GitConfigScope`, `GitStatusLabel`, `GitAddOpts`, `GitCloneOpts`, `GitCommitOpts`, `GitConfigOpts`, `GitDangerouslyAuthenticateOpts`, `GitDeleteBranchOpts`, `GitInitOpts`, `GitPullOpts`, `GitPushOpts`, `GitRemoteAddOpts`, `GitRequestOpts`, `GitResetOpts`, `GitRestoreOpts` |
 | Persistencia | `S3PrefixInit`, `CheckpointFilesOptions`, `CheckpointProgress`, `CheckpointProgressCallback`, `CheckpointResult`, `RestoreFilesOptions`, `RestoreProgress`, `RestoreProgressCallback`, `RestoreResult`, `ReincarnateOptions` |
 | Agente de IA | `AgentRunOptions`, `AgentPrepareOptions`, `AgentSpecOptions`, `AgentModelOptions`, `AgentLimitsOptions`, `AgentPermissionsOptions`, `SubAgentOptions`, `McpLocalOptions`, `McpRemoteOptions`, `McpServer`, `ModelProvider`, `PermissionAction`, `ToolPermission`, `DeepAgentsOptions`, `AgentEvent`, `TextDelta`, `Text`, `Reasoning`, `ToolCall`, `StepStarted`, `StepFinished`, `AgentFailed`, `AgentFailedOptions`, `AgentFailureReason`, `Done`, `AgentResult`, `TokenUsageOptions`, `BedrockGatewayOptions`, `AnthropicGatewayOptions`, `OpenAiCompatibleGatewayOptions`, `AgentRuntime`, `RunCommand`, `RunRequest`, `RuntimeFile`, `RuntimeFiles`, `RuntimeState`, `TemplateStep`, `WarmupStep`, `AgentTemplateOptions`, `AgentTemplateBuildOptions`, `AgentTemplateManifest`, `AgentTemplateRuntime` (obsoleto), `StrandsRuntime`, `StrandsRuntimeOptions`, `HermesRuntime`, `HermesRuntimeOptions`, `CustomRuntime`, `CustomRuntimeOptions`, `HttpApp`, `HttpAppOptions`, `InstallableRuntime`, `ServableRuntime`, `HostConfig`, `GatewayWiring`, `DirectWiring`, `ModelWiring`, `InstallTarget`, `gatewayWiring`, `directWiring`, `hostConfig`, `installTarget`, `isInstallable`, `isServable`, `AgentProject`, `AgentProjectOptions`, `AgentProjectRunOptions`, `AgentProjectDeployOptions`, `AgentProjectSandboxOptions`, `ServeOptions`, `ServeOptionsInput`, `AgentExport`, `AgentExportOptions`, `AgentDeployment`, `AgentDeploymentStream`, `AgentInvokeOptions`, `DeploymentStatus`, `deployAgent`, `planDeploy`, `DeployAgentOptions`, `DeployConnection`, `AgentDeployOptions`, `AgentDeployOptionsInput`, `AgentDeployPlan`, `AgentDeployStep`, `AgentDeployCostEstimate`, `AgentPlannedSecret`, `DetectOverrides`, `AgentFleet`, `AgentFleetConnectOptions`, `AgentFleetOptions`, `AgentFleetStream`, `FleetMemberStatus`, `FleetStatus`, `ScalingOptions`, `ScalingOptionsInput`, `SessionMode` |
+| Despliegue en AgentCore | `AgentCoreOptions`, `AgentCoreDeployPlan`, `AgentCoreStatus`, `AgentCoreDeleteResult` |
 | Pool | `PoolConfig`, `ResolvedPoolConfig`, `PoolBackend`, `PoolStats`, `PoolSlotInfo`, `SlotRecord`, `SandboxPoolOptions`, `TakeOptions`, `CloseOptions` |
 | Secretos e índice | `SecretOptions`, `SecretsInput`, `SecretLike`, `SecretRefOptions`, `SecretCacheOptions`, `SecretStoreOptions`, `SecretInfo`, `SecretPage`, `SecretsManagerApi`, `DynamoDbIndexOptions`, `DynamoDbApi`, `WriteFailurePolicy`, `IndexRecord` |
 | Montajes, tamaños, eventos, OTLP y pasarela | `S3MountOptions`, `MountStatus`, `SizeInput`, `SizeName`, `SizeRequest`, `ResolvedSize`, `LifecycleEventsOptions`, `DeployWebhooksOptions`, `EventRecord`, `EventKind`, `KillReason`, `WebhookInfo`, `TelemetryExportOptions`, `TelemetryHealth`, `NameStyleOption`, `SecretGatewayOptions`, `AllowRule` |

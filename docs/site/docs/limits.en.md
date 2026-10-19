@@ -44,6 +44,15 @@ client.
 | Agent fleet (since 0.14.0) | from `min_vms` to `max_vms`, up to 64 per fleet; `warm_vms` ≤ `max_vms - min_vms`; `scale_in_after_seconds` from 60 s to 8 h (900 s by default) | `InvalidArgumentException` |
 | Restart of an agent's app (since 0.14.0) | up to 3 restarts in 300 s, waiting from 2 s up to 30 s | `/ping` 503 and `app_crashloop` in the failure marker |
 | Detection scan (since 0.14.0) | up to 5000 files, 6 folder levels and 256 KiB per file | `scan_truncated` warning |
+| Regions with AgentCore Runtime and CodeBuild arm64 builds (since 0.15.0) | 21: `us-east-1`, `us-east-2`, `us-west-1`, `us-west-2`, `ca-central-1`, `sa-east-1`, `eu-central-1`, `eu-west-1`, `eu-west-2`, `eu-west-3`, `eu-south-1`, `eu-south-2`, `eu-north-1`, `ap-south-1`, `ap-south-2`, `ap-southeast-1`, `ap-southeast-2`, `ap-southeast-5`, `ap-southeast-7`, `ap-northeast-1`, `ap-northeast-2` | `unsupported_region` before calling AWS |
+| An agent image on AgentCore (since 0.15.0) | up to 2 GB (`image_too_large`; ECR reports the compressed size) | `AgentCoreError` after the build |
+| An AgentCore session (since 0.15.0) | up to 2 vCPU and 8 GB; 25 new sessions per second per account; 5000 active sessions in `us-east-1` and `us-west-2` and 2500 in the other regions | `QuotaExceededError` or `RateLimitError` on invoke |
+| An AgentCore request (since 0.15.0) | {{agentcoreRequestTimeoutSeconds}} s per synchronous request and {{agentcoreStreamMaxSeconds}} s per streamed response; the SDK uses those read timeouts | — |
+| Lifecycle of an AgentCore session (since 0.15.0) | `idle_session_timeout` and `max_session_lifetime` from {{agentcoreLifecycleMinSeconds}} to {{agentcoreLifecycleMaxSeconds}} s, the first not greater than the second; defaults {{agentcoreIdleSessionTimeoutDefaultSeconds}} and {{agentcoreLifecycleMaxSeconds}} s | `lifecycle_invalid` or `lifecycle_order` before calling AWS |
+| An AgentCore session id (since 0.15.0) | {{agentcoreSessionIdMinLength}} to {{agentcoreSessionIdMaxLength}} characters `[a-zA-Z0-9_-]`, starting with a letter or digit | the SDK uses the id as is, derives one from yours or creates one (see the [guide](guias/desplegar-en-agentcore.md#sesiones)) |
+| Names of an agent on AgentCore (since 0.15.0) | the agent name up to 41 characters; the runtime `rayito_<name>`, up to {{agentcoreRuntimeNameMaxLength}} | `name_invalid` |
+| Environment variables and tags of an AgentCore runtime (since 0.15.0) | up to {{agentcoreMaxEnvironmentVariables}} variables of up to {{agentcoreEnvironmentValueMaxChars}} characters (with the two region ones) and up to {{agentcoreMaxTags}} tags (with the three fixed ones) | `env_invalid` or `tags_invalid` |
+| Waits of the AgentCore deploy (since 0.15.0) | {{agentcoreBuildTimeoutMinutes}} min for the build, {{agentcoreReadyTimeoutSeconds}} s for the runtime to be ready and {{agentcoreDeleteTimeoutSeconds}} s for it to be deleted | `image_build_timeout`, `runtime_timeout` or `delete_failed` |
 
 The TPS quotas are per account and region (`AWS_API_NOTES.md` §11); new
 accounts may start with lower values.
