@@ -68,6 +68,14 @@ LOG_GROUP_PREFIX: Final = "/rayito"
 #: Nombre por defecto de la imagen base publicada por `rayito image publish`
 #: (variante `full`); `from_base_image()` sin nombre compone sobre ella.
 DEFAULT_BASE_IMAGE_NAME: Final = "rayito-base"
+#: Nombre de la pila de IAM que `rayito image publish` y `rayito setup`
+#: leen (`infra/iam.yaml`, `AWS_API_NOTES.md` §10).
+DEFAULT_IAM_STACK_NAME: Final = "rayito-m0-iam"
+#: Salida de esa pila con el rol que usa el build de la imagen.
+BUILD_ROLE_OUTPUT_KEY: Final = "BuildRoleArn"
+#: Estados de una versión (`MicrovmImageVersionState`, `AWS_API_NOTES.md`
+#: §4) en los que el build aún no terminó.
+BUILDING_VERSION_STATES: Final = frozenset({"PENDING", "IN_PROGRESS"})
 #: Código de error que `create`/`update-microvm-image` devuelven al pasar
 #: de 10 builds simultáneos por cuenta (Q83, `AWS_API_NOTES.md` §27).
 BUILD_QUOTA_ERROR_CODE: Final = "ServiceQuotaExceededException"
@@ -371,6 +379,15 @@ def read_gate(clients: ImageBuildClients, arn: str, version: str) -> VersionGate
         version_state=str(detail["state"]),
         version_status=str(detail["status"]),
         state_reason=detail.get("stateReason"),
+    )
+
+
+def gate_progress_line(gate: VersionGate, version: str, elapsed: float) -> str:
+    """La línea de progreso de un sondeo del gate, la misma para `rayito
+    image publish` y `rayito setup`."""
+    return (
+        f"  image={gate.image_state} version={version} state={gate.version_state} "
+        f"status={gate.version_status} ({elapsed:.0f}s)"
     )
 
 
