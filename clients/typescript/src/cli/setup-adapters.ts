@@ -1,17 +1,20 @@
 /**
- * Los adaptadores de `rayito setup` (ADR-030, D1): la pila de IAM sobre
- * `OptionalStacks`, el bucket sobre `HeadBucket` del doctor, la imagen base
+ * Los adaptadores de `rayito setup` (ADR-030, D1): las pilas de IAM y del
+ * bucket sobre `OptionalStacks`, el bucket sobre `HeadBucket` del doctor, la imagen base
  * sobre el núcleo de `images/gateway.ts` y la publicación sobre la misma
  * tubería de `rayito image publish`. Se componen con lo que la sesión ya
  * tiene, como `ops-adapters.ts`; construirlos no llama a AWS ni carga ningún
  * peer. Espejo de `rayito._account_setup._aws` y `cli/_setup_publisher.py`.
  */
 
+import { ARTIFACT_STACK_COMPONENT } from "../account-setup/artifact-stack.js";
 import {
   AccountSetupError,
   ARTIFACT_BUCKET_PARAMETER,
+  ARTIFACT_STACK_NAME,
   BASE_IMAGE_NAME,
   BASE_IMAGE_VARIANT,
+  BUCKET_NAME_PARAMETER,
   type BucketProbe,
   IAM_STACK_NAME,
   type ImageGateResult,
@@ -23,13 +26,13 @@ import { IAM_STACK_COMPONENT } from "../account-setup/iam-stack.js";
 import type {
   AccountSetupGateways,
   ArtifactBucketGateway,
+  ArtifactStackGateway,
   BaseImageGateway,
   BaseImagePublisher,
   IamStackGateway,
   Progress,
 } from "../account-setup/ports.js";
 import { GithubReleaseSource } from "../account-setup/release.js";
-import { BUCKET_MISSING_CODES } from "../agent/aws-resolve.js";
 import type { AwsClientSettings } from "../aws/control-plane.js";
 import { StackError } from "../errors.js";
 import { fileArtifacts } from "../images/artifact-node.js";
@@ -49,13 +52,25 @@ import {
   resolveBaseImageVersion,
 } from "../images/publish-service.js";
 import { CloudFormationProvisioner } from "../stacks/cloudformation.js";
-import type { StackStatus } from "../stacks/model.js";
+import type { StackComponent, StackStatus } from "../stacks/model.js";
 import type { StackProvisioner } from "../stacks/port.js";
 import { DEFAULT_WAIT_TIMEOUT_MS, OptionalStacks } from "../stacks/service.js";
 import { pythonStringRepr } from "../strings.js";
 import { AwsOperationError, type DoctorAws } from "./doctor/ports.js";
 
 type Credentials = AwsClientSettings["credentials"];
+
+/**
+ * Códigos de `HeadBucket` (fila `HeadBucket` de `AWS_API_NOTES.md`): 404 es un
+ * bucket que no existe.
+ */
+export const BUCKET_NOT_FOUND_CODES: ReadonlySet<string> = new Set([
+  "404",
+  "NoSuchBucket",
+  "NotFound",
+]);
+/** 403: el bucket existe y estas credenciales no lo leen, normalmente porque es de otra cuenta. */
+export const BUCKET_FORBIDDEN_CODES: ReadonlySet<string> = new Set(["403"]);
 
 /** Los relojes de las esperas; los tests los sustituyen para no dormir. */
 export interface SetupClock {
@@ -71,30 +86,46 @@ const REAL_CLOCK: SetupClock = {
   utcNow: () => new Date(),
 };
 
-function observationOf(status: StackStatus | undefined): StackObservation {
+function observationOf(status: StackStatus | undefined, stackName: string): StackObservation {
   return {
-    name: IAM_STACK_NAME,
+    name: stackName,
     status: status?.state,
     outputs: status?.outputs ?? {},
     parameters: status?.parameters ?? {},
   };
 }
 
-/** La pila `rayito-m0-iam` a través de `OptionalStacks`, con la plantilla empaquetada del SDK. */
-export class SdkIamStack implements IamStackGateway {
+/** Una pila de `rayito setup` a través de `OptionalStacks`, con la plantilla empaquetada del SDK. */
+export class SdkSetupStack implements IamStackGateway, ArtifactStackGateway {
   readonly #provisioner: StackProvisioner;
   readonly #stacks: OptionalStacks;
+  readonly #component: StackComponent;
+  readonly #stackName: string;
+  readonly #bucketParameter: string;
   readonly #waitTimeoutMs: number;
 
-  constructor(provisioner: StackProvisioner, options: { readonly waitTimeoutMs?: number } = {}) {
+  constructor(
+    provisioner: StackProvisioner,
+    options: {
+      readonly component: StackComponent;
+      readonly stackName: string;
+      /** El único parámetro que se manda: el nombre del bucket. */
+      readonly bucketParameter: string;
+      readonly waitTimeoutMs?: number;
+    },
+  ) {
     this.#provisioner = provisioner;
     this.#stacks = new OptionalStacks({ provisioner });
+    this.#component = options.component;
+    this.#stackName = options.stackName;
+    this.#bucketParameter = options.bucketParameter;
     this.#waitTimeoutMs = options.waitTimeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS;
   }
 
   async observe(): Promise<StackObservation> {
     return observationOf(
-      await this.#stacks.status(IAM_STACK_COMPONENT, { stackName: IAM_STACK_NAME }),
+      await this.#stacks.status(this.#component, { stackName: this.#stackName }),
+      this.#stackName,
     );
   }
 
@@ -108,29 +139,47 @@ export class SdkIamStack implements IamStackGateway {
 
   /** Una pila que desaparece durante la espera es un fallo, como en Python. */
   async wait(): Promise<StackObservation> {
-    await this.#provisioner.wait(IAM_STACK_NAME, "deployed", this.#waitTimeoutMs);
+    await this.#provisioner.wait(this.#stackName, "deployed", this.#waitTimeoutMs);
     const observed = await this.observe();
     if (observed.status === undefined) {
       throw new StackError(
-        `la pila ${pythonStringRepr(IAM_STACK_NAME)} desapareció mientras se esperaba`,
+        `la pila ${pythonStringRepr(this.#stackName)} desapareció mientras se esperaba`,
         { code: "failed" },
       );
     }
     return observed;
   }
 
-  /** `deploy` crea o actualiza según exista la pila y sólo manda `ArtifactBucket`. */
+  /** `deploy` crea o actualiza según exista la pila y sólo manda el nombre del bucket. */
   async #deployBucket(bucket: string): Promise<StackObservation> {
-    const status = await this.#stacks.deploy(IAM_STACK_COMPONENT, {
-      stackName: IAM_STACK_NAME,
-      parameters: { [ARTIFACT_BUCKET_PARAMETER]: bucket },
+    const status = await this.#stacks.deploy(this.#component, {
+      stackName: this.#stackName,
+      parameters: { [this.#bucketParameter]: bucket },
       waitTimeoutMs: this.#waitTimeoutMs,
     });
-    return observationOf(status);
+    return observationOf(status, this.#stackName);
   }
 }
 
-/** Un `HeadBucket`: un código de "no existe o no es accesible" es un bucket ausente, no un fallo. */
+/** La pila de IAM `rayito-m0-iam`, que recibe `ArtifactBucket`. */
+export function sdkIamStack(provisioner: StackProvisioner): SdkSetupStack {
+  return new SdkSetupStack(provisioner, {
+    component: IAM_STACK_COMPONENT,
+    stackName: IAM_STACK_NAME,
+    bucketParameter: ARTIFACT_BUCKET_PARAMETER,
+  });
+}
+
+/** La pila del bucket `rayito-m0-artifacts`, que recibe `BucketName`. */
+export function sdkArtifactStack(provisioner: StackProvisioner): SdkSetupStack {
+  return new SdkSetupStack(provisioner, {
+    component: ARTIFACT_STACK_COMPONENT,
+    stackName: ARTIFACT_STACK_NAME,
+    bucketParameter: BUCKET_NAME_PARAMETER,
+  });
+}
+
+/** Un `HeadBucket`: 200 es `found`, 404 `missing` y 403 `forbidden`; cualquier otro error se propaga. */
 export class SdkArtifactBuckets implements ArtifactBucketGateway {
   readonly #doctor: Pick<DoctorAws, "headBucket">;
   readonly #accountId: () => Promise<string>;
@@ -147,10 +196,15 @@ export class SdkArtifactBuckets implements ArtifactBucketGateway {
   async probe(bucket: string): Promise<BucketProbe> {
     try {
       const facts = await this.#doctor.headBucket(bucket);
-      return { exists: true, region: facts.region || undefined };
+      return { state: "found", region: facts.region || undefined };
     } catch (error) {
-      if (error instanceof AwsOperationError && BUCKET_MISSING_CODES.has(error.code)) {
-        return { exists: false, region: undefined };
+      if (error instanceof AwsOperationError) {
+        if (BUCKET_NOT_FOUND_CODES.has(error.code)) {
+          return { state: "missing", region: undefined };
+        }
+        if (BUCKET_FORBIDDEN_CODES.has(error.code)) {
+          return { state: "forbidden", region: undefined };
+        }
       }
       throw error;
     }
@@ -271,7 +325,7 @@ export class PipelineImagePublisher implements BaseImagePublisher {
   }
 }
 
-/** Los cinco puertos de `rayito setup` sobre la sesión de AWS; no llama a AWS al construirlos. */
+/** Los seis puertos de `rayito setup` sobre la sesión de AWS; no llama a AWS al construirlos. */
 export function sdkAccountSetupGateways(input: {
   readonly region: string;
   readonly credentials: Credentials;
@@ -279,10 +333,13 @@ export function sdkAccountSetupGateways(input: {
   readonly publishPorts: PublishPorts;
 }): AccountSetupGateways {
   const { publishPorts } = input;
+  const provisioner = new CloudFormationProvisioner({
+    region: input.region,
+    credentials: input.credentials,
+  });
   return {
-    iamStack: new SdkIamStack(
-      new CloudFormationProvisioner({ region: input.region, credentials: input.credentials }),
-    ),
+    iamStack: sdkIamStack(provisioner),
+    artifactStack: sdkArtifactStack(provisioner),
     buckets: new SdkArtifactBuckets(input.doctor, () => publishPorts.accountId()),
     images: new SdkBaseImages(publishPorts),
     publisher: new PipelineImagePublisher(publishPorts),

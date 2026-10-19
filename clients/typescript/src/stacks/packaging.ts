@@ -8,6 +8,7 @@
  */
 
 import type { StackComponent } from "./model.js";
+import * as artifactBucket from "./templates/artifact-bucket.gen.js";
 import * as customDomain from "./templates/custom-domain.gen.js";
 import * as dashboard from "./templates/dashboard.gen.js";
 import * as dashboardCloudwatch from "./templates/dashboard-cloudwatch.gen.js";
@@ -29,6 +30,7 @@ interface GeneratedAsset {
 }
 
 const ASSETS: Readonly<Record<string, GeneratedAsset>> = {
+  "artifact-bucket": artifactBucket,
   "custom-domain": customDomain,
   dashboard,
   "dashboard-cloudwatch": dashboardCloudwatch,

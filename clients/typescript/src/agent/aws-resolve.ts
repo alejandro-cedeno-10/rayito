@@ -15,6 +15,8 @@
  */
 
 import {
+  ARTIFACT_STACK_NAME,
+  artifactStackBucket,
   BUCKET_ENV_VAR,
   CDK_BOOTSTRAP_QUALIFIER,
   cdkBucketName,
@@ -23,12 +25,14 @@ import {
 import { clientConfig } from "../aws/control-plane.js";
 import { awsCode } from "../aws/optional-client.js";
 import { sanitizeAwsError } from "../aws/sanitize.js";
-import { InvalidArgumentError } from "../errors.js";
+import { InvalidArgumentError, StackError } from "../errors.js";
 import { accountImageArn } from "../images/gateway.js";
 import { generateAccessToken } from "../payload.js";
 import { ACCESS_TOKEN_ENV_VAR } from "../sandbox/launch.js";
 import { SecretGateway } from "../secret-gateway/domain.js";
 import { SecretRef } from "../secrets/names.js";
+import { CloudFormationProvisioner } from "../stacks/cloudformation.js";
+import type { StackProvisioner } from "../stacks/port.js";
 import { AwsBuildClients } from "../templates/build.js";
 import type { AgentProject } from "./project.js";
 
@@ -63,6 +67,20 @@ export const GATEWAY_SECRET_ENV_VARS: Readonly<Record<string, string>> = Object.
 /** `BUCKET_ENV_VAR` (el bucket de artefactos, el mismo de `rayito image publish`) y las reglas del bucket del bootstrap de CDK viven en `account-setup/domain.ts`. */
 export { BUCKET_ENV_VAR, CDK_BOOTSTRAP_QUALIFIER, cdkBucketName };
 
+/** Códigos de acceso denegado de CloudFormation (`AccessDenied`) y de la forma `*Exception`. */
+const ACCESS_DENIED_CODES: ReadonlySet<string> = new Set(["AccessDenied", "AccessDeniedException"]);
+
+/** Un `StackError` de `describe` cuya causa es un acceso denegado de AWS. */
+function isAccessDenied(error: unknown): boolean {
+  if (!(error instanceof StackError)) {
+    return false;
+  }
+  const cause = error.cause as { name?: unknown; code?: unknown } | undefined;
+  return [cause?.name, cause?.code].some(
+    (code) => typeof code === "string" && ACCESS_DENIED_CODES.has(code),
+  );
+}
+
 export type BucketSource = "argument" | "project_file" | "environment" | "discovered";
 
 export interface BucketChoice {
@@ -74,11 +92,14 @@ export type Environ = Readonly<Record<string, string | undefined>>;
 
 /** Lo que `deployAgent()` pregunta a AWS antes de crear nada: la región
  * efectiva, la cuenta (`GetCallerIdentity`), si un bucket existe
- * (`HeadBucket`) y si una imagen existe (`GetMicrovmImage`). */
+ * (`HeadBucket`), el bucket de la pila `rayito-m0-artifacts` que creó
+ * `rayito setup` (`DescribeStacks`) y si una imagen existe
+ * (`GetMicrovmImage`). */
 export interface DeployAws {
   resolvedRegion(): string;
   accountId(): Promise<string>;
   bucketExists(bucket: string): Promise<boolean>;
+  artifactStackBucket(): Promise<string | undefined>;
   imageExists(name: string): Promise<boolean>;
 }
 
@@ -107,7 +128,8 @@ export function secretNameFor(project: string, gateway: string): string {
 
 /** El bucket del artefacto: argumento > `[deploy].bucket` del fichero de
  * proyecto > `RAYITO_BUCKET` > el bucket de activos del bootstrap de CDK de la
- * cuenta y la región (si existe). Sin ninguno, `InvalidArgumentError` con las
+ * cuenta y la región (si existe) > el de la pila `rayito-m0-artifacts` que creó
+ * `rayito setup` (si existe). Sin ninguno, `InvalidArgumentError` con las
  * opciones; nunca se crea un bucket. */
 export async function resolveBucket(
   explicit: string | undefined,
@@ -288,14 +310,18 @@ export async function ensureModelSecrets(
 export class AwsResolver implements DeployAws {
   readonly #region: string | undefined;
   readonly #credentials: ConstructorParameters<typeof AwsBuildClients>[1];
+  readonly #stacks: Pick<StackProvisioner, "describe"> | undefined;
   #build: AwsBuildClients | undefined;
 
   constructor(options: {
     readonly region?: string | undefined;
     readonly credentials?: ConstructorParameters<typeof AwsBuildClients>[1];
+    /** Quien lee las pilas, para tests; por defecto CloudFormation. */
+    readonly stacks?: Pick<StackProvisioner, "describe">;
   }) {
     this.#region = options.region;
     this.#credentials = options.credentials;
+    this.#stacks = options.stacks;
   }
 
   resolvedRegion(): string {
@@ -337,6 +363,27 @@ export class AwsResolver implements DeployAws {
     return true;
   }
 
+  /** `DescribeStacks` de `rayito-m0-artifacts`; sólo lectura, nunca crea la pila.
+   * Sin `cloudformation:DescribeStacks` es como si no hubiera pila: quien no
+   * tenía bucket sigue recibiendo el mismo error de siempre. */
+  async artifactStackBucket(): Promise<string | undefined> {
+    const stacks =
+      this.#stacks ??
+      new CloudFormationProvisioner({
+        region: this.resolvedRegion(),
+        credentials: this.#credentials,
+      });
+    try {
+      const status = await stacks.describe(ARTIFACT_STACK_NAME);
+      return artifactStackBucket({ status: status?.state, outputs: status?.outputs ?? {} });
+    } catch (error) {
+      if (isAccessDenied(error)) {
+        return undefined;
+      }
+      throw error;
+    }
+  }
+
   async imageExists(name: string): Promise<boolean> {
     const arn = accountImageArn(this.resolvedRegion(), await this.accountId(), name);
     return (await this.#clients().getMicrovmImage(arn)) !== undefined;
@@ -344,10 +391,14 @@ export class AwsResolver implements DeployAws {
 }
 
 /** El bucket de activos del bootstrap de CDK de la cuenta y la región, si
- * existe (`GetCallerIdentity` y `HeadBucket`; nunca se crea). */
+ * existe (`GetCallerIdentity` y `HeadBucket`), y si no el de la pila
+ * `rayito-m0-artifacts` de `rayito setup` (`DescribeStacks`); nunca se crea. */
 export async function discoverBucket(aws: DeployAws, region: string): Promise<string | undefined> {
   const candidate = cdkBucketName(await aws.accountId(), region);
-  return (await aws.bucketExists(candidate)) ? candidate : undefined;
+  if (await aws.bucketExists(candidate)) {
+    return candidate;
+  }
+  return aws.artifactStackBucket();
 }
 
 /** Si la imagen base existe. Si no, la publica con `publisher` (que el

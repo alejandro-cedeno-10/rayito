@@ -10,7 +10,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { SetupPlan, SetupResult } from "../../account-setup/domain.js";
+import type { ErrorCode, SetupPlan, SetupResult } from "../../account-setup/domain.js";
 import { AccountSetupError, BASE_IMAGE_NAME, BUCKET_ENV_VAR } from "../../account-setup/domain.js";
 import { AccountSetup } from "../../account-setup/service.js";
 import { fileArtifacts } from "../../images/artifact-node.js";
@@ -19,7 +19,8 @@ import { type CommandContext, defineCommand, flag, option } from "../command.js"
 import { runDoctor } from "../doctor/checks.js";
 import { newDoctorContext } from "../doctor/model.js";
 import { doctorDocument, exitCodeFor, QUOTA_FLOAT_KEYS, renderHuman } from "../doctor/render.js";
-import { EXIT_FAILURE } from "../exit-codes.js";
+import { EXIT_FAILURE, EXIT_USAGE } from "../exit-codes.js";
+import { translateFailure } from "../failures.js";
 import type { CliServices } from "../services.js";
 import {
   CONFIRM_QUESTION,
@@ -29,19 +30,22 @@ import {
   finalLines,
   planLines,
   type SetupDocumentInput,
+  type SetupFailure,
   setupDocument,
 } from "../setup-output.js";
 
 const WORKDIR_PREFIX = "rayito-setup-";
 
 const HELP =
-  "Prepara la cuenta y la región para Rayito en una orden idempotente, como `cdk bootstrap`: " +
-  "la pila de IAM rayito-m0-iam, el bucket de artefactos (el tuyo, el de la pila o el del " +
-  "bootstrap de CDK; Rayito no crea buckets) y la imagen rayito-base desde el " +
-  "rayito-image.zip de la release de tu versión, comprobado contra su SHA256SUMS. Muestra el " +
-  "plan y el coste, pide confirmación y termina con rayito doctor. Coste: cada versión " +
-  "publicada de la imagen ≈ $0,04 por semana de almacenamiento (mínimo una semana); la pila " +
-  "de IAM es gratis; con --dry-run sólo lee.";
+  "Prepara la cuenta y la región para Rayito en una orden idempotente, como `cdk " +
+  "bootstrap`: el bucket de artefactos (el tuyo, el de la pila de IAM o el del bootstrap de" +
+  " CDK; si no hay ninguno, lo crea con la pila rayito-m0-artifacts: cifrado, privado, sólo" +
+  " TLS y con los zips caducando a los 7 días), la pila de IAM rayito-m0-iam y la imagen " +
+  "rayito-base desde el rayito-image.zip de la release de tu versión, comprobado contra su " +
+  "SHA256SUMS. Muestra el plan y el coste, pide confirmación y termina con rayito doctor. " +
+  "Coste: cada versión publicada de la imagen ≈ $0,04 por semana de almacenamiento (mínimo " +
+  "una semana); la pila de IAM es gratis; el zip en el bucket, céntimos; con --dry-run sólo" +
+  " lee.";
 
 /** Un `--artifact` ausente o que no es la variante `full` sin EFS se rechaza antes de cualquier llamada a AWS. */
 function requireFullArtifact(artifact: string): void {
@@ -133,27 +137,53 @@ async function finish(
   return failed ? EXIT_FAILURE : undefined;
 }
 
+/**
+ * Los códigos del contrato más cercanos a un fallo que `setup` no traduce (un
+ * error de AWS crudo, una excepción de una pila): `contract.json` no tiene un
+ * código para ellos y su salida es la de siempre, 1 (la operación falló) o 2
+ * (credenciales o región). Cada uno lleva el código del contrato con la misma
+ * salida: `stack_blocked` (1) y `bucket_unavailable` (2). El mensaje es la línea
+ * ya traducida de `failures.ts`.
+ */
+const UNTRANSLATED_FAILURE_CODE: ErrorCode = "stack_blocked";
+const UNTRANSLATED_USAGE_CODE: ErrorCode = "bucket_unavailable";
+
 function reportFailure(
   context: CommandContext,
   services: CliServices,
   plan: SetupPlan | undefined,
-  error: AccountSetupError,
-  dryRun: boolean,
+  error: SetupFailure,
+  exitCode: number,
 ): number {
   context.console.echo(`${ERROR_PREFIX}${error.message}`, { err: true });
   if (context.globals.json) {
     emitDocument(context, {
       region: services.region,
-      dryRun,
+      dryRun: context.values.flag("dry_run"),
       ready: false,
       plan,
       result: undefined,
       doctor: undefined,
       error,
-      exitCode: error.exitCode,
+      exitCode,
     });
   }
-  return error.exitCode;
+  return exitCode;
+}
+
+/** Con `--json` un fallo ajeno a `setup` también deja un único documento; en modo humano sigue su camino de siempre. */
+function reportUntranslated(
+  context: CommandContext,
+  services: CliServices,
+  plan: SetupPlan | undefined,
+  error: unknown,
+): number {
+  const failure = translateFailure(error, context.globals.verbose);
+  const message = failure.line.startsWith(ERROR_PREFIX)
+    ? failure.line.slice(ERROR_PREFIX.length)
+    : failure.line;
+  const code = failure.code === EXIT_USAGE ? UNTRANSLATED_USAGE_CODE : UNTRANSLATED_FAILURE_CODE;
+  return reportFailure(context, services, plan, { code, message }, failure.code);
 }
 
 async function runSetup(
@@ -211,7 +241,8 @@ export const setupCommand = defineCommand({
     option(["--bucket"], {
       help:
         "Bucket de artefactos en la misma región; por defecto RAYITO_BUCKET, el de la pila de " +
-        "IAM o el del bootstrap de CDK. Rayito no crea buckets.",
+        "IAM, el del bootstrap de CDK o uno nuevo rayito-artifacts-<cuenta>-<región>. Si no " +
+        "existe, se crea con ese nombre (pila rayito-m0-artifacts).",
     }),
     option(["--artifact"], {
       type: "path",
@@ -233,7 +264,10 @@ export const setupCommand = defineCommand({
       return await runSetup(context, services, state);
     } catch (error) {
       if (error instanceof AccountSetupError) {
-        return reportFailure(context, services, state.plan, error, context.values.flag("dry_run"));
+        return reportFailure(context, services, state.plan, error, error.exitCode);
+      }
+      if (context.globals.json) {
+        return reportUntranslated(context, services, state.plan, error);
       }
       throw error;
     }

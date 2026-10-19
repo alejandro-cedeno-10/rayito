@@ -12,11 +12,16 @@
  *
  * Recursos y llamadas AWS: la pila de IAM `rayito-m0-iam` (`CreateStack` o
  * `UpdateStack`), el zip de la imagen en el bucket (`PutObject`) y una versión
- * de `rayito-base` (`CreateMicrovmImage` o `UpdateMicrovmImage`); lee con
- * `GetCallerIdentity`, `DescribeStacks`, `HeadBucket`, `GetMicrovmImage` y
- * `ListMicrovmImageVersions`. Nunca crea un bucket.
+ * de `rayito-base` (`CreateMicrovmImage` o `UpdateMicrovmImage`); sólo si no
+ * hay ningún bucket que reutilizar, también la pila `rayito-m0-artifacts`
+ * (`CreateStack`, la plantilla `infra/artifact-bucket.yaml`) que crea el
+ * bucket: el SDK nunca llama a `CreateBucket` por sí mismo. Lee con
+ * `GetCallerIdentity`, `DescribeStacks`, `HeadBucket` (hasta tres, y un
+ * `DescribeStacks` más de `rayito-m0-artifacts`, sólo en una cuenta sin bucket
+ * utilizable), `GetMicrovmImage` y `ListMicrovmImageVersions`.
  *
- * Coste aproximado: la pila de IAM es gratis; cada versión publicada de la
+ * Coste aproximado: el bucket creado y su pila son gratis salvo los zips, que
+ * caducan a los 7 días (céntimos); la pila de IAM es gratis; cada versión publicada de la
  * imagen ≈ $0,04 por semana de almacenamiento, con mínimo de una semana
  * (`cost.md`, "Mantener publicada una versión de imagen"); el zip, céntimos.
  *
@@ -24,10 +29,15 @@
  * permisos de IAM que exige `CAPABILITY_NAMED_IAM` para crear roles y
  * políticas, `s3:ListBucket`/`PutObject`/`GetObject` sobre `rayito/images/*` y
  * `lambda:CreateMicrovmImage`/`UpdateMicrovmImage` (`CallerPolicy` de
- * `infra/iam.yaml`).
+ * `infra/iam.yaml`). Crear el bucket exige además permisos de S3 de nivel de
+ * bootstrap (`s3:CreateBucket`, `s3:PutBucketPolicy`,
+ * `s3:PutEncryptionConfiguration`, `s3:PutLifecycleConfiguration`, entre
+ * otros): `CallerPolicy` no los da, así que ese paso pide credenciales de
+ * administrador o de bootstrap.
  *
  * Cómo apagarla: no ejecutes `rayito setup` (o usa `--dry-run`); para borrar lo
- * creado, `aws cloudformation delete-stack` y `rayito image prune`.
+ * creado, `aws cloudformation delete-stack` (el bucket de
+ * `rayito-m0-artifacts` se conserva) y `rayito image prune`.
  *
  * Ejemplo: `await new AccountSetup(gateways).plan(request)` devuelve el plan sin
  * escribir nada.
@@ -35,19 +45,29 @@
 
 import {
   AccountSetupError,
+  ARTIFACT_STACK_NAME,
+  ARTIFACT_TEMPLATE_PATH,
   BASE_IMAGE_NAME,
+  BUCKET_NAME_OUTPUT_KEY,
   BUILD_ROLE_OUTPUT_KEY,
-  chooseBucketCandidate,
+  bucketCandidates,
+  creationTarget,
+  decideBucket,
   formatTemplate,
   IAM_STACK_NAME,
+  IAM_TEMPLATE_PATH,
   IMAGE_ASSET_NAME,
+  needsDefaultProbe,
   PROGRESS_MESSAGES,
+  planBucketCreation,
   planSetup,
   requireSupportedRegion,
   type SetupPlan,
   type SetupRequest,
   type SetupResult,
+  type SetupStep,
   type StackObservation,
+  stackOutput,
   stepOf,
   verifyChecksum,
 } from "./domain.js";
@@ -72,17 +92,62 @@ export class AccountSetup {
     const { iamStack, buckets, images } = this.#gateways;
     const account = await buckets.accountId();
     const stack = await iamStack.observe();
-    const candidate = chooseBucketCandidate(request, stack, account);
-    const probe = await buckets.probe(candidate.name);
+    const bucketStep = await this.#resolveBucket(request, stack, account);
     const image = await images.observe(BASE_IMAGE_NAME);
-    return planSetup({ request, account, stack, candidate, probe, image });
+    return planSetup({ request, account, stack, bucketStep, image });
   }
 
-  /** Aplica el plan: el bucket no se escribe, luego la pila de IAM y por último la imagen. */
+  /** Aplica el plan: el bucket (si falta), luego la pila de IAM y por último la imagen. */
   async apply(plan: SetupPlan, options: ApplyOptions): Promise<SetupResult> {
-    const bucket = stepOf(plan, "bucket").name;
+    const bucket = await this.#applyBucket(plan, options.onProgress);
     const stack = await this.#applyStack(plan, bucket, options.onProgress);
     return this.#applyImage(plan, bucket, stack, options);
+  }
+
+  /**
+   * Fase de reutilización (cada candidato se sondea una vez hasta que uno
+   * decide) y, sólo si nada se reutilizó, fase de creación.
+   */
+  async #resolveBucket(
+    request: SetupRequest,
+    stack: StackObservation,
+    account: string,
+  ): Promise<SetupStep> {
+    const { artifactStack, buckets } = this.#gateways;
+    for (const candidate of bucketCandidates(request, stack, account)) {
+      const step = decideBucket(candidate, await buckets.probe(candidate.name), request.region);
+      if (step !== undefined) {
+        return step;
+      }
+    }
+    const target = creationTarget(request, account);
+    const observed = await artifactStack.observe();
+    const probe = needsDefaultProbe(target, observed)
+      ? await buckets.probe(target.name)
+      : undefined;
+    return planBucketCreation(target, observed, probe);
+  }
+
+  /** Crea o espera la pila del bucket y devuelve su `BucketName`; un bucket reutilizado no se escribe. */
+  async #applyBucket(plan: SetupPlan, onProgress: Progress): Promise<string> {
+    const step = stepOf(plan, "bucket");
+    const { artifactStack } = this.#gateways;
+    const stack = { name: ARTIFACT_STACK_NAME };
+    let observed: StackObservation;
+    if (step.action === "create") {
+      onProgress(formatTemplate(PROGRESS_MESSAGES.bucketCreate, { ...stack, bucket: step.name }));
+      observed = await artifactStack.create(step.name);
+    } else if (step.action === "wait") {
+      onProgress(
+        formatTemplate(PROGRESS_MESSAGES.bucketWait, { ...stack, status: step.status ?? "" }),
+      );
+      observed = await artifactStack.wait();
+    } else {
+      return step.name;
+    }
+    const bucket = stackOutput(observed, BUCKET_NAME_OUTPUT_KEY, ARTIFACT_TEMPLATE_PATH);
+    onProgress(formatTemplate(PROGRESS_MESSAGES.bucketReady, { ...stack, bucket }));
+    return bucket;
   }
 
   async #applyStack(
@@ -203,9 +268,5 @@ export class AccountSetup {
 
 /** El rol de build de la pila; sin la salida no es la plantilla de Rayito. */
 function requireBuildRole(stack: StackObservation): string {
-  const arn = stack.outputs[BUILD_ROLE_OUTPUT_KEY];
-  if (!arn) {
-    throw new AccountSetupError("stack_incomplete", { name: IAM_STACK_NAME });
-  }
-  return arn;
+  return stackOutput(stack, BUILD_ROLE_OUTPUT_KEY, IAM_TEMPLATE_PATH);
 }

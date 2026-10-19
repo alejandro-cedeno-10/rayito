@@ -1,14 +1,18 @@
 /**
- * Dobles en memoria de los cinco puertos de `rayito setup`, construidos desde
+ * Dobles en memoria de los seis puertos de `rayito setup`, construidos desde
  * el `input` de los vectores compartidos (`testdata/account-setup/`). Cada
  * llamada queda registrada en `calls`, como los `Stubber` de los tests de
  * Python: una lectura o una escritura que no debía ocurrir se ve en la lista.
  */
 
 import {
+  ARTIFACT_STACK_NAME,
+  BUCKET_NAME_OUTPUT_KEY,
+  BUCKET_NAME_PARAMETER,
   type BucketProbe,
   cdkBucketName,
   type DownloadedRelease,
+  defaultArtifactBucketName,
   IAM_STACK_NAME,
   type ImageGateResult,
   type ImageObservation,
@@ -18,6 +22,7 @@ import {
 import type {
   AccountSetupGateways,
   ArtifactBucketGateway,
+  ArtifactStackGateway,
   BaseImageGateway,
   BaseImagePublisher,
   IamStackGateway,
@@ -36,6 +41,13 @@ export interface VectorImageVersion {
   readonly createdAt: string;
 }
 
+/** Una pila observada: `stack` es rayito-m0-iam y `artifactStack` rayito-m0-artifacts. */
+export interface VectorStack {
+  readonly status: string;
+  readonly outputs: Record<string, string>;
+  readonly parameters: Record<string, string>;
+}
+
 /** El `input` de `plan-vectors.json` y de `cli-cases.json`. */
 export interface VectorInput {
   readonly region: string;
@@ -43,28 +55,46 @@ export interface VectorInput {
   readonly bucket: string | null;
   readonly environmentBucket: string | null;
   readonly artifact: string | null;
-  readonly stack: {
-    readonly status: string;
-    readonly outputs: Record<string, string>;
-    readonly parameters: Record<string, string>;
-  } | null;
+  readonly stack: VectorStack | null;
+  /** Los buckets que `HeadBucket` encuentra, con su región; los de `forbiddenBuckets` dan 403 y el resto 404. */
   readonly buckets: Record<string, string>;
+  readonly forbiddenBuckets: string[];
+  readonly artifactStack: VectorStack | null;
   readonly image: { readonly state: string; readonly versions: VectorImageVersion[] } | null;
 }
 
-/** Sustituye `{sdkVersion}` y `{cdkBucket}` del texto de un caso compartido. */
+/** Sustituye `{sdkVersion}`, `{cdkBucket}` y `{defaultBucket}` del texto de un caso compartido. */
 export function withPlaceholders<T>(value: T, input: VectorInput, sdkVersion: string): T {
   const text = JSON.stringify(value)
     .replaceAll("{sdkVersion}", sdkVersion)
-    .replaceAll("{cdkBucket}", cdkBucketName(input.account, input.region));
+    .replaceAll("{cdkBucket}", cdkBucketName(input.account, input.region))
+    .replaceAll("{defaultBucket}", defaultArtifactBucketName(input.account, input.region));
   return JSON.parse(text) as T;
 }
 
 export type Call = readonly [string, ...unknown[]];
 
+const HEAD_PREFIX = "head:";
+const ARTIFACT_STACK_READ = "artifactStack";
+
+/** Las lecturas que resuelven el bucket, como las lista `bucketReads` de `plan-vectors.json`. */
+export function bucketReads(calls: readonly Call[]): string[] {
+  const reads: string[] = [];
+  for (const [name, bucket] of calls) {
+    if (name === "head_bucket") {
+      reads.push(`${HEAD_PREFIX}${String(bucket)}`);
+    } else if (name === "describe_artifact_stack") {
+      reads.push(ARTIFACT_STACK_READ);
+    }
+  }
+  return reads;
+}
+
 export interface FakeBehavior {
   /** `create`/`update` dejan la pila sin la salida `BuildRoleArn`. */
   readonly omitBuildRole?: boolean;
+  /** `create`/`wait` de la pila del bucket la dejan sin la salida `BucketName`. */
+  readonly omitBucketName?: boolean;
   /** La espera de un build en curso termina sin quedar lanzable. */
   readonly waitedBuildFails?: boolean;
   /** El sha256 del zip descargado; por defecto el que lista `SHA256SUMS`. */
@@ -77,6 +107,7 @@ export interface FakeBehavior {
 export class FakeAccountSetup implements AccountSetupGateways {
   readonly calls: Call[] = [];
   readonly iamStack: IamStackGateway;
+  readonly artifactStack: ArtifactStackGateway;
   readonly buckets: ArtifactBucketGateway;
   readonly images: BaseImageGateway;
   readonly publisher: BaseImagePublisher;
@@ -121,6 +152,36 @@ export class FakeAccountSetup implements AccountSetupGateways {
         return deployed(stack.parameters.ArtifactBucket ?? "");
       },
     };
+    let bucketStack: StackObservation = {
+      name: ARTIFACT_STACK_NAME,
+      status: input.artifactStack?.status,
+      outputs: input.artifactStack?.outputs ?? {},
+      parameters: input.artifactStack?.parameters ?? {},
+    };
+    const bucketDeployed = (bucket: string): StackObservation => {
+      bucketStack = {
+        name: ARTIFACT_STACK_NAME,
+        status: "CREATE_COMPLETE",
+        outputs: behavior.omitBucketName === true ? {} : { [BUCKET_NAME_OUTPUT_KEY]: bucket },
+        parameters: { [BUCKET_NAME_PARAMETER]: bucket },
+      };
+      return bucketStack;
+    };
+    this.artifactStack = {
+      observe: async () => {
+        record("describe_artifact_stack");
+        return bucketStack;
+      },
+      create: async (bucket) => {
+        record("create_artifact_stack", bucket);
+        record("wait_artifact_stack");
+        return bucketDeployed(bucket);
+      },
+      wait: async () => {
+        record("wait_artifact_stack");
+        return bucketDeployed(bucketStack.parameters[BUCKET_NAME_PARAMETER] ?? "");
+      },
+    };
     this.buckets = {
       accountId: async () => {
         record("accountId");
@@ -128,8 +189,13 @@ export class FakeAccountSetup implements AccountSetupGateways {
       },
       probe: async (bucket): Promise<BucketProbe> => {
         record("head_bucket", bucket);
+        if (input.forbiddenBuckets.includes(bucket)) {
+          return { state: "forbidden", region: undefined };
+        }
         const region = input.buckets[bucket];
-        return { exists: region !== undefined, region };
+        return region === undefined
+          ? { state: "missing", region: undefined }
+          : { state: "found", region };
       },
     };
     this.images = {
@@ -185,7 +251,7 @@ export class FakeAccountSetup implements AccountSetupGateways {
   /** Las llamadas que cambian algo en la cuenta o descargan algo. */
   get writes(): Call[] {
     return this.calls.filter(([name]) =>
-      ["create", "update", "publish", "download"].includes(name),
+      ["create", "update", "create_artifact_stack", "publish", "download"].includes(name),
     );
   }
 }

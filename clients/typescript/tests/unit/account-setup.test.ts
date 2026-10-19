@@ -9,7 +9,6 @@ import * as domain from "../../src/account-setup/domain.js";
 import {
   AccountSetupError,
   type ErrorCode,
-  type SetupPlan,
   type SetupRequest,
 } from "../../src/account-setup/domain.js";
 import { AccountSetup } from "../../src/account-setup/service.js";
@@ -18,6 +17,7 @@ import { LATEST_BASE_IMAGE_VERSION } from "../../src/images/publish-service.js";
 import { VERSION } from "../../src/version.js";
 import {
   BUILD_ROLE_ARN,
+  bucketReads,
   FAKE_IMAGE_SHA256,
   FakeAccountSetup,
   type FakeBehavior,
@@ -34,6 +34,15 @@ interface Contract {
     iamCapabilities: string[];
     artifactBucketParameter: string;
     buildRoleOutputKey: string;
+    iamTemplatePath: string;
+    artifactStackName: string;
+    artifactComponentName: string;
+    artifactTemplatePath: string;
+    bucketNameParameter: string;
+    bucketNameOutputKey: string;
+    defaultArtifactBucketTemplate: string;
+    artifactExpirationDays: number;
+    explicitBucketSources: string[];
     baseImageName: string;
     baseImageVariant: string;
     baseImageVersion: string;
@@ -50,6 +59,7 @@ interface Contract {
     buildingVersionStates: string[];
   };
   bucketSources: string[];
+  bucketProbeStates: string[];
   messages: {
     cost: Record<string, string>;
     progress: Record<string, string>;
@@ -70,6 +80,7 @@ interface PlanVector {
     needsConfirmation?: boolean;
     cost?: string[];
     error?: string;
+    bucketReads: string[];
   };
 }
 
@@ -95,20 +106,20 @@ function requestOf(input: VectorInput): SetupRequest {
   };
 }
 
-async function planOf(input: VectorInput, behavior?: FakeBehavior): Promise<SetupPlan> {
-  return new AccountSetup(new FakeAccountSetup(input, behavior)).plan(requestOf(input));
-}
-
 describe("account setup: shared plan vectors", () => {
   it.each(planVectors.map((vector) => [vector.name, vector] as const))("%s", async (_name, raw) => {
     const vector = withPlaceholders(raw, raw.input, VERSION);
+    const fake = new FakeAccountSetup(vector.input);
+    const planned = new AccountSetup(fake).plan(requestOf(vector.input));
     if (vector.expected.error !== undefined) {
-      const failure = await planOf(vector.input).catch((error: unknown) => error);
+      const failure = await planned.catch((error: unknown) => error);
       expect(failure).toBeInstanceOf(AccountSetupError);
       expect((failure as AccountSetupError).code).toBe(vector.expected.error);
+      expect(bucketReads(fake.calls)).toEqual(vector.expected.bucketReads);
       return;
     }
-    const plan = await planOf(vector.input);
+    const plan = await planned;
+    expect(bucketReads(fake.calls)).toEqual(vector.expected.bucketReads);
     expect(plan.steps.map(domain.stepJson)).toEqual(vector.expected.steps);
     expect(plan.ready).toBe(vector.expected.ready);
     expect(plan.needsConfirmation).toBe(vector.expected.needsConfirmation);
@@ -130,6 +141,15 @@ describe("account setup: contract", () => {
     expect([...domain.IAM_STACK_CAPABILITIES]).toEqual(constants.iamCapabilities);
     expect(domain.ARTIFACT_BUCKET_PARAMETER).toBe(constants.artifactBucketParameter);
     expect(domain.BUILD_ROLE_OUTPUT_KEY).toBe(constants.buildRoleOutputKey);
+    expect(domain.IAM_TEMPLATE_PATH).toBe(constants.iamTemplatePath);
+    expect(domain.ARTIFACT_STACK_NAME).toBe(constants.artifactStackName);
+    expect(domain.ARTIFACT_COMPONENT_NAME).toBe(constants.artifactComponentName);
+    expect(domain.ARTIFACT_TEMPLATE_PATH).toBe(constants.artifactTemplatePath);
+    expect(domain.BUCKET_NAME_PARAMETER).toBe(constants.bucketNameParameter);
+    expect(domain.BUCKET_NAME_OUTPUT_KEY).toBe(constants.bucketNameOutputKey);
+    expect(domain.DEFAULT_ARTIFACT_BUCKET_TEMPLATE).toBe(constants.defaultArtifactBucketTemplate);
+    expect(domain.ARTIFACT_EXPIRATION_DAYS).toBe(constants.artifactExpirationDays);
+    expect([...domain.EXPLICIT_BUCKET_SOURCES]).toEqual(constants.explicitBucketSources);
     expect(domain.BASE_IMAGE_NAME).toBe(constants.baseImageName);
     expect(domain.BASE_IMAGE_VARIANT).toBe(constants.baseImageVariant);
     expect(LATEST_BASE_IMAGE_VERSION).toBe(constants.baseImageVersion);
@@ -175,12 +195,32 @@ describe("account setup: contract", () => {
       reason: "HTTP 404",
       imageVersion: "2.0",
       state: "FAILED",
+      stack: "rayito-m0-artifacts",
+      existing: "amzn-s3-demo-bucket2",
+      output: "BuildRoleArn",
+      template: "infra/iam.yaml",
     };
     for (const code of Object.keys(contract.errorExitCodes) as ErrorCode[]) {
       const error = new AccountSetupError(code, fields);
       expect(error.exitCode).toBe(contract.errorExitCodes[code]);
       expect(error.message).not.toContain("{");
     }
+  });
+
+  it("the default bucket name carries the account and the region", () => {
+    expect(domain.defaultArtifactBucketName("123456789012", "us-east-1")).toBe(
+      "rayito-artifacts-123456789012-us-east-1",
+    );
+  });
+
+  it("the artifact stack bucket is the output of a usable stack only", () => {
+    const outputs = { BucketName: "amzn-s3-demo-bucket" };
+    expect(domain.artifactStackBucket({ status: "CREATE_COMPLETE", outputs })).toBe(
+      "amzn-s3-demo-bucket",
+    );
+    expect(domain.artifactStackBucket({ status: "CREATE_COMPLETE", outputs: {} })).toBeUndefined();
+    expect(domain.artifactStackBucket({ status: "CREATE_IN_PROGRESS", outputs })).toBeUndefined();
+    expect(domain.artifactStackBucket({ status: undefined, outputs: {} })).toBeUndefined();
   });
 
   it("release helpers build the tag, the URL and the hint", () => {
@@ -216,8 +256,13 @@ const FRESH: VectorInput = {
   artifact: null,
   stack: null,
   buckets: { [domain.cdkBucketName("123456789012", "us-east-1")]: "us-east-1" },
+  forbiddenBuckets: [],
+  artifactStack: null,
   image: null,
 };
+
+const DEFAULT_BUCKET = domain.defaultArtifactBucketName("123456789012", "us-east-1");
+const NO_BUCKET: Partial<VectorInput> = { buckets: {} };
 
 const PREPARED_STACK = {
   status: "CREATE_COMPLETE",
@@ -422,5 +467,89 @@ describe("AccountSetup.apply", () => {
       "amzn-s3-demo-bucket",
       BUILD_ROLE_ARN,
     ]);
+  });
+});
+
+describe("AccountSetup with no reusable bucket", () => {
+  it("creates the bucket stack, then the IAM stack, then publishes into it", async () => {
+    const { fake, plan, result, lines } = await applied(inputWith(NO_BUCKET));
+    expect(plan.cost[0]).toContain("los zips de la imagen caducan a los 7 días");
+    const writes = fake.calls.filter(([name]) =>
+      ["create_artifact_stack", "create", "download", "publish"].includes(name),
+    );
+    expect(writes.map(([name]) => name)).toEqual([
+      "create_artifact_stack",
+      "create",
+      "download",
+      "download",
+      "publish",
+    ]);
+    expect(writes[0]).toEqual(["create_artifact_stack", DEFAULT_BUCKET]);
+    expect(writes[1]).toEqual(["create", DEFAULT_BUCKET]);
+    expect(fake.calls.at(-1)).toEqual([
+      "publish",
+      "/work/rayito-image.zip",
+      DEFAULT_BUCKET,
+      BUILD_ROLE_ARN,
+    ]);
+    expect(result.bucket).toBe(DEFAULT_BUCKET);
+    expect(lines.slice(0, 2)).toEqual([
+      `creando el bucket ${DEFAULT_BUCKET} con la pila rayito-m0-artifacts`,
+      `bucket ${DEFAULT_BUCKET} listo (pila rayito-m0-artifacts)`,
+    ]);
+  });
+
+  it("a --bucket name that does not exist is created with that name", async () => {
+    const input = inputWith({ ...NO_BUCKET, bucket: "amzn-s3-demo-bucket1" });
+    const { fake, result } = await applied(input);
+    expect(fake.calls).toContainEqual(["create_artifact_stack", "amzn-s3-demo-bucket1"]);
+    expect(fake.calls).toContainEqual(["create", "amzn-s3-demo-bucket1"]);
+    expect(result.bucket).toBe("amzn-s3-demo-bucket1");
+  });
+
+  it("a bucket stack in progress is waited for and never created", async () => {
+    const input = inputWith({
+      ...NO_BUCKET,
+      artifactStack: {
+        status: "CREATE_IN_PROGRESS",
+        outputs: {},
+        parameters: { BucketName: DEFAULT_BUCKET },
+      },
+    });
+    const { fake, plan, lines } = await applied(input);
+    expect(plan.steps[0]).toMatchObject({ action: "wait", source: "artifactStack" });
+    expect(names(fake.calls)).not.toContain("create_artifact_stack");
+    expect(names(fake.calls)).toContain("wait_artifact_stack");
+    expect(lines[0]).toBe(
+      "esperando a la pila rayito-m0-artifacts del bucket (CREATE_IN_PROGRESS)",
+    );
+  });
+
+  it("a created bucket stack without the BucketName output raises stack_incomplete", async () => {
+    await expect(applied(inputWith(NO_BUCKET), { omitBucketName: true })).rejects.toMatchObject({
+      code: "stack_incomplete",
+      message: expect.stringContaining("no tiene la salida BucketName"),
+    });
+  });
+
+  it("an account with a reusable bucket never reads the bucket stack", async () => {
+    const { fake } = await applied(FRESH);
+    expect(names(fake.calls)).not.toContain("describe_artifact_stack");
+    expect(names(fake.calls)).not.toContain("create_artifact_stack");
+  });
+
+  it("a plan that only waits or reuses writes nothing to the bucket stack", async () => {
+    const input = inputWith({
+      ...NO_BUCKET,
+      buckets: { [DEFAULT_BUCKET]: "us-east-1" },
+      artifactStack: {
+        status: "CREATE_COMPLETE",
+        outputs: { BucketName: DEFAULT_BUCKET },
+        parameters: { BucketName: DEFAULT_BUCKET },
+      },
+    });
+    const { fake, result } = await applied(input);
+    expect(names(fake.calls)).not.toContain("create_artifact_stack");
+    expect(result.bucket).toBe(DEFAULT_BUCKET);
   });
 });
