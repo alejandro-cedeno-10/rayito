@@ -127,6 +127,25 @@ When `RunMicrovm` fails with `ResourceNotFoundException`, the control plane SHAL
 - **WHEN** `deploy_agent` resolves no bucket
 - **THEN** `InvalidArgumentException`/`InvalidArgumentError` is raised and its message contains both `Rayito no crea buckets` and `rayito setup`
 
+### Requirement: Setup tags the stacks it creates or updates
+`rayito setup` SHALL accept `--tag K=V`, repeatable, and SHALL pass every tag as a CloudFormation stack tag in the `CreateStack` and `UpdateStack` calls of `rayito-m0-artifacts` and `rayito-m0-iam`. A reused stack SHALL NOT be retagged and the tags SHALL NOT be applied to the MicroVM image. Without `--tag`, the calls SHALL be identical to those made before the option existed. A value that is not `K=V` (no `=` or an empty key) SHALL be a usage error with exit code 2 before any AWS call.
+
+#### Scenario: tags reach both stacks on create
+- **WHEN** `rayito setup --yes --tag Owner=platform --tag Project=agents` runs on a fresh fake account
+- **THEN** the `CreateStack` of `rayito-m0-artifacts` and the `CreateStack` of `rayito-m0-iam` both carry the tags `Owner=platform` and `Project=agents`, and `CreateMicrovmImage` carries none
+
+#### Scenario: tags reach the IAM stack on update
+- **WHEN** the same command runs on an account whose `rayito-m0-iam` needs an `update`
+- **THEN** the `UpdateStack` call carries the same tags
+
+#### Scenario: no tags leaves the calls unchanged
+- **WHEN** `rayito setup --yes` runs without `--tag`
+- **THEN** the recorded `CreateStack` and `UpdateStack` calls are equal to those recorded before the option existed
+
+#### Scenario: bad format is a usage error
+- **WHEN** `rayito setup --tag Owner` runs
+- **THEN** the exit code is 2, the message names the expected `K=V` form and the fakes record no call
+
 ### Requirement: Nothing is created or charged without the explicit command
 Constructing `AccountSetup` or any of its adapters SHALL make no AWS call and SHALL load no optional AWS client. No SDK call other than `rayito setup` SHALL invoke `AccountSetup`. Without `--yes` or a terminal confirmation, `rayito setup` SHALL make no write call (`CreateStack` of either stack, `UpdateStack`, `PutObject`, `CreateMicrovmImage`, `UpdateMicrovmImage`) and SHALL download nothing.
 

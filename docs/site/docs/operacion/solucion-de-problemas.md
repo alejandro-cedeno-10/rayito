@@ -69,6 +69,12 @@ quieres borrarlo, vacíalo y bórralo a mano. Cuando una orden posterior (`Sandb
 dice que no hay imagen o bucket, el mensaje termina con la pista «si la cuenta
 o la región aún no están preparadas, ejecuta `rayito setup`».
 
+Si `setup` falla con `AccessDenied` o «explicit deny» en `s3:CreateBucket` o `cloudformation:CreateStack` (o `stack_blocked` con ese motivo en `describe-stack-events`) porque una SCP de tu organización exige etiquetas, vuelve a ejecutarlo con las que pide, una `--tag` por cada una (los valores de aquí son de ejemplo):
+
+```bash
+rayito setup --tag Owner=platform --tag Project=agents
+```
+
 ## Credenciales y región
 
 **`ExpiredTokenException`, `Token has expired`, `UnauthorizedSSOTokenError`.**

@@ -26,7 +26,9 @@ bucket en la región de los sandboxes (el tuyo, el de la pila de IAM o el de
 `cdk bootstrap` sirven igual): `rayito setup` lo despliega solo cuando no
 encuentra ninguno, como la pila `rayito-m0-artifacts`, con el nombre
 `rayito-artifacts-<cuenta>-<región>` (o el de `--bucket` / `RAYITO_BUCKET` si no
-existe).
+existe). Si tu organización exige etiquetas para crear recursos, `rayito setup
+--tag K=V` (repetible) las pasa como etiquetas de la pila y CloudFormation las
+propaga al bucket.
 
 Crea dos recursos y nada más:
 

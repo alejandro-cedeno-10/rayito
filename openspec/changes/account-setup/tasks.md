@@ -699,6 +699,8 @@ targeted AWS check per language lane, with inventory before and after.
 - [ ] 4.5 Inventory again; the difference is zero. Record the measurements
       (build time, any SCP finding) as the next free Q rows of
       `AWS_API_NOTES.md`.
+- [ ] 4.5b If the test account's SCP requires tags (D11), the run passes the
+      organization's tags through `RAYITO_E2E_SETUP_TAGS` (see 6.AWS.1).
 - [ ] 4.6 Review sweep (`reference/review-checklist.md`), then archive this
       change (`openspec archive account-setup --yes`).
 
@@ -984,6 +986,42 @@ TypeScript `tests/unit/account-setup.test.ts`, `tests/unit/cli/setup.test.ts`.
       targeted checks above plus the release's full regression
       (`reference/release-and-aws.md`); record the stack create time and
       any SCP finding as the next free Q row of `AWS_API_NOTES.md`.
+
+## 6. Stack tags (`--tag K=V`, design D11)
+
+### 6.PY Track PY (`clients/python/` only)
+
+- [ ] 6.PY.1 `rayito setup --tag K=V` (repeatable, same parser as
+      `rayito stack deploy`), passed to the `CreateStack`/`UpdateStack` of
+      `rayito-m0-artifacts` and `rayito-m0-iam`; reused stacks and the image
+      untouched; bad format is exit 2. Help text from
+      `testdata/account-setup/contract.json`.
+- [ ] 6.PY.2 Tests: tags on both creates, on the IAM update, no tags equals
+      the old calls, bad format; `RAYITO_E2E_SETUP_TAGS` read by the e2e.
+
+### 6.TS Track TS (`clients/typescript/` only)
+
+- [ ] 6.TS.1 Same as 6.PY.1 in the TypeScript CLI and adapters.
+- [ ] 6.TS.2 Same tests as 6.PY.2 and `RAYITO_E2E_SETUP_TAGS`.
+
+### 6.DOCS Track DOCS (no file under `clients/` or `testdata/`)
+
+- [x] 6.DOCS.1 This change: design D11, the requirement and its scenarios,
+      this section.
+- [x] 6.DOCS.2 CLI reference (es/en): the `--tag` option with the contract's
+      help text and an `rayito setup --tag ...` example.
+- [x] 6.DOCS.3 `configurar-aws` (es/en): a note for organizations that
+      require tags.
+- [x] 6.DOCS.4 Troubleshooting (es/en): explicit deny on `CreateBucket` or
+      `CreateStack` by an SCP, re-run with the required `--tag`.
+- [x] 6.DOCS.5 `ARCHITECTURE.md` ADR-030 amendment line and `infra/README.md`.
+
+### 6.AWS Acceptance addition
+
+- [ ] 6.AWS.1 The AWS run passes the organization's required tags to the
+      setup e2e through `RAYITO_E2E_SETUP_TAGS` (a comma-separated `K=V`
+      list kept outside the repository); the inventory of 4.2/4.5 checks that
+      the bucket, the roles and the stacks it created carry them.
 
 ## Open questions (defaults already chosen; change only if the maintainer says so)
 
