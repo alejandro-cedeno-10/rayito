@@ -112,6 +112,8 @@ CLI_PHASES: Final[dict[int, tuple[str, ...]]] = {
         "agent invoke",
         "agent status",
         "agent stop",
+        "agent list",
+        "agent delete",
         "events deploy",
         "events status",
         "events destroy",

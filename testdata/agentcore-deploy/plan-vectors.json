@@ -1,0 +1,1880 @@
+{
+  "description": "Vectores del plan de `--target agentcore` (plan_deploy / planDeploy / --dry-run): no llama a AWS. `project` es un documento de AgentProject.from_dict/fromDict (base_dir: el directorio de este fichero); `call` son opciones de la llamada en camelCase (scaling, secretNames, accessToken, keepOnFailure, bucket y agentcore con bedrockModels, readableSecrets, idleSessionTimeoutSeconds, maxSessionLifetimeSeconds y tags; TypeScript pasa los dos plazos en milisegundos multiplicando por 1000); `environ` sustituye al entorno. `expected` es el plan (se comparan todas sus claves salvo imageTag y cost, que tienen sus propios tests) o `error` con `code` y los campos que el mensaje interpola. security y warnings son claves de messages.security y messages.warnings, en el orden en que salen.",
+  "cases": [
+    {
+      "name": "proyecto mínimo con el bucket de RAYITO_BUCKET",
+      "target": "agentcore",
+      "region": "us-east-1",
+      "project": {
+        "schema": "rayito.agent-project/1",
+        "name": "support-bot",
+        "runtime": {
+          "kind": "deepagents"
+        },
+        "model": {
+          "provider": "bedrock",
+          "id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "region": "us-east-1",
+          "gateway": "bedrock"
+        },
+        "gateways": {
+          "bedrock": {
+            "preset": "bedrock",
+            "secret": "rayito/bedrock-key",
+            "region": "us-east-1",
+            "models": [
+              "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+            ]
+          }
+        }
+      },
+      "call": {},
+      "environ": {
+        "RAYITO_BUCKET": "amzn-s3-demo-bucket"
+      },
+      "expected": {
+        "target": "agentcore",
+        "name": "support-bot",
+        "region": "us-east-1",
+        "runtimeName": "rayito_support_bot",
+        "stackName": "rayito-agentcore-support-bot",
+        "repositoryName": "rayito/agentcore/support-bot",
+        "buildProjectName": "rayito-agentcore-support-bot",
+        "bucket": "amzn-s3-demo-bucket",
+        "bucketSource": "environment",
+        "network": "PUBLIC",
+        "bedrockModels": [
+          "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+        ],
+        "readableSecrets": [],
+        "environment": {
+          "AWS_DEFAULT_REGION": "us-east-1",
+          "AWS_REGION": "us-east-1"
+        },
+        "lifecycle": {
+          "idleSessionTimeoutSeconds": 900,
+          "maxSessionLifetimeSeconds": 28800
+        },
+        "tags": {},
+        "steps": [
+          {
+            "resource": "stack",
+            "name": "rayito-agentcore-support-bot",
+            "action": "planned",
+            "status": null
+          },
+          {
+            "resource": "image",
+            "name": "rayito/agentcore/support-bot",
+            "action": "planned",
+            "status": null
+          },
+          {
+            "resource": "runtime",
+            "name": "rayito_support_bot",
+            "action": "planned",
+            "status": null
+          }
+        ],
+        "security": [
+          "noGateway",
+          "bedrockModels",
+          "publicNetwork",
+          "sessionIsolation"
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "bucket del argumento gana",
+      "target": "agentcore",
+      "region": "us-east-1",
+      "project": {
+        "schema": "rayito.agent-project/1",
+        "name": "support-bot",
+        "runtime": {
+          "kind": "deepagents"
+        },
+        "model": {
+          "provider": "bedrock",
+          "id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "region": "us-east-1",
+          "gateway": "bedrock"
+        },
+        "gateways": {
+          "bedrock": {
+            "preset": "bedrock",
+            "secret": "rayito/bedrock-key",
+            "region": "us-east-1",
+            "models": [
+              "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+            ]
+          }
+        },
+        "deploy": {
+          "bucket": "amzn-s3-demo-bucket1"
+        }
+      },
+      "call": {
+        "bucket": "amzn-s3-demo-bucket2"
+      },
+      "environ": {
+        "RAYITO_BUCKET": "amzn-s3-demo-bucket"
+      },
+      "expected": {
+        "target": "agentcore",
+        "name": "support-bot",
+        "region": "us-east-1",
+        "runtimeName": "rayito_support_bot",
+        "stackName": "rayito-agentcore-support-bot",
+        "repositoryName": "rayito/agentcore/support-bot",
+        "buildProjectName": "rayito-agentcore-support-bot",
+        "bucket": "amzn-s3-demo-bucket2",
+        "bucketSource": "argument",
+        "network": "PUBLIC",
+        "bedrockModels": [
+          "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+        ],
+        "readableSecrets": [],
+        "environment": {
+          "AWS_DEFAULT_REGION": "us-east-1",
+          "AWS_REGION": "us-east-1"
+        },
+        "lifecycle": {
+          "idleSessionTimeoutSeconds": 900,
+          "maxSessionLifetimeSeconds": 28800
+        },
+        "tags": {},
+        "steps": [
+          {
+            "resource": "stack",
+            "name": "rayito-agentcore-support-bot",
+            "action": "planned",
+            "status": null
+          },
+          {
+            "resource": "image",
+            "name": "rayito/agentcore/support-bot",
+            "action": "planned",
+            "status": null
+          },
+          {
+            "resource": "runtime",
+            "name": "rayito_support_bot",
+            "action": "planned",
+            "status": null
+          }
+        ],
+        "security": [
+          "noGateway",
+          "bedrockModels",
+          "publicNetwork",
+          "sessionIsolation"
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "bucket del fichero de proyecto",
+      "target": "agentcore",
+      "region": "us-east-1",
+      "project": {
+        "schema": "rayito.agent-project/1",
+        "name": "support-bot",
+        "runtime": {
+          "kind": "deepagents"
+        },
+        "model": {
+          "provider": "bedrock",
+          "id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "region": "us-east-1",
+          "gateway": "bedrock"
+        },
+        "gateways": {
+          "bedrock": {
+            "preset": "bedrock",
+            "secret": "rayito/bedrock-key",
+            "region": "us-east-1",
+            "models": [
+              "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+            ]
+          }
+        },
+        "deploy": {
+          "bucket": "amzn-s3-demo-bucket1"
+        }
+      },
+      "call": {},
+      "environ": {
+        "RAYITO_BUCKET": "amzn-s3-demo-bucket"
+      },
+      "expected": {
+        "target": "agentcore",
+        "name": "support-bot",
+        "region": "us-east-1",
+        "runtimeName": "rayito_support_bot",
+        "stackName": "rayito-agentcore-support-bot",
+        "repositoryName": "rayito/agentcore/support-bot",
+        "buildProjectName": "rayito-agentcore-support-bot",
+        "bucket": "amzn-s3-demo-bucket1",
+        "bucketSource": "project_file",
+        "network": "PUBLIC",
+        "bedrockModels": [
+          "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+        ],
+        "readableSecrets": [],
+        "environment": {
+          "AWS_DEFAULT_REGION": "us-east-1",
+          "AWS_REGION": "us-east-1"
+        },
+        "lifecycle": {
+          "idleSessionTimeoutSeconds": 900,
+          "maxSessionLifetimeSeconds": 28800
+        },
+        "tags": {},
+        "steps": [
+          {
+            "resource": "stack",
+            "name": "rayito-agentcore-support-bot",
+            "action": "planned",
+            "status": null
+          },
+          {
+            "resource": "image",
+            "name": "rayito/agentcore/support-bot",
+            "action": "planned",
+            "status": null
+          },
+          {
+            "resource": "runtime",
+            "name": "rayito_support_bot",
+            "action": "planned",
+            "status": null
+          }
+        ],
+        "security": [
+          "noGateway",
+          "bedrockModels",
+          "publicNetwork",
+          "sessionIsolation"
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "sin bucket: se descubre al aplicar",
+      "target": "agentcore",
+      "region": "us-east-1",
+      "project": {
+        "schema": "rayito.agent-project/1",
+        "name": "support-bot",
+        "runtime": {
+          "kind": "deepagents"
+        },
+        "model": {
+          "provider": "bedrock",
+          "id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "region": "us-east-1",
+          "gateway": "bedrock"
+        },
+        "gateways": {
+          "bedrock": {
+            "preset": "bedrock",
+            "secret": "rayito/bedrock-key",
+            "region": "us-east-1",
+            "models": [
+              "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+            ]
+          }
+        }
+      },
+      "call": {},
+      "environ": {},
+      "expected": {
+        "target": "agentcore",
+        "name": "support-bot",
+        "region": "us-east-1",
+        "runtimeName": "rayito_support_bot",
+        "stackName": "rayito-agentcore-support-bot",
+        "repositoryName": "rayito/agentcore/support-bot",
+        "buildProjectName": "rayito-agentcore-support-bot",
+        "bucket": null,
+        "bucketSource": "discover",
+        "network": "PUBLIC",
+        "bedrockModels": [
+          "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+        ],
+        "readableSecrets": [],
+        "environment": {
+          "AWS_DEFAULT_REGION": "us-east-1",
+          "AWS_REGION": "us-east-1"
+        },
+        "lifecycle": {
+          "idleSessionTimeoutSeconds": 900,
+          "maxSessionLifetimeSeconds": 28800
+        },
+        "tags": {},
+        "steps": [
+          {
+            "resource": "stack",
+            "name": "rayito-agentcore-support-bot",
+            "action": "planned",
+            "status": null
+          },
+          {
+            "resource": "image",
+            "name": "rayito/agentcore/support-bot",
+            "action": "planned",
+            "status": null
+          },
+          {
+            "resource": "runtime",
+            "name": "rayito_support_bot",
+            "action": "planned",
+            "status": null
+          }
+        ],
+        "security": [
+          "noGateway",
+          "bedrockModels",
+          "publicNetwork",
+          "sessionIsolation"
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "valores del fichero que no aplican: avisos, no errores",
+      "target": "agentcore",
+      "region": "us-east-1",
+      "project": {
+        "schema": "rayito.agent-project/1",
+        "name": "support-bot",
+        "runtime": {
+          "kind": "deepagents"
+        },
+        "model": {
+          "provider": "bedrock",
+          "id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "region": "us-east-1",
+          "gateway": "bedrock"
+        },
+        "gateways": {
+          "bedrock": {
+            "preset": "bedrock",
+            "secret": "rayito/bedrock-key",
+            "region": "us-east-1",
+            "models": [
+              "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+            ]
+          }
+        },
+        "scaling": {
+          "min_vms": 2,
+          "max_vms": 3,
+          "warm_vms": 1
+        },
+        "serve": {
+          "port": 8081,
+          "timeout_seconds": 120,
+          "idle_seconds": 300,
+          "max_concurrency": 2
+        },
+        "env": {
+          "LOG_LEVEL": "debug"
+        },
+        "image": {
+          "memory_mib": 4096
+        },
+        "deploy": {
+          "base_image_version": "3"
+        }
+      },
+      "call": {},
+      "environ": {
+        "RAYITO_BUCKET": "amzn-s3-demo-bucket"
+      },
+      "expected": {
+        "target": "agentcore",
+        "name": "support-bot",
+        "region": "us-east-1",
+        "runtimeName": "rayito_support_bot",
+        "stackName": "rayito-agentcore-support-bot",
+        "repositoryName": "rayito/agentcore/support-bot",
+        "buildProjectName": "rayito-agentcore-support-bot",
+        "bucket": "amzn-s3-demo-bucket",
+        "bucketSource": "environment",
+        "network": "PUBLIC",
+        "bedrockModels": [
+          "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+        ],
+        "readableSecrets": [],
+        "environment": {
+          "AWS_DEFAULT_REGION": "us-east-1",
+          "AWS_REGION": "us-east-1",
+          "LOG_LEVEL": "debug"
+        },
+        "lifecycle": {
+          "idleSessionTimeoutSeconds": 900,
+          "maxSessionLifetimeSeconds": 28800
+        },
+        "tags": {},
+        "steps": [
+          {
+            "resource": "stack",
+            "name": "rayito-agentcore-support-bot",
+            "action": "planned",
+            "status": null
+          },
+          {
+            "resource": "image",
+            "name": "rayito/agentcore/support-bot",
+            "action": "planned",
+            "status": null
+          },
+          {
+            "resource": "runtime",
+            "name": "rayito_support_bot",
+            "action": "planned",
+            "status": null
+          }
+        ],
+        "security": [
+          "noGateway",
+          "bedrockModels",
+          "publicNetwork",
+          "sessionIsolation"
+        ],
+        "warnings": [
+          "fileScaling",
+          "fileMemory",
+          "filePort",
+          "fileTimeout",
+          "fileIdle",
+          "fileBaseImage"
+        ]
+      }
+    },
+    {
+      "name": "opciones de AgentCore",
+      "target": "agentcore",
+      "region": "us-east-1",
+      "project": {
+        "schema": "rayito.agent-project/1",
+        "name": "support-bot",
+        "runtime": {
+          "kind": "deepagents"
+        },
+        "model": {
+          "provider": "bedrock",
+          "id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "region": "us-east-1",
+          "gateway": "bedrock"
+        },
+        "gateways": {
+          "bedrock": {
+            "preset": "bedrock",
+            "secret": "rayito/bedrock-key",
+            "region": "us-east-1",
+            "models": [
+              "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+            ]
+          }
+        }
+      },
+      "call": {
+        "agentcore": {
+          "bedrockModels": [
+            "amazon.nova-lite-v1:0",
+            "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+          ],
+          "readableSecrets": [
+            "rayito/agents/support/db"
+          ],
+          "idleSessionTimeoutSeconds": 600,
+          "maxSessionLifetimeSeconds": 7200,
+          "tags": {
+            "team": "agents",
+            "cost-center": "1234"
+          }
+        }
+      },
+      "environ": {
+        "RAYITO_BUCKET": "amzn-s3-demo-bucket"
+      },
+      "expected": {
+        "target": "agentcore",
+        "name": "support-bot",
+        "region": "us-east-1",
+        "runtimeName": "rayito_support_bot",
+        "stackName": "rayito-agentcore-support-bot",
+        "repositoryName": "rayito/agentcore/support-bot",
+        "buildProjectName": "rayito-agentcore-support-bot",
+        "bucket": "amzn-s3-demo-bucket",
+        "bucketSource": "environment",
+        "network": "PUBLIC",
+        "bedrockModels": [
+          "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "amazon.nova-lite-v1:0"
+        ],
+        "readableSecrets": [
+          "rayito/agents/support/db"
+        ],
+        "environment": {
+          "AWS_DEFAULT_REGION": "us-east-1",
+          "AWS_REGION": "us-east-1"
+        },
+        "lifecycle": {
+          "idleSessionTimeoutSeconds": 600,
+          "maxSessionLifetimeSeconds": 7200
+        },
+        "tags": {
+          "cost-center": "1234",
+          "team": "agents"
+        },
+        "steps": [
+          {
+            "resource": "stack",
+            "name": "rayito-agentcore-support-bot",
+            "action": "planned",
+            "status": null
+          },
+          {
+            "resource": "image",
+            "name": "rayito/agentcore/support-bot",
+            "action": "planned",
+            "status": null
+          },
+          {
+            "resource": "runtime",
+            "name": "rayito_support_bot",
+            "action": "planned",
+            "status": null
+          }
+        ],
+        "security": [
+          "noGateway",
+          "bedrockModels",
+          "readableSecrets",
+          "publicNetwork",
+          "sessionIsolation"
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "sólo max_session_lifetime por debajo de 900",
+      "target": "agentcore",
+      "region": "us-east-1",
+      "project": {
+        "schema": "rayito.agent-project/1",
+        "name": "support-bot",
+        "runtime": {
+          "kind": "deepagents"
+        },
+        "model": {
+          "provider": "bedrock",
+          "id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "region": "us-east-1",
+          "gateway": "bedrock"
+        },
+        "gateways": {
+          "bedrock": {
+            "preset": "bedrock",
+            "secret": "rayito/bedrock-key",
+            "region": "us-east-1",
+            "models": [
+              "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+            ]
+          }
+        }
+      },
+      "call": {
+        "agentcore": {
+          "maxSessionLifetimeSeconds": 300
+        }
+      },
+      "environ": {
+        "RAYITO_BUCKET": "amzn-s3-demo-bucket"
+      },
+      "expected": {
+        "target": "agentcore",
+        "name": "support-bot",
+        "region": "us-east-1",
+        "runtimeName": "rayito_support_bot",
+        "stackName": "rayito-agentcore-support-bot",
+        "repositoryName": "rayito/agentcore/support-bot",
+        "buildProjectName": "rayito-agentcore-support-bot",
+        "bucket": "amzn-s3-demo-bucket",
+        "bucketSource": "environment",
+        "network": "PUBLIC",
+        "bedrockModels": [
+          "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+        ],
+        "readableSecrets": [],
+        "environment": {
+          "AWS_DEFAULT_REGION": "us-east-1",
+          "AWS_REGION": "us-east-1"
+        },
+        "lifecycle": {
+          "idleSessionTimeoutSeconds": 300,
+          "maxSessionLifetimeSeconds": 300
+        },
+        "tags": {},
+        "steps": [
+          {
+            "resource": "stack",
+            "name": "rayito-agentcore-support-bot",
+            "action": "planned",
+            "status": null
+          },
+          {
+            "resource": "image",
+            "name": "rayito/agentcore/support-bot",
+            "action": "planned",
+            "status": null
+          },
+          {
+            "resource": "runtime",
+            "name": "rayito_support_bot",
+            "action": "planned",
+            "status": null
+          }
+        ],
+        "security": [
+          "noGateway",
+          "bedrockModels",
+          "publicNetwork",
+          "sessionIsolation"
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "despliegue en otra región con perfil us: el modelo sigue en us-east-1",
+      "target": "agentcore",
+      "region": "eu-west-1",
+      "project": {
+        "schema": "rayito.agent-project/1",
+        "name": "support-bot",
+        "runtime": {
+          "kind": "deepagents"
+        },
+        "model": {
+          "provider": "bedrock",
+          "id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "region": "us-east-1",
+          "gateway": "bedrock"
+        },
+        "gateways": {
+          "bedrock": {
+            "preset": "bedrock",
+            "secret": "rayito/bedrock-key",
+            "region": "us-east-1",
+            "models": [
+              "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+            ]
+          }
+        }
+      },
+      "call": {},
+      "environ": {
+        "RAYITO_BUCKET": "amzn-s3-demo-bucket"
+      },
+      "expected": {
+        "target": "agentcore",
+        "name": "support-bot",
+        "region": "eu-west-1",
+        "runtimeName": "rayito_support_bot",
+        "stackName": "rayito-agentcore-support-bot",
+        "repositoryName": "rayito/agentcore/support-bot",
+        "buildProjectName": "rayito-agentcore-support-bot",
+        "bucket": "amzn-s3-demo-bucket",
+        "bucketSource": "environment",
+        "network": "PUBLIC",
+        "bedrockModels": [
+          "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+        ],
+        "readableSecrets": [],
+        "environment": {
+          "AWS_DEFAULT_REGION": "eu-west-1",
+          "AWS_REGION": "eu-west-1"
+        },
+        "lifecycle": {
+          "idleSessionTimeoutSeconds": 900,
+          "maxSessionLifetimeSeconds": 28800
+        },
+        "tags": {},
+        "steps": [
+          {
+            "resource": "stack",
+            "name": "rayito-agentcore-support-bot",
+            "action": "planned",
+            "status": null
+          },
+          {
+            "resource": "image",
+            "name": "rayito/agentcore/support-bot",
+            "action": "planned",
+            "status": null
+          },
+          {
+            "resource": "runtime",
+            "name": "rayito_support_bot",
+            "action": "planned",
+            "status": null
+          }
+        ],
+        "security": [
+          "noGateway",
+          "bedrockModels",
+          "publicNetwork",
+          "sessionIsolation"
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "el entorno del proyecto no pisa las variables de región",
+      "target": "agentcore",
+      "region": "us-east-1",
+      "project": {
+        "schema": "rayito.agent-project/1",
+        "name": "support-bot",
+        "runtime": {
+          "kind": "deepagents"
+        },
+        "model": {
+          "provider": "bedrock",
+          "id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "region": "us-east-1",
+          "gateway": "bedrock"
+        },
+        "gateways": {
+          "bedrock": {
+            "preset": "bedrock",
+            "secret": "rayito/bedrock-key",
+            "region": "us-east-1",
+            "models": [
+              "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+            ]
+          }
+        },
+        "env": {
+          "AWS_REGION": "ap-south-1",
+          "MODE": "prod"
+        }
+      },
+      "call": {},
+      "environ": {
+        "RAYITO_BUCKET": "amzn-s3-demo-bucket"
+      },
+      "expected": {
+        "target": "agentcore",
+        "name": "support-bot",
+        "region": "us-east-1",
+        "runtimeName": "rayito_support_bot",
+        "stackName": "rayito-agentcore-support-bot",
+        "repositoryName": "rayito/agentcore/support-bot",
+        "buildProjectName": "rayito-agentcore-support-bot",
+        "bucket": "amzn-s3-demo-bucket",
+        "bucketSource": "environment",
+        "network": "PUBLIC",
+        "bedrockModels": [
+          "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+        ],
+        "readableSecrets": [],
+        "environment": {
+          "AWS_DEFAULT_REGION": "us-east-1",
+          "AWS_REGION": "us-east-1",
+          "MODE": "prod"
+        },
+        "lifecycle": {
+          "idleSessionTimeoutSeconds": 900,
+          "maxSessionLifetimeSeconds": 28800
+        },
+        "tags": {},
+        "steps": [
+          {
+            "resource": "stack",
+            "name": "rayito-agentcore-support-bot",
+            "action": "planned",
+            "status": null
+          },
+          {
+            "resource": "image",
+            "name": "rayito/agentcore/support-bot",
+            "action": "planned",
+            "status": null
+          },
+          {
+            "resource": "runtime",
+            "name": "rayito_support_bot",
+            "action": "planned",
+            "status": null
+          }
+        ],
+        "security": [
+          "noGateway",
+          "bedrockModels",
+          "publicNetwork",
+          "sessionIsolation"
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "región sin AgentCore",
+      "target": "agentcore",
+      "region": "eu-central-2",
+      "project": {
+        "schema": "rayito.agent-project/1",
+        "name": "support-bot",
+        "runtime": {
+          "kind": "deepagents"
+        },
+        "model": {
+          "provider": "bedrock",
+          "id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "region": "us-east-1",
+          "gateway": "bedrock"
+        },
+        "gateways": {
+          "bedrock": {
+            "preset": "bedrock",
+            "secret": "rayito/bedrock-key",
+            "region": "us-east-1",
+            "models": [
+              "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+            ]
+          }
+        }
+      },
+      "call": {},
+      "environ": {
+        "RAYITO_BUCKET": "amzn-s3-demo-bucket"
+      },
+      "expected": {
+        "error": {
+          "code": "unsupported_region",
+          "region": "eu-central-2"
+        }
+      }
+    },
+    {
+      "name": "nombre con mayúsculas y punto",
+      "target": "agentcore",
+      "region": "us-east-1",
+      "project": {
+        "schema": "rayito.agent-project/1",
+        "name": "support-bot",
+        "runtime": {
+          "kind": "deepagents"
+        },
+        "model": {
+          "provider": "bedrock",
+          "id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "region": "us-east-1",
+          "gateway": "bedrock"
+        },
+        "gateways": {
+          "bedrock": {
+            "preset": "bedrock",
+            "secret": "rayito/bedrock-key",
+            "region": "us-east-1",
+            "models": [
+              "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+            ]
+          }
+        },
+        "image": {
+          "template": "Support.Bot"
+        }
+      },
+      "call": {},
+      "environ": {
+        "RAYITO_BUCKET": "amzn-s3-demo-bucket"
+      },
+      "expected": {
+        "error": {
+          "code": "name_invalid",
+          "name": "Support.Bot"
+        }
+      }
+    },
+    {
+      "name": "nombre de 42 caracteres",
+      "target": "agentcore",
+      "region": "us-east-1",
+      "project": {
+        "schema": "rayito.agent-project/1",
+        "name": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "runtime": {
+          "kind": "deepagents"
+        },
+        "model": {
+          "provider": "bedrock",
+          "id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "region": "us-east-1",
+          "gateway": "bedrock"
+        },
+        "gateways": {
+          "bedrock": {
+            "preset": "bedrock",
+            "secret": "rayito/bedrock-key",
+            "region": "us-east-1",
+            "models": [
+              "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+            ]
+          }
+        }
+      },
+      "call": {},
+      "environ": {
+        "RAYITO_BUCKET": "amzn-s3-demo-bucket"
+      },
+      "expected": {
+        "error": {
+          "code": "name_invalid",
+          "name": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      }
+    },
+    {
+      "name": "proveedor que no es bedrock",
+      "target": "agentcore",
+      "region": "us-east-1",
+      "project": {
+        "schema": "rayito.agent-project/1",
+        "name": "support-bot",
+        "runtime": {
+          "kind": "deepagents"
+        },
+        "model": {
+          "provider": "openai",
+          "id": "gpt-4.1-mini",
+          "gateway": "openai"
+        },
+        "gateways": {
+          "openai": {
+            "preset": "openai",
+            "secret": "rayito/openai-key"
+          }
+        }
+      },
+      "call": {},
+      "environ": {
+        "RAYITO_BUCKET": "amzn-s3-demo-bucket"
+      },
+      "expected": {
+        "error": {
+          "code": "provider_unsupported",
+          "provider": "openai"
+        }
+      }
+    },
+    {
+      "name": "egress del proyecto",
+      "target": "agentcore",
+      "region": "us-east-1",
+      "project": {
+        "schema": "rayito.agent-project/1",
+        "name": "support-bot",
+        "runtime": {
+          "kind": "deepagents"
+        },
+        "model": {
+          "provider": "bedrock",
+          "id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "region": "us-east-1",
+          "gateway": "bedrock"
+        },
+        "gateways": {
+          "bedrock": {
+            "preset": "bedrock",
+            "secret": "rayito/bedrock-key",
+            "region": "us-east-1",
+            "models": [
+              "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+            ]
+          }
+        },
+        "network": {
+          "egress": [
+            "api.example.com"
+          ]
+        }
+      },
+      "call": {},
+      "environ": {
+        "RAYITO_BUCKET": "amzn-s3-demo-bucket"
+      },
+      "expected": {
+        "error": {
+          "code": "network_policy_unsupported"
+        }
+      }
+    },
+    {
+      "name": "allow_out del proyecto",
+      "target": "agentcore",
+      "region": "us-east-1",
+      "project": {
+        "schema": "rayito.agent-project/1",
+        "name": "support-bot",
+        "runtime": {
+          "kind": "deepagents"
+        },
+        "model": {
+          "provider": "bedrock",
+          "id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "region": "us-east-1",
+          "gateway": "bedrock"
+        },
+        "gateways": {
+          "bedrock": {
+            "preset": "bedrock",
+            "secret": "rayito/bedrock-key",
+            "region": "us-east-1",
+            "models": [
+              "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+            ]
+          }
+        },
+        "network": {
+          "allow_out": [
+            "api.example.com"
+          ]
+        }
+      },
+      "call": {},
+      "environ": {
+        "RAYITO_BUCKET": "amzn-s3-demo-bucket"
+      },
+      "expected": {
+        "error": {
+          "code": "network_policy_unsupported"
+        }
+      }
+    },
+    {
+      "name": "min_vms en la llamada",
+      "target": "agentcore",
+      "region": "us-east-1",
+      "project": {
+        "schema": "rayito.agent-project/1",
+        "name": "support-bot",
+        "runtime": {
+          "kind": "deepagents"
+        },
+        "model": {
+          "provider": "bedrock",
+          "id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "region": "us-east-1",
+          "gateway": "bedrock"
+        },
+        "gateways": {
+          "bedrock": {
+            "preset": "bedrock",
+            "secret": "rayito/bedrock-key",
+            "region": "us-east-1",
+            "models": [
+              "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+            ]
+          }
+        }
+      },
+      "call": {
+        "scaling": {
+          "minVms": 2
+        }
+      },
+      "environ": {
+        "RAYITO_BUCKET": "amzn-s3-demo-bucket"
+      },
+      "expected": {
+        "error": {
+          "code": "option_not_supported",
+          "option": "scaling.min_vms"
+        }
+      }
+    },
+    {
+      "name": "warm_vms en la llamada",
+      "target": "agentcore",
+      "region": "us-east-1",
+      "project": {
+        "schema": "rayito.agent-project/1",
+        "name": "support-bot",
+        "runtime": {
+          "kind": "deepagents"
+        },
+        "model": {
+          "provider": "bedrock",
+          "id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "region": "us-east-1",
+          "gateway": "bedrock"
+        },
+        "gateways": {
+          "bedrock": {
+            "preset": "bedrock",
+            "secret": "rayito/bedrock-key",
+            "region": "us-east-1",
+            "models": [
+              "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+            ]
+          }
+        }
+      },
+      "call": {
+        "scaling": {
+          "warmVms": 1
+        }
+      },
+      "environ": {
+        "RAYITO_BUCKET": "amzn-s3-demo-bucket"
+      },
+      "expected": {
+        "error": {
+          "code": "option_not_supported",
+          "option": "scaling.warm_vms"
+        }
+      }
+    },
+    {
+      "name": "secret_names en la llamada",
+      "target": "agentcore",
+      "region": "us-east-1",
+      "project": {
+        "schema": "rayito.agent-project/1",
+        "name": "support-bot",
+        "runtime": {
+          "kind": "deepagents"
+        },
+        "model": {
+          "provider": "bedrock",
+          "id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "region": "us-east-1",
+          "gateway": "bedrock"
+        },
+        "gateways": {
+          "bedrock": {
+            "preset": "bedrock",
+            "secret": "rayito/bedrock-key",
+            "region": "us-east-1",
+            "models": [
+              "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+            ]
+          }
+        }
+      },
+      "call": {
+        "secretNames": {
+          "bedrock": "rayito/bedrock-key"
+        }
+      },
+      "environ": {
+        "RAYITO_BUCKET": "amzn-s3-demo-bucket"
+      },
+      "expected": {
+        "error": {
+          "code": "option_not_supported",
+          "option": "secret_names"
+        }
+      }
+    },
+    {
+      "name": "access_token en la llamada",
+      "target": "agentcore",
+      "region": "us-east-1",
+      "project": {
+        "schema": "rayito.agent-project/1",
+        "name": "support-bot",
+        "runtime": {
+          "kind": "deepagents"
+        },
+        "model": {
+          "provider": "bedrock",
+          "id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "region": "us-east-1",
+          "gateway": "bedrock"
+        },
+        "gateways": {
+          "bedrock": {
+            "preset": "bedrock",
+            "secret": "rayito/bedrock-key",
+            "region": "us-east-1",
+            "models": [
+              "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+            ]
+          }
+        }
+      },
+      "call": {
+        "accessToken": "0123456789abcdef0123456789abcdef"
+      },
+      "environ": {
+        "RAYITO_BUCKET": "amzn-s3-demo-bucket"
+      },
+      "expected": {
+        "error": {
+          "code": "option_not_supported",
+          "option": "access_token"
+        }
+      }
+    },
+    {
+      "name": "keep_on_failure en la llamada",
+      "target": "agentcore",
+      "region": "us-east-1",
+      "project": {
+        "schema": "rayito.agent-project/1",
+        "name": "support-bot",
+        "runtime": {
+          "kind": "deepagents"
+        },
+        "model": {
+          "provider": "bedrock",
+          "id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "region": "us-east-1",
+          "gateway": "bedrock"
+        },
+        "gateways": {
+          "bedrock": {
+            "preset": "bedrock",
+            "secret": "rayito/bedrock-key",
+            "region": "us-east-1",
+            "models": [
+              "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+            ]
+          }
+        }
+      },
+      "call": {
+        "keepOnFailure": true
+      },
+      "environ": {
+        "RAYITO_BUCKET": "amzn-s3-demo-bucket"
+      },
+      "expected": {
+        "error": {
+          "code": "option_not_supported",
+          "option": "keep_on_failure"
+        }
+      }
+    },
+    {
+      "name": "opciones de AgentCore con target microvm",
+      "target": "microvm",
+      "region": "us-east-1",
+      "project": {
+        "schema": "rayito.agent-project/1",
+        "name": "support-bot",
+        "runtime": {
+          "kind": "deepagents"
+        },
+        "model": {
+          "provider": "bedrock",
+          "id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "region": "us-east-1",
+          "gateway": "bedrock"
+        },
+        "gateways": {
+          "bedrock": {
+            "preset": "bedrock",
+            "secret": "rayito/bedrock-key",
+            "region": "us-east-1",
+            "models": [
+              "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+            ]
+          }
+        }
+      },
+      "call": {
+        "agentcore": {
+          "idleSessionTimeoutSeconds": 600
+        }
+      },
+      "environ": {
+        "RAYITO_BUCKET": "amzn-s3-demo-bucket"
+      },
+      "expected": {
+        "error": {
+          "code": "option_requires_agentcore",
+          "option": "agentcore"
+        }
+      }
+    },
+    {
+      "name": "idle por debajo de 60",
+      "target": "agentcore",
+      "region": "us-east-1",
+      "project": {
+        "schema": "rayito.agent-project/1",
+        "name": "support-bot",
+        "runtime": {
+          "kind": "deepagents"
+        },
+        "model": {
+          "provider": "bedrock",
+          "id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "region": "us-east-1",
+          "gateway": "bedrock"
+        },
+        "gateways": {
+          "bedrock": {
+            "preset": "bedrock",
+            "secret": "rayito/bedrock-key",
+            "region": "us-east-1",
+            "models": [
+              "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+            ]
+          }
+        }
+      },
+      "call": {
+        "agentcore": {
+          "idleSessionTimeoutSeconds": 30
+        }
+      },
+      "environ": {
+        "RAYITO_BUCKET": "amzn-s3-demo-bucket"
+      },
+      "expected": {
+        "error": {
+          "code": "lifecycle_invalid",
+          "option": "idle_session_timeout"
+        }
+      }
+    },
+    {
+      "name": "max por encima de 8 h",
+      "target": "agentcore",
+      "region": "us-east-1",
+      "project": {
+        "schema": "rayito.agent-project/1",
+        "name": "support-bot",
+        "runtime": {
+          "kind": "deepagents"
+        },
+        "model": {
+          "provider": "bedrock",
+          "id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "region": "us-east-1",
+          "gateway": "bedrock"
+        },
+        "gateways": {
+          "bedrock": {
+            "preset": "bedrock",
+            "secret": "rayito/bedrock-key",
+            "region": "us-east-1",
+            "models": [
+              "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+            ]
+          }
+        }
+      },
+      "call": {
+        "agentcore": {
+          "maxSessionLifetimeSeconds": 28801
+        }
+      },
+      "environ": {
+        "RAYITO_BUCKET": "amzn-s3-demo-bucket"
+      },
+      "expected": {
+        "error": {
+          "code": "lifecycle_invalid",
+          "option": "max_session_lifetime"
+        }
+      }
+    },
+    {
+      "name": "idle mayor que max",
+      "target": "agentcore",
+      "region": "us-east-1",
+      "project": {
+        "schema": "rayito.agent-project/1",
+        "name": "support-bot",
+        "runtime": {
+          "kind": "deepagents"
+        },
+        "model": {
+          "provider": "bedrock",
+          "id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "region": "us-east-1",
+          "gateway": "bedrock"
+        },
+        "gateways": {
+          "bedrock": {
+            "preset": "bedrock",
+            "secret": "rayito/bedrock-key",
+            "region": "us-east-1",
+            "models": [
+              "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+            ]
+          }
+        }
+      },
+      "call": {
+        "agentcore": {
+          "idleSessionTimeoutSeconds": 3600,
+          "maxSessionLifetimeSeconds": 1800
+        }
+      },
+      "environ": {
+        "RAYITO_BUCKET": "amzn-s3-demo-bucket"
+      },
+      "expected": {
+        "error": {
+          "code": "lifecycle_order"
+        }
+      }
+    },
+    {
+      "name": "etiqueta con carácter no válido",
+      "target": "agentcore",
+      "region": "us-east-1",
+      "project": {
+        "schema": "rayito.agent-project/1",
+        "name": "support-bot",
+        "runtime": {
+          "kind": "deepagents"
+        },
+        "model": {
+          "provider": "bedrock",
+          "id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "region": "us-east-1",
+          "gateway": "bedrock"
+        },
+        "gateways": {
+          "bedrock": {
+            "preset": "bedrock",
+            "secret": "rayito/bedrock-key",
+            "region": "us-east-1",
+            "models": [
+              "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+            ]
+          }
+        }
+      },
+      "call": {
+        "agentcore": {
+          "tags": {
+            "team#1": "x"
+          }
+        }
+      },
+      "environ": {
+        "RAYITO_BUCKET": "amzn-s3-demo-bucket"
+      },
+      "expected": {
+        "error": {
+          "code": "tags_invalid"
+        }
+      }
+    },
+    {
+      "name": "demasiadas etiquetas (48 más las 3 fijas)",
+      "target": "agentcore",
+      "region": "us-east-1",
+      "project": {
+        "schema": "rayito.agent-project/1",
+        "name": "support-bot",
+        "runtime": {
+          "kind": "deepagents"
+        },
+        "model": {
+          "provider": "bedrock",
+          "id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "region": "us-east-1",
+          "gateway": "bedrock"
+        },
+        "gateways": {
+          "bedrock": {
+            "preset": "bedrock",
+            "secret": "rayito/bedrock-key",
+            "region": "us-east-1",
+            "models": [
+              "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+            ]
+          }
+        }
+      },
+      "call": {
+        "agentcore": {
+          "tags": {
+            "k00": "v",
+            "k01": "v",
+            "k02": "v",
+            "k03": "v",
+            "k04": "v",
+            "k05": "v",
+            "k06": "v",
+            "k07": "v",
+            "k08": "v",
+            "k09": "v",
+            "k10": "v",
+            "k11": "v",
+            "k12": "v",
+            "k13": "v",
+            "k14": "v",
+            "k15": "v",
+            "k16": "v",
+            "k17": "v",
+            "k18": "v",
+            "k19": "v",
+            "k20": "v",
+            "k21": "v",
+            "k22": "v",
+            "k23": "v",
+            "k24": "v",
+            "k25": "v",
+            "k26": "v",
+            "k27": "v",
+            "k28": "v",
+            "k29": "v",
+            "k30": "v",
+            "k31": "v",
+            "k32": "v",
+            "k33": "v",
+            "k34": "v",
+            "k35": "v",
+            "k36": "v",
+            "k37": "v",
+            "k38": "v",
+            "k39": "v",
+            "k40": "v",
+            "k41": "v",
+            "k42": "v",
+            "k43": "v",
+            "k44": "v",
+            "k45": "v",
+            "k46": "v",
+            "k47": "v"
+          }
+        }
+      },
+      "environ": {
+        "RAYITO_BUCKET": "amzn-s3-demo-bucket"
+      },
+      "expected": {
+        "error": {
+          "code": "tags_invalid"
+        }
+      }
+    },
+    {
+      "name": "47 etiquetas caben",
+      "target": "agentcore",
+      "region": "us-east-1",
+      "project": {
+        "schema": "rayito.agent-project/1",
+        "name": "support-bot",
+        "runtime": {
+          "kind": "deepagents"
+        },
+        "model": {
+          "provider": "bedrock",
+          "id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "region": "us-east-1",
+          "gateway": "bedrock"
+        },
+        "gateways": {
+          "bedrock": {
+            "preset": "bedrock",
+            "secret": "rayito/bedrock-key",
+            "region": "us-east-1",
+            "models": [
+              "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+            ]
+          }
+        }
+      },
+      "call": {
+        "agentcore": {
+          "tags": {
+            "k00": "v",
+            "k01": "v",
+            "k02": "v",
+            "k03": "v",
+            "k04": "v",
+            "k05": "v",
+            "k06": "v",
+            "k07": "v",
+            "k08": "v",
+            "k09": "v",
+            "k10": "v",
+            "k11": "v",
+            "k12": "v",
+            "k13": "v",
+            "k14": "v",
+            "k15": "v",
+            "k16": "v",
+            "k17": "v",
+            "k18": "v",
+            "k19": "v",
+            "k20": "v",
+            "k21": "v",
+            "k22": "v",
+            "k23": "v",
+            "k24": "v",
+            "k25": "v",
+            "k26": "v",
+            "k27": "v",
+            "k28": "v",
+            "k29": "v",
+            "k30": "v",
+            "k31": "v",
+            "k32": "v",
+            "k33": "v",
+            "k34": "v",
+            "k35": "v",
+            "k36": "v",
+            "k37": "v",
+            "k38": "v",
+            "k39": "v",
+            "k40": "v",
+            "k41": "v",
+            "k42": "v",
+            "k43": "v",
+            "k44": "v",
+            "k45": "v",
+            "k46": "v"
+          }
+        }
+      },
+      "environ": {
+        "RAYITO_BUCKET": "amzn-s3-demo-bucket"
+      },
+      "expected": {
+        "target": "agentcore",
+        "name": "support-bot",
+        "region": "us-east-1",
+        "runtimeName": "rayito_support_bot",
+        "stackName": "rayito-agentcore-support-bot",
+        "repositoryName": "rayito/agentcore/support-bot",
+        "buildProjectName": "rayito-agentcore-support-bot",
+        "bucket": "amzn-s3-demo-bucket",
+        "bucketSource": "environment",
+        "network": "PUBLIC",
+        "bedrockModels": [
+          "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+        ],
+        "readableSecrets": [],
+        "environment": {
+          "AWS_DEFAULT_REGION": "us-east-1",
+          "AWS_REGION": "us-east-1"
+        },
+        "lifecycle": {
+          "idleSessionTimeoutSeconds": 900,
+          "maxSessionLifetimeSeconds": 28800
+        },
+        "tags": {
+          "k00": "v",
+          "k01": "v",
+          "k02": "v",
+          "k03": "v",
+          "k04": "v",
+          "k05": "v",
+          "k06": "v",
+          "k07": "v",
+          "k08": "v",
+          "k09": "v",
+          "k10": "v",
+          "k11": "v",
+          "k12": "v",
+          "k13": "v",
+          "k14": "v",
+          "k15": "v",
+          "k16": "v",
+          "k17": "v",
+          "k18": "v",
+          "k19": "v",
+          "k20": "v",
+          "k21": "v",
+          "k22": "v",
+          "k23": "v",
+          "k24": "v",
+          "k25": "v",
+          "k26": "v",
+          "k27": "v",
+          "k28": "v",
+          "k29": "v",
+          "k30": "v",
+          "k31": "v",
+          "k32": "v",
+          "k33": "v",
+          "k34": "v",
+          "k35": "v",
+          "k36": "v",
+          "k37": "v",
+          "k38": "v",
+          "k39": "v",
+          "k40": "v",
+          "k41": "v",
+          "k42": "v",
+          "k43": "v",
+          "k44": "v",
+          "k45": "v",
+          "k46": "v"
+        },
+        "steps": [
+          {
+            "resource": "stack",
+            "name": "rayito-agentcore-support-bot",
+            "action": "planned",
+            "status": null
+          },
+          {
+            "resource": "image",
+            "name": "rayito/agentcore/support-bot",
+            "action": "planned",
+            "status": null
+          },
+          {
+            "resource": "runtime",
+            "name": "rayito_support_bot",
+            "action": "planned",
+            "status": null
+          }
+        ],
+        "security": [
+          "noGateway",
+          "bedrockModels",
+          "publicNetwork",
+          "sessionIsolation"
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "demasiadas variables de entorno (49 más las 2 de región)",
+      "target": "agentcore",
+      "region": "us-east-1",
+      "project": {
+        "schema": "rayito.agent-project/1",
+        "name": "support-bot",
+        "runtime": {
+          "kind": "deepagents"
+        },
+        "model": {
+          "provider": "bedrock",
+          "id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "region": "us-east-1",
+          "gateway": "bedrock"
+        },
+        "gateways": {
+          "bedrock": {
+            "preset": "bedrock",
+            "secret": "rayito/bedrock-key",
+            "region": "us-east-1",
+            "models": [
+              "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+            ]
+          }
+        },
+        "env": {
+          "VAR_00": "x",
+          "VAR_01": "x",
+          "VAR_02": "x",
+          "VAR_03": "x",
+          "VAR_04": "x",
+          "VAR_05": "x",
+          "VAR_06": "x",
+          "VAR_07": "x",
+          "VAR_08": "x",
+          "VAR_09": "x",
+          "VAR_10": "x",
+          "VAR_11": "x",
+          "VAR_12": "x",
+          "VAR_13": "x",
+          "VAR_14": "x",
+          "VAR_15": "x",
+          "VAR_16": "x",
+          "VAR_17": "x",
+          "VAR_18": "x",
+          "VAR_19": "x",
+          "VAR_20": "x",
+          "VAR_21": "x",
+          "VAR_22": "x",
+          "VAR_23": "x",
+          "VAR_24": "x",
+          "VAR_25": "x",
+          "VAR_26": "x",
+          "VAR_27": "x",
+          "VAR_28": "x",
+          "VAR_29": "x",
+          "VAR_30": "x",
+          "VAR_31": "x",
+          "VAR_32": "x",
+          "VAR_33": "x",
+          "VAR_34": "x",
+          "VAR_35": "x",
+          "VAR_36": "x",
+          "VAR_37": "x",
+          "VAR_38": "x",
+          "VAR_39": "x",
+          "VAR_40": "x",
+          "VAR_41": "x",
+          "VAR_42": "x",
+          "VAR_43": "x",
+          "VAR_44": "x",
+          "VAR_45": "x",
+          "VAR_46": "x",
+          "VAR_47": "x",
+          "VAR_48": "x"
+        }
+      },
+      "call": {},
+      "environ": {
+        "RAYITO_BUCKET": "amzn-s3-demo-bucket"
+      },
+      "expected": {
+        "error": {
+          "code": "env_invalid"
+        }
+      }
+    },
+    {
+      "name": "variable de entorno de más de 5000 caracteres",
+      "target": "agentcore",
+      "region": "us-east-1",
+      "project": {
+        "schema": "rayito.agent-project/1",
+        "name": "support-bot",
+        "runtime": {
+          "kind": "deepagents"
+        },
+        "model": {
+          "provider": "bedrock",
+          "id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "region": "us-east-1",
+          "gateway": "bedrock"
+        },
+        "gateways": {
+          "bedrock": {
+            "preset": "bedrock",
+            "secret": "rayito/bedrock-key",
+            "region": "us-east-1",
+            "models": [
+              "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+            ]
+          }
+        },
+        "env": {
+          "BIG": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        }
+      },
+      "call": {},
+      "environ": {
+        "RAYITO_BUCKET": "amzn-s3-demo-bucket"
+      },
+      "expected": {
+        "error": {
+          "code": "env_invalid"
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,52 @@
+{
+  "description": "Vectores de la etiqueta de imagen por contenido (constants.imageTagDigest): `files` es el árbol de render_export (ruta relativa -> contenido UTF-8) y `expected` la etiqueta.",
+  "cases": [
+    {
+      "name": "un fichero",
+      "files": {
+        "Dockerfile": "FROM scratch\n"
+      },
+      "expected": "src-eb15c63a9a2c9ad0"
+    },
+    {
+      "name": "el orden de entrada no cuenta",
+      "files": {
+        "b.txt": "2",
+        "a.txt": "1"
+      },
+      "expected": "src-53242b94fc1c3605"
+    },
+    {
+      "name": "mismo contenido en otro orden",
+      "files": {
+        "a.txt": "1",
+        "b.txt": "2"
+      },
+      "expected": "src-53242b94fc1c3605"
+    },
+    {
+      "name": "mover bytes entre ficheros cambia la etiqueta",
+      "files": {
+        "a.txt": "12",
+        "b.txt": ""
+      },
+      "expected": "src-deaf1408b10d66c2"
+    },
+    {
+      "name": "rutas con subdirectorios y UTF-8",
+      "files": {
+        "app/agent.py": "print('hola')\n",
+        "app/ñ.txt": "ñ",
+        "host.json": "{}\n"
+      },
+      "expected": "src-b6e48e1f1f70dc5e"
+    },
+    {
+      "name": "fichero vacío",
+      "files": {
+        "empty": ""
+      },
+      "expected": "src-930a699a2062f22e"
+    }
+  ]
+}

@@ -1,0 +1,57 @@
+{
+  "description": "Vectores de la regla de ids de sesión de AgentCore (contract.json, constants.sessionIdRules). Un id nuevo (sin session_id) no tiene vector porque es aleatorio: su forma es newPattern.",
+  "newPattern": "^rayito-[0-9a-f]{32}$",
+  "emptyIsError": true,
+  "cases": [
+    {
+      "input": "user-42",
+      "expected": "rayito-6d894aa3ee802549d7f340e7c1cf0d1c",
+      "kind": "derived"
+    },
+    {
+      "input": "0123456789abcdef0123456789abcdef0",
+      "expected": "0123456789abcdef0123456789abcdef0",
+      "kind": "kept"
+    },
+    {
+      "input": "rayito-1f3870be274f6c49b3e31a0c6728957f",
+      "expected": "rayito-1f3870be274f6c49b3e31a0c6728957f",
+      "kind": "kept"
+    },
+    {
+      "input": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "expected": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "kind": "kept"
+    },
+    {
+      "input": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "expected": "rayito-9d0793397991b57a99a07c6e6b4a92ba",
+      "kind": "derived"
+    },
+    {
+      "input": "conversación-ñandú-con-espacios y acentos",
+      "expected": "rayito-2ef0394c6dafdf89319b39c7dd5225f6",
+      "kind": "derived"
+    },
+    {
+      "input": "-0123456789abcdef0123456789abcdef",
+      "expected": "rayito-5700ffc3ccce59541a603ba38b4eaf9e",
+      "kind": "derived"
+    },
+    {
+      "input": "rs1.microvm.abc",
+      "expected": "rayito-2ce60a9abf5cf1dfea5fe823f8a5b592",
+      "kind": "derived"
+    },
+    {
+      "input": "0123456789abcdef0123456789abcde",
+      "expected": "rayito-8cdbdad56e5d28b5873a3a47ba7c3df5",
+      "kind": "derived"
+    },
+    {
+      "input": "Session_ID-0123456789abcdef0123456789",
+      "expected": "Session_ID-0123456789abcdef0123456789",
+      "kind": "kept"
+    }
+  ]
+}
