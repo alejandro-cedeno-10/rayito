@@ -31,7 +31,8 @@ Parameters:
 
 Resources:
   # Always `DeletionPolicy: Retain` / `UpdateReplacePolicy: Retain`, as
-  # literals: the bucket is referenced by the rayito-m0-iam stack (the build
+  # literals, on the bucket and on its policy (a retained bucket must keep its
+  # TLS-only policy): the bucket is referenced by the rayito-m0-iam stack (the build
   # role reads it) and may hold objects of other Rayito features, and
   # CloudFormation cannot delete a bucket that still has objects. Deleting
   # it is an explicit step outside this stack.
@@ -62,6 +63,8 @@ Resources:
 
   ArtifactBucketPolicy:
     Type: AWS::S3::BucketPolicy
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       Bucket: !Ref ArtifactBucket
       PolicyDocument:

@@ -45,6 +45,9 @@ def test_deleting_or_replacing_the_stack_keeps_the_bucket() -> None:
     bucket = template()["Resources"][BUCKET]
     assert bucket["DeletionPolicy"] == RETAIN
     assert bucket["UpdateReplacePolicy"] == RETAIN
+    policy = template()["Resources"][POLICY]
+    assert policy["DeletionPolicy"] == RETAIN
+    assert policy["UpdateReplacePolicy"] == RETAIN
 
 
 def test_the_bucket_is_encrypted_private_and_without_acls() -> None:
