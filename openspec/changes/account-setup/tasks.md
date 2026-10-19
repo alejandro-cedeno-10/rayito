@@ -175,14 +175,14 @@ cd ../.. && python3 scripts/check_hygiene.py && python3 scripts/gen_stack_assets
 
 ### 1.1 Shared constants moved, not duplicated
 
-- [ ] 1.1.1 `src/rayito/_images.py`: add `DEFAULT_IAM_STACK_NAME: Final =
+- [x] 1.1.1 `src/rayito/_images.py`: add `DEFAULT_IAM_STACK_NAME: Final =
       "rayito-m0-iam"`, `BUILD_ROLE_OUTPUT_KEY: Final = "BuildRoleArn"` and
       `BUILDING_VERSION_STATES: Final = frozenset({"PENDING",
       "IN_PROGRESS"})` (docstrings cite `AWS_API_NOTES.md` §4
       `MicrovmImageVersionState`). `cli/_publish.py` keeps its public names
       by importing them: `DEFAULT_STACK_NAME = DEFAULT_IAM_STACK_NAME`,
       `BUILD_ROLE_OUTPUT_KEY` re-imported.
-- [ ] 1.1.2 `src/rayito/_account_setup/_domain.py` becomes the single home of
+- [x] 1.1.2 `src/rayito/_account_setup/_domain.py` becomes the single home of
       `CDK_BOOTSTRAP_QUALIFIER`, `CDK_ASSETS_BUCKET_TEMPLATE` and
       `cdk_bucket_name(account: str, region: str) -> str`;
       `_agent/_aws_resolve.py` imports them from there (same names, so its
@@ -190,9 +190,9 @@ cd ../.. && python3 scripts/check_hygiene.py && python3 scripts/gen_stack_assets
 
 ### 1.2 Domain `src/rayito/_account_setup/` (pure)
 
-- [ ] 1.2.1 `__init__.py`: docstring only, no imports (so `_aws.py` can import
+- [x] 1.2.1 `__init__.py`: docstring only, no imports (so `_aws.py` can import
       `_domain` without cycles).
-- [ ] 1.2.2 `_domain.py` (imports only stdlib, `rayito._limits`,
+- [x] 1.2.2 `_domain.py` (imports only stdlib, `rayito._limits`,
       `rayito._images` constants): `Literal` types `ResourceKind`,
       `SetupAction`, `BucketSource`, `ImageSource`, `StackCondition`
       (`missing|usable|in_progress|blocked`), `ImageCondition`
@@ -210,7 +210,7 @@ cd ../.. && python3 scripts/check_hygiene.py && python3 scripts/gen_stack_assets
       texts `COST_TEXTS` (each docstring cites the doc page it quotes:
       `cost.md` row "Mantener publicada una versión de imagen",
       `configurar-aws.md` steps 2 and 3).
-- [ ] 1.2.3 Frozen dataclasses: `SetupRequest(region, bucket,
+- [x] 1.2.3 Frozen dataclasses: `SetupRequest(region, bucket,
       environment_bucket, artifact: Path | None, sdk_version)`,
       `StackObservation(name, status: str | None, outputs: Mapping[str, str],
       parameters: Mapping[str, str])`, `BucketCandidate(name, source)`,
@@ -230,11 +230,11 @@ cd ../.. && python3 scripts/check_hygiene.py && python3 scripts/gen_stack_assets
       image_version, artifact_uploaded: bool)`, `ImageGateResult(launchable:
       bool, version_state: str)`. Invariants in `__post_init__` (three steps
       in the fixed order; actions allowed per resource as in design D2).
-- [ ] 1.2.4 `class AccountSetupException(Exception)` with `code: ErrorCode`
+- [x] 1.2.4 `class AccountSetupException(Exception)` with `code: ErrorCode`
       and property `exit_code` (from `ERROR_EXIT_CODES`); constructor
       `AccountSetupException(code: ErrorCode, **fields: str)` formats
       `ERROR_MESSAGES[code]`, so the text is never written twice.
-- [ ] 1.2.5 Pure functions: `require_supported_region(region: str) -> None`;
+- [x] 1.2.5 Pure functions: `require_supported_region(region: str) -> None`;
       `release_tag(sdk_version: str) -> str`; `release_asset_url(tag: str,
       asset: str) -> str`; `cdk_bucket_name`; `choose_bucket_candidate(request:
       SetupRequest, stack: StackObservation, account: str) ->
@@ -251,7 +251,7 @@ cd ../.. && python3 scripts/check_hygiene.py && python3 scripts/gen_stack_assets
       `verify_checksum(release: DownloadedRelease, tag: str) -> None` (raises
       `checksum_missing`/`checksum_mismatch`); `with_setup_hint(message: str)
       -> str`. Rules exactly as design D2/D5.
-- [ ] 1.2.6 `_iam_stack.py`: `IAM_STACK_COMPONENT: Final = StackComponent(
+- [x] 1.2.6 `_iam_stack.py`: `IAM_STACK_COMPONENT: Final = StackComponent(
       name="iam", description=..., cost=CostStatement(creates=(two roles, three
       managed policies), idle_monthly="$0 (IAM no se factura)", removal=...,
       source=...), parameters=(ArtifactBucket required; the six others
@@ -260,7 +260,7 @@ cd ../.. && python3 scripts/check_hygiene.py && python3 scripts/gen_stack_assets
 
 ### 1.3 Ports and service
 
-- [ ] 1.3.1 `_ports.py`: `Progress = Callable[[str], None]`; `Protocol`s
+- [x] 1.3.1 `_ports.py`: `Progress = Callable[[str], None]`; `Protocol`s
       `IamStackGateway` (`observe() -> StackObservation`, `create(bucket: str)
       -> StackObservation`, `update_bucket(bucket: str) -> StackObservation`,
       `wait() -> StackObservation`), `ArtifactBucketGateway` (`account_id() ->
@@ -272,7 +272,7 @@ cd ../.. && python3 scripts/check_hygiene.py && python3 scripts/gen_stack_assets
       `ReleaseArtifactSource` (`fetch(tag: str, directory: Path, on_progress:
       Progress) -> DownloadedRelease`); frozen dataclass
       `AccountSetupGateways(iam_stack, buckets, images, publisher, releases)`.
-- [ ] 1.3.2 `_service.py`: `class AccountSetup` with `__init__(self,
+- [x] 1.3.2 `_service.py`: `class AccountSetup` with `__init__(self,
       gateways: AccountSetupGateways) -> None` (no call), `plan(self, request:
       SetupRequest) -> SetupPlan` (region check, `account_id`, stack
       `observe`, one `probe`, image `observe`, `plan_setup`) and `apply(self,
@@ -287,7 +287,7 @@ cd ../.. && python3 scripts/check_hygiene.py && python3 scripts/gen_stack_assets
 
 ### 1.4 Adapters
 
-- [ ] 1.4.1 `_account_setup/_aws.py`: `CloudFormationIamStack(provisioner:
+- [x] 1.4.1 `_account_setup/_aws.py`: `CloudFormationIamStack(provisioner:
       StackProvisioner, *, wait_timeout_seconds: float =
       DEFAULT_WAIT_TIMEOUT_SECONDS)`, which builds its own
       `OptionalStacks(provisioner=provisioner)` (`observe` via `status(
@@ -305,7 +305,7 @@ cd ../.. && python3 scripts/check_hygiene.py && python3 scripts/gen_stack_assets
       `ResourceNotFoundException` as missing, `list_microvm_image_versions`
       paginator; `wait`: `_images.wait_for_gate` with the same tick line
       format as `cli/_publish.wait_for_gate`).
-- [ ] 1.4.2 `_account_setup/_release.py` (stdlib only): `GithubReleaseSource(*,
+- [x] 1.4.2 `_account_setup/_release.py` (stdlib only): `GithubReleaseSource(*,
       opener: Callable[..., Any] = urllib.request.urlopen, timeout_seconds:
       float = RELEASE_DOWNLOAD_TIMEOUT_SECONDS, clock: Callable[[], float] =
       time.monotonic)`; `fetch` downloads `SHA256SUMS` (text) and
@@ -314,7 +314,7 @@ cd ../.. && python3 scripts/check_hygiene.py && python3 scripts/gen_stack_assets
       deadline per asset; `HTTPError` → `release_download` with `HTTP
       <status>`, `TimeoutError`/deadline → `tiempo agotado`, `URLError`/
       `OSError` → `error de red`. Messages never include the URL.
-- [ ] 1.4.3 `cli/_setup_publisher.py` (no `typer` import):
+- [x] 1.4.3 `cli/_setup_publisher.py` (no `typer` import):
       `PipelineImagePublisher(clients: Clients, *, sleep: Sleeper =
       time.sleep)` implementing `BaseImagePublisher` over
       `resolve_base_image_version(clients.microvms, clients.region,
@@ -325,17 +325,17 @@ cd ../.. && python3 scripts/check_hygiene.py && python3 scripts/gen_stack_assets
       DEFAULT_BUILD_TIMEOUT_SECONDS, ...)` and `build_or_reuse(...,
       emit=on_progress)`; a summary with `launchable: False` raises
       `AccountSetupException("image_build_failed", ...)`.
-- [ ] 1.4.4 `cli/_session.py`: `Clients.account_setup_override:
+- [x] 1.4.4 `cli/_session.py`: `Clients.account_setup_override:
       AccountSetupGateways | None = None` (test seam, documented next to
       `control_plane_override`; the type imported under `TYPE_CHECKING` so
       `_session.py` gains no runtime import).
 
 ### 1.5 CLI
 
-- [ ] 1.5.1 `cli/doctor.py`: extract `doctor_document(clients, context,
+- [x] 1.5.1 `cli/doctor.py`: extract `doctor_document(clients, context,
       results, code) -> dict[str, Any]` from `render_json` (which now emits
       it); no output change.
-- [ ] 1.5.2 `cli/_setup_output.py` (no `typer` import): plan-rendering
+- [x] 1.5.2 `cli/_setup_output.py` (no `typer` import): plan-rendering
       templates of the contract (`HEADER_TEMPLATE`, `STEP_TEMPLATE`,
       `RESOURCE_LABELS`, `ACTION_TEMPLATES`, `BUCKET_SOURCE_LABELS`,
       `COST_HEADER`, `COST_LINE_TEMPLATE`, `NOTHING_TO_DO`, `DRY_RUN_FOOTER`,
@@ -344,7 +344,7 @@ cd ../.. && python3 scripts/check_hygiene.py && python3 scripts/gen_stack_assets
       -> list[str]`; `final_lines(result: SetupResult, region: str) ->
       list[str]`; `setup_document(*, sdk_version, region, account, dry_run,
       ready, plan, result, doctor, error, exit_code) -> dict[str, Any]`.
-- [ ] 1.5.3 `cli/setup.py`: `setup(ctx, bucket, artifact, yes, dry_run)` with
+- [x] 1.5.3 `cli/setup.py`: `setup(ctx, bucket, artifact, yes, dry_run)` with
       the contract's option help; `gateways_for(clients) -> AccountSetupGateways` returns
       `clients.account_setup_override` or builds the defaults (no AWS call:
       `CloudFormationIamStack(CloudFormationProvisioner(region=clients.region,
@@ -361,34 +361,34 @@ cd ../.. && python3 scripts/check_hygiene.py && python3 scripts/gen_stack_assets
       `render_human` or `doctor_document`); errors reported as the contract
       says. The docstring states the cost (memory: every CLI command states
       its cost).
-- [ ] 1.5.4 `cli/app.py`: `app.command("setup")(setup)`; module docstring
+- [x] 1.5.4 `cli/app.py`: `app.command("setup")(setup)`; module docstring
       lists the command.
 
 ### 1.6 Hint for unprepared accounts
 
-- [ ] 1.6.1 `_aws.py` `BotoControlPlane.run_microvm`: on
+- [x] 1.6.1 `_aws.py` `BotoControlPlane.run_microvm`: on
       `SandboxNotFoundException` from `_invoke`, raise a new
       `SandboxNotFoundException(with_setup_hint(str(exc)),
       status_code=exc.status_code, aws_code=exc.aws_code)` keeping the
       sanitized cause (`raise ... from exc.__cause__`). Nothing else changes.
-- [ ] 1.6.2 `_agent/_aws_resolve.py`: `resolve_bucket`'s and
+- [x] 1.6.2 `_agent/_aws_resolve.py`: `resolve_bucket`'s and
       `ensure_base_image`'s "missing" messages wrapped with `with_setup_hint`.
-- [ ] 1.6.3 Update any existing test that asserts those exact messages
+- [x] 1.6.3 Update any existing test that asserts those exact messages
       (`rg "Rayito no crea buckets|no existe en esta cuenta y región" tests`).
 
 ### 1.7 Tests (names by behaviour)
 
-- [ ] 1.7.1 `tests/unit/fake_account_setup.py`: in-memory fakes of the five
+- [x] 1.7.1 `tests/unit/fake_account_setup.py`: in-memory fakes of the five
       ports that record calls (`("describe",)`, `("create", bucket)`,
       `("update", bucket)`, `("wait",)`, `("head_bucket", name)`,
       `("get_image",)`, `("list_versions",)`, `("gate", version)`,
       `("download", asset)`, `("publish", path)`), built from a vector `input`
       (`from_vector_input(input, sdk_version) -> AccountSetupGateways`).
-- [ ] 1.7.2 `tests/unit/test_account_setup_domain.py`: every case of
+- [x] 1.7.2 `tests/unit/test_account_setup_domain.py`: every case of
       `plan-vectors.json` and `checksums.json`; every constant and message
       against `contract.json` (domain part); `release_tag`,
       `release_asset_url`, `with_setup_hint`; `SetupStep.as_json` key order.
-- [ ] 1.7.3 `tests/unit/test_account_setup_service.py`: plan makes only the
+- [x] 1.7.3 `tests/unit/test_account_setup_service.py`: plan makes only the
       read calls (fresh account: `describe`, `head_bucket`, `get_image`, no
       `list_versions`); apply on a fresh account (`create`, `wait` inside
       create, `download` × 2, `publish`; result fields); `update` sends only
@@ -397,7 +397,7 @@ cd ../.. && python3 scripts/check_hygiene.py && python3 scripts/gen_stack_assets
       and `checksum_missing` publish nothing; `--artifact` downloads
       nothing; prepared account writes nothing; `stack_incomplete` after a
       create without output; construction makes no call.
-- [ ] 1.7.4 `tests/unit/test_account_setup_adapters.py`:
+- [x] 1.7.4 `tests/unit/test_account_setup_adapters.py`:
       `CloudFormationIamStack` over `tests/unit/fake_stacks.py` (create with
       `CAPABILITY_NAMED_IAM` and only `ArtifactBucket`; update keeps the six
       others as `UsePreviousValue`); `IAM_STACK_COMPONENT` parameters equal the
@@ -408,10 +408,10 @@ cd ../.. && python3 scripts/check_hygiene.py && python3 scripts/gen_stack_assets
       `MicrovmBaseImages` with `Stubber` (missing image, versions,
       gate wait); default gateways built with a `boto3.session.Session.client`
       spy make zero calls.
-- [ ] 1.7.5 `tests/unit/test_account_setup_release.py`: `GithubReleaseSource`
+- [x] 1.7.5 `tests/unit/test_account_setup_release.py`: `GithubReleaseSource`
       with a fake opener: exact URLs, streamed file and sha256, HTTP 404,
       timeout, network error, deadline; messages contain no URL.
-- [ ] 1.7.6 `tests/unit/cli/test_setup.py`: every case of `cli-cases.json`
+- [x] 1.7.6 `tests/unit/cli/test_setup.py`: every case of `cli-cases.json`
       through `CliRunner` with `obj=Clients(..., account_setup_override=...)`;
       apply flows with `rayito.cli.setup.run_doctor` monkeypatched (success
       prints the last three lines; one `FAIL` exits 1 with `DOCTOR_FAILED`);
@@ -419,15 +419,15 @@ cd ../.. && python3 scripts/check_hygiene.py && python3 scripts/gen_stack_assets
       `--json` apply document keys and `doctor` embedded; artifact errors exit
       2 before any fake call; plan-rendering templates against
       `contract.json`.
-- [ ] 1.7.7 `tests/unit/test_account_setup_hint.py`: `Sandbox.create` with a
+- [x] 1.7.7 `tests/unit/test_account_setup_hint.py`: `Sandbox.create` with a
       `Stubber` whose `run_microvm` raises `ResourceNotFoundException` →
       `SandboxNotFoundException`, `aws_code` unchanged, message contains
       `rayito setup`; `resolve_bucket` and `ensure_base_image` messages.
-- [ ] 1.7.8 `tests/unit/cli/test_cli_surface.py`: `assert ("setup",) in
+- [x] 1.7.8 `tests/unit/cli/test_cli_surface.py`: `assert ("setup",) in
       paths`; the golden from Track 0 must then match without regeneration.
-- [ ] 1.7.9 `tests/unit/cli/test_doctor.py`: `render_json` output equals
+- [x] 1.7.9 `tests/unit/cli/test_doctor.py`: `render_json` output equals
       `doctor_document`.
-- [ ] 1.7.10 `tests/e2e/test_account_setup.py` (AWS, header documents the
+- [x] 1.7.10 `tests/e2e/test_account_setup.py` (AWS, header documents the
       variables generically): skips without `RAYITO_E2E=1` and
       `RAYITO_E2E_SETUP_REGION`; optional `RAYITO_E2E_SETUP_BUCKET` and
       `RAYITO_E2E_SETUP_ARTIFACT`. Pre-check read-only: if `rayito-m0-iam` or
@@ -444,7 +444,7 @@ cd ../.. && python3 scripts/check_hygiene.py && python3 scripts/gen_stack_assets
 
 ### 1.8 Changelog
 
-- [ ] 1.8.1 `clients/python/CHANGELOG.md`, `## [Unreleased]` → `### Añadido`
+- [x] 1.8.1 `clients/python/CHANGELOG.md`, `## [Unreleased]` → `### Añadido`
       (`rayito setup`) and `### Cambiado` (the hint sentence in the two
       errors).
 
