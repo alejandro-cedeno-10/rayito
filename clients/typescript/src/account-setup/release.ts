@@ -7,7 +7,7 @@
  */
 
 import { createHash } from "node:crypto";
-import { open } from "node:fs/promises";
+import { type FileHandle, open } from "node:fs/promises";
 import { join } from "node:path";
 import {
   AccountSetupError,
@@ -99,6 +99,19 @@ export class GithubReleaseSource implements ReleaseArtifactSource {
   }
 }
 
+/**
+ * `FileHandle.write` puede escribir menos bytes de los pedidos: se repite hasta
+ * escribir el trozo entero, para que el fichero en disco sea exactamente lo que
+ * se hasheó.
+ */
+async function writeFully(handle: FileHandle, chunk: Uint8Array): Promise<void> {
+  let offset = 0;
+  while (offset < chunk.byteLength) {
+    const { bytesWritten } = await handle.write(chunk, offset, chunk.byteLength - offset);
+    offset += bytesWritten;
+  }
+}
+
 /** El cuerpo en trozos: calcula el sha256 y lo escribe en `destination` o lo junta como texto. */
 async function readBody(
   response: Response,
@@ -121,7 +134,7 @@ async function readBody(
       if (handle === undefined) {
         chunks.push(Buffer.from(value));
       } else {
-        await handle.write(value);
+        await writeFully(handle, value);
       }
     }
   } finally {
