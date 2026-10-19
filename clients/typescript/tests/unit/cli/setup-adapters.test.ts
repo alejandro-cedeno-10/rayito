@@ -17,6 +17,7 @@ import {
   type SetupClock,
   sdkAccountSetupGateways,
 } from "../../../src/cli/setup-adapters.js";
+import { StackError } from "../../../src/errors.js";
 import { loadTemplate } from "../../../src/stacks/packaging.js";
 import { COMPONENTS } from "../../../src/stacks/registry.js";
 import { FakeStackProvisioner } from "../m15-fake-stacks.js";
@@ -105,8 +106,21 @@ describe("SdkIamStack", () => {
 
   it("waits for 'deployed' and observes again", async () => {
     const provisioner = new FakeStackProvisioner();
-    await new SdkIamStack(provisioner).wait();
+    provisioner.stacks.set(IAM_STACK_NAME, {
+      name: IAM_STACK_NAME,
+      state: "CREATE_COMPLETE",
+      outputs: { BuildRoleArn: BUILD_ROLE },
+      parameters: { ArtifactBucket: BUCKET },
+    });
+    const observed = await new SdkIamStack(provisioner).wait();
     expect(provisioner.calls.map(([name]) => name)).toEqual(["wait", "describe"]);
+    expect(observed.status).toBe("CREATE_COMPLETE");
+  });
+
+  it("fails if the stack vanished while waiting", async () => {
+    const wait = new SdkIamStack(new FakeStackProvisioner()).wait();
+    await expect(wait).rejects.toBeInstanceOf(StackError);
+    await expect(wait).rejects.toMatchObject({ code: "failed" });
   });
 
   it("declares exactly the parameters of the packaged iam template", async () => {

@@ -47,7 +47,7 @@ export const IN_PROGRESS_STACK_SUFFIX = "_IN_PROGRESS";
 /** Esperar a que una pila que se borra "esté desplegada" no terminaría nunca. */
 export const DELETING_STACK_STATE = "DELETE_IN_PROGRESS";
 /** Una línea de `sha256sum`: 64 hexadecimales en minúsculas, un espacio y el modo (espacio o `*`). */
-const CHECKSUM_LINE_PATTERN = /^([0-9a-f]{64}) [ *](.+)$/;
+const CHECKSUM_LINE_PATTERN = /^([0-9a-f]{64}) [ *](\S.*)$/;
 
 export type ResourceKind = "bucket" | "iamStack" | "baseImage";
 export type SetupAction = "create" | "update" | "reuse" | "wait" | "publish";

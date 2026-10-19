@@ -31,6 +31,7 @@ import type {
 import { GithubReleaseSource } from "../account-setup/release.js";
 import { BUCKET_MISSING_CODES } from "../agent/aws-resolve.js";
 import type { AwsClientSettings } from "../aws/control-plane.js";
+import { StackError } from "../errors.js";
 import { fileArtifacts } from "../images/artifact-node.js";
 import {
   accountImageArn,
@@ -51,6 +52,7 @@ import { CloudFormationProvisioner } from "../stacks/cloudformation.js";
 import type { StackStatus } from "../stacks/model.js";
 import type { StackProvisioner } from "../stacks/port.js";
 import { DEFAULT_WAIT_TIMEOUT_MS, OptionalStacks } from "../stacks/service.js";
+import { pythonStringRepr } from "../strings.js";
 import { AwsOperationError, type DoctorAws } from "./doctor/ports.js";
 
 type Credentials = AwsClientSettings["credentials"];
@@ -104,9 +106,17 @@ export class SdkIamStack implements IamStackGateway {
     return this.#deployBucket(bucket);
   }
 
+  /** Una pila que desaparece durante la espera es un fallo, como en Python. */
   async wait(): Promise<StackObservation> {
     await this.#provisioner.wait(IAM_STACK_NAME, "deployed", this.#waitTimeoutMs);
-    return this.observe();
+    const observed = await this.observe();
+    if (observed.status === undefined) {
+      throw new StackError(
+        `la pila ${pythonStringRepr(IAM_STACK_NAME)} desapareció mientras se esperaba`,
+        { code: "failed" },
+      );
+    }
+    return observed;
   }
 
   /** `deploy` crea o actualiza según exista la pila y sólo manda `ArtifactBucket`. */

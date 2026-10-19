@@ -70,8 +70,8 @@ export class AccountSetup {
   async plan(request: SetupRequest): Promise<SetupPlan> {
     requireSupportedRegion(request.region);
     const { iamStack, buckets, images } = this.#gateways;
-    const stack = await iamStack.observe();
     const account = await buckets.accountId();
+    const stack = await iamStack.observe();
     const candidate = chooseBucketCandidate(request, stack, account);
     const probe = await buckets.probe(candidate.name);
     const image = await images.observe(BASE_IMAGE_NAME);

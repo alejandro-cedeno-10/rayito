@@ -258,7 +258,7 @@ describe("AccountSetup.plan", () => {
   it("only reads: a fresh account describes, probes one bucket and gets the image", async () => {
     const fake = new FakeAccountSetup(FRESH);
     await new AccountSetup(fake).plan(requestOf(FRESH));
-    expect(names(fake.calls)).toEqual(["describe", "accountId", "head_bucket", "get_image"]);
+    expect(names(fake.calls)).toEqual(["accountId", "describe", "head_bucket", "get_image"]);
     expect(fake.writes).toEqual([]);
   });
 

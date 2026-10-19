@@ -146,8 +146,8 @@ describe("rayito setup: shared CLI cases", () => {
   it("a dry run only reads and downloads nothing", async () => {
     const outcome = await invoke({ args: ["setup", "--dry-run"] });
     expect(outcome.fake.calls.map(([name]) => name)).toEqual([
-      "describe",
       "accountId",
+      "describe",
       "head_bucket",
       "get_image",
     ]);
