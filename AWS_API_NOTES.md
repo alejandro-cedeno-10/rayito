@@ -2114,3 +2114,156 @@ no autenticidad (la firma es la de `cosign`, `docs/site/docs/verify.md`).
 `CAPABILITY_AUTO_EXPAND`), verificado sin red en botocore 1.43.103 el
 2026-10-19; hace falta porque `infra/iam.yaml` da nombre fijo a sus roles
 (`rayito-m0-*`).
+
+## Despliegue en AgentCore Runtime (`agentcore-deploy`, ADR-031, **contrato de parámetros**)
+
+`rayito agent deploy --target agentcore`, `deploy_agent(target="agentcore")` y
+`deployAgent(path, { target: "agentcore" })` despliegan un agente en Amazon
+Bedrock AgentCore Runtime. **Estas son las únicas operaciones y los únicos
+parámetros que los SDK pueden usar para ello** (regla dura 1). Verificado sin
+red el 2026-10-19 contra los modelos de botocore 1.43.103
+(`bedrock-agentcore-control/2023-06-05`, `bedrock-agentcore/2024-02-28`,
+`codebuild/2016-10-06`, `ecr/2015-09-21`, `logs/2014-03-28`, `s3/2006-03-01`)
+y contra los tipos de `@aws-sdk/client-bedrock-agentcore-control` y
+`@aws-sdk/client-bedrock-agentcore` 3.1138.0 (paquetes publicados, leídos con
+`npm pack`: `metadataConfiguration.requireMMDSV2`, `runtimeSessionId` y
+`response` de `InvokeAgentRuntime` existen con esos nombres). Los nombres de
+JavaScript son los mismos miembros de la API REST. Documentación consultada el
+2026-10-19:
+<https://docs.aws.amazon.com/bedrock-agentcore-control/latest/APIReference/>,
+<https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-http-protocol-contract.html>,
+<https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/bedrock-agentcore-limits.html>,
+<https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-lifecycle-settings.html>,
+<https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-permissions.html>,
+<https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-troubleshooting.html>,
+<https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-security-best-practices.html>,
+<https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/agentcore-regions.html>,
+<https://docs.aws.amazon.com/codebuild/latest/APIReference/API_StartBuild.html>,
+<https://docs.aws.amazon.com/codebuild/latest/userguide/build-env-ref-compute-types.html>,
+<https://docs.aws.amazon.com/codebuild/latest/userguide/ec2-compute-images.html>.
+
+### Plano de control de AgentCore (`bedrock-agentcore-control`)
+
+| Operación (boto3 / AWS SDK v3) | Parámetros de entrada (y sólo estos) | Salida que se lee | Errores que se traducen | IAM del llamante |
+|---|---|---|---|---|
+| `CreateAgentRuntime` (`create_agent_runtime` / `CreateAgentRuntimeCommand`) | `agentRuntimeName` (`[a-zA-Z][a-zA-Z0-9_]{0,47}`), `agentRuntimeArtifact.containerConfiguration.containerUri` (`<cuenta>.dkr.ecr.<región>.amazonaws.com/<repo>:<etiqueta>`), `roleArn`, `networkConfiguration.networkMode="PUBLIC"`, `protocolConfiguration.serverProtocol="HTTP"`, `lifecycleConfiguration.{idleRuntimeSessionTimeout, maxLifetime}`, `environmentVariables` (mapa, hasta 50, valores de hasta 5000 caracteres; el modelo lo marca `sensitive`), `description` (1-4096), `tags` (mapa, hasta 50; claves 1-128 y valores 0-256 con `[a-zA-Z0-9\s._:/=+@-]*`), `clientToken` (33-256, `[a-zA-Z0-9](-*[a-zA-Z0-9]){0,256}`) | `agentRuntimeArn`, `agentRuntimeId` (`<nombre>-<10 caracteres>`), `agentRuntimeVersion` (`"1"`…`"99999"`), `status` | `AccessDeniedException`, `ConflictException` (otro llamante lo creó a la vez: se vuelve a listar y se actualiza), `ServiceQuotaExceededException`, `ValidationException`, `ThrottlingException`, `InternalServerException` | `bedrock-agentcore:CreateAgentRuntime`, `iam:PassRole` sobre el rol del runtime |
+| `UpdateAgentRuntime` (`update_agent_runtime` / `UpdateAgentRuntimeCommand`) | `agentRuntimeId`, y `agentRuntimeArtifact`, `roleArn`, `networkConfiguration` (los tres obligatorios en el modelo), `protocolConfiguration`, `lifecycleConfiguration`, `environmentVariables`, `description`, `metadataConfiguration.requireMMDSV2=true` (siempre), `clientToken` | `agentRuntimeVersion`, `status` | los de `CreateAgentRuntime` y `ResourceNotFoundException` | `bedrock-agentcore:UpdateAgentRuntime`, `iam:PassRole` |
+| `GetAgentRuntime` (`get_agent_runtime` / `GetAgentRuntimeCommand`) | `agentRuntimeId` | `agentRuntimeArn`, `agentRuntimeName`, `agentRuntimeVersion`, `status`, `description`, `roleArn`, `networkConfiguration.networkMode`, `protocolConfiguration.serverProtocol`, `lifecycleConfiguration.{idleRuntimeSessionTimeout, maxLifetime}`, `environmentVariables`, `agentRuntimeArtifact.containerConfiguration.containerUri`, `metadataConfiguration.requireMMDSV2`. `failureReason` existe pero **no se muestra** (texto crudo de AWS) | `ResourceNotFoundException` = ya no existe (espera del borrado) | `bedrock-agentcore:GetAgentRuntime` |
+| `ListAgentRuntimes` (`list_agent_runtimes` / `ListAgentRuntimesCommand`) | `maxResults` (1-100), `nextToken` | `agentRuntimes[].{agentRuntimeId, agentRuntimeArn, agentRuntimeName, agentRuntimeVersion, status, description}`, `nextToken` | — | `bedrock-agentcore:ListAgentRuntimes` |
+| `DeleteAgentRuntime` (`delete_agent_runtime` / `DeleteAgentRuntimeCommand`) | `agentRuntimeId` | `status` | `ResourceNotFoundException` = ya borrado, `ConflictException` | `bedrock-agentcore:DeleteAgentRuntime` |
+
+- `status` (`AgentRuntimeStatus`): `CREATING`, `CREATE_FAILED`, `UPDATING`,
+  `UPDATE_FAILED`, `READY`, `DELETING`, `DELETE_FAILED`. Crear y actualizar
+  responden 202 y el runtime pasa por `CREATING`/`UPDATING` hasta `READY`: se
+  sondea `GetAgentRuntime`.
+- **MMDSv2 obligatorio desde el 2026-06-30**: AgentCore rechaza con
+  `ValidationException` («This runtime is not MMDSv2-enabled») toda invocación a
+  un runtime sin `metadataConfiguration.requireMMDSV2=true`. `CreateAgentRuntime`
+  **no tiene** `metadataConfiguration` en el modelo: tras crear y llegar a
+  `READY` se manda un `UpdateAgentRuntime` con la configuración completa y
+  `requireMMDSV2=true` (troubleshooting, «My agent invocations fail with "This
+  runtime is not MMDSv2-enabled"»).
+- `lifecycleConfiguration`: el modelo admite 60-1209600 en los dos campos, pero
+  la guía limita los runtimes de microVMs (los que crea Rayito, sin
+  `capacityProviderConfiguration`) a **60-28800**, exige
+  `idleRuntimeSessionTimeout <= maxLifetime` y fija los valores por defecto en
+  900 y 28800 (`runtime-lifecycle-settings.html`). Gana la guía para el rango.
+- `platformVersion` no se manda: sin él el runtime se crea en la plataforma
+  **V1**, la de los precios de lista que cita Rayito (guía «microVMs»,
+  `runtime-how-it-works.html`).
+- Al crear un runtime AgentCore crea también su endpoint `DEFAULT`, que apunta
+  siempre a la última versión; `InvokeAgentRuntime` sin `qualifier` usa ese
+  endpoint. Rayito no llama a ninguna operación de endpoints.
+- Grupo de logs del runtime (lo crea AgentCore con el rol del runtime):
+  `/aws/bedrock-agentcore/runtimes/<agentRuntimeId>-DEFAULT` (troubleshooting,
+  «I have missing or empty CloudWatch Logs»).
+
+### Plano de datos (`bedrock-agentcore`)
+
+| Operación | Parámetros de entrada (y sólo estos) | Salida que se lee | Errores | IAM |
+|---|---|---|---|---|
+| `InvokeAgentRuntime` (`invoke_agent_runtime` / `InvokeAgentRuntimeCommand`) | `agentRuntimeArn`, `runtimeSessionId` (cabecera `X-Amzn-Bedrock-AgentCore-Runtime-Session-Id`, 33-256), `contentType="application/json"`, `accept` (`application/json` o `text/event-stream`), `payload` (hasta 100 MB) | `response` (cuerpo en streaming: el documento JSON o los eventos SSE del host), `contentType`, `runtimeSessionId` (1-100, `[a-zA-Z0-9][a-zA-Z0-9-_]*`), `statusCode` | `ResourceNotFoundException`, `AccessDeniedException`, `ValidationException`, `ThrottlingException` (429), `ServiceQuotaExceededException` (402), `RetryableConflictException` (409, lo reintenta el SDK de AWS), `RuntimeClientError` (424: el contenedor devolvió un 4xx/5xx), `InternalServerException` | `bedrock-agentcore:InvokeAgentRuntime` sobre el runtime |
+| `StopRuntimeSession` (`stop_runtime_session` / `StopRuntimeSessionCommand`) | `agentRuntimeArn`, `runtimeSessionId` | `runtimeSessionId`, `statusCode` | los de `InvokeAgentRuntime` y `ConflictException`, `UnauthorizedException` | `bedrock-agentcore:StopRuntimeSession` |
+
+- Como `runtimeSessionId` de respuesta mide como mucho 100, Rayito nunca manda
+  uno más largo (`agentcoreSessionIdMaxLength`).
+- Cada `runtimeSessionId` tiene su propia microVM; un id nuevo crea una
+  sesión nueva (cuota de 25 sesiones nuevas por segundo y cuenta). Plazos:
+  15 min por petición síncrona, 60 min por respuesta en streaming, sesiones
+  activas por cuenta 5000 en us-east-1 y us-west-2 y 2500 en las demás, 2 vCPU
+  y 8 GB por sesión, imagen de hasta 2 GB (cuotas, consultadas 2026-10-19).
+- Contrato del contenedor (HTTP): `0.0.0.0:8080`, `linux/arm64`,
+  `POST /invocations` y `GET /ping` con `{"status": "Healthy" | "HealthyBusy"}`;
+  el host de Rayito ya lo cumple (`AGENT_SERVICE_EXPORT_PORT`,
+  `AGENT_SERVICE_SESSION_HEADER`).
+
+### Build de la imagen (CodeBuild y ECR)
+
+| Operación | Parámetros de entrada (y sólo estos) | Salida que se lee | Errores | IAM |
+|---|---|---|---|---|
+| `StartBuild` (`start_build` / `StartBuildCommand`) | `projectName`, `sourceLocationOverride` (`<bucket>/<clave>` del zip), `environmentVariablesOverride=[{name, value, type: "PLAINTEXT"}]` con `IMAGE_TAG` y `AGENT_BASE_IMAGE`, `idempotencyToken` (la etiqueta de la imagen: «valid for 5 minutes», un `StartBuild` repetido en ese plazo devuelve el mismo build) | `build.id`, `build.buildStatus` | `AccountLimitExceededException` (`build_quota`), `ResourceNotFoundException`, `InvalidInputException` | `codebuild:StartBuild` sobre el proyecto |
+| `BatchGetBuilds` (`batch_get_builds` / `BatchGetBuildsCommand`) | `ids` (uno) | `builds[0].{id, buildStatus, currentPhase, logs.groupName}` | `InvalidInputException` | `codebuild:BatchGetBuilds` |
+| `DescribeImages` (ECR, `describe_images` / `DescribeImagesCommand`) | `repositoryName`, `imageIds=[{imageTag}]` | `imageDetails[0].{imageDigest, imageSizeInBytes, imageTags}` | `ImageNotFoundException` = no existe; `RepositoryNotFoundException` (pila sin repositorio: `stack_failed`) | `ecr:DescribeImages` sobre el repositorio |
+
+- `buildStatus`: `SUCCEEDED`, `FAILED`, `FAULT`, `TIMED_OUT`, `IN_PROGRESS`,
+  `STOPPED`.
+- Entorno del proyecto: `ARM_CONTAINER` con `BUILD_GENERAL1_SMALL` (2 vCPU,
+  4 GiB, 64 GB de disco) e imagen `aws/codebuild/amazonlinux-aarch64-standard:3.0`
+  (Amazon Linux 2023), con `PrivilegedMode: true` para el demonio de Docker.
+  `ARM_CONTAINER` existe en las 21 regiones comerciales de AgentCore Runtime
+  con microVMs (las dos listas se cruzaron el 2026-10-19).
+- `imageSizeInBytes` es el tamaño que guarda ECR (comprimido); se compara con
+  el límite de 2 GB de AgentCore. Pendiente de medir (fila Q al aceptar) si
+  AgentCore mide la imagen comprimida o descomprimida.
+
+### Otras llamadas
+
+| Operación | Parámetros de entrada (y sólo estos) | Salida | IAM |
+|---|---|---|---|
+| `PutObject` | los de §21 (`Bucket`, `Key`, `ExpectedBucketOwner`, `Body`, `ChecksumSHA256`), con la clave `rayito/images/agentcore/<agente>/<etiqueta>.zip` | — | `s3:PutObject` sobre el prefijo |
+| `DeleteObject` (`delete_object` / `DeleteObjectCommand`) | `Bucket`, `Key`, `ExpectedBucketOwner` | — (204 también si no existe) | `s3:DeleteObject` sobre el prefijo |
+| `HeadBucket` | el de «Despliegue de agentes de cero configuración» (región en `x-amz-bucket-region`) | — | `s3:ListBucket` |
+| `DeleteLogGroup` (`delete_log_group` / `DeleteLogGroupCommand`) | `logGroupName` (el del runtime) | — ; `ResourceNotFoundException` = ya no existe | `logs:DeleteLogGroup` sobre ese grupo |
+| `CreateStack`, `UpdateStack`, `DescribeStacks`, `DeleteStack` | los de §21, con `Capabilities=["CAPABILITY_IAM"]` (los dos roles de `infra/agentcore-runtime.yaml` no tienen nombre fijo) y `Tags` (las tres fijas más las de `--tag`) | los de §21 | los de §21 más los del manejador de cada recurso |
+| `GetCallerIdentity` | — | `Account` (los ARNs de modelos y secretos) | ninguna |
+
+### Plantilla `infra/agentcore-runtime.yaml`
+
+Seis recursos, verificados sin red con cfn-lint 1.56.3 el 2026-10-19:
+`AWS::ECR::Repository` (`RepositoryName`, `ImageTagMutability: IMMUTABLE`,
+`ImageScanningConfiguration.ScanOnPush`, `EmptyOnDelete: true`,
+`LifecyclePolicy.LifecyclePolicyText` que conserva las últimas
+`ImageRetentionCount` imágenes), `AWS::Logs::LogGroup` del build
+(`RetentionInDays`), dos `AWS::IAM::Role` (build y runtime, con
+`aws:SourceAccount` y, en el del runtime, `aws:SourceArn` sobre
+`bedrock-agentcore` de la región) y `AWS::CodeBuild::Project` (`Source.Type: S3`,
+`Artifacts.Type: NO_ARTIFACTS`, `Environment` de arriba, `LogsConfig`). El rol
+del runtime sigue la política de ejemplo de la guía («AgentCore Runtime
+execution role») restringida: ECR sólo sobre su repositorio; logs sólo sobre
+`/aws/bedrock-agentcore/runtimes/<RuntimeName>-*`; X-Ray; `PutMetricData` con
+`cloudwatch:namespace = bedrock-agentcore`; `GetWorkloadAccessToken` y
+`GetWorkloadAccessTokenForJWT` sobre `workload-identity-directory/default` y su
+`workload-identity/<RuntimeName>-*` (sin `GetWorkloadAccessTokenForUserId`,
+como recomienda la guía de seguridad); `bedrock:InvokeModel` e
+`InvokeModelWithResponseStream` **sólo** sobre `BedrockModelArns`, y
+`secretsmanager:GetSecretValue` **sólo** sobre `ReadableSecretArns`; vacíos, sin
+esos permisos.
+
+### Regiones (21)
+
+`us-east-1`, `us-east-2`, `us-west-1`, `us-west-2`, `ca-central-1`,
+`sa-east-1`, `eu-central-1`, `eu-west-1`, `eu-west-2`, `eu-west-3`,
+`eu-south-1`, `eu-south-2`, `eu-north-1`, `ap-south-1`, `ap-south-2`,
+`ap-southeast-1`, `ap-southeast-2`, `ap-southeast-5`, `ap-southeast-7`,
+`ap-northeast-1`, `ap-northeast-2` (AgentCore Runtime con microVMs ∩ CodeBuild
+`ARM_CONTAINER`, `agentcoreSupportedRegions` en `limits.json`).
+
+### Precios (us-east-1, consultados 2026-10-19)
+
+| Concepto | Precio | Fuente |
+|---|---|---|
+| AgentCore Runtime microVMs V1, CPU | $0,0895 por vCPU-hora, por segundo de uso real; sin cargo de CPU en espera de E/S | <https://aws.amazon.com/bedrock/agentcore/pricing/> |
+| AgentCore Runtime microVMs V1, memoria | $0,00945 por GB-hora mientras la sesión vive (mínimo 128 MB) | la misma |
+| CodeBuild `arm1.small` (`Build-Min:ARM:g1.small`) | $0,0034 por minuto, redondeado al minuto; 100 minutos gratis al mes | Price List API (publicación 2026-09-11) y <https://aws.amazon.com/codebuild/pricing/> |
+| ECR, almacenamiento | $0,10 por GB-mes | Price List API |
+| CloudWatch Logs, ingesta | $0,50 por GB | Price List API |
