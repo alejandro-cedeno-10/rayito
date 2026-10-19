@@ -12,7 +12,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { inspect } from "node:util";
 import { describe, expect, test, vi } from "vitest";
+import { ARTIFACT_STACK_NAME } from "../../src/account-setup/domain.js";
 import {
+  AwsResolver,
   BUCKET_ENV_VAR,
   cdkBucketName,
   type DeployAws,
@@ -43,6 +45,7 @@ import { Sandbox } from "../../src/sandbox/sandbox.js";
 import { Template } from "../../src/templates/dsl.js";
 import { FakePool, FleetHarness } from "./agent-fleet-fake.js";
 import { project } from "./agent-project-fake.js";
+import { FakeStackProvisioner } from "./m15-fake-stacks.js";
 
 const VECTORS = join(import.meta.dirname, "..", "..", "..", "..", "testdata", "agent-deploy");
 const RESOLVE = JSON.parse(readFileSync(join(VECTORS, "resolve.json"), "utf8"));
@@ -75,6 +78,8 @@ const INFO = { templateId: "arn", buildId: "3.0/abc", alias: "support-bot" };
 class FakeAws implements DeployAws {
   images = new Set(["rayito-base-caps"]);
   buckets = new Set<string>();
+  /** El `BucketName` de la pila `rayito-m0-artifacts`, si `setup` la creó. */
+  stackBucket: string | undefined = undefined;
   calls: string[] = [];
 
   resolvedRegion(): string {
@@ -87,6 +92,10 @@ class FakeAws implements DeployAws {
   async bucketExists(bucket: string): Promise<boolean> {
     this.calls.push("bucket");
     return this.buckets.has(bucket);
+  }
+  async artifactStackBucket(): Promise<string | undefined> {
+    this.calls.push("stack");
+    return this.stackBucket;
   }
   async imageExists(name: string): Promise<boolean> {
     this.calls.push(`image:${name}`);
@@ -237,6 +246,49 @@ describe("shared vectors", () => {
     aws.buckets.add(cdkBucketName("123456789012", "us-east-1"));
     expect(await discoverBucket(aws, "us-east-1")).toBe(cdkBucketName("123456789012", "us-east-1"));
     expect(await discoverBucket(new FakeAws(), "us-east-1")).toBeUndefined();
+  });
+
+  test("discovery falls back to the bucket of the rayito setup stack after the cdk one", async () => {
+    const aws = new FakeAws();
+    aws.stackBucket = BUCKET;
+    expect(await discoverBucket(aws, "us-east-1")).toBe(BUCKET);
+    expect(aws.calls).toEqual(["account", "bucket", "stack"]);
+  });
+
+  test.each([
+    ["a deployed stack", "CREATE_COMPLETE", { BucketName: BUCKET }, BUCKET],
+    ["an updated stack", "UPDATE_COMPLETE", { BucketName: BUCKET }, BUCKET],
+    ["a stack in progress", "CREATE_IN_PROGRESS", { BucketName: BUCKET }, undefined],
+    ["a rolled back stack", "ROLLBACK_COMPLETE", { BucketName: BUCKET }, undefined],
+    ["a stack without the output", "CREATE_COMPLETE", {}, undefined],
+  ])(
+    "AwsResolver reads %s of rayito-m0-artifacts read-only",
+    async (_name, state, outputs, expected) => {
+      const stacks = new FakeStackProvisioner();
+      stacks.stacks.set(ARTIFACT_STACK_NAME, {
+        name: ARTIFACT_STACK_NAME,
+        state,
+        outputs,
+        parameters: {},
+      });
+      const resolver = new AwsResolver({ region: "us-east-1", stacks });
+      expect(await resolver.artifactStackBucket()).toBe(expected);
+      expect(stacks.calls).toEqual([["describe", ARTIFACT_STACK_NAME]]);
+    },
+  );
+
+  test("AwsResolver finds no bucket when the stack does not exist", async () => {
+    const stacks = new FakeStackProvisioner();
+    const resolver = new AwsResolver({ region: "us-east-1", stacks });
+    expect(await resolver.artifactStackBucket()).toBeUndefined();
+  });
+
+  test("the cdk bucket wins and the stack is not read", async () => {
+    const aws = new FakeAws();
+    aws.buckets.add(cdkBucketName("123456789012", "us-east-1"));
+    aws.stackBucket = BUCKET;
+    expect(await discoverBucket(aws, "us-east-1")).toBe(cdkBucketName("123456789012", "us-east-1"));
+    expect(aws.calls).not.toContain("stack");
   });
 
   test.each(RESOLVE.costs as CostCase[])("cost $memoryMib", (item) => {
@@ -556,6 +608,15 @@ describe("deployAgent", () => {
     await h.deploy();
     expect(h.builds[0]?.bucket).toBe(discovered);
     expect(h.steps[0]?.detail).toBe(`discovered:${discovered}`);
+  });
+
+  test("the bucket of the rayito setup stack is found when no other source exists", async () => {
+    const h = new Harness();
+    delete h.environ[BUCKET_ENV_VAR];
+    h.aws.stackBucket = BUCKET;
+    await h.deploy();
+    expect(h.builds[0]?.bucket).toBe(BUCKET);
+    expect(h.steps[0]?.detail).toBe(`discovered:${BUCKET}`);
   });
 
   test("the base image version and timeout reach the build", async () => {

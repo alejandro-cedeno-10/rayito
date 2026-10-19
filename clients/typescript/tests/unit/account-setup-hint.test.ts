@@ -76,6 +76,7 @@ describe("deployAgent errors", () => {
       resolvedRegion: () => REGION,
       accountId: async () => "123456789012",
       bucketExists: async () => true,
+      artifactStackBucket: async () => undefined,
       imageExists: async () => false,
     };
     const failure = await ensureBaseImage(aws, "rayito-base-caps", undefined, {
