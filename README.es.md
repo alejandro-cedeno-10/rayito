@@ -203,13 +203,16 @@ key). La receta completa, con cada orden, está en
 1. **Prepara la cuenta**: `rayito setup` crea la pila de IAM `rayito-m0-iam` y
    publica `rayito-base` desde el `rayito-image.zip` de la release,
    comprobado contra su `SHA256SUMS`. Reutiliza un bucket (`--bucket`,
-   `RAYITO_BUCKET`, el de la pila o el de `cdk bootstrap`) y nunca crea uno.
-   Muestra el plan y el coste y pide confirmación; el build de la imagen
-   tarda unos 10 minutos, una vez por cuenta y región.
+   `RAYITO_BUCKET`, el de la pila o el de `cdk bootstrap`) y, sólo si no hay
+   ninguno, crea uno cifrado y privado con la pila `rayito-m0-artifacts`.
+   Muestra el plan y el coste y pide confirmación. La primera ejecución tarda
+   unos 10–12 minutos, casi todo el snapshot de la imagen en AWS, una vez por
+   cuenta y región; las siguientes, segundos. Necesita credenciales de
+   administración o de *bootstrap* una vez, como `cdk bootstrap`.
 
    ```bash
-   rayito setup --dry-run --bucket amzn-s3-demo-bucket   # sólo lee: plan y coste
-   rayito setup --bucket amzn-s3-demo-bucket
+   rayito setup --dry-run   # sólo lee: plan y coste
+   rayito setup
    ```
 
    Con el SDK de TypeScript solo: `npx rayito setup`. La comprobación del hash
@@ -223,7 +226,7 @@ key). La receta completa, con cada orden, está en
    cosign verify-blob --bundle rayito-image.zip.sigstore.json \
      --certificate-identity "https://github.com/alejandro-cedeno-10/rayito/.github/workflows/release.yml@refs/tags/rayd-v${RAYD_VERSION}" \
      --certificate-oidc-issuer https://token.actions.githubusercontent.com rayito-image.zip
-   rayito setup --bucket amzn-s3-demo-bucket --artifact rayito-image.zip
+   rayito setup --artifact rayito-image.zip
    ```
 
    El camino a mano (bucket, `aws cloudformation deploy`, descarga con cosign
