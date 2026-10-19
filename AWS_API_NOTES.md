@@ -982,7 +982,7 @@ forma. Referencia de la API:
 
 | Operación (boto3 / AWS SDK v3) | Parámetros de entrada (y sólo estos) | Campos de salida que se leen | IAM | Fuente |
 |---|---|---|---|---|
-| `CreateStack` (`create_stack` / `CreateStackCommand`) | `StackName`, `TemplateBody`, `Parameters=[{ParameterKey, ParameterValue}]`, `Tags=[{Key, Value}]`, `Capabilities=["CAPABILITY_IAM"]` sólo si la plantilla crea roles/políticas con nombre implícito | `StackId` (no se usa: el nombre ya es la clave) | `cloudformation:CreateStack` sobre la pila, más `iam:CreatePolicy` etc. si la plantilla crea IAM (`CAPABILITY_IAM`) | <https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_CreateStack.html> |
+| `CreateStack` (`create_stack` / `CreateStackCommand`) | `StackName`, `TemplateBody`, `Parameters=[{ParameterKey, ParameterValue}]`, `Tags=[{Key, Value}]`, `Capabilities=["CAPABILITY_IAM"]` sólo si la plantilla crea roles/políticas con nombre implícito; `Capabilities=["CAPABILITY_NAMED_IAM"]` para `infra/iam.yaml` (roles con nombre fijo `rayito-m0-*`) | `StackId` (no se usa: el nombre ya es la clave) | `cloudformation:CreateStack` sobre la pila, más `iam:CreatePolicy` etc. si la plantilla crea IAM (`CAPABILITY_IAM`) | <https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_CreateStack.html> |
 | `UpdateStack` (`update_stack` / `UpdateStackCommand`) | igual que `CreateStack`, y además `Parameters=[{ParameterKey, UsePreviousValue: true}]` (sin `ParameterValue`) para cada parámetro que se conserva | — | `cloudformation:UpdateStack` | <https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_UpdateStack.html>, <https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_Parameter.html> |
 | `DescribeStacks` (`describe_stacks` / `DescribeStacksCommand`) | `StackName` | `Stacks[0].{StackStatus, StackStatusReason, Outputs[].{OutputKey, OutputValue}, Parameters[].{ParameterKey, ParameterValue}}` | `cloudformation:DescribeStacks` | <https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_DescribeStacks.html> |
 | `DeleteStack` (`delete_stack` / `DeleteStackCommand`) | `StackName` | — (idempotente: no falla sobre una pila que no existe) | `cloudformation:DeleteStack` | <https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_DeleteStack.html> |
@@ -2038,3 +2038,31 @@ dice dónde. Consultado el 2026-10-16.
 - Pendiente de medir en AWS real (nueva fila Q al aceptar 0.14): el tope de
   conexiones simultáneas por MicroVM por debajo de 2 GB (se asume el de 2 GB,
   conservador) y la latencia de reanudar una plaza aparcada y arrancar el host.
+
+## Preparación de la cuenta (`rayito setup`, ADR-030)
+
+`rayito setup` no usa ninguna llamada de AWS que no esté ya documentada: sólo
+las encadena. Cada fila dice dónde está su contrato; `setup` no añade
+parámetros. Consultado el 2026-10-19.
+
+| Paso | Llamada | Dónde está documentada |
+|---|---|---|
+| Cuenta | `GetCallerIdentity` (`Account`) | §21, tabla de `GetCallerIdentity` |
+| Pila de IAM, lectura | `DescribeStacks` (`Stacks[0].{StackStatus, Outputs, Parameters}`; ausencia = `ValidationError` con «does not exist») | §21 |
+| Pila de IAM, escritura | `CreateStack` / `UpdateStack` con `Capabilities=["CAPABILITY_NAMED_IAM"]`; sólo `ArtifactBucket` como parámetro propio, el resto con el valor por defecto o `UsePreviousValue`; la espera sondea `DescribeStacks` | §21 |
+| Bucket | `HeadBucket` (un solo candidato; la región sale de `x-amz-bucket-region`, como en la comprobación `bucket` de `rayito doctor`); nunca `CreateBucket` | «Despliegue de agentes de cero configuración» y `docs/site/docs/cli.md` |
+| Imagen, lectura | `GetMicrovmImage` y `ListMicrovmImageVersions` (`items[].{imageVersion, state, status, createdAt}`) | §4 y §30 |
+| Imagen, publicación | `PutObject` del zip (clave por contenido `rayito/images/rayd-<sha12>.zip`), `CreateMicrovmImage` o `UpdateMicrovmImage`, la compuerta de tres estados, y la versión `latest` de la base gestionada | §4 y §27 (el mismo camino que `rayito image publish`) |
+| Doctor | las comprobaciones de `rayito doctor`, sin `--launch` | `docs/site/docs/cli.md` |
+
+Lo que sí es nuevo y **no es una API de AWS**: la descarga HTTPS de dos assets de
+la release de GitHub, `rayito-image.zip` y `SHA256SUMS`, desde
+`https://github.com/alejandro-cedeno-10/rayito/releases/download/rayd-v<versión>/<asset>`.
+`SHA256SUMS` es el formato de `sha256sum`; la comprobación prueba integridad y
+no autenticidad (la firma es la de `cosign`, `docs/site/docs/verify.md`).
+
+`CAPABILITY_NAMED_IAM` es un valor del `enum` `Capability` del modelo
+`cloudformation/2010-05-15` (`CAPABILITY_IAM`, `CAPABILITY_NAMED_IAM`,
+`CAPABILITY_AUTO_EXPAND`), verificado sin red en botocore 1.43.103 el
+2026-10-19; hace falta porque `infra/iam.yaml` da nombre fijo a sus roles
+(`rayito-m0-*`).

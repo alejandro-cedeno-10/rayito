@@ -255,8 +255,8 @@ these three shapes, those of [`CustomRuntime`](#otros-frameworks-customruntime):
 
 ## Before you start { #antes-de-empezar }
 
-1. [Configure AWS](../primeros-pasos/configurar-aws.md) done and
-   `rayito-base-caps` published: it is the base of the agent image, the only
+1. [Configure AWS](../primeros-pasos/configurar-aws.md) done (`rayito setup`)
+   and `rayito-base-caps` published: it is the base of the agent image, the only
    one that enforces closed egress.
 2. The model key in Secrets Manager, and `RayitoSecretsReader` for whoever
    calls the SDK ([Agent in the sandbox](agente-en-el-sandbox.md#1-el-secreto-y-la-pasarela)).
@@ -277,8 +277,8 @@ your requirements) and deploying it (≈ 20 seconds until the service answers).
 
 | What | How | How long |
 |---|---|---|
-| An S3 bucket for the build artifact | `export RAYITO_BUCKET=amzn-s3-demo-bucket` ([Configure AWS](../primeros-pasos/configurar-aws.md#2-un-bucket-para-los-artefactos)) | 1 min |
-| The `rayito-base-caps` base image | publish it from the release `rayito-image.zip` ([Configure AWS](../primeros-pasos/configurar-aws.md#4-publicar-la-imagen-rayito-base)) | ≈ 4 min |
+| An S3 bucket for the build artifact | `export RAYITO_BUCKET=amzn-s3-demo-bucket` ([Configure AWS](../primeros-pasos/configurar-aws.md#2-prepara-la-cuenta-con-rayito-setup)) | 1 min |
+| The `rayito-base-caps` base image | publish it from the release `rayito-image.zip` ([Configure AWS](../primeros-pasos/configurar-aws.md#a-mano-sin-rayito-setup)) | ≈ 4 min |
 | The version of the AWS managed base | no need to look it up by hand: with `--base-image-version latest`, `rayito image publish` uses the newest one AWS lists and prints it; an explicit number pins a reproducible build | — |
 
 ```bash

@@ -1,9 +1,9 @@
 # CLI
 
 `rayito` es la herramienta de línea de comandos del SDK: publica y lista la
-imagen, borra versiones antiguas, lista, inspecciona y mata sandboxes, lee
-sus logs de CloudWatch y diagnostica una cuenta antes del primer
-`Sandbox.create()`. También despliega las pilas opcionales
+imagen, prepara la cuenta (`rayito setup`), borra versiones antiguas, lista,
+inspecciona y mata sandboxes, lee sus logs de CloudWatch y diagnostica una
+cuenta antes del primer `Sandbox.create()`. También despliega las pilas opcionales
 (`rayito stack`, `rayito events`, `rayito domain`), construye templates
 declarativos (`rayito template`) y el agente de IA como proyecto
 (`rayito agent`). No hay `rayito.toml`: la configuración son
@@ -19,6 +19,7 @@ opciones y variables de entorno.
 | [`rayito template`](#rayito-template) | `build`, `status`, `logs` |
 | [`rayito agent`](#rayito-agent) | `init`, `build`, `run`, `deploy`, `export`, `invoke`, `status`, `stop`, `template build` |
 | [`rayito dashboard`](#rayito-dashboard) | — |
+| [`rayito setup`](#rayito-setup) | — |
 | [`rayito doctor`](#rayito-doctor) | — |
 
 Hay dos CLI con la misma superficie, salida y códigos de salida: la de
@@ -605,6 +606,155 @@ defensas en [Seguridad](security.md#panel-de-gestion-local). Para tenerlo
 siempre disponible dentro de tu cuenta, con inicio de sesión y auditoría:
 `rayito stack deploy dashboard --artifact-bucket B`
 ([Panel en tu cuenta](funciones-opcionales/panel-en-tu-cuenta.md)).
+
+## `rayito setup`
+
+```bash
+rayito [--profile P] [--region R] [--json] [--verbose] setup
+       [--bucket BUCKET] [--artifact PATH] [--yes] [--dry-run]
+```
+
+Prepara la cuenta y la región para Rayito en una orden idempotente, como
+`cdk bootstrap`. Tutorial paso a paso: [Configurar AWS](primeros-pasos/configurar-aws.md#2-prepara-la-cuenta-con-rayito-setup).
+
+| Opción | Qué hace |
+|---|---|
+| `--bucket BUCKET` | Bucket de artefactos en la misma región; por defecto `RAYITO_BUCKET`, el de la pila de IAM o el del bootstrap de CDK. Rayito no crea buckets. |
+| `--artifact PATH` | Zip de la imagen ya verificado (p. ej. con cosign); sin él se descarga `rayito-image.zip` de la release `rayd-v<versión del SDK>` y se comprueba contra su `SHA256SUMS`. Sólo vale el zip de la variante `full`, sin EFS. |
+| `--yes` | No pedir confirmación (hace falta sin terminal o con `--json` si hay algo que crear). |
+| `--dry-run` | Sólo lee la cuenta y muestra el plan; no crea ni cambia nada. |
+
+`RAYITO_BUCKET` lo lee la orden, no el parser, igual que `rayito doctor`.
+
+**El plan** son siempre tres pasos, en este orden:
+
+| Recurso | Acciones posibles | Escribe | Pide confirmación |
+|---|---|---|---|
+| `bucket` | `reuse` | nunca | no |
+| `iamStack` (pila `rayito-m0-iam`) | `create`, `update`, `reuse`, `wait` | `create`, `update` | `create`, `update` |
+| `baseImage` (imagen `rayito-base`) | `publish`, `reuse`, `wait` | `publish` | `publish` |
+
+- **Bucket:** el primero que exista de `--bucket`, `RAYITO_BUCKET`, el
+  parámetro `ArtifactBucket` de la pila de IAM o el bucket de `cdk bootstrap` de
+  esa cuenta y región (calificador por defecto). Se comprueba con un `HeadBucket`;
+  nunca se crea.
+- **Pila de IAM:** si no existe, `create` con `ArtifactBucket=<bucket>`. Si
+  está en `CREATE_COMPLETE`, `UPDATE_COMPLETE` o `UPDATE_ROLLBACK_COMPLETE` y
+  tiene la salida `BuildRoleArn`, `reuse`; si su `ArtifactBucket` es otro,
+  `update` (sólo cambia ese parámetro). En un estado `*_IN_PROGRESS`, `wait`;
+  en `DELETE_IN_PROGRESS`, `ROLLBACK_COMPLETE` o `*_FAILED`, `stack_blocked`.
+- **Imagen:** si no existe `rayito-base`, `publish`; con una versión
+  `PENDING` o `IN_PROGRESS`, `wait`; con una versión `SUCCESSFUL` y `ACTIVE`,
+  `reuse` (sea cual sea el `rayd` con que se construyó; `rayito doctor
+  --launch` avisa de uno viejo y `rayito image publish` lo actualiza); con
+  sólo versiones fallidas o inactivas, `publish`. El `publish` usa `--artifact`
+  o la release `rayd-v<versión del SDK>` y el `latest` de la base gestionada
+  de AWS.
+
+El plan está `ready` cuando los tres pasos son `reuse`. Pide confirmación si
+algún paso es `create`, `update` o `publish`: en una terminal, con
+`¿Preparar la cuenta? [y/N]:`; sin terminal o con `--json`, hace falta
+`--yes` (`needs_confirmation`, salida 2). Un `wait` no cuesta nada nuevo y no
+pide confirmación. Después de aplicar, ejecuta `rayito doctor` (sin `--launch`)
+sobre `rayito-base` y el bucket elegido, y termina con
+`RAYITO_TEMPLATE=<arn>` y `RAYITO_BUCKET=<bucket>`.
+
+```bash
+rayito setup --dry-run --bucket amzn-s3-demo-bucket
+```
+
+<!-- noqa: example: salida de consola, no es código -->
+```text
+rayito setup: cuenta 123456789012, región us-east-1
+  bucket amzn-s3-demo-bucket: reutilizar (--bucket)
+  pila de IAM rayito-m0-iam: crear
+  imagen rayito-base: publicar desde rayd-v0.15.0 (≈ 10 min)
+Coste aproximado:
+  pila de IAM: gratis
+  imagen: ≈ $0,04 por semana por versión publicada (mínimo una semana)
+  zip de la imagen en el bucket: céntimos
+no se creó ni cambió nada (--dry-run)
+```
+
+**Códigos de salida.** `0`: éxito, `--dry-run` o nada que hacer con el doctor
+sin `FAIL`. `1`: falla la operación (`stack_blocked`, `stack_incomplete`,
+`release_download`, `checksum_missing`, `checksum_mismatch`,
+`image_build_failed`, un «no» en la confirmación, un `FAIL` del doctor o un
+error de AWS sin traducir). `2`: uso o entorno (`unsupported_region`,
+`no_bucket`, `bucket_unavailable`, `bucket_region`, `artifact_missing`,
+`artifact_variant`, `needs_confirmation`, y los de siempre: sin región, sin
+perfil o sin credenciales). Qué hacer con cada uno:
+[Solución de problemas](operacion/solucion-de-problemas.md#rayito-setup).
+
+**Con `--json`** sale un único documento por stdout y el progreso por stderr.
+Sus claves, en este orden: `rayito` (versión del SDK), `region`, `account`
+(`null` si el plan falló), `dryRun`, `ready`, `steps`, `cost`, `result`,
+`doctor`, `error` y `exitCode`. Cada elemento de `steps` lleva `resource`
+(`bucket`, `iamStack` o `baseImage`), `name`, `action` (`create`, `update`,
+`reuse`, `wait` o `publish`), `source` (`argument`, `environment`, `iamStack`,
+`cdkBootstrap`, `release`, `artifact` o `null`), `status`, `imageVersion`,
+`release` y `previousBucket`. `result` (`bucket`, `imageArn`, `imageVersion`,
+`artifactUploaded`) es `null` mientras no termine la preparación; `doctor` es
+el documento de `rayito --json doctor`, o `null` con `--dry-run` y si la
+preparación se detuvo antes; `error` es `{"code", "message"}` o `null`. En un
+error el mensaje sale además por stderr como `rayito: <mensaje>`.
+
+```json
+{
+  "rayito": "0.15.0",
+  "region": "us-east-1",
+  "account": "123456789012",
+  "dryRun": true,
+  "ready": false,
+  "steps": [
+    {"resource": "bucket", "name": "amzn-s3-demo-bucket", "action": "reuse",
+     "source": "argument", "status": null, "imageVersion": null,
+     "release": null, "previousBucket": null},
+    {"resource": "iamStack", "name": "rayito-m0-iam", "action": "create",
+     "source": null, "status": null, "imageVersion": null,
+     "release": null, "previousBucket": null},
+    {"resource": "baseImage", "name": "rayito-base", "action": "publish",
+     "source": "release", "status": null, "imageVersion": null,
+     "release": "rayd-v0.15.0", "previousBucket": null}
+  ],
+  "cost": [
+    "pila de IAM: gratis",
+    "imagen: ≈ $0,04 por semana por versión publicada (mínimo una semana)",
+    "zip de la imagen en el bucket: céntimos"
+  ],
+  "result": null,
+  "doctor": null,
+  "error": null,
+  "exitCode": 0
+}
+```
+
+!!! info "Coste y activación"
+    - **Activa:** ejecutar `rayito setup` y confirmar. `--dry-run` sólo lee la
+      cuenta; con una cuenta ya preparada tampoco escribe nada.
+    - **Recursos y llamadas AWS:** la pila `rayito-m0-iam`
+      (`CreateStack`/`UpdateStack` con `CAPABILITY_NAMED_IAM`); la imagen
+      `rayito-base` (un objeto en el bucket, `CreateMicrovmImage` o
+      `UpdateMicrovmImage`); lecturas de `GetCallerIdentity`,
+      `DescribeStacks`, `HeadBucket`, `GetMicrovmImage` y
+      `ListMicrovmImageVersions`; la descarga HTTPS de `rayito-image.zip` y
+      `SHA256SUMS`. Nunca crea un bucket.
+    - **Coste aproximado:** pila de IAM, gratis; cada versión publicada de la
+      imagen ≈ $0,04 por semana (mínimo una semana); el zip en el bucket,
+      céntimos. Ver [Precios](cost.md).
+    - **IAM:** permisos de administración para preparar la cuenta (crear la
+      pila y los roles, escribir en el bucket, publicar la imagen). Para usar
+      el SDK después, la política mínima de
+      [Configurar AWS](primeros-pasos/configurar-aws.md#3-la-pila-de-iam).
+    - **Cómo apagarla:** no ejecutarla; para deshacerla, borra la pila y las
+      versiones de la imagen.
+    - **Ejemplo:** `rayito setup --dry-run`.
+
+!!! warning "El hash no prueba la autenticidad"
+    La comprobación contra `SHA256SUMS` detecta un zip truncado, corrupto o
+    equivocado, pero no que sea auténtico (`SHA256SUMS` sale de la misma
+    release). Para la firma de cosign, verifica el zip y pásalo con
+    `--artifact`: [Verificar una release](verify.md).
 
 ## `rayito doctor`
 

@@ -47,7 +47,7 @@ pip install "rayito[cli]"   # SDK Python (Python >= 3.11) y la CLI `rayito`
 pnpm add rayito             # SDK TypeScript (Node >= 20); o: npm i rayito / yarn add rayito / bun add rayito
 ```
 
-La CLI (`rayito image publish`, `rayito doctor`…) es Python aunque uses el
+La CLI (`rayito setup`, `rayito image publish`, `rayito doctor`…) es Python aunque uses el
 SDK de TypeScript. Extras de Python: `cli`, `mcp` (servidor MCP), `otel`
 (trazas OpenTelemetry) y `custom-domain` (dominio propio, experimental); las
 funciones opcionales de TypeScript cargan *peerDependencies* opcionales
@@ -200,44 +200,41 @@ Cuatro pasos, todos en tu propia cuenta (Rayito no tiene servidor ni API
 key). La receta completa, con cada orden, está en
 [Configurar AWS](https://alejandro-cedeno-10.github.io/rayito/primeros-pasos/configurar-aws/).
 
-1. **IAM**: despliega los roles de build y ejecución y las políticas del
-   cliente ([`infra/README.md`](infra/README.md)):
+1. **Prepara la cuenta**: `rayito setup` crea la pila de IAM `rayito-m0-iam` y
+   publica `rayito-base` desde el `rayito-image.zip` de la release,
+   comprobado contra su `SHA256SUMS`. Reutiliza un bucket (`--bucket`,
+   `RAYITO_BUCKET`, el de la pila o el de `cdk bootstrap`) y nunca crea uno.
+   Muestra el plan y el coste y pide confirmación; el build de la imagen
+   tarda unos 10 minutos, una vez por cuenta y región.
 
    ```bash
-   aws cloudformation deploy --stack-name rayito-m0-iam \
-     --template-file infra/iam.yaml --capabilities CAPABILITY_NAMED_IAM \
-     --parameter-overrides ArtifactBucket=amzn-s3-demo-bucket LogGroupPrefix=/rayito
+   rayito setup --dry-run --bucket amzn-s3-demo-bucket   # sólo lee: plan y coste
+   rayito setup --bucket amzn-s3-demo-bucket
    ```
 
-   Asigna a tu usuario la política del output `CallerPolicyArn`
-   (`rayito-m0-caller-<región>`) y al rol de tu servicio, sólo la de
-   `SandboxLauncherPolicyArn` ([IAM](https://alejandro-cedeno-10.github.io/rayito/operacion/iam/)).
-
-2. **Imagen**: publica `rayito-base` desde el `rayito-image.zip` firmado de
-   la release, sin compilar nada. Verifica la firma antes de publicar
-   ([Verificar una release](https://alejandro-cedeno-10.github.io/rayito/verify/)):
-
-   ```bash
-   RAYD_VERSION=$(python -c "import rayito; print(rayito.__version__)")   # la del SDK instalado
-   curl -fsSLO "https://github.com/alejandro-cedeno-10/rayito/releases/download/rayd-v${RAYD_VERSION}/rayito-image.zip"
-   curl -fsSLO "https://github.com/alejandro-cedeno-10/rayito/releases/download/rayd-v${RAYD_VERSION}/rayito-image.zip.sigstore.json"
-   cosign verify-blob --bundle rayito-image.zip.sigstore.json \
-     --certificate-identity "https://github.com/alejandro-cedeno-10/rayito/.github/workflows/release.yml@refs/tags/rayd-v${RAYD_VERSION}" \
-     --certificate-oidc-issuer https://token.actions.githubusercontent.com rayito-image.zip
-   rayito image publish --artifact rayito-image.zip --base-image-version 1 --bucket amzn-s3-demo-bucket
-   ```
-
-   La imagen debe llevar el `rayd` de la misma versión que el SDK
-   (`rayito doctor` lo comprueba). Las variantes `-caps` (red saliente y el
-   agente) y `-poly` (kernels bash, JavaScript y TypeScript), en
+   Con el SDK de TypeScript solo: `npx rayito setup`. La comprobación del hash
+   prueba integridad, no autenticidad: para la firma de cosign, verifica el zip
+   a mano y pásalo con `--artifact` ([Verificar una release](https://alejandro-cedeno-10.github.io/rayito/verify/)).
+   El camino a mano (bucket, `aws cloudformation deploy`, descarga con cosign
+   y `rayito image publish`) está en
+   [Configurar AWS](https://alejandro-cedeno-10.github.io/rayito/primeros-pasos/configurar-aws/#a-mano-sin-rayito-setup);
+   las variantes `-caps` (red saliente y el agente) y `-poly` (kernels bash,
+   JavaScript y TypeScript), en
    [Imágenes](https://alejandro-cedeno-10.github.io/rayito/images/). Desde el código fuente: `make image-publish
    BUCKET=amzn-s3-demo-bucket`, que compila `rayd` para
    `aarch64-unknown-linux-musl` en Linux o WSL2 (en macOS, dentro de una VM
    Linux) con `cargo-zigbuild` ([`CONTRIBUTING.md`](CONTRIBUTING.md)).
 
+2. **Políticas de IAM**: asigna a tu usuario la política del output
+   `CallerPolicyArn` de la pila (`rayito-m0-caller-<región>`) y al rol de tu
+   servicio, sólo la de `SandboxLauncherPolicyArn`
+   ([`infra/README.md`](infra/README.md),
+   [IAM](https://alejandro-cedeno-10.github.io/rayito/operacion/iam/)).
+
 3. **Diagnóstico**: `rayito doctor --template rayito-base` comprueba
    credenciales, cuotas, IAM, bucket, imagen, versión del agente y
-   compatibilidad SDK ↔ `rayd`; `--launch` prueba además un sandbox efímero.
+   compatibilidad SDK ↔ `rayd`; `--launch` prueba además un sandbox efímero. La
+   imagen debe llevar el `rayd` de la misma versión que el SDK.
 
 4. **Primer sandbox**: [Primer sandbox](https://alejandro-cedeno-10.github.io/rayito/quickstart/).
 

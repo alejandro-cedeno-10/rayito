@@ -27,8 +27,40 @@ necesitan un sandbox `RUNNING` de la imagen, o `--launch` para crear uno de
 | 7 | `sandboxes` | más de 10 sandboxes `RUNNING` de esa imagen (`WARN` de 1 a 10): facturan | `rayito sandbox list`; `rayito sandbox kill --all --template <imagen>` |
 | 8 | `token` | `AccessDenied` al acuñar el token del proxy; `SKIP` si no hay ningún sandbox `RUNNING` | concede `lambda:CreateMicrovmAuthToken`; usa `--launch` |
 | 9 | `agent` | `rayd responde pero no está agent_ready`, o no responde (`UNAVAILABLE`, 403 del proxy); `WARN` con `kernel_ready=false`, `hook_anomalies` mayor que 0 o `imds_blocked=false` en una imagen `-caps`; `SKIP` sin token | espera unos segundos; republica la imagen; con `hook_anomalies`, revisa quién acuña tokens `allPorts` ([Seguridad](../security.md)) |
-| 10 | `compatibility` | el `rayd` de la imagen es más antiguo que el que exige el SDK ([tabla de compatibilidad](../limits.md#compatibilidad-sdk-rayd-imagen)) | publica la imagen de la release de tu SDK ([Configurar AWS](../primeros-pasos/configurar-aws.md#4-publicar-la-imagen-rayito-base)) |
+| 10 | `compatibility` | el `rayd` de la imagen es más antiguo que el que exige el SDK ([tabla de compatibilidad](../limits.md#compatibilidad-sdk-rayd-imagen)) | publica la imagen de la release de tu SDK ([Configurar AWS](../primeros-pasos/configurar-aws.md#a-mano-sin-rayito-setup)) |
 | — | `efs-network` (sólo con `--efs-vpc-id` y `--efs-subnet-ids`) | la VPC o las subredes no sirven para `rayito stack deploy efs-volumes` | corrige lo que nombra; no crea nada ([Volúmenes EFS en tu VPC](../funciones-opcionales/volumenes-efs-vpc.md)) |
+
+## `rayito setup` { #rayito-setup }
+
+Cada error sale como `rayito: <mensaje>` por stderr (con `--json`, además, en
+el documento: `error: {"code", "message"}` y `exitCode`). Con un `--dry-run`
+no se ha creado nada todavía; el resto de errores se pueden repetir: `rayito
+setup` observa la cuenta de nuevo y retoma lo que quedó a medias.
+
+| Código | Salida | Qué pasa | Qué hacer |
+|---|---|---|---|
+| `unsupported_region` | 2 | la región no tiene Lambda MicroVMs (el mensaje lista las diez que sí) | elige una de ellas con `--region` o `AWS_REGION` |
+| `no_bucket` | 2 | no hay bucket para el artefacto: ni `--bucket`, ni `RAYITO_BUCKET`, ni el de la pila, ni el de `cdk bootstrap` | pasa `--bucket`, exporta `RAYITO_BUCKET` o ejecuta `cdk bootstrap` en esa cuenta y región; Rayito no crea buckets |
+| `bucket_unavailable` | 2 | el bucket (`--bucket`, `RAYITO_BUCKET` o el de la pila) no existe o no es accesible con estas credenciales | revisa el nombre y que tengas `s3:ListBucket` sobre él |
+| `bucket_region` | 2 | el bucket está en otra región y el build fallaría con `S3_CROSS_REGION_ACCESS_DENIED` | usa un bucket de la misma región que la cuenta y la región de `setup` |
+| `artifact_missing` | 2 | el fichero de `--artifact` no existe | corrige la ruta |
+| `artifact_variant` | 2 | `--artifact` no es el zip de la variante `full` sin EFS | usa el `rayito-image.zip` de la release; las otras variantes se publican con `rayito image publish` |
+| `needs_confirmation` | 2 | hay algo que crear y no hay terminal (o usas `--json`) | confírmalo con `--yes`, o ejecútalo desde una terminal |
+| `stack_blocked` | 1 | la pila `rayito-m0-iam` está en un estado que no se puede reutilizar ni esperar (`ROLLBACK_COMPLETE`, `*_FAILED`, `DELETE_IN_PROGRESS`) | `aws cloudformation delete-stack --stack-name rayito-m0-iam`, espera a que desaparezca y vuelve a ejecutar `rayito setup` |
+| `stack_incomplete` | 1 | la pila no tiene la salida `BuildRoleArn`: no es la plantilla `infra/iam.yaml` de Rayito | despliega la plantilla de Rayito (o bórrala y deja que `rayito setup` la cree) |
+| `release_download` | 1 | no se pudo descargar `rayito-image.zip` o `SHA256SUMS` de la release (`HTTP <estado>`, `tiempo agotado` o `error de red`) | revisa la red o el proxy (`HTTPS_PROXY`); o descarga el zip, verifícalo y pasa `--artifact` |
+| `checksum_missing` | 1 | `SHA256SUMS` de la release no lista `rayito-image.zip`; no se publica | usa la release de la versión de tu SDK; o `--artifact` con un zip verificado |
+| `checksum_mismatch` | 1 | el sha256 del zip no coincide con `SHA256SUMS`; no se publica | repite la descarga; si persiste, no publiques ese fichero y [verifícalo](../verify.md) |
+| `image_build_failed` | 1 | la imagen `rayito-base` no quedó lanzable tras el build | vuelve a ejecutar `rayito setup` (pedirá confirmar un nuevo `publish`); si se repite, `rayito doctor` y `rayito image list` dicen el estado |
+
+Otros fallos: un `FAIL` de `rayito doctor` al final deja la salida en 1 con
+`la cuenta no está lista` (arréglalo con [`rayito doctor`](#rayito-doctor) y
+repite); un «no» en la confirmación sale con 1 sin crear nada; sin región, sin
+perfil o sin credenciales, salida 2 como el resto de la CLI; un error de AWS no
+traducido (por ejemplo, un permiso denegado al crear la pila) sale con 1 y su
+código. Cuando una orden posterior (`Sandbox.create()`, `rayito agent deploy`)
+dice que no hay imagen o bucket, el mensaje termina con la pista «si la cuenta
+o la región aún no están preparadas, ejecuta `rayito setup`».
 
 ## Credenciales y región
 
@@ -65,7 +97,7 @@ puede leer el bucket, o el zip es de otra variante (`--variant`).
 
 **Compilar `rayd` en macOS o Windows.** Hace falta Linux o WSL2 (en macOS,
 una VM Linux). Para empezar no lo necesitas: publica el `rayito-image.zip`
-firmado de la release ([Configurar AWS](../primeros-pasos/configurar-aws.md#4-publicar-la-imagen-rayito-base)).
+firmado de la release ([Configurar AWS](../primeros-pasos/configurar-aws.md#a-mano-sin-rayito-setup)).
 
 ## Cuotas y ritmo
 

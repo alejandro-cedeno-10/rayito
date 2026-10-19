@@ -79,7 +79,7 @@ works without changing anything.
 
 Without compiling anything, `rayito-base` and `rayito-base-caps` are
 published from each release's signed `rayito-image.zip`
-([Set up AWS](primeros-pasos/configurar-aws.md#4-publicar-la-imagen-rayito-base)).
+([Set up AWS](primeros-pasos/configurar-aws.md#a-mano-sin-rayito-setup)).
 From source (Linux or WSL2, to compile `rayd`):
 
 ```bash

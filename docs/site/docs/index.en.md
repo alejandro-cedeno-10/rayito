@@ -218,15 +218,31 @@ Python ≥ 3.11 or Node ≥ 20. The CLI (`rayito doctor`) is installed with pip.
 
 ### Prepare your account, once { #prepara-tu-cuenta-una-vez }
 
-About 15 minutes, most of them waiting for AWS to build the image: an IAM
-stack, a bucket and the `rayito-base` image. Then the diagnosis tells you
-what is missing.
+One command, `rayito setup`, prepares the account and region: IAM stack,
+`rayito-base` image and the bucket you already have (it never creates
+buckets). It shows the plan and the cost and asks for confirmation. The image
+takes about 10 minutes to build, once per account and region. `rayito doctor`
+is the check.
 
-```bash
-export AWS_PROFILE=<your-profile>
-export AWS_REGION=us-east-1
-rayito doctor --template rayito-base
-```
+=== "Python"
+
+    ```bash
+    export AWS_PROFILE=<your-profile>
+    export AWS_REGION=us-east-1
+    rayito setup --dry-run     # read-only: shows the plan and the cost
+    rayito setup
+    rayito doctor --template rayito-base
+    ```
+
+=== "TypeScript"
+
+    ```bash
+    export AWS_PROFILE=<your-profile>
+    export AWS_REGION=us-east-1
+    npx rayito setup --dry-run
+    npx rayito setup
+    npx rayito doctor --template rayito-base
+    ```
 
 [Set up AWS](primeros-pasos/configurar-aws.md)
 
