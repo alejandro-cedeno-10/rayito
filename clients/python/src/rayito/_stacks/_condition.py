@@ -1,0 +1,44 @@
+"""Cómo se clasifica una pila de CloudFormation que Rayito observa: lo que
+comparten `rayito setup` (ADR-030) y `rayito agent deploy --target agentcore`
+(ADR-031). Puro: sólo la biblioteca estándar.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Mapping
+from dataclasses import dataclass
+from typing import Final, Literal
+
+StackCondition = Literal["missing", "usable", "in_progress", "blocked"]
+
+#: Estados de una pila con los que sirve tal cual; `UPDATE_ROLLBACK_COMPLETE`
+#: volvió a la última plantilla que funcionaba.
+USABLE_STACK_STATES: Final = frozenset(
+    {"CREATE_COMPLETE", "UPDATE_COMPLETE", "UPDATE_ROLLBACK_COMPLETE"}
+)
+IN_PROGRESS_STACK_SUFFIX: Final = "_IN_PROGRESS"
+#: Una pila que se está borrando nunca llega a "deployed": esperarla no terminaría.
+DELETING_STACK_STATE: Final = "DELETE_IN_PROGRESS"
+
+
+@dataclass(frozen=True)
+class StackObservation:
+    """Lo que `DescribeStacks` dice de una pila de Rayito; `status` es `None`
+    si la pila no existe."""
+
+    name: str
+    status: str | None
+    outputs: Mapping[str, str]
+    parameters: Mapping[str, str]
+
+
+def classify_stack(stack: StackObservation) -> StackCondition:
+    if stack.status is None:
+        return "missing"
+    if stack.status in USABLE_STACK_STATES:
+        return "usable"
+    if stack.status == DELETING_STACK_STATE:
+        return "blocked"
+    if stack.status.endswith(IN_PROGRESS_STACK_SUFFIX):
+        return "in_progress"
+    return "blocked"

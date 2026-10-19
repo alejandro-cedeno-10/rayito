@@ -27,7 +27,6 @@ from rayito._account_setup._domain import (
     ImageGateResult,
     ImageObservation,
     ImageVersionItem,
-    StackObservation,
 )
 from rayito._account_setup._iam_stack import IAM_STACK_COMPONENT
 from rayito._account_setup._ports import Progress
@@ -41,6 +40,7 @@ from rayito._images import (
     gate_progress_line,
     wait_for_gate,
 )
+from rayito._stacks._condition import StackObservation
 from rayito._stacks._model import StackComponent, StackStatus
 from rayito._stacks._port import StackProvisioner
 from rayito._stacks._service import DEFAULT_WAIT_TIMEOUT_SECONDS, OptionalStacks

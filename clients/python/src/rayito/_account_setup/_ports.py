@@ -16,8 +16,8 @@ from rayito._account_setup._domain import (
     ImageGateResult,
     ImageObservation,
     PublishedImage,
-    StackObservation,
 )
+from rayito._stacks._condition import StackObservation
 
 Progress = Callable[[str], None]
 

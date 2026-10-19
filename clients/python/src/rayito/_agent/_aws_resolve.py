@@ -26,7 +26,6 @@ from rayito._account_setup._aws import artifact_stack_gateway
 from rayito._account_setup._domain import BUCKET_ENV_VAR as BUCKET_ENV_VAR
 from rayito._account_setup._domain import (
     BUCKET_NAME_OUTPUT_KEY,
-    classify_stack,
     with_setup_hint,
 )
 from rayito._account_setup._domain import cdk_bucket_name as cdk_bucket_name
@@ -39,6 +38,7 @@ from rayito._sandbox_base import ACCESS_TOKEN_ENV_VAR
 from rayito._secret_gateway._domain import SecretGateway
 from rayito._secrets import SecretRef
 from rayito._stacks._cloudformation import CloudFormationProvisioner
+from rayito._stacks._condition import classify_stack
 from rayito.exceptions import InvalidArgumentException, StackException
 
 if TYPE_CHECKING:

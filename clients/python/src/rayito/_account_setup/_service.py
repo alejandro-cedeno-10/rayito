@@ -20,7 +20,6 @@ from rayito._account_setup._domain import (
     SetupRequest,
     SetupResult,
     SetupStep,
-    StackObservation,
     bucket_candidates,
     creation_target,
     decide_bucket,
@@ -34,6 +33,7 @@ from rayito._account_setup._domain import (
 )
 from rayito._account_setup._ports import AccountSetupGateways, Progress
 from rayito._images import BUILD_ROLE_OUTPUT_KEY
+from rayito._stacks._condition import StackObservation
 
 
 class AccountSetup:

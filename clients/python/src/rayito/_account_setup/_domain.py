@@ -28,6 +28,11 @@ from rayito._images import (
     SUCCESSFUL_VERSION_STATE,
 )
 from rayito._limits import SUPPORTED_REGIONS
+from rayito._stacks._condition import DELETING_STACK_STATE as DELETING_STACK_STATE
+from rayito._stacks._condition import IN_PROGRESS_STACK_SUFFIX as IN_PROGRESS_STACK_SUFFIX
+from rayito._stacks._condition import USABLE_STACK_STATES as USABLE_STACK_STATES
+from rayito._stacks._condition import StackObservation as StackObservation
+from rayito._stacks._condition import classify_stack
 
 ResourceKind = Literal["bucket", "iamStack", "baseImage"]
 SetupAction = Literal["create", "update", "reuse", "wait", "publish"]
@@ -36,7 +41,6 @@ BucketSource = Literal[
 ]
 BucketState = Literal["found", "missing", "forbidden"]
 ImageSource = Literal["release", "artifact"]
-StackCondition = Literal["missing", "usable", "in_progress", "blocked"]
 ImageCondition = Literal["missing", "launchable", "building", "unlaunchable"]
 ErrorCode = Literal[
     "unsupported_region",
@@ -108,14 +112,6 @@ IMAGE_ASSET_NAME: Final = "rayito-image.zip"
 CHECKSUMS_ASSET_NAME: Final = "SHA256SUMS"
 #: Plazo de descarga de cada asset de la release (`tasks.md`, contrato).
 RELEASE_DOWNLOAD_TIMEOUT_SECONDS: Final = 600.0
-#: Estados de la pila de IAM con los que sirve tal cual; `UPDATE_ROLLBACK_COMPLETE`
-#: volvió a la última plantilla que funcionaba.
-USABLE_STACK_STATES: Final = frozenset(
-    {"CREATE_COMPLETE", "UPDATE_COMPLETE", "UPDATE_ROLLBACK_COMPLETE"}
-)
-IN_PROGRESS_STACK_SUFFIX: Final = "_IN_PROGRESS"
-#: Una pila que se está borrando nunca llega a "deployed": esperarla no terminaría.
-DELETING_STACK_STATE: Final = "DELETE_IN_PROGRESS"
 #: Línea de `sha256sum`: 64 hex en minúsculas, un espacio, y espacio (texto)
 #: o `*` (binario) antes del nombre.
 CHECKSUM_LINE_PATTERN: Final = re.compile(r"(?P<sha256>[0-9a-f]{64}) [ *](?P<name>\S.*)")
@@ -261,17 +257,6 @@ class SetupRequest:
     environment_bucket: str | None
     artifact: Path | None
     sdk_version: str
-
-
-@dataclass(frozen=True)
-class StackObservation:
-    """Lo que `DescribeStacks` dice de `rayito-m0-iam` o de
-    `rayito-m0-artifacts`; `status` es `None` si la pila no existe."""
-
-    name: str
-    status: str | None
-    outputs: Mapping[str, str]
-    parameters: Mapping[str, str]
 
 
 @dataclass(frozen=True)
@@ -545,18 +530,6 @@ def stack_output(observation: StackObservation, key: str, template: str) -> str:
             "stack_incomplete", name=observation.name, output=key, template=template
         )
     return value
-
-
-def classify_stack(stack: StackObservation) -> StackCondition:
-    if stack.status is None:
-        return "missing"
-    if stack.status in USABLE_STACK_STATES:
-        return "usable"
-    if stack.status == DELETING_STACK_STATE:
-        return "blocked"
-    if stack.status.endswith(IN_PROGRESS_STACK_SUFFIX):
-        return "in_progress"
-    return "blocked"
 
 
 def plan_stack(stack: StackObservation, bucket: str) -> SetupStep:
