@@ -461,6 +461,11 @@ aws cloudformation deploy --stack-name rayito-m0-iam \
 make image-publish BUCKET=<tu-bucket>          # y image-publish-caps / -poly
 ```
 
+La precondición del e2e (la pila `rayito-m0-iam` y la imagen `rayito-base`) también
+la deja `rayito setup --bucket <tu-bucket>` en tu cuenta y región; la orden de
+arriba sigue siendo válida si prefieres desplegar a mano o publicar otra
+variante.
+
 El e2e cuesta dinero (≈ $0,03 por ejecución completa, más ≈ $0,037 de storage
 por cada versión de imagen nueva) y nunca corre sin `RAYITO_E2E=1` y
 `RAYITO_TEMPLATE` (`clients/python/tests/e2e/conftest.py`). El PR dice si se

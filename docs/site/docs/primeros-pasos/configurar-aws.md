@@ -1,34 +1,37 @@
 ---
-description: "Prepara tu cuenta de AWS para Rayito una sola vez: la pila de IAM, el bucket de artefactos y la imagen rayito-base, con rayito doctor."
+description: "Prepara tu cuenta de AWS para Rayito una sola vez con rayito setup: la pila de IAM, la imagen rayito-base y el bucket que ya tengas, con rayito doctor."
 ---
 
 # Configurar AWS
 
 Antes del primer sandbox, tu cuenta necesita permisos (una pila de IAM), un
 bucket para los artefactos de la imagen y la imagen `rayito-base` publicada.
-Son seis pasos y casi todos se hacen **una vez por cuenta y región**, en unos
-15 minutos (casi todo es esperar a que AWS construya la imagen).
+`rayito setup` lo prepara en una sola orden, idempotente, como `cdk bootstrap`:
+**una vez por cuenta y región**, en unos 15 minutos (casi todo es esperar a que
+AWS construya la imagen, unos 10 minutos).
 
 | Paso | Una vez por | Tiempo | Coste |
 |---|---|---|---|
 | 1. Credenciales y región | máquina | 1 min | — |
-| 2. Un bucket | cuenta y región | 1 min | céntimos |
-| 3. La pila de IAM `rayito-m0-iam` | cuenta y región | 2 min | gratis |
-| 4. Publicar `rayito-base` | cuenta, región y versión de `rayd` | ≈ 10 min | ≈ $0,037/semana por versión |
-| 5. `RAYITO_TEMPLATE` | entorno de tu app | — | — |
-| 6. `rayito doctor --launch` | cuando quieras | 1 min | ≈ $0,002 |
+| 2. `rayito setup` | cuenta y región | ≈ 10 min | pila de IAM gratis; ≈ $0,04/semana por versión de imagen; zip en el bucket, céntimos |
+| 3. Asignar las políticas de IAM | cuenta y región | 2 min | gratis |
+| 4. `RAYITO_TEMPLATE` | entorno de tu app | — | — |
+| 5. `rayito doctor --launch` | cuando quieras | 1 min | ≈ $0,002 |
+
+¿Prefieres cada paso a mano (bucket, pila, descarga verificada con cosign,
+`rayito image publish`)? Sigue siendo posible: [A mano, sin `rayito setup`](#a-mano-sin-rayito-setup).
 
 Después, cada aplicación sólo instala el SDK (`pip install rayito` o
 `pnpm add rayito`) y escribe su código; no hay ningún servidor de Rayito que
 desplegar.
 
 !!! info "Todo queda en tu cuenta"
-    Rayito no tiene servidor ni API key. Lo que creas aquí son recursos tuyos:
-    una pila de CloudFormation con roles y una política, un bucket de S3 y
-    una imagen de Lambda MicroVMs. Borrar la pila y la imagen lo deja todo
-    como estaba.
+    Rayito no tiene servidor ni API key. Lo que se crea aquí son recursos tuyos:
+    una pila de CloudFormation con roles y políticas y una imagen de Lambda
+    MicroVMs, más un zip en un bucket de S3 que ya existe. Borrar la pila y la
+    imagen lo deja todo como estaba.
 
-## 1. Credenciales y región
+## 1. Credenciales y región { #1-credenciales-y-region }
 
 Elige una de las diez regiones con Lambda MicroVMs (`us-east-1`,
 `us-east-2`, `us-west-2`, `eu-west-1`, `eu-central-1`, `eu-north-1`,
@@ -45,37 +48,150 @@ Basta con `AWS_REGION`: los dos SDK y la CLI la leen. Si falta, usan
 `region` (TypeScript) gana a todas.
 
 Para estos pasos de preparación hacen falta permisos de administración
-(crear roles de IAM y un bucket). Para usar el SDK después basta la política
-mínima que crea el paso 3.
+(crear roles de IAM y publicar imágenes) y un bucket de S3 tuyo, en la misma
+región, para el zip de la imagen (el que crea `cdk bootstrap` sirve). Para usar
+el SDK después basta la política mínima que crea el paso 3.
 
-## 2. Un bucket para los artefactos
+## 2. Prepara la cuenta con `rayito setup` { #2-prepara-la-cuenta-con-rayito-setup }
 
-El zip de la imagen se sube a un bucket tuyo, bajo el prefijo `rayito/`.
-Créalo en la **misma región** que los sandboxes:
+`rayito setup` mira tu cuenta y tu región, enseña el plan y el coste, pide
+confirmación y crea sólo lo que falta. Son tres recursos, siempre en este
+orden:
 
-```bash
-export RAYITO_BUCKET=amzn-s3-demo-bucket
-aws s3 mb "s3://$RAYITO_BUCKET" --region "$AWS_REGION"
+- **El bucket de artefactos.** Lo reutiliza; **nunca crea uno**. Elige el
+  primero que exista de: `--bucket`, la variable `RAYITO_BUCKET`, el bucket de
+  la pila de IAM si ya la tienes, o el de `cdk bootstrap` de esa cuenta y
+  región. Si no hay ninguno, se detiene y te lo dice: pasa `--bucket`, exporta
+  `RAYITO_BUCKET` o ejecuta `cdk bootstrap`.
+- **La pila de IAM `rayito-m0-iam`**, con la plantilla `infra/iam.yaml`
+  (roles y las tres políticas del [paso 3](#3-la-pila-de-iam)). Si ya existe
+  y apunta al bucket elegido, no la toca.
+- **La imagen `rayito-base`.** Descarga `rayito-image.zip` y `SHA256SUMS` de la
+  release `rayd-v<versión de tu SDK>`, comprueba el sha256 y la publica. Si ya
+  hay una versión lanzable, no construye otra; si hay un build en curso, lo
+  espera.
+
+Empieza con `--dry-run`: sólo lee tu cuenta y no crea ni cambia nada.
+
+=== "Python"
+
+    ```bash
+    rayito setup --dry-run --bucket amzn-s3-demo-bucket
+    ```
+
+=== "TypeScript"
+
+    ```bash
+    npx rayito setup --dry-run --bucket amzn-s3-demo-bucket
+    ```
+
+En una cuenta nueva, con `--bucket amzn-s3-demo-bucket` (sustitúyelo por un
+bucket tuyo de esa región), el plan es:
+
+<!-- noqa: example: salida de consola, no es código -->
+```text
+rayito setup: cuenta 123456789012, región us-east-1
+  bucket amzn-s3-demo-bucket: reutilizar (--bucket)
+  pila de IAM rayito-m0-iam: crear
+  imagen rayito-base: publicar desde rayd-v0.15.0 (≈ 10 min)
+Coste aproximado:
+  pila de IAM: gratis
+  imagen: ≈ $0,04 por semana por versión publicada (mínimo una semana)
+  zip de la imagen en el bucket: céntimos
+no se creó ni cambió nada (--dry-run)
 ```
 
-Sustituye `amzn-s3-demo-bucket` por un nombre único tuyo. `RAYITO_BUCKET`
-evita repetir `--bucket` en la CLI.
+Cuando el plan te parezca bien, ejecútalo sin `--dry-run`. Pide
+confirmación (`¿Preparar la cuenta? [y/N]:`); sin terminal, o con `--json`,
+hace falta `--yes`.
 
-## 3. La pila de IAM
+=== "Python"
 
-`infra/iam.yaml` crea el rol con el que AWS construye la imagen, el rol de
-ejecución opcional del sandbox y tres políticas mínimas para quien usa el
-SDK: `SandboxLauncherPolicy` (`rayito-m0-launcher-<región>`, sólo lanzar y
-manejar sandboxes), `ImagePublisherPolicy` (`rayito-m0-publisher-<región>`,
-sólo publicar imágenes) y `CallerPolicy` (`rayito-m0-caller-<región>`, las
-dos juntas). Descarga la plantilla del repositorio y despliégala:
+    ```bash
+    rayito setup --bucket amzn-s3-demo-bucket
+    ```
 
-```bash
-curl -fsSLO https://raw.githubusercontent.com/alejandro-cedeno-10/rayito/main/infra/iam.yaml
-aws cloudformation deploy --stack-name rayito-m0-iam \
-  --template-file iam.yaml --capabilities CAPABILITY_NAMED_IAM \
-  --parameter-overrides ArtifactBucket="$RAYITO_BUCKET" LogGroupPrefix=/rayito
+=== "TypeScript"
+
+    ```bash
+    npx rayito setup --bucket amzn-s3-demo-bucket
+    ```
+
+Imprime el mismo plan, las líneas de progreso, la salida de
+[`rayito doctor`](#5-diagnostico) y, al final, lo que necesita tu aplicación:
+
+<!-- noqa: example: salida de consola, no es código -->
+```text
+rayito setup: cuenta 123456789012, región us-east-1
+  bucket amzn-s3-demo-bucket: reutilizar (--bucket)
+  pila de IAM rayito-m0-iam: crear
+  imagen rayito-base: publicar desde rayd-v0.15.0 (≈ 10 min)
+Coste aproximado:
+  pila de IAM: gratis
+  imagen: ≈ $0,04 por semana por versión publicada (mínimo una semana)
+  zip de la imagen en el bucket: céntimos
+¿Preparar la cuenta? [y/N]: y
+creando la pila de IAM rayito-m0-iam
+pila de IAM rayito-m0-iam lista
+descargando SHA256SUMS de rayd-v0.15.0
+descargando rayito-image.zip de rayd-v0.15.0
+sha256 de rayito-image.zip verificado contra SHA256SUMS: <sha256>
+imagen rayito-base <versión> lanzable
+...                                  (la salida de rayito doctor)
+rayito setup: cuenta preparada en us-east-1
+RAYITO_TEMPLATE=arn:aws:lambda:us-east-1:123456789012:microvm-image:rayito-base
+RAYITO_BUCKET=amzn-s3-demo-bucket
 ```
+
+Si `rayito doctor` encuentra algún `FAIL`, en lugar de las tres últimas líneas
+verás `rayito setup: rayito doctor encontró algún FAIL; la cuenta no está lista`
+y la orden sale con código 1. Puedes repetir `rayito setup` las veces que
+quieras: en una cuenta ya preparada observa tres recursos reutilizables
+(`La cuenta ya está preparada: no hay nada que crear.`) y no escribe nada. Si
+una ejecución se corta, la siguiente retoma lo que quedó en curso (la pila o el
+build) sin lanzar un segundo build.
+
+!!! warning "Qué comprueba el hash y qué no"
+    `rayito setup` descarga el zip de la release de GitHub y comprueba su
+    sha256 contra el `SHA256SUMS` de esa misma release. Eso detecta un fichero
+    truncado, corrupto o equivocado, pero **no prueba que sea auténtico**: zip
+    y `SHA256SUMS` salen del mismo sitio. La firma se comprueba con `cosign
+    verify-blob`; si la quieres, verifica el zip a mano y pásalo con
+    `rayito setup --artifact rayito-image.zip` (ver [A mano, sin `rayito
+    setup`](#a-mano-sin-rayito-setup) y [Verificar una release](../verify.md)).
+
+!!! info "Coste y activación"
+    - **Activa:** ejecutar `rayito setup` (y confirmar). `rayito setup
+      --dry-run` sólo lee la cuenta y no crea nada.
+    - **Recursos y llamadas AWS:** la pila de CloudFormation `rayito-m0-iam`
+      (`CreateStack` o `UpdateStack` con `CAPABILITY_NAMED_IAM`; roles y tres
+      políticas gestionadas); la imagen `rayito-base` (un objeto en el bucket
+      del artefacto, `CreateMicrovmImage` o `UpdateMicrovmImage` y su build);
+      lecturas de `GetCallerIdentity`, `DescribeStacks`, `HeadBucket`,
+      `GetMicrovmImage` y `ListMicrovmImageVersions`; la descarga HTTPS de dos
+      ficheros de la release de GitHub. Nunca crea un bucket.
+    - **Coste aproximado:** la pila de IAM es gratis; cada versión publicada de
+      la imagen ≈ $0,04 por semana de almacenamiento (mínimo una semana); el zip
+      en el bucket, céntimos. Ver [Precios](../cost.md).
+    - **IAM:** permisos de administración para esta preparación, como en el
+      resto del tutorial: crear la pila y los roles de IAM
+      (`cloudformation:CreateStack`, `iam:CreateRole`, `iam:CreatePolicy`),
+      `s3:ListBucket` y escribir en el bucket, y publicar imágenes. Para usar
+      el SDK después basta la política mínima del paso 3.
+    - **Cómo apagarla:** no ejecutar `rayito setup`. Para deshacer lo creado,
+      borra la pila `rayito-m0-iam` y las versiones de la imagen que
+      publicaste.
+    - **Ejemplo:** `rayito setup --dry-run`.
+
+## 3. Asigna las políticas de IAM { #3-la-pila-de-iam }
+
+La pila `rayito-m0-iam` (la que crea `rayito setup` o la que desplegaste a
+mano) trae el rol con el que AWS construye la imagen, el rol de ejecución
+opcional del sandbox y tres políticas mínimas para quien usa el SDK:
+`SandboxLauncherPolicy` (`rayito-m0-launcher-<región>`, sólo lanzar y manejar
+sandboxes), `ImagePublisherPolicy` (`rayito-m0-publisher-<región>`, sólo
+publicar imágenes) y `CallerPolicy` (`rayito-m0-caller-<región>`, las dos
+juntas).
 
 Asigna a cada identidad sólo lo que hace:
 
@@ -111,95 +227,11 @@ para [ficheros grandes y URLs de S3](../files.md), y `PersistenceBucket` y
 `PersistencePrefix` para la [persistencia](../persistence.md). Qué permiso
 necesita cada función: [IAM](../operacion/iam.md).
 
-## 4. Publicar la imagen `rayito-base`
+`rayito setup` sólo fija `ArtifactBucket`; el resto de parámetros se quedan
+como estén. Si más adelante despliegas a mano la pila con esos parámetros
+opcionales, un `rayito setup` posterior los conserva.
 
-Cada sandbox arranca desde una imagen de Lambda MicroVMs publicada en tu
-cuenta. La forma más corta es publicar el `rayito-image.zip` firmado de la
-última release, sin compilar nada:
-
-=== "Desde la release (recomendado)"
-
-    ```bash
-    RAYD_VERSION=0.14.0     # la misma versión que tu SDK: python -c "import rayito; print(rayito.__version__)"  (TypeScript: npm ls rayito)
-    BASE=https://github.com/alejandro-cedeno-10/rayito/releases/download/rayd-v${RAYD_VERSION}
-    curl -fsSLO "$BASE/rayito-image.zip"
-    curl -fsSLO "$BASE/rayito-image.zip.sigstore.json"    # su firma de Sigstore
-    curl -fsSLO "$BASE/SHA256SUMS"
-
-    cosign verify-blob --bundle rayito-image.zip.sigstore.json \
-      --certificate-identity "https://github.com/alejandro-cedeno-10/rayito/.github/workflows/release.yml@refs/tags/rayd-v${RAYD_VERSION}" \
-      --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-      rayito-image.zip
-    sha256sum -c --ignore-missing SHA256SUMS   # en macOS: shasum -a 256 -c --ignore-missing SHA256SUMS
-
-    rayito image publish --artifact rayito-image.zip --base-image-version 1
-    ```
-
-    Comprueba la firma **antes** de publicar: `rayito image publish` no
-    verifica nada, y el zip de una release se podría reemplazar con un token
-    del repositorio. Si `cosign verify-blob` no dice `Verified OK`, no
-    publiques ese fichero. Necesitas [cosign](https://docs.sigstore.dev/cosign/system_config/installation/)
-    ≥ 2.x; qué prueba la firma y cómo verificar el binario `rayd` suelto, en
-    [Verificar una release](../verify.md).
-
-    Usa el `rayd` de la misma versión que el SDK instalado: si la imagen es
-    más vieja, la comprobación `compatibility` de `rayito doctor` lo marca.
-    Todas las versiones están en las
-    [releases `rayd-v*`](https://github.com/alejandro-cedeno-10/rayito/releases).
-
-    Con la CLI de GitHub (`gh`, autenticada con `gh auth login`) la descarga
-    es una línea:
-    `gh release download "rayd-v${RAYD_VERSION}" --repo alejandro-cedeno-10/rayito --pattern 'rayito-image.zip*' --pattern SHA256SUMS`.
-
-=== "Desde el código fuente"
-
-    ```bash
-    git clone https://github.com/alejandro-cedeno-10/rayito.git && cd rayito
-    make image-publish BUCKET="$RAYITO_BUCKET"
-    ```
-
-    Compila `rayd` para `aarch64-unknown-linux-musl`: necesitas Linux o WSL2
-    (en macOS, una VM Linux) con Rust y `cargo-zigbuild`, como explica
-    [`CONTRIBUTING.md`](https://github.com/alejandro-cedeno-10/rayito/blob/main/CONTRIBUTING.md).
-
-`rayito image publish` sube el zip, pide a AWS que construya la imagen y
-espera a que la versión sea lanzable (unos 10 minutos). La última línea es
-`RAYITO_TEMPLATE=<arn>`. Cada versión publicada cuesta ≈ $0,04 por semana de
-almacenamiento ([Precios](../cost.md#componentes-del-precio)).
-
-`--base-image-version` es la versión de la base gestionada de AWS sobre la que
-se construye. No hace falta buscarla a mano: con `--base-image-version latest`,
-`rayito image publish` usa la más reciente que lista AWS y la imprime
-(`base_image_version=1`); un número explícito (`--base-image-version 1`) fija
-una build reproducible.
-
-??? example "Las otras variantes: `-caps`, `-poly` y la imagen del agente"
-    - `rayito-base-caps` es el mismo zip publicado con
-      `additionalOsCapabilities ALL`; hace falta para la
-      [política de red saliente](../network.md) y es la base de la imagen
-      del agente:
-
-        ```bash
-        rayito image publish --artifact rayito-image.zip --base-image-version 1 \
-          --image-name rayito-base-caps --os-capabilities ALL
-        ```
-
-    - `rayito-base-poly` añade los kernels bash, JavaScript y TypeScript
-      ([Lenguajes y kernels](../kernels.md)). Se construye desde el código
-      fuente: `make image-publish-poly BUCKET=amzn-s3-demo-bucket`.
-
-    - `rayito-agent`, para el [agente en el sandbox](../guias/agente-en-el-sandbox.md),
-      se construye en tu cuenta sobre `rayito-base-caps` (publícala antes)
-      con OpenCode, ripgrep y deepagents
-      ([Templates de agente](../funciones-opcionales/templates-de-agente.md)):
-
-        ```bash
-        rayito agent template build --bucket amzn-s3-demo-bucket
-        ```
-
-    Qué imagen necesita cada función: [Imágenes](../images.md).
-
-## 5. Apunta el SDK a la imagen
+## 4. Apunta el SDK a la imagen { #4-apunta-el-sdk-a-la-imagen }
 
 ```bash
 export RAYITO_TEMPLATE=rayito-base       # nombre o ARN de la imagen
@@ -208,7 +240,7 @@ export RAYITO_TEMPLATE=rayito-base       # nombre o ARN de la imagen
 Con `RAYITO_TEMPLATE` no hace falta pasar `template=` en cada `create()`. Un
 nombre se resuelve al ARN de tu cuenta y región.
 
-## 6. Diagnóstico
+## 5. Diagnóstico { #5-diagnostico }
 
 `rayito doctor` hace diez comprobaciones de la cuenta (credenciales,
 imágenes gestionadas, cuotas, IAM, bucket, imagen, sandboxes vivos, token,
@@ -276,7 +308,130 @@ administrador y no bloquea nada (las comprobaciones que cuentan son las de
 imágenes gestionadas, bucket, imagen y token). Qué hacer con cada `FAIL`:
 [Solución de problemas](../operacion/solucion-de-problemas.md#rayito-doctor).
 
-## Siguiente paso
+## A mano, sin `rayito setup` { #a-mano-sin-rayito-setup }
+
+Los pasos que `rayito setup` encadena, uno a uno. Úsalos si prefieres controlar
+cada paso o si quieres
+verificar la firma con cosign antes de publicar (después, `rayito setup
+--artifact rayito-image.zip` publica ese zip verificado en lugar de descargar
+el de la release).
+
+??? example "Bucket, pila de IAM y publicación de la imagen, paso a paso"
+    **Un bucket para los artefactos**
+
+    El zip de la imagen se sube a un bucket tuyo, bajo el prefijo `rayito/`.
+    Créalo en la **misma región** que los sandboxes:
+
+    ```bash
+    export RAYITO_BUCKET=amzn-s3-demo-bucket
+    aws s3 mb "s3://$RAYITO_BUCKET" --region "$AWS_REGION"
+    ```
+
+    Sustituye `amzn-s3-demo-bucket` por un nombre único tuyo. `RAYITO_BUCKET`
+    evita repetir `--bucket` en la CLI.
+
+    **La pila de IAM**
+
+    Descarga la plantilla del repositorio y despliégala (es la misma pila que
+    crea `rayito setup`; después sigue en el [paso 3](#3-la-pila-de-iam)):
+
+    ```bash
+    curl -fsSLO https://raw.githubusercontent.com/alejandro-cedeno-10/rayito/main/infra/iam.yaml
+    aws cloudformation deploy --stack-name rayito-m0-iam \
+      --template-file iam.yaml --capabilities CAPABILITY_NAMED_IAM \
+      --parameter-overrides ArtifactBucket="$RAYITO_BUCKET" LogGroupPrefix=/rayito
+    ```
+
+    **Publicar la imagen `rayito-base`**
+
+    Cada sandbox arranca desde una imagen de Lambda MicroVMs publicada en tu
+    cuenta. La forma más corta es publicar el `rayito-image.zip` firmado de la
+    última release, sin compilar nada:
+
+    === "Desde la release (recomendado)"
+
+        ```bash
+        RAYD_VERSION=0.14.0     # la misma versión que tu SDK: python -c "import rayito; print(rayito.__version__)"  (TypeScript: npm ls rayito)
+        BASE=https://github.com/alejandro-cedeno-10/rayito/releases/download/rayd-v${RAYD_VERSION}
+        curl -fsSLO "$BASE/rayito-image.zip"
+        curl -fsSLO "$BASE/rayito-image.zip.sigstore.json"    # su firma de Sigstore
+        curl -fsSLO "$BASE/SHA256SUMS"
+
+        cosign verify-blob --bundle rayito-image.zip.sigstore.json \
+          --certificate-identity "https://github.com/alejandro-cedeno-10/rayito/.github/workflows/release.yml@refs/tags/rayd-v${RAYD_VERSION}" \
+          --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+          rayito-image.zip
+        sha256sum -c --ignore-missing SHA256SUMS   # en macOS: shasum -a 256 -c --ignore-missing SHA256SUMS
+
+        rayito image publish --artifact rayito-image.zip --base-image-version 1
+        ```
+
+        Comprueba la firma **antes** de publicar: `rayito image publish` no
+        verifica nada, y el zip de una release se podría reemplazar con un token
+        del repositorio. Si `cosign verify-blob` no dice `Verified OK`, no
+        publiques ese fichero. Necesitas [cosign](https://docs.sigstore.dev/cosign/system_config/installation/)
+        ≥ 2.x; qué prueba la firma y cómo verificar el binario `rayd` suelto, en
+        [Verificar una release](../verify.md).
+
+        Usa el `rayd` de la misma versión que el SDK instalado: si la imagen es
+        más vieja, la comprobación `compatibility` de `rayito doctor` lo marca.
+        Todas las versiones están en las
+        [releases `rayd-v*`](https://github.com/alejandro-cedeno-10/rayito/releases).
+
+        Con la CLI de GitHub (`gh`, autenticada con `gh auth login`) la descarga
+        es una línea:
+        `gh release download "rayd-v${RAYD_VERSION}" --repo alejandro-cedeno-10/rayito --pattern 'rayito-image.zip*' --pattern SHA256SUMS`.
+
+    === "Desde el código fuente"
+
+        ```bash
+        git clone https://github.com/alejandro-cedeno-10/rayito.git && cd rayito
+        make image-publish BUCKET="$RAYITO_BUCKET"
+        ```
+
+        Compila `rayd` para `aarch64-unknown-linux-musl`: necesitas Linux o WSL2
+        (en macOS, una VM Linux) con Rust y `cargo-zigbuild`, como explica
+        [`CONTRIBUTING.md`](https://github.com/alejandro-cedeno-10/rayito/blob/main/CONTRIBUTING.md).
+
+    `rayito image publish` sube el zip, pide a AWS que construya la imagen y
+    espera a que la versión sea lanzable (unos 10 minutos). La última línea es
+    `RAYITO_TEMPLATE=<arn>`. Cada versión publicada cuesta ≈ $0,04 por semana de
+    almacenamiento ([Precios](../cost.md#componentes-del-precio)).
+
+    `--base-image-version` es la versión de la base gestionada de AWS sobre la que
+    se construye. No hace falta buscarla a mano: con `--base-image-version latest`,
+    `rayito image publish` usa la más reciente que lista AWS y la imprime
+    (`base_image_version=1`); un número explícito (`--base-image-version 1`) fija
+    una build reproducible.
+
+    ??? example "Las otras variantes: `-caps`, `-poly` y la imagen del agente"
+        - `rayito-base-caps` es el mismo zip publicado con
+          `additionalOsCapabilities ALL`; hace falta para la
+          [política de red saliente](../network.md) y es la base de la imagen
+          del agente:
+
+            ```bash
+            rayito image publish --artifact rayito-image.zip --base-image-version 1 \
+              --image-name rayito-base-caps --os-capabilities ALL
+            ```
+
+        - `rayito-base-poly` añade los kernels bash, JavaScript y TypeScript
+          ([Lenguajes y kernels](../kernels.md)). Se construye desde el código
+          fuente: `make image-publish-poly BUCKET=amzn-s3-demo-bucket`.
+
+        - `rayito-agent`, para el [agente en el sandbox](../guias/agente-en-el-sandbox.md),
+          se construye en tu cuenta sobre `rayito-base-caps` (publícala antes)
+          con OpenCode, ripgrep y deepagents
+          ([Templates de agente](../funciones-opcionales/templates-de-agente.md)):
+
+            ```bash
+            rayito agent template build --bucket amzn-s3-demo-bucket
+            ```
+
+        Qué imagen necesita cada función: [Imágenes](../images.md).
+
+
+## Siguiente paso { #siguiente-paso }
 
 [Primer sandbox](../quickstart.md): comandos, ficheros y código en Python y
 TypeScript.

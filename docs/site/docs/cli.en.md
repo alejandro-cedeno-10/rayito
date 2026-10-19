@@ -1,9 +1,9 @@
 # CLI
 
 `rayito` is the SDK's command-line tool: it publishes and lists the image,
-prunes old versions, lists, inspects and kills sandboxes, reads their
-CloudWatch logs and diagnoses an account before the first
-`Sandbox.create()`. It also deploys the optional stacks
+prepares the account (`rayito setup`), prunes old versions, lists, inspects
+and kills sandboxes, reads their CloudWatch logs and diagnoses an account
+before the first `Sandbox.create()`. It also deploys the optional stacks
 (`rayito stack`, `rayito events`, `rayito domain`), builds declarative
 templates (`rayito template`) and the AI agent as a project
 (`rayito agent`). There is no `rayito.toml`: configuration is
@@ -25,6 +25,7 @@ options and environment variables.
 | [`rayito template`](#rayito-template) | `build`, `status`, `logs` |
 | [`rayito agent`](#rayito-agent) | `init`, `build`, `run`, `deploy`, `export`, `invoke`, `status`, `stop`, `template build` |
 | [`rayito dashboard`](#rayito-dashboard) | — |
+| [`rayito setup`](#rayito-setup) | — |
 | [`rayito doctor`](#rayito-doctor) | — |
 
 There are two CLIs with the same surface, output and exit codes: the Python
@@ -620,6 +621,156 @@ defenses in [Security](security.md#panel-de-gestion-local). To have it always
 available inside your account, with sign-in and audit:
 `rayito stack deploy dashboard --artifact-bucket B`
 ([Dashboard in your account](funciones-opcionales/panel-en-tu-cuenta.md)).
+
+## `rayito setup` { #rayito-setup }
+
+```bash
+rayito [--profile P] [--region R] [--json] [--verbose] setup
+       [--bucket BUCKET] [--artifact PATH] [--yes] [--dry-run]
+```
+
+Prepares the account and region for Rayito in one idempotent command, like
+`cdk bootstrap`. Step-by-step tutorial: [Set up AWS](primeros-pasos/configurar-aws.md#2-prepara-la-cuenta-con-rayito-setup).
+
+| Option | What it does |
+|---|---|
+| `--bucket BUCKET` | Artifacts bucket in the same region; by default `RAYITO_BUCKET`, the IAM stack's one or the CDK bootstrap one. Rayito does not create buckets. |
+| `--artifact PATH` | Already verified image zip (e.g. with cosign); without it, `rayito-image.zip` is downloaded from the `rayd-v<SDK version>` release and checked against its `SHA256SUMS`. Only the `full` variant zip, without EFS, is valid. |
+| `--yes` | Do not ask for confirmation (required without a terminal or with `--json` if there is anything to create). |
+| `--dry-run` | Only reads the account and shows the plan; creates or changes nothing. |
+
+`RAYITO_BUCKET` is read by the command, not by the parser, like `rayito doctor`.
+
+**The plan** is always three steps, in this order:
+
+| Resource | Possible actions | Writes | Asks for confirmation |
+|---|---|---|---|
+| `bucket` | `reuse` | never | no |
+| `iamStack` (`rayito-m0-iam` stack) | `create`, `update`, `reuse`, `wait` | `create`, `update` | `create`, `update` |
+| `baseImage` (`rayito-base` image) | `publish`, `reuse`, `wait` | `publish` | `publish` |
+
+- **Bucket:** the first that exists of `--bucket`, `RAYITO_BUCKET`, the
+  `ArtifactBucket` parameter of the IAM stack or the `cdk bootstrap` bucket of
+  that account and region (default qualifier). It is checked with one
+  `HeadBucket`; it is never created.
+- **IAM stack:** if it does not exist, `create` with `ArtifactBucket=<bucket>`.
+  In `CREATE_COMPLETE`, `UPDATE_COMPLETE` or `UPDATE_ROLLBACK_COMPLETE` and
+  with the `BuildRoleArn` output, `reuse`; if its `ArtifactBucket` is another
+  one, `update` (only that parameter changes). In a `*_IN_PROGRESS` state,
+  `wait`; in `DELETE_IN_PROGRESS`, `ROLLBACK_COMPLETE` or `*_FAILED`,
+  `stack_blocked`.
+- **Image:** if `rayito-base` does not exist, `publish`; with a `PENDING` or
+  `IN_PROGRESS` version, `wait`; with a `SUCCESSFUL` and `ACTIVE` version,
+  `reuse` (whatever `rayd` it was built from; `rayito doctor --launch` warns
+  about an old one and `rayito image publish` updates it); with only failed or
+  inactive versions, `publish`. `publish` uses `--artifact` or the
+  `rayd-v<SDK version>` release and the `latest` of AWS's managed base.
+
+The plan is `ready` when the three steps are `reuse`. It asks for confirmation
+if any step is `create`, `update` or `publish`: on a terminal, with
+`¿Preparar la cuenta? [y/N]:`; without a terminal or with `--json`, `--yes` is
+required (`needs_confirmation`, exit 2). A `wait` costs nothing new and does not
+ask. After applying, it runs `rayito doctor` (without `--launch`) on
+`rayito-base` and the chosen bucket, and ends with `RAYITO_TEMPLATE=<arn>` and
+`RAYITO_BUCKET=<bucket>`.
+
+```bash
+rayito setup --dry-run --bucket amzn-s3-demo-bucket
+```
+
+<!-- noqa: example: salida de consola, no es código -->
+```text
+rayito setup: cuenta 123456789012, región us-east-1
+  bucket amzn-s3-demo-bucket: reutilizar (--bucket)
+  pila de IAM rayito-m0-iam: crear
+  imagen rayito-base: publicar desde rayd-v0.15.0 (≈ 10 min)
+Coste aproximado:
+  pila de IAM: gratis
+  imagen: ≈ $0,04 por semana por versión publicada (mínimo una semana)
+  zip de la imagen en el bucket: céntimos
+no se creó ni cambió nada (--dry-run)
+```
+
+**Exit codes.** `0`: success, `--dry-run`, or nothing to do with a doctor
+without `FAIL`. `1`: the operation fails (`stack_blocked`, `stack_incomplete`,
+`release_download`, `checksum_missing`, `checksum_mismatch`,
+`image_build_failed`, a "no" at the confirmation, a doctor `FAIL` or an
+untranslated AWS error). `2`: usage or environment (`unsupported_region`,
+`no_bucket`, `bucket_unavailable`, `bucket_region`, `artifact_missing`,
+`artifact_variant`, `needs_confirmation`, and the usual ones: no region, no
+profile or no credentials). What to do with each:
+[Troubleshooting](operacion/solucion-de-problemas.md#rayito-setup).
+
+**With `--json`** a single document goes to stdout and progress to stderr. Its
+keys, in this order: `rayito` (SDK version), `region`, `account` (`null` if the
+plan failed), `dryRun`, `ready`, `steps`, `cost`, `result`, `doctor`, `error`
+and `exitCode`. Each element of `steps` carries `resource` (`bucket`,
+`iamStack` or `baseImage`), `name`, `action` (`create`, `update`, `reuse`,
+`wait` or `publish`), `source` (`argument`, `environment`, `iamStack`,
+`cdkBootstrap`, `release`, `artifact` or `null`), `status`, `imageVersion`,
+`release` and `previousBucket`. `result` (`bucket`, `imageArn`,
+`imageVersion`, `artifactUploaded`) is `null` until the preparation finishes;
+`doctor` is the document of `rayito --json doctor`, or `null` with `--dry-run`
+and if the preparation stopped earlier; `error` is `{"code", "message"}` or
+`null`. On an error the message also goes to stderr as `rayito: <message>`.
+
+```json
+{
+  "rayito": "0.15.0",
+  "region": "us-east-1",
+  "account": "123456789012",
+  "dryRun": true,
+  "ready": false,
+  "steps": [
+    {"resource": "bucket", "name": "amzn-s3-demo-bucket", "action": "reuse",
+     "source": "argument", "status": null, "imageVersion": null,
+     "release": null, "previousBucket": null},
+    {"resource": "iamStack", "name": "rayito-m0-iam", "action": "create",
+     "source": null, "status": null, "imageVersion": null,
+     "release": null, "previousBucket": null},
+    {"resource": "baseImage", "name": "rayito-base", "action": "publish",
+     "source": "release", "status": null, "imageVersion": null,
+     "release": "rayd-v0.15.0", "previousBucket": null}
+  ],
+  "cost": [
+    "pila de IAM: gratis",
+    "imagen: ≈ $0,04 por semana por versión publicada (mínimo una semana)",
+    "zip de la imagen en el bucket: céntimos"
+  ],
+  "result": null,
+  "doctor": null,
+  "error": null,
+  "exitCode": 0
+}
+```
+
+!!! info "Cost and activation"
+    - **Turns on:** running `rayito setup` and confirming. `--dry-run` only
+      reads the account; with an already prepared account it writes nothing
+      either.
+    - **AWS resources and calls:** the `rayito-m0-iam` stack
+      (`CreateStack`/`UpdateStack` with `CAPABILITY_NAMED_IAM`); the
+      `rayito-base` image (one object in the bucket, `CreateMicrovmImage` or
+      `UpdateMicrovmImage`); reads of `GetCallerIdentity`, `DescribeStacks`,
+      `HeadBucket`, `GetMicrovmImage` and `ListMicrovmImageVersions`; the HTTPS
+      download of `rayito-image.zip` and `SHA256SUMS`. It never creates a
+      bucket.
+    - **Approximate cost:** IAM stack, free; each published image version ≈
+      $0.04 per week (minimum one week); the zip in the bucket, cents. See
+      [Pricing](cost.md).
+    - **IAM:** administrator permissions to prepare the account (create the
+      stack and roles, write to the bucket, publish the image). To use the SDK
+      afterwards, the minimal policy of
+      [Set up AWS](primeros-pasos/configurar-aws.md#3-la-pila-de-iam).
+    - **How to turn it off:** do not run it; to undo it, delete the stack and
+      the image versions.
+    - **Example:** `rayito setup --dry-run`.
+
+!!! warning "The hash does not prove authenticity"
+    The check against `SHA256SUMS` catches a truncated, corrupted or wrong zip,
+    but not that it is authentic (`SHA256SUMS` comes from the same release).
+    For the cosign signature, verify the zip and pass it with `--artifact`:
+    [Verify a release](verify.md).
 
 ## `rayito doctor` { #rayito-doctor }
 

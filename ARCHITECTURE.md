@@ -3095,3 +3095,172 @@ mide la reanudación.
 **Reversible.** Aditivo: módulos, claves del fichero y constantes nuevos;
 quitar `deploy_agent` y `AgentFleet` deja el 0.14 anterior intacto. Detalle en
 `openspec/changes/agent-zero-config/design.md`.
+
+## ADR-030 — rayito setup: preparar la cuenta en una orden
+
+**Contexto.** Preparar una cuenta y una región para Rayito son seis pasos a
+mano (`configurar-aws.md`): credenciales, un bucket, la pila `rayito-m0-iam` con
+`infra/iam.yaml`, la descarga de `rayito-image.zip` y `SHA256SUMS` de la release,
+`rayito image publish` y `rayito doctor`. Cada paso es una ocasión de equivocar
+un parámetro (el bucket en otra región, una pila sin `BuildRoleArn`, una imagen
+de otra versión de `rayd`), y quien llama a `Sandbox.create()` antes de acabar
+recibe un `ResourceNotFoundException` sin pista de qué falta. 0.14 ya tiene
+casi todas las piezas: el bucket de `cdk bootstrap` que reutiliza
+`rayito agent deploy`, `rayito image publish` idempotente, `OptionalStacks` y
+`rayito doctor`. Esta decisión las pone detrás de una orden idempotente, como
+`cdk bootstrap` prepara un entorno para CDK. Lo que no existe y no se añade:
+ningún camino de código que cree un bucket de S3 (`AWS_API_NOTES.md`: «Rayito
+nunca llama a `CreateBucket`»).
+
+**Decisión.**
+
+1. **Un servicio privado `AccountSetup` con un plan puro, detrás de puertos.**
+   `rayito setup` es una orden de la CLI sobre un servicio privado, como
+   `rayito doctor`; no se exporta nada de `rayito/__init__.py` ni de
+   `src/index.ts`, porque una API pública (síncrona y asíncrona, shim, docs) no
+   la pidió nadie. El dominio (`classify_stack`, `choose_bucket_candidate`,
+   `decide_bucket`, `classify_image`, `plan_setup`, `parse_checksums`,
+   `verify_checksum`) no importa `boto3`, `@aws-sdk/*`, `typer`, HTTP ni
+   sistema de ficheros; el servicio sólo llama a cinco puertos (pila de IAM,
+   bucket, imagen base, publicador, descarga de la release) y los adaptadores
+   traducen los fallos a `AccountSetupException` / `AccountSetupError`, con un
+   `code` cerrado. Python y TypeScript tienen las mismas capas y el mismo
+   comportamiento.
+2. **Tres recursos, cinco acciones, un plan.** El plan son siempre tres pasos,
+   en este orden: `bucket` (sólo `reuse`), `iamStack` (`create`, `update`,
+   `reuse`, `wait`) y `baseImage` (`publish`, `reuse`, `wait`). Está `ready`
+   cuando los tres son `reuse` y pide confirmación si algún paso es `create`,
+   `update` o `publish`; un `wait` no cuesta nada nuevo. Primero lee (un
+   `DescribeStacks`, un `HeadBucket`, `GetMicrovmImage` y
+   `ListMicrovmImageVersions`) y cada escritura se decide de una observación
+   de esa misma ejecución: repetir tras un éxito observa tres `reuse` y no
+   escribe nada, y una cuenta preparada a mano se detecta como completa. La
+   pila se clasifica por su estado: ausente, `create`; `CREATE_COMPLETE`,
+   `UPDATE_COMPLETE` o `UPDATE_ROLLBACK_COMPLETE` con `BuildRoleArn`, `reuse`
+   (o `update` si su `ArtifactBucket` difiere, enviando sólo ese parámetro y
+   conservando el resto con `UsePreviousValue`); sin `BuildRoleArn`,
+   `stack_incomplete`; `DELETE_IN_PROGRESS`, `ROLLBACK_COMPLETE` y `*_FAILED`,
+   `stack_blocked`; otro `*_IN_PROGRESS`, `wait`. La imagen: ausente, `publish`;
+   con una versión `PENDING` o `IN_PROGRESS`, `wait`; con una versión
+   `SUCCESSFUL` y `ACTIVE`, `reuse`; sólo fallidas o inactivas, `publish`. Una
+   base lanzable es `reuse` sea cual sea el `rayd` con que se construyó:
+   compararla con la release exigiría descargar el zip en una detección de
+   sólo lectura, y `rayito doctor --launch` y `rayito image publish` ya cubren
+   esa diferencia.
+3. **La pila de IAM pasa por `OptionalStacks`, no por el catálogo.**
+   `scripts/gen_stack_assets.py` empaqueta `infra/iam.yaml` en los dos SDKs. Un
+   `StackComponent` `iam` declara sus siete parámetros (`ArtifactBucket`
+   obligatorio, el resto con el valor por defecto de la plantilla) y
+   `CAPABILITY_NAMED_IAM`, un valor del enum `Capability` de CloudFormation
+   verificado sin conexión en botocore 1.43.103 (`AWS_API_NOTES.md` §21). No
+   entra en `_registry.COMPONENTS`: `rayito stack list` muestra funciones
+   opcionales con coste, y esta pila es un prerrequisito con su nombre
+   histórico `rayito-m0-iam`.
+4. **Nunca crear un bucket.** Hay un solo candidato: el primero que exista de
+   `--bucket`, `RAYITO_BUCKET`, el `ArtifactBucket` de la pila o el bucket de
+   `cdk bootstrap` (`cdk-<calificador>-assets-<cuenta>-<región>`, calificador
+   `hnb659fds`). Se comprueba con un `HeadBucket`: inexistente o 403 es
+   `no_bucket` (para el de `cdk bootstrap`) o `bucket_unavailable`; en otra
+   región, `bucket_region`. Sin candidato se detiene y nombra las tres salidas
+   (`--bucket`, `RAYITO_BUCKET`, `cdk bootstrap`). Como el bucket elegido se
+   escribe en la pila, la siguiente ejecución lo encuentra aunque no esté
+   `RAYITO_BUCKET`.
+5. **El artefacto de la release, comprobado contra `SHA256SUMS`.** Sin
+   `--artifact`, descarga por HTTPS `SHA256SUMS` y `rayito-image.zip` de la
+   release `rayd-v<versión del SDK>` a un directorio temporal que la CLI borra
+   (Python con `urllib.request`, TypeScript con `fetch`; plazo de 600 s por
+   asset) y compara el sha256 del zip con su línea (`checksum_missing`,
+   `checksum_mismatch`: no se publica nada). Un estado HTTP distinto de 2xx,
+   un plazo agotado o un fallo de red son `release_download`. Qué prueba y qué
+   no: el hash detecta un zip truncado, corrupto o equivocado, **no
+   autenticidad**: `SHA256SUMS` sale de la misma release que el zip. La firma
+   la comprueba `cosign verify-blob` (`verify.md`); quien la quiera verifica el
+   zip y lo pasa con `--artifact`. La documentación y `SECURITY.md` (T10) lo
+   dicen sin rodeos.
+6. **Orden de aplicación, idempotencia y reanudación.** Región admitida (antes
+   de cualquier llamada), plan, impresión del plan y del coste, `--dry-run`
+   termina ahí, confirmación si hace falta (`--yes`, o terminal; si no,
+   `needs_confirmation`), y se aplica: la pila (`create`/`update` más espera, o
+   `wait`), la salida `BuildRoleArn` (`stack_incomplete` si falta) y la imagen
+   (esperar el build en curso, o publicar: descargar y verificar, subir por
+   contenido, reutilizar una versión idéntica o crear/actualizar la imagen y
+   esperar a que sea lanzable). La clave de S3 es por contenido
+   (`rayito/images/rayd-<sha12>.zip`), así que una subida cortada se repite y
+   una terminada se salta. Una ejecución cortada deja la pila o una versión en
+   curso, y la siguiente planifica `wait` y nunca lanza un segundo build. Un
+   `wait` que acaba en fallo termina con `image_build_failed` y no escala a un
+   `publish` dentro de la misma ejecución. La versión de la base gestionada es
+   siempre `latest`. Al final ejecuta `rayito doctor` (sin `--launch`, que
+   cuesta un sandbox que nadie pidió) y publica `RAYITO_TEMPLATE` y
+   `RAYITO_BUCKET`.
+7. **Códigos de salida y errores.** `0`: éxito, `--dry-run`, nada que hacer con
+   el doctor limpio. `2`: uso o entorno (`unsupported_region`, `no_bucket`,
+   `bucket_unavailable`, `bucket_region`, `artifact_missing`,
+   `artifact_variant`, `needs_confirmation`, y los de siempre sin región,
+   perfil o credenciales). `1`: `stack_blocked`, `stack_incomplete`,
+   `release_download`, `checksum_missing`, `checksum_mismatch`,
+   `image_build_failed`, un «no» en la confirmación, un `FAIL` del doctor y un
+   error de AWS sin traducir. `AccountSetupException` no hereda de
+   `SandboxException` (nada aquí es atribuible a un sandbox), es privada y su
+   mensaje nunca lleva una URL, un enlace prefirmado, un token ni el mensaje
+   crudo de AWS. Con `--json` sale igualmente un único documento con
+   `error: {code, message}` y `exitCode`, más la línea `rayito: <mensaje>` por
+   stderr.
+8. **Los errores de una cuenta sin preparar apuntan a `rayito setup`.** Una
+   frase (`ACCOUNT_SETUP_HINT`) se añade como `"<mensaje> (<pista>)"` al
+   `ResourceNotFoundException` de `RunMicrovm` (misma clase, mismo
+   `status_code`, `aws_code` y causa saneada: cubre `Sandbox.create()`, el pool
+   y los shims de E2B) y a los errores «no hay bucket» y «la imagen base no
+   existe» de `deploy_agent`/`deployAgent`. No se añade ninguna llamada para
+   averiguar si la cuenta está preparada.
+9. **El coste sólo cita cifras ya publicadas.** Imagen: «≈ $0,04 por semana por
+   versión publicada (mínimo una semana)» (`cost.md`); pila de IAM: «gratis» y
+   zip en el bucket: «céntimos» (`configurar-aws.md`); build: «≈ 10 min». No es
+   una función opcional (no crea nada que un sandbox necesite en ejecución más
+   allá de lo que el tutorial ya hacía crear), así que no tiene fila en
+   `optional-features.md`; su referencia en la CLI y el tutorial llevan la caja
+   «Coste y activación». El contrato compartido de las dos CLI (opciones,
+   ayuda, salida humana, documento JSON, constantes, errores) vive en
+   `testdata/account-setup/` y los dos SDK lo comparan en sus tests.
+
+**Consecuencias.** Una orden prepara una cuenta donde se encuentra un bucket;
+si no, el usuario ejecuta un `cdk bootstrap` o pasa `--bucket`. `rayito setup`
+nunca cambia una cuenta preparada a mano que funciona ni sube `rayito-base` a un
+`rayd` más nuevo: las dos cosas siguen siendo explícitas (`rayito image
+publish`). Quien prefiere artefactos verificados con cosign conserva ese camino
+con `--artifact`. El SDK distribuye ahora `infra/iam.yaml`; un cambio en
+`infra/` llega a los usuarios por `gen_stack_assets.py --check`, que ya es una
+puerta. Riesgos: una SCP de la organización puede denegar `iam:CreateRole` con
+nombres fijos o `cloudformation:CreateStack` con `CAPABILITY_NAMED_IAM` (la
+aceptación lo comprueba antes, sólo lectura, con la simulación IAM de `rayito
+doctor`); detrás de un proxy corporativo `urllib` respeta `HTTPS_PROXY` pero el
+`fetch` de Node no, y `--artifact` es el camino documentado; durante la
+aceptación de un PR de release la release `rayd-v<versión nueva>` aún no existe
+y la prueba usa `--artifact`; los roles se llaman `rayito-m0-*-<región>`, así
+que dos regiones no chocan, pero una pila a medio borrar puede dejar un nombre
+ocupado, y `stack_blocked` manda borrar la pila primero.
+
+**Alternativas descartadas.** Crear el bucket si falta (cifrado, bloqueo de
+acceso público, ciclo de vida) como hace `cdk bootstrap`: necesita APIs de
+escritura de S3 o una plantilla con `AWS::S3::Bucket` que `AWS_API_NOTES.md` no
+documenta, y 0.14 dice que Rayito nunca crea buckets; puede ser un seguimiento
+si el mantenedor lo aprueba. Hacer de la pila de IAM un componente del catálogo
+(`rayito stack deploy iam`): el catálogo es para funciones opcionales con coste,
+su nombre por defecto sería `rayito-iam` y no `rayito-m0-iam`, y habría dos
+formas de desplegar la misma pila. Un `UpdateStack` siempre, para llevar las
+pilas antiguas a la plantilla empaquetada: convierte una ejecución de sólo
+lectura sobre una cuenta preparada en una escritura que pide permisos de IAM
+que quien la preparó a mano quizá no tiene, y cambiaría políticas sin pedirlo.
+Verificar el bundle de cosign dentro del SDK (sigstore-python, sigstore-js): dos
+dependencias pesadas y una ruta de actualización de la raíz de confianza para
+una orden; `--artifact` deja abierto el camino de cosign. Embeber el sha256 del
+zip en el SDK: las ruedas y el paquete npm se construyen en jobs que no dependen
+de `rayd-build`, así que el hash no se conoce al construirlos; exigiría cambiar
+el pipeline de release. Ejecutar `rayito doctor --launch` al final: cuesta un
+sandbox (≈ $0,002) que el usuario no pidió; el mensaje final lo sugiere. Una API
+pública `AccountSetup`: especulativa.
+
+**Reversible.** Aditivo: una orden, un paquete privado en cada SDK, una
+plantilla empaquetada, una frase añadida a tres mensajes y el contrato de
+pruebas; quitar `rayito setup` deja el 0.14 anterior intacto y el camino a mano
+sigue documentado. Detalle en `openspec/changes/account-setup/design.md`.
