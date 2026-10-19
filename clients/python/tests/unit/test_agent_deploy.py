@@ -45,6 +45,7 @@ from rayito._agent._fleet_async import AsyncAgentFleet
 from rayito._agent._project_domain import AgentProject
 from rayito._agent._scaling_domain import ScalingOptions
 from rayito._agent._template import AgentTemplate, AsyncAgentTemplate
+from rayito._aws_sanitize import AwsErrorSummary
 from rayito._limits import AGENT_SOURCE_DEFAULT_EXCLUDES
 from rayito._payload import generate_access_token
 from rayito._sandbox_base import ACCESS_TOKEN_ENV_VAR
@@ -251,9 +252,13 @@ def test_discovery_prefers_the_cdk_bucket_and_then_skips_the_stack_read() -> Non
     assert "artifact_stack" not in aws.calls
 
 
-class UnreadableProvisioner(FakeStackProvisioner):
+@dataclass
+class FailingProvisioner(FakeStackProvisioner):
+    aws_code: str = "AccessDenied"
+
     def describe(self, stack_name: str) -> StackStatus | None:
-        raise StackException("sin permiso", code="failed")
+        cause = AwsErrorSummary(self.aws_code, "no", code=self.aws_code)
+        raise StackException(str(cause), code="failed") from cause
 
 
 def resolver_over(
@@ -294,11 +299,20 @@ def test_the_resolver_ignores_a_setup_stack_that_gives_no_bucket(
     assert resolver_over(monkeypatch, FakeStackProvisioner(stacks)).artifact_stack_bucket() is None
 
 
-def test_the_resolver_treats_an_unreadable_stack_as_no_bucket(
+@pytest.mark.parametrize("aws_code", ["AccessDenied", "AccessDeniedException"])
+def test_the_resolver_treats_access_denied_on_the_setup_stack_as_no_bucket(
+    monkeypatch: pytest.MonkeyPatch, aws_code: str
+) -> None:
+    resolver = resolver_over(monkeypatch, FailingProvisioner(aws_code=aws_code))
+    assert resolver.artifact_stack_bucket() is None
+
+
+def test_the_resolver_still_propagates_any_other_setup_stack_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    resolver = resolver_over(monkeypatch, UnreadableProvisioner())
-    assert resolver.artifact_stack_bucket() is None
+    resolver = resolver_over(monkeypatch, FailingProvisioner(aws_code="Throttling"))
+    with pytest.raises(StackException):
+        resolver.artifact_stack_bucket()
 
 
 @pytest.mark.parametrize("case", RESOLVE["costs"], ids=lambda case: str(case["memoryMib"]))

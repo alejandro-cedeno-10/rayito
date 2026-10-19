@@ -53,6 +53,9 @@ AUTHORIZATION_HEADER: Final = "authorization"
 #: `s3:ListBucket` S3 contesta 403 a un HEAD, y un bucket que no se puede
 #: leer tampoco sirve para el artefacto.
 BUCKET_MISSING_CODES: Final = frozenset({"404", "NoSuchBucket", "NotFound", "403"})
+#: Códigos de acceso denegado de CloudFormation (`AccessDenied`) y de la
+#: forma `*Exception`; la misma tabla en TypeScript.
+ACCESS_DENIED_CODES: Final = frozenset({"AccessDenied", "AccessDeniedException"})
 #: La variable de entorno estándar de cada pasarela de modelo
 #: (`testdata/agent-deploy/secret-env.json`, la misma tabla en TypeScript).
 GATEWAY_SECRET_ENV_VARS: Final[Mapping[str, str]] = MappingProxyType(
@@ -70,6 +73,17 @@ GATEWAY_SECRET_ENV_VARS: Final[Mapping[str, str]] = MappingProxyType(
         "litellm": "LITELLM_API_KEY",
     }
 )
+
+
+def _is_access_denied(exc: StackException) -> bool:
+    """Un `StackException` de `describe` cuya causa (el resumen saneado del
+    error de AWS) es un acceso denegado."""
+    cause = exc.__cause__
+    return any(
+        isinstance(code, str) and code in ACCESS_DENIED_CODES
+        for code in (getattr(cause, "name", None), getattr(cause, "code", None))
+    )
+
 
 BucketSource = Literal["argument", "project_file", "environment", "discovered"]
 
@@ -310,14 +324,18 @@ class AwsResolver:
 
     def artifact_stack_bucket(self) -> str | None:
         """La salida `BucketName` de `rayito-m0-artifacts` si la pila está
-        lista; `None` si no existe, no está lista, no tiene la salida o no se
-        puede leer (sólo lectura: quien no tiene permisos de CloudFormation
-        sigue viendo el error de bucket de siempre)."""
+        lista; `None` si no existe, no está lista, no tiene la salida o
+        `DescribeStacks` responde acceso denegado (sólo lectura: quien no
+        tiene permisos de CloudFormation sigue viendo el error de bucket de
+        siempre). Cualquier otro fallo (p. ej. `Throttling`) se propaga como
+        `StackException`."""
         provisioner = CloudFormationProvisioner(region=self.resolved_region, session=self.session)
         try:
             observed = artifact_stack_gateway(provisioner).observe()
-        except StackException:
-            return None
+        except StackException as exc:
+            if _is_access_denied(exc):
+                return None
+            raise
         if classify_stack(observed) != "usable":
             return None
         return observed.outputs.get(BUCKET_NAME_OUTPUT_KEY) or None
