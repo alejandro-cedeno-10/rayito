@@ -26,6 +26,16 @@
       "help": "Zip de la imagen ya verificado (p. ej. con cosign); sin él se descarga rayito-image.zip de la release rayd-v<versión del SDK> y se comprueba contra su SHA256SUMS."
     },
     {
+      "name": "tag",
+      "flags": [
+        "--tag"
+      ],
+      "type": "list[str]",
+      "default": [],
+      "isFlag": false,
+      "help": "Etiqueta K=V; repetible. Se aplica a las pilas que crea setup (rayito-m0-artifacts y rayito-m0-iam) y CloudFormation la propaga a sus recursos; útil si la organización exige etiquetas."
+    },
+    {
       "name": "yes",
       "flags": [
         "--yes"
