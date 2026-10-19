@@ -13,6 +13,9 @@
  *   `rayd-v<versión>`); sin ella se descarga de la release.
  * - `RAYITO_TEMPLATE` (con `RAYITO_E2E=1`): activa el segundo bloque, que
  *   comprueba la cuenta ya preparada de la región e2e por defecto.
+ * - `RAYITO_E2E_SETUP_CREATE_BUCKET=1` (con las dos primeras): activa el tercer
+ *   bloque, que prepara una región sin bucket con `--bucket` y un nombre que no
+ *   existe, así que `setup` lo crea con la pila `rayito-m0-artifacts`.
  *
  * Pre-chequeo de sólo lectura: si `rayito-m0-iam` o `rayito-base` ya existen en
  * la región elegida, el primer bloque se omite entero (nunca se toca lo que
@@ -31,18 +34,35 @@
  * Necesita `lambda:DeleteMicrovmImage`, `logs:DeleteLogGroup`,
  * `cloudformation:DeleteStack` y `s3:DeleteObject` sobre `rayito/images/*`.
  *
+ * Tercer bloque (sólo si `rayito-m0-artifacts`, `rayito-m0-iam` y `rayito-base`
+ * no existen en la región): `setup --yes --bucket rayito-e2e-setup-<hex>` crea la
+ * pila del bucket y el bucket, que `HeadBucket` encuentra en la región, y un
+ * segundo `--dry-run` planea tres `reuse`. Su limpieza borra la imagen, la pila de
+ * IAM, `rayito-m0-artifacts` y por último el bucket que la pila conservó (vaciado
+ * antes); necesita además `cloudformation:DeleteStack`, `s3:ListBucket`,
+ * `s3:DeleteObject` y `s3:DeleteBucket`.
+ *
  * Coste: una versión de `rayito-base` (≈ $0,04 por semana, mínimo una semana),
  * la pila de IAM (gratis) y el zip en el bucket (céntimos); la limpieza lo borra.
  */
 
 import { type ChildProcess, spawn } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { CloudWatchLogsClient } from "@aws-sdk/client-cloudwatch-logs";
 import { LambdaMicrovmsClient } from "@aws-sdk/client-lambda-microvms";
-import { DeleteObjectCommand, HeadObjectCommand, S3Client } from "@aws-sdk/client-s3";
-import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import {
+  DeleteBucketCommand,
+  DeleteObjectCommand,
+  DeleteObjectsCommand,
+  HeadObjectCommand,
+  ListObjectsV2Command,
+  S3Client,
+} from "@aws-sdk/client-s3";
+import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { ARTIFACT_STACK_COMPONENT } from "../../src/account-setup/artifact-stack.js";
+import {
+  ARTIFACT_STACK_NAME,
   BASE_IMAGE_NAME,
   IAM_STACK_NAME,
   type ImageObservation,
@@ -63,6 +83,10 @@ import { BuiltImages } from "./image-cleanup.js";
 const REGION_VAR = "RAYITO_E2E_SETUP_REGION";
 const BUCKET_VAR = "RAYITO_E2E_SETUP_BUCKET";
 const ARTIFACT_VAR = "RAYITO_E2E_SETUP_ARTIFACT";
+const CREATE_BUCKET_VAR = "RAYITO_E2E_SETUP_CREATE_BUCKET";
+const CREATED_BUCKET_PREFIX = "rayito-e2e-setup-";
+const CREATED_BUCKET_SUFFIX_BYTES = 6;
+const CREATE_TEST_TIMEOUT_MS = 1_500_000;
 const CLI_ENTRY = new URL("../../dist/cli.mjs", import.meta.url);
 const VERIFIED_PATTERN = /sha256 de rayito-image\.zip verificado contra SHA256SUMS: ([0-9a-f]{64})/;
 const STACK_HOOK_TIMEOUT_MS = 900_000;
@@ -70,6 +94,9 @@ const BUILD_START_BUDGET_MS = 600_000;
 const BUILD_START_POLL_MS = 5_000;
 const KILL_SETTLE_MS = 2_000;
 const NOT_FOUND_CODES: ReadonlySet<string> = new Set(["404", "NotFound", "NoSuchKey"]);
+
+const FOUND_STATE = "found";
+const ALL_REUSE = ["reuse", "reuse", "reuse"];
 
 interface Outcome {
   readonly exitCode: number;
@@ -90,6 +117,10 @@ interface SetupDocument {
 
 function setupEnabled(): boolean {
   return process.env[E2E_FLAG_VAR] === "1" && Boolean(process.env[REGION_VAR]);
+}
+
+function createBucketEnabled(): boolean {
+  return setupEnabled() && process.env[CREATE_BUCKET_VAR] === "1";
 }
 
 function setupArguments(region: string, ...extra: string[]): string[] {
@@ -312,5 +343,102 @@ describe.runIf(e2eEnabled())("rayito setup en la región e2e ya preparada (AWS r
     const after = await observe(services);
     expect(after.image.versions).toHaveLength(before.image.versions.length);
     expect(after.stack.status).toBe(before.stack.status);
+  });
+});
+
+/** Vacía y borra el bucket que `rayito-m0-artifacts` conservó (`DeletionPolicy: Retain`). */
+async function deleteRetainedBucket(client: S3Client, bucket: string): Promise<void> {
+  let token: string | undefined;
+  do {
+    const page = await client.send(
+      new ListObjectsV2Command({ Bucket: bucket, ContinuationToken: token }),
+    );
+    const objects = (page.Contents ?? []).map((item) => ({ Key: item.Key as string }));
+    if (objects.length > 0) {
+      await client.send(new DeleteObjectsCommand({ Bucket: bucket, Delete: { Objects: objects } }));
+    }
+    token = page.NextContinuationToken;
+  } while (token !== undefined);
+  await client.send(new DeleteBucketCommand({ Bucket: bucket }));
+}
+
+describe.runIf(createBucketEnabled())("rayito setup crea el bucket (AWS real)", () => {
+  const region = process.env[REGION_VAR] ?? "";
+  const bucket = `${CREATED_BUCKET_PREFIX}${randomBytes(CREATED_BUCKET_SUFFIX_BYTES).toString("hex")}`;
+  let services: CliServices;
+  let fresh = false;
+  let created = false;
+
+  function createArguments(...extra: string[]): string[] {
+    const artifact = process.env[ARTIFACT_VAR];
+    return [
+      "--region",
+      region,
+      "--json",
+      "setup",
+      ...(artifact ? ["--artifact", artifact] : []),
+      ...extra,
+    ];
+  }
+
+  beforeAll(async () => {
+    services = await servicesIn(region);
+    const iam = await observe(services);
+    const artifacts = await services.accountSetup.artifactStack.observe();
+    fresh =
+      artifacts.status === undefined &&
+      iam.stack.status === undefined &&
+      iam.image.state === undefined;
+  }, STACK_HOOK_TIMEOUT_MS);
+
+  afterAll(async () => {
+    if (!fresh || !created) {
+      return;
+    }
+    const failures: string[] = [];
+    const images = new BuiltImages({
+      client: new LambdaMicrovmsClient(clientConfig(region)),
+      resolveArn: (name) => services.controlPlane.resolveTemplateArn(name),
+      logs: new CloudWatchLogsClient(clientConfig(region)),
+    });
+    images.track(BASE_IMAGE_NAME);
+    failures.push(...(await images.deleteAll()));
+    await services.stacks.destroy(IAM_STACK_COMPONENT, { stackName: IAM_STACK_NAME });
+    await services.stacks.destroy(ARTIFACT_STACK_COMPONENT, { stackName: ARTIFACT_STACK_NAME });
+    await deleteRetainedBucket(new S3Client(clientConfig(region)), bucket);
+    if (failures.length > 0) {
+      throw new Error(`sin borrar (bórralo a mano): ${failures.join("; ")}`);
+    }
+  }, STACK_HOOK_TIMEOUT_MS);
+
+  test(
+    "--bucket que no existe se crea con la pila rayito-m0-artifacts",
+    async (context) => {
+      if (!fresh) {
+        context.skip();
+      }
+      created = true;
+      const outcome = await runSetup(createArguments("--yes", "--bucket", bucket));
+      const document = documentOf(outcome);
+      expect(outcome.exitCode).toBe(0);
+      expect(document.steps[0]?.action).toBe("create");
+      expect(document.result?.bucket).toBe(bucket);
+      const stack = await services.accountSetup.artifactStack.observe();
+      expect(stack.status).toBe("CREATE_COMPLETE");
+      expect(stack.outputs.BucketName).toBe(bucket);
+      expect(await services.accountSetup.buckets.probe(bucket)).toEqual({
+        state: FOUND_STATE,
+        region,
+      });
+    },
+    CREATE_TEST_TIMEOUT_MS,
+  );
+
+  test("un segundo --dry-run planea tres reuse", async (context) => {
+    if (!fresh) {
+      context.skip();
+    }
+    const dry = documentOf(await runSetup(createArguments("--dry-run")));
+    expect(actionsOf(dry)).toEqual(ALL_REUSE);
   });
 });

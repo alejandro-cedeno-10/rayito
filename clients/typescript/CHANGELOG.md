@@ -13,14 +13,26 @@ versionado [SemVer](https://semver.org/lang/es/).
   coste aproximado, pide confirmación (`--yes` sin terminal o con `--json`;
   `--dry-run` sólo lee) y termina con `rayito doctor`. Crea o actualiza la pila
   de IAM `rayito-m0-iam` (sólo `ArtifactBucket`), reutiliza el bucket de
-  `--bucket`, `RAYITO_BUCKET`, la pila o el bootstrap de CDK (nunca crea uno) y
-  publica `rayito-base` desde el `rayito-image.zip` de la release
+  `--bucket`, `RAYITO_BUCKET`, la pila o el bootstrap de CDK y publica `rayito-base` desde el `rayito-image.zip` de la release
   `rayd-v<versión>`, comprobado contra su `SHA256SUMS`, o desde `--artifact`.
   Un build en curso se espera en vez de lanzar otro. Mismas opciones, textos,
   documento JSON y códigos de salida que la CLI de Python.
+- `rayito setup` crea el bucket de artefactos con la pila `rayito-m0-artifacts`
+  (`infra/artifact-bucket.yaml`: cifrado, privado, sólo TLS, zips caducando a los
+  7 días, conservado al borrar la pila) cuando no hay ninguno que reutilizar;
+  un `--bucket` o `RAYITO_BUCKET` que no existe se crea con ese nombre.
+- `rayito agent deploy` y `deployAgent()` encuentran el bucket que creó
+  `rayito setup` (la salida `BucketName` de `rayito-m0-artifacts`, sólo
+  lectura) cuando no hay `RAYITO_BUCKET` ni bucket del bootstrap de CDK.
 
 ### Cambiado
 
+- Los códigos de error de `rayito setup`: desaparece `no_bucket`;
+  `bucket_unavailable` queda para un bucket que responde 403; nuevos
+  `bucket_taken` y `artifact_stack_conflict`. Con `--json`, un error de AWS o de
+  una pila que `setup` no traduce también deja un único documento JSON
+  (`stack_blocked` con salida 1, `bucket_unavailable` con salida 2, el código del
+  contrato con la misma salida) y la misma salida de proceso de siempre.
 - Los errores de `Sandbox.create()` (`ResourceNotFoundException` de
   `RunMicrovm`) y de `deployAgent()` por falta de bucket o de imagen base
   terminan con la pista "si la cuenta o la región aún no están preparadas,
