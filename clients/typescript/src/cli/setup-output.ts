@@ -6,7 +6,7 @@
  */
 
 import {
-  type AccountSetupError,
+  ARTIFACT_STACK_NAME,
   BUCKET_SOURCE_LABELS,
   type BucketSource,
   formatTemplate,
@@ -29,6 +29,8 @@ export const RESOURCE_LABELS: Readonly<Record<ResourceKind, string>> = {
 /** El texto de cada acción; `bucketReuse` y las de imagen llevan los campos del paso. */
 export const ACTION_TEMPLATES = {
   bucketReuse: "reutilizar ({source})",
+  bucketCreate: "crear con la pila {stack} ({source})",
+  bucketWait: "pila {stack} en curso ({status}): esperar",
   stackCreate: "crear",
   stackUpdate: "actualizar ArtifactBucket {previousBucket} -> {bucket}",
   stackReuse: "ya existe ({status})",
@@ -55,6 +57,8 @@ type ActionKey = keyof typeof ACTION_TEMPLATES;
 /** La plantilla de cada par recurso-acción; `publish` distingue la release del `--artifact` por su origen. */
 const ACTION_KEYS: Readonly<Record<string, ActionKey>> = {
   "bucket:reuse": "bucketReuse",
+  "bucket:create": "bucketCreate",
+  "bucket:wait": "bucketWait",
   "iamStack:create": "stackCreate",
   "iamStack:update": "stackUpdate",
   "iamStack:reuse": "stackReuse",
@@ -77,6 +81,7 @@ function actionKey(step: SetupStep): ActionKey {
 function actionText(plan: SetupPlan, step: SetupStep): string {
   const template = ACTION_TEMPLATES[actionKey(step)];
   return formatTemplate(template, {
+    stack: ARTIFACT_STACK_NAME,
     source: BUCKET_SOURCE_LABELS[(step.source ?? "argument") as BucketSource],
     previousBucket: step.previousBucket ?? "",
     bucket: stepOf(plan, "bucket").name,
@@ -120,6 +125,12 @@ export function finalLines(result: SetupResult, region: string): string[] {
   ];
 }
 
+/** El error del documento JSON: el de `AccountSetupError` o uno ajeno a `setup` ya traducido. */
+export interface SetupFailure {
+  readonly code: string;
+  readonly message: string;
+}
+
 export interface SetupDocumentInput {
   readonly sdkVersion: string;
   readonly region: string;
@@ -128,7 +139,7 @@ export interface SetupDocumentInput {
   readonly plan: SetupPlan | undefined;
   readonly result: SetupResult | undefined;
   readonly doctor: Record<string, unknown> | undefined;
-  readonly error: AccountSetupError | undefined;
+  readonly error: SetupFailure | undefined;
   readonly exitCode: number;
 }
 

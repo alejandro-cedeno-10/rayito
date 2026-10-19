@@ -6,16 +6,22 @@
  */
 
 import { afterEach, describe, expect, it } from "vitest";
-import { AccountSetupError, IAM_STACK_NAME } from "../../../src/account-setup/domain.js";
+import { ARTIFACT_STACK_COMPONENT } from "../../../src/account-setup/artifact-stack.js";
+import {
+  AccountSetupError,
+  ARTIFACT_STACK_NAME,
+  IAM_STACK_NAME,
+} from "../../../src/account-setup/domain.js";
 import { IAM_STACK_COMPONENT } from "../../../src/account-setup/iam-stack.js";
 import { AwsOperationError } from "../../../src/cli/doctor/ports.js";
 import {
   PipelineImagePublisher,
   SdkArtifactBuckets,
   SdkBaseImages,
-  SdkIamStack,
   type SetupClock,
   sdkAccountSetupGateways,
+  sdkArtifactStack,
+  sdkIamStack,
 } from "../../../src/cli/setup-adapters.js";
 import { StackError } from "../../../src/errors.js";
 import { loadTemplate } from "../../../src/stacks/packaging.js";
@@ -55,10 +61,10 @@ afterEach(() => {
   }
 });
 
-describe("SdkIamStack", () => {
+describe("sdkIamStack", () => {
   it("creates the stack with CAPABILITY_NAMED_IAM's single parameter and waits for it", async () => {
     const provisioner = new FakeStackProvisioner();
-    const observed = await new SdkIamStack(provisioner).create(BUCKET);
+    const observed = await sdkIamStack(provisioner).create(BUCKET);
     expect(provisioner.calls.map(([name]) => name)).toEqual([
       "describe",
       "create",
@@ -80,7 +86,7 @@ describe("SdkIamStack", () => {
         ["ArtifactBucket", ...OTHER_PARAMETERS].map((name) => [name, "x"]),
       ),
     });
-    await new SdkIamStack(provisioner).updateBucket(BUCKET_B);
+    await sdkIamStack(provisioner).updateBucket(BUCKET_B);
     expect(provisioner.sentParameters).toEqual({ ArtifactBucket: BUCKET_B });
     expect(provisioner.sentKeepPrevious).toEqual(OTHER_PARAMETERS);
     expect(provisioner.calls.map(([name]) => name)).not.toContain("create");
@@ -88,7 +94,7 @@ describe("SdkIamStack", () => {
 
   it("observes a missing stack and an existing one", async () => {
     const provisioner = new FakeStackProvisioner();
-    const gateway = new SdkIamStack(provisioner);
+    const gateway = sdkIamStack(provisioner);
     expect(await gateway.observe()).toEqual({
       name: IAM_STACK_NAME,
       status: undefined,
@@ -112,13 +118,13 @@ describe("SdkIamStack", () => {
       outputs: { BuildRoleArn: BUILD_ROLE },
       parameters: { ArtifactBucket: BUCKET },
     });
-    const observed = await new SdkIamStack(provisioner).wait();
+    const observed = await sdkIamStack(provisioner).wait();
     expect(provisioner.calls.map(([name]) => name)).toEqual(["wait", "describe"]);
     expect(observed.status).toBe("CREATE_COMPLETE");
   });
 
   it("fails if the stack vanished while waiting", async () => {
-    const wait = new SdkIamStack(new FakeStackProvisioner()).wait();
+    const wait = sdkIamStack(new FakeStackProvisioner()).wait();
     await expect(wait).rejects.toBeInstanceOf(StackError);
     await expect(wait).rejects.toMatchObject({ code: "failed" });
   });
@@ -133,6 +139,47 @@ describe("SdkIamStack", () => {
   });
 });
 
+describe("sdkArtifactStack", () => {
+  it("creates the bucket stack with BucketName only and no capabilities", async () => {
+    const provisioner = new FakeStackProvisioner();
+    const observed = await sdkArtifactStack(provisioner).create(BUCKET);
+    expect(provisioner.calls).toContainEqual(["create", ARTIFACT_STACK_NAME]);
+    expect(provisioner.calls).toContainEqual(["wait", ARTIFACT_STACK_NAME, "deployed"]);
+    expect(provisioner.sentParameters).toEqual({ BucketName: BUCKET });
+    expect(ARTIFACT_STACK_COMPONENT.capabilities).toEqual([]);
+    expect(observed).toMatchObject({
+      name: ARTIFACT_STACK_NAME,
+      parameters: { BucketName: BUCKET },
+    });
+  });
+
+  it("observes a missing stack under its own name", async () => {
+    expect(await sdkArtifactStack(new FakeStackProvisioner()).observe()).toEqual({
+      name: ARTIFACT_STACK_NAME,
+      status: undefined,
+      outputs: {},
+      parameters: {},
+    });
+  });
+
+  it("fails if the stack vanished while waiting", async () => {
+    await expect(sdkArtifactStack(new FakeStackProvisioner()).wait()).rejects.toMatchObject({
+      code: "failed",
+    });
+  });
+
+  it("declares exactly the parameters of the packaged artifact-bucket template", async () => {
+    const template = await loadTemplate(ARTIFACT_STACK_COMPONENT);
+    expect(componentParameterNames(ARTIFACT_STACK_COMPONENT)).toEqual(
+      templateParameterNames(template),
+    );
+  });
+
+  it("is not part of the rayito stack catalog", () => {
+    expect(COMPONENTS.map((component) => component.name)).not.toContain("artifact-bucket");
+  });
+});
+
 describe("SdkArtifactBuckets", () => {
   const accountId = async () => "123456789012";
 
@@ -140,7 +187,7 @@ describe("SdkArtifactBuckets", () => {
     const doctor = new FakeDoctorAws();
     doctor.bucketFacts = { region: "eu-west-1" };
     expect(await new SdkArtifactBuckets(doctor, accountId).probe(BUCKET)).toEqual({
-      exists: true,
+      state: "found",
       region: "eu-west-1",
     });
   });
@@ -151,17 +198,23 @@ describe("SdkArtifactBuckets", () => {
     expect((await new SdkArtifactBuckets(doctor, accountId).probe(BUCKET)).region).toBeUndefined();
   });
 
-  it.each(["NotFound", "NoSuchBucket", "403", "Forbidden", "404"])(
-    "the code %s means the bucket is missing",
-    async (code) => {
-      const doctor = new FakeDoctorAws();
-      doctor.bucketFacts = new AwsOperationError("HeadBucket", code, "no");
-      expect(await new SdkArtifactBuckets(doctor, accountId).probe(BUCKET)).toEqual({
-        exists: false,
-        region: undefined,
-      });
-    },
-  );
+  it.each(["NotFound", "NoSuchBucket", "404"])("the code %s means missing", async (code) => {
+    const doctor = new FakeDoctorAws();
+    doctor.bucketFacts = new AwsOperationError("HeadBucket", code, "no");
+    expect(await new SdkArtifactBuckets(doctor, accountId).probe(BUCKET)).toEqual({
+      state: "missing",
+      region: undefined,
+    });
+  });
+
+  it("the code 403 means forbidden", async () => {
+    const doctor = new FakeDoctorAws();
+    doctor.bucketFacts = new AwsOperationError("HeadBucket", "403", "no");
+    expect(await new SdkArtifactBuckets(doctor, accountId).probe(BUCKET)).toEqual({
+      state: "forbidden",
+      region: undefined,
+    });
+  });
 
   it("any other error propagates", async () => {
     const doctor = new FakeDoctorAws();
@@ -284,7 +337,7 @@ describe("PipelineImagePublisher", () => {
 });
 
 describe("sdkAccountSetupGateways", () => {
-  it("builds the five ports without any call", () => {
+  it("builds the six ports without any call", () => {
     const ports = new FakePublishPorts();
     const doctor = new FakeDoctorAws();
     const gateways = sdkAccountSetupGateways({
@@ -294,6 +347,7 @@ describe("sdkAccountSetupGateways", () => {
       publishPorts: ports,
     });
     expect(Object.keys(gateways).sort()).toEqual([
+      "artifactStack",
       "buckets",
       "iamStack",
       "images",

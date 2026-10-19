@@ -7,11 +7,12 @@
  */
 
 import { afterEach, describe, expect, it } from "vitest";
-import { cdkBucketName } from "../../../src/account-setup/domain.js";
+import { cdkBucketName, defaultArtifactBucketName } from "../../../src/account-setup/domain.js";
 import { AwsOperationError } from "../../../src/cli/doctor/ports.js";
 import type { TerminalInput } from "../../../src/cli/interactive-terminal.js";
 import type { CliServices } from "../../../src/cli/services.js";
 import * as output from "../../../src/cli/setup-output.js";
+import { StackError } from "../../../src/errors.js";
 import { VERSION } from "../../../src/version.js";
 import {
   BUILD_ROLE_ARN,
@@ -60,6 +61,7 @@ interface CliCase {
 
 const contract = loadAccountSetupTestdata<Contract>("contract.json");
 const cases = loadAccountSetupTestdata<{ cases: CliCase[] }>("cli-cases.json").cases;
+const HTTP_FORBIDDEN = 403;
 const REGION = "us-east-1";
 const ACCOUNT = "123456789012";
 const IMAGE_ARN = `arn:aws:lambda:${REGION}:${ACCOUNT}:microvm-image:rayito-base`;
@@ -73,8 +75,12 @@ const FRESH: VectorInput = {
   artifact: null,
   stack: null,
   buckets: { [CDK_BUCKET]: REGION },
+  forbiddenBuckets: [],
+  artifactStack: null,
   image: null,
 };
+
+const DEFAULT_BUCKET = defaultArtifactBucketName(ACCOUNT, REGION);
 
 const workspaces: ImageWorkspace[] = [];
 afterEach(() => {
@@ -260,6 +266,25 @@ describe("rayito setup: apply", () => {
   });
 });
 
+describe("rayito setup: an account without a bucket", () => {
+  it("prints the bucket progress and ends with the created bucket", async () => {
+    const outcome = await invoke({ args: ["setup", "--yes"], input: { ...FRESH, buckets: {} } });
+    expect(outcome.exitCode).toBe(0);
+    expect(outcome.stdout).toContain(
+      `creando el bucket ${DEFAULT_BUCKET} con la pila rayito-m0-artifacts`,
+    );
+    expect(outcome.stdout).toContain(`bucket ${DEFAULT_BUCKET} listo (pila rayito-m0-artifacts)`);
+    expect(lastLines(outcome.stdout, 1)).toEqual([`RAYITO_BUCKET=${DEFAULT_BUCKET}`]);
+    expect(outcome.fake.writes.map(([name]) => name)).toEqual([
+      "create_artifact_stack",
+      "create",
+      "download",
+      "download",
+      "publish",
+    ]);
+  });
+});
+
 describe("rayito setup: confirmation", () => {
   it("asks on a terminal and 'n' exits 1 without writing", async () => {
     const outcome = await invoke({ args: ["setup"], stdin: "n\n", terminal: true });
@@ -337,6 +362,86 @@ describe("rayito setup: --json", () => {
       error: { code: "checksum_mismatch" },
     });
     expect(outcome.stderr).toContain("rayito: el sha256");
+  });
+});
+
+describe("rayito setup: --json with a failure setup does not translate", () => {
+  async function failing(args: string[], error: Error): Promise<CliOutcome> {
+    const fake = new FakeAccountSetup(FRESH);
+    const services: CliServices = {
+      ...buildWorld({}).services,
+      region: REGION,
+      accountSetup: {
+        ...fake,
+        iamStack: {
+          ...fake.iamStack,
+          observe: async () => {
+            throw error;
+          },
+        },
+      },
+      doctor: new FakeDoctorAws(),
+    };
+    return runWithServices({ args, services });
+  }
+
+  const denied = Object.assign(
+    new Error("not authorized to perform cloudformation:DescribeStacks"),
+    {
+      name: "AccessDenied",
+      // `$metadata` es el nombre real del campo del SDK; se construye aparte para no escribirlo como clave literal.
+      [`${"$"}metadata`]: { httpStatusCode: HTTP_FORBIDDEN },
+    },
+  );
+
+  it("emits one error document for an AWS error and exits 1 like human mode", async () => {
+    const human = await failing(["setup", "--dry-run"], denied);
+    const json = await failing(["--json", "setup", "--dry-run"], denied);
+    expect(json.exitCode).toBe(human.exitCode);
+    expect(json.exitCode).toBe(1);
+    const document = JSON.parse(json.stdout) as Record<string, unknown>;
+    expect(Object.keys(document)).toEqual(contract.json.documentKeys);
+    expect(document).toMatchObject({
+      ready: false,
+      steps: [],
+      result: null,
+      doctor: null,
+      dryRun: true,
+      exitCode: 1,
+      error: { code: "stack_blocked" },
+    });
+    expect((document.error as { message: string }).message).toMatch(/^AWS error AccessDenied/);
+    expect(json.stderr).toBe(human.stderr);
+  });
+
+  it("emits one error document for a stack exception", async () => {
+    const json = await failing(
+      ["--json", "setup", "--yes"],
+      new StackError("falló la pila", { code: "failed" }),
+    );
+    expect(json.exitCode).toBe(1);
+    expect(JSON.parse(json.stdout)).toMatchObject({
+      error: { code: "stack_blocked", message: "falló la pila" },
+      exitCode: 1,
+    });
+  });
+
+  it("an environment failure keeps exit 2 in the document", async () => {
+    const json = await failing(
+      ["--json", "setup", "--dry-run"],
+      Object.assign(new Error("no creds"), { name: "CredentialsProviderError" }),
+    );
+    expect(json.exitCode).toBe(2);
+    expect(JSON.parse(json.stdout)).toMatchObject({
+      error: { code: "bucket_unavailable" },
+      exitCode: 2,
+    });
+  });
+
+  it("human mode stays as it was: the shared handler prints one line", async () => {
+    const human = await failing(["setup", "--dry-run"], denied);
+    expect(human.stdout).toBe("");
+    expect(human.stderr).toMatch(/^rayito: AWS error AccessDenied/);
   });
 });
 

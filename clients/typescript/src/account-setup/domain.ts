@@ -24,6 +24,27 @@ export const IAM_STACK_COMPONENT_NAME = "iam";
 export const IAM_STACK_CAPABILITIES: readonly string[] = ["CAPABILITY_NAMED_IAM"];
 export const ARTIFACT_BUCKET_PARAMETER = "ArtifactBucket";
 export { BUILD_ROLE_OUTPUT_KEY };
+/** La plantilla de la pila de IAM, para el mensaje de `stack_incomplete`. */
+export const IAM_TEMPLATE_PATH = "infra/iam.yaml";
+/**
+ * La pila que crea el bucket de artefactos cuando no hay ninguno que
+ * reutilizar (`infra/artifact-bucket.yaml`, diseño D4 y D10).
+ */
+export const ARTIFACT_STACK_NAME = "rayito-m0-artifacts";
+export const ARTIFACT_COMPONENT_NAME = "artifact-bucket";
+export const ARTIFACT_TEMPLATE_PATH = "infra/artifact-bucket.yaml";
+/** El parámetro y la salida de la plantilla con el nombre del bucket. */
+export const BUCKET_NAME_PARAMETER = "BucketName";
+export const BUCKET_NAME_OUTPUT_KEY = "BucketName";
+/** El bucket por defecto: determinista, único por cuenta y región (`contract.json`). */
+export const DEFAULT_ARTIFACT_BUCKET_TEMPLATE = "rayito-artifacts-{account}-{region}";
+/** Días que tarda en caducar un zip de la imagen; el valor por defecto de la plantilla (`ArtifactExpirationDays`). */
+export const ARTIFACT_EXPIRATION_DAYS = 7;
+/** Los orígenes de un nombre que el usuario pidió expresamente. */
+export const EXPLICIT_BUCKET_SOURCES: ReadonlySet<BucketSource> = new Set([
+  "argument",
+  "environment",
+]);
 export const BASE_IMAGE_NAME = DEFAULT_BASE_IMAGE_NAME;
 export const BASE_IMAGE_VARIANT = "full";
 /** Variable con el bucket de artefactos, la misma de `rayito image publish`. */
@@ -51,15 +72,24 @@ const CHECKSUM_LINE_PATTERN = /^([0-9a-f]{64}) [ *](\S.*)$/;
 
 export type ResourceKind = "bucket" | "iamStack" | "baseImage";
 export type SetupAction = "create" | "update" | "reuse" | "wait" | "publish";
-export type BucketSource = "argument" | "environment" | "iamStack" | "cdkBootstrap";
+export type BucketSource =
+  | "argument"
+  | "environment"
+  | "iamStack"
+  | "cdkBootstrap"
+  | "artifactStack"
+  | "rayitoDefault";
+/** El resultado de un `HeadBucket`: 200, 404 (`NoSuchBucket`, `NotFound`) o 403 (existe pero no es accesible). */
+export type BucketState = "found" | "missing" | "forbidden";
 export type ImageSource = "release" | "artifact";
 export type StackCondition = "missing" | "usable" | "in_progress" | "blocked";
 export type ImageCondition = "missing" | "launchable" | "building" | "unlaunchable";
 export type ErrorCode =
   | "unsupported_region"
-  | "no_bucket"
   | "bucket_unavailable"
   | "bucket_region"
+  | "bucket_taken"
+  | "artifact_stack_conflict"
   | "artifact_missing"
   | "artifact_variant"
   | "needs_confirmation"
@@ -77,9 +107,10 @@ const EXIT_USAGE = 2;
 /** Código de salida de cada error (`contract.json`, `errorExitCodes`). */
 export const ERROR_EXIT_CODES: Readonly<Record<ErrorCode, number>> = {
   unsupported_region: EXIT_USAGE,
-  no_bucket: EXIT_USAGE,
   bucket_unavailable: EXIT_USAGE,
   bucket_region: EXIT_USAGE,
+  bucket_taken: EXIT_USAGE,
+  artifact_stack_conflict: EXIT_USAGE,
   artifact_missing: EXIT_USAGE,
   artifact_variant: EXIT_USAGE,
   needs_confirmation: EXIT_USAGE,
@@ -94,12 +125,14 @@ export const ERROR_EXIT_CODES: Readonly<Record<ErrorCode, number>> = {
 /** Los textos de cada error; nunca llevan URL, enlace prefirmado, token ni el mensaje crudo de AWS. */
 export const ERROR_MESSAGES: Readonly<Record<ErrorCode, string>> = {
   unsupported_region: "la región {region} no tiene Lambda MicroVMs: usa una de {regions}",
-  no_bucket:
-    "no hay bucket para el artefacto de la imagen: pasa --bucket, exporta RAYITO_BUCKET o ejecuta `cdk bootstrap` en esta cuenta y región; Rayito no crea buckets",
   bucket_unavailable:
-    "el bucket {bucket} ({source}) no existe o no es accesible con estas credenciales",
+    "el bucket {bucket} ({source}) existe pero no es accesible con estas credenciales: puede ser de otra cuenta; pasa otro nombre con --bucket",
   bucket_region:
     "el bucket {bucket} está en {bucketRegion}, no en {region}: el build fallaría con S3_CROSS_REGION_ACCESS_DENIED",
+  bucket_taken:
+    "el nombre {bucket} ya lo usa un bucket que no creó la pila {stack}: si es tuyo, pásalo con --bucket {bucket}; si no, elige otro nombre con --bucket",
+  artifact_stack_conflict:
+    "la pila {stack} ya gestiona el bucket {existing}: pasa --bucket {existing} o, para crear {bucket}, borra antes esa pila (el bucket {existing} se conserva)",
   artifact_missing: "{artifact} no existe",
   artifact_variant:
     "{artifact} no es un zip de la variante full sin EFS: publica las otras variantes con `rayito image publish`",
@@ -108,7 +141,7 @@ export const ERROR_MESSAGES: Readonly<Record<ErrorCode, string>> = {
   stack_blocked:
     "la pila {name} está en {status}: bórrala (aws cloudformation delete-stack --stack-name {name}), espera a que desaparezca y vuelve a ejecutar `rayito setup`",
   stack_incomplete:
-    "la pila {name} no tiene la salida BuildRoleArn: no es la plantilla infra/iam.yaml de Rayito",
+    "la pila {name} no tiene la salida {output}: no es la plantilla {template} de Rayito",
   release_download: "no se pudo descargar {asset} de la release {release}: {reason}",
   checksum_missing: "SHA256SUMS de la release {release} no lista {asset}: no se publica",
   checksum_mismatch:
@@ -119,6 +152,9 @@ export const ERROR_MESSAGES: Readonly<Record<ErrorCode, string>> = {
 
 /** Las líneas de progreso de `apply`. */
 export const PROGRESS_MESSAGES = {
+  bucketCreate: "creando el bucket {bucket} con la pila {name}",
+  bucketWait: "esperando a la pila {name} del bucket ({status})",
+  bucketReady: "bucket {bucket} listo (pila {name})",
   stackCreate: "creando la pila de IAM {name}",
   stackUpdate: "actualizando la pila de IAM {name}",
   stackWait: "esperando a la pila de IAM {name} ({status})",
@@ -141,14 +177,18 @@ export const BUCKET_SOURCE_LABELS: Readonly<Record<BucketSource, string>> = {
   environment: "RAYITO_BUCKET",
   iamStack: "el de la pila de IAM",
   cdkBootstrap: "bootstrap de CDK",
+  artifactStack: "el de la pila de artefactos",
+  rayitoDefault: "nombre por defecto de Rayito",
 };
 
 /**
  * Las cifras de coste son las ya publicadas: `cost.md` (fila "Mantener
  * publicada una versión de imagen"), `configurar-aws.md` paso 3 (pila de IAM)
- * y paso 2 (zip en el bucket).
+ * y paso 2 (zip en el bucket); la línea del bucket es la del contrato.
  */
 export const COST_TEXTS = {
+  bucket:
+    "bucket de artefactos: los zips de la imagen caducan a los {days} días (regla de ciclo de vida)",
   iamStack: "pila de IAM: gratis",
   image: "imagen: ≈ $0,04 por semana por versión publicada (mínimo una semana)",
   artifact: "zip de la imagen en el bucket: céntimos",
@@ -206,7 +246,7 @@ export interface BucketCandidate {
 }
 
 export interface BucketProbe {
-  readonly exists: boolean;
+  readonly state: BucketState;
   /** La región que declara el bucket; `undefined` si `HeadBucket` no la trajo. */
   readonly region: string | undefined;
 }
@@ -351,43 +391,65 @@ export function cdkBucketName(account: string, region: string): string {
   return `cdk-${CDK_BOOTSTRAP_QUALIFIER}-assets-${account}-${region}`;
 }
 
-/**
- * El único bucket que se sondea: el primero presente de `--bucket`,
- * `RAYITO_BUCKET`, el `ArtifactBucket` de la pila de IAM y el del bootstrap
- * de CDK.
- */
-export function chooseBucketCandidate(
-  request: SetupRequest,
-  stack: StackObservation,
-  account: string,
-): BucketCandidate {
+/** El bucket por defecto de Rayito: `rayito-artifacts-<cuenta>-<región>`. */
+export function defaultArtifactBucketName(account: string, region: string): string {
+  return formatTemplate(DEFAULT_ARTIFACT_BUCKET_TEMPLATE, { account, region });
+}
+
+function explicitCandidate(request: SetupRequest): BucketCandidate | undefined {
   if (request.bucket) {
     return { name: request.bucket, source: "argument" };
   }
   if (request.environmentBucket) {
     return { name: request.environmentBucket, source: "environment" };
   }
-  const fromStack = stack.parameters[ARTIFACT_BUCKET_PARAMETER];
-  if (fromStack) {
-    return { name: fromStack, source: "iamStack" };
-  }
-  return { name: cdkBucketName(account, request.region), source: "cdkBootstrap" };
+  return undefined;
 }
 
-/** Un bucket ausente, ajeno o de otra región detiene el plan; nunca se crea uno. */
+/**
+ * Los candidatos a reutilizar, en el orden en que se sondean: un nombre
+ * explícito (`--bucket`, `RAYITO_BUCKET`) es el único; si no, el
+ * `ArtifactBucket` de la pila de IAM, si la hay, y el del bootstrap de CDK.
+ */
+export function bucketCandidates(
+  request: SetupRequest,
+  stack: StackObservation,
+  account: string,
+): readonly BucketCandidate[] {
+  const explicit = explicitCandidate(request);
+  if (explicit !== undefined) {
+    return [explicit];
+  }
+  const candidates: BucketCandidate[] = [];
+  const fromStack = stack.parameters[ARTIFACT_BUCKET_PARAMETER];
+  if (fromStack) {
+    candidates.push({ name: fromStack, source: "iamStack" });
+  }
+  candidates.push({ name: cdkBucketName(account, request.region), source: "cdkBootstrap" });
+  return candidates;
+}
+
+/**
+ * La decisión de un candidato sondeado: reutilizarlo, detener el plan, o
+ * `undefined` si hay que seguir con el siguiente candidato o con la fase de
+ * creación (reglas de D2).
+ */
 export function decideBucket(
   candidate: BucketCandidate,
   probe: BucketProbe,
   region: string,
-): SetupStep {
-  if (!probe.exists) {
+): SetupStep | undefined {
+  if (probe.state === "forbidden") {
     if (candidate.source === "cdkBootstrap") {
-      throw new AccountSetupError("no_bucket");
+      return undefined;
     }
     throw new AccountSetupError("bucket_unavailable", {
       bucket: candidate.name,
       source: BUCKET_SOURCE_LABELS[candidate.source],
     });
+  }
+  if (probe.state === "missing") {
+    return undefined;
   }
   if (probe.region && probe.region !== region) {
     throw new AccountSetupError("bucket_region", {
@@ -399,6 +461,16 @@ export function decideBucket(
   return newStep(
     { resource: "bucket", name: candidate.name, action: "reuse" },
     { source: candidate.source },
+  );
+}
+
+/** El bucket que se creará si nada se reutiliza: el nombre explícito o el de por defecto. */
+export function creationTarget(request: SetupRequest, account: string): BucketCandidate {
+  return (
+    explicitCandidate(request) ?? {
+      name: defaultArtifactBucketName(account, request.region),
+      source: "rayitoDefault",
+    }
   );
 }
 
@@ -414,6 +486,91 @@ export function classifyStack(stack: StackObservation): StackCondition {
     return "in_progress";
   }
   return "blocked";
+}
+
+/** La salida `key` de una pila; sin ella no es la plantilla `template` de Rayito (`stack_incomplete`). */
+export function stackOutput(stack: StackObservation, key: string, template: string): string {
+  const value = stack.outputs[key];
+  if (!value) {
+    throw new AccountSetupError("stack_incomplete", { name: stack.name, output: key, template });
+  }
+  return value;
+}
+
+/**
+ * El bucket de `rayito-m0-artifacts` si la pila está desplegada y lo declara;
+ * `undefined` si no hay pila, no está lista o no es la plantilla de Rayito. Lo
+ * lee `deployAgent()` (sólo lectura) para encontrar el bucket que creó `setup`.
+ */
+export function artifactStackBucket(
+  stack: Pick<StackObservation, "status" | "outputs">,
+): string | undefined {
+  const usable =
+    classifyStack({ name: ARTIFACT_STACK_NAME, parameters: {}, ...stack }) === "usable";
+  return usable ? stack.outputs[BUCKET_NAME_OUTPUT_KEY] || undefined : undefined;
+}
+
+/** Sólo la creación por defecto, sin la pila del bucket, sondea además el nombre por defecto. */
+export function needsDefaultProbe(
+  target: BucketCandidate,
+  artifactStack: StackObservation,
+): boolean {
+  return target.source === "rayitoDefault" && classifyStack(artifactStack) === "missing";
+}
+
+/** Una pila que gestiona otro bucket que el nombre explícito pedido nunca se renombra. */
+function requireSameBucket(target: BucketCandidate, existing: string): void {
+  if (EXPLICIT_BUCKET_SOURCES.has(target.source) && target.name !== existing) {
+    throw new AccountSetupError("artifact_stack_conflict", {
+      stack: ARTIFACT_STACK_NAME,
+      existing,
+      bucket: target.name,
+    });
+  }
+}
+
+/**
+ * La fase de creación (D2): reutilizar o esperar el bucket de la pila
+ * `rayito-m0-artifacts`, o crearlo. `probe` es el `HeadBucket` del nombre por
+ * defecto, sólo presente cuando `needsDefaultProbe`: un bucket con ese nombre
+ * que no creó la pila nunca se adopta.
+ */
+export function planBucketCreation(
+  target: BucketCandidate,
+  artifactStack: StackObservation,
+  probe: BucketProbe | undefined,
+): SetupStep {
+  const base = { resource: "bucket" } as const;
+  const condition = classifyStack(artifactStack);
+  if (condition === "blocked") {
+    throw new AccountSetupError("stack_blocked", {
+      name: ARTIFACT_STACK_NAME,
+      status: artifactStack.status ?? "",
+    });
+  }
+  if (condition === "usable") {
+    const existing = stackOutput(artifactStack, BUCKET_NAME_OUTPUT_KEY, ARTIFACT_TEMPLATE_PATH);
+    requireSameBucket(target, existing);
+    return newStep(
+      { ...base, name: existing, action: "reuse" },
+      { source: "artifactStack", status: artifactStack.status },
+    );
+  }
+  if (condition === "in_progress") {
+    const existing = artifactStack.parameters[BUCKET_NAME_PARAMETER] ?? "";
+    requireSameBucket(target, existing);
+    return newStep(
+      { ...base, name: existing, action: "wait" },
+      { source: "artifactStack", status: artifactStack.status },
+    );
+  }
+  if (probe !== undefined && probe.state !== "missing") {
+    throw new AccountSetupError("bucket_taken", {
+      bucket: target.name,
+      stack: ARTIFACT_STACK_NAME,
+    });
+  }
+  return newStep({ ...base, name: target.name, action: "create" }, { source: target.source });
 }
 
 /** Crear, actualizar sólo `ArtifactBucket`, reutilizar o esperar la pila de IAM. */
@@ -432,9 +589,7 @@ export function planStack(stack: StackObservation, bucket: string): SetupStep {
   if (condition === "in_progress") {
     return newStep({ ...base, action: "wait" }, { status: stack.status });
   }
-  if (!stack.outputs[BUILD_ROLE_OUTPUT_KEY]) {
-    throw new AccountSetupError("stack_incomplete", { name: IAM_STACK_NAME });
-  }
+  stackOutput(stack, BUILD_ROLE_OUTPUT_KEY, IAM_TEMPLATE_PATH);
   const previous = stack.parameters[ARTIFACT_BUCKET_PARAMETER];
   if (previous === bucket) {
     return newStep({ ...base, action: "reuse" }, { status: stack.status });
@@ -501,9 +656,12 @@ export function planImage(image: ImageObservation, request: SetupRequest): Setup
   );
 }
 
-/** Las líneas de coste de las acciones que cuestan, en orden: pila, imagen y zip. */
+/** Las líneas de coste de las acciones que cuestan, en orden: bucket, pila, imagen y zip. */
 export function costLines(steps: readonly SetupStep[]): readonly string[] {
   const lines: string[] = [];
+  if (steps.find((step) => step.resource === "bucket")?.action === "create") {
+    lines.push(formatTemplate(COST_TEXTS.bucket, { days: ARTIFACT_EXPIRATION_DAYS }));
+  }
   const stack = steps.find((step) => step.resource === "iamStack");
   if (stack?.action === "create" || stack?.action === "update") {
     lines.push(COST_TEXTS.iamStack);
@@ -521,13 +679,12 @@ export function planSetup(input: {
   readonly request: SetupRequest;
   readonly account: string;
   readonly stack: StackObservation;
-  readonly candidate: BucketCandidate;
-  readonly probe: BucketProbe;
+  /** El paso `bucket` ya decidido (`reuse`, `wait` o `create`). */
+  readonly bucketStep: SetupStep;
   readonly image: ImageObservation;
 }): SetupPlan {
-  const { request, stack, image } = input;
-  const bucket = decideBucket(input.candidate, input.probe, request.region);
-  const steps = [bucket, planStack(stack, bucket.name), planImage(image, request)];
+  const { request, stack, bucketStep, image } = input;
+  const steps = [bucketStep, planStack(stack, bucketStep.name), planImage(image, request)];
   return {
     region: request.region,
     account: input.account,

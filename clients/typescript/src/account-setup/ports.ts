@@ -1,6 +1,6 @@
 /**
  * Puertos de `rayito setup` (ADR-030, D1): lo que el servicio necesita de la
- * pila de IAM, del bucket, de la imagen base, de quien la publica y de la
+ * pila de IAM, de la pila del bucket, del bucket, de la imagen base, de quien la publica y de la
  * release. Los cumplen `cli/setup-adapters.ts` y `release.ts` sobre el SDK de
  * AWS y la red, y los tests con dobles en memoria. Espejo de
  * `rayito._account_setup._ports`.
@@ -24,6 +24,18 @@ export interface IamStackGateway {
   create(bucket: string): Promise<StackObservation>;
   /** Cambia sólo `ArtifactBucket` (el resto conserva su valor) y espera. */
   updateBucket(bucket: string): Promise<StackObservation>;
+  /** Espera a que termine la operación en curso. */
+  wait(): Promise<StackObservation>;
+}
+
+/**
+ * La pila `rayito-m0-artifacts` del bucket. Sin `update`: su `BucketName` no
+ * cambia nunca durante la vida de la pila.
+ */
+export interface ArtifactStackGateway {
+  observe(): Promise<StackObservation>;
+  /** Crea la pila con `BucketName` y espera a que quede desplegada. */
+  create(bucket: string): Promise<StackObservation>;
   /** Espera a que termine la operación en curso. */
   wait(): Promise<StackObservation>;
 }
@@ -56,6 +68,7 @@ export interface ReleaseArtifactSource {
 
 export interface AccountSetupGateways {
   readonly iamStack: IamStackGateway;
+  readonly artifactStack: ArtifactStackGateway;
   readonly buckets: ArtifactBucketGateway;
   readonly images: BaseImageGateway;
   readonly publisher: BaseImagePublisher;
