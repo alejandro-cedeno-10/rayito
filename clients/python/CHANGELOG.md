@@ -10,16 +10,24 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
 
 - **`rayito setup` prepara una cuenta y una región en una orden idempotente**:
   reutiliza el bucket de artefactos (`--bucket`, `RAYITO_BUCKET`, el de la pila
-  de IAM o el del bootstrap de CDK; nunca crea buckets), crea o actualiza la
+  de IAM o el del bootstrap de CDK; si no hay ninguno, lo crea con la pila
+  `rayito-m0-artifacts`), crea o actualiza la
   pila `rayito-m0-iam` y publica `rayito-base` desde el `rayito-image.zip` de la
   release de tu versión, comprobado contra su `SHA256SUMS` (o desde `--artifact`).
   Muestra el plan y el coste, pide confirmación (`--yes`, `--dry-run`), reanuda
   un build interrumpido en vez de lanzar otro y termina con `rayito doctor`.
   Con `--json` imprime un único documento. La pila de IAM va empaquetada con el
-  SDK y no aparece en `rayito stack list`.
+  SDK y no aparece en `rayito stack list`. `rayito setup` crea el bucket de
+  artefactos con la pila `rayito-m0-artifacts` cuando no hay ninguno, y
+  `deploy_agent` / `rayito agent deploy` lo encuentran por su salida
+  `BucketName` (sólo lectura). Con `--json`, un error de AWS o de pila que
+  `setup` no traduce también deja un único documento.
 
 ### Cambiado
 
+- **Códigos de error de `rayito setup`**: se retira `no_bucket`,
+  `bucket_unavailable` queda sólo para un bucket que existe sin acceso (403) y
+  se añaden `bucket_taken` y `artifact_stack_conflict`.
 - **Los errores de una cuenta sin preparar apuntan a `rayito setup`**: el
   `SandboxNotFoundException` de `Sandbox.create()` cuando falta la imagen y los
   errores de `deploy_agent` por falta de bucket o de imagen base terminan con

@@ -32,6 +32,17 @@ class IamStackGateway(Protocol):
     def wait(self) -> StackObservation: ...
 
 
+class ArtifactStackGateway(Protocol):
+    """La pila `rayito-m0-artifacts`. Sin `update`: el nombre del bucket de la
+    pila no cambia nunca."""
+
+    def observe(self) -> StackObservation: ...
+
+    def create(self, bucket: str) -> StackObservation: ...
+
+    def wait(self) -> StackObservation: ...
+
+
 class ArtifactBucketGateway(Protocol):
     def account_id(self) -> str: ...
 
@@ -59,6 +70,7 @@ class ReleaseArtifactSource(Protocol):
 @dataclass(frozen=True)
 class AccountSetupGateways:
     iam_stack: IamStackGateway
+    artifact_stack: ArtifactStackGateway
     buckets: ArtifactBucketGateway
     images: BaseImageGateway
     publisher: BaseImagePublisher

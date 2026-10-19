@@ -719,7 +719,7 @@ TypeScript `tests/unit/account-setup.test.ts`, `tests/unit/cli/setup.test.ts`.
 
 ### 5.PY Track PY (`clients/python/` only)
 
-- [ ] 5.PY.1 `src/rayito/_account_setup/_domain.py`:
+- [x] 5.PY.1 `src/rayito/_account_setup/_domain.py`:
       - Types: `BucketSource` adds `"artifactStack"`, `"rayitoDefault"`; new
         `BucketState = Literal["found", "missing", "forbidden"]`;
         `ErrorCode` drops `"no_bucket"`, adds `"bucket_taken"`,
@@ -764,7 +764,7 @@ TypeScript `tests/unit/account-setup.test.ts`, `tests/unit/cli/setup.test.ts`.
         fields; `plan_setup(request, account, stack, bucket_step, image)`
         takes the decided bucket step (no candidate/probe); `cost_lines`
         puts the `bucket` line first when the bucket action is `create`.
-- [ ] 5.PY.2 New `src/rayito/_account_setup/_artifact_stack.py`:
+- [x] 5.PY.2 New `src/rayito/_account_setup/_artifact_stack.py`:
       `ARTIFACT_STACK_COMPONENT: Final = StackComponent(name=
       ARTIFACT_COMPONENT_NAME, description=..., parameters=(StackParameter(
       BUCKET_NAME_PARAMETER, ..., required=True), StackParameter(
@@ -774,12 +774,12 @@ TypeScript `tests/unit/account-setup.test.ts`, `tests/unit/cli/setup.test.ts`.
       stack and the policy are deleted, the bucket is kept (Retain)>,
       source="AWS_API_NOTES.md, Preparación de la cuenta"))`. Not in
       `_stacks/_registry.COMPONENTS`.
-- [ ] 5.PY.3 `src/rayito/_account_setup/_ports.py`: `ArtifactStackGateway`
+- [x] 5.PY.3 `src/rayito/_account_setup/_ports.py`: `ArtifactStackGateway`
       (`observe() -> StackObservation`, `create(bucket: str) ->
       StackObservation`, `wait() -> StackObservation`; no update: the bucket
       name of the stack never changes); `AccountSetupGateways.artifact_stack`
       right after `iam_stack`.
-- [ ] 5.PY.4 `src/rayito/_account_setup/_service.py`: `plan` = region check,
+- [x] 5.PY.4 `src/rayito/_account_setup/_service.py`: `plan` = region check,
       `account_id`, IAM `observe`, `_resolve_bucket` (probe each
       `bucket_candidates` until `decide_bucket` returns a step; else
       `creation_target`, artifact stack `observe`, the default probe only if
@@ -794,7 +794,7 @@ TypeScript `tests/unit/account-setup.test.ts`, `tests/unit/cli/setup.test.ts`.
       BUILD_ROLE_OUTPUT_KEY, IAM_TEMPLATE_PATH)`. The "Coste y activación"
       docstring names the extra reads, the bucket stack and the
       bootstrap-level IAM requirement.
-- [ ] 5.PY.5 `src/rayito/_account_setup/_aws.py`: `CloudFormationIamStack`
+- [x] 5.PY.5 `src/rayito/_account_setup/_aws.py`: `CloudFormationIamStack`
       becomes `CloudFormationSetupStack(provisioner, *, component,
       stack_name, bucket_parameter, wait_timeout_seconds=
       DEFAULT_WAIT_TIMEOUT_SECONDS)` (same `observe`/`create`/
@@ -807,13 +807,13 @@ TypeScript `tests/unit/account-setup.test.ts`, `tests/unit/cli/setup.test.ts`.
       (docstrings cite the `HeadBucket` row of `AWS_API_NOTES.md`), any other
       `ClientError` propagates. `_agent._aws_resolve.BUCKET_MISSING_CODES`
       stays as it is for `deploy_agent`.
-- [ ] 5.PY.6 `src/rayito/cli/setup.py`: `gateways_for` builds one
+- [x] 5.PY.6 `src/rayito/cli/setup.py`: `gateways_for` builds one
       `CloudFormationProvisioner` and passes it to both factories; the
       command help and the `--bucket` help are the contract's strings.
       `cli/_setup_output.py`: `ACTION_TEMPLATES` adds `bucketCreate`,
       `bucketWait`; `action_text` renders the bucket step by action
       (`stack=ARTIFACT_STACK_NAME`, the source label, the status).
-- [ ] 5.PY.7 Tests (`tests/unit/`):
+- [x] 5.PY.7 Tests (`tests/unit/`):
       - `fake_account_setup.py`: `FakeArtifactStack` recording
         `("describe_artifact_stack",)`, `("create_artifact_stack", bucket)`,
         `("wait_artifact_stack",)`; `FakeBuckets.probe` answers from
@@ -844,7 +844,7 @@ TypeScript `tests/unit/account-setup.test.ts`, `tests/unit/cli/setup.test.ts`.
       - `cli/test_setup.py`: the 12 `cli-cases.json`; an apply on an account
         without bucket prints the `bucketCreate`/`bucketReady` progress and
         ends with `RAYITO_BUCKET=<default>`.
-- [ ] 5.PY.8 `tests/e2e/test_account_setup.py`: one more test behind
+- [x] 5.PY.8 `tests/e2e/test_account_setup.py`: one more test behind
       `RAYITO_E2E_SETUP_CREATE_BUCKET=1`: `setup --yes --bucket
       rayito-e2e-setup-<random hex>` (a name with no account) creates
       `rayito-m0-artifacts` and the bucket; the bucket has the template's
@@ -855,7 +855,7 @@ TypeScript `tests/unit/account-setup.test.ts`, `tests/unit/cli/setup.test.ts`.
       `rayito-m0-artifacts` already exists in the region. Teardown deletes
       what the run created only: the image and the IAM stack as today, then
       `rayito-m0-artifacts`, then the retained bucket (emptied first).
-- [ ] 5.PY.9 `clients/python/CHANGELOG.md` `## [Unreleased]`: `### Añadido`
+- [x] 5.PY.9 `clients/python/CHANGELOG.md` `## [Unreleased]`: `### Añadido`
       "rayito setup crea el bucket de artefactos con la pila
       rayito-m0-artifacts cuando no hay ninguno"; `### Cambiado` the error
       codes (`no_bucket` removed, `bucket_unavailable` only for 403, new

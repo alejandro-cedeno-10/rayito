@@ -15,6 +15,7 @@ from typing import Any
 import boto3
 import pytest
 import typer.main
+from botocore.exceptions import ClientError
 from typer.testing import CliRunner, Result
 
 from rayito import __version__ as SDK_VERSION
@@ -26,8 +27,9 @@ from rayito.cli._artifact import (
     WARMUP_MARKER_ENTRY,
 )
 from rayito.cli._checks import CheckResult
-from rayito.cli._session import Clients
+from rayito.cli._session import Clients, UsageError
 from rayito.cli.app import app
+from rayito.exceptions import StackException
 
 from ..fake_account_setup import (
     BUILD_ROLE_ARN,
@@ -44,6 +46,7 @@ CASES = load_cases("cli-cases.json")
 VECTORS = {case["name"]: case["input"] for case in load_cases("plan-vectors.json")}
 FRESH = VECTORS["cuenta nueva con el bucket del bootstrap de CDK"]
 PREPARED = VECTORS["cuenta preparada a mano: todo se reutiliza"]
+NO_BUCKET = VECTORS["sin ningún bucket: se crea uno con el nombre por defecto"]
 WRITING_CALLS = {"create", "update", "wait", "download", "publish", "gate"}
 
 
@@ -135,6 +138,20 @@ def test_apply_prints_the_progress_the_doctor_and_the_next_step_variables(
         f"RAYITO_BUCKET={account.iam_stack.stack.parameters['ArtifactBucket']}",
     ]
     assert account.publisher.published_with[1] == BUILD_ROLE_ARN
+
+
+def test_apply_without_a_bucket_creates_it_and_prints_it_for_the_next_step(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("rayito.cli.setup.run_doctor", doctor_returning("OK"))
+    result, account = run(NO_BUCKET, "setup", "--yes")
+    bucket = fill("{defaultBucket}", NO_BUCKET)
+    lines = result.stdout.splitlines()
+    assert result.exit_code == 0, result.stderr
+    assert f"creando el bucket {bucket} con la pila rayito-m0-artifacts" in lines
+    assert f"bucket {bucket} listo (pila rayito-m0-artifacts)" in lines
+    assert lines[-1] == f"RAYITO_BUCKET={bucket}"
+    assert ("create_artifact_stack", bucket) in account.calls
 
 
 def test_a_doctor_failure_fails_the_command(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -296,7 +313,7 @@ def test_the_document_keys_follow_the_contract_order() -> None:
         plan=None,
         result=None,
         doctor=None,
-        error={"code": "no_bucket", "message": "m"},
+        error={"code": "bucket_taken", "message": "m"},
         exit_code=2,
     )
     assert list(document) == CONTRACT["json"]["documentKeys"]
@@ -320,3 +337,57 @@ def test_the_command_help_and_options_match_the_contract() -> None:
         assert option.is_flag == expected["isFlag"]
         assert option.envvar is None
         assert normalised(option.help) == normalised(expected["help"])
+
+
+def failing_clients(error: Exception) -> Clients:
+    clients, account = clients_for(FRESH)
+
+    def observe() -> Any:
+        raise error
+
+    account.iam_stack.observe = observe  # type: ignore[method-assign]
+    return clients
+
+
+ACCESS_DENIED = ClientError(
+    {"Error": {"Code": "AccessDenied", "Message": "no puedes"}}, "DescribeStacks"
+)
+BLOCKED_STACK = StackException("la pila 'rayito-m0-iam' está bloqueada", code="blocked")
+
+
+@pytest.mark.parametrize(
+    ("error", "message", "exit_code"),
+    [
+        (ACCESS_DENIED, "AWS error AccessDenied: no puedes", 1),
+        (BLOCKED_STACK, "la pila 'rayito-m0-iam' está bloqueada", 1),
+        (UsageError("sin credenciales"), "sin credenciales", 2),
+    ],
+    ids=["aws", "stack", "usage"],
+)
+def test_json_mode_reports_an_untranslated_error_as_one_document(
+    error: Exception, message: str, exit_code: int
+) -> None:
+    result = CliRunner().invoke(app, ["--json", "setup"], obj=failing_clients(error))
+    document = json.loads(result.stdout)
+    code = "bucket_unavailable" if exit_code == 2 else "stack_blocked"
+    assert result.exit_code == exit_code
+    assert list(document) == CONTRACT["json"]["documentKeys"]
+    assert document["error"] == {"code": code, "message": message}
+    assert document["exitCode"] == exit_code
+    assert document["steps"] == [] and document["ready"] is False
+    assert result.stderr == f"rayito: {message}\n"
+
+
+@pytest.mark.parametrize(
+    ("error", "line"),
+    [
+        (ACCESS_DENIED, "rayito: AWS error AccessDenied: no puedes"),
+        (BLOCKED_STACK, "rayito: la pila 'rayito-m0-iam' está bloqueada"),
+    ],
+    ids=["aws", "stack"],
+)
+def test_human_mode_keeps_the_global_error_line(error: Exception, line: str) -> None:
+    result = CliRunner().invoke(app, ["setup"], obj=failing_clients(error))
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert result.stderr == f"{line}\n"

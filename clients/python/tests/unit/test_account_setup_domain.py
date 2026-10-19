@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, get_args
 
 import pytest
 
@@ -20,22 +20,22 @@ from rayito._account_setup._domain import (
     SetupResult,
     SetupStep,
     checksum_for,
-    choose_bucket_candidate,
+    default_artifact_bucket_name,
     parse_checksums,
-    plan_setup,
     release_asset_url,
     release_tag,
     verify_checksum,
     with_setup_hint,
 )
+from rayito._account_setup._service import AccountSetup
 from rayito._images import BUILD_ROLE_OUTPUT_KEY, BUILDING_VERSION_STATES
 
 from .fake_account_setup import (
+    bucket_reads,
     fill_placeholders,
-    image_from_vector,
+    from_vector_input,
     load_cases,
     load_contract,
-    stack_from_vector,
 )
 
 CONTRACT = load_contract()
@@ -45,22 +45,30 @@ SHA_A = "a" * 64
 SHA_B = "b" * 64
 
 
-def plan_from_vector(vector: dict[str, Any]) -> SetupPlan:
-    region, account = vector["region"], vector["account"]
-    data = fill_placeholders(vector, account=account, region=region, sdk_version=SDK_VERSION)
-    request = SetupRequest(
-        region=region,
-        bucket=data["bucket"],
-        environment_bucket=data["environmentBucket"],
-        artifact=None if data["artifact"] is None else Path(data["artifact"]),
+def request_from_vector(vector: dict[str, Any]) -> SetupRequest:
+    return SetupRequest(
+        region=vector["region"],
+        bucket=vector["bucket"],
+        environment_bucket=vector["environmentBucket"],
+        artifact=None if vector["artifact"] is None else Path(vector["artifact"]),
         sdk_version=SDK_VERSION,
     )
-    stack = stack_from_vector(data["stack"], domain.IAM_STACK_NAME)
-    candidate = choose_bucket_candidate(request, stack, account)
-    buckets = data["buckets"]
-    probe = BucketProbe(candidate.name in buckets, buckets.get(candidate.name))
-    image = image_from_vector(data["image"], domain.BASE_IMAGE_NAME, "arn:image")
-    return plan_setup(request, account, stack, candidate, probe, image)
+
+
+def plan_from_vector(vector: dict[str, Any]) -> tuple[SetupPlan | None, list[str], str | None]:
+    """El plan de `AccountSetup.plan` sobre los dobles del vector, las
+    lecturas del bucket y el código del error si lo hubo."""
+    account = from_vector_input(vector, SDK_VERSION)
+    request = request_from_vector(
+        fill_placeholders(
+            vector, account=vector["account"], region=vector["region"], sdk_version=SDK_VERSION
+        )
+    )
+    try:
+        plan = AccountSetup(account.gateways).plan(request)
+    except AccountSetupException as exc:
+        return None, bucket_reads(account.calls), exc.code
+    return plan, bucket_reads(account.calls), None
 
 
 PLAN_CASES = load_cases("plan-vectors.json")
@@ -74,12 +82,12 @@ def test_plan_vectors(case: dict[str, Any]) -> None:
         region=case["input"]["region"],
         sdk_version=SDK_VERSION,
     )
+    plan, reads, error = plan_from_vector(case["input"])
+    assert reads == expected["bucketReads"]
     if "error" in expected:
-        with pytest.raises(AccountSetupException) as caught:
-            plan_from_vector(case["input"])
-        assert caught.value.code == expected["error"]
+        assert error == expected["error"]
         return
-    plan = plan_from_vector(case["input"])
+    assert plan is not None
     assert [step.as_json() for step in plan.steps] == expected["steps"]
     assert plan.ready == expected["ready"]
     assert plan.needs_confirmation == expected["needsConfirmation"]
@@ -122,6 +130,15 @@ def test_constants_match_the_contract() -> None:
     assert CONSTANTS["iamComponentName"] == domain.IAM_COMPONENT_NAME
     assert list(domain.IAM_CAPABILITIES) == CONSTANTS["iamCapabilities"]
     assert CONSTANTS["artifactBucketParameter"] == domain.ARTIFACT_BUCKET_PARAMETER
+    assert CONSTANTS["iamTemplatePath"] == domain.IAM_TEMPLATE_PATH
+    assert CONSTANTS["artifactStackName"] == domain.ARTIFACT_STACK_NAME
+    assert CONSTANTS["artifactComponentName"] == domain.ARTIFACT_COMPONENT_NAME
+    assert CONSTANTS["artifactTemplatePath"] == domain.ARTIFACT_TEMPLATE_PATH
+    assert CONSTANTS["bucketNameParameter"] == domain.BUCKET_NAME_PARAMETER
+    assert CONSTANTS["bucketNameOutputKey"] == domain.BUCKET_NAME_OUTPUT_KEY
+    assert CONSTANTS["defaultArtifactBucketTemplate"] == domain.DEFAULT_ARTIFACT_BUCKET_TEMPLATE
+    assert CONSTANTS["artifactExpirationDays"] == domain.ARTIFACT_EXPIRATION_DAYS
+    assert sorted(CONSTANTS["explicitBucketSources"]) == sorted(domain.EXPLICIT_BUCKET_SOURCES)
     assert CONSTANTS["buildRoleOutputKey"] == BUILD_ROLE_OUTPUT_KEY
     assert CONSTANTS["baseImageName"] == domain.BASE_IMAGE_NAME
     assert CONSTANTS["baseImageVariant"] == domain.BASE_IMAGE_VARIANT
@@ -143,6 +160,11 @@ def test_resources_actions_and_sources_match_the_contract() -> None:
     allowed = {action for actions in domain.ALLOWED_ACTIONS.values() for action in actions}
     assert sorted(allowed) == sorted(CONTRACT["actions"])
     assert sorted(domain.BUCKET_SOURCE_LABELS) == sorted(CONTRACT["bucketSources"])
+    assert {k: sorted(v) for k, v in domain.ALLOWED_ACTIONS.items()} == {
+        k: sorted(v) for k, v in CONTRACT["resourceActions"].items()
+    }
+    assert sorted(get_args(domain.BucketSource)) == sorted(CONTRACT["bucketSources"])
+    assert sorted(get_args(domain.BucketState)) == sorted(CONTRACT["bucketProbeStates"])
 
 
 def test_messages_match_the_contract() -> None:
@@ -167,7 +189,7 @@ def test_an_error_formats_its_message_and_exposes_the_exit_code() -> None:
     )
     assert error.code == "stack_blocked"
     assert error.exit_code == 1
-    assert AccountSetupException("no_bucket").exit_code == 2
+    assert AccountSetupException("bucket_taken", bucket="b", stack="s").exit_code == 2
 
 
 def test_release_tag_and_asset_url() -> None:
@@ -191,7 +213,7 @@ def test_step_and_result_json_keys_follow_the_contract_order() -> None:
 
 def test_a_step_rejects_an_action_its_resource_does_not_admit() -> None:
     with pytest.raises(ValueError, match="bucket"):
-        SetupStep("bucket", "b", "create")
+        SetupStep("bucket", "b", "update")
     with pytest.raises(ValueError, match="baseImage"):
         SetupStep("baseImage", "rayito-base", "update")
 
@@ -206,15 +228,55 @@ def test_a_plan_needs_the_three_steps_in_order() -> None:
         SetupPlan("us-east-1", "1", steps, (), None, "arn", None)
 
 
+def test_the_default_bucket_name_carries_the_account_and_the_region() -> None:
+    assert default_artifact_bucket_name("123456789012", "us-east-1") == (
+        "rayito-artifacts-123456789012-us-east-1"
+    )
+
+
 def test_a_bucket_without_a_reported_region_is_accepted() -> None:
     candidate = domain.BucketCandidate("amzn-s3-demo-bucket", "argument")
-    step = domain.decide_bucket(candidate, BucketProbe(True, None), "us-east-1")
+    step = domain.decide_bucket(candidate, BucketProbe("found", None), "us-east-1")
+    assert step is not None
     assert step.action == "reuse"
 
 
-def test_a_missing_bucket_from_the_stack_is_unavailable_not_missing() -> None:
+def test_a_forbidden_bucket_of_the_stack_is_unavailable() -> None:
     candidate = domain.BucketCandidate("amzn-s3-demo-bucket", "iamStack")
     with pytest.raises(AccountSetupException) as caught:
-        domain.decide_bucket(candidate, BucketProbe(False, None), "us-east-1")
+        domain.decide_bucket(candidate, BucketProbe("forbidden", None), "us-east-1")
     assert caught.value.code == "bucket_unavailable"
     assert "el de la pila de IAM" in str(caught.value)
+
+
+def test_a_forbidden_cdk_bucket_and_a_missing_candidate_decide_nothing() -> None:
+    cdk = domain.BucketCandidate("amzn-s3-demo-bucket", "cdkBootstrap")
+    assert domain.decide_bucket(cdk, BucketProbe("forbidden", None), "us-east-1") is None
+    assert domain.decide_bucket(cdk, BucketProbe("missing", None), "us-east-1") is None
+
+
+def test_the_default_target_is_probed_only_when_no_stack_manages_it() -> None:
+    target = domain.BucketCandidate("rayito-artifacts-1-us-east-1", "rayitoDefault")
+    absent = domain.StackObservation(domain.ARTIFACT_STACK_NAME, None, {}, {})
+    present = domain.StackObservation(domain.ARTIFACT_STACK_NAME, "CREATE_COMPLETE", {}, {})
+    assert domain.needs_default_probe(target, absent)
+    assert not domain.needs_default_probe(target, present)
+    explicit = domain.BucketCandidate("amzn-s3-demo-bucket", "argument")
+    assert not domain.needs_default_probe(explicit, absent)
+
+
+def test_creating_the_default_bucket_needs_its_probe() -> None:
+    target = domain.BucketCandidate("rayito-artifacts-1-us-east-1", "rayitoDefault")
+    absent = domain.StackObservation(domain.ARTIFACT_STACK_NAME, None, {}, {})
+    with pytest.raises(ValueError, match="sonda"):
+        domain.plan_bucket_creation(target, absent, None, "us-east-1")
+
+
+def test_a_usable_bucket_stack_without_its_output_is_incomplete() -> None:
+    target = domain.BucketCandidate("rayito-artifacts-1-us-east-1", "rayitoDefault")
+    stack = domain.StackObservation(domain.ARTIFACT_STACK_NAME, "CREATE_COMPLETE", {}, {})
+    with pytest.raises(AccountSetupException) as caught:
+        domain.plan_bucket_creation(target, stack, None, "us-east-1")
+    assert caught.value.code == "stack_incomplete"
+    assert "BucketName" in str(caught.value)
+    assert domain.ARTIFACT_TEMPLATE_PATH in str(caught.value)

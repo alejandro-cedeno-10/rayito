@@ -22,9 +22,14 @@ from typing import TYPE_CHECKING, Any, Final, Literal, Protocol
 
 from botocore.exceptions import ClientError
 
+from rayito._account_setup._aws import artifact_stack_gateway
 from rayito._account_setup._domain import BUCKET_ENV_VAR as BUCKET_ENV_VAR
+from rayito._account_setup._domain import (
+    BUCKET_NAME_OUTPUT_KEY,
+    classify_stack,
+    with_setup_hint,
+)
 from rayito._account_setup._domain import cdk_bucket_name as cdk_bucket_name
-from rayito._account_setup._domain import with_setup_hint
 from rayito._agent._project_domain import AgentProject
 from rayito._aws import LazyClient
 from rayito._aws_region import aws_session, resolve_region
@@ -33,7 +38,8 @@ from rayito._payload import generate_access_token
 from rayito._sandbox_base import ACCESS_TOKEN_ENV_VAR
 from rayito._secret_gateway._domain import SecretGateway
 from rayito._secrets import SecretRef
-from rayito.exceptions import InvalidArgumentException
+from rayito._stacks._cloudformation import CloudFormationProvisioner
+from rayito.exceptions import InvalidArgumentException, StackException
 
 if TYPE_CHECKING:
     import boto3
@@ -77,7 +83,9 @@ class BucketChoice:
 class DeployAws(Protocol):
     """Lo que `deploy_agent()` pregunta a AWS antes de crear nada: la región
     efectiva, la cuenta (`GetCallerIdentity`), si un bucket existe
-    (`HeadBucket`) y si una imagen existe (`GetMicrovmImage`)."""
+    (`HeadBucket`), el bucket de la pila `rayito-m0-artifacts` que creó
+    `rayito setup` (`DescribeStacks`) y si una imagen existe
+    (`GetMicrovmImage`)."""
 
     @property
     def resolved_region(self) -> str: ...
@@ -85,6 +93,8 @@ class DeployAws(Protocol):
     def account_id(self) -> str: ...
 
     def bucket_exists(self, bucket: str) -> bool: ...
+
+    def artifact_stack_bucket(self) -> str | None: ...
 
     def image_exists(self, name: str) -> bool: ...
 
@@ -124,7 +134,8 @@ def resolve_bucket(
 ) -> BucketChoice:
     """El bucket del artefacto: argumento > `[deploy].bucket` del fichero de
     proyecto > `RAYITO_BUCKET` > el bucket de activos del bootstrap de CDK de
-    la cuenta y la región (si existe). Sin ninguno, `InvalidArgumentException`
+    la cuenta y la región (si existe) > el de la pila `rayito-m0-artifacts` de
+    `rayito setup` (si existe). Sin ninguno, `InvalidArgumentException`
     con las opciones; nunca se crea un bucket."""
     if explicit:
         return BucketChoice(explicit, "argument")
@@ -297,6 +308,20 @@ class AwsResolver:
             raise
         return True
 
+    def artifact_stack_bucket(self) -> str | None:
+        """La salida `BucketName` de `rayito-m0-artifacts` si la pila está
+        lista; `None` si no existe, no está lista, no tiene la salida o no se
+        puede leer (sólo lectura: quien no tiene permisos de CloudFormation
+        sigue viendo el error de bucket de siempre)."""
+        provisioner = CloudFormationProvisioner(region=self.resolved_region, session=self.session)
+        try:
+            observed = artifact_stack_gateway(provisioner).observe()
+        except StackException:
+            return None
+        if classify_stack(observed) != "usable":
+            return None
+        return observed.outputs.get(BUCKET_NAME_OUTPUT_KEY) or None
+
     def image_exists(self, name: str) -> bool:
         arn = account_image_arn(self.resolved_region, self.account_id(), name)
         return image_exists(_MicrovmClients(self._microvms.get()), arn)
@@ -304,9 +329,12 @@ class AwsResolver:
 
 def discover_bucket(aws: DeployAws, region: str) -> str | None:
     """El bucket de activos del bootstrap de CDK de la cuenta y la región, si
-    existe (`GetCallerIdentity` y `HeadBucket`; nunca se crea)."""
+    existe (`GetCallerIdentity` y `HeadBucket`) y, si no, el que creó
+    `rayito setup` (`DescribeStacks` de `rayito-m0-artifacts`). Nunca se crea."""
     candidate = cdk_bucket_name(aws.account_id(), region)
-    return candidate if aws.bucket_exists(candidate) else None
+    if aws.bucket_exists(candidate):
+        return candidate
+    return aws.artifact_stack_bucket()
 
 
 @dataclass(frozen=True)

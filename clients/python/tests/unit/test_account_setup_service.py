@@ -36,6 +36,9 @@ STACK_IN_PROGRESS = "pila en curso: se espera, sin coste nuevo"
 BUILD_IN_PROGRESS = "build en curso: se espera en vez de lanzar otro"
 ARTIFACT = "--artifact publica ese zip en vez de descargar la release"
 UNSUPPORTED = "región sin Lambda MicroVMs"
+NO_BUCKET = "sin ningún bucket: se crea uno con el nombre por defecto"
+NAMED_MISSING = "--bucket que no existe: se crea con ese nombre"
+BUCKET_STACK_IN_PROGRESS = "pila del bucket en curso: se espera, sin crear otra"
 
 
 def account_for(name: str) -> FakeAccount:
@@ -84,6 +87,13 @@ def test_the_plan_of_a_fresh_account_only_reads() -> None:
     names = [call[0] for call in account.calls]
     assert names == ["account", "describe", "head_bucket", "get_image"]
     assert "list_versions" not in names
+
+
+def test_an_account_with_a_reusable_bucket_never_reads_the_bucket_stack() -> None:
+    for name in (FRESH, PREPARED):
+        account = account_for(name)
+        AccountSetup(account.gateways).plan(request_for(name))
+        assert "describe_artifact_stack" not in account.recorder.names()
 
 
 def test_the_plan_of_a_prepared_account_lists_the_versions() -> None:
@@ -222,3 +232,50 @@ def test_a_created_stack_without_the_build_role_output_is_incomplete(tmp_path: P
         planned.apply()
     assert caught.value.code == "stack_incomplete"
     assert "publish" not in [call[0] for call in planned.account.calls]
+
+
+def test_apply_on_an_account_without_a_bucket_creates_it_first(tmp_path: Path) -> None:
+    planned = Planned(NO_BUCKET, tmp_path)
+    result = planned.apply()
+    bucket = planned.plan.bucket
+    assert planned.plan.steps[0].source == "rayitoDefault"
+    assert planned.writes == [
+        ("create_artifact_stack", bucket),
+        ("create", bucket),
+        ("download", "SHA256SUMS"),
+        ("download", "rayito-image.zip"),
+        ("publish", str(tmp_path / "rayito-image.zip")),
+    ]
+    assert planned.account.publisher.published_with == (bucket, BUILD_ROLE_ARN)
+    assert result.bucket == bucket
+    assert planned.progress[:3] == [
+        f"creando el bucket {bucket} con la pila rayito-m0-artifacts",
+        f"bucket {bucket} listo (pila rayito-m0-artifacts)",
+        "creando la pila de IAM rayito-m0-iam",
+    ]
+
+
+def test_an_explicit_missing_bucket_is_created_with_that_name(tmp_path: Path) -> None:
+    planned = Planned(NAMED_MISSING, tmp_path)
+    planned.apply()
+    assert planned.writes[0] == ("create_artifact_stack", "amzn-s3-demo-bucket1")
+    assert planned.writes[1] == ("create", "amzn-s3-demo-bucket1")
+
+
+def test_a_bucket_stack_in_progress_is_waited_for_and_never_created(tmp_path: Path) -> None:
+    planned = Planned(BUCKET_STACK_IN_PROGRESS, tmp_path)
+    planned.apply()
+    names = planned.account.recorder.names()
+    assert planned.writes[0] == ("wait_artifact_stack",)
+    assert "create_artifact_stack" not in names
+    assert planned.progress[0].startswith("esperando a la pila rayito-m0-artifacts del bucket")
+    assert planned.account.publisher.published_with[0] == planned.plan.bucket
+
+
+def test_a_created_bucket_stack_without_the_bucket_output_is_incomplete(tmp_path: Path) -> None:
+    planned = Planned(NO_BUCKET, tmp_path)
+    planned.account.artifact_stack.created_outputs_key = "BucketArn"
+    with pytest.raises(AccountSetupException) as caught:
+        planned.apply()
+    assert caught.value.code == "stack_incomplete"
+    assert "create" not in planned.account.recorder.names()

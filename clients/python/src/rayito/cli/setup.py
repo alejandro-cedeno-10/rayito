@@ -7,7 +7,8 @@ ejecución de `AccountSetup`.
 Códigos de salida: 0 éxito, `--dry-run` o nada que hacer con el doctor
 limpio; 1 fallo (pila bloqueada o incompleta, descarga o checksum, build no
 lanzable, un "no" en la confirmación, un `FAIL` del doctor); 2 uso o entorno
-(región, bucket, artefacto, falta de confirmación, sin credenciales).
+(región, bucket, pila de artefactos en conflicto, artefacto, falta de
+confirmación, sin credenciales).
 """
 
 from __future__ import annotations
@@ -17,11 +18,17 @@ import sys
 import tempfile
 import zipfile
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Final
 
 import typer
+from botocore.exceptions import ClientError
 
-from rayito._account_setup._aws import CloudFormationIamStack, MicrovmBaseImages, S3ArtifactBuckets
+from rayito._account_setup._aws import (
+    MicrovmBaseImages,
+    S3ArtifactBuckets,
+    artifact_stack_gateway,
+    iam_stack_gateway,
+)
 from rayito._account_setup._domain import (
     BASE_IMAGE_NAME,
     BASE_IMAGE_VARIANT,
@@ -38,9 +45,15 @@ from rayito._stacks._cloudformation import CloudFormationProvisioner
 from rayito._version import __version__
 from rayito.cli._artifact import marker_has_efs, marker_variant
 from rayito.cli._checks import DoctorContext
-from rayito.cli._console import EXIT_FAILURE, echo, emit_json
+from rayito.cli._console import (
+    EXIT_FAILURE,
+    EXIT_USAGE,
+    echo,
+    emit_json,
+    translate_failure,
+)
 from rayito.cli._publish import progress_emitter
-from rayito.cli._session import Clients, clients_of, json_mode
+from rayito.cli._session import Clients, UsageError, clients_of, json_mode
 from rayito.cli._setup_output import (
     CONFIRM_QUESTION,
     DOCTOR_FAILED,
@@ -52,6 +65,13 @@ from rayito.cli._setup_output import (
 )
 from rayito.cli._setup_publisher import PipelineImagePublisher
 from rayito.cli.doctor import doctor_document, exit_code_for, render_human, run_doctor
+from rayito.exceptions import SandboxException, UnimplementedError
+
+#: El contrato de `rayito setup` no tiene código para un fallo ajeno a él
+#: (AWS sin traducir, una pila, el entorno): con `--json` se elige el más
+#: cercano por su código de salida, igual que la CLI de TypeScript.
+UNTRANSLATED_FAILURE_CODE: Final = "stack_blocked"
+UNTRANSLATED_USAGE_CODE: Final = "bucket_unavailable"
 
 
 def gateways_for(clients: Clients) -> AccountSetupGateways:
@@ -60,10 +80,10 @@ def gateways_for(clients: Clients) -> AccountSetupGateways:
     que no llaman a nada al construirse."""
     if clients.account_setup_override is not None:
         return clients.account_setup_override
+    provisioner = CloudFormationProvisioner(region=clients.region, session=clients.session)
     return AccountSetupGateways(
-        iam_stack=CloudFormationIamStack(
-            CloudFormationProvisioner(region=clients.region, session=clients.session)
-        ),
+        iam_stack=iam_stack_gateway(provisioner),
+        artifact_stack=artifact_stack_gateway(provisioner),
         buckets=S3ArtifactBuckets(clients),
         images=MicrovmBaseImages(clients, clients.region, lambda: clients.account_id),
         publisher=PipelineImagePublisher(clients),
@@ -99,15 +119,15 @@ def confirm_plan(plan: SetupPlan, *, yes: bool, json_output: bool) -> None:
 
 
 def report_error(
-    exc: AccountSetupException,
+    error: dict[str, str],
+    exit_code: int,
     clients: Clients,
     plan: SetupPlan | None,
     *,
     dry_run: bool,
     json_output: bool,
 ) -> None:
-    message = str(exc)
-    echo(f"{ERROR_PREFIX}{message}", err=True)
+    echo(f"{ERROR_PREFIX}{error['message']}", err=True)
     if json_output:
         emit_json(
             setup_document(
@@ -119,10 +139,24 @@ def report_error(
                 plan=plan,
                 result=None,
                 doctor=None,
-                error={"code": exc.code, "message": message},
-                exit_code=exc.exit_code,
+                error=error,
+                exit_code=exit_code,
             )
         )
+
+
+def untranslated_error(exc: Exception) -> tuple[dict[str, str], int] | None:
+    """Un fallo que `setup` no traduce, con el mensaje y el código de salida
+    del manejador global de la CLI (sin el prefijo `rayito: `). El contrato no
+    tiene código para él: se elige por el código de salida, `stack_blocked`
+    (1) o `bucket_unavailable` (2). `None` si el manejador global tampoco lo
+    traduce."""
+    translated = translate_failure(exc)
+    if translated is None:
+        return None
+    message, exit_code = translated
+    code = UNTRANSLATED_USAGE_CODE if exit_code == EXIT_USAGE else UNTRANSLATED_FAILURE_CODE
+    return {"code": code, "message": message}, exit_code
 
 
 def report_dry_run(clients: Clients, plan: SetupPlan, *, json_output: bool) -> None:
@@ -200,8 +234,10 @@ def setup(
         typer.Option(
             "--bucket",
             help=(
-                "Bucket de artefactos en la misma región; por defecto RAYITO_BUCKET, el de la "
-                "pila de IAM o el del bootstrap de CDK. Rayito no crea buckets."
+                "Bucket de artefactos en la misma región; por defecto RAYITO_BUCKET, el "
+                "de la pila de IAM, el del bootstrap de CDK o uno nuevo "
+                "rayito-artifacts-<cuenta>-<región>. Si no existe, se crea con ese nombre "
+                "(pila rayito-m0-artifacts)."
             ),
         ),
     ] = None,
@@ -233,14 +269,14 @@ def setup(
         ),
     ] = False,
 ) -> None:
-    """Prepara la cuenta y la región para Rayito en una orden idempotente, como
-    `cdk bootstrap`: la pila de IAM rayito-m0-iam, el bucket de artefactos (el
-    tuyo, el de la pila o el del bootstrap de CDK; Rayito no crea buckets) y la
-    imagen rayito-base desde el rayito-image.zip de la release de tu versión,
-    comprobado contra su SHA256SUMS. Muestra el plan y el coste, pide
-    confirmación y termina con rayito doctor. Coste: cada versión publicada de
-    la imagen ≈ $0,04 por semana de almacenamiento (mínimo una semana); la pila
-    de IAM es gratis; con --dry-run sólo lee."""
+    """Prepara la cuenta y la región para Rayito en una orden idempotente, como `cdk bootstrap`: el
+    bucket de artefactos (el tuyo, el de la pila de IAM o el del bootstrap de CDK; si no hay
+    ninguno, lo crea con la pila rayito-m0-artifacts: cifrado, privado, sólo TLS y con los zips
+    caducando a los 7 días), la pila de IAM rayito-m0-iam y la imagen rayito-base desde el
+    rayito-image.zip de la release de tu versión, comprobado contra su SHA256SUMS. Muestra el
+    plan y el coste, pide confirmación y termina con rayito doctor. Coste: cada versión
+    publicada de la imagen ≈ $0,04 por semana de almacenamiento (mínimo una semana); la pila de
+    IAM es gratis; el zip en el bucket, céntimos; con --dry-run sólo lee."""
     clients = clients_of(ctx)
     json_output = json_mode(ctx)
     plan: SetupPlan | None = None
@@ -264,7 +300,15 @@ def setup(
             return
         code = run_setup(clients, service, plan, yes=yes, json_output=json_output)
     except AccountSetupException as exc:
-        report_error(exc, clients, plan, dry_run=dry_run, json_output=json_output)
+        error = {"code": exc.code, "message": str(exc)}
+        report_error(error, exc.exit_code, clients, plan, dry_run=dry_run, json_output=json_output)
         raise typer.Exit(exc.exit_code) from None
+    except (UsageError, ClientError, SandboxException, UnimplementedError) as exc:
+        untranslated = untranslated_error(exc)
+        if not json_output or untranslated is None:
+            raise
+        error, exit_code = untranslated
+        report_error(error, exit_code, clients, plan, dry_run=dry_run, json_output=True)
+        raise typer.Exit(exit_code) from None
     if code:
         raise typer.Exit(code)

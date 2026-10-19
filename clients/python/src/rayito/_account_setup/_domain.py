@@ -31,15 +31,19 @@ from rayito._limits import SUPPORTED_REGIONS
 
 ResourceKind = Literal["bucket", "iamStack", "baseImage"]
 SetupAction = Literal["create", "update", "reuse", "wait", "publish"]
-BucketSource = Literal["argument", "environment", "iamStack", "cdkBootstrap"]
+BucketSource = Literal[
+    "argument", "environment", "iamStack", "cdkBootstrap", "artifactStack", "rayitoDefault"
+]
+BucketState = Literal["found", "missing", "forbidden"]
 ImageSource = Literal["release", "artifact"]
 StackCondition = Literal["missing", "usable", "in_progress", "blocked"]
 ImageCondition = Literal["missing", "launchable", "building", "unlaunchable"]
 ErrorCode = Literal[
     "unsupported_region",
-    "no_bucket",
     "bucket_unavailable",
     "bucket_region",
+    "bucket_taken",
+    "artifact_stack_conflict",
     "artifact_missing",
     "artifact_variant",
     "needs_confirmation",
@@ -56,7 +60,7 @@ RESOURCE_ORDER: Final[tuple[ResourceKind, ...]] = ("bucket", "iamStack", "baseIm
 #: Acciones que admite cada recurso (diseño D2).
 ALLOWED_ACTIONS: Final[Mapping[ResourceKind, frozenset[SetupAction]]] = MappingProxyType(
     {
-        "bucket": frozenset({"reuse"}),
+        "bucket": frozenset({"create", "reuse", "wait"}),
         "iamStack": frozenset({"create", "update", "reuse", "wait"}),
         "baseImage": frozenset({"publish", "reuse", "wait"}),
     }
@@ -68,6 +72,26 @@ IAM_STACK_NAME: Final = DEFAULT_IAM_STACK_NAME
 IAM_COMPONENT_NAME: Final = "iam"
 IAM_CAPABILITIES: Final = ("CAPABILITY_NAMED_IAM",)
 ARTIFACT_BUCKET_PARAMETER: Final = "ArtifactBucket"
+#: Plantilla de la pila de IAM; el mensaje `stack_incomplete` la nombra.
+IAM_TEMPLATE_PATH: Final = "infra/iam.yaml"
+#: La pila que crea el bucket de artefactos cuando no hay ninguno que
+#: reutilizar (contrato; diseño D4 y D10), junto a `rayito-m0-iam`.
+ARTIFACT_STACK_NAME: Final = "rayito-m0-artifacts"
+ARTIFACT_COMPONENT_NAME: Final = "artifact-bucket"
+ARTIFACT_TEMPLATE_PATH: Final = "infra/artifact-bucket.yaml"
+#: Parámetro de `infra/artifact-bucket.yaml` con el nombre del bucket y salida
+#: que lo devuelve (diseño D10).
+BUCKET_NAME_PARAMETER: Final = "BucketName"
+BUCKET_NAME_OUTPUT_KEY: Final = "BucketName"
+#: Nombre del bucket sin `--bucket` ni `RAYITO_BUCKET` (diseño D4): determinista
+#: para que una nueva ejecución lo encuentre; como mucho 44 caracteres.
+DEFAULT_ARTIFACT_BUCKET_TEMPLATE: Final = "rayito-artifacts-{account}-{region}"
+#: Días que tardan en caducar los zips bajo `rayito/images/`; igual al
+#: `Default` de `ArtifactExpirationDays` en la plantilla (diseño D10).
+ARTIFACT_EXPIRATION_DAYS: Final = 7
+#: Orígenes de un nombre que el usuario pidió expresamente: si no existe se
+#: crea con ese nombre y es el único candidato.
+EXPLICIT_BUCKET_SOURCES: Final[frozenset[BucketSource]] = frozenset({"argument", "environment"})
 BASE_IMAGE_NAME: Final = DEFAULT_BASE_IMAGE_NAME
 BASE_IMAGE_VARIANT: Final = "full"
 BUCKET_ENV_VAR: Final = "RAYITO_BUCKET"
@@ -103,14 +127,21 @@ BUCKET_SOURCE_LABELS: Final[Mapping[str, str]] = MappingProxyType(
         "environment": "RAYITO_BUCKET",
         "iamStack": "el de la pila de IAM",
         "cdkBootstrap": "bootstrap de CDK",
+        "artifactStack": "el de la pila de artefactos",
+        "rayitoDefault": "nombre por defecto de Rayito",
     }
 )
 
-#: Cifras ya publicadas, no nuevas: la imagen, `cost.md` fila "Mantener
+#: Cifras ya publicadas, no nuevas (el bucket: los días de caducidad de
+#: `infra/artifact-bucket.yaml`, diseño D10); la imagen, `cost.md` fila "Mantener
 #: publicada una versión de imagen"; la pila de IAM, `configurar-aws.md`
 #: paso 3; el zip en el bucket, `configurar-aws.md` paso 2.
 COST_TEXTS: Final[Mapping[str, str]] = MappingProxyType(
     {
+        "bucket": (
+            "bucket de artefactos: los zips de la imagen caducan a los {days} días (regla de "
+            "ciclo de vida)"
+        ),
         "iamStack": "pila de IAM: gratis",
         "image": "imagen: ≈ $0,04 por semana por versión publicada (mínimo una semana)",
         "artifact": "zip de la imagen en el bucket: céntimos",
@@ -120,42 +151,46 @@ COST_TEXTS: Final[Mapping[str, str]] = MappingProxyType(
 ERROR_MESSAGES: Final[Mapping[ErrorCode, str]] = MappingProxyType(
     {
         "unsupported_region": "la región {region} no tiene Lambda MicroVMs: usa una de {regions}",
-        "no_bucket": (
-            "no hay bucket para el artefacto de la imagen: pasa --bucket, exporta RAYITO_BUCKET "
-            "o ejecuta `cdk bootstrap` en esta cuenta y región; Rayito no crea buckets"
-        ),
         "bucket_unavailable": (
-            "el bucket {bucket} ({source}) no existe o no es accesible con estas credenciales"
+            "el bucket {bucket} ({source}) existe pero no es accesible con estas credenciales: "
+            "puede ser de otra cuenta; pasa otro nombre con --bucket"
         ),
         "bucket_region": (
-            "el bucket {bucket} está en {bucketRegion}, no en {region}: "
-            "el build fallaría con S3_CROSS_REGION_ACCESS_DENIED"
+            "el bucket {bucket} está en {bucketRegion}, no en {region}: el build fallaría con "
+            "S3_CROSS_REGION_ACCESS_DENIED"
+        ),
+        "bucket_taken": (
+            "el nombre {bucket} ya lo usa un bucket que no creó la pila {stack}: si es tuyo, "
+            "pásalo con --bucket {bucket}; si no, elige otro nombre con --bucket"
+        ),
+        "artifact_stack_conflict": (
+            "la pila {stack} ya gestiona el bucket {existing}: pasa --bucket {existing} o, para "
+            "crear {bucket}, borra antes esa pila (el bucket {existing} se conserva)"
         ),
         "artifact_missing": "{artifact} no existe",
         "artifact_variant": (
-            "{artifact} no es un zip de la variante full sin EFS: "
-            "publica las otras variantes con `rayito image publish`"
+            "{artifact} no es un zip de la variante full sin EFS: publica las otras variantes con "
+            "`rayito image publish`"
         ),
         "needs_confirmation": (
-            "preparar la cuenta crea recursos con coste: confírmalo con --yes "
-            "(o desde una terminal)"
+            "preparar la cuenta crea recursos con coste: confírmalo con --yes (o desde una "
+            "terminal)"
         ),
         "stack_blocked": (
             "la pila {name} está en {status}: bórrala (aws cloudformation delete-stack "
             "--stack-name {name}), espera a que desaparezca y vuelve a ejecutar `rayito setup`"
         ),
         "stack_incomplete": (
-            "la pila {name} no tiene la salida BuildRoleArn: no es la plantilla infra/iam.yaml "
-            "de Rayito"
+            "la pila {name} no tiene la salida {output}: no es la plantilla {template} de Rayito"
         ),
-        "release_download": ("no se pudo descargar {asset} de la release {release}: {reason}"),
+        "release_download": "no se pudo descargar {asset} de la release {release}: {reason}",
         "checksum_missing": "SHA256SUMS de la release {release} no lista {asset}: no se publica",
         "checksum_mismatch": (
             "el sha256 de {asset} no coincide con SHA256SUMS de la release {release}: no se publica"
         ),
         "image_build_failed": (
-            "la imagen {name} no quedó lanzable (versión {imageVersion}, {state}): "
-            "vuelve a ejecutar `rayito setup`"
+            "la imagen {name} no quedó lanzable (versión {imageVersion}, {state}): vuelve a "
+            "ejecutar `rayito setup`"
         ),
     }
 )
@@ -163,9 +198,10 @@ ERROR_MESSAGES: Final[Mapping[ErrorCode, str]] = MappingProxyType(
 ERROR_EXIT_CODES: Final[Mapping[ErrorCode, int]] = MappingProxyType(
     {
         "unsupported_region": 2,
-        "no_bucket": 2,
         "bucket_unavailable": 2,
         "bucket_region": 2,
+        "bucket_taken": 2,
+        "artifact_stack_conflict": 2,
         "artifact_missing": 2,
         "artifact_variant": 2,
         "needs_confirmation": 2,
@@ -180,6 +216,9 @@ ERROR_EXIT_CODES: Final[Mapping[ErrorCode, int]] = MappingProxyType(
 #: Líneas de progreso de `apply`.
 PROGRESS_MESSAGES: Final[Mapping[str, str]] = MappingProxyType(
     {
+        "bucketCreate": "creando el bucket {bucket} con la pila {name}",
+        "bucketWait": "esperando a la pila {name} del bucket ({status})",
+        "bucketReady": "bucket {bucket} listo (pila {name})",
         "stackCreate": "creando la pila de IAM {name}",
         "stackUpdate": "actualizando la pila de IAM {name}",
         "stackWait": "esperando a la pila de IAM {name} ({status})",
@@ -226,8 +265,8 @@ class SetupRequest:
 
 @dataclass(frozen=True)
 class StackObservation:
-    """Lo que `DescribeStacks` dice de `rayito-m0-iam`; `status` es `None`
-    si la pila no existe."""
+    """Lo que `DescribeStacks` dice de `rayito-m0-iam` o de
+    `rayito-m0-artifacts`; `status` es `None` si la pila no existe."""
 
     name: str
     status: str | None
@@ -243,10 +282,11 @@ class BucketCandidate:
 
 @dataclass(frozen=True)
 class BucketProbe:
-    """Resultado de un `HeadBucket`; `region` es `None` si no existe o si la
-    respuesta no trajo `BucketRegion`."""
+    """Resultado de un `HeadBucket` (`found` 200, `missing` 404, `forbidden`
+    403: existe pero estas credenciales no lo ven; `AWS_API_NOTES.md`,
+    `HeadBucket`); `region` es `None` salvo que `found` traiga `BucketRegion`."""
 
-    exists: bool
+    state: BucketState
     region: str | None
 
 
@@ -393,35 +433,118 @@ def with_setup_hint(message: str) -> str:
     return HINT_TEMPLATE.format(message=message, hint=ACCOUNT_SETUP_HINT)
 
 
-def choose_bucket_candidate(
+def default_artifact_bucket_name(account: str, region: str) -> str:
+    return DEFAULT_ARTIFACT_BUCKET_TEMPLATE.format(account=account, region=region)
+
+
+def bucket_candidates(
     request: SetupRequest, stack: StackObservation, account: str
-) -> BucketCandidate:
-    """El primer bucket presente: `--bucket`, `RAYITO_BUCKET`, el
-    `ArtifactBucket` de la pila de IAM y el del bootstrap de CDK."""
+) -> tuple[BucketCandidate, ...]:
+    """Los buckets reutilizables, en orden de prueba: el nombre explícito
+    (`--bucket`, luego `RAYITO_BUCKET`) como único candidato o, sin él, el
+    `ArtifactBucket` de la pila de IAM si existe y el del bootstrap de CDK."""
     if request.bucket:
-        return BucketCandidate(request.bucket, "argument")
+        return (BucketCandidate(request.bucket, "argument"),)
     if request.environment_bucket:
-        return BucketCandidate(request.environment_bucket, "environment")
+        return (BucketCandidate(request.environment_bucket, "environment"),)
+    candidates: list[BucketCandidate] = []
     from_stack = stack.parameters.get(ARTIFACT_BUCKET_PARAMETER)
     if stack.status is not None and from_stack:
-        return BucketCandidate(from_stack, "iamStack")
-    return BucketCandidate(cdk_bucket_name(account, request.region), "cdkBootstrap")
+        candidates.append(BucketCandidate(from_stack, "iamStack"))
+    candidates.append(BucketCandidate(cdk_bucket_name(account, request.region), "cdkBootstrap"))
+    return tuple(candidates)
 
 
-def decide_bucket(candidate: BucketCandidate, probe: BucketProbe, region: str) -> SetupStep:
-    if not probe.exists:
-        if candidate.source == "cdkBootstrap":
-            raise AccountSetupException("no_bucket")
+def decide_bucket(candidate: BucketCandidate, probe: BucketProbe, region: str) -> SetupStep | None:
+    """`reuse` si el candidato está en la región; error si está en otra o si
+    no se puede ver y Rayito lo necesita. `None`: pasa al siguiente candidato
+    o, si no quedan, a la fase de creación (diseño D2)."""
+    if probe.state == "found":
+        if probe.region is not None and probe.region != region:
+            raise AccountSetupException(
+                "bucket_region", bucket=candidate.name, bucketRegion=probe.region, region=region
+            )
+        return SetupStep("bucket", candidate.name, "reuse", source=candidate.source)
+    if probe.state == "forbidden" and candidate.source != "cdkBootstrap":
         raise AccountSetupException(
             "bucket_unavailable",
             bucket=candidate.name,
             source=BUCKET_SOURCE_LABELS[candidate.source],
         )
-    if probe.region is not None and probe.region != region:
+    return None
+
+
+def creation_target(request: SetupRequest, account: str) -> BucketCandidate:
+    """El bucket que se crea: el nombre explícito o el nombre por defecto."""
+    explicit = request.bucket or request.environment_bucket
+    if explicit:
+        return BucketCandidate(explicit, "argument" if request.bucket else "environment")
+    return BucketCandidate(default_artifact_bucket_name(account, request.region), "rayitoDefault")
+
+
+def needs_default_probe(target: BucketCandidate, artifact_stack: StackObservation) -> bool:
+    """El nombre por defecto se sonda sólo si ninguna pila lo gestiona: un
+    bucket con ese nombre que no creó la pila nunca se adopta."""
+    return target.source == "rayitoDefault" and artifact_stack.status is None
+
+
+def plan_bucket_creation(
+    target: BucketCandidate,
+    artifact_stack: StackObservation,
+    probe: BucketProbe | None,
+    region: str,
+) -> SetupStep:
+    """El paso del bucket cuando nada se reutilizó, según la pila
+    `rayito-m0-artifacts`: `reuse` o `wait` el bucket que ya gestiona,
+    `create` el del objetivo, o el error que corresponda."""
+    condition = classify_stack(artifact_stack)
+    if condition == "blocked":
         raise AccountSetupException(
-            "bucket_region", bucket=candidate.name, bucketRegion=probe.region, region=region
+            "stack_blocked", name=artifact_stack.name, status=str(artifact_stack.status)
         )
-    return SetupStep("bucket", candidate.name, "reuse", source=candidate.source)
+    if condition == "missing":
+        return _create_unless_taken(target, probe)
+    if condition == "usable":
+        managed = stack_output(artifact_stack, BUCKET_NAME_OUTPUT_KEY, ARTIFACT_TEMPLATE_PATH)
+        action: SetupAction = "reuse"
+    else:
+        managed = artifact_stack.parameters.get(BUCKET_NAME_PARAMETER, target.name)
+        action = "wait"
+    _require_same_bucket(target, managed)
+    return SetupStep(
+        "bucket", managed, action, source="artifactStack", status=artifact_stack.status
+    )
+
+
+def _create_unless_taken(target: BucketCandidate, probe: BucketProbe | None) -> SetupStep:
+    if target.source in EXPLICIT_BUCKET_SOURCES:
+        return SetupStep("bucket", target.name, "create", source=target.source)
+    if probe is None:
+        raise ValueError("el nombre por defecto se sonda antes de crearlo")
+    if probe.state != "missing":
+        raise AccountSetupException("bucket_taken", bucket=target.name, stack=ARTIFACT_STACK_NAME)
+    return SetupStep("bucket", target.name, "create", source=target.source)
+
+
+def _require_same_bucket(target: BucketCandidate, managed: str) -> None:
+    if target.source in EXPLICIT_BUCKET_SOURCES and target.name != managed:
+        raise AccountSetupException(
+            "artifact_stack_conflict",
+            stack=ARTIFACT_STACK_NAME,
+            existing=managed,
+            bucket=target.name,
+        )
+
+
+def stack_output(observation: StackObservation, key: str, template: str) -> str:
+    """La salida `key` de una pila de Rayito; sin ella la pila no es la
+    plantilla `template`."""
+    value = observation.outputs.get(key)
+    if not value:
+        raise AccountSetupException(
+            "stack_incomplete", name=observation.name, output=key, template=template
+        )
+    return value
 
 
 def classify_stack(stack: StackObservation) -> StackCondition:
@@ -444,8 +567,7 @@ def plan_stack(stack: StackObservation, bucket: str) -> SetupStep:
         raise AccountSetupException("stack_blocked", name=stack.name, status=str(stack.status))
     if condition == "in_progress":
         return SetupStep("iamStack", IAM_STACK_NAME, "wait", status=stack.status)
-    if BUILD_ROLE_OUTPUT_KEY not in stack.outputs:
-        raise AccountSetupException("stack_incomplete", name=stack.name)
+    stack_output(stack, BUILD_ROLE_OUTPUT_KEY, IAM_TEMPLATE_PATH)
     previous = stack.parameters.get(ARTIFACT_BUCKET_PARAMETER)
     if previous == bucket:
         return SetupStep("iamStack", IAM_STACK_NAME, "reuse", status=stack.status)
@@ -500,10 +622,12 @@ def plan_image(image: ImageObservation, request: SetupRequest) -> SetupStep:
 
 
 def cost_lines(steps: Sequence[SetupStep]) -> tuple[str, ...]:
-    """Sólo el coste de lo que cuesta: la pila de IAM al crear o actualizar;
-    la imagen y el zip al publicar."""
+    """Sólo el coste de lo que cuesta: el bucket al crearse (primero), la pila
+    de IAM al crear o actualizar; la imagen y el zip al publicar."""
     lines: list[str] = []
     by_resource = {step.resource: step for step in steps}
+    if by_resource["bucket"].action == "create":
+        lines.append(COST_TEXTS["bucket"].format(days=ARTIFACT_EXPIRATION_DAYS))
     if by_resource["iamStack"].action in {"create", "update"}:
         lines.append(COST_TEXTS["iamStack"])
     if by_resource["baseImage"].action == "publish":
@@ -515,12 +639,10 @@ def plan_setup(
     request: SetupRequest,
     account: str,
     stack: StackObservation,
-    candidate: BucketCandidate,
-    probe: BucketProbe,
+    bucket_step: SetupStep,
     image: ImageObservation,
 ) -> SetupPlan:
     require_supported_region(request.region)
-    bucket_step = decide_bucket(candidate, probe, request.region)
     steps = (
         bucket_step,
         plan_stack(stack, bucket_step.name),

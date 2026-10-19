@@ -9,6 +9,7 @@ from types import MappingProxyType
 from typing import Any, Final
 
 from rayito._account_setup._domain import (
+    ARTIFACT_STACK_NAME,
     BUCKET_SOURCE_LABELS,
     ResourceKind,
     SetupPlan,
@@ -45,6 +46,8 @@ RESOURCE_LABELS: Final[Mapping[ResourceKind, str]] = MappingProxyType(
 ACTION_TEMPLATES: Final[Mapping[str, str]] = MappingProxyType(
     {
         "bucketReuse": "reutilizar ({source})",
+        "bucketCreate": "crear con la pila {stack} ({source})",
+        "bucketWait": "pila {stack} en curso ({status}): esperar",
         "stackCreate": "crear",
         "stackUpdate": "actualizar ArtifactBucket {previousBucket} -> {bucket}",
         "stackReuse": "ya existe ({status})",
@@ -69,7 +72,9 @@ ERROR_PREFIX: Final = "rayito: "
 #: Clave de `ACTION_TEMPLATES` de cada (recurso, acción).
 ACTION_KEYS: Final[Mapping[tuple[str, str], str]] = MappingProxyType(
     {
+        ("bucket", "create"): "bucketCreate",
         ("bucket", "reuse"): "bucketReuse",
+        ("bucket", "wait"): "bucketWait",
         ("iamStack", "create"): "stackCreate",
         ("iamStack", "update"): "stackUpdate",
         ("iamStack", "reuse"): "stackReuse",
@@ -86,6 +91,7 @@ def action_text(plan: SetupPlan, step: SetupStep) -> str:
     else:
         key = ACTION_KEYS[(step.resource, step.action)]
     return ACTION_TEMPLATES[key].format(
+        stack=ARTIFACT_STACK_NAME,
         source=BUCKET_SOURCE_LABELS.get(step.source or "", ""),
         status=step.status,
         previousBucket=step.previous_bucket,

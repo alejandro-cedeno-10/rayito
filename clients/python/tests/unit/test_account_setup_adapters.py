@@ -14,7 +14,13 @@ from botocore.config import Config
 from botocore.exceptions import ClientError
 from botocore.stub import Stubber
 
-from rayito._account_setup._aws import CloudFormationIamStack, MicrovmBaseImages, S3ArtifactBuckets
+from rayito._account_setup._artifact_stack import ARTIFACT_STACK_COMPONENT
+from rayito._account_setup._aws import (
+    MicrovmBaseImages,
+    S3ArtifactBuckets,
+    artifact_stack_gateway,
+    iam_stack_gateway,
+)
 from rayito._account_setup._domain import StackObservation
 from rayito._account_setup._iam_stack import IAM_STACK_COMPONENT
 from rayito._account_setup._service import AccountSetup
@@ -79,12 +85,12 @@ def test_only_the_bucket_is_required_and_the_other_parameters_keep_the_template_
 
 
 def test_observing_a_missing_stack() -> None:
-    gateway = CloudFormationIamStack(FakeStackProvisioner())
+    gateway = iam_stack_gateway(FakeStackProvisioner())
     assert gateway.observe() == StackObservation(STACK, None, {}, {})
 
 
 def test_observing_an_existing_stack_maps_status_outputs_and_parameters() -> None:
-    gateway = CloudFormationIamStack(FakeStackProvisioner(stacks={STACK: deployed_stack()}))
+    gateway = iam_stack_gateway(FakeStackProvisioner(stacks={STACK: deployed_stack()}))
     observed = gateway.observe()
     assert observed.status == "CREATE_COMPLETE"
     assert observed.outputs == {"BuildRoleArn": BUILD_ROLE}
@@ -93,7 +99,7 @@ def test_observing_an_existing_stack_maps_status_outputs_and_parameters() -> Non
 
 def test_create_sends_named_iam_and_only_the_bucket_then_waits() -> None:
     provisioner = RecordingProvisioner()
-    observed = CloudFormationIamStack(provisioner).create(BUCKET)
+    observed = iam_stack_gateway(provisioner).create(BUCKET)
     assert provisioner.created_component is not None
     assert provisioner.created_component.capabilities == ("CAPABILITY_NAMED_IAM",)
     assert provisioner.sent_parameters == {"ArtifactBucket": BUCKET}
@@ -103,7 +109,7 @@ def test_create_sends_named_iam_and_only_the_bucket_then_waits() -> None:
 
 def test_update_sends_only_the_bucket_and_keeps_the_six_others() -> None:
     provisioner = FakeStackProvisioner(stacks={STACK: deployed_stack()})
-    CloudFormationIamStack(provisioner).update_bucket(OTHER_BUCKET)
+    iam_stack_gateway(provisioner).update_bucket(OTHER_BUCKET)
     assert provisioner.sent_parameters == {"ArtifactBucket": OTHER_BUCKET}
     assert provisioner.sent_keep_previous == tuple(sorted(OTHER_PARAMETERS))
     assert ("update", STACK) in provisioner.calls
@@ -112,7 +118,7 @@ def test_update_sends_only_the_bucket_and_keeps_the_six_others() -> None:
 
 def test_wait_polls_the_stack_and_observes_it_again() -> None:
     provisioner = FakeStackProvisioner(stacks={STACK: deployed_stack()})
-    observed = CloudFormationIamStack(provisioner, wait_timeout_seconds=7.0).wait()
+    observed = iam_stack_gateway(provisioner, wait_timeout_seconds=7.0).wait()
     assert provisioner.calls[0] == ("wait", STACK, "deployed")
     assert provisioner.wait_timeouts == [7.0]
     assert observed.status == "CREATE_COMPLETE"
@@ -120,8 +126,41 @@ def test_wait_polls_the_stack_and_observes_it_again() -> None:
 
 def test_wait_fails_if_the_stack_vanished() -> None:
     with pytest.raises(StackException) as caught:
-        CloudFormationIamStack(FakeStackProvisioner()).wait()
+        iam_stack_gateway(FakeStackProvisioner()).wait()
     assert caught.value.code == "failed"
+
+
+ARTIFACT_STACK = "rayito-m0-artifacts"
+
+
+def test_the_artifact_component_declares_the_parameters_of_the_packaged_template() -> None:
+    template = load_template(ARTIFACT_STACK_COMPONENT)
+    assert component_parameter_names(ARTIFACT_STACK_COMPONENT) == template_parameter_names(template)
+
+
+def test_the_artifact_component_is_not_in_the_stack_catalog() -> None:
+    assert ARTIFACT_STACK_COMPONENT.name not in {component.name for component in COMPONENTS}
+
+
+def test_only_the_bucket_name_is_required_in_the_artifact_component() -> None:
+    required = [p.name for p in ARTIFACT_STACK_COMPONENT.parameters if p.required]
+    assert required == ["BucketName"]
+    assert all(p.default is None for p in ARTIFACT_STACK_COMPONENT.parameters)
+
+
+def test_observing_a_missing_artifact_stack() -> None:
+    gateway = artifact_stack_gateway(FakeStackProvisioner())
+    assert gateway.observe() == StackObservation(ARTIFACT_STACK, None, {}, {})
+
+
+def test_the_artifact_stack_create_sends_only_the_bucket_name_and_no_capabilities() -> None:
+    provisioner = RecordingProvisioner()
+    observed = artifact_stack_gateway(provisioner).create(BUCKET)
+    assert provisioner.created_component is not None
+    assert provisioner.created_component.capabilities == ()
+    assert provisioner.sent_parameters == {"BucketName": BUCKET}
+    assert ("create", ARTIFACT_STACK) in provisioner.calls
+    assert (observed.name, observed.status) == (ARTIFACT_STACK, "CREATE_COMPLETE")
 
 
 def stubbed(service: str) -> Any:
@@ -150,25 +189,33 @@ def test_probe_reports_the_region_of_an_accessible_bucket() -> None:
     result = probe(
         lambda stub: stub.add_response("head_bucket", {"BucketRegion": REGION}, {"Bucket": BUCKET})
     )
-    assert (result.exists, result.region) == (True, REGION)
+    assert (result.state, result.region) == ("found", REGION)
 
 
 def test_probe_of_a_bucket_without_a_reported_region() -> None:
     result = probe(lambda stub: stub.add_response("head_bucket", {}, {"Bucket": BUCKET}))
-    assert (result.exists, result.region) == (True, None)
+    assert (result.state, result.region) == ("found", None)
 
 
-@pytest.mark.parametrize("code", ["404", "403"])
-def test_probe_treats_not_found_and_forbidden_as_missing(code: str) -> None:
+@pytest.mark.parametrize(
+    ("error_code", "state"),
+    [
+        ("404", "missing"),
+        ("NoSuchBucket", "missing"),
+        ("NotFound", "missing"),
+        ("403", "forbidden"),
+    ],
+)
+def test_probe_tells_a_missing_bucket_from_a_forbidden_one(error_code: str, state: str) -> None:
     result = probe(
         lambda stub: stub.add_client_error(
             "head_bucket",
-            service_error_code=code,
-            http_status_code=int(code),
+            service_error_code=error_code,
+            http_status_code=int(error_code) if error_code.isdigit() else 404,
             expected_params={"Bucket": BUCKET},
         )
     )
-    assert (result.exists, result.region) == (False, None)
+    assert (result.state, result.region) == (state, None)
 
 
 def test_probe_lets_any_other_error_through() -> None:

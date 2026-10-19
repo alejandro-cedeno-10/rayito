@@ -1,4 +1,4 @@
-"""Los cinco puertos de `AccountSetup` en memoria (ADR-030): registran cada
+"""Los seis puertos de `AccountSetup` en memoria (ADR-030): registran cada
 llamada y se construyen desde el `input` de `testdata/account-setup/*.json`
 (el mismo formato en `plan-vectors.json` y `cli-cases.json`). Sin AWS, sin
 red y sin disco fuera del directorio que se les da."""
@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -24,6 +24,7 @@ from rayito._account_setup._domain import (
     PublishedImage,
     StackObservation,
     cdk_bucket_name,
+    default_artifact_bucket_name,
 )
 from rayito._account_setup._ports import AccountSetupGateways, Progress
 from rayito._images import account_image_arn
@@ -49,10 +50,13 @@ def load_cases(name: str) -> list[dict[str, Any]]:
 
 
 def fill_placeholders(value: Any, *, account: str, region: str, sdk_version: str) -> Any:
-    """Sustituye `{sdkVersion}` y `{cdkBucket}` en cadenas, claves y listas."""
+    """Sustituye `{sdkVersion}`, `{cdkBucket}` y `{defaultBucket}` en cadenas,
+    claves y listas."""
     if isinstance(value, str):
-        return value.replace("{sdkVersion}", sdk_version).replace(
-            "{cdkBucket}", cdk_bucket_name(account, region)
+        return (
+            value.replace("{sdkVersion}", sdk_version)
+            .replace("{cdkBucket}", cdk_bucket_name(account, region))
+            .replace("{defaultBucket}", default_artifact_bucket_name(account, region))
         )
     if isinstance(value, list):
         return [
@@ -67,6 +71,18 @@ def fill_placeholders(value: Any, *, account: str, region: str, sdk_version: str
             for key, item in value.items()
         }
     return value
+
+
+def bucket_reads(calls: Sequence[Call]) -> list[str]:
+    """Las lecturas que resuelven el bucket, como `bucketReads` de
+    `plan-vectors.json`: `head:<bucket>` y `artifactStack`."""
+    reads: list[str] = []
+    for call in calls:
+        if call[0] == "head_bucket":
+            reads.append(f"head:{call[1]}")
+        elif call[0] == "describe_artifact_stack":
+            reads.append("artifactStack")
+    return reads
 
 
 def stack_from_vector(stack: Mapping[str, Any] | None, name: str) -> StackObservation:
@@ -139,9 +155,41 @@ class FakeIamStack:
 
 
 @dataclass
+class FakeArtifactStack:
+    """La pila `rayito-m0-artifacts` en memoria: `create` y `wait` la dejan
+    completa con la salida `BucketName`."""
+
+    recorder: Recorder
+    stack: StackObservation
+    created_outputs_key: str = "BucketName"
+
+    def observe(self) -> StackObservation:
+        self.recorder.record("describe_artifact_stack")
+        return self.stack
+
+    def create(self, bucket: str) -> StackObservation:
+        self.recorder.record("create_artifact_stack", bucket)
+        return self._complete(bucket)
+
+    def wait(self) -> StackObservation:
+        self.recorder.record("wait_artifact_stack")
+        return self._complete(self.stack.parameters.get("BucketName", ""))
+
+    def _complete(self, bucket: str) -> StackObservation:
+        self.stack = StackObservation(
+            self.stack.name,
+            "CREATE_COMPLETE",
+            {self.created_outputs_key: bucket},
+            {"BucketName": bucket},
+        )
+        return self.stack
+
+
+@dataclass
 class FakeBuckets:
     recorder: Recorder
     buckets: Mapping[str, str]
+    forbidden: Sequence[str] = ()
     account: str = ACCOUNT
 
     def account_id(self) -> str:
@@ -150,9 +198,11 @@ class FakeBuckets:
 
     def probe(self, bucket: str) -> BucketProbe:
         self.recorder.record("head_bucket", bucket)
+        if bucket in self.forbidden:
+            return BucketProbe("forbidden", None)
         if bucket not in self.buckets:
-            return BucketProbe(exists=False, region=None)
-        return BucketProbe(exists=True, region=self.buckets[bucket])
+            return BucketProbe("missing", None)
+        return BucketProbe("found", self.buckets[bucket])
 
 
 @dataclass
@@ -204,10 +254,11 @@ class FakeReleases:
 
 @dataclass
 class FakeAccount:
-    """Los cinco dobles de un `AccountSetupGateways` con su registro común."""
+    """Los seis dobles de un `AccountSetupGateways` con su registro común."""
 
     recorder: Recorder
     iam_stack: FakeIamStack
+    artifact_stack: FakeArtifactStack
     buckets: FakeBuckets
     images: FakeImages
     publisher: FakePublisher
@@ -217,6 +268,7 @@ class FakeAccount:
     def gateways(self) -> AccountSetupGateways:
         return AccountSetupGateways(
             iam_stack=self.iam_stack,
+            artifact_stack=self.artifact_stack,
             buckets=self.buckets,
             images=self.images,
             publisher=self.publisher,
@@ -238,7 +290,10 @@ def from_vector_input(vector: Mapping[str, Any], sdk_version: str) -> FakeAccoun
     return FakeAccount(
         recorder=recorder,
         iam_stack=FakeIamStack(recorder, stack_from_vector(data["stack"], "rayito-m0-iam")),
-        buckets=FakeBuckets(recorder, data["buckets"], account),
+        artifact_stack=FakeArtifactStack(
+            recorder, stack_from_vector(data["artifactStack"], "rayito-m0-artifacts")
+        ),
+        buckets=FakeBuckets(recorder, data["buckets"], data["forbiddenBuckets"], account),
         images=FakeImages(recorder, image_from_vector(data["image"], "rayito-base", arn)),
         publisher=FakePublisher(recorder, arn),
         releases=FakeReleases(recorder),
