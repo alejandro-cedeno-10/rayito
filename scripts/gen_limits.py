@@ -499,6 +499,86 @@ GROUPS: tuple[tuple[str, ...], ...] = (
         "agentSecretNameTemplate",
         "agentTokenFileDefault",
     ),
+    (
+        # agentcore-deploy (ADR-031): deploying an agent to Amazon Bedrock
+        # AgentCore Runtime. Regions: AgentCore Runtime microVMs
+        # (docs.aws.amazon.com/bedrock-agentcore/latest/devguide/
+        # agentcore-regions.html) intersected with CodeBuild ARM_CONTAINER
+        # (docs.aws.amazon.com/codebuild/latest/userguide/
+        # build-env-ref-compute-types.html), checked 2026-10-19. Names and
+        # prefixes are Rayito's (design D4). A runtime session id is 33 to 100
+        # chars (the request accepts 33-256; the SessionId echoed back is
+        # 1-100, so Rayito never sends a longer one), the
+        # lifecycle range on microVMs (60 s to 8 h), the 15-minute request
+        # timeout, the 60-minute stream, the 2 GB image, 50 environment
+        # variables of up to 5000 chars and 50 tags: API reference and
+        # "Quotas for Amazon Bedrock AgentCore" (consulted 2026-10-19). The
+        # build environment, image and compute type: CodeBuild "EC2 compute
+        # images" and "compute types" pages. Prices, us-east-1: AgentCore
+        # Runtime microVMs V1 (aws.amazon.com/bedrock/agentcore/pricing,
+        # 2026-10-19), CodeBuild arm1.small and the free tier, ECR storage and
+        # CloudWatch Logs ingestion (AWS Price List API, publications
+        # 2026-09-11, 2026-09-11 and 2026-10-07). The base image mirror holds
+        # the same digest as agentExportBaseImageDigest (measured 2026-10-19).
+        "agentcoreSupportedRegions",
+        "agentcoreRuntimeNamePrefix",
+        "agentcoreRuntimeNameMaxLength",
+        "agentcoreStackNamePrefix",
+        "agentcoreRepositoryPrefix",
+        "agentcoreSourcePrefix",
+        "agentcoreImageTagPrefix",
+        "agentcoreImageTagHexChars",
+        "agentcoreDescriptionMarker",
+        "agentcoreEndpointName",
+        "agentcoreRuntimeLogGroupPrefix",
+        "agentcoreServerProtocol",
+        "agentcoreNetworkMode",
+        "agentcoreSessionIdPrefix",
+        "agentcoreSessionIdMinLength",
+        "agentcoreSessionIdMaxLength",
+        "agentcoreLifecycleMinSeconds",
+        "agentcoreLifecycleMaxSeconds",
+        "agentcoreIdleSessionTimeoutDefaultSeconds",
+        "agentcoreRequestTimeoutSeconds",
+        "agentcoreStreamMaxSeconds",
+        "agentcoreMaxImageBytes",
+        "agentcoreMaxEnvironmentVariables",
+        "agentcoreEnvironmentValueMaxChars",
+        "agentcoreMaxTags",
+        "agentcoreReadyTimeoutSeconds",
+        "agentcoreReadyPollSeconds",
+        "agentcoreDeleteTimeoutSeconds",
+        "agentcoreBuildTimeoutMinutes",
+        "agentcoreBuildPollSeconds",
+        "agentcoreBuildEnvironmentType",
+        "agentcoreBuildImage",
+        "agentcoreBuildComputeType",
+        "agentcoreImageRetentionCount",
+        "agentcoreBuildLogRetentionDays",
+        "agentcoreBaseImageMirror",
+        # The framework adapters of the Node bridge whose Bedrock client reads
+        # credentials only from environment variables (the published
+        # @ai-sdk/amazon-bedrock has no AWS credential provider in its
+        # dependency tree: testdata/agent-samples/typescript/vercel-ai-sdk/
+        # package-lock.json, checked 2026-10-19), and the sha256 of the
+        # botocore venv the host uses to read the runtime role for them.
+        "agentcoreEnvCredentialAdapters",
+        "agentAwsCredentialsRequirementsSha256",
+        "agentcoreRuntimeVcpuHourPriceUsd",
+        "agentcoreRuntimeGbHourPriceUsd",
+        "codebuildArmSmallMinutePriceUsd",
+        "codebuildFreeTierMinutesPerMonth",
+        "ecrStorageGbMonthPriceUsd",
+        "cloudwatchLogsIngestionGbPriceUsd",
+        # The geographic prefixes of system-defined Bedrock inference profile
+        # ids that appear in the Bedrock user guide ("Prerequisites for
+        # inference profiles" and "Supported Regions and models for inference
+        # profiles", consulted 2026-10-19). A model id with one of them
+        # needs the profile ARN and the foundation model in every region; a
+        # global profile also needs the region-less foundation-model ARN.
+        "bedrockInferenceProfilePrefixes",
+        "bedrockGlobalProfilePrefix",
+    ),
 )
 
 PYTHON_HEADER = '''"""Límites y cuotas de Lambda MicroVMs que el SDK valida en cliente.
@@ -530,6 +610,7 @@ CONSTANT_NAME_OVERRIDES = {
     "agentStrandsRequirementsSha256": "AGENT_STRANDS_REQUIREMENTS_SHA256",
     "agentStrandsHarnessRequirementsSha256": "AGENT_STRANDS_HARNESS_REQUIREMENTS_SHA256",
     "agentHermesRequirementsSha256": "AGENT_HERMES_REQUIREMENTS_SHA256",
+    "agentAwsCredentialsRequirementsSha256": "AGENT_AWS_CREDENTIALS_REQUIREMENTS_SHA256",
     "agentHermesPythonSha256": "AGENT_HERMES_PYTHON_SHA256",
     "agentPythonBuildSha256": "AGENT_PYTHON_BUILD_SHA256",
     "agentNodeBuildSha256": "AGENT_NODE_BUILD_SHA256",
