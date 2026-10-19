@@ -37,7 +37,7 @@ import { AgentFleet } from "../../src/agent/fleet.js";
 import { AgentProject } from "../../src/agent/project.js";
 import { ScalingOptions } from "../../src/agent/scaling-domain.js";
 import { AgentTemplate } from "../../src/agent/template.js";
-import { InvalidArgumentError } from "../../src/errors.js";
+import { InvalidArgumentError, StackError } from "../../src/errors.js";
 import { AGENT_SOURCE_DEFAULT_EXCLUDES } from "../../src/limits.js";
 import { generateAccessToken } from "../../src/payload.js";
 import { ACCESS_TOKEN_ENV_VAR } from "../../src/sandbox/launch.js";
@@ -276,6 +276,34 @@ describe("shared vectors", () => {
       expect(stacks.calls).toEqual([["describe", ARTIFACT_STACK_NAME]]);
     },
   );
+
+  test.each(["AccessDenied", "AccessDeniedException"])(
+    "AwsResolver treats %s on DescribeStacks as no bucket and deployAgent keeps the old error",
+    async (name) => {
+      const stacks = {
+        describe: async () => {
+          throw new StackError(`${name}: no`, { code: "failed", cause: { name, message: "no" } });
+        },
+      };
+      const resolver = new AwsResolver({ region: "us-east-1", stacks });
+      expect(await resolver.artifactStackBucket()).toBeUndefined();
+      const failure = await resolveBucket(undefined, undefined, {}, () =>
+        resolver.artifactStackBucket(),
+      ).catch((error: unknown) => error);
+      expect(failure).toBeInstanceOf(InvalidArgumentError);
+      expect((failure as Error).message).toContain("Rayito no crea buckets");
+    },
+  );
+
+  test("AwsResolver still propagates any other DescribeStacks failure", async () => {
+    const stacks = {
+      describe: async () => {
+        throw new StackError("Throttling: no", { code: "failed", cause: { name: "Throttling" } });
+      },
+    };
+    const resolver = new AwsResolver({ region: "us-east-1", stacks });
+    await expect(resolver.artifactStackBucket()).rejects.toBeInstanceOf(StackError);
+  });
 
   test("AwsResolver finds no bucket when the stack does not exist", async () => {
     const stacks = new FakeStackProvisioner();

@@ -25,7 +25,7 @@ import {
 import { clientConfig } from "../aws/control-plane.js";
 import { awsCode } from "../aws/optional-client.js";
 import { sanitizeAwsError } from "../aws/sanitize.js";
-import { InvalidArgumentError } from "../errors.js";
+import { InvalidArgumentError, StackError } from "../errors.js";
 import { accountImageArn } from "../images/gateway.js";
 import { generateAccessToken } from "../payload.js";
 import { ACCESS_TOKEN_ENV_VAR } from "../sandbox/launch.js";
@@ -66,6 +66,20 @@ export const GATEWAY_SECRET_ENV_VARS: Readonly<Record<string, string>> = Object.
 
 /** `BUCKET_ENV_VAR` (el bucket de artefactos, el mismo de `rayito image publish`) y las reglas del bucket del bootstrap de CDK viven en `account-setup/domain.ts`. */
 export { BUCKET_ENV_VAR, CDK_BOOTSTRAP_QUALIFIER, cdkBucketName };
+
+/** Códigos de acceso denegado de CloudFormation (`AccessDenied`) y de la forma `*Exception`. */
+const ACCESS_DENIED_CODES: ReadonlySet<string> = new Set(["AccessDenied", "AccessDeniedException"]);
+
+/** Un `StackError` de `describe` cuya causa es un acceso denegado de AWS. */
+function isAccessDenied(error: unknown): boolean {
+  if (!(error instanceof StackError)) {
+    return false;
+  }
+  const cause = error.cause as { name?: unknown; code?: unknown } | undefined;
+  return [cause?.name, cause?.code].some(
+    (code) => typeof code === "string" && ACCESS_DENIED_CODES.has(code),
+  );
+}
 
 export type BucketSource = "argument" | "project_file" | "environment" | "discovered";
 
@@ -349,7 +363,9 @@ export class AwsResolver implements DeployAws {
     return true;
   }
 
-  /** `DescribeStacks` de `rayito-m0-artifacts`; sólo lectura, nunca crea la pila. */
+  /** `DescribeStacks` de `rayito-m0-artifacts`; sólo lectura, nunca crea la pila.
+   * Sin `cloudformation:DescribeStacks` es como si no hubiera pila: quien no
+   * tenía bucket sigue recibiendo el mismo error de siempre. */
   async artifactStackBucket(): Promise<string | undefined> {
     const stacks =
       this.#stacks ??
@@ -357,8 +373,15 @@ export class AwsResolver implements DeployAws {
         region: this.resolvedRegion(),
         credentials: this.#credentials,
       });
-    const status = await stacks.describe(ARTIFACT_STACK_NAME);
-    return artifactStackBucket({ status: status?.state, outputs: status?.outputs ?? {} });
+    try {
+      const status = await stacks.describe(ARTIFACT_STACK_NAME);
+      return artifactStackBucket({ status: status?.state, outputs: status?.outputs ?? {} });
+    } catch (error) {
+      if (isAccessDenied(error)) {
+        return undefined;
+      }
+      throw error;
+    }
   }
 
   async imageExists(name: string): Promise<boolean> {
