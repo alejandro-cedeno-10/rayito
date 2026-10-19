@@ -6,6 +6,26 @@ versionado [SemVer](https://semver.org/lang/es/).
 
 ## [Unreleased]
 
+### Añadido
+
+- **`rayito setup`**: prepara una cuenta y una región de AWS para Rayito en una
+  orden idempotente, como `cdk bootstrap`. Lee la cuenta, muestra el plan y el
+  coste aproximado, pide confirmación (`--yes` sin terminal o con `--json`;
+  `--dry-run` sólo lee) y termina con `rayito doctor`. Crea o actualiza la pila
+  de IAM `rayito-m0-iam` (sólo `ArtifactBucket`), reutiliza el bucket de
+  `--bucket`, `RAYITO_BUCKET`, la pila o el bootstrap de CDK (nunca crea uno) y
+  publica `rayito-base` desde el `rayito-image.zip` de la release
+  `rayd-v<versión>`, comprobado contra su `SHA256SUMS`, o desde `--artifact`.
+  Un build en curso se espera en vez de lanzar otro. Mismas opciones, textos,
+  documento JSON y códigos de salida que la CLI de Python.
+
+### Cambiado
+
+- Los errores de `Sandbox.create()` (`ResourceNotFoundException` de
+  `RunMicrovm`) y de `deployAgent()` por falta de bucket o de imagen base
+  terminan con la pista "si la cuenta o la región aún no están preparadas,
+  ejecuta `rayito setup`". La clase, el código y la condición no cambian.
+
 ## [0.14.0] - 2026-10-17
 
 ### Añadido
