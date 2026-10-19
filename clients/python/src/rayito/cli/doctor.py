@@ -105,10 +105,12 @@ def render_human(results: list[CheckResult]) -> None:
     )
 
 
-def render_json(
+def doctor_document(
     clients: Clients, context: DoctorContext, results: list[CheckResult], code: int
-) -> None:
-    document: dict[str, Any] = {
+) -> dict[str, Any]:
+    """El documento de `rayito --json doctor`; `rayito setup` lo incrusta
+    tal cual bajo `doctor`."""
+    return {
         "rayito": __version__,
         "region": clients.region,
         "account": context.account,
@@ -118,7 +120,12 @@ def render_json(
         "launched_sandbox_id": None if context.launched is None else context.launched.sandbox_id,
         "exit_code": code,
     }
-    emit_json(document)
+
+
+def render_json(
+    clients: Clients, context: DoctorContext, results: list[CheckResult], code: int
+) -> None:
+    emit_json(doctor_document(clients, context, results, code))
 
 
 def doctor(

@@ -1,5 +1,5 @@
 """La aplicación `typer`: opciones globales, los grupos `image` y `sandbox`,
-el comando `doctor` y `run_shim` para los scripts de `scripts/`.
+los comandos `doctor` y `setup` y `run_shim` para los scripts de `scripts/`.
 
 Códigos de salida: 0 éxito; 1 la operación falló (build no lanzable,
 candidato de prune que sobrevive, id desconocido en `kill`, `FAIL` del
@@ -26,6 +26,7 @@ from rayito.cli.domain import domain_app
 from rayito.cli.events import events_app
 from rayito.cli.image import image_app
 from rayito.cli.sandbox import sandbox_app
+from rayito.cli.setup import setup
 from rayito.cli.stack import stack_app
 from rayito.cli.template import template_app
 
@@ -59,6 +60,7 @@ app.add_typer(template_app, name="template")
 app.add_typer(domain_app, name="domain")
 app.add_typer(agent_app, name="agent")
 app.command("doctor")(doctor)
+app.command("setup")(setup)
 app.add_typer(dashboard_app, name="dashboard")
 
 

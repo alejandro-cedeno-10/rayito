@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 import boto3
 from botocore.config import Config
@@ -21,6 +21,9 @@ from rayito._aws_region import REGION_ENV_VAR, resolve_region
 from rayito._transport import TransportSettings
 from rayito._version import __version__
 from rayito.sandbox_sync.main import Sandbox
+
+if TYPE_CHECKING:
+    from rayito._account_setup._ports import AccountSetupGateways
 
 SERVICE_NAMES: dict[str, str] = {
     "microvms": "lambda-microvms",
@@ -60,7 +63,9 @@ class Clients:
     `clients` admite clientes ya construidos (los stubs de los tests);
     `control_plane_override`, `sandbox_factory` y `transport` son las
     costuras del `doctor` y de los comandos `sandbox` (un plano falso, un
-    `Sandbox` falso para `--launch`, un `rayd` falso en loopback).
+    `Sandbox` falso para `--launch`, un `rayd` falso en loopback);
+    `account_setup_override` es la de `rayito setup` (los cinco puertos de
+    `AccountSetup` como dobles en memoria).
     """
 
     session: boto3.session.Session
@@ -70,6 +75,7 @@ class Clients:
     control_plane_override: ControlPlane | None = None
     sandbox_factory: SandboxFactory = Sandbox.create
     account_id_override: str | None = None
+    account_setup_override: AccountSetupGateways | None = None
     transport: TransportSettings = field(default_factory=TransportSettings)
 
     def client(self, name: str) -> Any:
