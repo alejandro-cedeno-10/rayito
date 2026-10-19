@@ -507,6 +507,29 @@ describe("AccountSetup with no reusable bucket", () => {
     expect(result.bucket).toBe("amzn-s3-demo-bucket1");
   });
 
+  it("the tags reach the creation of both stacks; without tags they are empty", async () => {
+    const tags = { Owner: "team", Env: "test" };
+    const fake = new FakeAccountSetup(inputWith(NO_BUCKET));
+    const service = new AccountSetup(fake);
+    const plan = await service.plan(requestOf(inputWith(NO_BUCKET)));
+    await service.apply(plan, { workdir: "/work", onProgress: () => undefined, tags });
+    expect(fake.tagsByCall.get("create_artifact_stack")).toEqual(tags);
+    expect(fake.tagsByCall.get("create")).toEqual(tags);
+    const untagged = await applied(inputWith(NO_BUCKET));
+    expect(untagged.fake.tagsByCall.get("create_artifact_stack")).toEqual({});
+    expect(untagged.fake.tagsByCall.get("create")).toEqual({});
+  });
+
+  it("the tags reach the update of an existing IAM stack", async () => {
+    const tags = { Owner: "team" };
+    const input = inputWith({ stack: { ...PREPARED_STACK, status: "UPDATE_COMPLETE" } });
+    const fake = new FakeAccountSetup(input);
+    const service = new AccountSetup(fake);
+    const plan = await service.plan({ ...requestOf(input), bucket: "amzn-s3-demo-bucket2" });
+    await service.apply(plan, { workdir: "/work", onProgress: () => undefined, tags });
+    expect(fake.tagsByCall.get("update")).toEqual(tags);
+  });
+
   it("a bucket stack in progress is waited for and never created", async () => {
     const input = inputWith({
       ...NO_BUCKET,

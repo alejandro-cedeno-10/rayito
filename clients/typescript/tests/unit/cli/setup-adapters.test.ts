@@ -64,7 +64,7 @@ afterEach(() => {
 describe("sdkIamStack", () => {
   it("creates the stack with CAPABILITY_NAMED_IAM's single parameter and waits for it", async () => {
     const provisioner = new FakeStackProvisioner();
-    const observed = await sdkIamStack(provisioner).create(BUCKET);
+    const observed = await sdkIamStack(provisioner).create(BUCKET, {});
     expect(provisioner.calls.map(([name]) => name)).toEqual([
       "describe",
       "create",
@@ -86,10 +86,18 @@ describe("sdkIamStack", () => {
         ["ArtifactBucket", ...OTHER_PARAMETERS].map((name) => [name, "x"]),
       ),
     });
-    await sdkIamStack(provisioner).updateBucket(BUCKET_B);
+    await sdkIamStack(provisioner).updateBucket(BUCKET_B, {});
     expect(provisioner.sentParameters).toEqual({ ArtifactBucket: BUCKET_B });
     expect(provisioner.sentKeepPrevious).toEqual(OTHER_PARAMETERS);
     expect(provisioner.calls.map(([name]) => name)).not.toContain("create");
+  });
+
+  it("sends the caller's tags on create and on update", async () => {
+    const provisioner = new FakeStackProvisioner();
+    await sdkIamStack(provisioner).create(BUCKET, { Owner: "team" });
+    expect(provisioner.sentTags).toMatchObject({ Owner: "team" });
+    await sdkIamStack(provisioner).updateBucket(BUCKET_B, { Env: "test" });
+    expect(provisioner.sentTags).toMatchObject({ Env: "test" });
   });
 
   it("observes a missing stack and an existing one", async () => {
@@ -142,7 +150,7 @@ describe("sdkIamStack", () => {
 describe("sdkArtifactStack", () => {
   it("creates the bucket stack with BucketName only and no capabilities", async () => {
     const provisioner = new FakeStackProvisioner();
-    const observed = await sdkArtifactStack(provisioner).create(BUCKET);
+    const observed = await sdkArtifactStack(provisioner).create(BUCKET, {});
     expect(provisioner.calls).toContainEqual(["create", ARTIFACT_STACK_NAME]);
     expect(provisioner.calls).toContainEqual(["wait", ARTIFACT_STACK_NAME, "deployed"]);
     expect(provisioner.sentParameters).toEqual({ BucketName: BUCKET });
@@ -151,6 +159,12 @@ describe("sdkArtifactStack", () => {
       name: ARTIFACT_STACK_NAME,
       parameters: { BucketName: BUCKET },
     });
+  });
+
+  it("sends the caller's tags when it creates the bucket stack", async () => {
+    const provisioner = new FakeStackProvisioner();
+    await sdkArtifactStack(provisioner).create(BUCKET, { Owner: "team" });
+    expect(provisioner.sentTags).toMatchObject({ Owner: "team" });
   });
 
   it("observes a missing stack under its own name", async () => {

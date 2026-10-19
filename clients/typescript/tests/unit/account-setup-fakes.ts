@@ -106,6 +106,8 @@ export interface FakeBehavior {
 
 export class FakeAccountSetup implements AccountSetupGateways {
   readonly calls: Call[] = [];
+  /** Las etiquetas recibidas por cada llamada que crea o actualiza una pila, por nombre de llamada. */
+  readonly tagsByCall = new Map<string, Readonly<Record<string, string>>>();
   readonly iamStack: IamStackGateway;
   readonly artifactStack: ArtifactStackGateway;
   readonly buckets: ArtifactBucketGateway;
@@ -137,13 +139,15 @@ export class FakeAccountSetup implements AccountSetupGateways {
         record("describe");
         return stack;
       },
-      create: async (bucket) => {
+      create: async (bucket, tags) => {
         record("create", bucket);
+        this.tagsByCall.set("create", tags);
         record("wait");
         return deployed(bucket);
       },
-      updateBucket: async (bucket) => {
+      updateBucket: async (bucket, tags) => {
         record("update", bucket);
+        this.tagsByCall.set("update", tags);
         record("wait");
         return deployed(bucket);
       },
@@ -172,8 +176,9 @@ export class FakeAccountSetup implements AccountSetupGateways {
         record("describe_artifact_stack");
         return bucketStack;
       },
-      create: async (bucket) => {
+      create: async (bucket, tags) => {
         record("create_artifact_stack", bucket);
+        this.tagsByCall.set("create_artifact_stack", tags);
         record("wait_artifact_stack");
         return bucketDeployed(bucket);
       },

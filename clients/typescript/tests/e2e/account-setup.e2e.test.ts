@@ -84,6 +84,8 @@ const REGION_VAR = "RAYITO_E2E_SETUP_REGION";
 const BUCKET_VAR = "RAYITO_E2E_SETUP_BUCKET";
 const ARTIFACT_VAR = "RAYITO_E2E_SETUP_ARTIFACT";
 const CREATE_BUCKET_VAR = "RAYITO_E2E_SETUP_CREATE_BUCKET";
+/** Etiquetas K=V separadas por comas que exige la organización de la cuenta de prueba. */
+const TAGS_VAR = "RAYITO_E2E_SETUP_TAGS";
 const CREATED_BUCKET_PREFIX = "rayito-e2e-setup-";
 const CREATED_BUCKET_SUFFIX_BYTES = 6;
 const CREATE_TEST_TIMEOUT_MS = 1_500_000;
@@ -123,6 +125,15 @@ function createBucketEnabled(): boolean {
   return setupEnabled() && process.env[CREATE_BUCKET_VAR] === "1";
 }
 
+/** `RAYITO_E2E_SETUP_TAGS` como pares `--tag K=V`; sin la variable, ninguno. */
+function tagArguments(): string[] {
+  return (process.env[TAGS_VAR] ?? "")
+    .split(",")
+    .map((pair) => pair.trim())
+    .filter((pair) => pair !== "")
+    .flatMap((pair) => ["--tag", pair]);
+}
+
 function setupArguments(region: string, ...extra: string[]): string[] {
   const bucket = process.env[BUCKET_VAR];
   const artifact = process.env[ARTIFACT_VAR];
@@ -133,6 +144,7 @@ function setupArguments(region: string, ...extra: string[]): string[] {
     "setup",
     ...(bucket ? ["--bucket", bucket] : []),
     ...(artifact ? ["--artifact", artifact] : []),
+    ...tagArguments(),
     ...extra,
   ];
 }
@@ -377,6 +389,7 @@ describe.runIf(createBucketEnabled())("rayito setup crea el bucket (AWS real)", 
       "--json",
       "setup",
       ...(artifact ? ["--artifact", artifact] : []),
+      ...tagArguments(),
       ...extra,
     ];
   }

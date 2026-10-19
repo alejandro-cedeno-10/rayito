@@ -31,6 +31,7 @@ import type {
   BaseImagePublisher,
   IamStackGateway,
   Progress,
+  StackTags,
 } from "../account-setup/ports.js";
 import { GithubReleaseSource } from "../account-setup/release.js";
 import type { AwsClientSettings } from "../aws/control-plane.js";
@@ -129,12 +130,12 @@ export class SdkSetupStack implements IamStackGateway, ArtifactStackGateway {
     );
   }
 
-  create(bucket: string): Promise<StackObservation> {
-    return this.#deployBucket(bucket);
+  create(bucket: string, tags: StackTags): Promise<StackObservation> {
+    return this.#deployBucket(bucket, tags);
   }
 
-  updateBucket(bucket: string): Promise<StackObservation> {
-    return this.#deployBucket(bucket);
+  updateBucket(bucket: string, tags: StackTags): Promise<StackObservation> {
+    return this.#deployBucket(bucket, tags);
   }
 
   /** Una pila que desaparece durante la espera es un fallo, como en Python. */
@@ -151,10 +152,11 @@ export class SdkSetupStack implements IamStackGateway, ArtifactStackGateway {
   }
 
   /** `deploy` crea o actualiza según exista la pila y sólo manda el nombre del bucket. */
-  async #deployBucket(bucket: string): Promise<StackObservation> {
+  async #deployBucket(bucket: string, tags: StackTags): Promise<StackObservation> {
     const status = await this.#stacks.deploy(this.#component, {
       stackName: this.#stackName,
       parameters: { [this.#bucketParameter]: bucket },
+      tags,
       waitTimeoutMs: this.#waitTimeoutMs,
     });
     return observationOf(status, this.#stackName);

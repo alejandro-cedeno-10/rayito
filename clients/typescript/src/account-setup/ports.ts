@@ -15,15 +15,18 @@ import type {
   StackObservation,
 } from "./domain.js";
 
+/** Etiquetas de pila K=V que `rayito setup --tag` aplica a las pilas que crea o actualiza. */
+export type StackTags = Readonly<Record<string, string>>;
+
 /** Una línea de progreso. */
 export type Progress = (message: string) => void;
 
 export interface IamStackGateway {
   observe(): Promise<StackObservation>;
   /** Crea la pila con `ArtifactBucket` y espera a que quede desplegada. */
-  create(bucket: string): Promise<StackObservation>;
+  create(bucket: string, tags: StackTags): Promise<StackObservation>;
   /** Cambia sólo `ArtifactBucket` (el resto conserva su valor) y espera. */
-  updateBucket(bucket: string): Promise<StackObservation>;
+  updateBucket(bucket: string, tags: StackTags): Promise<StackObservation>;
   /** Espera a que termine la operación en curso. */
   wait(): Promise<StackObservation>;
 }
@@ -35,7 +38,7 @@ export interface IamStackGateway {
 export interface ArtifactStackGateway {
   observe(): Promise<StackObservation>;
   /** Crea la pila con `BucketName` y espera a que quede desplegada. */
-  create(bucket: string): Promise<StackObservation>;
+  create(bucket: string, tags: StackTags): Promise<StackObservation>;
   /** Espera a que termine la operación en curso. */
   wait(): Promise<StackObservation>;
 }
