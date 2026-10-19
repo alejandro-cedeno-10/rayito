@@ -9,6 +9,7 @@
 
 import { describe, expect, it } from "vitest";
 import type { PortSpec } from "../../../src/aws/control-plane.js";
+import { CliConsole } from "../../../src/cli/console.js";
 import {
   CHECK_NAMES,
   CHECKS,
@@ -20,6 +21,7 @@ import {
 import * as constants from "../../../src/cli/doctor/constants.js";
 import { type DoctorContext, newDoctorContext } from "../../../src/cli/doctor/model.js";
 import { AwsOperationError, MissingPeerError } from "../../../src/cli/doctor/ports.js";
+import { doctorDocument, renderJson } from "../../../src/cli/doctor/render.js";
 import { AuthenticationError, SandboxError } from "../../../src/errors.js";
 import { IMAGE_ARTIFACT_KEY_PREFIX, MANAGED_BASE_IMAGE_NAME } from "../../../src/images/managed.js";
 import { sandboxInfo } from "../../../src/models.js";
@@ -44,6 +46,7 @@ import {
 } from "./doctor-fakes.js";
 import { loadCliTestdata } from "./paths.js";
 import { runWithServices } from "./run-case.js";
+import { FakeTerminal } from "./terminal.js";
 
 interface DoctorContract {
   checkNames: string[];
@@ -678,6 +681,19 @@ describe("la orden", () => {
       services: { ...built.services, doctor: aws },
     });
   }
+
+  it("renderJson escribe exactamente doctorDocument", async () => {
+    const aws = new FakeDoctorAws();
+    const context = newDoctorContext({ template: "rayito-base", bucket: BUCKET });
+    const results = await runDoctor(aws, context, () => undefined);
+    const input = { region: REGION, context, results, exitCode: 0 };
+    const terminal = new FakeTerminal();
+    renderJson(new CliConsole(terminal), input);
+    expect(JSON.parse(terminal.stdoutText)).toEqual(
+      JSON.parse(JSON.stringify(doctorDocument(input))),
+    );
+    expect(Object.keys(doctorDocument(input))[0]).toBe("rayito");
+  });
 
   it("--json es un documento con las diez comprobaciones y la tabla", async () => {
     const aws = new FakeDoctorAws();
