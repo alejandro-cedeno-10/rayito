@@ -284,7 +284,9 @@ describe.runIf(setupEnabled())("rayito setup en una región nueva (AWS real)", (
     const outcome = await runSetup(setupArguments(region, "--dry-run"));
     const document = documentOf(outcome);
     expect(outcome.exitCode).toBe(0);
-    expect(actionsOf(document)).toEqual(["reuse", "create", "publish"]);
+    // `reuse` si la región tiene el bucket de `cdk bootstrap`, `create` si no tiene ninguno.
+    expect(["reuse", "create"]).toContain(actionsOf(document)[0]);
+    expect(actionsOf(document).slice(1)).toEqual(["create", "publish"]);
     const after = await observe(services);
     expect(after.stack.status).toBeUndefined();
     expect(after.image.state).toBeUndefined();

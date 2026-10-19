@@ -214,7 +214,9 @@ def test_dry_run_plans_the_creation_and_writes_nothing() -> None:
         pytest.skip(f"{IAM_STACK_NAME} o {BASE_IMAGE_NAME} ya existen: no se toca lo que había")
     code, document, stderr = run_setup(account.region, "--dry-run", budget=DRY_RUN_BUDGET_SECONDS)
     assert code == 0, stderr
-    assert actions(document) == ["reuse", "create", "publish"]
+    # `reuse` si la región tiene el bucket de `cdk bootstrap`, `create` si no tiene ninguno.
+    assert actions(document)[0] in {"reuse", "create"}
+    assert actions(document)[1:] == ["create", "publish"]
     assert document["dryRun"] is True
     assert document["ready"] is False
     assert document["doctor"] is None

@@ -686,20 +686,20 @@ Regression level: SDK and CLI change, no `rayd`, image, proto or `infra/*.yaml`
 change (`reference/release-and-aws.md`): full CI, local e2e, and a short,
 targeted AWS check per language lane, with inventory before and after.
 
-- [ ] 4.1 Read-only pre-check in the test account: `rayito doctor` IAM
+- [x] 4.1 Read-only pre-check in the test account: `rayito doctor` IAM
       simulation for `cloudformation:CreateStack`, `iam:CreateRole` and
       `iam:CreatePolicy` in the chosen regions (SCP risk); stop and report if
       denied.
-- [ ] 4.2 Inventory of the two lane regions (stacks, images and versions, S3
+- [x] 4.2 Inventory of the two lane regions (stacks, images and versions, S3
       `rayito/images/` keys, roles `rayito-m0-*`).
-- [ ] 4.3 Python lane e2e (`RAYITO_E2E_SETUP_REGION=<region A>`) and
+- [x] 4.3 Python lane e2e (`RAYITO_E2E_SETUP_REGION=<region A>`) and
       TypeScript lane e2e (`<region B>`) in parallel, never the same region.
-- [ ] 4.4 Prepared-account check in the main test region (`--dry-run`, three
+- [x] 4.4 Prepared-account check in the main test region (`--dry-run`, three
       `reuse`, zero writes) in both CLIs.
-- [ ] 4.5 Inventory again; the difference is zero. Record the measurements
+- [x] 4.5 Inventory again; the difference is zero. Record the measurements
       (build time, any SCP finding) as the next free Q rows of
       `AWS_API_NOTES.md`.
-- [ ] 4.5b If the test account's SCP requires tags (D11), the run passes the
+- [x] 4.5b If the test account's SCP requires tags (D11), the run passes the
       organization's tags through `RAYITO_E2E_SETUP_TAGS` (see 6.AWS.1).
 - [ ] 4.6 Review sweep (`reference/review-checklist.md`), then archive this
       change (`openspec archive account-setup --yes`).
@@ -973,13 +973,13 @@ TypeScript `tests/unit/account-setup.test.ts`, `tests/unit/cli/setup.test.ts`.
 
 ### 5.AWS Acceptance additions (with section 4)
 
-- [ ] 5.AWS.1 4.1 also simulates `s3:CreateBucket`,
+- [x] 5.AWS.1 4.1 also simulates `s3:CreateBucket`,
       `s3:PutEncryptionConfiguration`, `s3:PutBucketPolicy`,
       `s3:PutLifecycleConfiguration` (SCP risk) before any write.
-- [ ] 5.AWS.2 4.2/4.5 inventories include S3 buckets and the
+- [x] 5.AWS.2 4.2/4.5 inventories include S3 buckets and the
       `rayito-m0-artifacts` stack; the run deletes the stack and then the
       retained bucket it created (emptied first), and nothing else.
-- [ ] 5.AWS.3 Python and TypeScript e2e of 5.PY.8/5.TS.8 in their own
+- [x] 5.AWS.3 Python and TypeScript e2e of 5.PY.8/5.TS.8 in their own
       regions; the prepared-account check (4.4) still reads no
       `rayito-m0-artifacts` (zero new reads on an account with a bucket).
 - [ ] 5.AWS.4 Regression level: `infra/` changed (one new template), so the
