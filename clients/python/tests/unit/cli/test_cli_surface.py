@@ -107,3 +107,4 @@ def test_golden_lists_every_documented_group() -> None:
     for group in DOCUMENTED_GROUPS:
         assert (group,) in paths
     assert ("doctor",) in paths
+    assert ("setup",) in paths

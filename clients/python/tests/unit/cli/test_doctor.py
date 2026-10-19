@@ -24,6 +24,7 @@ from rayito.cli import _checks
 from rayito.cli._checks import CheckResult, CheckSpec, DoctorContext, run_check
 from rayito.cli._session import Clients
 from rayito.cli.app import app
+from rayito.cli.doctor import doctor_document, render_json
 from rayito.exceptions import SandboxException
 from rayito.v1 import health_pb2
 
@@ -812,3 +813,15 @@ def test_shared_doctor_contract_matches_code() -> None:
     ]
     for name, actual, shared in pairs:
         assert actual == shared, name
+
+
+def test_render_json_emits_the_document_that_setup_embeds(
+    clients: Clients, capsys: pytest.CaptureFixture[str]
+) -> None:
+    context = DoctorContext(account=ACCOUNT_ID, principal_kind="user")
+    results = [CheckResult("credentials", "OK", "ok"), CheckResult("bucket", "WARN", "warn")]
+    render_json(clients, context, results, 0)
+    document = doctor_document(clients, context, results, 0)
+    assert json.loads(capsys.readouterr().out) == document
+    assert document["exit_code"] == 0
+    assert [check["name"] for check in document["checks"]] == ["credentials", "bucket"]
