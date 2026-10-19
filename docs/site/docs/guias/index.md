@@ -94,6 +94,7 @@ AI): el sandbox es su herramienta y basta `rayito-base`. **Dentro**
 | [Agente en el sandbox](agente-en-el-sandbox.md) | un agente de código (OpenCode o deepagents) **dentro** del sandbox con `sbx.agent.run()`, el modelo tras la pasarela de secretos; el arranque rápido, opcional |
 | [Proveedores del agente](agente-proveedores.md) | los proveedores de modelo que admite `sbx.agent` tras la pasarela de secretos, cómo configurar cada uno y cuáles no se admiten |
 | [Templates de agente](../funciones-opcionales/templates-de-agente.md) | `AgentTemplate`: la imagen `rayito-agent` con OpenCode, ripgrep y deepagents, sus pines y el coste de cada versión |
+| [Desplegar en AgentCore](desplegar-en-agentcore.md) | el agente que ya tienes en Amazon Bedrock AgentCore Runtime con `--target agentcore`: build con CodeBuild sin Docker local, rol de mínimo privilegio y la misma API de `invoke` que una flota de MicroVMs |
 
 ## Desarrollar y probar
 
