@@ -146,7 +146,11 @@ Todo funciona igual en Python (sync y `asyncio`) y en TypeScript.
   ([Métricas y listado](https://alejandro-cedeno-10.github.io/rayito/observability/)); la API git de E2B ([Git](https://alejandro-cedeno-10.github.io/rayito/git/)).
 - **Agentes**: el agente dentro del sandbox (arriba); el servidor MCP para
   Claude Code, Cursor o VS Code ([Servidor MCP](https://alejandro-cedeno-10.github.io/rayito/mcp/)); adaptadores para
-  LangChain y Vercel AI ([LangChain y Vercel AI](https://alejandro-cedeno-10.github.io/rayito/guias/langchain-y-vercel-ai/)).
+  LangChain y Vercel AI ([LangChain y Vercel AI](https://alejandro-cedeno-10.github.io/rayito/guias/langchain-y-vercel-ai/));
+  y `rayito agent deploy ./mi-agente --target agentcore` para desplegar el mismo
+  agente en Amazon Bedrock AgentCore Runtime sin Docker local, con un rol de
+  mínimo privilegio y sin pasarela de secretos
+  ([Desplegar en AgentCore](https://alejandro-cedeno-10.github.io/rayito/guias/desplegar-en-agentcore/)).
 - **CLI** `rayito`: publicar imágenes, `doctor`, operar sandboxes, pilas
   opcionales ([CLI](https://alejandro-cedeno-10.github.io/rayito/cli/)).
 - **Panel de gestión**: `rayito dashboard` abre un panel web local con los
@@ -161,8 +165,8 @@ Todo funciona igual en Python (sync y `asyncio`) y en TypeScript.
   Manager, pasarela de secretos, montajes S3, tamaños de 512 MiB a 8 GiB,
   eventos y webhooks, exportación OTLP, trazas OpenTelemetry, índice de
   metadatos en DynamoDB, templates declarativos y de agente, proxy local,
-  volúmenes EFS (experimental) y dominio propio (experimental). Qué activa y
-  qué cuesta cada una: [Funciones opcionales](https://alejandro-cedeno-10.github.io/rayito/optional-features/).
+  volúmenes EFS (experimental), dominio propio (experimental) y el destino de
+  despliegue AgentCore. Qué activa y qué cuesta cada una: [Funciones opcionales](https://alejandro-cedeno-10.github.io/rayito/optional-features/).
 
 ## Cómo funciona
 
