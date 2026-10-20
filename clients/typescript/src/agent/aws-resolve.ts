@@ -353,7 +353,9 @@ export class AwsResolver implements DeployAws {
       ),
     );
     try {
-      await client.send(new sdk.HeadBucketCommand({ Bucket: bucket }));
+      await client.send(
+        new sdk.HeadBucketCommand({ Bucket: bucket, ExpectedBucketOwner: await this.accountId() }),
+      );
     } catch (error) {
       const code = awsCode(error);
       if (code !== undefined && BUCKET_MISSING_CODES.has(code)) {

@@ -91,13 +91,23 @@ export class FakeBuildClients implements BuildClients {
     return this.objects.get(this.key(bucket, objectKey));
   }
 
-  async headObject(bucket: string, objectKey: string): Promise<boolean> {
+  /** El `owner` de cada `headObject` y `putObject`, en orden. */
+  readonly objectOwners: string[] = [];
+
+  async headObject(bucket: string, objectKey: string, owner: string): Promise<boolean> {
     this.calls.push(["headObject", bucket, objectKey]);
+    this.objectOwners.push(owner);
     return this.objects.has(this.key(bucket, objectKey));
   }
 
-  async putObject(bucket: string, objectKey: string, body: Uint8Array): Promise<void> {
+  async putObject(
+    bucket: string,
+    objectKey: string,
+    body: Uint8Array,
+    owner: string,
+  ): Promise<void> {
     this.calls.push(["putObject", bucket, objectKey]);
+    this.objectOwners.push(owner);
     this.objects.set(this.key(bucket, objectKey), body);
   }
 

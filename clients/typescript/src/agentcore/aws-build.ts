@@ -225,11 +225,11 @@ export class SdkSourceStore implements SourceStore {
     }
   }
 
-  async bucketRegion(bucket: string): Promise<string | undefined> {
+  async bucketRegion(bucket: string, owner: string): Promise<string | undefined> {
     const { sdk, send } = await this.#client.get();
     try {
       const output = await send<{ BucketRegion?: string }>(
-        new sdk.HeadBucketCommand({ Bucket: bucket }),
+        new sdk.HeadBucketCommand({ Bucket: bucket, ExpectedBucketOwner: owner }),
       );
       return output.BucketRegion;
     } catch (error) {

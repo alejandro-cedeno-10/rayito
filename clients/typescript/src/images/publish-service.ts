@@ -160,7 +160,13 @@ async function uploadArtifact(
   const digest = createHash("sha256").update(payload).digest("hex");
   const key = artifactKey(digest, settings.artifactRunId);
   const uri = `s3://${settings.bucket}/${key}`;
-  const uploaded = await uploadIfAbsent(deps.ports, settings.bucket, key, payload);
+  const uploaded = await uploadIfAbsent(
+    deps.ports,
+    settings.bucket,
+    key,
+    payload,
+    await deps.ports.accountId(),
+  );
   deps.emit(
     uploaded
       ? `subido ${uri} (${payload.length} bytes)`

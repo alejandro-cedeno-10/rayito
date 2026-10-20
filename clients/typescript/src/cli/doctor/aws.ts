@@ -294,7 +294,7 @@ export class SdkDoctorAws implements DoctorAws {
     });
   }
 
-  async headBucket(bucket: string): Promise<BucketFacts> {
+  async headBucket(bucket: string, expectedOwner?: string): Promise<BucketFacts> {
     return operationCall("HeadBucket", async () => {
       const { sdk, send } = await loadOptionalSdkClient<S3Module>(
         S3_PEER,
@@ -304,7 +304,10 @@ export class SdkDoctorAws implements DoctorAws {
         this.#credentials,
       );
       const response = await send<{ BucketRegion?: string }>(
-        new sdk.HeadBucketCommand({ Bucket: bucket }),
+        new sdk.HeadBucketCommand({
+          Bucket: bucket,
+          ...(expectedOwner === undefined ? {} : { ExpectedBucketOwner: expectedOwner }),
+        }),
       );
       return { region: response.BucketRegion ?? "" };
     });

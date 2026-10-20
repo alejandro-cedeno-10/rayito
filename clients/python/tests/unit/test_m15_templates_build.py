@@ -102,6 +102,8 @@ def test_a_successful_build_uploads_the_artifact_and_returns_build_info(
     # the uploaded artifact is content-addressed and reused on a second call.
     first_put_calls = [c for c in clients.calls if c[0] == "put_object"]
     assert len(first_put_calls) == 1
+    # both S3 calls are pinned to the caller's account (squatted-bucket guard).
+    assert clients.owners == [clients.account_id_value, clients.account_id_value]
 
 
 def test_building_twice_with_the_same_configuration_reuses_the_version(

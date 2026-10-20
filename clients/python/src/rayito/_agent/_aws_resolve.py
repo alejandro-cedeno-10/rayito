@@ -315,7 +315,7 @@ class AwsResolver:
 
     def bucket_exists(self, bucket: str) -> bool:
         try:
-            self._s3.get().head_bucket(Bucket=bucket)
+            self._s3.get().head_bucket(Bucket=bucket, ExpectedBucketOwner=self.account_id())
         except ClientError as exc:
             if client_error_code(exc) in BUCKET_MISSING_CODES:
                 return False

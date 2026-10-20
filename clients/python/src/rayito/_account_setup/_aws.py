@@ -169,7 +169,9 @@ class S3ArtifactBuckets:
 
     def probe(self, bucket: str) -> BucketProbe:
         try:
-            response = self._clients.s3.head_bucket(Bucket=bucket)
+            response = self._clients.s3.head_bucket(
+                Bucket=bucket, ExpectedBucketOwner=self._clients.account_id
+            )
         except ClientError as exc:
             code = client_error_code(exc)
             if code in BUCKET_NOT_FOUND_CODES:

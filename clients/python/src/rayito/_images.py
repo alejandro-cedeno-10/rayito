@@ -146,10 +146,13 @@ def account_image_arn(region: str, account_id: str, name: str) -> str:
     return f"arn:aws:lambda:{region}:{account_id}:microvm-image:{name}"
 
 
-def object_exists(clients: ArtifactStoreClients, bucket: str, key: str) -> bool:
-    """Un 403 también cuenta como ausente (ver `MISSING_OBJECT_CODES`)."""
+def object_exists(clients: ArtifactStoreClients, bucket: str, key: str, owner: str) -> bool:
+    """Un 403 también cuenta como ausente (ver `MISSING_OBJECT_CODES`).
+    `owner` es la cuenta de quien llama: con `ExpectedBucketOwner`, un bucket
+    de otra cuenta (p. ej. uno con un nombre predecible que alguien ocupó) da
+    403 en vez de recibir el artefacto."""
     try:
-        clients.s3.head_object(Bucket=bucket, Key=key)
+        clients.s3.head_object(Bucket=bucket, Key=key, ExpectedBucketOwner=owner)
     except ClientError as exc:
         if client_error_code(exc) in MISSING_OBJECT_CODES:
             return False
@@ -157,12 +160,15 @@ def object_exists(clients: ArtifactStoreClients, bucket: str, key: str) -> bool:
     return True
 
 
-def upload_if_absent(clients: ArtifactStoreClients, bucket: str, key: str, payload: bytes) -> bool:
+def upload_if_absent(
+    clients: ArtifactStoreClients, bucket: str, key: str, payload: bytes, owner: str
+) -> bool:
     """Sube `payload` a `s3://bucket/key` salvo que ya exista (la clave es
-    direccionada por contenido); `True` si hubo subida."""
-    if object_exists(clients, bucket, key):
+    direccionada por contenido); `True` si hubo subida. Las dos llamadas llevan
+    `ExpectedBucketOwner=owner`: un bucket de otra cuenta falla."""
+    if object_exists(clients, bucket, key, owner):
         return False
-    clients.s3.put_object(Bucket=bucket, Key=key, Body=payload)
+    clients.s3.put_object(Bucket=bucket, Key=key, Body=payload, ExpectedBucketOwner=owner)
     return True
 
 

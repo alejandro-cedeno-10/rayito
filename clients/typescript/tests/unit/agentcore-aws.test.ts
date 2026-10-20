@@ -480,7 +480,7 @@ describe("zip, logs y cuenta", () => {
   it("HeadBucket da la región, la de una redirección 301 y undefined si no existe", async () => {
     const store = new SdkSourceStore(SETTINGS);
     respond("HeadBucketCommand", { BucketRegion: "us-east-1" });
-    expect(await store.bucketRegion("b")).toBe("us-east-1");
+    expect(await store.bucketRegion("b", "123456789012")).toBe("us-east-1");
     respond(
       "HeadBucketCommand",
       awsError("PermanentRedirect", {
@@ -488,9 +488,14 @@ describe("zip, logs y cuenta", () => {
         [RESPONSE_KEY]: { headers: { "x-amz-bucket-region": "eu-west-1" } },
       }),
     );
-    expect(await store.bucketRegion("b")).toBe("eu-west-1");
+    expect(await store.bucketRegion("b", "123456789012")).toBe("eu-west-1");
     respond("HeadBucketCommand", awsError("NotFound"));
-    expect(await store.bucketRegion("b")).toBeUndefined();
+    expect(await store.bucketRegion("b", "123456789012")).toBeUndefined();
+    expect(sentOf("HeadBucketCommand")).toEqual([
+      { Bucket: "b", ExpectedBucketOwner: "123456789012" },
+      { Bucket: "b", ExpectedBucketOwner: "123456789012" },
+      { Bucket: "b", ExpectedBucketOwner: "123456789012" },
+    ]);
   });
 
   it("DeleteLogGroup borra el grupo y uno ausente es false", async () => {

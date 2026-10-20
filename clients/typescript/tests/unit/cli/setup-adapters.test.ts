@@ -206,6 +206,13 @@ describe("SdkArtifactBuckets", () => {
     });
   });
 
+  it("pins the probe to the caller's account so a squatted bucket is not reused", async () => {
+    const doctor = new FakeDoctorAws();
+    doctor.bucketFacts = { region: "eu-west-1" };
+    await new SdkArtifactBuckets(doctor, accountId).probe(BUCKET);
+    expect(doctor.headBucketOwners).toEqual(["123456789012"]);
+  });
+
   it("an empty region is unknown", async () => {
     const doctor = new FakeDoctorAws();
     doctor.bucketFacts = { region: "" };

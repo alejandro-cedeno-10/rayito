@@ -549,12 +549,14 @@ def test_the_source_zip_is_put_with_checksum_and_owner_and_deleted_with_the_owne
 
 
 def test_region_of_a_bucket_reads_head_bucket_and_hides_missing_or_foreign_buckets() -> None:
-    with stubbed("s3") as (s3, stubber):
-        stubber.add_response("head_bucket", {}, {"Bucket": "mine"})
+    owner = {"ExpectedBucketOwner": fake.ACCOUNT}
+    with stubbed("sts") as (sts, sts_stubber), stubbed("s3") as (s3, stubber):
+        sts_stubber.add_response("get_caller_identity", {"Account": fake.ACCOUNT})
+        stubber.add_response("head_bucket", {}, {"Bucket": "mine", **owner})
         error(stubber, "head_bucket", "404")
         error(stubber, "head_bucket", "403")
-        clients = clients_with(s3=s3)
-        bucket = S3ArtifactBucket(clients, identity_for(None))
+        clients = clients_with(s3=s3, sts=sts)
+        bucket = S3ArtifactBucket(clients, StsIdentity(clients))
         assert bucket.region_of("mine") is None
         assert bucket.region_of("missing") is None
         assert bucket.region_of("foreign") is None

@@ -220,7 +220,7 @@ def fetch_base_artifact(clients: BuildClients, base_version: dict[str, Any]) -> 
 
 def upload_artifact(clients: BuildClients, bucket: str, payload: bytes) -> str:
     key = f"{S3_KEY_PREFIX}/{hashlib.sha256(payload).hexdigest()}.zip"
-    upload_if_absent(clients, bucket, key, payload)
+    upload_if_absent(clients, bucket, key, payload, clients.account_id)
     return f"s3://{bucket}/{key}"
 
 

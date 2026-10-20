@@ -214,13 +214,21 @@ def probe(stub_setup: Any) -> Any:
 
 def test_probe_reports_the_region_of_an_accessible_bucket() -> None:
     result = probe(
-        lambda stub: stub.add_response("head_bucket", {"BucketRegion": REGION}, {"Bucket": BUCKET})
+        lambda stub: stub.add_response(
+            "head_bucket",
+            {"BucketRegion": REGION},
+            {"Bucket": BUCKET, "ExpectedBucketOwner": ACCOUNT_ID},
+        )
     )
     assert (result.state, result.region) == ("found", REGION)
 
 
 def test_probe_of_a_bucket_without_a_reported_region() -> None:
-    result = probe(lambda stub: stub.add_response("head_bucket", {}, {"Bucket": BUCKET}))
+    result = probe(
+        lambda stub: stub.add_response(
+            "head_bucket", {}, {"Bucket": BUCKET, "ExpectedBucketOwner": ACCOUNT_ID}
+        )
+    )
     assert (result.state, result.region) == ("found", None)
 
 
@@ -239,7 +247,7 @@ def test_probe_tells_a_missing_bucket_from_a_forbidden_one(error_code: str, stat
             "head_bucket",
             service_error_code=error_code,
             http_status_code=int(error_code) if error_code.isdigit() else 404,
-            expected_params={"Bucket": BUCKET},
+            expected_params={"Bucket": BUCKET, "ExpectedBucketOwner": ACCOUNT_ID},
         )
     )
     assert (result.state, result.region) == (state, None)
@@ -252,7 +260,7 @@ def test_probe_lets_any_other_error_through() -> None:
             "head_bucket",
             service_error_code="500",
             http_status_code=500,
-            expected_params={"Bucket": BUCKET},
+            expected_params={"Bucket": BUCKET, "ExpectedBucketOwner": ACCOUNT_ID},
         )
         with pytest.raises(ClientError):
             S3ArtifactBuckets(BucketClients(client)).probe(BUCKET)

@@ -83,8 +83,8 @@ export interface ImageBuildClients {
     arn: string,
     request: Record<string, unknown>,
   ): Promise<{ imageArn: string; imageVersion: string }>;
-  headObject(bucket: string, key: string): Promise<boolean>;
-  putObject(bucket: string, key: string, body: Uint8Array): Promise<void>;
+  headObject(bucket: string, key: string, owner: string): Promise<boolean>;
+  putObject(bucket: string, key: string, body: Uint8Array, owner: string): Promise<void>;
 }
 
 /** Los tres estados independientes que deben pasar antes de `run-microvm`. */
@@ -300,17 +300,19 @@ export async function submitImageBuild(
   };
 }
 
-/** Sube `payload` salvo que la clave (direccionada por contenido) ya exista. */
+/** Sube `payload` salvo que la clave (direccionada por contenido) ya exista.
+ * Las dos llamadas llevan `ExpectedBucketOwner=owner`: un bucket de otra cuenta falla. */
 export async function uploadIfAbsent(
   clients: ImageBuildClients,
   bucket: string,
   key: string,
   payload: Uint8Array,
+  owner: string,
 ): Promise<boolean> {
-  if (await clients.headObject(bucket, key)) {
+  if (await clients.headObject(bucket, key, owner)) {
     return false;
   }
-  await clients.putObject(bucket, key, payload);
+  await clients.putObject(bucket, key, payload, owner);
   return true;
 }
 

@@ -108,7 +108,7 @@ export interface SourceStore {
   /** Idempotente (S3 responde 204 también si no existe). */
   deleteSource(bucket: string, key: string, owner: string): Promise<void>;
   /** La región del bucket, o `undefined` si no existe o no es accesible. */
-  bucketRegion(bucket: string): Promise<string | undefined>;
+  bucketRegion(bucket: string, owner: string): Promise<string | undefined>;
 }
 
 export interface BucketDiscovery {

@@ -310,7 +310,7 @@ def upload_artifact(
     payload = settings.artifact.read_bytes()
     key = artifact_key(payload, settings.artifact_run_id)
     uri = f"s3://{settings.bucket}/{key}"
-    uploaded = upload_if_absent(clients, settings.bucket, key, payload)
+    uploaded = upload_if_absent(clients, settings.bucket, key, payload, clients.account_id)
     if uploaded:
         emit(f"uploaded {uri} ({len(payload)} bytes)")
     else:

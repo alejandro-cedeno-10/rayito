@@ -215,9 +215,10 @@ class S3ArtifactBucket:
 
     def region_of(self, bucket: str) -> str | None:
         client = self._clients.s3.get()
+        owner = self._identity.account_id()
         response = guarded(
             OP_HEAD_BUCKET,
-            lambda: client.head_bucket(Bucket=bucket),
+            lambda: client.head_bucket(Bucket=bucket, ExpectedBucketOwner=owner),
             absent=BUCKET_NOT_FOUND_CODES | BUCKET_FORBIDDEN_CODES,
         )
         if isinstance(response, Absent):

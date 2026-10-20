@@ -183,8 +183,12 @@ export class FakeDoctorAws implements DoctorAws {
     return settle(this.quotas);
   }
 
-  async headBucket(bucket: string): Promise<BucketFacts> {
+  /** El `expectedOwner` de cada `headBucket`, en orden. */
+  readonly headBucketOwners: Array<string | undefined> = [];
+
+  async headBucket(bucket: string, expectedOwner?: string): Promise<BucketFacts> {
     this.calls.push(`headBucket:${bucket}`);
+    this.headBucketOwners.push(expectedOwner);
     return settle(this.bucketFacts);
   }
 

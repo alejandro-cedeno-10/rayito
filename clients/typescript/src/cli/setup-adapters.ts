@@ -181,7 +181,7 @@ export function sdkArtifactStack(provisioner: StackProvisioner): SdkSetupStack {
   });
 }
 
-/** Un `HeadBucket`: 200 es `found`, 404 `missing` y 403 `forbidden`; cualquier otro error se propaga. */
+/** Un `HeadBucket` con `ExpectedBucketOwner` (un bucket de otra cuenta es `forbidden`): 200 es `found`, 404 `missing` y 403 `forbidden`; cualquier otro error se propaga. */
 export class SdkArtifactBuckets implements ArtifactBucketGateway {
   readonly #doctor: Pick<DoctorAws, "headBucket">;
   readonly #accountId: () => Promise<string>;
@@ -197,7 +197,7 @@ export class SdkArtifactBuckets implements ArtifactBucketGateway {
 
   async probe(bucket: string): Promise<BucketProbe> {
     try {
-      const facts = await this.#doctor.headBucket(bucket);
+      const facts = await this.#doctor.headBucket(bucket, await this.#accountId());
       return { state: "found", region: facts.region || undefined };
     } catch (error) {
       if (error instanceof AwsOperationError) {

@@ -286,7 +286,9 @@ def test_publish_sizes_reuses_an_already_built_version_without_touching_the_base
     tamaño para que `publish_with_sizes` lo agregue con el del baseline."""
     settings = base_settings(artifact=artifact)
     key = _publish.artifact_key(artifact.read_bytes())
-    stubbed_clients.s3.add_response("head_object", {}, {"Bucket": "bucket", "Key": key})
+    stubbed_clients.s3.add_response(
+        "head_object", {}, {"Bucket": "bucket", "Key": key, "ExpectedBucketOwner": ACCOUNT_ID}
+    )
     stubbed_clients.microvms.add_response(
         "get_microvm_image", sized_image_response(), {"imageIdentifier": SIZED_ARN}
     )
@@ -394,7 +396,9 @@ def stub_baseline_reuse(stubs: Stubs, key: str) -> None:
     """La misma versión 3.0 de `rayito-base` que `test_publish.py`'s
     `test_reuse_makes_no_build_call` reutiliza, para una ruta de reuse
     determinista sin esperar ningún gate."""
-    stubs.s3.add_response("head_object", {}, {"Bucket": "bucket", "Key": key})
+    stubs.s3.add_response(
+        "head_object", {}, {"Bucket": "bucket", "Key": key, "ExpectedBucketOwner": ACCOUNT_ID}
+    )
     stubs.microvms.add_response(
         "get_microvm_image",
         {"imageArn": IMAGE_ARN, "name": "rayito-base", "state": "UPDATED", "createdAt": T0},
@@ -441,7 +445,9 @@ def stub_baseline_reuse(stubs: Stubs, key: str) -> None:
 
 
 def stub_sized_reuse(stubs: Stubs, key: str) -> None:
-    stubs.s3.add_response("head_object", {}, {"Bucket": "bucket", "Key": key})
+    stubs.s3.add_response(
+        "head_object", {}, {"Bucket": "bucket", "Key": key, "ExpectedBucketOwner": ACCOUNT_ID}
+    )
     stubs.microvms.add_response(
         "get_microvm_image", sized_image_response(), {"imageIdentifier": SIZED_ARN}
     )
@@ -506,9 +512,13 @@ def stub_failed_baseline_build(stubbed_clients: Stubs, artifact: Path, key: str)
         service_error_code="404",
         service_message="Not Found",
         http_status_code=404,
-        expected_params={"Bucket": "bucket", "Key": key},
+        expected_params={"Bucket": "bucket", "Key": key, "ExpectedBucketOwner": ACCOUNT_ID},
     )
-    stubbed_clients.s3.add_response("put_object", {}, {"Bucket": "bucket", "Key": key, "Body": ANY})
+    stubbed_clients.s3.add_response(
+        "put_object",
+        {},
+        {"Bucket": "bucket", "Key": key, "Body": ANY, "ExpectedBucketOwner": ACCOUNT_ID},
+    )
     stubbed_clients.microvms.add_response(
         "get_microvm_image",
         {"imageArn": IMAGE_ARN, "name": "rayito-base", "state": "UPDATED", "createdAt": T0},
