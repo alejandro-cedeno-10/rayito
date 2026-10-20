@@ -7,7 +7,10 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Final, Literal
+from typing import TYPE_CHECKING, Final, Literal
+
+if TYPE_CHECKING:
+    from rayito._stacks._model import StackStatus
 
 StackCondition = Literal["missing", "usable", "in_progress", "blocked"]
 
@@ -42,3 +45,16 @@ def classify_stack(stack: StackObservation) -> StackCondition:
     if stack.status.endswith(IN_PROGRESS_STACK_SUFFIX):
         return "in_progress"
     return "blocked"
+
+
+def stack_observation(status: StackStatus | None, stack_name: str) -> StackObservation:
+    """La `StackObservation` de lo que `OptionalStacks.status` devolvió; una
+    pila que no existe es `status=None`."""
+    if status is None:
+        return StackObservation(stack_name, None, {}, {})
+    return StackObservation(
+        name=stack_name,
+        status=status.state,
+        outputs=dict(status.outputs),
+        parameters=dict(status.parameters),
+    )

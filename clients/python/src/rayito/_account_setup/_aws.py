@@ -40,8 +40,8 @@ from rayito._images import (
     gate_progress_line,
     wait_for_gate,
 )
-from rayito._stacks._condition import StackObservation
-from rayito._stacks._model import StackComponent, StackStatus
+from rayito._stacks._condition import StackObservation, stack_observation
+from rayito._stacks._model import StackComponent
 from rayito._stacks._port import StackProvisioner
 from rayito._stacks._service import DEFAULT_WAIT_TIMEOUT_SECONDS, OptionalStacks
 from rayito.exceptions import StackException
@@ -83,7 +83,7 @@ class CloudFormationSetupStack:
         self._wait_timeout = wait_timeout_seconds
 
     def observe(self) -> StackObservation:
-        return _observation(
+        return stack_observation(
             self._stacks.status(self._component, stack_name=self._stack_name), self._stack_name
         )
 
@@ -103,7 +103,7 @@ class CloudFormationSetupStack:
         return observed
 
     def _deploy(self, bucket: str) -> StackObservation:
-        return _observation(
+        return stack_observation(
             self._stacks.deploy(
                 self._component,
                 stack_name=self._stack_name,
@@ -146,17 +146,6 @@ def artifact_stack_gateway(
         bucket_parameter=BUCKET_NAME_PARAMETER,
         tags=tags,
         wait_timeout_seconds=wait_timeout_seconds,
-    )
-
-
-def _observation(status: StackStatus | None, stack_name: str) -> StackObservation:
-    if status is None:
-        return StackObservation(stack_name, None, {}, {})
-    return StackObservation(
-        name=stack_name,
-        status=status.state,
-        outputs=dict(status.outputs),
-        parameters=dict(status.parameters),
     )
 
 
