@@ -14,6 +14,15 @@
  * `AgentDeployStep` por cada uno, y ninguno crea nada en silencio.
  */
 
+import { rejectAgentCoreOptions } from "../agentcore/domain.js";
+import type { AgentCoreFleet } from "../agentcore/fleet.js";
+import {
+  AGENT_TARGETS,
+  type AgentCoreDeployPlan,
+  type AgentCoreOptions,
+  type AgentTarget,
+  TARGET_AGENTCORE,
+} from "../agentcore/models.js";
 import { InvalidArgumentError } from "../errors.js";
 import type { ControlPlaneOptions } from "../sandbox/sandbox.js";
 import type { SecretGateway } from "../secret-gateway/domain.js";
@@ -30,11 +39,12 @@ import {
   type SecretStorePort,
 } from "./aws-resolve.js";
 import {
-  AgentDeployOptions,
+  type AgentDeployOptions,
   type AgentDeployOptionsInput,
   type AgentDeployPlan,
   baseVersionOf,
   buildPlan,
+  deployOptionsOf,
   projectBucket,
   projectFor,
   resolvedRegion,
@@ -60,10 +70,37 @@ export interface DeployConnection extends ControlPlaneOptions {
   readonly credentials?: ConstructorParameters<typeof AwsResolver>[0]["credentials"];
 }
 
-export interface DeployAgentOptions extends DeployConnection {
+/**
+ * Los argumentos de `deployAgent()` y `planDeploy()`. `target` (por defecto
+ * `"microvm"`) elige dónde se despliega: una flota de MicroVMs o, con
+ * `"agentcore"`, Amazon Bedrock AgentCore Runtime; `agentcore` (`AgentCoreOptions`)
+ * sólo vale con ese destino y con otro es `option_requires_agentcore`. El tipo
+ * del resultado sigue al de `target`.
+ */
+export interface DeployAgentOptions<T extends AgentTarget = "microvm"> extends DeployConnection {
   readonly project?: AgentProject | undefined;
   readonly options?: AgentDeployOptions | AgentDeployOptionsInput | undefined;
   readonly overrides?: DetectOverrides | undefined;
+  readonly target?: T | undefined;
+  readonly agentcore?: AgentCoreOptions | undefined;
+}
+
+/** El resultado de `deployAgent()` según el destino. */
+export type DeployedAgent<T extends AgentTarget> = T extends "agentcore"
+  ? AgentCoreFleet
+  : AgentFleet;
+
+/** El resultado de `planDeploy()` según el destino. */
+export type DeployPlanOf<T extends AgentTarget> = T extends "agentcore"
+  ? AgentCoreDeployPlan
+  : AgentDeployPlan;
+
+function requireKnownTarget(target: string | undefined): void {
+  if (target !== undefined && !(AGENT_TARGETS as readonly string[]).includes(target)) {
+    throw new InvalidArgumentError(
+      `target debe ser uno de ${AGENT_TARGETS.map((name) => JSON.stringify(name)).join(", ")}`,
+    );
+  }
 }
 
 /** Las dependencias de `deployAgent()` que los tests sustituyen: AWS (`aws`,
@@ -88,16 +125,13 @@ export interface Preflight {
   readonly steps: readonly { readonly kind: string; readonly detail: string }[];
 }
 
-function optionsOf(
-  options: AgentDeployOptions | AgentDeployOptionsInput | undefined,
-): AgentDeployOptions {
-  return options instanceof AgentDeployOptions ? options : new AgentDeployOptions(options);
-}
-
 /**
  * Lo que `deployAgent()` haría con estos argumentos, sin llamar a AWS:
  * detecta el proyecto (lee ficheros locales, no ejecuta su código), y calcula
- * el escalado, el origen de cada valor y el coste de lista.
+ * el escalado, el origen de cada valor y el coste de lista. Con `target:
+ * "agentcore"` devuelve el `AgentCoreDeployPlan`: valida lo que no necesita AWS
+ * (región, opciones de MicroVMs que no aplican, nombre, ciclo de vida, etiquetas
+ * y entorno) y lista los tres pasos, la seguridad, los avisos y el coste.
  *
  * Coste y activación
  * -------------------
@@ -111,16 +145,23 @@ function optionsOf(
  *   const plan = await planDeploy("./mi-agente");
  *   plan.cost.runningUsdPerHour;
  */
-export async function planDeploy(
+export async function planDeploy<T extends AgentTarget = "microvm">(
   path = ".",
-  args: DeployAgentOptions = {},
-): Promise<AgentDeployPlan> {
-  const options = optionsOf(args.options);
+  args: DeployAgentOptions<T> = {},
+): Promise<DeployPlanOf<T>> {
+  requireKnownTarget(args.target);
+  if (args.target === TARGET_AGENTCORE) {
+    const { planAgentCoreWith } = await import("../agentcore/facade.js");
+    const planned = await planAgentCoreWith({}, path, args as DeployAgentOptions<"agentcore">);
+    return planned.plan as DeployPlanOf<T>;
+  }
+  rejectAgentCoreOptions(args.agentcore);
+  const options = deployOptionsOf(args.options);
   const { project, report } = await projectFor(path, args.project, args.overrides, args.region);
   return buildPlan(project, options, {
     region: resolvedRegion(args.region, project, process.env),
     detection: report,
-  });
+  }) as DeployPlanOf<T>;
 }
 
 /**
@@ -141,6 +182,15 @@ export async function planDeploy(
  * flota es `options.accessToken`, o `RAYITO_ACCESS_TOKEN`, o uno nuevo en
  * `AgentFleet.accessToken`.
  *
+ * Con `target: "agentcore"` despliega en Amazon Bedrock AgentCore Runtime y
+ * devuelve un `AgentCoreFleet` (la misma API de `invoke()` y `stream()`): sin
+ * Docker local, construye la imagen arm64 en CodeBuild, la sube a ECR, crea el
+ * rol del runtime con el mínimo privilegio y crea o actualiza el runtime sin
+ * duplicarlo. Las opciones de MicroVMs que AgentCore no admite fallan con
+ * `option_not_supported` en vez de aproximarse, y AgentCore no tiene la
+ * pasarela de secretos de Rayito: el agente lee las credenciales del rol del
+ * runtime, así que el rol sólo lleva los modelos de `agentcore.bedrockModels`.
+ *
  * Coste y activación
  * -------------------
  * Activa: llamar a `deployAgent()` (o `rayito agent deploy`); nada más lo
@@ -150,22 +200,34 @@ export async function planDeploy(
  *     (`create`/`update-microvm-image`, un objeto en S3); `GetCallerIdentity`,
  *     `HeadBucket`, `GetMicrovmImage` y `DescribeSecret` de lectura; con
  *     `createSecretFromEnv: true`, `CreateSecret`; con `basePublisher`, una
- *     imagen base; con `sessionIndex`, DynamoDB.
+ *     imagen base; con `sessionIndex`, DynamoDB. Con `target: "agentcore"`: la
+ *     pila `rayito-agentcore-<nombre>` (repositorio ECR, proyecto de CodeBuild
+ *     y dos roles), un zip del contexto en el bucket (se borra al terminar el
+ *     build), un build de CodeBuild, una imagen en ECR y el runtime.
  * Coste aproximado: por VM, el del MicroVM mientras vive (2 GB: ≈ $0,13 por
  *     hora en us-east-1, consultado 2026-10-06 en
  *     https://aws.amazon.com/lambda/pricing/); la imagen nueva, ≈ 3,0 GB de
  *     snapshot (≈ $0,011 de escritura y ≈ $0,056 por semana mínima de
  *     almacenamiento); un secreto, $0,40 al mes
  *     (https://aws.amazon.com/secrets-manager/pricing/, consultado
- *     2026-09-30); el modelo lo cobra su proveedor.
+ *     2026-09-30); el modelo lo cobra su proveedor. En AgentCore (us-east-1,
+ *     plataforma V1, consultado 2026-10-19 en
+ *     https://aws.amazon.com/bedrock/agentcore/pricing/): $0,0895 por
+ *     vCPU-hora y $0,00945 por GB-hora de uso real y sin cómputo sin sesiones;
+ *     un build ≈ $0,02-0,03 en CodeBuild (https://aws.amazon.com/codebuild/pricing/)
+ *     y la imagen $0,10 por GB-mes.
  * IAM: los de `Sandbox.create()`, `Sandbox.list()` y `AgentTemplate.build()`
  *     (`RayitoSandboxRunner`, `RayitoTemplateBuilder`),
  *     `secretsmanager:DescribeSecret` y, con `createSecretFromEnv`,
  *     `secretsmanager:CreateSecret`, `sts:GetCallerIdentity` y `s3:ListBucket`
- *     sobre el bucket del artefacto.
- * Cómo apagarla: `AgentFleet.stop()` termina los VMs; los valores por defecto
- *     de `AgentDeployOptions` no crean ningún secreto, imagen base ni índice; sin
- *     llamar a `deployAgent()` nada se crea.
+ *     sobre el bucket del artefacto. Con `target: "agentcore"`: los de
+ *     `AgentCoreDeployer` (CloudFormation con `CAPABILITY_IAM`, CodeBuild, ECR,
+ *     S3 sobre el prefijo del zip, `bedrock-agentcore` y `iam:PassRole`).
+ * Cómo apagarla: `AgentFleet.stop()` termina los VMs y
+ *     `AgentCoreFleet.delete()` borra lo que creó en AgentCore; los valores por
+ *     defecto de `AgentDeployOptions` no crean ningún secreto, imagen base ni
+ *     índice; sin llamar a `deployAgent()` (o con el destino por defecto) no se
+ *     crea nada de AgentCore.
  * Ejemplo:
  *   const fleet = await deployAgent("./mi-agente", {
  *     options: { bucket: "amzn-s3-demo-bucket" },
@@ -173,8 +235,20 @@ export async function planDeploy(
  *   (await fleet.invoke("Resume el README.")).text;
  *   await fleet.stop();
  */
-export async function deployAgent(path = ".", args: DeployAgentOptions = {}): Promise<AgentFleet> {
-  return deployWith({}, path, args);
+export async function deployAgent<T extends AgentTarget = "microvm">(
+  path = ".",
+  args: DeployAgentOptions<T> = {},
+): Promise<DeployedAgent<T>> {
+  requireKnownTarget(args.target);
+  if (args.target === TARGET_AGENTCORE) {
+    const { deployAgentCoreWith } = await import("../agentcore/facade.js");
+    return (await deployAgentCoreWith(
+      {},
+      path,
+      args as DeployAgentOptions<"agentcore">,
+    )) as DeployedAgent<T>;
+  }
+  return (await deployWith({}, path, args as DeployAgentOptions)) as DeployedAgent<T>;
 }
 
 /** `deployAgent()` con las dependencias de `ports`. */
@@ -183,7 +257,8 @@ export async function deployWith(
   path: string,
   args: DeployAgentOptions = {},
 ): Promise<AgentFleet> {
-  const options = optionsOf(args.options);
+  rejectAgentCoreOptions(args.agentcore);
+  const options = deployOptionsOf(args.options);
   const detected = await projectFor(path, args.project, args.overrides, args.region);
   const flight = await preflight(detected.project, options, ports, args);
   emit(options, flight.steps);
@@ -220,7 +295,14 @@ export async function deployWith(
 }
 
 function connectionOf(args: DeployAgentOptions, region: string | undefined): ControlPlaneOptions {
-  const { project: _project, options: _options, overrides: _overrides, ...connection } = args;
+  const {
+    project: _project,
+    options: _options,
+    overrides: _overrides,
+    target: _target,
+    agentcore: _agentcore,
+    ...connection
+  } = args;
   return { ...connection, ...(region === undefined ? {} : { region }) };
 }
 

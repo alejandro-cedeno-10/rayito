@@ -10,6 +10,8 @@
 
 import type { Code } from "@connectrpc/connect";
 import type { TokenUsage } from "./agent/events.js";
+import { type AgentCoreErrorCode, ERROR_EXIT_CODES, ERROR_MESSAGES } from "./agentcore/messages.js";
+import { formatTemplate, type TemplateFields } from "./template-text.js";
 
 export interface SandboxErrorOptions {
   readonly statusCode?: number | undefined;
@@ -542,5 +544,35 @@ export class AgentError extends SandboxError {
     this.usage = options.usage;
     this.exitCode = options.exitCode;
     this.detailCode = options.detailCode;
+  }
+}
+
+/**
+ * Un fallo de `--target agentcore` (ADR-031): `deployAgent()` o `planDeploy()`
+ * con `target: "agentcore"`, `AgentCoreFleet` o `rayito agent deploy|invoke|
+ * status|stop|list|delete --target agentcore`. `code` es una lista cerrada
+ * (`AgentCoreErrorCode`, con su texto en `agentcore/messages.ts`) y `exitCode`
+ * el de la CLI: 2 para uso o entorno, 1 para un fallo del lado de AWS. No es
+ * `SandboxError`: nada de esto se atribuye a un sandbox. El mensaje nunca lleva
+ * un ARN, una URL, un token ni el texto de AWS; el `cause` ya pasó por
+ * `sanitizeAwsError`.
+ */
+export class AgentCoreError extends Error {
+  readonly code: AgentCoreErrorCode;
+  readonly exitCode: number;
+
+  constructor(
+    code: AgentCoreErrorCode,
+    fields: TemplateFields = {},
+    options: { readonly cause?: unknown } = {},
+  ) {
+    super(
+      formatTemplate(ERROR_MESSAGES[code], fields),
+      options.cause === undefined ? undefined : { cause: options.cause },
+    );
+    Object.setPrototypeOf(this, new.target.prototype);
+    this.name = new.target.name;
+    this.code = code;
+    this.exitCode = ERROR_EXIT_CODES[code];
   }
 }

@@ -19,6 +19,7 @@ import {
   agentTemplateBuildCommand,
   agentTemplateGroup,
 } from "./commands/agent.js";
+import { agentDeleteCommand, agentListCommand } from "./commands/agent-agentcore.js";
 import { dashboardGroup } from "./commands/dashboard.js";
 import { cloudwatchCommand } from "./commands/dashboard-cloudwatch.js";
 import { doctorCommand } from "./commands/doctor.js";
@@ -115,6 +116,8 @@ export const COMMANDS: readonly CommandDefinition[] = [
   agentInvokeCommand,
   agentStatusCommand,
   agentStopCommand,
+  agentListCommand,
+  agentDeleteCommand,
   eventsDeploy,
   eventsStatus,
   eventsDestroy,

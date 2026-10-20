@@ -201,6 +201,13 @@ export class AgentDeployOptions {
   }
 }
 
+/** `options` como `AgentDeployOptions`: uno ya construido se usa tal cual y un objeto se valida. */
+export function deployOptionsOf(
+  options: AgentDeployOptions | AgentDeployOptionsInput | undefined,
+): AgentDeployOptions {
+  return options instanceof AgentDeployOptions ? options : new AgentDeployOptions(options);
+}
+
 /** Lo que cuesta lo que `deployAgent()` crea, en dólares, a precios de lista
  * (`limits.json`): `runningUsdPerHour` por los VMs `minVms` mientras viven,
  * `parkedUsdPerDay` por las plazas aparcadas (sólo almacenamiento de

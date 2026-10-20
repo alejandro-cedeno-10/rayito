@@ -1,0 +1,7 @@
+[
+  { "name": "class AgentCoreFleet", "pattern": "^(export )?declare class AgentCoreFleet\\b" },
+  {
+    "name": "interface AgentCoreOptions",
+    "pattern": "^(export )?(declare )?interface AgentCoreOptions\\b"
+  }
+]

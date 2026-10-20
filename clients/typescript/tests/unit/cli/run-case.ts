@@ -1,7 +1,7 @@
 /** Ejecuta `runCli` con servicios falsos y la terminal falsa: lo común a los tests de comandos. */
 
 import type { TerminalInput } from "../../../src/cli/interactive-terminal.js";
-import type { AgentProjectTools } from "../../../src/cli/ops-ports.js";
+import type { AgentCoreTools, AgentProjectTools } from "../../../src/cli/ops-ports.js";
 import { runCli } from "../../../src/cli/run.js";
 import type { CliServices } from "../../../src/cli/services.js";
 import { FakeTerminal } from "./terminal.js";
@@ -24,6 +24,7 @@ export interface CliRun {
   readonly env?: Readonly<Record<string, string | undefined>> | undefined;
   readonly signal?: AbortSignal | undefined;
   readonly agentProjects?: AgentProjectTools | undefined;
+  readonly agentcore?: AgentCoreTools | undefined;
   readonly sleep?: ((ms: number, signal: AbortSignal) => Promise<void>) | undefined;
 }
 
@@ -38,6 +39,7 @@ export async function runWithServices(run: CliRun): Promise<CliOutcome> {
     signal: run.signal ?? new AbortController().signal,
     createServices: async () => run.services,
     agentProjects: run.agentProjects,
+    agentcore: run.agentcore,
   });
   return { exitCode, stdout: terminal.stdoutText, stderr: terminal.stderrText };
 }

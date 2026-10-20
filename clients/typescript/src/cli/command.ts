@@ -7,7 +7,7 @@
  */
 
 import type { CliConsole } from "./console.js";
-import type { AgentProjectTools } from "./ops-ports.js";
+import type { AgentCoreTools, AgentProjectTools } from "./ops-ports.js";
 import type { CliServices } from "./services.js";
 
 export type ParameterType = "str" | "int" | "float" | "boolean" | "path";
@@ -216,6 +216,8 @@ export interface CommandContext {
    * `build`, `run`, `deploy` y `connect` la construyen.
    */
   readonly agentProjects: AgentProjectTools;
+  /** `rayito agent ... --target agentcore`: planear no llama a AWS; el resto construye la sesión. */
+  readonly agentcore: AgentCoreTools;
 }
 
 export interface CommandDefinition {

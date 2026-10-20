@@ -388,7 +388,7 @@ function requireInvocable(raw: boolean): void {
   }
 }
 
-function requirePrompt(prompt: unknown): string {
+export function requirePrompt(prompt: unknown): string {
   if (typeof prompt !== "string" || prompt === "") {
     throw new InvalidArgumentError("el prompt debe ser una cadena no vacía");
   }
