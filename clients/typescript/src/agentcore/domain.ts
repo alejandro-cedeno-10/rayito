@@ -77,7 +77,25 @@ export interface CallFlags {
   readonly timeoutMs?: number | undefined;
   readonly idleSeconds?: number | undefined;
   readonly tokenFile?: string | undefined;
+  /** La llamada viene de la CLI: `option_not_supported` nombra la bandera, no el campo del SDK. */
+  readonly viaCli?: boolean | undefined;
 }
+
+/** La bandera de la CLI de cada opción de MicroVMs con bandera (`constants.cliOptionLabels`). */
+export const CLI_OPTION_LABELS: Readonly<Record<string, string>> = {
+  "scaling.min_vms": "--min-vms",
+  "scaling.max_vms": "--max-vms",
+  "scaling.warm_vms": "--warm",
+  memory_mib: "--memory",
+  "serve.port": "--port",
+  "serve.timeout_seconds": "--timeout",
+  "serve.idle": "--idle",
+  secret_names: "--secret",
+  create_secret_from_env: "--create-secret",
+  access_token: "--token-file",
+  keep_on_failure: "--keep-on-failure",
+  base_publisher: "--base-artifact",
+};
 
 interface OptionCheck {
   readonly label: string;
@@ -185,13 +203,16 @@ function optionChecks(options: AgentDeployOptions, flags: CallFlags): OptionChec
 /**
  * Lanza `option_not_supported` con la primera opción de MicroVMs de la llamada
  * (argumento del SDK o bandera de la CLI) que AgentCore no admite, en el
- * orden de la tabla del contrato. Un valor igual al valor por defecto cuenta
+ * orden de la tabla del contrato; la CLI (`flags.viaCli`) la nombra por su
+ * bandera y el SDK por su campo. Un valor igual al valor por defecto cuenta
  * como no puesto.
  */
 export function checkCallOptions(options: AgentDeployOptions, flags: CallFlags = {}): void {
   const found = optionChecks(options, flags).find((check) => check.given);
   if (found !== undefined) {
-    throw new AgentCoreError("option_not_supported", { option: found.label, reason: found.reason });
+    const option =
+      flags.viaCli === true ? (CLI_OPTION_LABELS[found.label] ?? found.label) : found.label;
+    throw new AgentCoreError("option_not_supported", { option, reason: found.reason });
   }
 }
 

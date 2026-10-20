@@ -99,6 +99,11 @@ def test_stack_parameters_and_outputs_are_the_contracts() -> None:
     assert list(AGENTCORE_STACK_COMPONENT.capabilities) == CONSTANTS["stackCapabilities"]
 
 
+def test_cli_option_labels_are_the_contracts() -> None:
+    labels = {option.name: option.flag for option in domain.CALL_OPTIONS if option.flag}
+    assert labels == CONSTANTS["cliOptionLabels"]
+
+
 def test_iam_resource_rules_are_the_contracts() -> None:
     rules = CONSTANTS["iamResourceRules"]
     assert iam.SECRET_NAME_PATTERN.pattern == rules["secretNamePattern"].strip("^$")

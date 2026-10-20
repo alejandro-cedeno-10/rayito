@@ -220,21 +220,22 @@ describe("el plan con el adaptador real, sin AWS", () => {
   });
 
   it.each([
-    ["--min-vms", "2", "scaling.min_vms"],
-    ["--warm", "1", "scaling.warm_vms"],
-    ["--memory", "4096", "memory_mib"],
-    ["--port", "9100", "serve.port"],
-    ["--timeout", "120", "serve.timeout_seconds"],
-    ["--idle", "300", "serve.idle"],
-    ["--token-file", "token", "access_token"],
-    ["--keep-on-failure", "", "keep_on_failure"],
-    ["--secret", "bedrock=mi-clave", "secret_names"],
-    ["--create-secret", "", "create_secret_from_env"],
-  ])("%s no aplica a AgentCore y sale con 2 antes de llamar a AWS", async (flag, value, label) => {
+    ["--min-vms", "2"],
+    ["--max-vms", "2"],
+    ["--warm", "1"],
+    ["--memory", "4096"],
+    ["--port", "9100"],
+    ["--timeout", "120"],
+    ["--idle", "300"],
+    ["--token-file", "token"],
+    ["--keep-on-failure", ""],
+    ["--secret", "bedrock=mi-clave"],
+    ["--create-secret", ""],
+  ])("%s no aplica a AgentCore y sale con 2 antes de llamar a AWS", async (flag, value) => {
     const extra = value === "" ? [flag] : [flag, value];
     const outcome = await run([...base, ...extra], { tools: NO_AWS });
     expect(outcome.exitCode).toBe(2);
-    expect(outcome.stderr).toContain(`${label} no aplica a --target agentcore`);
+    expect(outcome.stderr).toContain(`${flag} no aplica a --target agentcore`);
   });
 
   it("--allow-out es una política de red que AgentCore no aplica", async () => {

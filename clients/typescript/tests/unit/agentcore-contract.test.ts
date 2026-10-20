@@ -32,7 +32,7 @@ import {
   RUNTIME_READY_STATE,
   RUNTIME_REPAIRABLE_STATE,
 } from "../../src/agentcore/decisions.js";
-import { RUNTIME_REGION_VARIABLES } from "../../src/agentcore/domain.js";
+import { CLI_OPTION_LABELS, RUNTIME_REGION_VARIABLES } from "../../src/agentcore/domain.js";
 import {
   ACCOUNT_PATTERN,
   AWS_PARTITION,
@@ -167,6 +167,10 @@ describe("nombres y constantes", () => {
   it("el nombre del agente: patrón y largo máximo del contrato", () => {
     expect(AGENT_NAME_PATTERN.source).toBe(constants.agentNamePattern);
     expect(AGENT_NAME_MAX_LENGTH).toBe(constants.agentNameMaxLength);
+  });
+
+  it("las banderas de la CLI de las opciones de MicroVMs son las del contrato", () => {
+    expect(CLI_OPTION_LABELS).toEqual(constants.cliOptionLabels);
   });
 
   it("las reglas de los recursos de IAM son las del contrato", () => {

@@ -107,6 +107,26 @@ describe("opciones de MicroVMs en AgentCore", () => {
     });
   }
 
+  it("desde la CLI cada opción con bandera se nombra por su bandera y el resto por su campo", () => {
+    const labels = contract.constants.cliOptionLabels as Record<string, string>;
+    for (const testCase of CASES) {
+      const message = (() => {
+        try {
+          checkCallOptions(testCase.options ?? new AgentDeployOptions(), {
+            ...testCase.flags,
+            viaCli: true,
+          });
+        } catch (error) {
+          return (error as AgentCoreError).message;
+        }
+        return "";
+      })();
+      expect(message.startsWith(`${labels[testCase.label] ?? testCase.label} no aplica`)).toBe(
+        true,
+      );
+    }
+  });
+
   it("los valores por defecto cuentan como no puestos", () => {
     expect(() =>
       checkCallOptions(new AgentDeployOptions({ scaling: new ScalingOptions() }), {

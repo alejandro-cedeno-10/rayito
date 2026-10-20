@@ -97,6 +97,7 @@ export class SdkAgentCoreTools implements AgentCoreTools {
       maxVms: flags.maxVms,
       warmVms: flags.warm,
       tokenFile: request.tokenFile,
+      viaCli: true,
     });
     return {
       report: detected.report,

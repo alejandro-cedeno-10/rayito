@@ -336,6 +336,20 @@
       "accountPattern": "^[0-9]{12}$",
       "rule": "un nombre de secreto o un id de modelo sólo lleva esos caracteres (sin *, ? ni ,); un ARN debe tener la partición aws, la región del despliegue (o, para foundation-model, la región del modelo, * o vacía) y la cuenta del despliegue, y su nombre o id cumple el patrón. Cualquier otro valor es iam_resource_invalid con field = readable_secrets, bedrock_models o model.id"
     },
+    "cliOptionLabels": {
+      "scaling.min_vms": "--min-vms",
+      "scaling.max_vms": "--max-vms",
+      "scaling.warm_vms": "--warm",
+      "memory_mib": "--memory",
+      "serve.port": "--port",
+      "serve.timeout_seconds": "--timeout",
+      "serve.idle": "--idle",
+      "secret_names": "--secret",
+      "create_secret_from_env": "--create-secret",
+      "access_token": "--token-file",
+      "keep_on_failure": "--keep-on-failure",
+      "base_publisher": "--base-artifact"
+    },
     "runtimeRegionEnvironmentVariables": [
       "AWS_REGION",
       "AWS_DEFAULT_REGION"
@@ -491,7 +505,7 @@
     ]
   },
   "optionsTable": {
-    "description": "Qué pasa con cada opción del despliegue en MicroVMs cuando el destino es agentcore. `call` es una opción de esta llamada (argumento del SDK o bandera de la CLI): si no aplica, error `option_not_supported` antes de cualquier llamada a AWS. `file` es un valor del fichero de proyecto (compartido entre destinos): si no aplica, aviso en el plan y se ignora. `applies` se usa tal cual. Un valor igual al valor por defecto cuenta como no puesto. `ignored` es un valor del fichero que AgentCore no usa y que el plan ya explica en Seguridad, sin aviso aparte. Las opciones de la llamada se comprueban antes de cualquier llamada a AWS, en este orden: target, opciones de AgentCore con target microvm, región, opciones de MicroVMs (en el orden de esta tabla), proveedor del modelo, política de red, nombre, ciclo de vida, etiquetas, entorno, recursos de IAM.",
+    "description": "Qué pasa con cada opción del despliegue en MicroVMs cuando el destino es agentcore. `call` es una opción de esta llamada (argumento del SDK o bandera de la CLI): si no aplica, error `option_not_supported` antes de cualquier llamada a AWS. `file` es un valor del fichero de proyecto (compartido entre destinos): si no aplica, aviso en el plan y se ignora. `applies` se usa tal cual. Un valor igual al valor por defecto cuenta como no puesto. `ignored` es un valor del fichero que AgentCore no usa y que el plan ya explica en Seguridad, sin aviso aparte. Las opciones de la llamada se comprueban antes de cualquier llamada a AWS, en este orden: target, opciones de AgentCore con target microvm, región, opciones de MicroVMs (en el orden de esta tabla), proveedor del modelo, política de red, nombre, ciclo de vida, etiquetas, entorno, recursos de IAM. Cuando la llamada viene de la CLI, `option_not_supported` nombra la opción por su bandera (constants.cliOptionLabels); cuando viene del SDK, por su campo (la primera columna).",
     "rows": [
       {
         "option": "scaling.min_vms / --min-vms",
