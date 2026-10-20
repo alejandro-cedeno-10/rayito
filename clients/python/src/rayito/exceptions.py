@@ -10,8 +10,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from rayito._agentcore._errors import ERROR_EXIT_CODES, ERROR_MESSAGES
-
 if TYPE_CHECKING:
     import grpc
 
@@ -478,10 +476,14 @@ class AgentCoreException(Exception):
     son los valores que interpola."""
 
     def __init__(self, code: AgentCoreErrorCode, **fields: object) -> None:
+        from rayito._agentcore._errors import ERROR_MESSAGES
+
         self.fields: dict[str, str] = {name: str(value) for name, value in fields.items()}
         super().__init__(ERROR_MESSAGES[code].format(**self.fields))
         self.code: AgentCoreErrorCode = code
 
     @property
     def exit_code(self) -> int:
+        from rayito._agentcore._errors import ERROR_EXIT_CODES
+
         return ERROR_EXIT_CODES[self.code]
