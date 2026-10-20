@@ -52,8 +52,7 @@ from rayito._limits import (
 )
 from rayito._stacks._cloudformation import CloudFormationProvisioner
 from rayito._stacks._condition import StackObservation, stack_observation
-from rayito._stacks._model import StackComponent, StackStatus
-from rayito._stacks._port import DeployTarget, StackProvisioner, UpdateOutcome
+from rayito._stacks._port import NO_CHANGES_OUTCOME, StackProvisioner
 from rayito._stacks._service import DEFAULT_WAIT_TIMEOUT_SECONDS, OptionalStacks
 from rayito.exceptions import (
     AgentCoreException,
@@ -521,68 +520,6 @@ class CloudWatchRuntimeLogs:
         return not isinstance(deleted, Absent)
 
 
-class _RecordingProvisioner:
-    """Un `StackProvisioner` que delega en otro y recuerda si el último
-    `UpdateStack` cambió algo: `OptionalStacks.deploy()` no lo devuelve y
-    `reuse` frente a `update` depende de ello."""
-
-    def __init__(self, inner: StackProvisioner) -> None:
-        self._inner = inner
-        self.outcome: UpdateOutcome | None = None
-
-    def describe(self, stack_name: str) -> StackStatus | None:
-        return self._inner.describe(stack_name)
-
-    def create(
-        self,
-        component: StackComponent,
-        *,
-        stack_name: str,
-        template_body: str,
-        parameters: dict[str, str],
-        tags: dict[str, str],
-    ) -> None:
-        self._inner.create(
-            component,
-            stack_name=stack_name,
-            template_body=template_body,
-            parameters=parameters,
-            tags=tags,
-        )
-
-    def update(
-        self,
-        component: StackComponent,
-        *,
-        stack_name: str,
-        template_body: str,
-        parameters: dict[str, str],
-        tags: dict[str, str],
-        keep_previous: tuple[str, ...] = (),
-    ) -> UpdateOutcome:
-        self.outcome = self._inner.update(
-            component,
-            stack_name=stack_name,
-            template_body=template_body,
-            parameters=parameters,
-            tags=tags,
-            keep_previous=keep_previous,
-        )
-        return self.outcome
-
-    def delete(self, stack_name: str) -> None:
-        self._inner.delete(stack_name)
-
-    def wait(self, stack_name: str, target: DeployTarget, timeout: float) -> None:
-        self._inner.wait(stack_name, target, timeout)
-
-    def put_artifact(self, bucket: str, key: str, data: bytes) -> None:
-        self._inner.put_artifact(bucket, key, data)
-
-    def failure_reason(self, stack_name: str) -> str | None:
-        return self._inner.failure_reason(stack_name)
-
-
 class CloudFormationAgentStack:
     """`AgentStack` sobre `OptionalStacks`: crear y actualizar son el mismo
     `deploy`, que decide por el estado de la pila; `tags` (`--tag`) se manda
@@ -596,8 +533,7 @@ class CloudFormationAgentStack:
         tags: Mapping[str, str] | None = None,
         wait_timeout_seconds: float = DEFAULT_WAIT_TIMEOUT_SECONDS,
     ) -> None:
-        self._recorder = _RecordingProvisioner(provisioner)
-        self._stacks = OptionalStacks(provisioner=self._recorder)
+        self._stacks = OptionalStacks(provisioner=provisioner)
         self._provisioner = provisioner
         self._stack_name = stack_name
         self._tags = dict(tags or {})
@@ -611,9 +547,8 @@ class CloudFormationAgentStack:
         return stack_observation(status, self._stack_name)
 
     def deploy(self, parameters: Mapping[str, str]) -> StackDeployment:
-        self._recorder.outcome = None
         try:
-            status = self._stacks.deploy(
+            result = self._stacks.deploy_with_outcome(
                 AGENTCORE_STACK_COMPONENT,
                 stack_name=self._stack_name,
                 parameters=dict(parameters),
@@ -622,8 +557,8 @@ class CloudFormationAgentStack:
             )
         except StackException as exc:
             raise self._translate(exc) from exc.__cause__
-        changed = self._recorder.outcome != "no_changes"
-        return StackDeployment(stack_observation(status, self._stack_name), changed)
+        changed = result.update_outcome != NO_CHANGES_OUTCOME
+        return StackDeployment(stack_observation(result.status, self._stack_name), changed)
 
     def wait(self) -> StackObservation:
         try:

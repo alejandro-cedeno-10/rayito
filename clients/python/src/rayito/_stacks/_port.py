@@ -9,6 +9,8 @@ from typing import Literal, Protocol
 from rayito._stacks._model import StackComponent, StackStatus
 
 UpdateOutcome = Literal["changed", "no_changes"]
+#: Lo que `StackProvisioner.update()` devuelve cuando CloudFormation no tiene nada que cambiar.
+NO_CHANGES_OUTCOME: UpdateOutcome = "no_changes"
 DeployTarget = Literal["deployed", "deleted"]
 
 
