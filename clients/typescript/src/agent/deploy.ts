@@ -128,7 +128,10 @@ export interface Preflight {
 /**
  * Lo que `deployAgent()` haría con estos argumentos, sin llamar a AWS:
  * detecta el proyecto (lee ficheros locales, no ejecuta su código), y calcula
- * el escalado, el origen de cada valor y el coste de lista.
+ * el escalado, el origen de cada valor y el coste de lista. Con `target:
+ * "agentcore"` devuelve el `AgentCoreDeployPlan`: valida lo que no necesita AWS
+ * (región, opciones de MicroVMs que no aplican, nombre, ciclo de vida, etiquetas
+ * y entorno) y lista los tres pasos, la seguridad, los avisos y el coste.
  *
  * Coste y activación
  * -------------------
