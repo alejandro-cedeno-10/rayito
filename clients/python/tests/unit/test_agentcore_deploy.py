@@ -6,6 +6,7 @@ devuelve la flota con la misma API que `AgentFleet`; el progreso llega como
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import os
 from pathlib import Path
 
@@ -19,6 +20,7 @@ from rayito import (
     AsyncAgentCoreFleet,
 )
 from rayito._agent._events import Done
+from rayito._agent._project_domain import AgentProject
 from rayito._agentcore._deploy import (
     AgentCorePorts,
     apply_request,
@@ -109,6 +111,39 @@ def test_the_plan_alone_never_touches_the_gateways() -> None:
     planned = plan_agentcore(Path(DATA), project=project(), region=fake.REGION, environ=ENVIRON)
     assert planned.plan.name == "support-bot" and planned.tree["Dockerfile"]
     assert cloud.recorder.calls == []
+
+
+SENSITIVE_PATHS = (".env", ".env.local", ".git/config")
+
+
+def project_with_sensitive_files(root: Path, *, with_sensitive: bool) -> AgentProject:
+    source = root / "app"
+    source.mkdir()
+    (source / "agent.py").write_text("print('hi')\n", encoding="utf-8")
+    if with_sensitive:
+        for relative in SENSITIVE_PATHS:
+            target = source / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text("not-a-real-value\n", encoding="utf-8")
+    return dataclasses.replace(project(), source=str(source))
+
+
+def test_the_plan_leaves_secret_files_out_of_the_build_context(tmp_path: Path) -> None:
+    clean = tmp_path / "clean"
+    dirty = tmp_path / "dirty"
+    clean.mkdir()
+    dirty.mkdir()
+    plans = [
+        plan_agentcore(root, project=found, region=fake.REGION, environ=ENVIRON)
+        for root, found in (
+            (clean, project_with_sensitive_files(clean, with_sensitive=False)),
+            (dirty, project_with_sensitive_files(dirty, with_sensitive=True)),
+        )
+    ]
+    for planned in plans:
+        assert "app/agent.py" in planned.tree
+        assert not [path for path in planned.tree if path.startswith(("app/.env", "app/.git"))]
+    assert plans[0].plan.image_tag == plans[1].plan.image_tag
 
 
 def test_the_plan_reads_the_bucket_from_the_environment_it_is_given(

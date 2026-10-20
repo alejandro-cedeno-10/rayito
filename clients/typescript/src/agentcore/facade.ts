@@ -13,6 +13,7 @@ import {
   deployOptionsOf,
   projectFor,
   resolvedRegion,
+  withDefaultExcludes,
 } from "../agent/deploy-plan.js";
 import { renderExport, usesRawProtocol } from "../agent/export.js";
 import type { AgentProject } from "../agent/project.js";
@@ -56,7 +57,7 @@ export async function planAgentCoreWith(
 ): Promise<PlannedAgentCore> {
   const options = deployOptionsOf(args.options);
   const detected = await projectFor(path, args.project, args.overrides, args.region);
-  const { project } = detected;
+  const project = withDefaultExcludes(detected.project);
   const environ = ports.environ ?? process.env;
   const region = resolvedRegion(args.region, project, environ);
   if (region === undefined) {

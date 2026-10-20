@@ -20,6 +20,7 @@ from rayito._agent._deploy_plan import (
     AgentDeployStep,
     project_for,
     resolved_region,
+    with_default_excludes,
 )
 from rayito._agent._export import RawAppNotExportable, render_export
 from rayito._agent._project_domain import AgentProject
@@ -97,6 +98,7 @@ def plan_agentcore(
     detected, report = project_for(path, project, overrides, region)
     if adjust is not None:
         detected = adjust(detected)
+    detected = with_default_excludes(detected)
     variables = os.environ if environ is None else environ
     effective = resolved_region(region, detected, session, variables)
     trees: list[Mapping[str, bytes]] = []
