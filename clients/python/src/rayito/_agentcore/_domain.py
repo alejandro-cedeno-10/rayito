@@ -26,6 +26,7 @@ from rayito._agent._fleet_base import AGENT_FLEET_WARM_READY_TIMEOUT_SECONDS
 from rayito._agent._project_base import template_name
 from rayito._agent._project_domain import ServeOptions
 from rayito._agent._scaling_domain import ScalingOptions
+from rayito._agentcore._env_credentials import uses_env_credentials
 from rayito._agentcore._messages import COST_TEXTS
 from rayito._agentcore._models import (
     AgentCoreDeployPlan,
@@ -42,7 +43,6 @@ from rayito._limits import (
     AGENTCORE_BASE_IMAGE_MIRROR,
     AGENTCORE_DESCRIPTION_MARKER,
     AGENTCORE_ENDPOINT_NAME,
-    AGENTCORE_ENV_CREDENTIAL_ADAPTERS,
     AGENTCORE_ENVIRONMENT_VALUE_MAX_CHARS,
     AGENTCORE_IDLE_SESSION_TIMEOUT_DEFAULT_SECONDS,
     AGENTCORE_IMAGE_RETENTION_COUNT,
@@ -731,17 +731,9 @@ def security_keys(
     if secrets:
         keys.append(SECURITY_SECRETS)
     keys.extend((SECURITY_PUBLIC_NETWORK, SECURITY_ISOLATION))
-    if uses_env_credentials(project):
+    if uses_env_credentials(project.runtime):
         keys.append(SECURITY_ENV_CREDENTIALS)
     return tuple(keys)
-
-
-def uses_env_credentials(project: AgentProject) -> bool:
-    """Si el adaptador del proyecto sólo lee las credenciales de variables de
-    entorno (`AGENTCORE_ENV_CREDENTIAL_ADAPTERS`): el host se las pone, leídas
-    del rol del runtime, en cada invocación."""
-    adapter = getattr(project.runtime, "adapter", None)
-    return adapter in AGENTCORE_ENV_CREDENTIAL_ADAPTERS
 
 
 def _usd(price: float) -> str:
