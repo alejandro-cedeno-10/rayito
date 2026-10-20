@@ -26,24 +26,21 @@ from rayito._agentcore._domain import (
     stack_name_for,
 )
 from rayito._agentcore._fleet_base import (
+    AgentCoreFleetView,
     ChunkedResponse,
     event_with_session_id,
     invocation_request,
+    runtime_not_found,
     with_session_id,
 )
 from rayito._agentcore._models import (
     AgentCoreDeleteResult,
-    AgentCoreDeployment,
     AgentCoreStatus,
 )
 from rayito._agentcore._ports import (
-    AgentCoreGateways,
-    InvokeResponse,
-    RuntimeInvoker,
     RuntimeNotFound,
 )
 from rayito._agentcore._service import AgentCoreDeleter, describe_agent, status_of
-from rayito.exceptions import AgentCoreException
 
 T = TypeVar("T")
 
@@ -82,7 +79,7 @@ class AgentCoreFleetStream:
         self._stream.close()
 
 
-class AgentCoreFleet:
+class AgentCoreFleet(AgentCoreFleetView):
     """Un agente desplegado en AgentCore Runtime. `invoke()` y `stream()`
     tienen la firma y los resultados de `AgentFleet`: el `session_id` del
     resultado es el que se usó (si pasas uno tuyo, el mismo id llega siempre a
@@ -115,39 +112,6 @@ class AgentCoreFleet:
         fleet.invoke("¿Y el de docs?", session_id=result.session_id)
     """
 
-    def __init__(
-        self,
-        status: AgentCoreStatus,
-        *,
-        gateways: AgentCoreGateways,
-        invoker: RuntimeInvoker,
-    ) -> None:
-        self._status = status
-        self._gateways = gateways
-        self._invoker = invoker
-
-    @classmethod
-    def from_deployment(
-        cls,
-        deployment: AgentCoreDeployment,
-        *,
-        gateways: AgentCoreGateways,
-        invoker: RuntimeInvoker,
-    ) -> Self:
-        """La flota de un despliegue recién aplicado."""
-        status = AgentCoreStatus(
-            name=deployment.name,
-            region=deployment.region,
-            runtime_name=deployment.runtime_name,
-            runtime_id=deployment.runtime_id,
-            runtime_arn=deployment.runtime_arn,
-            runtime_version=deployment.runtime_version,
-            status=deployment.status,
-            image_uri=deployment.image_uri,
-            log_group=deployment.log_group,
-        )
-        return cls(status, gateways=gateways, invoker=invoker)
-
     @classmethod
     def connect(
         cls,
@@ -164,38 +128,6 @@ class AgentCoreFleet:
         _, status = describe_agent(gateways.runtimes, name, resolved, runtime_name_for(name))
         invoker = AgentCoreInvoker(AgentCoreClients(resolved, session))
         return cls(status, gateways=gateways, invoker=invoker)
-
-    @property
-    def name(self) -> str:
-        return self._status.name
-
-    @property
-    def region(self) -> str:
-        return self._status.region
-
-    @property
-    def runtime_name(self) -> str:
-        return self._status.runtime_name
-
-    @property
-    def runtime_id(self) -> str:
-        return self._status.runtime_id
-
-    @property
-    def runtime_arn(self) -> str:
-        return self._status.runtime_arn
-
-    @property
-    def runtime_version(self) -> str:
-        return self._status.runtime_version
-
-    @property
-    def image_uri(self) -> str:
-        return self._status.image_uri
-
-    @property
-    def log_group(self) -> str:
-        return self._status.log_group
 
     def invoke(
         self,
@@ -233,7 +165,9 @@ class AgentCoreFleet:
                 self._status.runtime_arn, request.session_id, request.body, request.accept
             )
         )
-        return AgentCoreFleetStream(AgentDeploymentStream(_adapted(response)), request.session_id)
+        return AgentCoreFleetStream(
+            AgentDeploymentStream(ChunkedResponse(response)), request.session_id
+        )
 
     def status(self) -> AgentCoreStatus:
         """El runtime tal como está ahora (`GetAgentRuntime`)."""
@@ -259,10 +193,4 @@ class AgentCoreFleet:
         try:
             return operation()
         except RuntimeNotFound:
-            raise AgentCoreException(
-                "runtime_not_found", name=self.name, region=self.region
-            ) from None
-
-
-def _adapted(response: InvokeResponse) -> Any:
-    return ChunkedResponse(response)
+            raise runtime_not_found(self.name, self.region) from None

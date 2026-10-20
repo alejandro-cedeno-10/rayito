@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 from collections.abc import AsyncIterator, Iterator
-from typing import Final
+from typing import Final, Self
 
 from rayito._agent._deployment_base import (
     EVENT_STREAM_CONTENT_TYPE,
@@ -20,7 +20,9 @@ from rayito._agent._deployment_base import (
 from rayito._agent._events import AgentEvent, AgentFailed, AgentResult, Done
 from rayito._agent._stream_base import require_prompt
 from rayito._agentcore._domain import agentcore_session_id
-from rayito._agentcore._ports import InvokeResponse
+from rayito._agentcore._models import AgentCoreDeployment, AgentCoreStatus
+from rayito._agentcore._ports import AgentCoreGateways, InvokeResponse, RuntimeInvoker
+from rayito.exceptions import AgentCoreException
 
 ACCEPT_JSON: Final = JSON_CONTENT_TYPE
 ACCEPT_EVENT_STREAM: Final = EVENT_STREAM_CONTENT_TYPE
@@ -52,6 +54,86 @@ def invocation_request(
         ),
         accept=ACCEPT_EVENT_STREAM if streaming else ACCEPT_JSON,
     )
+
+
+def status_from_deployment(deployment: AgentCoreDeployment) -> AgentCoreStatus:
+    """El estado de un runtime recién desplegado, campo a campo."""
+    return AgentCoreStatus(
+        name=deployment.name,
+        region=deployment.region,
+        runtime_name=deployment.runtime_name,
+        runtime_id=deployment.runtime_id,
+        runtime_arn=deployment.runtime_arn,
+        runtime_version=deployment.runtime_version,
+        status=deployment.status,
+        image_uri=deployment.image_uri,
+        log_group=deployment.log_group,
+    )
+
+
+def runtime_not_found(name: str, region: str) -> AgentCoreException:
+    """El error de una operación sobre un runtime que ya no existe."""
+    return AgentCoreException("runtime_not_found", name=name, region=region)
+
+
+class AgentCoreFleetView:
+    """Lo que `AgentCoreFleet` y `AsyncAgentCoreFleet` leen igual del estado del
+    runtime: sus puertos, el estado con el que se crearon y las propiedades de
+    sólo lectura."""
+
+    def __init__(
+        self,
+        status: AgentCoreStatus,
+        *,
+        gateways: AgentCoreGateways,
+        invoker: RuntimeInvoker,
+    ) -> None:
+        self._status = status
+        self._gateways = gateways
+        self._invoker = invoker
+
+    @classmethod
+    def from_deployment(
+        cls,
+        deployment: AgentCoreDeployment,
+        *,
+        gateways: AgentCoreGateways,
+        invoker: RuntimeInvoker,
+    ) -> Self:
+        """La flota de un despliegue recién aplicado."""
+        return cls(status_from_deployment(deployment), gateways=gateways, invoker=invoker)
+
+    @property
+    def name(self) -> str:
+        return self._status.name
+
+    @property
+    def region(self) -> str:
+        return self._status.region
+
+    @property
+    def runtime_name(self) -> str:
+        return self._status.runtime_name
+
+    @property
+    def runtime_id(self) -> str:
+        return self._status.runtime_id
+
+    @property
+    def runtime_arn(self) -> str:
+        return self._status.runtime_arn
+
+    @property
+    def runtime_version(self) -> str:
+        return self._status.runtime_version
+
+    @property
+    def image_uri(self) -> str:
+        return self._status.image_uri
+
+    @property
+    def log_group(self) -> str:
+        return self._status.log_group
 
 
 def with_session_id(result: AgentResult, session_id: str) -> AgentResult:
