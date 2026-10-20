@@ -8,6 +8,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import io
+import json
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
@@ -16,7 +17,7 @@ from typing import Any
 import boto3
 import pytest
 from botocore.response import StreamingBody
-from botocore.stub import ANY, Stubber
+from botocore.stub import Stubber
 
 from rayito._agentcore._aws import (
     AgentCoreClients,
@@ -49,6 +50,9 @@ from rayito.exceptions import (
 from tests.unit import fake_agentcore as fake
 
 NOW = datetime(2026, 10, 19, tzinfo=UTC)
+TOKEN_VECTORS: list[dict[str, Any]] = json.loads(
+    (fake.DATA / "client-tokens.json").read_text(encoding="utf-8")
+)["cases"]
 RUNTIME_ARN = f"arn:aws:bedrock-agentcore:{fake.REGION}:{fake.ACCOUNT}:runtime/{fake.RUNTIME_ID}"
 IMAGE_URI = f"{fake.DEFAULT_OUTPUTS['RepositoryUri']}:{fake.IMAGE_TAG}"
 ROLE_ARN = fake.DEFAULT_OUTPUTS["RuntimeRoleArn"]
@@ -213,6 +217,17 @@ def test_create_runtime_sends_the_documented_request_with_a_deterministic_token(
 
 
 def test_update_runtime_always_requires_mmds_v2_and_resends_the_full_configuration() -> None:
+    sent = {
+        "agentRuntimeId": fake.RUNTIME_ID,
+        "agentRuntimeArtifact": {"containerConfiguration": {"containerUri": IMAGE_URI}},
+        "roleArn": ROLE_ARN,
+        "networkConfiguration": {"networkMode": "PUBLIC"},
+        "protocolConfiguration": {"serverProtocol": "HTTP"},
+        "lifecycleConfiguration": {"idleRuntimeSessionTimeout": 900, "maxLifetime": 28800},
+        "environmentVariables": {"AWS_REGION": fake.REGION},
+        "description": fake.runtime_description(),
+        "metadataConfiguration": {"requireMMDSV2": True},
+    }
     with stubbed("bedrock-agentcore-control") as (client, stubber):
         stubber.add_response(
             "update_agent_runtime",
@@ -224,23 +239,24 @@ def test_update_runtime_always_requires_mmds_v2_and_resends_the_full_configurati
                 "lastUpdatedAt": NOW,
                 "status": "UPDATING",
             },
-            {
-                "agentRuntimeId": fake.RUNTIME_ID,
-                "agentRuntimeArtifact": {"containerConfiguration": {"containerUri": IMAGE_URI}},
-                "roleArn": ROLE_ARN,
-                "networkConfiguration": {"networkMode": "PUBLIC"},
-                "protocolConfiguration": {"serverProtocol": "HTTP"},
-                "lifecycleConfiguration": {"idleRuntimeSessionTimeout": 900, "maxLifetime": 28800},
-                "environmentVariables": {"AWS_REGION": fake.REGION},
-                "description": fake.runtime_description(),
-                "metadataConfiguration": {"requireMMDSV2": True},
-                "clientToken": ANY,
-            },
+            {**sent, "clientToken": client_token_for(sent, "2")},
         )
         ref = AgentCoreRuntimes(clients_with(control=client)).update_runtime(
-            fake.RUNTIME_ID, spec()
+            fake.RUNTIME_ID, spec(), "2"
         )
     assert (ref.runtime_id, ref.version, ref.status) == (fake.RUNTIME_ID, "3", "UPDATING")
+
+
+@pytest.mark.parametrize("case", TOKEN_VECTORS, ids=lambda case: case["name"])
+def test_client_token_vectors(case: dict[str, Any]) -> None:
+    assert client_token_for(case["request"], case.get("baseVersion")) == case["expected"]
+
+
+def test_an_update_back_to_an_earlier_configuration_does_not_reuse_the_old_token() -> None:
+    request = {"agentRuntimeId": fake.RUNTIME_ID, "description": "same"}
+    assert client_token_for(request, "2") == client_token_for(request, "2")
+    assert client_token_for(request, "2") != client_token_for(request, "3")
+    assert client_token_for(request, "2") != client_token_for(request)
 
 
 def test_the_same_request_gets_the_same_token_and_a_changed_one_does_not() -> None:

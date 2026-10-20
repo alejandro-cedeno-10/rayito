@@ -108,6 +108,9 @@ EMPTY_SESSION_ID_MESSAGE: Final = "session_id no puede ser vacío"
 #: Caracteres hexadecimales del sha256 y del uuid que forman un id o un token
 #: (`sessionIdRules`, `clientTokenDigest`).
 DERIVED_HEX_CHARS: Final = 32
+#: La clave que añade la versión leída al texto que se hashea al actualizar
+#: (`clientTokenDigest`).
+BASE_VERSION_KEY: Final = "baseVersion"
 
 #: Etiquetas de AWS (`CreateAgentRuntime.tags`, `AWS_API_NOTES.md`): clave de 1
 #: a 128 y valor de 0 a 256 caracteres de `[a-zA-Z0-9\s._:/=+@-]`.
@@ -520,13 +523,19 @@ def image_tag_for(tree: Mapping[str, bytes]) -> str:
     return AGENTCORE_IMAGE_TAG_PREFIX + digest.hexdigest()[:AGENTCORE_IMAGE_TAG_HEX_CHARS]
 
 
-def client_token_for(request: Mapping[str, Any]) -> str:
-    """El `clientToken` de una petición de crear o actualizar un runtime: el
-    sha256 de su JSON canónico sin el propio token (`clientTokenDigest`). Un
-    reintento de la misma petición repite el token y AgentCore no crea un
-    duplicado."""
+def client_token_for(request: Mapping[str, Any], base_version: str | None = None) -> str:
+    """El `clientToken` de una petición de AWS de crear o actualizar un
+    runtime: el sha256 de su JSON canónico sin el propio token
+    (`clientTokenDigest`). Al actualizar se pasa `base_version`, la versión que
+    `GetAgentRuntime` dio justo antes, y entra en el hash como `baseVersion`:
+    un reintento de la misma petición repite el token, pero volver a una
+    configuración anterior tras otra versión no se confunde con la petición
+    vieja."""
+    unsigned = {key: value for key, value in request.items() if key != "clientToken"}
+    if base_version is not None:
+        unsigned[BASE_VERSION_KEY] = base_version
     canonical = json.dumps(
-        {key: value for key, value in request.items() if key != "clientToken"},
+        unsigned,
         sort_keys=True,
         separators=(",", ":"),
         ensure_ascii=False,

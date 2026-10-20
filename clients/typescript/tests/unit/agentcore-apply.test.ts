@@ -158,9 +158,9 @@ describe("despliegue completo", () => {
     expect(create?.runtimeName).toBe(RUNTIME_NAME);
     expect(create?.requireMMDSV2).toBeUndefined();
     expect(create?.description).toBe(DESCRIPTION);
-    expect(create?.clientToken).toMatch(/^rayito-[0-9a-f]{32}$/);
+    expect(create?.baseVersion).toBeUndefined();
     expect(update?.requireMMDSV2).toBe(true);
-    expect(update?.clientToken).not.toBe(create?.clientToken);
+    expect(update?.baseVersion).toBe("1");
     expect(result.runtimeId).toBe(RUNTIME_ID);
     expect(result.logGroup).toBe(`/aws/bedrock-agentcore/runtimes/${RUNTIME_ID}-DEFAULT`);
   });

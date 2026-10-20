@@ -5,8 +5,8 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { imageTagFor } from "../../src/agentcore/identifiers.js";
-import { imageTagVectors } from "./agentcore-vectors.js";
+import { clientTokenFor, imageTagFor } from "../../src/agentcore/identifiers.js";
+import { clientTokenVectors, imageTagVectors } from "./agentcore-vectors.js";
 
 describe("etiqueta de imagen de AgentCore", () => {
   for (const testCase of imageTagVectors) {
@@ -19,5 +19,20 @@ describe("etiqueta de imagen de AgentCore", () => {
     const text = imageTagFor(new Map([["a.txt", "ñ"]]));
     const bytes = imageTagFor(new Map([["a.txt", new TextEncoder().encode("ñ")]]));
     expect(bytes).toBe(text);
+  });
+});
+
+describe("clientToken de AgentCore", () => {
+  for (const testCase of clientTokenVectors) {
+    it(testCase.name, () => {
+      expect(clientTokenFor(testCase.request, testCase.baseVersion)).toBe(testCase.expected);
+    });
+  }
+
+  it("volver a una configuración anterior en otra versión no repite el token", () => {
+    const request = { agentRuntimeId: "rayito_demo-abc1234567", description: "igual" };
+    expect(clientTokenFor(request, "2")).toBe(clientTokenFor(request, "2"));
+    expect(clientTokenFor(request, "2")).not.toBe(clientTokenFor(request, "3"));
+    expect(clientTokenFor(request, "2")).not.toBe(clientTokenFor(request));
   });
 });

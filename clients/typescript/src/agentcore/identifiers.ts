@@ -19,6 +19,9 @@ import {
 
 /** `sessionIdRules.pattern` del contrato: lo que admite `runtimeSessionId` en la respuesta de AWS. */
 export const SESSION_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_-]*$/;
+/** La clave que añade la versión leída al texto que se hashea al actualizar (`constants.clientTokenDigest`). */
+export const BASE_VERSION_KEY = "baseVersion";
+
 /** Caracteres hexadecimales del `clientToken` (`clientTokenTemplate` del contrato; mide 39 con el prefijo, dentro de 33-256). */
 export const CLIENT_TOKEN_HEX_CHARS = 32;
 const HASH_ALGORITHM = "sha256";
@@ -82,15 +85,21 @@ function sortedKeys(value: unknown): unknown {
 }
 
 /**
- * El `clientToken` de una petición de `CreateAgentRuntime` o
+ * El `clientToken` de una petición de AWS de `CreateAgentRuntime` o
  * `UpdateAgentRuntime`: `rayito-` y 32 hexadecimales del sha256 de su JSON
- * canónico sin `clientToken` (claves ordenadas, sin espacios, UTF-8). Un
- * reintento de la misma petición repite el token y AgentCore no crea un
- * duplicado.
+ * canónico sin `clientToken` (claves ordenadas, sin espacios, UTF-8). Al
+ * actualizar se pasa `baseVersion`, la versión que `GetAgentRuntime` dio justo
+ * antes, y entra en el hash: un reintento de la misma petición repite el
+ * token, pero volver a una configuración anterior tras otra versión no se
+ * confunde con la petición vieja.
  */
-export function clientTokenFor(request: Readonly<Record<string, unknown>>): string {
+export function clientTokenFor(
+  request: Readonly<Record<string, unknown>>,
+  baseVersion?: string,
+): string {
   const { clientToken: _omitted, ...rest } = request;
-  const digest = sha256Hex(UTF8.encode(JSON.stringify(sortedKeys(rest))));
+  const unsigned = baseVersion === undefined ? rest : { ...rest, [BASE_VERSION_KEY]: baseVersion };
+  const digest = sha256Hex(UTF8.encode(JSON.stringify(sortedKeys(unsigned))));
   return `${AGENTCORE_SESSION_ID_PREFIX}${digest.slice(0, CLIENT_TOKEN_HEX_CHARS)}`;
 }
 

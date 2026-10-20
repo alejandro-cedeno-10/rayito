@@ -399,14 +399,14 @@ class AgentCoreRuntimes:
             status=str(response["status"]),
         )
 
-    def update_runtime(self, runtime_id: str, spec: RuntimeSpec) -> RuntimeRef:
+    def update_runtime(self, runtime_id: str, spec: RuntimeSpec, base_version: str) -> RuntimeRef:
         client = self._clients.control.get()
         request = {
             "agentRuntimeId": runtime_id,
             **_runtime_request(spec),
             "metadataConfiguration": {"requireMMDSV2": True},
         }
-        request["clientToken"] = client_token_for(request)
+        request["clientToken"] = client_token_for(request, base_version)
         response = required(
             OP_UPDATE_RUNTIME,
             lambda: client.update_agent_runtime(**request),

@@ -15,6 +15,7 @@ import {
   SdkRuntimeLogs,
   SdkSourceStore,
 } from "../../src/agentcore/aws-build.js";
+import { clientTokenFor } from "../../src/agentcore/identifiers.js";
 import { MissingResourceError, RuntimeConflictError } from "../../src/agentcore/ports.js";
 import {
   AgentCoreError,
@@ -166,7 +167,6 @@ describe("plano de control", () => {
       maxLifetime: 28800,
       description: "Rayito agent demo (rayito.agentcore/1)",
       tags: { "rayito:component": "agentcore-runtime" },
-      clientToken: "rayito-0123456789abcdef0123456789abcdef",
     });
     expect(written).toMatchObject({
       runtimeId: "rayito_demo-abc1234567",
@@ -188,6 +188,8 @@ describe("plano de control", () => {
         "tags",
       ].sort(),
     );
+    const { clientToken, ...unsigned } = input ?? {};
+    expect(clientToken).toBe(clientTokenFor(unsigned));
     expect(input).toMatchObject({
       agentRuntimeArtifact: {
         containerConfiguration: { containerUri: expect.stringContaining(":src-") },
@@ -209,7 +211,6 @@ describe("plano de control", () => {
         idleRuntimeSessionTimeout: 900,
         maxLifetime: 28800,
         description: "d",
-        clientToken: "t",
       }),
     ).rejects.toBeInstanceOf(RuntimeConflictError);
   });
@@ -225,7 +226,7 @@ describe("plano de control", () => {
       maxLifetime: 28800,
       description: "d",
       requireMMDSV2: true,
-      clientToken: "t",
+      baseVersion: "2",
     });
     const [input] = sentOf("UpdateAgentRuntimeCommand");
     expect(input).toMatchObject({
@@ -234,6 +235,8 @@ describe("plano de control", () => {
       networkConfiguration: { networkMode: "PUBLIC" },
     });
     expect(input).not.toHaveProperty("platformVersion");
+    const { clientToken, ...unsigned } = input ?? {};
+    expect(clientToken).toBe(clientTokenFor(unsigned, "2"));
   });
 
   it("lee los campos que se comparan y no failureReason", async () => {

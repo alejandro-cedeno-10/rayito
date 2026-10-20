@@ -444,7 +444,8 @@ class AgentCoreDeployer:
     ) -> RuntimeDescription:
         if announce:
             report("runtimeUpdate", runtimeName=spec.name)
-        self._gateways.runtimes.update_runtime(runtime_id, spec)
+        base_version = self._gateways.runtimes.get_runtime(runtime_id).listing.version
+        self._gateways.runtimes.update_runtime(runtime_id, spec, base_version)
         described = self._await_ready(runtime_id, spec.name)
         report("runtimeReady", runtimeName=spec.name, version=described.listing.version)
         return described

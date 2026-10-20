@@ -202,6 +202,7 @@ class FakeRuntimes:
     others: list[RuntimeListing] = field(default_factory=list)
     conflict_on_create: bool = False
     specs: list[RuntimeSpec] = field(default_factory=list)
+    base_versions: list[str] = field(default_factory=list)
     deleted: list[str] = field(default_factory=list)
     ready_after_polls: int = 1
     _polls: int = 0
@@ -267,8 +268,9 @@ class FakeRuntimes:
         )
         return RuntimeRef(RUNTIME_ID, _arn(RUNTIME_ID), "1", "CREATING")
 
-    def update_runtime(self, runtime_id: str, spec: RuntimeSpec) -> RuntimeRef:
+    def update_runtime(self, runtime_id: str, spec: RuntimeSpec, base_version: str) -> RuntimeRef:
         self.recorder.record("update_runtime", runtime_id)
+        self.base_versions.append(base_version)
         assert self.listing is not None
         self.specs.append(spec)
         self._last_spec = spec

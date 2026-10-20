@@ -9,7 +9,7 @@
 import type { StackProvisioner } from "../stacks/port.js";
 import type { ImageObservation, ListedRuntime, RuntimeDetails } from "./models.js";
 
-/** Lo que se manda a `CreateAgentRuntime` o `UpdateAgentRuntime` (`runtimeName` y `tags` sólo al crear; `runtimeId` y `requireMMDSV2` sólo al actualizar). */
+/** Lo que se manda a `CreateAgentRuntime` o `UpdateAgentRuntime` (`runtimeName` y `tags` sólo al crear; `runtimeId`, `requireMMDSV2` y `baseVersion` sólo al actualizar). El adaptador firma la petición de AWS con su `clientToken`. */
 export interface RuntimeWriteRequest {
   readonly runtimeName?: string;
   readonly runtimeId?: string;
@@ -21,7 +21,8 @@ export interface RuntimeWriteRequest {
   readonly description: string;
   readonly tags?: Readonly<Record<string, string>>;
   readonly requireMMDSV2?: true;
-  readonly clientToken: string;
+  /** La versión que `GetAgentRuntime` dio justo antes de actualizar; entra en el `clientToken`. */
+  readonly baseVersion?: string;
 }
 
 export interface RuntimeWriteResult {

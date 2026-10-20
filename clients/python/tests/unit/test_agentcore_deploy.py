@@ -98,6 +98,12 @@ def test_deploy_uses_the_options_of_agentcore_for_the_role_and_the_lifecycle() -
     assert spec.description == "Rayito agent support-bot (rayito.agentcore/1)"
 
 
+def test_the_update_after_a_create_carries_the_version_read_just_before() -> None:
+    cloud = fake.cloud()
+    deploy_agentcore(ports(cloud), Path(DATA), project=project(), region=fake.REGION)
+    assert cloud.runtimes.base_versions == ["1"]
+
+
 def test_a_failure_is_an_agentcore_exception_with_a_closed_code() -> None:
     cloud = fake.cloud()
     cloud.builder.statuses = ["FAILED"]

@@ -145,7 +145,7 @@ async function checkNameConflict(name: string, fleet: AgentCoreFleet): Promise<v
       maxLifetime: details.maxLifetime,
       description,
       requireMMDSV2: true,
-      clientToken: `rayito-e2e-${name}-${description.length}`.padEnd(33, "0"),
+      baseVersion: details.runtimeVersion,
     });
   await rewrite("creado a mano");
   try {

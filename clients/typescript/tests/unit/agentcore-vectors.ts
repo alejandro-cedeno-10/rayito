@@ -138,6 +138,18 @@ export interface ImageTagCase {
   expected: string;
 }
 
+export interface ClientTokenCase {
+  name: string;
+  request: Record<string, unknown>;
+  baseVersion?: string;
+  expected: string;
+}
+
+export const clientTokenVectors = loadTestdata<{ cases: ClientTokenCase[] }>(
+  FOLDER,
+  "client-tokens.json",
+).cases;
+
 export const contract = loadTestdata<Contract>(FOLDER, "contract.json");
 export const planVectors = loadTestdata<{ cases: PlanCase[] }>(FOLDER, "plan-vectors.json").cases;
 export const applyVectors = loadTestdata<{ cases: ApplyCase[] }>(

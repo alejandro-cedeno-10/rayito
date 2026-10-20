@@ -17,7 +17,6 @@ import {
   RUNTIME_READY_STATE,
   type StackOutputs,
 } from "./decisions.js";
-import { clientTokenFor } from "./identifiers.js";
 import type {
   AgentCoreDeployPlan,
   AgentCoreStep,
@@ -147,12 +146,11 @@ export class RuntimeApplier {
 
   async #create(plan: AgentCoreDeployPlan, desired: DesiredRuntime, emit: Emit): Promise<Executed> {
     emit("runtimeCreate", { runtimeName: plan.runtimeName });
-    const unsigned = {
+    const request: RuntimeWriteRequest = {
       ...this.#writeRequest(plan, desired),
       runtimeName: plan.runtimeName,
       tags: stackTags(AGENTCORE_STACK_COMPONENT, plan.tags),
     };
-    const request: RuntimeWriteRequest = { ...unsigned, clientToken: clientTokenFor(unsigned) };
     let runtimeId: string;
     try {
       runtimeId = (await this.#control.createRuntime(request)).runtimeId;
@@ -193,10 +191,11 @@ export class RuntimeApplier {
   }
 
   /**
-   * `UpdateAgentRuntime` con la configuración completa y `requireMMDSV2`. El
-   * `clientToken` incluye la versión que se ve ahora: un reintento de la misma
-   * petición lo repite, pero volver a una configuración anterior después de
-   * otra versión no se confunde con la petición vieja.
+   * `UpdateAgentRuntime` con la configuración completa y `requireMMDSV2`. La
+   * versión que se ve ahora viaja como `baseVersion` y entra en el
+   * `clientToken` del adaptador: un reintento de la misma petición lo repite,
+   * pero volver a una configuración anterior después de otra versión no se
+   * confunde con la petición vieja.
    */
   async #enforceMmds(
     plan: AgentCoreDeployPlan,
@@ -204,14 +203,11 @@ export class RuntimeApplier {
     desired: DesiredRuntime,
   ): Promise<void> {
     const current = await this.#control.getRuntime(runtimeId);
-    const unsigned = {
+    await this.#control.updateRuntime({
       ...this.#writeRequest(plan, desired),
       runtimeId,
       requireMMDSV2: true as const,
-    };
-    await this.#control.updateRuntime({
-      ...unsigned,
-      clientToken: clientTokenFor({ ...unsigned, baseVersion: current?.runtimeVersion ?? "" }),
+      baseVersion: current?.runtimeVersion ?? "",
     });
     await this.#waitReady(plan, runtimeId);
   }

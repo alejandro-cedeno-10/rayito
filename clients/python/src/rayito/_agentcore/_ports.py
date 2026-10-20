@@ -115,9 +115,10 @@ class RuntimeControl(Protocol):
         """Lanza `RuntimeAlreadyExists` si otro lo creó a la vez."""
         ...
 
-    def update_runtime(self, runtime_id: str, spec: RuntimeSpec) -> RuntimeRef:
+    def update_runtime(self, runtime_id: str, spec: RuntimeSpec, base_version: str) -> RuntimeRef:
         """`UpdateAgentRuntime` con la configuración completa y
-        `requireMMDSV2=true`."""
+        `requireMMDSV2=true`. `base_version` es la versión que `GetAgentRuntime`
+        dio justo antes y entra en el `clientToken`."""
         ...
 
     def delete_runtime(self, runtime_id: str) -> None: ...

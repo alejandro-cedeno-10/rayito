@@ -29,6 +29,7 @@ import {
   loadClient,
   NOT_FOUND_CODE,
 } from "./aws-support.js";
+import { clientTokenFor } from "./identifiers.js";
 import type { ListedRuntime, RuntimeDetails } from "./models.js";
 import {
   type InvokeRequest,
@@ -140,7 +141,6 @@ function writeInput(request: RuntimeWriteRequest): Record<string, unknown> {
     },
     environmentVariables: request.environmentVariables,
     description: request.description,
-    clientToken: request.clientToken,
   };
 }
 
@@ -224,12 +224,14 @@ export class SdkRuntimeControl implements RuntimeControl {
   async createRuntime(request: RuntimeWriteRequest): Promise<RuntimeWriteResult> {
     const output = await this.#call<RuntimeSummaryOutput>(
       "CreateAgentRuntime",
-      (sdk) =>
-        new sdk.CreateAgentRuntimeCommand({
+      (sdk) => {
+        const input = {
           agentRuntimeName: request.runtimeName,
           ...writeInput(request),
           ...(request.tags === undefined ? {} : { tags: request.tags }),
-        }),
+        };
+        return new sdk.CreateAgentRuntimeCommand({ ...input, clientToken: clientTokenFor(input) });
+      },
       (code) => (code === CONFLICT_CODE ? new RuntimeConflictError() : undefined),
     );
     return writeResultOf(output, undefined);
@@ -238,14 +240,19 @@ export class SdkRuntimeControl implements RuntimeControl {
   async updateRuntime(request: RuntimeWriteRequest): Promise<RuntimeWriteResult> {
     const output = await this.#call<RuntimeSummaryOutput>(
       "UpdateAgentRuntime",
-      (sdk) =>
-        new sdk.UpdateAgentRuntimeCommand({
+      (sdk) => {
+        const input = {
           agentRuntimeId: request.runtimeId,
           ...writeInput(request),
           ...(request.requireMMDSV2 === true
             ? { metadataConfiguration: { requireMMDSV2: true } }
             : {}),
-        }),
+        };
+        return new sdk.UpdateAgentRuntimeCommand({
+          ...input,
+          clientToken: clientTokenFor(input, request.baseVersion ?? ""),
+        });
+      },
       (code) =>
         code === NOT_FOUND_CODE
           ? new AgentCoreError("runtime_not_found", {

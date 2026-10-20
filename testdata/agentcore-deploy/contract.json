@@ -414,7 +414,7 @@
     "applyActionsNote": "El plan (plan_deploy, planDeploy y --dry-run) no llama a AWS: sus tres pasos son siempre `planned`. Las acciones create, update, reuse, wait y build se deciden al aplicar, de una observación de esa misma ejecución (apply-vectors.json), y salen en `steps` del documento de despliegue.",
     "imageTagDigest": "sha256 hexadecimal sobre el árbol de render_export(project, target='agentcore'): para cada fichero, en orden ascendente de ruta relativa (comparación de cadenas UTF-8), la ruta en UTF-8, un byte 0, la longitud en bytes en decimal ASCII, un byte 0 y el contenido. La etiqueta es imageTagPrefix + los primeros agentcoreImageTagHexChars caracteres.",
     "clientTokenTemplate": "{sessionIdPrefix}{sha256Prefix32}",
-    "clientTokenDigest": "sha256 hexadecimal (32 primeros caracteres) del JSON canónico de la petición de CreateAgentRuntime o UpdateAgentRuntime sin clientToken (claves ordenadas, sin espacios, UTF-8). Un reintento de la misma petición repite el token y AgentCore no crea un duplicado.",
+    "clientTokenDigest": "sha256 hexadecimal (32 primeros caracteres) del JSON canónico de la petición de AWS de CreateAgentRuntime o UpdateAgentRuntime sin clientToken (claves ordenadas, sin espacios, UTF-8). En UpdateAgentRuntime la petición lleva además baseVersion, la agentRuntimeVersion que GetAgentRuntime devolvió justo antes de actualizar, para que volver a una configuración anterior no se confunda con una repetición. Un reintento de la misma petición sobre la misma versión repite el token y AgentCore no crea un duplicado. Los vectores están en client-tokens.json.",
     "buildIdempotencyToken": "{imageTag}",
     "sessionIdRules": {
       "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]*$",
