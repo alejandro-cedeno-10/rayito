@@ -17,6 +17,7 @@ import { createHash } from "node:crypto";
 import { MAX_CONCURRENT_IMAGE_BUILDS } from "../limits.js";
 import type { SizeName } from "../sizing/sizing.js";
 import { pythonStringRepr } from "../strings.js";
+import { formatTemplate } from "../template-text.js";
 import { isoUtc } from "../time-text.js";
 import { MS_PER_SECOND } from "../units.js";
 import {
@@ -33,7 +34,9 @@ import {
   aggregateSummary,
   artifactKey,
   BUILD_ROLE_OUTPUT_KEY,
+  CDK_MANAGED_IMAGE_MESSAGE,
   desiredConfiguration,
+  isCdkManagedImage,
   logGroupOf,
   type PublishSettings,
   type PublishSummary,
@@ -179,11 +182,25 @@ interface PreparedBuild {
   readonly arn: string;
   readonly artifact: UploadedArtifact;
   readonly desired: Record<string, unknown>;
+  /** La respuesta de `GetMicrovmImage` ya leída (o `undefined`), para no volver a pedirla. */
+  readonly existing: Awaited<ReturnType<PublishPorts["getMicrovmImage"]>>;
 }
 
-/** Sube el artefacto (si hace falta) y arma la configuración deseada; no decide si hay que construir. */
+/**
+ * Rechaza una imagen que gestiona CloudFormation (`rayito:managed-by=rayito-cdk`)
+ * *antes* de cualquier escritura, también con `force` (ni siquiera sube el
+ * artefacto: spec `agentcore-cdk`, "SHALL fail without any write"); después
+ * sube el artefacto (si hace falta) y arma la configuración deseada. No
+ * decide si hay que construir, eso es `reusableVersion`.
+ */
 async function prepareBuild(deps: PublishDeps, settings: PublishSettings): Promise<PreparedBuild> {
   const arn = await imageArnOf(deps.ports, settings.imageName);
+  const existing = await deps.ports.getMicrovmImage(arn);
+  if (isCdkManagedImage(existing)) {
+    throw new ImagePublishError(
+      formatTemplate(CDK_MANAGED_IMAGE_MESSAGE, { name: settings.imageName }),
+    );
+  }
   const artifact = await uploadArtifact(deps, settings);
   const desired = desiredConfiguration({
     region: deps.ports.region,
@@ -191,16 +208,19 @@ async function prepareBuild(deps: PublishDeps, settings: PublishSettings): Promi
     artifactUri: artifact.uri,
     buildRoleArn: await buildRoleArnOf(deps.ports, settings),
   });
-  return { arn, artifact, desired };
+  return { arn, artifact, desired, existing };
 }
 
-/** La versión lanzable más nueva que ya coincide, o `undefined` si no hay ninguna o `force` la ignora. */
+/**
+ * La versión lanzable más nueva que ya coincide, o `undefined` si no hay
+ * ninguna o `force` la ignora.
+ */
 async function reusableVersion(
   ports: PublishPorts,
   settings: PublishSettings,
   prepared: PreparedBuild,
 ): Promise<string | undefined> {
-  if (settings.force || (await ports.getMicrovmImage(prepared.arn)) === undefined) {
+  if (settings.force || prepared.existing === undefined) {
     return undefined;
   }
   return findReusableVersion(ports, prepared.arn, prepared.desired);

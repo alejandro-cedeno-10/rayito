@@ -811,3 +811,39 @@ def test_an_explicit_version_prints_nothing_extra_and_asks_no_one(
     result = runner.invoke(app, publish_args(artifact), obj=clients)
     assert result.exit_code == 0, result.stderr
     assert "base_image_version=" not in result.stderr
+
+
+CDK_CONTRACT = Path(__file__).resolve().parents[5] / "testdata" / "agentcore-cdk" / "contract.json"
+
+
+def test_cdk_refusal_message_is_the_contracts() -> None:
+    contract = json.loads(CDK_CONTRACT.read_text(encoding="utf-8"))
+    refusal = contract["cliRefusals"]["imagePublish"]
+    assert refusal["message"] == _publish.CDK_MANAGED_IMAGE_MESSAGE
+    assert contract["constants"]["managedByTag"] == {
+        "key": _publish.MANAGED_BY_TAG_KEY,
+        "value": "rayito-cdk",
+    }
+
+
+@pytest.mark.parametrize("extra", [(), ("--force",)])
+def test_publish_over_a_cdk_image_is_refused_before_any_update(
+    runner: CliRunner,
+    clients: Clients,
+    stubbed_clients: Stubs,
+    artifact: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    extra: tuple[str, ...],
+) -> None:
+    """Sin ningún stub de S3: si el comando llegase a `head_object` o
+    `put_object` el `Stubber` fallaría y el mensaje de rechazo no saldría
+    (spec `agentcore-cdk`: "SHALL fail without any write")."""
+    monkeypatch.setenv("RAYITO_BUCKET", "bucket")
+    stubbed_clients.microvms.add_response(
+        "get_microvm_image",
+        {**image_response(), "tags": {"rayito:managed-by": "rayito-cdk"}},
+        {"imageIdentifier": IMAGE_ARN},
+    )
+    result = runner.invoke(app, publish_args(artifact, *extra), obj=clients)
+    assert result.exit_code == 1
+    assert "la gestiona CloudFormation (CDK): cámbiala con cdk deploy" in result.stderr

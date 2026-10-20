@@ -128,14 +128,20 @@ def client_error_code(exc: ClientError) -> str:
     return str(exc.response.get("Error", {}).get("Code", ""))
 
 
-def image_exists(clients: ImageBuildClients, arn: str) -> bool:
+def existing_image(clients: ImageBuildClients, arn: str) -> dict[str, Any] | None:
+    """La respuesta de `GetMicrovmImage` (con sus `tags`), o `None` si la
+    imagen no existe."""
     try:
-        clients.microvms.get_microvm_image(imageIdentifier=arn)
+        response: dict[str, Any] = clients.microvms.get_microvm_image(imageIdentifier=arn)
     except ClientError as exc:
         if client_error_code(exc) == "ResourceNotFoundException":
-            return False
+            return None
         raise
-    return True
+    return response
+
+
+def image_exists(clients: ImageBuildClients, arn: str) -> bool:
+    return existing_image(clients, arn) is not None
 
 
 def account_image_arn(region: str, account_id: str, name: str) -> str:
