@@ -19,7 +19,7 @@ from rayito._agent._runner.agent_host.aws_credentials import (
     HELPER_TIMEOUT_SECONDS,
     CredentialsHelper,
 )
-from rayito._agent._runner.agent_host.protocol import AgentFailure
+from rayito._agent._runner.agent_host.protocol import AgentFailure, Request
 from rayito._limits import AGENT_SERVICE_SESSION_HEADER
 from tests.unit.agent_host_support import (
     FakeDriver,
@@ -166,3 +166,12 @@ def test_the_stream_of_an_agentcore_session_carries_the_header_id_in_every_event
     assert {event["session_id"] for event in with_session} == {AGENTCORE_SESSION}
     assert events[-1]["type"] == "done"
     assert driver.requests[0].session_id is None
+
+
+def test_the_request_repr_does_not_print_the_credentials() -> None:
+    request = Request(
+        prompt="hola",
+        aws_env={"AWS_SECRET_ACCESS_KEY": "wJalrXUtnFEMI-example-key-material"},
+    )
+    assert "example-key-material" not in repr(request)
+    assert "AWS_SECRET_ACCESS_KEY" not in repr(request)
