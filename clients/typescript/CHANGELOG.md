@@ -31,6 +31,15 @@ versionado [SemVer](https://semver.org/lang/es/).
 - El export `agentcore` lleva el argumento de build `AGENT_BASE_IMAGE` y, para
   Vercel AI SDK, el ayudante que lee las credenciales del rol del runtime
   (`botocore` fijado por hash); el `Dockerfile` y el README del export `docker` no cambian.
+- **OpenCode obtiene el rol del runtime con un perfil `credential_process`**:
+  el export `agentcore` de un agente OpenCode añade el ayudante de botocore, un
+  `AWS_CONFIG_FILE` con un perfil cuyo `credential_process` lo ejecuta (con
+  `Expiration`, para que el SDK renueve) y `AWS_CONFIG_FILE` y `AWS_PROFILE` en la
+  imagen; sin ellos OpenCode no arranca su proveedor de Bedrock. MicroVM, el
+  export `docker` y los demás frameworks no cambian.
+- El host del agente retiene hasta 25 s la primera petición de una sesión nueva de
+  AgentCore esperando el calentamiento, en vez de contestar 503 (un calentamiento
+  fallido sigue contestando 503 al instante).
 - **`rayito setup`**: prepara una cuenta y una región de AWS para Rayito en una
   orden idempotente, como `cdk bootstrap`. Lee la cuenta, muestra el plan y el
   coste aproximado, pide confirmación (`--yes` sin terminal o con `--json`;
@@ -60,12 +69,6 @@ versionado [SemVer](https://semver.org/lang/es/).
   código no haya cambiado; los siguientes la reutilizan. El `Dockerfile` y el
   README del export `docker` no cambian; sus ficheros de `agent_host/` y, en
   Node, `node_bridge.mjs` sí.
-- Los códigos de error de `rayito setup`: desaparece `no_bucket`;
-  `bucket_unavailable` queda para un bucket que responde 403; nuevos
-  `bucket_taken` y `artifact_stack_conflict`. Con `--json`, un error de AWS o de
-  una pila que `setup` no traduce también deja un único documento JSON
-  (`stack_blocked` con salida 1, `bucket_unavailable` con salida 2, el código del
-  contrato con la misma salida) y la misma salida de proceso de siempre.
 - Los errores de `Sandbox.create()` (`ResourceNotFoundException` de
   `RunMicrovm`) y de `deployAgent()` por falta de bucket o de imagen base
   terminan con la pista "si la cuenta o la región aún no están preparadas,

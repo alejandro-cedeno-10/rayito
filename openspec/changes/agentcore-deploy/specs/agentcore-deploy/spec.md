@@ -115,5 +115,5 @@ The `agentcore` export SHALL keep the 0.14 tree and add only the `AGENT_BASE_IMA
 - **THEN** every snapshot matches, including the `ARG AGENT_BASE_IMAGE` line and the README of `deepagents-agentcore`, and the docker-target goldens are unchanged
 
 #### Scenario: AWS acceptance per framework
-- **WHEN** the acceptance deploys each of the fifteen projects of `testdata/agent-samples/` with `--target agentcore` in us-east-1
+- **WHEN** the acceptance deploys each of the sixteen projects of `testdata/agent-samples/` with `--target agentcore` in us-east-1
 - **THEN** each reaches `READY`, answers the manifest prompt with `42` through `invoke` and through `stream`, continues the same session with the returned id, redeploys without changes as three `reuse` steps, and is deleted leaving no runtime, stack, repository, project, role or log group of the run

@@ -50,10 +50,24 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   del AI SDK de Vercel lleva una herramienta (botocore fijado por hash) con la
   que el host lee las credenciales del rol y se las pasa al puente de Node en
   cada invocación. El `Dockerfile` y el README del export `docker` no cambian.
+- **OpenCode obtiene el rol del runtime con un perfil `credential_process`**:
+  OpenCode sólo arranca su proveedor de Bedrock con `AWS_PROFILE` u otra variable
+  de credenciales de AWS, y en AgentCore el rol sólo lo sirve el servicio de
+  metadatos de la microVM. El export `agentcore` de un agente OpenCode añade el
+  ayudante de botocore, un `AWS_CONFIG_FILE` con un perfil cuyo `credential_process`
+  lo ejecuta (con `Expiration`, para que el SDK renueve) y `AWS_CONFIG_FILE` y
+  `AWS_PROFILE` en la imagen. MicroVM, el export `docker` y los demás frameworks
+  no cambian.
+- **Códigos de error de `rayito setup`**: `bucket_unavailable` (un bucket que
+  existe sin acceso, 403), `bucket_taken` y `artifact_stack_conflict`, además de
+  los de la pila y la imagen.
 - **El host del agente traduce el id de sesión de AgentCore**: una cabecera
   `X-Amzn-Bedrock-AgentCore-Runtime-Session-Id` con cualquier forma empieza una
   sesión del driver la primera vez y la continúa después, y la respuesta lleva
-  siempre el id de la cabecera.
+  siempre el id de la cabecera. Una sesión nueva de AgentCore enruta su primera
+  petición en cuanto arranca la microVM, antes de que el agente esté caliente: el
+  host la retiene hasta 25 s esperando el calentamiento en vez de contestar 503
+  (un calentamiento fallido sigue contestando 503 al instante).
 
 ### Cambiado
 
@@ -67,9 +81,6 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   código no haya cambiado; los siguientes la reutilizan. El `Dockerfile` y el
   README del export `docker` no cambian; sus ficheros de `agent_host/` y, en
   Node, `node_bridge.mjs` sí.
-- **Códigos de error de `rayito setup`**: se retira `no_bucket`,
-  `bucket_unavailable` queda sólo para un bucket que existe sin acceso (403) y
-  se añaden `bucket_taken` y `artifact_stack_conflict`.
 - **Los errores de una cuenta sin preparar apuntan a `rayito setup`**: el
   `SandboxNotFoundException` de `Sandbox.create()` cuando falta la imagen y los
   errores de `deploy_agent` por falta de bucket o de imagen base terminan con

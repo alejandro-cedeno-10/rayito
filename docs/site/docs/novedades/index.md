@@ -16,8 +16,9 @@ actualizar. El detalle completo, cambio a cambio, está en el
 
     ---
 
-    Despliega el agente que ya tienes en Amazon Bedrock AgentCore Runtime con
-    `--target agentcore` (`rayito agent deploy`, `deploy_agent()` y
+    Nuevo `rayito setup`: prepara la cuenta y la región en una orden idempotente
+    (bucket, pila de IAM e imagen base). Y despliega el agente que ya tienes en
+    Amazon Bedrock AgentCore Runtime con `--target agentcore` (`rayito agent deploy`, `deploy_agent()` y
     `deployAgent()`): sin Docker local, con un rol de mínimo privilegio y la
     misma API de `invoke` que una flota de MicroVMs. AgentCore no tiene la
     pasarela de secretos de Rayito. Sin cambios que rompan la API.
