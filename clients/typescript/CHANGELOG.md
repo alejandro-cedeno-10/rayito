@@ -8,6 +8,29 @@ versionado [SemVer](https://semver.org/lang/es/).
 
 ### Añadido
 
+- **Despliegue en Amazon Bedrock AgentCore Runtime**: `deployAgent(ruta, { target:
+  "agentcore" })`, `planDeploy()` y `rayito agent deploy ./mi-agente --target
+  agentcore` despliegan un agente de cero configuración sin Docker local: la
+  imagen arm64 se construye en CodeBuild a partir del export de `agentcore`, se
+  sube a ECR (repositorio, proyecto y roles en la pila `rayito-agentcore-<nombre>`)
+  y el runtime se crea o se actualiza sin duplicarlo, con MMDSv2 siempre exigido.
+  `rayito agent deploy --target agentcore` muestra el plan, la región, el coste
+  aproximado y la seguridad, y pide confirmación (`--yes`, `--dry-run`, `--json`,
+  `--tag K=V` para las organizaciones que exigen etiquetas). `AgentCoreFleet`
+  (`connect()`, `invoke()`, `stream()`, `status()`, `stopSession()`, `delete()`)
+  tiene la misma API y las mismas sesiones que `AgentFleet`; `rayito agent
+  invoke|status|stop --target agentcore` y las órdenes nuevas `rayito agent list`
+  y `rayito agent delete` lo usan. Las opciones de MicroVMs que AgentCore no
+  admite (`min_vms`, `warm_vms`, `--memory`...) dan `option_not_supported` en vez
+  de aproximarse. AgentCore no tiene la pasarela de secretos de Rayito: el agente
+  lee las credenciales del rol del runtime, que sólo puede invocar los modelos de
+  `agentcore.bedrockModels` y leer los secretos de `agentcore.readableSecrets`.
+  Cuatro clientes de AWS nuevos como peers opcionales
+  (`@aws-sdk/client-bedrock-agentcore`, `-bedrock-agentcore-control`, `-codebuild` y
+  `-ecr`); el destino por defecto sigue siendo la flota de MicroVMs y no los carga.
+- El export `agentcore` lleva el argumento de build `AGENT_BASE_IMAGE` y, para
+  Vercel AI SDK, el ayudante que lee las credenciales del rol del runtime
+  (`botocore` fijado por hash); el export `docker` no cambia.
 - **`rayito setup`**: prepara una cuenta y una región de AWS para Rayito en una
   orden idempotente, como `cdk bootstrap`. Lee la cuenta, muestra el plan y el
   coste aproximado, pide confirmación (`--yes` sin terminal o con `--json`;
