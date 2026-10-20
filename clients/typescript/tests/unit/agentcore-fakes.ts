@@ -200,6 +200,7 @@ export class FakeControl {
   readonly calls: Call[];
   readonly writes: RuntimeWriteRequest[] = [];
   #pendingStatus: string | undefined;
+  #creatingByAnother = false;
 
   constructor(runtime: RuntimeState, calls: Call[]) {
     this.runtime = runtime;
@@ -216,6 +217,11 @@ export class FakeControl {
     const current = this.runtime.details ?? this.runtime.listed;
     if (current === undefined) {
       return undefined;
+    }
+    if (this.#creatingByAnother) {
+      this.#creatingByAnother = false;
+      this.#pendingStatus = "READY";
+      return current as RuntimeDetails;
     }
     if (this.#pendingStatus !== undefined) {
       const settled = this.runtime.settled ?? (this.runtime.details as RuntimeDetails);
@@ -245,7 +251,7 @@ export class FakeControl {
         requireMMDSV2: false,
       });
       this.runtime.settled = desiredDetails({ runtimeVersion: "1", requireMMDSV2: false });
-      this.#pendingStatus = "READY";
+      this.#creatingByAnother = true;
       throw new RuntimeConflictError();
     }
     this.writes.push(request);
@@ -272,7 +278,7 @@ export class FakeControl {
 
   async updateRuntime(request: RuntimeWriteRequest): Promise<RuntimeWriteResult> {
     this.calls.push({ operation: "UpdateAgentRuntime", input: request });
-    if (this.#pendingStatus !== undefined) {
+    if (this.#pendingStatus !== undefined || this.#creatingByAnother) {
       throw new Error("UpdateAgentRuntime sobre un runtime que no está READY");
     }
     this.writes.push(request);
