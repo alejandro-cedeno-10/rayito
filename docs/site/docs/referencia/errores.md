@@ -257,6 +257,7 @@ un token ni el texto crudo de AWS. Guía:
 | `lifecycle_invalid` | un tiempo de ciclo de vida fuera de rango, o no entero (en TypeScript, no múltiplo de 1000 ms) | entre 60 y 28 800 s |
 | `lifecycle_order` | `idle_session_timeout` mayor que `max_session_lifetime` | baja el tiempo de inactividad o sube la vida máxima |
 | `tags_invalid` | una etiqueta no válida o más de 50 con las tres fijas | `CLAVE=VALOR`, letras, dígitos, espacios y `_ . : / = + - @` |
+| `iam_resource_invalid` | un secreto legible, un modelo de Bedrock o el modelo del proyecto con comodines (`*`, `?`), comas, o un ARN que no es de tu cuenta, región y partición | un nombre o id sin comodines, o un ARN completo de tu cuenta y región; el campo sale en el mensaje |
 | `env_invalid` | más de 50 variables de entorno (con las dos de región) o un valor de más de 5000 caracteres | reduce el `env` del proyecto |
 | `raw_protocol` | una app con `protocol = "raw"` | no cumple el contrato de AgentCore (`/ping` y `/invocations`) |
 | `no_bucket` | no hay bucket para el contexto de build | `--bucket`, `[deploy].bucket`, `RAYITO_BUCKET` o `rayito setup` |

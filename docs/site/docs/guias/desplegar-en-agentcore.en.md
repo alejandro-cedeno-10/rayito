@@ -380,8 +380,8 @@ They only apply with `--target agentcore`; without it, they give
 
 | CLI | Python (`AgentCoreOptions`) | TypeScript (`agentcore`) | What it does |
 |---|---|---|---|
-| `--bedrock-model ID` (repeatable) | `bedrock_models` | `bedrockModels` | Bedrock models or inference profiles the runtime role may invoke. Default: the project's model; if unknown, `model_required` |
-| `--readable-secret NAME` (repeatable) | `readable_secrets` | `readableSecrets` | Secrets Manager secrets the role may read. Default: none |
+| `--bedrock-model ID` (repeatable) | `bedrock_models` | `bedrockModels` | Bedrock models or inference profiles the runtime role may invoke. Default: the project's model; if unknown, `model_required`. No wildcards or commas: an id, or an ARN of your account and region (`iam_resource_invalid`) |
+| `--readable-secret NAME` (repeatable) | `readable_secrets` | `readableSecrets` | Secrets Manager secrets the role may read. Default: none. A name without wildcards or commas, or an ARN of your account and region (`iam_resource_invalid`) |
 | `--idle-session-timeout S` | `idle_session_timeout_seconds` | `idleSessionTimeoutMs` | Seconds without use after which AgentCore ends a session's microVM: {{agentcoreLifecycleMinSeconds}} to {{agentcoreLifecycleMaxSeconds}}, default {{agentcoreIdleSessionTimeoutDefaultSeconds}} |
 | `--max-session-lifetime S` | `max_session_lifetime_seconds` | `maxSessionLifetimeMs` | Maximum lifetime of a session's microVM: {{agentcoreLifecycleMinSeconds}} to {{agentcoreLifecycleMaxSeconds}}, default {{agentcoreLifecycleMaxSeconds}} (8 h) |
 | `--tag K=V` (repeatable) | `tags` | `tags` | Tags for the stack and the runtime, for organizations that require them ([below](#etiquetas)) |

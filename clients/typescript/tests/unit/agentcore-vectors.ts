@@ -144,10 +144,20 @@ export const applyVectors = loadTestdata<{ cases: ApplyCase[] }>(
   FOLDER,
   "apply-vectors.json",
 ).cases;
-export const modelArnVectors = loadTestdata<{ bedrock: ModelArnCase[]; secrets: SecretArnCase[] }>(
-  FOLDER,
-  "model-arns.json",
-);
+export interface RejectedArnCase {
+  name: string;
+  kind: "secret" | "model";
+  value: string;
+  region: string;
+  account: string;
+  partition: string;
+}
+
+export const modelArnVectors = loadTestdata<{
+  bedrock: ModelArnCase[];
+  secrets: SecretArnCase[];
+  rejected: RejectedArnCase[];
+}>(FOLDER, "model-arns.json");
 export const sessionVectors = loadTestdata<{
   newPattern: string;
   cases: SessionCase[];

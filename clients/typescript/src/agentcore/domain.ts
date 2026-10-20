@@ -36,6 +36,7 @@ import { FIXED_TAG_KEYS } from "../stacks/model.js";
 import { formatTemplate } from "../template-text.js";
 import { MS_PER_SECOND } from "../units.js";
 import { usesEnvCredentials } from "./env-credentials.js";
+import { checkIamInputs } from "./iam-resources.js";
 import { COST_MESSAGES, type SecurityKey, type WarningKey } from "./messages.js";
 import type {
   AgentCoreDeployPlan,
@@ -456,6 +457,13 @@ export function planWithoutImageTag(input: PlanInput): PlanWithoutImageTag {
   const lifecycle = resolveLifecycle(resolved);
   validateTags(resolved.tags);
   const environment = runtimeEnvironment(project, region);
+  checkIamInputs({
+    projectModel: project.spec.model.id,
+    bedrockModels: resolved.bedrockModels,
+    readableSecrets: resolved.readableSecrets,
+    modelRegion: project.spec.model.region ?? region,
+    region,
+  });
   const bucket = bucketPlan(options, project, input.environ);
   const models = [...new Set([project.spec.model.id, ...resolved.bedrockModels])];
   const names = {

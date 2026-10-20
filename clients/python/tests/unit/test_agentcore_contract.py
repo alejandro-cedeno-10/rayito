@@ -10,6 +10,7 @@ from typing import Any
 import pytest
 
 from rayito._agentcore import _domain as domain
+from rayito._agentcore import _iam_resources as iam
 from rayito._agentcore import _messages as messages
 from rayito._agentcore._errors import ERROR_EXIT_CODES, ERROR_MESSAGES
 from rayito._agentcore._stack import AGENTCORE_STACK_COMPONENT
@@ -96,6 +97,14 @@ def test_stack_parameters_and_outputs_are_the_contracts() -> None:
     assert parameters["readableSecretArns"] == domain.STACK_PARAMETER_SECRET_ARNS
     assert AGENTCORE_STACK_COMPONENT.name == CONSTANTS["stackComponentName"]
     assert list(AGENTCORE_STACK_COMPONENT.capabilities) == CONSTANTS["stackCapabilities"]
+
+
+def test_iam_resource_rules_are_the_contracts() -> None:
+    rules = CONSTANTS["iamResourceRules"]
+    assert iam.SECRET_NAME_PATTERN.pattern == rules["secretNamePattern"].strip("^$")
+    assert rules["secretNameMaxLength"] == iam.SECRET_NAME_MAX_LENGTH
+    assert iam.MODEL_ID_PATTERN.pattern == rules["modelIdPattern"].strip("^$")
+    assert iam.ACCOUNT_PATTERN.pattern == rules["accountPattern"].strip("^$")
 
 
 def test_names_and_states_are_the_contracts() -> None:

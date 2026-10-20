@@ -25,6 +25,7 @@ AgentCoreErrorCode = Literal[
     "lifecycle_invalid",
     "tags_invalid",
     "env_invalid",
+    "iam_resource_invalid",
     "raw_protocol",
     "no_bucket",
     "bucket_region",
@@ -63,6 +64,7 @@ ERROR_EXIT_CODES: Final[Mapping[AgentCoreErrorCode, int]] = MappingProxyType(
         "lifecycle_invalid": 2,
         "tags_invalid": 2,
         "env_invalid": 2,
+        "iam_resource_invalid": 2,
         "raw_protocol": 2,
         "no_bucket": 2,
         "bucket_region": 2,
@@ -130,6 +132,10 @@ ERROR_MESSAGES: Final[Mapping[AgentCoreErrorCode, str]] = MappingProxyType(
         "env_invalid": (
             "AgentCore admite como mucho {maxVariables} variables de entorno de hasta {maxChars} "
             "caracteres"
+        ),
+        "iam_resource_invalid": (
+            "{field} no vale como recurso de IAM: usa un nombre o id sin comodines (* ?) ni "
+            "comas, o un ARN completo de la cuenta y la región del despliegue"
         ),
         "raw_protocol": (
             "una app con protocol='raw' no cumple el contrato de AgentCore (/ping + /invocations)"

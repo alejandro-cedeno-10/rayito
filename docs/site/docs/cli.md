@@ -644,7 +644,7 @@ qué hace cada una y por qué.
 `option_requires_agentcore`, `target_unsupported`, `provider_unsupported`,
 `network_policy_unsupported`, `name_invalid`, `name_conflict`, `model_required`,
 `image_missing`, `lifecycle_invalid`, `lifecycle_order`, `tags_invalid`,
-`env_invalid`, `raw_protocol`, `no_bucket`, `bucket_region`, `needs_confirmation`,
+`env_invalid`, `iam_resource_invalid`, `raw_protocol`, `no_bucket`, `bucket_region`, `needs_confirmation`,
 `delete_needs_confirmation` y `session_required`. **Salida 1** (lo que falla en
 AWS): `stack_blocked`, `stack_failed`, `image_build_failed`,
 `image_build_timeout`, `build_quota`, `image_too_large`, `runtime_blocked`,

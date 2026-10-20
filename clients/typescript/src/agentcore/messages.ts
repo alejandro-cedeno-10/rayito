@@ -22,6 +22,7 @@ export const AGENTCORE_ERROR_CODES = [
   "lifecycle_invalid",
   "tags_invalid",
   "env_invalid",
+  "iam_resource_invalid",
   "raw_protocol",
   "no_bucket",
   "bucket_region",
@@ -74,6 +75,8 @@ export const ERROR_EXIT_CODES: Readonly<Record<AgentCoreErrorCode, number>> = {
   tags_invalid: 2,
 
   env_invalid: 2,
+
+  iam_resource_invalid: 2,
 
   raw_protocol: 2,
 
@@ -154,6 +157,9 @@ export const ERROR_MESSAGES: Readonly<Record<AgentCoreErrorCode, string>> = {
 
   env_invalid:
     "AgentCore admite como mucho {maxVariables} variables de entorno de hasta {maxChars} caracteres",
+
+  iam_resource_invalid:
+    "{field} no vale como recurso de IAM: usa un nombre o id sin comodines (* ?) ni comas, o un ARN completo de la cuenta y la región del despliegue",
 
   raw_protocol:
     "una app con protocol='raw' no cumple el contrato de AgentCore (/ping + /invocations)",

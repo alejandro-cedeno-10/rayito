@@ -1,5 +1,5 @@
 {
-  "description": "Vectores de los ARNs que el rol del runtime recibe para Bedrock (BedrockModelArns) y Secrets Manager (ReadableSecretArns). Un id con un prefijo de bedrockInferenceProfilePrefixes es un perfil de inferencia del sistema: su ARN en la región del modelo y el modelo base en cualquier región; un perfil global añade el ARN del modelo base sin región. Otro id es un modelo base en la región del modelo. Un ARN se usa tal cual. Se quitan duplicados conservando el orden. modelRegion es la región del modelo del proyecto o, sin ella, la del despliegue.",
+  "description": "Vectores de los ARNs que el rol del runtime recibe para Bedrock (BedrockModelArns) y Secrets Manager (ReadableSecretArns). Un id con un prefijo de bedrockInferenceProfilePrefixes es un perfil de inferencia del sistema: su ARN en la región del modelo y el modelo base en cualquier región; un perfil global añade el ARN del modelo base sin región. Otro id es un modelo base en la región del modelo. Un ARN se usa tal cual. Se quitan duplicados conservando el orden. modelRegion es la región del modelo del proyecto o, sin ella, la del despliegue. Un valor que no es un nombre o id de su servicio (comodines, comas) o un ARN que no es de la partición, región y cuenta del despliegue (salvo el modelo base sin región o en cualquier región) es iam_resource_invalid: lo recogen `rejected` y los casos de plan-vectors.json.",
   "bedrock": [
     {
       "name": "perfil de inferencia us",
@@ -95,6 +95,18 @@
         "arn:aws:bedrock:ap-southeast-2:123456789012:inference-profile/au.anthropic.claude-haiku-4-5-20251001-v1:0",
         "arn:aws:bedrock:*::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0"
       ]
+    },
+    {
+      "name": "ARN de modelo base sin región",
+      "models": [
+        "arn:aws:bedrock:::foundation-model/amazon.nova-lite-v1:0"
+      ],
+      "modelRegion": "us-east-1",
+      "account": "123456789012",
+      "partition": "aws",
+      "expected": [
+        "arn:aws:bedrock:::foundation-model/amazon.nova-lite-v1:0"
+      ]
     }
   ],
   "secrets": [
@@ -121,6 +133,88 @@
       "expected": [
         "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/db-AbCdEf"
       ]
+    }
+  ],
+  "rejected": [
+    {
+      "name": "secreto comodín",
+      "kind": "secret",
+      "value": "*",
+      "region": "us-east-1",
+      "account": "123456789012",
+      "partition": "aws"
+    },
+    {
+      "name": "secreto con coma",
+      "kind": "secret",
+      "value": "rayito/a,rayito/b",
+      "region": "us-east-1",
+      "account": "123456789012",
+      "partition": "aws"
+    },
+    {
+      "name": "ARN de secreto con comodines",
+      "kind": "secret",
+      "value": "arn:aws:secretsmanager:*:*:secret:*",
+      "region": "us-east-1",
+      "account": "123456789012",
+      "partition": "aws"
+    },
+    {
+      "name": "ARN de secreto de otra cuenta",
+      "kind": "secret",
+      "value": "arn:aws:secretsmanager:us-east-1:210987654321:secret:prod/db-AbCdEf",
+      "region": "us-east-1",
+      "account": "123456789012",
+      "partition": "aws"
+    },
+    {
+      "name": "ARN de secreto de otra partición",
+      "kind": "secret",
+      "value": "arn:aws-cn:secretsmanager:us-east-1:123456789012:secret:prod/db-AbCdEf",
+      "region": "us-east-1",
+      "account": "123456789012",
+      "partition": "aws"
+    },
+    {
+      "name": "modelo con comodín",
+      "kind": "model",
+      "value": "amazon.nova-*",
+      "region": "us-east-1",
+      "account": "123456789012",
+      "partition": "aws"
+    },
+    {
+      "name": "modelo con coma",
+      "kind": "model",
+      "value": "amazon.nova-lite-v1:0,amazon.nova-pro-v1:0",
+      "region": "us-east-1",
+      "account": "123456789012",
+      "partition": "aws"
+    },
+    {
+      "name": "ARN de modelo con comodín",
+      "kind": "model",
+      "value": "arn:aws:bedrock:*::foundation-model/*",
+      "region": "us-east-1",
+      "account": "123456789012",
+      "partition": "aws"
+    },
+    {
+      "name": "ARN de perfil de otra cuenta",
+      "kind": "model",
+      "value": "arn:aws:bedrock:us-east-1:210987654321:inference-profile/us.amazon.nova-lite-v1:0",
+      "region": "us-east-1",
+      "account": "123456789012",
+      "partition": "aws"
+    },
+    {
+      "name": "ARN de otro servicio",
+      "kind": "model",
+      "value": "arn:aws:s3:::amzn-s3-demo-bucket",
+      "region": "us-east-1",
+      "account": "123456789012",
+      "partition": "aws"
     }
   ]
 }

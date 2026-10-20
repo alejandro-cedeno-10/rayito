@@ -1875,6 +1875,270 @@
           "code": "env_invalid"
         }
       }
+    },
+    {
+      "name": "un secreto legible con comodín",
+      "target": "agentcore",
+      "region": "us-east-1",
+      "project": {
+        "schema": "rayito.agent-project/1",
+        "name": "support-bot",
+        "runtime": {
+          "kind": "deepagents"
+        },
+        "model": {
+          "provider": "bedrock",
+          "id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "region": "us-east-1",
+          "gateway": "bedrock"
+        },
+        "gateways": {
+          "bedrock": {
+            "preset": "bedrock",
+            "secret": "rayito/bedrock-key",
+            "region": "us-east-1",
+            "models": [
+              "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+            ]
+          }
+        }
+      },
+      "call": {
+        "agentcore": {
+          "readableSecrets": [
+            "*"
+          ]
+        }
+      },
+      "environ": {
+        "RAYITO_BUCKET": "amzn-s3-demo-bucket"
+      },
+      "expected": {
+        "error": {
+          "code": "iam_resource_invalid",
+          "field": "readable_secrets"
+        }
+      }
+    },
+    {
+      "name": "un secreto legible con coma",
+      "target": "agentcore",
+      "region": "us-east-1",
+      "project": {
+        "schema": "rayito.agent-project/1",
+        "name": "support-bot",
+        "runtime": {
+          "kind": "deepagents"
+        },
+        "model": {
+          "provider": "bedrock",
+          "id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "region": "us-east-1",
+          "gateway": "bedrock"
+        },
+        "gateways": {
+          "bedrock": {
+            "preset": "bedrock",
+            "secret": "rayito/bedrock-key",
+            "region": "us-east-1",
+            "models": [
+              "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+            ]
+          }
+        }
+      },
+      "call": {
+        "agentcore": {
+          "readableSecrets": [
+            "rayito/a,rayito/b"
+          ]
+        }
+      },
+      "environ": {
+        "RAYITO_BUCKET": "amzn-s3-demo-bucket"
+      },
+      "expected": {
+        "error": {
+          "code": "iam_resource_invalid",
+          "field": "readable_secrets"
+        }
+      }
+    },
+    {
+      "name": "un ARN de secreto con comodines",
+      "target": "agentcore",
+      "region": "us-east-1",
+      "project": {
+        "schema": "rayito.agent-project/1",
+        "name": "support-bot",
+        "runtime": {
+          "kind": "deepagents"
+        },
+        "model": {
+          "provider": "bedrock",
+          "id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "region": "us-east-1",
+          "gateway": "bedrock"
+        },
+        "gateways": {
+          "bedrock": {
+            "preset": "bedrock",
+            "secret": "rayito/bedrock-key",
+            "region": "us-east-1",
+            "models": [
+              "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+            ]
+          }
+        }
+      },
+      "call": {
+        "agentcore": {
+          "readableSecrets": [
+            "arn:aws:secretsmanager:*:*:secret:*"
+          ]
+        }
+      },
+      "environ": {
+        "RAYITO_BUCKET": "amzn-s3-demo-bucket"
+      },
+      "expected": {
+        "error": {
+          "code": "iam_resource_invalid",
+          "field": "readable_secrets"
+        }
+      }
+    },
+    {
+      "name": "un ARN de secreto de otra región",
+      "target": "agentcore",
+      "region": "us-east-1",
+      "project": {
+        "schema": "rayito.agent-project/1",
+        "name": "support-bot",
+        "runtime": {
+          "kind": "deepagents"
+        },
+        "model": {
+          "provider": "bedrock",
+          "id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "region": "us-east-1",
+          "gateway": "bedrock"
+        },
+        "gateways": {
+          "bedrock": {
+            "preset": "bedrock",
+            "secret": "rayito/bedrock-key",
+            "region": "us-east-1",
+            "models": [
+              "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+            ]
+          }
+        }
+      },
+      "call": {
+        "agentcore": {
+          "readableSecrets": [
+            "arn:aws:secretsmanager:eu-west-1:123456789012:secret:prod/db-AbCdEf"
+          ]
+        }
+      },
+      "environ": {
+        "RAYITO_BUCKET": "amzn-s3-demo-bucket"
+      },
+      "expected": {
+        "error": {
+          "code": "iam_resource_invalid",
+          "field": "readable_secrets"
+        }
+      }
+    },
+    {
+      "name": "un modelo con comodín",
+      "target": "agentcore",
+      "region": "us-east-1",
+      "project": {
+        "schema": "rayito.agent-project/1",
+        "name": "support-bot",
+        "runtime": {
+          "kind": "deepagents"
+        },
+        "model": {
+          "provider": "bedrock",
+          "id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "region": "us-east-1",
+          "gateway": "bedrock"
+        },
+        "gateways": {
+          "bedrock": {
+            "preset": "bedrock",
+            "secret": "rayito/bedrock-key",
+            "region": "us-east-1",
+            "models": [
+              "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+            ]
+          }
+        }
+      },
+      "call": {
+        "agentcore": {
+          "bedrockModels": [
+            "amazon.nova-*"
+          ]
+        }
+      },
+      "environ": {
+        "RAYITO_BUCKET": "amzn-s3-demo-bucket"
+      },
+      "expected": {
+        "error": {
+          "code": "iam_resource_invalid",
+          "field": "bedrock_models"
+        }
+      }
+    },
+    {
+      "name": "un ARN de modelo con comodín",
+      "target": "agentcore",
+      "region": "us-east-1",
+      "project": {
+        "schema": "rayito.agent-project/1",
+        "name": "support-bot",
+        "runtime": {
+          "kind": "deepagents"
+        },
+        "model": {
+          "provider": "bedrock",
+          "id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "region": "us-east-1",
+          "gateway": "bedrock"
+        },
+        "gateways": {
+          "bedrock": {
+            "preset": "bedrock",
+            "secret": "rayito/bedrock-key",
+            "region": "us-east-1",
+            "models": [
+              "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+            ]
+          }
+        }
+      },
+      "call": {
+        "agentcore": {
+          "bedrockModels": [
+            "arn:aws:bedrock:*::foundation-model/*"
+          ]
+        }
+      },
+      "environ": {
+        "RAYITO_BUCKET": "amzn-s3-demo-bucket"
+      },
+      "expected": {
+        "error": {
+          "code": "iam_resource_invalid",
+          "field": "bedrock_models"
+        }
+      }
     }
   ]
 }

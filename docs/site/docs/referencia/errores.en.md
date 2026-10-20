@@ -258,6 +258,7 @@ carries an ARN, a URL, a token or AWS's raw text. Guide:
 | `lifecycle_invalid` | a lifecycle time out of range, or not an integer (in TypeScript, not a multiple of 1000 ms) | between 60 and 28,800 s |
 | `lifecycle_order` | `idle_session_timeout` greater than `max_session_lifetime` | lower the idle timeout or raise the maximum lifetime |
 | `tags_invalid` | an invalid tag, or more than 50 with the three fixed ones | `KEY=VALUE`, letters, digits, spaces and `_ . : / = + - @` |
+| `iam_resource_invalid` | a readable secret, a Bedrock model or the project's model with wildcards (`*`, `?`), commas, or an ARN that is not of your account, region and partition | a name or id without wildcards, or a full ARN of your account and region; the field is in the message |
 | `env_invalid` | more than 50 environment variables (with the two region ones) or a value longer than 5000 characters | reduce the project's `env` |
 | `raw_protocol` | an app with `protocol = "raw"` | it does not meet the AgentCore contract (`/ping` and `/invocations`) |
 | `no_bucket` | there is no bucket for the build context | `--bucket`, `[deploy].bucket`, `RAYITO_BUCKET` or `rayito setup` |

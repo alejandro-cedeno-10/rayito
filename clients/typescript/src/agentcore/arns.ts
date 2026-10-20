@@ -11,10 +11,13 @@
 
 import { BEDROCK_GLOBAL_PROFILE_PREFIX, BEDROCK_INFERENCE_PROFILE_PREFIXES } from "../limits.js";
 import { formatTemplate } from "../template-text.js";
+import {
+  ARN_PREFIX,
+  AWS_PARTITION,
+  checkModelReference,
+  checkSecretReference,
+} from "./iam-resources.js";
 
-export const ARN_PREFIX = "arn:";
-/** La partición de las regiones comerciales de AgentCore (`constants.awsPartition`). */
-export const AWS_PARTITION = "aws";
 export const SECRET_ARN_TEMPLATE =
   "arn:{partition}:secretsmanager:{region}:{account}:secret:{name}-??????";
 export const REGIONAL_FOUNDATION_MODEL_ARN_TEMPLATE =
@@ -44,6 +47,11 @@ function profilePrefixOf(modelId: string): string | undefined {
 function arnsOfModel(modelId: string, context: ModelArnContext): string[] {
   const partition = context.partition ?? AWS_PARTITION;
   const fields = { partition, region: context.modelRegion, account: context.account };
+  checkModelReference(modelId, {
+    region: context.modelRegion,
+    account: context.account,
+    partition,
+  });
   if (modelId.startsWith(ARN_PREFIX)) {
     return [modelId];
   }
@@ -83,6 +91,9 @@ export function secretResourceArns(
   },
 ): string[] {
   const partition = context.partition ?? AWS_PARTITION;
+  for (const name of names) {
+    checkSecretReference(name, { ...context, partition });
+  }
   return unique(
     names.map((name) =>
       name.startsWith(ARN_PREFIX)

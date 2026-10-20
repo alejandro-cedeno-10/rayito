@@ -267,6 +267,7 @@
     "lifecycle_invalid": 2,
     "tags_invalid": 2,
     "env_invalid": 2,
+    "iam_resource_invalid": 2,
     "raw_protocol": 2,
     "no_bucket": 2,
     "bucket_region": 2,
@@ -328,6 +329,13 @@
     "runtimeLogGroupTemplate": "{runtimeLogGroupPrefix}{runtimeId}-{endpointName}",
     "agentNamePattern": "^[a-z0-9]+(?:[_-][a-z0-9]+)*$",
     "agentNameMaxLength": 41,
+    "iamResourceRules": {
+      "secretNamePattern": "^[A-Za-z0-9/_+=.@-]+$",
+      "secretNameMaxLength": 512,
+      "modelIdPattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "accountPattern": "^[0-9]{12}$",
+      "rule": "un nombre de secreto o un id de modelo sólo lleva esos caracteres (sin *, ? ni ,); un ARN debe tener la partición aws, la región del despliegue (o, para foundation-model, la región del modelo, * o vacía) y la cuenta del despliegue, y su nombre o id cumple el patrón. Cualquier otro valor es iam_resource_invalid con field = readable_secrets, bedrock_models o model.id"
+    },
     "runtimeRegionEnvironmentVariables": [
       "AWS_REGION",
       "AWS_DEFAULT_REGION"
@@ -483,7 +491,7 @@
     ]
   },
   "optionsTable": {
-    "description": "Qué pasa con cada opción del despliegue en MicroVMs cuando el destino es agentcore. `call` es una opción de esta llamada (argumento del SDK o bandera de la CLI): si no aplica, error `option_not_supported` antes de cualquier llamada a AWS. `file` es un valor del fichero de proyecto (compartido entre destinos): si no aplica, aviso en el plan y se ignora. `applies` se usa tal cual. Un valor igual al valor por defecto cuenta como no puesto. `ignored` es un valor del fichero que AgentCore no usa y que el plan ya explica en Seguridad, sin aviso aparte. Las opciones de la llamada se comprueban antes de cualquier llamada a AWS, en este orden: target, opciones de AgentCore con target microvm, región, opciones de MicroVMs (en el orden de esta tabla), proveedor del modelo, política de red, nombre, ciclo de vida, etiquetas, entorno.",
+    "description": "Qué pasa con cada opción del despliegue en MicroVMs cuando el destino es agentcore. `call` es una opción de esta llamada (argumento del SDK o bandera de la CLI): si no aplica, error `option_not_supported` antes de cualquier llamada a AWS. `file` es un valor del fichero de proyecto (compartido entre destinos): si no aplica, aviso en el plan y se ignora. `applies` se usa tal cual. Un valor igual al valor por defecto cuenta como no puesto. `ignored` es un valor del fichero que AgentCore no usa y que el plan ya explica en Seguridad, sin aviso aparte. Las opciones de la llamada se comprueban antes de cualquier llamada a AWS, en este orden: target, opciones de AgentCore con target microvm, región, opciones de MicroVMs (en el orden de esta tabla), proveedor del modelo, política de red, nombre, ciclo de vida, etiquetas, entorno, recursos de IAM.",
     "rows": [
       {
         "option": "scaling.min_vms / --min-vms",
@@ -1010,6 +1018,7 @@
       "lifecycle_invalid": "{option} debe ser un número entero de segundos entre {min} y {max}",
       "tags_invalid": "--tag necesita CLAVE=VALOR, hasta {max} etiquetas, con letras, dígitos, espacios y _ . : / = + - @",
       "env_invalid": "AgentCore admite como mucho {maxVariables} variables de entorno de hasta {maxChars} caracteres",
+      "iam_resource_invalid": "{field} no vale como recurso de IAM: usa un nombre o id sin comodines (* ?) ni comas, o un ARN completo de la cuenta y la región del despliegue",
       "raw_protocol": "una app con protocol='raw' no cumple el contrato de AgentCore (/ping + /invocations)",
       "no_bucket": "no hay bucket para el contexto de build: pasa --bucket, [deploy].bucket o RAYITO_BUCKET, o crea uno con rayito setup",
       "bucket_region": "el bucket {bucket} está en {bucketRegion}, no en {region}: CodeBuild sólo lee el código de un bucket de su región",

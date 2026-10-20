@@ -27,6 +27,13 @@ from rayito._agent._project_base import template_name
 from rayito._agent._project_domain import ServeOptions
 from rayito._agent._scaling_domain import ScalingOptions
 from rayito._agentcore._env_credentials import uses_env_credentials
+from rayito._agentcore._iam_resources import (
+    ARN_PREFIX,
+    AWS_PARTITION,
+    check_iam_inputs,
+    check_model_reference,
+    check_secret_reference,
+)
 from rayito._agentcore._messages import COST_TEXTS
 from rayito._agentcore._models import (
     AgentCoreDeployPlan,
@@ -113,7 +120,6 @@ TAG_VALUE_MAX_CHARS: Final = 256
 TAG_TEXT_PATTERN: Final = re.compile(r"[a-zA-Z0-9\s._:/=+@-]*")
 
 REGION_ENV_VARIABLES: Final = ("AWS_REGION", "AWS_DEFAULT_REGION")
-AWS_PARTITION: Final = "aws"
 SECRET_ARN_TEMPLATE: Final = (
     "arn:{partition}:secretsmanager:{region}:{account}:secret:{name}-??????"
 )
@@ -125,7 +131,6 @@ GLOBAL_MODEL_ARN_TEMPLATE: Final = "arn:{partition}:bedrock:::foundation-model/{
 INFERENCE_PROFILE_ARN_TEMPLATE: Final = (
     "arn:{partition}:bedrock:{region}:{account}:inference-profile/{profileId}"
 )
-ARN_PREFIX: Final = "arn:"
 PROFILE_SEPARATOR: Final = "."
 
 #: Sufijo del grupo de logs del runtime (`<id>-DEFAULT`).
@@ -574,6 +579,7 @@ def _unique(items: Sequence[str]) -> tuple[str, ...]:
 
 
 def _model_arns(model: str, region: str, account: str, partition: str) -> list[str]:
+    check_model_reference(model, region, account, partition)
     if model.startswith(ARN_PREFIX):
         return [model]
     prefix, _, base = model.partition(PROFILE_SEPARATOR)
@@ -609,7 +615,10 @@ def secret_resource_arns(
 ) -> tuple[str, ...]:
     """Los ARNs de los secretos que el rol puede leer (`ReadableSecretArns`):
     el nombre con el sufijo de seis caracteres que Secrets Manager añade, o
-    el ARN tal cual."""
+    el ARN tal cual. Un nombre o ARN que no sea de esta cuenta y región, o con
+    comodines, es `iam_resource_invalid`."""
+    for secret in secrets:
+        check_secret_reference(secret, region, account, partition)
     arns = [
         secret
         if secret.startswith(ARN_PREFIX)
@@ -798,8 +807,8 @@ def build_plan(
 ) -> AgentCoreDeployPlan:
     """El plan de `plan_deploy(target="agentcore")`, sin AWS. Valida en este
     orden: la región, las opciones de MicroVMs de la llamada, el proveedor del
-    modelo, la política de red, el nombre, el ciclo de vida, las etiquetas y
-    el entorno; el primero que falla es el error. `bucket` es el bucket de la
+    modelo, la política de red, el nombre, el ciclo de vida, las etiquetas, el
+    entorno y los recursos de IAM; el primero que falla es el error. `bucket` es el bucket de la
     llamada (`AgentDeployOptions.bucket`)."""
     supported = require_supported_region(region)
     check_call_options(options, cli_flags)
@@ -810,9 +819,16 @@ def build_plan(
     )
     tags = validate_tags(agentcore.tags)
     environment = runtime_environment(project, supported)
+    models = bedrock_models_of(project, agentcore)
+    check_iam_inputs(
+        project.spec.model.id,
+        agentcore.bedrock_models,
+        agentcore.readable_secrets,
+        model_region=project.spec.model.region or supported,
+        region=supported,
+    )
     image_tag = image_tag_for(tree_for())
     chosen_bucket, source = bucket_source_of(bucket, project.bucket, environ)
-    models = bedrock_models_of(project, agentcore)
     return AgentCoreDeployPlan(
         name=name,
         region=supported,

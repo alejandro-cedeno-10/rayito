@@ -380,8 +380,8 @@ antes de llamar a AWS.
 
 | CLI | Python (`AgentCoreOptions`) | TypeScript (`agentcore`) | Qué hace |
 |---|---|---|---|
-| `--bedrock-model ID` (repetible) | `bedrock_models` | `bedrockModels` | Modelos o perfiles de inferencia de Bedrock que el rol del runtime puede invocar. Por defecto, el modelo del proyecto; si no se conoce, `model_required` |
-| `--readable-secret NOMBRE` (repetible) | `readable_secrets` | `readableSecrets` | Secretos de Secrets Manager que el rol puede leer. Por defecto, ninguno |
+| `--bedrock-model ID` (repetible) | `bedrock_models` | `bedrockModels` | Modelos o perfiles de inferencia de Bedrock que el rol del runtime puede invocar. Por defecto, el modelo del proyecto; si no se conoce, `model_required`. Sin comodines ni comas: un id, o un ARN de tu cuenta y región (`iam_resource_invalid`) |
+| `--readable-secret NOMBRE` (repetible) | `readable_secrets` | `readableSecrets` | Secretos de Secrets Manager que el rol puede leer. Por defecto, ninguno. Un nombre sin comodines ni comas, o un ARN de tu cuenta y región (`iam_resource_invalid`) |
 | `--idle-session-timeout S` | `idle_session_timeout_seconds` | `idleSessionTimeoutMs` | Segundos sin uso tras los que AgentCore termina la microVM de una sesión: de {{agentcoreLifecycleMinSeconds}} a {{agentcoreLifecycleMaxSeconds}}, por defecto {{agentcoreIdleSessionTimeoutDefaultSeconds}} |
 | `--max-session-lifetime S` | `max_session_lifetime_seconds` | `maxSessionLifetimeMs` | Vida máxima de la microVM de una sesión: de {{agentcoreLifecycleMinSeconds}} a {{agentcoreLifecycleMaxSeconds}}, por defecto {{agentcoreLifecycleMaxSeconds}} (8 h) |
 | `--tag K=V` (repetible) | `tags` | `tags` | Etiquetas de la pila y del runtime, para organizaciones que las exigen ([abajo](#etiquetas)) |

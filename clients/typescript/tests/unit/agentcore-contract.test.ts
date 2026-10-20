@@ -16,7 +16,6 @@ import {
 } from "../../src/agent/export.js";
 import {
   ANY_REGION_FOUNDATION_MODEL_ARN_TEMPLATE,
-  AWS_PARTITION,
   GLOBAL_FOUNDATION_MODEL_ARN_TEMPLATE,
   INFERENCE_PROFILE_ARN_TEMPLATE,
   REGIONAL_FOUNDATION_MODEL_ARN_TEMPLATE,
@@ -34,6 +33,13 @@ import {
   RUNTIME_REPAIRABLE_STATE,
 } from "../../src/agentcore/decisions.js";
 import { RUNTIME_REGION_VARIABLES } from "../../src/agentcore/domain.js";
+import {
+  ACCOUNT_PATTERN,
+  AWS_PARTITION,
+  MODEL_ID_PATTERN,
+  SECRET_NAME_MAX_LENGTH,
+  SECRET_NAME_PATTERN,
+} from "../../src/agentcore/iam-resources.js";
 import { SESSION_ID_PATTERN } from "../../src/agentcore/identifiers.js";
 import {
   AGENTCORE_ERROR_CODES,
@@ -161,6 +167,14 @@ describe("nombres y constantes", () => {
   it("el nombre del agente: patrón y largo máximo del contrato", () => {
     expect(AGENT_NAME_PATTERN.source).toBe(constants.agentNamePattern);
     expect(AGENT_NAME_MAX_LENGTH).toBe(constants.agentNameMaxLength);
+  });
+
+  it("las reglas de los recursos de IAM son las del contrato", () => {
+    const rules = constants.iamResourceRules as Record<string, unknown>;
+    expect(SECRET_NAME_PATTERN.source).toBe(rules.secretNamePattern);
+    expect(SECRET_NAME_MAX_LENGTH).toBe(rules.secretNameMaxLength);
+    expect(MODEL_ID_PATTERN.source).toBe(rules.modelIdPattern);
+    expect(ACCOUNT_PATTERN.source).toBe(rules.accountPattern);
   });
 
   it("los parámetros, salidas y capacidades de la pila son los del contrato", () => {
