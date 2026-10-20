@@ -39,6 +39,10 @@ With `target="agentcore"`, `plan_deploy`, `planDeploy` and `rayito agent deploy 
 ### Requirement: Deploy builds the image in AWS without local Docker
 After confirmation (`--yes`, or a terminal; otherwise `needs_confirmation`), deploy SHALL deploy `infra/agentcore-runtime.yaml` (packaged by `scripts/gen_stack_assets.py`) as `rayito-agentcore-<name>` through `OptionalStacks` with `CAPABILITY_IAM` and the merged tags, upload the `render_export(target="agentcore")` tree as a zip to `rayito/images/agentcore/<name>/<tag>.zip` in the artifact bucket of the same region (`bucket_region` otherwise), build it with `StartBuild` (`idempotencyToken` = the tag, `AGENT_BASE_IMAGE` = the ECR Public mirror with the pinned digest), poll `BatchGetBuilds`, and delete the zip when the build ends. The image tag SHALL be `src-` plus 16 hex characters of the framed sha256 of the export tree. No code path SHALL run Docker on the caller's machine.
 
+#### Scenario: secret files stay out of the build context
+- **WHEN** the project source holds `.env`, `.env.local` or `.git/`
+- **THEN** the build context and the source zip of both SDKs leave them out, with the same default exclusions as the MicroVM deploy, and the image tag does not change because of them
+
 #### Scenario: image tag vectors
 - **WHEN** each SDK computes the tag of every tree in `testdata/agentcore-deploy/image-tags.json`
 - **THEN** it equals `expected`
