@@ -126,7 +126,6 @@ def target_of(allowed: tuple[str, ...], flag: str) -> Callable[[str], str]:
 
 
 DEPLOY_TARGET_CHECK: Final = target_of(TARGETS, "--target")
-AGENTCORE_TARGET_CHECK: Final = target_of((TARGET_AGENTCORE,), "--target")
 
 
 @contextmanager
@@ -347,9 +346,17 @@ def stop_session(ctx: typer.Context, name: str, session_id: str | None) -> None:
         echo(output.stopped_line(name, session_id))
 
 
-def list_command_body(ctx: typer.Context) -> None:
+def require_agentcore_listing_target(target: str, command: str) -> None:
+    """`list` y `delete` sólo existen con AgentCore: el destino MicroVM es
+    `target_unsupported`, con el mismo documento de error que los demás."""
+    if target != TARGET_AGENTCORE:
+        raise AgentCoreException("target_unsupported", command=command)
+
+
+def list_command_body(ctx: typer.Context, target: str) -> None:
     json_output = json_mode(ctx)
     with agentcore_errors(json_output=json_output):
+        require_agentcore_listing_target(target, "list")
         clients, region = region_of(ctx)
         items = list_agents(runtimes_of(clients))
     if json_output:
@@ -359,9 +366,10 @@ def list_command_body(ctx: typer.Context) -> None:
         echo(line)
 
 
-def delete_command_body(ctx: typer.Context, name: str, *, yes: bool) -> None:
+def delete_command_body(ctx: typer.Context, name: str, target: str, *, yes: bool) -> None:
     json_output = json_mode(ctx)
     with agentcore_errors(json_output=json_output):
+        require_agentcore_listing_target(target, "delete")
         clients, _ = region_of(ctx)
         deleter = AgentCoreDeleter(
             gateways_of(clients, name), on_progress=lambda line: echo(line, err=True)
@@ -387,7 +395,6 @@ def delete_command_body(ctx: typer.Context, name: str, *, yes: bool) -> None:
 
 
 __all__ = [
-    "AGENTCORE_TARGET_CHECK",
     "DEPLOY_TARGET_CHECK",
     "TARGET_MICROVM",
     "AgentCoreDeployRequest",

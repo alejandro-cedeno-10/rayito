@@ -445,7 +445,19 @@ def test_an_empty_list_says_so(tmp_path: Path) -> None:
 def test_list_and_delete_require_the_target() -> None:
     assert CliRunner().invoke(app, ["agent", "list"]).exit_code == 2
     assert CliRunner().invoke(app, ["agent", "delete", "x"]).exit_code == 2
-    assert CliRunner().invoke(app, ["agent", "list", "--target", "microvm"]).exit_code == 2
+
+
+@pytest.mark.parametrize(
+    ("command", "arguments"), [("list", []), ("delete", ["support-bot"])], ids=["list", "delete"]
+)
+def test_list_and_delete_with_the_microvm_target_are_target_unsupported(
+    tmp_path: Path, command: str, arguments: list[str]
+) -> None:
+    result = run(world(tmp_path), "--json", "agent", command, *arguments, "--target", "microvm")
+    document = error_of(result)
+    assert document["error"]["code"] == "target_unsupported"
+    assert document["exitCode"] == 2 and result.exit_code == 2
+    assert f"rayito agent {command}" in document["error"]["message"]
 
 
 def test_delete_with_yes_removes_exactly_what_rayito_created(tmp_path: Path) -> None:

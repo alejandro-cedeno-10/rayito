@@ -82,7 +82,6 @@ from rayito.cli._agent_scaffold import (
     write_scaffold,
 )
 from rayito.cli._agentcore import (
-    AGENTCORE_TARGET_CHECK,
     BEDROCK_MODEL_FLAG,
     BEDROCK_MODEL_HELP,
     DELETE_HELP,
@@ -1272,18 +1271,18 @@ def delete_command(
     ctx: typer.Context,
     name: Annotated[str, typer.Argument(help=DELETE_NAME_HELP)],
     target: Annotated[
-        str, typer.Option("--target", help=DELETE_TARGET_HELP, callback=AGENTCORE_TARGET_CHECK)
+        str, typer.Option("--target", help=DELETE_TARGET_HELP, callback=DEPLOY_TARGET_CHECK)
     ],
     yes: Annotated[bool, typer.Option("--yes", help=DELETE_YES_HELP)] = False,
 ) -> None:
-    delete_command_body(ctx, name, yes=yes)
+    delete_command_body(ctx, name, target, yes=yes)
 
 
 @agent_app.command("list", help=LIST_HELP)
 def list_command(
     ctx: typer.Context,
     target: Annotated[
-        str, typer.Option("--target", help=LIST_TARGET_HELP, callback=AGENTCORE_TARGET_CHECK)
+        str, typer.Option("--target", help=LIST_TARGET_HELP, callback=DEPLOY_TARGET_CHECK)
     ],
 ) -> None:
-    list_command_body(ctx)
+    list_command_body(ctx, target)

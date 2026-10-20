@@ -456,8 +456,20 @@ describe("agent list y agent delete", () => {
     expect(calls(tools)).toEqual(["previewDelete"]);
   });
 
-  it("delete con --target microvm es target_unsupported", async () => {
-    const outcome = await run(["agent", "delete", "support-bot", "--target", "microvm"]);
-    expect(outcome.exitCode).toBe(2);
-  });
+  it.each([
+    ["list", []],
+    ["delete", ["support-bot"]],
+  ])(
+    "%s con --target microvm es el error target_unsupported con su documento JSON",
+    async (command, extra) => {
+      const outcome = await run(["--json", "agent", command, ...extra, "--target", "microvm"]);
+      expect(outcome.exitCode).toBe(2);
+      const document = documentOf(outcome.stdout);
+      expect(Object.keys(document)).toEqual(["error", "exitCode"]);
+      expect(document.exitCode).toBe(2);
+      const error = document.error as { code: string; message: string };
+      expect(error.code).toBe("target_unsupported");
+      expect(error.message).toContain(`rayito agent ${command}`);
+    },
+  );
 });
