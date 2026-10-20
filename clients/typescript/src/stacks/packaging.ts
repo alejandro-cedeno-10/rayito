@@ -8,6 +8,7 @@
  */
 
 import type { StackComponent } from "./model.js";
+import * as agentcoreRuntime from "./templates/agentcore-runtime.gen.js";
 import * as artifactBucket from "./templates/artifact-bucket.gen.js";
 import * as customDomain from "./templates/custom-domain.gen.js";
 import * as dashboard from "./templates/dashboard.gen.js";
@@ -30,6 +31,7 @@ interface GeneratedAsset {
 }
 
 const ASSETS: Readonly<Record<string, GeneratedAsset>> = {
+  "agentcore-runtime": agentcoreRuntime,
   "artifact-bucket": artifactBucket,
   "custom-domain": customDomain,
   dashboard,

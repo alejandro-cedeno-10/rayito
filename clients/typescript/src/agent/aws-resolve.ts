@@ -36,6 +36,9 @@ import type { StackProvisioner } from "../stacks/port.js";
 import { AwsBuildClients } from "../templates/build.js";
 import type { AgentProject } from "./project.js";
 
+/** El mensaje cuando ni el argumento ni el entorno dan la región de AWS. */
+export const NO_REGION_MESSAGE =
+  "no hay región de AWS: pasa region (--region) o exporta AWS_REGION";
 export const BEARER_PREFIX = "Bearer ";
 export const AUTHORIZATION_HEADER = "authorization";
 /** Códigos de `HeadBucket` que dan el bucket por inexistente o ajeno: sin
@@ -327,9 +330,7 @@ export class AwsResolver implements DeployAws {
   resolvedRegion(): string {
     const resolved = this.#region ?? process.env.AWS_REGION ?? process.env.AWS_DEFAULT_REGION;
     if (!resolved) {
-      throw new InvalidArgumentError(
-        "no hay región de AWS: pasa region (--region) o exporta AWS_REGION",
-      );
+      throw new InvalidArgumentError(NO_REGION_MESSAGE);
     }
     return resolved;
   }
