@@ -39,8 +39,7 @@ import {
 } from "./agentcore-output.js";
 import type { CommandContext } from "./command.js";
 import { pairsOrUsage } from "./commands/sandbox.js";
-import { EXIT_FAILURE, EXIT_USAGE } from "./exit-codes.js";
-import { translateFailure } from "./failures.js";
+import { EXIT_FAILURE } from "./exit-codes.js";
 import type {
   AgentCoreDeployRequest,
   AgentDeployFlags,
@@ -48,11 +47,7 @@ import type {
   AgentDetectOverrides,
 } from "./ops-ports.js";
 
-/** Una orden no escribe el código del error del documento `--json` de un fallo ajeno a AgentCore: el más cercano. */
-const UNTRANSLATED_FAILURE_CODE = "aws_error";
-const UNTRANSLATED_USAGE_CODE = "option_not_supported";
 const TOKEN_FILE_OPTION = "--token-file";
-const STOP_NOT_ACTIVE_TEMPLATE = "la sesión {sessionId} no estaba activa en {name}";
 
 /** El valor de `--target`, o `undefined` si no es uno de los admitidos (el llamante da el error de uso). */
 export function targetOf(context: CommandContext): AgentTarget | undefined {
@@ -60,30 +55,19 @@ export function targetOf(context: CommandContext): AgentTarget | undefined {
   return (AGENT_TARGETS as readonly string[]).includes(value) ? (value as AgentTarget) : undefined;
 }
 
-function errorMessage(line: string): string {
-  return line.startsWith(ERROR_PREFIX) ? line.slice(ERROR_PREFIX.length) : line;
-}
-
-/** Imprime un fallo: la línea por stderr y, con `--json`, el documento de error por stdout. Devuelve el código de salida. */
-export function reportFailure(context: CommandContext, error: unknown): number {
-  const failure = translateFailure(error, context.globals.verbose);
-  context.console.echo(failure.line, { err: true });
+/** Imprime un fallo de AgentCore: la línea por stderr y, con `--json`, el documento de error por stdout. Devuelve su código de salida. */
+export function reportFailure(context: CommandContext, error: AgentCoreError): number {
+  context.console.echo(`${ERROR_PREFIX}${error.message}`, { err: true });
   if (context.globals.json) {
-    const code =
-      error instanceof AgentCoreError
-        ? error.code
-        : failure.code === EXIT_USAGE
-          ? UNTRANSLATED_USAGE_CODE
-          : UNTRANSLATED_FAILURE_CODE;
     context.console.emitJson({
-      error: { code, message: errorMessage(failure.line) },
-      exitCode: failure.code,
+      error: { code: error.code, message: error.message },
+      exitCode: error.exitCode,
     });
   }
-  return failure.code;
+  return error.exitCode;
 }
 
-/** Ejecuta `action`; un fallo sale con su documento y su código de salida. */
+/** Ejecuta `action`; un fallo de AgentCore sale con su documento y su código de salida, y cualquier otro sigue su camino de siempre. */
 export async function guardedAgentCore(
   context: CommandContext,
   action: () => Promise<number | undefined>,
@@ -91,7 +75,10 @@ export async function guardedAgentCore(
   try {
     return await action();
   } catch (error) {
-    return reportFailure(context, error);
+    if (error instanceof AgentCoreError) {
+      return reportFailure(context, error);
+    }
+    throw error;
   }
 }
 
@@ -182,21 +169,21 @@ export async function runAgentCoreDeploy(
   const { console, globals } = context;
   const region = await regionOf(context, input.dryRun);
   const view = await context.agentcore.plan(deployRequest(context, input, region));
-  if (input.dryRun) {
-    if (globals.json) {
-      console.emitJson(dryRunDocument(view.plan, view.report));
-      return undefined;
-    }
-    for (const line of [...detectionLines(view.report), ...planLines(view.plan)]) {
-      console.echo(line);
-    }
-    console.echo(DRY_RUN_FOOTER);
+  if (input.dryRun && globals.json) {
+    console.emitJson(dryRunDocument(view.plan, view.report));
     return undefined;
   }
   if (!globals.json) {
+    for (const line of detectionLines(view.report)) {
+      console.echo(line, { err: !input.dryRun });
+    }
     for (const line of planLines(view.plan)) {
       console.echo(line);
     }
+  }
+  if (input.dryRun) {
+    console.echo(DRY_RUN_FOOTER);
+    return undefined;
   }
   if (!(await confirmed(context, CONFIRM_QUESTION, "needs_confirmation"))) {
     return EXIT_FAILURE;
@@ -271,9 +258,9 @@ export async function runAgentCoreStop(context: CommandContext): Promise<number 
     console.emitJson(stopDocument(name, sessionId, stopped));
     return undefined;
   }
-  console.echo(
-    formatTemplate(stopped ? STOPPED_TEMPLATE : STOP_NOT_ACTIVE_TEMPLATE, { sessionId, name }),
-  );
+  if (stopped) {
+    console.echo(formatTemplate(STOPPED_TEMPLATE, { sessionId, name }));
+  }
   return undefined;
 }
 

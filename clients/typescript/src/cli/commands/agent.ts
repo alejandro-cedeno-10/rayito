@@ -698,7 +698,9 @@ export const agentDeployCommand = defineCommand({
           flags,
           settings: {
             ...request(undefined).settings,
-            onBuildLogs: (line: string) => context.console.echo(line, { err: true }),
+            onBuildLogs: verbose
+              ? (line: string) => context.console.echo(line, { err: true })
+              : undefined,
             onStep: (step: { readonly detail: string }) =>
               context.console.echo(step.detail, { err: true }),
           },
