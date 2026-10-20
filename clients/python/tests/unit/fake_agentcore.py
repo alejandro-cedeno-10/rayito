@@ -127,7 +127,7 @@ class FakeStack:
     recorder: Recorder
     stack: StackObservation
     changed: bool = True
-    created_outputs: Mapping[str, str] = DEFAULT_OUTPUTS
+    created_outputs: Mapping[str, str] = field(default_factory=lambda: dict(DEFAULT_OUTPUTS))
     parameters_seen: list[Mapping[str, str]] = field(default_factory=list)
     destroyed: bool = False
 
