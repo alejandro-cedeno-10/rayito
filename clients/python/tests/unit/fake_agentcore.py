@@ -245,8 +245,9 @@ class FakeRuntimes:
     def create_runtime(self, spec: RuntimeSpec) -> RuntimeRef:
         self.recorder.record("create_runtime", spec.name)
         if self.conflict_on_create:
+            self._polls = 0
             self.listing = RuntimeListing(
-                RUNTIME_ID, _arn(RUNTIME_ID), spec.name, "1", "READY", spec.description
+                RUNTIME_ID, _arn(RUNTIME_ID), spec.name, "1", "CREATING", spec.description
             )
             self.details = RuntimeDetails(
                 container_uri="",
@@ -272,6 +273,9 @@ class FakeRuntimes:
         self.recorder.record("update_runtime", runtime_id)
         self.base_versions.append(base_version)
         assert self.listing is not None
+        assert self.listing.status not in {"CREATING", "UPDATING"}, (
+            "UpdateAgentRuntime sobre un runtime que no está READY"
+        )
         self.specs.append(spec)
         self._last_spec = spec
         self._mmds = True

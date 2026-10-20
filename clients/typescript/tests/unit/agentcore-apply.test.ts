@@ -68,6 +68,7 @@ function accountOf(testCase: ApplyCase): FakeAccount {
       listed,
       details,
       settled: waiting ? desiredDetails() : undefined,
+      conflictOnCreate: testCase.input.conflictOnCreate ?? false,
     },
     image: { exists: image?.exists ?? false, sizeBytes: image?.sizeBytes },
   });

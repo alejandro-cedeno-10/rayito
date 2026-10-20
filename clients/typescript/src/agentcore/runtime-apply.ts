@@ -176,6 +176,7 @@ export class RuntimeApplier {
     if (existing === undefined || !isOwned(existing, plan.name)) {
       throw new AgentCoreError("name_conflict", { runtimeName: plan.runtimeName, name: plan.name });
     }
+    await this.#waitReady(plan, existing.runtimeId);
     await this.#update(plan, existing.runtimeId, desired, emit);
     return { runtimeId: existing.runtimeId, action: "update" };
   }

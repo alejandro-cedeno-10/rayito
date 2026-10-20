@@ -236,10 +236,16 @@ export class FakeControl {
         runtimeArn: desiredDetails().runtimeArn,
         runtimeName: RUNTIME_NAME,
         runtimeVersion: "1",
-        status: "READY",
+        status: "CREATING",
         description: DESCRIPTION,
       };
-      this.runtime.details = desiredDetails({ runtimeVersion: "1", requireMMDSV2: false });
+      this.runtime.details = desiredDetails({
+        runtimeVersion: "1",
+        status: "CREATING",
+        requireMMDSV2: false,
+      });
+      this.runtime.settled = desiredDetails({ runtimeVersion: "1", requireMMDSV2: false });
+      this.#pendingStatus = "READY";
       throw new RuntimeConflictError();
     }
     this.writes.push(request);
@@ -266,6 +272,9 @@ export class FakeControl {
 
   async updateRuntime(request: RuntimeWriteRequest): Promise<RuntimeWriteResult> {
     this.calls.push({ operation: "UpdateAgentRuntime", input: request });
+    if (this.#pendingStatus !== undefined) {
+      throw new Error("UpdateAgentRuntime sobre un runtime que no está READY");
+    }
     this.writes.push(request);
     const current = (this.runtime.details ?? this.runtime.listed) as RuntimeDetails;
     const details: RuntimeDetails = {

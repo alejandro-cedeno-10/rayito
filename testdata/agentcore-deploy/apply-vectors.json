@@ -1,5 +1,5 @@
 {
-  "description": "Vectores de las decisiones al aplicar `--target agentcore`, sobre fakes de los puertos. `stack` es Stacks[0] de DescribeStacks (status y outputs) o null si no existe; `image` es el resultado de DescribeImages con la etiqueta deseada (exists y imageSizeInBytes) o null si no se consulta (la pila no existe: el repositorio tampoco); `runtime` es el elemento de ListAgentRuntimes con agentRuntimeName igual al nombre del runtime, o null; `runtimeDetails` son los campos de GetAgentRuntime que se comparan (constants.runtimeComparedFields; containerUri es <RepositoryUri>:<imageTag>); `buildImage` es build_image/buildImage (null, true o false). `expected` son las acciones de stack, image y runtime, o `error` con su code y los campos que interpola. Una pila en `wait` se espera y se vuelve a observar antes de decidir la imagen; un runtime en `wait` se espera hasta READY y se vuelve a decidir con sus nuevos detalles. `create` del runtime incluye el UpdateAgentRuntime con requireMMDSV2 tras el primer READY. megabytes se redondea hacia abajo (bytes // 1000000).",
+  "description": "Vectores de las decisiones al aplicar `--target agentcore`, sobre fakes de los puertos. `stack` es Stacks[0] de DescribeStacks (status y outputs) o null si no existe; `image` es el resultado de DescribeImages con la etiqueta deseada (exists y imageSizeInBytes) o null si no se consulta (la pila no existe: el repositorio tampoco); `runtime` es el elemento de ListAgentRuntimes con agentRuntimeName igual al nombre del runtime, o null; `runtimeDetails` son los campos de GetAgentRuntime que se comparan (constants.runtimeComparedFields; containerUri es <RepositoryUri>:<imageTag>); `buildImage` es build_image/buildImage (null, true o false). `expected` son las acciones de stack, image y runtime, o `error` con su code y los campos que interpola. Una pila en `wait` se espera y se vuelve a observar antes de decidir la imagen; un runtime en `wait` se espera hasta READY y se vuelve a decidir con sus nuevos detalles. `create` del runtime incluye el UpdateAgentRuntime con requireMMDSV2 tras el primer READY. megabytes se redondea hacia abajo (bytes // 1000000). `conflictOnCreate` (opcional, false por defecto) hace que CreateAgentRuntime responda ConflictException porque otro despliegue creó el runtime a la vez: ese runtime aparece en CREATING, se espera hasta READY y se actualiza; nunca se crea un duplicado ni se actualiza antes de READY.",
   "desired": {
     "imageTag": "src-0123456789abcdef",
     "environmentVariables": {
@@ -405,6 +405,44 @@
         "stack": "update",
         "image": "reuse",
         "runtime": "wait"
+      }
+    },
+    {
+      "name": "creación concurrente: otro despliegue crea el runtime a la vez",
+      "input": {
+        "stack": {
+          "status": "UPDATE_COMPLETE",
+          "outputs": {
+            "RepositoryName": "rayito/agentcore/support-bot",
+            "RepositoryUri": "123456789012.dkr.ecr.us-east-1.amazonaws.com/rayito/agentcore/support-bot",
+            "RepositoryArn": "arn:aws:ecr:us-east-1:123456789012:repository/rayito/agentcore/support-bot",
+            "BuildProjectName": "rayito-agentcore-support-bot",
+            "BuildLogGroupName": "/aws/codebuild/rayito-agentcore-support-bot",
+            "RuntimeRoleArn": "arn:aws:iam::123456789012:role/rayito-agentcore-support-bot-RuntimeRole-ABCDEFGHIJKL"
+          }
+        },
+        "image": {
+          "exists": true,
+          "sizeBytes": 800000000
+        },
+        "runtime": null,
+        "runtimeDetails": null,
+        "buildImage": null,
+        "desired": {
+          "imageTag": "src-0123456789abcdef",
+          "environmentVariables": {
+            "AWS_DEFAULT_REGION": "us-east-1",
+            "AWS_REGION": "us-east-1"
+          },
+          "idleRuntimeSessionTimeout": 900,
+          "maxLifetime": 28800
+        },
+        "conflictOnCreate": true
+      },
+      "expected": {
+        "stack": "update",
+        "image": "reuse",
+        "runtime": "update"
       }
     },
     {

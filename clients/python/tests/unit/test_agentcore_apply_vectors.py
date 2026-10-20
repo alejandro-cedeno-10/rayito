@@ -38,6 +38,7 @@ def cloud_for(item: dict[str, Any]) -> fake.FakeCloud:
         details=fake.details_from(item["runtimeDetails"]),
     )
     runtime = cloud.runtimes
+    runtime.conflict_on_create = item.get("conflictOnCreate", False)
     if runtime.listing is not None and runtime.details is None:
         outputs = (stack or {"outputs": {}})["outputs"]
         desired = item["desired"]

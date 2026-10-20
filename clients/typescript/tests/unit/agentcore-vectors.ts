@@ -98,6 +98,7 @@ export interface ApplyCase {
       requireMMDSV2: boolean;
     } | null;
     buildImage: boolean | null;
+    conflictOnCreate?: boolean;
     desired: {
       imageTag: string;
       environmentVariables: Record<string, string>;
