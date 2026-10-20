@@ -3776,10 +3776,11 @@ el contrato HTTP de AgentCore, con \`http.server.ThreadingHTTPServer\`.
   hay token y no coincide.
 
 El id de sesión de AgentCore (la cabecera) lo elige quien llama, con cualquier
-forma; los drivers sólo aceptan el suyo (\`rda_\` y 32 hex, o el de OpenCode).
-\`SessionBridge\` traduce uno al otro dentro de la microVM: la primera llamada de
-una sesión de AgentCore arranca una sesión nueva del driver y las siguientes la
-continúan, y la respuesta lleva siempre el id de la cabecera.
+forma; los drivers sólo continúan sesiones suyas (\`rda_\` y 32 hex, o las que
+guarda OpenCode). \`SessionBridge\` traduce uno al otro dentro de la microVM: la
+primera llamada de una sesión de AgentCore arranca una sesión nueva del driver
+y las siguientes la continúan, y la respuesta lleva siempre el id de la
+cabecera.
 
 El host no loguea contenido: sólo método, ruta sin consulta, estado, bytes y
 duración. Nunca el prompt, una cabecera ni el token.
