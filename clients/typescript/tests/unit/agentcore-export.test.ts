@@ -8,6 +8,7 @@
 
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { planDeploy } from "../../src/agent/deploy.js";
 import { renderExport, usesRawProtocol } from "../../src/agent/export.js";
 import { AgentProject } from "../../src/agent/project.js";
 import {
@@ -112,5 +113,17 @@ describe("export agentcore", () => {
 
   it("un proyecto de framework no es una app con protocol raw", async () => {
     expect(usesRawProtocol(await sample("python/deepagents"))).toBe(false);
+  });
+
+  it("el plan avisa en Seguridad de que el host pone las credenciales sólo a ese adaptador", async () => {
+    const planOf = async (path: string) =>
+      planDeploy(".", {
+        project: await sample(path),
+        region: REGION,
+        target: "agentcore",
+        options: { bucket: "amzn-s3-demo-bucket" },
+      });
+    expect((await planOf("typescript/vercel-ai-sdk")).security).toContain("envCredentials");
+    expect((await planOf("python/deepagents")).security).not.toContain("envCredentials");
   });
 });

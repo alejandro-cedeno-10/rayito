@@ -16,6 +16,7 @@
 
 import { mkdir, readdir, writeFile } from "node:fs/promises";
 import { dirname, join, posix } from "node:path";
+import { usesEnvCredentials } from "../agentcore/env-credentials.js";
 import { InvalidArgumentError } from "../errors.js";
 import {
   AGENT_AWS_CREDENTIALS_REQUIREMENTS_SHA256,
@@ -23,7 +24,6 @@ import {
   AGENT_EXPORT_BASE_IMAGE_DIGEST,
   AGENT_SERVICE_EXPORT_PORT,
   AGENT_STATE_DIR,
-  AGENTCORE_ENV_CREDENTIAL_ADAPTERS,
   DEFAULT_AGENT_WORKDIR,
 } from "../limits.js";
 import {
@@ -176,12 +176,9 @@ function hostConfigBytes(project: AgentProject, host: HostConfig, target: string
   return canonicalJson({ ...document, ...credentials, schema: AGENT_HOST_SCHEMA });
 }
 
-/** Si el framework del proyecto sólo lee las credenciales de AWS de variables de entorno, en AgentCore el host se las pone leídas del rol del runtime. */
+/** Si el adaptador del proyecto sólo lee las credenciales de AWS de variables de entorno, en AgentCore el host se las pone leídas del rol del runtime. */
 function needsAwsEnvCredentials(project: AgentProject, target: string): boolean {
-  return (
-    target === "agentcore" &&
-    (AGENTCORE_ENV_CREDENTIAL_ADAPTERS as readonly string[]).includes(project.framework ?? "")
-  );
+  return target === "agentcore" && usesEnvCredentials(project.runtime);
 }
 
 function awsCredentialSteps(install: InstallTarget): readonly TemplateStep[] {

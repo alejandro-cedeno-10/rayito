@@ -22,7 +22,6 @@ import { ScalingOptions } from "../agent/scaling-domain.js";
 import { AgentCoreError, InvalidArgumentError } from "../errors.js";
 import {
   AGENT_MIN_MEMORY_MIB,
-  AGENTCORE_ENV_CREDENTIAL_ADAPTERS,
   AGENTCORE_ENVIRONMENT_VALUE_MAX_CHARS,
   AGENTCORE_IDLE_SESSION_TIMEOUT_DEFAULT_SECONDS,
   AGENTCORE_IMAGE_RETENTION_COUNT,
@@ -36,6 +35,7 @@ import {
 import { FIXED_TAG_KEYS } from "../stacks/model.js";
 import { formatTemplate } from "../template-text.js";
 import { MS_PER_SECOND } from "../units.js";
+import { usesEnvCredentials } from "./env-credentials.js";
 import { COST_MESSAGES, type SecurityKey, type WarningKey } from "./messages.js";
 import type {
   AgentCoreDeployPlan,
@@ -404,7 +404,7 @@ function securityKeys(project: AgentProject, readableSecrets: readonly string[])
     keys.push("readableSecrets");
   }
   keys.push("publicNetwork", "sessionIsolation");
-  if ((AGENTCORE_ENV_CREDENTIAL_ADAPTERS as readonly string[]).includes(project.framework ?? "")) {
+  if (usesEnvCredentials(project.runtime)) {
     keys.push("envCredentials");
   }
   return keys;
