@@ -112,7 +112,7 @@ describe("rayito/e2b exports", () => {
     });
     expect(manifest.sideEffects).toBe(false);
     expect(readText("tsdown.config.ts")).toContain(
-      'entry: { index: "src/index.ts", e2b: "src/e2b/index.ts" }',
+      'entry: { index: "src/index.ts", e2b: "src/e2b/index.ts", cdk: "src/cdk/index.ts" }',
     );
     const packCheck = readText("scripts/pack-check.mjs");
     for (const file of ["e2b.mjs", "e2b.cjs", "e2b.d.mts", "e2b.d.cts"]) {

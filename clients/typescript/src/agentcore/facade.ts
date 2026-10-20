@@ -11,13 +11,22 @@ import type { DeployAgentOptions } from "../agent/deploy.js";
 import {
   type AgentDeployOptions,
   deployOptionsOf,
-  projectFor,
   resolvedRegion,
   withDefaultExcludes,
 } from "../agent/deploy-plan.js";
-import { renderExport, usesRawProtocol } from "../agent/export.js";
+import type { DetectionReport } from "../agent/detect-report.js";
+import { renderExportSteps, usesRawProtocol } from "../agent/export.js";
 import type { AgentProject } from "../agent/project.js";
 import { copyProject } from "../agent/project-copy.js";
+import { detectProjectSteps } from "../agent/project-file.js";
+import {
+  nodeProjectReader,
+  type ProjectSteps,
+  runWithReader,
+  runWithSyncReader,
+  type SyncProjectReader,
+  syncProjectReader,
+} from "../agent/project-reader.js";
 import { AgentCoreError, InvalidArgumentError } from "../errors.js";
 import { AGENT_SOURCE_DEFAULT_EXCLUDES } from "../limits.js";
 import { sdkAgentCorePorts } from "./aws-ports.js";
@@ -72,10 +81,55 @@ export async function planAgentCoreWith(
   args: DeployAgentOptions<"agentcore">,
   flags?: CallFlags,
 ): Promise<PlannedAgentCore> {
-  const options = deployOptionsOf(args.options);
-  const detected = await projectFor(path, args.project, args.overrides, args.region);
-  const project = withNestedDefaultExcludes(withDefaultExcludes(detected.project));
   const environ = ports.environ ?? process.env;
+  return runWithReader(planSteps(environ, path, args, flags), nodeProjectReader);
+}
+
+/** Lo que `planAgentCoreSync` necesita además del proyecto: el entorno, las banderas y el lector. */
+export interface SyncPlanOptions {
+  readonly environ?: Environ | undefined;
+  readonly flags?: CallFlags | undefined;
+  readonly projectReader?: SyncProjectReader | undefined;
+}
+
+/**
+ * `planAgentCoreWith` sin esperar nada (los constructos CDK, ADR-032 D7): las
+ * mismas reglas, en el mismo orden, con el lector síncrono del disco. Sin AWS.
+ */
+export function planAgentCoreSync(
+  path: string,
+  args: DeployAgentOptions<"agentcore">,
+  options: SyncPlanOptions = {},
+): PlannedAgentCore {
+  const environ = options.environ ?? process.env;
+  return runWithSyncReader(
+    planSteps(environ, path, args, options.flags),
+    options.projectReader ?? syncProjectReader,
+  );
+}
+
+function* projectSteps(
+  path: string,
+  args: DeployAgentOptions<"agentcore">,
+): ProjectSteps<{ readonly project: AgentProject; readonly report: DetectionReport | undefined }> {
+  if (args.project !== undefined) {
+    return { project: args.project, report: undefined };
+  }
+  const [project, report] = yield* detectProjectSteps(path, args.overrides, {
+    region: args.region,
+  });
+  return { project, report };
+}
+
+function* planSteps(
+  environ: Environ,
+  path: string,
+  args: DeployAgentOptions<"agentcore">,
+  flags: CallFlags | undefined,
+): ProjectSteps<PlannedAgentCore> {
+  const options = deployOptionsOf(args.options);
+  const detected = yield* projectSteps(path, args);
+  const project = withNestedDefaultExcludes(withDefaultExcludes(detected.project));
   const region = resolvedRegion(args.region, project, environ);
   if (region === undefined) {
     throw new InvalidArgumentError(NO_REGION_MESSAGE);
@@ -91,7 +145,7 @@ export async function planAgentCoreWith(
   if (usesRawProtocol(project)) {
     throw new AgentCoreError("raw_protocol");
   }
-  const tree = await renderExport(project, "agentcore");
+  const tree = yield* renderExportSteps(project, "agentcore");
   return {
     plan: { ...partial, imageTag: imageTagFor(tree) },
     tree,

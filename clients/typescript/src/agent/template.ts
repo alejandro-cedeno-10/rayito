@@ -31,7 +31,7 @@ import {
   AGENT_TEMPLATE_MANIFEST_SCHEMA,
 } from "../limits.js";
 import type { BuildInfo, BuildOptions } from "../templates/build.js";
-import { collectContextFiles } from "../templates/context-node.js";
+import { collectContextFiles, collectContextFilesSync } from "../templates/context-node.js";
 import { Template } from "../templates/dsl.js";
 import { type ReadyCommand, waitForFile } from "../templates/ready-cmds.js";
 import { OPENCODE_FLAG_ENVS } from "./opencode.js";
@@ -405,13 +405,20 @@ function applySteps(
   return { template: tpl, executables };
 }
 
+const APP_COPY_STEPS = [{ kind: "copy", src: ".", dst: AGENT_APP_DIR }] as const;
+
 /** Los ficheros del código del usuario, sin lo que ignoran su `.dockerignore`
  * y `exclude`. */
 export async function appFiles(
   app: string,
   exclude: readonly string[],
 ): Promise<Array<[string, Uint8Array]>> {
-  return collectContextFiles(app, [{ kind: "copy", src: ".", dst: AGENT_APP_DIR }], exclude);
+  return collectContextFiles(app, APP_COPY_STEPS, exclude);
+}
+
+/** `appFiles` con lecturas síncronas (los constructos CDK, ADR-032 D7). */
+export function appFilesSync(app: string, exclude: readonly string[]): Array<[string, Uint8Array]> {
+  return collectContextFilesSync(app, APP_COPY_STEPS, exclude);
 }
 
 async function writeContext(

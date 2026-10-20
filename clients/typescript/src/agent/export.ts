@@ -39,6 +39,15 @@ import {
 import { canonicalJson } from "./opencode.js";
 import type { AgentProject } from "./project.js";
 import {
+  appFilesStep,
+  nodeProjectReader,
+  type ProjectSteps,
+  runWithReader,
+  runWithSyncReader,
+  type SyncProjectReader,
+  syncProjectReader,
+} from "./project-reader.js";
+import {
   AGENT_HOST_SCHEMA,
   hostDocument,
   installableRuntime,
@@ -66,7 +75,6 @@ import {
   STEP_RUN,
   type TemplateStep,
 } from "./runtime.js";
-import { appFiles } from "./template.js";
 
 export const EXPORT_TARGETS = ["docker", "agentcore"] as const;
 export type ExportTarget = (typeof EXPORT_TARGETS)[number];
@@ -340,6 +348,23 @@ export async function renderExport(
   project: AgentProject,
   target = "docker",
 ): Promise<Map<string, string | Uint8Array>> {
+  return runWithReader(renderExportSteps(project, target), nodeProjectReader);
+}
+
+/** `renderExport` con un lector síncrono (`planAgentCoreSync`, los constructos CDK). */
+export function renderExportSync(
+  project: AgentProject,
+  target = "docker",
+  projectReader: SyncProjectReader = syncProjectReader,
+): Map<string, string | Uint8Array> {
+  return runWithSyncReader(renderExportSteps(project, target), projectReader);
+}
+
+/** Los pasos de `renderExport`, para la ruta asíncrona y la síncrona. */
+export function* renderExportSteps(
+  project: AgentProject,
+  target: string,
+): ProjectSteps<Map<string, string | Uint8Array>> {
   const runtime = installableRuntime(project);
   const install = installTarget({ platform: "container" });
   const credentialProcess = target === "agentcore" && usesCredentialProcess(project.runtime);
@@ -375,7 +400,7 @@ export async function renderExport(
     );
   }
   if (project.source !== undefined) {
-    for (const [relative, data] of await appFiles(project.source, project.exclude)) {
+    for (const [relative, data] of yield* appFilesStep(project.source, project.exclude)) {
       tree.set(`${AGENT_APP_CONTEXT_DIR}/${relative}`, data);
     }
   }

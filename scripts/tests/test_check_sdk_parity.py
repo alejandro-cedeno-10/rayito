@@ -335,3 +335,31 @@ def test_main_with_cli_passes_once_typescript_defines_every_command(
     write_typescript_command(tmp_path, "sandbox.ts", ["sandbox", "list"])
     assert check_sdk_parity.main(["--root", str(tmp_path), "--cli"]) == 0
     assert capsys.readouterr().out.splitlines() == ["OK rayito sandbox list", "OK"]
+
+
+def test_the_cdk_surface_is_compared_and_must_be_the_contracts(tmp_path: Path) -> None:
+    assert ("rayito.cdk",) == tuple(
+        surface for surface, *_ in check_sdk_parity.SURFACES if surface.endswith("cdk")
+    )
+    contract = {
+        "sdk": {
+            "python": {"exports": ["RayitoAgent", "RayitoCdkException"]},
+            "typescript": {
+                "exports": ["RayitoAgent", "RayitoCdkError", "type RayitoAgentProps"]
+            },
+        }
+    }
+    write(tmp_path, check_sdk_parity.CDK_CONTRACT, json.dumps(contract))
+    paths = {surface: (py, ts) for surface, py, ts in check_sdk_parity.SURFACES}
+    python_path, typescript_path = paths["rayito.cdk"]
+    write(tmp_path, python_path, '__all__ = ["RayitoAgent", "RayitoCdkException"]\n')
+    write(
+        tmp_path,
+        typescript_path,
+        "export { RayitoAgent, type RayitoAgentProps } from './agent.js';\n"
+        "export { RayitoCdkError } from './errors.js';\n",
+    )
+    assert check_sdk_parity.cdk_contract_problems(tmp_path) == []
+    write(tmp_path, python_path, '__all__ = ["RayitoAgent"]\n')
+    (problem,) = check_sdk_parity.cdk_contract_problems(tmp_path)
+    assert "sdk.python.exports" in problem

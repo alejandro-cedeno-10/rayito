@@ -8,15 +8,23 @@
  */
 
 import { readFileSync, realpathSync, statSync } from "node:fs";
-import { readFile } from "node:fs/promises";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import { AGENT_PROJECT_FILE_NAMES } from "../limits.js";
-import { loadOptionalPeer } from "../optional.js";
 import { detect } from "./detect-domain.js";
 import { LocalProjectTree } from "./detect-fs.js";
 import { detectedDocument } from "./detect-project.js";
 import type { DetectionReport, DetectOverrides } from "./detect-report.js";
 import { AgentProject, AgentProjectError, type TextReader } from "./project.js";
+import {
+  nodeProjectReader,
+  type ProjectSteps,
+  readTextStep,
+  runWithReader,
+  runWithSyncReader,
+  type SyncProjectReader,
+  syncProjectReader,
+  tomlParserStep,
+} from "./project-reader.js";
 
 /** Ruta que el error de un documento ilegible lleva: el documento entero. */
 export const DOCUMENT_PATH = "<fichero>";
@@ -31,12 +39,7 @@ const NAME_EDGE_CHAR = "-";
 const DEFAULT_PROJECT_NAME = "my-agent";
 const MAX_PROJECT_NAME_CHARS = 63;
 const REGION_ENV_VARS = ["AWS_REGION", "AWS_DEFAULT_REGION"] as const;
-/** El peer opcional que parsea TOML. */
-const TOML_PEER = "smol-toml";
-
-interface TomlModule {
-  parse(text: string): Record<string, unknown>;
-}
+const TOML_FEATURE = "AgentProject.load de un .toml";
 
 /** El documento leído: su contenido, el directorio del fichero y el lector de
  * ficheros de texto que no puede salir de ese directorio. */
@@ -85,9 +88,9 @@ function invalid(detail: string, cause?: unknown): AgentProjectError {
   return error;
 }
 
-async function parse(file: string, text: string): Promise<Record<string, unknown>> {
+function* parse(file: string, text: string): ProjectSteps<Record<string, unknown>> {
   if (file.endsWith(TOML_SUFFIX)) {
-    const toml = await loadOptionalPeer<TomlModule>(TOML_PEER, "AgentProject.load de un .toml");
+    const toml = yield* tomlParserStep(TOML_FEATURE);
     try {
       return toml.parse(text);
     } catch (cause) {
@@ -129,13 +132,18 @@ function reader(baseDir: string): TextReader {
   };
 }
 
+/** Los pasos de `readProjectDocument`, para la ruta asíncrona y la síncrona. */
+export function* projectDocumentSteps(path: string): ProjectSteps<ProjectDocument> {
+  const file = locate(path);
+  const data = yield* parse(file, yield* readTextStep(file));
+  const baseDir = realpathSync(dirname(resolve(file)));
+  return { data, baseDir, readText: reader(baseDir) };
+}
+
 /** Lee el fichero de proyecto de `path`: un fichero, o un directorio donde se
  * usa el primero de `AGENT_PROJECT_FILE_NAMES` que exista. */
 export async function readProjectDocument(path: string): Promise<ProjectDocument> {
-  const file = locate(path);
-  const data = await parse(file, await readFile(file, "utf8"));
-  const baseDir = realpathSync(dirname(resolve(file)));
-  return { data, baseDir, readText: reader(baseDir) };
+  return runWithReader(projectDocumentSteps(path), nodeProjectReader);
 }
 
 /** Quita los `-` de los dos extremos, sin expresión regular (una con
@@ -192,11 +200,30 @@ export async function detectProject(
   overrides?: DetectOverrides,
   options: { readonly region?: string | undefined } = {},
 ): Promise<readonly [AgentProject, DetectionReport | undefined]> {
+  return runWithReader(detectProjectSteps(path, overrides, options), nodeProjectReader);
+}
+
+/** `detectProject` con un lector síncrono (`planAgentCoreSync`, los constructos CDK). */
+export function detectProjectSync(
+  path: string,
+  overrides?: DetectOverrides,
+  options: { readonly region?: string | undefined } = {},
+  projectReader: SyncProjectReader = syncProjectReader,
+): readonly [AgentProject, DetectionReport | undefined] {
+  return runWithSyncReader(detectProjectSteps(path, overrides, options), projectReader);
+}
+
+/** Los pasos de `detectProject`, para la ruta asíncrona y la síncrona. */
+export function* detectProjectSteps(
+  path: string,
+  overrides: DetectOverrides | undefined,
+  options: { readonly region?: string | undefined },
+): ProjectSteps<readonly [AgentProject, DetectionReport | undefined]> {
   let document: Record<string, unknown> = {};
   let baseDir: string;
   let readText: TextReader;
   try {
-    const located = await readProjectDocument(path);
+    const located = yield* projectDocumentSteps(path);
     document = { ...located.data };
     baseDir = located.baseDir;
     readText = located.readText;
