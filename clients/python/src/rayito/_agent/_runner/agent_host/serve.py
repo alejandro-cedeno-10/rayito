@@ -93,6 +93,10 @@ QUEUE_TIMEOUT_SECONDS_MAX: Final = 900.0
 #: Segundos que `Retry-After` pide esperar con el agente ocupado o sin
 #: calentar.
 RETRY_AFTER_SECONDS: Final = 1
+#: Segundos que una petición espera a que el host termine de calentar antes de
+#: recibir el `503`: AgentCore enruta la primera llamada de una sesión nueva en
+#: cuanto arranca la microVM, antes de que el agente esté caliente.
+READY_WAIT_SECONDS_DEFAULT: Final = 25.0
 #: Segundos que un manejador espera una lectura o una escritura del socket
 #: antes de soltar la conexión: un cliente que anuncia un cuerpo y no lo manda
 #: no retiene un hilo para siempre.
@@ -139,6 +143,7 @@ class ServiceConfig:
     session_header: str = SESSION_HEADER
     ready_marker: str | None = None
     io_timeout_seconds: float = IO_TIMEOUT_SECONDS
+    ready_wait_seconds: float = READY_WAIT_SECONDS_DEFAULT
     aws_credentials: Callable[[], Mapping[str, str]] | None = None
 
 
@@ -197,6 +202,7 @@ class Service:
         self._active = 0
         self._waiting: deque[object] = deque()
         self._ready = False
+        self._warmed = threading.Event()
         self._last_update = int(clock())
         self.sessions = SessionBridge()
         listen = getattr(driver, "add_failure_listener", None)
@@ -207,12 +213,20 @@ class Service:
     def ready(self) -> bool:
         return self._ready
 
+    def wait_ready(self, timeout_seconds: float) -> bool:
+        """Espera hasta `timeout_seconds` a que el host esté listo (o falle el
+        calentamiento) y dice si lo está."""
+        self._warmed.wait(timeout_seconds)
+        return self._ready
+
     def mark_ready(self) -> None:
         self._ready = True
+        self._warmed.set()
         self._write_marker(self.config.ready_marker, "ready")
 
     def mark_failed(self, code: str, diagnostics: str | None = None) -> None:
         write_failed_marker(self.config, code, diagnostics)
+        self._warmed.set()
 
     @staticmethod
     def _write_marker(path: str | None, content: str) -> None:
@@ -551,7 +565,7 @@ def make_handler(service: Service) -> type[BaseHTTPRequestHandler]:
             está listo o la app se relanza o cayó para siempre."""
             code = (
                 NOT_READY_CODE
-                if not service.ready
+                if not service.wait_ready(service.config.ready_wait_seconds)
                 else UNAVAILABLE_CODES.get(service.availability() or "")
             )
             if code is not None:

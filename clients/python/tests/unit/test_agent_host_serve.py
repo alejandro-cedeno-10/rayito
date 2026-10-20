@@ -38,6 +38,7 @@ from tests.unit.agent_host_support import (
 )
 
 SESSION = "rda_" + "0" * 32
+WARM_UP_SECONDS = 0.3
 
 
 def test_service_constants_match_limits_json() -> None:
@@ -171,13 +172,34 @@ def test_a_second_invocation_gets_429_with_retry_after() -> None:
 
 
 def test_not_ready_is_503_and_ping_still_answers() -> None:
-    with running_service(FakeDriver(), ready=False) as (service, port):
+    config = serve.ServiceConfig(ready_wait_seconds=0.0)
+    with running_service(FakeDriver(), config=config, ready=False) as (service, port):
         status, headers, _ = invoke(port)
         assert status == 503
         assert "retry-after" in headers
         assert request(port, "GET", "/ping")[0] == 200
         service.mark_ready()
         assert invoke(port)[0] == 200
+
+
+def test_a_call_that_arrives_while_the_host_warms_up_waits_instead_of_failing() -> None:
+    with running_service(FakeDriver(), ready=False) as (service, port):
+        warming = threading.Timer(WARM_UP_SECONDS, service.mark_ready)
+        warming.start()
+        status, _, body = invoke(port)
+        warming.join()
+        assert status == 200
+        assert "text" in body
+
+
+def test_a_call_that_waits_for_a_failed_warm_up_gets_503_at_once() -> None:
+    with running_service(FakeDriver(), ready=False) as (service, port):
+        failing = threading.Timer(WARM_UP_SECONDS, lambda: service.mark_failed("warm_failed"))
+        failing.start()
+        status, headers, _ = invoke(port)
+        failing.join()
+        assert status == 503
+        assert "retry-after" in headers
 
 
 def test_the_session_header_is_the_fallback() -> None:
