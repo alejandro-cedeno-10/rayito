@@ -19,8 +19,7 @@ it with the same API as [`AgentFleet`](flota-de-agentes.md).
 It works with every framework the 0.14 zero-config detection already deploys:
 LangGraph and LangGraph.js, LangChain and deepagents (Python and TypeScript),
 Strands (Python and TypeScript) and its harness, Hermes, the Vercel AI SDK and
-your own Flask or Express app. OpenCode deploys but does not answer yet: it does
-not read the credentials of the runtime role (`model_error`).
+your own Flask or Express app, and OpenCode.
 
 !!! info "Cost and activation"
     - **Turns it on:** `--target agentcore` in `rayito agent deploy`, or
@@ -501,6 +500,13 @@ credentials by itself. For that framework, the build context includes a small
 helper that the host runs before each invocation to read the role's credentials
 and set them as environment variables of the Node process only for that
 invocation. The plan says so under `Seguridad`.
+
+OpenCode does not find them by itself either: it only starts its Bedrock
+provider when an AWS profile or variable is present, and on AgentCore the role
+is served only by the microVM metadata service. For OpenCode, the build context
+includes the same helper and an AWS profile with `credential_process` that runs
+it (`AWS_CONFIG_FILE` and `AWS_PROFILE` in the image environment): OpenCode gets
+credentials with an expiry time and refreshes them on its own.
 
 ## Errors { #errores }
 

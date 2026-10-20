@@ -504,6 +504,7 @@ export const AGENTCORE_BUILD_LOG_RETENTION_DAYS = 14 as const;
 export const AGENTCORE_BASE_IMAGE_MIRROR =
   "public.ecr.aws/docker/library/python:3.12-slim-bookworm" as const;
 export const AGENTCORE_ENV_CREDENTIAL_ADAPTERS = ["vercel-ai"] as const;
+export const AGENTCORE_CREDENTIAL_PROCESS_RUNTIMES = ["opencode"] as const;
 export const AGENT_AWS_CREDENTIALS_REQUIREMENTS_SHA256 =
   "89036dcfdb03c8b21958b771e3230e30e1dc6bd5e16c41eaae64514f1aa5578f" as const;
 export const AGENTCORE_RUNTIME_VCPU_HOUR_PRICE_USD = 0.0895 as const;

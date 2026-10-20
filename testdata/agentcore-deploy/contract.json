@@ -474,7 +474,30 @@
         "bridgeField": "aws_env",
         "bridgeNote": "Antes de cada invocación el host ejecuta python script (plazo hostCredentialsTimeoutSeconds), lee el JSON de stdout y lo manda en aws_env; el puente pone esas variables en process.env durante la invocación. Si falla, la invocación termina en agent_failed con detail_code aws_credentials_unavailable.",
         "hostCredentialsTimeoutSeconds": 10,
-        "failureDetailCode": "aws_credentials_unavailable"
+        "failureDetailCode": "aws_credentials_unavailable",
+        "credentialProcess": {
+          "appliesTo": "target agentcore y un runtime de agentcoreCredentialProcessRuntimes (limits.json, por AgentRuntime.name)",
+          "why": "OpenCode (v1.18.34, provider.ts de amazon-bedrock) sólo arranca el proveedor de Bedrock con AWS_PROFILE, AWS_ACCESS_KEY_ID, AWS_BEARER_TOKEN_BEDROCK, AWS_WEB_IDENTITY_TOKEN_FILE o AWS_CONTAINER_CREDENTIALS_*; AgentCore sólo sirve el rol por el servicio de metadatos de la microVM, así que ninguna estaba puesta.",
+          "configAsset": "aws-config",
+          "configPath": "/opt/agents/rayito/aws-config",
+          "profile": "rayito-agentcore",
+          "helperArgument": "--credential-process",
+          "configTemplate": "[profile {profile}]\ncredential_process = {python} {script} {helperArgument}\n",
+          "envs": {
+            "AWS_CONFIG_FILE": "{configPath}",
+            "AWS_PROFILE": "{profile}"
+          },
+          "outputFields": [
+            "Version",
+            "AccessKeyId",
+            "SecretAccessKey",
+            "SessionToken",
+            "Expiration"
+          ],
+          "outputVersion": 1,
+          "dockerfileOrder": "justo después del COPY del script de awsCredentials y antes de COPY agent_host; las dos variables van en host.json envs y en los ENV del Dockerfile",
+          "note": "Sólo OpenCode: el proceso lee el perfil, ejecuta la herramienta y refresca al llegar Expiration. La herramienta quita AWS_PROFILE y AWS_CONFIG_FILE de su entorno para no llamarse a sí misma."
+        }
       }
     }
   },

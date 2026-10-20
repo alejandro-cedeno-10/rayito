@@ -563,6 +563,13 @@ GROUPS: tuple[tuple[str, ...], ...] = (
         # package-lock.json, checked 2026-10-19), and the sha256 of the
         # botocore venv the host uses to read the runtime role for them.
         "agentcoreEnvCredentialAdapters",
+        # The agent runtimes (AgentRuntime.name) whose process reads AWS
+        # credentials through the SDK chain but only starts it when a profile
+        # or an environment variable is present (OpenCode, v1.18.34
+        # provider.ts `amazon-bedrock`): in AgentCore the role is served only
+        # by the microVM metadata service, so they get a `credential_process`
+        # profile that runs the same botocore helper.
+        "agentcoreCredentialProcessRuntimes",
         "agentAwsCredentialsRequirementsSha256",
         "agentcoreRuntimeVcpuHourPriceUsd",
         "agentcoreRuntimeGbHourPriceUsd",

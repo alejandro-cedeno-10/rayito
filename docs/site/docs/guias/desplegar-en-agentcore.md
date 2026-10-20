@@ -19,8 +19,7 @@ con la misma API que [`AgentFleet`](flota-de-agentes.md).
 Funciona con todos los frameworks que ya despliega la detección sin
 configuración de 0.14: LangGraph y LangGraph.js, LangChain y deepagents (Python
 y TypeScript), Strands (Python y TypeScript) y su harness, Hermes, el AI SDK de Vercel y una
-app propia con Flask o Express. OpenCode se despliega, pero todavía no contesta:
-no lee las credenciales del rol del runtime (`model_error`).
+app propia con Flask o Express, y OpenCode.
 
 !!! info "Coste y activación"
     - **Activa:** `--target agentcore` en `rayito agent deploy`, o
@@ -504,6 +503,13 @@ contexto de build incluye un pequeño ayudante que el host ejecuta antes de cada
 invocación para leer las credenciales del rol y ponerlas como variables de
 entorno del proceso de Node sólo durante esa invocación. El plan lo dice en
 `Seguridad`.
+
+OpenCode tampoco las encuentra solo: sólo arranca su proveedor de Bedrock si hay
+un perfil o una variable de AWS, y en AgentCore el rol únicamente lo sirve el
+servicio de metadatos de la microVM. Para OpenCode, el contexto de build incluye
+el mismo ayudante y un perfil de AWS con `credential_process` que lo ejecuta
+(`AWS_CONFIG_FILE` y `AWS_PROFILE` en el entorno de la imagen): OpenCode obtiene
+credenciales con fecha de caducidad y las refresca solo.
 
 ## Errores { #errores }
 

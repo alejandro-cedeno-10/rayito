@@ -439,8 +439,8 @@ against a runtime created by hand without the marker (then deleted).
 Result of the acceptance run (2026-10-19, `us-east-1`; details in
 `AWS_API_NOTES.md` Q175-Q179): fifteen of the sixteen samples pass every check
 of the table above. `opencode` deploys and reaches `READY` but cannot call the
-model with the runtime role (Q177), so it needs a credentials path of its own
-before it is supported. The run found one product bug (a new session's first
+model with the runtime role (Q177); the fix is a `credential_process` profile
+(section 4.7, Q180). The run found one product bug (a new session's first
 call reached the host before the agent was warm; fixed in the host, Q176) and
 three defects in the TypeScript e2e (fixed). The sweep of the e2e support only
 removes runtimes, so a stack without a runtime needs `agent delete`.
@@ -481,6 +481,19 @@ removes runtimes, so a stack without a runtime needs `agent delete`.
 - [x] Record in `AWS_API_NOTES.md` (new Q rows): image size measured by ECR
       vs what AgentCore accepts, cold start to first `invoke`, build minutes
       per framework, OpenCode credentials result.
+
+### 4.7 OpenCode credentials (follow-up to Q177)
+- [x] Root cause: OpenCode v1.18.34 (`provider.ts`, `amazon-bedrock`) returns
+      `autoload: false` unless `AWS_PROFILE`, `AWS_ACCESS_KEY_ID`, a bearer
+      token, `AWS_WEB_IDENTITY_TOKEN_FILE` or `AWS_CONTAINER_CREDENTIALS_*` is
+      set; AgentCore serves the role only through the microVM metadata service.
+- [x] `limits.json` key `agentcoreCredentialProcessRuntimes` (`["opencode"]`),
+      `contract.json` `awsCredentials.credentialProcess`, the helper's
+      `--credential-process` mode, the `aws-config` file and the two image
+      variables in both SDKs (export golden `opencode-agentcore`).
+- [x] Real AWS: `opencode` deployed with the Python and the TypeScript SDK
+      answers `invoke` and `stream`, continues a session, and deletes cleanly;
+      `typescript-vercel-ai-sdk` and `python-strands` still pass (Q180).
 
 ## Open questions (defaults chosen; change only if the maintainer says so)
 

@@ -423,6 +423,7 @@
   "agentcoreBuildLogRetentionDays": 14,
   "agentcoreBaseImageMirror": "public.ecr.aws/docker/library/python:3.12-slim-bookworm",
   "agentcoreEnvCredentialAdapters": ["vercel-ai"],
+  "agentcoreCredentialProcessRuntimes": ["opencode"],
   "agentAwsCredentialsRequirementsSha256": "89036dcfdb03c8b21958b771e3230e30e1dc6bd5e16c41eaae64514f1aa5578f",
   "agentcoreRuntimeVcpuHourPriceUsd": 0.0895,
   "agentcoreRuntimeGbHourPriceUsd": 0.00945,

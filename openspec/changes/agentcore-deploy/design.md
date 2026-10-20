@@ -424,9 +424,13 @@ borrar», exit 0. Source zips never outlive their build.
 - ECR reports the compressed image size; if AgentCore enforces 2 GB on the
   uncompressed image, a large agent fails at runtime creation, not at the
   pre-check. The acceptance records the measurement (new Q row).
-- OpenCode's Bedrock provider credentials path is not verified offline; if
-  the acceptance shows it cannot read the role, `opencode` joins
-  `agentcoreEnvCredentialAdapters` (a data change).
+- OpenCode's Bedrock provider credentials path was not verifiable offline. The
+  acceptance showed it only starts the provider with `AWS_PROFILE` or an
+  access-key, bearer-token, web-identity or container-credentials variable, none
+  of which AgentCore sets (the role comes from the microVM metadata service), so
+  `opencode` is listed in `agentcoreCredentialProcessRuntimes`: the export adds
+  the botocore helper plus an AWS config file with a `credential_process`
+  profile and sets `AWS_CONFIG_FILE`/`AWS_PROFILE` in the image (Q180).
 - New accounts may have a CodeBuild concurrency quota of one ARM build:
   `build_quota` says so; the acceptance runs builds three at a time and checks
   the quota first.

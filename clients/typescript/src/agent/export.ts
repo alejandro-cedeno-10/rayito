@@ -16,7 +16,13 @@
 
 import { mkdir, readdir, writeFile } from "node:fs/promises";
 import { dirname, join, posix } from "node:path";
-import { usesEnvCredentials } from "../agentcore/env-credentials.js";
+import {
+  AWS_CONFIG_NAME,
+  awsConfigText,
+  awsProfileEnvs,
+  usesCredentialProcess,
+  usesEnvCredentials,
+} from "../agentcore/env-credentials.js";
 import { InvalidArgumentError } from "../errors.js";
 import {
   AGENT_AWS_CREDENTIALS_REQUIREMENTS_SHA256,
@@ -97,6 +103,7 @@ export const AWS_ENV_CREDENTIALS_SCRIPT_NAME = "aws_env_credentials.py";
 export const AWS_CREDENTIALS_REQUIREMENTS_PATH = `${AGENT_INSTALL_DIR}/${AWS_CREDENTIALS_REQUIREMENTS_NAME}`;
 export const AWS_CREDENTIALS_VENV_DIR = `${AGENT_RAYITO_DIR}/aws-credentials`;
 export const AWS_ENV_CREDENTIALS_SCRIPT_PATH = `${AGENT_RAYITO_DIR}/${AWS_ENV_CREDENTIALS_SCRIPT_NAME}`;
+export const AWS_CONFIG_PATH = `${AGENT_RAYITO_DIR}/${AWS_CONFIG_NAME}`;
 export const HOST_AWS_ENV_CREDENTIALS_KEY = "aws_env_credentials";
 const DEFAULT_FILE_MODE = 0o644;
 const OCTAL = 8;
@@ -173,7 +180,11 @@ function hostConfigBytes(project: AgentProject, host: HostConfig, target: string
         },
       }
     : {};
-  return canonicalJson({ ...document, ...credentials, schema: AGENT_HOST_SCHEMA });
+  return canonicalJson({
+    ...document,
+    ...credentials,
+    schema: AGENT_HOST_SCHEMA,
+  });
 }
 
 /** Si el adaptador del proyecto sólo lee las credenciales de AWS de variables de entorno, en AgentCore el host se las pone leídas del rol del runtime. */
@@ -331,7 +342,11 @@ export async function renderExport(
 ): Promise<Map<string, string | Uint8Array>> {
   const runtime = installableRuntime(project);
   const install = installTarget({ platform: "container" });
-  const host = containerHost(project);
+  const credentialProcess = target === "agentcore" && usesCredentialProcess(project.runtime);
+  const base = containerHost(project);
+  const host = credentialProcess
+    ? { ...base, envs: { ...base.envs, ...awsProfileEnvs(AWS_CONFIG_PATH) } }
+    : base;
   if (target === "agentcore" && isRawApp(host)) {
     throw new InvalidArgumentError(
       "una app con protocol: 'raw' no cumple el contrato de AgentCore (/ping + /invocations)",
@@ -348,9 +363,16 @@ export async function renderExport(
     tree.set(`${RUNTIME_FILES_CONTEXT_DIR}/${index}`, file.data);
   });
   tree.set(HOST_CONFIG_NAME, hostConfigBytes(project, host, target));
-  if (needsAwsEnvCredentials(project, target)) {
+  const envCredentials = needsAwsEnvCredentials(project, target);
+  if (envCredentials || credentialProcess) {
     tree.set(AWS_CREDENTIALS_REQUIREMENTS_NAME, AWS_CREDENTIALS_REQUIREMENTS);
     tree.set(AWS_ENV_CREDENTIALS_SCRIPT_NAME, AWS_ENV_CREDENTIALS_SCRIPT);
+  }
+  if (credentialProcess) {
+    tree.set(
+      AWS_CONFIG_NAME,
+      awsConfigText(`${AWS_CREDENTIALS_VENV_DIR}/bin/python`, AWS_ENV_CREDENTIALS_SCRIPT_PATH),
+    );
   }
   if (project.source !== undefined) {
     for (const [relative, data] of await appFiles(project.source, project.exclude)) {
@@ -359,7 +381,8 @@ export async function renderExport(
   }
   const steps = [
     ...runtime.installSteps(install),
-    ...(needsAwsEnvCredentials(project, target) ? awsCredentialSteps(install) : []),
+    ...(envCredentials || credentialProcess ? awsCredentialSteps(install) : []),
+    ...(credentialProcess ? [copyStep(AWS_CONFIG_NAME, AWS_CONFIG_PATH)] : []),
   ];
   tree.set(DOCKERFILE_NAME, dockerfile(project, host, steps, target));
   tree.set(DOCKERIGNORE_NAME, DOCKERIGNORE_CONTENT);

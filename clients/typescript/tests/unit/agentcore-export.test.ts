@@ -23,8 +23,19 @@ const SAMPLES = join(import.meta.dirname, "..", "..", "..", "..", "testdata", "a
 const REGION = "us-east-1";
 const BASE_REFERENCE = `${AGENT_EXPORT_BASE_IMAGE}@${AGENT_EXPORT_BASE_IMAGE_DIGEST}`;
 
+interface CredentialProcess {
+  profile: string;
+  configAsset: string;
+  configPath: string;
+  configTemplate: string;
+  helperArgument: string;
+  envs: Record<string, string>;
+}
+
 async function sample(path: string): Promise<AgentProject> {
-  const [project] = await AgentProject.detect(join(SAMPLES, path), undefined, { region: REGION });
+  const [project] = await AgentProject.detect(join(SAMPLES, path), undefined, {
+    region: REGION,
+  });
   return project;
 }
 
@@ -95,6 +106,41 @@ describe("export agentcore", () => {
       python: `${credentials.venvDir}/bin/python`,
       script: credentials.scriptPath,
     });
+  });
+
+  it("OpenCode lleva el ayudante, el perfil de credential_process y sus variables", async () => {
+    const credentials = contract.constants.export.awsCredentials as unknown as {
+      hostValue: { python: string };
+      venvDir: string;
+      scriptAsset: string;
+      scriptPath: string;
+      credentialProcess: CredentialProcess;
+    };
+    const proc = credentials.credentialProcess;
+    const values = {
+      profile: proc.profile,
+      configPath: proc.configPath,
+      python: formatTemplate(credentials.hostValue.python, {
+        venvDir: credentials.venvDir,
+      }),
+      script: credentials.scriptPath,
+      helperArgument: proc.helperArgument,
+    };
+    const tree = await renderExport(await sample("opencode"), "agentcore");
+    expect(text(tree, proc.configAsset)).toBe(formatTemplate(proc.configTemplate, values));
+    const host = JSON.parse(text(tree, "host.json")) as Record<string, unknown>;
+    expect(host).not.toHaveProperty("aws_env_credentials");
+    const lines = text(tree, "Dockerfile").split("\n");
+    const copyConfig = lines.indexOf(`COPY ${proc.configAsset} ${proc.configPath}`);
+    expect(lines[copyConfig - 1]).toBe(`COPY ${credentials.scriptAsset} ${credentials.scriptPath}`);
+    expect(lines[copyConfig + 1]).toBe("COPY agent_host /opt/agents/rayito/agent_host");
+    for (const [name, template] of Object.entries(proc.envs)) {
+      const value = formatTemplate(template, values);
+      expect(lines).toContain(`ENV ${name}=${JSON.stringify(value)}`);
+    }
+    const docker = await renderExport(await sample("opencode"), "docker");
+    expect(docker.has(proc.configAsset)).toBe(false);
+    expect(docker.has(credentials.scriptAsset)).toBe(false);
   });
 
   it("el export docker de Vercel AI SDK no lleva el ayudante", async () => {

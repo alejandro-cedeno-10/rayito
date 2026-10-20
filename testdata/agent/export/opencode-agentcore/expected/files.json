@@ -1,0 +1,12 @@
+[
+  ".dockerignore",
+  "Dockerfile",
+  "README.md",
+  "app/.dockerignore",
+  "app/agent.py",
+  "aws-config",
+  "aws_env_credentials.py",
+  "config/0",
+  "host.json",
+  "requirements-aws-credentials.txt"
+]

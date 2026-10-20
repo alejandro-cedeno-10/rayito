@@ -19,6 +19,7 @@ ROOT = Path(__file__).resolve().parents[4] / "testdata" / "agent-samples"
 SAMPLES: list[dict[str, Any]] = json.loads((ROOT / "manifest.json").read_text("utf-8"))["samples"]
 REGION = "us-east-1"
 ENV_CREDENTIAL_SAMPLES = {"typescript-vercel-ai-sdk"}
+CREDENTIAL_PROCESS_SAMPLES = {"opencode"}
 
 
 @pytest.fixture(autouse=True)
@@ -47,4 +48,6 @@ def test_the_build_context_is_the_same_every_time(sample: dict[str, Any]) -> Non
     dockerfile = first["Dockerfile"].decode()
     assert "ARG AGENT_BASE_IMAGE=" in dockerfile
     assert "FROM --platform=linux/arm64 ${AGENT_BASE_IMAGE}" in dockerfile
-    assert ("aws_env_credentials.py" in first) == (sample["id"] in ENV_CREDENTIAL_SAMPLES)
+    helper = ENV_CREDENTIAL_SAMPLES | CREDENTIAL_PROCESS_SAMPLES
+    assert ("aws_env_credentials.py" in first) == (sample["id"] in helper)
+    assert ("aws-config" in first) == (sample["id"] in CREDENTIAL_PROCESS_SAMPLES)

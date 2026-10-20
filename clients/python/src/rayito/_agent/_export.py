@@ -19,7 +19,7 @@ import json
 import os
 import posixpath
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Final, Literal
 
@@ -82,6 +82,7 @@ AWS_CREDENTIALS_REQUIREMENTS_PATH: Final = (
 )
 AWS_CREDENTIALS_VENV_DIR: Final = f"{AGENT_RAYITO_DIR}/aws-credentials"
 AWS_CREDENTIALS_SCRIPT_PATH: Final = f"{AGENT_RAYITO_DIR}/{_env_credentials.SCRIPT_NAME}"
+AWS_CONFIG_PATH: Final = f"{AGENT_RAYITO_DIR}/{_env_credentials.CONFIG_NAME}"
 AGENT_USER: Final = "user"
 #: `~/.rayito`: lo que `user` debe poder escribir (sesiones del agente).
 RAYITO_HOME_DIR: Final = f"{DEFAULT_AGENT_WORKDIR}/.rayito"
@@ -158,6 +159,10 @@ def render_export(project: AgentProject, *, target: str = "docker") -> dict[str,
     servable = servable_runtime(project)
     install = InstallTarget(platform="container")
     host = servable.host_config(project.spec, wiring=DirectWiring(), workdir=DEFAULT_AGENT_WORKDIR)
+    agentcore = target == "agentcore"
+    credential_process = agentcore and _env_credentials.uses_credential_process(project.runtime)
+    if credential_process:
+        host = replace(host, envs={**host.envs, **_env_credentials.profile_envs(AWS_CONFIG_PATH)})
     if target == "agentcore" and is_raw_app(host):
         raise RawAppNotExportable(
             "una app con protocol='raw' no cumple el contrato de AgentCore (/ping + /invocations)"
@@ -169,19 +174,26 @@ def render_export(project: AgentProject, *, target: str = "docker") -> dict[str,
         tree[f"{AGENT_HOST_CONTEXT_DIR}/{relative}"] = data
     for index, runtime_file in enumerate(host.files.files):
         tree[f"{RUNTIME_FILES_CONTEXT_DIR}/{index}"] = runtime_file.data
-    env_credentials = target == "agentcore" and _env_credentials.uses_env_credentials(
-        project.runtime
-    )
+    env_credentials = agentcore and _env_credentials.uses_env_credentials(project.runtime)
     tree[HOST_CONFIG_NAME] = _host_config_bytes(project, host, env_credentials=env_credentials)
-    if env_credentials:
+    if env_credentials or credential_process:
         tree[_env_credentials.REQUIREMENTS_NAME] = asset_bytes(_env_credentials.REQUIREMENTS_NAME)
         tree[_env_credentials.SCRIPT_NAME] = asset_bytes(_env_credentials.SCRIPT_NAME)
+    if credential_process:
+        tree[_env_credentials.CONFIG_NAME] = _env_credentials.config_text(
+            f"{AWS_CREDENTIALS_VENV_DIR}/bin/python", AWS_CREDENTIALS_SCRIPT_PATH
+        ).encode()
     if project.source is not None:
         for relative, data in _app_files(project.source, project.exclude):
             tree[f"{AGENT_APP_CONTEXT_DIR}/{relative}"] = data
     steps = runtime.install_steps(install)
     tree[DOCKERFILE_NAME] = _dockerfile(
-        project, host, steps, target=target, env_credentials=env_credentials
+        project,
+        host,
+        steps,
+        target=target,
+        helper=env_credentials or credential_process,
+        config=credential_process,
     ).encode()
     tree[DOCKERIGNORE_NAME] = DOCKERIGNORE_CONTENT.encode()
     tree[README_NAME] = _readme(project, target).encode()
@@ -252,7 +264,8 @@ def _dockerfile(
     steps: Sequence[TemplateStep],
     *,
     target: str,
-    env_credentials: bool,
+    helper: bool,
+    config: bool,
 ) -> str:
     install_lines, executables = _step_lines(steps)
     config_dirs = sorted({posixpath.dirname(file.path) for file in host.files.files})
@@ -283,7 +296,8 @@ def _dockerfile(
         f" && mkdir -p {AGENT_STATE_DIR} {' '.join(config_dirs)}"
         f" && chown -R {AGENT_USER}:{AGENT_USER} {RAYITO_HOME_DIR}",
         *install_lines,
-        *(_credentials_lines(InstallTarget(platform="container")) if env_credentials else []),
+        *(_credentials_lines(InstallTarget(platform="container")) if helper else []),
+        *([f"COPY {_env_credentials.CONFIG_NAME} {AWS_CONFIG_PATH}"] if config else []),
         f"COPY {AGENT_HOST_CONTEXT_DIR} {AGENT_HOST_DIR}",
         f"COPY {HOST_CONFIG_NAME} {HOST_CONFIG_PATH}",
         *([f"COPY {AGENT_APP_CONTEXT_DIR} {AGENT_APP_DIR}"] if project.source is not None else []),

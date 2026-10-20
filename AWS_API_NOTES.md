@@ -2101,6 +2101,30 @@ una sola región (us-east-1).
   `typescript-strands-ts` (TypeScript) se desplegaron con el destino por
   defecto, contestaron, y la limpieza no dejó VMs; también pasaron las
   variantes con opciones y las sesiones dedicadas del espejo de TypeScript.
+- **Q180 — OpenCode con el rol del runtime (2026-10-19, us-east-1).** Causa de
+  Q177: el contenedor de AgentCore no recibe credenciales por variables de
+  entorno ni por `AWS_CONTAINER_CREDENTIALS_*`; el rol del runtime sólo lo sirve
+  el servicio de metadatos de la microVM (MMDS, `169.254.169.254`, con token de
+  sesión desde que el runtime exige `requireMMDSV2`; docs de AgentCore,
+  «Runtime troubleshooting» y `RuntimeMetadataConfiguration`). El proveedor
+  `amazon-bedrock` de OpenCode v1.18.34 (`packages/opencode/src/provider/
+  provider.ts`) devuelve `autoload: false` si no hay `AWS_PROFILE`,
+  `AWS_ACCESS_KEY_ID`, `AWS_BEARER_TOKEN_BEDROCK`, `apiKey` en la configuración,
+  `AWS_WEB_IDENTITY_TOKEN_FILE` ni `AWS_CONTAINER_CREDENTIALS_RELATIVE_URI` o
+  `_FULL_URI`: sólo mira la cadena de credenciales (que sí incluye el servicio
+  de metadatos) cuando una de ellas existe, así que `AWS_REGION` no cambia nada.
+  Arreglo: el export de `--target agentcore` para `opencode` añade el venv de
+  botocore de siempre, un `AWS_CONFIG_FILE` con un perfil cuyo
+  `credential_process` ejecuta `aws_env_credentials.py --credential-process`
+  (documento `Version` 1 con `AccessKeyId`, `SecretAccessKey`, `SessionToken` y
+  `Expiration`, que los SDK de AWS documentan para ese ajuste) y las variables
+  `AWS_CONFIG_FILE` y `AWS_PROFILE` en la imagen; la herramienta quita esas dos
+  variables de su propio entorno para no llamarse a sí misma. Medido: `opencode`
+  desplegado con el SDK de Python y con el de TypeScript contesta `invoke` y
+  `stream`, continúa la sesión, se redespliega sin cambios y se borra sin dejar
+  nada (473 s el ciclo de Python); `python-strands` (Python) y
+  `typescript-vercel-ai-sdk` (TypeScript) siguen pasando, y el inventario
+  posterior es idéntico al previo.
 
 
 ## Despliegue de agentes de cero configuración (0.14, `deploy_agent`)

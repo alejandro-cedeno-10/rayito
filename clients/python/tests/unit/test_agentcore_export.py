@@ -20,6 +20,7 @@ from rayito._limits import (
     AGENT_AWS_CREDENTIALS_REQUIREMENTS_SHA256,
     AGENT_EXPORT_BASE_IMAGE_DIGEST,
     AGENTCORE_BASE_IMAGE_MIRROR,
+    AGENTCORE_CREDENTIAL_PROCESS_RUNTIMES,
     AGENTCORE_ENV_CREDENTIAL_ADAPTERS,
 )
 from tests.unit.fake_agentcore import CONTRACT
@@ -27,6 +28,7 @@ from tests.unit.fake_agentcore import CONTRACT
 EXPORT_DIR = Path(__file__).resolve().parents[4] / "testdata" / "agent" / "export"
 EXPORT: dict[str, Any] = CONTRACT["constants"]["export"]
 CREDENTIALS: dict[str, Any] = EXPORT["awsCredentials"]
+PROCESS: dict[str, Any] = CREDENTIALS["credentialProcess"]
 
 
 def tree(case: str, target: str | None = None) -> dict[str, bytes]:
@@ -47,6 +49,10 @@ def test_the_requirements_asset_has_the_sha256_of_limits() -> None:
 
 def test_the_only_adapter_that_needs_the_helper_is_vercel_ai() -> None:
     assert AGENTCORE_ENV_CREDENTIAL_ADAPTERS == ("vercel-ai",)
+
+
+def test_the_only_runtime_that_needs_a_credential_process_is_opencode() -> None:
+    assert AGENTCORE_CREDENTIAL_PROCESS_RUNTIMES == ("opencode",)
 
 
 def test_the_agentcore_dockerfile_takes_its_base_from_a_build_argument() -> None:
@@ -120,6 +126,49 @@ def test_vercel_ai_gets_the_helper_the_steps_the_host_key_and_the_files() -> Non
     assert lines.index("COPY agent_host /opt/agents/rayito/agent_host") == first + 3
     node_bridge = next(index for index, line in enumerate(lines) if "node_bridge.mjs" in line)
     assert node_bridge < first
+
+
+def _process_values() -> dict[str, str]:
+    return {
+        "profile": PROCESS["profile"],
+        "configPath": PROCESS["configPath"],
+        "python": CREDENTIALS["hostValue"]["python"].format(venvDir=CREDENTIALS["venvDir"]),
+        "script": CREDENTIALS["scriptPath"],
+        "helperArgument": PROCESS["helperArgument"],
+    }
+
+
+def test_opencode_gets_the_helper_a_credential_process_profile_and_its_variables() -> None:
+    files = tree("opencode-agentcore")
+    values = _process_values()
+    assert files[PROCESS["configAsset"]].decode() == PROCESS["configTemplate"].format(**values)
+    assert CREDENTIALS["hostKey"] not in json.loads(files["host.json"])
+    envs = {name: value.format(**values) for name, value in PROCESS["envs"].items()}
+    lines = files["Dockerfile"].decode().splitlines()
+    script = f"COPY {CREDENTIALS['scriptAsset']} {CREDENTIALS['scriptPath']}"
+    assert lines[lines.index(script) + 1] == f"COPY {PROCESS['configAsset']} {values['configPath']}"
+    assert lines.index(f"COPY {PROCESS['configAsset']} {values['configPath']}") + 1 == (
+        lines.index("COPY agent_host /opt/agents/rayito/agent_host")
+    )
+    for name, value in envs.items():
+        assert f'ENV {name}="{value}"' in lines
+
+
+def test_opencode_gets_no_credential_process_outside_agentcore() -> None:
+    files = tree("opencode-agentcore", "docker")
+    assert PROCESS["configAsset"] not in files
+    assert CREDENTIALS["scriptAsset"] not in files
+    assert not any(
+        line.startswith("ENV AWS_PROFILE") for line in files["Dockerfile"].decode().splitlines()
+    )
+
+
+def test_the_helper_prints_the_credential_process_document_and_never_calls_itself() -> None:
+    script = asset_bytes(CREDENTIALS["scriptAsset"]).decode()
+    assert PROCESS["helperArgument"] in script
+    for field in PROCESS["outputFields"]:
+        assert field in script
+    assert all(variable in script for variable in PROCESS["envs"])
 
 
 def test_the_helper_never_ships_a_credential() -> None:
