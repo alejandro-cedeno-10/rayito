@@ -162,6 +162,7 @@ STACK_OUTPUT_KEYS: Final = (
 )
 #: Parámetros de la pila (`stackParameters`).
 STACK_PARAMETER_AGENT_NAME: Final = "AgentName"
+STACK_PARAMETER_AGENT_DISPLAY_NAME: Final = "AgentDisplayName"
 STACK_PARAMETER_RUNTIME_NAME: Final = "RuntimeName"
 STACK_PARAMETER_BUCKET: Final = "ArtifactBucket"
 STACK_PARAMETER_MODEL_ARNS: Final = "BedrockModelArns"
@@ -444,17 +445,27 @@ def validate_agent_name(name: str) -> str:
     return name
 
 
+def canonical_agent_name(name: str) -> str:
+    """La forma canónica del nombre: `_` como `-`. Todo nombre derivado (pila,
+    repositorio, proyecto de CodeBuild, prefijo del código y runtime) sale de
+    ella, así que `a-b` y `a_b` dan los mismos recursos y se detecta que son el
+    mismo (`name_conflict`) en vez de pisarse. Los nombres sólo con `-` quedan
+    igual que siempre."""
+    return name.replace(RUNTIME_NAME_SEPARATOR, NAME_SEPARATOR)
+
+
 def runtime_name_for(name: str) -> str:
-    return AGENTCORE_RUNTIME_NAME_PREFIX + name.replace(NAME_SEPARATOR, RUNTIME_NAME_SEPARATOR)
+    canonical = canonical_agent_name(name)
+    return AGENTCORE_RUNTIME_NAME_PREFIX + canonical.replace(NAME_SEPARATOR, RUNTIME_NAME_SEPARATOR)
 
 
 def stack_name_for(name: str) -> str:
-    """`rayito-agentcore-<nombre>` con `_` como `-` (CloudFormation no admite `_`)."""
-    return AGENTCORE_STACK_NAME_PREFIX + name.replace(RUNTIME_NAME_SEPARATOR, NAME_SEPARATOR)
+    """`rayito-agentcore-<nombre canónico>` (CloudFormation no admite `_`)."""
+    return AGENTCORE_STACK_NAME_PREFIX + canonical_agent_name(name)
 
 
 def repository_name_for(name: str) -> str:
-    return AGENTCORE_REPOSITORY_PREFIX + name
+    return AGENTCORE_REPOSITORY_PREFIX + canonical_agent_name(name)
 
 
 def build_project_name_for(name: str) -> str:
@@ -463,7 +474,7 @@ def build_project_name_for(name: str) -> str:
 
 def source_key_for(name: str, image_tag: str) -> str:
     zip_name = SOURCE_ZIP_NAME_TEMPLATE.format(image_tag=image_tag)
-    return f"{AGENTCORE_SOURCE_PREFIX}{name}/{zip_name}"
+    return f"{AGENTCORE_SOURCE_PREFIX}{canonical_agent_name(name)}/{zip_name}"
 
 
 def runtime_description_for(name: str) -> str:
@@ -496,6 +507,12 @@ def is_owned(listed: RuntimeListing) -> bool:
 
 def has_marker(description: str) -> bool:
     return f"({AGENTCORE_DESCRIPTION_MARKER})" in description
+
+
+def is_owned_by(listed: RuntimeListing, name: str) -> bool:
+    """Un runtime de Rayito que es del agente `name` y no de otro cuyo nombre
+    da el mismo runtime (`a-b` y `a_b`)."""
+    return is_owned(listed) and agent_name_of_runtime(listed) == name
 
 
 def agent_name_of_runtime(listed: RuntimeListing) -> str:
@@ -872,6 +889,15 @@ class StackOutputs:
     runtime_role_arn: str
 
 
+def check_stack_owner(observation: StackObservation, name: str) -> None:
+    """`name_conflict` si la pila es de otro agente cuyo nombre da la misma
+    pila (`a-b` y `a_b`): la plantilla guarda el nombre sin normalizar en
+    `AgentDisplayName`. Una pila sin ese parámetro no se discute."""
+    recorded = observation.parameters.get(STACK_PARAMETER_AGENT_DISPLAY_NAME)
+    if recorded and recorded != name:
+        raise AgentCoreException("name_conflict", runtimeName=runtime_name_for(name), name=name)
+
+
 def decide_stack(observation: StackObservation, name: str) -> StackAction:
     """Qué hacer con la pila del agente: `create` si falta, `update` si sirve
     (CloudFormation no toca nada si no cambió), `wait` si hay una operación en
@@ -879,6 +905,7 @@ def decide_stack(observation: StackObservation, name: str) -> StackAction:
     condition = classify_stack(observation)
     if condition == "missing":
         return "create"
+    check_stack_owner(observation, name)
     if condition == "usable":
         return "update"
     if condition == "in_progress":
@@ -952,7 +979,7 @@ def check_runtime_usable(listed: RuntimeListing | None, runtime_name: str, name:
     despliegue que acabaría fallando."""
     if listed is None:
         return
-    if not is_owned(listed):
+    if not is_owned_by(listed, name):
         raise AgentCoreException("name_conflict", runtimeName=runtime_name, name=name)
     if listed.status in RUNTIME_BLOCKED:
         raise AgentCoreException(

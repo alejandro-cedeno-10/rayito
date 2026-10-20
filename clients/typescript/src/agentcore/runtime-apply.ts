@@ -12,6 +12,7 @@ import { stackTags } from "../stacks/model.js";
 import { MS_PER_SECOND } from "../units.js";
 import type { Clock } from "./clock.js";
 import {
+  checkRuntimeUsable,
   decideRuntime,
   RUNTIME_FAILED_STATES,
   RUNTIME_READY_STATE,
@@ -88,6 +89,11 @@ export class RuntimeApplier {
       },
       details: final,
     };
+  }
+
+  /** Falla con `name_conflict` o `runtime_blocked` antes de escribir nada. */
+  async check(plan: AgentCoreDeployPlan): Promise<void> {
+    checkRuntimeUsable(await this.#find(plan.runtimeName), plan.runtimeName, plan.name);
   }
 
   async #find(runtimeName: string): Promise<ListedRuntime | undefined> {

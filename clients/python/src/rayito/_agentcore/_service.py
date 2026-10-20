@@ -20,6 +20,7 @@ from rayito._agentcore._domain import (
     BUILD_SUCCEEDED,
     RUNTIME_IN_PROGRESS,
     RUNTIME_READY,
+    STACK_PARAMETER_AGENT_DISPLAY_NAME,
     STACK_PARAMETER_AGENT_NAME,
     STACK_PARAMETER_BUCKET,
     STACK_PARAMETER_BUILD_TIMEOUT,
@@ -32,13 +33,16 @@ from rayito._agentcore._domain import (
     agent_name_of_runtime,
     base_image_reference,
     bedrock_resource_arns,
+    canonical_agent_name,
     check_image_size,
     check_runtime_usable,
+    check_stack_owner,
     decide_image,
     decide_runtime,
     decide_stack,
     image_uri_for,
     is_owned,
+    is_owned_by,
     runtime_description_for,
     runtime_log_group_for,
     secret_resource_arns,
@@ -131,7 +135,7 @@ def describe_agent(
     """El runtime de Rayito llamado `runtime_name` y su estado; si no existe
     o no es de Rayito, `runtime_not_found`."""
     listing = find_runtime(runtimes, runtime_name)
-    if listing is None or not is_owned(listing):
+    if listing is None or not is_owned_by(listing, name):
         raise AgentCoreException("runtime_not_found", name=name, region=region)
     try:
         described = runtimes.get_runtime(listing.runtime_id)
@@ -257,7 +261,8 @@ class AgentCoreDeployer:
         models = bedrock_resource_arns(plan.bedrock_models, request.model_region, account)
         secrets = secret_resource_arns(plan.readable_secrets, plan.region, account)
         return {
-            STACK_PARAMETER_AGENT_NAME: plan.name,
+            STACK_PARAMETER_AGENT_NAME: canonical_agent_name(plan.name),
+            STACK_PARAMETER_AGENT_DISPLAY_NAME: plan.name,
             STACK_PARAMETER_RUNTIME_NAME: plan.runtime_name,
             STACK_PARAMETER_BUCKET: bucket,
             STACK_PARAMETER_MODEL_ARNS: ARN_LIST_SEPARATOR.join(models),
@@ -392,7 +397,11 @@ class AgentCoreDeployer:
     ) -> tuple[RuntimeListing | None, RuntimeDescription | None]:
         runtimes = self._gateways.runtimes
         listing = find_runtime(runtimes, plan.runtime_name)
-        if listing is None or not is_owned(listing) or listing.status != RUNTIME_READY:
+        if (
+            listing is None
+            or not is_owned_by(listing, plan.name)
+            or listing.status != RUNTIME_READY
+        ):
             return listing, None
         return listing, runtimes.get_runtime(listing.runtime_id)
 
@@ -429,7 +438,7 @@ class AgentCoreDeployer:
             created = runtimes.create_runtime(spec)
         except RuntimeAlreadyExists:
             winner = find_runtime(runtimes, plan.runtime_name)
-            if winner is None or not is_owned(winner):
+            if winner is None or not is_owned_by(winner, plan.name):
                 raise AgentCoreException(
                     "name_conflict", runtimeName=spec.name, name=plan.name
                 ) from None
@@ -533,9 +542,11 @@ class AgentCoreDeleter:
         Rayito, la pila y el grupo de logs que se borrarían."""
         validate_agent_name(name)
         listing = find_runtime(self._gateways.runtimes, runtime_name)
-        if listing is not None and not is_owned(listing):
+        if listing is not None and not is_owned_by(listing, name):
             raise AgentCoreException("name_conflict", runtimeName=runtime_name, name=name)
-        stack_exists = self._gateways.stack.observe().status is not None
+        observed = self._gateways.stack.observe()
+        check_stack_owner(observed, name)
+        stack_exists = observed.status is not None
         return AgentCoreDeletePlan(
             name=name,
             region=self._gateways.region,

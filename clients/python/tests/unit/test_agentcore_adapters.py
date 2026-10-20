@@ -633,6 +633,7 @@ def test_the_stack_is_created_then_updated_and_reports_whether_anything_changed(
     assert stack.observe().status is None
     parameters = {
         "AgentName": fake.AGENT,
+        "AgentDisplayName": fake.AGENT,
         "RuntimeName": fake.RUNTIME_NAME,
         "ArtifactBucket": fake.BUCKET,
     }

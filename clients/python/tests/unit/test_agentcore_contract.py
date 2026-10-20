@@ -92,6 +92,7 @@ def test_stack_parameters_and_outputs_are_the_contracts() -> None:
     )
     assert list(domain.STACK_OUTPUT_KEYS) == list(CONSTANTS["stackOutputs"].values())
     assert parameters["agentName"] == domain.STACK_PARAMETER_AGENT_NAME
+    assert parameters["agentDisplayName"] == domain.STACK_PARAMETER_AGENT_DISPLAY_NAME
     assert parameters["artifactBucket"] == domain.STACK_PARAMETER_BUCKET
     assert parameters["bedrockModelArns"] == domain.STACK_PARAMETER_MODEL_ARNS
     assert parameters["readableSecretArns"] == domain.STACK_PARAMETER_SECRET_ARNS

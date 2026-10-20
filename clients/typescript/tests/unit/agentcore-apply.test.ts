@@ -137,6 +137,7 @@ describe("despliegue completo", () => {
     ]);
     expect(operations(account)).toEqual([
       "GetCallerIdentity",
+      "ListAgentRuntimes",
       "DescribeStacks",
       "CreateStack",
       "WaitStack",

@@ -23,6 +23,7 @@ export const ARN_LIST_SEPARATOR = ",";
 
 export const STACK_PARAMETERS = {
   agentName: "AgentName",
+  agentDisplayName: "AgentDisplayName",
   runtimeName: "RuntimeName",
   artifactBucket: "ArtifactBucket",
   bedrockModelArns: "BedrockModelArns",
@@ -47,7 +48,16 @@ export const AGENTCORE_STACK_COMPONENT: StackComponent = {
     "Un agente en Amazon Bedrock AgentCore Runtime: repositorio ECR, proyecto de CodeBuild " +
     "con su grupo de logs y los roles de build y del runtime (rayito agent deploy --target agentcore).",
   parameters: [
-    { name: STACK_PARAMETERS.agentName, description: "Nombre del agente.", required: true },
+    {
+      name: STACK_PARAMETERS.agentName,
+      description: "Nombre canónico del agente (con `-`): nombra los recursos de la pila.",
+      required: true,
+    },
+    {
+      name: STACK_PARAMETERS.agentDisplayName,
+      description: "Nombre del agente tal como se escribió: distingue `a-b` de `a_b`.",
+      required: true,
+    },
     { name: STACK_PARAMETERS.runtimeName, description: "Nombre del runtime.", required: true },
     {
       name: STACK_PARAMETERS.artifactBucket,

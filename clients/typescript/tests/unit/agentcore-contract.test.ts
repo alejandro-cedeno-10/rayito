@@ -164,7 +164,7 @@ describe("nombres y constantes", () => {
     expect(runtimeLogGroupFor("rayito_support_bot-a1b2c3d4e5")).toBe(
       "/aws/bedrock-agentcore/runtimes/rayito_support_bot-a1b2c3d4e5-DEFAULT",
     );
-    expect(constants.runtimeNameTemplate).toBe("{runtimeNamePrefix}{agentNameWithUnderscores}");
+    expect(constants.runtimeNameTemplate).toBe("{runtimeNamePrefix}{canonicalName with - as _}");
   });
 
   it("el nombre del agente: patrón y largo máximo del contrato", () => {

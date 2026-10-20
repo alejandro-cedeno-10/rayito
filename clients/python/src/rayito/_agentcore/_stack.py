@@ -12,6 +12,7 @@ from __future__ import annotations
 from typing import Final
 
 from rayito._agentcore._domain import (
+    STACK_PARAMETER_AGENT_DISPLAY_NAME,
     STACK_PARAMETER_AGENT_NAME,
     STACK_PARAMETER_BUCKET,
     STACK_PARAMETER_BUILD_TIMEOUT,
@@ -38,7 +39,16 @@ AGENTCORE_STACK_COMPONENT: Final = StackComponent(
         "del runtime de un agente en AgentCore Runtime (infra/agentcore-runtime.yaml)."
     ),
     parameters=(
-        StackParameter(STACK_PARAMETER_AGENT_NAME, "Nombre del agente de Rayito.", required=True),
+        StackParameter(
+            STACK_PARAMETER_AGENT_NAME,
+            "Nombre canónico del agente (con `-`): nombra los recursos de la pila.",
+            required=True,
+        ),
+        StackParameter(
+            STACK_PARAMETER_AGENT_DISPLAY_NAME,
+            "Nombre del agente tal como se escribió: distingue `a-b` de `a_b`.",
+            required=True,
+        ),
         StackParameter(
             STACK_PARAMETER_RUNTIME_NAME, "Nombre del runtime de AgentCore.", required=True
         ),

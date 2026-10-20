@@ -21,12 +21,20 @@ Parameters:
     Type: String
     MinLength: 1
     MaxLength: 41
+    AllowedPattern: "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+    Description: >-
+      The canonical Rayito agent name: the project or template name with '_'
+      as '-'. Names the stack, the repository rayito/agentcore/<AgentName>,
+      the build project rayito-agentcore-<AgentName> (and its log group) and
+      the source prefix rayito/images/agentcore/<AgentName>/.
+  AgentDisplayName:
+    Type: String
+    MinLength: 1
+    MaxLength: 41
     AllowedPattern: "^[a-z0-9]+(?:[_-][a-z0-9]+)*$"
     Description: >-
-      The Rayito agent name (the project or template name). Names the stack,
-      the repository rayito/agentcore/<AgentName>, the build project
-      rayito-agentcore-<AgentName> and the source prefix
-      rayito/images/agentcore/<AgentName>/.
+      The agent name as written (before '_' became '-'). Only recorded, so
+      'a-b' and 'a_b', which share every resource, are told apart.
   RuntimeName:
     Type: String
     MinLength: 1
@@ -108,7 +116,7 @@ Resources:
   BuildRole:
     Type: AWS::IAM::Role
     Properties:
-      Description: !Sub "Rayito: builds the AgentCore image of \${AgentName}"
+      Description: !Sub "Rayito: builds the AgentCore image of \${AgentDisplayName}"
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
         Statement:
@@ -156,7 +164,7 @@ Resources:
     Type: AWS::CodeBuild::Project
     Properties:
       Name: !Sub "rayito-agentcore-\${AgentName}"
-      Description: !Sub "Rayito: linux/arm64 image of the agent \${AgentName} for AgentCore Runtime"
+      Description: !Sub "Rayito: linux/arm64 image of the agent \${AgentDisplayName} for AgentCore Runtime"
       ServiceRole: !GetAtt BuildRole.Arn
       TimeoutInMinutes: !Ref BuildTimeoutMinutes
       Artifacts:
@@ -193,7 +201,7 @@ Resources:
   RuntimeRole:
     Type: AWS::IAM::Role
     Properties:
-      Description: !Sub "Rayito: AgentCore runtime role of \${AgentName}"
+      Description: !Sub "Rayito: AgentCore runtime role of \${AgentDisplayName}"
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
         Statement:

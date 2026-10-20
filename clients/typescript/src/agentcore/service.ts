@@ -46,7 +46,6 @@ import {
 import { classifyStack, type StackObservation } from "../stacks/condition.js";
 import { stackTags } from "../stacks/model.js";
 import { loadTemplate } from "../stacks/packaging.js";
-import type { StackProvisioner } from "../stacks/port.js";
 import { DEFAULT_WAIT_TIMEOUT_MS } from "../stacks/service.js";
 import { formatTemplate } from "../template-text.js";
 import { MS_PER_SECOND } from "../units.js";
@@ -61,6 +60,7 @@ import {
   decideStack,
   requireStackOutputs,
   type StackOutputs,
+  stackObservation,
 } from "./decisions.js";
 import type {
   AgentCoreDeployPlan,
@@ -69,7 +69,7 @@ import type {
   ImageObservation,
   StackAction,
 } from "./models.js";
-import { runtimeLogGroupFor, sourceKeyFor } from "./names.js";
+import { canonicalAgentName, runtimeLogGroupFor, sourceKeyFor } from "./names.js";
 import { type AgentCorePorts, MissingResourceError } from "./ports.js";
 import { deployEmitter, type Emit, type ProgressStep } from "./progress.js";
 import { RuntimeApplier } from "./runtime-apply.js";
@@ -109,18 +109,6 @@ function megabytes(sizeBytes: number | undefined): number {
   return Math.floor((sizeBytes ?? 0) / BYTES_PER_MEGABYTE);
 }
 
-function stackObservation(
-  name: string,
-  status: Awaited<ReturnType<StackProvisioner["describe"]>>,
-): StackObservation {
-  return {
-    name,
-    status: status?.state,
-    outputs: status?.outputs ?? {},
-    parameters: status?.parameters ?? {},
-  };
-}
-
 export class AgentCoreDeployer {
   readonly #ports: AgentCorePorts;
   readonly #clock: Clock;
@@ -137,6 +125,7 @@ export class AgentCoreDeployer {
     const emit = deployEmitter(request.onStep);
     const account = await this.#ports.identity.accountId();
     const bucket = await this.#resolveBucket(plan);
+    await this.#runtime.check(plan);
     const stack = await this.#applyStack(request, bucket, account, emit);
     const image = await this.#applyImage(request, bucket, account, stack, emit).catch(
       (error: unknown) => {
@@ -282,7 +271,8 @@ export class AgentCoreDeployer {
     });
     const secrets = secretResourceArns(plan.readableSecrets, { region: plan.region, account });
     return {
-      [STACK_PARAMETERS.agentName]: plan.name,
+      [STACK_PARAMETERS.agentName]: canonicalAgentName(plan.name),
+      [STACK_PARAMETERS.agentDisplayName]: plan.name,
       [STACK_PARAMETERS.runtimeName]: plan.runtimeName,
       [STACK_PARAMETERS.artifactBucket]: bucket,
       [STACK_PARAMETERS.bedrockModelArns]: models.join(ARN_LIST_SEPARATOR),

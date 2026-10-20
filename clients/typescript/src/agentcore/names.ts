@@ -37,18 +37,29 @@ export function validateAgentName(name: string): string {
   return name;
 }
 
-/** `rayito_<nombre>` con `-` como `_` (el nombre de un runtime no admite `-`). */
-export function runtimeNameFor(name: string): string {
-  return `${AGENTCORE_RUNTIME_NAME_PREFIX}${name.replaceAll(NAME_SEPARATOR, RUNTIME_NAME_SEPARATOR)}`;
+/**
+ * La forma canónica del nombre: `_` como `-`. Todo nombre derivado (pila,
+ * repositorio, proyecto de CodeBuild, prefijo del código y runtime) sale de
+ * ella, así que `a-b` y `a_b` dan los mismos recursos y se detecta que son el
+ * mismo (`name_conflict`) en vez de pisarse. Los nombres sólo con `-` quedan
+ * igual que siempre.
+ */
+export function canonicalAgentName(name: string): string {
+  return name.replaceAll(RUNTIME_NAME_SEPARATOR, NAME_SEPARATOR);
 }
 
-/** `rayito-agentcore-<nombre>` con `_` como `-` (CloudFormation no admite `_`). */
+/** `rayito_<nombre canónico>` con `-` como `_` (el nombre de un runtime no admite `-`). */
+export function runtimeNameFor(name: string): string {
+  return `${AGENTCORE_RUNTIME_NAME_PREFIX}${canonicalAgentName(name).replaceAll(NAME_SEPARATOR, RUNTIME_NAME_SEPARATOR)}`;
+}
+
+/** `rayito-agentcore-<nombre canónico>` (CloudFormation no admite `_`). */
 export function stackNameFor(name: string): string {
-  return `${AGENTCORE_STACK_NAME_PREFIX}${name.replaceAll(RUNTIME_NAME_SEPARATOR, NAME_SEPARATOR)}`;
+  return `${AGENTCORE_STACK_NAME_PREFIX}${canonicalAgentName(name)}`;
 }
 
 export function repositoryNameFor(name: string): string {
-  return `${AGENTCORE_REPOSITORY_PREFIX}${name}`;
+  return `${AGENTCORE_REPOSITORY_PREFIX}${canonicalAgentName(name)}`;
 }
 
 /** El proyecto de CodeBuild de la pila lleva el mismo nombre que ella. */
@@ -58,7 +69,7 @@ export function buildProjectNameFor(name: string): string {
 
 /** `rayito/images/agentcore/<nombre>/<etiqueta>.zip`, dentro del prefijo que el bucket de `rayito setup` caduca. */
 export function sourceKeyFor(name: string, imageTag: string): string {
-  return `${AGENTCORE_SOURCE_PREFIX}${name}/${imageTag}.zip`;
+  return `${AGENTCORE_SOURCE_PREFIX}${canonicalAgentName(name)}/${imageTag}.zip`;
 }
 
 /** La descripción que marca un runtime como de Rayito. */

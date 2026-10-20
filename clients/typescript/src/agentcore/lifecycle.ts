@@ -11,6 +11,7 @@ import { AGENTCORE_DELETE_TIMEOUT_SECONDS, AGENTCORE_READY_POLL_SECONDS } from "
 import { DEFAULT_WAIT_TIMEOUT_MS } from "../stacks/service.js";
 import { MS_PER_SECOND } from "../units.js";
 import { Clock, type ServiceSettings } from "./clock.js";
+import { checkStackOwner, stackObservation } from "./decisions.js";
 import type {
   AgentCoreDeleteResult,
   AgentCoreListItem,
@@ -77,7 +78,11 @@ export async function inspectDeletion(
       name: target.name,
     });
   }
-  return { listed, stackExists: (await ports.stacks.describe(target.stackName)) !== undefined };
+  const stack = await ports.stacks.describe(target.stackName);
+  if (stack !== undefined) {
+    checkStackOwner(stackObservation(target.stackName, stack), target.name);
+  }
+  return { listed, stackExists: stack !== undefined };
 }
 
 /**

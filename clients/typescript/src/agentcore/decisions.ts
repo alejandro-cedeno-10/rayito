@@ -13,6 +13,7 @@ import {
   AGENTCORE_SERVER_PROTOCOL,
 } from "../limits.js";
 import { classifyStack, type StackObservation } from "../stacks/condition.js";
+import type { StackProvisioner } from "../stacks/port.js";
 import type {
   DesiredRuntime,
   ImageAction,
@@ -22,8 +23,8 @@ import type {
   RuntimeDetails,
   StackAction,
 } from "./models.js";
-import { isOwned } from "./names.js";
-import { STACK_OUTPUTS } from "./stack.js";
+import { isOwned, runtimeNameFor } from "./names.js";
+import { STACK_OUTPUTS, STACK_PARAMETERS } from "./stack.js";
 
 /** Los megabytes de los mensajes son decimales (`bytes // 1000000`), como el límite de 2 GB de AgentCore. */
 export const BYTES_PER_MEGABYTE = 1_000_000;
@@ -41,6 +42,31 @@ export const RUNTIME_FAILED_STATES: ReadonlySet<string> = new Set([
 ]);
 export const BUILD_SUCCEEDED_STATE = "SUCCEEDED";
 export const BUILD_IN_PROGRESS_STATE = "IN_PROGRESS";
+
+/** Lo que `DescribeStacks` dijo de la pila `name`, en la forma de `classifyStack`. */
+export function stackObservation(
+  name: string,
+  status: Awaited<ReturnType<StackProvisioner["describe"]>>,
+): StackObservation {
+  return {
+    name,
+    status: status?.state,
+    outputs: status?.outputs ?? {},
+    parameters: status?.parameters ?? {},
+  };
+}
+
+/**
+ * `name_conflict` si la pila es de otro agente cuyo nombre da la misma pila
+ * (`a-b` y `a_b`): la plantilla guarda el nombre sin normalizar en
+ * `AgentDisplayName`. Una pila sin ese parámetro no se discute.
+ */
+export function checkStackOwner(observation: StackObservation, name: string): void {
+  const recorded = observation.parameters[STACK_PARAMETERS.agentDisplayName];
+  if (recorded !== undefined && recorded !== "" && recorded !== name) {
+    throw new AgentCoreError("name_conflict", { runtimeName: runtimeNameFor(name), name });
+  }
+}
 
 /** Las seis salidas de la plantilla, ya leídas. */
 export interface StackOutputs {
@@ -64,6 +90,7 @@ export function decideStack(observation: StackObservation, name: string): StackA
   if (condition === "missing") {
     return "create";
   }
+  checkStackOwner(observation, name);
   if (condition === "in_progress") {
     return "wait";
   }
@@ -160,6 +187,28 @@ export function runtimeMatches(details: RuntimeDetails, desired: DesiredRuntime)
 }
 
 /**
+ * `name_conflict` si el runtime con ese nombre no es del agente `name` y
+ * `runtime_blocked` si está en un estado que no se toca. Se comprueba antes de
+ * crear la pila y construir la imagen: ahorra el coste de un despliegue que
+ * acabaría fallando.
+ */
+export function checkRuntimeUsable(
+  listed: ListedRuntime | undefined,
+  runtimeName: string,
+  name: string,
+): void {
+  if (listed === undefined) {
+    return;
+  }
+  if (!isOwned(listed, name)) {
+    throw new AgentCoreError("name_conflict", { runtimeName, name });
+  }
+  if (RUNTIME_BLOCKED_STATES.has(listed.status)) {
+    throw new AgentCoreError("runtime_blocked", { runtimeName, status: listed.status, name });
+  }
+}
+
+/**
  * Qué hacer con el runtime `runtimeName`: crearlo si falta, esperarlo si está
  * en `CREATING` o `UPDATING`, repararlo (actualizarlo) si quedó en
  * `UPDATE_FAILED`, actualizarlo si algún campo comparado difiere y reutilizarlo
@@ -179,16 +228,7 @@ export function decideRuntime(input: {
   if (listed === undefined) {
     return "create";
   }
-  if (!isOwned(listed, input.name)) {
-    throw new AgentCoreError("name_conflict", { runtimeName: input.runtimeName, name: input.name });
-  }
-  if (RUNTIME_BLOCKED_STATES.has(listed.status)) {
-    throw new AgentCoreError("runtime_blocked", {
-      runtimeName: input.runtimeName,
-      status: listed.status,
-      name: input.name,
-    });
-  }
+  checkRuntimeUsable(listed, input.runtimeName, input.name);
   if (RUNTIME_IN_PROGRESS_STATES.has(listed.status)) {
     return "wait";
   }
