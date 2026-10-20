@@ -686,7 +686,7 @@ Regression level: SDK and CLI change, no `rayd`, image, proto or `infra/*.yaml`
 change (`reference/release-and-aws.md`): full CI, local e2e, and a short,
 targeted AWS check per language lane, with inventory before and after.
 
-- [x] 4.1 Read-only pre-check in the test account: `rayito doctor` IAM
+- [x] 4.1 Read-only pre-check in the target account: `rayito doctor` IAM
       simulation for `cloudformation:CreateStack`, `iam:CreateRole` and
       `iam:CreatePolicy` in the chosen regions (SCP risk); stop and report if
       denied.
@@ -697,9 +697,9 @@ targeted AWS check per language lane, with inventory before and after.
 - [x] 4.4 Prepared-account check in the main test region (`--dry-run`, three
       `reuse`, zero writes) in both CLIs.
 - [x] 4.5 Inventory again; the difference is zero. Record the measurements
-      (build time, any SCP finding) as the next free Q rows of
+      (build time, any denial found) as the next free Q rows of
       `AWS_API_NOTES.md`.
-- [x] 4.5b If the test account's SCP requires tags (D11), the run passes the
+- [x] 4.5b If an organization SCP requires tags (D11), the run passes the
       organization's tags through `RAYITO_E2E_SETUP_TAGS` (see 6.AWS.1).
 - [ ] 4.6 Review sweep (`reference/review-checklist.md`), then archive this
       change (`openspec archive account-setup --yes`).

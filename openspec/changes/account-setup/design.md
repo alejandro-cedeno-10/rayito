@@ -476,16 +476,15 @@ not applied to the MicroVM image (`CreateMicrovmImage` is unchanged). Without
 `rayito events deploy`; a malformed value is a usage error (exit 2) before any
 AWS call. The help text lives in `testdata/account-setup/contract.json`.
 
-Why: the acceptance run found that the test account's SCP denies
-`s3:CreateBucket` when the request carries no organization tags, so the
-bucket stack failed with an explicit deny. The same SCP shape applies to
-other creating actions. Stack tags are the smallest fix: no new IAM or S3
+Why: an organization SCP may require tags on resource creation and deny
+`s3:CreateBucket` (or other creating actions) when the request carries none,
+so the bucket stack would fail with an explicit deny. Stack tags are the smallest fix: no new IAM or S3
 call, and CloudFormation is already the record of what setup created (D4).
 
 Alternatives: tagging the bucket with `PutBucketTagging` after creation (too
 late for a deny on `CreateBucket`, and a new write API); a template parameter
 per tag (the tag keys are not known in advance); tagging the image (not
-needed by the SCP finding, and `CreateMicrovmImage` stays out of scope).
+needed by tag-enforcing SCPs, and `CreateMicrovmImage` stays out of scope).
 
 ## Alternatives considered
 
@@ -575,9 +574,8 @@ needed by the SCP finding, and `CreateMicrovmImage` stays out of scope).
 
 ## Risks
 
-- **Test account SCP.** The organisation SCP of the test account denied
-  `cloudfront:CreateDistribution` before (Q141). It may also deny
-  `iam:CreateRole` with fixed names, `cloudformation:CreateStack` with
+- **Organization SCP.** An SCP in the organization may deny
+  `cloudfront:CreateDistribution`, `iam:CreateRole` with fixed names, `cloudformation:CreateStack` with
   `CAPABILITY_NAMED_IAM`, or `s3:CreateBucket`, in some regions. The AWS acceptance (task 4.x)
   checks first, read-only, with `rayito doctor`'s IAM simulation, and records
   the result as a new `AWS_API_NOTES.md` Q row.
