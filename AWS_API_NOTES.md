@@ -2468,11 +2468,22 @@ adicional), `State` (`MicrovmImageState`), `LatestActiveImageVersion`,
   <https://unpkg.com/aws-cdk-lib@2.217.0/aws-bedrockagentcore/lib/bedrockagentcore.generated.d.ts>,
   <https://pypi.org/project/aws-cdk-lib/2.261.0/>.
 - **Q185 — ¿Una actualización del runtime por CloudFormation devuelve
-  `requireMMDSV2` a falso?** Pendiente de medir en la aceptación de
-  `agentcore-cdk` (tarea 3.4). El recurso `Custom::RayitoRuntimeMmds` vuelve a
-  correr con cada versión nueva, así que la respuesta sólo cambia si hay
-  deriva visible.
+  `requireMMDSV2` a falso?** No (medido 2026-10-20 en us-east-1, aceptación de
+  `agentcore-cdk`, Python y TypeScript). El runtime que crea
+  `AWS::BedrockAgentCore::Runtime` ya sale con `requireMMDSV2=true` en la
+  versión 1, aunque el recurso no tenga la propiedad, y la versión 2 que crea
+  una actualización (cambio de código) también. `Custom::RayitoRuntimeMmds`
+  no escribe nada en ninguno de los dos casos (create y update en ≈ 3 s, sin
+  `UpdateAgentRuntime`), y su atributo `AgentRuntimeVersion` es la versión de
+  CloudFormation (1 y luego 2). El recurso se queda como red de seguridad: sólo
+  publicaría una versión nueva, fuera de CloudFormation, si una llegara sin
+  MMDSv2.
 - **Q186 — ¿Espera CloudFormation a una versión `SUCCESSFUL`/`ACTIVE` de la
-  imagen, y borra una actualización las versiones anteriores?** Pendiente de
-  medir (tarea 3.4): el manejador de `update` pide
-  `DeleteMicrovmImageVersion`, pero el esquema no dice cuándo lo usa.
+  imagen, y borra una actualización las versiones anteriores?** Lo primero, sí
+  (medido 2026-10-20 en us-east-1, Python y TypeScript): el create de
+  `AWS::Lambda::MicrovmImage` tarda lo que el build de la imagen (≈ 3,5-4,5
+  min) y acaba con la versión `1.0`; un sandbox creado justo después desde
+  esa imagen arranca. Lo segundo sigue **pendiente**: la aceptación no
+  actualizó ninguna imagen, así que no se vio si una actualización borra las
+  versiones anteriores (el manejador de `update` pide
+  `DeleteMicrovmImageVersion`, pero el esquema no dice cuándo lo usa).

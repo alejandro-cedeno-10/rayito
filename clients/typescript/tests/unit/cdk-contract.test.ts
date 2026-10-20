@@ -9,6 +9,7 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DefaultStackSynthesizer } from "aws-cdk-lib";
 import { afterEach, describe, expect, it } from "vitest";
 import { CDK_MANAGED_MESSAGE } from "../../src/agentcore/messages.js";
 import { RAYITO_CDK_ERROR_MESSAGES, RayitoCdkError } from "../../src/cdk/errors.js";
@@ -122,7 +123,7 @@ describe("normalización (contract.normalisation)", () => {
         Type: "AWS::S3::Bucket",
         Metadata: { "aws:cdk:path": "Stack/Bucket" },
         Properties: {
-          Name: `cdk-hnb659fds-assets/${"a".repeat(64)}.zip`,
+          Name: `cdk-${DefaultStackSynthesizer.DEFAULT_QUALIFIER}-assets/${"a".repeat(64)}.zip`,
           Tags: [
             { Key: "rayito:sdk-version", Value: "0.15.0" },
             { Key: "team", Value: "demo" },

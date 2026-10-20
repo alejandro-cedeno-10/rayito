@@ -17,7 +17,9 @@ recursos que `RayitoAgent` declara con el `Provider` de `custom_resources`
   `metadataConfiguration.requireMMDSV2=true`, cada vez que cambia la versión
   del runtime (la propiedad `AgentRuntimeVersion` del recurso la fuerza). El
   recurso devuelve en `AgentRuntimeVersion` la versión viva que ya exige
-  MMDSv2 (la que publica esa actualización), no la que creó CloudFormation.
+  MMDSv2: normalmente la que creó CloudFormation, porque AgentCore ya la crea
+  con MMDSv2 (AWS_API_NOTES.md Q185), y sólo si no, la que publica esa
+  actualización.
 
 Borrar cualquiera de los dos no llama a AWS: el repositorio se vacía con su
 pila (`EmptyOnDelete`) y el runtime lo borra CloudFormation.

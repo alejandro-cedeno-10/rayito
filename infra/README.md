@@ -150,7 +150,9 @@ la suya con CDK y reutilizan las de aquí.
       `UpdateAgentRuntime` y `metadataConfiguration.requireMMDSV2` (con un
       `clientToken` de la versión viva, no de la propiedad); vuelve a correr con
       cada versión nueva del runtime y devuelve el atributo `AgentRuntimeVersion`
-      con la versión que ya exige MMDSv2 (la que expone `runtimeVersion`).
+      con la versión viva (la que expone `runtimeVersion`). Los runtimes que
+      crea CloudFormation ya salen con MMDSv2 activo (`AWS_API_NOTES.md` Q185),
+      así que normalmente es la de CloudFormation y no se publica ninguna.
 
   Su rol sólo puede eso sobre **ese** proyecto, **ese** repositorio y **ese**
   runtime, e `iam:PassRole` sólo sobre el rol del runtime (SECURITY.md T37). El

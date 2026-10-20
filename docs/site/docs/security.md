@@ -638,7 +638,8 @@ en silencio lo que declara la pila.
 CDK, que por defecto tiene `AdministratorAccess`: quien puede ejecutar
 `cdk deploy` en la cuenta puede cambiar el rol del runtime. Si eso no vale,
 restringe el bootstrap ([Bootstrap restringido](guias/desplegar-con-cdk.md#bootstrap-restringido)).
-MMDSv2 se activa fuera de CloudFormation (el recurso no tiene la propiedad), así
-que la detección de deriva puede marcarlo; se vuelve a comprobar en cada versión
-nueva del runtime. Los assets (el código del agente, el zip de la imagen) se
+El recurso de CloudFormation no tiene la propiedad de MMDSv2, pero AgentCore ya
+crea cada versión con MMDSv2 activo; `Mmds` lo comprueba en cada versión nueva
+y sólo lo activaría fuera de CloudFormation (y la detección de deriva podría
+marcarlo) si alguna llegara sin él. Los assets (el código del agente, el zip de la imagen) se
 quedan en el bucket del bootstrap hasta `cdk gc`.

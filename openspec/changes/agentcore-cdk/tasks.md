@@ -165,15 +165,23 @@ to the planner. Exception: Track PY owns the generated
       environment and OIDC role.
 - [ ] 3.2 Runbook: one manual, tagged `cdk bootstrap` per test account and
       region; the e2e role may assume the bootstrap roles.
-- [ ] 3.3 Python and TypeScript apps: a run-named stack with one
+- [x] 3.3 Python and TypeScript apps: a run-named stack with one
       `RayitoAgent` (codeBuild) and one `RayitoMicrovmImage`; invoke the
       agent once, `connect` and `list` see it, `rayito agent deploy` and
       `rayito image publish` refuse; one sandbox from the image, killed;
       `cdk destroy --force` in `always()`; tag sweep limited to the run.
-- [ ] 3.4 Record Q185 (does a CloudFormation update of the runtime reset
+      Done as a manual run (2026-10-20, us-east-1, Python and TypeScript):
+      deploy, invoke and stream, CLI list/status/invoke, CLI refusals, an
+      unchanged redeploy with no rebuild, a code change that rebuilt, a
+      sandbox from the CDK image, `cdk destroy`, and an account inventory
+      equal before and after. The workflow (3.1) and runbook (3.2) are
+      still to do.
+- [x] 3.4 Record Q185 (does a CloudFormation update of the runtime reset
       `requireMMDSV2`?) and Q186 (does CloudFormation wait for a
       `SUCCESSFUL`/`ACTIVE` version, and does an update delete earlier
-      versions?) in `AWS_API_NOTES.md`.
+      versions?) in `AWS_API_NOTES.md`. Q185: no reset, runtimes come up
+      with MMDSv2 on. Q186: the create waits for a usable version; whether an
+      update deletes earlier versions is still unmeasured.
 
 ## D. Docs (Spanish default plus `.en.md`, `scripts/check_docs_i18n.py`)
 

@@ -402,8 +402,9 @@ class RayitoAgent(Construct):
         self.runtime_name: str = plan.runtime_name
         self.runtime_arn: str = runtime.attr_agent_runtime_arn
         self.runtime_id: str = runtime.attr_agent_runtime_id
-        #: La versión que ya exige MMDSv2 (la que publica `Mmds`), no la que
-        #: creó CloudFormation: es la que se puede fijar en un endpoint.
+        #: La versión viva del runtime, la que se puede fijar en un endpoint.
+        #: Normalmente la de CloudFormation (AgentCore ya la crea con MMDSv2);
+        #: `Mmds` sólo publica otra si una llegara sin MMDSv2.
         self.runtime_version: str = mmds.get_att_string(RUNTIME_VERSION_ATTRIBUTE)
         self.role_arn: str = runtime_role.attr_arn
         self.repository_uri: str = repository_uri

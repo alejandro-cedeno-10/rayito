@@ -10,7 +10,7 @@
 import { cpSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { App, NestedStack, Stack } from "aws-cdk-lib";
+import { App, DefaultStackSynthesizer, NestedStack, Stack } from "aws-cdk-lib";
 import { Match, Template } from "aws-cdk-lib/assertions";
 import { DockerImageAsset } from "aws-cdk-lib/aws-ecr-assets";
 import { Role, ServicePrincipal } from "aws-cdk-lib/aws-iam";
@@ -197,7 +197,7 @@ describe("RayitoAgent: IAM", () => {
       [STACK_PARAMETERS.agentName]: canonicalAgentName(agent.agentName),
       [STACK_PARAMETERS.agentDisplayName]: agent.agentName,
       [STACK_PARAMETERS.runtimeName]: agent.runtimeName,
-      [STACK_PARAMETERS.artifactBucket]: `cdk-hnb659fds-assets-${ACCOUNT}-${REGION}`,
+      [STACK_PARAMETERS.artifactBucket]: `cdk-${DefaultStackSynthesizer.DEFAULT_QUALIFIER}-assets-${ACCOUNT}-${REGION}`,
       [STACK_PARAMETERS.bedrockModelArns]: conditionalResource(
         resources.RuntimeRole,
         "HasBedrockModels",

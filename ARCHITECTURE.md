@@ -3653,11 +3653,11 @@ en marcha.
 agente desde el mismo proyecto, y una imagen de Rayito puede vivir en una
 pila de CDK junto al resto de una aplicación. Hay dos dependencias opcionales
 más y una pila anidada que depende de `infra/agentcore-runtime.yaml` (un test
-de igualdad de IAM y las plantillas del contrato lo vigilan). Riesgos: si una
-actualización de CloudFormation devuelve `requireMMDSV2` a falso (Q185) el
-recurso personalizado lo repara en el mismo despliegue, pero la detección de
-deriva puede señalarlo; si CloudFormation conserva todas las versiones de la
-imagen (Q186) el almacenamiento de snapshots crece y `rayito image prune` es
+de igualdad de IAM y las plantillas del contrato lo vigilan). Riesgos: CloudFormation crea y actualiza el runtime con `requireMMDSV2`
+ya activo (Q185, medido), así que el recurso personalizado normalmente no
+escribe nada; si alguna versión llegara sin él, lo repararía en el mismo
+despliegue y la detección de deriva podría señalarlo; si CloudFormation
+conserva todas las versiones de la imagen (Q186, sin medir) el almacenamiento de snapshots crece y `rayito image prune` es
 la respuesta documentada; un build atascado bloquea la pila hasta el tiempo
 total del proveedor (40 min por defecto); `aws-cdk-lib` pesa unos 139 MB y la
 síntesis en Python necesita Node; un bootstrap de CDK con permisos

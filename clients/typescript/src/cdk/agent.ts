@@ -308,8 +308,9 @@ export class RayitoAgent extends Construct {
   readonly runtimeArn: string;
   readonly runtimeId: string;
   /**
-   * La versión que ya exige MMDSv2 (la que publica el recurso `Mmds`), no la
-   * que creó CloudFormation: es la que se puede fijar en un endpoint.
+   * La versión viva del runtime, la que se puede fijar en un endpoint.
+   * Normalmente la de CloudFormation (AgentCore ya la crea con MMDSv2); el
+   * recurso `Mmds` sólo publica otra si una llegara sin MMDSv2.
    */
   readonly runtimeVersion: string;
   /** El rol que asume AgentCore (el `RuntimeRole` de la pila anidada). */

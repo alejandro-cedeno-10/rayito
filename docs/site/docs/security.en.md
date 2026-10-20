@@ -634,7 +634,8 @@ CLI cannot silently undo what the stack declares.
 which has `AdministratorAccess` by default: whoever can run `cdk deploy` in the
 account can change the runtime role. If that is not acceptable, restrict the
 bootstrap ([Restricted bootstrap](guias/desplegar-con-cdk.md#bootstrap-restringido)).
-MMDSv2 is turned on outside CloudFormation (the resource has no such
-property), so drift detection may flag it; it is checked again on every new
-runtime version. Assets (the agent code, the image zip) stay in the bootstrap
+The CloudFormation resource has no MMDSv2 property, but AgentCore already
+creates every version with MMDSv2 on; `Mmds` checks it on every new version
+and would only turn it on outside CloudFormation (where drift detection could
+flag it) if one ever came without it. Assets (the agent code, the image zip) stay in the bootstrap
 bucket until `cdk gc`.

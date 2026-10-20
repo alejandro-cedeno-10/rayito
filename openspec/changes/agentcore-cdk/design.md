@@ -68,10 +68,11 @@ Q181-Q186). Account ids are masked; the schemas were read with
    `GetMicrovmImageResponse`), which is how the CLI recognises a CDK image
    without a description marker (D6).
 
-Pending, measured by the AWS acceptance (task 3), recorded as Q185 and Q186:
-whether a later CloudFormation update of the runtime resets
-`requireMMDSV2`; whether CloudFormation waits for the image version to be
-`SUCCESSFUL`/`ACTIVE`; and whether an update deletes earlier image versions.
+Measured by the AWS acceptance (task 3), recorded as Q185 and Q186: runtime
+versions that CloudFormation creates or updates already have `requireMMDSV2`
+on, so the custom resource finds nothing to do; CloudFormation finishes the
+image create only once the version is usable (a sandbox started from it right
+after). Still open: whether an image update deletes earlier versions.
 
 ## Decisions
 
@@ -153,10 +154,11 @@ with the configuration it read plus `requireMMDSV2=true` and a deterministic
 `clientToken` (sha256 of id and version); it waits for `READY`. Its
 `AgentRuntimeVersion` property (`GetAtt`) makes it run again whenever
 CloudFormation creates a new runtime version, so a reset by a later update
-(Q185, pending) is repaired in the same deployment. IAM:
+would be repaired in the same deployment (Q185: none seen, CloudFormation's
+versions already require MMDSv2). IAM:
 `bedrock-agentcore:GetAgentRuntime`/`UpdateAgentRuntime` on that runtime and
-`iam:PassRole` on the runtime role only. The out-of-band update may show as
-drift; the docs say so.
+`iam:PassRole` on the runtime role only. Only that out-of-band update, if it
+ever happens, could show as drift; the docs say so.
 
 ### D6. Ownership: `+cdk` (maintainer decision)
 
@@ -277,7 +279,7 @@ compares `rayito.cdk.__all__` with `src/cdk/index.ts`.
    `rayito setup` created. `rayito image publish` refuses a CDK image (D6);
    `rayito image prune --image-name <name>` may delete its old versions (it
    never touches the latest active one), which is the documented answer if
-   CloudFormation keeps earlier versions (Q186, pending).
+   CloudFormation keeps earlier versions (Q186, still open for updates).
 7. **Deploy-time permissions.** CloudFormation calls `CreateMicrovmImage`
    (authorised on `*`, Q114), `lambda:PassNetworkConnector` on the managed
    `INTERNET_EGRESS` connector even with no connector named (Q114) and
@@ -387,8 +389,9 @@ them see no change in size, imports or behaviour.
 
 ## Risks
 
-- **MMDSv2 outside CloudFormation** (Q185): re-applied on each new runtime
-  version; drift detection may report it.
+- **MMDSv2 outside CloudFormation** (Q185): checked on each new runtime
+  version; CloudFormation's versions already have it, so only a version that
+  came without it would be updated out of band (and could show as drift).
 - **Image update semantics** (Q186): if CloudFormation keeps every version,
   snapshot storage grows; `rayito image prune` is the documented answer.
 - **Build ceilings**: a stuck CodeBuild build blocks the stack up to the

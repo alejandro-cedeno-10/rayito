@@ -67,9 +67,11 @@ the image lives in your stack and sandboxes are still created with the SDK
     - **Example:** [An agent](#rayitoagent) and [an image](#rayitomicrovmimage).
     - **Tracing, VPC and log delivery** for the runtime stay off, as with the
       CLI.
-    - **Measured:** pending. The constructs have not been accepted on real AWS
-      yet; the figures are those of the CLI deploy, which creates the same
-      resources.
+    - **Measured (2026-10-20):** acceptance on real AWS with both SDKs
+      deployed, invoked and destroyed an agent and an image; after
+      `cdk destroy` no resource was left except the bootstrap assets (until
+      `cdk gc`). Cost was not measured separately: the figures are those of the
+      CLI deploy, which creates the same resources.
 
 !!! warning "Security: no secret gateway on AgentCore"
     An agent on AgentCore gets the runtime role's credentials, and any code
@@ -99,6 +101,11 @@ the image lives in your stack and sandboxes are still created with the SDK
     never the AgentCore alpha package. CDK in Python runs on Node (jsii), so you
     need Node 20 or later in Python too, plus the CDK CLI
     (`npm install -g aws-cdk` or `npx aws-cdk`).
+
+    To [invoke the agent](#invocar) from the same TypeScript app, add the
+    package's optional AgentCore peers:
+    `pnpm add @aws-sdk/client-bedrock-agentcore @aws-sdk/client-bedrock-agentcore-control`.
+    Python needs nothing else: `boto3` is already a dependency of `rayito`.
 2. **A concrete region in the stack.** The construct validates the region at
    synth time (that it has AgentCore Runtime, the MicroVMs base image ARN), so
    an environment-agnostic stack fails with `region_unresolved`. The account can
@@ -274,11 +281,13 @@ The rules are the CLI's and so are the errors (`name_invalid`,
 - **`Runtime`** (`AWS::BedrockAgentCore::Runtime`): `rayito_<name>`, the image
   just built, `PUBLIC` network, `HTTP` protocol, the plan's lifecycle and
   environment, and the description `Rayito agent <name> (rayito.agentcore/1+cdk)`.
-- **`Mmds`** (`Custom::RayitoRuntimeMmds`): the CloudFormation resource cannot
-  require MMDSv2, which AgentCore needs since 2026-06-30 to invoke, so this
-  resource turns it on with `UpdateAgentRuntime` and checks it again on every new
-  runtime version. CloudFormation drift detection may flag it as a change made
-  outside the stack.
+- **`Mmds`** (`Custom::RayitoRuntimeMmds`): the CloudFormation resource has no
+  property to require MMDSv2, which AgentCore needs since 2026-06-30 to invoke.
+  Runtimes that CloudFormation creates and updates already come up with MMDSv2
+  on, so this resource only checks it on every new runtime version; if one ever
+  came without it, it would turn it on with `UpdateAgentRuntime` (and
+  CloudFormation drift detection could then flag it as a change made outside the
+  stack).
 - **`Provider`** and **`Handler`**: the two Lambda functions (Python, code from
   `infra/agentcore-cdk-handler.py`) and the state machine behind the two custom
   resources, with 14-day logs.
@@ -286,9 +295,10 @@ The rules are the CLI's and so are the errors (`name_invalid`,
 Attributes for the rest of your app: `agentName`, `runtimeName`, `runtimeArn`,
 `runtimeId`, `runtimeVersion`, `roleArn`, `repositoryUri`, `imageUri` and
 `runtime` (an `IRuntime` from the `aws-cdk-lib` L2, to combine it with other
-constructs), in `snake_case` in Python. `runtimeVersion` is the version that
-already requires MMDSv2 (the one `Mmds` publishes), not the one CloudFormation
-created, so it is the one you can pin an endpoint to. `grantInvoke(grantee)` /
+constructs), in `snake_case` in Python. `runtimeVersion` is the live runtime
+version, the one you can pin an endpoint to. It is normally the one
+CloudFormation created, because AgentCore already creates it with MMDSv2 on;
+`Mmds` only publishes a new version if one ever came without MMDSv2. `grantInvoke(grantee)` /
 `grant_invoke(grantee)` grants `bedrock-agentcore:InvokeAgentRuntime` on the
 runtime.
 
@@ -550,7 +560,8 @@ image zip, the handler code) stay in the bootstrap bucket until `cdk gc`. With
 | `ImageBuild` fails and CloudFormation rolls back | the CodeBuild build failed or the image exceeds 2 GB | the reason (the tag and the build status) is in the stack event; the log, in the CodeBuild project's log group |
 | `ImageBuild` takes long and times out | the build took longer than `timeoutMinutes` plus the margin | raise `timeoutMinutes` in `AgentImageBuild.codeBuild(...)` |
 | `localDocker()` fails in `cdk deploy` | no Docker, or it cannot build `linux/arm64` | start Docker with arm64 support (buildx or QEMU), or go back to `codeBuild()` |
-| Drift detection flags the runtime | `Mmds` turns on MMDSv2 outside CloudFormation | expected; the next `cdk deploy` checks it again |
+| Drift detection flags the runtime | a version came without MMDSv2 and `Mmds` turned it on outside CloudFormation | expected; the next `cdk deploy` checks it again |
+| Two parallel `cdk deploy` runs in the same app directory fail or clobber each other | they share `cdk.out` (and its lock) | give each one its own directory: `cdk deploy --output cdk.out.<stack> <stack>` |
 | `AccessDenied` on `PassNetworkConnector`, `CreateMicrovmImage` or `CreateAgentRuntime` | restricted bootstrap | add the permissions in [Restricted bootstrap](#bootstrap-restringido) |
 | `release_download_failed` | no network or no GitHub access on the first synth | download once with network (it is kept in `.rayito/releases/`) or use `fromFile` |
 | `image_name_reserved` | the name starts with `rayito-base` | pick another; `rayito-base*` belongs to `rayito setup` |
