@@ -68,6 +68,9 @@ const OPTION_AGENTCORE = "agentcore";
 
 /** Las opciones de MicroVMs que la CLI pone en el proyecto con banderas (`--memory`, `--port`, `--timeout`, `--idle`) y `--token-file`, que no llegan en `AgentDeployOptions`. */
 export interface CallFlags {
+  readonly minVms?: number | undefined;
+  readonly maxVms?: number | undefined;
+  readonly warmVms?: number | undefined;
   readonly memoryMib?: number | undefined;
   readonly port?: number | undefined;
   readonly timeoutMs?: number | undefined;
@@ -85,7 +88,13 @@ const DEFAULT_SCALING = new ScalingOptions();
 const REASON_NO_FIXED_VMS = "AgentCore escala solo: una microVM por sesión, sin VMs fijos";
 const REASON_NO_WARM = "AgentCore no tiene plazas calientes";
 const REASON_NO_GATEWAY = "no hay pasarela de secretos";
-const REASON_IAM_AUTH = "AgentCore autentica con IAM (SigV4), no con un access token";
+/** Por qué `access_token` y `--token-file` no aplican: AgentCore autentica con IAM. */
+export const REASON_IAM_AUTH = "AgentCore autentica con IAM (SigV4), no con un access token";
+
+/** Un valor cuenta como puesto si difiere del valor por defecto, venga del argumento del SDK (`value`) o de una bandera de la CLI (`flag`). */
+function isSet(value: number | undefined, flag: number | undefined, fallback: number): boolean {
+  return (value !== undefined && value !== fallback) || (flag !== undefined && flag !== fallback);
+}
 
 function optionChecks(options: AgentDeployOptions, flags: CallFlags): OptionCheck[] {
   const scaling = options.scaling ?? DEFAULT_SCALING;
@@ -93,17 +102,17 @@ function optionChecks(options: AgentDeployOptions, flags: CallFlags): OptionChec
     {
       label: "scaling.min_vms",
       reason: REASON_NO_FIXED_VMS,
-      given: scaling.minVms !== DEFAULT_SCALING.minVms,
+      given: isSet(scaling.minVms, flags.minVms, DEFAULT_SCALING.minVms),
     },
     {
       label: "scaling.max_vms",
       reason: "el tope lo pone la cuota de sesiones activas de la cuenta",
-      given: scaling.maxVms !== DEFAULT_SCALING.maxVms,
+      given: isSet(scaling.maxVms, flags.maxVms, DEFAULT_SCALING.maxVms),
     },
     {
       label: "scaling.warm_vms",
       reason: REASON_NO_WARM,
-      given: scaling.warmVms !== DEFAULT_SCALING.warmVms,
+      given: isSet(scaling.warmVms, flags.warmVms, DEFAULT_SCALING.warmVms),
     },
     {
       label: "scaling.scale_in_after_seconds",
@@ -113,17 +122,17 @@ function optionChecks(options: AgentDeployOptions, flags: CallFlags): OptionChec
     {
       label: "memory_mib",
       reason: "cada sesión usa hasta 2 vCPU y 8 GB y se cobra por consumo real",
-      given: flags.memoryMib !== undefined,
+      given: isSet(undefined, flags.memoryMib, AGENT_MIN_MEMORY_MIB),
     },
     {
       label: "serve.port",
       reason: "el contenedor de AgentCore sirve en el 8080",
-      given: flags.port !== undefined,
+      given: isSet(undefined, flags.port, DEFAULT_SERVE.port),
     },
     {
       label: "serve.timeout_seconds",
       reason: "usa max_session_lifetime_seconds / --max-session-lifetime",
-      given: flags.timeoutMs !== undefined,
+      given: isSet(undefined, flags.timeoutMs, DEFAULT_SERVE.timeoutMs),
     },
     {
       label: "serve.idle",

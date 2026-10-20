@@ -20,6 +20,8 @@ export { DeepAgents, type DeepAgentsOptions } from "./agent/deepagents.js";
 export {
   type DeployAgentOptions,
   type DeployConnection,
+  type DeployedAgent,
+  type DeployPlanOf,
   deployAgent,
   planDeploy,
 } from "./agent/deploy.js";
@@ -158,6 +160,18 @@ export {
 } from "./agent/template.js";
 export { agentPoolWarmup } from "./agent/warmup.js";
 export {
+  type AgentCoreConnectOptions,
+  AgentCoreFleet,
+  AgentCoreFleetStream,
+} from "./agentcore/fleet.js";
+export type {
+  AgentCoreDeleteResult,
+  AgentCoreDeployPlan,
+  AgentCoreOptions,
+  AgentCoreStatus,
+  AgentTarget,
+} from "./agentcore/models.js";
+export {
   type CommandSender,
   type ControlPlane,
   LambdaMicrovmsControlPlane,
@@ -210,6 +224,7 @@ export {
 export { Fleet, type FleetOptions } from "./dashboard/fleet.js";
 export { Quotas, type QuotasOptions } from "./dashboard/quotas.js";
 export {
+  AgentCoreError,
   AgentError,
   type AgentErrorOptions,
   AuthenticationError,

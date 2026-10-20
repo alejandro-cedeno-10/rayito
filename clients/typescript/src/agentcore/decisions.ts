@@ -56,7 +56,8 @@ export interface StackOutputs {
  * Qué hacer con la pila: crearla si falta, actualizarla si sirve (CloudFormation
  * no toca nada si la plantilla y los parámetros son los mismos), esperarla si
  * hay una operación en curso, y `stack_blocked` si está en un estado que sólo
- * se arregla borrándola.
+ * se arregla borrándola. Una pila utilizable sin las seis salidas de la
+ * plantilla no es de Rayito: `stack_failed`, y no se actualiza.
  */
 export function decideStack(observation: StackObservation, name: string): StackAction {
   const condition = classifyStack(observation);
@@ -73,6 +74,7 @@ export function decideStack(observation: StackObservation, name: string): StackA
       name,
     });
   }
+  requireStackOutputs(observation);
   return "update";
 }
 

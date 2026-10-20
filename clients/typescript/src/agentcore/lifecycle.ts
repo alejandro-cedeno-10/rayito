@@ -63,6 +63,23 @@ export interface DeleteRequest {
   readonly onStep?: OnStep;
 }
 
+/** Lo que existe de un agente en la región: su runtime de Rayito (si hay) y si tiene pila. Un runtime con el nombre y sin la marca es `name_conflict`. */
+export async function inspectDeletion(
+  ports: AgentCorePorts,
+  target: Pick<DeleteRequest, "name" | "runtimeName" | "stackName">,
+): Promise<{ readonly listed: ListedRuntime | undefined; readonly stackExists: boolean }> {
+  const listed = (await ports.control.listRuntimes()).find(
+    (candidate) => candidate.runtimeName === target.runtimeName,
+  );
+  if (listed !== undefined && !isOwned(listed, target.name)) {
+    throw new AgentCoreError("name_conflict", {
+      runtimeName: target.runtimeName,
+      name: target.name,
+    });
+  }
+  return { listed, stackExists: (await ports.stacks.describe(target.stackName)) !== undefined };
+}
+
 /**
  * Borra lo que Rayito creó para un agente y nada más: el runtime, la pila
  * `rayito-agentcore-<nombre>` con su repositorio, su proyecto de CodeBuild y sus
@@ -91,16 +108,7 @@ export class AgentCoreDeleter {
 
   async delete(request: DeleteRequest): Promise<AgentCoreDeleteResult> {
     const emit = deleteEmitter(request.onStep);
-    const listed = (await this.#ports.control.listRuntimes()).find(
-      (candidate) => candidate.runtimeName === request.runtimeName,
-    );
-    if (listed !== undefined && !isOwned(listed, request.name)) {
-      throw new AgentCoreError("name_conflict", {
-        runtimeName: request.runtimeName,
-        name: request.name,
-      });
-    }
-    const stackExists = (await this.#ports.stacks.describe(request.stackName)) !== undefined;
+    const { listed, stackExists } = await inspectDeletion(this.#ports, request);
     const runtimeDeleted =
       listed !== undefined && (await this.#deleteRuntime(request, listed, emit));
     const stackDeleted = stackExists && (await this.#deleteStack(request, emit));
