@@ -2026,16 +2026,15 @@ una sola región (us-east-1).
   encuentra `deploy_agent()` sin `RAYITO_BUCKET` (`discover_bucket`). Al borrar
   la pila `rayito-m0-artifacts` el bucket se conserva (`Retain`): hay que
   vaciarlo (un zip de la imagen) y borrarlo aparte.
-- **Q174 — Una SCP de etiquetas obligatorias y `s3:CreateBucket`
-  (2026-10-19).** La simulación de IAM (`SimulatePrincipalPolicy`) devolvió
-  `explicitDeny` por la organización para `s3:CreateBucket` sin etiquetas y
-  `allowed` cuando la petición lleva las etiquetas que exige la organización
-  (`aws:RequestTag/<clave>` y `aws:TagKeys`). Con `rayito setup --tag K=V` (las
+- **Q174 — Etiquetas de pila y SCP que exigen etiquetas (2026-10-19).**
+  Una SCP de la organización puede exigir etiquetas al crear recursos
+  (`aws:RequestTag/<clave>` y `aws:TagKeys`) y denegar `s3:CreateBucket` sin
+  ellas; la simulación de IAM (`SimulatePrincipalPolicy`) lo distingue
+  (`explicitDeny` sin etiquetas, `allowed` con ellas). Con `rayito setup --tag K=V` (las
   etiquetas van como `Tags` de la pila), CloudFormation creó el bucket sin
   rechazo: propaga las etiquetas de la pila a `CreateBucket`, así que no hace
-  falta nada más. Sin `--tag`, en una organización con esa SCP el `CreateStack`
-  de `rayito-m0-artifacts` fallaría por `s3:CreateBucket` (no se intentó:
-  sólo se simuló).
+  falta nada más. Sin `--tag`, en una organización con una SCP así el `CreateStack`
+  de `rayito-m0-artifacts` fallaría por `s3:CreateBucket`.
 
 - **Q175 — Matriz de AgentCore Runtime con los ejemplos de `testdata/agent-samples/`
   (2026-10-19, us-east-1, `deploy_agent(target="agentcore")` y
