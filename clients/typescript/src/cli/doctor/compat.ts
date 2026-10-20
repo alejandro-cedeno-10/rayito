@@ -117,6 +117,14 @@ export const COMPATIBILITY: readonly CompatibilityRow[] = [
       "LangGraph, OpenCode o propio), sus opciones tipadas de escalado y la CLI rayito agent " +
       "se validan con el rayd del tag rayd-v0.14.0",
   },
+  {
+    sdkSeries: "0.15",
+    minAgentVersion: "0.15.0",
+    note:
+      "0.15: rayito setup (preparar una cuenta en un comando) y el despliegue de agentes en " +
+      "Amazon Bedrock AgentCore Runtime (--target agentcore) se validan con el rayd del tag " +
+      "rayd-v0.15.0",
+  },
 ];
 
 export interface Assessment {
