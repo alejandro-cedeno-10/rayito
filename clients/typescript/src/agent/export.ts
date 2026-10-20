@@ -18,12 +18,18 @@ import { mkdir, readdir, writeFile } from "node:fs/promises";
 import { dirname, join, posix } from "node:path";
 import { InvalidArgumentError } from "../errors.js";
 import {
+  AGENT_AWS_CREDENTIALS_REQUIREMENTS_SHA256,
   AGENT_EXPORT_BASE_IMAGE,
   AGENT_EXPORT_BASE_IMAGE_DIGEST,
   AGENT_SERVICE_EXPORT_PORT,
   AGENT_STATE_DIR,
+  AGENTCORE_ENV_CREDENTIAL_ADAPTERS,
   DEFAULT_AGENT_WORKDIR,
 } from "../limits.js";
+import {
+  AWS_CREDENTIALS_REQUIREMENTS,
+  AWS_ENV_CREDENTIALS_SCRIPT,
+} from "./assets/template-assets.gen.js";
 import { canonicalJson } from "./opencode.js";
 import type { AgentProject } from "./project.js";
 import {
@@ -41,11 +47,15 @@ import {
   AGENT_INSTALL_DIR,
   AGENT_RAYITO_DIR,
   agentHostFiles,
+  hashedVenvInstall,
 } from "./recipes.js";
 import {
+  copyStep,
   directWiring,
   type HostConfig,
+  type InstallTarget,
   installTarget,
+  runStep,
   STEP_COPY,
   STEP_RUN,
   type TemplateStep,
@@ -79,6 +89,15 @@ const HEALTHCHECK_COMMAND =
   'python3 -c "import urllib.request; ' +
   `urllib.request.urlopen('http://127.0.0.1:${AGENT_SERVICE_EXPORT_PORT}/ping')"`;
 const PERMISSIONS_CMD = `chown -R root:root ${AGENT_INSTALL_DIR} && chmod -R a+rX,go-w ${AGENT_INSTALL_DIR}`;
+/** El argumento de build con el que CodeBuild toma la misma imagen base (mismo digest) de ECR Public (`constants.dockerfileBaseImageArg`). */
+export const AGENT_BASE_IMAGE_ARG = "AGENT_BASE_IMAGE";
+/** El helper que lee las credenciales del rol de AgentCore para los adaptadores que sólo las leen de variables de entorno (`constants.export.awsCredentials`). */
+export const AWS_CREDENTIALS_REQUIREMENTS_NAME = "requirements-aws-credentials.txt";
+export const AWS_ENV_CREDENTIALS_SCRIPT_NAME = "aws_env_credentials.py";
+export const AWS_CREDENTIALS_REQUIREMENTS_PATH = `${AGENT_INSTALL_DIR}/${AWS_CREDENTIALS_REQUIREMENTS_NAME}`;
+export const AWS_CREDENTIALS_VENV_DIR = `${AGENT_RAYITO_DIR}/aws-credentials`;
+export const AWS_ENV_CREDENTIALS_SCRIPT_PATH = `${AGENT_RAYITO_DIR}/${AWS_ENV_CREDENTIALS_SCRIPT_NAME}`;
+export const HOST_AWS_ENV_CREDENTIALS_KEY = "aws_env_credentials";
 const DEFAULT_FILE_MODE = 0o644;
 const OCTAL = 8;
 const MODE_DIGITS = 4;
@@ -108,6 +127,16 @@ function pythonJsonString(value: string): string {
   );
 }
 
+function fromLines(target: string): string[] {
+  if (target !== "agentcore") {
+    return [`FROM --platform=${EXPORT_PLATFORM} ${BASE_IMAGE_REFERENCE}`];
+  }
+  return [
+    `ARG ${AGENT_BASE_IMAGE_ARG}=${BASE_IMAGE_REFERENCE}`,
+    `FROM --platform=${EXPORT_PLATFORM} \${${AGENT_BASE_IMAGE_ARG}}`,
+  ];
+}
+
 function stepLines(steps: readonly TemplateStep[]): {
   readonly lines: string[];
   readonly executables: string[];
@@ -134,15 +163,46 @@ function envLines(envs: Readonly<Record<string, string>>): string[] {
     .map((name) => `ENV ${name}=${pythonJsonString(envs[name] as string)}`);
 }
 
-function hostConfigBytes(project: AgentProject, host: HostConfig): Uint8Array {
+function hostConfigBytes(project: AgentProject, host: HostConfig, target: string): Uint8Array {
   const { ready_marker: _ready, ...document } = hostDocument(project, host);
-  return canonicalJson({ ...document, schema: AGENT_HOST_SCHEMA });
+  const credentials = needsAwsEnvCredentials(project, target)
+    ? {
+        [HOST_AWS_ENV_CREDENTIALS_KEY]: {
+          python: `${AWS_CREDENTIALS_VENV_DIR}/bin/python`,
+          script: AWS_ENV_CREDENTIALS_SCRIPT_PATH,
+        },
+      }
+    : {};
+  return canonicalJson({ ...document, ...credentials, schema: AGENT_HOST_SCHEMA });
+}
+
+/** Si el framework del proyecto sólo lee las credenciales de AWS de variables de entorno, en AgentCore el host se las pone leídas del rol del runtime. */
+function needsAwsEnvCredentials(project: AgentProject, target: string): boolean {
+  return (
+    target === "agentcore" &&
+    (AGENTCORE_ENV_CREDENTIAL_ADAPTERS as readonly string[]).includes(project.framework ?? "")
+  );
+}
+
+function awsCredentialSteps(install: InstallTarget): readonly TemplateStep[] {
+  return [
+    copyStep(AWS_CREDENTIALS_REQUIREMENTS_NAME, AWS_CREDENTIALS_REQUIREMENTS_PATH),
+    runStep(
+      hashedVenvInstall(install, {
+        venvDir: AWS_CREDENTIALS_VENV_DIR,
+        requirementsPath: AWS_CREDENTIALS_REQUIREMENTS_PATH,
+        requirementsSha256: AGENT_AWS_CREDENTIALS_REQUIREMENTS_SHA256,
+      }),
+    ),
+    copyStep(AWS_ENV_CREDENTIALS_SCRIPT_NAME, AWS_ENV_CREDENTIALS_SCRIPT_PATH),
+  ];
 }
 
 function dockerfile(
   project: AgentProject,
   host: HostConfig,
   steps: readonly TemplateStep[],
+  target: string,
 ): string {
   const { lines: installLines, executables } = stepLines(steps);
   const configDirs = [...new Set(host.files.files.map((file) => posix.dirname(file.path)))].sort();
@@ -169,7 +229,7 @@ function dockerfile(
     "# syntax=docker/dockerfile:1",
     `# Agente \`${project.name}\` exportado por Rayito. Construye con:`,
     `#   docker buildx build --platform ${EXPORT_PLATFORM} -t ${project.name} .`,
-    `FROM --platform=${EXPORT_PLATFORM} ${BASE_IMAGE_REFERENCE}`,
+    ...fromLines(target),
     `RUN useradd --create-home --uid ${AGENT_UID} --shell /bin/bash ${AGENT_USER}` +
       ` && mkdir -p ${AGENT_STATE_DIR} ${configDirs.join(" ")}` +
       ` && chown -R ${AGENT_USER}:${AGENT_USER} ${RAYITO_HOME_DIR}`,
@@ -187,6 +247,34 @@ function dockerfile(
     `CMD ${command}`,
   ];
   return `${lines.join("\n")}\n`;
+}
+
+function agentCoreReadmeLines(port: number): string[] {
+  return [
+    "",
+    "## Amazon Bedrock AgentCore Runtime",
+    "",
+    `AgentCore espera una imagen \`${EXPORT_PLATFORM}\` que sirva \`/ping\` y \`/invocations\``,
+    `en el puerto ${port}, como esta. La forma más corta de desplegarla es`,
+    "`rayito agent deploy <directorio> --target agentcore`: construye la imagen con",
+    "CodeBuild (sin Docker local), la sube a Amazon ECR, crea el rol del runtime con",
+    "el mínimo privilegio y crea o actualiza el runtime. A mano: sube la imagen a ECR,",
+    "crea el runtime en la consola o con la CLI de AgentCore y activa MMDSv2",
+    "(`requireMMDSV2` en `UpdateAgentRuntime`), sin el que AgentCore rechaza las",
+    "invocaciones. AgentCore autentica las invocaciones por sí mismo (SigV4): no",
+    `fijes \`${SERVICE_TOKEN_ENV}\`.`,
+    "",
+    `El argumento de build \`${AGENT_BASE_IMAGE_ARG}\` toma la misma imagen base, con el mismo`,
+    "digest, de otro registro (por ejemplo `public.ecr.aws/docker/library/python`).",
+    "",
+    "### Seguridad: sin pasarela de secretos",
+    "",
+    "En AgentCore no hay pasarela de secretos de Rayito: el agente obtiene las",
+    "credenciales del rol del runtime por el servicio de metadatos de la microVM, y",
+    "cualquier código que corra en la sesión puede leerlas. Da al rol sólo lo que el",
+    "agente necesita: los modelos de Bedrock que usa y, si hace falta, los secretos",
+    "que debe leer.",
+  ];
 }
 
 function readme(project: AgentProject, target: string): string {
@@ -221,18 +309,21 @@ function readme(project: AgentProject, target: string): string {
     "credencial sólo vale dentro de Rayito.",
   ];
   if (target === "agentcore") {
-    lines.push(
-      "",
-      "## Amazon Bedrock AgentCore Runtime",
-      "",
-      `AgentCore espera una imagen \`${EXPORT_PLATFORM}\` que sirva \`/ping\` y \`/invocations\``,
-      `en el puerto ${port}, como esta. Sube la imagen a Amazon ECR y crea el runtime`,
-      "con ella en la consola o con la CLI de AgentCore. AgentCore autentica las",
-      `invocaciones por sí mismo: no fijes \`${SERVICE_TOKEN_ENV}\`, y da al rol del`,
-      "runtime los permisos del modelo que use el agente.",
-    );
+    lines.push(...agentCoreReadmeLines(port));
   }
   return `${lines.join("\n")}\n`;
+}
+
+function containerHost(project: AgentProject): HostConfig {
+  return servableRuntime(project).hostConfig(project.spec, {
+    wiring: directWiring(),
+    workdir: DEFAULT_AGENT_WORKDIR,
+  });
+}
+
+/** `true` si el proyecto es una app con `protocol: "raw"`: no cumple el contrato de AgentCore (`/ping` y `/invocations`), así que no se despliega allí. */
+export function usesRawProtocol(project: AgentProject): boolean {
+  return isRawApp(containerHost(project));
 }
 
 /** El árbol de ficheros del export (ruta relativa -> contenido). Puro salvo
@@ -242,12 +333,8 @@ export async function renderExport(
   target = "docker",
 ): Promise<Map<string, string | Uint8Array>> {
   const runtime = installableRuntime(project);
-  const servable = servableRuntime(project);
   const install = installTarget({ platform: "container" });
-  const host = servable.hostConfig(project.spec, {
-    wiring: directWiring(),
-    workdir: DEFAULT_AGENT_WORKDIR,
-  });
+  const host = containerHost(project);
   if (target === "agentcore" && isRawApp(host)) {
     throw new InvalidArgumentError(
       "una app con protocol: 'raw' no cumple el contrato de AgentCore (/ping + /invocations)",
@@ -263,13 +350,21 @@ export async function renderExport(
   host.files.files.forEach((file, index) => {
     tree.set(`${RUNTIME_FILES_CONTEXT_DIR}/${index}`, file.data);
   });
-  tree.set(HOST_CONFIG_NAME, hostConfigBytes(project, host));
+  tree.set(HOST_CONFIG_NAME, hostConfigBytes(project, host, target));
+  if (needsAwsEnvCredentials(project, target)) {
+    tree.set(AWS_CREDENTIALS_REQUIREMENTS_NAME, AWS_CREDENTIALS_REQUIREMENTS);
+    tree.set(AWS_ENV_CREDENTIALS_SCRIPT_NAME, AWS_ENV_CREDENTIALS_SCRIPT);
+  }
   if (project.source !== undefined) {
     for (const [relative, data] of await appFiles(project.source, project.exclude)) {
       tree.set(`${AGENT_APP_CONTEXT_DIR}/${relative}`, data);
     }
   }
-  tree.set(DOCKERFILE_NAME, dockerfile(project, host, runtime.installSteps(install)));
+  const steps = [
+    ...runtime.installSteps(install),
+    ...(needsAwsEnvCredentials(project, target) ? awsCredentialSteps(install) : []),
+  ];
+  tree.set(DOCKERFILE_NAME, dockerfile(project, host, steps, target));
   tree.set(DOCKERIGNORE_NAME, DOCKERIGNORE_CONTENT);
   tree.set(README_NAME, readme(project, target));
   return new Map([...tree.entries()].sort(([left], [right]) => (left < right ? -1 : 1)));
