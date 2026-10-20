@@ -331,6 +331,7 @@
     "runtimeDescriptionTemplate": "Rayito agent {agentName} ({descriptionMarker})",
     "runtimeLogGroupTemplate": "{runtimeLogGroupPrefix}{runtimeId}-{endpointName}",
     "agentNamePattern": "^[a-z0-9]+(?:[_-][a-z0-9]+)*$",
+    "canonicalAgentNamePattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
     "agentNameMaxLength": 41,
     "iamResourceRules": {
       "secretNamePattern": "^[A-Za-z0-9/_+=.@-]+$",

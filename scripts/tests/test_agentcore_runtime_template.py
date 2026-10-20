@@ -68,7 +68,15 @@ def test_defaults_come_from_limits() -> None:
         == LIMITS["agentcoreBuildTimeoutMinutes"]
     )
     assert parameters["AgentName"]["MaxLength"] == CONSTANTS["agentNameMaxLength"]
-    assert parameters["AgentName"]["AllowedPattern"] == CONSTANTS["agentNamePattern"]
+    assert (
+        parameters["AgentName"]["AllowedPattern"]
+        == CONSTANTS["canonicalAgentNamePattern"]
+    )
+    assert parameters["AgentDisplayName"]["MaxLength"] == CONSTANTS["agentNameMaxLength"]
+    assert (
+        parameters["AgentDisplayName"]["AllowedPattern"]
+        == CONSTANTS["agentNamePattern"]
+    )
     assert (
         parameters["RuntimeName"]["MaxLength"]
         == LIMITS["agentcoreRuntimeNameMaxLength"]

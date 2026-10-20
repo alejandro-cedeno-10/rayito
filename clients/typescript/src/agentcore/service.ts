@@ -124,7 +124,7 @@ export class AgentCoreDeployer {
     const { plan } = request;
     const emit = deployEmitter(request.onStep);
     const account = await this.#ports.identity.accountId();
-    const bucket = await this.#resolveBucket(plan);
+    const bucket = await this.#resolveBucket(plan, account);
     await this.#runtime.check(plan);
     const stack = await this.#applyStack(request, bucket, account, emit);
     const image = await this.#applyImage(request, bucket, account, stack, emit).catch(
@@ -148,12 +148,12 @@ export class AgentCoreDeployer {
     };
   }
 
-  async #resolveBucket(plan: AgentCoreDeployPlan): Promise<string> {
+  async #resolveBucket(plan: AgentCoreDeployPlan, owner: string): Promise<string> {
     const bucket = plan.bucket ?? (await this.#ports.buckets.discover(plan.region));
     if (bucket === undefined) {
       throw new AgentCoreError("no_bucket");
     }
-    const bucketRegion = await this.#ports.source.bucketRegion(bucket);
+    const bucketRegion = await this.#ports.source.bucketRegion(bucket, owner);
     if (bucketRegion === undefined) {
       throw new AgentCoreError("no_bucket");
     }
