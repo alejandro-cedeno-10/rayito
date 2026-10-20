@@ -18,6 +18,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { SdkRuntimeControl } from "../../src/agentcore/aws.js";
+import type { RuntimeDetails } from "../../src/agentcore/models.js";
 import { runtimeNameFor } from "../../src/agentcore/names.js";
 import { AgentCoreFleet, deployAgent, planDeploy } from "../../src/index.js";
 import {
@@ -45,6 +46,9 @@ const ENVIRONMENT_SAMPLE = "python-strands";
 const CODE_SAMPLE = "typescript-express-custom";
 const CODE_FILE = "package.json";
 const ALLOWED = "allowed";
+const READY_STATUS = "READY";
+const SETTLE_ATTEMPTS = 60;
+const SETTLE_POLL_MS = 3000;
 
 const control = new SdkRuntimeControl({ region: REGION });
 
@@ -111,14 +115,14 @@ async function extraChecks(
   const name = agentNameOf(sample);
   if (sample.id === ENVIRONMENT_SAMPLE) {
     const kinds: string[] = [];
-    await deployed(
-      stagedAgent(sample, join(tmpdir(), `agentcore-env-${name}`), { E2E_MARKER: "1" }),
-      kinds,
-    );
+    const changed = stagedAgent(sample, join(tmpdir(), `agentcore-env-${name}`), {
+      E2E_MARKER: "1",
+    });
+    await deployed(changed, kinds);
     expect(kinds).toContain("runtimeUpdate");
     expect(kinds).not.toContain("runtimeCreate");
     expect(await runtimesNamed(name)).toBe(1);
-    await checkNameConflict(name, fleet);
+    await checkNameConflict(changed, fleet);
   }
   if (sample.id === CODE_SAMPLE) {
     touchSource(directory, CODE_FILE, "");
@@ -130,13 +134,31 @@ async function extraChecks(
   }
 }
 
-async function checkNameConflict(name: string, fleet: AgentCoreFleet): Promise<void> {
+async function settledRuntime(
+  runtimeId: string,
+  fallback: RuntimeDetails,
+): Promise<RuntimeDetails> {
+  for (let attempt = 0; attempt < SETTLE_ATTEMPTS; attempt += 1) {
+    const current = await control.getRuntime(runtimeId);
+    if (current === undefined) {
+      return fallback;
+    }
+    if (current.status === READY_STATUS) {
+      return current;
+    }
+    await new Promise((resolve) => setTimeout(resolve, SETTLE_POLL_MS));
+  }
+  return fallback;
+}
+
+async function checkNameConflict(directory: string, fleet: AgentCoreFleet): Promise<void> {
   const details = await control.getRuntime(fleet.runtimeId);
   if (details === undefined) {
     throw new Error("el runtime desplegado ya no existe");
   }
-  const rewrite = (description: string) =>
-    control.updateRuntime({
+  const rewrite = async (description: string) => {
+    const current = await settledRuntime(fleet.runtimeId, details);
+    return control.updateRuntime({
       runtimeId: details.runtimeId,
       containerUri: details.containerUri,
       roleArn: details.roleArn,
@@ -145,15 +167,17 @@ async function checkNameConflict(name: string, fleet: AgentCoreFleet): Promise<v
       maxLifetime: details.maxLifetime,
       description,
       requireMMDSV2: true,
-      baseVersion: details.runtimeVersion,
+      baseVersion: current.runtimeVersion,
     });
+  };
   await rewrite("creado a mano");
   try {
-    await expect(deployed(join(tmpdir(), `agentcore-env-${name}`), [])).rejects.toMatchObject({
+    await expect(deployed(directory, [])).rejects.toMatchObject({
       code: "name_conflict",
     });
   } finally {
     await rewrite(details.description);
+    await settledRuntime(fleet.runtimeId, details);
   }
 }
 
