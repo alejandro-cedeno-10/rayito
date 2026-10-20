@@ -82,12 +82,18 @@ def plan_agentcore(
     agentcore: AgentCoreOptions | None = None,
     environ: Mapping[str, str] | None = None,
     cli_flags: Collection[str] = (),
+    adjust: Callable[[AgentProject], AgentProject] | None = None,
 ) -> PlannedDeploy:
     """El plan de desplegar el proyecto de `path` en AgentCore, sin llamar a
     AWS: lee ficheros locales y la configuración local de boto3, no ejecuta el
-    código del agente ni crea ningún cliente."""
+    código del agente ni crea ningún cliente. `adjust` cambia el proyecto
+    detectado antes de planificar (lo que la CLI hace con sus banderas) y
+    `cli_flags` son las banderas de MicroVMs que se pasaron, para
+    `option_not_supported`."""
     chosen = options or AgentDeployOptions()
     detected, report = project_for(path, project, overrides, region)
+    if adjust is not None:
+        detected = adjust(detected)
     variables = os.environ if environ is None else environ
     effective = resolved_region(region, detected, session, variables)
     trees: list[Mapping[str, bytes]] = []
