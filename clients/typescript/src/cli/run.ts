@@ -8,12 +8,13 @@
 import type { Logger } from "../logger.js";
 import { VERSION } from "../version.js";
 import { SdkAgentProjectTools } from "./agent-project-adapter.js";
+import { SdkAgentCoreTools } from "./agentcore-adapter.js";
 import type { CommandContext } from "./command.js";
 import { CliConsole, type Terminal } from "./console.js";
 import { EXIT_OK, EXIT_USAGE } from "./exit-codes.js";
 import { translateFailure, UsageError } from "./failures.js";
 import { helpFor } from "./help.js";
-import type { AgentProjectTools } from "./ops-ports.js";
+import type { AgentCoreTools, AgentProjectTools } from "./ops-ports.js";
 import { type CommandTree, parseInvocation } from "./parse.js";
 import { COMMAND_TREE } from "./registry.js";
 import type { CliServices, ServicesFactory } from "./services.js";
@@ -34,6 +35,8 @@ export interface CliRuntime {
   readonly openUrl?: ((url: string) => Promise<void>) | undefined;
   /** Sin él, `rayito agent` usa el SDK; los tests lo sustituyen por dobles. */
   readonly agentProjects?: AgentProjectTools | undefined;
+  /** Sin él, `rayito agent ... --target agentcore` usa el SDK; los tests lo sustituyen por dobles. */
+  readonly agentcore?: AgentCoreTools | undefined;
 }
 
 /** El logger de `--verbose`: INFO y más, a stderr, sólo con ids, estados y códigos. */
@@ -91,6 +94,7 @@ export async function runCli(
       openUrl: runtime.openUrl ?? (async () => undefined),
       services: servicesOf,
       agentProjects: runtime.agentProjects ?? new SdkAgentProjectTools(servicesOf),
+      agentcore: runtime.agentcore ?? new SdkAgentCoreTools(servicesOf),
     };
     return (await command.run(context)) ?? EXIT_OK;
   } catch (error) {

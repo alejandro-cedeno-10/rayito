@@ -8,6 +8,14 @@
 
 import type { AgentEvent, AgentResult } from "../agent/events.js";
 import type { AgentTemplate } from "../agent/template.js";
+import type {
+  AgentCoreDeleteResult,
+  AgentCoreDeployPlan,
+  AgentCoreListItem,
+  AgentCoreOptions,
+  AgentCoreStatus,
+  AgentCoreStep,
+} from "../agentcore/models.js";
 import type { CustomDomain, DeployCustomDomainOptions } from "../custom-domain/service.js";
 import type { LifecycleEvents } from "../lifecycle-events/service.js";
 import type { StackStatus } from "../stacks/model.js";
@@ -232,4 +240,72 @@ export interface AgentProjectTools {
   connectFleet(name: string, accessToken: string | undefined): Promise<FleetClient>;
   /** `terminate-microvm`: no necesita el access token. `false` si el sandbox ya no existe. */
   stop(sandboxId: string): Promise<boolean>;
+}
+
+/** Lo que `rayito agent deploy --target agentcore` pide al SDK: el proyecto, las banderas, `--tag` y las opciones de AgentCore. `region` es el `--region` global (el plan no resuelve la región con ninguna llamada a AWS). */
+export interface AgentCoreDeployRequest {
+  readonly path: string;
+  readonly overrides: AgentDetectOverrides;
+  readonly flags: AgentDeployFlags;
+  readonly settings: AgentDeploySettings;
+  readonly agentcore: AgentCoreOptions;
+  readonly tokenFile: string | undefined;
+  readonly region: string | undefined;
+  /** El entorno del proceso: de él salen el bucket (`RAYITO_BUCKET`) y la región. */
+  readonly environ: Readonly<Record<string, string | undefined>>;
+}
+
+/** El resultado de desplegar en AgentCore: lo que `agent deploy` imprime. */
+export interface AgentCoreDeployedView {
+  readonly name: string;
+  readonly region: string;
+  readonly runtimeName: string;
+  readonly runtimeId: string;
+  readonly runtimeArn: string;
+  readonly runtimeVersion: string;
+  readonly status: string;
+  readonly imageUri: string;
+  readonly stackName: string;
+  readonly logGroup: string;
+  readonly steps: readonly AgentCoreStep[];
+}
+
+/** El plan calculado sin AWS y, para quien lo confirme, cómo aplicarlo. */
+export interface AgentCorePlanView {
+  readonly report: unknown;
+  readonly plan: AgentCoreDeployPlan;
+  apply(): Promise<AgentCoreDeployedView>;
+}
+
+/** Un agente de AgentCore reconectado: lo que la CLI usa de `AgentCoreFleet`. */
+export interface AgentCoreClient {
+  invoke(prompt: string, options: { readonly sessionId: string | undefined }): Promise<AgentResult>;
+  stream(
+    prompt: string,
+    options: { readonly sessionId: string | undefined },
+  ): Promise<AsyncIterable<AgentEvent>>;
+  status(): Promise<AgentCoreStatus>;
+  stopSession(sessionId: string): Promise<boolean>;
+}
+
+/** Qué borraría `rayito agent delete`: lo que existe de ese agente en la región. */
+export interface AgentCoreDeletePreview {
+  readonly region: string;
+  readonly runtimeName: string;
+  readonly runtimeId: string | undefined;
+  readonly stackName: string;
+  readonly stackExists: boolean;
+  readonly logGroup: string | undefined;
+}
+
+/** `rayito agent ... --target agentcore` sobre el SDK; `plan` no llama a AWS. */
+export interface AgentCoreTools {
+  plan(request: AgentCoreDeployRequest): Promise<AgentCorePlanView>;
+  connect(name: string): Promise<AgentCoreClient>;
+  list(): Promise<{ readonly region: string; readonly agents: readonly AgentCoreListItem[] }>;
+  previewDelete(name: string): Promise<AgentCoreDeletePreview>;
+  delete(
+    name: string,
+    onStep: (step: { readonly kind: string; readonly detail: string }) => void,
+  ): Promise<AgentCoreDeleteResult>;
 }
