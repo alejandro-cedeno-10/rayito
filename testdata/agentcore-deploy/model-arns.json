@@ -163,7 +163,7 @@
     {
       "name": "ARN de secreto de otra cuenta",
       "kind": "secret",
-      "value": "arn:aws:secretsmanager:us-east-1:210987654321:secret:prod/db-AbCdEf",
+      "value": "arn:aws:secretsmanager:us-east-1:111122223333:secret:prod/db-AbCdEf",
       "region": "us-east-1",
       "account": "123456789012",
       "partition": "aws"
@@ -203,7 +203,7 @@
     {
       "name": "ARN de perfil de otra cuenta",
       "kind": "model",
-      "value": "arn:aws:bedrock:us-east-1:210987654321:inference-profile/us.amazon.nova-lite-v1:0",
+      "value": "arn:aws:bedrock:us-east-1:111122223333:inference-profile/us.amazon.nova-lite-v1:0",
       "region": "us-east-1",
       "account": "123456789012",
       "partition": "aws"
