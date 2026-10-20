@@ -1,0 +1,305 @@
+{
+  "description": "Contrato compartido de los constructos CDK de Rayito (agentcore-cdk, ADR-032): superficie pública de Python (rayito.cdk) y TypeScript (rayito/cdk), ids de constructo (fijan los logical ids en los dos lenguajes), marcas de propiedad, errores y mensajes, rechazos de la CLI y reglas de normalización de las plantillas sintetizadas de cases/. Ningún valor es una cuenta, un bucket ni una etiqueta reales: la cuenta de los casos es la ficticia 123456789012.",
+  "floors": {
+    "awsCdkLib": "2.261.0",
+    "constructs": "10.5.0",
+    "why": "CfnMicrovmImage aparece en aws-cdk-lib 2.261.0 (CfnRuntime en 2.217.0, la L2 de AgentCore en 2.255.0); su peer es constructs ^10.5.0 (AWS_API_NOTES.md Q184). Nunca el paquete alpha."
+  },
+  "packaging": {
+    "python": {
+      "module": "rayito.cdk",
+      "extra": "cdk",
+      "extraRequires": [
+        "aws-cdk-lib>=2.261.0,<3",
+        "constructs>=10.5.0,<11"
+      ],
+      "lazyImport": "require_module(\"aws_cdk\", extra=\"cdk\", feature=\"rayito.cdk\")"
+    },
+    "typescript": {
+      "subpath": "rayito/cdk",
+      "entry": "src/cdk/index.ts",
+      "optionalPeers": {
+        "aws-cdk-lib": "^2.261.0",
+        "constructs": "^10.5.0"
+      }
+    },
+    "neverImportedBy": [
+      "rayito (raíz)",
+      "rayito.cli",
+      "rayito.mcp",
+      "rayito/e2b",
+      "dist/index*",
+      "dist/e2b*",
+      "dist/cli*",
+      "dist/mcp*"
+    ]
+  },
+  "constants": {
+    "ownershipSuffix": "+cdk",
+    "agentcoreDescriptionMarker": "rayito.agentcore/1+cdk",
+    "runtimeDescriptionTemplate": "Rayito agent {name} (rayito.agentcore/1+cdk)",
+    "microvmImageDescriptionTemplate": "Rayito image {name} (rayito.microvm-image/1+cdk)",
+    "managedByTag": {
+      "key": "rayito:managed-by",
+      "value": "rayito-cdk"
+    },
+    "fixedTagKeys": [
+      "rayito:component",
+      "rayito:managed-by",
+      "rayito:sdk-version"
+    ],
+    "componentTagValues": {
+      "RayitoAgent": "agentcore-runtime",
+      "RayitoMicrovmImage": "microvm-image"
+    },
+    "reservedImageNamePrefix": "rayito-base",
+    "imageNamePattern": "^[a-zA-Z0-9-_]+$",
+    "imageNameMaxLength": 64,
+    "imageLogGroupTemplate": "/rayito/{name}",
+    "imageLogRetentionDays": 14,
+    "managedBaseImageArnTemplate": "arn:aws:lambda:{region}:aws:microvm-image:al2023-1",
+    "handler": {
+      "python": "clients/python/src/rayito/_stacks/_artifacts/agentcore-cdk-handler.zip",
+      "typescript": "clients/typescript/src/stacks/templates/agentcore-cdk-handler.gen.ts (ARTIFACT_BASE64)",
+      "source": "infra/agentcore-cdk-handler.py",
+      "assetFileName": "agentcore-cdk-handler.zip",
+      "runtime": "python3.13",
+      "onEvent": "index.on_event",
+      "isComplete": "index.is_complete",
+      "timeoutSeconds": 60,
+      "queryIntervalSeconds": 30,
+      "totalTimeoutMarginMinutes": 10
+    },
+    "customResourceTypes": {
+      "imageBuild": "Custom::RayitoImageBuild",
+      "runtimeMmds": "Custom::RayitoRuntimeMmds"
+    },
+    "customResourceProperties": {
+      "Custom::RayitoImageBuild": [
+        "ProjectName",
+        "RepositoryName",
+        "ImageTag",
+        "SourceLocation",
+        "AgentBaseImage",
+        "MaxImageBytes"
+      ],
+      "Custom::RayitoRuntimeMmds": [
+        "AgentRuntimeId",
+        "AgentRuntimeVersion"
+      ]
+    },
+    "runtimeEnvironmentValueMaxChars": 2048,
+    "runtimeEnvironmentValueRule": "RayitoAgent rechaza en la síntesis, con el env_invalid del plan, un valor de entorno de más de 2048 caracteres (límite del esquema de AWS::BedrockAgentCore::Runtime, Q181), aunque la API admita 5000"
+  },
+  "constructIds": {
+    "RayitoAgent": {
+      "Build": "NestedStack con infra/agentcore-runtime.yaml (cloudformation_include.CfnInclude id \"Template\")",
+      "Source": "s3_assets.Asset del source_zip (sólo codeBuild)",
+      "Image": "ecr_assets.DockerImageAsset (sólo localDocker)",
+      "Handler": "las dos lambda.Function del Provider cuelgan de aquí: \"OnEvent\" e \"IsComplete\"",
+      "Provider": "custom_resources.Provider",
+      "ImageBuild": "CustomResource Custom::RayitoImageBuild (sólo codeBuild)",
+      "Runtime": "bedrockagentcore.CfnRuntime",
+      "Mmds": "CustomResource Custom::RayitoRuntimeMmds"
+    },
+    "RayitoMicrovmImage": {
+      "Artifact": "s3_assets.Asset del zip (uno para todos los tamaños)",
+      "BuildRole": "iam.Role del build de la imagen",
+      "LogGroup": "logs.LogGroup /rayito/<name> (la base); \"LogGroup<SIZE>\" para cada tamaño, con SIZE en mayúsculas",
+      "Image": "lambda.CfnMicrovmImage de la base; \"Image<SIZE>\" para cada tamaño"
+    }
+  },
+  "sdk": {
+    "python": {
+      "exports": [
+        "RayitoAgent",
+        "AgentImageBuild",
+        "RayitoMicrovmImage",
+        "MicrovmImageArtifact",
+        "RayitoCdkException"
+      ],
+      "RayitoAgent": {
+        "signature": "RayitoAgent(scope, id, *, project, name=None, bedrock_models=(), readable_secrets=(), idle_session_timeout_seconds=None, max_session_lifetime_seconds=None, tags=None, build=None, export_outputs=False)",
+        "attributes": [
+          "agent_name",
+          "runtime_name",
+          "runtime_arn",
+          "runtime_id",
+          "runtime_version",
+          "role_arn",
+          "repository_uri",
+          "image_uri",
+          "runtime"
+        ],
+        "methods": [
+          "grant_invoke(grantee) -> iam.Grant"
+        ]
+      },
+      "AgentImageBuild": [
+        "AgentImageBuild.code_build(*, timeout_minutes=None)",
+        "AgentImageBuild.local_docker()"
+      ],
+      "RayitoMicrovmImage": {
+        "signature": "RayitoMicrovmImage(scope, id, *, name, artifact, base_image_version, variant='full', with_efs=False, os_capabilities=False, memory_mib=None, sizes=(), allowed_mount_buckets=(), environment=None, tags=None)",
+        "attributes": [
+          "image_name",
+          "image_arn",
+          "latest_active_image_version",
+          "build_role_arn",
+          "log_group_name",
+          "size_image_arns"
+        ]
+      },
+      "MicrovmImageArtifact": [
+        "MicrovmImageArtifact.from_file(path, *, sha256=None)",
+        "MicrovmImageArtifact.download_release(*, version=None, directory=None)"
+      ]
+    },
+    "typescript": {
+      "exports": [
+        "RayitoAgent",
+        "AgentImageBuild",
+        "RayitoMicrovmImage",
+        "MicrovmImageArtifact",
+        "RayitoCdkError",
+        "type RayitoAgentProps",
+        "type CodeBuildOptions",
+        "type RayitoMicrovmImageProps",
+        "type FromFileOptions",
+        "type DownloadReleaseOptions"
+      ],
+      "RayitoAgent": {
+        "signature": "new RayitoAgent(scope, id, { project, name?, bedrockModels?, readableSecrets?, idleSessionTimeoutSeconds?, maxSessionLifetimeSeconds?, tags?, build?, exportOutputs? })",
+        "attributes": [
+          "agentName",
+          "runtimeName",
+          "runtimeArn",
+          "runtimeId",
+          "runtimeVersion",
+          "roleArn",
+          "repositoryUri",
+          "imageUri",
+          "runtime"
+        ],
+        "methods": [
+          "grantInvoke(grantee): iam.Grant"
+        ]
+      },
+      "AgentImageBuild": [
+        "AgentImageBuild.codeBuild({ timeoutMinutes? })",
+        "AgentImageBuild.localDocker()"
+      ],
+      "RayitoMicrovmImage": {
+        "signature": "new RayitoMicrovmImage(scope, id, { name, artifact, baseImageVersion, variant?, withEfs?, osCapabilities?, memoryMib?, sizes?, allowedMountBuckets?, environment?, tags? })",
+        "attributes": [
+          "imageName",
+          "imageArn",
+          "latestActiveImageVersion",
+          "buildRoleArn",
+          "logGroupName",
+          "sizeImageArns"
+        ]
+      },
+      "MicrovmImageArtifact": [
+        "MicrovmImageArtifact.fromFile(path, { sha256? })",
+        "await MicrovmImageArtifact.downloadRelease({ version?, directory? })"
+      ]
+    },
+    "propNames": {
+      "project": "project",
+      "name": "name",
+      "bedrockModels": "bedrock_models",
+      "readableSecrets": "readable_secrets",
+      "idleSessionTimeoutSeconds": "idle_session_timeout_seconds",
+      "maxSessionLifetimeSeconds": "max_session_lifetime_seconds",
+      "tags": "tags",
+      "build": "build",
+      "exportOutputs": "export_outputs",
+      "timeoutMinutes": "timeout_minutes",
+      "artifact": "artifact",
+      "baseImageVersion": "base_image_version",
+      "variant": "variant",
+      "withEfs": "with_efs",
+      "osCapabilities": "os_capabilities",
+      "memoryMib": "memory_mib",
+      "sizes": "sizes",
+      "allowedMountBuckets": "allowed_mount_buckets",
+      "environment": "environment",
+      "sha256": "sha256",
+      "version": "version",
+      "directory": "directory"
+    }
+  },
+  "errors": {
+    "exception": {
+      "python": "rayito.cdk.RayitoCdkException (code, message)",
+      "typescript": "RayitoCdkError (code, message)"
+    },
+    "agentPlanErrors": "Los errores del plan de AgentCore (name_invalid, tags_invalid, lifecycle_invalid, lifecycle_order, env_invalid, iam_resource_invalid, unsupported_region, provider_unsupported, network_policy_unsupported) salen tal cual como AgentCoreException / AgentCoreError, con los mensajes de testdata/agentcore-deploy/contract.json.",
+    "messages": {
+      "region_unresolved": "el constructo {construct} necesita una región concreta en el stack (env.region): con un stack sin entorno la región es un token y no se puede validar",
+      "account_invalid": "la cuenta {account} del stack no es un id de 12 dígitos",
+      "image_name_invalid": "el nombre de imagen {name} no vale: de 1 a {max} caracteres de letras, dígitos, - o _ (con el sufijo de tamaño incluido)",
+      "image_name_reserved": "el nombre de imagen {name} está reservado para rayito setup y rayito image publish ({prefix}*): elige otro",
+      "artifact_not_found": "no existe el artefacto {path}",
+      "artifact_checksum_mismatch": "el sha256 de {path} no coincide con el esperado",
+      "artifact_variant_mismatch": "el artefacto es de la variante {found} y se pidió {variant}",
+      "artifact_efs_mismatch": "el artefacto {state} el marcador de EFS y with_efs es {withEfs}",
+      "option_invalid": "{option}: {reason}",
+      "release_download_failed": "no se pudo descargar {asset} de la release {release}: {reason}"
+    }
+  },
+  "cliRefusals": {
+    "agentDeploy": {
+      "code": "name_conflict",
+      "message": "el agente {name} lo gestiona CloudFormation (CDK, stack {stackHint}): despliégalo con cdk deploy y bórralo con cdk destroy",
+      "appliesTo": [
+        "rayito agent deploy --target agentcore",
+        "rayito agent delete --target agentcore",
+        "deploy_agent(target=\"agentcore\")",
+        "deployAgent({ target: \"agentcore\" })"
+      ],
+      "readOnlyStillWorks": [
+        "rayito agent list --target agentcore",
+        "rayito agent status --target agentcore",
+        "rayito agent invoke --target agentcore",
+        "AgentCoreFleet.connect"
+      ]
+    },
+    "imagePublish": {
+      "message": "la imagen {name} la gestiona CloudFormation (CDK): cámbiala con cdk deploy",
+      "detection": "GetMicrovmImage.tags[\"rayito:managed-by\"] == \"rayito-cdk\"",
+      "appliesTo": [
+        "rayito image publish",
+        "rayito image prune"
+      ]
+    }
+  },
+  "normalisation": {
+    "description": "Antes de comparar con expected.template.json, cada SDK normaliza su plantilla sintetizada (y la de cada nested stack) con estas reglas, en este orden. scripts/gen_cdk_vectors.py implementa la referencia (normalise_template).",
+    "rules": [
+      "Quitar Resources.CDKMetadata, Conditions.CDKMetadataAvailable, Parameters.BootstrapVersion y Rules.CheckBootstrapVersion.",
+      "Quitar la clave Metadata de cada recurso (aws:cdk:path y aws:asset:* dependen del directorio de salida).",
+      "Sustituir cada secuencia de 64 hex en minúsculas (hash de asset) por <ASSET_HASH>.",
+      "Sustituir el calificador de bootstrap hnb659fds por <QUALIFIER>.",
+      "Sustituir el valor de la etiqueta rayito:sdk-version (en Tags como lista Key/Value o como mapa) por <SDK_VERSION>.",
+      "Serializar con claves ordenadas, sangría de 2 espacios, ensure_ascii=false y salto de línea final."
+    ],
+    "output": "expected.template.json = {\"root\": <plantilla del stack>, \"nested\": {\"<logicalId del AWS::CloudFormation::Stack>\": <plantilla>}}"
+  },
+  "caseFormat": {
+    "inputFile": "cases/<case>/input.json",
+    "fields": {
+      "construct": "RayitoAgent | RayitoMicrovmImage",
+      "stack": "{account, region}; region null = stack sin entorno",
+      "id": "id del constructo dentro del stack",
+      "props": "props en camelCase de TypeScript; Python las traduce con sdk.propNames",
+      "project": "ruta a un proyecto de testdata/agent-samples (relativa a testdata/), para RayitoAgent",
+      "build": "\"codeBuild\" | {\"codeBuild\": {timeoutMinutes}} | \"localDocker\"",
+      "artifact": "{\"fixture\": \"<dir de fixtures/>\", \"sha256\"?: \"...\", \"variant\"?: ...}: el test comprime el directorio en un zip temporal con entradas ordenadas, sin compresión (stored), fecha 1980-01-01 y modo 0644, y lo pasa a MicrovmImageArtifact.fromFile / from_file; el hash queda normalizado",
+      "expected": "\"template\" (comparar con expected.template.json) o {\"error\": {\"code\", \"exception\", \"fields\"}}"
+    },
+    "stackName": "RayitoCdkCase",
+    "appContext": "{\"aws:cdk:enable-path-metadata\": false, \"aws:cdk:enable-asset-metadata\": false, \"aws:cdk:version-reporting\": false}"
+  }
+}

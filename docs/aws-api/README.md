@@ -11,6 +11,7 @@ parámetros) considera este directorio parte de `AWS_API_NOTES.md`.
 | `service-2.json` | Modelo botocore `lambda-microvms/2025-09-09/service-2.json` empaquetado en la CLI |
 | `paginators-1.json` | Paginadores del mismo modelo |
 | `model_summary.md` | Resumen generado del modelo: cada operación con shapes de entrada/salida, enums y límites |
+| `bedrock-agentcore-control/2023-06-05/*.json.gz` | Modelo y reglas de endpoint de `bedrock-agentcore-control` copiados sin cambios de botocore 1.43.103; los empaqueta `scripts/gen_stack_assets.py` en el manejador de los constructos CDK (ADR-032, `AWS_API_NOTES.md` Q183) |
 
 Para refrescar tras actualizar la CLI:
 
