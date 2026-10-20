@@ -46,11 +46,6 @@ def uses_credential_process(runtime: Any) -> bool:
     return name in AGENTCORE_CREDENTIAL_PROCESS_RUNTIMES
 
 
-def needs_helper(runtime: Any) -> bool:
-    """Si la imagen necesita la herramienta que lee las credenciales del rol."""
-    return uses_env_credentials(runtime) or uses_credential_process(runtime)
-
-
 def config_text(python: str, script: str) -> str:
     """El `AWS_CONFIG_FILE`: un perfil cuyas credenciales salen de la
     herramienta (`contract.json`, `credentialProcess.configTemplate`)."""
