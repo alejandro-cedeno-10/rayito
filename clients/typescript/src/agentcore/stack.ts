@@ -16,7 +16,6 @@ import {
 import type { StackComponent } from "../stacks/model.js";
 
 export const AGENTCORE_STACK_COMPONENT_NAME = "agentcore-runtime";
-export const AGENTCORE_STACK_TEMPLATE_PATH = "infra/agentcore-runtime.yaml";
 /** Los roles de la plantilla no llevan nombre fijo: hace falta `CAPABILITY_IAM`. */
 export const AGENTCORE_STACK_CAPABILITIES: readonly string[] = ["CAPABILITY_IAM"];
 /** Separador de `BedrockModelArns` y `ReadableSecretArns` (`CommaDelimitedList`). */

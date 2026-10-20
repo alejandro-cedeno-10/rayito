@@ -85,7 +85,7 @@ export class RuntimeApplier {
         resource: "runtime",
         name: plan.runtimeName,
         action: executed.action,
-        status: final.status,
+        status: listed?.status ?? null,
       },
       details: final,
     };

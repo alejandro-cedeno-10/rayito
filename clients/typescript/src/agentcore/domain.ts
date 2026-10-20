@@ -19,7 +19,7 @@ import { AGENT_FLEET_WARM_READY_TIMEOUT_MS } from "../agent/fleet-base.js";
 import { type AgentProject, ServeOptions } from "../agent/project.js";
 import { templateName } from "../agent/project-service.js";
 import { ScalingOptions } from "../agent/scaling-domain.js";
-import { AgentCoreError } from "../errors.js";
+import { AgentCoreError, InvalidArgumentError } from "../errors.js";
 import {
   AGENT_MIN_MEMORY_MIB,
   AGENTCORE_ENV_CREDENTIAL_ADAPTERS,
@@ -54,6 +54,7 @@ import {
 } from "./names.js";
 
 /** Las claves de `tags` de `CreateAgentRuntime` (`AWS_API_NOTES.md`, «Despliegue en AgentCore Runtime»): clave de 1 a 128 caracteres, valor de 0 a 256. */
+export const TAG_KEY_MIN_CHARS = 1;
 export const TAG_KEY_MAX_CHARS = 128;
 export const TAG_VALUE_MAX_CHARS = 256;
 export const TAG_CHARACTERS = /^[a-zA-Z0-9\s._:/=+@-]*$/;
@@ -296,7 +297,9 @@ function stringList(value: readonly string[] | undefined, label: string): readon
     return [];
   }
   if (!Array.isArray(value) || !value.every((item) => typeof item === "string" && item !== "")) {
-    throw new TypeError(`AgentCoreOptions.${label} debe ser una lista de cadenas no vacías`);
+    throw new InvalidArgumentError(
+      `AgentCoreOptions.${label} debe ser una lista de cadenas no vacías`,
+    );
   }
   return [...new Set(value)];
 }
@@ -339,7 +342,7 @@ export function validateTags(tags: Readonly<Record<string, string>>): void {
   const entries = Object.entries(tags);
   const valid = entries.every(
     ([key, value]) =>
-      key.length >= 1 &&
+      key.length >= TAG_KEY_MIN_CHARS &&
       key.length <= TAG_KEY_MAX_CHARS &&
       value.length <= TAG_VALUE_MAX_CHARS &&
       TAG_CHARACTERS.test(key) &&

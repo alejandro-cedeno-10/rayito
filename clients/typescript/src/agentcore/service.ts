@@ -93,6 +93,9 @@ export const BUILD_PHASE_LINE = "build {buildId}: fase {phase}";
 /** El estado de un build correcto cuya etiqueta no llegó al repositorio. */
 export const BUILD_WITHOUT_IMAGE_STATUS = "SUCCEEDED_WITHOUT_IMAGE";
 
+/** Lo que se hizo con la pila: crearla, actualizarla o, si CloudFormation respondió «No updates are to be performed», reutilizarla. */
+type StackWrite = "create" | "update" | "reuse";
+
 /** El estado que cuenta `stack_failed` cuando la pila no tiene el repositorio o el proyecto de CodeBuild que la plantilla crea. */
 export const STACK_INCOMPLETE_STATUS = "INCOMPLETE";
 
@@ -183,19 +186,20 @@ export class AgentCoreDeployer {
   ): Promise<{
     readonly step: AgentCoreStep;
     readonly outputs: StackOutputs;
-    readonly action: StackAction;
+    readonly created: boolean;
   }> {
     const { plan } = request;
     const observed = await this.#observeStack(plan.stackName);
-    const action = decideStack(observed, plan.name);
-    let reported: string = action;
+    const first = decideStack(observed, plan.name);
+    if (first === "create" && request.buildImage === false) {
+      throw new AgentCoreError("image_missing", {
+        imageTag: plan.imageTag,
+        repositoryName: plan.repositoryName,
+      });
+    }
+    let written: StackWrite;
     try {
-      if (action === "wait") {
-        emit("stackWait", { stackName: plan.stackName, status: observed.status ?? "" });
-        await this.#waitStack(plan.stackName);
-      } else {
-        reported = await this.#writeStack(request, bucket, account, action, emit);
-      }
+      written = await this.#settleStack(request, { observed, first }, { bucket, account }, emit);
     } catch (error) {
       throw await this.#stackFailure(plan.stackName, error);
     }
@@ -208,16 +212,36 @@ export class AgentCoreDeployer {
     }
     const outputs = requireStackOutputs(ready);
     emit("stackReady", { stackName: plan.stackName });
+    const action = first === "wait" ? "wait" : written;
     return {
       step: {
         resource: "stack",
         name: plan.stackName,
-        action: reported,
-        status: ready.status ?? null,
+        action,
+        status: first === "create" ? null : (observed.status ?? null),
       },
       outputs,
-      action,
+      created: written === "create",
     };
+  }
+
+  /** Espera la operación en curso, si la hay, y escribe la pila (crear, actualizar o, si CloudFormation no cambió nada, reutilizar). */
+  async #settleStack(
+    request: DeployRequest,
+    seen: { readonly observed: StackObservation; readonly first: StackAction },
+    target: { readonly bucket: string; readonly account: string },
+    emit: Emit,
+  ): Promise<StackWrite> {
+    const { plan } = request;
+    let current = seen.observed;
+    let action = seen.first;
+    while (action === "wait") {
+      emit("stackWait", { stackName: plan.stackName, status: current.status ?? "" });
+      await this.#waitStack(plan.stackName);
+      current = await this.#observeStack(plan.stackName);
+      action = decideStack(current, plan.name);
+    }
+    return this.#writeStack(request, target.bucket, target.account, action, emit);
   }
 
   async #writeStack(
@@ -226,7 +250,7 @@ export class AgentCoreDeployer {
     account: string,
     action: "create" | "update",
     emit: Emit,
-  ): Promise<string> {
+  ): Promise<StackWrite> {
     const { plan } = request;
     const stacks = this.#ports.stacks;
     const options = {
@@ -289,15 +313,14 @@ export class AgentCoreDeployer {
     request: DeployRequest,
     bucket: string,
     account: string,
-    stack: { readonly outputs: StackOutputs; readonly action: StackAction },
+    stack: { readonly outputs: StackOutputs; readonly created: boolean },
     emit: Emit,
   ): Promise<AgentCoreStep> {
     const { plan } = request;
     const { outputs } = stack;
-    const observed: ImageObservation | undefined =
-      stack.action === "create"
-        ? { exists: false, sizeBytes: undefined }
-        : await this.#ports.registry.describeImage(outputs.repositoryName, plan.imageTag);
+    const observed: ImageObservation | undefined = stack.created
+      ? { exists: false, sizeBytes: undefined }
+      : await this.#ports.registry.describeImage(outputs.repositoryName, plan.imageTag);
     const action = decideImage({
       image: observed,
       buildImage: request.buildImage,

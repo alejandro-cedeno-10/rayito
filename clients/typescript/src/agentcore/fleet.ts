@@ -1,39 +1,7 @@
 /**
- * `AgentCoreFleet`: un agente desplegado en Amazon Bedrock AgentCore Runtime
- * (ADR-031, D7). Tiene la misma API de `invoke()` y `stream()` y la misma
- * semántica de sesiones que `AgentFleet`: el resultado lleva el id de sesión
- * que hay que pasar para seguir la conversación, y los mismos decodificadores
- * leen la respuesta del host. La llamada es `InvokeAgentRuntime` firmada con
- * SigV4 con las credenciales de quien llama; el id de sesión viaja sólo en la
- * cabecera.
- *
- * Construirlo no llama a AWS: `connect()` lee el runtime por nombre y cada
- * `invoke()`, `stream()`, `status()`, `stopSession()` o `delete()` es una
- * llamada a tu cuenta.
- *
- * Coste y activación
- * -------------------
- * Activa: crearlo con `deployAgent(path, { target: "agentcore" })` o
- *     reconectarlo con `AgentCoreFleet.connect(nombre)`; cada `invoke()` o
- *     `stream()` abre (o continúa) una sesión de AgentCore, que corre en su
- *     propia microVM.
- * Recursos y llamadas AWS: `InvokeAgentRuntime`, `StopRuntimeSession`,
- *     `ListAgentRuntimes` y `GetAgentRuntime`; `delete()` borra el runtime, la
- *     pila `rayito-agentcore-<nombre>` y el grupo de logs del runtime.
- * Coste aproximado: AgentCore cobra por uso real, sin sesiones no hay cómputo:
- *     $0,0895 por vCPU-hora y $0,00945 por GB-hora (plataforma V1, us-east-1,
- *     consultado 2026-10-19 en https://aws.amazon.com/bedrock/agentcore/pricing/);
- *     el modelo lo cobra su proveedor.
- * IAM: `bedrock-agentcore:InvokeAgentRuntime` y `StopRuntimeSession` sobre el
- *     runtime, `bedrock-agentcore:ListAgentRuntimes` y `GetAgentRuntime`, y para
- *     `delete()` los de `AgentCoreDeleter`.
- * Cómo apagarla: `stopSession()` termina la microVM de una sesión;
- *     `delete()` quita el agente y deja de costar su imagen; sin sesiones no
- *     hay coste de cómputo.
- * Ejemplo:
- *   const fleet = await AgentCoreFleet.connect("mi-agente", { region: "us-east-1" });
- *   (await fleet.invoke("Resume el README.")).text;
- *   await fleet.stopSession(sessionId);
+ * `AgentCoreFleet`, `AgentCoreFleetStream` y `connectWith` (ADR-031, D7): el
+ * cliente de un agente desplegado en Amazon Bedrock AgentCore Runtime, con la
+ * misma API de `invoke()` y `stream()` que `AgentFleet`.
  */
 
 import { Readable } from "node:stream";
@@ -133,6 +101,43 @@ export class AgentCoreFleetStream implements AsyncIterable<AgentEvent> {
   }
 }
 
+/**
+ * Un agente desplegado en Amazon Bedrock AgentCore Runtime
+ * (ADR-031, D7). Tiene la misma API de `invoke()` y `stream()` y la misma
+ * semántica de sesiones que `AgentFleet`: el resultado lleva el id de sesión
+ * que hay que pasar para seguir la conversación, y los mismos decodificadores
+ * leen la respuesta del host. La llamada es `InvokeAgentRuntime` firmada con
+ * SigV4 con las credenciales de quien llama; el id de sesión viaja sólo en la
+ * cabecera.
+ *
+ * Construirlo no llama a AWS: `connect()` lee el runtime por nombre y cada
+ * `invoke()`, `stream()`, `status()`, `stopSession()` o `delete()` es una
+ * llamada a tu cuenta.
+ *
+ * Coste y activación
+ * -------------------
+ * Activa: crearlo con `deployAgent(path, { target: "agentcore" })` o
+ *     reconectarlo con `AgentCoreFleet.connect(nombre)`; cada `invoke()` o
+ *     `stream()` abre (o continúa) una sesión de AgentCore, que corre en su
+ *     propia microVM.
+ * Recursos y llamadas AWS: `InvokeAgentRuntime`, `StopRuntimeSession`,
+ *     `ListAgentRuntimes` y `GetAgentRuntime`; `delete()` borra el runtime, la
+ *     pila `rayito-agentcore-<nombre>` y el grupo de logs del runtime.
+ * Coste aproximado: AgentCore cobra por uso real, sin sesiones no hay cómputo:
+ *     $0,0895 por vCPU-hora y $0,00945 por GB-hora (plataforma V1, us-east-1,
+ *     consultado 2026-10-19 en https://aws.amazon.com/bedrock/agentcore/pricing/);
+ *     el modelo lo cobra su proveedor.
+ * IAM: `bedrock-agentcore:InvokeAgentRuntime` y `StopRuntimeSession` sobre el
+ *     runtime, `bedrock-agentcore:ListAgentRuntimes` y `GetAgentRuntime`, y para
+ *     `delete()` los de `AgentCoreDeleter`.
+ * Cómo apagarla: `stopSession()` termina la microVM de una sesión;
+ *     `delete()` quita el agente y deja de costar su imagen; sin sesiones no
+ *     hay coste de cómputo.
+ * Ejemplo:
+ *   const fleet = await AgentCoreFleet.connect("mi-agente", { region: "us-east-1" });
+ *   (await fleet.invoke("Resume el README.")).text;
+ *   await fleet.stopSession(sessionId);
+ */
 export class AgentCoreFleet {
   readonly name: string;
   readonly region: string;
@@ -160,7 +165,10 @@ export class AgentCoreFleet {
   }
 
   /** Reconecta con el agente `name` desplegado en `region`; `runtime_not_found` si no hay uno de Rayito con ese nombre. */
-  static connect(name: string, options: AgentCoreConnectOptions = {}): Promise<AgentCoreFleet> {
+  static async connect(
+    name: string,
+    options: AgentCoreConnectOptions = {},
+  ): Promise<AgentCoreFleet> {
     const region = options.region ?? process.env.AWS_REGION ?? process.env.AWS_DEFAULT_REGION;
     if (!region) {
       throw new InvalidArgumentError(NO_REGION_MESSAGE);
