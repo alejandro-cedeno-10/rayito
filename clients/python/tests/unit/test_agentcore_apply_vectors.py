@@ -150,7 +150,7 @@ def test_a_failed_build_deletes_the_zip_and_never_touches_the_runtime() -> None:
     assert raised.value.fields["logGroup"] == fake.DEFAULT_OUTPUTS["BuildLogGroupName"]
     names = cloud.recorder.names()
     assert "delete_object" in names
-    assert "create_runtime" not in names and "list_runtimes" not in names
+    assert not {"create_runtime", "update_runtime"} & set(names)
 
 
 def test_a_build_that_outlives_its_timeout_is_image_build_timeout() -> None:
@@ -241,3 +241,24 @@ def test_build_phases_reach_on_build_logs() -> None:
 
 def _ready_stack() -> StackObservation:
     return StackObservation(fake.STACK_NAME, "UPDATE_COMPLETE", dict(fake.DEFAULT_OUTPUTS), {})
+
+
+def test_a_runtime_that_is_not_rayitos_fails_before_the_stack_and_the_build() -> None:
+    cloud = fake.cloud(
+        listing=fake.listing_from(
+            {
+                "agentRuntimeId": fake.RUNTIME_ID,
+                "agentRuntimeName": fake.RUNTIME_NAME,
+                "agentRuntimeVersion": "1",
+                "status": "READY",
+                "description": "my own agent",
+            }
+        )
+    )
+    deployer = AgentCoreDeployer(cloud.gateways, clock=cloud.clock, sleep=cloud.clock.sleep)
+    with pytest.raises(AgentCoreException) as raised:
+        deployer.apply(fake.make_plan(), fake.make_request())
+    assert raised.value.code == "name_conflict"
+    assert not {"create_stack", "update_stack", "put_object", "start_build"} & set(
+        cloud.recorder.names()
+    )

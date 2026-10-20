@@ -925,6 +925,21 @@ def runtime_matches(details: RuntimeDetails, spec: RuntimeSpec) -> bool:
     )
 
 
+def check_runtime_usable(listed: RuntimeListing | None, runtime_name: str, name: str) -> None:
+    """`name_conflict` si el runtime con ese nombre no es de Rayito y
+    `runtime_blocked` si está en un estado que no se puede tocar. Se comprueba
+    antes de crear la pila y construir la imagen: ahorra el coste de un
+    despliegue que acabaría fallando."""
+    if listed is None:
+        return
+    if not is_owned(listed):
+        raise AgentCoreException("name_conflict", runtimeName=runtime_name, name=name)
+    if listed.status in RUNTIME_BLOCKED:
+        raise AgentCoreException(
+            "runtime_blocked", runtimeName=runtime_name, status=listed.status, name=name
+        )
+
+
 def decide_runtime(
     listed: RuntimeListing | None, details: RuntimeDetails | None, spec: RuntimeSpec, name: str
 ) -> RuntimeAction:
@@ -932,16 +947,11 @@ def decide_runtime(
     nombre es de otro; `wait` si está en curso; `runtime_blocked` si no se puede
     tocar; `update` si quedó en `UPDATE_FAILED` o su configuración difiere;
     `reuse` si ya está al día."""
+    check_runtime_usable(listed, spec.name, name)
     if listed is None:
         return "create"
-    if not is_owned(listed):
-        raise AgentCoreException("name_conflict", runtimeName=spec.name, name=name)
     if listed.status in RUNTIME_IN_PROGRESS:
         return "wait"
-    if listed.status in RUNTIME_BLOCKED:
-        raise AgentCoreException(
-            "runtime_blocked", runtimeName=spec.name, status=listed.status, name=name
-        )
     if listed.status in RUNTIME_REPAIRABLE or details is None:
         return "update"
     return "reuse" if runtime_matches(details, spec) else "update"

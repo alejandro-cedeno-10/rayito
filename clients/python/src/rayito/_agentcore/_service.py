@@ -33,6 +33,7 @@ from rayito._agentcore._domain import (
     base_image_reference,
     bedrock_resource_arns,
     check_image_size,
+    check_runtime_usable,
     decide_image,
     decide_runtime,
     decide_stack,
@@ -198,6 +199,9 @@ class AgentCoreDeployer:
         report = _Reporter(request.on_progress)
         account = self._gateways.identity.account_id()
         bucket = self._resolve_bucket(plan)
+        check_runtime_usable(
+            find_runtime(self._gateways.runtimes, plan.runtime_name), plan.runtime_name, plan.name
+        )
         stack_step, outputs, stack_status = self._apply_stack(
             plan, request, account, bucket, report
         )
