@@ -49,7 +49,7 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   digest), el README explica `--target agentcore` y la seguridad, y un agente
   del AI SDK de Vercel lleva una herramienta (botocore fijado por hash) con la
   que el host lee las credenciales del rol y se las pasa al puente de Node en
-  cada invocación. El export `docker` no cambia.
+  cada invocación. El `Dockerfile` y el README del export `docker` no cambian.
 - **El host del agente traduce el id de sesión de AgentCore**: una cabecera
   `X-Amzn-Bedrock-AgentCore-Runtime-Session-Id` con cualquier forma empieza una
   sesión del driver la primera vez y la continúa después, y la respuesta lleva
@@ -57,6 +57,16 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
 
 ### Cambiado
 
+- **Una vez, el hash de contenido de las imágenes de agentes de MicroVMs**:
+  el host del agente (`agent_host`) y, para los frameworks de Node (Strands TS,
+  LangGraph JS, Deep Agents JS, AI SDK de Vercel, Strands harness TS), el puente
+  `node_bridge.mjs` llevan ahora el soporte de AgentCore (id de sesión y
+  credenciales del rol). Como los dos forman parte del contexto de build, el
+  primer `deploy_agent` tras actualizar construye una versión de imagen nueva
+  (unos $0,011 y al menos una semana de almacenamiento de su snapshot) aunque tu
+  código no haya cambiado; los siguientes la reutilizan. El `Dockerfile` y el
+  README del export `docker` no cambian; sus ficheros de `agent_host/` y, en
+  Node, `node_bridge.mjs` sí.
 - **Códigos de error de `rayito setup`**: se retira `no_bucket`,
   `bucket_unavailable` queda sólo para un bucket que existe sin acceso (403) y
   se añaden `bucket_taken` y `artifact_stack_conflict`.

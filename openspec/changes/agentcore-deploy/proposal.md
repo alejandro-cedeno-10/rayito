@@ -90,7 +90,7 @@ unchanged; the new target is specified entirely in `agentcore-deploy`.
   (`requirements-aws-credentials.txt`, `aws_env_credentials.py`) rendered into
   TypeScript by `scripts/gen_agent_template_assets.py`.
 - The `agentcore` export target gains the `AGENT_BASE_IMAGE` build argument
-  and a README section; the `docker` target is byte-for-byte unchanged.
+  and a README section; the `Dockerfile` and README of the `docker` target are byte-for-byte unchanged.
 - Cost only on explicit action: CodeBuild minutes, ECR storage, AgentCore
   session time and logs. No AWS call happens unless `target="agentcore"` is
   passed; the plan itself makes none.

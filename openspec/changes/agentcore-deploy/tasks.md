@@ -194,7 +194,7 @@ now.
       the golden; for frameworks in `AGENTCORE_ENV_CREDENTIAL_ADAPTERS`, the
       steps of `constants.export.awsCredentials` (sha from
       `AGENT_AWS_CREDENTIALS_REQUIREMENTS_SHA256`) and `host.json`
-      `aws_env_credentials`. `docker` output byte-for-byte unchanged.
+      `aws_env_credentials`. `docker` `Dockerfile` and README byte-for-byte unchanged.
 - [x] 1.5.2 Host (`_runner/agent_host/`, standard library only): when
       `aws_env_credentials` is present, run `python script` before each
       invocation with a 10 s timeout, parse the JSON, pass it as `aws_env` to

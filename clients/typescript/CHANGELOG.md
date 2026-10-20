@@ -30,7 +30,7 @@ versionado [SemVer](https://semver.org/lang/es/).
   `-ecr`); el destino por defecto sigue siendo la flota de MicroVMs y no los carga.
 - El export `agentcore` lleva el argumento de build `AGENT_BASE_IMAGE` y, para
   Vercel AI SDK, el ayudante que lee las credenciales del rol del runtime
-  (`botocore` fijado por hash); el export `docker` no cambia.
+  (`botocore` fijado por hash); el `Dockerfile` y el README del export `docker` no cambian.
 - **`rayito setup`**: prepara una cuenta y una región de AWS para Rayito en una
   orden idempotente, como `cdk bootstrap`. Lee la cuenta, muestra el plan y el
   coste aproximado, pide confirmación (`--yes` sin terminal o con `--json`;
@@ -50,6 +50,16 @@ versionado [SemVer](https://semver.org/lang/es/).
 
 ### Cambiado
 
+- **Una vez, el hash de contenido de las imágenes de agentes de MicroVMs**:
+  el host del agente (`agent_host`) y, para los frameworks de Node (Strands TS,
+  LangGraph JS, Deep Agents JS, AI SDK de Vercel, Strands harness TS), el puente
+  `node_bridge.mjs` llevan ahora el soporte de AgentCore (id de sesión y
+  credenciales del rol). Como los dos forman parte del contexto de build, el
+  primer `deploy_agent` tras actualizar construye una versión de imagen nueva
+  (unos $0,011 y al menos una semana de almacenamiento de su snapshot) aunque tu
+  código no haya cambiado; los siguientes la reutilizan. El `Dockerfile` y el
+  README del export `docker` no cambian; sus ficheros de `agent_host/` y, en
+  Node, `node_bridge.mjs` sí.
 - Los códigos de error de `rayito setup`: desaparece `no_bucket`;
   `bucket_unavailable` queda para un bucket que responde 403; nuevos
   `bucket_taken` y `artifact_stack_conflict`. Con `--json`, un error de AWS o de
