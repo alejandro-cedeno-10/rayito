@@ -20,5 +20,5 @@ numpy==2.5.3
 scipy==1.18.1
 scikit-learn==1.9.1
 matplotlib-inline==0.2.2
-pillow==12.3.0
+pillow==13.0.0
 pydantic==2.13.5

@@ -787,7 +787,7 @@ señala nunca.
   cp312 wheels, sin compiladores en la imagen): `ipykernel==7.3.0`,
   `jupyter_client==8.10.0`, `ipython==9.17.1`, `pyzmq==27.2.0`,
   `matplotlib==3.11.2`, `pandas==3.0.6`, `numpy==2.5.3`, `scipy==1.18.1`,
-  `scikit-learn==1.9.1`, `pillow==12.3.0`, `pydantic==2.13.5` (lo importa
+  `scikit-learn==1.9.1`, `pillow==13.0.0`, `pydantic==2.13.5` (lo importa
   `e2b_charts`).
 - `e2b_charts` vendorizado (MIT, `_vendor/e2b_charts`) para que `chart` (JSON
   de matplotlib) y `data` (DataFrame, `orient=list`) se produzcan en el kernel

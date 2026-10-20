@@ -271,15 +271,6 @@ impl InheritableDescriptor {
 /// `echo <word>` typed so that the terminal echo of the command line never
 /// contains the word itself (`echo r''eady`): only the command's output
 /// does, which is what the assertions wait for.
-/// Lo que sigue a la primera aparición de `marker` en `buffer`.
-fn after_marker<'a>(buffer: &'a [u8], marker: &[u8]) -> &'a [u8] {
-    let start = buffer
-        .windows(marker.len())
-        .position(|window| window == marker)
-        .unwrap_or_else(|| panic!("no marker in {}", shown(buffer)));
-    &buffer[start + marker.len()..]
-}
-
 fn say(word: &str) -> String {
     let (head, tail) = word.split_at(1);
     format!("echo {head}''{tail}\n")
@@ -750,7 +741,13 @@ async fn output_is_chunked_at_16_kib_and_replayable_from_the_ring() {
     let harness = harness().await;
     let (pid, mut stream) = harness.bash().await;
     harness.send(pid, &say("ready")).await.unwrap();
-    read_until(&mut stream, b"ready\r\n").await;
+    // Se guarda todo lo leído en vivo desde el primer fragmento (seq 1): el
+    // fragmento que trae `ready` puede traer también el prompt siguiente, y
+    // ese prompt lleva el nombre de máquina, que en algunos runners tiene `x`.
+    // Contar en vivo sólo desde el fragmento siguiente y en la repetición
+    // desde `ready` daba una `x` de diferencia según cómo bash partiera sus
+    // escrituras.
+    let mut live = read_until(&mut stream, b"ready\r\n").await;
     harness
         .send(pid, "head -c 100000 /dev/zero | tr '\\0' x; echo d''one\n")
         .await
@@ -759,17 +756,20 @@ async fn output_is_chunked_at_16_kib_and_replayable_from_the_ring() {
     let xs = buffer.iter().filter(|byte| **byte == b'x').count();
     assert!((100_000..100_050).contains(&xs), "{xs}");
     assert!(last_seq >= 7, "{last_seq}");
+    live.extend(buffer);
     let mut replay = harness.connect(pid, 1).await.unwrap();
     assert_eq!(first_pid(&mut replay).await, pid);
     let (replayed, _, replayed_seq) = read_until_with(&mut replay, b"done\r\n", READ_TIMEOUT).await;
-    // La repetición empieza en el primer fragmento: antes de `ready` trae el
-    // prompt inicial, cuyo nombre de máquina puede llevar `x`. Se cuenta
-    // desde el mismo punto que la lectura en vivo.
-    let replayed_xs = after_marker(&replayed, b"ready\r\n")
-        .iter()
-        .filter(|byte| **byte == b'x')
-        .count();
-    assert_eq!(replayed_xs, xs);
+    // La repetición desde seq 1 entrega los mismos fragmentos que la lectura
+    // en vivo, así que hasta `done` los bytes coinciden uno a uno (prompt
+    // inicial incluido). Sin `assert_eq!` sobre los buffers: imprimiría
+    // 100 KB de `x` en el log del runner (ver `shown`).
+    assert!(
+        replayed == live,
+        "replay {} != live {}",
+        shown(&replayed),
+        shown(&live)
+    );
     assert_eq!(replayed_seq, last_seq);
     harness.send(pid, &say("after")).await.unwrap();
     read_until(&mut replay, b"after\r\n").await;
