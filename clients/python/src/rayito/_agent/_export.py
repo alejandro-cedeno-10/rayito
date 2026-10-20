@@ -92,6 +92,11 @@ _PERMISSIONS_CMD: Final = (
 )
 
 
+class RawAppNotExportable(InvalidArgumentException):
+    """Una app con `protocol="raw"` no cumple el contrato de AgentCore
+    (`/ping` y `/invocations`) y no se puede exportar para ese destino."""
+
+
 @dataclass(frozen=True)
 class AgentExport:
     """Lo que `export()` escribió: el directorio, los ficheros (rutas
@@ -140,7 +145,7 @@ def render_export(project: AgentProject, *, target: str = "docker") -> dict[str,
     install = InstallTarget(platform="container")
     host = servable.host_config(project.spec, wiring=DirectWiring(), workdir=DEFAULT_AGENT_WORKDIR)
     if target == "agentcore" and is_raw_app(host):
-        raise InvalidArgumentException(
+        raise RawAppNotExportable(
             "una app con protocol='raw' no cumple el contrato de AgentCore (/ping + /invocations)"
         )
     tree: dict[str, bytes] = {}
