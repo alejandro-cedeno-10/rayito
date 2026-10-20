@@ -281,7 +281,7 @@
         }
       ],
       "context_files": {
-        "node_bridge.mjs": "e42ada65f69a8d2044394fc54e5ae9bc785a2390a2fa0f901f79cd1994b4241f"
+        "node_bridge.mjs": "cb36eb9ac9fb999d82091ca76399cb19187c3ac79dbc63dccfc7c04224e2b153"
       },
       "manifest_entry": {
         "language": "typescript",
@@ -289,7 +289,7 @@
         "node_sha256": "5ced2d48d1d7198739b7f86804de0171aefb6823b684b12341d3321afc3cb0b2",
         "tested_sdk_version": "1.21.0",
         "tested_harness_version": "0.3.0",
-        "bridge_sha256": "e42ada65f69a8d2044394fc54e5ae9bc785a2390a2fa0f901f79cd1994b4241f"
+        "bridge_sha256": "cb36eb9ac9fb999d82091ca76399cb19187c3ac79dbc63dccfc7c04224e2b153"
       },
       "smoke_checks": [
         "su user -c 'node --version'",
@@ -596,7 +596,7 @@
         }
       ],
       "context_files": {
-        "node_bridge.mjs": "e42ada65f69a8d2044394fc54e5ae9bc785a2390a2fa0f901f79cd1994b4241f"
+        "node_bridge.mjs": "cb36eb9ac9fb999d82091ca76399cb19187c3ac79dbc63dccfc7c04224e2b153"
       },
       "manifest_entry": {
         "driver": "node-callable",
@@ -1077,7 +1077,7 @@
         }
       ],
       "context_files": {
-        "node_bridge.mjs": "e42ada65f69a8d2044394fc54e5ae9bc785a2390a2fa0f901f79cd1994b4241f"
+        "node_bridge.mjs": "cb36eb9ac9fb999d82091ca76399cb19187c3ac79dbc63dccfc7c04224e2b153"
       },
       "manifest_entry": {
         "language": "typescript",
@@ -1085,7 +1085,7 @@
         "node_sha256": "b7e7991d5407815adfa74a2a9cd4db683552c8ce32ff4a295c22e972849c3f5d",
         "tested_sdk_version": "1.21.0",
         "tested_harness_version": "0.3.0",
-        "bridge_sha256": "e42ada65f69a8d2044394fc54e5ae9bc785a2390a2fa0f901f79cd1994b4241f"
+        "bridge_sha256": "cb36eb9ac9fb999d82091ca76399cb19187c3ac79dbc63dccfc7c04224e2b153"
       },
       "smoke_checks": [
         "su user -c 'node --version'",
