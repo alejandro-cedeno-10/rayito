@@ -19,6 +19,7 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import shutil
 import subprocess
 import sys
 from collections.abc import Iterator
@@ -35,6 +36,7 @@ from .agent_project_support import (
     CASES,
     PROMPT,
     RuntimeCase,
+    app_fixture,
     build_image,
     image_name,
     project_file_text,
@@ -85,11 +87,16 @@ def json_of(done: subprocess.CompletedProcess[str]) -> dict[str, Any]:
 
 @pytest.fixture
 def project_dir(case: RuntimeCase, images: dict[str, str], tmp_path: Path) -> Path:
+    """El proyecto del caso: el código de su tipo de imagen y el
+    `rayito-agent.toml`. Va en un subdirectorio para que el fichero del
+    token, junto a él, nunca entre en el código que `deploy` empaqueta."""
     reason = unsupported(case, images[case.image])
     if reason is not None:
         pytest.skip(f"{case.id}: {reason}")
-    (tmp_path / PROJECT_FILE_NAME).write_text(project_file_text(case, images[case.image]))
-    return tmp_path
+    directory = tmp_path / "project"
+    shutil.copytree(app_fixture(case.image), directory)
+    (directory / PROJECT_FILE_NAME).write_text(project_file_text(case, images[case.image]))
+    return directory
 
 
 @pytest.fixture
@@ -124,7 +131,7 @@ def test_cli_run_streams_events(case: RuntimeCase, project_dir: Path) -> None:
 def test_cli_deploy_status_invoke_stop(
     case: RuntimeCase, project_dir: Path, deployed: list[str]
 ) -> None:
-    token_file = project_dir / TOKEN_FILE_NAME
+    token_file = project_dir.parent / TOKEN_FILE_NAME
     token = ("--token-file", str(token_file))
     deploy = json_of(rayito("--json", "agent", "deploy", "--file", str(project_dir), *token))
     sandbox_id = str(deploy["sandboxId"])

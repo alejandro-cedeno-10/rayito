@@ -222,6 +222,11 @@ export function unsupportedReason(item: RuntimeCase, template: string): string |
 
 const builtImages: Partial<Record<ImageKind, Promise<string>>> = {};
 
+/** El código de prueba del tipo de imagen: `py` o, para `cli`, `ts`. */
+export function appFixture(kind: ImageKind): string {
+  return join(FIXTURES, kind === "py" ? "py" : "ts");
+}
+
 /** El nombre de la imagen del tipo; la construye una vez por proceso si el
  * entorno trae el prefijo y el bucket. */
 export function agentImage(kind: ImageKind, region: string): Promise<string> {
@@ -239,7 +244,7 @@ export function agentImage(kind: ImageKind, region: string): Promise<string> {
     ? new AgentTemplate({
         name,
         runtimes: imageRuntimes(kind),
-        app: join(FIXTURES, kind === "py" ? "py" : "ts"),
+        app: appFixture(kind),
         ...(BASE ? { base: BASE } : {}),
       })
         .build({ bucket: BUCKET, region, timeoutMs: BUILD_TIMEOUT_MS })
@@ -250,7 +255,10 @@ export function agentImage(kind: ImageKind, region: string): Promise<string> {
 }
 
 /** El `rayito-agent.toml` del caso: el mismo proyecto que `projectFor`, sobre
- * la imagen ya construida, para las pruebas de la CLI. Sólo Bedrock. */
+ * la imagen ya construida, para las pruebas de la CLI. Sólo Bedrock.
+ * `[source]` apunta al propio directorio, que lleva el código del caso
+ * (`appFixture`): `deploy` reconstruye la imagen desde ahí y, sin código, el
+ * punto de entrada no existiría. */
 export function projectFileText(item: RuntimeCase, template: string): string {
   const { model, secret } = providerFor(item);
   return [
@@ -258,6 +266,8 @@ export function projectFileText(item: RuntimeCase, template: string): string {
     `name = "e2e-${item.id}"`,
     "",
     `[runtime]\n${item.runtimeToml}`,
+    "",
+    '[source]\npath = "."',
     "",
     `[model]\nprovider = "bedrock"\nid = "${model}"\nregion = "${BEDROCK_REGION}"\ngateway = "${GATEWAY_NAME}"`,
     "",
