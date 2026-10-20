@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import time
 from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -49,6 +50,8 @@ class AgentCorePorts:
     gateways: AgentCoreGateways | None = None
     invoker: RuntimeInvoker | None = None
     environ: Mapping[str, str] | None = None
+    clock: Callable[[], float] = time.monotonic
+    sleep: Callable[[float], None] = time.sleep
 
 
 @dataclass(frozen=True)
@@ -171,9 +174,13 @@ def apply_agentcore(
     planned: PlannedDeploy,
     gateways: AgentCoreGateways,
     on_progress: Callable[[str, str], None] | None = None,
+    ports: AgentCorePorts | None = None,
 ) -> AgentCoreDeployment:
-    """Aplica un plan: la pila, la imagen y el runtime."""
-    return AgentCoreDeployer(gateways).apply(planned.plan, apply_request(planned, on_progress))
+    """Aplica un plan: la pila, la imagen y el runtime. `ports` trae el reloj
+    y el sueño de las esperas, que los tests sustituyen."""
+    chosen = ports or AgentCorePorts()
+    deployer = AgentCoreDeployer(gateways, clock=chosen.clock, sleep=chosen.sleep)
+    return deployer.apply(planned.plan, apply_request(planned, on_progress))
 
 
 def deploy_agentcore(
@@ -202,7 +209,7 @@ def deploy_agentcore(
         environ=None if ports is None else ports.environ,
     )
     gateways = agentcore_gateways(planned, ports, session)
-    deployment = apply_agentcore(planned, gateways, step_reporter(planned.options))
+    deployment = apply_agentcore(planned, gateways, step_reporter(planned.options), ports)
     return AgentCoreFleet.from_deployment(
         deployment, gateways=gateways, invoker=agentcore_invoker(planned, ports, session)
     )
@@ -237,7 +244,9 @@ async def deploy_agentcore_async(
     )
     gateways = agentcore_gateways(planned, ports, session)
     request = apply_request(planned, step_reporter(planned.options))
-    deployment = await AsyncAgentCoreDeployer(gateways).apply(planned.plan, request)
+    chosen = ports or AgentCorePorts()
+    deployer = AsyncAgentCoreDeployer(gateways, clock=chosen.clock, sleep=chosen.sleep)
+    deployment = await deployer.apply(planned.plan, request)
     return AsyncAgentCoreFleet.from_deployment(
         deployment, gateways=gateways, invoker=agentcore_invoker(planned, ports, session)
     )

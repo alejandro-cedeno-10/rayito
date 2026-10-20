@@ -7,6 +7,7 @@ síncrono, cuyos adaptadores son boto3 bloqueante.
 from __future__ import annotations
 
 import asyncio
+import time
 
 from rayito._agentcore._models import (
     AgentCoreApplyRequest,
@@ -17,7 +18,13 @@ from rayito._agentcore._models import (
     AgentCoreListItem,
 )
 from rayito._agentcore._ports import AgentCoreGateways, RuntimeControl
-from rayito._agentcore._service import AgentCoreDeleter, AgentCoreDeployer, list_agents
+from rayito._agentcore._service import (
+    AgentCoreDeleter,
+    AgentCoreDeployer,
+    Clock,
+    Sleeper,
+    list_agents,
+)
 
 
 class AsyncAgentCoreDeployer:
@@ -35,8 +42,14 @@ class AsyncAgentCoreDeployer:
         deployment = await AsyncAgentCoreDeployer(gateways).apply(plan, request)
     """
 
-    def __init__(self, gateways: AgentCoreGateways) -> None:
-        self._inner = AgentCoreDeployer(gateways)
+    def __init__(
+        self,
+        gateways: AgentCoreGateways,
+        *,
+        clock: Clock = time.monotonic,
+        sleep: Sleeper = time.sleep,
+    ) -> None:
+        self._inner = AgentCoreDeployer(gateways, clock=clock, sleep=sleep)
 
     async def apply(
         self, plan: AgentCoreDeployPlan, request: AgentCoreApplyRequest
