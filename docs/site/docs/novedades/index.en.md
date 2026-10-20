@@ -20,8 +20,9 @@ detail, change by change, is in each component's
     (bucket, IAM stack and base image). And deploy the agent you already have to
     Amazon Bedrock AgentCore Runtime with `--target agentcore` (`rayito agent deploy`, `deploy_agent()` and
     `deployAgent()`): no local Docker, a least-privilege role and the same
-    `invoke` API as a MicroVM fleet. AgentCore has no Rayito secrets gateway. No
-    API-breaking changes.
+    `invoke` API as a MicroVM fleet. AgentCore has no Rayito secrets gateway.
+    With AWS CDK, the `RayitoAgent` and `RayitoMicrovmImage` constructs declare
+    the agent and the MicroVM image in your own app. No API-breaking changes.
 
     [:octicons-arrow-right-24: What's new in 0.15.0](0.15.0.md)
 

@@ -269,6 +269,34 @@ const fleet = await deployAgent("./my-agent", {
 console.log(fleet.runtimeArn, fleet.runtimeVersion);
 ```
 
+## CDK constructs (`rayito/cdk`) { #cdk }
+
+Since 0.15.0 (not published yet). A separate entry point, with `aws-cdk-lib`
+(`^{{cdkAwsCdkLibMinVersion}}`) and `constructs` (`^{{cdkConstructsMinVersion}}`)
+as optional peers: neither `rayito`, nor `rayito/e2b`, nor the CLI, nor the MCP
+server import them. Everything is synchronous except
+`MicrovmImageArtifact.downloadRelease()`, and `cdk synth` makes no AWS call.
+Guide: [Deploy with CDK](../guias/desplegar-con-cdk.md).
+
+!!! info "Cost and activation"
+    - **Turns it on:** instantiating a construct in a CDK app and `cdk deploy`.
+    - **AWS resources and calls:** `RayitoAgent`, those of the AgentCore deploy
+      plus two Lambdas and a state machine for the `Provider`;
+      `RayitoMicrovmImage`, a build role, a log group and one image per size.
+    - **Approximate cost:** see [Deploy with CDK](../guias/desplegar-con-cdk.md).
+    - **IAM:** the CDK bootstrap execution role.
+    - **How to turn it off:** `cdk destroy`.
+    - **Example:** [the guide](../guias/desplegar-con-cdk.md#rayitoagent).
+
+| TypeScript | Python | What it is |
+|---|---|---|
+| `new RayitoAgent(scope, id, { project, name?, bedrockModels?, readableSecrets?, idleSessionTimeoutSeconds?, maxSessionLifetimeSeconds?, tags?, build?, exportOutputs? })` | `RayitoAgent(scope, id, *, project, name=None, bedrock_models=(), ...)` | an agent on AgentCore Runtime; attributes `agentName`, `runtimeName`, `runtimeArn`, `runtimeId`, `runtimeVersion`, `roleArn`, `repositoryUri`, `imageUri`, `runtime` (`IRuntime`) |
+| `agent.grantInvoke(grantee)` | `agent.grant_invoke(grantee)` | `bedrock-agentcore:InvokeAgentRuntime` on the runtime (`iam.Grant`) |
+| `AgentImageBuild.codeBuild({ timeoutMinutes? })` / `AgentImageBuild.localDocker()` | `AgentImageBuild.code_build(*, timeout_minutes=None)` / `AgentImageBuild.local_docker()` | how the image is built; CodeBuild by default |
+| `new RayitoMicrovmImage(scope, id, { name, artifact, baseImageVersion, variant?, withEfs?, osCapabilities?, memoryMib?, sizes?, allowedMountBuckets?, environment?, tags? })` | `RayitoMicrovmImage(scope, id, *, name, artifact, base_image_version, ...)` | a MicroVMs image with `rayd`; attributes `imageName`, `imageArn`, `latestActiveImageVersion`, `buildRoleArn`, `logGroupName`, `sizeImageArns` |
+| `MicrovmImageArtifact.fromFile(path, { sha256? })` / `await MicrovmImageArtifact.downloadRelease({ version?, directory? })` | `MicrovmImageArtifact.from_file(path, *, sha256=None)` / `MicrovmImageArtifact.download_release(*, version=None, directory=None)` | the image zip |
+| `RayitoCdkError` (`code`) | `RayitoCdkException` | synth errors ([codes](../guias/desplegar-con-cdk.md#errores)) |
+
 ## Pool { #pool }
 
 | TypeScript | Python |
@@ -340,8 +368,8 @@ errors and `UnimplementedError`. The native sandbox is in
 
 ## Exports index { #exports }
 
-Everything exported by the package's two entry points. What is not here is
-private.
+Everything exported by the package's entry points (`rayito/cdk` since
+0.15.0). What is not here is private.
 
 ### `rayito`: classes, functions and constants { #rayito-clases-funciones-y-constantes }
 
@@ -386,3 +414,11 @@ private.
 | Classes and functions | `Sandbox` (also `export default`), `SandboxPaginator`, `E2B`, `ConnectionConfig`, `Filesystem`, `Pty`, `Git`, `Secret`, `SecretPaginator`, `Template`, `Volume`, `bindVolume`, `getSignature`, `WatchHandle`, `Execution`, `Result`, `FileType`, `FilesystemEventType`, `ChartType`, `ScaleType`, `ALL_TRAFFIC`, `DEFAULT_WATCH_TIMEOUT_MS` |
 | Errors (the native classes under E2B's names) | `SandboxError`, `TimeoutError`, `InvalidArgumentError`, `NotFoundError`, `FileNotFoundError`, `SandboxNotFoundError`, `CommandExitError`, `FileUploadError`, `RateLimitError`, `GitUpstreamError`, `SecretError`, `SecretNotFoundError`, `BuildError`, `TemplateError`, `AuthenticationError`, `GitAuthError`, `UnimplementedError`, `NotEnoughSpaceError` (= `DiskFullError`), `ServiceBusyError` (= `CapacityError`) |
 | Types | `SandboxOpts`, `SandboxConnectOpts`, `SandboxInstanceConnectOpts`, `SandboxListOpts`, `SandboxInfo`, `SandboxInfoLifecycle`, `SandboxLifecycle`, `SandboxState`, `SandboxMetrics`, `SandboxMetricsOpts`, `SandboxNetworkInfo`, `SandboxNetworkOpts`, `SandboxNetworkSelector`, `SandboxNetworkUpdate`, `SandboxOnResume`, `SandboxOnTimeout`, `SandboxPauseOpts`, `SandboxUrlOpts`, `E2BClientOpts`, `ConnectionOpts`, `Username`, `WatchOpts`, `WatchEventCallback`, `PtyCreateOpts`, `PtyConnectOpts`, `PtyOutputCallback`, `PtySize`, `SecretInfo`, `SecretConnectionOpts`, `SecretCreateOpts`, `SecretDestroyOpts`, `SecretExistsOpts`, `SecretGetInfoOpts`, `SecretListOpts`, `SecretUpdateOpts`, `CommandHandle`, `CommandResult`, `ProcessInfo`, `Context` (= `CodeContext`), `EntryInfo`, `WriteInfo` (= `EntryInfo`), `WriteEntry`, `ExecutionError`, `FilesystemEvent`, `Logs`, `OutputMessage`, `Chart`, `LineChart`, `ScatterChart`, `BarChart`, `BarData`, `PieChart`, `PieData`, `BoxAndWhiskerChart`, `BoxAndWhiskerData`, `SuperChart`, `PointData`, `GitStatus`, `GitFileStatus`, `GitBranches`, `GitResetMode`, `Logger` |
+
+### `rayito/cdk` { #rayitocdk }
+
+| Area | Exports |
+|---|---|
+| Constructs and factories | `RayitoAgent`, `AgentImageBuild`, `RayitoMicrovmImage`, `MicrovmImageArtifact` |
+| Errors | `RayitoCdkError` |
+| Types | `RayitoAgentProps`, `CodeBuildOptions`, `RayitoMicrovmImageProps`, `FromFileOptions`, `DownloadReleaseOptions` |

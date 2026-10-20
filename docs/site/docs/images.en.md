@@ -137,6 +137,13 @@ measured except where stated) and the `$/h` per size are in
     }
     ```
 
+!!! tip "With AWS CDK"
+    The `RayitoMicrovmImage` construct publishes an image with `rayd` (and its
+    sizes) from your CDK app, with the same configuration as
+    `rayito image publish`; sandboxes are still created with the SDK by name.
+    The `rayito-base*` names stay with `rayito setup` and
+    `rayito image publish`: [Deploy with CDK](guias/desplegar-con-cdk.md#rayitomicrovmimage).
+
 ## Caller IAM { #iam-del-llamante }
 
 The SDK runs with **your** credentials (the boto3 / AWS SDK v3 chain).

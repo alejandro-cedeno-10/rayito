@@ -596,3 +596,49 @@ runtime que no tiene la marca `rayito.agentcore/1` en su descripción nunca se t
 **Riesgo residual.** Todo lo que el rol permita, cualquier código de la sesión
 puede usarlo; una organización con SCP que exigen etiquetas necesita `--tag`, y
 las etiquetas de un runtime ya creado no se actualizan.
+
+## Constructos CDK: roles de los recursos personalizados y del build de la imagen (T37) { #cdk }
+
+Resumen de **T37** de
+[`SECURITY.md`](https://github.com/alejandro-cedeno-10/rayito/blob/main/SECURITY.md)
+(`agentcore-cdk`, ADR-032, desde 0.15.0, todavía sin publicar): lo que añaden
+los constructos de [Desplegar con CDK](guias/desplegar-con-cdk.md) a lo que ya
+crea la CLI.
+
+**El rol del agente no cambia.** `RayitoAgent` despliega la misma plantilla
+`infra/agentcore-runtime.yaml` que `rayito agent deploy`, así que el rol del
+runtime es el mismo, con el mismo mínimo privilegio de [AgentCore](#agentcore).
+Lo nuevo son dos piezas que la CLI hacía con las credenciales de quien
+despliega y que aquí hace CloudFormation:
+
+- **Las funciones de los recursos personalizados** (`Custom::RayitoImageBuild` y
+  `Custom::RayitoRuntimeMmds`, código en `infra/agentcore-cdk-handler.py`). Su
+  rol sólo puede `codebuild:StartBuild` y `BatchGetBuilds` sobre **el** proyecto
+  de CodeBuild de ese agente, `ecr:DescribeImages` sobre **su** repositorio,
+  `bedrock-agentcore:GetAgentRuntime` y `UpdateAgentRuntime` sobre **su**
+  runtime, e `iam:PassRole` **sólo** sobre el rol del runtime (lo exige
+  `UpdateAgentRuntime`). No puede crear ni borrar runtimes, ni pasar otro rol, ni
+  leer imágenes, secretos ni modelos.
+- **El rol de build de la imagen de MicroVMs** (`RayitoMicrovmImage`). Sólo lo
+  puede asumir Lambda en tu cuenta (`aws:SourceAccount`), lee **sólo** el objeto
+  del asset del zip y escribe **sólo** en los grupos de logs `/rayito/<nombre>` de
+  sus imágenes. No usa el rol compartido de `rayito-m0-iam`.
+
+**El asset del código.** El rol de build de CodeBuild del agente puede leer,
+además de su prefijo de siempre, el objeto exacto del asset del código en el
+bucket del bootstrap de CDK; nada más del bucket.
+
+**Quién puede cambiar qué.** El runtime lleva la marca `rayito.agentcore/1+cdk`
+y la imagen la etiqueta `rayito:managed-by=rayito-cdk`: `rayito agent deploy`,
+`rayito agent delete` y `rayito image publish` se niegan a modificarlos antes de
+escribir nada (ni siquiera el artefacto en S3), así que la CLI no puede deshacer
+en silencio lo que declara la pila.
+
+**Riesgo residual.** El despliegue lo hace el rol de ejecución del bootstrap de
+CDK, que por defecto tiene `AdministratorAccess`: quien puede ejecutar
+`cdk deploy` en la cuenta puede cambiar el rol del runtime. Si eso no vale,
+restringe el bootstrap ([Bootstrap restringido](guias/desplegar-con-cdk.md#bootstrap-restringido)).
+MMDSv2 se activa fuera de CloudFormation (el recurso no tiene la propiedad), así
+que la detección de deriva puede marcarlo; se vuelve a comprobar en cada versión
+nueva del runtime. Los assets (el código del agente, el zip de la imagen) se
+quedan en el bucket del bootstrap hasta `cdk gc`.

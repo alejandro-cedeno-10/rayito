@@ -3597,7 +3597,7 @@ en marcha.
    alpha; recursos L1 (`CfnRuntime`, `CfnMicrovmImage`) para controlar cada
    propiedad.
 2. **`RayitoAgent` despliega el mismo agente que la CLI (D3).** Las props son
-   las de `AgentCoreOptions`; el plan es el de los SDK (`build_plan`,
+   las de `AgentCoreOptions`; el plan es el de los SDK (`plan_agentcore`,
    `planAgentCoreSync` sobre un puerto `ProjectReader` síncrono). Una pila
    anidada incluye `infra/agentcore-runtime.yaml` con los mismos parámetros
    (IAM idéntico por construcción), el `source_zip` va como asset, un
