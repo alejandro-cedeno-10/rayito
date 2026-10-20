@@ -28,6 +28,7 @@ from rayito._agent._project_base import template_name
 from rayito._agent._project_domain import ServeOptions
 from rayito._agent._scaling_domain import ScalingOptions
 from rayito._agentcore._env_credentials import uses_env_credentials
+from rayito._agentcore._errors import cdk_managed_error
 from rayito._agentcore._iam_resources import (
     ARN_PREFIX,
     AWS_PARTITION,
@@ -77,6 +78,7 @@ from rayito._limits import (
     AGENTCORE_SUPPORTED_REGIONS,
     BEDROCK_GLOBAL_PROFILE_PREFIX,
     BEDROCK_INFERENCE_PROFILE_PREFIXES,
+    CDK_OWNERSHIP_SUFFIX,
     CLOUDWATCH_LOGS_INGESTION_GB_PRICE_USD,
     CODEBUILD_ARM_SMALL_MINUTE_PRICE_USD,
     CODEBUILD_FREE_TIER_MINUTES_PER_MONTH,
@@ -98,6 +100,11 @@ AGENT_NAME_MAX_LENGTH: Final = AGENTCORE_RUNTIME_NAME_MAX_LENGTH - len(
     AGENTCORE_RUNTIME_NAME_PREFIX
 )
 RUNTIME_DESCRIPTION_TEMPLATE: Final = "Rayito agent {name} ({marker})"
+#: La marca de un runtime que gestiona CloudFormation con `RayitoAgent`
+#: (`rayito.cdk`, ADR-032 D6): se lee y se invoca igual, pero la CLI no lo
+#: despliega ni lo borra.
+CDK_DESCRIPTION_MARKER: Final = AGENTCORE_DESCRIPTION_MARKER + CDK_OWNERSHIP_SUFFIX
+MARKER_TEMPLATE: Final = "({marker})"
 RUNTIME_DESCRIPTION_PATTERN: Final = re.compile(r"Rayito agent (?P<name>\S+) \(.+\)")
 RUNTIME_NAME_SEPARATOR: Final = "_"
 # Separador del nombre del agente; los nombres de pila de CloudFormation sólo
@@ -477,8 +484,11 @@ def source_key_for(name: str, image_tag: str) -> str:
     return f"{AGENTCORE_SOURCE_PREFIX}{canonical_agent_name(name)}/{zip_name}"
 
 
-def runtime_description_for(name: str) -> str:
-    return RUNTIME_DESCRIPTION_TEMPLATE.format(name=name, marker=AGENTCORE_DESCRIPTION_MARKER)
+def runtime_description_for(name: str, *, managed_by_cdk: bool = False) -> str:
+    """La descripción del runtime con la marca de Rayito; con
+    `managed_by_cdk`, la de `RayitoAgent` (`rayito.agentcore/1+cdk`)."""
+    marker = CDK_DESCRIPTION_MARKER if managed_by_cdk else AGENTCORE_DESCRIPTION_MARKER
+    return RUNTIME_DESCRIPTION_TEMPLATE.format(name=name, marker=marker)
 
 
 def runtime_log_group_for(runtime_id: str) -> str:
@@ -506,7 +516,26 @@ def is_owned(listed: RuntimeListing) -> bool:
 
 
 def has_marker(description: str) -> bool:
-    return f"({AGENTCORE_DESCRIPTION_MARKER})" in description
+    """La marca de la CLI o la de CDK: las dos son de Rayito."""
+    return any(
+        MARKER_TEMPLATE.format(marker=marker) in description
+        for marker in (AGENTCORE_DESCRIPTION_MARKER, CDK_DESCRIPTION_MARKER)
+    )
+
+
+def is_cdk_managed(listed: RuntimeListing) -> bool:
+    """Un runtime de Rayito que gestiona CloudFormation (`RayitoAgent`): la
+    CLI y los SDK lo leen e invocan, pero nunca lo despliegan ni lo borran."""
+    return is_owned(listed) and MARKER_TEMPLATE.format(marker=CDK_DESCRIPTION_MARKER) in (
+        listed.description
+    )
+
+
+def check_not_cdk_managed(listed: RuntimeListing | None, name: str) -> None:
+    """`name_conflict` con el mensaje de CDK (`contract.cliRefusals.agentDeploy`
+    de `testdata/agentcore-cdk/`) si el runtime lo gestiona CloudFormation."""
+    if listed is not None and is_cdk_managed(listed):
+        raise cdk_managed_error(name, listed.name)
 
 
 def is_owned_by(listed: RuntimeListing, name: str) -> bool:
@@ -981,6 +1010,7 @@ def check_runtime_usable(listed: RuntimeListing | None, runtime_name: str, name:
         return
     if not is_owned_by(listed, name):
         raise AgentCoreException("name_conflict", runtimeName=runtime_name, name=name)
+    check_not_cdk_managed(listed, name)
     if listed.status in RUNTIME_BLOCKED:
         raise AgentCoreException(
             "runtime_blocked", runtimeName=runtime_name, status=listed.status, name=name

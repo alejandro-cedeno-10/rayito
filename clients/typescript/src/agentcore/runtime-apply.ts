@@ -26,7 +26,7 @@ import type {
   RuntimeAction,
   RuntimeDetails,
 } from "./models.js";
-import { isOwned, runtimeDescriptionFor, runtimeLogGroupFor } from "./names.js";
+import { isOwned, refuseCdkManaged, runtimeDescriptionFor, runtimeLogGroupFor } from "./names.js";
 import type { RuntimeControl, RuntimeWriteRequest } from "./ports.js";
 import { RuntimeConflictError } from "./ports.js";
 import type { Emit } from "./progress.js";
@@ -182,6 +182,7 @@ export class RuntimeApplier {
     if (existing === undefined || !isOwned(existing, plan.name)) {
       throw new AgentCoreError("name_conflict", { runtimeName: plan.runtimeName, name: plan.name });
     }
+    refuseCdkManaged(existing, plan.name);
     await this.#waitReady(plan, existing.runtimeId);
     await this.#update(plan, existing.runtimeId, desired, emit);
     return { runtimeId: existing.runtimeId, action: "update" };
