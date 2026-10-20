@@ -22,6 +22,7 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Final, Literal, Protocol
 
 from rayito._account_setup._domain import BUCKET_ENV_VAR
+from rayito._agent._deploy_plan import AgentDeployOptions, bucket_source_of, project_bucket
 from rayito._agent._fleet_base import AGENT_FLEET_WARM_READY_TIMEOUT_SECONDS
 from rayito._agent._project_base import template_name
 from rayito._agent._project_domain import ServeOptions
@@ -87,11 +88,6 @@ from rayito.exceptions import AgentCoreException, InvalidArgumentException
 
 if TYPE_CHECKING:
     from rayito._agent._project_domain import AgentProject
-
-BUCKET_SOURCE_ARGUMENT: Final = "argument"
-BUCKET_SOURCE_PROJECT_FILE: Final = "project_file"
-BUCKET_SOURCE_ENVIRONMENT: Final = "environment"
-BUCKET_SOURCE_DISCOVER: Final = "discover"
 
 #: Un nombre de agente: minúsculas y dígitos con `-` o `_` sueltos entre ellos
 #: (`contract.json`, `agentNamePattern`).
@@ -768,21 +764,17 @@ def cost_lines() -> tuple[str, ...]:
 COST_KEYS: Final = ("runtime", "build", "image", "logs", "model")
 
 
-def bucket_source_of(
-    argument: str | None, project_file: str | None, environ: Mapping[str, str]
+def planned_bucket(
+    options: AgentDeployOptions, project: AgentProject, environ: Mapping[str, str]
 ) -> tuple[str | None, str]:
-    """El bucket del contexto de build y de dónde sale, sin preguntar a AWS:
-    el argumento, `[deploy].bucket`, `RAYITO_BUCKET` y, si ninguno, se
-    descubre al aplicar (el del bootstrap de CDK o el de `rayito setup`)."""
-    from_environment = environ.get(BUCKET_ENV_VAR)
-    for bucket, source in (
-        (argument, BUCKET_SOURCE_ARGUMENT),
-        (project_file, BUCKET_SOURCE_PROJECT_FILE),
-        (from_environment, BUCKET_SOURCE_ENVIRONMENT),
-    ):
-        if bucket:
-            return bucket, source
-    return None, BUCKET_SOURCE_DISCOVER
+    """El bucket del contexto de build y de dónde sale, sin preguntar a AWS,
+    con el orden y los nombres del despliegue de MicroVMs (`bucket_source_of`):
+    el argumento, `[deploy].bucket`, `RAYITO_BUCKET` y, si ninguno, `discovered`
+    y el bucket es `None` (se descubre al aplicar: el del bootstrap de CDK o el
+    de `rayito setup`)."""
+    source = bucket_source_of(options, project_bucket(project), environ)
+    named = options.bucket or project_bucket(project) or environ.get(BUCKET_ENV_VAR)
+    return named or None, source
 
 
 def planned_steps(name: str) -> tuple[AgentCoreStep, ...]:
@@ -795,10 +787,9 @@ def planned_steps(name: str) -> tuple[AgentCoreStep, ...]:
 
 def build_plan(
     project: AgentProject,
-    options: CallOptions,
+    options: AgentDeployOptions,
     agentcore: AgentCoreOptions,
     *,
-    bucket: str | None,
     region: str | None,
     environ: Mapping[str, str],
     tree_for: Callable[[], Mapping[str, bytes]],
@@ -828,7 +819,7 @@ def build_plan(
         region=supported,
     )
     image_tag = image_tag_for(tree_for())
-    chosen_bucket, source = bucket_source_of(bucket, project.bucket, environ)
+    chosen_bucket, source = planned_bucket(options, project, environ)
     return AgentCoreDeployPlan(
         name=name,
         region=supported,

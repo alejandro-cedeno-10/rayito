@@ -202,7 +202,7 @@ with the name and without the marker is `name_conflict`, never touched.
 call and load no AWS client** (the 0.14 rule for the plan, ADR-029 D9). The
 plan validates everything that can be validated offline (D6), resolves the
 bucket only from explicit sources (argument, `[deploy].bucket`,
-`RAYITO_BUCKET`; otherwise `discover`), and shows three `planned` steps
+`RAYITO_BUCKET`; otherwise `discovered`), and shows three `planned` steps
 (stack, image, runtime), the security section, the warnings and the cost.
 Vectors: `testdata/agentcore-deploy/plan-vectors.json`.
 

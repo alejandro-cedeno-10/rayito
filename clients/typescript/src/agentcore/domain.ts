@@ -11,7 +11,7 @@
  * etiquetas y entorno.
  */
 
-import { BUCKET_ENV_VAR, type Environ } from "../agent/aws-resolve.js";
+import { BUCKET_ENV_VAR, type BucketSource, type Environ } from "../agent/aws-resolve.js";
 import { BASE_IMAGE_VERSION_LATEST } from "../agent/deploy-domain.js";
 import type { AgentDeployOptions } from "../agent/deploy-plan.js";
 import { bucketSourceOf, projectBucket } from "../agent/deploy-plan.js";
@@ -43,7 +43,6 @@ import type {
   AgentCoreLifecycle,
   AgentCoreOptions,
   AgentCoreStep,
-  BucketSource,
   ResolvedAgentCoreOptions,
 } from "./models.js";
 import {
@@ -384,19 +383,15 @@ function sortedRecord(values: Readonly<Record<string, string>>): Record<string, 
   );
 }
 
-const NAMED_BUCKET_SOURCES: readonly BucketSource[] = ["argument", "project_file", "environment"];
-
 function bucketPlan(
   options: AgentDeployOptions,
   project: AgentProject,
   environ: Environ,
 ): { readonly bucket: string | null; readonly source: BucketSource } {
   const fileBucket = projectBucket(project);
-  const source = bucketSourceOf(options, fileBucket, environ) as BucketSource | "discovered";
+  const source = bucketSourceOf(options, fileBucket, environ);
   const named = options.bucket || fileBucket || environ[BUCKET_ENV_VAR];
-  return source === "discovered" || !named || !NAMED_BUCKET_SOURCES.includes(source)
-    ? { bucket: null, source: "discover" }
-    : { bucket: named, source };
+  return { bucket: named || null, source };
 }
 
 function securityKeys(project: AgentProject, readableSecrets: readonly string[]): SecurityKey[] {

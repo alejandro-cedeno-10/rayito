@@ -141,4 +141,4 @@ def test_the_plan_is_the_same_for_the_same_project(monkeypatch: pytest.MonkeyPat
     first = plan_deploy(project=project, region="us-east-1", target="agentcore")
     second = plan_deploy(project=project, region="us-east-1", target="agentcore")
     assert first == second
-    assert first.bucket is None and first.bucket_source == "discover"
+    assert first.bucket is None and first.bucket_source == "discovered"

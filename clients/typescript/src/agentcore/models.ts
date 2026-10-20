@@ -6,6 +6,8 @@
  * nombres son los de `testdata/agentcore-deploy/contract.json`.
  */
 
+import type { BucketSource } from "../agent/aws-resolve.js";
+
 export const AGENT_TARGETS = ["microvm", "agentcore"] as const;
 export type AgentTarget = (typeof AGENT_TARGETS)[number];
 export const TARGET_MICROVM: AgentTarget = "microvm";
@@ -51,7 +53,6 @@ export interface ResolvedAgentCoreOptions {
 }
 
 export type ResourceKind = "stack" | "image" | "runtime";
-export type BucketSource = "argument" | "project_file" | "environment" | "discover";
 
 /** Un paso del plan o del despliegue: `action` es `planned` en el plan y, al
  * aplicar, `create`, `update`, `reuse`, `wait` o `build`; `status` es el

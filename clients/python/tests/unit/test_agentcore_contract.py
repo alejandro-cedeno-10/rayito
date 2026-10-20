@@ -117,7 +117,7 @@ def test_names_and_states_are_the_contracts() -> None:
     assert set(CONSTANTS["runtimeRepairableStates"]) == domain.RUNTIME_REPAIRABLE
     assert CONSTANTS["buildSucceededState"] == domain.BUILD_SUCCEEDED
     assert domain.SESSION_ID_PATTERN.pattern == CONSTANTS["sessionIdRules"]["pattern"].strip("^$")
-    assert CONSTANTS["awsPartition"] == domain.AWS_PARTITION
+    assert CONSTANTS["awsPartition"] == iam.AWS_PARTITION
     assert CONSTANTS["secretArnTemplate"] == domain.SECRET_ARN_TEMPLATE
     assert CONSTANTS["regionalFoundationModelArnTemplate"] == domain.FOUNDATION_MODEL_ARN_TEMPLATE
     assert CONSTANTS["anyRegionFoundationModelArnTemplate"] == domain.ANY_REGION_MODEL_ARN_TEMPLATE

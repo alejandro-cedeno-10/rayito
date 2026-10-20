@@ -299,7 +299,7 @@
         "repositoryName": "rayito/agentcore/support-bot",
         "buildProjectName": "rayito-agentcore-support-bot",
         "bucket": null,
-        "bucketSource": "discover",
+        "bucketSource": "discovered",
         "network": "PUBLIC",
         "bedrockModels": [
           "us.anthropic.claude-haiku-4-5-20251001-v1:0"

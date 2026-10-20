@@ -19,7 +19,7 @@ import {
 import { validateAccessToken } from "../payload.js";
 import type { PoolBackend } from "../pool/backend.js";
 import { ACCESS_TOKEN_ENV_VAR } from "../sandbox/launch.js";
-import { BUCKET_ENV_VAR, type Environ } from "./aws-resolve.js";
+import { BUCKET_ENV_VAR, type BucketSource, type Environ } from "./aws-resolve.js";
 import {
   BASE_IMAGE_VERSION_LATEST,
   validateBucketHint,
@@ -288,7 +288,7 @@ export function bucketSourceOf(
   options: AgentDeployOptions,
   projectFile: string | undefined,
   environ: Environ,
-): string {
+): BucketSource {
   if (options.bucket) {
     return "argument";
   }

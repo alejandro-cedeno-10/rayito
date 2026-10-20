@@ -111,7 +111,6 @@ def plan_agentcore(
         detected,
         chosen,
         agentcore or AgentCoreOptions(),
-        bucket=chosen.bucket,
         region=effective or aws_session(session, None).region_name,
         environ=variables,
         tree_for=tree_for,

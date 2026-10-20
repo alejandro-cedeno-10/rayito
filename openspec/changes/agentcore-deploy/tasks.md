@@ -136,7 +136,7 @@ now.
       `runtime_environment(project, region)` with `env_invalid`.
 - [x] 1.2.9 `build_plan(project, options, agentcore, region, environ) ->
       AgentCoreDeployPlan` (offline; bucket from argument, project file or
-      `RAYITO_BUCKET`, else `discover`).
+      `RAYITO_BUCKET`, else `discovered`).
 - [x] 1.2.10 Apply decisions: `decide_stack(observation)`,
       `decide_image(stack_ready, image_observation, build_image)`,
       `check_image_size(size_bytes)`, `decide_runtime(listed, details,

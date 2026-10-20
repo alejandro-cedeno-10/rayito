@@ -285,7 +285,7 @@ describe("despliegue completo", () => {
   it("sin bucket ni descubrimiento es no_bucket, y uno de otra región es bucket_region", async () => {
     const noBucket = newAccount();
     const missing = await deployer(noBucket)
-      .apply(request({ plan: samplePlan({ bucket: null, bucketSource: "discover" }) }))
+      .apply(request({ plan: samplePlan({ bucket: null, bucketSource: "discovered" }) }))
       .catch((thrown: unknown) => thrown);
     expect((missing as AgentCoreError).code).toBe("no_bucket");
 
@@ -303,7 +303,7 @@ describe("despliegue completo", () => {
     const account = newAccount();
     account.discovered = BUCKET;
     await deployer(account).apply(
-      request({ plan: samplePlan({ bucket: null, bucketSource: "discover" }) }),
+      request({ plan: samplePlan({ bucket: null, bucketSource: "discovered" }) }),
     );
     expect(account.source.puts).toHaveLength(1);
   });
