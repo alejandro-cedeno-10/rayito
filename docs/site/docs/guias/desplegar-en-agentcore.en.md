@@ -18,8 +18,9 @@ it with the same API as [`AgentFleet`](flota-de-agentes.md).
 
 It works with every framework the 0.14 zero-config detection already deploys:
 LangGraph and LangGraph.js, LangChain and deepagents (Python and TypeScript),
-Strands (Python and TypeScript) and its harness, Hermes, OpenCode, the Vercel AI
-SDK and your own Flask or Express app.
+Strands (Python and TypeScript) and its harness, Hermes, the Vercel AI SDK and
+your own Flask or Express app. OpenCode deploys but does not answer yet: it does
+not read the credentials of the runtime role (`model_error`).
 
 !!! info "Cost and activation"
     - **Turns it on:** `--target agentcore` in `rayito agent deploy`, or
@@ -44,6 +45,10 @@ SDK and your own Flask or Express app.
       `fleet.delete()`) deletes the runtime, the stack with its repository and the
       log group; with no sessions, an idle runtime charges no compute.
     - **Example:** [Deploy](#desplegar).
+    - **Measured** (real-AWS acceptance, 2026-10-19, us-east-1): the build took
+      38 to 121 s depending on the framework, the runtime reached `READY` about
+      13 s after creation, the first invocation of a new session took 10 to 34 s
+      (the agent starts in a fresh microVM) and later ones 1 to 3 s.
 
 !!! warning "Security: no secrets gateway"
     AgentCore has no Rayito secrets gateway: the agent gets credentials from the

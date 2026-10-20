@@ -391,15 +391,15 @@ Variables (documented generically in the test headers): `RAYITO_E2E=1`,
 for tag-enforcing SCPs).
 
 ### 4.1 Preconditions (read-only)
-- [ ] Inventory before: `ListAgentRuntimes`, stacks `rayito-agentcore-*`, ECR
+- [x] Inventory before: `ListAgentRuntimes`, stacks `rayito-agentcore-*`, ECR
       repositories `rayito/agentcore/*`, CodeBuild projects
       `rayito-agentcore-*`, log groups `/aws/bedrock-agentcore/runtimes/` and
       `/aws/codebuild/rayito-agentcore-*`, S3 prefix `rayito/images/agentcore/`,
       IAM roles of those stacks, plus the MicroVM inventory of
       `release-and-aws.md`.
-- [ ] Service Quotas: CodeBuild concurrent ARM small builds and AgentCore
+- [x] Service Quotas: CodeBuild concurrent ARM small builds and AgentCore
       active sessions; Bedrock model access for the profile.
-- [ ] IAM simulation of the caller for the actions of `AWS_API_NOTES.md`.
+- [x] IAM simulation of the caller for the actions of `AWS_API_NOTES.md`.
 
 ### 4.2 Matrix (one project per framework, all from `testdata/agent-samples/`)
 
@@ -436,13 +436,22 @@ TypeScript e2e covers rows 9-14 and 16 and one Python row (4) through
 `deployAgent`. Plus one `--dry-run --json` per SDK and a `name_conflict` check
 against a runtime created by hand without the marker (then deleted).
 
+Result of the acceptance run (2026-10-19, `us-east-1`; details in
+`AWS_API_NOTES.md` Q175-Q179): fifteen of the sixteen samples pass every check
+of the table above. `opencode` deploys and reaches `READY` but cannot call the
+model with the runtime role (Q177), so it needs a credentials path of its own
+before it is supported. The run found one product bug (a new session's first
+call reached the host before the agent was warm; fixed in the host, Q176) and
+three defects in the TypeScript e2e (fixed). The sweep of the e2e support only
+removes runtimes, so a stack without a runtime needs `agent delete`.
+
 ### 4.3 MicroVM backward compatibility
-- [ ] `rayito agent deploy <sample> --dry-run` without `--target` equals the
+- [x] `rayito agent deploy <sample> --dry-run` without `--target` equals the
       0.14 output (unit golden) and makes no AWS call.
-- [ ] Deploy `python-strands` and `typescript-strands-ts` to MicroVMs with the
+- [x] Deploy `python-strands` and `typescript-strands-ts` to MicroVMs with the
       default target (subset of `tests/e2e/test_agent_zero_config.py` and its
       TypeScript mirror), invoke, stop.
-- [ ] `rayito setup --dry-run` unchanged.
+- [x] `rayito setup --dry-run` unchanged.
 
 ### 4.4 Parallelism and limits
 - At most 3 CodeBuild builds at a time (raise only if the quota allows),
@@ -463,13 +472,13 @@ against a runtime created by hand without the marker (then deleted).
 - **Total ≈ $0.80; cap $5.**
 
 ### 4.6 Cleanup (only what this run created)
-- [ ] Every test deletes its agent in `finally` (`delete --yes`); afterwards a
+- [x] Every test deletes its agent in `finally` (`delete --yes`); afterwards a
       sweep deletes only runtimes, stacks, repositories, projects, log groups
       and S3 objects whose names contain the run id; the MicroVM images of the
       run follow `release-and-aws.md` (`RAYITO_E2E_RUN_ID`).
-- [ ] Inventory after; the difference with 4.1 must be zero. Anything that
+- [x] Inventory after; the difference with 4.1 must be zero. Anything that
       existed before stays, even if it looks like Rayito's.
-- [ ] Record in `AWS_API_NOTES.md` (new Q rows): image size measured by ECR
+- [x] Record in `AWS_API_NOTES.md` (new Q rows): image size measured by ECR
       vs what AgentCore accepts, cold start to first `invoke`, build minutes
       per framework, OpenCode credentials result.
 

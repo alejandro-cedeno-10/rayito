@@ -2037,6 +2037,71 @@ una sola región (us-east-1).
   de `rayito-m0-artifacts` fallaría por `s3:CreateBucket` (no se intentó:
   sólo se simuló).
 
+- **Q175 — Matriz de AgentCore Runtime con los ejemplos de `testdata/agent-samples/`
+  (2026-10-19, us-east-1, `deploy_agent(target="agentcore")` y
+  `deployAgent`).** Quince de los dieciséis ejemplos se desplegaron sin tocar su
+  código, llegaron a `READY`, contestaron 42 por `invoke` y por `stream`,
+  continuaron la sesión con el id devuelto, no construyeron ni crearon nada al
+  redesplegar sin cambios (`stackNoChanges`, `imageReused`, `runtimeReuse`),
+  pararon la sesión y se borraron sin dejar runtime, pila, repositorio ni
+  proyecto; la simulación de IAM denegó otro modelo y un secreto que no se dio.
+  El dieciséis, OpenCode, falla (Q177). Build de CodeBuild `arm1.small`, en
+  segundos: `python-langgraph-fastapi` 110, `python-langchain-create-agent` 102,
+  `python-deepagents` 99, `python-strands` 79, `python-strands-harness` 92,
+  `python-hermes` 121, `python-flask-custom` 38, `python-agentcore-native` 85,
+  `typescript-langgraph-js` 82, `typescript-langchain-js` 90,
+  `typescript-deepagents-js` 99, `typescript-strands-ts` 66,
+  `typescript-strands-harness-ts` 101, `typescript-vercel-ai-sdk` 69,
+  `typescript-express-custom` 51 y `opencode` 40. El runtime pasó de
+  `CREATING` a `READY` en unos 13 s en todos (incluido el `UpdateAgentRuntime`
+  que fija `requireMMDSV2`). Ninguna imagen fue rechazada por tamaño: la cuota
+  de 2 048 MB no se alcanzó con ningún ejemplo (no se midió el tamaño de ECR por
+  ejemplo: el repositorio se borra con la pila). La cuota de builds
+  simultáneos `ARM/Small` de la cuenta es de 300 y la de sesiones activas de
+  AgentCore, de 5 000; se corrieron tres builds a la vez sin esperas.
+- **Q176 — La primera llamada de una sesión nueva llega antes de que el agente
+  esté caliente (2026-10-19).** Con el host de 0.14, la primera `invoke` de un
+  runtime recién creado devolvió `RuntimeClientError` (HTTP 424, «Received error
+  (503) from runtime») en todos los ejemplos de Python que se probaron antes del arreglo: AgentCore
+  arranca una microVM por sesión y enruta `POST /invocations` en cuanto el host
+  escucha, y el host contestaba `503 not_ready` hasta terminar `warm()` (de 7 a
+  20 s según el framework; `GET /ping` ya contestaba 200). El SDK de TypeScript
+  sólo lo evitó por azar de tiempos y falló en el `stream` de
+  `typescript-express-custom`. Con el arreglo (el host retiene la petición hasta
+  25 s a que termine el calentamiento y sólo entonces contesta `503`) las
+  invocaciones siguientes pasaron. Primera invocación de una sesión nueva
+  tras el arreglo, en segundos: 9,8 (`python-flask-custom`) a 33,6
+  (`python-hermes`), 12 a 22 en el resto; la segunda llamada con el mismo id,
+  de 0,9 a 4,8 s. Una sesión nueva sobre un runtime ya caliente tarda unos 3 s.
+- **Q177 — OpenCode no lee el rol del runtime (2026-10-19).** El ejemplo
+  `opencode` se despliega y llega a `READY`, pero cada `invoke` devuelve
+  `failed.reason = "model_error"` con `detail_code = "UnknownError"` tras 13 s;
+  repetido con `AWS_REGION` y `AWS_DEFAULT_REGION` en `[env]` el resultado fue el
+  mismo. El host no registra más detalle. El riesgo previsto en el diseño se
+  confirma, pero no es un cambio de datos: el adaptador de credenciales
+  (`agentcoreEnvCredentialAdapters`) sólo alimenta al puente de Node, no al
+  proceso de OpenCode, así que `opencode` sigue sin soporte hasta que el host
+  le pase las credenciales del rol.
+- **Q178 — Ciclo de vida del runtime (2026-10-19).** Un cambio de entorno
+  actualiza el mismo runtime (la versión sube y sigue habiendo un solo runtime
+  por nombre) y un cambio de código construye una imagen nueva y
+  actualiza el runtime. Un runtime sin la marca de Rayito (descripción
+  distinta) es `name_conflict` y nunca se toca. Borrar y volver a desplegar la
+  misma configuración (`python-flask-custom`, CLI) volvió a crear pila, imagen y
+  runtime con el mismo `clientToken` sin error: 116 s el primer despliegue,
+  24 s el borrado y 105 s el segundo. `DeleteAgentRuntime` justo después de un
+  `UpdateAgentRuntime` devuelve `ConflictException` mientras el runtime está en
+  `UPDATING`: hay que esperar a `READY`. Borrar la pila tardó entre 24 y 327 s.
+- **Q179 — Compatibilidad con el destino MicroVM (2026-10-19).**
+  `rayito agent deploy <ruta> --dry-run` sin `--target` no llama a AWS y
+  produce el plan de 0.14; `rayito setup --dry-run` planea `bucket`, `iamStack`
+  y `baseImage` como `reuse`. Con una imagen `rayito-base-caps` desechable
+  (construida con el `rayd` de esta rama: 216 s, snapshot de memoria 0,91 GB,
+  instalación de código 1,45 GB), `python-strands` (Python) y
+  `typescript-strands-ts` (TypeScript) se desplegaron con el destino por
+  defecto, contestaron, y la limpieza no dejó VMs; también pasaron las
+  variantes con opciones y las sesiones dedicadas del espejo de TypeScript.
+
 
 ## Despliegue de agentes de cero configuración (0.14, `deploy_agent`)
 
