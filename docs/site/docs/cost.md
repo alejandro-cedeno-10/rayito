@@ -350,3 +350,35 @@ déjale `idle` (el valor por defecto), o páralo con `rayito agent stop`.
     - Tiempos, tamaños y tokens medidos en AWS real el 2026-10-07
       (Q146–Q150 y Q152 de `AWS_API_NOTES.md` §16); el contraste con una
       factura real (Q151) sigue pendiente.
+
+### Coste de un agente en AgentCore { #coste-de-un-agente-en-agentcore }
+
+Con [`--target agentcore`](guias/desplegar-en-agentcore.md) el agente no corre en
+un MicroVM de Lambda sino en Amazon Bedrock AgentCore Runtime, y su coste son
+cuatro líneas de la factura de AWS, más el modelo (**List**, `us-east-1`,
+consultado el **2026-10-19**; todavía no hay una factura real de un despliegue):
+
+| Concepto | Precio | Cómo se cobra | Fuente |
+|---|---|---|---|
+| Runtime, CPU (plataforma V1, la que crea Rayito) | $0,0895 por vCPU-hora | por segundo de uso real; sin cargo de CPU en espera de E/S | [precios de AgentCore](https://aws.amazon.com/bedrock/agentcore/pricing/) |
+| Runtime, memoria | $0,00945 por GB-hora | por segundo, mientras la sesión vive (mínimo 128 MB), hasta que termina: por defecto, a los 15 min sin uso | los mismos |
+| Build en CodeBuild (`arm1.small`) | $0,0034 por minuto | redondeado al minuto; 100 minutos al mes gratis | [precios de CodeBuild](https://aws.amazon.com/codebuild/pricing/) y la lista de precios de AWS |
+| Imagen en ECR | $0,10 por GB-mes | se conservan las últimas 5 versiones | la lista de precios de AWS |
+| Logs en CloudWatch | $0,50 por GB ingerido | por GB que escribe el agente y el build | la lista de precios de AWS |
+
+Sin sesiones no hay cómputo: un runtime parado no cobra CPU ni memoria, y sólo
+quedan la imagen en ECR y los logs. Cada sesión es una microVM propia (hasta
+2 vCPU y 8 GB), así que dos conversaciones a la vez cobran dos veces.
+
+| Escenario | Coste aproximado |
+|---|---|
+| Una conversación de 20 s de CPU a 1 vCPU y 2 GB de memoria durante 120 s | 20 s × $0,0895/3600 + 120 s × 2 GB × $0,00945/3600 ≈ $0,0005 + $0,0006 ≈ **$0,0011**, más los tokens del modelo |
+| Un build de 8 minutos, pasado el nivel gratuito | 8 × $0,0034 ≈ **$0,03** (los primeros 100 minutos del mes, gratis) |
+| Una imagen de 1,5 GB en ECR | 1,5 × $0,10 = **$0,15 al mes** por versión conservada, hasta 5 |
+
+Los tamaños y tiempos de la imagen y del build son estimaciones: ECR informa
+del tamaño comprimido y los minutos de build dependen del framework. Lo medido
+en AWS real irá en `AWS_API_NOTES.md` cuando se acepte el despliegue.
+`rayito agent deploy --target agentcore` imprime estas líneas en el plan, y
+`rayito agent delete <nombre> --target agentcore` deja de cobrar la imagen y los
+logs.

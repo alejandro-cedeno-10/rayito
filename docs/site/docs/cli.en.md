@@ -23,7 +23,7 @@ options and environment variables.
 | [`rayito domain`](#rayito-domain) (experimental) | `deploy`, `status`, `destroy` |
 | [`rayito events`](#rayito-events) | `deploy`, `status`, `destroy`, `list`, `webhook add`, `webhook list`, `webhook remove` |
 | [`rayito template`](#rayito-template) | `build`, `status`, `logs` |
-| [`rayito agent`](#rayito-agent) | `init`, `build`, `run`, `deploy`, `export`, `invoke`, `status`, `stop`, `template build` |
+| [`rayito agent`](#rayito-agent) | `init`, `build`, `run`, `deploy`, `export`, `invoke`, `status`, `stop`, `list`, `delete`, `template build` |
 | [`rayito dashboard`](#rayito-dashboard) | — |
 | [`rayito setup`](#rayito-setup) | — |
 | [`rayito doctor`](#rayito-doctor) | — |
@@ -514,10 +514,15 @@ rayito agent deploy [PATH] [--file PATH] [--timeout S] [--port N] [--token-file 
                     [--min-vms N] [--max-vms N] [--warm N] [--idle S] [--queue N] [--queue-timeout S]
                     [--env K=V]... [--allow-out DEST]... [--bucket B] [--secret PROVIDER=NAME]...
                     [--create-secret] [--base-artifact ZIP] [--yes] [--dry-run]
+                    [--target microvm|agentcore] [--tag K=V]... [--bedrock-model ID]...
+                    [--readable-secret NAME]... [--idle-session-timeout S] [--max-session-lifetime S]
 rayito agent export --target docker|agentcore --out DIR [--file PATH] [--overwrite]
 rayito agent invoke SANDBOX_ID PROMPT [--session-id ID] [--stream] [--token-file F]
-rayito agent status SANDBOX_ID [--token-file F]
-rayito agent stop SANDBOX_ID
+                    [--target microvm|agentcore]
+rayito agent status SANDBOX_ID [--token-file F] [--target microvm|agentcore]
+rayito agent stop SANDBOX_ID [--target microvm|agentcore] [--session-id ID]
+rayito agent list --target agentcore
+rayito agent delete NAME --target agentcore [--yes]
 rayito agent template build --bucket B [--name rayito-agent] [--base rayito-base-caps] [--memory-mb 2048]
                             [--no-deepagents] [--no-prefetch] [--force] [--timeout 1800]
 ```
@@ -580,6 +585,99 @@ pool. Prefetch and warm pools are optional:
 [What do I use?](guias/agente-en-el-sandbox.md#que-uso). Each new version
 costs snapshot storage ([Pricing](cost.md#cuanto-cuesta-con-ejemplos)); old
 ones are deleted with `rayito image prune --image-name <name>`.
+
+### `agent` with `--target agentcore` { #agent-agentcore }
+
+Since 0.15.0 (not published yet), `rayito agent deploy --target agentcore`
+deploys the agent to Amazon Bedrock AgentCore Runtime instead of a MicroVM
+fleet, and `invoke`, `status`, `stop`, `list` and `delete` operate it. Without
+`--target`, or with `--target microvm`, everything is as in 0.14. Full guide:
+[Deploy to AgentCore](guias/desplegar-en-agentcore.md).
+
+!!! info "Cost and activation"
+    - **Turns it on:** `--target agentcore` in `rayito agent deploy`. `--dry-run`
+      makes no AWS call.
+    - **AWS resources and calls:** one CloudFormation stack per agent
+      (`rayito-agentcore-<name>`), one CodeBuild build for each new content and
+      one AgentCore runtime.
+    - **Approximate cost** (us-east-1, list prices, checked on 2026-10-19):
+      runtime at $0.0895 per vCPU-hour and $0.00945 per GB-hour of actual use;
+      build at $0.0034 per minute (100 minutes a month free); image in ECR at
+      $0.10 per GB-month. More in [Pricing](cost.md#coste-de-un-agente-en-agentcore).
+    - **IAM:** [Before you start](guias/desplegar-en-agentcore.md#antes-de-empezar).
+    - **How to turn it off:** `rayito agent delete <name> --target agentcore`.
+    - **Example:** `rayito agent deploy ./my-agent --target agentcore --yes`.
+
+| Option | Commands | What it does |
+|---|---|---|
+| `--target` (`microvm` or `agentcore`) | `deploy`, `invoke`, `status`, `stop` (on `list` and `delete` it is required and only `agentcore` is valid) | Where it is deployed. Default: `microvm` |
+| `--tag K=V` | `deploy` | Tag for the `rayito-agentcore-<name>` stack and the runtime; repeatable; useful if the organization requires tags |
+| `--bedrock-model ID` | `deploy` | Bedrock model or inference profile the runtime role may invoke; repeatable. Default: the project's model |
+| `--readable-secret NAME` | `deploy` | Secrets Manager secret the runtime role may read; repeatable. Default: none |
+| `--idle-session-timeout S` | `deploy` | Seconds without use after which AgentCore ends a session's microVM ({{agentcoreLifecycleMinSeconds}}-{{agentcoreLifecycleMaxSeconds}}, default {{agentcoreIdleSessionTimeoutDefaultSeconds}}) |
+| `--max-session-lifetime S` | `deploy` | Maximum lifetime of a session's microVM ({{agentcoreLifecycleMinSeconds}}-{{agentcoreLifecycleMaxSeconds}}, default {{agentcoreLifecycleMaxSeconds}}) |
+| `--session-id ID` | `stop` | The session whose microVM is stopped (`StopRuntimeSession`); with `--target agentcore` it is required |
+| `--yes` | `deploy`, `delete` | Do not ask for confirmation (required with no terminal or with `--json`) |
+
+The new options, except `--target`, only apply with `--target agentcore`:
+without it they give `option_requires_agentcore` (exit 2). With
+`--target agentcore`, the MicroVM options that have no equivalent (`--min-vms`,
+`--max-vms`, `--warm`, `--memory`, `--port`, `--timeout`, `--idle`, `--secret`,
+`--create-secret`, `--token-file`, `--keep-on-failure`, `--base-artifact`,
+`--allow-out`) give `option_not_supported` (exit 2) before calling AWS; the
+[full table](guias/desplegar-en-agentcore.md#opciones-que-no-aplican) says what
+each one does and why.
+
+- **`deploy --target agentcore`** prints the plan (three steps: stack, image and
+  runtime), the `Seguridad:` section (AgentCore has no Rayito secrets gateway:
+  the agent gets credentials from the runtime role), the warnings and the
+  approximate cost, and asks for confirmation (`¿Desplegar en AgentCore?`). With
+  `--dry-run` it stops there without calling AWS; with no terminal or with
+  `--json`, `--yes` is required (`needs_confirmation`, exit 2). When done it
+  prints `target=agentcore`, `name`, `runtime_id`, `runtime_arn`, `version`,
+  `region` and `logs`, and how to invoke it.
+- **`invoke NAME PROMPT --target agentcore`**: the argument is the agent name;
+  `--session-id` and `--stream` work as they are. `--token-file` gives
+  `option_not_supported`: AgentCore authenticates with SigV4.
+- **`status NAME --target agentcore`** prints the runtime's state, its version,
+  the image, the region and the log group.
+- **`stop NAME --target agentcore --session-id ID`** ends that session; without
+  `--session-id` it gives `session_required` (exit 2).
+- **`list --target agentcore`** lists the region's Rayito agents
+  (`<name> runtime=… id=… version=… status=…`) or says there are none.
+- **`delete NAME --target agentcore`** deletes the runtime, the
+  `rayito-agentcore-<name>` stack (ECR repository with its images, CodeBuild
+  project and logs, and the two roles) and the runtime's log group; only what
+  Rayito created for that name. It asks for confirmation (`--yes` skips it; with
+  no terminal or with `--json`, `delete_needs_confirmation`, exit 2). With
+  nothing to delete, it exits 0.
+
+**Exit 2** (usage or environment): `unsupported_region`, `option_not_supported`,
+`option_requires_agentcore`, `target_unsupported`, `provider_unsupported`,
+`network_policy_unsupported`, `name_invalid`, `name_conflict`, `model_required`,
+`image_missing`, `lifecycle_invalid`, `lifecycle_order`, `tags_invalid`,
+`env_invalid`, `raw_protocol`, `no_bucket`, `bucket_region`, `needs_confirmation`,
+`delete_needs_confirmation` and `session_required`. **Exit 1** (what fails in
+AWS): `stack_blocked`, `stack_failed`, `image_build_failed`,
+`image_build_timeout`, `build_quota`, `image_too_large`, `runtime_blocked`,
+`runtime_failed`, `runtime_timeout`, `runtime_not_found`, `delete_failed`,
+`access_denied` and `aws_error`. What each means:
+[Errors](referencia/errores.md#agentcore).
+
+With `--json`, each command prints a single document:
+
+| Command | Keys |
+|---|---|
+| `deploy --dry-run` | `dryRun`, `target`, `detection`, `plan` (`target`, `name`, `region`, `runtimeName`, `stackName`, `repositoryName`, `buildProjectName`, `imageTag`, `bucket`, `bucketSource`, `network`, `bedrockModels`, `readableSecrets`, `environment`, `lifecycle`, `tags`, `steps`, `security`, `warnings`, `cost`) |
+| `deploy` | `target`, `name`, `region`, `runtimeName`, `runtimeId`, `runtimeArn`, `runtimeVersion`, `status`, `imageUri`, `stackName`, `logGroup`, `steps` |
+| `status` | `target`, `name`, `region`, `runtimeName`, `runtimeId`, `runtimeArn`, `runtimeVersion`, `status`, `imageUri`, `logGroup` |
+| `list` | `target`, `region`, `agents` (`name`, `runtimeName`, `runtimeId`, `runtimeVersion`, `status`) |
+| `delete` | `target`, `name`, `region`, `runtimeDeleted`, `stackDeleted`, `logGroupDeleted` |
+| `stop` | `target`, `name`, `sessionId`, `stopped` |
+| an error | `{"error": {"code", "message"}, "exitCode"}` on stdout and the line `rayito: <message>` on stderr, like `rayito setup` |
+
+Each step (`steps`) carries `resource` (`stack`, `image` or `runtime`), `name`,
+`action` and `status`; in the plan, `action` is always `planned`.
 
 ## `rayito dashboard` { #rayito-dashboard }
 

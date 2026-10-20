@@ -94,6 +94,7 @@ LangChain/Vercel AI): the sandbox is its tool and `rayito-base` is enough.
 | [Agent in the sandbox](agente-en-el-sandbox.md) | a coding agent (OpenCode or deepagents) **inside** the sandbox with `sbx.agent.run()`, the model behind the secrets gateway; fast startup is optional |
 | [Agent providers](agente-proveedores.md) | the model providers `sbx.agent` supports behind the secrets gateway, how to configure each one and which are not supported |
 | [Agent templates](../funciones-opcionales/templates-de-agente.md) | `AgentTemplate`: the `rayito-agent` image with OpenCode, ripgrep and deepagents, their pins and the cost of each version |
+| [Deploy to AgentCore](desplegar-en-agentcore.md) | the agent you already have on Amazon Bedrock AgentCore Runtime with `--target agentcore`: a CodeBuild build with no local Docker, a least-privilege role and the same `invoke` API as a MicroVM fleet |
 
 ## Develop and test { #desarrollar-y-probar }
 

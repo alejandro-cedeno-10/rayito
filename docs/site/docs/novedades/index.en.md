@@ -12,6 +12,18 @@ detail, change by change, is in each component's
 
 <div class="grid cards" markdown>
 
+-   :material-tag:{ .lg .middle } **0.15.0** · in development, not published
+
+    ---
+
+    Deploy the agent you already have to Amazon Bedrock AgentCore Runtime with
+    `--target agentcore` (`rayito agent deploy`, `deploy_agent()` and
+    `deployAgent()`): no local Docker, a least-privilege role and the same
+    `invoke` API as a MicroVM fleet. AgentCore has no Rayito secrets gateway. No
+    API-breaking changes.
+
+    [:octicons-arrow-right-24: What's new in 0.15.0](0.15.0.md)
+
 -   :material-tag:{ .lg .middle } **0.14.0** · 2026-10-17 · current
 
     ---
