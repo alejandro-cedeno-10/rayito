@@ -61,6 +61,20 @@ def template_name(project: AgentProject) -> str:
     return project.template or project.name
 
 
+def image_version_of(info: Any) -> str:
+    """La versión de la imagen de un `BuildInfo`: la primera parte de su
+    `build_id` (`"<versión>/<build>"`). Es la versión que el build creó o
+    reutilizó, no necesariamente la más reciente de la imagen."""
+    return str(info.build_id).split("/", maxsplit=1)[0]
+
+
+def version_args(image_version: str | None) -> dict[str, str]:
+    """El `template_version` de `Sandbox.create()` cuando hay una versión
+    fijada; vacío si no (la más reciente activa, como `run-microvm` sin
+    `imageVersion`)."""
+    return {} if image_version is None else {"template_version": image_version}
+
+
 def project_template(
     project: AgentProject, *, asynchronous: bool = False, base_version: str | None = None
 ) -> AgentTemplate:

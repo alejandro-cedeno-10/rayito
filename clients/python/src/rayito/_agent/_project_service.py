@@ -21,6 +21,7 @@ from rayito._agent._project_base import (
     failed_marker_path,
     host_config_for,
     host_entries,
+    image_version_of,
     is_raw_app,
     is_raw_project,
     kept_sandbox_note,
@@ -31,6 +32,7 @@ from rayito._agent._project_base import (
     serve_command,
     startup_failure_message,
     template_name,
+    version_args,
 )
 from rayito._images import DEFAULT_BUILD_TIMEOUT_SECONDS
 from rayito._limits import AGENT_SERVICE_READY_MARKER_PATH, AGENT_SERVICE_READY_TIMEOUT_SECONDS
@@ -61,12 +63,21 @@ class ProjectService:
         transport_factory: Any = default_transport,
         sleep: Callable[[float], None] = time.sleep,
         clock: Callable[[], float] = time.monotonic,
+        image_version: str | None = None,
     ) -> None:
         self._project = project
         self._sandbox_class = sandbox_class
         self._transport_factory = transport_factory
         self._sleep = sleep
         self._clock = clock
+        self._image_version = image_version
+
+    @property
+    def image_version(self) -> str | None:
+        """La versión de la imagen con la que se crean los sandboxes: la que
+        fijó el constructor o el último `build()` (creada o reutilizada), o
+        `None` para la más reciente activa."""
+        return self._image_version
 
     def build(
         self,
@@ -80,8 +91,11 @@ class ProjectService:
         base_version: str | None = None,
     ) -> BuildInfo:
         """Construye la imagen del proyecto con `AgentTemplate.build()`;
-        `base_version` fija la versión de la base (`None`: la más reciente)."""
-        return project_template(self._project, base_version=base_version).build(
+        `base_version` fija la versión de la base (`None`: la más reciente).
+        La versión que el build crea o reutiliza queda fijada para los
+        sandboxes que este servicio cree después, aunque la imagen tenga otra
+        más reciente."""
+        info = project_template(self._project, base_version=base_version).build(
             bucket=bucket,
             force=force,
             timeout=timeout,
@@ -89,6 +103,8 @@ class ProjectService:
             region=region,
             session=session,
         )
+        self._image_version = image_version_of(info)
+        return info
 
     def run(
         self,
@@ -194,7 +210,12 @@ class ProjectService:
 
             sandbox_class = Sandbox
         extra = {key: value for key, value in (("region", region), ("session", session)) if value}
-        return sandbox_class.create(template_name(self._project), **arguments, **extra)
+        return sandbox_class.create(
+            template_name(self._project),
+            **arguments,
+            **version_args(self._image_version),
+            **extra,
+        )
 
     def _wait_ready(self, sandbox: Any) -> None:
         """Espera al marcador de listo del host: `TimeoutException` al

@@ -34,6 +34,7 @@ from rayito._limits import (
     AGENT_STARTUP_DIAGNOSTICS_MAX_BYTES,
 )
 from rayito._models import ALL_TRAFFIC, IdlePolicy, NetworkPolicy
+from rayito._templates._models import BuildInfo
 from rayito.exceptions import (
     AgentException,
     InvalidArgumentException,
@@ -53,6 +54,8 @@ from tests.unit.fake_agent_project import (
     FakeSandboxClass,
     project,
 )
+
+INFO = BuildInfo("arn", "1.0/support-bot", "support-bot")
 
 
 class Flavor:
@@ -122,13 +125,13 @@ def test_build_composes_the_template_of_the_project(
     flav = flavor()
     seen: list[tuple[Any, dict[str, Any]]] = []
 
-    def build_sync(self: AgentTemplate, **kwargs: Any) -> str:
+    def build_sync(self: AgentTemplate, **kwargs: Any) -> BuildInfo:
         seen.append((self, kwargs))
-        return "info"
+        return INFO
 
-    async def build_async(self: AsyncAgentTemplate, **kwargs: Any) -> str:
+    async def build_async(self: AsyncAgentTemplate, **kwargs: Any) -> BuildInfo:
         seen.append((self, kwargs))
-        return "info"
+        return INFO
 
     monkeypatch.setattr(AgentTemplate, "build", build_sync)
     monkeypatch.setattr(AsyncAgentTemplate, "build", build_async)
@@ -143,7 +146,7 @@ def test_build_composes_the_template_of_the_project(
         force=True,
         region="us-east-1",
     )
-    assert info == "info"
+    assert info == INFO
     ((template, kwargs),) = seen
     assert isinstance(template, AsyncAgentTemplate if flav.asynchronous else AgentTemplate)
     assert (template.name, template.base, template.memory_mib) == (
@@ -163,17 +166,63 @@ def test_build_defaults_the_image_name_to_the_project_name(
 ) -> None:
     flav = flavor()
     names: list[str] = []
-    monkeypatch.setattr(AgentTemplate, "build", lambda self, **kw: names.append(self.name))
+
+    def build_sync(self: AgentTemplate, **kwargs: Any) -> BuildInfo:
+        names.append(self.name)
+        return INFO
+
+    monkeypatch.setattr(AgentTemplate, "build", build_sync)
     monkeypatch.setattr(AsyncAgentTemplate, "build", _async_recorder(names))
     flav.call(flav.service(project()), "build", bucket="b")
     assert names == ["support-bot"]
 
 
 def _async_recorder(names: list[str]) -> Callable[..., Any]:
-    async def build(self: AsyncAgentTemplate, **kwargs: Any) -> None:
+    async def build(self: AsyncAgentTemplate, **kwargs: Any) -> BuildInfo:
         names.append(self.name)
+        return INFO
 
     return build
+
+
+def _patch_build(monkeypatch: pytest.MonkeyPatch, info: BuildInfo) -> None:
+    async def build_async(self: AsyncAgentTemplate, **kwargs: Any) -> BuildInfo:
+        return info
+
+    monkeypatch.setattr(AgentTemplate, "build", lambda self, **kwargs: info)
+    monkeypatch.setattr(AsyncAgentTemplate, "build", build_async)
+
+
+def test_build_pins_the_image_version_it_created_or_reused(
+    flavor: Callable[..., Flavor], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """El build puede reutilizar una versión anterior a la más reciente: los
+    sandboxes que el servicio cree después arrancan esa, no la última."""
+    flav = flavor()
+    _patch_build(monkeypatch, BuildInfo("arn", "2.0/support-bot", "support-bot"))
+    service = flav.service(project())
+    before = service.image_version
+    flav.call(service, "build", bucket="b")
+    assert (before, service.image_version) == (None, "2.0")
+    flav.call(service, "deploy")
+    flav.call(service, "run", "hola")
+    assert [kwargs["template_version"] for _, kwargs in flav.klass.created] == ["2.0", "2.0"]
+
+
+def test_without_a_build_no_image_version_is_pinned(flavor: Callable[..., Flavor]) -> None:
+    flav = flavor()
+    flav.call(flav.service(project()), "deploy")
+    ((_, kwargs),) = flav.klass.created
+    assert "template_version" not in kwargs
+
+
+def test_an_explicit_image_version_is_pinned(flavor: Callable[..., Flavor]) -> None:
+    flav = flavor()
+    service_class = AsyncProjectService if flav.asynchronous else ProjectService
+    service = service_class(project(), sandbox_class=flav.klass, image_version="3.0")
+    flav.call(service, "deploy")
+    ((_, kwargs),) = flav.klass.created
+    assert kwargs["template_version"] == "3.0"
 
 
 def test_build_rejects_a_runtime_that_cannot_be_installed(flavor: Callable[..., Flavor]) -> None:

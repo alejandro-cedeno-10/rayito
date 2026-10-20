@@ -107,6 +107,40 @@ describe("build", () => {
     built.mockRestore();
   });
 
+  test("pins the image version the build created or reused", async () => {
+    const built = vi.spyOn(AgentTemplate.prototype, "build").mockResolvedValue({
+      templateId: "t",
+      buildId: "2.0/support-bot",
+      alias: "a",
+    });
+    const { service, factory } = harness();
+    const the = service(project());
+    expect(the.imageVersion).toBeUndefined();
+    await the.build({ bucket: "b" });
+    expect(the.imageVersion).toBe("2.0");
+    await the.deploy();
+    await the.run("hola");
+    expect(factory.created.map((created) => created?.templateVersion)).toEqual(["2.0", "2.0"]);
+    built.mockRestore();
+  });
+
+  test("without a build no version is pinned: the newest active one", async () => {
+    const { service, factory } = harness();
+    await service(project()).deploy();
+    expect(factory.created[0]).not.toHaveProperty("templateVersion");
+  });
+
+  test("an explicit imageVersion is pinned until the next build", async () => {
+    const sandbox = new FakeSandbox();
+    const factory = new FakeSandboxFactory(sandbox);
+    const service = new ProjectService(project(), {
+      sandboxFactory: factory,
+      imageVersion: "3.0",
+    });
+    await service.deploy();
+    expect(factory.created[0]?.templateVersion).toBe("3.0");
+  });
+
   test("rejects a runtime that cannot be installed", async () => {
     const { service, factory } = harness();
     await expect(
