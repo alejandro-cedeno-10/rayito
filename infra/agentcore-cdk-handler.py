@@ -15,7 +15,9 @@ recursos que `RayitoAgent` declara con el `Provider` de `custom_resources`
   (AWS_API_NOTES.md Q181) y `CreateAgentRuntime` tampoco: se manda un
   `UpdateAgentRuntime` con la configuración que devuelve `GetAgentRuntime` y
   `metadataConfiguration.requireMMDSV2=true`, cada vez que cambia la versión
-  del runtime (la propiedad `AgentRuntimeVersion` del recurso la fuerza).
+  del runtime (la propiedad `AgentRuntimeVersion` del recurso la fuerza). El
+  recurso devuelve en `AgentRuntimeVersion` la versión viva que ya exige
+  MMDSv2 (la que publica esa actualización), no la que creó CloudFormation.
 
 Borrar cualquiera de los dos no llama a AWS: el repositorio se vacía con su
 pila (`EmptyOnDelete`) y el runtime lo borra CloudFormation.
@@ -190,14 +192,24 @@ def _image_size(properties: dict[str, Any]) -> int | None:
     return int(details[0]["imageSizeInBytes"]) if details else None
 
 
+#: Atributo de `Custom::RayitoRuntimeMmds` (`GetAtt Mmds.AgentRuntimeVersion`).
+RUNTIME_VERSION_ATTRIBUTE: Final = "AgentRuntimeVersion"
+
+
 def _require_mmds(properties: dict[str, Any]) -> dict[str, Any]:
+    """La propiedad `AgentRuntimeVersion` sólo dispara la re-ejecución: el
+    token de idempotencia sale de la versión *viva* que devuelve
+    `GetAgentRuntime` (como `client_token_for` de la CLI con la versión
+    base), porque la de CloudFormation queda atrás en cuanto esta misma
+    actualización publica la siguiente, y un rollback podría repetirla con
+    otra petición."""
     runtime_id = str(properties["AgentRuntimeId"])
-    version = str(properties["AgentRuntimeVersion"])
     control = _client("bedrock-agentcore-control")
     runtime = control.get_agent_runtime(agentRuntimeId=runtime_id)
     physical_id = f"{runtime_id}/mmds"
     if _mmds_required(runtime):
         return {"PhysicalResourceId": physical_id}
+    version = str(runtime.get("agentRuntimeVersion") or properties["AgentRuntimeVersion"])
     request = {field: runtime[field] for field in RUNTIME_UPDATE_FIELDS if field in runtime}
     control.update_agent_runtime(
         agentRuntimeId=runtime_id,
@@ -215,7 +227,12 @@ def _mmds_complete(properties: dict[str, Any]) -> dict[str, Any]:
     status = str(runtime.get("status", ""))
     if status in RUNTIME_FAILED_STATES:
         raise HandlerError("runtime_failed", status=status)
-    return {"IsComplete": status == RUNTIME_READY and _mmds_required(runtime)}
+    if status != RUNTIME_READY or not _mmds_required(runtime):
+        return {"IsComplete": False}
+    return {
+        "IsComplete": True,
+        "Data": {RUNTIME_VERSION_ATTRIBUTE: str(runtime["agentRuntimeVersion"])},
+    }
 
 
 def _mmds_required(runtime: dict[str, Any]) -> bool:

@@ -88,6 +88,11 @@
         "AgentRuntimeVersion"
       ]
     },
+    "customResourceAttributes": {
+      "Custom::RayitoRuntimeMmds": {
+        "AgentRuntimeVersion": "la versión viva del runtime que ya exige MMDSv2 (GetAgentRuntime.agentRuntimeVersion cuando el recurso termina); RayitoAgent.runtimeVersion / runtime_version y RuntimeRef la usan, nunca CfnRuntime.AgentRuntimeVersion"
+      }
+    },
     "runtimeEnvironmentValueMaxChars": 2048,
     "runtimeEnvironmentValueRule": "RayitoAgent rechaza en la síntesis, con el env_invalid del plan, un valor de entorno de más de 2048 caracteres (límite del esquema de AWS::BedrockAgentCore::Runtime, Q181), aunque la API admita 5000"
   },
@@ -270,7 +275,9 @@
       "message": "la imagen {name} la gestiona CloudFormation (CDK): cámbiala con cdk deploy",
       "detection": "GetMicrovmImage.tags[\"rayito:managed-by\"] == \"rayito-cdk\"",
       "appliesTo": [
-        "rayito image publish",
+        "rayito image publish"
+      ],
+      "readOnlyStillWorks": [
         "rayito image prune"
       ]
     }

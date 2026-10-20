@@ -60,6 +60,7 @@ uv run --project clients/python python scripts/gen_cdk_vectors.py          # esc
 uv run --project clients/python python scripts/gen_cdk_vectors.py --check  # sale 1 si algo deriva
 ```
 
-Hasta que existan el constructo de Python y su arnés
-(`clients/python/tests/cdk_contract_harness.py`, tareas 1.2 y 1.4) el script
-da los casos por pendientes y `--check` sale con 0.
+El arnés de Python es `clients/python/tests/cdk_contract_harness.py`
+(`synthesize_case`). Las plantillas dependen de la versión de `aws-cdk-lib`
+fijada en `clients/python/uv.lock` (de ella salen las funciones del
+`Provider`): TypeScript fija la misma en su lockfile.

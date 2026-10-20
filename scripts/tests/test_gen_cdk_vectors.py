@@ -39,7 +39,7 @@ def test_normalise_template_applies_every_rule() -> None:
                 "Metadata": {"aws:cdk:path": "Stack/Image"},
                 "Properties": {
                     "CodeArtifact": {
-                        "Uri": f"s3://cdk-hnb659fds-assets-123456789012-us-east-1/{HASH}.zip"
+                        "Uri": f"s3://cdk-{script.BOOTSTRAP_QUALIFIER}-assets-123456789012-us-east-1/{HASH}.zip"
                     },
                     "Tags": [
                         {"Key": "rayito:sdk-version", "Value": "0.15.0"},

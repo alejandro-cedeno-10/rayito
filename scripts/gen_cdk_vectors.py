@@ -18,9 +18,12 @@ Usage::
     uv run --project clients/python python scripts/gen_cdk_vectors.py
     uv run --project clients/python python scripts/gen_cdk_vectors.py --check
 
-Until the Python construct and its harness exist (tasks 1.2 and 1.4 of the
-OpenSpec change) the script reports the cases as pending: `--check` fails only when a golden file
-exists that the current code no longer produces.
+The harness is `clients/python/tests/cdk_contract_harness.py`
+(`synthesize_case`); the golden templates depend on the `aws-cdk-lib` version
+locked in `clients/python/uv.lock` (the Provider framework functions come from
+it), so TypeScript must lock the same version. Without the harness or the
+`cdk` extra the script reports the cases as pending, and `--check` fails if
+golden files exist that it cannot verify.
 """
 
 from __future__ import annotations
@@ -147,6 +150,7 @@ def python_synthesizer() -> Synthesizer | None:
     if spec is None or spec.loader is None:
         return None
     module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     synthesize: Synthesizer = getattr(module, HARNESS_FUNCTION)
     return synthesize

@@ -77,9 +77,10 @@ class FakeCodeBuild:
 
 
 class FakeControl:
-    def __init__(self, *, mmds: bool, status: str = "READY") -> None:
+    def __init__(self, *, mmds: bool, status: str = "READY", version: str = "1") -> None:
         self.runtime: dict[str, Any] = {
             "agentRuntimeId": "rayito_bot-AbCdEfGhIj",
+            "agentRuntimeVersion": version,
             "agentRuntimeArtifact": {"containerConfiguration": {"containerUri": "repo:src-1"}},
             "roleArn": "arn:aws:iam::123456789012:role/runtime",
             "networkConfiguration": {"networkMode": "PUBLIC"},
@@ -194,11 +195,29 @@ def test_mmds_is_required_once(handler: ModuleType, monkeypatch: pytest.MonkeyPa
         handler.RUNTIME_UPDATE_FIELDS
     )
     assert handler.is_complete(mmds_event()) == {"IsComplete": False}
-    already = FakeControl(mmds=True)
+    already = FakeControl(mmds=True, version="2")
     install(handler, monkeypatch, control=already)
     handler.on_event(mmds_event("Update"))
     assert already.updates == []
-    assert handler.is_complete(mmds_event()) == {"IsComplete": True}
+    assert handler.is_complete(mmds_event()) == {
+        "IsComplete": True,
+        "Data": {"AgentRuntimeVersion": "2"},
+    }
+
+
+def test_mmds_token_uses_the_live_version(
+    handler: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """La propiedad (la versión que grabó CloudFormation) se queda atrás en
+    cuanto la propia actualización publica otra: un rollback la repetiría
+    con otra petición, así que el token sale de la versión viva."""
+    control = FakeControl(mmds=False, version="5")
+    install(handler, monkeypatch, control=control)
+    handler.on_event(mmds_event())
+    (update,) = control.updates
+    live = handler.client_token("rayito_bot-AbCdEfGhIj", "5")
+    assert update["clientToken"] == live
+    assert live != handler.client_token("rayito_bot-AbCdEfGhIj", "1")
 
 
 def test_failed_runtime_stops_the_wait(handler: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
