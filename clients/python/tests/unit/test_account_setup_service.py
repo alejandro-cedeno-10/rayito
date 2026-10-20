@@ -5,6 +5,7 @@ no publica nada."""
 from __future__ import annotations
 
 import copy
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -162,6 +163,21 @@ def test_a_stack_in_progress_is_waited_for_not_recreated(tmp_path: Path) -> None
     assert "create" not in names
     assert "update" not in names
     assert planned.account.publisher.published_with[1] == BUILD_ROLE_ARN
+
+
+def test_after_waiting_for_a_stack_in_progress_it_is_updated_if_it_has_another_bucket(
+    tmp_path: Path,
+) -> None:
+    planned = Planned(STACK_IN_PROGRESS, tmp_path)
+    other = "amzn-s3-demo-bucket-other"
+    planned.account.iam_stack.stack = replace(
+        planned.account.iam_stack.stack, parameters={"ArtifactBucket": other}
+    )
+    plan = planned.plan
+    assert plan.stack_step.action == "wait"
+    planned.apply()
+    assert [call[0] for call in planned.writes][:2] == ["wait", "update"]
+    assert planned.writes[1] == ("update", plan.bucket)
 
 
 def test_a_build_in_progress_is_waited_for_and_never_published(tmp_path: Path) -> None:

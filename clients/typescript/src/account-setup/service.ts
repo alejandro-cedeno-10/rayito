@@ -61,6 +61,7 @@ import {
   PROGRESS_MESSAGES,
   planBucketCreation,
   planSetup,
+  planStack,
   requireSupportedRegion,
   type SetupPlan,
   type SetupRequest,
@@ -174,6 +175,11 @@ export class AccountSetup {
         formatTemplate(PROGRESS_MESSAGES.stackWait, { ...name, status: step.status ?? "" }),
       );
       observed = await iamStack.wait();
+      if (planStack(observed, bucket).action === "update") {
+        // la pila que se esperaba trabajaba con otro bucket: se actualiza
+        onProgress(formatTemplate(PROGRESS_MESSAGES.stackUpdate, name));
+        observed = await iamStack.updateBucket(bucket, tags);
+      }
     } else {
       return undefined;
     }

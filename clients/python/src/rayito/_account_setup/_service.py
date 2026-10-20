@@ -26,6 +26,7 @@ from rayito._account_setup._domain import (
     needs_default_probe,
     plan_bucket_creation,
     plan_setup,
+    plan_stack,
     progress_message,
     require_supported_region,
     stack_output,
@@ -163,6 +164,10 @@ class AccountSetup:
         elif step.action == "wait":
             on_progress(progress_message("stackWait", name=IAM_STACK_NAME, status=str(step.status)))
             observation = gateway.wait()
+            if plan_stack(observation, bucket).action == "update":
+                # la pila que se esperaba trabajaba con otro bucket: se actualiza
+                on_progress(progress_message("stackUpdate", name=IAM_STACK_NAME))
+                observation = gateway.update_bucket(bucket)
         else:
             return None
         stack_output(observation, BUILD_ROLE_OUTPUT_KEY, IAM_TEMPLATE_PATH)

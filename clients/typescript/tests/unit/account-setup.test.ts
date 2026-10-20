@@ -367,6 +367,18 @@ describe("AccountSetup.apply", () => {
     expect(names(fake.calls)).toContain("wait");
   });
 
+  it("after waiting for a stack in progress, updates it when it works with another bucket", async () => {
+    const input = inputWith({
+      bucket: "amzn-s3-demo-bucket1",
+      stack: { ...PREPARED_STACK, status: "CREATE_IN_PROGRESS", outputs: {} },
+      buckets: { "amzn-s3-demo-bucket1": "us-east-1" },
+      image: LAUNCHABLE_IMAGE,
+    });
+    const { fake } = await applied(input);
+    expect(fake.writes).toEqual([["update", "amzn-s3-demo-bucket1"]]);
+    expect(names(fake.calls).indexOf("wait")).toBeLessThan(names(fake.calls).indexOf("update"));
+  });
+
   it("waits for a build in progress and never publishes", async () => {
     const input = inputWith({
       stack: PREPARED_STACK,
