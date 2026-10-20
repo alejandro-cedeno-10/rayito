@@ -22,6 +22,38 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   `deploy_agent` / `rayito agent deploy` lo encuentran por su salida
   `BucketName` (sólo lectura). Con `--json`, un error de AWS o de pila que
   `setup` no traduce también deja un único documento.
+- **`deploy_agent(target="agentcore")` despliega un agente en Amazon Bedrock
+  AgentCore Runtime sin Docker local**: `rayito agent deploy ./mi-agente --target
+  agentcore` (y `deploy_agent` / `deploy_agent_async` / `plan_deploy` con
+  `target="agentcore"` y `agentcore=AgentCoreOptions(...)`) detecta el
+  proyecto, imprime el plan (región, recursos, seguridad y coste, sin llamar a
+  AWS), pide confirmación (`--yes`, `--dry-run`, `--json`) y crea la pila
+  `rayito-agentcore-<nombre>` (repositorio de ECR, proyecto de CodeBuild y dos
+  roles), construye la imagen arm64 en CodeBuild sólo si cambió el contenido y
+  crea o actualiza el runtime por nombre (sin duplicados), con MMDSv2 exigido y
+  un rol de mínimo privilegio. `AgentCoreFleet.invoke()` y `stream()` tienen la
+  API y la semántica de sesión de `AgentFleet`; `rayito agent invoke`,
+  `status` y `stop` aceptan `--target agentcore` y hay un `rayito agent list`
+  y un `rayito agent delete` nuevos (sólo borran lo que creó Rayito). Las
+  opciones de MicroVMs que no aplican son un error explícito
+  (`option_not_supported`) o un aviso si vienen del fichero de proyecto.
+  AgentCore no tiene la pasarela de secretos de Rayito: el agente lee las
+  credenciales del rol del runtime; el plan, el README exportado y las guías lo
+  dicen. Nuevos: `AgentCoreFleet`, `AsyncAgentCoreFleet`, `AgentCoreFleetStream`,
+  `AsyncAgentCoreFleetStream`, `AgentCoreOptions`, `AgentCoreStatus`,
+  `AgentCoreDeleteResult`, `AgentCoreDeployPlan` y `AgentCoreException`. El
+  destino por defecto sigue siendo MicroVM y sin `target="agentcore"` no se
+  crea ningún cliente de AgentCore, CodeBuild ni ECR.
+- **El export `agentcore` se despliega tal cual**: su `Dockerfile` toma la
+  imagen base de un argumento de build (`AGENT_BASE_IMAGE`, con el mismo
+  digest), el README explica `--target agentcore` y la seguridad, y un agente
+  del AI SDK de Vercel lleva una herramienta (botocore fijado por hash) con la
+  que el host lee las credenciales del rol y se las pasa al puente de Node en
+  cada invocación. El export `docker` no cambia.
+- **El host del agente traduce el id de sesión de AgentCore**: una cabecera
+  `X-Amzn-Bedrock-AgentCore-Runtime-Session-Id` con cualquier forma empieza una
+  sesión del driver la primera vez y la continúa después, y la respuesta lleva
+  siempre el id de la cabecera.
 
 ### Cambiado
 
