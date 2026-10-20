@@ -1,6 +1,6 @@
 /**
  * Los agentes de ejemplo de la aceptación de 0.14 (`testdata/agent-samples/`):
- * quince proyectos que ya existían, sin código de rayito, cada uno con su
+ * dieciséis proyectos que ya existían, sin código de rayito, cada uno con su
  * lockfile, y el manifiesto que comparten los tests de Python y de TypeScript.
  * Todo es puro: sólo se leen ficheros.
  */
@@ -10,7 +10,7 @@ import { join, relative, sep } from "node:path";
 import { describe, expect, test } from "vitest";
 
 const ROOT = join(import.meta.dirname, "..", "..", "..", "..", "testdata", "agent-samples");
-const SAMPLE_COUNT = 15;
+const SAMPLE_COUNT = 16;
 const SKIPPED_DIRS = new Set([".venv", "node_modules", "__pycache__"]);
 const LOCKFILE_NAMES = new Set(["uv.lock", "package-lock.json"]);
 const SOURCE_SUFFIXES = new Set([".py", ".js"]);
@@ -60,7 +60,7 @@ const suffixOf = (path: string): string => path.slice(path.lastIndexOf("."));
 const read = (path: string): string => readFileSync(path, "utf8");
 
 describe("agent samples", () => {
-  test("the manifest lists the fifteen samples once", () => {
+  test("the manifest lists the sixteen samples once", () => {
     expect(manifest.samples).toHaveLength(SAMPLE_COUNT);
     expect(new Set(manifest.samples.map((sample) => sample.id)).size).toBe(SAMPLE_COUNT);
     expect(manifest.schema).toBe("rayito.agent-samples/1");

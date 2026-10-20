@@ -1,4 +1,4 @@
-"""Los quince agentes de ejemplo de 0.14 (`testdata/agent-samples/`) planifican
+"""Los dieciséis agentes de ejemplo de 0.14 (`testdata/agent-samples/`) planifican
 para AgentCore sin cambiar una línea: cada framework sale con un contexto de
 build determinista, y sólo el AI SDK de Vercel pide la herramienta de
 credenciales del rol."""

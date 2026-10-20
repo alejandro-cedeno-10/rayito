@@ -38,6 +38,7 @@ export const OTHER_MODEL_ARN_TEMPLATE =
 export const SECRET_ARN_PATTERN_TEMPLATE = "arn:aws:secretsmanager:{region}:*:secret:*";
 const DEFAULT_SAMPLES = [
   "typescript-langgraph-js",
+  "typescript-langchain-js",
   "typescript-deepagents-js",
   "typescript-strands-ts",
   "typescript-strands-harness-ts",

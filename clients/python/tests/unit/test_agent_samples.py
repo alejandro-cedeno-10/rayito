@@ -1,5 +1,5 @@
 """Los agentes de ejemplo de la aceptación de 0.14 (`testdata/agent-samples/`):
-quince proyectos que ya existían, sin código de rayito, cada uno con su
+dieciséis proyectos que ya existían, sin código de rayito, cada uno con su
 lockfile, y el manifiesto que comparten los tests de Python y de TypeScript.
 Todo es puro: sólo se leen ficheros."""
 
@@ -15,7 +15,7 @@ import pytest
 ROOT: Final = Path(__file__).parents[4] / "testdata" / "agent-samples"
 MANIFEST: Final = json.loads((ROOT / "manifest.json").read_text(encoding="utf-8"))
 SAMPLES: Final[list[dict[str, Any]]] = MANIFEST["samples"]
-SAMPLE_COUNT: Final = 15
+SAMPLE_COUNT: Final = 16
 SKIPPED_DIRS: Final = frozenset({".venv", "node_modules", "__pycache__"})
 LOCKFILE_NAMES: Final = frozenset({"uv.lock", "package-lock.json"})
 #: Patrones con forma de credencial. Se arman por partes para que este fichero
@@ -44,7 +44,7 @@ def _ids() -> list[str]:
     return [sample["id"] for sample in SAMPLES]
 
 
-def test_manifest_lists_the_fifteen_samples_once() -> None:
+def test_manifest_lists_the_sixteen_samples_once() -> None:
     assert len(SAMPLES) == SAMPLE_COUNT
     assert len(set(_ids())) == SAMPLE_COUNT
     assert MANIFEST["schema"] == "rayito.agent-samples/1"

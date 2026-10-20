@@ -235,7 +235,7 @@ agent-runner-test:
 agent-export-test:
 	cd $(PYTHON_CLIENT) && uv run pytest tests/container -m docker_export -p no:cacheprovider -v
 
-# Los quince agentes de ejemplo (testdata/agent-samples/) de la detección al
+# Los dieciséis agentes de ejemplo (testdata/agent-samples/) de la detección al
 # contenedor: cada uno se detecta, se exporta, se construye con el Docker del
 # host (linux/arm64) y se prueba contra el Bedrock falso del entorno local
 # (dev/local/providers/fake_bedrock.py): ping, invocación con herramienta, SSE,

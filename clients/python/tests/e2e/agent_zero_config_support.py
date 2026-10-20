@@ -1,4 +1,4 @@
-"""Lo común a `test_agent_zero_config.py`: los quince agentes de ejemplo
+"""Lo común a `test_agent_zero_config.py`: los dieciséis agentes de ejemplo
 (`testdata/agent-samples/`) preparados para desplegarlos sin tocar su código,
 con un nombre propio de la ejecución, y el libro de gasto que corta la
 ejecución antes de pasar del tope.

@@ -1,4 +1,4 @@
-"""Los quince agentes de ejemplo (`testdata/agent-samples/`) desplegados en AWS
+"""Los dieciséis agentes de ejemplo (`testdata/agent-samples/`) desplegados en AWS
 real sin tocar su código (`agent-zero-config`), cada uno dos veces: sin opciones
 y con las propias (4096 MiB, 2 sesiones por VM, cola de 2, de 1 a 2 VMs con 1
 caliente). El modelo es Claude Haiku 4.5 por la pasarela de secretos.

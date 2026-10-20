@@ -226,10 +226,10 @@ SSE y el token) dentro de él.
 
 ### Los agentes de ejemplo, de la detección al contenedor { #los-agentes-de-ejemplo }
 
-`make agent-zero-config-test` toma los quince agentes de
+`make agent-zero-config-test` toma los dieciséis agentes de
 `testdata/agent-samples/` (LangGraph con FastAPI, LangChain, deepagents, Strands,
 Strands harness, Hermes, una app Flask, un agente nativo de AgentCore, LangGraph.js,
-deepagents-js, Strands TypeScript y su harness, el Vercel AI SDK, una app Express y
+LangChain.js, deepagents-js, Strands TypeScript y su harness, el Vercel AI SDK, una app Express y
 OpenCode), los detecta sin opciones, exporta su contexto de Docker, lo construye
 para `linux/arm64` con el Docker del host y lo prueba contra un Bedrock falso
 (`dev/local/providers/fake_bedrock.py`, que llama a la herramienta `add` y

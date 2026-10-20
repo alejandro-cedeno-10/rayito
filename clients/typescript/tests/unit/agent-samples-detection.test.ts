@@ -1,5 +1,5 @@
 /**
- * La detección (`ai-agent-detection`) sobre los quince agentes de ejemplo de
+ * La detección (`ai-agent-detection`) sobre los dieciséis agentes de ejemplo de
  * `testdata/agent-samples/`: cada uno se decide sin ninguna opción, igual que
  * lo dice el manifiesto que comparten los dos SDK. Sin AWS ni red: sólo se
  * leen ficheros.

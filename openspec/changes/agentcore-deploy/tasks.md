@@ -404,7 +404,7 @@ for tag-enforcing SCPs).
 ### 4.2 Matrix (one project per framework, all from `testdata/agent-samples/`)
 
 Agent name `<sample-id>-<run-id>` through `[image].template` (≤ 41 chars).
-No fixture is missing: the fifteen samples of 0.14 cover every framework.
+The sixteen samples of `testdata/agent-samples/` cover every framework in the request, including LangChain.js `createAgent` (`typescript-langchain-js`, added for this change).
 
 | # | Sample | Framework | Language | Model (runtime role) | Extra checks |
 |---|---|---|---|---|---|
@@ -423,6 +423,7 @@ No fixture is missing: the fifteen samples of 0.14 cover every framework.
 | 13 | `typescript-vercel-ai-sdk` | Vercel AI SDK | TypeScript | idem | env-credential helper path |
 | 14 | `typescript-express-custom` | custom Express | TypeScript | idem | **redeploy with a code change → image `build` + runtime `update`** |
 | 15 | `opencode` | OpenCode | config | idem | records whether OpenCode reads the role (risk in design) |
+| 16 | `typescript-langchain-js` | LangChain.js `createAgent` | TypeScript | idem | tool use |
 
 For every row: deploy (`--yes`, `--tag` from `RAYITO_E2E_TAGS`), status
 `READY`, `invoke` returns `42`, `stream` returns `42` with events, a second
@@ -431,7 +432,7 @@ three `reuse` and no build, `stop --session-id`, `delete --yes`, and the
 role check: IAM `SimulatePrincipalPolicy` on the runtime role denies
 `bedrock:InvokeModel` on another model and `secretsmanager:GetSecretValue`
 without `--readable-secret`. Python e2e covers rows 1-8 and 15 plus the CLI;
-TypeScript e2e covers rows 9-14 and one Python row (4) through
+TypeScript e2e covers rows 9-14 and 16 and one Python row (4) through
 `deployAgent`. Plus one `--dry-run --json` per SDK and a `name_conflict` check
 against a runtime created by hand without the marker (then deleted).
 

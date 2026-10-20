@@ -5,7 +5,7 @@ nombre del modelo.
 Variables de entorno (todas opcionales):
 
 - `RAYITO_ZC_SAMPLES`: ids del manifiesto separados por comas; sin ella corren
-  los quince.
+  los dieciséis.
 - `RAYITO_ZC_ENDPOINT_HOST`: el nombre con el que el contenedor alcanza el
   Bedrock falso del host (`host.docker.internal` por defecto; con Lima,
   `host.lima.internal`).
