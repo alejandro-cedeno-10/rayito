@@ -6797,6 +6797,10 @@ const USAGE_KEYS = {
   cacheWriteInputTokens: "cache_write",
 };
 const SESSION_ID_PATTERN = /^rda_[0-9a-f]{32}$/;
+// Las únicas variables que el host puede pasar con las credenciales del rol de
+// AgentCore (\`aws_env\`), para el cliente de Bedrock de los frameworks que sólo las
+// leen del entorno.
+const AWS_ENV_NAMES = ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"];
 const DETAIL_CODE_PATTERN = /[^a-z0-9_]/g;
 const MAX_DETAIL_CODE_LENGTH = 64;
 
@@ -7610,6 +7614,28 @@ function readStdin() {
   }
 }
 
+// Ejecuta \`action\` con las credenciales de \`awsEnv\` en \`process.env\` y deja el
+// entorno como estaba al terminar, con éxito o no. Sin \`awsEnv\` no toca nada.
+export async function withAwsEnv(awsEnv, action) {
+  const source = awsEnv && typeof awsEnv === "object" ? awsEnv : {};
+  const names = AWS_ENV_NAMES.filter((name) => typeof source[name] === "string" && source[name]);
+  const previous = new Map(names.map((name) => [name, process.env[name]]));
+  for (const name of names) {
+    process.env[name] = source[name];
+  }
+  try {
+    return await action();
+  } finally {
+    for (const [name, value] of previous) {
+      if (value === undefined) {
+        delete process.env[name];
+      } else {
+        process.env[name] = value;
+      }
+    }
+  }
+}
+
 export async function main(argv) {
   const emit = protocolEmitter();
   let config;
@@ -7629,7 +7655,7 @@ export async function main(argv) {
     forceHttp1ForAwsSdk();
   }
   try {
-    await run({ config, request, emit });
+    await withAwsEnv(request.aws_env, () => run({ config, request, emit }));
   } catch (error) {
     const [reason, detail] = classify(error);
     emit(event("agent_failed", { reason, detail_code: detail, session_id: request.session_id }));

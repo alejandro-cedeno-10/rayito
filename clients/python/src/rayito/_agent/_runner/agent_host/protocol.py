@@ -80,6 +80,7 @@ class Request:
     session_id: str | None = None
     model: str | None = None
     reasoning: bool = False
+    aws_env: Mapping[str, str] | None = None
 
 
 @dataclass

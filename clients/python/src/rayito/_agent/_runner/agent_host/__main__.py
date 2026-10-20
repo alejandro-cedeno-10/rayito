@@ -7,7 +7,9 @@
 `DRIVERS`), `options` (las opciones del driver de `HostConfig.options`, que
 el driver recibe como su configuración) y, opcionalmente, `limits`,
 `max_concurrency`, `queue_max`, `queue_timeout_seconds`, `max_request_bytes`,
-`session_header` y `ready_marker`.
+`session_header`, `ready_marker` y `aws_env_credentials` (`{python, script}`: la
+herramienta que lee las credenciales del rol de AgentCore, que se ejecuta antes de
+cada invocación).
 Las variables de entorno de `HostConfig.envs` las pone quien lanza el host
 (el comando del SDK o el `ENV` del Dockerfile exportado). En `task` la
 petición llega por stdin y las líneas v1 salen por un descriptor privado; en
@@ -138,6 +140,7 @@ def serve(package: str, args: argparse.Namespace) -> int:
         token=os.environ.get(serving.TOKEN_ENV) or None,
         session_header=str(host.get("session_header", serving.SESSION_HEADER)),
         ready_marker=host.get("ready_marker"),
+        aws_credentials=_credentials_source(package, host.get("aws_env_credentials")),
     )
     if config.ready_marker is not None:
         Path(config.ready_marker).unlink(missing_ok=True)
@@ -162,6 +165,18 @@ def serve(package: str, args: argparse.Namespace) -> int:
     log.info("listening port=%d driver=%s", args.port, host["driver"])
     server.serve_forever()
     return 1 if warm_failed.is_set() else 0
+
+
+def _credentials_source(package: str, spec: Any) -> Any:
+    """La herramienta que lee las credenciales del rol de AgentCore antes de
+    cada invocación, o `None` si `host.json` no la configura."""
+    if not isinstance(spec, dict):
+        return None
+    python, script = spec.get("python"), spec.get("script")
+    if not isinstance(python, str) or not isinstance(script, str):
+        return None
+    module = importlib.import_module(".aws_credentials", package)
+    return module.CredentialsHelper(python, script)
 
 
 def _bounded(value: Any, default: Any, ceiling: Any) -> Any:
