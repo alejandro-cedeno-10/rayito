@@ -11,8 +11,16 @@ import { afterEach, describe, expect, it } from "vitest";
 import { AgentProject } from "../../src/agent/project.js";
 import { planAgentCoreWith } from "../../src/agentcore/facade.js";
 
-const SENSITIVE_PATHS = [".env", ".env.local", ".git/config"];
-const SECRET_PREFIXES = ["app/.env", "app/.git"];
+const SENSITIVE_PATHS = [
+  ".env",
+  ".env.local",
+  ".git/config",
+  "sub/.env",
+  "sub/.env.local",
+  "sub/.git/config",
+];
+const isSecretPath = (path: string): boolean =>
+  path.split("/").some((part) => part === ".git" || part.startsWith(".env"));
 const BUCKET_ENVIRON = { RAYITO_BUCKET: "amzn-s3-demo-bucket" };
 const REGION = "us-east-1";
 const MODEL_ID = "us.anthropic.claude-haiku-4-5-20251001-v1:0";
@@ -66,9 +74,7 @@ describe("contexto de build de AgentCore", () => {
     for (const planned of [clean, dirty]) {
       const paths = [...planned.tree.keys()];
       expect(paths).toContain("app/agent.py");
-      expect(
-        paths.filter((path) => SECRET_PREFIXES.some((prefix) => path.startsWith(prefix))),
-      ).toEqual([]);
+      expect(paths.filter(isSecretPath)).toEqual([]);
     }
     expect(dirty.plan.imageTag).toBe(clean.plan.imageTag);
   });

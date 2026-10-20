@@ -119,7 +119,14 @@ def test_the_plan_alone_never_touches_the_gateways() -> None:
     assert cloud.recorder.calls == []
 
 
-SENSITIVE_PATHS = (".env", ".env.local", ".git/config")
+SENSITIVE_PATHS = (
+    ".env",
+    ".env.local",
+    ".git/config",
+    "sub/.env",
+    "sub/.env.local",
+    "sub/.git/config",
+)
 
 
 def project_with_sensitive_files(root: Path, *, with_sensitive: bool) -> AgentProject:
@@ -148,7 +155,11 @@ def test_the_plan_leaves_secret_files_out_of_the_build_context(tmp_path: Path) -
     ]
     for planned in plans:
         assert "app/agent.py" in planned.tree
-        assert not [path for path in planned.tree if path.startswith(("app/.env", "app/.git"))]
+        assert not [
+            path
+            for path in planned.tree
+            if any(part == ".git" or part.startswith(".env") for part in path.split("/"))
+        ]
     assert plans[0].plan.image_tag == plans[1].plan.image_tag
 
 
