@@ -320,7 +320,7 @@
     },
     "dockerfileBaseImageArg": "AGENT_BASE_IMAGE",
     "sourceZipName": "{imageTag}.zip",
-    "stackNameTemplate": "{stackNamePrefix}{agentName}",
+    "stackNameTemplate": "{stackNamePrefix}{agentName with _ as -}",
     "repositoryNameTemplate": "{repositoryPrefix}{agentName}",
     "sourceKeyTemplate": "{sourcePrefix}{agentName}/{imageTag}.zip",
     "imageTagTemplate": "{imageTagPrefix}{sha256Prefix}",

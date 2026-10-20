@@ -100,6 +100,9 @@ AGENT_NAME_MAX_LENGTH: Final = AGENTCORE_RUNTIME_NAME_MAX_LENGTH - len(
 RUNTIME_DESCRIPTION_TEMPLATE: Final = "Rayito agent {name} ({marker})"
 RUNTIME_DESCRIPTION_PATTERN: Final = re.compile(r"Rayito agent (?P<name>\S+) \(.+\)")
 RUNTIME_NAME_SEPARATOR: Final = "_"
+# Separador del nombre del agente; los nombres de pila de CloudFormation sólo
+# admiten letras, dígitos y `-`, así que `_` pasa a `-` en la pila y en CodeBuild.
+NAME_SEPARATOR: Final = "-"
 SOURCE_ZIP_NAME_TEMPLATE: Final = "{image_tag}.zip"
 
 #: Un id de sesión de AgentCore que Rayito deja pasar (`sessionIdRules`).
@@ -442,11 +445,12 @@ def validate_agent_name(name: str) -> str:
 
 
 def runtime_name_for(name: str) -> str:
-    return AGENTCORE_RUNTIME_NAME_PREFIX + name.replace("-", RUNTIME_NAME_SEPARATOR)
+    return AGENTCORE_RUNTIME_NAME_PREFIX + name.replace(NAME_SEPARATOR, RUNTIME_NAME_SEPARATOR)
 
 
 def stack_name_for(name: str) -> str:
-    return AGENTCORE_STACK_NAME_PREFIX + name
+    """`rayito-agentcore-<nombre>` con `_` como `-` (CloudFormation no admite `_`)."""
+    return AGENTCORE_STACK_NAME_PREFIX + name.replace(RUNTIME_NAME_SEPARATOR, NAME_SEPARATOR)
 
 
 def repository_name_for(name: str) -> str:
@@ -454,7 +458,7 @@ def repository_name_for(name: str) -> str:
 
 
 def build_project_name_for(name: str) -> str:
-    return AGENTCORE_STACK_NAME_PREFIX + name
+    return stack_name_for(name)
 
 
 def source_key_for(name: str, image_tag: str) -> str:

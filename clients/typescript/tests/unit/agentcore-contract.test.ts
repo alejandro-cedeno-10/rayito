@@ -154,6 +154,9 @@ describe("nombres y constantes", () => {
     expect(stackNameFor(AGENT)).toBe("rayito-agentcore-support-bot");
     expect(repositoryNameFor(AGENT)).toBe("rayito/agentcore/support-bot");
     expect(buildProjectNameFor(AGENT)).toBe("rayito-agentcore-support-bot");
+    expect(stackNameFor("support_bot")).toBe("rayito-agentcore-support-bot");
+    expect(buildProjectNameFor("support_bot")).toBe("rayito-agentcore-support-bot");
+    expect(runtimeNameFor("support_bot")).toBe("rayito_support_bot");
     expect(sourceKeyFor(AGENT, "src-0123456789abcdef")).toBe(
       "rayito/images/agentcore/support-bot/src-0123456789abcdef.zip",
     );

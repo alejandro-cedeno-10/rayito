@@ -149,3 +149,9 @@ def test_the_options_table_keeps_the_order_of_the_contract() -> None:
         "scaling.scale_in_after_seconds",
     ]
     assert names.index("memory_mib") < names.index("secret_names") < names.index("pool_backend")
+
+
+def test_an_underscore_in_the_agent_name_becomes_a_hyphen_in_cloudformation_names() -> None:
+    assert domain.stack_name_for("support_bot") == "rayito-agentcore-support-bot"
+    assert domain.build_project_name_for("support_bot") == "rayito-agentcore-support-bot"
+    assert domain.runtime_name_for("support_bot") == "rayito_support_bot"

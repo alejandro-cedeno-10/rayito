@@ -42,8 +42,9 @@ export function runtimeNameFor(name: string): string {
   return `${AGENTCORE_RUNTIME_NAME_PREFIX}${name.replaceAll(NAME_SEPARATOR, RUNTIME_NAME_SEPARATOR)}`;
 }
 
+/** `rayito-agentcore-<nombre>` con `_` como `-` (CloudFormation no admite `_`). */
 export function stackNameFor(name: string): string {
-  return `${AGENTCORE_STACK_NAME_PREFIX}${name}`;
+  return `${AGENTCORE_STACK_NAME_PREFIX}${name.replaceAll(RUNTIME_NAME_SEPARATOR, NAME_SEPARATOR)}`;
 }
 
 export function repositoryNameFor(name: string): string {
