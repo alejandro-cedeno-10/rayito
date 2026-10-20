@@ -96,7 +96,7 @@ now.
 ## 1. Track PY (`clients/python/` only)
 
 ### 1.1 Shared code moved, not duplicated
-- [ ] 1.1.1 Move `StackObservation`, `StackCondition`, `classify_stack`,
+- [x] 1.1.1 Move `StackObservation`, `StackCondition`, `classify_stack`,
       `USABLE_STACK_STATES`, `DELETING_STACK_STATE` and
       `IN_PROGRESS_STACK_SUFFIX` from `_account_setup/_domain.py` to a new
       `src/rayito/_stacks/_condition.py`; `_account_setup` imports them from
@@ -104,127 +104,127 @@ now.
       untouched).
 
 ### 1.2 Domain `src/rayito/_agentcore/_domain.py` and `_models.py` (pure)
-- [ ] 1.2.1 Constants from `_limits.py` only (no literal): regions, prefixes,
+- [x] 1.2.1 Constants from `_limits.py` only (no literal): regions, prefixes,
       session lengths, lifecycle range and defaults, quotas, timeouts, poll
       intervals, retention, marker, endpoint name, prices.
-- [ ] 1.2.2 `AgentCoreOptions` (frozen dataclass; fields of
+- [x] 1.2.2 `AgentCoreOptions` (frozen dataclass; fields of
       `contract.sdk.python.options`; validates types, not ranges) and
       `AgentCoreDeployPlan`, `AgentCorePlanStep`, `AgentCoreStatus`,
       `AgentCoreDeleteResult`, `AgentCoreApplyStep` in `_models.py`.
-- [ ] 1.2.3 `AgentCoreException(Exception)` in `rayito/exceptions.py` with
+- [x] 1.2.3 `AgentCoreException(Exception)` in `rayito/exceptions.py` with
       `code: AgentCoreErrorCode` (the closed list of
       `contract.errorExitCodes`), `exit_code`, messages from
       `ERROR_MESSAGES` (the contract templates), never an ARN, URL, token or
       AWS text.
-- [ ] 1.2.4 Names: `agent_name_of(project)`, `validate_agent_name`,
+- [x] 1.2.4 Names: `agent_name_of(project)`, `validate_agent_name`,
       `runtime_name_for`, `stack_name_for`, `repository_name_for`,
       `build_project_name_for`, `source_key_for(name, tag)`,
       `runtime_description_for`, `runtime_log_group_for(runtime_id)`,
       `is_owned(listed)`.
-- [ ] 1.2.5 `image_tag_for(tree: Mapping[str, bytes]) -> str` (framing of
+- [x] 1.2.5 `image_tag_for(tree: Mapping[str, bytes]) -> str` (framing of
       `constants.imageTagDigest`), `client_token_for(request: Mapping) -> str`.
-- [ ] 1.2.6 `agentcore_session_id(session_id: str | None) -> str`
+- [x] 1.2.6 `agentcore_session_id(session_id: str | None) -> str`
       (`sessionIdRules`; uuid source injected for tests).
-- [ ] 1.2.7 `bedrock_resource_arns(models, model_region, account, partition)`
+- [x] 1.2.7 `bedrock_resource_arns(models, model_region, account, partition)`
       and `secret_resource_arns(names, region, account, partition)`
       (`model-arns.json`).
-- [ ] 1.2.8 `check_call_options(options: AgentDeployOptions, cli_flags:
+- [x] 1.2.8 `check_call_options(options: AgentDeployOptions, cli_flags:
       Mapping[str, object]) -> None` and `file_warnings(project) -> tuple[str, ...]`
       driven by one table mirroring `optionsTable` (order of the table
       description); `check_project(project)` for provider and network;
       `resolve_lifecycle`, `validate_tags` (counting `FIXED_TAG_KEYS`),
       `runtime_environment(project, region)` with `env_invalid`.
-- [ ] 1.2.9 `build_plan(project, options, agentcore, region, environ) ->
+- [x] 1.2.9 `build_plan(project, options, agentcore, region, environ) ->
       AgentCoreDeployPlan` (offline; bucket from argument, project file or
       `RAYITO_BUCKET`, else `discover`).
-- [ ] 1.2.10 Apply decisions: `decide_stack(observation)`,
+- [x] 1.2.10 Apply decisions: `decide_stack(observation)`,
       `decide_image(stack_ready, image_observation, build_image)`,
       `check_image_size(size_bytes)`, `decide_runtime(listed, details,
       desired)`, `runtime_matches(details, desired)` (`apply-vectors.json`).
 
 ### 1.3 Ports, service, adapters
-- [ ] 1.3.1 `_ports.py`: `RuntimeControl` (`list_runtimes`, `get_runtime`,
+- [x] 1.3.1 `_ports.py`: `RuntimeControl` (`list_runtimes`, `get_runtime`,
       `create_runtime`, `update_runtime`, `delete_runtime`), `RuntimeInvoker`
       (`invoke`, `stop_session`), `ImageBuilder` (`start_build`,
       `get_build`), `ImageRegistry` (`describe_image`), `SourceStore`
       (`put_source`, `delete_source`, `bucket_region`), `RuntimeLogs`
       (`delete_log_group`), `AccountIdentity` (`account_id`); the stack goes
       through the existing `StackProvisioner`/`OptionalStacks`.
-- [ ] 1.3.2 `_stack.py`: `AGENTCORE_STACK_COMPONENT` (`StackComponent`,
+- [x] 1.3.2 `_stack.py`: `AGENTCORE_STACK_COMPONENT` (`StackComponent`,
       `agentcore-runtime`, the eight parameters and six outputs of the
       contract, `CAPABILITY_IAM`, `CostStatement`); **not** in
       `_stacks/_registry.COMPONENTS`.
-- [ ] 1.3.3 `_service.py` (`AgentCoreDeployer.apply(plan) ->
+- [x] 1.3.3 `_service.py` (`AgentCoreDeployer.apply(plan) ->
       AgentCoreFleet`, `AgentCoreDeleter.delete(name)`, `list_agents()`), and
       `_service_async.py` with the same surface (`asyncio.to_thread` around
       the sync adapters, like `deploy_with_async`); progress through
       `on_step` with `AgentDeployStep` and the contract progress keys; poll
       with injected `clock`/`sleep`.
-- [ ] 1.3.4 `_aws.py`: boto3 adapters with `LazyClient` and
+- [x] 1.3.4 `_aws.py`: boto3 adapters with `LazyClient` and
       `client_config()`, only the parameters of `AWS_API_NOTES.md`; error
       translation by code from `awsErrorMap`; `sanitize_aws_error` on every
       cause; `InvokeAgentRuntime` read timeouts 900 s / 3600 s
       (`AGENTCORE_REQUEST_TIMEOUT_SECONDS`, `AGENTCORE_STREAM_MAX_SECONDS`)
       through a dedicated botocore `Config(read_timeout=...)`.
-- [ ] 1.3.5 Source zip: deterministic zip of `render_export(project,
+- [x] 1.3.5 Source zip: deterministic zip of `render_export(project,
       target="agentcore")` (fixed timestamps, sorted entries, `0o644`), uploaded
       with `PutObject` + `ChecksumSHA256`, deleted in `finally` after the build.
 
 ### 1.4 Public surface
-- [ ] 1.4.1 `_fleet.py` / `_fleet_async.py`: `AgentCoreFleet`,
+- [x] 1.4.1 `_fleet.py` / `_fleet_async.py`: `AgentCoreFleet`,
       `AsyncAgentCoreFleet`, `AgentCoreFleetStream`,
       `AsyncAgentCoreFleetStream` with the members of `contract.sdk.python`;
       `invoke`/`stream` reuse `invocation_body`, `result_from_body`,
       `EventDecoder`, `ResultBuilder`; `connect(name, region=, session=)`.
-- [ ] 1.4.2 `_deploy_facade.py`: `target` and `agentcore` keyword-only on
+- [x] 1.4.2 `_deploy_facade.py`: `target` and `agentcore` keyword-only on
       `deploy_agent`, `deploy_agent_async`, `plan_deploy` (`typing.overload`
       by `Literal` target for the return types); the MicroVM branch untouched.
-- [ ] 1.4.3 «Coste y activación» blocks (six entries, us-east-1 prices with
+- [x] 1.4.3 «Coste y activación» blocks (six entries, us-east-1 prices with
       the 2026-10-19 date and URLs) on `deploy_agent`, `deploy_agent_async`,
       `AgentCoreFleet`, `AgentCoreOptions`.
-- [ ] 1.4.4 Export in `rayito/__init__.py` (`__all__`): `AgentCoreFleet`,
+- [x] 1.4.4 Export in `rayito/__init__.py` (`__all__`): `AgentCoreFleet`,
       `AsyncAgentCoreFleet`, `AgentCoreFleetStream`,
       `AsyncAgentCoreFleetStream`, `AgentCoreOptions`, `AgentCoreStatus`,
       `AgentCoreDeleteResult`, `AgentCoreDeployPlan`, `AgentCoreException`.
 
 ### 1.5 Export and host (the image)
-- [ ] 1.5.1 `_agent/_export.py`: for `target == "agentcore"` only, the
+- [x] 1.5.1 `_agent/_export.py`: for `target == "agentcore"` only, the
       `ARG AGENT_BASE_IMAGE=<BASE_IMAGE_REFERENCE>` line before `FROM` and
       `FROM --platform=linux/arm64 ${AGENT_BASE_IMAGE}`; the README section of
       the golden; for frameworks in `AGENTCORE_ENV_CREDENTIAL_ADAPTERS`, the
       steps of `constants.export.awsCredentials` (sha from
       `AGENT_AWS_CREDENTIALS_REQUIREMENTS_SHA256`) and `host.json`
       `aws_env_credentials`. `docker` output byte-for-byte unchanged.
-- [ ] 1.5.2 Host (`_runner/agent_host/`, standard library only): when
+- [x] 1.5.2 Host (`_runner/agent_host/`, standard library only): when
       `aws_env_credentials` is present, run `python script` before each
       invocation with a 10 s timeout, parse the JSON, pass it as `aws_env` to
       the Node bridge request; on failure `agent_failed` with
       `detail_code="aws_credentials_unavailable"`; never log the values.
-- [ ] 1.5.3 Node bridge (`_assets/node_bridge.mjs`): apply `aws_env` to
+- [x] 1.5.3 Node bridge (`_assets/node_bridge.mjs`): apply `aws_env` to
       `process.env` for the invocation and restore afterwards.
-- [ ] 1.5.4 Regenerate `python3 scripts/gen_agent_template_assets.py` and add
+- [x] 1.5.4 Regenerate `python3 scripts/gen_agent_template_assets.py` and add
       the golden case `testdata/agent/export/vercel-ai-agentcore/`
       (`case.json` from the `typescript/vercel-ai-sdk` sample shape, target
       `agentcore`; `RAYITO_UPDATE_SNAPSHOTS=1`).
 
 ### 1.6 CLI (`cli/agent.py`, new `cli/_agentcore.py`)
-- [ ] 1.6.1 Options appended exactly as `testdata/cli/surface.json` and
+- [x] 1.6.1 Options appended exactly as `testdata/cli/surface.json` and
       `contract.commands` (help texts verbatim); defaults from SDK constants.
-- [ ] 1.6.2 `deploy --target agentcore`: build the plan, print it
+- [x] 1.6.2 `deploy --target agentcore`: build the plan, print it
       (`messages`), `--dry-run` stops, confirmation, apply with progress
       lines, final lines `messages.deployed`; `--json` documents with
       `json.planDocumentKeys`, `deployKeys`, error document like
       `rayito setup` (`json.errorDocument`).
-- [ ] 1.6.3 `invoke|status|stop --target agentcore` (`AgentCoreFleet.connect`;
+- [x] 1.6.3 `invoke|status|stop --target agentcore` (`AgentCoreFleet.connect`;
       `--token-file` → `option_not_supported`; `stop` requires `--session-id`);
       `--session-id` on `stop` without the target → `option_requires_agentcore`.
-- [ ] 1.6.4 `list --target agentcore` and `delete <name> --target agentcore
+- [x] 1.6.4 `list --target agentcore` and `delete <name> --target agentcore
       [--yes]` with `messages.list*`, `messages.delete*`, `listKeys`,
       `deleteKeys`.
-- [ ] 1.6.5 `--tag` parsed with `cli/stack.parse_pairs`.
+- [x] 1.6.5 `--tag` parsed with `cli/stack.parse_pairs`.
 
 ### 1.7 Tests (names by behaviour, fakes only)
-- [ ] `tests/unit/test_agentcore_contract.py` (constants and messages equal
+- [x] `tests/unit/test_agentcore_contract.py` (constants and messages equal
       the contract), `test_agentcore_plan_vectors.py`,
       `test_agentcore_apply_vectors.py`, `test_agentcore_model_arns.py`,
       `test_agentcore_session_ids.py`, `test_agentcore_image_tag.py`,
@@ -235,16 +235,16 @@ now.
       (sync/async parity with `inspect.signature`),
       `tests/unit/cli/test_agentcore_cli.py` (dry run, `--json`, confirmation,
       exit codes), and the updated export tests.
-- [ ] Container test (optional, local Docker in CI only):
+- [x] Container test (optional, local Docker in CI only):
       `tests/container/test_agentcore_export_container.py` builds the
       `deepagents-agentcore` context with
       `--build-arg AGENT_BASE_IMAGE=...` and checks `/ping` and the session
       header.
-- [ ] e2e `tests/e2e/test_agentcore_deploy.py` + `agentcore_deploy_support.py`
+- [x] e2e `tests/e2e/test_agentcore_deploy.py` + `agentcore_deploy_support.py`
       (section 4; never runs without `RAYITO_E2E=1` and `RAYITO_E2E_AGENTCORE=1`).
 
 ### 1.8 Changelog
-- [ ] `clients/python/CHANGELOG.md` `## [Unreleased]` → `Added`.
+- [x] `clients/python/CHANGELOG.md` `## [Unreleased]` → `Added`.
 
 ### Gates (Track PY)
 
