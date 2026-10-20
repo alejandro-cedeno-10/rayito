@@ -135,7 +135,7 @@ describe("coste cero de AgentCore", () => {
 
 describe("los clientes de AgentCore sólo se importan en los adaptadores", () => {
   const Forbidden = new RegExp(
-    `from\\s+["'](?:${AGENTCORE_PEERS.map((peer) => peer.replace(/[/-]/g, "\\$&")).join("|")})["']`,
+    `from\\s+["'](?:${AGENTCORE_PEERS.map((peer) => peer.replace(/[.*+?^${}()|[\]\\/-]/g, "\\$&")).join("|")})["']`,
   );
 
   it("ningún módulo los importa de forma estática", () => {
