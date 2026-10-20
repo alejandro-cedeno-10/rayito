@@ -205,3 +205,4 @@ own strings, which it prints in Spanish; here they are translated.
 | `0.12` | `0.12.0` | 0.12: the management dashboard (rayito dashboard and the dashboard stack) is validated with the rayd of tag rayd-v0.12.0 |
 | `0.13` | `0.13.0` | 0.13: the TypeScript CLI and MCP server (ADR-027) and the CLI's UTC timestamp format are validated with the rayd of tag rayd-v0.13.0 |
 | `0.14` | `0.14.0` | 0.14: zero-config deployment of the agent you already have (Strands, Hermes, LangGraph, OpenCode or your own), its typed scaling options and the rayito agent CLI are validated with the rayd of tag rayd-v0.14.0 |
+| `0.15` | `0.15.0` | 0.15: rayito setup (prepare an account in one command) and agent deployment to Amazon Bedrock AgentCore Runtime (--target agentcore) are validated with the rayd of tag rayd-v0.15.0 |
