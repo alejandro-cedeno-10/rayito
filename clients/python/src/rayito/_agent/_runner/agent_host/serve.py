@@ -12,6 +12,13 @@ el contrato HTTP de AgentCore, con `http.server.ThreadingHTTPServer`.
   estar listo o mientras la app se relanza (con `Retry-After`) y `401` si
   hay token y no coincide.
 
+El id de sesión de AgentCore (la cabecera) lo elige quien llama, con cualquier
+forma; los drivers sólo continúan sesiones suyas (`rda_` y 32 hex, o las que
+guarda OpenCode). `SessionBridge` traduce uno al otro dentro de la microVM: la
+primera llamada de una sesión de AgentCore arranca una sesión nueva del driver
+y las siguientes la continúan, y la respuesta lleva siempre el id de la
+cabecera.
+
 El host no loguea contenido: sólo método, ruta sin consulta, estado, bytes y
 duración. Nunca el prompt, una cabecera ni el token.
 """
@@ -19,11 +26,13 @@ duración. Nunca el prompt, una cabecera ni el token.
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 import hmac
 import json
 import logging
 import os
 import queue
+import re
 import threading
 import time
 from collections import deque
@@ -84,6 +93,10 @@ QUEUE_TIMEOUT_SECONDS_MAX: Final = 900.0
 #: Segundos que `Retry-After` pide esperar con el agente ocupado o sin
 #: calentar.
 RETRY_AFTER_SECONDS: Final = 1
+#: Segundos que una petición espera a que el host termine de calentar antes de
+#: recibir el `503`: AgentCore enruta la primera llamada de una sesión nueva en
+#: cuanto arranca la microVM, antes de que el agente esté caliente.
+READY_WAIT_SECONDS_DEFAULT: Final = 25.0
 #: Segundos que un manejador espera una lectura o una escritura del socket
 #: antes de soltar la conexión: un cliente que anuncia un cuerpo y no lo manda
 #: no retiene un hilo para siempre.
@@ -130,6 +143,37 @@ class ServiceConfig:
     session_header: str = SESSION_HEADER
     ready_marker: str | None = None
     io_timeout_seconds: float = IO_TIMEOUT_SECONDS
+    ready_wait_seconds: float = READY_WAIT_SECONDS_DEFAULT
+    aws_credentials: Callable[[], Mapping[str, str]] | None = None
+
+
+#: El id de sesión propio de los drivers (`SESSION_ID_PATTERN` de `drivers/_common.py`):
+#: una cabecera que ya lo tiene es de una sesión de esta máquina y se usa tal cual.
+DRIVER_SESSION_PATTERN: Final = re.compile(r"rda_[0-9a-f]{32}")
+#: Las claves de un evento de una ejecución que llevan el id de sesión.
+SESSION_EVENT_TYPES: Final = ("session", "done", "agent_failed")
+
+
+class SessionBridge:
+    """Traduce el id de sesión de la cabecera de AgentCore al del driver y
+    de vuelta. Un id de cabecera con la forma de los drivers se usa tal cual;
+    cualquier otro empieza una sesión del driver la primera vez (`None`) y la
+    continúa después, con el id del driver que aprendió del evento `session`."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._driver_ids: dict[str, str] = {}
+
+    def to_driver(self, request: Request, header_session: str | None) -> Request:
+        if header_session is None or DRIVER_SESSION_PATTERN.fullmatch(header_session):
+            return request
+        with self._lock:
+            driver_session = self._driver_ids.get(header_session)
+        return dataclasses.replace(request, session_id=driver_session)
+
+    def learn(self, header_session: str, driver_session: str) -> None:
+        with self._lock:
+            self._driver_ids[header_session] = driver_session
 
 
 def write_failed_marker(config: ServiceConfig, code: str, diagnostics: str | None = None) -> None:
@@ -158,7 +202,9 @@ class Service:
         self._active = 0
         self._waiting: deque[object] = deque()
         self._ready = False
+        self._warmed = threading.Event()
         self._last_update = int(clock())
+        self.sessions = SessionBridge()
         listen = getattr(driver, "add_failure_listener", None)
         if listen is not None:
             listen(self.mark_failed)
@@ -167,12 +213,20 @@ class Service:
     def ready(self) -> bool:
         return self._ready
 
+    def wait_ready(self, timeout_seconds: float) -> bool:
+        """Espera hasta `timeout_seconds` a que el host esté listo (o falle el
+        calentamiento) y dice si lo está."""
+        self._warmed.wait(timeout_seconds)
+        return self._ready
+
     def mark_ready(self) -> None:
         self._ready = True
+        self._warmed.set()
         self._write_marker(self.config.ready_marker, "ready")
 
     def mark_failed(self, code: str, diagnostics: str | None = None) -> None:
         write_failed_marker(self.config, code, diagnostics)
+        self._warmed.set()
 
     @staticmethod
     def _write_marker(path: str | None, content: str) -> None:
@@ -246,6 +300,15 @@ class Service:
                 self._last_update = int(self._clock())
             self._turns.notify_all()
 
+    def with_credentials(self, request: Request) -> Request:
+        """La petición con las credenciales del rol de AgentCore, si el
+        adaptador del proyecto sólo las lee del entorno; un fallo al leerlas
+        es un `AgentFailure` y termina la invocación."""
+        read = self.config.aws_credentials
+        if read is None:
+            return request
+        return dataclasses.replace(request, aws_env=read())
+
     def authorized(self, header: str | None) -> bool:
         """Sin token configurado todo pasa (en un MicroVM la autenticación es
         el JWE del proxy de AWS); con él, `Authorization: Bearer <token>`
@@ -264,9 +327,16 @@ class Invocation:
     topes se aplican al entregar cada evento (`LimitTracker`); el plazo lo
     vigila `events()`."""
 
-    def __init__(self, service: Service, request: Request) -> None:
+    def __init__(
+        self, service: Service, request: Request, header_session: str | None = None
+    ) -> None:
         self._service = service
-        self._request = request
+        self._request = service.sessions.to_driver(request, header_session)
+        self._header_session = (
+            None
+            if header_session is not None and DRIVER_SESSION_PATTERN.fullmatch(header_session)
+            else header_session
+        )
         self._queue: queue.Queue[Event | None] = queue.Queue()
         self._closed = threading.Event()
         self.tracker = LimitTracker(service.config.limits)
@@ -279,6 +349,7 @@ class Invocation:
     def _deliver(self, event: Event) -> None:
         if self._closed.is_set():
             raise LimitExceeded("aborted")
+        event = self._presented(event)
         kind = event.get("type")
         if kind in ("done", "agent_failed"):
             self._queue.put(event)
@@ -291,6 +362,17 @@ class Invocation:
             self.session_id = event["session_id"]
         self._queue.put(event)
 
+    def _presented(self, event: Event) -> Event:
+        """El evento con el id de sesión de la cabecera de AgentCore, si la
+        sesión viene de ahí: el del driver es privado de la microVM."""
+        header = self._header_session
+        if header is None or event.get("type") not in SESSION_EVENT_TYPES:
+            return event
+        driver_session = event.get("session_id")
+        if event.get("type") == "session" and isinstance(driver_session, str):
+            self._service.sessions.learn(header, driver_session)
+        return {**event, "session_id": header}
+
     def _fail(self, reason: str) -> None:
         self._queue.put(
             build_event("agent_failed", reason=reason, detail_code=None, session_id=self.session_id)
@@ -301,7 +383,8 @@ class Invocation:
         emitter = _QueueEmitter(self._deliver)
 
         def body(state: RunState) -> None:
-            self._service.driver.run(self._request, self._deliver, state)
+            request = self._service.with_credentials(self._request)
+            self._service.driver.run(request, self._deliver, state)
 
         try:
             run_to_terminal(emitter, body, lambda exc: classify_by_module(exc, ()))
@@ -380,9 +463,10 @@ def result_body(invocation: Invocation, terminal: Event) -> dict[str, Any]:
     }
 
 
-def parse_invocation(body: bytes, header_session: str | None) -> Request:
+def parse_invocation(body: bytes, header_session: str | None) -> tuple[Request, str | None]:
     """El cuerpo de `POST /invocations` a `Request`; `AgentFailure` si no es
-    válido. Sin `session_id` en el cuerpo, vale el de la cabecera."""
+    válido. Sin `session_id` en el cuerpo, vale el de la cabecera; el segundo
+    valor es el id de la cabecera cuando es de donde sale la sesión."""
     try:
         data = json.loads(body)
     except ValueError:
@@ -393,7 +477,8 @@ def parse_invocation(body: bytes, header_session: str | None) -> Request:
     if unknown:
         raise AgentFailure("protocol_error", "invalid_request")
     session_id = data.get("session_id") or header_session
-    return parse_request({**data, "v": PROTOCOL_VERSION, "session_id": session_id})
+    request = parse_request({**data, "v": PROTOCOL_VERSION, "session_id": session_id})
+    return request, None if data.get("session_id") else header_session
 
 
 def make_handler(service: Service) -> type[BaseHTTPRequestHandler]:
@@ -480,7 +565,7 @@ def make_handler(service: Service) -> type[BaseHTTPRequestHandler]:
             está listo o la app se relanza o cayó para siempre."""
             code = (
                 NOT_READY_CODE
-                if not service.ready
+                if not service.wait_ready(service.config.ready_wait_seconds)
                 else UNAVAILABLE_CODES.get(service.availability() or "")
             )
             if code is not None:
@@ -529,9 +614,10 @@ def make_handler(service: Service) -> type[BaseHTTPRequestHandler]:
                 return
             if not self._available():
                 return
-            request = self._read_request()
-            if request is None:
+            parsed = self._read_request()
+            if parsed is None:
                 return
+            request, header_session = parsed
             outcome = service.acquire()
             if outcome != ACQUIRED:
                 self._error(
@@ -540,7 +626,7 @@ def make_handler(service: Service) -> type[BaseHTTPRequestHandler]:
                     {"Retry-After": str(RETRY_AFTER_SECONDS)},
                 )
                 return
-            invocation = Invocation(service, request)
+            invocation = Invocation(service, request, header_session)
             try:
                 invocation.start()
                 if EVENT_STREAM in (self.headers.get("Accept") or ""):
@@ -569,7 +655,7 @@ def make_handler(service: Service) -> type[BaseHTTPRequestHandler]:
                 return None
             return self.rfile.read(length) if length else b""
 
-        def _read_request(self) -> Request | None:
+        def _read_request(self) -> tuple[Request, str | None] | None:
             body = self._read_limited_body(empty_ok=False)
             if body is None:
                 return None

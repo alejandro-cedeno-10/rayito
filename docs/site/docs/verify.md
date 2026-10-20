@@ -83,6 +83,24 @@ El SBOM `rayd.cdx.json` es el mismo grafo en CycloneDX 1.5 para las
 herramientas que consumen SBOMs (el componente `metadata.component` es `rayd`
 con la versión del tag).
 
+### Qué comprueba `rayito setup` y qué no { #que-comprueba-rayito-setup }
+
+Sin `--artifact`, [`rayito setup`](cli.md#rayito-setup) descarga por HTTPS
+`SHA256SUMS` y `rayito-image.zip` de la release `rayd-v<versión de tu SDK>` y
+compara el sha256 del zip con la línea de `SHA256SUMS`. Si falta la línea o no
+coincide, no publica nada (`checksum_missing`, `checksum_mismatch`).
+
+Eso prueba **integridad, no autenticidad**: detecta un zip truncado, corrupto
+o equivocado, pero `SHA256SUMS` sale de la misma release que el zip, así que
+quien pudiera reemplazar uno podría reemplazar los dos. `rayito setup` **no
+comprueba la firma de cosign**. Si la quieres, verifica el zip con los
+comandos de arriba y pásalo a `rayito setup`, que lo publica en lugar de
+descargar el de la release:
+
+```bash
+rayito setup --artifact rayito-image.zip
+```
+
 ### Avisos de licencia de `rayd`
 
 `rayd` es Apache-2.0 y enlaza estáticamente crates de terceros (MIT,

@@ -169,3 +169,72 @@ def test_an_unknown_adapter_never_reaches_the_user_code(tmp_path: Path) -> None:
     lines = _run_bridge_through_the_host(tmp_path, CALLABLE_AGENT, "crewai")
     assert lines[-1]["detail_code"] == "unknown_adapter"
     assert "text" not in _kinds(lines)
+
+
+ENV_AGENT = """
+export const handler = () => ({
+  text: [process.env.AWS_ACCESS_KEY_ID, process.env.AWS_SECRET_ACCESS_KEY,
+    process.env.AWS_SESSION_TOKEN ?? "sin-token", process.env.OTRA ?? "sin-otra"].join("|"),
+});
+"""
+
+
+def _run_bridge_directly(tmp_path: Path, request: dict[str, Any]) -> list[dict[str, Any]]:
+    app = tmp_path / "app"
+    app.mkdir()
+    (app / "agent.mjs").write_text(ENV_AGENT, encoding="utf-8")
+    config = tmp_path / "config.json"
+    config.write_text(
+        json.dumps(
+            {
+                "adapter": "callable",
+                "entrypoint": "agent.mjs",
+                "app_dir": str(app),
+                "workdir": str(tmp_path),
+                "sessions_dir": str(tmp_path / "sessions"),
+            }
+        ),
+        encoding="utf-8",
+    )
+    environment = {key: value for key, value in os.environ.items() if not key.startswith("AWS_")}
+    completed = subprocess.run(
+        [str(_node()), str(BRIDGE), str(config)],
+        input=json.dumps(request),
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env=environment,
+        check=False,
+    )
+    return [json.loads(line) for line in completed.stdout.splitlines()]
+
+
+def test_the_credentials_the_host_passes_reach_the_agent_environment(tmp_path: Path) -> None:
+    request = {
+        **REQUEST,
+        "aws_env": {
+            "AWS_ACCESS_KEY_ID": "AKIDEXAMPLE",
+            "AWS_SECRET_ACCESS_KEY": "s",
+            "AWS_SESSION_TOKEN": "t",
+        },
+    }
+    lines = _run_bridge_directly(tmp_path, request)
+    text = next(line["text"] for line in lines if line["type"] == "text")
+    assert text == "AKIDEXAMPLE|s|t|sin-otra"
+    assert lines[-1]["type"] == "done"
+
+
+def test_only_the_three_credential_variables_are_accepted(tmp_path: Path) -> None:
+    request = {
+        **REQUEST,
+        "aws_env": {"AWS_ACCESS_KEY_ID": "AKIDEXAMPLE", "AWS_SECRET_ACCESS_KEY": "s", "OTRA": "x"},
+    }
+    lines = _run_bridge_directly(tmp_path, request)
+    text = next(line["text"] for line in lines if line["type"] == "text")
+    assert text == "AKIDEXAMPLE|s|sin-token|sin-otra"
+
+
+def test_without_credentials_the_environment_is_untouched(tmp_path: Path) -> None:
+    lines = _run_bridge_directly(tmp_path, REQUEST)
+    text = next(line["text"] for line in lines if line["type"] == "text")
+    assert text == "||sin-token|sin-otra"

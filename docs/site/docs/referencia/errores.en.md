@@ -104,7 +104,9 @@ happens and what to do.
 Catch `SandboxException` / `SandboxError` for "something failed in the
 sandbox"; `AuthenticationException`, `QuotaExceededException` and
 `CapacityException` are left out on purpose: they say something about your
-account or AWS, not the sandbox. An error **inside `run_code`** is never an
+account or AWS, not the sandbox. Neither is `AgentCoreException` /
+`AgentCoreError`, the one of the [AgentCore deploy](#agentcore), which is not
+attributable to a sandbox. An error **inside `run_code`** is never an
 exception: it arrives in `execution.error`.
 
 ## Full table { #tabla-completa }
@@ -227,6 +229,68 @@ generated content.
 | `output_limit` | reserved: not emitted today |
 | `aborted` | `stream.abort()` / cancellation / `AbortSignal` |
 | `busy` | an execution is already in progress in that sandbox (one `run`/`stream` at a time per sandbox in this phase) |
+
+## `AgentCoreException` / `AgentCoreError` { #agentcore }
+
+Since 0.15.0 (not published yet). Raised by the AgentCore deploy
+(`deploy_agent(target="agentcore")`, `AgentCoreFleet` and `rayito agent ...
+--target agentcore`). They do not inherit from `SandboxException` /
+`SandboxError`: nothing here is attributable to a sandbox (the same reasoning as
+for `rayito setup`). They carry `code` (a closed list, the one in the table) and
+`exit_code` / `exitCode` (the CLI exit code). The message is in Spanish and never
+carries an ARN, a URL, a token or AWS's raw text. Guide:
+[Deploy to AgentCore](../guias/desplegar-en-agentcore.md).
+
+**Exit 2** (usage or environment: fix it before calling again):
+
+| `code` | When | What to do |
+|---|---|---|
+| `unsupported_region` | the region has no AgentCore Runtime with CodeBuild arm64 builds | use one of the 21 regions in the [guide](../guias/desplegar-en-agentcore.md#antes-de-empezar) |
+| `option_not_supported` | a MicroVM option in the call does not apply to AgentCore | remove it; the message says which one to use instead ([table](../guias/desplegar-en-agentcore.md#opciones-que-no-aplican)) |
+| `option_requires_agentcore` | an AgentCore option (`--tag`, `--bedrock-model`…) with the `microvm` target | add `--target agentcore` or remove it |
+| `target_unsupported` | `rayito agent list` or `delete` without `--target agentcore` | use `--target agentcore`; a MicroVM fleet is stopped with `rayito agent stop` |
+| `provider_unsupported` | the project's model is not a Bedrock one | AgentCore only wires `bedrock`, with the runtime role |
+| `network_policy_unsupported` | the project declares `egress` or `network` | remove it: in PUBLIC mode AgentCore does not filter egress |
+| `name_invalid` | the agent name does not fit the derived names | up to 41 characters, lowercase letters and digits with single `-` or `_`; change it with `[image].template` |
+| `name_conflict` | a runtime with that name already exists and is not Rayito's | change the name with `[image].template`; Rayito does not touch other runtimes |
+| `model_required` | it is not known which Bedrock model the agent uses | pass it with `--bedrock-model` / `bedrock_models` |
+| `image_missing` | `--no-build` and there is no image with that content | deploy without `--no-build` |
+| `lifecycle_invalid` | a lifecycle time out of range, or not an integer (in TypeScript, not a multiple of 1000 ms) | between 60 and 28,800 s |
+| `lifecycle_order` | `idle_session_timeout` greater than `max_session_lifetime` | lower the idle timeout or raise the maximum lifetime |
+| `tags_invalid` | an invalid tag, or more than 50 with the three fixed ones | `KEY=VALUE`, letters, digits, spaces and `_ . : / = + - @` |
+| `iam_resource_invalid` | a readable secret, a Bedrock model or the project's model with wildcards (`*`, `?`), commas, or an ARN that is not of your account, region and partition | a name or id without wildcards, or a full ARN of your account and region; the field is in the message |
+| `env_invalid` | more than 50 environment variables (with the two region ones) or a value longer than 5000 characters | reduce the project's `env` |
+| `raw_protocol` | an app with `protocol = "raw"` | it does not meet the AgentCore contract (`/ping` and `/invocations`) |
+| `no_bucket` | there is no bucket for the build context | `--bucket`, `[deploy].bucket`, `RAYITO_BUCKET` or `rayito setup` |
+| `bucket_region` | the bucket is in another region | CodeBuild only reads code from a bucket in its own region |
+| `needs_confirmation` | no terminal or with `--json` and no `--yes` | confirm with `--yes` |
+| `delete_needs_confirmation` | the same for `rayito agent delete` | confirm with `--yes` |
+| `session_required` | `rayito agent stop --target agentcore` without `--session-id` | pass `--session-id`; to remove the agent, `rayito agent delete` |
+
+**Exit 1** (what fails in AWS):
+
+| `code` | When | What to do |
+|---|---|---|
+| `stack_blocked` | the `rayito-agentcore-<name>` stack is in a state that accepts no changes | `rayito agent delete <name> --target agentcore` and deploy again |
+| `stack_failed` | the stack could not be deployed, or it lacks outputs | look at its events in the CloudFormation console |
+| `image_build_failed` | the CodeBuild build ended badly | the logs are in the build's log group (the message names it) |
+| `image_build_timeout` | the build is still running past the deadline | follow it in its log group; raise `build_timeout_seconds` |
+| `build_quota` | CodeBuild rejected the build because of the concurrent builds quota | wait for the running ones to finish or ask for more quota |
+| `image_too_large` | the image exceeds AgentCore's maximum (2 GB) | reduce the project's dependencies |
+| `runtime_blocked` | the runtime is in `CREATE_FAILED`, `DELETING` or `DELETE_FAILED` | `rayito agent delete <name> --target agentcore` and deploy again |
+| `runtime_failed` | the runtime ended in a failed state after being created or updated | look at its logs (the message names the group) |
+| `runtime_timeout` | the runtime is still in progress past the deadline | run the deploy again: it resumes |
+| `runtime_not_found` | there is no Rayito agent with that name in the region | check the name and region with `rayito agent list --target agentcore` |
+| `delete_failed` | a resource could not be deleted | retry `rayito agent delete`; the message says which |
+| `access_denied` | your credentials lack a permission | see the [guide's permissions](../guias/desplegar-en-agentcore.md#antes-de-empezar); the message names the operation and the AWS code |
+| `aws_error` | AWS rejected an operation for another reason | the message names the operation and the AWS code |
+
+Invocation errors (`invoke()`, `stream()`) are not `AgentCoreException`, except
+configuration ones: a `429` is `RateLimitException`, an exceeded session quota
+is `QuotaExceededException`, a failure of the agent itself (the container
+answered 4xx or 5xx) is `AgentException(reason="runtime_error")`, and a runtime
+that does not exist, a missing permission or a rejected request are
+`AgentCoreException` (`runtime_not_found`, `access_denied`, `aws_error`).
 
 ## E2B shim errors { #errores-del-shim-de-e2b }
 

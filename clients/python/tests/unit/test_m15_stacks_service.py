@@ -85,6 +85,20 @@ def test_deploy_updates_an_existing_stack() -> None:
     assert [call[0] for call in fake.calls] == ["describe", "update", "wait", "describe"]
 
 
+def test_deploy_with_outcome_reports_what_update_stack_said() -> None:
+    existing = {
+        "rayito-metadata-index": StackStatus(name="rayito-metadata-index", state="CREATE_COMPLETE")
+    }
+    created = OptionalStacks(provisioner=FakeStackProvisioner()).deploy_with_outcome(
+        "metadata-index"
+    )
+    assert created.update_outcome is None
+    for outcome in ("changed", "no_changes"):
+        fake = FakeStackProvisioner(stacks=dict(existing), next_update_outcome=outcome)
+        result = OptionalStacks(provisioner=fake).deploy_with_outcome("metadata-index")
+        assert result.update_outcome == outcome
+
+
 def test_deploy_is_blocked_on_a_rollback_complete_stack() -> None:
     fake = FakeStackProvisioner(
         stacks={

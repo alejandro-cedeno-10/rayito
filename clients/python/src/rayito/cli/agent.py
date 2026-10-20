@@ -28,6 +28,7 @@ from typing import Annotated, Any
 import typer
 
 from rayito import (
+    AgentCoreFleet,
     AgentDeployment,
     AgentDeployOptions,
     AgentDeployStep,
@@ -52,6 +53,7 @@ from rayito._agent._template import (
     DEFAULT_AGENT_TEMPLATE_NAME,
     AgentTemplate,
 )
+from rayito._agentcore._targets import TARGET_AGENTCORE, TARGET_MICROVM
 from rayito._aws_region import resolve_region
 from rayito._images import DEFAULT_BUILD_TIMEOUT_SECONDS
 from rayito._limits import AGENT_MIN_MEMORY_MIB
@@ -79,6 +81,38 @@ from rayito.cli._agent_scaffold import (
     scaffold_files,
     write_scaffold,
 )
+from rayito.cli._agentcore import (
+    BEDROCK_MODEL_FLAG,
+    BEDROCK_MODEL_HELP,
+    DELETE_HELP,
+    DELETE_NAME_HELP,
+    DELETE_TARGET_HELP,
+    DELETE_YES_HELP,
+    DEPLOY_TARGET_CHECK,
+    IDLE_SESSION_TIMEOUT_FLAG,
+    IDLE_SESSION_TIMEOUT_HELP,
+    LIST_HELP,
+    LIST_TARGET_HELP,
+    MAX_SESSION_LIFETIME_FLAG,
+    MAX_SESSION_LIFETIME_HELP,
+    READABLE_SECRET_FLAG,
+    READABLE_SECRET_HELP,
+    SESSION_ID_FLAG,
+    STOP_SESSION_ID_HELP,
+    TAG_FLAG,
+    TAG_HELP,
+    TARGET_HELP,
+    AgentCoreDeployRequest,
+    agentcore_errors,
+    connect_agentcore_fleet,
+    delete_command_body,
+    list_command_body,
+    reject_token_file,
+    require_agentcore_target,
+    run_agentcore_deploy,
+    show_status,
+    stop_session,
+)
 from rayito.cli._console import EXIT_USAGE, echo, emit_json, fail, visible_controls
 from rayito.cli._session import clients_of, json_mode
 from rayito.cli._tokens import TOKEN_ENV_VAR, TokenFileError
@@ -88,6 +122,7 @@ from rayito.exceptions import (
     BuildException,
     CapacityException,
     InvalidArgumentException,
+    QuotaExceededException,
     SandboxException,
 )
 
@@ -667,7 +702,12 @@ def deploy_command(
     ] = None,
     bucket: Annotated[
         str | None,
-        typer.Option("--bucket", help="Bucket del artefacto (por defecto, RAYITO_BUCKET o CDK)."),
+        typer.Option(
+            "--bucket",
+            help=(
+                "Bucket del artefacto (por defecto, RAYITO_BUCKET, el de CDK o el de rayito setup)."
+            ),
+        ),
     ] = None,
     secret: Annotated[
         list[str] | None,
@@ -703,6 +743,23 @@ def deploy_command(
     verbose: Annotated[
         bool, typer.Option("--verbose", help="Imprime todos los logs del build.")
     ] = False,
+    target: Annotated[
+        str,
+        typer.Option("--target", help=TARGET_HELP, callback=DEPLOY_TARGET_CHECK),
+    ] = TARGET_MICROVM,
+    tag: Annotated[list[str], typer.Option("--tag", help=TAG_HELP)] = [],  # noqa: B006
+    bedrock_model: Annotated[
+        list[str], typer.Option("--bedrock-model", help=BEDROCK_MODEL_HELP)
+    ] = [],  # noqa: B006
+    readable_secret: Annotated[
+        list[str], typer.Option("--readable-secret", help=READABLE_SECRET_HELP)
+    ] = [],  # noqa: B006
+    idle_session_timeout: Annotated[
+        int | None, typer.Option("--idle-session-timeout", help=IDLE_SESSION_TIMEOUT_HELP)
+    ] = None,
+    max_session_lifetime: Annotated[
+        int | None, typer.Option("--max-session-lifetime", help=MAX_SESSION_LIFETIME_HELP)
+    ] = None,
 ) -> None:
     """Despliega el agente de un directorio como una flota de MicroVMs.
 
@@ -719,11 +776,70 @@ def deploy_command(
     es el de RAYITO_ACCESS_TOKEN; si no hay ninguno, en .rayito/agent-token con
     modo 0600, que se reutiliza al volver a desplegar). Vive como mucho 8 h:
     `rayito agent stop <nombre>` lo termina. Con --dry-run no llama a AWS.
+
+    Con --target agentcore el agente va a Amazon Bedrock AgentCore Runtime sin
+    Docker local: imprime el plan (región, recursos, seguridad y coste), pide
+    confirmación (--yes la salta) y crea la pila rayito-agentcore-<nombre>, la
+    imagen arm64 (CodeBuild, sólo si cambió) y el runtime. Sin pasarela de
+    secretos: el agente lee las credenciales del rol del runtime.
     """
-    target = deploy_target(path, file)
+    with agentcore_errors(json_output=json_mode(ctx)):
+        require_agentcore_target(
+            target,
+            {
+                TAG_FLAG: tag,
+                BEDROCK_MODEL_FLAG: bedrock_model,
+                READABLE_SECRET_FLAG: readable_secret,
+                IDLE_SESSION_TIMEOUT_FLAG: idle_session_timeout,
+                MAX_SESSION_LIFETIME_FLAG: max_session_lifetime,
+            },
+        )
+    if target == TARGET_AGENTCORE:
+        run_agentcore_deploy(
+            ctx,
+            AgentCoreDeployRequest(
+                project_path=deploy_target(path, file),
+                overrides=detect_overrides_of(framework, language, entry, protocol),
+                max_sessions=max_sessions,
+                queue=queue,
+                queue_timeout=queue_timeout,
+                env=env,
+                allow_out=allow_out,
+                bucket=bucket,
+                build=build,
+                verbose=verbose,
+                yes=yes,
+                dry_run=dry_run,
+                tags=tag,
+                bedrock_models=bedrock_model,
+                readable_secrets=readable_secret,
+                idle_session_timeout=idle_session_timeout,
+                max_session_lifetime=max_session_lifetime,
+                microvm_flags=frozenset(
+                    flag
+                    for flag, passed in {
+                        "--min-vms": min_vms is not None,
+                        "--max-vms": max_vms is not None,
+                        "--warm": warm is not None,
+                        "--memory": memory is not None,
+                        "--port": port is not None,
+                        "--timeout": timeout is not None,
+                        "--idle": idle is not None,
+                        "--secret": bool(secret),
+                        "--create-secret": create_secret,
+                        "--token-file": token_file is not None,
+                        "--keep-on-failure": keep_on_failure,
+                        "--base-artifact": base_artifact is not None,
+                    }.items()
+                    if passed
+                ),
+            ),
+        )
+        return
+    project_path = deploy_target(path, file)
     overrides = detect_overrides_of(framework, language, entry, protocol)
     try:
-        project, report = project_for(target, None, overrides, ctx.meta.get("region"))
+        project, report = project_for(project_path, None, overrides, ctx.meta.get("region"))
         project = apply_serve_flags(
             project,
             max_sessions=max_sessions,
@@ -1023,31 +1139,42 @@ def invoke_command(
     ] = None,
     stream: Annotated[bool, typer.Option("--stream", help=STREAM_HELP)] = False,
     token_file: TokenFileOption = None,
+    target: Annotated[
+        str, typer.Option("--target", help=TARGET_HELP, callback=DEPLOY_TARGET_CHECK)
+    ] = TARGET_MICROVM,
 ) -> None:
     """Llama a un agente desplegado con `rayito agent deploy`.
 
     Con el id de un sandbox habla con ese VM; con el nombre de la flota
     reparte la sesión entre sus VMs (el `session_id` que devuelve identifica
-    el VM: pásalo con --session-id para seguir la conversación)."""
-    target: AgentDeployment | AgentFleet = (
-        connect_fleet(ctx, sandbox_id, token_file)
-        if is_fleet_name(sandbox_id)
-        else connect_deployment(ctx, sandbox_id, token_file)
-    )
+    el VM: pásalo con --session-id para seguir la conversación). Con --target
+    agentcore, `sandbox_id` es el nombre del agente: se invoca con SigV4 y el
+    `session_id` que devuelve continúa la conversación."""
     as_json = json_mode(ctx)
-    try:
-        if stream:
-            printer = EventPrinter(as_json=as_json)
-            with target.stream(prompt, session_id=session_id) as events:
-                for event in events:
-                    printer(event)
-            printer.finish()
-            return
-        result = target.invoke(prompt, session_id=session_id)
-    except AgentException as exc:
-        run_failed(exc)
-    except (CapacityException, SandboxException) as exc:
-        fail(str(exc))
+    with agentcore_errors(json_output=as_json):
+        fleet: AgentDeployment | AgentFleet | AgentCoreFleet
+        if target == TARGET_AGENTCORE:
+            reject_token_file(token_file)
+            fleet = connect_agentcore_fleet(ctx, sandbox_id)
+        else:
+            fleet = (
+                connect_fleet(ctx, sandbox_id, token_file)
+                if is_fleet_name(sandbox_id)
+                else connect_deployment(ctx, sandbox_id, token_file)
+            )
+        try:
+            if stream:
+                printer = EventPrinter(as_json=as_json)
+                with fleet.stream(prompt, session_id=session_id) as events:
+                    for event in events:
+                        printer(event)
+                printer.finish()
+                return
+            result = fleet.invoke(prompt, session_id=session_id)
+        except AgentException as exc:
+            run_failed(exc)
+        except (CapacityException, QuotaExceededException, SandboxException) as exc:
+            fail(str(exc))
     print_result(result, as_json=as_json)
 
 
@@ -1058,10 +1185,17 @@ def status_command(
         str, typer.Argument(help="Id del sandbox desplegado o nombre de la flota.")
     ],
     token_file: TokenFileOption = None,
+    target: Annotated[
+        str, typer.Option("--target", help=TARGET_HELP, callback=DEPLOY_TARGET_CHECK)
+    ] = TARGET_MICROVM,
 ) -> None:
     """Estado de un agente desplegado: si está listo y si está ocupado. Con el
     nombre de una flota, el de cada uno de sus VMs (uno que este proceso no
-    ha abierto figura como `unknown`: preguntarle lo reanudaría)."""
+    ha abierto figura como `unknown`: preguntarle lo reanudaría). Con --target
+    agentcore, `sandbox_id` es el nombre del agente y se lee su runtime."""
+    if target == TARGET_AGENTCORE:
+        show_status(ctx, sandbox_id, token_file)
+        return
     if is_fleet_name(sandbox_id):
         print_fleet_status(connect_fleet(ctx, sandbox_id, token_file), as_json=json_mode(ctx))
         return
@@ -1098,10 +1232,23 @@ def stop_command(
     sandbox_id: Annotated[
         str, typer.Argument(help="Id del sandbox desplegado o nombre de la flota.")
     ],
+    target: Annotated[
+        str, typer.Option("--target", help=TARGET_HELP, callback=DEPLOY_TARGET_CHECK)
+    ] = TARGET_MICROVM,
+    session_id: Annotated[
+        str | None, typer.Option("--session-id", help=STOP_SESSION_ID_HELP)
+    ] = None,
 ) -> None:
     """Para un agente desplegado: destruye su sandbox, o todos los de la flota
     si le pasas su nombre. No necesita el access token: `terminate-microvm`
-    basta."""
+    basta. Con --target agentcore para la microVM de una sesión (--session-id,
+    obligatorio): AgentCore no cobra sin sesiones; para borrar el agente usa
+    `rayito agent delete`."""
+    with agentcore_errors(json_output=json_mode(ctx)):
+        require_agentcore_target(target, {SESSION_ID_FLAG: session_id})
+    if target == TARGET_AGENTCORE:
+        stop_session(ctx, sandbox_id, session_id)
+        return
     clients = clients_of(ctx)
     if is_fleet_name(sandbox_id):
         fleet = AgentFleet.connect(sandbox_id, region=clients.region, session=clients.session)
@@ -1117,3 +1264,25 @@ def stop_command(
         emit_json({"sandboxId": sandbox_id, "stopped": stopped})
     else:
         echo(f"{'parado' if stopped else 'ya no existe'} sandbox_id={sandbox_id}")
+
+
+@agent_app.command("delete", help=DELETE_HELP)
+def delete_command(
+    ctx: typer.Context,
+    name: Annotated[str, typer.Argument(help=DELETE_NAME_HELP)],
+    target: Annotated[
+        str, typer.Option("--target", help=DELETE_TARGET_HELP, callback=DEPLOY_TARGET_CHECK)
+    ],
+    yes: Annotated[bool, typer.Option("--yes", help=DELETE_YES_HELP)] = False,
+) -> None:
+    delete_command_body(ctx, name, target, yes=yes)
+
+
+@agent_app.command("list", help=LIST_HELP)
+def list_command(
+    ctx: typer.Context,
+    target: Annotated[
+        str, typer.Option("--target", help=LIST_TARGET_HELP, callback=DEPLOY_TARGET_CHECK)
+    ],
+) -> None:
+    list_command_body(ctx, target)

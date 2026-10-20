@@ -69,32 +69,33 @@ export function renderHuman(console: CliConsole, results: readonly CheckResult[]
 }
 
 /** Los valores de cuota y su mínimo son `float` en Python: `10` se escribe `10.0`. */
-const QUOTA_FLOAT_KEYS: FloatKeys = new Set(["value", "default"]);
+export const QUOTA_FLOAT_KEYS: FloatKeys = new Set(["value", "default"]);
 
-export function renderJson(
-  console: CliConsole,
-  input: {
-    readonly region: string;
-    readonly context: DoctorContext;
-    readonly results: readonly CheckResult[];
-    readonly exitCode: number;
-  },
-): void {
-  console.emitJson(
-    {
-      rayito: VERSION,
-      region: input.region,
-      account: input.context.account ?? null,
-      principal_kind: input.context.principalKind ?? null,
-      checks: input.results.map((result) => ({ ...result })),
-      compatibility: COMPATIBILITY.map((row) => ({
-        sdk_series: row.sdkSeries,
-        min_agent_version: row.minAgentVersion,
-        note: row.note,
-      })),
-      launched_sandbox_id: input.context.launched?.sandboxId ?? null,
-      exit_code: input.exitCode,
-    },
-    QUOTA_FLOAT_KEYS,
-  );
+export interface DoctorDocumentInput {
+  readonly region: string;
+  readonly context: DoctorContext;
+  readonly results: readonly CheckResult[];
+  readonly exitCode: number;
+}
+
+/** El documento de `rayito --json doctor`; `rayito setup` lo incrusta tal cual. */
+export function doctorDocument(input: DoctorDocumentInput): Record<string, unknown> {
+  return {
+    rayito: VERSION,
+    region: input.region,
+    account: input.context.account ?? null,
+    principal_kind: input.context.principalKind ?? null,
+    checks: input.results.map((result) => ({ ...result })),
+    compatibility: COMPATIBILITY.map((row) => ({
+      sdk_series: row.sdkSeries,
+      min_agent_version: row.minAgentVersion,
+      note: row.note,
+    })),
+    launched_sandbox_id: input.context.launched?.sandboxId ?? null,
+    exit_code: input.exitCode,
+  };
+}
+
+export function renderJson(console: CliConsole, input: DoctorDocumentInput): void {
+  console.emitJson(doctorDocument(input), QUOTA_FLOAT_KEYS);
 }

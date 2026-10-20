@@ -32,8 +32,57 @@ that is killed at the end.
 | 7 | `sandboxes` | more than 10 `RUNNING` sandboxes of that image (`WARN` from 1 to 10): they bill | `rayito sandbox list`; `rayito sandbox kill --all --template <image>` |
 | 8 | `token` | `AccessDenied` when minting the proxy token; `SKIP` if there is no `RUNNING` sandbox | grant `lambda:CreateMicrovmAuthToken`; use `--launch` |
 | 9 | `agent` | `rayd responde pero no está agent_ready` (rayd responds but is not agent_ready), or no response (`UNAVAILABLE`, proxy 403); `WARN` with `kernel_ready=false`, `hook_anomalies` greater than 0 or `imds_blocked=false` on a `-caps` image; `SKIP` without a token | wait a few seconds; republish the image; with `hook_anomalies`, check who mints `allPorts` tokens ([Security](../security.md)) |
-| 10 | `compatibility` | the image's `rayd` is older than the one the SDK requires ([compatibility table](../limits.md#compatibilidad-sdk-rayd-imagen)) | publish the image from your SDK's release ([Set up AWS](../primeros-pasos/configurar-aws.md#4-publicar-la-imagen-rayito-base)) |
+| 10 | `compatibility` | the image's `rayd` is older than the one the SDK requires ([compatibility table](../limits.md#compatibilidad-sdk-rayd-imagen)) | publish the image from your SDK's release ([Set up AWS](../primeros-pasos/configurar-aws.md#a-mano-sin-rayito-setup)) |
 | — | `efs-network` (only with `--efs-vpc-id` and `--efs-subnet-ids`) | the VPC or the subnets are not suitable for `rayito stack deploy efs-volumes` | fix what it names; it creates nothing ([EFS volumes in your VPC](../funciones-opcionales/volumenes-efs-vpc.md)) |
+
+## `rayito setup` { #rayito-setup }
+
+Every error comes out as `rayito: <message>` on stderr (with `--json`, also in
+the document: `error: {"code", "message"}` and `exitCode`). The messages are in
+Spanish, like the rest of the CLI; the table glosses each one. Nothing has been
+created after a `--dry-run`; the rest of the errors can be retried: `rayito
+setup` observes the account again and resumes whatever was left half done.
+
+| Code | Exit | What happens | What to do |
+|---|---|---|---|
+| `unsupported_region` | 2 | the region has no Lambda MicroVMs (the message lists the ten that do) | pick one of them with `--region` or `AWS_REGION` |
+| `bucket_unavailable` | 2 | the bucket (`--bucket`, `RAYITO_BUCKET` or the IAM stack's) exists but is not accessible with these credentials (S3 answers 403: it usually belongs to another account) | pass another name with `--bucket` (if it does not exist, `setup` creates it) or, if it is yours, grant `s3:ListBucket` on it |
+| `bucket_taken` | 2 | the default name `rayito-artifacts-<account>-<region>` is already used by a bucket that the `rayito-m0-artifacts` stack did not create: it may be one of yours that was kept when the stack was deleted, or another account's; `setup` never adopts such a bucket | if it is yours, pass it with `--bucket <name>` (it reuses it); if not, pick another name with `--bucket` and `setup` will create it |
+| `artifact_stack_conflict` | 2 | the `rayito-m0-artifacts` stack already manages another bucket and you asked for a new one with `--bucket` or `RAYITO_BUCKET` | pass `--bucket <the stack's bucket>`, or delete the stack first (`aws cloudformation delete-stack --stack-name rayito-m0-artifacts`; the bucket it managed is kept) |
+| `bucket_region` | 2 | the bucket is in another region and the build would fail with `S3_CROSS_REGION_ACCESS_DENIED` | use a bucket in the same region as the account and `setup` region |
+| `artifact_missing` | 2 | the `--artifact` file does not exist | fix the path |
+| `artifact_variant` | 2 | `--artifact` is not the `full` variant zip without EFS | use the release's `rayito-image.zip`; the other variants are published with `rayito image publish` |
+| `needs_confirmation` | 2 | there is something to create and there is no terminal (or you use `--json`) | confirm with `--yes`, or run it from a terminal |
+| `stack_blocked` | 1 | the `rayito-m0-iam` or `rayito-m0-artifacts` stack (the message names it) is in a state that cannot be reused or waited for (`ROLLBACK_COMPLETE`, `*_FAILED`, `DELETE_IN_PROGRESS`) | `aws cloudformation delete-stack --stack-name <the stack>`, wait for it to disappear and run `rayito setup` again; if it is the bucket's and it failed on creation, first look at `aws cloudformation describe-stack-events` (usually an S3 permission or an SCP) |
+| `stack_incomplete` | 1 | the stack has no output Rayito reads: `BuildRoleArn` in `rayito-m0-iam` (`infra/iam.yaml` template) or `BucketName` in `rayito-m0-artifacts` (`infra/artifact-bucket.yaml` template) | deploy Rayito's template (or delete the stack and let `rayito setup` create it) |
+| `release_download` | 1 | `rayito-image.zip` or `SHA256SUMS` could not be downloaded from the release (`HTTP <status>`, `tiempo agotado` (timeout) or `error de red` (network error)) | check the network or proxy (`HTTPS_PROXY`); or download the zip, verify it and pass `--artifact` |
+| `checksum_missing` | 1 | the release's `SHA256SUMS` does not list `rayito-image.zip`; nothing is published | use the release of your SDK's version; or `--artifact` with a verified zip |
+| `checksum_mismatch` | 1 | the zip's sha256 does not match `SHA256SUMS`; nothing is published | download again; if it persists, do not publish that file and [verify it](../verify.md) |
+| `image_build_failed` | 1 | the `rayito-base` image was not launchable after the build | run `rayito setup` again (it will ask to confirm a new `publish`); if it repeats, `rayito doctor` and `rayito image list` show the state |
+
+Other failures: a `rayito doctor` `FAIL` at the end leaves the exit at 1 with
+`la cuenta no está lista` (the account is not ready) (fix it with
+[`rayito doctor`](#rayito-doctor) and repeat); a "no" at the confirmation exits
+with 1 without creating anything; no region, no profile or no credentials exit
+with 2 like the rest of the CLI; an untranslated AWS error (for example a
+permission denied when creating the stack) exits with 1 and its code.
+`rayito setup` needs administrator or *bootstrap* credentials once
+(CloudFormation, IAM and, if it creates the bucket, S3: `s3:CreateBucket`,
+`s3:PutEncryptionConfiguration`, `s3:PutBucketPublicAccessBlock`,
+`s3:PutBucketOwnershipControls`, `s3:PutLifecycleConfiguration`,
+`s3:PutBucketTagging`, `s3:GetBucketPolicy` and `s3:PutBucketPolicy`); the
+`CallerPolicy` policy is not enough. The bucket it creates is kept when its
+stack is deleted: to remove it, empty and delete it by hand. When a
+later command (`Sandbox.create()`, `rayito agent deploy`) says there is no image
+or bucket, the message ends with the hint "si la cuenta o la región aún no
+están preparadas, ejecuta `rayito setup`" (if the account or region are not
+prepared yet, run `rayito setup`).
+
+If `setup` fails with `AccessDenied` or an explicit deny on `s3:CreateBucket` or `cloudformation:CreateStack` (or `stack_blocked` with that reason in `describe-stack-events`) because an SCP in your organization requires tags, run it again with the ones it asks for, one `--tag` for each (the values here are examples):
+
+```bash
+rayito setup --tag Owner=platform --tag Project=agents
+```
 
 ## Credentials and region { #credenciales-y-region }
 
@@ -71,7 +120,7 @@ the bucket, or the zip is of another variant (`--variant`).
 
 **Building `rayd` on macOS or Windows.** You need Linux or WSL2 (on macOS, a
 Linux VM). To get started you do not need it: publish the release's signed
-`rayito-image.zip` ([Set up AWS](../primeros-pasos/configurar-aws.md#4-publicar-la-imagen-rayito-base)).
+`rayito-image.zip` ([Set up AWS](../primeros-pasos/configurar-aws.md#a-mano-sin-rayito-setup)).
 
 ## Quotas and pacing { #cuotas-y-ritmo }
 

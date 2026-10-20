@@ -1,0 +1,13 @@
+[
+  ".dockerignore",
+  "Dockerfile",
+  "README.md",
+  "app/agent.js",
+  "app/package-lock.json",
+  "app/package.json",
+  "aws_env_credentials.py",
+  "config/0",
+  "host.json",
+  "node_bridge.mjs",
+  "requirements-aws-credentials.txt"
+]

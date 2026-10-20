@@ -97,7 +97,7 @@ CLI_PHASES: Final[dict[int, tuple[str, ...]]] = {
         "image list",
         "image sizes",
     ),
-    2: ("doctor",),
+    2: ("doctor", "setup"),
     3: (
         "template build",
         "template status",
@@ -112,6 +112,8 @@ CLI_PHASES: Final[dict[int, tuple[str, ...]]] = {
         "agent invoke",
         "agent status",
         "agent stop",
+        "agent list",
+        "agent delete",
         "events deploy",
         "events status",
         "events destroy",

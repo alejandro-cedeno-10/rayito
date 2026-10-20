@@ -12,7 +12,7 @@ follows a linear path: each page ends where the next one begins.
 
 | Requirement | Detail |
 |---|---|
-| An AWS account | with permission to deploy a CloudFormation stack (IAM) and create an S3 bucket |
+| An AWS account | with administrator or *bootstrap* permissions once, so `rayito setup` can deploy CloudFormation stacks (IAM and, if you have no bucket, an S3 one) |
 | A region with Lambda MicroVMs | `us-east-1`, `us-east-2`, `us-west-2`, `eu-west-1`, `eu-central-1`, `eu-north-1`, `ap-northeast-1`, `ap-south-1`, `ap-southeast-1` or `ap-southeast-2` |
 | The AWS CLI v2 | `aws --version`; the steps in [Set up AWS](configurar-aws.md) use it (`aws sts`, `aws s3 mb`, `aws cloudformation deploy`). [Install it](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html) |
 | `curl` | to download the IAM template and the release image (it ships with macOS and most Linux distributions) |
@@ -30,8 +30,8 @@ zip. There is no Rayito API key and no account to create anywhere else.
 
 1. [**Installation**](instalacion.md): the SDK, the CLI and the optional
    extras.
-2. [**Set up AWS**](configurar-aws.md): IAM, a bucket and the `rayito-base`
-   image in your account. You do it once per account and region.
+2. [**Set up AWS**](configurar-aws.md): IAM, the bucket (reused or created) and
+   the `rayito-base` image in your account. You do it once per account and region.
 3. [**First sandbox**](../quickstart.md): commands, files, code and
    reconnecting from another process.
 4. [**Concepts**](../concepts.md): what runs where, the three clocks of a

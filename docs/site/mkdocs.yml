@@ -158,6 +158,7 @@ plugins:
             Proveedores del agente: Agent providers
             Despliega tu agente: Deploy your agent
             Varias sesiones y varias VMs: Several sessions and several VMs
+            Desplegar en AgentCore: Deploy to AgentCore
             Desarrollar: Develop
             Probar en local (Docker + Floci): Test locally (Docker + Floci)
             Funciones opcionales: Optional features
@@ -319,6 +320,7 @@ nav:
           - "Proveedores del agente": guias/agente-proveedores.md
           - "Despliega tu agente": guias/despliega-tu-agente.md
           - "Varias sesiones y varias VMs": guias/flota-de-agentes.md
+          - "Desplegar en AgentCore": guias/desplegar-en-agentcore.md
       - Desarrollar:
           - Probar en local (Docker + Floci): guias/probar-en-local.md
   - Funciones opcionales:
@@ -351,6 +353,7 @@ nav:
       - Paridad: e2b-parity.md
   - Novedades:
       - novedades/index.md
+      - "0.15.0": novedades/0.15.0.md
       - "0.14.0": novedades/0.14.0.md
       - "0.13.0": novedades/0.13.0.md
       - "0.12.0": novedades/0.12.0.md

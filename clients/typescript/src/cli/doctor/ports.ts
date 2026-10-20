@@ -106,7 +106,7 @@ export interface DoctorAws {
   listManagedImageArns(): Promise<string[]>;
   listManagedImageVersions(imageArn: string): Promise<ManagedImageVersion[]>;
   appliedQuotas(): Promise<AppliedQuota[]>;
-  headBucket(bucket: string): Promise<BucketFacts>;
+  headBucket(bucket: string, expectedOwner?: string): Promise<BucketFacts>;
   /** `undefined` si la imagen no existe; cualquier otro fallo sube como `AwsOperationError`. */
   getImage(imageArn: string): Promise<ImageDetail | undefined>;
   getImageVersion(imageArn: string, imageVersion: string): Promise<ImageVersionDetail>;

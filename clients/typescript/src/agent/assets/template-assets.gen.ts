@@ -6797,6 +6797,10 @@ const USAGE_KEYS = {
   cacheWriteInputTokens: "cache_write",
 };
 const SESSION_ID_PATTERN = /^rda_[0-9a-f]{32}$/;
+// Las únicas variables que el host puede pasar con las credenciales del rol de
+// AgentCore (\`aws_env\`), para el cliente de Bedrock de los frameworks que sólo las
+// leen del entorno.
+const AWS_ENV_NAMES = ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"];
 const DETAIL_CODE_PATTERN = /[^a-z0-9_]/g;
 const MAX_DETAIL_CODE_LENGTH = 64;
 
@@ -7610,6 +7614,28 @@ function readStdin() {
   }
 }
 
+// Ejecuta \`action\` con las credenciales de \`awsEnv\` en \`process.env\` y deja el
+// entorno como estaba al terminar, con éxito o no. Sin \`awsEnv\` no toca nada.
+export async function withAwsEnv(awsEnv, action) {
+  const source = awsEnv && typeof awsEnv === "object" ? awsEnv : {};
+  const names = AWS_ENV_NAMES.filter((name) => typeof source[name] === "string" && source[name]);
+  const previous = new Map(names.map((name) => [name, process.env[name]]));
+  for (const name of names) {
+    process.env[name] = source[name];
+  }
+  try {
+    return await action();
+  } finally {
+    for (const [name, value] of previous) {
+      if (value === undefined) {
+        delete process.env[name];
+      } else {
+        process.env[name] = value;
+      }
+    }
+  }
+}
+
 export async function main(argv) {
   const emit = protocolEmitter();
   let config;
@@ -7629,7 +7655,7 @@ export async function main(argv) {
     forceHttp1ForAwsSdk();
   }
   try {
-    await run({ config, request, emit });
+    await withAwsEnv(request.aws_env, () => run({ config, request, emit }));
   } catch (error) {
     const [reason, detail] = classify(error);
     emit(event("agent_failed", { reason, detail_code: detail, session_id: request.session_id }));
@@ -7641,4 +7667,145 @@ export async function main(argv) {
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   await main(process.argv);
 }
+`;
+
+export const AWS_CREDENTIALS_REQUIREMENTS = `# Pines del venv con el que el host del agente lee las credenciales del rol de
+# AgentCore Runtime para los adaptadores de Node que sólo las leen de variables
+# de entorno (agentcore-deploy, ADR-031: \`aws_env_credentials.py\`). Sólo
+# \`botocore\` 1.43.103 (Apache-2.0) y sus dependencias: su cadena de
+# credenciales por defecto es la que las obtiene del servicio de metadatos de
+# la microVM. Su sha256 está en limits.json
+# (agentAwsCredentialsRequirementsSha256). Generado para CPython 3.12 en Linux
+# arm64 y sólo wheels:
+#
+#   printf 'botocore==1.43.103\\n' > req.in
+#   uv pip compile req.in --python-version 3.12 \\
+#     --python-platform aarch64-manylinux_2_34 --generate-hashes \\
+#     --only-binary :all: --no-header
+#
+# La imagen lo instala con --require-hashes --no-deps --only-binary=:all:
+# (igual que requirements-deepagents.txt).
+botocore==1.43.103 \\
+    --hash=sha256:6a6a561a6de43845ae42bc7ff7e2c798742bfa277f5215398f9c15ed9b1bd67c \\
+    --hash=sha256:8c7f220e09f3b7ec99c59c716aa66cf6f5b2b57fd8731544054f3778aa744c6a
+    # via -r req.in
+jmespath==1.1.0 \\
+    --hash=sha256:472c87d80f36026ae83c6ddd0f1d05d4e510134ed462851fd5f754c8c3cbb88d \\
+    --hash=sha256:a5663118de4908c91729bea0acadca56526eb2698e83de10cd116ae0f4e97c64
+    # via botocore
+python-dateutil==2.9.0.post0 \\
+    --hash=sha256:37dd54208da7e1cd875388217d5e00ebd4179249f90fb72437e91a35459a0ad3 \\
+    --hash=sha256:a8b2bc7bffae282281c8140a97d3aa9c14da0b136dfe83f850eea9a5f7470427
+    # via botocore
+six==1.17.0 \\
+    --hash=sha256:4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274 \\
+    --hash=sha256:ff70335d468e7eb6ec65b95b99d3a2836546063f63acc5171de367e834932a81
+    # via python-dateutil
+urllib3==2.8.0 \\
+    --hash=sha256:0cf3cae568d36aa9576b28dfb35f11328f1cb974ca7647d9475ebb86c75ac6e3 \\
+    --hash=sha256:63bf2ead4c879426ebf22ef2a781eeb4aa3b4ae798a0435506f8687fd5bb9b63
+    # via botocore
+`;
+
+export const AWS_ENV_CREDENTIALS_SCRIPT = `"""Credenciales del rol de AgentCore Runtime para los adaptadores de Node que
+sólo las leen de variables de entorno (agentcore-deploy, ADR-031).
+
+El host del agente lo ejecuta con el Python del venv de
+\`requirements-aws-credentials.txt\` antes de cada invocación de un adaptador de
+\`AGENTCORE_ENV_CREDENTIAL_ADAPTERS\` y pasa el resultado al puente de Node, que
+lo pone en el entorno de esa invocación. La cadena de credenciales por defecto
+de botocore es la que las obtiene del servicio de metadatos de la microVM; este
+script no conoce ninguna ruta ni cabecera del servicio.
+
+Escribe por stdout un único objeto JSON con \`AWS_ACCESS_KEY_ID\`,
+\`AWS_SECRET_ACCESS_KEY\` y, si la credencial es temporal, \`AWS_SESSION_TOKEN\`.
+Sin credenciales sale con \`EXIT_NO_CREDENTIALS\` y no escribe nada. Nunca
+escribe las credenciales en stderr ni en un fichero.
+
+Con \`--credential-process\` escribe, en cambio, el documento que los SDK de AWS
+esperan de un \`credential_process\` de un perfil (\`Version\` 1, \`AccessKeyId\`,
+\`SecretAccessKey\`, \`SessionToken\` y \`Expiration\`): así un proceso de larga vida
+que sólo arranca su proveedor de Bedrock con un perfil (OpenCode,
+\`AGENTCORE_CREDENTIAL_PROCESS_RUNTIMES\`) obtiene credenciales que el SDK
+refresca al caducar. Antes de abrir la sesión de botocore quita
+\`AWS_PROFILE\` y \`AWS_CONFIG_FILE\`: el perfil que lo invoca apunta a este mismo
+script y, si no, se llamaría a sí mismo.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import sys
+from typing import Any, Final
+
+import botocore.session
+
+ACCESS_KEY_VARIABLE: Final = "AWS_ACCESS_KEY_ID"
+SECRET_KEY_VARIABLE: Final = "AWS_SECRET_ACCESS_KEY"
+SESSION_TOKEN_VARIABLE: Final = "AWS_SESSION_TOKEN"
+CREDENTIAL_PROCESS_FLAG: Final = "--credential-process"
+#: Versión del documento de \`credential_process\` que definen los SDK de AWS.
+CREDENTIAL_PROCESS_VERSION: Final = 1
+#: Variables que hacen que botocore lea el perfil de \`credential_process\`.
+PROFILE_VARIABLES: Final = ("AWS_PROFILE", "AWS_CONFIG_FILE")
+EXIT_OK: Final = 0
+EXIT_NO_CREDENTIALS: Final = 1
+
+
+def _current_credentials() -> Any:
+    """La credencial vigente de la cadena por defecto de botocore, o \`None\`."""
+    for variable in PROFILE_VARIABLES:
+        os.environ.pop(variable, None)
+    return botocore.session.get_session().get_credentials()
+
+
+def credential_variables() -> dict[str, str] | None:
+    """Las variables de entorno de la credencial vigente, o \`None\` si la
+    cadena por defecto no encuentra ninguna."""
+    credentials = _current_credentials()
+    if credentials is None:
+        return None
+    frozen = credentials.get_frozen_credentials()
+    variables = {ACCESS_KEY_VARIABLE: frozen.access_key, SECRET_KEY_VARIABLE: frozen.secret_key}
+    if frozen.token:
+        variables[SESSION_TOKEN_VARIABLE] = frozen.token
+    return variables
+
+
+def credential_process_document() -> dict[str, str | int] | None:
+    """El documento de \`credential_process\` de la credencial vigente, o \`None\`
+    si no hay ninguna. \`Expiration\` sale del instante de caducidad que botocore
+    guarda en las credenciales renovables (la versión está fijada en
+    \`requirements-aws-credentials.txt\`); sin él el SDK las tomaría por
+    permanentes."""
+    credentials = _current_credentials()
+    if credentials is None:
+        return None
+    frozen = credentials.get_frozen_credentials()
+    document: dict[str, str | int] = {
+        "Version": CREDENTIAL_PROCESS_VERSION,
+        "AccessKeyId": frozen.access_key,
+        "SecretAccessKey": frozen.secret_key,
+    }
+    if frozen.token:
+        document["SessionToken"] = frozen.token
+    expiry = getattr(credentials, "_expiry_time", None)
+    if expiry is not None:
+        document["Expiration"] = expiry.isoformat()
+    return document
+
+
+def main(argv: list[str]) -> int:
+    document = (
+        credential_process_document() if CREDENTIAL_PROCESS_FLAG in argv else credential_variables()
+    )
+    if document is None:
+        return EXIT_NO_CREDENTIALS
+    sys.stdout.write(json.dumps(document, separators=(",", ":")))
+    return EXIT_OK
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
 `;

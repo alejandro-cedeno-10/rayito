@@ -63,6 +63,7 @@ function services(
     logs: undefined as never,
     doctor: undefined as never,
     publishPorts: undefined as never,
+    accountSetup: undefined as never,
     prunePorts: undefined as never,
     templates: undefined as never,
     lifecycleEvents: undefined as never,

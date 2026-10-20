@@ -1,0 +1,1522 @@
+{
+  "description": "Vectores del plan de `rayito setup` (ADR-030): lo observado en la cuenta y lo que el plan decide, o el código de error. Cada SDK los evalúa con `AccountSetup.plan` sobre los dobles en memoria construidos desde `input`, así que `bucketReads` (las lecturas para resolver el bucket, en orden: `head:<bucket>` es un `HeadBucket` y `artifactStack` un `DescribeStacks` de rayito-m0-artifacts) se comprueba también en los casos de error. Marcadores que el test sustituye antes de comparar: `{sdkVersion}`, la versión del SDK que corre el test; `{cdkBucket}`, `cdk_bucket_name(account, region)`/`cdkBucketName(account, region)`; y `{defaultBucket}`, `default_artifact_bucket_name(account, region)`/`defaultArtifactBucketName(account, region)` (los nombres reales llevan cuenta y región, y check_hygiene.py no los admite en el repositorio). `buckets` lista los buckets que `HeadBucket` encuentra, con su región; `forbiddenBuckets`, los que responden 403; cualquier otro no existe (404). `stack` es rayito-m0-iam y `artifactStack` rayito-m0-artifacts (null: no existe).",
+  "cases": [
+    {
+      "name": "cuenta nueva con el bucket del bootstrap de CDK",
+      "input": {
+        "region": "us-east-1",
+        "account": "123456789012",
+        "bucket": null,
+        "environmentBucket": null,
+        "artifact": null,
+        "stack": null,
+        "buckets": {
+          "{cdkBucket}": "us-east-1"
+        },
+        "forbiddenBuckets": [],
+        "artifactStack": null,
+        "image": null
+      },
+      "expected": {
+        "steps": [
+          {
+            "resource": "bucket",
+            "name": "{cdkBucket}",
+            "action": "reuse",
+            "source": "cdkBootstrap",
+            "status": null,
+            "imageVersion": null,
+            "release": null,
+            "previousBucket": null
+          },
+          {
+            "resource": "iamStack",
+            "name": "rayito-m0-iam",
+            "action": "create",
+            "source": null,
+            "status": null,
+            "imageVersion": null,
+            "release": null,
+            "previousBucket": null
+          },
+          {
+            "resource": "baseImage",
+            "name": "rayito-base",
+            "action": "publish",
+            "source": "release",
+            "status": null,
+            "imageVersion": null,
+            "release": "rayd-v{sdkVersion}",
+            "previousBucket": null
+          }
+        ],
+        "ready": false,
+        "needsConfirmation": true,
+        "cost": [
+          "pila de IAM: gratis",
+          "imagen: ≈ $0,04 por semana por versión publicada (mínimo una semana)",
+          "zip de la imagen en el bucket: céntimos"
+        ],
+        "bucketReads": [
+          "head:{cdkBucket}"
+        ]
+      }
+    },
+    {
+      "name": "cuenta preparada a mano: todo se reutiliza",
+      "input": {
+        "region": "us-east-1",
+        "account": "123456789012",
+        "bucket": null,
+        "environmentBucket": null,
+        "artifact": null,
+        "stack": {
+          "status": "CREATE_COMPLETE",
+          "outputs": {
+            "BuildRoleArn": "arn:aws:iam::123456789012:role/rayito-m0-build-us-east-1"
+          },
+          "parameters": {
+            "ArtifactBucket": "amzn-s3-demo-bucket"
+          }
+        },
+        "buckets": {
+          "amzn-s3-demo-bucket": "us-east-1"
+        },
+        "forbiddenBuckets": [],
+        "artifactStack": null,
+        "image": {
+          "state": "UPDATED",
+          "versions": [
+            {
+              "imageVersion": "1.0",
+              "state": "SUCCESSFUL",
+              "status": "ACTIVE",
+              "createdAt": "2026-10-01T00:00:00Z"
+            }
+          ]
+        }
+      },
+      "expected": {
+        "steps": [
+          {
+            "resource": "bucket",
+            "name": "amzn-s3-demo-bucket",
+            "action": "reuse",
+            "source": "iamStack",
+            "status": null,
+            "imageVersion": null,
+            "release": null,
+            "previousBucket": null
+          },
+          {
+            "resource": "iamStack",
+            "name": "rayito-m0-iam",
+            "action": "reuse",
+            "source": null,
+            "status": "CREATE_COMPLETE",
+            "imageVersion": null,
+            "release": null,
+            "previousBucket": null
+          },
+          {
+            "resource": "baseImage",
+            "name": "rayito-base",
+            "action": "reuse",
+            "source": null,
+            "status": null,
+            "imageVersion": "1.0",
+            "release": null,
+            "previousBucket": null
+          }
+        ],
+        "ready": true,
+        "needsConfirmation": false,
+        "cost": [],
+        "bucketReads": [
+          "head:amzn-s3-demo-bucket"
+        ]
+      }
+    },
+    {
+      "name": "RAYITO_BUCKET en una cuenta sin pila",
+      "input": {
+        "region": "us-east-1",
+        "account": "123456789012",
+        "bucket": null,
+        "environmentBucket": "amzn-s3-demo-bucket",
+        "artifact": null,
+        "stack": null,
+        "buckets": {
+          "amzn-s3-demo-bucket": "us-east-1",
+          "{cdkBucket}": "us-east-1"
+        },
+        "forbiddenBuckets": [],
+        "artifactStack": null,
+        "image": null
+      },
+      "expected": {
+        "steps": [
+          {
+            "resource": "bucket",
+            "name": "amzn-s3-demo-bucket",
+            "action": "reuse",
+            "source": "environment",
+            "status": null,
+            "imageVersion": null,
+            "release": null,
+            "previousBucket": null
+          },
+          {
+            "resource": "iamStack",
+            "name": "rayito-m0-iam",
+            "action": "create",
+            "source": null,
+            "status": null,
+            "imageVersion": null,
+            "release": null,
+            "previousBucket": null
+          },
+          {
+            "resource": "baseImage",
+            "name": "rayito-base",
+            "action": "publish",
+            "source": "release",
+            "status": null,
+            "imageVersion": null,
+            "release": "rayd-v{sdkVersion}",
+            "previousBucket": null
+          }
+        ],
+        "ready": false,
+        "needsConfirmation": true,
+        "cost": [
+          "pila de IAM: gratis",
+          "imagen: ≈ $0,04 por semana por versión publicada (mínimo una semana)",
+          "zip de la imagen en el bucket: céntimos"
+        ],
+        "bucketReads": [
+          "head:amzn-s3-demo-bucket"
+        ]
+      }
+    },
+    {
+      "name": "--bucket distinto del de la pila actualiza ArtifactBucket",
+      "input": {
+        "region": "us-east-1",
+        "account": "123456789012",
+        "bucket": "amzn-s3-demo-bucket1",
+        "environmentBucket": "amzn-s3-demo-bucket",
+        "artifact": null,
+        "stack": {
+          "status": "CREATE_COMPLETE",
+          "outputs": {
+            "BuildRoleArn": "arn:aws:iam::123456789012:role/rayito-m0-build-us-east-1"
+          },
+          "parameters": {
+            "ArtifactBucket": "amzn-s3-demo-bucket"
+          }
+        },
+        "buckets": {
+          "amzn-s3-demo-bucket": "us-east-1",
+          "amzn-s3-demo-bucket1": "us-east-1"
+        },
+        "forbiddenBuckets": [],
+        "artifactStack": null,
+        "image": {
+          "state": "UPDATED",
+          "versions": [
+            {
+              "imageVersion": "1.0",
+              "state": "SUCCESSFUL",
+              "status": "ACTIVE",
+              "createdAt": "2026-10-01T00:00:00Z"
+            }
+          ]
+        }
+      },
+      "expected": {
+        "steps": [
+          {
+            "resource": "bucket",
+            "name": "amzn-s3-demo-bucket1",
+            "action": "reuse",
+            "source": "argument",
+            "status": null,
+            "imageVersion": null,
+            "release": null,
+            "previousBucket": null
+          },
+          {
+            "resource": "iamStack",
+            "name": "rayito-m0-iam",
+            "action": "update",
+            "source": null,
+            "status": "CREATE_COMPLETE",
+            "imageVersion": null,
+            "release": null,
+            "previousBucket": "amzn-s3-demo-bucket"
+          },
+          {
+            "resource": "baseImage",
+            "name": "rayito-base",
+            "action": "reuse",
+            "source": null,
+            "status": null,
+            "imageVersion": "1.0",
+            "release": null,
+            "previousBucket": null
+          }
+        ],
+        "ready": false,
+        "needsConfirmation": true,
+        "cost": [
+          "pila de IAM: gratis"
+        ],
+        "bucketReads": [
+          "head:amzn-s3-demo-bucket1"
+        ]
+      }
+    },
+    {
+      "name": "pila en UPDATE_ROLLBACK_COMPLETE sigue sirviendo",
+      "input": {
+        "region": "us-east-1",
+        "account": "123456789012",
+        "bucket": null,
+        "environmentBucket": null,
+        "artifact": null,
+        "stack": {
+          "status": "UPDATE_ROLLBACK_COMPLETE",
+          "outputs": {
+            "BuildRoleArn": "arn:aws:iam::123456789012:role/rayito-m0-build-us-east-1"
+          },
+          "parameters": {
+            "ArtifactBucket": "amzn-s3-demo-bucket"
+          }
+        },
+        "buckets": {
+          "amzn-s3-demo-bucket": "us-east-1"
+        },
+        "forbiddenBuckets": [],
+        "artifactStack": null,
+        "image": {
+          "state": "UPDATED",
+          "versions": [
+            {
+              "imageVersion": "1.0",
+              "state": "SUCCESSFUL",
+              "status": "ACTIVE",
+              "createdAt": "2026-10-01T00:00:00Z"
+            }
+          ]
+        }
+      },
+      "expected": {
+        "steps": [
+          {
+            "resource": "bucket",
+            "name": "amzn-s3-demo-bucket",
+            "action": "reuse",
+            "source": "iamStack",
+            "status": null,
+            "imageVersion": null,
+            "release": null,
+            "previousBucket": null
+          },
+          {
+            "resource": "iamStack",
+            "name": "rayito-m0-iam",
+            "action": "reuse",
+            "source": null,
+            "status": "UPDATE_ROLLBACK_COMPLETE",
+            "imageVersion": null,
+            "release": null,
+            "previousBucket": null
+          },
+          {
+            "resource": "baseImage",
+            "name": "rayito-base",
+            "action": "reuse",
+            "source": null,
+            "status": null,
+            "imageVersion": "1.0",
+            "release": null,
+            "previousBucket": null
+          }
+        ],
+        "ready": true,
+        "needsConfirmation": false,
+        "cost": [],
+        "bucketReads": [
+          "head:amzn-s3-demo-bucket"
+        ]
+      }
+    },
+    {
+      "name": "pila en curso: se espera, sin coste nuevo",
+      "input": {
+        "region": "us-east-1",
+        "account": "123456789012",
+        "bucket": null,
+        "environmentBucket": null,
+        "artifact": null,
+        "stack": {
+          "status": "CREATE_IN_PROGRESS",
+          "outputs": {},
+          "parameters": {
+            "ArtifactBucket": "amzn-s3-demo-bucket"
+          }
+        },
+        "buckets": {
+          "amzn-s3-demo-bucket": "us-east-1"
+        },
+        "forbiddenBuckets": [],
+        "artifactStack": null,
+        "image": null
+      },
+      "expected": {
+        "steps": [
+          {
+            "resource": "bucket",
+            "name": "amzn-s3-demo-bucket",
+            "action": "reuse",
+            "source": "iamStack",
+            "status": null,
+            "imageVersion": null,
+            "release": null,
+            "previousBucket": null
+          },
+          {
+            "resource": "iamStack",
+            "name": "rayito-m0-iam",
+            "action": "wait",
+            "source": null,
+            "status": "CREATE_IN_PROGRESS",
+            "imageVersion": null,
+            "release": null,
+            "previousBucket": null
+          },
+          {
+            "resource": "baseImage",
+            "name": "rayito-base",
+            "action": "publish",
+            "source": "release",
+            "status": null,
+            "imageVersion": null,
+            "release": "rayd-v{sdkVersion}",
+            "previousBucket": null
+          }
+        ],
+        "ready": false,
+        "needsConfirmation": true,
+        "cost": [
+          "imagen: ≈ $0,04 por semana por versión publicada (mínimo una semana)",
+          "zip de la imagen en el bucket: céntimos"
+        ],
+        "bucketReads": [
+          "head:amzn-s3-demo-bucket"
+        ]
+      }
+    },
+    {
+      "name": "pila en ROLLBACK_COMPLETE bloquea",
+      "input": {
+        "region": "us-east-1",
+        "account": "123456789012",
+        "bucket": null,
+        "environmentBucket": null,
+        "artifact": null,
+        "stack": {
+          "status": "ROLLBACK_COMPLETE",
+          "outputs": {},
+          "parameters": {
+            "ArtifactBucket": "amzn-s3-demo-bucket"
+          }
+        },
+        "buckets": {
+          "amzn-s3-demo-bucket": "us-east-1"
+        },
+        "forbiddenBuckets": [],
+        "artifactStack": null,
+        "image": null
+      },
+      "expected": {
+        "error": "stack_blocked",
+        "bucketReads": [
+          "head:amzn-s3-demo-bucket"
+        ]
+      }
+    },
+    {
+      "name": "pila borrándose bloquea",
+      "input": {
+        "region": "us-east-1",
+        "account": "123456789012",
+        "bucket": null,
+        "environmentBucket": null,
+        "artifact": null,
+        "stack": {
+          "status": "DELETE_IN_PROGRESS",
+          "outputs": {},
+          "parameters": {
+            "ArtifactBucket": "amzn-s3-demo-bucket"
+          }
+        },
+        "buckets": {
+          "amzn-s3-demo-bucket": "us-east-1"
+        },
+        "forbiddenBuckets": [],
+        "artifactStack": null,
+        "image": null
+      },
+      "expected": {
+        "error": "stack_blocked",
+        "bucketReads": [
+          "head:amzn-s3-demo-bucket"
+        ]
+      }
+    },
+    {
+      "name": "pila sin la salida BuildRoleArn",
+      "input": {
+        "region": "us-east-1",
+        "account": "123456789012",
+        "bucket": null,
+        "environmentBucket": null,
+        "artifact": null,
+        "stack": {
+          "status": "CREATE_COMPLETE",
+          "outputs": {},
+          "parameters": {
+            "ArtifactBucket": "amzn-s3-demo-bucket"
+          }
+        },
+        "buckets": {
+          "amzn-s3-demo-bucket": "us-east-1"
+        },
+        "forbiddenBuckets": [],
+        "artifactStack": null,
+        "image": null
+      },
+      "expected": {
+        "error": "stack_incomplete",
+        "bucketReads": [
+          "head:amzn-s3-demo-bucket"
+        ]
+      }
+    },
+    {
+      "name": "build en curso: se espera en vez de lanzar otro",
+      "input": {
+        "region": "us-east-1",
+        "account": "123456789012",
+        "bucket": null,
+        "environmentBucket": null,
+        "artifact": null,
+        "stack": {
+          "status": "CREATE_COMPLETE",
+          "outputs": {
+            "BuildRoleArn": "arn:aws:iam::123456789012:role/rayito-m0-build-us-east-1"
+          },
+          "parameters": {
+            "ArtifactBucket": "amzn-s3-demo-bucket"
+          }
+        },
+        "buckets": {
+          "amzn-s3-demo-bucket": "us-east-1"
+        },
+        "forbiddenBuckets": [],
+        "artifactStack": null,
+        "image": {
+          "state": "UPDATING",
+          "versions": [
+            {
+              "imageVersion": "1.0",
+              "state": "SUCCESSFUL",
+              "status": "ACTIVE",
+              "createdAt": "2026-10-01T00:00:00Z"
+            },
+            {
+              "imageVersion": "2.0",
+              "state": "IN_PROGRESS",
+              "status": "INACTIVE",
+              "createdAt": "2026-10-02T00:00:00Z"
+            }
+          ]
+        }
+      },
+      "expected": {
+        "steps": [
+          {
+            "resource": "bucket",
+            "name": "amzn-s3-demo-bucket",
+            "action": "reuse",
+            "source": "iamStack",
+            "status": null,
+            "imageVersion": null,
+            "release": null,
+            "previousBucket": null
+          },
+          {
+            "resource": "iamStack",
+            "name": "rayito-m0-iam",
+            "action": "reuse",
+            "source": null,
+            "status": "CREATE_COMPLETE",
+            "imageVersion": null,
+            "release": null,
+            "previousBucket": null
+          },
+          {
+            "resource": "baseImage",
+            "name": "rayito-base",
+            "action": "wait",
+            "source": null,
+            "status": null,
+            "imageVersion": "2.0",
+            "release": null,
+            "previousBucket": null
+          }
+        ],
+        "ready": false,
+        "needsConfirmation": false,
+        "cost": [],
+        "bucketReads": [
+          "head:amzn-s3-demo-bucket"
+        ]
+      }
+    },
+    {
+      "name": "imagen sin ninguna versión lanzable se vuelve a publicar",
+      "input": {
+        "region": "us-east-1",
+        "account": "123456789012",
+        "bucket": null,
+        "environmentBucket": null,
+        "artifact": null,
+        "stack": {
+          "status": "CREATE_COMPLETE",
+          "outputs": {
+            "BuildRoleArn": "arn:aws:iam::123456789012:role/rayito-m0-build-us-east-1"
+          },
+          "parameters": {
+            "ArtifactBucket": "amzn-s3-demo-bucket"
+          }
+        },
+        "buckets": {
+          "amzn-s3-demo-bucket": "us-east-1"
+        },
+        "forbiddenBuckets": [],
+        "artifactStack": null,
+        "image": {
+          "state": "UPDATE_FAILED",
+          "versions": [
+            {
+              "imageVersion": "1.0",
+              "state": "FAILED",
+              "status": "INACTIVE",
+              "createdAt": "2026-10-01T00:00:00Z"
+            }
+          ]
+        }
+      },
+      "expected": {
+        "steps": [
+          {
+            "resource": "bucket",
+            "name": "amzn-s3-demo-bucket",
+            "action": "reuse",
+            "source": "iamStack",
+            "status": null,
+            "imageVersion": null,
+            "release": null,
+            "previousBucket": null
+          },
+          {
+            "resource": "iamStack",
+            "name": "rayito-m0-iam",
+            "action": "reuse",
+            "source": null,
+            "status": "CREATE_COMPLETE",
+            "imageVersion": null,
+            "release": null,
+            "previousBucket": null
+          },
+          {
+            "resource": "baseImage",
+            "name": "rayito-base",
+            "action": "publish",
+            "source": "release",
+            "status": null,
+            "imageVersion": null,
+            "release": "rayd-v{sdkVersion}",
+            "previousBucket": null
+          }
+        ],
+        "ready": false,
+        "needsConfirmation": true,
+        "cost": [
+          "imagen: ≈ $0,04 por semana por versión publicada (mínimo una semana)",
+          "zip de la imagen en el bucket: céntimos"
+        ],
+        "bucketReads": [
+          "head:amzn-s3-demo-bucket"
+        ]
+      }
+    },
+    {
+      "name": "--artifact publica ese zip en vez de descargar la release",
+      "input": {
+        "region": "us-east-1",
+        "account": "123456789012",
+        "bucket": null,
+        "environmentBucket": null,
+        "artifact": "image/rayito-image.zip",
+        "stack": null,
+        "buckets": {
+          "{cdkBucket}": "us-east-1"
+        },
+        "forbiddenBuckets": [],
+        "artifactStack": null,
+        "image": null
+      },
+      "expected": {
+        "steps": [
+          {
+            "resource": "bucket",
+            "name": "{cdkBucket}",
+            "action": "reuse",
+            "source": "cdkBootstrap",
+            "status": null,
+            "imageVersion": null,
+            "release": null,
+            "previousBucket": null
+          },
+          {
+            "resource": "iamStack",
+            "name": "rayito-m0-iam",
+            "action": "create",
+            "source": null,
+            "status": null,
+            "imageVersion": null,
+            "release": null,
+            "previousBucket": null
+          },
+          {
+            "resource": "baseImage",
+            "name": "rayito-base",
+            "action": "publish",
+            "source": "artifact",
+            "status": null,
+            "imageVersion": null,
+            "release": null,
+            "previousBucket": null
+          }
+        ],
+        "ready": false,
+        "needsConfirmation": true,
+        "cost": [
+          "pila de IAM: gratis",
+          "imagen: ≈ $0,04 por semana por versión publicada (mínimo una semana)",
+          "zip de la imagen en el bucket: céntimos"
+        ],
+        "bucketReads": [
+          "head:{cdkBucket}"
+        ]
+      }
+    },
+    {
+      "name": "sin ningún bucket: se crea uno con el nombre por defecto",
+      "input": {
+        "region": "us-east-1",
+        "account": "123456789012",
+        "bucket": null,
+        "environmentBucket": null,
+        "artifact": null,
+        "stack": null,
+        "buckets": {},
+        "forbiddenBuckets": [],
+        "artifactStack": null,
+        "image": null
+      },
+      "expected": {
+        "steps": [
+          {
+            "resource": "bucket",
+            "name": "{defaultBucket}",
+            "action": "create",
+            "source": "rayitoDefault",
+            "status": null,
+            "imageVersion": null,
+            "release": null,
+            "previousBucket": null
+          },
+          {
+            "resource": "iamStack",
+            "name": "rayito-m0-iam",
+            "action": "create",
+            "source": null,
+            "status": null,
+            "imageVersion": null,
+            "release": null,
+            "previousBucket": null
+          },
+          {
+            "resource": "baseImage",
+            "name": "rayito-base",
+            "action": "publish",
+            "source": "release",
+            "status": null,
+            "imageVersion": null,
+            "release": "rayd-v{sdkVersion}",
+            "previousBucket": null
+          }
+        ],
+        "ready": false,
+        "needsConfirmation": true,
+        "cost": [
+          "bucket de artefactos: los zips de la imagen caducan a los 7 días (regla de ciclo de vida)",
+          "pila de IAM: gratis",
+          "imagen: ≈ $0,04 por semana por versión publicada (mínimo una semana)",
+          "zip de la imagen en el bucket: céntimos"
+        ],
+        "bucketReads": [
+          "head:{cdkBucket}",
+          "artifactStack",
+          "head:{defaultBucket}"
+        ]
+      }
+    },
+    {
+      "name": "--bucket que no existe: se crea con ese nombre",
+      "input": {
+        "region": "us-east-1",
+        "account": "123456789012",
+        "bucket": "amzn-s3-demo-bucket1",
+        "environmentBucket": null,
+        "artifact": null,
+        "stack": null,
+        "buckets": {
+          "{cdkBucket}": "us-east-1"
+        },
+        "forbiddenBuckets": [],
+        "artifactStack": null,
+        "image": null
+      },
+      "expected": {
+        "steps": [
+          {
+            "resource": "bucket",
+            "name": "amzn-s3-demo-bucket1",
+            "action": "create",
+            "source": "argument",
+            "status": null,
+            "imageVersion": null,
+            "release": null,
+            "previousBucket": null
+          },
+          {
+            "resource": "iamStack",
+            "name": "rayito-m0-iam",
+            "action": "create",
+            "source": null,
+            "status": null,
+            "imageVersion": null,
+            "release": null,
+            "previousBucket": null
+          },
+          {
+            "resource": "baseImage",
+            "name": "rayito-base",
+            "action": "publish",
+            "source": "release",
+            "status": null,
+            "imageVersion": null,
+            "release": "rayd-v{sdkVersion}",
+            "previousBucket": null
+          }
+        ],
+        "ready": false,
+        "needsConfirmation": true,
+        "cost": [
+          "bucket de artefactos: los zips de la imagen caducan a los 7 días (regla de ciclo de vida)",
+          "pila de IAM: gratis",
+          "imagen: ≈ $0,04 por semana por versión publicada (mínimo una semana)",
+          "zip de la imagen en el bucket: céntimos"
+        ],
+        "bucketReads": [
+          "head:amzn-s3-demo-bucket1",
+          "artifactStack"
+        ]
+      }
+    },
+    {
+      "name": "bucket de otra región",
+      "input": {
+        "region": "us-east-1",
+        "account": "123456789012",
+        "bucket": "amzn-s3-demo-bucket",
+        "environmentBucket": null,
+        "artifact": null,
+        "stack": null,
+        "buckets": {
+          "amzn-s3-demo-bucket": "eu-west-1"
+        },
+        "forbiddenBuckets": [],
+        "artifactStack": null,
+        "image": null
+      },
+      "expected": {
+        "error": "bucket_region",
+        "bucketReads": [
+          "head:amzn-s3-demo-bucket"
+        ]
+      }
+    },
+    {
+      "name": "región sin Lambda MicroVMs",
+      "input": {
+        "region": "sa-east-1",
+        "account": "123456789012",
+        "bucket": null,
+        "environmentBucket": null,
+        "artifact": null,
+        "stack": null,
+        "buckets": {},
+        "forbiddenBuckets": [],
+        "artifactStack": null,
+        "image": null
+      },
+      "expected": {
+        "error": "unsupported_region",
+        "bucketReads": []
+      }
+    },
+    {
+      "name": "RAYITO_BUCKET que no existe: se crea con ese nombre",
+      "input": {
+        "region": "us-east-1",
+        "account": "123456789012",
+        "bucket": null,
+        "environmentBucket": "amzn-s3-demo-bucket",
+        "artifact": null,
+        "stack": null,
+        "buckets": {},
+        "forbiddenBuckets": [],
+        "artifactStack": null,
+        "image": null
+      },
+      "expected": {
+        "steps": [
+          {
+            "resource": "bucket",
+            "name": "amzn-s3-demo-bucket",
+            "action": "create",
+            "source": "environment",
+            "status": null,
+            "imageVersion": null,
+            "release": null,
+            "previousBucket": null
+          },
+          {
+            "resource": "iamStack",
+            "name": "rayito-m0-iam",
+            "action": "create",
+            "source": null,
+            "status": null,
+            "imageVersion": null,
+            "release": null,
+            "previousBucket": null
+          },
+          {
+            "resource": "baseImage",
+            "name": "rayito-base",
+            "action": "publish",
+            "source": "release",
+            "status": null,
+            "imageVersion": null,
+            "release": "rayd-v{sdkVersion}",
+            "previousBucket": null
+          }
+        ],
+        "ready": false,
+        "needsConfirmation": true,
+        "cost": [
+          "bucket de artefactos: los zips de la imagen caducan a los 7 días (regla de ciclo de vida)",
+          "pila de IAM: gratis",
+          "imagen: ≈ $0,04 por semana por versión publicada (mínimo una semana)",
+          "zip de la imagen en el bucket: céntimos"
+        ],
+        "bucketReads": [
+          "head:amzn-s3-demo-bucket",
+          "artifactStack"
+        ]
+      }
+    },
+    {
+      "name": "ejecución interrumpida: la pila del bucket existe y la de IAM no",
+      "input": {
+        "region": "us-east-1",
+        "account": "123456789012",
+        "bucket": null,
+        "environmentBucket": null,
+        "artifact": null,
+        "stack": null,
+        "buckets": {
+          "{defaultBucket}": "us-east-1"
+        },
+        "forbiddenBuckets": [],
+        "artifactStack": {
+          "status": "CREATE_COMPLETE",
+          "outputs": {
+            "BucketName": "{defaultBucket}"
+          },
+          "parameters": {
+            "BucketName": "{defaultBucket}"
+          }
+        },
+        "image": null
+      },
+      "expected": {
+        "steps": [
+          {
+            "resource": "bucket",
+            "name": "{defaultBucket}",
+            "action": "reuse",
+            "source": "artifactStack",
+            "status": "CREATE_COMPLETE",
+            "imageVersion": null,
+            "release": null,
+            "previousBucket": null
+          },
+          {
+            "resource": "iamStack",
+            "name": "rayito-m0-iam",
+            "action": "create",
+            "source": null,
+            "status": null,
+            "imageVersion": null,
+            "release": null,
+            "previousBucket": null
+          },
+          {
+            "resource": "baseImage",
+            "name": "rayito-base",
+            "action": "publish",
+            "source": "release",
+            "status": null,
+            "imageVersion": null,
+            "release": "rayd-v{sdkVersion}",
+            "previousBucket": null
+          }
+        ],
+        "ready": false,
+        "needsConfirmation": true,
+        "cost": [
+          "pila de IAM: gratis",
+          "imagen: ≈ $0,04 por semana por versión publicada (mínimo una semana)",
+          "zip de la imagen en el bucket: céntimos"
+        ],
+        "bucketReads": [
+          "head:{cdkBucket}",
+          "artifactStack"
+        ]
+      }
+    },
+    {
+      "name": "pila del bucket en curso: se espera, sin crear otra",
+      "input": {
+        "region": "us-east-1",
+        "account": "123456789012",
+        "bucket": null,
+        "environmentBucket": null,
+        "artifact": null,
+        "stack": null,
+        "buckets": {},
+        "forbiddenBuckets": [],
+        "artifactStack": {
+          "status": "CREATE_IN_PROGRESS",
+          "outputs": {},
+          "parameters": {
+            "BucketName": "{defaultBucket}"
+          }
+        },
+        "image": null
+      },
+      "expected": {
+        "steps": [
+          {
+            "resource": "bucket",
+            "name": "{defaultBucket}",
+            "action": "wait",
+            "source": "artifactStack",
+            "status": "CREATE_IN_PROGRESS",
+            "imageVersion": null,
+            "release": null,
+            "previousBucket": null
+          },
+          {
+            "resource": "iamStack",
+            "name": "rayito-m0-iam",
+            "action": "create",
+            "source": null,
+            "status": null,
+            "imageVersion": null,
+            "release": null,
+            "previousBucket": null
+          },
+          {
+            "resource": "baseImage",
+            "name": "rayito-base",
+            "action": "publish",
+            "source": "release",
+            "status": null,
+            "imageVersion": null,
+            "release": "rayd-v{sdkVersion}",
+            "previousBucket": null
+          }
+        ],
+        "ready": false,
+        "needsConfirmation": true,
+        "cost": [
+          "pila de IAM: gratis",
+          "imagen: ≈ $0,04 por semana por versión publicada (mínimo una semana)",
+          "zip de la imagen en el bucket: céntimos"
+        ],
+        "bucketReads": [
+          "head:{cdkBucket}",
+          "artifactStack"
+        ]
+      }
+    },
+    {
+      "name": "pila del bucket en ROLLBACK_COMPLETE bloquea",
+      "input": {
+        "region": "us-east-1",
+        "account": "123456789012",
+        "bucket": null,
+        "environmentBucket": null,
+        "artifact": null,
+        "stack": null,
+        "buckets": {},
+        "forbiddenBuckets": [],
+        "artifactStack": {
+          "status": "ROLLBACK_COMPLETE",
+          "outputs": {},
+          "parameters": {
+            "BucketName": "{defaultBucket}"
+          }
+        },
+        "image": null
+      },
+      "expected": {
+        "error": "stack_blocked",
+        "bucketReads": [
+          "head:{cdkBucket}",
+          "artifactStack"
+        ]
+      }
+    },
+    {
+      "name": "pila del bucket sin la salida BucketName",
+      "input": {
+        "region": "us-east-1",
+        "account": "123456789012",
+        "bucket": null,
+        "environmentBucket": null,
+        "artifact": null,
+        "stack": null,
+        "buckets": {},
+        "forbiddenBuckets": [],
+        "artifactStack": {
+          "status": "CREATE_COMPLETE",
+          "outputs": {},
+          "parameters": {
+            "BucketName": "{defaultBucket}"
+          }
+        },
+        "image": null
+      },
+      "expected": {
+        "error": "stack_incomplete",
+        "bucketReads": [
+          "head:{cdkBucket}",
+          "artifactStack"
+        ]
+      }
+    },
+    {
+      "name": "--bucket nuevo cuando la pila del bucket ya gestiona otro",
+      "input": {
+        "region": "us-east-1",
+        "account": "123456789012",
+        "bucket": "amzn-s3-demo-bucket1",
+        "environmentBucket": null,
+        "artifact": null,
+        "stack": null,
+        "buckets": {
+          "{defaultBucket}": "us-east-1"
+        },
+        "forbiddenBuckets": [],
+        "artifactStack": {
+          "status": "CREATE_COMPLETE",
+          "outputs": {
+            "BucketName": "{defaultBucket}"
+          },
+          "parameters": {
+            "BucketName": "{defaultBucket}"
+          }
+        },
+        "image": null
+      },
+      "expected": {
+        "error": "artifact_stack_conflict",
+        "bucketReads": [
+          "head:amzn-s3-demo-bucket1",
+          "artifactStack"
+        ]
+      }
+    },
+    {
+      "name": "el nombre por defecto ya existe fuera de la pila: no se adopta",
+      "input": {
+        "region": "us-east-1",
+        "account": "123456789012",
+        "bucket": null,
+        "environmentBucket": null,
+        "artifact": null,
+        "stack": null,
+        "buckets": {
+          "{defaultBucket}": "us-east-1"
+        },
+        "forbiddenBuckets": [],
+        "artifactStack": null,
+        "image": null
+      },
+      "expected": {
+        "error": "bucket_taken",
+        "bucketReads": [
+          "head:{cdkBucket}",
+          "artifactStack",
+          "head:{defaultBucket}"
+        ]
+      }
+    },
+    {
+      "name": "el nombre por defecto responde 403",
+      "input": {
+        "region": "us-east-1",
+        "account": "123456789012",
+        "bucket": null,
+        "environmentBucket": null,
+        "artifact": null,
+        "stack": null,
+        "buckets": {},
+        "forbiddenBuckets": [
+          "{defaultBucket}"
+        ],
+        "artifactStack": null,
+        "image": null
+      },
+      "expected": {
+        "error": "bucket_taken",
+        "bucketReads": [
+          "head:{cdkBucket}",
+          "artifactStack",
+          "head:{defaultBucket}"
+        ]
+      }
+    },
+    {
+      "name": "--bucket que existe sin acceso (403)",
+      "input": {
+        "region": "us-east-1",
+        "account": "123456789012",
+        "bucket": "amzn-s3-demo-bucket1",
+        "environmentBucket": null,
+        "artifact": null,
+        "stack": null,
+        "buckets": {
+          "{cdkBucket}": "us-east-1"
+        },
+        "forbiddenBuckets": [
+          "amzn-s3-demo-bucket1"
+        ],
+        "artifactStack": null,
+        "image": null
+      },
+      "expected": {
+        "error": "bucket_unavailable",
+        "bucketReads": [
+          "head:amzn-s3-demo-bucket1"
+        ]
+      }
+    },
+    {
+      "name": "el bucket de la pila de IAM ya no existe: se usa el del bootstrap de CDK",
+      "input": {
+        "region": "us-east-1",
+        "account": "123456789012",
+        "bucket": null,
+        "environmentBucket": null,
+        "artifact": null,
+        "stack": {
+          "status": "CREATE_COMPLETE",
+          "outputs": {
+            "BuildRoleArn": "arn:aws:iam::123456789012:role/rayito-m0-build-us-east-1"
+          },
+          "parameters": {
+            "ArtifactBucket": "amzn-s3-demo-bucket"
+          }
+        },
+        "buckets": {
+          "{cdkBucket}": "us-east-1"
+        },
+        "forbiddenBuckets": [],
+        "artifactStack": null,
+        "image": {
+          "state": "UPDATED",
+          "versions": [
+            {
+              "imageVersion": "1.0",
+              "state": "SUCCESSFUL",
+              "status": "ACTIVE",
+              "createdAt": "2026-10-01T00:00:00Z"
+            }
+          ]
+        }
+      },
+      "expected": {
+        "steps": [
+          {
+            "resource": "bucket",
+            "name": "{cdkBucket}",
+            "action": "reuse",
+            "source": "cdkBootstrap",
+            "status": null,
+            "imageVersion": null,
+            "release": null,
+            "previousBucket": null
+          },
+          {
+            "resource": "iamStack",
+            "name": "rayito-m0-iam",
+            "action": "update",
+            "source": null,
+            "status": "CREATE_COMPLETE",
+            "imageVersion": null,
+            "release": null,
+            "previousBucket": "amzn-s3-demo-bucket"
+          },
+          {
+            "resource": "baseImage",
+            "name": "rayito-base",
+            "action": "reuse",
+            "source": null,
+            "status": null,
+            "imageVersion": "1.0",
+            "release": null,
+            "previousBucket": null
+          }
+        ],
+        "ready": false,
+        "needsConfirmation": true,
+        "cost": [
+          "pila de IAM: gratis"
+        ],
+        "bucketReads": [
+          "head:amzn-s3-demo-bucket",
+          "head:{cdkBucket}"
+        ]
+      }
+    },
+    {
+      "name": "el bucket de la pila de IAM sin acceso (403)",
+      "input": {
+        "region": "us-east-1",
+        "account": "123456789012",
+        "bucket": null,
+        "environmentBucket": null,
+        "artifact": null,
+        "stack": {
+          "status": "CREATE_COMPLETE",
+          "outputs": {
+            "BuildRoleArn": "arn:aws:iam::123456789012:role/rayito-m0-build-us-east-1"
+          },
+          "parameters": {
+            "ArtifactBucket": "amzn-s3-demo-bucket"
+          }
+        },
+        "buckets": {},
+        "forbiddenBuckets": [
+          "amzn-s3-demo-bucket"
+        ],
+        "artifactStack": null,
+        "image": {
+          "state": "UPDATED",
+          "versions": [
+            {
+              "imageVersion": "1.0",
+              "state": "SUCCESSFUL",
+              "status": "ACTIVE",
+              "createdAt": "2026-10-01T00:00:00Z"
+            }
+          ]
+        }
+      },
+      "expected": {
+        "error": "bucket_unavailable",
+        "bucketReads": [
+          "head:amzn-s3-demo-bucket"
+        ]
+      }
+    },
+    {
+      "name": "bootstrap de CDK sin acceso (403): se crea el de Rayito",
+      "input": {
+        "region": "us-east-1",
+        "account": "123456789012",
+        "bucket": null,
+        "environmentBucket": null,
+        "artifact": null,
+        "stack": null,
+        "buckets": {},
+        "forbiddenBuckets": [
+          "{cdkBucket}"
+        ],
+        "artifactStack": null,
+        "image": null
+      },
+      "expected": {
+        "steps": [
+          {
+            "resource": "bucket",
+            "name": "{defaultBucket}",
+            "action": "create",
+            "source": "rayitoDefault",
+            "status": null,
+            "imageVersion": null,
+            "release": null,
+            "previousBucket": null
+          },
+          {
+            "resource": "iamStack",
+            "name": "rayito-m0-iam",
+            "action": "create",
+            "source": null,
+            "status": null,
+            "imageVersion": null,
+            "release": null,
+            "previousBucket": null
+          },
+          {
+            "resource": "baseImage",
+            "name": "rayito-base",
+            "action": "publish",
+            "source": "release",
+            "status": null,
+            "imageVersion": null,
+            "release": "rayd-v{sdkVersion}",
+            "previousBucket": null
+          }
+        ],
+        "ready": false,
+        "needsConfirmation": true,
+        "cost": [
+          "bucket de artefactos: los zips de la imagen caducan a los 7 días (regla de ciclo de vida)",
+          "pila de IAM: gratis",
+          "imagen: ≈ $0,04 por semana por versión publicada (mínimo una semana)",
+          "zip de la imagen en el bucket: céntimos"
+        ],
+        "bucketReads": [
+          "head:{cdkBucket}",
+          "artifactStack",
+          "head:{defaultBucket}"
+        ]
+      }
+    },
+    {
+      "name": "cuenta preparada por rayito setup: el bucket creado se reutiliza sin leer su pila",
+      "input": {
+        "region": "us-east-1",
+        "account": "123456789012",
+        "bucket": null,
+        "environmentBucket": null,
+        "artifact": null,
+        "stack": {
+          "status": "CREATE_COMPLETE",
+          "outputs": {
+            "BuildRoleArn": "arn:aws:iam::123456789012:role/rayito-m0-build-us-east-1"
+          },
+          "parameters": {
+            "ArtifactBucket": "{defaultBucket}"
+          }
+        },
+        "buckets": {
+          "{defaultBucket}": "us-east-1"
+        },
+        "forbiddenBuckets": [],
+        "artifactStack": {
+          "status": "CREATE_COMPLETE",
+          "outputs": {
+            "BucketName": "{defaultBucket}"
+          },
+          "parameters": {
+            "BucketName": "{defaultBucket}"
+          }
+        },
+        "image": {
+          "state": "UPDATED",
+          "versions": [
+            {
+              "imageVersion": "1.0",
+              "state": "SUCCESSFUL",
+              "status": "ACTIVE",
+              "createdAt": "2026-10-01T00:00:00Z"
+            }
+          ]
+        }
+      },
+      "expected": {
+        "steps": [
+          {
+            "resource": "bucket",
+            "name": "{defaultBucket}",
+            "action": "reuse",
+            "source": "iamStack",
+            "status": null,
+            "imageVersion": null,
+            "release": null,
+            "previousBucket": null
+          },
+          {
+            "resource": "iamStack",
+            "name": "rayito-m0-iam",
+            "action": "reuse",
+            "source": null,
+            "status": "CREATE_COMPLETE",
+            "imageVersion": null,
+            "release": null,
+            "previousBucket": null
+          },
+          {
+            "resource": "baseImage",
+            "name": "rayito-base",
+            "action": "reuse",
+            "source": null,
+            "status": null,
+            "imageVersion": "1.0",
+            "release": null,
+            "previousBucket": null
+          }
+        ],
+        "ready": true,
+        "needsConfirmation": false,
+        "cost": [],
+        "bucketReads": [
+          "head:{defaultBucket}"
+        ]
+      }
+    }
+  ]
+}

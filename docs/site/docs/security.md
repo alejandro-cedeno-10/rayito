@@ -45,6 +45,7 @@ anteriores ([Versionado y soporte](limits.md#versionado-y-soporte),
 | Hooks de ciclo de vida forjados desde dentro de la VM (T2) | el puerto 9000 nunca va en un token; `rayd` comprueba qué uid es dueño de cada conexión a los hooks: un `/terminate` o un `/validate` de un proceso del sandbox responde 200 sin hacer nada, un `/run` suyo no consume el `/run` del arranque (así el `start_cmd` de una plantilla, que llega antes que la plataforma, no instala su token), y tras el primer `/run` un `/ready` o un `/validate` no reinicia ningún kernel; todo queda en `hook_audit` y en `get_health().hook_anomalies`; **riesgo residual**: `/suspend` y `/resume` forjados se aceptan (cuentan como anomalía), y un `/terminate` que esquiva la búsqueda se acepta pero también cuenta |
 | Pasarela de secretos (T24) | apagada por defecto; con `gateways=` el valor vive sólo en `rayd`, el `upstream` es fijo (`https://host`) y la allowlist decide antes de conectar; de la respuesta se quitan las cabeceras que llevan el valor; **riesgo residual**: el cuerpo vuelve sin inspeccionar, así que una regla de `allow` hacia un endpoint que refleje las cabeceras de la petición entrega el secreto ([Pasarela de secretos](funciones-opcionales/pasarela-de-secretos.md#lo-que-la-pasarela-no-puede-impedir)) |
 | Dominio propio (T25, experimental) | apagado por defecto; con `CustomDomain` la CloudFront Function borra toda cabecera `x-aws-proxy-*` del viewer antes de poner las suyas, una ruta exige token de tráfico salvo `public=True` explícito (se guarda sólo su sha256) y una ruta caducada responde 404; **riesgo residual**: la ruta no se borra sola al matar el sandbox (llama a `unregister()`) y el JWE de cada ruta vive en el KeyValueStore de tu cuenta ([Dominio propio](funciones-opcionales/dominio-propio.md)) |
+| Agente en AgentCore sin pasarela de secretos (T36) | `--target agentcore` es opt-in; el agente lee las credenciales del rol del runtime, así que ese rol es de mínimo privilegio (Bedrock sólo en los modelos de `--bedrock-model`, Secrets Manager sólo en los de `--readable-secret`), con MMDSv2 siempre activo y sin copiar secretos al runtime ([detalle](#agentcore)) |
 
 ## Qué no poner en `envs` ni en `metadata`
 
@@ -525,3 +526,73 @@ workdir están apagados (`autoupdate: false`, `share: "disabled"`, `OPENCODE_DIS
 sale a buscar algo a Internet dentro de un sandbox con egress cerrado, y
 si lo intentara, fallaría igual que cualquier otra conexión saliente no
 permitida.
+
+## AgentCore: sin pasarela de secretos (T36) { #agentcore }
+
+Resumen de **T36** de
+[`SECURITY.md`](https://github.com/alejandro-cedeno-10/rayito/blob/main/SECURITY.md)
+(`agentcore-deploy`, desde 0.15.0, todavía sin publicar): el modelo de amenazas
+de [Desplegar en AgentCore](guias/desplegar-en-agentcore.md).
+
+**La diferencia.** En un MicroVM de Rayito el agente nunca ve la credencial del
+modelo: la pasarela de secretos la añade al reenviar la petición. En AgentCore
+no hay pasarela de secretos de Rayito: el agente obtiene las credenciales del rol
+del runtime por el servicio de metadatos de la microVM, y **cualquier código que
+corra en la sesión puede leerlas**: el tuyo, el del framework y una herramienta
+que el modelo decida ejecutar. La garantía de «el agente no puede leer la
+credencial» no existe aquí; lo que la sustituye es el mínimo privilegio.
+
+**Qué puede hacer el rol del runtime** (el que crea `infra/agentcore-runtime.yaml`,
+uno por agente, que sólo AgentCore puede asumir en tu cuenta y tu región):
+
+- extraer **su** imagen de ECR y escribir en **su** grupo de logs
+  (`/aws/bedrock-agentcore/runtimes/<runtime>-*`);
+- enviar trazas a X-Ray y métricas al espacio de nombres `bedrock-agentcore`;
+- obtener tokens de identidad de carga de trabajo (`GetWorkloadAccessToken` y
+  `GetWorkloadAccessTokenForJWT`) sobre el directorio y las identidades de su
+  runtime, **sin** `GetWorkloadAccessTokenForUserId`;
+- invocar en Bedrock (`InvokeModel` e `InvokeModelWithResponseStream`) **sólo**
+  los ARNs de `--bedrock-model` (por defecto, el modelo del proyecto; sin
+  modelo, ningún permiso de Bedrock);
+- leer (`secretsmanager:GetSecretValue`) **sólo** los secretos de
+  `--readable-secret` (por defecto, ninguno).
+
+No puede nada más. Lo que cree el agente con esas credenciales, como llamar a
+otro modelo o leer otro secreto, lo deniega IAM.
+
+**Lo que no cambia con el rol.**
+
+- **Red `PUBLIC`.** El runtime tiene salida a Internet sin filtro: la política de
+  salida de Rayito (`egress`, `network`) no se aplica, y por eso un proyecto que
+  la declara no se despliega (`network_policy_unsupported`). Un código que lea las
+  credenciales del rol puede enviarlas a donde quiera; si no quieres ese riesgo,
+  no des al rol nada que no puedas perder.
+- **MMDSv2 siempre activo.** AgentCore exige la versión 2 del servicio de
+  metadatos (`requireMMDSV2`) desde el 2026-06-30 y rechaza invocar un runtime
+  sin ella. Rayito la activa justo después de crear el runtime y en cada
+  actualización.
+- **Sin secretos en el runtime.** Las variables de entorno del runtime se leen
+  con `GetAgentRuntime`: Rayito nunca copia valores de secretos allí, ni la clave
+  de un proveedor que no sea Bedrock (`provider_unsupported`). El agente lee lo
+  que necesite con el rol, en ejecución.
+- **Sesiones y usuarios.** Cada sesión corre en su propia microVM, aislada de las
+  demás, pero AgentCore no asocia sesiones a usuarios: quién puede continuar qué
+  sesión (qué `session_id` puede usar cada persona) lo decide tu backend.
+- **Autenticación.** Invocar un runtime exige `bedrock-agentcore:InvokeAgentRuntime`
+  y firma SigV4: no hay access token ni `RAYITO_AGENT_SERVICE_TOKEN` (no lo fijes
+  en este destino).
+
+**El build.** El zip del contexto se sube a `rayito/images/agentcore/<nombre>/` del
+bucket de artefactos, se borra en cuanto acaba el build (con éxito o no) y, si
+queda alguno, el bucket de `rayito setup` lo caduca a los 7 días. El rol de
+CodeBuild sólo lee ese prefijo, sólo escribe en su grupo de logs y sólo sube
+imágenes a su repositorio, que tiene etiquetas inmutables y análisis al subir.
+La imagen base va fijada por digest.
+
+**Qué borra `rayito agent delete`.** Sólo lo que creó Rayito para ese nombre: un
+runtime que no tiene la marca `rayito.agentcore/1` en su descripción nunca se toca
+(`name_conflict`).
+
+**Riesgo residual.** Todo lo que el rol permita, cualquier código de la sesión
+puede usarlo; una organización con SCP que exigen etiquetas necesita `--tag`, y
+las etiquetas de un runtime ya creado no se actualizan.

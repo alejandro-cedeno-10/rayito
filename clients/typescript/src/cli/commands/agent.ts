@@ -16,7 +16,6 @@
  *   aceptan el nombre de la flota además del id de un sandbox.
  */
 
-import { type AgentEvent, type AgentResult, failureMessage } from "../../agent/events.js";
 import { projectNameOf } from "../../agent/project-file.js";
 import {
   AGENT_TEMPLATE_RUNTIMES,
@@ -24,7 +23,9 @@ import {
   DEFAULT_AGENT_TEMPLATE_BASE,
   DEFAULT_AGENT_TEMPLATE_NAME,
 } from "../../agent/template.js";
+import { AGENT_TARGETS, TARGET_AGENTCORE } from "../../agentcore/models.js";
 import {
+  AgentCoreError,
   AgentError,
   BuildError,
   CapacityError,
@@ -42,6 +43,7 @@ import {
   PairFlagError,
   parseFlagPairs,
 } from "../agent-deploy.js";
+import { EventPrinter, printResult } from "../agent-output.js";
 import {
   DEFAULT_PROVIDER,
   LANGUAGES,
@@ -54,6 +56,25 @@ import {
   TYPESCRIPT_LANGUAGE,
   writeScaffold,
 } from "../agent-scaffold.js";
+import {
+  agentCoreOptionGiven,
+  guardedAgentCore,
+  reportFailure,
+  runAgentCoreDeploy,
+  runAgentCoreInvoke,
+  runAgentCoreStatus,
+  runAgentCoreStop,
+  targetOf,
+} from "../agentcore.js";
+import {
+  bedrockModelOption,
+  idleSessionTimeoutOption,
+  maxSessionLifetimeOption,
+  readableSecretOption,
+  stopSessionIdOption,
+  tagOption,
+  targetOption,
+} from "../agentcore-options.js";
 import {
   argument,
   type CommandContext,
@@ -169,6 +190,7 @@ const STREAM_HELP =
   "Imprime los eventos a medida que llegan (en --json, una línea JSON por evento).";
 const EXPORT_TARGETS = ["docker", "agentcore"] as const;
 const SESSION_HELP = "Continúa una sesión anterior.";
+const SESSION_ID_OPTION = "--session-id";
 
 function usageFailure(context: CommandContext, message: string): number {
   context.console.echo(`rayito: ${message}`, { err: true });
@@ -183,7 +205,6 @@ function isOneOf(value: string, allowed: readonly string[]): boolean {
   return allowed.includes(value);
 }
 
-const USAGE_UNKNOWN_LABEL = "desconocido";
 const CUSTOM_INIT_HINT =
   'la app usa protocol = "raw": el despliegue reenvía tus rutas (/health, /invoke) con ' +
   'deployment.url y deployment.headers; deployment.invoke() es para protocol = "agentcore"';
@@ -194,84 +215,6 @@ function rawRoutesHint(routes: HiddenAppRoutes): string {
     `tus rutas (${routes.healthPath} y ${routes.invokePath}) no se alcanzan desde fuera. ` +
     'Usa protocol = "raw" en [runtime.app] para exponerlas.'
   );
-}
-
-function resultDocument(result: AgentResult): Record<string, unknown> {
-  const { usage } = result;
-  return {
-    sessionId: result.sessionId,
-    text: result.text,
-    steps: result.steps,
-    usage: {
-      input: usage.input,
-      output: usage.output,
-      reasoning: usage.reasoning,
-      cacheRead: usage.cacheRead,
-      cacheWrite: usage.cacheWrite,
-      total: usage.total,
-    },
-    usageReported: result.usageReported !== false,
-    exitCode: result.exitCode,
-  };
-}
-
-function printResult(context: CommandContext, result: AgentResult): void {
-  if (context.globals.json) {
-    context.console.emitJson(resultDocument(result));
-    return;
-  }
-  context.console.echo(result.text);
-  context.console.echo(`session_id=${result.sessionId}`, { err: true });
-  const tokens = result.usageReported === false ? USAGE_UNKNOWN_LABEL : result.usage.total;
-  context.console.echo(`steps=${result.steps} tokens=${tokens}`, { err: true });
-}
-
-/**
- * Escribe los eventos de un stream: en `--json`, un objeto por línea; en
- * texto, los `text_delta` tal cual (el `text` entero sólo si no hubo deltas)
- * y las herramientas en stderr. Un `agent_failed` termina la orden con 1.
- */
-class EventPrinter {
-  readonly #context: CommandContext;
-  #sawDelta = false;
-  #wroteText = false;
-  failed: AgentEvent | undefined;
-
-  constructor(context: CommandContext) {
-    this.#context = context;
-  }
-
-  readonly print = (event: AgentEvent): void => {
-    const { console, globals } = this.#context;
-    if (globals.json) {
-      console.emitJsonLine(event);
-    } else if (event.type === "text_delta") {
-      this.#sawDelta = true;
-      this.#write(event.text);
-    } else if (event.type === "text" && !this.#sawDelta) {
-      this.#write(event.text);
-    } else if (event.type === "tool_call") {
-      console.echo(`tool=${event.name} status=${event.status}`, { err: true });
-    }
-    if (event.type === "agent_failed") {
-      this.failed = event;
-    }
-  };
-
-  finish(): number | undefined {
-    if (this.#wroteText) {
-      this.#context.console.writeRaw("stdout", "\n");
-    }
-    if (this.failed?.type === "agent_failed") {
-      return failure(this.#context, failureMessage(this.failed.reason, this.failed.detailCode));
-    }
-    return undefined;
-  }
-
-  #write(text: string): void {
-    this.#wroteText = true;
-    this.#context.console.write(text);
-  }
 }
 
 async function loadProject(context: CommandContext) {
@@ -619,7 +562,14 @@ export const agentDeployCommand = defineCommand({
     "cabeceras de acceso no se imprimen nunca. El access token se guarda en --token-file (o es " +
     "el de RAYITO_ACCESS_TOKEN; si no hay ninguno, en .rayito/agent-token con modo 0600, que " +
     "se reutiliza al volver a desplegar). Vive como mucho 8 h: `rayito agent stop <nombre>` lo " +
-    "termina. Con --dry-run no llama a AWS.",
+    "termina. Con --dry-run no llama a AWS. Con --target agentcore despliega en Amazon Bedrock " +
+    "AgentCore Runtime sin Docker local: muestra el plan, la región y el coste aproximado, " +
+    "construye la imagen arm64 en CodeBuild, la sube a ECR y crea o actualiza el runtime sin " +
+    "duplicarlo; pide confirmación (--yes la salta; --dry-run sólo calcula; --json da un " +
+    "documento; --tag K=V se aplica a la pila y al runtime). AgentCore no tiene la pasarela " +
+    "de secretos de Rayito: el agente lee las credenciales del rol del runtime, que sólo " +
+    "puede invocar los modelos de --bedrock-model y leer los secretos de --readable-secret. " +
+    "Las opciones de MicroVMs que AgentCore no admite dan error en vez de aproximarse.",
   parameters: [
     argument("path", {
       type: "path",
@@ -664,7 +614,7 @@ export const agentDeployCommand = defineCommand({
     option(["--env"], { multiple: true, help: "CLAVE=VALOR no secreto; repetible." }),
     option(["--allow-out"], { multiple: true, help: "Destino de salida permitido; repetible." }),
     option(["--bucket"], {
-      help: "Bucket del artefacto (por defecto, RAYITO_BUCKET o CDK).",
+      help: "Bucket del artefacto (por defecto, RAYITO_BUCKET, el de CDK o el de rayito setup).",
     }),
     option(["--secret"], {
       multiple: true,
@@ -683,10 +633,27 @@ export const agentDeployCommand = defineCommand({
       help: "Construye la imagen (por defecto, si hay bucket) o reutiliza la existente.",
     }),
     flag(["--verbose"], { help: "Imprime todos los logs del build." }),
+    targetOption,
+    tagOption,
+    bedrockModelOption,
+    readableSecretOption,
+    idleSessionTimeoutOption,
+    maxSessionLifetimeOption,
   ],
   run: (context) =>
     guarded(context, async () => {
       const { values } = context;
+      const chosen = targetOf(context);
+      if (chosen === undefined) {
+        return badChoice(context, "--target", AGENT_TARGETS);
+      }
+      const agentCoreOnly = agentCoreOptionGiven(context);
+      if (chosen !== TARGET_AGENTCORE && agentCoreOnly !== undefined) {
+        return reportFailure(
+          context,
+          new AgentCoreError("option_requires_agentcore", { option: agentCoreOnly }),
+        );
+      }
       const target = deployTarget(context);
       const sessions = values.string("sessions");
       if (sessions !== undefined && !isOneOf(sessions, SESSION_MODE_CHOICES)) {
@@ -724,6 +691,23 @@ export const agentDeployCommand = defineCommand({
           onStep: stepPrinter(context),
         },
       });
+      if (chosen === TARGET_AGENTCORE) {
+        const input = {
+          path: target,
+          overrides: detectOverridesOf(context),
+          flags,
+          settings: {
+            ...request(undefined).settings,
+            onBuildLogs: verbose
+              ? (line: string) => context.console.echo(line, { err: true })
+              : undefined,
+            onStep: (step: { readonly detail: string }) =>
+              context.console.echo(step.detail, { err: true }),
+          },
+          dryRun: values.flag("dry_run"),
+        };
+        return guardedAgentCore(context, () => runAgentCoreDeploy(context, input));
+      }
       if (values.flag("dry_run")) {
         const plan = await context.agentProjects.planDeploy(request(undefined));
         if (context.globals.json) {
@@ -867,17 +851,27 @@ export const agentInvokeCommand = defineCommand({
   help:
     "Llama a un agente desplegado con `rayito agent deploy`. Con el id de un sandbox habla " +
     "con ese VM; con el nombre de la flota reparte la sesión entre sus VMs (el `session_id` " +
-    "que devuelve identifica el VM: pásalo con --session-id para seguir la conversación).",
+    "que devuelve identifica el VM: pásalo con --session-id para seguir la conversación). Con " +
+    "--target agentcore el argumento es el nombre del agente desplegado en AgentCore y la " +
+    "sesión es la que devuelve el resultado.",
   parameters: [
     argument("sandbox_id", { required: true, help: TARGET_HELP }),
     argument("prompt", { required: true, help: "Lo que se le pide al agente." }),
     option(["--session-id"], { help: SESSION_HELP }),
     flag(["--stream"], { help: STREAM_HELP }),
     tokenFileOption,
+    targetOption,
   ],
   run: (context) =>
     guarded(context, async () => {
       const { values } = context;
+      const chosen = targetOf(context);
+      if (chosen === undefined) {
+        return badChoice(context, "--target", AGENT_TARGETS);
+      }
+      if (chosen === TARGET_AGENTCORE) {
+        return guardedAgentCore(context, () => runAgentCoreInvoke(context));
+      }
       const target = values.string("sandbox_id") ?? "";
       const client = isFleetName(target)
         ? await context.agentProjects.connectFleet(target, fleetTokenOrUsage(context))
@@ -926,10 +920,22 @@ export const agentStatusCommand = defineCommand({
   help:
     "Estado de un agente desplegado: si está listo y si está ocupado. Con el nombre de una " +
     "flota, el de cada uno de sus VMs (uno que este proceso no ha abierto figura como " +
-    "`unknown`: preguntarle lo reanudaría).",
-  parameters: [argument("sandbox_id", { required: true, help: TARGET_HELP }), tokenFileOption],
+    "`unknown`: preguntarle lo reanudaría). Con --target agentcore, el estado del runtime del " +
+    "agente en AgentCore.",
+  parameters: [
+    argument("sandbox_id", { required: true, help: TARGET_HELP }),
+    tokenFileOption,
+    targetOption,
+  ],
   run: (context) =>
     guarded(context, async () => {
+      const chosen = targetOf(context);
+      if (chosen === undefined) {
+        return badChoice(context, "--target", AGENT_TARGETS);
+      }
+      if (chosen === TARGET_AGENTCORE) {
+        return guardedAgentCore(context, () => runAgentCoreStatus(context));
+      }
       const sandboxId = context.values.string("sandbox_id") ?? "";
       if (isFleetName(sandboxId)) {
         const fleet = await context.agentProjects.connectFleet(
@@ -975,10 +981,28 @@ export const agentStopCommand = defineCommand({
   path: ["agent", "stop"],
   help:
     "Para un agente desplegado: destruye su sandbox, o todos los de la flota si le pasas su " +
-    "nombre. No necesita el access token.",
-  parameters: [argument("sandbox_id", { required: true, help: TARGET_HELP })],
+    "nombre. No necesita el access token. Con --target agentcore, --session-id para la " +
+    "microVM de esa sesión (para quitar el agente usa `rayito agent delete`).",
+  parameters: [
+    argument("sandbox_id", { required: true, help: TARGET_HELP }),
+    targetOption,
+    stopSessionIdOption,
+  ],
   run: (context) =>
     guarded(context, async () => {
+      const chosen = targetOf(context);
+      if (chosen === undefined) {
+        return badChoice(context, "--target", AGENT_TARGETS);
+      }
+      if (chosen === TARGET_AGENTCORE) {
+        return guardedAgentCore(context, () => runAgentCoreStop(context));
+      }
+      if (context.values.string("session_id") !== undefined) {
+        return reportFailure(
+          context,
+          new AgentCoreError("option_requires_agentcore", { option: SESSION_ID_OPTION }),
+        );
+      }
       const sandboxId = context.values.string("sandbox_id") ?? "";
       if (isFleetName(sandboxId)) {
         const fleet = await context.agentProjects.connectFleet(sandboxId, undefined);

@@ -6,6 +6,87 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
 
 ## [Unreleased]
 
+### Añadido
+
+- **`rayito setup` prepara una cuenta y una región en una orden idempotente**:
+  reutiliza el bucket de artefactos (`--bucket`, `RAYITO_BUCKET`, el de la pila
+  de IAM o el del bootstrap de CDK; si no hay ninguno, lo crea con la pila
+  `rayito-m0-artifacts`), crea o actualiza la
+  pila `rayito-m0-iam` y publica `rayito-base` desde el `rayito-image.zip` de la
+  release de tu versión, comprobado contra su `SHA256SUMS` (o desde `--artifact`).
+  Muestra el plan y el coste, pide confirmación (`--yes`, `--dry-run`), reanuda
+  un build interrumpido en vez de lanzar otro y termina con `rayito doctor`.
+  Con `--json` imprime un único documento. La pila de IAM va empaquetada con el
+  SDK y no aparece en `rayito stack list`. `rayito setup` crea el bucket de
+  artefactos con la pila `rayito-m0-artifacts` cuando no hay ninguno, y
+  `deploy_agent` / `rayito agent deploy` lo encuentran por su salida
+  `BucketName` (sólo lectura). Con `--json`, un error de AWS o de pila que
+  `setup` no traduce también deja un único documento.
+- **`deploy_agent(target="agentcore")` despliega un agente en Amazon Bedrock
+  AgentCore Runtime sin Docker local**: `rayito agent deploy ./mi-agente --target
+  agentcore` (y `deploy_agent` / `deploy_agent_async` / `plan_deploy` con
+  `target="agentcore"` y `agentcore=AgentCoreOptions(...)`) detecta el
+  proyecto, imprime el plan (región, recursos, seguridad y coste, sin llamar a
+  AWS), pide confirmación (`--yes`, `--dry-run`, `--json`) y crea la pila
+  `rayito-agentcore-<nombre>` (repositorio de ECR, proyecto de CodeBuild y dos
+  roles), construye la imagen arm64 en CodeBuild sólo si cambió el contenido y
+  crea o actualiza el runtime por nombre (sin duplicados), con MMDSv2 exigido y
+  un rol de mínimo privilegio. `AgentCoreFleet.invoke()` y `stream()` tienen la
+  API y la semántica de sesión de `AgentFleet`; `rayito agent invoke`,
+  `status` y `stop` aceptan `--target agentcore` y hay un `rayito agent list`
+  y un `rayito agent delete` nuevos (sólo borran lo que creó Rayito). Las
+  opciones de MicroVMs que no aplican son un error explícito
+  (`option_not_supported`) o un aviso si vienen del fichero de proyecto.
+  AgentCore no tiene la pasarela de secretos de Rayito: el agente lee las
+  credenciales del rol del runtime; el plan, el README exportado y las guías lo
+  dicen. Nuevos: `AgentCoreFleet`, `AsyncAgentCoreFleet`, `AgentCoreFleetStream`,
+  `AsyncAgentCoreFleetStream`, `AgentCoreOptions`, `AgentCoreStatus`,
+  `AgentCoreDeleteResult`, `AgentCoreDeployPlan` y `AgentCoreException`. El
+  destino por defecto sigue siendo MicroVM y sin `target="agentcore"` no se
+  crea ningún cliente de AgentCore, CodeBuild ni ECR.
+- **El export `agentcore` se despliega tal cual**: su `Dockerfile` toma la
+  imagen base de un argumento de build (`AGENT_BASE_IMAGE`, con el mismo
+  digest), el README explica `--target agentcore` y la seguridad, y un agente
+  del AI SDK de Vercel lleva una herramienta (botocore fijado por hash) con la
+  que el host lee las credenciales del rol y se las pasa al puente de Node en
+  cada invocación. El `Dockerfile` y el README del export `docker` no cambian.
+- **OpenCode obtiene el rol del runtime con un perfil `credential_process`**:
+  OpenCode sólo arranca su proveedor de Bedrock con `AWS_PROFILE` u otra variable
+  de credenciales de AWS, y en AgentCore el rol sólo lo sirve el servicio de
+  metadatos de la microVM. El export `agentcore` de un agente OpenCode añade el
+  ayudante de botocore, un `AWS_CONFIG_FILE` con un perfil cuyo `credential_process`
+  lo ejecuta (con `Expiration`, para que el SDK renueve) y `AWS_CONFIG_FILE` y
+  `AWS_PROFILE` en la imagen. MicroVM, el export `docker` y los demás frameworks
+  no cambian.
+- **Códigos de error de `rayito setup`**: `bucket_unavailable` (un bucket que
+  existe sin acceso, 403), `bucket_taken` y `artifact_stack_conflict`, además de
+  los de la pila y la imagen.
+- **El host del agente traduce el id de sesión de AgentCore**: una cabecera
+  `X-Amzn-Bedrock-AgentCore-Runtime-Session-Id` con cualquier forma empieza una
+  sesión del driver la primera vez y la continúa después, y la respuesta lleva
+  siempre el id de la cabecera. Una sesión nueva de AgentCore enruta su primera
+  petición en cuanto arranca la microVM, antes de que el agente esté caliente: el
+  host la retiene hasta 25 s esperando el calentamiento en vez de contestar 503
+  (un calentamiento fallido sigue contestando 503 al instante).
+
+### Cambiado
+
+- **Una vez, el hash de contenido de las imágenes de agentes de MicroVMs**:
+  el host del agente (`agent_host`) y, para los frameworks de Node (Strands TS,
+  LangGraph JS, Deep Agents JS, AI SDK de Vercel, Strands harness TS), el puente
+  `node_bridge.mjs` llevan ahora el soporte de AgentCore (id de sesión y
+  credenciales del rol). Como los dos forman parte del contexto de build, el
+  primer `deploy_agent` tras actualizar construye una versión de imagen nueva
+  (unos $0,011 y al menos una semana de almacenamiento de su snapshot) aunque tu
+  código no haya cambiado; los siguientes la reutilizan. El `Dockerfile` y el
+  README del export `docker` no cambian; sus ficheros de `agent_host/` y, en
+  Node, `node_bridge.mjs` sí.
+- **Los errores de una cuenta sin preparar apuntan a `rayito setup`**: el
+  `SandboxNotFoundException` de `Sandbox.create()` cuando falta la imagen y los
+  errores de `deploy_agent` por falta de bucket o de imagen base terminan con
+  «si la cuenta o la región aún no están preparadas, ejecuta `rayito setup`».
+  La clase, el código y la causa de cada uno no cambian.
+
 ## [0.14.0] - 2026-10-17
 
 ### Añadido

@@ -18,7 +18,7 @@ import sys
 import threading
 import uuid
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import IO, Any, Final, Protocol
 
 #: Versión del protocolo JSONL (`AGENT_PROTOCOL_VERSION` de `limits.json`).
@@ -74,12 +74,14 @@ class LimitExceeded(BaseException):
 
 @dataclass(frozen=True)
 class Request:
-    """La petición de una ejecución, ya validada."""
+    """La petición de una ejecución, ya validada. `aws_env` lleva las
+    credenciales del rol del runtime y no sale en `repr`."""
 
     prompt: str
     session_id: str | None = None
     model: str | None = None
     reasoning: bool = False
+    aws_env: Mapping[str, str] | None = field(default=None, repr=False)
 
 
 @dataclass

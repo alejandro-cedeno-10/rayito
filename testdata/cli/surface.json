@@ -148,6 +148,54 @@
     {
       "path": [
         "agent",
+        "delete"
+      ],
+      "group": false,
+      "invoke_without_command": false,
+      "hidden": false,
+      "parameters": [
+        {
+          "name": "name",
+          "kind": "argument",
+          "flags": [
+            "name"
+          ],
+          "type": "str",
+          "required": true,
+          "multiple": false,
+          "default": null
+        },
+        {
+          "name": "target",
+          "kind": "option",
+          "flags": [
+            "--target"
+          ],
+          "type": "str",
+          "required": true,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "yes",
+          "kind": "option",
+          "flags": [
+            "--yes"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "default": false,
+          "is_flag": true,
+          "envvar": null
+        }
+      ]
+    },
+    {
+      "path": [
+        "agent",
         "deploy"
       ],
       "group": false,
@@ -529,6 +577,84 @@
           "default": false,
           "is_flag": true,
           "envvar": null
+        },
+        {
+          "name": "target",
+          "kind": "option",
+          "flags": [
+            "--target"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": false,
+          "default": "microvm",
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "tag",
+          "kind": "option",
+          "flags": [
+            "--tag"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": true,
+          "default": [],
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "bedrock_model",
+          "kind": "option",
+          "flags": [
+            "--bedrock-model"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": true,
+          "default": [],
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "readable_secret",
+          "kind": "option",
+          "flags": [
+            "--readable-secret"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": true,
+          "default": [],
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "idle_session_timeout",
+          "kind": "option",
+          "flags": [
+            "--idle-session-timeout"
+          ],
+          "type": "int",
+          "required": false,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "max_session_lifetime",
+          "kind": "option",
+          "flags": [
+            "--max-session-lifetime"
+          ],
+          "type": "int",
+          "required": false,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
         }
       ]
     },
@@ -851,6 +977,43 @@
           "default": null,
           "is_flag": false,
           "envvar": null
+        },
+        {
+          "name": "target",
+          "kind": "option",
+          "flags": [
+            "--target"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": false,
+          "default": "microvm",
+          "is_flag": false,
+          "envvar": null
+        }
+      ]
+    },
+    {
+      "path": [
+        "agent",
+        "list"
+      ],
+      "group": false,
+      "invoke_without_command": false,
+      "hidden": false,
+      "parameters": [
+        {
+          "name": "target",
+          "kind": "option",
+          "flags": [
+            "--target"
+          ],
+          "type": "str",
+          "required": true,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
         }
       ]
     },
@@ -960,6 +1123,19 @@
           "default": null,
           "is_flag": false,
           "envvar": null
+        },
+        {
+          "name": "target",
+          "kind": "option",
+          "flags": [
+            "--target"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": false,
+          "default": "microvm",
+          "is_flag": false,
+          "envvar": null
         }
       ]
     },
@@ -982,6 +1158,32 @@
           "required": true,
           "multiple": false,
           "default": null
+        },
+        {
+          "name": "target",
+          "kind": "option",
+          "flags": [
+            "--target"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": false,
+          "default": "microvm",
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "session_id",
+          "kind": "option",
+          "flags": [
+            "--session-id"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
         }
       ]
     },
@@ -3117,6 +3319,81 @@
           "multiple": false,
           "default": 8,
           "is_flag": false,
+          "envvar": null
+        }
+      ]
+    },
+    {
+      "path": [
+        "setup"
+      ],
+      "group": false,
+      "invoke_without_command": false,
+      "hidden": false,
+      "parameters": [
+        {
+          "name": "bucket",
+          "kind": "option",
+          "flags": [
+            "--bucket"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "artifact",
+          "kind": "option",
+          "flags": [
+            "--artifact"
+          ],
+          "type": "path",
+          "required": false,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "tag",
+          "kind": "option",
+          "flags": [
+            "--tag"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": true,
+          "default": [],
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "yes",
+          "kind": "option",
+          "flags": [
+            "--yes"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "default": false,
+          "is_flag": true,
+          "envvar": null
+        },
+        {
+          "name": "dry_run",
+          "kind": "option",
+          "flags": [
+            "--dry-run"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "default": false,
+          "is_flag": true,
           "envvar": null
         }
       ]

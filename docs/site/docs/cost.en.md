@@ -23,6 +23,7 @@ page carries one of two labels:
 | An agent with 100 five-minute sessions a day | VM only: 100 × (300 s × $0.126/h + $0.0014) ≈ **$1.19/day**; the model is paid separately ([cost of an agent](#coste-de-un-agente-vm-frente-a-modelo)) |
 | The same sandbox paused for 8 hours | snapshot storage (≈ 0.92 GB × $0.08/GB-month for 8 h) ≈ **$0.0008** + one suspend/resume cycle ($0.0049) |
 | Keeping an image version published | ≈ **$0.04 per week** (one-week minimum per version) |
+| Prepare the account (`rayito setup`) | the IAM stack is free; the image, ≈ **$0.04 per week** per published version (minimum one week); the zip in the bucket, cents; if there is no bucket, it creates one whose zips expire after 7 days (no figure of its own: it is the same "cents" of the zip); `--dry-run` costs nothing |
 | `rayito doctor --launch` | ≈ **$0.002** |
 | A pool of 3 idle slots | ≈ 3 × $0.60 = **$1.80/month** (see below) |
 
@@ -339,3 +340,35 @@ A deployment nobody calls keeps costing until it suspends: leave `idle` on
     - Times, sizes and tokens measured on real AWS on 2026-10-07 (Q146–Q150
       and Q152 of `AWS_API_NOTES.md` §16); the comparison with a real
       invoice (Q151) is still pending.
+
+### Cost of an agent on AgentCore { #coste-de-un-agente-en-agentcore }
+
+With [`--target agentcore`](guias/desplegar-en-agentcore.md) the agent does not
+run in a Lambda MicroVM but in Amazon Bedrock AgentCore Runtime, and its cost is
+four lines of the AWS bill, plus the model (**List**, `us-east-1`, checked on
+**2026-10-19**; there is no real bill for a deployment yet):
+
+| Item | Price | How it is billed | Source |
+|---|---|---|---|
+| Runtime, CPU (platform V1, the one Rayito creates) | $0.0895 per vCPU-hour | per second of actual use; no CPU charge while waiting on I/O | [AgentCore pricing](https://aws.amazon.com/bedrock/agentcore/pricing/) |
+| Runtime, memory | $0.00945 per GB-hour | per second, while the session lives (128 MB minimum), until it ends: by default, after 15 minutes without use | the same |
+| CodeBuild build (`arm1.small`) | $0.0034 per minute | rounded up to the minute; 100 minutes a month free | [CodeBuild pricing](https://aws.amazon.com/codebuild/pricing/) and the AWS price list |
+| Image in ECR | $0.10 per GB-month | the last 5 versions are kept | the AWS price list |
+| CloudWatch Logs | $0.50 per GB ingested | per GB the agent and the build write | the AWS price list |
+
+With no sessions there is no compute: a stopped runtime charges no CPU or
+memory, and only the image in ECR and the logs remain. Each session is a
+microVM of its own (up to 2 vCPU and 8 GB), so two conversations at the same
+time are charged twice.
+
+| Scenario | Approximate cost |
+|---|---|
+| A conversation of 20 s of CPU at 1 vCPU and 2 GB of memory for 120 s | 20 s × $0.0895/3600 + 120 s × 2 GB × $0.00945/3600 ≈ $0.0005 + $0.0006 ≈ **$0.0011**, plus the model's tokens |
+| An 8-minute build, past the free tier | 8 × $0.0034 ≈ **$0.03** (the first 100 minutes of the month, free) |
+| A 1.5 GB image in ECR | 1.5 × $0.10 = **$0.15 a month** per kept version, up to 5 |
+
+Image and build sizes and times are estimates: ECR reports the compressed size
+and build minutes depend on the framework. What is measured in real AWS will go
+in `AWS_API_NOTES.md` once the deployment is accepted. `rayito agent deploy
+--target agentcore` prints these lines in the plan, and `rayito agent delete
+<name> --target agentcore` stops the charge for the image and the logs.

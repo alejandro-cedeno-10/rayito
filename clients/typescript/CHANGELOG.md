@@ -6,6 +6,74 @@ versionado [SemVer](https://semver.org/lang/es/).
 
 ## [Unreleased]
 
+### Añadido
+
+- **Despliegue en Amazon Bedrock AgentCore Runtime**: `deployAgent(ruta, { target:
+  "agentcore" })`, `planDeploy()` y `rayito agent deploy ./mi-agente --target
+  agentcore` despliegan un agente de cero configuración sin Docker local: la
+  imagen arm64 se construye en CodeBuild a partir del export de `agentcore`, se
+  sube a ECR (repositorio, proyecto y roles en la pila `rayito-agentcore-<nombre>`)
+  y el runtime se crea o se actualiza sin duplicarlo, con MMDSv2 siempre exigido.
+  `rayito agent deploy --target agentcore` muestra el plan, la región, el coste
+  aproximado y la seguridad, y pide confirmación (`--yes`, `--dry-run`, `--json`,
+  `--tag K=V` para las organizaciones que exigen etiquetas). `AgentCoreFleet`
+  (`connect()`, `invoke()`, `stream()`, `status()`, `stopSession()`, `delete()`)
+  tiene la misma API y las mismas sesiones que `AgentFleet`; `rayito agent
+  invoke|status|stop --target agentcore` y las órdenes nuevas `rayito agent list`
+  y `rayito agent delete` lo usan. Las opciones de MicroVMs que AgentCore no
+  admite (`min_vms`, `warm_vms`, `--memory`...) dan `option_not_supported` en vez
+  de aproximarse. AgentCore no tiene la pasarela de secretos de Rayito: el agente
+  lee las credenciales del rol del runtime, que sólo puede invocar los modelos de
+  `agentcore.bedrockModels` y leer los secretos de `agentcore.readableSecrets`.
+  Cuatro clientes de AWS nuevos como peers opcionales
+  (`@aws-sdk/client-bedrock-agentcore`, `-bedrock-agentcore-control`, `-codebuild` y
+  `-ecr`); el destino por defecto sigue siendo la flota de MicroVMs y no los carga.
+- El export `agentcore` lleva el argumento de build `AGENT_BASE_IMAGE` y, para
+  Vercel AI SDK, el ayudante que lee las credenciales del rol del runtime
+  (`botocore` fijado por hash); el `Dockerfile` y el README del export `docker` no cambian.
+- **OpenCode obtiene el rol del runtime con un perfil `credential_process`**:
+  el export `agentcore` de un agente OpenCode añade el ayudante de botocore, un
+  `AWS_CONFIG_FILE` con un perfil cuyo `credential_process` lo ejecuta (con
+  `Expiration`, para que el SDK renueve) y `AWS_CONFIG_FILE` y `AWS_PROFILE` en la
+  imagen; sin ellos OpenCode no arranca su proveedor de Bedrock. MicroVM, el
+  export `docker` y los demás frameworks no cambian.
+- El host del agente retiene hasta 25 s la primera petición de una sesión nueva de
+  AgentCore esperando el calentamiento, en vez de contestar 503 (un calentamiento
+  fallido sigue contestando 503 al instante).
+- **`rayito setup`**: prepara una cuenta y una región de AWS para Rayito en una
+  orden idempotente, como `cdk bootstrap`. Lee la cuenta, muestra el plan y el
+  coste aproximado, pide confirmación (`--yes` sin terminal o con `--json`;
+  `--dry-run` sólo lee) y termina con `rayito doctor`. Crea o actualiza la pila
+  de IAM `rayito-m0-iam` (sólo `ArtifactBucket`), reutiliza el bucket de
+  `--bucket`, `RAYITO_BUCKET`, la pila o el bootstrap de CDK y publica `rayito-base` desde el `rayito-image.zip` de la release
+  `rayd-v<versión>`, comprobado contra su `SHA256SUMS`, o desde `--artifact`.
+  Un build en curso se espera en vez de lanzar otro. Mismas opciones, textos,
+  documento JSON y códigos de salida que la CLI de Python.
+- `rayito setup` crea el bucket de artefactos con la pila `rayito-m0-artifacts`
+  (`infra/artifact-bucket.yaml`: cifrado, privado, sólo TLS, zips caducando a los
+  7 días, conservado al borrar la pila) cuando no hay ninguno que reutilizar;
+  un `--bucket` o `RAYITO_BUCKET` que no existe se crea con ese nombre.
+- `rayito agent deploy` y `deployAgent()` encuentran el bucket que creó
+  `rayito setup` (la salida `BucketName` de `rayito-m0-artifacts`, sólo
+  lectura) cuando no hay `RAYITO_BUCKET` ni bucket del bootstrap de CDK.
+
+### Cambiado
+
+- **Una vez, el hash de contenido de las imágenes de agentes de MicroVMs**:
+  el host del agente (`agent_host`) y, para los frameworks de Node (Strands TS,
+  LangGraph JS, Deep Agents JS, AI SDK de Vercel, Strands harness TS), el puente
+  `node_bridge.mjs` llevan ahora el soporte de AgentCore (id de sesión y
+  credenciales del rol). Como los dos forman parte del contexto de build, el
+  primer `deploy_agent` tras actualizar construye una versión de imagen nueva
+  (unos $0,011 y al menos una semana de almacenamiento de su snapshot) aunque tu
+  código no haya cambiado; los siguientes la reutilizan. El `Dockerfile` y el
+  README del export `docker` no cambian; sus ficheros de `agent_host/` y, en
+  Node, `node_bridge.mjs` sí.
+- Los errores de `Sandbox.create()` (`ResourceNotFoundException` de
+  `RunMicrovm`) y de `deployAgent()` por falta de bucket o de imagen base
+  terminan con la pista "si la cuenta o la región aún no están preparadas,
+  ejecuta `rayito setup`". La clase, el código y la condición no cambian.
+
 ## [0.14.0] - 2026-10-17
 
 ### Añadido

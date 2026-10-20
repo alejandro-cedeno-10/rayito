@@ -40,6 +40,8 @@ PRUNE_ARGS    ?= --keep 5
 EGRESS_TEMPLATE := infra/egress-connector.yaml
 CI_OIDC_TEMPLATE := infra/ci-oidc-role.yaml
 IAM_TEMPLATE  := infra/iam.yaml
+ARTIFACT_BUCKET_TEMPLATE := infra/artifact-bucket.yaml
+AGENTCORE_RUNTIME_TEMPLATE := infra/agentcore-runtime.yaml
 SECRETS_TEMPLATE := infra/secrets-access.yaml
 METADATA_INDEX_TEMPLATE := infra/metadata-index.yaml
 CUSTOM_DOMAIN_TEMPLATE := infra/custom-domain.yaml
@@ -233,7 +235,7 @@ agent-runner-test:
 agent-export-test:
 	cd $(PYTHON_CLIENT) && uv run pytest tests/container -m docker_export -p no:cacheprovider -v
 
-# Los quince agentes de ejemplo (testdata/agent-samples/) de la detección al
+# Los dieciséis agentes de ejemplo (testdata/agent-samples/) de la detección al
 # contenedor: cada uno se detecta, se exporta, se construye con el Docker del
 # host (linux/arm64) y se prueba contra el Bedrock falso del entorno local
 # (dev/local/providers/fake_bedrock.py): ping, invocación con herramienta, SSE,
@@ -329,7 +331,8 @@ image-prune:
 
 # Valida las plantillas de infra/ (conector de egress, rol OIDC del e2e, el
 # IAM de build/ejecución/cliente con los parámetros de persistencia y
-# transferencias, las políticas opcionales de secretos de M13a y la tabla
+# transferencias, el bucket de artefactos de `rayito setup`, las políticas
+# opcionales de secretos de M13a y la tabla
 # opcional del índice de metadatos de M14, y los volúmenes EFS de M15):
 # validate-template (servidor, gratis) + cfn-lint (desde
 # .github/release/requirements-cfn-lint.txt, con --hash). cfn-lint 1.56.3 ya conoce
@@ -339,6 +342,8 @@ infra-lint:
 	aws cloudformation validate-template --template-body file://$(EGRESS_TEMPLATE) >/dev/null && echo "validate-template ok: $(EGRESS_TEMPLATE)"
 	aws cloudformation validate-template --template-body file://$(CI_OIDC_TEMPLATE) >/dev/null && echo "validate-template ok: $(CI_OIDC_TEMPLATE)"
 	aws cloudformation validate-template --template-body file://$(IAM_TEMPLATE) >/dev/null && echo "validate-template ok: $(IAM_TEMPLATE)"
+	aws cloudformation validate-template --template-body file://$(ARTIFACT_BUCKET_TEMPLATE) >/dev/null && echo "validate-template ok: $(ARTIFACT_BUCKET_TEMPLATE)"
+	aws cloudformation validate-template --template-body file://$(AGENTCORE_RUNTIME_TEMPLATE) >/dev/null && echo "validate-template ok: $(AGENTCORE_RUNTIME_TEMPLATE)"
 	aws cloudformation validate-template --template-body file://$(SECRETS_TEMPLATE) >/dev/null && echo "validate-template ok: $(SECRETS_TEMPLATE)"
 	aws cloudformation validate-template --template-body file://$(METADATA_INDEX_TEMPLATE) >/dev/null && echo "validate-template ok: $(METADATA_INDEX_TEMPLATE)"
 	aws cloudformation validate-template --template-body file://$(CUSTOM_DOMAIN_TEMPLATE) >/dev/null && echo "validate-template ok: $(CUSTOM_DOMAIN_TEMPLATE)"
@@ -351,7 +356,7 @@ infra-lint:
 	tools="$$(mktemp -d)" && trap 'rm -rf "$$tools"' EXIT && \
 	  $(call hashed-tool,cfn-lint,"$$tools") && \
 	  "$$tools/bin/cfn-lint" --version && \
-	  "$$tools/bin/cfn-lint" -- $(EGRESS_TEMPLATE) $(CI_OIDC_TEMPLATE) $(IAM_TEMPLATE) $(SECRETS_TEMPLATE) $(METADATA_INDEX_TEMPLATE) $(CUSTOM_DOMAIN_TEMPLATE) $(EVENTS_WEBHOOKS_TEMPLATE) $(EFS_VOLUMES_TEMPLATE) $(DASHBOARD_TEMPLATE) $(DASHBOARD_CLOUDWATCH_TEMPLATE) $(DASHBOARD_READ_ROLE_TEMPLATE) $(QUOTA_ALERTS_TEMPLATE)
+	  "$$tools/bin/cfn-lint" -- $(EGRESS_TEMPLATE) $(CI_OIDC_TEMPLATE) $(IAM_TEMPLATE) $(ARTIFACT_BUCKET_TEMPLATE) $(AGENTCORE_RUNTIME_TEMPLATE) $(SECRETS_TEMPLATE) $(METADATA_INDEX_TEMPLATE) $(CUSTOM_DOMAIN_TEMPLATE) $(EVENTS_WEBHOOKS_TEMPLATE) $(EFS_VOLUMES_TEMPLATE) $(DASHBOARD_TEMPLATE) $(DASHBOARD_CLOUDWATCH_TEMPLATE) $(DASHBOARD_READ_ROLE_TEMPLATE) $(QUOTA_ALERTS_TEMPLATE)
 
 # Aceptación contra AWS real (~$0.03 por sandbox). Se niega a correr sin las
 # dos variables; RAYITO_EXECUTION_ROLE_ARN activa los logs de runtime.

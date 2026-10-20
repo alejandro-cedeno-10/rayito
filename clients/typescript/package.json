@@ -86,12 +86,16 @@
     "@smithy/node-http-handler": "^4.12.1"
   },
   "peerDependencies": {
+    "@aws-sdk/client-bedrock-agentcore": "^3.1138.0",
+    "@aws-sdk/client-bedrock-agentcore-control": "^3.1138.0",
     "@aws-sdk/client-cloudformation": "^3.1138.0",
     "@aws-sdk/client-cloudfront-keyvaluestore": "^3.1138.0",
     "@aws-sdk/client-cloudwatch-logs": "^3.1138.0",
+    "@aws-sdk/client-codebuild": "^3.1138.0",
     "@aws-sdk/client-cost-explorer": "^3.1138.0",
     "@aws-sdk/client-dynamodb": "^3.1138.0",
     "@aws-sdk/client-ec2": "^3.1138.0",
+    "@aws-sdk/client-ecr": "^3.1138.0",
     "@aws-sdk/client-efs": "^3.1138.0",
     "@aws-sdk/client-iam": "^3.1138.0",
     "@aws-sdk/client-secrets-manager": "^3.1138.0",
@@ -103,6 +107,12 @@
     "zod": "^4.2.0"
   },
   "peerDependenciesMeta": {
+    "@aws-sdk/client-bedrock-agentcore": {
+      "optional": true
+    },
+    "@aws-sdk/client-bedrock-agentcore-control": {
+      "optional": true
+    },
     "@aws-sdk/client-cloudformation": {
       "optional": true
     },
@@ -112,6 +122,9 @@
     "@aws-sdk/client-cloudwatch-logs": {
       "optional": true
     },
+    "@aws-sdk/client-codebuild": {
+      "optional": true
+    },
     "@aws-sdk/client-cost-explorer": {
       "optional": true
     },
@@ -119,6 +132,9 @@
       "optional": true
     },
     "@aws-sdk/client-ec2": {
+      "optional": true
+    },
+    "@aws-sdk/client-ecr": {
       "optional": true
     },
     "@aws-sdk/client-efs": {
@@ -150,12 +166,16 @@
     }
   },
   "devDependencies": {
+    "@aws-sdk/client-bedrock-agentcore": "^3.1138.0",
+    "@aws-sdk/client-bedrock-agentcore-control": "^3.1138.0",
     "@aws-sdk/client-cloudformation": "^3.1138.0",
     "@aws-sdk/client-cloudfront-keyvaluestore": "^3.1138.0",
     "@aws-sdk/client-cloudwatch-logs": "^3.1138.0",
+    "@aws-sdk/client-codebuild": "^3.1138.0",
     "@aws-sdk/client-cost-explorer": "^3.1138.0",
     "@aws-sdk/client-dynamodb": "^3.1138.0",
     "@aws-sdk/client-ec2": "^3.1138.0",
+    "@aws-sdk/client-ecr": "^3.1138.0",
     "@aws-sdk/client-efs": "^3.1138.0",
     "@aws-sdk/client-iam": "^3.1138.0",
     "@aws-sdk/client-secrets-manager": "^3.1138.0",

@@ -1,0 +1,1260 @@
+{
+  "description": "Contrato de `--target agentcore` compartido por Python y TypeScript (ADR-031, cambio OpenSpec agentcore-deploy): opciones nuevas de la CLI, códigos de salida y de error, constantes, reglas de nombres, de ids de sesión y del etiquetado de imagen, la tabla de opciones que no aplican a AgentCore, el mapeo de errores de AWS, la superficie pública de los dos SDK, textos de la salida humana (en español en las dos CLI) y forma de los documentos JSON. Los tests de los dos SDK comparan sus constantes y mensajes con este fichero; si discrepa del código, gana este fichero. Los casos están en plan-vectors.json, apply-vectors.json, model-arns.json, session-ids.json e image-tags.json.",
+  "targets": [
+    "microvm",
+    "agentcore"
+  ],
+  "defaultTarget": "microvm",
+  "commands": {
+    "deploy": {
+      "path": [
+        "agent",
+        "deploy"
+      ],
+      "appendedOptions": [
+        {
+          "name": "target",
+          "flags": [
+            "--target"
+          ],
+          "type": "str",
+          "default": "microvm",
+          "isFlag": false,
+          "multiple": false,
+          "required": false,
+          "help": "Dónde se despliega: microvm (por defecto, una flota de Lambda MicroVMs) o agentcore (Amazon Bedrock AgentCore Runtime).",
+          "choices": [
+            "microvm",
+            "agentcore"
+          ]
+        },
+        {
+          "name": "tag",
+          "flags": [
+            "--tag"
+          ],
+          "type": "str",
+          "default": [],
+          "isFlag": false,
+          "multiple": true,
+          "required": false,
+          "help": "Etiqueta K=V; repetible. Sólo con --target agentcore: se aplica a la pila rayito-agentcore-<nombre> (CloudFormation la propaga) y al runtime; útil si la organización exige etiquetas."
+        },
+        {
+          "name": "bedrock_model",
+          "flags": [
+            "--bedrock-model"
+          ],
+          "type": "str",
+          "default": [],
+          "isFlag": false,
+          "multiple": true,
+          "required": false,
+          "help": "Id o ARN de un modelo o perfil de inferencia de Bedrock que el rol del runtime puede invocar; repetible. Sólo con --target agentcore; por defecto, el modelo del proyecto."
+        },
+        {
+          "name": "readable_secret",
+          "flags": [
+            "--readable-secret"
+          ],
+          "type": "str",
+          "default": [],
+          "isFlag": false,
+          "multiple": true,
+          "required": false,
+          "help": "Nombre de un secreto de Secrets Manager que el rol del runtime puede leer; repetible. Sólo con --target agentcore; por defecto, ninguno."
+        },
+        {
+          "name": "idle_session_timeout",
+          "flags": [
+            "--idle-session-timeout"
+          ],
+          "type": "int",
+          "default": null,
+          "isFlag": false,
+          "multiple": false,
+          "required": false,
+          "help": "Segundos sin uso tras los que AgentCore termina la microVM de una sesión (60-28800; por defecto, 900). Sólo con --target agentcore."
+        },
+        {
+          "name": "max_session_lifetime",
+          "flags": [
+            "--max-session-lifetime"
+          ],
+          "type": "int",
+          "default": null,
+          "isFlag": false,
+          "multiple": false,
+          "required": false,
+          "help": "Segundos de vida máxima de la microVM de una sesión (60-28800; por defecto, 28800). Sólo con --target agentcore."
+        }
+      ],
+      "notes": "Las opciones nuevas, salvo --target, sólo valen con --target agentcore (option_requires_agentcore). Con --target agentcore las opciones de MicroVMs siguen optionsTable."
+    },
+    "invoke": {
+      "path": [
+        "agent",
+        "invoke"
+      ],
+      "appendedOptions": [
+        {
+          "name": "target",
+          "flags": [
+            "--target"
+          ],
+          "type": "str",
+          "default": "microvm",
+          "isFlag": false,
+          "multiple": false,
+          "required": false,
+          "help": "Dónde se despliega: microvm (por defecto, una flota de Lambda MicroVMs) o agentcore (Amazon Bedrock AgentCore Runtime).",
+          "choices": [
+            "microvm",
+            "agentcore"
+          ]
+        }
+      ],
+      "notes": "Con --target agentcore el argumento sandbox_id es el nombre del agente; --token-file da option_not_supported (AgentCore autentica con SigV4); --session-id y --stream se usan tal cual."
+    },
+    "status": {
+      "path": [
+        "agent",
+        "status"
+      ],
+      "appendedOptions": [
+        {
+          "name": "target",
+          "flags": [
+            "--target"
+          ],
+          "type": "str",
+          "default": "microvm",
+          "isFlag": false,
+          "multiple": false,
+          "required": false,
+          "help": "Dónde se despliega: microvm (por defecto, una flota de Lambda MicroVMs) o agentcore (Amazon Bedrock AgentCore Runtime).",
+          "choices": [
+            "microvm",
+            "agentcore"
+          ]
+        }
+      ],
+      "notes": "Con --target agentcore el argumento sandbox_id es el nombre del agente; --token-file da option_not_supported."
+    },
+    "stop": {
+      "path": [
+        "agent",
+        "stop"
+      ],
+      "appendedOptions": [
+        {
+          "name": "target",
+          "flags": [
+            "--target"
+          ],
+          "type": "str",
+          "default": "microvm",
+          "isFlag": false,
+          "multiple": false,
+          "required": false,
+          "help": "Dónde se despliega: microvm (por defecto, una flota de Lambda MicroVMs) o agentcore (Amazon Bedrock AgentCore Runtime).",
+          "choices": [
+            "microvm",
+            "agentcore"
+          ]
+        },
+        {
+          "name": "session_id",
+          "flags": [
+            "--session-id"
+          ],
+          "type": "str",
+          "default": null,
+          "isFlag": false,
+          "multiple": false,
+          "required": false,
+          "help": "Con --target agentcore: la sesión cuya microVM se para (StopRuntimeSession)."
+        }
+      ],
+      "notes": "Con --target agentcore el argumento sandbox_id es el nombre del agente y --session-id es obligatorio (session_required); sin --target agentcore, --session-id da option_requires_agentcore."
+    },
+    "delete": {
+      "path": [
+        "agent",
+        "delete"
+      ],
+      "new": true,
+      "help": "Borra un agente desplegado con --target agentcore: el runtime, la pila rayito-agentcore-<nombre> (repositorio ECR con sus imágenes, proyecto y logs de CodeBuild y los dos roles) y el grupo de logs del runtime. Sólo borra lo que creó Rayito para ese nombre. Pide confirmación (--yes la salta). Gratis; deja de costar el almacenamiento de las imágenes.",
+      "parameters": [
+        {
+          "name": "name",
+          "kind": "argument",
+          "type": "str",
+          "required": true,
+          "help": "Nombre del agente (el de rayito agent deploy)."
+        },
+        {
+          "name": "target",
+          "flags": [
+            "--target"
+          ],
+          "type": "str",
+          "default": null,
+          "isFlag": false,
+          "multiple": false,
+          "required": true,
+          "help": "Sólo agentcore: para una flota de MicroVMs usa rayito agent stop.",
+          "choices": [
+            "agentcore"
+          ]
+        },
+        {
+          "name": "yes",
+          "flags": [
+            "--yes"
+          ],
+          "type": "boolean",
+          "default": false,
+          "isFlag": true,
+          "multiple": false,
+          "required": false,
+          "help": "No pedir confirmación (hace falta sin terminal o con --json)."
+        }
+      ]
+    },
+    "list": {
+      "path": [
+        "agent",
+        "list"
+      ],
+      "new": true,
+      "help": "Lista los agentes desplegados con --target agentcore en la región (los runtimes que creó Rayito). Gratis: sólo lee.",
+      "parameters": [
+        {
+          "name": "target",
+          "flags": [
+            "--target"
+          ],
+          "type": "str",
+          "default": null,
+          "isFlag": false,
+          "multiple": false,
+          "required": true,
+          "help": "Sólo agentcore.",
+          "choices": [
+            "agentcore"
+          ]
+        }
+      ]
+    }
+  },
+  "exitCodes": {
+    "ok": 0,
+    "failure": 1,
+    "usage": 2
+  },
+  "errorExitCodes": {
+    "unsupported_region": 2,
+    "option_not_supported": 2,
+    "option_requires_agentcore": 2,
+    "target_unsupported": 2,
+    "provider_unsupported": 2,
+    "network_policy_unsupported": 2,
+    "name_invalid": 2,
+    "name_conflict": 2,
+    "model_required": 2,
+    "image_missing": 2,
+    "lifecycle_invalid": 2,
+    "tags_invalid": 2,
+    "env_invalid": 2,
+    "iam_resource_invalid": 2,
+    "raw_protocol": 2,
+    "no_bucket": 2,
+    "bucket_region": 2,
+    "needs_confirmation": 2,
+    "session_required": 2,
+    "stack_blocked": 1,
+    "stack_failed": 1,
+    "image_build_failed": 1,
+    "image_build_timeout": 1,
+    "build_quota": 1,
+    "image_too_large": 1,
+    "runtime_blocked": 1,
+    "runtime_failed": 1,
+    "runtime_timeout": 1,
+    "runtime_not_found": 1,
+    "delete_failed": 1,
+    "access_denied": 1,
+    "aws_error": 1,
+    "lifecycle_order": 2,
+    "delete_needs_confirmation": 2
+  },
+  "constants": {
+    "stackComponentName": "agentcore-runtime",
+    "templatePath": "infra/agentcore-runtime.yaml",
+    "stackCapabilities": [
+      "CAPABILITY_IAM"
+    ],
+    "stackParameters": {
+      "agentName": "AgentName",
+      "agentDisplayName": "AgentDisplayName",
+      "runtimeName": "RuntimeName",
+      "artifactBucket": "ArtifactBucket",
+      "bedrockModelArns": "BedrockModelArns",
+      "readableSecretArns": "ReadableSecretArns",
+      "imageRetentionCount": "ImageRetentionCount",
+      "buildLogRetentionDays": "BuildLogRetentionDays",
+      "buildTimeoutMinutes": "BuildTimeoutMinutes"
+    },
+    "stackOutputs": {
+      "repositoryName": "RepositoryName",
+      "repositoryUri": "RepositoryUri",
+      "repositoryArn": "RepositoryArn",
+      "buildProjectName": "BuildProjectName",
+      "buildLogGroupName": "BuildLogGroupName",
+      "runtimeRoleArn": "RuntimeRoleArn"
+    },
+    "buildEnvironmentVariables": {
+      "imageTag": "IMAGE_TAG",
+      "baseImage": "AGENT_BASE_IMAGE",
+      "repositoryUri": "REPOSITORY_URI"
+    },
+    "dockerfileBaseImageArg": "AGENT_BASE_IMAGE",
+    "sourceZipName": "{imageTag}.zip",
+    "canonicalNameRule": "the agent name with _ as -; every derived name uses it, so a-b and a_b are the same agent (name_conflict)",
+    "stackNameTemplate": "{stackNamePrefix}{canonicalName}",
+    "repositoryNameTemplate": "{repositoryPrefix}{canonicalName}",
+    "sourceKeyTemplate": "{sourcePrefix}{canonicalName}/{imageTag}.zip",
+    "buildProjectNameTemplate": "{stackNamePrefix}{canonicalName}",
+    "imageTagTemplate": "{imageTagPrefix}{sha256Prefix}",
+    "runtimeNameTemplate": "{runtimeNamePrefix}{canonicalName with - as _}",
+    "runtimeDescriptionTemplate": "Rayito agent {agentName} ({descriptionMarker})",
+    "runtimeLogGroupTemplate": "{runtimeLogGroupPrefix}{runtimeId}-{endpointName}",
+    "agentNamePattern": "^[a-z0-9]+(?:[_-][a-z0-9]+)*$",
+    "canonicalAgentNamePattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+    "agentNameMaxLength": 41,
+    "iamResourceRules": {
+      "secretNamePattern": "^[A-Za-z0-9/_+=.@-]+$",
+      "secretNameMaxLength": 512,
+      "modelIdPattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "accountPattern": "^[0-9]{12}$",
+      "rule": "un nombre de secreto o un id de modelo sólo lleva esos caracteres (sin *, ? ni ,); un ARN debe tener la partición aws, la región del despliegue (o, para foundation-model, la región del modelo, * o vacía) y la cuenta del despliegue, y su nombre o id cumple el patrón. Cualquier otro valor es iam_resource_invalid con field = readable_secrets, bedrock_models o model.id"
+    },
+    "cliOptionLabels": {
+      "scaling.min_vms": "--min-vms",
+      "scaling.max_vms": "--max-vms",
+      "scaling.warm_vms": "--warm",
+      "memory_mib": "--memory",
+      "serve.port": "--port",
+      "serve.timeout_seconds": "--timeout",
+      "serve.idle": "--idle",
+      "secret_names": "--secret",
+      "create_secret_from_env": "--create-secret",
+      "access_token": "--token-file",
+      "keep_on_failure": "--keep-on-failure",
+      "base_publisher": "--base-artifact"
+    },
+    "runtimeRegionEnvironmentVariables": [
+      "AWS_REGION",
+      "AWS_DEFAULT_REGION"
+    ],
+    "metadataConfiguration": {
+      "requireMMDSV2": true
+    },
+    "contentTypeJson": "application/json",
+    "acceptJson": "application/json",
+    "acceptEventStream": "text/event-stream",
+    "invocationBodyKeys": [
+      "prompt",
+      "session_id",
+      "model",
+      "reasoning"
+    ],
+    "awsEnvCredentialVariables": [
+      "AWS_ACCESS_KEY_ID",
+      "AWS_SECRET_ACCESS_KEY",
+      "AWS_SESSION_TOKEN"
+    ],
+    "awsPartition": "aws",
+    "secretArnTemplate": "arn:{partition}:secretsmanager:{region}:{account}:secret:{name}-??????",
+    "regionalFoundationModelArnTemplate": "arn:{partition}:bedrock:{region}::foundation-model/{modelId}",
+    "anyRegionFoundationModelArnTemplate": "arn:{partition}:bedrock:*::foundation-model/{modelId}",
+    "globalFoundationModelArnTemplate": "arn:{partition}:bedrock:::foundation-model/{modelId}",
+    "inferenceProfileArnTemplate": "arn:{partition}:bedrock:{region}:{account}:inference-profile/{profileId}",
+    "runtimeStates": [
+      "CREATING",
+      "CREATE_FAILED",
+      "UPDATING",
+      "UPDATE_FAILED",
+      "READY",
+      "DELETING",
+      "DELETE_FAILED"
+    ],
+    "runtimeReadyState": "READY",
+    "runtimeInProgressStates": [
+      "CREATING",
+      "UPDATING"
+    ],
+    "runtimeBlockedStates": [
+      "CREATE_FAILED",
+      "DELETING",
+      "DELETE_FAILED"
+    ],
+    "runtimeRepairableStates": [
+      "UPDATE_FAILED"
+    ],
+    "buildStates": [
+      "SUCCEEDED",
+      "FAILED",
+      "FAULT",
+      "TIMED_OUT",
+      "IN_PROGRESS",
+      "STOPPED"
+    ],
+    "buildSucceededState": "SUCCEEDED",
+    "usableStackStates": [
+      "CREATE_COMPLETE",
+      "UPDATE_COMPLETE",
+      "UPDATE_ROLLBACK_COMPLETE"
+    ],
+    "blockedStackStates": [
+      "ROLLBACK_COMPLETE",
+      "DELETE_IN_PROGRESS",
+      "CREATE_FAILED",
+      "DELETE_FAILED",
+      "UPDATE_ROLLBACK_FAILED",
+      "ROLLBACK_FAILED"
+    ],
+    "inProgressStackSuffix": "_IN_PROGRESS",
+    "planActions": [
+      "planned"
+    ],
+    "applyActionsNote": "El plan (plan_deploy, planDeploy y --dry-run) no llama a AWS: sus tres pasos son siempre `planned`. Las acciones create, update, reuse, wait y build se deciden al aplicar, de una observación de esa misma ejecución (apply-vectors.json), y salen en `steps` del documento de despliegue.",
+    "imageTagDigest": "sha256 hexadecimal sobre el árbol de render_export(project, target='agentcore'): para cada fichero, en orden ascendente de ruta relativa (comparación de cadenas UTF-8), la ruta en UTF-8, un byte 0, la longitud en bytes en decimal ASCII, un byte 0 y el contenido. La etiqueta es imageTagPrefix + los primeros agentcoreImageTagHexChars caracteres.",
+    "clientTokenTemplate": "{sessionIdPrefix}{sha256Prefix32}",
+    "clientTokenDigest": "sha256 hexadecimal (32 primeros caracteres) del JSON canónico de la petición de AWS de CreateAgentRuntime o UpdateAgentRuntime sin clientToken (claves ordenadas, sin espacios, UTF-8). En UpdateAgentRuntime la petición lleva además baseVersion, la agentRuntimeVersion que GetAgentRuntime devolvió justo antes de actualizar, para que volver a una configuración anterior no se confunda con una repetición. Un reintento de la misma petición sobre la misma versión repite el token y AgentCore no crea un duplicado. Los vectores están en client-tokens.json.",
+    "buildIdempotencyToken": "{imageTag}",
+    "sessionIdRules": {
+      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]*$",
+      "new": "{sessionIdPrefix} + 32 caracteres hexadecimales de un uuid4 (39 en total)",
+      "kept": "un id del llamante que cumple pattern y mide entre agentcoreSessionIdMinLength y agentcoreSessionIdMaxLength se usa tal cual",
+      "derived": "cualquier otro id no vacío pasa a {sessionIdPrefix} + los 32 primeros caracteres hexadecimales del sha256 de su UTF-8; el resultado devuelve ese id derivado",
+      "empty": "invalid_argument con el mensaje del SDK para session_id vacío",
+      "transport": "el id va sólo en la cabecera (runtimeSessionId); el cuerpo de /invocations no lleva session_id y el host toma el de la cabecera"
+    },
+    "runtimeEnvironmentNote": "environmentVariables = env del proyecto + las dos variables de región con la región del despliegue (ganan sobre el proyecto). Nunca secretos.",
+    "metadataConfigurationNote": "CreateAgentRuntime no admite metadataConfiguration: tras crear y esperar a READY se manda un UpdateAgentRuntime con la configuración completa y requireMMDSV2=true. Todo UpdateAgentRuntime lo incluye. Desde el 2026-06-30 AgentCore rechaza invocar un runtime sin MMDSv2.",
+    "runtimeComparedFields": [
+      "containerUri",
+      "roleArn",
+      "networkMode",
+      "serverProtocol",
+      "environmentVariables",
+      "idleRuntimeSessionTimeout",
+      "maxLifetime",
+      "requireMMDSV2"
+    ],
+    "sourceZipLifecycle": "El zip del contexto se sube con PutObject justo antes de StartBuild y se borra con DeleteObject cuando el build termina, con éxito o no.",
+    "export": {
+      "baseImageArgLine": "ARG {dockerfileBaseImageArg}={baseImageReference}",
+      "fromLine": "FROM --platform={platform} ${{{dockerfileBaseImageArg}}}",
+      "baseImageArgNote": "Sólo con target agentcore: la línea ARG va justo antes de FROM y el FROM usa el argumento; con target docker el Dockerfile no cambia. CodeBuild pasa --build-arg AGENT_BASE_IMAGE={agentcoreBaseImageMirror}@{agentExportBaseImageDigest} (mismo digest, sin el límite de descargas anónimas de Docker Hub).",
+      "readmeGolden": "testdata/agent/export/deepagents-agentcore/expected/README.md",
+      "dockerfileGolden": "testdata/agent/export/deepagents-agentcore/expected/Dockerfile",
+      "awsCredentials": {
+        "appliesTo": "target agentcore y un framework de agentcoreEnvCredentialAdapters",
+        "requirementsAsset": "requirements-aws-credentials.txt",
+        "requirementsPath": "/opt/agents/requirements-aws-credentials.txt",
+        "venvDir": "/opt/agents/rayito/aws-credentials",
+        "scriptAsset": "aws_env_credentials.py",
+        "scriptPath": "/opt/agents/rayito/aws_env_credentials.py",
+        "installCommandTemplate": "echo '{sha256}  {requirementsPath}' | sha256sum -c - && python3 -m venv {venvDir} && {venvDir}/bin/python -m pip install --no-cache-dir --require-hashes --no-deps --only-binary=:all: -r {requirementsPath} && {venvDir}/bin/python -m pip check",
+        "dockerfileOrder": "COPY del requirements, RUN de installCommandTemplate y COPY del script, justo después de los pasos de instalación del runtime y antes de COPY agent_host",
+        "hostKey": "aws_env_credentials",
+        "hostValue": {
+          "python": "{venvDir}/bin/python",
+          "script": "{scriptPath}"
+        },
+        "bridgeField": "aws_env",
+        "bridgeNote": "Antes de cada invocación el host ejecuta python script (plazo hostCredentialsTimeoutSeconds), lee el JSON de stdout y lo manda en aws_env; el puente pone esas variables en process.env durante la invocación. Si falla, la invocación termina en agent_failed con detail_code aws_credentials_unavailable.",
+        "hostCredentialsTimeoutSeconds": 10,
+        "failureDetailCode": "aws_credentials_unavailable",
+        "credentialProcess": {
+          "appliesTo": "target agentcore y un runtime de agentcoreCredentialProcessRuntimes (limits.json, por AgentRuntime.name)",
+          "why": "OpenCode (v1.18.34, provider.ts de amazon-bedrock) sólo arranca el proveedor de Bedrock con AWS_PROFILE, AWS_ACCESS_KEY_ID, AWS_BEARER_TOKEN_BEDROCK, AWS_WEB_IDENTITY_TOKEN_FILE o AWS_CONTAINER_CREDENTIALS_*; AgentCore sólo sirve el rol por el servicio de metadatos de la microVM, así que ninguna estaba puesta.",
+          "configAsset": "aws-config",
+          "configPath": "/opt/agents/rayito/aws-config",
+          "profile": "rayito-agentcore",
+          "helperArgument": "--credential-process",
+          "configTemplate": "[profile {profile}]\ncredential_process = {python} {script} {helperArgument}\n",
+          "envs": {
+            "AWS_CONFIG_FILE": "{configPath}",
+            "AWS_PROFILE": "{profile}"
+          },
+          "outputFields": [
+            "Version",
+            "AccessKeyId",
+            "SecretAccessKey",
+            "SessionToken",
+            "Expiration"
+          ],
+          "outputVersion": 1,
+          "dockerfileOrder": "justo después del COPY del script de awsCredentials y antes de COPY agent_host; las dos variables van en host.json envs y en los ENV del Dockerfile",
+          "note": "Sólo OpenCode: el proceso lee el perfil, ejecuta la herramienta y refresca al llegar Expiration. La herramienta quita AWS_PROFILE y AWS_CONFIG_FILE de su entorno para no llamarse a sí misma."
+        }
+      }
+    }
+  },
+  "resources": [
+    "stack",
+    "image",
+    "runtime"
+  ],
+  "actions": {
+    "stack": [
+      "planned",
+      "create",
+      "update",
+      "reuse",
+      "wait"
+    ],
+    "image": [
+      "planned",
+      "build",
+      "reuse"
+    ],
+    "runtime": [
+      "planned",
+      "create",
+      "update",
+      "reuse",
+      "wait"
+    ]
+  },
+  "optionsTable": {
+    "description": "Qué pasa con cada opción del despliegue en MicroVMs cuando el destino es agentcore. `call` es una opción de esta llamada (argumento del SDK o bandera de la CLI): si no aplica, error `option_not_supported` antes de cualquier llamada a AWS. `file` es un valor del fichero de proyecto (compartido entre destinos): si no aplica, aviso en el plan y se ignora. `applies` se usa tal cual. Un valor igual al valor por defecto cuenta como no puesto. `ignored` es un valor del fichero que AgentCore no usa y que el plan ya explica en Seguridad, sin aviso aparte. Las opciones de la llamada se comprueban antes de cualquier llamada a AWS, en este orden: target, opciones de AgentCore con target microvm, región, opciones de MicroVMs (en el orden de esta tabla), proveedor del modelo, política de red, nombre, ciclo de vida, etiquetas, entorno, recursos de IAM. Cuando la llamada viene de la CLI, `option_not_supported` nombra la opción por su bandera (constants.cliOptionLabels); cuando viene del SDK, por su campo (la primera columna).",
+    "rows": [
+      {
+        "option": "scaling.min_vms / --min-vms",
+        "python": "AgentDeployOptions.scaling.min_vms",
+        "typescript": "AgentDeployOptions.scaling.minVms",
+        "call": "error",
+        "file": "warning",
+        "reason": "AgentCore escala solo: una microVM por sesión, sin VMs fijos"
+      },
+      {
+        "option": "scaling.max_vms / --max-vms",
+        "python": "AgentDeployOptions.scaling.max_vms",
+        "typescript": "AgentDeployOptions.scaling.maxVms",
+        "call": "error",
+        "file": "warning",
+        "reason": "el tope lo pone la cuota de sesiones activas de la cuenta"
+      },
+      {
+        "option": "scaling.warm_vms / --warm",
+        "python": "AgentDeployOptions.scaling.warm_vms",
+        "typescript": "AgentDeployOptions.scaling.warmVms",
+        "call": "error",
+        "file": "warning",
+        "reason": "AgentCore no tiene plazas calientes"
+      },
+      {
+        "option": "scaling.sessions / --sessions",
+        "python": "AgentDeployOptions.scaling.sessions",
+        "typescript": "AgentDeployOptions.scaling.sessions",
+        "call": "applies",
+        "file": "applies",
+        "reason": "en AgentCore cada sesión tiene siempre su propia microVM, como sessions='dedicated'; el plan lo dice en Seguridad (sessionIsolation)"
+      },
+      {
+        "option": "scaling.scale_in_after_seconds",
+        "python": "AgentDeployOptions.scaling.scale_in_after_seconds",
+        "typescript": "AgentDeployOptions.scaling.scaleInAfterMs",
+        "call": "error",
+        "file": "warning",
+        "reason": "usa idle_session_timeout_seconds / --idle-session-timeout"
+      },
+      {
+        "option": "memory_mib / --memory",
+        "python": "AgentProject.memory_mib",
+        "typescript": "AgentProject.memoryMib",
+        "call": "error",
+        "file": "warning",
+        "reason": "cada sesión usa hasta 2 vCPU y 8 GB y se cobra por consumo real"
+      },
+      {
+        "option": "serve.port / --port",
+        "python": "ServeOptions.port",
+        "typescript": "ServeOptions.port",
+        "call": "error",
+        "file": "warning",
+        "reason": "el contenedor de AgentCore sirve en el 8080"
+      },
+      {
+        "option": "serve.timeout_seconds / --timeout",
+        "python": "ServeOptions.timeout_seconds",
+        "typescript": "ServeOptions.timeoutMs",
+        "call": "error",
+        "file": "warning",
+        "reason": "usa max_session_lifetime_seconds / --max-session-lifetime"
+      },
+      {
+        "option": "serve.idle / --idle",
+        "python": "ServeOptions.idle",
+        "typescript": "ServeOptions.idle",
+        "call": "error",
+        "file": "warning",
+        "reason": "usa idle_session_timeout_seconds / --idle-session-timeout"
+      },
+      {
+        "option": "serve.max_concurrency / --max-sessions",
+        "python": "ServeOptions.max_concurrency",
+        "typescript": "ServeOptions.maxConcurrency",
+        "call": "applies",
+        "file": "applies",
+        "reason": "el host lo aplica dentro de la microVM de cada sesión"
+      },
+      {
+        "option": "serve.queue_max / --queue",
+        "python": "ServeOptions.queue_max",
+        "typescript": "ServeOptions.queueMax",
+        "call": "applies",
+        "file": "applies",
+        "reason": "cola del host dentro de la microVM de cada sesión"
+      },
+      {
+        "option": "serve.queue_timeout_seconds / --queue-timeout",
+        "python": "ServeOptions.queue_timeout_seconds",
+        "typescript": "ServeOptions.queueTimeoutMs",
+        "call": "applies",
+        "file": "applies",
+        "reason": "cola del host dentro de la microVM de cada sesión"
+      },
+      {
+        "option": "egress / --allow-out / network",
+        "python": "AgentProject.egress, AgentProject.network",
+        "typescript": "AgentProject.egress, AgentProject.network",
+        "call": "error network_policy_unsupported",
+        "file": "error network_policy_unsupported",
+        "reason": "en modo PUBLIC AgentCore no filtra la salida: aplicarla a medias sería un riesgo silencioso"
+      },
+      {
+        "option": "allow_internet_access",
+        "python": "AgentProject.allow_internet_access",
+        "typescript": "AgentProject.allowInternetAccess",
+        "call": "applies",
+        "file": "applies",
+        "reason": "AgentCore en modo PUBLIC siempre tiene salida a Internet: el plan lo dice en Seguridad (publicNetwork)"
+      },
+      {
+        "option": "gateways / [gateways]",
+        "python": "AgentProject.gateways",
+        "typescript": "AgentProject.gateways",
+        "call": "n/a",
+        "file": "ignored",
+        "reason": "no hay pasarela de secretos: el plan lo dice en Seguridad (noGateway) y el agente usa el rol del runtime"
+      },
+      {
+        "option": "secret_names / --secret",
+        "python": "AgentDeployOptions.secret_names",
+        "typescript": "AgentDeployOptions.secretNames",
+        "call": "error",
+        "file": "n/a",
+        "reason": "no hay pasarela de secretos; para dejar leer un secreto usa readable_secrets / --readable-secret"
+      },
+      {
+        "option": "create_secret_from_env / --create-secret",
+        "python": "AgentDeployOptions.create_secret_from_env",
+        "typescript": "AgentDeployOptions.createSecretFromEnv",
+        "call": "error",
+        "file": "n/a",
+        "reason": "no hay pasarela de secretos"
+      },
+      {
+        "option": "access_token / --token-file",
+        "python": "AgentDeployOptions.access_token",
+        "typescript": "AgentDeployOptions.accessToken",
+        "call": "error",
+        "file": "n/a",
+        "reason": "AgentCore autentica con IAM (SigV4), no con un access token"
+      },
+      {
+        "option": "keep_on_failure / --keep-on-failure",
+        "python": "AgentDeployOptions.keep_on_failure",
+        "typescript": "AgentDeployOptions.keepOnFailure",
+        "call": "error",
+        "file": "n/a",
+        "reason": "AgentCore siempre conserva lo creado si falla; bórralo con rayito agent delete"
+      },
+      {
+        "option": "base_image_version, ensure_base_image, base_publisher / --base-artifact",
+        "python": "AgentDeployOptions.base_image_version, ensure_base_image, base_publisher",
+        "typescript": "AgentDeployOptions.baseImageVersion, ensureBaseImage, basePublisher",
+        "call": "error",
+        "file": "warning",
+        "reason": "AgentCore no usa la imagen base de MicroVMs"
+      },
+      {
+        "option": "session_index",
+        "python": "AgentDeployOptions.session_index",
+        "typescript": "AgentDeployOptions.sessionIndex",
+        "call": "error",
+        "file": "n/a",
+        "reason": "AgentCore enruta las sesiones por su id"
+      },
+      {
+        "option": "pool_backend",
+        "python": "AgentDeployOptions.pool_backend",
+        "typescript": "AgentDeployOptions.poolBackend",
+        "call": "error",
+        "file": "n/a",
+        "reason": "AgentCore no tiene plazas calientes"
+      },
+      {
+        "option": "warm_timeout_seconds",
+        "python": "AgentDeployOptions.warm_timeout_seconds",
+        "typescript": "AgentDeployOptions.warmTimeoutMs",
+        "call": "error",
+        "file": "n/a",
+        "reason": "AgentCore no tiene plazas calientes"
+      },
+      {
+        "option": "bucket / --bucket",
+        "python": "AgentDeployOptions.bucket",
+        "typescript": "AgentDeployOptions.bucket",
+        "call": "applies",
+        "file": "applies",
+        "reason": "el zip del contexto de build va al bucket de artefactos"
+      },
+      {
+        "option": "build_image / --build/--no-build",
+        "python": "AgentDeployOptions.build_image",
+        "typescript": "AgentDeployOptions.buildImage",
+        "call": "applies",
+        "file": "n/a",
+        "reason": "False: sólo reutiliza una imagen ya construida con el mismo contenido"
+      },
+      {
+        "option": "build_timeout_seconds",
+        "python": "AgentDeployOptions.build_timeout_seconds",
+        "typescript": "AgentDeployOptions.buildTimeoutMs",
+        "call": "applies",
+        "file": "n/a",
+        "reason": "espera del build de CodeBuild"
+      },
+      {
+        "option": "on_build_logs, on_step / --verbose",
+        "python": "AgentDeployOptions.on_build_logs, on_step",
+        "typescript": "AgentDeployOptions.onBuildLogs, onStep",
+        "call": "applies",
+        "file": "n/a",
+        "reason": "logs de CodeBuild y pasos del despliegue"
+      },
+      {
+        "option": "env / --env",
+        "python": "AgentProject.env",
+        "typescript": "AgentProject.env",
+        "call": "applies",
+        "file": "applies",
+        "reason": "environmentVariables del runtime (nunca secretos)"
+      },
+      {
+        "option": "model provider",
+        "python": "AgentProject.spec.model.provider",
+        "typescript": "AgentProject.spec.model.provider",
+        "call": "error provider_unsupported unless bedrock",
+        "file": "error provider_unsupported unless bedrock",
+        "reason": "sin pasarela, la credencial de otro proveedor iría en claro en la configuración del runtime"
+      },
+      {
+        "option": "--token-file (invoke, status)",
+        "python": "CLI",
+        "typescript": "CLI",
+        "call": "error",
+        "file": "n/a",
+        "reason": "AgentCore autentica con IAM (SigV4), no con un access token"
+      },
+      {
+        "option": "agentcore / AgentCoreOptions, --tag, --bedrock-model, --readable-secret, --idle-session-timeout, --max-session-lifetime, --session-id (stop)",
+        "python": "deploy_agent(agentcore=...)",
+        "typescript": "DeployAgentOptions.agentcore",
+        "call": "error option_requires_agentcore unless target agentcore",
+        "file": "n/a",
+        "reason": "sólo existen en AgentCore"
+      }
+    ]
+  },
+  "awsErrorMap": {
+    "description": "Cómo se traduce un error de AWS de AgentCore, CodeBuild o ECR (por `aws_code`/`awsCode`, nunca por el mensaje). El `cause` pasa por sanitize_aws_error/sanitizeAwsError.",
+    "control": {
+      "AccessDeniedException": "access_denied",
+      "ServiceQuotaExceededException": "aws_error",
+      "ConflictException": "aws_error",
+      "ValidationException": "aws_error",
+      "ThrottlingException": "aws_error",
+      "InternalServerException": "aws_error",
+      "ResourceNotFoundException": "runtime_not_found"
+    },
+    "codebuild": {
+      "AccountLimitExceededException": "build_quota",
+      "ResourceNotFoundException": "stack_failed",
+      "InvalidInputException": "aws_error",
+      "AccessDeniedException": "access_denied"
+    },
+    "ecr": {
+      "ImageNotFoundException": "absent",
+      "RepositoryNotFoundException": "stack_failed",
+      "AccessDeniedException": "access_denied"
+    },
+    "invoke": {
+      "ResourceNotFoundException": {
+        "exception": "AgentCoreException",
+        "code": "runtime_not_found"
+      },
+      "AccessDeniedException": {
+        "exception": "AgentCoreException",
+        "code": "access_denied"
+      },
+      "ThrottlingException": {
+        "exception": "RateLimitException"
+      },
+      "ServiceQuotaExceededException": {
+        "exception": "QuotaExceededException"
+      },
+      "RetryableConflictException": {
+        "exception": "retry",
+        "note": "lo reintenta el SDK de AWS con sus reintentos estándar"
+      },
+      "RuntimeClientError": {
+        "exception": "AgentException",
+        "reason": "runtime_error"
+      },
+      "ValidationException": {
+        "exception": "AgentCoreException",
+        "code": "aws_error"
+      },
+      "InternalServerException": {
+        "exception": "AgentCoreException",
+        "code": "aws_error"
+      }
+    }
+  },
+  "json": {
+    "planDocumentKeys": [
+      "dryRun",
+      "target",
+      "detection",
+      "plan"
+    ],
+    "planKeys": [
+      "target",
+      "name",
+      "region",
+      "runtimeName",
+      "stackName",
+      "repositoryName",
+      "buildProjectName",
+      "imageTag",
+      "bucket",
+      "bucketSource",
+      "network",
+      "bedrockModels",
+      "readableSecrets",
+      "environment",
+      "lifecycle",
+      "tags",
+      "steps",
+      "security",
+      "warnings",
+      "cost"
+    ],
+    "stepKeys": [
+      "resource",
+      "name",
+      "action",
+      "status"
+    ],
+    "lifecycleKeys": [
+      "idleSessionTimeoutSeconds",
+      "maxSessionLifetimeSeconds"
+    ],
+    "deployKeys": [
+      "target",
+      "name",
+      "region",
+      "runtimeName",
+      "runtimeId",
+      "runtimeArn",
+      "runtimeVersion",
+      "status",
+      "imageUri",
+      "stackName",
+      "logGroup",
+      "steps"
+    ],
+    "statusKeys": [
+      "target",
+      "name",
+      "region",
+      "runtimeName",
+      "runtimeId",
+      "runtimeArn",
+      "runtimeVersion",
+      "status",
+      "imageUri",
+      "logGroup"
+    ],
+    "listKeys": [
+      "target",
+      "region",
+      "agents"
+    ],
+    "listItemKeys": [
+      "name",
+      "runtimeName",
+      "runtimeId",
+      "runtimeVersion",
+      "status"
+    ],
+    "deleteKeys": [
+      "target",
+      "name",
+      "region",
+      "runtimeDeleted",
+      "stackDeleted",
+      "logGroupDeleted"
+    ],
+    "stopKeys": [
+      "target",
+      "name",
+      "sessionId",
+      "stopped"
+    ],
+    "errorKeys": [
+      "code",
+      "message"
+    ],
+    "errorDocument": "un único objeto {\"error\": {\"code\", \"message\"}, \"exitCode\"} por stdout y la línea `rayito: <mensaje>` por stderr, como rayito setup"
+  },
+  "messages": {
+    "header": "rayito agent deploy: {name} en Amazon Bedrock AgentCore Runtime, región {region}",
+    "step": "  {label} {name}: {action}",
+    "labels": {
+      "stack": "pila",
+      "image": "imagen",
+      "runtime": "runtime"
+    },
+    "stackContents": "  (la pila crea el repositorio ECR, el proyecto de CodeBuild, su grupo de logs, el rol de build y el rol del runtime)",
+    "actions": {
+      "stackPlanned": "crear o actualizar (se decide al leer la cuenta)",
+      "stackCreate": "crear",
+      "stackUpdate": "actualizar si cambió (CloudFormation no toca nada si la plantilla y los parámetros son los mismos)",
+      "stackReuse": "ya existe ({status})",
+      "stackWait": "en curso ({status}): esperar",
+      "imagePlanned": "construir con CodeBuild si no existe (sin Docker local)",
+      "imageBuild": "construir con CodeBuild (sin Docker local)",
+      "imageReuse": "ya existe",
+      "runtimePlanned": "crear o actualizar",
+      "runtimeCreate": "crear y exigir MMDSv2",
+      "runtimeUpdate": "actualizar (versión nueva)",
+      "runtimeReuse": "ya está al día (versión {version})",
+      "runtimeWait": "en curso ({status}): esperar"
+    },
+    "securityHeader": "Seguridad:",
+    "security": {
+      "noGateway": "AgentCore no tiene la pasarela de secretos de Rayito: el agente obtiene las credenciales del rol del runtime, y cualquier código que corra en la sesión puede leerlas",
+      "bedrockModels": "el rol del runtime puede invocar en Bedrock: {models}",
+      "noBedrockModels": "el rol del runtime no puede invocar ningún modelo de Bedrock",
+      "readableSecrets": "el rol del runtime puede leer los secretos: {secrets}",
+      "publicNetwork": "red PUBLIC: el agente tiene salida a Internet y la política de salida de Rayito no se aplica",
+      "sessionIsolation": "cada sesión corre en su propia microVM de AgentCore, aislada de las demás; AgentCore no asocia sesiones a usuarios: eso es cosa de tu backend",
+      "envCredentials": "este framework lee las credenciales de variables de entorno: el host se las pone, leídas del rol del runtime, en cada invocación"
+    },
+    "warningsHeader": "Avisos:",
+    "warningLine": "  aviso: {text}",
+    "securityLine": "  - {text}",
+    "warnings": {
+      "fileScaling": "[scaling] del proyecto no aplica en AgentCore: AgentCore crea una microVM por sesión y escala solo",
+      "fileMemory": "memory_mib del proyecto no aplica en AgentCore: cada sesión usa hasta 2 vCPU y 8 GB y se cobra por consumo real",
+      "filePort": "[serve].port no aplica en AgentCore: el contenedor sirve en el 8080",
+      "fileTimeout": "[serve].timeout no aplica en AgentCore: la vida de una sesión es max_session_lifetime (8 h por defecto)",
+      "fileIdle": "[serve].idle no aplica en AgentCore: usa idle_session_timeout (15 min por defecto)",
+      "fileBaseImage": "[deploy].base_image_version no aplica en AgentCore: no usa la imagen base de MicroVMs"
+    },
+    "costHeader": "Coste aproximado (us-east-1, precios de lista):",
+    "costLine": "  {text}",
+    "cost": {
+      "runtime": "runtime (plataforma V1, la que crea Rayito): $0,0895 por vCPU-hora y $0,00945 por GB-hora de uso real, por segundo; la CPU no se cobra en espera de E/S y la memoria sí, hasta que la sesión termina (por defecto, 15 min sin uso); sin sesiones no hay cómputo",
+      "build": "build: $0,0034 por minuto en CodeBuild arm1.small, redondeado al minuto (100 minutos al mes en el nivel gratuito)",
+      "image": "imagen en ECR: $0,10 por GB-mes; se conservan las últimas {retained}",
+      "logs": "logs: $0,50 por GB ingerido en CloudWatch Logs",
+      "model": "el modelo lo cobra su proveedor"
+    },
+    "dryRunFooter": "no se creó ni cambió nada (--dry-run)",
+    "confirm": "¿Desplegar en AgentCore?",
+    "progress": {
+      "stackDeploy": "desplegando la pila {stackName}",
+      "stackWait": "esperando a la pila {stackName} ({status})",
+      "stackReady": "pila {stackName} lista",
+      "sourceUpload": "subiendo el contexto de build ({bytes} bytes)",
+      "buildStart": "construyendo la imagen {imageTag} con CodeBuild (build {buildId})",
+      "imageReady": "imagen {imageTag} lista ({megabytes} MB)",
+      "imageReused": "imagen {imageTag} reutilizada: el contenido no cambió",
+      "runtimeCreate": "creando el runtime {runtimeName}",
+      "runtimeRequireMmdsV2": "exigiendo MMDSv2 en el runtime {runtimeName}",
+      "runtimeUpdate": "actualizando el runtime {runtimeName}",
+      "runtimeWait": "esperando al runtime {runtimeName} ({status})",
+      "runtimeReady": "runtime {runtimeName} listo (versión {version})",
+      "runtimeReuse": "runtime {runtimeName} al día (versión {version}): nada que cambiar",
+      "stackNoChanges": "pila {stackName} sin cambios",
+      "sourceDeleted": "contexto de build borrado del bucket"
+    },
+    "deployed": [
+      "target=agentcore",
+      "name={name}",
+      "runtime_id={runtimeId}",
+      "runtime_arn={runtimeArn}",
+      "version={version}",
+      "region={region}",
+      "logs={logGroup}",
+      "invoca con: rayito agent invoke {name} \"<prompt>\" --target agentcore"
+    ],
+    "status": [
+      "target: agentcore",
+      "name: {name}",
+      "runtime_id: {runtimeId}",
+      "version: {version}",
+      "status: {status}",
+      "image: {imageUri}",
+      "region: {region}",
+      "logs: {logGroup}"
+    ],
+    "listLine": "{name} runtime={runtimeName} id={runtimeId} version={version} status={status}",
+    "listEmpty": "no hay agentes de Rayito en AgentCore en {region}",
+    "deleteHeader": "rayito agent delete: {name} en AgentCore, región {region}",
+    "deleteRuntime": "  runtime {runtimeName} ({runtimeId})",
+    "deleteStack": "  pila {stackName} (repositorio ECR con sus imágenes, proyecto y logs de CodeBuild, rol de build y rol del runtime)",
+    "deleteLogGroups": "  grupo de logs del runtime {logGroup}",
+    "deleteConfirm": "¿Borrar el agente y sus recursos?",
+    "deleteNothing": "no hay ningún despliegue de Rayito llamado {name} en {region}: nada que borrar",
+    "deleteProgress": {
+      "runtime": "borrando el runtime {runtimeName}",
+      "stack": "borrando la pila {stackName}",
+      "logGroup": "borrando el grupo de logs {logGroup}"
+    },
+    "deleted": "borrado {name}: runtime {runtimeDeleted}, pila {stackDeleted}, grupo de logs {logGroupDeleted}",
+    "stopped": "sesión {sessionId} parada en {name}",
+    "errorPrefix": "rayito: ",
+    "errors": {
+      "unsupported_region": "la región {region} no tiene AgentCore Runtime con builds arm64 de CodeBuild: usa una de {regions}",
+      "option_not_supported": "{option} no aplica a --target agentcore: {reason}",
+      "option_requires_agentcore": "{option} sólo aplica a --target agentcore",
+      "target_unsupported": "rayito agent {command} sólo aplica a --target agentcore: para una flota de MicroVMs usa rayito agent stop o status",
+      "provider_unsupported": "el proveedor de modelo {provider} no está soportado en AgentCore: sin pasarela de secretos sólo se cablea bedrock, con el rol del runtime",
+      "network_policy_unsupported": "AgentCore no puede aplicar la política de salida del proyecto ({what}): en modo PUBLIC el agente sale a Internet sin filtro; quítala para desplegar en AgentCore",
+      "name_invalid": "el nombre {name} no vale para AgentCore: hasta {max} caracteres, minúsculas y dígitos, con - o _ sueltos entre ellos; cámbialo con [image].template",
+      "name_conflict": "ya existe un runtime {runtimeName} que no es del agente {name} de Rayito: cambia el nombre con [image].template",
+      "image_missing": "--no-build: no hay ninguna imagen {imageTag} en {repositoryName}; despliega sin --no-build",
+      "model_required": "no se sabe qué modelo de Bedrock usa el agente: pásalo con --bedrock-model (bedrock_models en el SDK)",
+      "lifecycle_invalid": "{option} debe ser un número entero de segundos entre {min} y {max}",
+      "tags_invalid": "--tag necesita CLAVE=VALOR, hasta {max} etiquetas, con letras, dígitos, espacios y _ . : / = + - @",
+      "env_invalid": "AgentCore admite como mucho {maxVariables} variables de entorno de hasta {maxChars} caracteres",
+      "iam_resource_invalid": "{field} no vale como recurso de IAM: usa un nombre o id sin comodines (* ?) ni comas, o un ARN completo de la cuenta y la región del despliegue",
+      "raw_protocol": "una app con protocol='raw' no cumple el contrato de AgentCore (/ping + /invocations)",
+      "no_bucket": "no hay bucket para el contexto de build: pasa --bucket, [deploy].bucket o RAYITO_BUCKET, o crea uno con rayito setup",
+      "bucket_region": "el bucket {bucket} está en {bucketRegion}, no en {region}: CodeBuild sólo lee el código de un bucket de su región",
+      "needs_confirmation": "desplegar en AgentCore crea recursos con coste: confírmalo con --yes (o desde una terminal)",
+      "delete_needs_confirmation": "borrar un agente no se puede deshacer: confírmalo con --yes (o desde una terminal)",
+      "session_required": "con --target agentcore, rayito agent stop necesita --session-id: AgentCore no cobra sin sesiones; para borrar el agente usa rayito agent delete",
+      "stack_blocked": "la pila {stackName} está en {status}: bórrala con rayito agent delete {name} --target agentcore y vuelve a desplegar",
+      "stack_failed": "la pila {stackName} no se pudo desplegar ({status}): mira sus eventos en la consola de CloudFormation",
+      "image_build_failed": "el build {buildId} terminó en {status}: los logs están en el grupo {logGroup}",
+      "image_build_timeout": "el build {buildId} sigue en curso tras {seconds} s: síguelo en el grupo {logGroup}",
+      "build_quota": "CodeBuild rechazó el build por la cuota de builds simultáneos de la cuenta: espera a que acaben los que hay o pide más cuota",
+      "image_too_large": "la imagen ocupa {megabytes} MB y AgentCore admite como mucho {maxMegabytes} MB",
+      "runtime_blocked": "el runtime {runtimeName} está en {status}: bórralo con rayito agent delete {name} --target agentcore y vuelve a desplegar",
+      "runtime_failed": "el runtime {runtimeName} quedó en {status}: mira sus logs en {logGroup}",
+      "runtime_timeout": "el runtime {runtimeName} sigue en {status} tras {seconds} s",
+      "runtime_not_found": "no hay ningún agente de Rayito llamado {name} en AgentCore en {region}",
+      "delete_failed": "no se pudo borrar {resource} {resourceName} ({status})",
+      "access_denied": "faltan permisos para {operation} ({awsCode}): mira los permisos de --target agentcore en la guía",
+      "aws_error": "AWS rechazó {operation} ({awsCode})",
+      "lifecycle_order": "idle_session_timeout ({idle} s) no puede superar max_session_lifetime ({max} s)"
+    }
+  },
+  "sdk": {
+    "python": {
+      "deployFunctions": [
+        "deploy_agent",
+        "deploy_agent_async",
+        "plan_deploy"
+      ],
+      "targetParameter": "target: Literal['microvm', 'agentcore'] = 'microvm' (keyword-only, después de session)",
+      "agentcoreParameter": "agentcore: AgentCoreOptions | None = None (keyword-only, después de target; con target='microvm' da option_requires_agentcore)",
+      "returns": {
+        "microvm": "AgentFleet / AsyncAgentFleet / AgentDeployPlan",
+        "agentcore": "AgentCoreFleet / AsyncAgentCoreFleet / AgentCoreDeployPlan"
+      },
+      "options": {
+        "class": "AgentCoreOptions",
+        "fields": [
+          "bedrock_models: tuple[str, ...] = ()",
+          "readable_secrets: tuple[str, ...] = ()",
+          "idle_session_timeout_seconds: int | None = None",
+          "max_session_lifetime_seconds: int | None = None",
+          "tags: Mapping[str, str] = {}"
+        ]
+      },
+      "fleet": {
+        "class": "AgentCoreFleet",
+        "async": "AsyncAgentCoreFleet",
+        "connect": "AgentCoreFleet.connect(name: str, *, region: str | None = None, session: Any = None)",
+        "methods": [
+          "invoke(prompt, session_id=None, model=None, reasoning=False) -> AgentResult",
+          "stream(prompt, session_id=None, model=None, reasoning=False) -> AgentCoreFleetStream",
+          "status() -> AgentCoreStatus",
+          "stop_session(session_id: str) -> bool",
+          "delete() -> AgentCoreDeleteResult"
+        ],
+        "properties": [
+          "name",
+          "region",
+          "runtime_name",
+          "runtime_id",
+          "runtime_arn",
+          "runtime_version",
+          "image_uri",
+          "log_group"
+        ]
+      },
+      "stream": {
+        "class": "AgentCoreFleetStream",
+        "async": "AsyncAgentCoreFleetStream",
+        "members": [
+          "__iter__ / __aiter__ -> AgentEvent",
+          "session_id",
+          "result()",
+          "close()"
+        ]
+      },
+      "status": {
+        "class": "AgentCoreStatus",
+        "fields": [
+          "name",
+          "region",
+          "runtime_name",
+          "runtime_id",
+          "runtime_arn",
+          "runtime_version",
+          "status",
+          "image_uri",
+          "log_group"
+        ]
+      },
+      "deleteResult": {
+        "class": "AgentCoreDeleteResult",
+        "fields": [
+          "name",
+          "region",
+          "runtime_deleted",
+          "stack_deleted",
+          "log_group_deleted"
+        ]
+      },
+      "exception": {
+        "class": "AgentCoreException",
+        "base": "Exception",
+        "fields": [
+          "code",
+          "exit_code"
+        ]
+      }
+    },
+    "typescript": {
+      "deployFunctions": [
+        "deployAgent",
+        "planDeploy"
+      ],
+      "targetParameter": "DeployAgentOptions.target?: 'microvm' | 'agentcore' (por defecto 'microvm')",
+      "agentcoreParameter": "DeployAgentOptions.agentcore?: AgentCoreOptions (con target 'microvm' da option_requires_agentcore)",
+      "returns": {
+        "microvm": "AgentFleet / AgentDeployPlan",
+        "agentcore": "AgentCoreFleet / AgentCoreDeployPlan (sobrecargas por target)"
+      },
+      "options": {
+        "interface": "AgentCoreOptions",
+        "fields": [
+          "bedrockModels?: readonly string[]",
+          "readableSecrets?: readonly string[]",
+          "idleSessionTimeoutMs?: number",
+          "maxSessionLifetimeMs?: number",
+          "tags?: Readonly<Record<string, string>>"
+        ],
+        "note": "Los milisegundos se convierten a segundos enteros; un valor que no es múltiplo de 1000 da lifecycle_invalid."
+      },
+      "fleet": {
+        "class": "AgentCoreFleet",
+        "connect": "AgentCoreFleet.connect(name: string, options?: { region?: string; credentials?: AwsCredentialIdentityProvider })",
+        "methods": [
+          "invoke(prompt, options?: { sessionId?, model?, reasoning? }) -> Promise<AgentResult>",
+          "stream(prompt, options?) -> Promise<AgentCoreFleetStream>",
+          "status() -> Promise<AgentCoreStatus>",
+          "stopSession(sessionId: string) -> Promise<boolean>",
+          "delete() -> Promise<AgentCoreDeleteResult>"
+        ],
+        "properties": [
+          "name",
+          "region",
+          "runtimeName",
+          "runtimeId",
+          "runtimeArn",
+          "runtimeVersion",
+          "imageUri",
+          "logGroup"
+        ]
+      },
+      "stream": {
+        "class": "AgentCoreFleetStream",
+        "members": [
+          "[Symbol.asyncIterator] -> AgentEvent",
+          "sessionId",
+          "result()",
+          "close()"
+        ]
+      },
+      "status": {
+        "interface": "AgentCoreStatus",
+        "fields": [
+          "name",
+          "region",
+          "runtimeName",
+          "runtimeId",
+          "runtimeArn",
+          "runtimeVersion",
+          "status",
+          "imageUri",
+          "logGroup"
+        ]
+      },
+      "deleteResult": {
+        "interface": "AgentCoreDeleteResult",
+        "fields": [
+          "name",
+          "region",
+          "runtimeDeleted",
+          "stackDeleted",
+          "logGroupDeleted"
+        ]
+      },
+      "exception": {
+        "class": "AgentCoreError",
+        "base": "Error",
+        "fields": [
+          "code",
+          "exitCode"
+        ]
+      }
+    },
+    "parityNote": "La firma de invoke y stream y el significado de session_id son los de AgentFleet: el resultado lleva el id de sesión que hay que pasar para continuar la conversación."
+  }
+}

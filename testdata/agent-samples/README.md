@@ -1,6 +1,6 @@
 # Agentes de ejemplo
 
-Quince proyectos de agente "que ya existían": ninguno importa `rayito` y cada
+Dieciséis proyectos de agente "que ya existían": ninguno importa `rayito` y cada
 uno trae su propio lockfile (Hermes y OpenCode son sólo configuración). Los usa
 la aceptación de `agent-zero-config`: cada uno se despliega sin opciones y otra
 vez con opciones propias. `manifest.json` lista lo que debe decidir la

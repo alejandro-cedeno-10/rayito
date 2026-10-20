@@ -83,6 +83,25 @@ python3 scripts/check_auditable.py rayd   # from the repository: root, version a
 The `rayd.cdx.json` SBOM is the same graph in CycloneDX 1.5 for tools that
 consume SBOMs (the `metadata.component` is `rayd` with the tag's version).
 
+### What `rayito setup` checks and what it does not { #que-comprueba-rayito-setup }
+
+Without `--artifact`, [`rayito setup`](cli.md#rayito-setup) downloads
+`SHA256SUMS` and `rayito-image.zip` over HTTPS from the `rayd-v<your SDK
+version>` release and compares the zip's sha256 with the `SHA256SUMS` line. If
+the line is missing or does not match, it publishes nothing
+(`checksum_missing`, `checksum_mismatch`).
+
+That proves **integrity, not authenticity**: it catches a truncated, corrupted
+or wrong zip, but `SHA256SUMS` comes from the same release as the zip, so
+whoever could replace one could replace both. `rayito setup` **does not check
+the cosign signature**. If you want it, verify the zip with the commands above
+and pass it to `rayito setup`, which publishes it instead of downloading the
+release one:
+
+```bash
+rayito setup --artifact rayito-image.zip
+```
+
 ### `rayd` license notices { #avisos-de-licencia-de-rayd }
 
 `rayd` is Apache-2.0 and statically links third-party crates (MIT,

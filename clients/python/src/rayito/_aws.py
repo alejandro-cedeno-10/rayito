@@ -18,6 +18,7 @@ import boto3
 from botocore.config import Config
 from botocore.exceptions import ClientError
 
+from rayito._account_setup._domain import with_setup_hint
 from rayito._aws_region import aws_session, resolve_region
 from rayito._aws_sanitize import AwsErrorSummary, redact_aws_text, sanitize_aws_error
 from rayito._limits import (
@@ -355,8 +356,20 @@ class LambdaMicrovmsControlPlane:
         )
 
     def run_microvm(self, request: LaunchRequest) -> SandboxInfo:
-        response = self._invoke("RunMicrovm", self._client.run_microvm, **request.to_api())
-        return sandbox_info_from_response(response)
+        """Un `ResourceNotFoundException` aquí es casi siempre una imagen
+        ausente: se relanza como el mismo `SandboxNotFoundException`, con
+        `status_code`, `aws_code` y causa sanitizada intactos, y el mensaje
+        apuntando a `rayito setup` (ADR-030)."""
+        try:
+            response = self._invoke("RunMicrovm", self._client.run_microvm, **request.to_api())
+        except SandboxNotFoundException as exc:
+            hinted = SandboxNotFoundException(
+                with_setup_hint(str(exc)), status_code=exc.status_code, aws_code=exc.aws_code
+            )
+            cause = exc.__cause__
+        else:
+            return sandbox_info_from_response(response)
+        raise hinted from cause
 
     def get_microvm(self, sandbox_id: str) -> SandboxInfo:
         response = self._invoke(

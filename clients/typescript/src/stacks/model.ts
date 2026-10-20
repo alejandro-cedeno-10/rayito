@@ -9,6 +9,15 @@ import { InvalidArgumentError } from "../errors.js";
 import { VERSION } from "../version.js";
 
 export const MANAGED_BY_TAG = "rayito-sdk";
+export const COMPONENT_TAG_KEY = "rayito:component";
+export const MANAGED_BY_TAG_KEY = "rayito:managed-by";
+export const SDK_VERSION_TAG_KEY = "rayito:sdk-version";
+/** Las tres etiquetas que `stackTags` pone siempre y que ganan a las del llamante. */
+export const FIXED_TAG_KEYS: readonly string[] = [
+  COMPONENT_TAG_KEY,
+  MANAGED_BY_TAG_KEY,
+  SDK_VERSION_TAG_KEY,
+];
 export const ROLLBACK_COMPLETE = "ROLLBACK_COMPLETE";
 
 export type DeployAction = "create" | "update" | "blocked";
@@ -197,8 +206,8 @@ export function stackTags(
 ): Record<string, string> {
   return {
     ...userTags,
-    "rayito:component": component.name,
-    "rayito:managed-by": MANAGED_BY_TAG,
-    "rayito:sdk-version": VERSION,
+    [COMPONENT_TAG_KEY]: component.name,
+    [MANAGED_BY_TAG_KEY]: MANAGED_BY_TAG,
+    [SDK_VERSION_TAG_KEY]: VERSION,
   };
 }

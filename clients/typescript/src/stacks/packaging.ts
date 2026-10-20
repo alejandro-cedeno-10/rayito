@@ -8,12 +8,15 @@
  */
 
 import type { StackComponent } from "./model.js";
+import * as agentcoreRuntime from "./templates/agentcore-runtime.gen.js";
+import * as artifactBucket from "./templates/artifact-bucket.gen.js";
 import * as customDomain from "./templates/custom-domain.gen.js";
 import * as dashboard from "./templates/dashboard.gen.js";
 import * as dashboardCloudwatch from "./templates/dashboard-cloudwatch.gen.js";
 import * as dashboardReadRole from "./templates/dashboard-read-role.gen.js";
 import * as efsVolumes from "./templates/efs-volumes.gen.js";
 import * as eventsWebhooks from "./templates/events-webhooks.gen.js";
+import * as iam from "./templates/iam.gen.js";
 import * as metadataIndex from "./templates/metadata-index.gen.js";
 import * as otlpExport from "./templates/otlp-export.gen.js";
 import * as quotaAlerts from "./templates/quota-alerts.gen.js";
@@ -28,12 +31,15 @@ interface GeneratedAsset {
 }
 
 const ASSETS: Readonly<Record<string, GeneratedAsset>> = {
+  "agentcore-runtime": agentcoreRuntime,
+  "artifact-bucket": artifactBucket,
   "custom-domain": customDomain,
   dashboard,
   "dashboard-cloudwatch": dashboardCloudwatch,
   "dashboard-read-role": dashboardReadRole,
   "efs-volumes": efsVolumes,
   "events-webhooks": eventsWebhooks,
+  iam,
   "metadata-index": metadataIndex,
   "otlp-export": otlpExport,
   "quota-alerts": quotaAlerts,

@@ -11,6 +11,7 @@ cambio; este módulo es lo que esas fachadas envuelven.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Final, NamedTuple
 
 import boto3
@@ -28,7 +29,7 @@ from rayito._stacks._model import (
     stack_tags,
 )
 from rayito._stacks._packaging import artifact_key, load_artifact, load_template
-from rayito._stacks._port import StackProvisioner
+from rayito._stacks._port import StackProvisioner, UpdateOutcome
 from rayito._stacks._registry import COMPONENTS, component_by_name
 from rayito.exceptions import InvalidArgumentException, StackException, UnimplementedError
 
@@ -100,6 +101,16 @@ class _Plan(NamedTuple):
     parameters: ParameterPlan
 
 
+@dataclass(frozen=True)
+class StackDeployResult:
+    """Lo que `OptionalStacks.deploy_with_outcome()` devuelve: el estado de la
+    pila y, si se actualizó, lo que CloudFormation dijo del `UpdateStack`
+    (`None` si se creó)."""
+
+    status: StackStatus
+    update_outcome: UpdateOutcome | None
+
+
 class OptionalStacks:
     """Construirlo no hace ninguna llamada a AWS."""
 
@@ -151,7 +162,30 @@ class OptionalStacks:
         wait: bool = True,
         wait_timeout: float = DEFAULT_WAIT_TIMEOUT_SECONDS,
     ) -> StackStatus:
-        """Crea la pila o, si ya existe, la actualiza. Al crear, los
+        """Crea la pila o, si ya existe, la actualiza (ver `deploy_with_outcome`)."""
+        return self.deploy_with_outcome(
+            component,
+            stack_name=stack_name,
+            parameters=parameters,
+            artifact_bucket=artifact_bucket,
+            tags=tags,
+            wait=wait,
+            wait_timeout=wait_timeout,
+        ).status
+
+    def deploy_with_outcome(
+        self,
+        component: str | StackComponent,
+        *,
+        stack_name: str | None = None,
+        parameters: dict[str, str] | None = None,
+        artifact_bucket: str | None = None,
+        tags: dict[str, str] | None = None,
+        wait: bool = True,
+        wait_timeout: float = DEFAULT_WAIT_TIMEOUT_SECONDS,
+    ) -> StackDeployResult:
+        """Como `deploy()`, y además dice si CloudFormation cambió algo. Crea la
+        pila o, si ya existe, la actualiza. Al crear, los
         parámetros no pasados toman su valor por defecto del catálogo; al
         actualizar, los no pasados conservan el valor con el que la pila está
         desplegada (`UsePreviousValue`), así redesplegar sin repetir cada
@@ -167,6 +201,7 @@ class OptionalStacks:
                 values[artifact.parameter_key] = key
         template_body = load_template(resolved)
         full_tags = stack_tags(resolved, dict(tags or {}))
+        update_outcome: UpdateOutcome | None = None
         if plan_deploy(plan.current).action == "create":
             self._provisioner.create(
                 resolved,
@@ -176,7 +211,7 @@ class OptionalStacks:
                 tags=full_tags,
             )
         else:
-            self._provisioner.update(
+            update_outcome = self._provisioner.update(
                 resolved,
                 stack_name=name,
                 template_body=template_body,
@@ -191,7 +226,7 @@ class OptionalStacks:
             raise StackException(
                 f"la pila {name!r} desapareció justo tras desplegarla", code="failed"
             )
-        return status
+        return StackDeployResult(status, update_outcome)
 
     def _plan(
         self,

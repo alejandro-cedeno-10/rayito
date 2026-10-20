@@ -19,6 +19,7 @@ import pytest
 from rayito._agent._aws_resolve import (
     BUCKET_ENV_VAR,
     GATEWAY_SECRET_ENV_VARS,
+    AwsResolver,
     cdk_bucket_name,
     discover_bucket,
     resolve_bucket,
@@ -44,13 +45,17 @@ from rayito._agent._fleet_async import AsyncAgentFleet
 from rayito._agent._project_domain import AgentProject
 from rayito._agent._scaling_domain import ScalingOptions
 from rayito._agent._template import AgentTemplate, AsyncAgentTemplate
+from rayito._aws_sanitize import AwsErrorSummary
 from rayito._limits import AGENT_SOURCE_DEFAULT_EXCLUDES
 from rayito._payload import generate_access_token
 from rayito._sandbox_base import ACCESS_TOKEN_ENV_VAR
+from rayito._stacks._model import StackStatus
 from rayito._templates._models import BuildInfo
-from rayito.exceptions import InvalidArgumentException
+from rayito.exceptions import InvalidArgumentException, StackException
 from tests.unit.fake_agent_fleet import FleetFlavor
 from tests.unit.fake_agent_project import project
+
+from .fake_stacks import FakeStackProvisioner
 
 VECTORS = Path(__file__).parents[4] / "testdata" / "agent-deploy"
 RESOLVE = json.loads((VECTORS / "resolve.json").read_text(encoding="utf-8"))
@@ -65,6 +70,7 @@ class FakeAws:
 
     images: set[str] = field(default_factory=lambda: {"rayito-base-caps"})
     buckets: set[str] = field(default_factory=set)
+    stack_bucket: str | None = None
     calls: list[str] = field(default_factory=list)
     resolved_region: str = "us-east-1"
 
@@ -75,6 +81,10 @@ class FakeAws:
     def bucket_exists(self, bucket: str) -> bool:
         self.calls.append("bucket")
         return bucket in self.buckets
+
+    def artifact_stack_bucket(self) -> str | None:
+        self.calls.append("artifact_stack")
+        return self.stack_bucket
 
     def image_exists(self, name: str) -> bool:
         self.calls.append(f"image:{name}")
@@ -225,6 +235,84 @@ def test_discovery_checks_the_cdk_bucket_and_never_creates_it() -> None:
 
     assert discover_bucket(aws, "us-east-1") == cdk_bucket_name("123456789012", "us-east-1")
     assert discover_bucket(FakeAws(), "us-east-1") is None
+
+
+def test_discovery_falls_back_to_the_bucket_of_the_setup_stack() -> None:
+    aws = FakeAws(stack_bucket=BUCKET)
+
+    assert discover_bucket(aws, "us-east-1") == BUCKET
+    assert aws.calls == ["account", "bucket", "artifact_stack"]
+
+
+def test_discovery_prefers_the_cdk_bucket_and_then_skips_the_stack_read() -> None:
+    cdk = cdk_bucket_name("123456789012", "us-east-1")
+    aws = FakeAws(buckets={cdk}, stack_bucket=BUCKET)
+
+    assert discover_bucket(aws, "us-east-1") == cdk
+    assert "artifact_stack" not in aws.calls
+
+
+@dataclass
+class FailingProvisioner(FakeStackProvisioner):
+    aws_code: str = "AccessDenied"
+
+    def describe(self, stack_name: str) -> StackStatus | None:
+        cause = AwsErrorSummary(self.aws_code, "no", code=self.aws_code)
+        raise StackException(str(cause), code="failed") from cause
+
+
+def resolver_over(
+    monkeypatch: pytest.MonkeyPatch, provisioner: FakeStackProvisioner
+) -> AwsResolver:
+    monkeypatch.setattr(
+        "rayito._agent._aws_resolve.CloudFormationProvisioner", lambda **_: provisioner
+    )
+    return AwsResolver(region="us-east-1")
+
+
+def artifact_stack(state: str, outputs: dict[str, str]) -> dict[str, StackStatus]:
+    return {"rayito-m0-artifacts": StackStatus("rayito-m0-artifacts", state, outputs=outputs)}
+
+
+def test_the_resolver_reads_the_bucket_output_of_a_ready_setup_stack(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stacks = artifact_stack("CREATE_COMPLETE", {"BucketName": BUCKET})
+    assert (
+        resolver_over(monkeypatch, FakeStackProvisioner(stacks)).artifact_stack_bucket() == BUCKET
+    )
+
+
+@pytest.mark.parametrize(
+    "stacks",
+    [
+        {},
+        artifact_stack("CREATE_IN_PROGRESS", {"BucketName": BUCKET}),
+        artifact_stack("ROLLBACK_COMPLETE", {"BucketName": BUCKET}),
+        artifact_stack("CREATE_COMPLETE", {}),
+    ],
+    ids=["absent", "in-progress", "blocked", "no-output"],
+)
+def test_the_resolver_ignores_a_setup_stack_that_gives_no_bucket(
+    monkeypatch: pytest.MonkeyPatch, stacks: dict[str, StackStatus]
+) -> None:
+    assert resolver_over(monkeypatch, FakeStackProvisioner(stacks)).artifact_stack_bucket() is None
+
+
+@pytest.mark.parametrize("aws_code", ["AccessDenied", "AccessDeniedException"])
+def test_the_resolver_treats_access_denied_on_the_setup_stack_as_no_bucket(
+    monkeypatch: pytest.MonkeyPatch, aws_code: str
+) -> None:
+    resolver = resolver_over(monkeypatch, FailingProvisioner(aws_code=aws_code))
+    assert resolver.artifact_stack_bucket() is None
+
+
+def test_the_resolver_still_propagates_any_other_setup_stack_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    resolver = resolver_over(monkeypatch, FailingProvisioner(aws_code="Throttling"))
+    with pytest.raises(StackException):
+        resolver.artifact_stack_bucket()
 
 
 @pytest.mark.parametrize("case", RESOLVE["costs"], ids=lambda case: str(case["memoryMib"]))

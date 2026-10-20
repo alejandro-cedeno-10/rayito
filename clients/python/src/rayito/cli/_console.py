@@ -133,6 +133,18 @@ def client_error_message(exc: ClientError) -> str:
     return redact_aws_text(str(exc.response.get("Error", {}).get("Message", exc)))
 
 
+def translate_failure(exc: Exception) -> tuple[str, int] | None:
+    """El mensaje y el código de salida con que la CLI da por terminado un
+    error que ningún comando trató, o `None` si no es de los que traduce."""
+    if isinstance(exc, UsageError):
+        return str(exc), EXIT_USAGE
+    if isinstance(exc, ClientError):
+        return f"AWS error {client_error_code(exc)}: {client_error_message(exc)}", EXIT_FAILURE
+    if isinstance(exc, SandboxException | UnimplementedError):
+        return str(exc), EXIT_FAILURE
+    return None
+
+
 @contextmanager
 def translated_failures() -> Iterator[None]:
     """Un `ClientError` que ningún comando trató es `AWS error <Code>:
@@ -141,9 +153,6 @@ def translated_failures() -> Iterator[None]:
     mensaje (1); `UsageError`, su mensaje (2)."""
     try:
         yield
-    except UsageError as exc:
-        fail(str(exc), code=EXIT_USAGE)
-    except ClientError as exc:
-        fail(f"AWS error {client_error_code(exc)}: {client_error_message(exc)}")
-    except (SandboxException, UnimplementedError) as exc:
-        fail(str(exc))
+    except (UsageError, ClientError, SandboxException, UnimplementedError) as exc:
+        message, code = translate_failure(exc) or (str(exc), EXIT_FAILURE)
+        fail(message, code=code)

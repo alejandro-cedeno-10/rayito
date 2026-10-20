@@ -29,7 +29,22 @@ credencial sólo vale dentro de Rayito.
 ## Amazon Bedrock AgentCore Runtime
 
 AgentCore espera una imagen `linux/arm64` que sirva `/ping` y `/invocations`
-en el puerto 8080, como esta. Sube la imagen a Amazon ECR y crea el runtime
-con ella en la consola o con la CLI de AgentCore. AgentCore autentica las
-invocaciones por sí mismo: no fijes `RAYITO_AGENT_SERVICE_TOKEN`, y da al rol del
-runtime los permisos del modelo que use el agente.
+en el puerto 8080, como esta. La forma más corta de desplegarla es
+`rayito agent deploy <directorio> --target agentcore`: construye la imagen con
+CodeBuild (sin Docker local), la sube a Amazon ECR, crea el rol del runtime con
+el mínimo privilegio y crea o actualiza el runtime. A mano: sube la imagen a ECR,
+crea el runtime en la consola o con la CLI de AgentCore y activa MMDSv2
+(`requireMMDSV2` en `UpdateAgentRuntime`), sin el que AgentCore rechaza las
+invocaciones. AgentCore autentica las invocaciones por sí mismo (SigV4): no
+fijes `RAYITO_AGENT_SERVICE_TOKEN`.
+
+El argumento de build `AGENT_BASE_IMAGE` toma la misma imagen base, con el mismo
+digest, de otro registro (por ejemplo `public.ecr.aws/docker/library/python`).
+
+### Seguridad: sin pasarela de secretos
+
+En AgentCore no hay pasarela de secretos de Rayito: el agente obtiene las
+credenciales del rol del runtime por el servicio de metadatos de la microVM, y
+cualquier código que corra en la sesión puede leerlas. Da al rol sólo lo que el
+agente necesita: los modelos de Bedrock que usa y, si hace falta, los secretos
+que debe leer.

@@ -1,4 +1,4 @@
-"""Los quince agentes de ejemplo (`testdata/agent-samples/`), de la detección al
+"""Los dieciséis agentes de ejemplo (`testdata/agent-samples/`), de la detección al
 contenedor (`make agent-zero-config-test`): cada uno se detecta sin opciones,
 se exporta como contexto de Docker, se construye con el Docker del host
 (`linux/arm64`) y se prueba de verdad contra el Bedrock falso del entorno local

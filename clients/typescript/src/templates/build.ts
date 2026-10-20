@@ -245,10 +245,12 @@ export class AwsBuildClients implements BuildClients {
     }
   }
 
-  async headObject(bucket: string, key: string): Promise<boolean> {
+  async headObject(bucket: string, key: string, owner: string): Promise<boolean> {
     const [sdk, s3] = await Promise.all([loadS3Module(), this.#getS3()]);
     try {
-      await s3.send(new sdk.HeadObjectCommand({ Bucket: bucket, Key: key }));
+      await s3.send(
+        new sdk.HeadObjectCommand({ Bucket: bucket, Key: key, ExpectedBucketOwner: owner }),
+      );
       return true;
     } catch (error) {
       const code = awsCode(error);
@@ -259,10 +261,17 @@ export class AwsBuildClients implements BuildClients {
     }
   }
 
-  async putObject(bucket: string, key: string, body: Uint8Array): Promise<void> {
+  async putObject(bucket: string, key: string, body: Uint8Array, owner: string): Promise<void> {
     const [sdk, s3] = await Promise.all([loadS3Module(), this.#getS3()]);
     await sanitizedCall(() =>
-      s3.send(new sdk.PutObjectCommand({ Bucket: bucket, Key: key, Body: body })),
+      s3.send(
+        new sdk.PutObjectCommand({
+          Bucket: bucket,
+          Key: key,
+          Body: body,
+          ExpectedBucketOwner: owner,
+        }),
+      ),
     );
   }
 
@@ -435,7 +444,7 @@ async function uploadArtifact(
   payload: Uint8Array,
 ): Promise<string> {
   const key = `${S3_KEY_PREFIX}/${createHash("sha256").update(payload).digest("hex")}.zip`;
-  await uploadIfAbsent(clients, bucket, key, payload);
+  await uploadIfAbsent(clients, bucket, key, payload, await clients.accountId());
   return `s3://${bucket}/${key}`;
 }
 

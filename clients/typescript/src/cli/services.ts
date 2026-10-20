@@ -5,6 +5,7 @@
  * SDK de AWS y los tests con dobles en memoria, nunca con AWS.
  */
 
+import type { AccountSetupGateways } from "../account-setup/ports.js";
 import type { ControlPlane } from "../aws/control-plane.js";
 import type { StsSender } from "../dashboard/assume.js";
 import type { ImageCatalog } from "../dashboard/ports.js";
@@ -102,6 +103,8 @@ export interface CliServices {
   readonly logs: LogsApi;
   readonly doctor: DoctorAws;
   readonly publishPorts: PublishPorts;
+  /** Los puertos de `rayito setup`; construirlos no llama a AWS. */
+  readonly accountSetup: AccountSetupGateways;
   readonly prunePorts: PrunePorts;
   readonly templates: TemplateTools;
   /** `LifecycleEvents` de la pila `stackName`; construirlo no llama a AWS. */

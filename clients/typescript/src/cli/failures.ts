@@ -9,6 +9,7 @@
 import { awsCode, isAwsSdkError } from "../aws/optional-client.js";
 import { redactAwsText } from "../aws/sanitize.js";
 import {
+  AgentCoreError,
   AuthenticationError,
   CapacityError,
   QuotaExceededError,
@@ -64,6 +65,9 @@ export function translateFailure(error: unknown, verbose = false): TranslatedFai
   }
   if (error instanceof Error && error.name === CREDENTIALS_ERROR_NAME) {
     return { line: rayitoLine(NO_CREDENTIALS_MESSAGE), code: EXIT_USAGE };
+  }
+  if (error instanceof AgentCoreError) {
+    return { line: rayitoLine(error.message), code: error.exitCode };
   }
   if (sdkFailureTypes(error)) {
     return { line: rayitoLine((error as Error).message), code: EXIT_FAILURE };

@@ -188,8 +188,20 @@ pasado el plazo, lanza `CapacityException` (`code = "agent_capacity"`;
     ciclo (65 imágenes) costó unos $5 y terminó con el inventario de AWS igual
     que al empezar. Detalle en `AWS_API_NOTES.md` (Q170 a Q172).
 
+## En AgentCore no hay flota { #en-agentcore }
+
+Con `--target agentcore` el agente corre en
+[Amazon Bedrock AgentCore Runtime](desplegar-en-agentcore.md), que crea una
+microVM por sesión y escala solo: `min_vms`, `max_vms`, `warm_vms` y el resto
+de las opciones de esta página que dimensionan una flota no existen allí. Si las
+pasas en la llamada es un error (`option_not_supported`) y, si vienen del
+fichero de proyecto, un aviso: Rayito no las aproxima en silencio. `invoke()`,
+`stream()` y el `session_id` sí son los mismos. La tabla completa está en
+[Desplegar en AgentCore](desplegar-en-agentcore.md#opciones-que-no-aplican).
+
 ## Ver también { #ver-tambien }
 
 - [Despliega tu agente](despliega-tu-agente.md): la guía completa y el fichero de proyecto.
+- [Desplegar en AgentCore](desplegar-en-agentcore.md): el mismo agente en Amazon Bedrock AgentCore Runtime.
 - [Límites](../limits.md): las cuotas y los topes de esta página.
 - [Pool](../pool.md): las plazas aparcadas que usa una flota.

@@ -18,6 +18,7 @@ const CONSTANT_NAME_OVERRIDES: Record<string, string> = {
   agentStrandsRequirementsSha256: "AGENT_STRANDS_REQUIREMENTS_SHA256",
   agentStrandsHarnessRequirementsSha256: "AGENT_STRANDS_HARNESS_REQUIREMENTS_SHA256",
   agentHermesRequirementsSha256: "AGENT_HERMES_REQUIREMENTS_SHA256",
+  agentAwsCredentialsRequirementsSha256: "AGENT_AWS_CREDENTIALS_REQUIREMENTS_SHA256",
   agentHermesPythonSha256: "AGENT_HERMES_PYTHON_SHA256",
   agentPythonBuildSha256: "AGENT_PYTHON_BUILD_SHA256",
   agentNodeBuildSha256: "AGENT_NODE_BUILD_SHA256",

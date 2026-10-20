@@ -105,6 +105,7 @@ describe("publish", () => {
       `putObject:${BUCKET}/${key}`,
       "getMicrovmImage",
     ]);
+    expect(ports.objectOwners).toEqual(["123456789012", "123456789012"]);
     expect(ports.calls).toContain("createMicrovmImage");
     expect(ports.calls).not.toContain("updateMicrovmImage");
     expect(summary).toMatchObject({

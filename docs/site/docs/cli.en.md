@@ -1,9 +1,9 @@
 # CLI
 
 `rayito` is the SDK's command-line tool: it publishes and lists the image,
-prunes old versions, lists, inspects and kills sandboxes, reads their
-CloudWatch logs and diagnoses an account before the first
-`Sandbox.create()`. It also deploys the optional stacks
+prepares the account (`rayito setup`), prunes old versions, lists, inspects
+and kills sandboxes, reads their CloudWatch logs and diagnoses an account
+before the first `Sandbox.create()`. It also deploys the optional stacks
 (`rayito stack`, `rayito events`, `rayito domain`), builds declarative
 templates (`rayito template`) and the AI agent as a project
 (`rayito agent`). There is no `rayito.toml`: configuration is
@@ -23,8 +23,9 @@ options and environment variables.
 | [`rayito domain`](#rayito-domain) (experimental) | `deploy`, `status`, `destroy` |
 | [`rayito events`](#rayito-events) | `deploy`, `status`, `destroy`, `list`, `webhook add`, `webhook list`, `webhook remove` |
 | [`rayito template`](#rayito-template) | `build`, `status`, `logs` |
-| [`rayito agent`](#rayito-agent) | `init`, `build`, `run`, `deploy`, `export`, `invoke`, `status`, `stop`, `template build` |
+| [`rayito agent`](#rayito-agent) | `init`, `build`, `run`, `deploy`, `export`, `invoke`, `status`, `stop`, `list`, `delete`, `template build` |
 | [`rayito dashboard`](#rayito-dashboard) | — |
+| [`rayito setup`](#rayito-setup) | — |
 | [`rayito doctor`](#rayito-doctor) | — |
 
 There are two CLIs with the same surface, output and exit codes: the Python
@@ -513,10 +514,15 @@ rayito agent deploy [PATH] [--file PATH] [--timeout S] [--port N] [--token-file 
                     [--min-vms N] [--max-vms N] [--warm N] [--idle S] [--queue N] [--queue-timeout S]
                     [--env K=V]... [--allow-out DEST]... [--bucket B] [--secret PROVIDER=NAME]...
                     [--create-secret] [--base-artifact ZIP] [--yes] [--dry-run]
+                    [--target microvm|agentcore] [--tag K=V]... [--bedrock-model ID]...
+                    [--readable-secret NAME]... [--idle-session-timeout S] [--max-session-lifetime S]
 rayito agent export --target docker|agentcore --out DIR [--file PATH] [--overwrite]
 rayito agent invoke SANDBOX_ID PROMPT [--session-id ID] [--stream] [--token-file F]
-rayito agent status SANDBOX_ID [--token-file F]
-rayito agent stop SANDBOX_ID
+                    [--target microvm|agentcore]
+rayito agent status SANDBOX_ID [--token-file F] [--target microvm|agentcore]
+rayito agent stop SANDBOX_ID [--target microvm|agentcore] [--session-id ID]
+rayito agent list --target agentcore
+rayito agent delete NAME --target agentcore [--yes]
 rayito agent template build --bucket B [--name rayito-agent] [--base rayito-base-caps] [--memory-mb 2048]
                             [--no-deepagents] [--no-prefetch] [--force] [--timeout 1800]
 ```
@@ -554,7 +560,9 @@ AWS. `deploy` deploys a **fleet**
 live VMs and `--warm` parked slots; with `--secret provider=name` it uses an
 existing secret and with `--create-secret` it creates a missing one from the
 provider's standard variable (it costs $0.40 per month); it creates no buckets
-and only publishes the base image with `--base-artifact` and `--yes`. `invoke`,
+(`rayito setup` does; use `--bucket`, `RAYITO_BUCKET`, the `cdk bootstrap` one
+and, if it does not exist, the `BucketName` output of the `rayito-m0-artifacts`
+stack that `rayito setup` created) and only publishes the base image with `--base-artifact` and `--yes`. `invoke`,
 `status` and `stop` accept the fleet name (`rayito agent stop <name>` terminates
 all its VMs); the `session_id` that `invoke` returns on a fleet with several VMs
 identifies the VM, and passing it with `--session-id` continues the
@@ -577,6 +585,99 @@ pool. Prefetch and warm pools are optional:
 [What do I use?](guias/agente-en-el-sandbox.md#que-uso). Each new version
 costs snapshot storage ([Pricing](cost.md#cuanto-cuesta-con-ejemplos)); old
 ones are deleted with `rayito image prune --image-name <name>`.
+
+### `agent` with `--target agentcore` { #agent-agentcore }
+
+Since 0.15.0 (not published yet), `rayito agent deploy --target agentcore`
+deploys the agent to Amazon Bedrock AgentCore Runtime instead of a MicroVM
+fleet, and `invoke`, `status`, `stop`, `list` and `delete` operate it. Without
+`--target`, or with `--target microvm`, everything is as in 0.14. Full guide:
+[Deploy to AgentCore](guias/desplegar-en-agentcore.md).
+
+!!! info "Cost and activation"
+    - **Turns it on:** `--target agentcore` in `rayito agent deploy`. `--dry-run`
+      makes no AWS call.
+    - **AWS resources and calls:** one CloudFormation stack per agent
+      (`rayito-agentcore-<name>`), one CodeBuild build for each new content and
+      one AgentCore runtime.
+    - **Approximate cost** (us-east-1, list prices, checked on 2026-10-19):
+      runtime at $0.0895 per vCPU-hour and $0.00945 per GB-hour of actual use;
+      build at $0.0034 per minute (100 minutes a month free); image in ECR at
+      $0.10 per GB-month. More in [Pricing](cost.md#coste-de-un-agente-en-agentcore).
+    - **IAM:** [Before you start](guias/desplegar-en-agentcore.md#antes-de-empezar).
+    - **How to turn it off:** `rayito agent delete <name> --target agentcore`.
+    - **Example:** `rayito agent deploy ./my-agent --target agentcore --yes`.
+
+| Option | Commands | What it does |
+|---|---|---|
+| `--target` (`microvm` or `agentcore`) | `deploy`, `invoke`, `status`, `stop` (on `list` and `delete` it is required and only `agentcore` is valid) | Where it is deployed. Default: `microvm` |
+| `--tag K=V` | `deploy` | Tag for the `rayito-agentcore-<name>` stack and the runtime; repeatable; useful if the organization requires tags |
+| `--bedrock-model ID` | `deploy` | Bedrock model or inference profile the runtime role may invoke; repeatable. Default: the project's model |
+| `--readable-secret NAME` | `deploy` | Secrets Manager secret the runtime role may read; repeatable. Default: none |
+| `--idle-session-timeout S` | `deploy` | Seconds without use after which AgentCore ends a session's microVM ({{agentcoreLifecycleMinSeconds}}-{{agentcoreLifecycleMaxSeconds}}, default {{agentcoreIdleSessionTimeoutDefaultSeconds}}) |
+| `--max-session-lifetime S` | `deploy` | Maximum lifetime of a session's microVM ({{agentcoreLifecycleMinSeconds}}-{{agentcoreLifecycleMaxSeconds}}, default {{agentcoreLifecycleMaxSeconds}}) |
+| `--session-id ID` | `stop` | The session whose microVM is stopped (`StopRuntimeSession`); with `--target agentcore` it is required |
+| `--yes` | `deploy`, `delete` | Do not ask for confirmation (required with no terminal or with `--json`) |
+
+The new options, except `--target`, only apply with `--target agentcore`:
+without it they give `option_requires_agentcore` (exit 2). With
+`--target agentcore`, the MicroVM options that have no equivalent (`--min-vms`,
+`--max-vms`, `--warm`, `--memory`, `--port`, `--timeout`, `--idle`, `--secret`,
+`--create-secret`, `--token-file`, `--keep-on-failure`, `--base-artifact`,
+`--allow-out`) give `option_not_supported` (exit 2) before calling AWS; the
+[full table](guias/desplegar-en-agentcore.md#opciones-que-no-aplican) says what
+each one does and why.
+
+- **`deploy --target agentcore`** prints the plan (three steps: stack, image and
+  runtime), the `Seguridad:` section (AgentCore has no Rayito secrets gateway:
+  the agent gets credentials from the runtime role), the warnings and the
+  approximate cost, and asks for confirmation (`¿Desplegar en AgentCore?`). With
+  `--dry-run` it stops there without calling AWS; with no terminal or with
+  `--json`, `--yes` is required (`needs_confirmation`, exit 2). When done it
+  prints `target=agentcore`, `name`, `runtime_id`, `runtime_arn`, `version`,
+  `region` and `logs`, and how to invoke it.
+- **`invoke NAME PROMPT --target agentcore`**: the argument is the agent name;
+  `--session-id` and `--stream` work as they are. `--token-file` gives
+  `option_not_supported`: AgentCore authenticates with SigV4.
+- **`status NAME --target agentcore`** prints the runtime's state, its version,
+  the image, the region and the log group.
+- **`stop NAME --target agentcore --session-id ID`** ends that session; without
+  `--session-id` it gives `session_required` (exit 2).
+- **`list --target agentcore`** lists the region's Rayito agents
+  (`<name> runtime=… id=… version=… status=…`) or says there are none.
+- **`delete NAME --target agentcore`** deletes the runtime, the
+  `rayito-agentcore-<name>` stack (ECR repository with its images, CodeBuild
+  project and logs, and the two roles) and the runtime's log group; only what
+  Rayito created for that name. It asks for confirmation (`--yes` skips it; with
+  no terminal or with `--json`, `delete_needs_confirmation`, exit 2). With
+  nothing to delete, it exits 0.
+
+**Exit 2** (usage or environment): `unsupported_region`, `option_not_supported`,
+`option_requires_agentcore`, `target_unsupported`, `provider_unsupported`,
+`network_policy_unsupported`, `name_invalid`, `name_conflict`, `model_required`,
+`image_missing`, `lifecycle_invalid`, `lifecycle_order`, `tags_invalid`,
+`env_invalid`, `iam_resource_invalid`, `raw_protocol`, `no_bucket`, `bucket_region`, `needs_confirmation`,
+`delete_needs_confirmation` and `session_required`. **Exit 1** (what fails in
+AWS): `stack_blocked`, `stack_failed`, `image_build_failed`,
+`image_build_timeout`, `build_quota`, `image_too_large`, `runtime_blocked`,
+`runtime_failed`, `runtime_timeout`, `runtime_not_found`, `delete_failed`,
+`access_denied` and `aws_error`. What each means:
+[Errors](referencia/errores.md#agentcore).
+
+With `--json`, each command prints a single document:
+
+| Command | Keys |
+|---|---|
+| `deploy --dry-run` | `dryRun`, `target`, `detection`, `plan` (`target`, `name`, `region`, `runtimeName`, `stackName`, `repositoryName`, `buildProjectName`, `imageTag`, `bucket`, `bucketSource`, `network`, `bedrockModels`, `readableSecrets`, `environment`, `lifecycle`, `tags`, `steps`, `security`, `warnings`, `cost`) |
+| `deploy` | `target`, `name`, `region`, `runtimeName`, `runtimeId`, `runtimeArn`, `runtimeVersion`, `status`, `imageUri`, `stackName`, `logGroup`, `steps` |
+| `status` | `target`, `name`, `region`, `runtimeName`, `runtimeId`, `runtimeArn`, `runtimeVersion`, `status`, `imageUri`, `logGroup` |
+| `list` | `target`, `region`, `agents` (`name`, `runtimeName`, `runtimeId`, `runtimeVersion`, `status`) |
+| `delete` | `target`, `name`, `region`, `runtimeDeleted`, `stackDeleted`, `logGroupDeleted` |
+| `stop` | `target`, `name`, `sessionId`, `stopped` |
+| an error | `{"error": {"code", "message"}, "exitCode"}` on stdout and the line `rayito: <message>` on stderr, like `rayito setup` |
+
+Each step (`steps`) carries `resource` (`stack`, `image` or `runtime`), `name`,
+`action` and `status`; in the plan, `action` is always `planned`.
 
 ## `rayito dashboard` { #rayito-dashboard }
 
@@ -620,6 +721,194 @@ defenses in [Security](security.md#panel-de-gestion-local). To have it always
 available inside your account, with sign-in and audit:
 `rayito stack deploy dashboard --artifact-bucket B`
 ([Dashboard in your account](funciones-opcionales/panel-en-tu-cuenta.md)).
+
+## `rayito setup` { #rayito-setup }
+
+```bash
+rayito [--profile P] [--region R] [--json] [--verbose] setup
+       [--bucket BUCKET] [--artifact PATH] [--tag K=V ...] [--yes] [--dry-run]
+```
+
+Prepares the account and region for Rayito in one idempotent command, like
+`cdk bootstrap`. Step-by-step tutorial: [Set up AWS](primeros-pasos/configurar-aws.md#2-prepara-la-cuenta-con-rayito-setup).
+
+| Option | What it does |
+|---|---|
+| `--bucket BUCKET` | Artifacts bucket in the same region; by default `RAYITO_BUCKET`, the IAM stack's one, the CDK bootstrap one or a new `rayito-artifacts-<account>-<region>`. If it does not exist, it is created with that name (`rayito-m0-artifacts` stack). |
+| `--artifact PATH` | Already verified image zip (e.g. with cosign); without it, `rayito-image.zip` is downloaded from the `rayd-v<SDK version>` release and checked against its `SHA256SUMS`. Only the `full` variant zip, without EFS, is valid. |
+| `--tag K=V` | Etiqueta K=V; repetible. Se aplica a las pilas que crea setup (rayito-m0-artifacts y rayito-m0-iam) y CloudFormation la propaga a sus recursos; útil si la organización exige etiquetas. (Help text, in Spanish like the rest of the CLI: K=V tag, repeatable; applied to the stacks setup creates and propagated by CloudFormation to their resources; useful if your organization requires tags. Reused stacks are not retagged and the image gets none.) |
+| `--yes` | Do not ask for confirmation (required without a terminal or with `--json` if there is anything to create). |
+| `--dry-run` | Only reads the account and shows the plan; creates or changes nothing. |
+
+`RAYITO_BUCKET` is read by the command, not by the parser, like `rayito doctor`.
+
+With tags, if your organization requires them:
+
+```bash
+rayito setup --tag Owner=platform --tag Project=agents
+```
+
+**The plan** is always three steps, in this order:
+
+| Resource | Possible actions | Writes | Asks for confirmation |
+|---|---|---|---|
+| `bucket` (`rayito-m0-artifacts` stack if created) | `create`, `reuse`, `wait` | `create` | `create` |
+| `iamStack` (`rayito-m0-iam` stack) | `create`, `update`, `reuse`, `wait` | `create`, `update` | `create`, `update` |
+| `baseImage` (`rayito-base` image) | `publish`, `reuse`, `wait` | `publish` | `publish` |
+
+- **Bucket**, in two phases. *Reuse:* the first that exists of `--bucket` or
+  `RAYITO_BUCKET` (if you give an explicit one, it is the only candidate), the
+  `ArtifactBucket` parameter of the IAM stack or the `cdk bootstrap` bucket of
+  that account and region (default qualifier), each with one `HeadBucket`.
+  Exists in the region: `reuse` (source `argument`, `environment`, `iamStack`
+  or `cdkBootstrap`). Exists in another region: `bucket_region`. Exists but is
+  not accessible (403): `bucket_unavailable`, except the `cdk bootstrap` one,
+  which is skipped. Does not exist: with `--bucket` or `RAYITO_BUCKET`, it is
+  created with that name; if it is the IAM stack's or the `cdk bootstrap` one,
+  the next candidate is tried. An account with a reusable bucket never reaches
+  the second phase or reads anything more. *Creation:* with no reusable
+  bucket, `create` with the `rayito-m0-artifacts` stack (template
+  `infra/artifact-bucket.yaml`), with the explicit name or, otherwise,
+  `rayito-artifacts-<account>-<region>` (source `rayitoDefault`). If that stack
+  already exists and is complete, `reuse` (source `artifactStack`); in
+  progress, `wait`; blocked, `stack_blocked`. The created bucket is encrypted
+  (SSE-S3), with all public access blocked, ACLs disabled, TLS only and the
+  `rayito/images/` objects expiring after 7 days; deleting the stack keeps it.
+  A bucket that already exists with the default name and does not belong to
+  that stack is not adopted (`bucket_taken`): if it is yours, pass it with
+  `--bucket`.
+- **IAM stack:** if it does not exist, `create` with `ArtifactBucket=<bucket>`.
+  In `CREATE_COMPLETE`, `UPDATE_COMPLETE` or `UPDATE_ROLLBACK_COMPLETE` and
+  with the `BuildRoleArn` output, `reuse`; if its `ArtifactBucket` is another
+  one, `update` (only that parameter changes). In a `*_IN_PROGRESS` state,
+  `wait`; in `DELETE_IN_PROGRESS`, `ROLLBACK_COMPLETE` or `*_FAILED`,
+  `stack_blocked`.
+- **Image:** if `rayito-base` does not exist, `publish`; with a `PENDING` or
+  `IN_PROGRESS` version, `wait`; with a `SUCCESSFUL` and `ACTIVE` version,
+  `reuse` (whatever `rayd` it was built from; `rayito doctor --launch` warns
+  about an old one and `rayito image publish` updates it); with only failed or
+  inactive versions, `publish`. `publish` uses `--artifact` or the
+  `rayd-v<SDK version>` release and the `latest` of AWS's managed base.
+
+The plan is `ready` when the three steps are `reuse`. It asks for confirmation
+if any step is `create`, `update` or `publish`: on a terminal, with
+`¿Preparar la cuenta? [y/N]:`; without a terminal or with `--json`, `--yes` is
+required (`needs_confirmation`, exit 2). A `wait` costs nothing new and does not
+ask. After applying, it runs `rayito doctor` (without `--launch`) on
+`rayito-base` and the chosen bucket, and ends with `RAYITO_TEMPLATE=<arn>` and
+`RAYITO_BUCKET=<bucket>`. The first run takes about 10–12 minutes, almost all of
+it the image snapshot on AWS; an already prepared account finishes in seconds.
+
+```bash
+rayito setup --dry-run
+```
+
+On an account with no bucket at all (with a reusable one, the first line says
+`reutilizar` (reuse) and there is no bucket cost line):
+
+<!-- noqa: example: salida de consola, no es código -->
+```text
+rayito setup: cuenta 123456789012, región us-east-1
+  bucket rayito-artifacts-<account>-<region>: crear con la pila rayito-m0-artifacts (nombre por defecto de Rayito)
+  pila de IAM rayito-m0-iam: crear
+  imagen rayito-base: publicar desde rayd-v0.15.0 (≈ 10 min)
+Coste aproximado:
+  bucket de artefactos: los zips de la imagen caducan a los 7 días (regla de ciclo de vida)
+  pila de IAM: gratis
+  imagen: ≈ $0,04 por semana por versión publicada (mínimo una semana)
+  zip de la imagen en el bucket: céntimos
+no se creó ni cambió nada (--dry-run)
+```
+
+**Exit codes.** `0`: success, `--dry-run`, or nothing to do with a doctor
+without `FAIL`. `1`: the operation fails (`stack_blocked`, `stack_incomplete`,
+`release_download`, `checksum_missing`, `checksum_mismatch`,
+`image_build_failed`, a "no" at the confirmation, a doctor `FAIL` or an
+untranslated AWS error). `2`: usage or environment (`unsupported_region`,
+`bucket_unavailable`, `bucket_region`, `bucket_taken`,
+`artifact_stack_conflict`, `artifact_missing`, `artifact_variant`,
+`needs_confirmation`, and the usual ones: no region, no
+profile or no credentials). What to do with each:
+[Troubleshooting](operacion/solucion-de-problemas.md#rayito-setup).
+
+**With `--json`** a single document goes to stdout and progress to stderr. Its
+keys, in this order: `rayito` (SDK version), `region`, `account` (`null` if the
+plan failed), `dryRun`, `ready`, `steps`, `cost`, `result`, `doctor`, `error`
+and `exitCode`. Each element of `steps` carries `resource` (`bucket`,
+`iamStack` or `baseImage`), `name`, `action` (`create`, `update`, `reuse`,
+`wait` or `publish`), `source` (`argument`, `environment`, `iamStack`,
+`cdkBootstrap`, `artifactStack`, `rayitoDefault`, `release`, `artifact` or `null`), `status`, `imageVersion`,
+`release` and `previousBucket`. `result` (`bucket`, `imageArn`,
+`imageVersion`, `artifactUploaded`) is `null` until the preparation finishes;
+`doctor` is the document of `rayito --json doctor`, or `null` with `--dry-run`
+and if the preparation stopped earlier; `error` is `{"code", "message"}` or
+`null`. On an error the message also goes to stderr as `rayito: <message>`.
+
+```json
+{
+  "rayito": "0.15.0",
+  "region": "us-east-1",
+  "account": "123456789012",
+  "dryRun": true,
+  "ready": false,
+  "steps": [
+    {"resource": "bucket", "name": "amzn-s3-demo-bucket", "action": "reuse",
+     "source": "argument", "status": null, "imageVersion": null,
+     "release": null, "previousBucket": null},
+    {"resource": "iamStack", "name": "rayito-m0-iam", "action": "create",
+     "source": null, "status": null, "imageVersion": null,
+     "release": null, "previousBucket": null},
+    {"resource": "baseImage", "name": "rayito-base", "action": "publish",
+     "source": "release", "status": null, "imageVersion": null,
+     "release": "rayd-v0.15.0", "previousBucket": null}
+  ],
+  "cost": [
+    "pila de IAM: gratis",
+    "imagen: ≈ $0,04 por semana por versión publicada (mínimo una semana)",
+    "zip de la imagen en el bucket: céntimos"
+  ],
+  "result": null,
+  "doctor": null,
+  "error": null,
+  "exitCode": 0
+}
+```
+
+!!! info "Cost and activation"
+    - **Turns on:** running `rayito setup` and confirming. `--dry-run` only
+      reads the account; with an already prepared account it writes nothing
+      either.
+    - **AWS resources and calls:** with no reusable bucket, the
+      `rayito-m0-artifacts` stack (`CreateStack` without capabilities: a bucket
+      and its policy); the `rayito-m0-iam` stack
+      (`CreateStack`/`UpdateStack` with `CAPABILITY_NAMED_IAM`); the
+      `rayito-base` image (one object in the bucket, `CreateMicrovmImage` or
+      `UpdateMicrovmImage`); reads of `GetCallerIdentity`, `DescribeStacks`,
+      `HeadBucket`, `GetMicrovmImage` and `ListMicrovmImageVersions`; the HTTPS
+      download of `rayito-image.zip` and `SHA256SUMS`. The SDK does not call
+      `CreateBucket`: CloudFormation creates the bucket with your credentials.
+    - **Approximate cost:** IAM stack, free; the bucket costs nothing to exist
+      and its zips expire after 7 days; each published image version ≈ $0.04
+      per week (minimum one week); the zip in the bucket, cents. See
+      [Pricing](cost.md).
+    - **IAM:** administrator or *bootstrap* credentials, once, like
+      `cdk bootstrap`: CloudFormation, IAM (roles and policies), publishing the
+      image and, if it creates the bucket, S3 (`s3:CreateBucket`,
+      `s3:PutEncryptionConfiguration`, `s3:PutBucketPublicAccessBlock`,
+      `s3:PutBucketOwnershipControls`, `s3:PutLifecycleConfiguration`,
+      `s3:PutBucketTagging`, `s3:GetBucketPolicy`, `s3:PutBucketPolicy`). To use
+      the SDK afterwards, the minimal policy of
+      [Set up AWS](primeros-pasos/configurar-aws.md#3-la-pila-de-iam).
+    - **How to turn it off:** do not run it; to undo it, delete the stacks
+      (`rayito-m0-iam` and, if it exists, `rayito-m0-artifacts`) and the image
+      versions. The created bucket is kept: empty and delete it by hand.
+    - **Example:** `rayito setup --dry-run`.
+
+!!! warning "The hash does not prove authenticity"
+    The check against `SHA256SUMS` catches a truncated, corrupted or wrong zip,
+    but not that it is authentic (`SHA256SUMS` comes from the same release).
+    For the cosign signature, verify the zip and pass it with `--artifact`:
+    [Verify a release](verify.md).
 
 ## `rayito doctor` { #rayito-doctor }
 

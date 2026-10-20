@@ -158,6 +158,11 @@ export class CliConsole {
     }
   }
 
+  /** `true` si la entrada es una terminal: sólo entonces se puede preguntar. */
+  get canPrompt(): boolean {
+    return this.#terminal.stdin?.isTTY === true;
+  }
+
   /** La terminal local como entrada y salida crudas; `undefined` si la terminal no tiene entrada cruda. */
   get interactive(): InteractiveIo | undefined {
     const input = this.#terminal.stdin;

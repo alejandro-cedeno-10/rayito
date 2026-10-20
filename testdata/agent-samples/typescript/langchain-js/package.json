@@ -1,0 +1,13 @@
+{
+  "name": "support-triage-js",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Agente de soporte de LangChain.js: createAgent con dos herramientas",
+  "engines": { "node": ">=22" },
+  "dependencies": {
+    "@langchain/aws": "^1.0.0",
+    "langchain": "^1.0.0",
+    "zod": "^4.0.0"
+  }
+}

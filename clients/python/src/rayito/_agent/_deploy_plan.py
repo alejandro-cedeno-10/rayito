@@ -68,7 +68,9 @@ class AgentDeployStep:
     cerrada (`base_image`, `secret_created`, `bucket`, `image`, `fleet`,
     `warm`) y `detail` un dato corto para mostrar (la pasarela, el origen y el
     bucket, la versión de la imagen); nunca el valor ni el nombre de un
-    secreto."""
+    secreto. Con `target="agentcore"`, `kind` es la clave de la línea de
+    progreso (`stackDeploy`, `buildStart`, `runtimeReady`...) y `detail` la
+    línea ya escrita."""
 
     kind: str
     detail: str

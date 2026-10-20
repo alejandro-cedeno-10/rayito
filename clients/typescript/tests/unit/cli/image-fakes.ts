@@ -170,13 +170,18 @@ export class FakePublishPorts implements PublishPorts {
     return this.#record("update", arn, request);
   }
 
-  async headObject(bucket: string, key: string): Promise<boolean> {
+  /** El `owner` de cada `headObject` y `putObject`, en orden. */
+  readonly objectOwners: string[] = [];
+
+  async headObject(bucket: string, key: string, owner: string): Promise<boolean> {
     this.calls.push(`headObject:${bucket}/${key}`);
+    this.objectOwners.push(owner);
     return this.objects.has(`${bucket}/${key}`);
   }
 
-  async putObject(bucket: string, key: string, body: Uint8Array): Promise<void> {
+  async putObject(bucket: string, key: string, body: Uint8Array, owner: string): Promise<void> {
     this.calls.push(`putObject:${bucket}/${key}`);
+    this.objectOwners.push(owner);
     this.objects.set(`${bucket}/${key}`, body);
   }
 

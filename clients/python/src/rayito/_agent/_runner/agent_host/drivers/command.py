@@ -64,6 +64,8 @@ def _request_line(request: Request, session_id: str) -> bytes:
         "model": request.model,
         "reasoning": request.reasoning,
     }
+    if request.aws_env is not None:
+        payload["aws_env"] = dict(request.aws_env)
     return (json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8")
 
 

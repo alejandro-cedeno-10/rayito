@@ -36,6 +36,8 @@ class FakeBuildClients:
     #: Líneas que devuelve `GetLogEvents` para el único log group simulado.
     log_lines: list[str] = field(default_factory=list)
     calls: list[tuple[str, ...]] = field(default_factory=list)
+    #: El `ExpectedBucketOwner` de cada `head_object` y `put_object`, en orden.
+    owners: list[str] = field(default_factory=list)
     #: Qué devuelve `submit_build` (create/update-microvm-image).
     next_build_version: str = "1"
     #: Código de `ClientError` que create/update-microvm-image lanzan en vez
@@ -144,14 +146,18 @@ class _FakeS3:
             raise _client_error("NoSuchKey")
         return {"Body": _Readable(content)}
 
-    def head_object(self, *, Bucket: str, Key: str) -> dict[str, Any]:
+    def head_object(self, *, Bucket: str, Key: str, ExpectedBucketOwner: str) -> dict[str, Any]:
         self._parent.calls.append(("head_object", Bucket, Key))
+        self._parent.owners.append(ExpectedBucketOwner)
         if (Bucket, Key) not in self._parent.objects:
             raise _client_error("404")
         return {}
 
-    def put_object(self, *, Bucket: str, Key: str, Body: bytes) -> dict[str, Any]:
+    def put_object(
+        self, *, Bucket: str, Key: str, Body: bytes, ExpectedBucketOwner: str
+    ) -> dict[str, Any]:
         self._parent.calls.append(("put_object", Bucket, Key))
+        self._parent.owners.append(ExpectedBucketOwner)
         self._parent.objects[(Bucket, Key)] = Body
         return {}
 

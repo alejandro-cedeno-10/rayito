@@ -3095,3 +3095,474 @@ mide la reanudación.
 **Reversible.** Aditivo: módulos, claves del fichero y constantes nuevos;
 quitar `deploy_agent` y `AgentFleet` deja el 0.14 anterior intacto. Detalle en
 `openspec/changes/agent-zero-config/design.md`.
+
+## ADR-030 — rayito setup: preparar la cuenta en una orden
+
+**Contexto.** Preparar una cuenta y una región para Rayito son seis pasos a
+mano (`configurar-aws.md`): credenciales, un bucket, la pila `rayito-m0-iam` con
+`infra/iam.yaml`, la descarga de `rayito-image.zip` y `SHA256SUMS` de la release,
+`rayito image publish` y `rayito doctor`. Cada paso es una ocasión de equivocar
+un parámetro (el bucket en otra región, una pila sin `BuildRoleArn`, una imagen
+de otra versión de `rayd`), y quien llama a `Sandbox.create()` antes de acabar
+recibe un `ResourceNotFoundException` sin pista de qué falta. 0.14 ya tiene
+casi todas las piezas: el bucket de `cdk bootstrap` que reutiliza
+`rayito agent deploy`, `rayito image publish` idempotente, `OptionalStacks` y
+`rayito doctor`. Esta decisión las pone detrás de una orden idempotente, como
+`cdk bootstrap` prepara un entorno para CDK. Lo que no existe y no se añade:
+ningún camino de código del SDK que llame a `CreateBucket` (`AWS_API_NOTES.md`);
+la enmienda del 2026-10-19 (al final de este ADR) hace que `setup` cree el
+bucket cuando no hay ninguno, pero con CloudFormation, no con llamadas de S3.
+
+**Decisión.**
+
+1. **Un servicio privado `AccountSetup` con un plan puro, detrás de puertos.**
+   `rayito setup` es una orden de la CLI sobre un servicio privado, como
+   `rayito doctor`; no se exporta nada de `rayito/__init__.py` ni de
+   `src/index.ts`, porque una API pública (síncrona y asíncrona, shim, docs) no
+   la pidió nadie. El dominio (`classify_stack`, `bucket_candidates`,
+   `decide_bucket`, `plan_bucket_creation`, `classify_image`, `plan_setup`, `parse_checksums`,
+   `verify_checksum`) no importa `boto3`, `@aws-sdk/*`, `typer`, HTTP ni
+   sistema de ficheros; el servicio sólo llama a puertos (pila de IAM, pila
+   del bucket, bucket, imagen base, publicador, descarga de la release) y los adaptadores
+   traducen los fallos a `AccountSetupException` / `AccountSetupError`, con un
+   `code` cerrado. Python y TypeScript tienen las mismas capas y el mismo
+   comportamiento.
+2. **Tres recursos, cinco acciones, un plan.** El plan son siempre tres pasos,
+   en este orden: `bucket` (`reuse`, `wait` y, desde la enmienda, `create`), `iamStack` (`create`, `update`,
+   `reuse`, `wait`) y `baseImage` (`publish`, `reuse`, `wait`). Está `ready`
+   cuando los tres son `reuse` y pide confirmación si algún paso es `create`,
+   `update` o `publish`; un `wait` no cuesta nada nuevo. Primero lee (un
+   `DescribeStacks`, un `HeadBucket`, `GetMicrovmImage` y
+   `ListMicrovmImageVersions`) y cada escritura se decide de una observación
+   de esa misma ejecución: repetir tras un éxito observa tres `reuse` y no
+   escribe nada, y una cuenta preparada a mano se detecta como completa. La
+   pila se clasifica por su estado: ausente, `create`; `CREATE_COMPLETE`,
+   `UPDATE_COMPLETE` o `UPDATE_ROLLBACK_COMPLETE` con `BuildRoleArn`, `reuse`
+   (o `update` si su `ArtifactBucket` difiere, enviando sólo ese parámetro y
+   conservando el resto con `UsePreviousValue`); sin `BuildRoleArn`,
+   `stack_incomplete`; `DELETE_IN_PROGRESS`, `ROLLBACK_COMPLETE` y `*_FAILED`,
+   `stack_blocked`; otro `*_IN_PROGRESS`, `wait`. La imagen: ausente, `publish`;
+   con una versión `PENDING` o `IN_PROGRESS`, `wait`; con una versión
+   `SUCCESSFUL` y `ACTIVE`, `reuse`; sólo fallidas o inactivas, `publish`. Una
+   base lanzable es `reuse` sea cual sea el `rayd` con que se construyó:
+   compararla con la release exigiría descargar el zip en una detección de
+   sólo lectura, y `rayito doctor --launch` y `rayito image publish` ya cubren
+   esa diferencia.
+3. **La pila de IAM pasa por `OptionalStacks`, no por el catálogo.**
+   `scripts/gen_stack_assets.py` empaqueta `infra/iam.yaml` en los dos SDKs. Un
+   `StackComponent` `iam` declara sus siete parámetros (`ArtifactBucket`
+   obligatorio, el resto con el valor por defecto de la plantilla) y
+   `CAPABILITY_NAMED_IAM`, un valor del enum `Capability` de CloudFormation
+   verificado sin conexión en botocore 1.43.103 (`AWS_API_NOTES.md` §21). No
+   entra en `_registry.COMPONENTS`: `rayito stack list` muestra funciones
+   opcionales con coste, y esta pila es un prerrequisito con su nombre
+   histórico `rayito-m0-iam`.
+4. **Reutilizar un bucket y, sólo si no hay ninguno, crearlo** (redactado de
+   nuevo en la enmienda del 2026-10-19; el texto original prohibía crear un
+   bucket). Dos fases. *Reutilización*: los candidatos, en orden, son
+   `--bucket` o `RAYITO_BUCKET` (si se da uno explícito es el único), el
+   `ArtifactBucket` de la pila de IAM y el bucket de `cdk bootstrap`
+   (`cdk-<calificador>-assets-<cuenta>-<región>`, calificador `hnb659fds`). Cada
+   uno se comprueba con un `HeadBucket` con tres resultados: existe (en otra
+   región, `bucket_region`), no existe, o 403 (`bucket_unavailable`, salvo para
+   el de `cdk bootstrap`, que se salta porque Rayito no lo necesita). Una
+   cuenta con bucket nunca sale de esta fase: no hay lecturas ni pilas nuevas.
+   *Creación*: si ninguno sirve, el destino es el nombre explícito (si no
+   existía) o `rayito-artifacts-<cuenta>-<región>`, y `setup` despliega la
+   pila `rayito-m0-artifacts` con `infra/artifact-bucket.yaml` (un
+   `AWS::S3::Bucket` y su política) pasando sólo `BucketName`. Antes mira esa
+   pila: usable, la reutiliza; en curso, espera; bloqueada, `stack_blocked`;
+   gestiona otro bucket que el pedido, `artifact_stack_conflict`. Un bucket
+   que ya existe con el nombre por defecto y no es de esa pila nunca se adopta
+   (`bucket_taken`): el nombre se deduce del número de cuenta, así que otra
+   cuenta podría haberlo creado antes y recibir nuestros zips; si es tuyo, lo
+   pasas con `--bucket`. Como el bucket elegido se escribe en la pila de IAM, la
+   siguiente ejecución lo encuentra aunque no esté `RAYITO_BUCKET`.
+5. **El artefacto de la release, comprobado contra `SHA256SUMS`.** Sin
+   `--artifact`, descarga por HTTPS `SHA256SUMS` y `rayito-image.zip` de la
+   release `rayd-v<versión del SDK>` a un directorio temporal que la CLI borra
+   (Python con `urllib.request`, TypeScript con `fetch`; plazo de 600 s por
+   asset) y compara el sha256 del zip con su línea (`checksum_missing`,
+   `checksum_mismatch`: no se publica nada). Un estado HTTP distinto de 2xx,
+   un plazo agotado o un fallo de red son `release_download`. Qué prueba y qué
+   no: el hash detecta un zip truncado, corrupto o equivocado, **no
+   autenticidad**: `SHA256SUMS` sale de la misma release que el zip. La firma
+   la comprueba `cosign verify-blob` (`verify.md`); quien la quiera verifica el
+   zip y lo pasa con `--artifact`. La documentación y `SECURITY.md` (T10) lo
+   dicen sin rodeos.
+6. **Orden de aplicación, idempotencia y reanudación.** Región admitida (antes
+   de cualquier llamada), plan, impresión del plan y del coste, `--dry-run`
+   termina ahí, confirmación si hace falta (`--yes`, o terminal; si no,
+   `needs_confirmation`), y se aplica: la pila (`create`/`update` más espera, o
+   `wait`), la salida `BuildRoleArn` (`stack_incomplete` si falta) y la imagen
+   (esperar el build en curso, o publicar: descargar y verificar, subir por
+   contenido, reutilizar una versión idéntica o crear/actualizar la imagen y
+   esperar a que sea lanzable). La clave de S3 es por contenido
+   (`rayito/images/rayd-<sha12>.zip`), así que una subida cortada se repite y
+   una terminada se salta. Una ejecución cortada deja la pila o una versión en
+   curso, y la siguiente planifica `wait` y nunca lanza un segundo build. Un
+   `wait` que acaba en fallo termina con `image_build_failed` y no escala a un
+   `publish` dentro de la misma ejecución. La versión de la base gestionada es
+   siempre `latest`. Al final ejecuta `rayito doctor` (sin `--launch`, que
+   cuesta un sandbox que nadie pidió) y publica `RAYITO_TEMPLATE` y
+   `RAYITO_BUCKET`.
+7. **Códigos de salida y errores.** `0`: éxito, `--dry-run`, nada que hacer con
+   el doctor limpio. `2`: uso o entorno (`unsupported_region`,
+   `bucket_unavailable`, `bucket_region`, `bucket_taken`,
+   `artifact_stack_conflict`, `artifact_missing`,
+   `artifact_variant`, `needs_confirmation`, y los de siempre sin región,
+   perfil o credenciales). `1`: `stack_blocked`, `stack_incomplete`,
+   `release_download`, `checksum_missing`, `checksum_mismatch`,
+   `image_build_failed`, un «no» en la confirmación, un `FAIL` del doctor y un
+   error de AWS sin traducir. `AccountSetupException` no hereda de
+   `SandboxException` (nada aquí es atribuible a un sandbox), es privada y su
+   mensaje nunca lleva una URL, un enlace prefirmado, un token ni el mensaje
+   crudo de AWS. Con `--json` sale igualmente un único documento con
+   `error: {code, message}` y `exitCode`, más la línea `rayito: <mensaje>` por
+   stderr.
+8. **Los errores de una cuenta sin preparar apuntan a `rayito setup`.** Una
+   frase (`ACCOUNT_SETUP_HINT`) se añade como `"<mensaje> (<pista>)"` al
+   `ResourceNotFoundException` de `RunMicrovm` (misma clase, mismo
+   `status_code`, `aws_code` y causa saneada: cubre `Sandbox.create()`, el pool
+   y los shims de E2B) y a los errores «no hay bucket» y «la imagen base no
+   existe» de `deploy_agent`/`deployAgent`. No se añade ninguna llamada para
+   averiguar si la cuenta está preparada.
+9. **El coste sólo cita cifras ya publicadas.** Imagen: «≈ $0,04 por semana por
+   versión publicada (mínimo una semana)» (`cost.md`); pila de IAM: «gratis» y
+   zip en el bucket: «céntimos» (`configurar-aws.md`); build: «≈ 10 min». No es
+   una función opcional (no crea nada que un sandbox necesite en ejecución más
+   allá de lo que el tutorial ya hacía crear), así que no tiene fila en
+   `optional-features.md`; su referencia en la CLI y el tutorial llevan la caja
+   «Coste y activación». El contrato compartido de las dos CLI (opciones,
+   ayuda, salida humana, documento JSON, constantes, errores) vive en
+   `testdata/account-setup/` y los dos SDK lo comparan en sus tests.
+
+**Consecuencias.** Una orden prepara una cuenta, tenga o no bucket (ver la
+enmienda). `rayito setup`
+nunca cambia una cuenta preparada a mano que funciona ni sube `rayito-base` a un
+`rayd` más nuevo: las dos cosas siguen siendo explícitas (`rayito image
+publish`). Quien prefiere artefactos verificados con cosign conserva ese camino
+con `--artifact`. El SDK distribuye ahora `infra/iam.yaml`; un cambio en
+`infra/` llega a los usuarios por `gen_stack_assets.py --check`, que ya es una
+puerta. Riesgos: una SCP de la organización puede denegar `iam:CreateRole` con
+nombres fijos o `cloudformation:CreateStack` con `CAPABILITY_NAMED_IAM` (la
+aceptación lo comprueba antes, sólo lectura, con la simulación IAM de `rayito
+doctor`); detrás de un proxy corporativo `urllib` respeta `HTTPS_PROXY` pero el
+`fetch` de Node no, y `--artifact` es el camino documentado; durante la
+aceptación de un PR de release la release `rayd-v<versión nueva>` aún no existe
+y la prueba usa `--artifact`; los roles se llaman `rayito-m0-*-<región>`, así
+que dos regiones no chocan, pero una pila a medio borrar puede dejar un nombre
+ocupado, y `stack_blocked` manda borrar la pila primero.
+
+**Alternativas descartadas.** Crear el bucket si falta: descartada en la
+redacción original y aprobada después por el mantenedor (enmienda). Hacer de la pila de IAM un componente del catálogo
+(`rayito stack deploy iam`): el catálogo es para funciones opcionales con coste,
+su nombre por defecto sería `rayito-iam` y no `rayito-m0-iam`, y habría dos
+formas de desplegar la misma pila. Un `UpdateStack` siempre, para llevar las
+pilas antiguas a la plantilla empaquetada: convierte una ejecución de sólo
+lectura sobre una cuenta preparada en una escritura que pide permisos de IAM
+que quien la preparó a mano quizá no tiene, y cambiaría políticas sin pedirlo.
+Verificar el bundle de cosign dentro del SDK (sigstore-python, sigstore-js): dos
+dependencias pesadas y una ruta de actualización de la raíz de confianza para
+una orden; `--artifact` deja abierto el camino de cosign. Embeber el sha256 del
+zip en el SDK: las ruedas y el paquete npm se construyen en jobs que no dependen
+de `rayd-build`, así que el hash no se conoce al construirlos; exigiría cambiar
+el pipeline de release. Ejecutar `rayito doctor --launch` al final: cuesta un
+sandbox (≈ $0,002) que el usuario no pidió; el mensaje final lo sugiere. Una API
+pública `AccountSetup`: especulativa.
+
+**Reversible.** Aditivo: una orden, un paquete privado en cada SDK, dos
+plantillas empaquetadas, una frase añadida a tres mensajes y el contrato de
+pruebas; quitar `rayito setup` deja el 0.14 anterior intacto y el camino a mano
+sigue documentado. Detalle en `openspec/changes/account-setup/design.md`.
+
+**Enmienda 2026-10-19: `rayito setup` crea el bucket de artefactos cuando no
+hay ninguno.** El mantenedor decidió que una sola orden debe dejar la cuenta
+lista, como `cdk bootstrap`; esto sustituye al punto 4 original (que
+prohibía crear un bucket) y a la alternativa descartada «crear el bucket si falta».
+
+- *Cuándo.* Sólo si ni `--bucket`, ni `RAYITO_BUCKET`, ni el bucket de la pila
+  de IAM, ni el de `cdk bootstrap` sirven (fases de reutilización y de creación
+  del punto 4). `rayito agent deploy` no cambia: reutiliza, no crea.
+- *Cómo.* Con la pila `rayito-m0-artifacts` y `infra/artifact-bucket.yaml`
+  (nombre por defecto `rayito-artifacts-<cuenta>-<región>`), no con llamadas de
+  S3: el SDK sigue sin llamar a `CreateBucket`; lo hace CloudFormation con las
+  credenciales de quien ejecuta `setup`. Un `AWS::S3::Bucket` con SSE-S3
+  (`AES256`), bloqueo de todo acceso público, ACL desactivadas
+  (`BucketOwnerEnforced`) y los objetos de `rayito/images/` caducando a los 7
+  días (un zip sólo se lee mientras se construye la versión de la imagen, y
+  `rayito image publish` lo vuelve a subir si falta); un `AWS::S3::BucketPolicy`
+  que niega todo acceso sin TLS. `DeletionPolicy` y `UpdateReplacePolicy` son
+  `Retain`: borrar la pila conserva el bucket. Una plantilla propia y no un
+  componente del catálogo (`rayito stack list`), igual que la de IAM.
+- *Alternativas descartadas.* Llamadas S3 directas (`CreateBucket`,
+  `PutBucketEncryption`, `PutPublicAccessBlock`, `PutBucketOwnershipControls`,
+  `PutBucketPolicy`, `PutBucketLifecycleConfiguration`): seis APIs de escritura
+  nuevas en los dos SDK y un fallo a medias deja un bucket a medio configurar
+  sin registro de lo aplicado; la pila es ese registro. El bucket dentro de la
+  pila de IAM: mezcla un recurso de datos que se conserva con roles que se
+  borran, y haría derivar toda `rayito-m0-iam` desplegada a mano. Adoptar el
+  bucket con el nombre por defecto sin pila: ver `bucket_taken` arriba. SSE-KMS:
+  una clave cuesta y obliga a dar `kms:*` al rol de build. Versionado: las
+  claves son por contenido y las versiones no vigentes seguirían costando.
+  `DeletionPolicy: Delete`: CloudFormation no borra un bucket con objetos.
+- *Consecuencias.* `setup` necesita permisos de administrador o de bootstrap una
+  vez, como `cdk bootstrap`: CloudFormation, IAM y, cuando crea el bucket, S3;
+  la política `CallerPolicy` del tutorial no alcanza. Un bucket creado por
+  `setup` sigue ahí al borrar la pila: se vacía y se borra a mano. Errores
+  nuevos: `bucket_taken` y `artifact_stack_conflict` (código de salida 2);
+  `no_bucket` desaparece y `bucket_unavailable` queda sólo para el 403.
+- *Riesgo.* Una SCP de la organización puede denegar `s3:CreateBucket` o
+  `s3:PutBucketPolicy`; la aceptación lo simula antes de escribir nada.
+- *Etiquetas de pila.* `rayito setup --tag K=V` (repetible) pasa las etiquetas
+  como `Tags` de `CreateStack`/`UpdateStack` de `rayito-m0-artifacts` y
+  `rayito-m0-iam`; CloudFormation las propaga a los recursos. Una pila
+  reutilizada no se reetiqueta y la imagen no las recibe. Existe porque una SCP
+  que exige etiquetas deniega `s3:CreateBucket` sin ellas (D11).
+- Detalle (D2, D4, D10, D11) en `openspec/changes/account-setup/design.md`.
+
+## ADR-031 — agentcore-deploy: despliega en Amazon Bedrock AgentCore Runtime
+
+**Contexto.** 0.14 despliega un proyecto de agente existente en una flota de
+Lambda MicroVMs con una llamada (`deploy_agent`, `deployAgent`, `rayito agent
+deploy`, ADR-029) y ya sabe exportar el mismo proyecto como un contexto de
+contenedor listo para AgentCore (`export(target="agentcore")`: Dockerfile
+`linux/arm64`, puerto 8080, `/ping` y `/invocations`, cabecera de sesión de
+AgentCore). Pasar de ese contexto a un Amazon Bedrock AgentCore Runtime en
+marcha sigue siendo manual: construir una imagen arm64 (Docker con buildx, o
+CodeBuild a mano), crear un repositorio de ECR, escribir un rol de ejecución,
+crear el runtime, acordarse de activar MMDSv2 (obligatorio desde el
+2026-06-30: sin él toda invocación falla) y escribir código de invocación con
+SigV4 e ids de sesión de al menos 33 caracteres. Los equipos que estandarizan
+en AgentCore quieren la experiencia sin configuración de 0.14 con AgentCore
+como destino, desde el mismo proyecto, con la misma API de `invoke` y sin
+Docker local. Esta decisión añade ese destino sin tocar el de MicroVMs, que
+sigue siendo el predeterminado.
+
+**Decisión.**
+
+1. **Un destino nuevo, opcional, en los puntos de entrada que ya existen
+   (D1).** `deploy_agent`, `deploy_agent_async` y `plan_deploy` (Python) y
+   `deployAgent` y `planDeploy` (TypeScript) aceptan `target` (`microvm` por
+   defecto, o `agentcore`) y `agentcore` con `AgentCoreOptions`; la CLI,
+   `--target microvm|agentcore` en `rayito agent deploy`, `invoke`, `status` y
+   `stop`, más las órdenes nuevas `rayito agent list` y `rayito agent delete`
+   (sólo `--target agentcore`). Con `microvm` corre el código de 0.14 sin
+   cambios, con los mismos tipos de retorno, salida y llamadas a AWS; sin
+   `target="agentcore"` no se crea ni se carga ningún cliente de AgentCore,
+   CodeBuild ni ECR, y un test en cada SDK lo comprueba. Detrás hay un
+   servicio de aplicación privado sobre puertos con un dominio puro (nombres,
+   validación, tabla de opciones, ids de sesión, etiqueta de imagen, ARNs de
+   Bedrock y de secretos, plan y decisiones de aplicación) y adaptadores que
+   traducen cada error de AWS por su código a `AgentCoreException` /
+   `AgentCoreError` (un `code` cerrado y un `exit_code` / `exitCode`),
+   `RateLimitException`, `QuotaExceededException` o `AgentException`.
+   `AgentCoreException` es pública y no hereda de `SandboxException`: nada de
+   esto es atribuible a un sandbox (mismo razonamiento que
+   `AccountSetupException`, ADR-030).
+2. **Construcción: una imagen de contenedor que construye CodeBuild, no el
+   despliegue directo de código (D2).** El despliegue directo (`codeConfiguration`)
+   corre un único runtime de lenguaje gestionado por agente, y el host de
+   cero configuración necesita más: cada framework de TypeScript corre como el
+   host de Python más un puente de Node, y OpenCode y Hermes instalan
+   binarios e intérpretes fijados. Además habría que armar un zip para arm64 en
+   la máquina del desarrollador (las ruedas nativas de macOS o x86 serían
+   erróneas) y se saltaría la exportación que 0.14 ya prueba byte a byte en los
+   dos SDK. La imagen reutiliza esa exportación sin cambios: la imagen que
+   escribe `rayito agent export --target agentcore` y la que corre `deploy` son
+   la misma. CodeBuild (`ARM_CONTAINER`, `BUILD_GENERAL1_SMALL`) construye
+   nativamente en Graviton en las 21 regiones donde AgentCore tiene microVMs,
+   sin QEMU ni Docker local; la guía de AgentCore recomienda CodeBuild para
+   builds arm64 y un build cuesta unos $0,02-0,03 pasado el nivel gratuito. La
+   imagen base es la fijada por digest de la exportación; CodeBuild la baja del
+   espejo de ECR Public de las imágenes oficiales de Docker, con el mismo
+   digest, mediante el argumento de build `AGENT_BASE_IMAGE`, porque Docker Hub
+   limita las descargas anónimas desde las direcciones compartidas de
+   CodeBuild.
+3. **La infraestructura de cada agente es una pila de CloudFormation; el
+   runtime, la API (D3).** `infra/agentcore-runtime.yaml` se despliega como
+   `rayito-agentcore-<nombre>` por `OptionalStacks.deploy` con un
+   `StackComponent` que **no** está en el catálogo de `rayito stack` (como las
+   pilas de IAM y del bucket de `rayito setup`, ADR-030): repositorio de ECR
+   (etiquetas inmutables, análisis al subir, conserva las últimas 5 imágenes,
+   se vacía al borrar la pila), proyecto de CodeBuild, su grupo de logs (14
+   días), el rol de build y el rol del runtime, con `CAPABILITY_IAM` y las tres
+   etiquetas fijas más las de `--tag`. El runtime se crea con
+   `CreateAgentRuntime` / `UpdateAgentRuntime` y no como recurso de la pila:
+   la imagen debe existir antes que el runtime y el repositorio antes que la
+   imagen (una pila con el runtime pediría dos actualizaciones por despliegue),
+   y la API permite esperar a `READY`, informar de la versión, exigir MMDSv2 y
+   actualizar de forma idempotente por nombre con un `clientToken`.
+4. **Nombres y propiedad (D4).** El nombre del agente es el del template
+   (`[image].template`) o del proyecto, validado con
+   `^[a-z0-9]+(?:[_-][a-z0-9]+)*$` y de hasta 41 caracteres, para que quepan
+   todos los derivados: runtime `rayito_<nombre>` (con `_` en vez de `-`),
+   pila `rayito-agentcore-<nombre>`, repositorio `rayito/agentcore/<nombre>`,
+   proyecto de CodeBuild `rayito-agentcore-<nombre>` y clave de origen
+   `rayito/images/agentcore/<nombre>/<etiqueta>.zip`, dentro del prefijo
+   `rayito/images/` que el bucket de `rayito setup` caduca a los 7 días. Un
+   runtime es de Rayito sólo si tiene ese nombre **y** la marca
+   `rayito.agentcore/1` en la descripción: con el nombre y sin la marca es
+   `name_conflict` y nunca se toca.
+5. **El plan no llama a AWS; las decisiones se toman al aplicar, de
+   observaciones frescas (D5).** `plan_deploy`, `planDeploy` y `--dry-run` no
+   hacen ninguna llamada ni cargan ningún cliente: validan lo que se puede
+   validar sin red, resuelven el bucket sólo de fuentes explícitas (argumento,
+   `[deploy].bucket`, `RAYITO_BUCKET`, o descubrimiento al aplicar) y muestran
+   tres pasos `planned` (pila, imagen, runtime), la sección de seguridad, los
+   avisos y el coste. Al aplicar, tras confirmar, se observa y se decide en
+   orden: identidad y bucket (un bucket de otra región es `bucket_region`:
+   CodeBuild sólo lee código de su región); pila (ausente `create`, usable
+   `update` o `reuse` si CloudFormation no tiene cambios, en curso `wait`,
+   bloqueada `stack_blocked`, sin las seis salidas `stack_failed`, con la
+   clasificación `classify_stack` que `rayito setup` ya usa y que pasa a un
+   módulo compartido); imagen (la etiqueta existe, `reuse`; si no, `build`:
+   subir el zip, `StartBuild`, sondear, borrar el zip; más de 2 GB,
+   `image_too_large`); runtime (ninguno, `create` + espera + `UpdateAgentRuntime`
+   con MMDSv2 + espera; ajeno, `name_conflict`; en curso, `wait`; `CREATE_FAILED`,
+   `DELETING` o `DELETE_FAILED`, `runtime_blocked`; `UPDATE_FAILED`, `update`;
+   `READY`, `reuse` si los ocho campos comparados coinciden, si no `update`).
+6. **Idempotencia (D6).** La etiqueta de la imagen es el contenido: `src-` más
+   los 16 primeros caracteres hexadecimales del sha256 del árbol de la
+   exportación, con un encuadre fijo, así que el mismo proyecto da la misma
+   etiqueta en los dos SDK. El `clientToken` es `rayito-` más 32 caracteres del
+   sha256 de la petición canónica y `StartBuild.idempotencyToken` es la
+   etiqueta: un reintento nunca crea un duplicado ni un segundo build. Redesplegar
+   sin cambios hace un `UpdateStack` sin efecto, ningún build y ninguna
+   escritura del runtime, y comunica `reuse` tres veces; un proyecto cambiado
+   actualiza el mismo runtime. Un despliegue interrumpido se reanuda.
+7. **Invocación y sesiones: la misma API que `AgentFleet` (D7).**
+   `AgentCoreFleet.invoke(prompt, session_id=None, model=None, reasoning=False)`
+   y `stream(...)` devuelven el mismo `AgentResult` y los mismos eventos que
+   `AgentFleet`; por debajo, `InvokeAgentRuntime` con SigV4, `accept`
+   `application/json` o `text/event-stream` y plazos de lectura de 900 s y 3600 s
+   (cuotas de AgentCore). El id de sesión va sólo en la cabecera
+   (`runtimeSessionId`): sin id, `rayito-` y 32 caracteres de un uuid4; un id del
+   llamante de 33 a 100 caracteres válidos se usa tal cual; cualquier otro no
+   vacío se convierte en `rayito-` más 32 caracteres del sha256 de su UTF-8, de
+   modo que el mismo id del llamante llega siempre a la misma sesión. El
+   resultado devuelve el id realmente usado y pasarlo continúa la conversación,
+   como el manejador enrutable de una flota de MicroVMs.
+8. **MMDSv2 siempre activo (D3, D9).** `CreateAgentRuntime` no admite
+   `metadataConfiguration`, así que tras crear y llegar a `READY` se manda un
+   `UpdateAgentRuntime` con la configuración completa y `requireMMDSV2=true`, y
+   todo `UpdateAgentRuntime` lo incluye. Es obligatorio desde el 2026-06-30.
+9. **La imagen: la exportación de 0.14 más dos adiciones sólo para AgentCore
+   (D9).** `render_export(project, target="agentcore")` añade `ARG
+   AGENT_BASE_IMAGE=<referencia fijada>` antes de `FROM` y un `FROM
+   --platform=linux/arm64 ${AGENT_BASE_IMAGE}`; para un framework de la lista
+   de adaptadores por entorno (hoy `vercel-ai`, cuyo cliente de Bedrock no trae
+   proveedor de credenciales de AWS) un venv de botocore fijado por hash y un
+   ayudante que el host ejecuta antes de cada invocación, de modo que el puente
+   de Node recibe las tres variables de credenciales del rol del runtime sólo
+   mientras dura la invocación; y una sección del README sobre AgentCore, MMDSv2
+   y la diferencia de seguridad. El destino `docker` no cambia ni un byte. Las
+   variables de entorno del runtime son las del proyecto más `AWS_REGION` y
+   `AWS_DEFAULT_REGION` con la región del despliegue; nunca secretos.
+10. **Las opciones de flota que no aplican no se aproximan en silencio (D10).**
+    La tabla `optionsTable` del contrato es normativa. Una opción de MicroVMs
+    pasada **en la llamada** que no tiene sentido en AgentCore es
+    `option_not_supported` antes de cualquier llamada a AWS (`min_vms`,
+    `max_vms`, `warm_vms`, `scale_in_after_seconds`, `--memory`, `--port`,
+    `--timeout`, `--idle`, `--secret`, `--create-secret`, `--token-file`,
+    `--keep-on-failure`, las de la imagen base, `session_index`,
+    `pool_backend`, `warm_timeout_seconds`). El mismo valor que viene del
+    **fichero de proyecto** (compartido entre destinos) es un aviso en el plan
+    y se ignora: `[scaling]`, `memory_mib`, `[serve].port|timeout|idle`,
+    `[deploy].base_image_version`. Aplican `max_concurrency`, `queue_max`,
+    `queue_timeout_seconds`, `bucket`, `build_image`, `build_timeout_seconds`,
+    `on_step`, `on_build_logs` y `env`; `sessions` aplica como `dedicated`. Una
+    política de salida o de red del proyecto es `network_policy_unsupported`:
+    el modo PUBLIC no filtra la salida y aplicar media política sería un
+    riesgo silencioso. Un proveedor de modelo que no sea `bedrock` es
+    `provider_unsupported`: sin pasarela, su clave quedaría en claro en la
+    configuración del runtime.
+11. **La diferencia de seguridad se dice en todas partes (D11).** En MicroVMs
+    el agente nunca ve la credencial del modelo (ADR-023, ADR-025). En
+    AgentCore no hay pasarela de secretos de Rayito: el agente obtiene las
+    credenciales del rol del runtime por el servicio de metadatos de la microVM,
+    y cualquier código que corra en la sesión puede leerlas. La compensación es
+    el mínimo privilegio: el rol sólo puede invocar en Bedrock los ARNs de los
+    modelos resueltos (un id de perfil de inferencia da el ARN del perfil en la
+    región del modelo y el modelo base en cualquier región; un perfil `global.`
+    suma además el ARN del modelo base sin región) y sólo lee los secretos de
+    `--readable-secret`; nada más allá de lo básico documentado (extraer su
+    imagen de ECR, escribir en su grupo de logs, X-Ray, métricas en el espacio
+    `bedrock-agentcore` y tokens de identidad de carga de trabajo sin
+    `GetWorkloadAccessTokenForUserId`). El plan, el README exportado, la guía,
+    `security.md` y `SECURITY.md` lo dicen con las mismas palabras.
+12. **Sin CDK por ahora (D12).** Un constructo de CDK de Rayito sería un tercer
+    paquete (jsii, su propio pipeline de release y de versiones, publicado en
+    npm y PyPI) que envolvería el `aws_bedrockagentcore.Runtime` de
+    `aws-cdk-lib`, que ya existe y admite una imagen de ECR o un asset local.
+    Es grande e independiente de la CLI y de los SDK, y va a un cambio
+    posterior; nada de éste lo bloquea: la plantilla, el contexto exportado y
+    las reglas de sesión son reutilizables.
+13. **Coste y activación (D13).** Sólo `target="agentcore"` (o `--target
+    agentcore`) crea algo. El plan muestra las líneas de coste del contrato
+    (precios de lista de la plataforma V1, CodeBuild por minuto con el nivel
+    gratuito, almacenamiento de ECR, ingesta de logs; el modelo lo cobra su
+    proveedor). Las docstrings y el TSDoc de `deploy_agent` / `deployAgent`,
+    `AgentCoreFleet` y `AgentCoreOptions` llevan el bloque «Coste y
+    activación»; la guía, la caja y una fila de `optional-features.md`, igual.
+14. **Orden de aplicación, borrado y errores.** Validar (sin AWS), plan,
+    imprimir plan, seguridad, avisos y coste; `--dry-run` termina ahí;
+    confirmación (`--yes` o terminal; si no, `needs_confirmation`); identidad
+    y bucket; pila; imagen; runtime. `delete` lista el runtime (comprueba que
+    sea de Rayito), lo borra y espera, borra la pila (el repositorio se vacía
+    solo) y borra el grupo de logs `/aws/bedrock-agentcore/runtimes/<id>-DEFAULT`;
+    sin nada que borrar, «nada que borrar» y salida 0; los zips de origen no
+    sobreviven a su build. Códigos de salida: `2` para uso y entorno, `1` para
+    fallos del lado de AWS; la lista cerrada de `code` está en
+    `testdata/agentcore-deploy/contract.json`. Con `--json` sale un único
+    documento con `error: {code, message}` y `exitCode`, más la línea
+    `rayito: <mensaje>` por stderr, como `rayito setup`. Los mensajes van en
+    español y nunca llevan un ARN, una URL, un token ni el texto crudo de AWS.
+
+**Consecuencias.** Una orden lleva un proyecto de 0.14 a AgentCore y el mismo
+proyecto sigue desplegándose en MicroVMs sin cambios; el contexto exportado y la
+imagen desplegada son el mismo artefacto. Rayito llama ahora a cuatro servicios
+de AWS más (plano de control y de datos de AgentCore, CodeBuild y ECR) y a
+`DeleteLogGroup` de CloudWatch Logs, todos detrás de puertos y documentados en
+`AWS_API_NOTES.md`. El Dockerfile de la exportación `agentcore` cambia (argumento
+de imagen base, README); el de `docker` no. Quien usa AgentCore pierde la
+garantía de la pasarela y los documentos lo dicen; el rol es de mínimo
+privilegio. `rayito agent delete` y `rayito agent list` sólo existen para
+AgentCore: una flota de MicroVMs se para con `rayito agent stop`. Riesgos: ECR
+informa del tamaño comprimido de la imagen y, si AgentCore aplica sus 2 GB a la
+imagen descomprimida, un agente grande fallaría al crear el runtime y no en la
+comprobación previa (la aceptación lo mide); no está comprobado sin red que
+OpenCode lea las credenciales del rol (si no puede, `opencode` entra en la lista
+de adaptadores por entorno, un cambio de datos); una cuenta nueva puede tener
+una cuota de un solo build arm simultáneo en CodeBuild (`build_quota` lo dice);
+una SCP que exija etiquetas al actualizar un runtime existente no está cubierta
+(las etiquetas se mandan al crear y no se actualizan después, no hay
+`TagResource`); el espejo de ECR Public podría ir por detrás de un digest y el
+digest fijado hace que el build falle de forma visible en vez de derivar.
+
+**Alternativas descartadas.** Despliegue directo de código: un runtime de
+lenguaje por agente, dependencias arm64 armadas en la máquina del desarrollador
+y una segunda vía de empaquetado que se aparta de la exportación probada. Docker
+local o buildx: lo excluye el requisito, además de ser lento y frágil bajo QEMU
+en x86. El starter toolkit o la CLI de AgentCore como dependencia: una tercera
+herramienta con sus ficheros de configuración y políticas de IAM «pensadas para
+desarrollo», con las que Rayito perdería el contrato compartido y el rol de
+mínimo privilegio. El runtime como recurso de CloudFormation: ver el punto 3. Una
+clave de origen fija `source.zip`: dos despliegues concurrentes de versiones
+distintas se pisarían; las claves por contenido borradas tras el build no
+cuestan nada. Aproximar las opciones de MicroVMs (`max_vms` a la cuota de
+sesiones, `--idle` al tiempo de inactividad): descartado, son semánticas
+distintas sin avisar; los equivalentes de AgentCore son opciones explícitas. Pasar
+la clave de un modelo que no es de Bedrock como variable de entorno del
+runtime: la leería `GetAgentRuntime` y el propio agente; AgentCore Identity
+podría guardarla, pero es otra función. Exigir MMDSv2 sólo cuando falle una
+invocación: desde el 2026-06-30 un runtime sin él no se puede invocar.
+
+**Reversible.** Aditivo: un destino opcional en los puntos de entrada, un
+paquete privado en cada SDK, una plantilla empaquetada, dos argumentos y una
+variable en la exportación `agentcore` y el contrato de pruebas; quitar el
+destino deja 0.14 intacto y la exportación manual sigue documentada. Detalle
+(D1 a D13), fuentes oficiales con fecha de consulta y el contrato en
+`openspec/changes/agentcore-deploy/design.md`,
+`testdata/agentcore-deploy/contract.json` y `AWS_API_NOTES.md` («Despliegue en
+AgentCore Runtime»).

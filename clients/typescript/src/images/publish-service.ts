@@ -160,7 +160,13 @@ async function uploadArtifact(
   const digest = createHash("sha256").update(payload).digest("hex");
   const key = artifactKey(digest, settings.artifactRunId);
   const uri = `s3://${settings.bucket}/${key}`;
-  const uploaded = await uploadIfAbsent(deps.ports, settings.bucket, key, payload);
+  const uploaded = await uploadIfAbsent(
+    deps.ports,
+    settings.bucket,
+    key,
+    payload,
+    await deps.ports.accountId(),
+  );
   deps.emit(
     uploaded
       ? `subido ${uri} (${payload.length} bytes)`
@@ -250,6 +256,14 @@ async function printRecentLogs(deps: PublishDeps, group: string): Promise<void> 
   }
 }
 
+/** La línea de progreso de cada lectura del gate de tres estados. */
+export function gateTickLine(gate: VersionGate, version: string, elapsedMs: number): string {
+  return (
+    `  image=${gate.imageState} version=${version} state=${gate.versionState} ` +
+    `status=${gate.versionStatus} (${Math.round(elapsedMs / MS_PER_SECOND)}s)`
+  );
+}
+
 function gateFacts(gate: VersionGate) {
   return {
     imageState: gate.imageState,
@@ -283,11 +297,7 @@ async function finalizeBuild(
     deps.sleep,
     {
       now: deps.now,
-      onTick: (read, elapsedMs) =>
-        deps.emit(
-          `  image=${read.imageState} version=${submitted.version} state=${read.versionState} ` +
-            `status=${read.versionStatus} (${Math.round(elapsedMs / MS_PER_SECOND)}s)`,
-        ),
+      onTick: (read, elapsedMs) => deps.emit(gateTickLine(read, submitted.version, elapsedMs)),
     },
   );
   const buildSeconds = (deps.now() - started) / MS_PER_SECOND;

@@ -30,6 +30,12 @@ const BASE_IMAGE_VERSION_KEY = "baseImageVersion";
 export const LAUNCHABLE_IMAGE_STATES: ReadonlySet<string> = new Set(["CREATED", "UPDATED"]);
 /** Imagen que ya no va a terminar: sondearla hasta el timeout sería esperar en vano. */
 export const FAILED_IMAGE_STATES: ReadonlySet<string> = new Set(["CREATE_FAILED", "UPDATE_FAILED"]);
+/**
+ * Versiones de imagen cuyo build sigue en marcha (`MicrovmImageVersionState`,
+ * `AWS_API_NOTES.md` §4): `rayito setup` espera a la más nueva en vez de
+ * lanzar un segundo build.
+ */
+export const BUILDING_VERSION_STATES: ReadonlySet<string> = new Set(["PENDING", "IN_PROGRESS"]);
 const SETTLED_VERSION_STATES: ReadonlySet<string> = new Set([
   SUCCESSFUL_VERSION_STATE,
   FAILED_VERSION_STATE,
@@ -77,8 +83,8 @@ export interface ImageBuildClients {
     arn: string,
     request: Record<string, unknown>,
   ): Promise<{ imageArn: string; imageVersion: string }>;
-  headObject(bucket: string, key: string): Promise<boolean>;
-  putObject(bucket: string, key: string, body: Uint8Array): Promise<void>;
+  headObject(bucket: string, key: string, owner: string): Promise<boolean>;
+  putObject(bucket: string, key: string, body: Uint8Array, owner: string): Promise<void>;
 }
 
 /** Los tres estados independientes que deben pasar antes de `run-microvm`. */
@@ -294,17 +300,19 @@ export async function submitImageBuild(
   };
 }
 
-/** Sube `payload` salvo que la clave (direccionada por contenido) ya exista. */
+/** Sube `payload` salvo que la clave (direccionada por contenido) ya exista.
+ * Las dos llamadas llevan `ExpectedBucketOwner=owner`: un bucket de otra cuenta falla. */
 export async function uploadIfAbsent(
   clients: ImageBuildClients,
   bucket: string,
   key: string,
   payload: Uint8Array,
+  owner: string,
 ): Promise<boolean> {
-  if (await clients.headObject(bucket, key)) {
+  if (await clients.headObject(bucket, key, owner)) {
     return false;
   }
-  await clients.putObject(bucket, key, payload);
+  await clients.putObject(bucket, key, payload, owner);
   return true;
 }
 

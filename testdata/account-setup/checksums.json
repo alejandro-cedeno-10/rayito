@@ -1,0 +1,47 @@
+{
+  "description": "Vectores de lectura de SHA256SUMS (formato de `sha256sum`: `<64 hex en minúsculas><espacio><espacio o *><nombre>`). Las líneas mal formadas se ignoran.",
+  "cases": [
+    {
+      "name": "release real: dos espacios",
+      "text": "1111111111111111111111111111111111111111111111111111111111111111  rayd\naaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  rayito-image.zip\n2222222222222222222222222222222222222222222222222222222222222222  rayd.cdx.json\n",
+      "asset": "rayito-image.zip",
+      "expected": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "name": "modo binario con asterisco",
+      "text": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa *rayito-image.zip\n",
+      "asset": "rayito-image.zip",
+      "expected": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "name": "sin la entrada",
+      "text": "1111111111111111111111111111111111111111111111111111111111111111  rayd\n",
+      "asset": "rayito-image.zip",
+      "expected": null
+    },
+    {
+      "name": "línea mal formada ignorada",
+      "text": "no-es-un-hash  rayito-image.zip\nbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb  rayito-image.zip\n",
+      "asset": "rayito-image.zip",
+      "expected": null
+    },
+    {
+      "name": "mayúsculas no valen",
+      "text": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA  rayito-image.zip\n",
+      "asset": "rayito-image.zip",
+      "expected": null
+    },
+    {
+      "name": "fin de línea CRLF",
+      "text": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  rayito-image.zip\r\n",
+      "asset": "rayito-image.zip",
+      "expected": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "name": "otro fichero con el mismo sufijo no cuenta",
+      "text": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc  old-rayito-image.zip\n",
+      "asset": "rayito-image.zip",
+      "expected": null
+    }
+  ]
+}

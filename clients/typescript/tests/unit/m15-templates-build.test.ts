@@ -93,6 +93,7 @@ describe("templates/build", () => {
     expect(info.alias).toBe("mi-template");
     expect(clients.calls.some((call) => call[0] === "createMicrovmImage")).toBe(true);
     expect(clients.calls.filter((call) => call[0] === "putObject")).toHaveLength(1);
+    expect(clients.objectOwners).toEqual([clients.accountIdValue, clients.accountIdValue]);
   });
 
   test("building twice with the same configuration reuses the version", async () => {

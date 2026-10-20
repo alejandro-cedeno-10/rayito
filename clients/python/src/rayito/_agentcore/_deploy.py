@@ -1,0 +1,268 @@
+"""El despliegue de un agente en AgentCore desde un proyecto (ADR-031): lo que
+`deploy_agent(target="agentcore")`, `plan_deploy(target="agentcore")` y
+`rayito agent deploy --target agentcore` comparten. Detecta el proyecto, calcula
+el plan sin llamar a AWS (`plan_agentcore`) y lo aplica sobre los puertos de AWS
+(`apply_agentcore`); `deploy_agentcore` y `deploy_agentcore_async` son las dos
+cosas juntas y devuelven la flota.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import dataclasses
+import os
+import time
+from collections.abc import Callable, Collection, Mapping
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, Final
+
+from rayito._agent._deploy_plan import (
+    AgentDeployOptions,
+    AgentDeployStep,
+    project_for,
+    resolved_region,
+    with_default_excludes,
+)
+from rayito._agent._export import RawAppNotExportable, render_export
+from rayito._agent._project_domain import AgentProject
+from rayito._agentcore._domain import build_plan
+from rayito._agentcore._models import (
+    AgentCoreApplyRequest,
+    AgentCoreDeployment,
+    AgentCoreDeployPlan,
+    AgentCoreOptions,
+)
+from rayito._agentcore._ports import AgentCoreGateways, RuntimeInvoker
+from rayito._agentcore._service import AgentCoreDeployer
+from rayito._aws_region import aws_session
+from rayito._limits import AGENT_SOURCE_DEFAULT_EXCLUDES
+from rayito.exceptions import AgentCoreException
+
+if TYPE_CHECKING:
+    from rayito._agent._detect_report import DetectOverrides
+    from rayito._agentcore._fleet import AgentCoreFleet
+    from rayito._agentcore._fleet_async import AsyncAgentCoreFleet
+
+
+@dataclass(frozen=True)
+class AgentCorePorts:
+    """Las dependencias de `deploy_agent(target="agentcore")` que los tests
+    sustituyen: los puertos de AWS (`gateways`), el invocador y el entorno. En
+    producción es el valor por defecto y no se pasa."""
+
+    gateways: AgentCoreGateways | None = None
+    invoker: RuntimeInvoker | None = None
+    environ: Mapping[str, str] | None = None
+    clock: Callable[[], float] = time.monotonic
+    sleep: Callable[[float], None] = time.sleep
+
+
+@dataclass(frozen=True)
+class PlannedDeploy:
+    """Un despliegue planificado: el proyecto, las opciones de la llamada, el
+    plan y el árbol de ficheros del contexto de build."""
+
+    project: AgentProject
+    options: AgentDeployOptions
+    plan: AgentCoreDeployPlan
+    tree: Mapping[str, bytes]
+
+
+NESTED_EXCLUDE_PREFIX: Final = "**/"
+
+
+def with_nested_default_excludes(project: AgentProject) -> AgentProject:
+    """El proyecto con las exclusiones por defecto también a cualquier
+    profundidad (`**/.env`, `**/.git`): `.dockerignore` ancla un patrón simple
+    en la raíz, y en AgentCore la imagen la construye CodeBuild con todo lo que
+    haya en el contexto, así que un `sub/.env` no debe colarse."""
+    nested = [f"{NESTED_EXCLUDE_PREFIX}{pattern}" for pattern in AGENT_SOURCE_DEFAULT_EXCLUDES]
+    merged = tuple(dict.fromkeys([*project.exclude, *nested]))
+    return dataclasses.replace(project, exclude=merged)
+
+
+def render_agentcore_tree(project: AgentProject) -> Mapping[str, bytes]:
+    """El contexto de build del agente para AgentCore; una app `raw` es
+    `raw_protocol`."""
+    try:
+        return render_export(project, target="agentcore")
+    except RawAppNotExportable:
+        raise AgentCoreException("raw_protocol") from None
+
+
+def plan_agentcore(
+    path: str | os.PathLike[str],
+    *,
+    project: AgentProject | None = None,
+    options: AgentDeployOptions | None = None,
+    overrides: DetectOverrides | None = None,
+    region: str | None = None,
+    session: Any = None,
+    agentcore: AgentCoreOptions | None = None,
+    environ: Mapping[str, str] | None = None,
+    cli_flags: Collection[str] = (),
+    adjust: Callable[[AgentProject], AgentProject] | None = None,
+) -> PlannedDeploy:
+    """El plan de desplegar el proyecto de `path` en AgentCore, sin llamar a
+    AWS: lee ficheros locales y la configuración local de boto3, no ejecuta el
+    código del agente ni crea ningún cliente. `adjust` cambia el proyecto
+    detectado antes de planificar (lo que la CLI hace con sus banderas) y
+    `cli_flags` son las banderas de MicroVMs que se pasaron, para
+    `option_not_supported`."""
+    chosen = options or AgentDeployOptions()
+    detected, report = project_for(path, project, overrides, region)
+    if adjust is not None:
+        detected = adjust(detected)
+    detected = with_nested_default_excludes(with_default_excludes(detected))
+    variables = os.environ if environ is None else environ
+    effective = resolved_region(region, detected, session, variables)
+    trees: list[Mapping[str, bytes]] = []
+
+    def tree_for() -> Mapping[str, bytes]:
+        trees.append(render_agentcore_tree(detected))
+        return trees[0]
+
+    plan = build_plan(
+        detected,
+        chosen,
+        agentcore or AgentCoreOptions(),
+        region=effective or aws_session(session, None).region_name,
+        environ=variables,
+        tree_for=tree_for,
+        detection=report,
+        cli_flags=cli_flags,
+    )
+    return PlannedDeploy(detected, chosen, plan, trees[0])
+
+
+def agentcore_gateways(
+    planned: PlannedDeploy, ports: AgentCorePorts | None, session: Any
+) -> AgentCoreGateways:
+    """Los puertos del agente: los de `ports` o los adaptadores de AWS (que no
+    llaman a nada al construirse)."""
+    if ports is not None and ports.gateways is not None:
+        return ports.gateways
+    from rayito._agentcore._aws import gateways_for
+
+    plan = planned.plan
+    return gateways_for(plan.name, plan.region, session=session, tags=plan.tags)
+
+
+def agentcore_invoker(
+    planned: PlannedDeploy, ports: AgentCorePorts | None, session: Any
+) -> RuntimeInvoker:
+    if ports is not None and ports.invoker is not None:
+        return ports.invoker
+    from rayito._agentcore._aws import AgentCoreClients, AgentCoreInvoker
+
+    return AgentCoreInvoker(AgentCoreClients(planned.plan.region, session))
+
+
+def apply_request(
+    planned: PlannedDeploy, on_progress: Callable[[str, str], None] | None
+) -> AgentCoreApplyRequest:
+    options = planned.options
+    model_region = planned.project.spec.model.region or planned.plan.region
+    return AgentCoreApplyRequest(
+        tree=planned.tree,
+        model_region=model_region,
+        build_image=options.build_image,
+        build_timeout_seconds=options.build_timeout_seconds,
+        on_progress=on_progress,
+        on_build_logs=options.on_build_logs,
+    )
+
+
+def step_reporter(options: AgentDeployOptions) -> Callable[[str, str], None] | None:
+    """Cada línea de progreso como un `AgentDeployStep` para `on_step`: `kind`
+    es la clave de `PROGRESS_MESSAGES` y `detail` la línea formateada."""
+    on_step = options.on_step
+    if on_step is None:
+        return None
+
+    def report(key: str, message: str) -> None:
+        on_step(AgentDeployStep(key, message))
+
+    return report
+
+
+def apply_agentcore(
+    planned: PlannedDeploy,
+    gateways: AgentCoreGateways,
+    on_progress: Callable[[str, str], None] | None = None,
+    ports: AgentCorePorts | None = None,
+) -> AgentCoreDeployment:
+    """Aplica un plan: la pila, la imagen y el runtime. `ports` trae el reloj
+    y el sueño de las esperas, que los tests sustituyen."""
+    chosen = ports or AgentCorePorts()
+    deployer = AgentCoreDeployer(gateways, clock=chosen.clock, sleep=chosen.sleep)
+    return deployer.apply(planned.plan, apply_request(planned, on_progress))
+
+
+def deploy_agentcore(
+    ports: AgentCorePorts | None,
+    path: str | os.PathLike[str],
+    *,
+    project: AgentProject | None = None,
+    options: AgentDeployOptions | None = None,
+    overrides: DetectOverrides | None = None,
+    region: str | None = None,
+    session: Any = None,
+    agentcore: AgentCoreOptions | None = None,
+) -> AgentCoreFleet:
+    """Planifica y aplica el despliegue y devuelve la flota, sin preguntar
+    nada."""
+    from rayito._agentcore._fleet import AgentCoreFleet
+
+    planned = plan_agentcore(
+        path,
+        project=project,
+        options=options,
+        overrides=overrides,
+        region=region,
+        session=session,
+        agentcore=agentcore,
+        environ=None if ports is None else ports.environ,
+    )
+    gateways = agentcore_gateways(planned, ports, session)
+    deployment = apply_agentcore(planned, gateways, step_reporter(planned.options), ports)
+    return AgentCoreFleet.from_deployment(
+        deployment, gateways=gateways, invoker=agentcore_invoker(planned, ports, session)
+    )
+
+
+async def deploy_agentcore_async(
+    ports: AgentCorePorts | None,
+    path: str | os.PathLike[str],
+    *,
+    project: AgentProject | None = None,
+    options: AgentDeployOptions | None = None,
+    overrides: DetectOverrides | None = None,
+    region: str | None = None,
+    session: Any = None,
+    agentcore: AgentCoreOptions | None = None,
+) -> AsyncAgentCoreFleet:
+    """Como `deploy_agentcore`, con `AsyncAgentCoreFleet`: lo bloqueante corre
+    en un hilo."""
+    from rayito._agentcore._fleet_async import AsyncAgentCoreFleet
+    from rayito._agentcore._service_async import AsyncAgentCoreDeployer
+
+    planned = await asyncio.to_thread(
+        plan_agentcore,
+        path,
+        project=project,
+        options=options,
+        overrides=overrides,
+        region=region,
+        session=session,
+        agentcore=agentcore,
+        environ=None if ports is None else ports.environ,
+    )
+    gateways = agentcore_gateways(planned, ports, session)
+    request = apply_request(planned, step_reporter(planned.options))
+    chosen = ports or AgentCorePorts()
+    deployer = AsyncAgentCoreDeployer(gateways, clock=chosen.clock, sleep=chosen.sleep)
+    deployment = await deployer.apply(planned.plan, request)
+    return AsyncAgentCoreFleet.from_deployment(
+        deployment, gateways=gateways, invoker=agentcore_invoker(planned, ports, session)
+    )

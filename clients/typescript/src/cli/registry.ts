@@ -19,6 +19,7 @@ import {
   agentTemplateBuildCommand,
   agentTemplateGroup,
 } from "./commands/agent.js";
+import { agentDeleteCommand, agentListCommand } from "./commands/agent-agentcore.js";
 import { dashboardGroup } from "./commands/dashboard.js";
 import { cloudwatchCommand } from "./commands/dashboard-cloudwatch.js";
 import { doctorCommand } from "./commands/doctor.js";
@@ -52,6 +53,7 @@ import {
   listCommand as sandboxList,
 } from "./commands/sandbox.js";
 import { connectCommand, proxyCommand } from "./commands/sandbox-interactive.js";
+import { setupCommand } from "./commands/setup.js";
 import {
   deployCommand,
   destroyCommand,
@@ -100,6 +102,7 @@ export const COMMANDS: readonly CommandDefinition[] = [
   pruneCommand,
   zipCommand,
   doctorCommand,
+  setupCommand,
   templateBuild,
   templateStatus,
   templateLogs,
@@ -113,6 +116,8 @@ export const COMMANDS: readonly CommandDefinition[] = [
   agentInvokeCommand,
   agentStatusCommand,
   agentStopCommand,
+  agentListCommand,
+  agentDeleteCommand,
   eventsDeploy,
   eventsStatus,
   eventsDestroy,

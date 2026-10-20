@@ -1,0 +1,195 @@
+{
+  "description": "El clientToken de CreateAgentRuntime y UpdateAgentRuntime (constants.clientTokenDigest): sha256 del JSON canónico de la petición de AWS sin clientToken y, al actualizar, con baseVersion, la agentRuntimeVersion que GetAgentRuntime dio justo antes. Una petición sin baseVersion es la de crear. Los dos SDK calculan el mismo token para cada caso.",
+  "cases": [
+    {
+      "name": "create sin versión",
+      "request": {
+        "agentRuntimeName": "rayito_support_bot",
+        "agentRuntimeArtifact": {
+          "containerConfiguration": {
+            "containerUri": "123456789012.dkr.ecr.us-east-1.amazonaws.com/rayito/agentcore/support-bot:src-0123456789abcdef"
+          }
+        },
+        "roleArn": "arn:aws:iam::123456789012:role/rayito-agentcore-support-bot-runtime",
+        "networkConfiguration": {
+          "networkMode": "PUBLIC"
+        },
+        "protocolConfiguration": {
+          "serverProtocol": "HTTP"
+        },
+        "lifecycleConfiguration": {
+          "idleRuntimeSessionTimeout": 900,
+          "maxLifetime": 28800
+        },
+        "environmentVariables": {
+          "AWS_REGION": "us-east-1",
+          "AWS_DEFAULT_REGION": "us-east-1"
+        },
+        "description": "Rayito agent support-bot (rayito.agentcore/1)",
+        "tags": {
+          "rayito:component": "agentcore-runtime"
+        }
+      },
+      "expected": "rayito-daa620e01e0f776035ca60446a88e73a"
+    },
+    {
+      "name": "create con un clientToken previo se ignora",
+      "request": {
+        "agentRuntimeName": "rayito_support_bot",
+        "agentRuntimeArtifact": {
+          "containerConfiguration": {
+            "containerUri": "123456789012.dkr.ecr.us-east-1.amazonaws.com/rayito/agentcore/support-bot:src-0123456789abcdef"
+          }
+        },
+        "roleArn": "arn:aws:iam::123456789012:role/rayito-agentcore-support-bot-runtime",
+        "networkConfiguration": {
+          "networkMode": "PUBLIC"
+        },
+        "protocolConfiguration": {
+          "serverProtocol": "HTTP"
+        },
+        "lifecycleConfiguration": {
+          "idleRuntimeSessionTimeout": 900,
+          "maxLifetime": 28800
+        },
+        "environmentVariables": {
+          "AWS_REGION": "us-east-1",
+          "AWS_DEFAULT_REGION": "us-east-1"
+        },
+        "description": "Rayito agent support-bot (rayito.agentcore/1)",
+        "tags": {
+          "rayito:component": "agentcore-runtime"
+        },
+        "clientToken": "rayito-ignored"
+      },
+      "expected": "rayito-daa620e01e0f776035ca60446a88e73a"
+    },
+    {
+      "name": "create con descripción no ASCII",
+      "request": {
+        "agentRuntimeName": "rayito_support_bot",
+        "agentRuntimeArtifact": {
+          "containerConfiguration": {
+            "containerUri": "123456789012.dkr.ecr.us-east-1.amazonaws.com/rayito/agentcore/support-bot:src-0123456789abcdef"
+          }
+        },
+        "roleArn": "arn:aws:iam::123456789012:role/rayito-agentcore-support-bot-runtime",
+        "networkConfiguration": {
+          "networkMode": "PUBLIC"
+        },
+        "protocolConfiguration": {
+          "serverProtocol": "HTTP"
+        },
+        "lifecycleConfiguration": {
+          "idleRuntimeSessionTimeout": 900,
+          "maxLifetime": 28800
+        },
+        "environmentVariables": {
+          "AWS_REGION": "us-east-1",
+          "AWS_DEFAULT_REGION": "us-east-1"
+        },
+        "description": "Agente de soporte (ñ, é)",
+        "tags": {
+          "rayito:component": "agentcore-runtime"
+        }
+      },
+      "expected": "rayito-dd5d397fd955b7d1d3fccdd31a77ecf1"
+    },
+    {
+      "name": "update sobre la versión 1",
+      "request": {
+        "agentRuntimeArtifact": {
+          "containerConfiguration": {
+            "containerUri": "123456789012.dkr.ecr.us-east-1.amazonaws.com/rayito/agentcore/support-bot:src-0123456789abcdef"
+          }
+        },
+        "roleArn": "arn:aws:iam::123456789012:role/rayito-agentcore-support-bot-runtime",
+        "networkConfiguration": {
+          "networkMode": "PUBLIC"
+        },
+        "protocolConfiguration": {
+          "serverProtocol": "HTTP"
+        },
+        "lifecycleConfiguration": {
+          "idleRuntimeSessionTimeout": 900,
+          "maxLifetime": 28800
+        },
+        "environmentVariables": {
+          "AWS_REGION": "us-east-1",
+          "AWS_DEFAULT_REGION": "us-east-1"
+        },
+        "description": "Rayito agent support-bot (rayito.agentcore/1)",
+        "agentRuntimeId": "rayito_support_bot-abc1234567",
+        "metadataConfiguration": {
+          "requireMMDSV2": true
+        }
+      },
+      "baseVersion": "1",
+      "expected": "rayito-e9d067cf7b469e4c43962ce31963f689"
+    },
+    {
+      "name": "update sobre la versión 2",
+      "request": {
+        "agentRuntimeArtifact": {
+          "containerConfiguration": {
+            "containerUri": "123456789012.dkr.ecr.us-east-1.amazonaws.com/rayito/agentcore/support-bot:src-0123456789abcdef"
+          }
+        },
+        "roleArn": "arn:aws:iam::123456789012:role/rayito-agentcore-support-bot-runtime",
+        "networkConfiguration": {
+          "networkMode": "PUBLIC"
+        },
+        "protocolConfiguration": {
+          "serverProtocol": "HTTP"
+        },
+        "lifecycleConfiguration": {
+          "idleRuntimeSessionTimeout": 900,
+          "maxLifetime": 28800
+        },
+        "environmentVariables": {
+          "AWS_REGION": "us-east-1",
+          "AWS_DEFAULT_REGION": "us-east-1"
+        },
+        "description": "Rayito agent support-bot (rayito.agentcore/1)",
+        "agentRuntimeId": "rayito_support_bot-abc1234567",
+        "metadataConfiguration": {
+          "requireMMDSV2": true
+        }
+      },
+      "baseVersion": "2",
+      "expected": "rayito-06e147bac75af683a9c38564c59fa933"
+    },
+    {
+      "name": "update sin versión previa",
+      "request": {
+        "agentRuntimeArtifact": {
+          "containerConfiguration": {
+            "containerUri": "123456789012.dkr.ecr.us-east-1.amazonaws.com/rayito/agentcore/support-bot:src-0123456789abcdef"
+          }
+        },
+        "roleArn": "arn:aws:iam::123456789012:role/rayito-agentcore-support-bot-runtime",
+        "networkConfiguration": {
+          "networkMode": "PUBLIC"
+        },
+        "protocolConfiguration": {
+          "serverProtocol": "HTTP"
+        },
+        "lifecycleConfiguration": {
+          "idleRuntimeSessionTimeout": 900,
+          "maxLifetime": 28800
+        },
+        "environmentVariables": {
+          "AWS_REGION": "us-east-1",
+          "AWS_DEFAULT_REGION": "us-east-1"
+        },
+        "description": "Rayito agent support-bot (rayito.agentcore/1)",
+        "agentRuntimeId": "rayito_support_bot-abc1234567",
+        "metadataConfiguration": {
+          "requireMMDSV2": true
+        }
+      },
+      "baseVersion": "",
+      "expected": "rayito-1df161c565f6479b3527ceffbb135663"
+    }
+  ]
+}

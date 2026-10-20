@@ -1,0 +1,294 @@
+{
+  "description": "Contrato de `rayito setup` compartido por Python y TypeScript (ADR-030, cambio OpenSpec account-setup): opciones, códigos de salida y de error, constantes, textos de la salida humana y forma del documento JSON. Incluye la creación del bucket de artefactos con la pila rayito-m0-artifacts (infra/artifact-bucket.yaml) cuando no hay ninguno que reutilizar. Los tests de los dos SDK comparan sus constantes y mensajes con este fichero; la CLI escribe en español en los dos.",
+  "command": [
+    "setup"
+  ],
+  "help": "Prepara la cuenta y la región para Rayito en una orden idempotente, como `cdk bootstrap`: el bucket de artefactos (el tuyo, el de la pila de IAM o el del bootstrap de CDK; si no hay ninguno, lo crea con la pila rayito-m0-artifacts: cifrado, privado, sólo TLS y con los zips caducando a los 7 días), la pila de IAM rayito-m0-iam y la imagen rayito-base desde el rayito-image.zip de la release de tu versión, comprobado contra su SHA256SUMS. Muestra el plan y el coste, pide confirmación y termina con rayito doctor. Coste: cada versión publicada de la imagen ≈ $0,04 por semana de almacenamiento (mínimo una semana); la pila de IAM es gratis; el zip en el bucket, céntimos; con --dry-run sólo lee.",
+  "options": [
+    {
+      "name": "bucket",
+      "flags": [
+        "--bucket"
+      ],
+      "type": "str",
+      "default": null,
+      "isFlag": false,
+      "help": "Bucket de artefactos en la misma región; por defecto RAYITO_BUCKET, el de la pila de IAM, el del bootstrap de CDK o uno nuevo rayito-artifacts-<cuenta>-<región>. Si no existe, se crea con ese nombre (pila rayito-m0-artifacts)."
+    },
+    {
+      "name": "artifact",
+      "flags": [
+        "--artifact"
+      ],
+      "type": "path",
+      "default": null,
+      "isFlag": false,
+      "help": "Zip de la imagen ya verificado (p. ej. con cosign); sin él se descarga rayito-image.zip de la release rayd-v<versión del SDK> y se comprueba contra su SHA256SUMS."
+    },
+    {
+      "name": "tag",
+      "flags": [
+        "--tag"
+      ],
+      "type": "list[str]",
+      "default": [],
+      "isFlag": false,
+      "help": "Etiqueta K=V; repetible. Se aplica a las pilas que crea setup (rayito-m0-artifacts y rayito-m0-iam) y CloudFormation la propaga a sus recursos; útil si la organización exige etiquetas."
+    },
+    {
+      "name": "yes",
+      "flags": [
+        "--yes"
+      ],
+      "type": "boolean",
+      "default": false,
+      "isFlag": true,
+      "help": "No pedir confirmación (hace falta sin terminal o con --json si hay algo que crear)."
+    },
+    {
+      "name": "dry_run",
+      "flags": [
+        "--dry-run"
+      ],
+      "type": "boolean",
+      "default": false,
+      "isFlag": true,
+      "help": "Sólo lee la cuenta y muestra el plan; no crea ni cambia nada."
+    }
+  ],
+  "globalOptions": [
+    "--profile",
+    "--region",
+    "--json",
+    "--verbose"
+  ],
+  "exitCodes": {
+    "ok": 0,
+    "failure": 1,
+    "usage": 2
+  },
+  "errorExitCodes": {
+    "unsupported_region": 2,
+    "bucket_unavailable": 2,
+    "bucket_region": 2,
+    "bucket_taken": 2,
+    "artifact_stack_conflict": 2,
+    "artifact_missing": 2,
+    "artifact_variant": 2,
+    "needs_confirmation": 2,
+    "stack_blocked": 1,
+    "stack_incomplete": 1,
+    "release_download": 1,
+    "checksum_missing": 1,
+    "checksum_mismatch": 1,
+    "image_build_failed": 1
+  },
+  "constants": {
+    "iamStackName": "rayito-m0-iam",
+    "iamComponentName": "iam",
+    "iamCapabilities": [
+      "CAPABILITY_NAMED_IAM"
+    ],
+    "artifactBucketParameter": "ArtifactBucket",
+    "buildRoleOutputKey": "BuildRoleArn",
+    "iamTemplatePath": "infra/iam.yaml",
+    "artifactStackName": "rayito-m0-artifacts",
+    "artifactComponentName": "artifact-bucket",
+    "artifactTemplatePath": "infra/artifact-bucket.yaml",
+    "bucketNameParameter": "BucketName",
+    "bucketNameOutputKey": "BucketName",
+    "defaultArtifactBucketTemplate": "rayito-artifacts-{account}-{region}",
+    "artifactExpirationDays": 7,
+    "imageArtifactPrefix": "rayito/images/",
+    "explicitBucketSources": [
+      "argument",
+      "environment"
+    ],
+    "baseImageName": "rayito-base",
+    "baseImageVariant": "full",
+    "baseImageVersion": "latest",
+    "cdkBootstrapQualifier": "hnb659fds",
+    "bucketEnvVar": "RAYITO_BUCKET",
+    "releaseTagPrefix": "rayd-v",
+    "releaseDownloadUrlTemplate": "https://github.com/alejandro-cedeno-10/rayito/releases/download/{tag}/{asset}",
+    "imageAssetName": "rayito-image.zip",
+    "checksumsAssetName": "SHA256SUMS",
+    "releaseDownloadTimeoutSeconds": 600,
+    "usableStackStates": [
+      "CREATE_COMPLETE",
+      "UPDATE_COMPLETE",
+      "UPDATE_ROLLBACK_COMPLETE"
+    ],
+    "inProgressStackSuffix": "_IN_PROGRESS",
+    "deletingStackState": "DELETE_IN_PROGRESS",
+    "buildingVersionStates": [
+      "PENDING",
+      "IN_PROGRESS"
+    ]
+  },
+  "resources": [
+    "bucket",
+    "iamStack",
+    "baseImage"
+  ],
+  "actions": [
+    "create",
+    "update",
+    "reuse",
+    "wait",
+    "publish"
+  ],
+  "resourceActions": {
+    "bucket": [
+      "create",
+      "reuse",
+      "wait"
+    ],
+    "iamStack": [
+      "create",
+      "update",
+      "reuse",
+      "wait"
+    ],
+    "baseImage": [
+      "publish",
+      "reuse",
+      "wait"
+    ]
+  },
+  "bucketSources": [
+    "argument",
+    "environment",
+    "iamStack",
+    "cdkBootstrap",
+    "artifactStack",
+    "rayitoDefault"
+  ],
+  "bucketProbeStates": [
+    "found",
+    "missing",
+    "forbidden"
+  ],
+  "imageSources": [
+    "release",
+    "artifact"
+  ],
+  "json": {
+    "documentKeys": [
+      "rayito",
+      "region",
+      "account",
+      "dryRun",
+      "ready",
+      "steps",
+      "cost",
+      "result",
+      "doctor",
+      "error",
+      "exitCode"
+    ],
+    "stepKeys": [
+      "resource",
+      "name",
+      "action",
+      "source",
+      "status",
+      "imageVersion",
+      "release",
+      "previousBucket"
+    ],
+    "resultKeys": [
+      "bucket",
+      "imageArn",
+      "imageVersion",
+      "artifactUploaded"
+    ],
+    "errorKeys": [
+      "code",
+      "message"
+    ],
+    "doctor": "el mismo documento que `rayito --json doctor` (sin --launch), o null en --dry-run y si la preparación falla antes"
+  },
+  "messages": {
+    "header": "rayito setup: cuenta {account}, región {region}",
+    "step": "  {label} {name}: {action}",
+    "labels": {
+      "bucket": "bucket",
+      "iamStack": "pila de IAM",
+      "baseImage": "imagen"
+    },
+    "actions": {
+      "bucketReuse": "reutilizar ({source})",
+      "bucketCreate": "crear con la pila {stack} ({source})",
+      "bucketWait": "pila {stack} en curso ({status}): esperar",
+      "stackCreate": "crear",
+      "stackUpdate": "actualizar ArtifactBucket {previousBucket} -> {bucket}",
+      "stackReuse": "ya existe ({status})",
+      "stackWait": "en curso ({status}): esperar",
+      "imagePublishRelease": "publicar desde {release} (≈ 10 min)",
+      "imagePublishArtifact": "publicar desde {artifact} (≈ 10 min)",
+      "imageReuse": "ya existe (versión {imageVersion} lanzable)",
+      "imageWait": "build en curso (versión {imageVersion}): esperar"
+    },
+    "bucketSources": {
+      "argument": "--bucket",
+      "environment": "RAYITO_BUCKET",
+      "iamStack": "el de la pila de IAM",
+      "cdkBootstrap": "bootstrap de CDK",
+      "artifactStack": "el de la pila de artefactos",
+      "rayitoDefault": "nombre por defecto de Rayito"
+    },
+    "costHeader": "Coste aproximado:",
+    "cost": {
+      "bucket": "bucket de artefactos: los zips de la imagen caducan a los {days} días (regla de ciclo de vida)",
+      "iamStack": "pila de IAM: gratis",
+      "image": "imagen: ≈ $0,04 por semana por versión publicada (mínimo una semana)",
+      "artifact": "zip de la imagen en el bucket: céntimos"
+    },
+    "costLine": "  {text}",
+    "nothingToDo": "La cuenta ya está preparada: no hay nada que crear.",
+    "dryRunFooter": "no se creó ni cambió nada (--dry-run)",
+    "confirm": "¿Preparar la cuenta?",
+    "progress": {
+      "bucketCreate": "creando el bucket {bucket} con la pila {name}",
+      "bucketWait": "esperando a la pila {name} del bucket ({status})",
+      "bucketReady": "bucket {bucket} listo (pila {name})",
+      "stackCreate": "creando la pila de IAM {name}",
+      "stackUpdate": "actualizando la pila de IAM {name}",
+      "stackWait": "esperando a la pila de IAM {name} ({status})",
+      "stackReady": "pila de IAM {name} lista",
+      "download": "descargando {asset} de {release}",
+      "verified": "sha256 de {asset} verificado contra SHA256SUMS: {sha256}",
+      "imageWait": "esperando el build en curso de {name} (versión {imageVersion})",
+      "imageReady": "imagen {name} {imageVersion} lanzable"
+    },
+    "done": "rayito setup: cuenta preparada en {region}",
+    "templateLine": "RAYITO_TEMPLATE={imageArn}",
+    "bucketLine": "RAYITO_BUCKET={bucket}",
+    "doctorFailed": "rayito setup: rayito doctor encontró algún FAIL; la cuenta no está lista",
+    "errorPrefix": "rayito: ",
+    "errors": {
+      "unsupported_region": "la región {region} no tiene Lambda MicroVMs: usa una de {regions}",
+      "bucket_unavailable": "el bucket {bucket} ({source}) existe pero no es accesible con estas credenciales: puede ser de otra cuenta; pasa otro nombre con --bucket",
+      "bucket_region": "el bucket {bucket} está en {bucketRegion}, no en {region}: el build fallaría con S3_CROSS_REGION_ACCESS_DENIED",
+      "bucket_taken": "el nombre {bucket} ya lo usa un bucket que no creó la pila {stack}: si es tuyo, pásalo con --bucket {bucket}; si no, elige otro nombre con --bucket",
+      "artifact_stack_conflict": "la pila {stack} ya gestiona el bucket {existing}: pasa --bucket {existing} o, para crear {bucket}, borra antes esa pila (el bucket {existing} se conserva)",
+      "artifact_missing": "{artifact} no existe",
+      "artifact_variant": "{artifact} no es un zip de la variante full sin EFS: publica las otras variantes con `rayito image publish`",
+      "needs_confirmation": "preparar la cuenta crea recursos con coste: confírmalo con --yes (o desde una terminal)",
+      "stack_blocked": "la pila {name} está en {status}: bórrala (aws cloudformation delete-stack --stack-name {name}), espera a que desaparezca y vuelve a ejecutar `rayito setup`",
+      "stack_incomplete": "la pila {name} no tiene la salida {output}: no es la plantilla {template} de Rayito",
+      "release_download": "no se pudo descargar {asset} de la release {release}: {reason}",
+      "checksum_missing": "SHA256SUMS de la release {release} no lista {asset}: no se publica",
+      "checksum_mismatch": "el sha256 de {asset} no coincide con SHA256SUMS de la release {release}: no se publica",
+      "image_build_failed": "la imagen {name} no quedó lanzable (versión {imageVersion}, {state}): vuelve a ejecutar `rayito setup`"
+    },
+    "downloadReasons": {
+      "http": "HTTP {status}",
+      "timeout": "tiempo agotado",
+      "network": "error de red"
+    },
+    "accountSetupHint": "si la cuenta o la región aún no están preparadas, ejecuta `rayito setup`",
+    "hintFormat": "{message} ({hint})"
+  }
+}

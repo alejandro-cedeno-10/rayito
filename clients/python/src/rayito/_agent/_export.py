@@ -19,7 +19,7 @@ import json
 import os
 import posixpath
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Final, Literal
 
@@ -38,6 +38,8 @@ from rayito._agent._recipes import (
     AGENT_INSTALL_DIR,
     AGENT_RAYITO_DIR,
     agent_host_files,
+    asset_bytes,
+    hashed_venv_install,
 )
 from rayito._agent._runtime import (
     STEP_COPY,
@@ -48,7 +50,9 @@ from rayito._agent._runtime import (
     TemplateStep,
 )
 from rayito._agent._template import _app_files
+from rayito._agentcore import _env_credentials
 from rayito._limits import (
+    AGENT_AWS_CREDENTIALS_REQUIREMENTS_SHA256,
     AGENT_EXPORT_BASE_IMAGE,
     AGENT_EXPORT_BASE_IMAGE_DIGEST,
     AGENT_SERVICE_EXPORT_PORT,
@@ -68,6 +72,17 @@ EXPORT_PLATFORM: Final = "linux/arm64"
 #: La imagen base con su digest: lo que se construye hoy es lo que se
 #: construirá mañana.
 BASE_IMAGE_REFERENCE: Final = f"{AGENT_EXPORT_BASE_IMAGE}@{AGENT_EXPORT_BASE_IMAGE_DIGEST}"
+#: El argumento de build con el que el `FROM` de AgentCore toma la imagen base
+#: de otro registro con el mismo digest (`contract.json`, `dockerfileBaseImageArg`).
+BASE_IMAGE_ARG: Final = "AGENT_BASE_IMAGE"
+#: Dónde deja el export la herramienta que lee las credenciales del rol de
+#: AgentCore para los adaptadores que sólo usan variables de entorno.
+AWS_CREDENTIALS_REQUIREMENTS_PATH: Final = (
+    f"{AGENT_INSTALL_DIR}/{_env_credentials.REQUIREMENTS_NAME}"
+)
+AWS_CREDENTIALS_VENV_DIR: Final = f"{AGENT_RAYITO_DIR}/aws-credentials"
+AWS_CREDENTIALS_SCRIPT_PATH: Final = f"{AGENT_RAYITO_DIR}/{_env_credentials.SCRIPT_NAME}"
+AWS_CONFIG_PATH: Final = f"{AGENT_RAYITO_DIR}/{_env_credentials.CONFIG_NAME}"
 AGENT_USER: Final = "user"
 #: `~/.rayito`: lo que `user` debe poder escribir (sesiones del agente).
 RAYITO_HOME_DIR: Final = f"{DEFAULT_AGENT_WORKDIR}/.rayito"
@@ -90,6 +105,11 @@ HEALTHCHECK_COMMAND: Final = (
 _PERMISSIONS_CMD: Final = (
     f"chown -R root:root {AGENT_INSTALL_DIR} && chmod -R a+rX,go-w {AGENT_INSTALL_DIR}"
 )
+
+
+class RawAppNotExportable(InvalidArgumentException):
+    """Una app con `protocol="raw"` no cumple el contrato de AgentCore
+    (`/ping` y `/invocations`) y no se puede exportar para ese destino."""
 
 
 @dataclass(frozen=True)
@@ -139,8 +159,12 @@ def render_export(project: AgentProject, *, target: str = "docker") -> dict[str,
     servable = servable_runtime(project)
     install = InstallTarget(platform="container")
     host = servable.host_config(project.spec, wiring=DirectWiring(), workdir=DEFAULT_AGENT_WORKDIR)
+    agentcore = target == "agentcore"
+    credential_process = agentcore and _env_credentials.uses_credential_process(project.runtime)
+    if credential_process:
+        host = replace(host, envs={**host.envs, **_env_credentials.profile_envs(AWS_CONFIG_PATH)})
     if target == "agentcore" and is_raw_app(host):
-        raise InvalidArgumentException(
+        raise RawAppNotExportable(
             "una app con protocol='raw' no cumple el contrato de AgentCore (/ping + /invocations)"
         )
     tree: dict[str, bytes] = {}
@@ -150,20 +174,41 @@ def render_export(project: AgentProject, *, target: str = "docker") -> dict[str,
         tree[f"{AGENT_HOST_CONTEXT_DIR}/{relative}"] = data
     for index, runtime_file in enumerate(host.files.files):
         tree[f"{RUNTIME_FILES_CONTEXT_DIR}/{index}"] = runtime_file.data
-    tree[HOST_CONFIG_NAME] = _host_config_bytes(project, host)
+    env_credentials = agentcore and _env_credentials.uses_env_credentials(project.runtime)
+    tree[HOST_CONFIG_NAME] = _host_config_bytes(project, host, env_credentials=env_credentials)
+    if env_credentials or credential_process:
+        tree[_env_credentials.REQUIREMENTS_NAME] = asset_bytes(_env_credentials.REQUIREMENTS_NAME)
+        tree[_env_credentials.SCRIPT_NAME] = asset_bytes(_env_credentials.SCRIPT_NAME)
+    if credential_process:
+        tree[_env_credentials.CONFIG_NAME] = _env_credentials.config_text(
+            f"{AWS_CREDENTIALS_VENV_DIR}/bin/python", AWS_CREDENTIALS_SCRIPT_PATH
+        ).encode()
     if project.source is not None:
         for relative, data in _app_files(project.source, project.exclude):
             tree[f"{AGENT_APP_CONTEXT_DIR}/{relative}"] = data
-    tree[DOCKERFILE_NAME] = _dockerfile(project, host, runtime.install_steps(install)).encode()
+    steps = runtime.install_steps(install)
+    tree[DOCKERFILE_NAME] = _dockerfile(
+        project,
+        host,
+        steps,
+        target=target,
+        helper=env_credentials or credential_process,
+        config=credential_process,
+    ).encode()
     tree[DOCKERIGNORE_NAME] = DOCKERIGNORE_CONTENT.encode()
     tree[README_NAME] = _readme(project, target).encode()
     return dict(sorted(tree.items()))
 
 
-def _host_config_bytes(project: AgentProject, host: HostConfig) -> bytes:
+def _host_config_bytes(project: AgentProject, host: HostConfig, *, env_credentials: bool) -> bytes:
     document = host_document(project, host)
     del document["ready_marker"]
     document["schema"] = AGENT_HOST_SCHEMA
+    if env_credentials:
+        document[_env_credentials.HOST_KEY] = {
+            "python": f"{AWS_CREDENTIALS_VENV_DIR}/bin/python",
+            "script": AWS_CREDENTIALS_SCRIPT_PATH,
+        }
     return (json.dumps(document, indent=2, sort_keys=True) + "\n").encode()
 
 
@@ -184,7 +229,44 @@ def _env_lines(envs: Mapping[str, str]) -> list[str]:
     return [f"ENV {name}={json.dumps(value)}" for name, value in sorted(envs.items())]
 
 
-def _dockerfile(project: AgentProject, host: HostConfig, steps: Sequence[TemplateStep]) -> str:
+def _credentials_lines(target: InstallTarget) -> list[str]:
+    """Los pasos que instalan la herramienta que lee las credenciales del rol
+    de AgentCore (un venv con botocore fijado por hash) para un adaptador que
+    sólo las lee de variables de entorno."""
+    install = hashed_venv_install(
+        target,
+        venv_dir=AWS_CREDENTIALS_VENV_DIR,
+        requirements_path=AWS_CREDENTIALS_REQUIREMENTS_PATH,
+        requirements_sha256=AGENT_AWS_CREDENTIALS_REQUIREMENTS_SHA256,
+    )
+    return [
+        f"COPY {_env_credentials.REQUIREMENTS_NAME} {AWS_CREDENTIALS_REQUIREMENTS_PATH}",
+        f"RUN {install}",
+        f"COPY {_env_credentials.SCRIPT_NAME} {AWS_CREDENTIALS_SCRIPT_PATH}",
+    ]
+
+
+def _from_lines(target: str) -> list[str]:
+    """Con AgentCore, la base llega por un argumento de build para que CodeBuild
+    use el espejo de ECR Public con el mismo digest; con Docker, la referencia
+    fija de siempre."""
+    if target != "agentcore":
+        return [f"FROM --platform={EXPORT_PLATFORM} {BASE_IMAGE_REFERENCE}"]
+    return [
+        f"ARG {BASE_IMAGE_ARG}={BASE_IMAGE_REFERENCE}",
+        f"FROM --platform={EXPORT_PLATFORM} ${{{BASE_IMAGE_ARG}}}",
+    ]
+
+
+def _dockerfile(
+    project: AgentProject,
+    host: HostConfig,
+    steps: Sequence[TemplateStep],
+    *,
+    target: str,
+    helper: bool,
+    config: bool,
+) -> str:
     install_lines, executables = _step_lines(steps)
     config_dirs = sorted({posixpath.dirname(file.path) for file in host.files.files})
     copy_files = [
@@ -209,11 +291,13 @@ def _dockerfile(project: AgentProject, host: HostConfig, steps: Sequence[Templat
         "# syntax=docker/dockerfile:1",
         f"# Agente `{project.name}` exportado por Rayito. Construye con:",
         f"#   docker buildx build --platform {EXPORT_PLATFORM} -t {project.name} .",
-        f"FROM --platform={EXPORT_PLATFORM} {BASE_IMAGE_REFERENCE}",
+        *_from_lines(target),
         f"RUN useradd --create-home --uid {AGENT_UID} --shell /bin/bash {AGENT_USER}"
         f" && mkdir -p {AGENT_STATE_DIR} {' '.join(config_dirs)}"
         f" && chown -R {AGENT_USER}:{AGENT_USER} {RAYITO_HOME_DIR}",
         *install_lines,
+        *(_credentials_lines(InstallTarget(platform="container")) if helper else []),
+        *([f"COPY {_env_credentials.CONFIG_NAME} {AWS_CONFIG_PATH}"] if config else []),
         f"COPY {AGENT_HOST_CONTEXT_DIR} {AGENT_HOST_DIR}",
         f"COPY {HOST_CONFIG_NAME} {HOST_CONFIG_PATH}",
         *([f"COPY {AGENT_APP_CONTEXT_DIR} {AGENT_APP_DIR}"] if project.source is not None else []),
@@ -261,17 +345,36 @@ def _readme(project: AgentProject, target: str) -> str:
         "credencial sólo vale dentro de Rayito.",
     ]
     if target == "agentcore":
-        lines += [
-            "",
-            "## Amazon Bedrock AgentCore Runtime",
-            "",
-            f"AgentCore espera una imagen `{EXPORT_PLATFORM}` que sirva `/ping` y `/invocations`",
-            f"en el puerto {port}, como esta. Sube la imagen a Amazon ECR y crea el runtime",
-            "con ella en la consola o con la CLI de AgentCore. AgentCore autentica las",
-            f"invocaciones por sí mismo: no fijes `{SERVICE_TOKEN_ENV}`, y da al rol del",
-            "runtime los permisos del modelo que use el agente.",
-        ]
+        lines += _agentcore_readme(port)
     return "\n".join(lines) + "\n"
+
+
+def _agentcore_readme(port: int) -> list[str]:
+    return [
+        "",
+        "## Amazon Bedrock AgentCore Runtime",
+        "",
+        f"AgentCore espera una imagen `{EXPORT_PLATFORM}` que sirva `/ping` y `/invocations`",
+        f"en el puerto {port}, como esta. La forma más corta de desplegarla es",
+        "`rayito agent deploy <directorio> --target agentcore`: construye la imagen con",
+        "CodeBuild (sin Docker local), la sube a Amazon ECR, crea el rol del runtime con",
+        "el mínimo privilegio y crea o actualiza el runtime. A mano: sube la imagen a ECR,",
+        "crea el runtime en la consola o con la CLI de AgentCore y activa MMDSv2",
+        "(`requireMMDSV2` en `UpdateAgentRuntime`), sin el que AgentCore rechaza las",
+        "invocaciones. AgentCore autentica las invocaciones por sí mismo (SigV4): no",
+        f"fijes `{SERVICE_TOKEN_ENV}`.",
+        "",
+        f"El argumento de build `{BASE_IMAGE_ARG}` toma la misma imagen base, con el mismo",
+        "digest, de otro registro (por ejemplo `public.ecr.aws/docker/library/python`).",
+        "",
+        "### Seguridad: sin pasarela de secretos",
+        "",
+        "En AgentCore no hay pasarela de secretos de Rayito: el agente obtiene las",
+        "credenciales del rol del runtime por el servicio de metadatos de la microVM, y",
+        "cualquier código que corra en la sesión puede leerlas. Da al rol sólo lo que el",
+        "agente necesita: los modelos de Bedrock que usa y, si hace falta, los secretos",
+        "que debe leer.",
+    ]
 
 
 __all__ = ["EXPORT_TARGETS", "AgentExport", "export_project", "render_export"]

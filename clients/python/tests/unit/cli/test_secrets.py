@@ -20,6 +20,7 @@ from rayito.v1 import health_pb2
 
 from . import test_doctor as doctor_stubs
 from .conftest import (
+    ACCOUNT_ID,
     IMAGE_ARN,
     STARTED_AT,
     FakeControlPlane,
@@ -111,7 +112,9 @@ def test_image_publish_reuse_never_leaks(
     artifact = tmp_path / "a.zip"
     _artifact.write_zip(image_dir, artifact)
     key = _publish.artifact_key(artifact.read_bytes())
-    stubbed_clients.s3.add_response("head_object", {}, {"Bucket": "b", "Key": key})
+    stubbed_clients.s3.add_response(
+        "head_object", {}, {"Bucket": "b", "Key": key, "ExpectedBucketOwner": ACCOUNT_ID}
+    )
     stubbed_clients.microvms.add_response(
         "get_microvm_image",
         {

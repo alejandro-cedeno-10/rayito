@@ -22,6 +22,13 @@ from typing import TYPE_CHECKING, Any, Final, Literal, Protocol
 
 from botocore.exceptions import ClientError
 
+from rayito._account_setup._aws import artifact_stack_gateway
+from rayito._account_setup._domain import BUCKET_ENV_VAR as BUCKET_ENV_VAR
+from rayito._account_setup._domain import (
+    BUCKET_NAME_OUTPUT_KEY,
+    with_setup_hint,
+)
+from rayito._account_setup._domain import cdk_bucket_name as cdk_bucket_name
 from rayito._agent._project_domain import AgentProject
 from rayito._aws import LazyClient
 from rayito._aws_region import aws_session, resolve_region
@@ -30,18 +37,13 @@ from rayito._payload import generate_access_token
 from rayito._sandbox_base import ACCESS_TOKEN_ENV_VAR
 from rayito._secret_gateway._domain import SecretGateway
 from rayito._secrets import SecretRef
-from rayito.exceptions import InvalidArgumentException
+from rayito._stacks._cloudformation import CloudFormationProvisioner
+from rayito._stacks._condition import classify_stack
+from rayito.exceptions import InvalidArgumentException, StackException
 
 if TYPE_CHECKING:
     import boto3
 
-#: Variable con el bucket de artefactos, la misma de `rayito image publish`.
-BUCKET_ENV_VAR: Final = "RAYITO_BUCKET"
-#: Calificador por defecto del bootstrap de CDK
-#: (docs.aws.amazon.com/cdk/v2/guide/bootstrapping-env.html, consultado
-#: 2026-10-16): el bucket de activos es `cdk-<calificador>-assets-<cuenta>-<región>`.
-CDK_BOOTSTRAP_QUALIFIER: Final = "hnb659fds"
-CDK_ASSETS_BUCKET_TEMPLATE: Final = "cdk-{qualifier}-assets-{account}-{region}"
 #: El nombre convencional del secreto de una pasarela, bajo el prefijo
 #: `rayito/` de `SecretStore` (el secreto queda en `rayito/agents/<proyecto>/<pasarela>`).
 AGENT_SECRET_NAME_TEMPLATE: Final = "agents/{project}/{gateway}"
@@ -51,6 +53,9 @@ AUTHORIZATION_HEADER: Final = "authorization"
 #: `s3:ListBucket` S3 contesta 403 a un HEAD, y un bucket que no se puede
 #: leer tampoco sirve para el artefacto.
 BUCKET_MISSING_CODES: Final = frozenset({"404", "NoSuchBucket", "NotFound", "403"})
+#: Códigos de acceso denegado de CloudFormation (`AccessDenied`) y de la
+#: forma `*Exception`; la misma tabla en TypeScript.
+ACCESS_DENIED_CODES: Final = frozenset({"AccessDenied", "AccessDeniedException"})
 #: La variable de entorno estándar de cada pasarela de modelo
 #: (`testdata/agent-deploy/secret-env.json`, la misma tabla en TypeScript).
 GATEWAY_SECRET_ENV_VARS: Final[Mapping[str, str]] = MappingProxyType(
@@ -69,6 +74,17 @@ GATEWAY_SECRET_ENV_VARS: Final[Mapping[str, str]] = MappingProxyType(
     }
 )
 
+
+def _is_access_denied(exc: StackException) -> bool:
+    """Un `StackException` de `describe` cuya causa (el resumen saneado del
+    error de AWS) es un acceso denegado."""
+    cause = exc.__cause__
+    return any(
+        isinstance(code, str) and code in ACCESS_DENIED_CODES
+        for code in (getattr(cause, "name", None), getattr(cause, "code", None))
+    )
+
+
 BucketSource = Literal["argument", "project_file", "environment", "discovered"]
 
 
@@ -81,7 +97,9 @@ class BucketChoice:
 class DeployAws(Protocol):
     """Lo que `deploy_agent()` pregunta a AWS antes de crear nada: la región
     efectiva, la cuenta (`GetCallerIdentity`), si un bucket existe
-    (`HeadBucket`) y si una imagen existe (`GetMicrovmImage`)."""
+    (`HeadBucket`), el bucket de la pila `rayito-m0-artifacts` que creó
+    `rayito setup` (`DescribeStacks`) y si una imagen existe
+    (`GetMicrovmImage`)."""
 
     @property
     def resolved_region(self) -> str: ...
@@ -89,6 +107,8 @@ class DeployAws(Protocol):
     def account_id(self) -> str: ...
 
     def bucket_exists(self, bucket: str) -> bool: ...
+
+    def artifact_stack_bucket(self) -> str | None: ...
 
     def image_exists(self, name: str) -> bool: ...
 
@@ -120,12 +140,6 @@ def secret_name_for(project: str, gateway: str) -> str:
     return AGENT_SECRET_NAME_TEMPLATE.format(project=project, gateway=gateway)
 
 
-def cdk_bucket_name(account: str, region: str) -> str:
-    return CDK_ASSETS_BUCKET_TEMPLATE.format(
-        qualifier=CDK_BOOTSTRAP_QUALIFIER, account=account, region=region
-    )
-
-
 def resolve_bucket(
     explicit: str | None,
     project_file: str | None,
@@ -134,7 +148,8 @@ def resolve_bucket(
 ) -> BucketChoice:
     """El bucket del artefacto: argumento > `[deploy].bucket` del fichero de
     proyecto > `RAYITO_BUCKET` > el bucket de activos del bootstrap de CDK de
-    la cuenta y la región (si existe). Sin ninguno, `InvalidArgumentException`
+    la cuenta y la región (si existe) > el de la pila `rayito-m0-artifacts` de
+    `rayito setup` (si existe). Sin ninguno, `InvalidArgumentException`
     con las opciones; nunca se crea un bucket."""
     if explicit:
         return BucketChoice(explicit, "argument")
@@ -147,9 +162,11 @@ def resolve_bucket(
     if discovered:
         return BucketChoice(discovered, "discovered")
     raise InvalidArgumentException(
-        "no hay bucket para el artefacto de la imagen: pasa bucket= (--bucket), "
-        f"[deploy].bucket en el fichero del proyecto o exporta {BUCKET_ENV_VAR}; "
-        "Rayito no crea buckets"
+        with_setup_hint(
+            "no hay bucket para el artefacto de la imagen: pasa bucket= (--bucket), "
+            f"[deploy].bucket en el fichero del proyecto o exporta {BUCKET_ENV_VAR}; "
+            "Rayito no crea buckets"
+        )
     )
 
 
@@ -298,12 +315,30 @@ class AwsResolver:
 
     def bucket_exists(self, bucket: str) -> bool:
         try:
-            self._s3.get().head_bucket(Bucket=bucket)
+            self._s3.get().head_bucket(Bucket=bucket, ExpectedBucketOwner=self.account_id())
         except ClientError as exc:
             if client_error_code(exc) in BUCKET_MISSING_CODES:
                 return False
             raise
         return True
+
+    def artifact_stack_bucket(self) -> str | None:
+        """La salida `BucketName` de `rayito-m0-artifacts` si la pila está
+        lista; `None` si no existe, no está lista, no tiene la salida o
+        `DescribeStacks` responde acceso denegado (sólo lectura: quien no
+        tiene permisos de CloudFormation sigue viendo el error de bucket de
+        siempre). Cualquier otro fallo (p. ej. `Throttling`) se propaga como
+        `StackException`."""
+        provisioner = CloudFormationProvisioner(region=self.resolved_region, session=self.session)
+        try:
+            observed = artifact_stack_gateway(provisioner).observe()
+        except StackException as exc:
+            if _is_access_denied(exc):
+                return None
+            raise
+        if classify_stack(observed) != "usable":
+            return None
+        return observed.outputs.get(BUCKET_NAME_OUTPUT_KEY) or None
 
     def image_exists(self, name: str) -> bool:
         arn = account_image_arn(self.resolved_region, self.account_id(), name)
@@ -312,9 +347,12 @@ class AwsResolver:
 
 def discover_bucket(aws: DeployAws, region: str) -> str | None:
     """El bucket de activos del bootstrap de CDK de la cuenta y la región, si
-    existe (`GetCallerIdentity` y `HeadBucket`; nunca se crea)."""
+    existe (`GetCallerIdentity` y `HeadBucket`) y, si no, el que creó
+    `rayito setup` (`DescribeStacks` de `rayito-m0-artifacts`). Nunca se crea."""
     candidate = cdk_bucket_name(aws.account_id(), region)
-    return candidate if aws.bucket_exists(candidate) else None
+    if aws.bucket_exists(candidate):
+        return candidate
+    return aws.artifact_stack_bucket()
 
 
 @dataclass(frozen=True)
@@ -333,10 +371,12 @@ def ensure_base_image(
         return False
     if not ensure or publisher is None:
         raise InvalidArgumentException(
-            f"la imagen base {base!r} no existe en esta cuenta y región: publícala con "
-            "`rayito image publish --os-capabilities ALL --artifact <zip> "
-            "--base-image-version latest` (ver la guía de instalación) o pasa "
-            "base_publisher= a deploy_agent()"
+            with_setup_hint(
+                f"la imagen base {base!r} no existe en esta cuenta y región: publícala con "
+                "`rayito image publish --os-capabilities ALL --artifact <zip> "
+                "--base-image-version latest` (ver la guía de instalación) o pasa "
+                "base_publisher= a deploy_agent()"
+            )
         )
     publisher()
     if not aws.image_exists(base):

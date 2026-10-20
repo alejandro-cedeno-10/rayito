@@ -91,6 +91,23 @@ Lo que devuelve es una [flota](flota-de-agentes.md) (`AgentFleet`): uno o varios
 MicroVMs que sirven el agente, con las sesiones repartidas entre ellos. Con los
 valores por defecto es un solo VM, igual que `AgentProject.deploy()`.
 
+### ¿Prefieres Amazon Bedrock AgentCore? { #desplegar-en-agentcore }
+
+El mismo proyecto se despliega en
+[Amazon Bedrock AgentCore Runtime](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/agents-tools-runtime.html)
+con `--target agentcore` (`target="agentcore"` en Python y `target: "agentcore"`
+en TypeScript), sin Docker local: Rayito construye la imagen arm64 con
+CodeBuild, crea el runtime con un rol de mínimo privilegio y devuelve un objeto
+con el mismo `invoke()` y las mismas sesiones que una flota. El destino por
+defecto sigue siendo `microvm`. Una diferencia importante: AgentCore no tiene
+la pasarela de secretos de Rayito, así que el agente puede leer las
+credenciales del rol del runtime. Todo en
+[Desplegar en AgentCore](desplegar-en-agentcore.md).
+
+```bash
+rayito agent deploy ./mi-agente --target agentcore --dry-run
+```
+
 ### Qué detecta y de dónde { #que-detecta-y-de-donde }
 
 | Qué | De dónde sale |
@@ -144,8 +161,14 @@ variable de entorno y del descubrimiento; ninguno crea nada en silencio:
 - La **región** es `--region`, `[deploy] region`, `AWS_REGION` o la de tu perfil.
 - La **imagen base** es la versión más reciente de `rayito-base-caps`. Si no
   existe, se publica sólo con `--base-artifact` y `--yes`.
-- El **bucket** del artefacto es `--bucket`, `[deploy] bucket`, `RAYITO_BUCKET` o
-  el del bootstrap de CDK de la cuenta. Rayito no crea buckets.
+- El **bucket** del artefacto es, por este orden, `--bucket`, `[deploy] bucket`,
+  `RAYITO_BUCKET`, el del bootstrap de CDK de la cuenta si existe (`HeadBucket`)
+  y, si no, el que creó `rayito setup`: la salida `BucketName` de la pila
+  `rayito-m0-artifacts` cuando está lista (`DescribeStacks`, sólo lectura; sin
+  permiso para leerla se salta).
+  `rayito agent deploy` no crea buckets: si no hay ninguno, ejecuta antes
+  [`rayito setup`](../primeros-pasos/configurar-aws.md#2-prepara-la-cuenta-con-rayito-setup),
+  que crea uno si hace falta.
 - El **secreto del modelo** es `--secret`, el del fichero, o el de nombre
   convencional `rayito/agents/<proyecto>/<proveedor>`. Sólo con `--create-secret`
   se crea el que falte, desde la variable estándar del proveedor, que se lee en
@@ -254,14 +277,14 @@ formas, las de [`CustomRuntime`](#otros-frameworks-customruntime):
 
 ## Antes de empezar
 
-1. [Configurar AWS](../primeros-pasos/configurar-aws.md) hecho y
-   `rayito-base-caps` publicada: es la base de la imagen del agente, la única
+1. [Configurar AWS](../primeros-pasos/configurar-aws.md) hecho (`rayito setup`)
+   y `rayito-base-caps` publicada: es la base de la imagen del agente, la única
    que aplica el egress cerrado.
 2. La clave del modelo en Secrets Manager, y `RayitoSecretsReader` para quien
    llama al SDK ([Agente en el sandbox](agente-en-el-sandbox.md#1-el-secreto-y-la-pasarela)).
 3. Acceso al modelo en tu proveedor
    ([Proveedores del agente](agente-proveedores.md)).
-4. Un bucket de S3 para el artefacto del build y `RayitoTemplateBuilder` para
+4. Un bucket de S3 para el artefacto del build (el que deja `rayito setup`) y `RayitoTemplateBuilder` para
    quien construye ([Templates de agente](../funciones-opcionales/templates-de-agente.md)).
 
 `rayito agent init` y `rayito agent export` funcionan sin nada de esto: sólo
@@ -276,8 +299,8 @@ desplegarla (≈ 20 segundos hasta que el servicio responde).
 
 | Qué | Cómo | Cuánto |
 |---|---|---|
-| Un bucket de S3 para el artefacto del build | `export RAYITO_BUCKET=amzn-s3-demo-bucket` ([Configurar AWS](../primeros-pasos/configurar-aws.md#2-un-bucket-para-los-artefactos)) | 1 min |
-| La imagen base `rayito-base-caps` | publícala desde el `rayito-image.zip` de la release ([Configurar AWS](../primeros-pasos/configurar-aws.md#4-publicar-la-imagen-rayito-base)) | ≈ 4 min |
+| Un bucket de S3 para el artefacto del build | `rayito setup` lo reutiliza o lo crea e imprime `RAYITO_BUCKET=<bucket>`; si prefieres el tuyo, `export RAYITO_BUCKET=amzn-s3-demo-bucket` ([Configurar AWS](../primeros-pasos/configurar-aws.md#2-prepara-la-cuenta-con-rayito-setup)) | incluido en `rayito setup` |
+| La imagen base `rayito-base-caps` | publícala desde el `rayito-image.zip` de la release ([Configurar AWS](../primeros-pasos/configurar-aws.md#a-mano-sin-rayito-setup)) | ≈ 4 min |
 | La versión de la base gestionada de AWS | no hace falta buscarla a mano: con `--base-image-version latest`, `rayito image publish` usa la más reciente que lista AWS y la imprime; un número explícito fija una build reproducible | — |
 
 ```bash
@@ -952,6 +975,15 @@ con las órdenes exactas. Con `agentcore` comprueba además las restricciones de
 contrato de AgentCore (arm64 y puerto 8080). No sobrescribe un directorio con
 contenido salvo con `overwrite`.
 
+Con `agentcore`, el `Dockerfile` toma la imagen base de un argumento de build,
+`AGENT_BASE_IMAGE`, con la referencia fijada por digest como valor por defecto:
+sirve para bajar la misma imagen, con el mismo digest, de otro registro (por
+ejemplo, `public.ecr.aws/docker/library/python`). El `README.md` exportado
+explica cómo desplegar el contexto en AgentCore y la diferencia de seguridad. Si
+no quieres construir la imagen ni crear el runtime a mano,
+[`rayito agent deploy --target agentcore`](desplegar-en-agentcore.md) hace las
+dos cosas. El destino `docker` no cambia.
+
 === "Python"
 
     ```python
@@ -1174,6 +1206,7 @@ Los mensajes nunca llevan el prompt, las cabeceras ni el nombre de un secreto.
 
 ## Ver también
 
+- [Desplegar en AgentCore](desplegar-en-agentcore.md)
 - [Agente en el sandbox](agente-en-el-sandbox.md)
 - [Proveedores del agente](agente-proveedores.md)
 - [Templates de agente](../funciones-opcionales/templates-de-agente.md)

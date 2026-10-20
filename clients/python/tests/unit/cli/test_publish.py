@@ -361,7 +361,7 @@ def stub_head_object_missing(stubs: Stubs, bucket: str, key: str) -> None:
         service_error_code="404",
         service_message="Not Found",
         http_status_code=404,
-        expected_params={"Bucket": bucket, "Key": key},
+        expected_params={"Bucket": bucket, "Key": key, "ExpectedBucketOwner": ACCOUNT_ID},
     )
 
 
@@ -421,7 +421,9 @@ def test_reuse_makes_no_build_call(
 ) -> None:
     monkeypatch.setenv("RAYITO_BUCKET", "bucket")
     key = _publish.artifact_key(artifact.read_bytes())
-    stubbed_clients.s3.add_response("head_object", {}, {"Bucket": "bucket", "Key": key})
+    stubbed_clients.s3.add_response(
+        "head_object", {}, {"Bucket": "bucket", "Key": key, "ExpectedBucketOwner": ACCOUNT_ID}
+    )
     stubbed_clients.microvms.add_response(
         "get_microvm_image", image_response(), {"imageIdentifier": IMAGE_ARN}
     )
@@ -442,7 +444,9 @@ def test_reuse_json_prints_only_the_summary(
     runner: CliRunner, clients: Clients, stubbed_clients: Stubs, artifact: Path
 ) -> None:
     key = _publish.artifact_key(artifact.read_bytes())
-    stubbed_clients.s3.add_response("head_object", {}, {"Bucket": "bucket", "Key": key})
+    stubbed_clients.s3.add_response(
+        "head_object", {}, {"Bucket": "bucket", "Key": key, "ExpectedBucketOwner": ACCOUNT_ID}
+    )
     stubbed_clients.microvms.add_response(
         "get_microvm_image", image_response(), {"imageIdentifier": IMAGE_ARN}
     )
@@ -472,7 +476,11 @@ def test_failed_build_prints_state_reason_and_log_tail(
     monkeypatch.setattr("rayito.cli._publish.time.sleep", lambda seconds: None)
     key = _publish.artifact_key(artifact.read_bytes())
     stub_head_object_missing(stubbed_clients, "bucket", key)
-    stubbed_clients.s3.add_response("put_object", {}, {"Bucket": "bucket", "Key": key, "Body": ANY})
+    stubbed_clients.s3.add_response(
+        "put_object",
+        {},
+        {"Bucket": "bucket", "Key": key, "Body": ANY, "ExpectedBucketOwner": ACCOUNT_ID},
+    )
     stubbed_clients.microvms.add_response(
         "get_microvm_image", image_response(), {"imageIdentifier": IMAGE_ARN}
     )
@@ -550,7 +558,9 @@ def test_upload_skipped_when_key_exists(
     clients: Clients, stubbed_clients: Stubs, artifact: Path
 ) -> None:
     key = _publish.artifact_key(artifact.read_bytes())
-    stubbed_clients.s3.add_response("head_object", {}, {"Bucket": "bucket", "Key": key})
+    stubbed_clients.s3.add_response(
+        "head_object", {}, {"Bucket": "bucket", "Key": key, "ExpectedBucketOwner": ACCOUNT_ID}
+    )
     lines: list[str] = []
     uploaded = _publish.upload_artifact(clients, settings(artifact=artifact), lines.append)
     assert uploaded == _publish.UploadedArtifact(f"s3://bucket/{key}", uploaded=False)
@@ -569,9 +579,13 @@ def test_upload_proceeds_when_head_is_forbidden_without_list_bucket(
         service_error_code="403",
         service_message="Forbidden",
         http_status_code=403,
-        expected_params={"Bucket": "bucket", "Key": key},
+        expected_params={"Bucket": "bucket", "Key": key, "ExpectedBucketOwner": ACCOUNT_ID},
     )
-    stubbed_clients.s3.add_response("put_object", {}, {"Bucket": "bucket", "Key": key, "Body": ANY})
+    stubbed_clients.s3.add_response(
+        "put_object",
+        {},
+        {"Bucket": "bucket", "Key": key, "Body": ANY, "ExpectedBucketOwner": ACCOUNT_ID},
+    )
     lines: list[str] = []
     uploaded = _publish.upload_artifact(clients, settings(artifact=artifact), lines.append)
     assert uploaded == _publish.UploadedArtifact(f"s3://bucket/{key}", uploaded=True)
@@ -608,7 +622,11 @@ def test_run_scoped_upload_reports_it_uploaded(
 ) -> None:
     key = _publish.artifact_key(artifact.read_bytes(), "run-1")
     stub_head_object_missing(stubbed_clients, "bucket", key)
-    stubbed_clients.s3.add_response("put_object", {}, {"Bucket": "bucket", "Key": key, "Body": ANY})
+    stubbed_clients.s3.add_response(
+        "put_object",
+        {},
+        {"Bucket": "bucket", "Key": key, "Body": ANY, "ExpectedBucketOwner": ACCOUNT_ID},
+    )
     uploaded = _publish.upload_artifact(
         clients, settings(artifact=artifact, artifact_run_id="run-1"), lambda _: None
     )
@@ -622,7 +640,9 @@ def test_cli_run_id_reaches_the_key_and_the_summary(
     invocación subió el objeto (`artifactUploaded`), que es lo que una
     limpieza consulta antes de borrarlo."""
     key = _publish.artifact_key(artifact.read_bytes(), "run-1")
-    stubbed_clients.s3.add_response("head_object", {}, {"Bucket": "bucket", "Key": key})
+    stubbed_clients.s3.add_response(
+        "head_object", {}, {"Bucket": "bucket", "Key": key, "ExpectedBucketOwner": ACCOUNT_ID}
+    )
     stubbed_clients.microvms.add_response(
         "get_microvm_image", image_response(), {"imageIdentifier": IMAGE_ARN}
     )
@@ -740,7 +760,9 @@ def test_the_cli_prints_the_version_it_resolved_and_publishes_on_it(
         },
         {"imageIdentifier": _publish.base_image_arn(REGION)},
     )
-    stubbed_clients.s3.add_response("head_object", {}, {"Bucket": "bucket", "Key": key})
+    stubbed_clients.s3.add_response(
+        "head_object", {}, {"Bucket": "bucket", "Key": key, "ExpectedBucketOwner": ACCOUNT_ID}
+    )
     stubbed_clients.microvms.add_response(
         "get_microvm_image", image_response(), {"imageIdentifier": IMAGE_ARN}
     )
@@ -774,7 +796,9 @@ def test_an_explicit_version_prints_nothing_extra_and_asks_no_one(
 ) -> None:
     monkeypatch.setenv("RAYITO_BUCKET", "bucket")
     key = _publish.artifact_key(artifact.read_bytes())
-    stubbed_clients.s3.add_response("head_object", {}, {"Bucket": "bucket", "Key": key})
+    stubbed_clients.s3.add_response(
+        "head_object", {}, {"Bucket": "bucket", "Key": key, "ExpectedBucketOwner": ACCOUNT_ID}
+    )
     stubbed_clients.microvms.add_response(
         "get_microvm_image", image_response(), {"imageIdentifier": IMAGE_ARN}
     )

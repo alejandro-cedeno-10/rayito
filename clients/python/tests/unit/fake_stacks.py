@@ -23,6 +23,7 @@ class FakeStackProvisioner:
     #: Los `parameters`/`keep_previous` de la última `create`/`update`.
     sent_parameters: dict[str, str] = field(default_factory=dict)
     sent_keep_previous: tuple[str, ...] = ()
+    sent_tags: dict[str, str] = field(default_factory=dict)
     next_update_outcome: UpdateOutcome = "changed"
     fail_wait: bool = False
     #: Cada `timeout` que `wait()` recibió, en orden; permite a un test de
@@ -46,6 +47,7 @@ class FakeStackProvisioner:
     ) -> None:
         self.calls.append(("create", stack_name))
         self.sent_parameters = dict(parameters)
+        self.sent_tags = dict(tags)
         self.sent_keep_previous = ()
         self.stacks[stack_name] = StackStatus(
             name=stack_name,
@@ -66,6 +68,7 @@ class FakeStackProvisioner:
     ) -> UpdateOutcome:
         self.calls.append(("update", stack_name))
         self.sent_parameters = dict(parameters)
+        self.sent_tags = dict(tags)
         self.sent_keep_previous = keep_previous
         if self.next_update_outcome == "changed":
             existing = self.stacks.get(stack_name)

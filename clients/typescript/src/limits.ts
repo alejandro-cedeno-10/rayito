@@ -443,3 +443,75 @@ export const AGENT_YARN_BERRY_INTEGRITY =
   "sha512-EH+A4TxAtBWXKE0DGQxW9Bo9crXHLJ73mfxjTQJuv8XonNWWTpei8BQ5JjczHJNU9GROTycwMFn8iOvRIZXUcA==" as const;
 export const AGENT_SECRET_NAME_TEMPLATE = "rayito/agents/{project}/{provider}" as const;
 export const AGENT_TOKEN_FILE_DEFAULT = ".rayito/agent-token" as const;
+
+export const AGENTCORE_SUPPORTED_REGIONS = [
+  "us-east-1",
+  "us-east-2",
+  "us-west-1",
+  "us-west-2",
+  "ca-central-1",
+  "sa-east-1",
+  "eu-central-1",
+  "eu-west-1",
+  "eu-west-2",
+  "eu-west-3",
+  "eu-south-1",
+  "eu-south-2",
+  "eu-north-1",
+  "ap-south-1",
+  "ap-south-2",
+  "ap-southeast-1",
+  "ap-southeast-2",
+  "ap-southeast-5",
+  "ap-southeast-7",
+  "ap-northeast-1",
+  "ap-northeast-2",
+] as const;
+export const AGENTCORE_RUNTIME_NAME_PREFIX = "rayito_" as const;
+export const AGENTCORE_RUNTIME_NAME_MAX_LENGTH = 48 as const;
+export const AGENTCORE_STACK_NAME_PREFIX = "rayito-agentcore-" as const;
+export const AGENTCORE_REPOSITORY_PREFIX = "rayito/agentcore/" as const;
+export const AGENTCORE_SOURCE_PREFIX = "rayito/images/agentcore/" as const;
+export const AGENTCORE_IMAGE_TAG_PREFIX = "src-" as const;
+export const AGENTCORE_IMAGE_TAG_HEX_CHARS = 16 as const;
+export const AGENTCORE_DESCRIPTION_MARKER = "rayito.agentcore/1" as const;
+export const AGENTCORE_ENDPOINT_NAME = "DEFAULT" as const;
+export const AGENTCORE_RUNTIME_LOG_GROUP_PREFIX = "/aws/bedrock-agentcore/runtimes/" as const;
+export const AGENTCORE_SERVER_PROTOCOL = "HTTP" as const;
+export const AGENTCORE_NETWORK_MODE = "PUBLIC" as const;
+export const AGENTCORE_SESSION_ID_PREFIX = "rayito-" as const;
+export const AGENTCORE_SESSION_ID_MIN_LENGTH = 33 as const;
+export const AGENTCORE_SESSION_ID_MAX_LENGTH = 100 as const;
+export const AGENTCORE_LIFECYCLE_MIN_SECONDS = 60 as const;
+export const AGENTCORE_LIFECYCLE_MAX_SECONDS = 28800 as const;
+export const AGENTCORE_IDLE_SESSION_TIMEOUT_DEFAULT_SECONDS = 900 as const;
+export const AGENTCORE_REQUEST_TIMEOUT_SECONDS = 900 as const;
+export const AGENTCORE_STREAM_MAX_SECONDS = 3600 as const;
+export const AGENTCORE_MAX_IMAGE_BYTES = 2000000000 as const;
+export const AGENTCORE_MAX_ENVIRONMENT_VARIABLES = 50 as const;
+export const AGENTCORE_ENVIRONMENT_VALUE_MAX_CHARS = 5000 as const;
+export const AGENTCORE_MAX_TAGS = 50 as const;
+export const AGENTCORE_READY_TIMEOUT_SECONDS = 900 as const;
+export const AGENTCORE_READY_POLL_SECONDS = 5 as const;
+export const AGENTCORE_DELETE_TIMEOUT_SECONDS = 600 as const;
+export const AGENTCORE_BUILD_TIMEOUT_MINUTES = 30 as const;
+export const AGENTCORE_BUILD_POLL_SECONDS = 10 as const;
+export const AGENTCORE_BUILD_ENVIRONMENT_TYPE = "ARM_CONTAINER" as const;
+export const AGENTCORE_BUILD_IMAGE = "aws/codebuild/amazonlinux-aarch64-standard:3.0" as const;
+export const AGENTCORE_BUILD_COMPUTE_TYPE = "BUILD_GENERAL1_SMALL" as const;
+export const AGENTCORE_IMAGE_RETENTION_COUNT = 5 as const;
+export const AGENTCORE_BUILD_LOG_RETENTION_DAYS = 14 as const;
+export const AGENTCORE_BASE_IMAGE_MIRROR =
+  "public.ecr.aws/docker/library/python:3.12-slim-bookworm" as const;
+export const AGENTCORE_ENV_CREDENTIAL_ADAPTERS = ["vercel-ai"] as const;
+export const AGENTCORE_CREDENTIAL_PROCESS_RUNTIMES = ["opencode"] as const;
+export const AGENT_AWS_CREDENTIALS_REQUIREMENTS_SHA256 =
+  "89036dcfdb03c8b21958b771e3230e30e1dc6bd5e16c41eaae64514f1aa5578f" as const;
+export const AGENTCORE_RUNTIME_VCPU_HOUR_PRICE_USD = 0.0895 as const;
+export const AGENTCORE_RUNTIME_GB_HOUR_PRICE_USD = 0.00945 as const;
+export const CODEBUILD_ARM_SMALL_MINUTE_PRICE_USD = 0.0034 as const;
+export const CODEBUILD_FREE_TIER_MINUTES_PER_MONTH = 100 as const;
+export const ECR_STORAGE_GB_MONTH_PRICE_USD = 0.1 as const;
+export const CLOUDWATCH_LOGS_INGESTION_GB_PRICE_USD = 0.5 as const;
+export const BEDROCK_INFERENCE_PROFILE_PREFIXES = ["us", "eu", "apac", "au", "global"] as const;
+export const BEDROCK_GLOBAL_PROFILE_PREFIX = "global" as const;

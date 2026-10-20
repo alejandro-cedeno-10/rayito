@@ -78,7 +78,7 @@ con capas caps y EFS publicada con `--image-name` funciona sin cambiar nada.
 
 Sin compilar nada, `rayito-base` y `rayito-base-caps` se publican desde el
 `rayito-image.zip` firmado de cada release
-([Configurar AWS](primeros-pasos/configurar-aws.md#4-publicar-la-imagen-rayito-base)).
+([Configurar AWS](primeros-pasos/configurar-aws.md#a-mano-sin-rayito-setup)).
 Desde el código fuente (Linux o WSL2, para compilar `rayd`):
 
 ```bash

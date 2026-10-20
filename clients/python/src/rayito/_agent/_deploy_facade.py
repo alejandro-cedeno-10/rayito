@@ -20,7 +20,7 @@ import logging
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Final
+from typing import TYPE_CHECKING, Any, Final, Literal, overload
 
 from rayito._agent._aws_resolve import (
     AwsResolver,
@@ -50,11 +50,19 @@ from rayito._agent._project_base import template_name
 from rayito._agent._project_domain import AgentProject
 from rayito._agent._project_service import ProjectService
 from rayito._agent._project_service_async import AsyncProjectService
+from rayito._agentcore._targets import (
+    TARGET_AGENTCORE,
+    check_agentcore_options_target,
+    require_target,
+)
 from rayito._secrets import SecretStore
 from rayito.exceptions import InvalidArgumentException
 
 if TYPE_CHECKING:
     from rayito._agent._detect_report import DetectOverrides
+    from rayito._agentcore._fleet import AgentCoreFleet
+    from rayito._agentcore._fleet_async import AsyncAgentCoreFleet
+    from rayito._agentcore._models import AgentCoreDeployPlan, AgentCoreOptions
 
 logger = logging.getLogger("rayito.agent")
 
@@ -92,6 +100,34 @@ class Preflight:
     steps: tuple[AgentDeployStep, ...]
 
 
+@overload
+def plan_deploy(
+    path: str | os.PathLike[str] = ...,
+    *,
+    project: AgentProject | None = ...,
+    options: AgentDeployOptions | None = ...,
+    overrides: DetectOverrides | None = ...,
+    region: str | None = ...,
+    session: Any = ...,
+    target: Literal["microvm"] = ...,
+    agentcore: None = ...,
+) -> AgentDeployPlan: ...
+
+
+@overload
+def plan_deploy(
+    path: str | os.PathLike[str] = ...,
+    *,
+    project: AgentProject | None = ...,
+    options: AgentDeployOptions | None = ...,
+    overrides: DetectOverrides | None = ...,
+    region: str | None = ...,
+    session: Any = ...,
+    target: Literal["agentcore"],
+    agentcore: AgentCoreOptions | None = ...,
+) -> AgentCoreDeployPlan: ...
+
+
 def plan_deploy(
     path: str | os.PathLike[str] = ".",
     *,
@@ -100,10 +136,15 @@ def plan_deploy(
     overrides: DetectOverrides | None = None,
     region: str | None = None,
     session: Any = None,
-) -> AgentDeployPlan:
+    target: Literal["microvm", "agentcore"] = "microvm",
+    agentcore: AgentCoreOptions | None = None,
+) -> AgentDeployPlan | AgentCoreDeployPlan:
     """Lo que `deploy_agent()` haría con estos argumentos, sin llamar a AWS:
     detecta el proyecto (lee ficheros locales, no ejecuta su código), y calcula
-    el escalado, el origen de cada valor y el coste de lista.
+    el escalado, el origen de cada valor y el coste de lista. Con
+    `target="agentcore"` devuelve un `AgentCoreDeployPlan`: valida las opciones,
+    deriva los nombres de los recursos y dice qué rol tendrá el runtime y qué
+    cuesta; `agentcore=` sólo vale con ese destino.
 
     Coste y activación
     -------------------
@@ -112,11 +153,25 @@ def plan_deploy(
         ningún paquete opcional.
     Coste aproximado: ninguno.
     IAM: ninguna.
-    Cómo apagarla: no la llames.
+    Cómo apagarla: no la llamo.
     Ejemplo:
         plan = plan_deploy("./mi-agente")
         plan.cost.running_usd_per_hour
     """
+    require_target(target)
+    check_agentcore_options_target(agentcore, target)
+    if target == TARGET_AGENTCORE:
+        from rayito._agentcore._deploy import plan_agentcore
+
+        return plan_agentcore(
+            path,
+            project=project,
+            options=options,
+            overrides=overrides,
+            region=region,
+            session=session,
+            agentcore=agentcore,
+        ).plan
     chosen = options or AgentDeployOptions()
     detected, report = project_for(path, project, overrides, region)
     return build_plan(
@@ -127,6 +182,34 @@ def plan_deploy(
     )
 
 
+@overload
+def deploy_agent(
+    path: str | os.PathLike[str] = ...,
+    *,
+    project: AgentProject | None = ...,
+    options: AgentDeployOptions | None = ...,
+    overrides: DetectOverrides | None = ...,
+    region: str | None = ...,
+    session: Any = ...,
+    target: Literal["microvm"] = ...,
+    agentcore: None = ...,
+) -> AgentFleet: ...
+
+
+@overload
+def deploy_agent(
+    path: str | os.PathLike[str] = ...,
+    *,
+    project: AgentProject | None = ...,
+    options: AgentDeployOptions | None = ...,
+    overrides: DetectOverrides | None = ...,
+    region: str | None = ...,
+    session: Any = ...,
+    target: Literal["agentcore"],
+    agentcore: AgentCoreOptions | None = ...,
+) -> AgentCoreFleet: ...
+
+
 def deploy_agent(
     path: str | os.PathLike[str] = ".",
     *,
@@ -135,8 +218,11 @@ def deploy_agent(
     overrides: DetectOverrides | None = None,
     region: str | None = None,
     session: Any = None,
-) -> AgentFleet:
-    """Despliega el agente de `path` y devuelve su `AgentFleet`.
+    target: Literal["microvm", "agentcore"] = "microvm",
+    agentcore: AgentCoreOptions | None = None,
+) -> AgentFleet | AgentCoreFleet:
+    """Despliega el agente de `path` y devuelve su `AgentFleet`; con
+    `target="agentcore"`, su `AgentCoreFleet`.
 
     `path` es un directorio con el proyecto (con o sin `rayito-agent.toml`):
     el lenguaje, el framework, el punto de entrada y la instalación se
@@ -153,38 +239,90 @@ def deploy_agent(
     contenido. El access token de la flota es `options.access_token`, o
     `RAYITO_ACCESS_TOKEN`, o uno nuevo en `AgentFleet.access_token`.
 
+    Con `target="agentcore"` (y `agentcore=AgentCoreOptions(...)` para los
+    modelos y secretos del rol, los plazos de sesión y las etiquetas) el agente
+    se despliega en Amazon Bedrock AgentCore Runtime sin Docker local: una
+    pila de CloudFormation por agente (`rayito-agentcore-<nombre>`), la imagen
+    arm64 construida en CodeBuild sólo si cambió el contenido y un runtime
+    creado o actualizado por nombre, con MMDSv2 exigido. No hay pasarela de
+    secretos: el agente lee las credenciales del rol del runtime, que sólo
+    puede invocar los modelos y leer los secretos que le des. Las opciones de
+    MicroVMs que AgentCore no admite (`scaling`, `secret_names`,
+    `access_token`...) son `AgentCoreException` con código
+    `option_not_supported`.
+
     Coste y activación
     -------------------
     Activa: llamar a `deploy_agent()` (o `rayito agent deploy`); nada más lo
         crea. `plan_deploy()` (`--dry-run`) calcula el coste sin llamar a AWS.
+        Con `target="agentcore"`, sólo ese argumento crea nada de AgentCore,
+        CodeBuild o ECR; sin él no se crea ni se carga ningún cliente de esos
+        servicios.
     Recursos y llamadas AWS: `min_vms` MicroVMs (`run-microvm`) y
         `warm_vms` plazas aparcadas; una versión de imagen nueva si cambió el
         contenido (`create`/`update-microvm-image`, un objeto en S3);
         `GetCallerIdentity`, `HeadBucket`, `GetMicrovmImage` y
         `DescribeSecret` de lectura; con `create_secret_from_env=True`,
         `CreateSecret`; con `base_publisher`, una imagen base; con
-        `session_index`, DynamoDB.
+        `session_index`, DynamoDB. Con `target="agentcore"`: la pila
+        `rayito-agentcore-<nombre>` (repositorio de ECR, proyecto de CodeBuild
+        con su grupo de logs y dos roles), un zip del contexto de build en el
+        bucket de artefactos mientras dura el build, un build de CodeBuild si
+        cambió el contenido, y un runtime de AgentCore (`CreateAgentRuntime`
+        y `UpdateAgentRuntime`); de lectura, `GetCallerIdentity`, `HeadBucket`,
+        `DescribeStacks`, `DescribeImages`, `ListAgentRuntimes` y
+        `GetAgentRuntime`.
     Coste aproximado: por VM, el del MicroVM mientras vive (2 GB: ≈ $0,13 por
         hora en us-east-1, consultado 2026-10-06 en
         https://aws.amazon.com/lambda/pricing/); la imagen nueva, ≈ 3,0 GB de
         snapshot (≈ $0,011 de escritura y ≈ $0,056 por semana mínima de
         almacenamiento); un secreto, $0,40 al mes
         (https://aws.amazon.com/secrets-manager/pricing/, consultado
-        2026-09-30); el modelo lo cobra su proveedor.
+        2026-09-30); el modelo lo cobra su proveedor. Con
+        `target="agentcore"` (us-east-1, consultado 2026-10-19): CodeBuild
+        arm1.small $0,0034 por minuto de build (100 minutos gratis al mes,
+        https://aws.amazon.com/codebuild/pricing/), imágenes en ECR $0,10 por
+        GB-mes, logs $0,50 por GB ingerido
+        (https://aws.amazon.com/cloudwatch/pricing/) y el runtime, V1,
+        $0,0895 por vCPU-hora y $0,00945 por GB-hora de uso real
+        (https://aws.amazon.com/bedrock/agentcore/pricing/); sin sesiones no
+        hay cómputo.
     IAM: los de `Sandbox.create()`, `Sandbox.list()` y `AgentTemplate.build()`
         (`RayitoSandboxRunner`, `RayitoTemplateBuilder`),
         `secretsmanager:DescribeSecret` y, con `create_secret_from_env`,
         `secretsmanager:CreateSecret`, `sts:GetCallerIdentity` y
-        `s3:ListBucket` sobre el bucket del artefacto.
+        `s3:ListBucket` sobre el bucket del artefacto. Con
+        `target="agentcore"`: CloudFormation sobre `rayito-agentcore-*` con
+        `CAPABILITY_IAM`, ECR, CodeBuild, S3 sobre
+        `rayito/images/agentcore/*`, AgentCore (`CreateAgentRuntime`,
+        `UpdateAgentRuntime`, `GetAgentRuntime`, `ListAgentRuntimes`) e
+        `iam:PassRole` del rol del runtime.
     Cómo apagarla: `AgentFleet.stop()` termina los VMs; los valores por
-        defecto de `AgentDeployOptions` no crean ningún secreto, imagen base ni
-        índice; sin llamar a `deploy_agent()` nada se crea.
+        defecto de `AgentDeployOptions` no crean ningún secreto, imagen
+        base ni índice; sin llamar a `deploy_agent()` nada se crea. Un agente
+        de AgentCore se borra con `AgentCoreFleet.delete()` (`rayito agent
+        delete --target agentcore`).
     Ejemplo:
         options = AgentDeployOptions(bucket="amzn-s3-demo-bucket")
         fleet = deploy_agent("./mi-agente", options=options)
         fleet.invoke("Resume el README.").text
         fleet.stop()
     """
+    require_target(target)
+    check_agentcore_options_target(agentcore, target)
+    if target == TARGET_AGENTCORE:
+        from rayito._agentcore._deploy import deploy_agentcore
+
+        return deploy_agentcore(
+            None,
+            path,
+            project=project,
+            options=options,
+            overrides=overrides,
+            region=region,
+            session=session,
+            agentcore=agentcore,
+        )
     return deploy_with(
         DeployPorts(),
         path,
@@ -196,6 +334,34 @@ def deploy_agent(
     )
 
 
+@overload
+async def deploy_agent_async(
+    path: str | os.PathLike[str] = ...,
+    *,
+    project: AgentProject | None = ...,
+    options: AgentDeployOptions | None = ...,
+    overrides: DetectOverrides | None = ...,
+    region: str | None = ...,
+    session: Any = ...,
+    target: Literal["microvm"] = ...,
+    agentcore: None = ...,
+) -> AsyncAgentFleet: ...
+
+
+@overload
+async def deploy_agent_async(
+    path: str | os.PathLike[str] = ...,
+    *,
+    project: AgentProject | None = ...,
+    options: AgentDeployOptions | None = ...,
+    overrides: DetectOverrides | None = ...,
+    region: str | None = ...,
+    session: Any = ...,
+    target: Literal["agentcore"],
+    agentcore: AgentCoreOptions | None = ...,
+) -> AsyncAgentCoreFleet: ...
+
+
 async def deploy_agent_async(
     path: str | os.PathLike[str] = ".",
     *,
@@ -204,25 +370,47 @@ async def deploy_agent_async(
     overrides: DetectOverrides | None = None,
     region: str | None = None,
     session: Any = None,
-) -> AsyncAgentFleet:
-    """Como `deploy_agent()`, con `AsyncAgentFleet`: mismas opciones, mismo
-    orden de resolución y mismo coste. Las lecturas de AWS previas a crear nada
-    corren en un hilo para no bloquear el bucle de eventos.
+    target: Literal["microvm", "agentcore"] = "microvm",
+    agentcore: AgentCoreOptions | None = None,
+) -> AsyncAgentFleet | AsyncAgentCoreFleet:
+    """Como `deploy_agent()`, con `AsyncAgentFleet` (o `AsyncAgentCoreFleet`
+    con `target="agentcore"`): mismas opciones, mismo orden de resolución y
+    mismo coste. Las lecturas de AWS previas a crear nada corren en un hilo
+    para no bloquear el bucle de eventos.
 
     Coste y activación
     -------------------
     Activa: `await deploy_agent_async()`; nada más lo crea.
     Recursos y llamadas AWS: los de `deploy_agent()`.
     Coste aproximado: el de `deploy_agent()`, por VM (2 GB: ≈ $0,13 por hora en
-        us-east-1, consultado 2026-10-06 en https://aws.amazon.com/lambda/pricing/).
+        us-east-1, consultado 2026-10-06 en https://aws.amazon.com/lambda/pricing/);
+        con `target="agentcore"`, el de AgentCore (V1: $0,0895 por vCPU-hora y
+        $0,00945 por GB-hora de uso real, us-east-1, consultado 2026-10-19 en
+        https://aws.amazon.com/bedrock/agentcore/pricing/) más CodeBuild, ECR y
+        logs como se detalla en `deploy_agent()`.
     IAM: los de `deploy_agent()`.
-    Cómo apagarla: `await fleet.stop()`; sin llamar a esta función nada se
-        crea.
+    Cómo apagarla: `await fleet.stop()` (en AgentCore, `await fleet.delete()`);
+        sin llamar a esta función nada se crea.
     Ejemplo:
         fleet = await deploy_agent_async("./mi-agente")
         (await fleet.invoke("Resume el README.")).text
         await fleet.stop()
     """
+    require_target(target)
+    check_agentcore_options_target(agentcore, target)
+    if target == TARGET_AGENTCORE:
+        from rayito._agentcore._deploy import deploy_agentcore_async
+
+        return await deploy_agentcore_async(
+            None,
+            path,
+            project=project,
+            options=options,
+            overrides=overrides,
+            region=region,
+            session=session,
+            agentcore=agentcore,
+        )
     return await deploy_with_async(
         DeployPorts(),
         path,

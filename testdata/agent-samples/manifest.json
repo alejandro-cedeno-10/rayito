@@ -1,6 +1,6 @@
 {
   "schema": "rayito.agent-samples/1",
-  "_comment": "Los quince agentes de ejemplo que despliega la aceptación de 0.14 sin tocar su código. Ninguno importa rayito y cada uno trae su propio lockfile (Hermes y OpenCode son sólo configuración, sin lockfile). `expected` es lo que debe decidir la detección sin opciones (`framework`, `kind` del runtime, protocolo, punto de entrada y gestor de instalación); `httpAlternative` es la app HTTP que la detección lista como alternativa y que `--entry http` sirve; `custom` es la combinación de opciones de la segunda pasada. Lo leen los tests de Python y de TypeScript.",
+  "_comment": "Los dieciséis agentes de ejemplo que despliega la aceptación de 0.14 sin tocar su código. Ninguno importa rayito y cada uno trae su propio lockfile (Hermes y OpenCode son sólo configuración, sin lockfile). `expected` es lo que debe decidir la detección sin opciones (`framework`, `kind` del runtime, protocolo, punto de entrada y gestor de instalación); `httpAlternative` es la app HTTP que la detección lista como alternativa y que `--entry http` sirve; `custom` es la combinación de opciones de la segunda pasada. Lo leen los tests de Python y de TypeScript.",
   "model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
   "prompt": "What is 17 plus 25? Use the add tool if you have one and reply with the number.",
   "expectedAnswer": "42",
@@ -188,6 +188,24 @@
         "kind": "langgraph",
         "protocol": "framework",
         "entry": "agent.js#graph",
+        "installManager": "npm"
+      }
+    },
+    {
+      "id": "typescript-langchain-js",
+      "language": "typescript",
+      "dir": "typescript/langchain-js",
+      "lockfile": "package-lock.json",
+      "tools": [
+        "add",
+        "ticket_priority"
+      ],
+      "toolUse": true,
+      "expected": {
+        "framework": "langgraph",
+        "kind": "langgraph",
+        "protocol": "framework",
+        "entry": "agent.js#agent",
         "installManager": "npm"
       }
     },

@@ -982,7 +982,7 @@ forma. Referencia de la API:
 
 | Operación (boto3 / AWS SDK v3) | Parámetros de entrada (y sólo estos) | Campos de salida que se leen | IAM | Fuente |
 |---|---|---|---|---|
-| `CreateStack` (`create_stack` / `CreateStackCommand`) | `StackName`, `TemplateBody`, `Parameters=[{ParameterKey, ParameterValue}]`, `Tags=[{Key, Value}]`, `Capabilities=["CAPABILITY_IAM"]` sólo si la plantilla crea roles/políticas con nombre implícito | `StackId` (no se usa: el nombre ya es la clave) | `cloudformation:CreateStack` sobre la pila, más `iam:CreatePolicy` etc. si la plantilla crea IAM (`CAPABILITY_IAM`) | <https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_CreateStack.html> |
+| `CreateStack` (`create_stack` / `CreateStackCommand`) | `StackName`, `TemplateBody`, `Parameters=[{ParameterKey, ParameterValue}]`, `Tags=[{Key, Value}]`, `Capabilities=["CAPABILITY_IAM"]` sólo si la plantilla crea roles/políticas con nombre implícito; `Capabilities=["CAPABILITY_NAMED_IAM"]` para `infra/iam.yaml` (roles con nombre fijo `rayito-m0-*`) | `StackId` (no se usa: el nombre ya es la clave) | `cloudformation:CreateStack` sobre la pila, más `iam:CreatePolicy` etc. si la plantilla crea IAM (`CAPABILITY_IAM`) | <https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_CreateStack.html> |
 | `UpdateStack` (`update_stack` / `UpdateStackCommand`) | igual que `CreateStack`, y además `Parameters=[{ParameterKey, UsePreviousValue: true}]` (sin `ParameterValue`) para cada parámetro que se conserva | — | `cloudformation:UpdateStack` | <https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_UpdateStack.html>, <https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_Parameter.html> |
 | `DescribeStacks` (`describe_stacks` / `DescribeStacksCommand`) | `StackName` | `Stacks[0].{StackStatus, StackStatusReason, Outputs[].{OutputKey, OutputValue}, Parameters[].{ParameterKey, ParameterValue}}` | `cloudformation:DescribeStacks` | <https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_DescribeStacks.html> |
 | `DeleteStack` (`delete_stack` / `DeleteStackCommand`) | `StackName` | — (idempotente: no falla sobre una pila que no existe) | `cloudformation:DeleteStack` | <https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_DeleteStack.html> |
@@ -2013,6 +2013,119 @@ una sola región (us-east-1).
   un endpoint `http://` (nunca ocurre contra AWS, que es TLS) y un Bedrock falso
   en HTTP/1.1 no le contesta.
 
+- **Q173 — `rayito setup` de cero en una región sin bucket (2026-10-19, us-west-2
+  con el SDK de Python y us-east-2 con el de TypeScript).** La primera
+  ejecución completa (pila `rayito-m0-artifacts`, pila `rayito-m0-iam`, descarga
+  y verificación de la release, build de `rayito-base` y `rayito doctor`) tardó
+  316 s en las dos regiones; la pila del bucket tardó ≈ 21 s en estar en
+  `CREATE_COMPLETE` y la de IAM menos de 1 minuto. Una segunda ejecución sin
+  `--dry-run` planeó tres `reuse`, no escribió nada y tardó 10 s (Python) y 20 s
+  (TypeScript); un `--dry-run` de lectura, 4 a 6 s. `rayito doctor --template
+  rayito-base` terminó sin fallos y un `Sandbox.create()` más `run_code("1+1")`
+  arrancó en 7 s (Python) y 12 s (TypeScript). El bucket creado por `setup` lo
+  encuentra `deploy_agent()` sin `RAYITO_BUCKET` (`discover_bucket`). Al borrar
+  la pila `rayito-m0-artifacts` el bucket se conserva (`Retain`): hay que
+  vaciarlo (un zip de la imagen) y borrarlo aparte.
+- **Q174 — Una SCP de etiquetas obligatorias y `s3:CreateBucket`
+  (2026-10-19).** La simulación de IAM (`SimulatePrincipalPolicy`) devolvió
+  `explicitDeny` por la organización para `s3:CreateBucket` sin etiquetas y
+  `allowed` cuando la petición lleva las etiquetas que exige la organización
+  (`aws:RequestTag/<clave>` y `aws:TagKeys`). Con `rayito setup --tag K=V` (las
+  etiquetas van como `Tags` de la pila), CloudFormation creó el bucket sin
+  rechazo: propaga las etiquetas de la pila a `CreateBucket`, así que no hace
+  falta nada más. Sin `--tag`, en una organización con esa SCP el `CreateStack`
+  de `rayito-m0-artifacts` fallaría por `s3:CreateBucket` (no se intentó:
+  sólo se simuló).
+
+- **Q175 — Matriz de AgentCore Runtime con los ejemplos de `testdata/agent-samples/`
+  (2026-10-19, us-east-1, `deploy_agent(target="agentcore")` y
+  `deployAgent`).** Quince de los dieciséis ejemplos se desplegaron sin tocar su
+  código, llegaron a `READY`, contestaron 42 por `invoke` y por `stream`,
+  continuaron la sesión con el id devuelto, no construyeron ni crearon nada al
+  redesplegar sin cambios (`stackNoChanges`, `imageReused`, `runtimeReuse`),
+  pararon la sesión y se borraron sin dejar runtime, pila, repositorio ni
+  proyecto; la simulación de IAM denegó otro modelo y un secreto que no se dio.
+  El dieciséis, OpenCode, falla (Q177). Build de CodeBuild `arm1.small`, en
+  segundos: `python-langgraph-fastapi` 110, `python-langchain-create-agent` 102,
+  `python-deepagents` 99, `python-strands` 79, `python-strands-harness` 92,
+  `python-hermes` 121, `python-flask-custom` 38, `python-agentcore-native` 85,
+  `typescript-langgraph-js` 82, `typescript-langchain-js` 90,
+  `typescript-deepagents-js` 99, `typescript-strands-ts` 66,
+  `typescript-strands-harness-ts` 101, `typescript-vercel-ai-sdk` 69,
+  `typescript-express-custom` 51 y `opencode` 40. El runtime pasó de
+  `CREATING` a `READY` en unos 13 s en todos (incluido el `UpdateAgentRuntime`
+  que fija `requireMMDSV2`). Ninguna imagen fue rechazada por tamaño: la cuota
+  de 2 048 MB no se alcanzó con ningún ejemplo (no se midió el tamaño de ECR por
+  ejemplo: el repositorio se borra con la pila). La cuota de builds
+  simultáneos `ARM/Small` de la cuenta es de 300 y la de sesiones activas de
+  AgentCore, de 5 000; se corrieron tres builds a la vez sin esperas.
+- **Q176 — La primera llamada de una sesión nueva llega antes de que el agente
+  esté caliente (2026-10-19).** Con el host de 0.14, la primera `invoke` de un
+  runtime recién creado devolvió `RuntimeClientError` (HTTP 424, «Received error
+  (503) from runtime») en todos los ejemplos de Python que se probaron antes del arreglo: AgentCore
+  arranca una microVM por sesión y enruta `POST /invocations` en cuanto el host
+  escucha, y el host contestaba `503 not_ready` hasta terminar `warm()` (de 7 a
+  20 s según el framework; `GET /ping` ya contestaba 200). El SDK de TypeScript
+  sólo lo evitó por azar de tiempos y falló en el `stream` de
+  `typescript-express-custom`. Con el arreglo (el host retiene la petición hasta
+  25 s a que termine el calentamiento y sólo entonces contesta `503`) las
+  invocaciones siguientes pasaron. Primera invocación de una sesión nueva
+  tras el arreglo, en segundos: 9,8 (`python-flask-custom`) a 33,6
+  (`python-hermes`), 12 a 22 en el resto; la segunda llamada con el mismo id,
+  de 0,9 a 4,8 s. Una sesión nueva sobre un runtime ya caliente tarda unos 3 s.
+- **Q177 — OpenCode no lee el rol del runtime (2026-10-19).** El ejemplo
+  `opencode` se despliega y llega a `READY`, pero cada `invoke` devuelve
+  `failed.reason = "model_error"` con `detail_code = "UnknownError"` tras 13 s;
+  repetido con `AWS_REGION` y `AWS_DEFAULT_REGION` en `[env]` el resultado fue el
+  mismo. El host no registra más detalle. El riesgo previsto en el diseño se
+  confirma, pero no es un cambio de datos: el adaptador de credenciales
+  (`agentcoreEnvCredentialAdapters`) sólo alimenta al puente de Node, no al
+  proceso de OpenCode, así que `opencode` sigue sin soporte hasta que el host
+  le pase las credenciales del rol.
+- **Q178 — Ciclo de vida del runtime (2026-10-19).** Un cambio de entorno
+  actualiza el mismo runtime (la versión sube y sigue habiendo un solo runtime
+  por nombre) y un cambio de código construye una imagen nueva y
+  actualiza el runtime. Un runtime sin la marca de Rayito (descripción
+  distinta) es `name_conflict` y nunca se toca. Borrar y volver a desplegar la
+  misma configuración (`python-flask-custom`, CLI) volvió a crear pila, imagen y
+  runtime con el mismo `clientToken` sin error: 116 s el primer despliegue,
+  24 s el borrado y 105 s el segundo. `DeleteAgentRuntime` justo después de un
+  `UpdateAgentRuntime` devuelve `ConflictException` mientras el runtime está en
+  `UPDATING`: hay que esperar a `READY`. Borrar la pila tardó entre 24 y 327 s.
+- **Q179 — Compatibilidad con el destino MicroVM (2026-10-19).**
+  `rayito agent deploy <ruta> --dry-run` sin `--target` no llama a AWS y
+  produce el plan de 0.14; `rayito setup --dry-run` planea `bucket`, `iamStack`
+  y `baseImage` como `reuse`. Con una imagen `rayito-base-caps` desechable
+  (construida con el `rayd` de esta rama: 216 s, snapshot de memoria 0,91 GB,
+  instalación de código 1,45 GB), `python-strands` (Python) y
+  `typescript-strands-ts` (TypeScript) se desplegaron con el destino por
+  defecto, contestaron, y la limpieza no dejó VMs; también pasaron las
+  variantes con opciones y las sesiones dedicadas del espejo de TypeScript.
+- **Q180 — OpenCode con el rol del runtime (2026-10-19, us-east-1).** Causa de
+  Q177: el contenedor de AgentCore no recibe credenciales por variables de
+  entorno ni por `AWS_CONTAINER_CREDENTIALS_*`; el rol del runtime sólo lo sirve
+  el servicio de metadatos de la microVM (MMDS, `169.254.169.254`, con token de
+  sesión desde que el runtime exige `requireMMDSV2`; docs de AgentCore,
+  «Runtime troubleshooting» y `RuntimeMetadataConfiguration`). El proveedor
+  `amazon-bedrock` de OpenCode v1.18.34 (`packages/opencode/src/provider/
+  provider.ts`) devuelve `autoload: false` si no hay `AWS_PROFILE`,
+  `AWS_ACCESS_KEY_ID`, `AWS_BEARER_TOKEN_BEDROCK`, `apiKey` en la configuración,
+  `AWS_WEB_IDENTITY_TOKEN_FILE` ni `AWS_CONTAINER_CREDENTIALS_RELATIVE_URI` o
+  `_FULL_URI`: sólo mira la cadena de credenciales (que sí incluye el servicio
+  de metadatos) cuando una de ellas existe, así que `AWS_REGION` no cambia nada.
+  Arreglo: el export de `--target agentcore` para `opencode` añade el venv de
+  botocore de siempre, un `AWS_CONFIG_FILE` con un perfil cuyo
+  `credential_process` ejecuta `aws_env_credentials.py --credential-process`
+  (documento `Version` 1 con `AccessKeyId`, `SecretAccessKey`, `SessionToken` y
+  `Expiration`, que los SDK de AWS documentan para ese ajuste) y las variables
+  `AWS_CONFIG_FILE` y `AWS_PROFILE` en la imagen; la herramienta quita esas dos
+  variables de su propio entorno para no llamarse a sí misma. Medido: `opencode`
+  desplegado con el SDK de Python y con el de TypeScript contesta `invoke` y
+  `stream`, continúa la sesión, se redespliega sin cambios y se borra sin dejar
+  nada (473 s el ciclo de Python); `python-strands` (Python) y
+  `typescript-vercel-ai-sdk` (TypeScript) siguen pasando, y el inventario
+  posterior es idéntico al previo.
+
 
 ## Despliegue de agentes de cero configuración (0.14, `deploy_agent`)
 
@@ -2030,11 +2143,216 @@ dice dónde. Consultado el 2026-10-16.
 
 - El bucket por defecto es el de activos del bootstrap de CDK de la cuenta y la
   región, `cdk-<calificador>-assets-<cuenta>-<región>` con el calificador por
-  defecto `hnb659fds`; sólo se comprueba con `HeadBucket`. Rayito nunca llama a
-  `CreateBucket`.
+  defecto `hnb659fds`; sólo se comprueba con `HeadBucket`. `deploy_agent` nunca
+  llama a `CreateBucket` y sigue sin crear ningún bucket; la regla es sobre las
+  llamadas propias del SDK (que sigue sin hacer ninguna de S3 de escritura de
+  buckets): `rayito setup` crea el bucket con una pila de CloudFormation, no con
+  `CreateBucket` (siguiente sección).
 - Un MicroVM no se puede etiquetar (§1): la pertenencia a una flota es la
   imagen. `rayd` fija la vida de un VM sobrante con `set_timeout`, sin llamada
   al plano de control.
 - Pendiente de medir en AWS real (nueva fila Q al aceptar 0.14): el tope de
   conexiones simultáneas por MicroVM por debajo de 2 GB (se asume el de 2 GB,
   conservador) y la latencia de reanudar una plaza aparcada y arrancar el host.
+
+## Preparación de la cuenta (`rayito setup`, ADR-030)
+
+`rayito setup` no usa ninguna llamada de AWS que no esté ya documentada: sólo
+las encadena. Cada fila dice dónde está su contrato; `setup` no añade
+parámetros. Consultado el 2026-10-19.
+
+| Paso | Llamada | Dónde está documentada |
+|---|---|---|
+| Cuenta | `GetCallerIdentity` (`Account`) | §21, tabla de `GetCallerIdentity` |
+| Pila de IAM, lectura | `DescribeStacks` (`Stacks[0].{StackStatus, Outputs, Parameters}`; ausencia = `ValidationError` con «does not exist») | §21 |
+| Pila de IAM, escritura | `CreateStack` / `UpdateStack` con `Capabilities=["CAPABILITY_NAMED_IAM"]`; sólo `ArtifactBucket` como parámetro propio, el resto con el valor por defecto o `UsePreviousValue`; la espera sondea `DescribeStacks` | §21 |
+| Bucket, lectura | `HeadBucket` hasta tres veces, una por candidato (`--bucket`/`RAYITO_BUCKET`; el `ArtifactBucket` de la pila de IAM; el de `cdk bootstrap`; o, sin ninguno, el nombre por defecto). La región sale de `x-amz-bucket-region`, como en la comprobación `bucket` de `rayito doctor`. 200 = existe y es accesible; 404 (`NoSuchBucket`, `NotFound`) = no existe; 403 = existe sin acceso (S3 no distingue ausente de ajeno); cualquier otro error se propaga | «Despliegue de agentes de cero configuración» y `docs/site/docs/cli.md` |
+| Bucket, creación | `DescribeStacks` y `CreateStack` sobre `rayito-m0-artifacts` con la plantilla `infra/artifact-bucket.yaml` y **sólo** `BucketName` como parámetro (`ArtifactExpirationDays` queda en su valor por defecto); **sin `Capabilities`** (la plantilla no crea recursos IAM); la espera sondea `DescribeStacks` y la salida `BucketName` es el bucket. El SDK no llama a `CreateBucket`: lo hace CloudFormation con las credenciales del llamante | §21 |
+| Imagen, lectura | `GetMicrovmImage` y `ListMicrovmImageVersions` (`items[].{imageVersion, state, status, createdAt}`) | §4 y §30 |
+| Imagen, publicación | `PutObject` del zip (clave por contenido `rayito/images/rayd-<sha12>.zip`), `CreateMicrovmImage` o `UpdateMicrovmImage`, la compuerta de tres estados, y la versión `latest` de la base gestionada | §4 y §27 (el mismo camino que `rayito image publish`) |
+| Doctor | las comprobaciones de `rayito doctor`, sin `--launch` | `docs/site/docs/cli.md` |
+
+### Plantilla `infra/artifact-bucket.yaml`
+
+Dos recursos y nada más. Los nombres de recurso y de propiedad se verificaron
+sin red contra los esquemas de CloudFormation que trae cfn-lint 1.56.3 el
+2026-10-19; `scripts/tests/test_artifact_bucket_template.py` fija los valores
+que cfn-lint no juzga.
+
+| Recurso | Propiedades | Efecto |
+|---|---|---|
+| `AWS::S3::Bucket` (`DeletionPolicy: Retain`, `UpdateReplacePolicy: Retain`) | `BucketName`; `BucketEncryption.ServerSideEncryptionConfiguration[].ServerSideEncryptionByDefault.SSEAlgorithm: AES256`; `PublicAccessBlockConfiguration` con `BlockPublicAcls`, `BlockPublicPolicy`, `IgnorePublicAcls` y `RestrictPublicBuckets` en `true`; `OwnershipControls.Rules[].ObjectOwnership: BucketOwnerEnforced`; `LifecycleConfiguration.Rules[]` con `Id: expire-image-artifacts`, `Status: Enabled`, `Prefix: rayito/images/` y `ExpirationInDays` (parámetro `ArtifactExpirationDays`, 7 por defecto) | Cifrado SSE-S3, sin acceso público, sin ACL, los zips de la imagen caducan; borrar la pila conserva el bucket |
+| `AWS::S3::BucketPolicy` | `Bucket`; `PolicyDocument` con un `Deny` de `s3:*` a `Principal: "*"` sobre el bucket y `/*` cuando `aws:SecureTransport` es `"false"` | Sólo TLS |
+
+Salidas: `BucketName` y `BucketArn`. Permisos que el manejador de
+CloudFormation necesita según esos esquemas, además de los de
+`cloudformation:*` sobre la pila: para crear `AWS::S3::Bucket`,
+`s3:CreateBucket`, `s3:PutEncryptionConfiguration`,
+`s3:PutBucketPublicAccessBlock`, `s3:PutBucketOwnershipControls`,
+`s3:PutLifecycleConfiguration` y `s3:PutBucketTagging`, entre otros; para
+`AWS::S3::BucketPolicy`, `s3:GetBucketPolicy` y `s3:PutBucketPolicy`.
+
+Lo que sí es nuevo y **no es una API de AWS**: la descarga HTTPS de dos assets de
+la release de GitHub, `rayito-image.zip` y `SHA256SUMS`, desde
+`https://github.com/alejandro-cedeno-10/rayito/releases/download/rayd-v<versión>/<asset>`.
+`SHA256SUMS` es el formato de `sha256sum`; la comprobación prueba integridad y
+no autenticidad (la firma es la de `cosign`, `docs/site/docs/verify.md`).
+
+`CAPABILITY_NAMED_IAM` es un valor del `enum` `Capability` del modelo
+`cloudformation/2010-05-15` (`CAPABILITY_IAM`, `CAPABILITY_NAMED_IAM`,
+`CAPABILITY_AUTO_EXPAND`), verificado sin red en botocore 1.43.103 el
+2026-10-19; hace falta porque `infra/iam.yaml` da nombre fijo a sus roles
+(`rayito-m0-*`).
+
+## Despliegue en AgentCore Runtime (`agentcore-deploy`, ADR-031, **contrato de parámetros**)
+
+`rayito agent deploy --target agentcore`, `deploy_agent(target="agentcore")` y
+`deployAgent(path, { target: "agentcore" })` despliegan un agente en Amazon
+Bedrock AgentCore Runtime. **Estas son las únicas operaciones y los únicos
+parámetros que los SDK pueden usar para ello** (regla dura 1). Verificado sin
+red el 2026-10-19 contra los modelos de botocore 1.43.103
+(`bedrock-agentcore-control/2023-06-05`, `bedrock-agentcore/2024-02-28`,
+`codebuild/2016-10-06`, `ecr/2015-09-21`, `logs/2014-03-28`, `s3/2006-03-01`)
+y contra los tipos de `@aws-sdk/client-bedrock-agentcore-control` y
+`@aws-sdk/client-bedrock-agentcore` 3.1138.0 (paquetes publicados, leídos con
+`npm pack`: `metadataConfiguration.requireMMDSV2`, `runtimeSessionId` y
+`response` de `InvokeAgentRuntime` existen con esos nombres). Los nombres de
+JavaScript son los mismos miembros de la API REST. Documentación consultada el
+2026-10-19:
+<https://docs.aws.amazon.com/bedrock-agentcore-control/latest/APIReference/>,
+<https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-http-protocol-contract.html>,
+<https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/bedrock-agentcore-limits.html>,
+<https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-lifecycle-settings.html>,
+<https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-permissions.html>,
+<https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-troubleshooting.html>,
+<https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-security-best-practices.html>,
+<https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/agentcore-regions.html>,
+<https://docs.aws.amazon.com/codebuild/latest/APIReference/API_StartBuild.html>,
+<https://docs.aws.amazon.com/codebuild/latest/userguide/build-env-ref-compute-types.html>,
+<https://docs.aws.amazon.com/codebuild/latest/userguide/ec2-compute-images.html>.
+
+### Plano de control de AgentCore (`bedrock-agentcore-control`)
+
+| Operación (boto3 / AWS SDK v3) | Parámetros de entrada (y sólo estos) | Salida que se lee | Errores que se traducen | IAM del llamante |
+|---|---|---|---|---|
+| `CreateAgentRuntime` (`create_agent_runtime` / `CreateAgentRuntimeCommand`) | `agentRuntimeName` (`[a-zA-Z][a-zA-Z0-9_]{0,47}`), `agentRuntimeArtifact.containerConfiguration.containerUri` (`<cuenta>.dkr.ecr.<región>.amazonaws.com/<repo>:<etiqueta>`), `roleArn`, `networkConfiguration.networkMode="PUBLIC"`, `protocolConfiguration.serverProtocol="HTTP"`, `lifecycleConfiguration.{idleRuntimeSessionTimeout, maxLifetime}`, `environmentVariables` (mapa, hasta 50, valores de hasta 5000 caracteres; el modelo lo marca `sensitive`), `description` (1-4096), `tags` (mapa, hasta 50; claves 1-128 y valores 0-256 con `[a-zA-Z0-9\s._:/=+@-]*`), `clientToken` (33-256, `[a-zA-Z0-9](-*[a-zA-Z0-9]){0,256}`) | `agentRuntimeArn`, `agentRuntimeId` (`<nombre>-<10 caracteres>`), `agentRuntimeVersion` (`"1"`…`"99999"`), `status` | `AccessDeniedException`, `ConflictException` (otro llamante lo creó a la vez: se vuelve a listar y se actualiza), `ServiceQuotaExceededException`, `ValidationException`, `ThrottlingException`, `InternalServerException` | `bedrock-agentcore:CreateAgentRuntime`, `iam:PassRole` sobre el rol del runtime |
+| `UpdateAgentRuntime` (`update_agent_runtime` / `UpdateAgentRuntimeCommand`) | `agentRuntimeId`, y `agentRuntimeArtifact`, `roleArn`, `networkConfiguration` (los tres obligatorios en el modelo), `protocolConfiguration`, `lifecycleConfiguration`, `environmentVariables`, `description`, `metadataConfiguration.requireMMDSV2=true` (siempre), `clientToken` | `agentRuntimeVersion`, `status` | los de `CreateAgentRuntime` y `ResourceNotFoundException` | `bedrock-agentcore:UpdateAgentRuntime`, `iam:PassRole` |
+| `GetAgentRuntime` (`get_agent_runtime` / `GetAgentRuntimeCommand`) | `agentRuntimeId` | `agentRuntimeArn`, `agentRuntimeName`, `agentRuntimeVersion`, `status`, `description`, `roleArn`, `networkConfiguration.networkMode`, `protocolConfiguration.serverProtocol`, `lifecycleConfiguration.{idleRuntimeSessionTimeout, maxLifetime}`, `environmentVariables`, `agentRuntimeArtifact.containerConfiguration.containerUri`, `metadataConfiguration.requireMMDSV2`. `failureReason` existe pero **no se muestra** (texto crudo de AWS) | `ResourceNotFoundException` = ya no existe (espera del borrado) | `bedrock-agentcore:GetAgentRuntime` |
+| `ListAgentRuntimes` (`list_agent_runtimes` / `ListAgentRuntimesCommand`) | `maxResults` (1-100), `nextToken` | `agentRuntimes[].{agentRuntimeId, agentRuntimeArn, agentRuntimeName, agentRuntimeVersion, status, description}`, `nextToken` | — | `bedrock-agentcore:ListAgentRuntimes` |
+| `DeleteAgentRuntime` (`delete_agent_runtime` / `DeleteAgentRuntimeCommand`) | `agentRuntimeId` | `status` | `ResourceNotFoundException` = ya borrado, `ConflictException` | `bedrock-agentcore:DeleteAgentRuntime` |
+
+- `status` (`AgentRuntimeStatus`): `CREATING`, `CREATE_FAILED`, `UPDATING`,
+  `UPDATE_FAILED`, `READY`, `DELETING`, `DELETE_FAILED`. Crear y actualizar
+  responden 202 y el runtime pasa por `CREATING`/`UPDATING` hasta `READY`: se
+  sondea `GetAgentRuntime`.
+- **MMDSv2 obligatorio desde el 2026-06-30**: AgentCore rechaza con
+  `ValidationException` («This runtime is not MMDSv2-enabled») toda invocación a
+  un runtime sin `metadataConfiguration.requireMMDSV2=true`. `CreateAgentRuntime`
+  **no tiene** `metadataConfiguration` en el modelo: tras crear y llegar a
+  `READY` se manda un `UpdateAgentRuntime` con la configuración completa y
+  `requireMMDSV2=true` (troubleshooting, «My agent invocations fail with "This
+  runtime is not MMDSv2-enabled"»).
+- `lifecycleConfiguration`: el modelo admite 60-1209600 en los dos campos, pero
+  la guía limita los runtimes de microVMs (los que crea Rayito, sin
+  `capacityProviderConfiguration`) a **60-28800**, exige
+  `idleRuntimeSessionTimeout <= maxLifetime` y fija los valores por defecto en
+  900 y 28800 (`runtime-lifecycle-settings.html`). Gana la guía para el rango.
+- `platformVersion` no se manda: sin él el runtime se crea en la plataforma
+  **V1**, la de los precios de lista que cita Rayito (guía «microVMs»,
+  `runtime-how-it-works.html`).
+- Al crear un runtime AgentCore crea también su endpoint `DEFAULT`, que apunta
+  siempre a la última versión; `InvokeAgentRuntime` sin `qualifier` usa ese
+  endpoint. Rayito no llama a ninguna operación de endpoints.
+- Grupo de logs del runtime (lo crea AgentCore con el rol del runtime):
+  `/aws/bedrock-agentcore/runtimes/<agentRuntimeId>-DEFAULT` (troubleshooting,
+  «I have missing or empty CloudWatch Logs»).
+
+### Plano de datos (`bedrock-agentcore`)
+
+| Operación | Parámetros de entrada (y sólo estos) | Salida que se lee | Errores | IAM |
+|---|---|---|---|---|
+| `InvokeAgentRuntime` (`invoke_agent_runtime` / `InvokeAgentRuntimeCommand`) | `agentRuntimeArn`, `runtimeSessionId` (cabecera `X-Amzn-Bedrock-AgentCore-Runtime-Session-Id`, 33-256), `contentType="application/json"`, `accept` (`application/json` o `text/event-stream`), `payload` (hasta 100 MB) | `response` (cuerpo en streaming: el documento JSON o los eventos SSE del host), `contentType`, `runtimeSessionId` (1-100, `[a-zA-Z0-9][a-zA-Z0-9-_]*`), `statusCode` | `ResourceNotFoundException`, `AccessDeniedException`, `ValidationException`, `ThrottlingException` (429), `ServiceQuotaExceededException` (402), `RetryableConflictException` (409, lo reintenta el SDK de AWS), `RuntimeClientError` (424: el contenedor devolvió un 4xx/5xx), `InternalServerException` | `bedrock-agentcore:InvokeAgentRuntime` sobre el runtime |
+| `StopRuntimeSession` (`stop_runtime_session` / `StopRuntimeSessionCommand`) | `agentRuntimeArn`, `runtimeSessionId` | `runtimeSessionId`, `statusCode` | los de `InvokeAgentRuntime` y `ConflictException`, `UnauthorizedException` | `bedrock-agentcore:StopRuntimeSession` |
+
+- Como `runtimeSessionId` de respuesta mide como mucho 100, Rayito nunca manda
+  uno más largo (`agentcoreSessionIdMaxLength`).
+- Cada `runtimeSessionId` tiene su propia microVM; un id nuevo crea una
+  sesión nueva (cuota de 25 sesiones nuevas por segundo y cuenta). Plazos:
+  15 min por petición síncrona, 60 min por respuesta en streaming, sesiones
+  activas por cuenta 5000 en us-east-1 y us-west-2 y 2500 en las demás, 2 vCPU
+  y 8 GB por sesión, imagen de hasta 2 GB (cuotas, consultadas 2026-10-19).
+- Contrato del contenedor (HTTP): `0.0.0.0:8080`, `linux/arm64`,
+  `POST /invocations` y `GET /ping` con `{"status": "Healthy" | "HealthyBusy"}`;
+  el host de Rayito ya lo cumple (`AGENT_SERVICE_EXPORT_PORT`,
+  `AGENT_SERVICE_SESSION_HEADER`).
+
+### Build de la imagen (CodeBuild y ECR)
+
+| Operación | Parámetros de entrada (y sólo estos) | Salida que se lee | Errores | IAM |
+|---|---|---|---|---|
+| `StartBuild` (`start_build` / `StartBuildCommand`) | `projectName`, `sourceLocationOverride` (`<bucket>/<clave>` del zip), `environmentVariablesOverride=[{name, value, type: "PLAINTEXT"}]` con `IMAGE_TAG` y `AGENT_BASE_IMAGE`, `idempotencyToken` (la etiqueta de la imagen: «valid for 5 minutes», un `StartBuild` repetido en ese plazo devuelve el mismo build) | `build.id`, `build.buildStatus` | `AccountLimitExceededException` (`build_quota`), `ResourceNotFoundException`, `InvalidInputException` | `codebuild:StartBuild` sobre el proyecto |
+| `BatchGetBuilds` (`batch_get_builds` / `BatchGetBuildsCommand`) | `ids` (uno) | `builds[0].{id, buildStatus, currentPhase, logs.groupName}` | `InvalidInputException` | `codebuild:BatchGetBuilds` |
+| `DescribeImages` (ECR, `describe_images` / `DescribeImagesCommand`) | `repositoryName`, `imageIds=[{imageTag}]` | `imageDetails[0].{imageDigest, imageSizeInBytes, imageTags}` | `ImageNotFoundException` = no existe; `RepositoryNotFoundException` (pila sin repositorio: `stack_failed`) | `ecr:DescribeImages` sobre el repositorio |
+
+- `buildStatus`: `SUCCEEDED`, `FAILED`, `FAULT`, `TIMED_OUT`, `IN_PROGRESS`,
+  `STOPPED`.
+- Entorno del proyecto: `ARM_CONTAINER` con `BUILD_GENERAL1_SMALL` (2 vCPU,
+  4 GiB, 64 GB de disco) e imagen `aws/codebuild/amazonlinux-aarch64-standard:3.0`
+  (Amazon Linux 2023), con `PrivilegedMode: true` para el demonio de Docker.
+  `ARM_CONTAINER` existe en las 21 regiones comerciales de AgentCore Runtime
+  con microVMs (las dos listas se cruzaron el 2026-10-19).
+- `imageSizeInBytes` es el tamaño que guarda ECR (comprimido); se compara con
+  el límite de 2 GB de AgentCore. Pendiente de medir (fila Q al aceptar) si
+  AgentCore mide la imagen comprimida o descomprimida.
+
+### Otras llamadas
+
+| Operación | Parámetros de entrada (y sólo estos) | Salida | IAM |
+|---|---|---|---|
+| `PutObject` | los de §21 (`Bucket`, `Key`, `ExpectedBucketOwner`, `Body`, `ChecksumSHA256`), con la clave `rayito/images/agentcore/<agente>/<etiqueta>.zip` | — | `s3:PutObject` sobre el prefijo |
+| `DeleteObject` (`delete_object` / `DeleteObjectCommand`) | `Bucket`, `Key`, `ExpectedBucketOwner` | — (204 también si no existe) | `s3:DeleteObject` sobre el prefijo |
+| `HeadBucket` | el de «Despliegue de agentes de cero configuración» (región en `x-amz-bucket-region`) | — | `s3:ListBucket` |
+| `DeleteLogGroup` (`delete_log_group` / `DeleteLogGroupCommand`) | `logGroupName` (el del runtime) | — ; `ResourceNotFoundException` = ya no existe | `logs:DeleteLogGroup` sobre ese grupo |
+| `CreateStack`, `UpdateStack`, `DescribeStacks`, `DeleteStack` | los de §21, con `Capabilities=["CAPABILITY_IAM"]` (los dos roles de `infra/agentcore-runtime.yaml` no tienen nombre fijo) y `Tags` (las tres fijas más las de `--tag`) | los de §21 | los de §21 más los del manejador de cada recurso |
+| `GetCallerIdentity` | — | `Account` (los ARNs de modelos y secretos) | ninguna |
+
+### Plantilla `infra/agentcore-runtime.yaml`
+
+Seis recursos, verificados sin red con cfn-lint 1.56.3 el 2026-10-19:
+`AWS::ECR::Repository` (`RepositoryName`, `ImageTagMutability: IMMUTABLE`,
+`ImageScanningConfiguration.ScanOnPush`, `EmptyOnDelete: true`,
+`LifecyclePolicy.LifecyclePolicyText` que conserva las últimas
+`ImageRetentionCount` imágenes), `AWS::Logs::LogGroup` del build
+(`RetentionInDays`), dos `AWS::IAM::Role` (build y runtime, con
+`aws:SourceAccount` y, en el del runtime, `aws:SourceArn` sobre
+`bedrock-agentcore` de la región) y `AWS::CodeBuild::Project` (`Source.Type: S3`,
+`Artifacts.Type: NO_ARTIFACTS`, `Environment` de arriba, `LogsConfig`). El rol
+del runtime sigue la política de ejemplo de la guía («AgentCore Runtime
+execution role») restringida: ECR sólo sobre su repositorio; logs sólo sobre
+`/aws/bedrock-agentcore/runtimes/<RuntimeName>-*`; X-Ray; `PutMetricData` con
+`cloudwatch:namespace = bedrock-agentcore`; `GetWorkloadAccessToken` y
+`GetWorkloadAccessTokenForJWT` sobre `workload-identity-directory/default` y su
+`workload-identity/<RuntimeName>-*` (sin `GetWorkloadAccessTokenForUserId`,
+como recomienda la guía de seguridad); `bedrock:InvokeModel` e
+`InvokeModelWithResponseStream` **sólo** sobre `BedrockModelArns`, y
+`secretsmanager:GetSecretValue` **sólo** sobre `ReadableSecretArns`; vacíos, sin
+esos permisos.
+
+### Regiones (21)
+
+`us-east-1`, `us-east-2`, `us-west-1`, `us-west-2`, `ca-central-1`,
+`sa-east-1`, `eu-central-1`, `eu-west-1`, `eu-west-2`, `eu-west-3`,
+`eu-south-1`, `eu-south-2`, `eu-north-1`, `ap-south-1`, `ap-south-2`,
+`ap-southeast-1`, `ap-southeast-2`, `ap-southeast-5`, `ap-southeast-7`,
+`ap-northeast-1`, `ap-northeast-2` (AgentCore Runtime con microVMs ∩ CodeBuild
+`ARM_CONTAINER`, `agentcoreSupportedRegions` en `limits.json`).
+
+### Precios (us-east-1, consultados 2026-10-19)
+
+| Concepto | Precio | Fuente |
+|---|---|---|
+| AgentCore Runtime microVMs V1, CPU | $0,0895 por vCPU-hora, por segundo de uso real; sin cargo de CPU en espera de E/S | <https://aws.amazon.com/bedrock/agentcore/pricing/> |
+| AgentCore Runtime microVMs V1, memoria | $0,00945 por GB-hora mientras la sesión vive (mínimo 128 MB) | la misma |
+| CodeBuild `arm1.small` (`Build-Min:ARM:g1.small`) | $0,0034 por minuto, redondeado al minuto; 100 minutos gratis al mes | Price List API (publicación 2026-09-11) y <https://aws.amazon.com/codebuild/pricing/> |
+| ECR, almacenamiento | $0,10 por GB-mes | Price List API |
+| CloudWatch Logs, ingesta | $0,50 por GB | Price List API |

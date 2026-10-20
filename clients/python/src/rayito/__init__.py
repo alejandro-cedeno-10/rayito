@@ -118,6 +118,7 @@ from rayito._volumes import (
     VolumeStore,
 )
 from rayito.exceptions import (
+    AgentCoreException,
     AgentException,
     AuthenticationException,
     BuildException,
@@ -251,6 +252,14 @@ if TYPE_CHECKING:
         plan_deploy,
         xai_gateway,
     )
+    from rayito._agentcore._fleet import AgentCoreFleet, AgentCoreFleetStream
+    from rayito._agentcore._fleet_async import AsyncAgentCoreFleet, AsyncAgentCoreFleetStream
+    from rayito._agentcore._models import (
+        AgentCoreDeleteResult,
+        AgentCoreDeployPlan,
+        AgentCoreOptions,
+        AgentCoreStatus,
+    )
     from rayito._dashboard._cost import UsageCost
     from rayito._dashboard._cost_async import AsyncUsageCost
     from rayito._dashboard._domain import (
@@ -332,6 +341,14 @@ _LAZY_EXPORTS: Final[dict[str, str]] = {
     "AgentDeployCostEstimate": "rayito._agent",
     "AgentDeployOptions": "rayito._agent",
     "AgentDeployPlan": "rayito._agent",
+    "AgentCoreFleet": "rayito._agentcore._fleet",
+    "AgentCoreFleetStream": "rayito._agentcore._fleet",
+    "AsyncAgentCoreFleet": "rayito._agentcore._fleet_async",
+    "AsyncAgentCoreFleetStream": "rayito._agentcore._fleet_async",
+    "AgentCoreOptions": "rayito._agentcore._models",
+    "AgentCoreStatus": "rayito._agentcore._models",
+    "AgentCoreDeleteResult": "rayito._agentcore._models",
+    "AgentCoreDeployPlan": "rayito._agentcore._models",
     "AgentDeployStep": "rayito._agent",
     "DetectOverrides": "rayito._agent",
     "FleetMemberStatus": "rayito._agent",
@@ -410,6 +427,13 @@ def __dir__() -> list[str]:
 
 __all__ = [
     "ALL_TRAFFIC",
+    "AgentCoreDeleteResult",
+    "AgentCoreDeployPlan",
+    "AgentCoreException",
+    "AgentCoreFleet",
+    "AgentCoreFleetStream",
+    "AgentCoreOptions",
+    "AgentCoreStatus",
     "AgentDeployCostEstimate",
     "AgentDeployOptions",
     "AgentDeployPlan",
@@ -431,6 +455,8 @@ __all__ = [
     "AgentSpec",
     "AgentStream",
     "AgentTemplate",
+    "AsyncAgentCoreFleet",
+    "AsyncAgentCoreFleetStream",
     "AsyncAgentDeployment",
     "AsyncAgentDeploymentStream",
     "AsyncAgentFleet",

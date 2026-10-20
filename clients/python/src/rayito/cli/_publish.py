@@ -107,11 +107,16 @@ from typing import Any, Protocol
 from botocore.exceptions import ClientError
 
 from rayito._images import (
+    BUILD_ROLE_OUTPUT_KEY as BUILD_ROLE_OUTPUT_KEY,
+)
+from rayito._images import (
     DEFAULT_BASE_IMAGE_NAME,
+    DEFAULT_IAM_STACK_NAME,
     LOG_GROUP_PREFIX,
     VersionGate,
     account_image_arn,
     find_reusable_version,
+    gate_progress_line,
     image_exists,
     submit_image_build,
     upload_if_absent,
@@ -134,12 +139,11 @@ EFS_IMAGE_NAME = f"{DEFAULT_IMAGE_NAME}-caps-efs"
 #: The only variant `--with-efs` combines with: it is the caps image (the
 #: `full` artifact) plus one layer, never slim or poly.
 EFS_BASE_VARIANT = "full"
-DEFAULT_STACK_NAME = "rayito-m0-iam"
+DEFAULT_STACK_NAME = DEFAULT_IAM_STACK_NAME
 #: `additionalOsCapabilities` value (the only one the service model accepts):
 #: `--with-efs` requires it, because `rayd` only mounts with `CAP_SYS_ADMIN`.
 ALL_OS_CAPABILITIES = "ALL"
 OS_CAPABILITY_CHOICES = (ALL_OS_CAPABILITIES,)
-BUILD_ROLE_OUTPUT_KEY = "BuildRoleArn"
 S3_KEY_PREFIX = "rayito/images"
 #: Segmento de las claves de `--artifact-run-id`: queda bajo `S3_KEY_PREFIX`,
 #: así que los permisos `rayito/images/*` de `infra/iam.yaml` y
@@ -306,7 +310,7 @@ def upload_artifact(
     payload = settings.artifact.read_bytes()
     key = artifact_key(payload, settings.artifact_run_id)
     uri = f"s3://{settings.bucket}/{key}"
-    uploaded = upload_if_absent(clients, settings.bucket, key, payload)
+    uploaded = upload_if_absent(clients, settings.bucket, key, payload, clients.account_id)
     if uploaded:
         emit(f"uploaded {uri} ({len(payload)} bytes)")
     else:
@@ -405,10 +409,7 @@ def wait_for_gate(
     sleep: Sleeper,
 ) -> VersionGate:
     def report(gate: VersionGate, elapsed: float) -> None:
-        emit(
-            f"  image={gate.image_state} version={version} state={gate.version_state} "
-            f"status={gate.version_status} ({elapsed:.0f}s)"
-        )
+        emit(gate_progress_line(gate, version, elapsed))
 
     gate, _timed_out = wait_for_image_gate(
         clients, arn, version, timeout_seconds, sleep, on_tick=report

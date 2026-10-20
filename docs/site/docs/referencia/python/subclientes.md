@@ -203,6 +203,26 @@ Los runtimes que `AgentTemplate`, `Agent` y `AgentProject` aceptan. Instalan sus
 
 ::: rayito.FleetMemberStatus
 
+#### Despliegue en AgentCore
+
+`deploy_agent(target="agentcore")` despliega el mismo proyecto en Amazon Bedrock AgentCore Runtime y devuelve una `AgentCoreFleet` con el mismo `invoke()` y `stream()` que `AgentFleet` ([Desplegar en AgentCore](../../guias/desplegar-en-agentcore.md)). Sin `target`, `deploy_agent()`, `deploy_agent_async()` y `plan_deploy()` hacen lo de siempre.
+
+::: rayito.AgentCoreOptions
+
+::: rayito.AgentCoreDeployPlan
+
+::: rayito.AgentCoreFleet
+
+::: rayito.AsyncAgentCoreFleet
+
+::: rayito.AgentCoreFleetStream
+
+::: rayito.AsyncAgentCoreFleetStream
+
+::: rayito.AgentCoreStatus
+
+::: rayito.AgentCoreDeleteResult
+
 #### Puertos de runtime
 
 Describen cómo se instala y cómo se sirve un runtime sin cambiar el puerto `AgentRuntime`.

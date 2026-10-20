@@ -15,3 +15,8 @@ const TESTDATA_ROOT = join(import.meta.dirname, "..", "..", "..", "..", "..", "t
 export function loadTestdata<T>(folder: string, name: string): T {
   return JSON.parse(readFileSync(join(TESTDATA_ROOT, folder, name), "utf8")) as T;
 }
+
+/** Un fichero JSON de `testdata/account-setup/` (el contrato y los casos de `rayito setup`). */
+export function loadAccountSetupTestdata<T>(name: string): T {
+  return loadTestdata<T>("account-setup", name);
+}

@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     import grpc
 
     from rayito._agent._events import TokenUsage
+    from rayito._agentcore._errors import AgentCoreErrorCode
 
 
 class SandboxException(Exception):
@@ -461,3 +462,28 @@ class AgentException(SandboxException):
         self.usage = usage
         self.exit_code = exit_code
         self.detail_code = detail_code
+
+
+class AgentCoreException(Exception):
+    """`--target agentcore` (ADR-031) falló antes o durante el despliegue, o
+    una llamada a un agente de AgentCore no se pudo hacer. `code` es una lista
+    cerrada (`rayito._agentcore._errors.AgentCoreErrorCode`: región o nombre no
+    válidos, opciones que no aplican, pila, imagen o runtime bloqueados o
+    fallidos, permisos...) y `exit_code` el código de salida de la CLI (2
+    uso o entorno, 1 fallo de AWS). No es un `SandboxException`: nada de esto
+    es atribuible a un sandbox. El mensaje sale de una tabla fija en español y
+    nunca lleva un ARN, una URL, un token ni el texto crudo de AWS; `fields`
+    son los valores que interpola."""
+
+    def __init__(self, code: AgentCoreErrorCode, **fields: object) -> None:
+        from rayito._agentcore._errors import ERROR_MESSAGES
+
+        self.fields: dict[str, str] = {name: str(value) for name, value in fields.items()}
+        super().__init__(ERROR_MESSAGES[code].format(**self.fields))
+        self.code: AgentCoreErrorCode = code
+
+    @property
+    def exit_code(self) -> int:
+        from rayito._agentcore._errors import ERROR_EXIT_CODES
+
+        return ERROR_EXIT_CODES[self.code]

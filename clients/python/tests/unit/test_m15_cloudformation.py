@@ -84,6 +84,22 @@ def test_describe_returns_none_for_a_missing_stack() -> None:
         assert adapter.describe("rayito-metadata-index") is None
 
 
+def test_describe_failure_keeps_the_aws_code_on_its_cause() -> None:
+    """`deploy_agent` distingue un `AccessDenied` de `DescribeStacks` (no hay
+    bucket de `rayito setup`) de cualquier otro fallo por este código."""
+    adapter, cfn_stub, _s3_stub = provisioner()
+    with cfn_stub:
+        cfn_stub.add_client_error(
+            "describe_stacks",
+            service_error_code="AccessDenied",
+            http_status_code=403,
+            expected_params={"StackName": "rayito-m0-artifacts"},
+        )
+        with pytest.raises(StackException) as caught:
+            adapter.describe("rayito-m0-artifacts")
+    assert getattr(caught.value.__cause__, "code", None) == "AccessDenied"
+
+
 def test_describe_maps_state_and_outputs() -> None:
     adapter, cfn_stub, _s3_stub = provisioner()
     with cfn_stub:

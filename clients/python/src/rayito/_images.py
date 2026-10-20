@@ -68,6 +68,14 @@ LOG_GROUP_PREFIX: Final = "/rayito"
 #: Nombre por defecto de la imagen base publicada por `rayito image publish`
 #: (variante `full`); `from_base_image()` sin nombre compone sobre ella.
 DEFAULT_BASE_IMAGE_NAME: Final = "rayito-base"
+#: Nombre de la pila de IAM que `rayito image publish` y `rayito setup`
+#: leen (`infra/iam.yaml`, `AWS_API_NOTES.md` §10).
+DEFAULT_IAM_STACK_NAME: Final = "rayito-m0-iam"
+#: Salida de esa pila con el rol que usa el build de la imagen.
+BUILD_ROLE_OUTPUT_KEY: Final = "BuildRoleArn"
+#: Estados de una versión (`MicrovmImageVersionState`, `AWS_API_NOTES.md`
+#: §4) en los que el build aún no terminó.
+BUILDING_VERSION_STATES: Final = frozenset({"PENDING", "IN_PROGRESS"})
 #: Código de error que `create`/`update-microvm-image` devuelven al pasar
 #: de 10 builds simultáneos por cuenta (Q83, `AWS_API_NOTES.md` §27).
 BUILD_QUOTA_ERROR_CODE: Final = "ServiceQuotaExceededException"
@@ -138,10 +146,13 @@ def account_image_arn(region: str, account_id: str, name: str) -> str:
     return f"arn:aws:lambda:{region}:{account_id}:microvm-image:{name}"
 
 
-def object_exists(clients: ArtifactStoreClients, bucket: str, key: str) -> bool:
-    """Un 403 también cuenta como ausente (ver `MISSING_OBJECT_CODES`)."""
+def object_exists(clients: ArtifactStoreClients, bucket: str, key: str, owner: str) -> bool:
+    """Un 403 también cuenta como ausente (ver `MISSING_OBJECT_CODES`).
+    `owner` es la cuenta de quien llama: con `ExpectedBucketOwner`, un bucket
+    de otra cuenta (p. ej. uno con un nombre predecible que alguien ocupó) da
+    403 en vez de recibir el artefacto."""
     try:
-        clients.s3.head_object(Bucket=bucket, Key=key)
+        clients.s3.head_object(Bucket=bucket, Key=key, ExpectedBucketOwner=owner)
     except ClientError as exc:
         if client_error_code(exc) in MISSING_OBJECT_CODES:
             return False
@@ -149,12 +160,15 @@ def object_exists(clients: ArtifactStoreClients, bucket: str, key: str) -> bool:
     return True
 
 
-def upload_if_absent(clients: ArtifactStoreClients, bucket: str, key: str, payload: bytes) -> bool:
+def upload_if_absent(
+    clients: ArtifactStoreClients, bucket: str, key: str, payload: bytes, owner: str
+) -> bool:
     """Sube `payload` a `s3://bucket/key` salvo que ya exista (la clave es
-    direccionada por contenido); `True` si hubo subida."""
-    if object_exists(clients, bucket, key):
+    direccionada por contenido); `True` si hubo subida. Las dos llamadas llevan
+    `ExpectedBucketOwner=owner`: un bucket de otra cuenta falla."""
+    if object_exists(clients, bucket, key, owner):
         return False
-    clients.s3.put_object(Bucket=bucket, Key=key, Body=payload)
+    clients.s3.put_object(Bucket=bucket, Key=key, Body=payload, ExpectedBucketOwner=owner)
     return True
 
 
@@ -371,6 +385,15 @@ def read_gate(clients: ImageBuildClients, arn: str, version: str) -> VersionGate
         version_state=str(detail["state"]),
         version_status=str(detail["status"]),
         state_reason=detail.get("stateReason"),
+    )
+
+
+def gate_progress_line(gate: VersionGate, version: str, elapsed: float) -> str:
+    """La línea de progreso de un sondeo del gate, la misma para `rayito
+    image publish` y `rayito setup`."""
+    return (
+        f"  image={gate.image_state} version={version} state={gate.version_state} "
+        f"status={gate.version_status} ({elapsed:.0f}s)"
     )
 
 
