@@ -258,7 +258,7 @@ describe("el plan con el adaptador real, sin AWS", () => {
       tools: NO_AWS,
       env: { RAYITO_BUCKET: "amzn-s3-demo-bucket" },
     });
-    expect(outcome.exitCode).toBe(1);
+    expect(outcome.exitCode).toBe(2);
     expect(outcome.stderr).toContain("región");
   });
 });
@@ -348,6 +348,17 @@ describe("invoke, status y stop con --target agentcore", () => {
       stopped: true,
     });
     expect(Object.keys(documentOf(stopped.stdout))).toEqual(contract.json.stopKeys);
+  });
+
+  it("stop de una sesión que ya no estaba activa no imprime nada y sale con 0", async () => {
+    const tools = new FakeAgentCoreTools();
+    tools.client.stopped = false;
+    const outcome = await run(
+      ["agent", "stop", "support-bot", "--session-id", "s1", "--target", "agentcore"],
+      { tools },
+    );
+    expect(outcome.exitCode).toBe(0);
+    expect(outcome.stdout).toBe("");
   });
 
   it("--session-id en stop con MicroVMs es option_requires_agentcore", async () => {

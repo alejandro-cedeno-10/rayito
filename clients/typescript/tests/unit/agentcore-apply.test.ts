@@ -308,6 +308,27 @@ describe("despliegue completo", () => {
     expect(account.source.puts).toHaveLength(1);
   });
 
+  it("--no-build sin pila falla antes de crear nada", async () => {
+    const account = newAccount();
+    const failure = await deployer(account)
+      .apply(request({ buildImage: false }))
+      .catch((thrown: unknown) => thrown);
+    expect((failure as AgentCoreError).code).toBe("image_missing");
+    expect(operations(account)).not.toContain("CreateStack");
+  });
+
+  it("una pila con una operación en curso se espera y después se actualiza", async () => {
+    const account = newAccount({
+      stack: { status: "UPDATE_IN_PROGRESS", settlesTo: "UPDATE_COMPLETE" },
+      image: { exists: true },
+      runtime: { listed: desiredDetails(), details: desiredDetails() },
+    });
+    const result = await deployer(account).apply(request());
+    expect(result.steps[0]).toMatchObject({ action: "wait", status: "UPDATE_IN_PROGRESS" });
+    const names = operations(account);
+    expect(names.indexOf("WaitStack")).toBeLessThan(names.indexOf("UpdateStack"));
+  });
+
   it("una pila que falla al desplegarse es stack_failed", async () => {
     const account = newAccount();
     account.stacks.failWait = true;
