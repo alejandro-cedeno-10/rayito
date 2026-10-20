@@ -271,6 +271,15 @@ impl InheritableDescriptor {
 /// `echo <word>` typed so that the terminal echo of the command line never
 /// contains the word itself (`echo r''eady`): only the command's output
 /// does, which is what the assertions wait for.
+/// Lo que sigue a la primera aparición de `marker` en `buffer`.
+fn after_marker<'a>(buffer: &'a [u8], marker: &[u8]) -> &'a [u8] {
+    let start = buffer
+        .windows(marker.len())
+        .position(|window| window == marker)
+        .unwrap_or_else(|| panic!("no marker in {}", shown(buffer)));
+    &buffer[start + marker.len()..]
+}
+
 fn say(word: &str) -> String {
     let (head, tail) = word.split_at(1);
     format!("echo {head}''{tail}\n")
@@ -753,7 +762,13 @@ async fn output_is_chunked_at_16_kib_and_replayable_from_the_ring() {
     let mut replay = harness.connect(pid, 1).await.unwrap();
     assert_eq!(first_pid(&mut replay).await, pid);
     let (replayed, _, replayed_seq) = read_until_with(&mut replay, b"done\r\n", READ_TIMEOUT).await;
-    let replayed_xs = replayed.iter().filter(|byte| **byte == b'x').count();
+    // La repetición empieza en el primer fragmento: antes de `ready` trae el
+    // prompt inicial, cuyo nombre de máquina puede llevar `x`. Se cuenta
+    // desde el mismo punto que la lectura en vivo.
+    let replayed_xs = after_marker(&replayed, b"ready\r\n")
+        .iter()
+        .filter(|byte| **byte == b'x')
+        .count();
     assert_eq!(replayed_xs, xs);
     assert_eq!(replayed_seq, last_seq);
     harness.send(pid, &say("after")).await.unwrap();
