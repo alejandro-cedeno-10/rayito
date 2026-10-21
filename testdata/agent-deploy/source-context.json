@@ -1,0 +1,61 @@
+{
+  "schema": "rayito.agent-deploy-source-context/1",
+  "description": "Qué ficheros del código del agente entran en el contexto de build (MicroVMs y AgentCore): `files` se crea dentro del directorio del proyecto, `exclude` es el `exclude` del proyecto, `tokenFile` la ruta del access token relativa al proyecto (puede quedar fuera) y `included` lo que debe quedar tras `source_excludes`, el patrón del fichero del token y la exclusión fija del directorio de estado.",
+  "files": [
+    "main.py",
+    "lib/util.py",
+    ".env",
+    ".env.local",
+    "sub/.env",
+    "sub/.env.prod",
+    "sub/.git/config",
+    "sub/node_modules/pkg/index.js",
+    "sub/__pycache__/m.cpython-312.pyc",
+    ".rayito/agent-token",
+    ".rayito/agent-pool.json",
+    "sub/.rayito/agent-token",
+    "deep/a/b/.rayito/agent-token",
+    "secrets/agent-token",
+    "my-token",
+    "tok[1]*",
+    "keep/tok[1]*"
+  ],
+  "cases": [
+    {
+      "name": "the state dir and secret files are left out at any depth",
+      "exclude": [],
+      "tokenFile": null,
+      "included": ["keep/tok[1]*", "lib/util.py", "main.py", "my-token", "secrets/agent-token", "tok[1]*"]
+    },
+    {
+      "name": "a custom token file inside the project is left out",
+      "exclude": [],
+      "tokenFile": "secrets/agent-token",
+      "included": ["keep/tok[1]*", "lib/util.py", "main.py", "my-token", "tok[1]*"]
+    },
+    {
+      "name": "a token file at the root is left out",
+      "exclude": [],
+      "tokenFile": "my-token",
+      "included": ["keep/tok[1]*", "lib/util.py", "main.py", "secrets/agent-token", "tok[1]*"]
+    },
+    {
+      "name": "the token file name is matched literally",
+      "exclude": [],
+      "tokenFile": "tok[1]*",
+      "included": ["keep/tok[1]*", "lib/util.py", "main.py", "my-token", "secrets/agent-token"]
+    },
+    {
+      "name": "a token file outside the project changes nothing",
+      "exclude": [],
+      "tokenFile": "../outside-token",
+      "included": ["keep/tok[1]*", "lib/util.py", "main.py", "my-token", "secrets/agent-token", "tok[1]*"]
+    },
+    {
+      "name": "a negation in exclude cannot bring back the token or the state dir",
+      "exclude": ["!secrets/agent-token", "!.rayito/agent-token", "!sub/.rayito/agent-token"],
+      "tokenFile": "secrets/agent-token",
+      "included": ["keep/tok[1]*", "lib/util.py", "main.py", "my-token", "tok[1]*"]
+    }
+  ]
+}

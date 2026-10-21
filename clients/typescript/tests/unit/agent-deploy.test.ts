@@ -6,10 +6,10 @@
  * `test_agent_deploy.py`; ninguna prueba llama a AWS.
  */
 
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import net from "node:net";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { inspect } from "node:util";
 import { describe, expect, test, vi } from "vitest";
 import { ARTIFACT_STACK_NAME } from "../../src/account-setup/domain.js";
@@ -31,17 +31,21 @@ import {
   AgentDeployOptions,
   type AgentDeployStep,
   estimateCost,
+  excludedFilePattern,
+  sourceExcludes,
+  withExcludedFile,
 } from "../../src/agent/deploy-plan.js";
 import type { DetectOverrides } from "../../src/agent/detect-report.js";
 import { AgentFleet } from "../../src/agent/fleet.js";
 import { AgentProject } from "../../src/agent/project.js";
 import { ScalingOptions } from "../../src/agent/scaling-domain.js";
-import { AgentTemplate } from "../../src/agent/template.js";
+import { AgentTemplate, appFiles } from "../../src/agent/template.js";
 import { InvalidArgumentError, StackError } from "../../src/errors.js";
 import { AGENT_SOURCE_DEFAULT_EXCLUDES } from "../../src/limits.js";
 import { generateAccessToken } from "../../src/payload.js";
 import { ACCESS_TOKEN_ENV_VAR } from "../../src/sandbox/launch.js";
 import { Sandbox } from "../../src/sandbox/sandbox.js";
+import { filesHash } from "../../src/templates/context.js";
 import { Template } from "../../src/templates/dsl.js";
 import { FakePool, FleetHarness } from "./agent-fleet-fake.js";
 import { project } from "./agent-project-fake.js";
@@ -49,6 +53,32 @@ import { FakeStackProvisioner } from "./m15-fake-stacks.js";
 
 const VECTORS = join(import.meta.dirname, "..", "..", "..", "..", "testdata", "agent-deploy");
 const RESOLVE = JSON.parse(readFileSync(join(VECTORS, "resolve.json"), "utf8"));
+const SOURCE_CONTEXT = JSON.parse(readFileSync(join(VECTORS, "source-context.json"), "utf8"));
+
+interface SourceContextCase {
+  readonly name: string;
+  readonly exclude: string[];
+  readonly tokenFile: string | null;
+  readonly included: string[];
+}
+
+/** El proyecto de `source-context.json` en un directorio temporal: cada
+ * fichero lleva su propia ruta como contenido. */
+function sourceTree(): string {
+  const source = join(mkdtempSync(join(tmpdir(), "rayito-source-")), "agent");
+  for (const relative of SOURCE_CONTEXT.files as string[]) {
+    const target = join(source, relative);
+    mkdirSync(dirname(target), { recursive: true });
+    writeFileSync(target, relative);
+  }
+  return source;
+}
+
+function patternsFor(source: string, exclude: string[], tokenFile: string | null): string[] {
+  const pattern =
+    tokenFile === null ? undefined : excludedFilePattern(source, join(source, tokenFile));
+  return [...sourceExcludes(exclude), ...(pattern === undefined ? [] : [pattern])];
+}
 const SECRET_ENV = JSON.parse(readFileSync(join(VECTORS, "secret-env.json"), "utf8"));
 interface BucketCase {
   name: string;
@@ -337,6 +367,55 @@ describe("shared vectors", () => {
 
   test("the default source excludes are the shared list", () => {
     expect([...AGENT_SOURCE_DEFAULT_EXCLUDES]).toEqual(RESOLVE.sourceExcludes);
+  });
+
+  test.each(SOURCE_CONTEXT.cases as SourceContextCase[])(
+    "the source context never carries the token nor the state dir: $name",
+    async (item) => {
+      const source = sourceTree();
+      const files = await appFiles(source, patternsFor(source, item.exclude, item.tokenFile));
+      expect(files.map(([name]) => name).sort()).toEqual(item.included);
+    },
+  );
+
+  test("rewriting the token file keeps the context hash", async () => {
+    const source = sourceTree();
+    const patterns = patternsFor(source, [], "secrets/agent-token");
+    const before = filesHash(await appFiles(source, patterns));
+    writeFileSync(join(source, "secrets", "agent-token"), generateAccessToken());
+    writeFileSync(join(source, ".rayito", "agent-token"), generateAccessToken());
+    expect(filesHash(await appFiles(source, patterns))).toBe(before);
+  });
+
+  test("the token file pattern is anchored, escaped and undefined outside", () => {
+    const root = mkdtempSync(join(tmpdir(), "rayito-source-"));
+    const source = join(root, "agent");
+    mkdirSync(source);
+    expect(excludedFilePattern(source, join(source, "a", "tok[1]*"))).toBe("a/tok\\[1\\]\\*");
+    expect(excludedFilePattern(source, join(source, "#token"))).toBe("\\#token");
+    expect(excludedFilePattern(source, join(root, "token"))).toBeUndefined();
+    expect(excludedFilePattern(source, source)).toBeUndefined();
+  });
+
+  test("the token file resolves symlinks before comparing", () => {
+    const root = mkdtempSync(join(tmpdir(), "rayito-source-"));
+    const real = join(root, "real");
+    mkdirSync(real);
+    writeFileSync(join(real, "token"), "t");
+    const link = join(root, "link");
+    symlinkSync(real, link, "dir");
+    expect(excludedFilePattern(link, join(real, "token"))).toBe("token");
+  });
+
+  test("the token file exclusion goes last and only once", () => {
+    const root = mkdtempSync(join(tmpdir(), "rayito-source-"));
+    const excluded = withExcludedFile(
+      project({ source: root, exclude: ["token", "dist"] }),
+      join(root, "token"),
+    );
+    expect(excluded.exclude).toEqual(["dist", "token"]);
+    expect(withExcludedFile(project(), join(root, "token")).exclude).toEqual([]);
+    expect(withExcludedFile(project({ source: root }), undefined).exclude).toEqual([]);
   });
 
   test("the token is the argument, then the environment, then a new one", () => {

@@ -230,7 +230,7 @@ function overridesOf(overrides: AgentDetectOverrides): DetectOverrides | undefin
 /** El proyecto detectado con las banderas aplicadas, su informe y las
  * `DeployOptions` de la petición. */
 async function prepared(request: AgentDeployRequest, park: boolean, region: string | undefined) {
-  const { projectFor } = await import("../agent/deploy-plan.js");
+  const { projectFor, withExcludedFile } = await import("../agent/deploy-plan.js");
   const { AgentDeployOptions } = await import("../agent/deploy-plan.js");
   const { applyProjectFlags, applyServeFlags, scalingOf } = await import(
     "./agent-project-flags.js"
@@ -241,11 +241,11 @@ async function prepared(request: AgentDeployRequest, park: boolean, region: stri
     overridesOf(request.overrides),
     region,
   );
-  const project = applyProjectFlags(
-    applyServeFlags(detected.project, request.flags),
-    request.flags,
-  );
   const { settings } = request;
+  const project = withExcludedFile(
+    applyProjectFlags(applyServeFlags(detected.project, request.flags), request.flags),
+    settings.tokenFile,
+  );
   const scaling = scalingOf(project, request.flags);
   const { fleetSettingsOf } = await import("../agent/fleet-base.js");
   const backendFile = park

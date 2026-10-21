@@ -18,7 +18,7 @@ import json
 import tempfile
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any, Final
 
 from rayito._agent._deepagents import deepagents_requirements, deepagents_runner
@@ -58,6 +58,7 @@ from rayito._limits import (
     AGENT_PROTOCOL_VERSION,
     AGENT_TEMPLATE_MANIFEST_PATH,
     AGENT_TEMPLATE_MANIFEST_SCHEMA,
+    AGENT_TOKEN_FILE_DEFAULT,
 )
 from rayito._templates._context import collect_context_files
 from rayito._templates._dockerignore import DOCKERIGNORE_FILENAME, DockerIgnore
@@ -78,6 +79,11 @@ DEFAULT_AGENT_TEMPLATE_BASE: Final = "rayito-base-caps"
 #: Runtimes que la plantilla instala si no se dice otra cosa.
 AGENT_TEMPLATE_RUNTIMES: Final = ("opencode", "deepagents")
 MANIFEST_CONTEXT_NAME: Final = "rayito-agent.json"
+#: El directorio de estado de la CLI (`.rayito/`: el access token de la flota y
+#: las plazas calientes), a cualquier profundidad. Se excluye siempre del
+#: código del usuario y va el último, así que ni su `.dockerignore` ni
+#: `exclude` pueden volver a meterlo en la imagen ni en su hash.
+AGENT_STATE_DIR_EXCLUDE: Final = f"**/{PurePosixPath(AGENT_TOKEN_FILE_DEFAULT).parts[0]}"
 #: Las claves del manifiesto `rayito.agent-template/1` que existían antes de
 #: ADR-028 y que el demonio de precarga y los SDK anteriores leen.
 LEGACY_OPENCODE_RUNTIME: Final = "opencode"
@@ -359,15 +365,16 @@ def _manifest_bytes(manifest: Mapping[str, object]) -> bytes:
 
 def _app_files(app: str, exclude: Sequence[str]) -> tuple[tuple[str, bytes], ...]:
     """Los ficheros del código del usuario, sin lo que ignoran su
-    `.dockerignore` y `exclude`. Los dos filtran antes de leer ningún
-    fichero: un `.venv` excluido ni se lee ni dispara el aviso de secretos."""
+    `.dockerignore`, `exclude` y `AGENT_STATE_DIR_EXCLUDE`. Todos filtran
+    antes de leer ningún fichero: un `.venv` excluido ni se lee ni dispara el
+    aviso de secretos."""
     source = Path(app)
     dockerignore = source / DOCKERIGNORE_FILENAME
     patterns = dockerignore.read_text(encoding="utf-8") if dockerignore.is_file() else ""
     return collect_context_files(
         source,
         [CopyStep(".", AGENT_APP_DIR)],
-        ignore=DockerIgnore.from_text("\n".join([patterns, *exclude])),
+        ignore=DockerIgnore.from_text("\n".join([patterns, *exclude, AGENT_STATE_DIR_EXCLUDE])),
     )
 
 
@@ -388,6 +395,7 @@ def _write_context(
 
 
 __all__ = [
+    "AGENT_STATE_DIR_EXCLUDE",
     "AGENT_TEMPLATE_RUNTIMES",
     "DEFAULT_AGENT_TEMPLATE_BASE",
     "DEFAULT_AGENT_TEMPLATE_NAME",

@@ -675,7 +675,7 @@ export const agentDeployCommand = defineCommand({
       const compact = verbose
         ? undefined
         : new CompactBuildLog((line) => context.console.echo(line, { err: true }));
-      const request = (token: string | undefined): AgentDeployRequest => ({
+      const request = (token: string | undefined, tokenFile?: string): AgentDeployRequest => ({
         path: target,
         overrides: detectOverridesOf(context),
         flags,
@@ -685,6 +685,7 @@ export const agentDeployCommand = defineCommand({
           createSecretFromEnv: values.flag("create_secret"),
           basePublisher: basePublisherOf(context, bucket),
           accessToken: token,
+          tokenFile,
           keepOnFailure: values.flag("keep_on_failure"),
           buildImage: values.optionalFlag("build"),
           onBuildLogs: verbose ? (line) => context.console.echo(line, { err: true }) : compact?.log,
@@ -733,7 +734,10 @@ export const agentDeployCommand = defineCommand({
         }
         throw error;
       }
-      const deployed = await deployRequest(context, request(token.token), compact);
+      // El fichero del token se escribe antes del build: si queda dentro del
+      // código del agente, se excluye para que no acabe en la imagen ni cambie
+      // su hash (que un nuevo despliegue la reutilice).
+      const deployed = await deployRequest(context, request(token.token, token.file), compact);
       if (typeof deployed === "number") {
         return deployed;
       }

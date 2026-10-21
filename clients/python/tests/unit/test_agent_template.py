@@ -527,5 +527,23 @@ def test_excluded_paths_are_never_read_nor_warned_about(tmp_path: Path) -> None:
     assert files == [".dockerignore", "keep.txt", "pkg/agent.py"]
 
 
+def test_the_state_dir_never_enters_the_app_even_without_excludes(tmp_path: Path) -> None:
+    """`AgentProject.build()` y `export()` no añaden las exclusiones por
+    defecto: `.rayito/` (el token de la flota) se excluye igual, a cualquier
+    profundidad, y una negación del `.dockerignore` no lo recupera."""
+    from rayito._agent._template import _app_files
+
+    app = _make_app(tmp_path)
+    for relative in (".rayito/agent-token", "pkg/.rayito/agent-token"):
+        (app / relative).parent.mkdir(parents=True, exist_ok=True)
+        (app / relative).write_text("secret")
+    (app / ".dockerignore").write_text(".venv\n!.rayito/agent-token\n")
+
+    files = [name for name, _ in _app_files(str(app), ())]
+
+    assert not [name for name in files if ".rayito" in name]
+    assert "pkg/agent.py" in files
+
+
 def test_without_app_there_is_no_app_copy() -> None:
     assert "__rayito_context/app" not in AgentTemplate().to_dockerfile()

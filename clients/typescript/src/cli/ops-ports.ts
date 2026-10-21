@@ -165,6 +165,9 @@ export interface AgentDeploySettings {
   /** Quien publica la imagen base si falta (`--base-artifact`); `undefined` sin la bandera. */
   readonly basePublisher: (() => Promise<void>) | undefined;
   readonly accessToken: string | undefined;
+  /** El fichero donde quedó el access token: si cae dentro del código del
+   * agente, se excluye de la imagen. */
+  readonly tokenFile?: string | undefined;
   readonly keepOnFailure: boolean;
   readonly buildImage: boolean | undefined;
   readonly onBuildLogs: ((line: string) => void) | undefined;

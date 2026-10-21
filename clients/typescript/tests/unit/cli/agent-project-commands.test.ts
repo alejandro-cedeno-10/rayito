@@ -478,6 +478,7 @@ describe("agent deploy", () => {
     expect(outcome.stdout).not.toContain(token);
     expect(statSync(tokenFile).mode & 0o777).toBe(0o600);
     expect(projects.deployRequests[0]?.settings.accessToken).toBe(token);
+    expect(projects.deployRequests[0]?.settings.tokenFile).toBe(tokenFile);
   });
 
   it("sin token usa .rayito/agent-token con modo 0600 y lo reutiliza", async () => {
@@ -494,6 +495,7 @@ describe("agent deploy", () => {
         token,
         token,
       ]);
+      expect(projects.deployRequests[0]?.settings.tokenFile).toBe(".rayito/agent-token");
     });
   });
 

@@ -17,7 +17,6 @@ import {
 import type { DetectionReport } from "../agent/detect-report.js";
 import { renderExportSteps, usesRawProtocol } from "../agent/export.js";
 import type { AgentProject } from "../agent/project.js";
-import { copyProject } from "../agent/project-copy.js";
 import { detectProjectSteps } from "../agent/project-file.js";
 import {
   nodeProjectReader,
@@ -28,7 +27,6 @@ import {
   syncProjectReader,
 } from "../agent/project-reader.js";
 import { AgentCoreError, InvalidArgumentError } from "../errors.js";
-import { AGENT_SOURCE_DEFAULT_EXCLUDES } from "../limits.js";
 import { sdkAgentCorePorts } from "./aws-ports.js";
 import type { ServiceSettings } from "./clock.js";
 import { type CallFlags, planWithoutImageTag } from "./domain.js";
@@ -51,21 +49,6 @@ export interface PlannedAgentCore {
   readonly tree: ReadonlyMap<string, string | Uint8Array>;
   readonly project: AgentProject;
   readonly report: unknown;
-}
-
-const NESTED_EXCLUDE_PREFIX = "**/";
-
-/**
- * El proyecto con las exclusiones por defecto también a cualquier profundidad
- * (`**\/.env`, `**\/.git`): `.dockerignore` ancla un patrón simple en la raíz, y
- * en AgentCore la imagen la construye CodeBuild con todo lo que haya en el
- * contexto, así que un `sub/.env` no debe colarse.
- */
-export function withNestedDefaultExcludes(project: AgentProject): AgentProject {
-  const nested = AGENT_SOURCE_DEFAULT_EXCLUDES.map(
-    (pattern) => `${NESTED_EXCLUDE_PREFIX}${pattern}`,
-  );
-  return copyProject(project, { exclude: [...new Set([...project.exclude, ...nested])] });
 }
 
 /**
@@ -129,7 +112,7 @@ function* planSteps(
 ): ProjectSteps<PlannedAgentCore> {
   const options = deployOptionsOf(args.options);
   const detected = yield* projectSteps(path, args);
-  const project = withNestedDefaultExcludes(withDefaultExcludes(detected.project));
+  const project = withDefaultExcludes(detected.project);
   const region = resolvedRegion(args.region, project, environ);
   if (region === undefined) {
     throw new InvalidArgumentError(NO_REGION_MESSAGE);

@@ -7,6 +7,8 @@
  * llama a AWS.
  */
 
+import { realpathSync } from "node:fs";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { estimateComputeUsd, MIB_PER_GB } from "../dashboard/domain.js";
 import { InvalidArgumentError } from "../errors.js";
 import { defineHidden } from "../hidden.js";
@@ -33,6 +35,12 @@ import { copyProject } from "./project-copy.js";
 import { ScalingOptions } from "./scaling-domain.js";
 
 export const SECONDS_PER_HOUR = 3600;
+/** El prefijo que lleva un patrón de `.dockerignore` a cualquier profundidad. */
+const NESTED_EXCLUDE_PREFIX = "**/";
+/** Lo que `.dockerignore` lee como comodín, negación o comentario: se escapa
+ * con una barra invertida para excluir un fichero por su nombre literal. */
+const GLOB_SPECIALS = new Set(["*", "?", "[", "]", "\\", "!", "#"]);
+const DOCKERIGNORE_ESCAPE = "\\";
 /** Días del mes de la lista de precios (`AWS_API_NOTES.md`, sección de coste:
  * el almacenamiento se cotiza por GB-mes de 720 h). */
 export const PRICING_DAYS_PER_MONTH = 30;
@@ -259,11 +267,63 @@ export function estimateCost(memoryMib: number, scaling: ScalingOptions): AgentD
   };
 }
 
-/** El proyecto con `AGENT_SOURCE_DEFAULT_EXCLUDES` delante de sus propias
- * exclusiones, sin repetir ninguna. */
+/** `AGENT_SOURCE_DEFAULT_EXCLUDES` en la raíz y a cualquier profundidad
+ * (`**\/.env`, `**\/.git`) delante de `exclude`, sin repetir ninguna:
+ * `.dockerignore` ancla un patrón simple en la raíz, y la imagen se construye
+ * con todo lo que haya en el contexto, así que un `sub/.env` no debe colarse
+ * ni en MicroVMs ni en AgentCore. */
+export function sourceExcludes(exclude: readonly string[]): string[] {
+  const nested = AGENT_SOURCE_DEFAULT_EXCLUDES.map(
+    (pattern) => `${NESTED_EXCLUDE_PREFIX}${pattern}`,
+  );
+  return [...new Set([...AGENT_SOURCE_DEFAULT_EXCLUDES, ...nested, ...exclude])];
+}
+
+/** El proyecto con `sourceExcludes` sobre sus propias exclusiones. */
 export function withDefaultExcludes(project: AgentProject): AgentProject {
-  const merged = [...new Set([...AGENT_SOURCE_DEFAULT_EXCLUDES, ...project.exclude])];
-  return copyProject(project, { exclude: merged });
+  return copyProject(project, { exclude: sourceExcludes(project.exclude) });
+}
+
+/** La ruta absoluta con los enlaces simbólicos resueltos hasta donde exista
+ * (como `Path.resolve()` de Python): lo que aún no existe se añade tal cual. */
+function realPath(path: string): string {
+  const absolute = resolve(path);
+  try {
+    return realpathSync(absolute);
+  } catch {
+    const parent = dirname(absolute);
+    return parent === absolute ? absolute : join(realPath(parent), basename(absolute));
+  }
+}
+
+/** El patrón de `.dockerignore` que excluye exactamente `path` del código de
+ * `source` (anclado en la raíz y con los comodines escapados); `undefined` si
+ * `path` queda fuera de `source`. Las dos rutas se resuelven (enlaces
+ * simbólicos incluidos) antes de compararlas. */
+export function excludedFilePattern(source: string, path: string): string | undefined {
+  const inside = relative(realPath(source), realPath(path));
+  if (inside === "" || isAbsolute(inside) || inside === ".." || inside.startsWith(`..${sep}`)) {
+    return undefined;
+  }
+  return [...inside.split(sep).join("/")]
+    .map((char) => (GLOB_SPECIALS.has(char) ? `${DOCKERIGNORE_ESCAPE}${char}` : char))
+    .join("");
+}
+
+/** El proyecto que además excluye `path` de su código si está dentro (el
+ * fichero del access token que escribe la CLI: nunca debe acabar en la imagen
+ * ni cambiar su hash). Va el último, así que ninguna negación de `exclude` lo
+ * vuelve a meter; fuera del código, o sin código, no cambia nada. */
+export function withExcludedFile(project: AgentProject, path: string | undefined): AgentProject {
+  if (path === undefined || project.source === undefined) {
+    return project;
+  }
+  const pattern = excludedFilePattern(project.source, path);
+  if (pattern === undefined) {
+    return project;
+  }
+  const kept = project.exclude.filter((entry) => entry !== pattern);
+  return copyProject(project, { exclude: [...kept, pattern] });
 }
 
 /** `[deploy].bucket` del fichero de proyecto (`AgentProject.bucket`); un
