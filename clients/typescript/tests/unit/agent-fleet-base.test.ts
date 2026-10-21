@@ -251,6 +251,13 @@ describe("settings", () => {
     expect(config.metadata).toEqual({ "rayito.agent.deployment": "support-bot" });
   });
 
+  test("the warm pool launches the pinned image version, if any", () => {
+    const scaling = new ScalingOptions({ minVms: 1, maxVms: 3, warmVms: 2 });
+    const token = generateAccessToken();
+    expect(poolConfigFor(project(), scaling, token, {}, "2.0").templateVersion).toBe("2.0");
+    expect(poolConfigFor(project(), scaling, token, {})).not.toHaveProperty("templateVersion");
+  });
+
   test("the warm pool carries the project env and network", () => {
     const the = project({
       env: { LOG_LEVEL: "debug" },

@@ -574,6 +574,24 @@ describe("deployAgent", () => {
     expect(h.steps[1]?.detail).toBe("3.0");
   });
 
+  test("every VM and the warm pool start the version the build chose", async () => {
+    const h = new Harness();
+    await h.deploy({ scaling: new ScalingOptions({ minVms: 2, maxVms: 3, warmVms: 1 }) });
+    expect(h.fleet.world.created.map(({ options }) => options.templateVersion)).toEqual([
+      "3.0",
+      "3.0",
+    ]);
+    expect(h.fleet.pools.map((pool) => pool.config.templateVersion)).toEqual(["3.0"]);
+  });
+
+  test("without a build the newest active version is used", async () => {
+    const h = new Harness();
+    await h.deploy({ buildImage: false });
+    expect(h.fleet.world.created.map(({ options }) => options.templateVersion)).toEqual([
+      undefined,
+    ]);
+  });
+
   test("without a token makes one and the fleet returns it", async () => {
     const h = new Harness();
     const fleet = await h.deploy();

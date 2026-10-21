@@ -46,7 +46,7 @@ from rayito._agent._deploy_plan import (
 from rayito._agent._fleet import AgentFleet
 from rayito._agent._fleet_async import AsyncAgentFleet
 from rayito._agent._fleet_base import AGENT_FLEET_WARM_POLL_SECONDS
-from rayito._agent._project_base import template_name
+from rayito._agent._project_base import image_version_of, template_name
 from rayito._agent._project_domain import AgentProject
 from rayito._agent._project_service import ProjectService
 from rayito._agent._project_service_async import AsyncProjectService
@@ -447,7 +447,7 @@ def deploy_with(
             session=session,
             base_version=base_version_of(chosen, flight.project),
         )
-        _emit(chosen, (AgentDeployStep(STEP_IMAGE, _image_detail(info)),))
+        _emit(chosen, (AgentDeployStep(STEP_IMAGE, image_version_of(info)),))
     fleet = AgentFleet(
         flight.project,
         access_token=flight.token,
@@ -492,7 +492,7 @@ async def deploy_with_async(
             session=session,
             base_version=base_version_of(chosen, flight.project),
         )
-        _emit(chosen, (AgentDeployStep(STEP_IMAGE, _image_detail(info)),))
+        _emit(chosen, (AgentDeployStep(STEP_IMAGE, image_version_of(info)),))
     fleet = AsyncAgentFleet(
         flight.project,
         access_token=flight.token,
@@ -572,11 +572,6 @@ def _bucket_for(
         raise
     steps.append(AgentDeployStep(STEP_BUCKET, f"{choice.source}:{choice.bucket}"))
     return choice.bucket
-
-
-def _image_detail(info: Any) -> str:
-    """La versión de la imagen de `BuildInfo.build_id` (`<versión>/<build>`)."""
-    return str(info.build_id).split("/", maxsplit=1)[0]
 
 
 def _emit(options: AgentDeployOptions, steps: tuple[AgentDeployStep, ...]) -> None:

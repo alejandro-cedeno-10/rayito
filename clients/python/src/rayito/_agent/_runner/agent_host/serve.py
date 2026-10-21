@@ -45,6 +45,7 @@ from typing import Any, Final
 from .limits import Limits, LimitTracker
 from .protocol import (
     PROTOCOL_VERSION,
+    TERMINAL_EVENT_TYPES,
     AgentFailure,
     Driver,
     Event,
@@ -325,7 +326,7 @@ class Service:
 class Invocation:
     """Una ejecución del driver en su hilo, con sus eventos en una cola. Los
     topes se aplican al entregar cada evento (`LimitTracker`); el plazo lo
-    vigila `events()`."""
+    vigila `events()`. Ocupa un cupo del servicio hasta `finish()`."""
 
     def __init__(
         self, service: Service, request: Request, header_session: str | None = None
@@ -339,6 +340,10 @@ class Invocation:
         )
         self._queue: queue.Queue[Event | None] = queue.Queue()
         self._closed = threading.Event()
+        #: El driver terminó por su cuenta (`done` o `agent_failed` de
+        #: `run_to_terminal`): ya no hay nada que cancelar.
+        self._ended = threading.Event()
+        self._finished = False
         self.tracker = LimitTracker(service.config.limits)
         self.session_id: str | None = None
         self._thread = threading.Thread(target=self._work, daemon=True)
@@ -351,7 +356,8 @@ class Invocation:
             raise LimitExceeded("aborted")
         event = self._presented(event)
         kind = event.get("type")
-        if kind in ("done", "agent_failed"):
+        if kind in TERMINAL_EVENT_TYPES:
+            self._ended.set()
             self._queue.put(event)
             return
         reason = self.tracker.observe(event)
@@ -395,8 +401,9 @@ class Invocation:
 
     def abort(self, reason: str) -> None:
         """Corta la ejecución: el consumidor ya no recibe más eventos y el
-        driver mata lo que lanzó."""
-        if self._closed.is_set():
+        driver mata lo que lanzó. Si el driver ya terminó no hay nada que
+        cortar."""
+        if self._closed.is_set() or self._ended.is_set():
             return
         self._fail(reason)
         with contextlib.suppress(Exception):
@@ -419,14 +426,23 @@ class Invocation:
             if event is None:
                 return
             yield event
-            if event.get("type") in ("done", "agent_failed"):
+            if event.get("type") in TERMINAL_EVENT_TYPES:
                 return
 
-    def close(self) -> None:
-        """Libera la ejecución: si el hilo sigue vivo (cliente que se fue)
-        la cancela."""
-        if self._thread.is_alive():
+    def finish(self) -> None:
+        """Cierra la ejecución y suelta su cupo, una sola vez. El manejador la
+        llama antes de escribir el terminal: un cliente que encadena llamadas
+        en cuanto recibe la respuesta encuentra el cupo libre y no un `429`.
+        Sólo cancela el driver si sigue corriendo (cliente que se fue, plazo
+        agotado); tras su propio terminal el hilo aún puede estar saliendo y
+        cancelarlo mataría lo que el driver mantiene vivo entre llamadas (la
+        app de `http_app`)."""
+        if self._finished:
+            return
+        self._finished = True
+        if self._thread.is_alive() and not self._ended.is_set():
             self.abort("aborted")
+        self._service.release()
 
 
 class _QueueEmitter:
@@ -634,8 +650,7 @@ def make_handler(service: Service) -> type[BaseHTTPRequestHandler]:
                 else:
                     self._respond(invocation)
             finally:
-                invocation.close()
-                service.release()
+                invocation.finish()
 
         def _read_limited_body(self, *, empty_ok: bool) -> bytes | None:
             """Lee el cuerpo respetando `max_request_bytes`. Un
@@ -669,6 +684,7 @@ def make_handler(service: Service) -> type[BaseHTTPRequestHandler]:
             terminal: Event = build_event("agent_failed", reason="runtime_error", detail_code=None)
             for event in invocation.events():
                 terminal = event
+            invocation.finish()
             self._send_json(HTTPStatus.OK, result_body(invocation, terminal))
 
         def _stream(self, invocation: Invocation) -> None:
@@ -680,6 +696,8 @@ def make_handler(service: Service) -> type[BaseHTTPRequestHandler]:
             self.end_headers()
             try:
                 for event in invocation.events():
+                    if event.get("type") in TERMINAL_EVENT_TYPES:
+                        invocation.finish()
                     self.wfile.write(format_sse(event))
                     self.wfile.flush()
             except (BrokenPipeError, ConnectionResetError):

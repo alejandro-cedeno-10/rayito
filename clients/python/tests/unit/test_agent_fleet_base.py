@@ -201,6 +201,16 @@ def test_the_warm_pool_launches_like_a_served_vm_with_the_fleet_token() -> None:
     assert config.metadata == {"rayito.agent.deployment": "support-bot"}
 
 
+def test_the_warm_pool_launches_the_pinned_image_version_if_any() -> None:
+    scaling = ScalingOptions(min_vms=1, max_vms=3, warm_vms=2)
+    token = generate_access_token()
+
+    pinned = pool_config_for(project(), scaling, token, {}, template_version="2.0")
+
+    assert pinned.template_version == "2.0"
+    assert pool_config_for(project(), scaling, token, {}).template_version is None
+
+
 def test_the_warm_pool_carries_the_project_env_and_network() -> None:
     policy = NetworkPolicy(allow_out=("api.example.com",), deny_out=(ALL_TRAFFIC,))
     the_project = project(env={"LOG_LEVEL": "debug"}, network=policy)
