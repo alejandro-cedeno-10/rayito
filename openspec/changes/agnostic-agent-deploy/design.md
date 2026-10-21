@@ -241,7 +241,12 @@ start after B merges. The acceptance in AWS runs once on the tip of
    `testdata/agent-langgraph-api/responses.json`; `__interrupt__` is
    `protocol_error/graph_interrupted`; other statuses keep `app_http_<n>`.
    Health `agentLanggraphHealthPath`; its own ready wait
-   `agentLanggraphReadyWaitSeconds` (global default unchanged).
+   `agentLanggraphReadyWaitSeconds` (global default unchanged). The copied
+   code is read-only and `langgraph dev` writes `.langgraph_api/` in its
+   working directory and resolves the paths of `langgraph.json` there, so
+   when the command carries `--config` the host writes a copy with absolute
+   paths (against `app_dir`) to `workdir` and starts the app in `workdir`
+   (found in the AWS acceptance, Q189).
 3. Detection, only with `--protocol langgraph-api` over the `langgraph-json`
    framework: kind `custom`, app from the launcher `langgraph-dev` on
    `AGENT_APP_INTERNAL_PORT`, protocol `langgraph-api`, `assistant_id` = the

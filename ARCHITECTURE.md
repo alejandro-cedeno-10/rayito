@@ -3808,7 +3808,11 @@ error.
    serverless) y sin human-in-the-loop. Rayito no instala `langgraph-api`
    (licencia Elastic-2.0): lo pone el usuario en sus dependencias, y la
    detección avisa si falta. La CLI de LangGraph corre con la analítica
-   apagada.
+   apagada. Como `langgraph dev` escribe su estado en su directorio de
+   trabajo y resuelve allí las rutas de `langgraph.json`, y el código copiado
+   es de sólo lectura, el host lo arranca en `workdir` con una copia de la
+   configuración de rutas absolutas (medido en la aceptación,
+   `AWS_API_NOTES.md` Q189).
 
 **Consecuencias.** Un agente LangGraph que elige su modelo por
 configuración, recibe un objeto de entrada y lee secretos de Secrets Manager

@@ -2310,7 +2310,13 @@ grafo detenido en un \`interrupt\` es
 \`protocol_error\`/\`graph_interrupted\`. La salud es \`GET /ok\`, la espera de
 arranque es \`LANGGRAPH_READY_WAIT_SECONDS\` y el hijo arranca sin la
 telemetría de la CLI ni las trazas a LangSmith salvo que el entorno las fije
-(\`LANGGRAPH_CHILD_ENV_DEFAULTS\`). Fuentes, consultadas el 2026-10-21:
+(\`LANGGRAPH_CHILD_ENV_DEFAULTS\`). \`langgraph dev\` resuelve las rutas de su
+\`langgraph.json\` contra su directorio de trabajo y escribe allí el estado de
+su servidor en memoria (\`.langgraph_api/\`), pero el código copiado
+(\`app_dir\`) es de sólo lectura: si el comando lleva \`--config\`, el host
+escribe en \`workdir\` una copia de la configuración con las rutas absolutas
+(\`langgraph_absolute_config\`) y arranca la app en \`workdir\`
+(\`langgraph_launch\`). Fuentes, consultadas el 2026-10-21:
 https://docs.langchain.com/langsmith/agent-server-api/thread-runs/create-run-wait-for-output.md,
 https://docs.langchain.com/langsmith/agent-server-api/system/health-check.md y
 https://docs.langchain.com/langsmith/data-storage-and-privacy.
@@ -2320,10 +2326,12 @@ from __future__ import annotations
 
 import http.client
 import json
+import os
 import threading
 import uuid
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator, Mapping, Sequence
 from http import HTTPStatus
+from pathlib import Path
 from typing import Any, Final
 
 from ..limits import output_fits
@@ -2388,6 +2396,14 @@ LANGGRAPH_CHILD_ENV_DEFAULTS: Final = (
     ("LANGGRAPH_CLI_NO_ANALYTICS", "1"),
     ("LANGSMITH_TRACING", "false"),
 )
+#: La opción de \`langgraph dev\` con su configuración, la copia que el host
+#: escribe en \`workdir\` (con las rutas absolutas) y las extensiones de una
+#: ruta de grafo de \`graphs\` (\`./agent.py:graph\`); una ruta de módulo
+#: (\`paquete.modulo:graph\`) se importa del \`PYTHONPATH\`, que ya empieza por
+#: \`app_dir\`, y no cambia. Q189 de \`AWS_API_NOTES.md\` cuenta por qué.
+LANGGRAPH_CONFIG_FLAG: Final = "--config"
+LANGGRAPH_CONFIG_COPY: Final = ".rayito/langgraph-api/langgraph.json"
+LANGGRAPH_GRAPH_FILE_SUFFIXES: Final = (".py", ".js", ".mjs", ".cjs", ".ts", ".mts", ".cts")
 #: El campo del cuerpo que lleva el prompt con \`json\`, si la
 #: configuración no trae \`request_field\`.
 DEFAULT_REQUEST_FIELD: Final = "prompt"
@@ -2458,6 +2474,84 @@ def langgraph_thread_id(session_id: str) -> str:
 def langgraph_invoke_path(template: str, session_id: str) -> str:
     """La ruta de la ejecución con el hilo de la sesión en \`{thread_id}\`."""
     return template.replace(LANGGRAPH_THREAD_PLACEHOLDER, langgraph_thread_id(session_id))
+
+
+def langgraph_absolute_config(config: Mapping[str, Any], app_dir: str) -> dict[str, Any]:
+    """\`langgraph.json\` con las rutas relativas hechas absolutas contra
+    \`app_dir\`: cada \`dependencies\`, la ruta de cada grafo de \`graphs\` (una
+    cadena o un objeto con \`path\`) y \`env\` si es la ruta de un \`.env\`. El
+    resto de claves no cambia. Sólo lee la configuración: nunca el código."""
+    absolute = dict(config)
+    dependencies = config.get("dependencies")
+    if isinstance(dependencies, list):
+        absolute["dependencies"] = [
+            _absolute_path(app_dir, item) if isinstance(item, str) else item
+            for item in dependencies
+        ]
+    graphs = config.get("graphs")
+    if isinstance(graphs, Mapping):
+        absolute["graphs"] = {name: _absolute_graph(app_dir, spec) for name, spec in graphs.items()}
+    env = config.get("env")
+    if isinstance(env, str):
+        absolute["env"] = _absolute_path(app_dir, env)
+    return absolute
+
+
+def langgraph_launch(
+    command: Sequence[object], app_dir: str, workdir: str
+) -> tuple[list[str], str] | None:
+    """El argv y el directorio de trabajo de \`langgraph dev\`: su
+    \`--config\` (de \`app_dir\`) copiado a \`workdir\` con las rutas absolutas, y
+    \`workdir\` como directorio de trabajo, que es donde escribe su estado.
+    \`None\` si el comando no lleva \`--config\` o la configuración no se lee: la
+    app arranca como siempre y es ella quien informa del error."""
+    argv = [str(part) for part in command]
+    position = _config_position(argv)
+    if position is None:
+        return None
+    index, inline = position
+    value = argv[index].split("=", 1)[1] if inline else argv[index]
+    try:
+        loaded = json.loads(Path(_absolute_path(app_dir, value)).read_text("utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(loaded, Mapping):
+        return None
+    copy = Path(workdir) / LANGGRAPH_CONFIG_COPY
+    copy.parent.mkdir(parents=True, exist_ok=True)
+    copy.write_text(json.dumps(langgraph_absolute_config(loaded, app_dir)), encoding="utf-8")
+    argv[index] = f"{LANGGRAPH_CONFIG_FLAG}={copy}" if inline else str(copy)
+    return argv, workdir
+
+
+def _config_position(argv: Sequence[str]) -> tuple[int, bool] | None:
+    """Dónde está el valor de \`--config\`: el índice del argumento que lo
+    lleva y si va pegado (\`--config=x\`)."""
+    for index, part in enumerate(argv):
+        if part == LANGGRAPH_CONFIG_FLAG and index + 1 < len(argv):
+            return index + 1, False
+        if part.startswith(f"{LANGGRAPH_CONFIG_FLAG}="):
+            return index, True
+    return None
+
+
+def _absolute_path(app_dir: str, path: str) -> str:
+    return path if os.path.isabs(path) else os.path.normpath(os.path.join(app_dir, path))
+
+
+def _absolute_graph(app_dir: str, spec: object) -> object:
+    if isinstance(spec, str):
+        return _absolute_graph_path(app_dir, spec)
+    if isinstance(spec, Mapping) and isinstance(spec.get("path"), str):
+        return {**spec, "path": _absolute_graph_path(app_dir, spec["path"])}
+    return spec
+
+
+def _absolute_graph_path(app_dir: str, spec: str) -> str:
+    path, separator, attribute = spec.rpartition(":")
+    if not separator or not (path.endswith(LANGGRAPH_GRAPH_FILE_SUFFIXES) or "/" in path):
+        return spec
+    return f"{_absolute_path(app_dir, path)}:{attribute}"
 
 
 def langgraph_prompt_input(prompt: str) -> dict[str, Any]:
@@ -2686,13 +2780,19 @@ class Driver:
         port_env = self._config.get("port_env")
         if port_env:
             env[str(port_env)] = str(self._config["port"])
-        return ChildProcess(
-            child_argv(self._config["command"], env),
-            env=env,
-            cwd=self._working_directory(),
-            capture_stdout=False,
-            capture_stderr_tail=True,
-        )
+        argv, cwd = child_argv(self._config["command"], env), self._working_directory()
+        launch = self._langgraph_launch()
+        if launch is not None:
+            argv, cwd = child_argv(launch[0], env), launch[1]
+        return ChildProcess(argv, env=env, cwd=cwd, capture_stdout=False, capture_stderr_tail=True)
+
+    def _langgraph_launch(self) -> tuple[list[str], str] | None:
+        """Con \`langgraph-api\`, \`app_dir\` y \`workdir\`, el arranque de
+        \`langgraph dev\` en \`workdir\` (\`langgraph_launch\`); si no, \`None\`."""
+        app_dir, workdir = self._config.get("app_dir"), self._config.get("workdir")
+        if not (self._langgraph and app_dir and workdir):
+            return None
+        return langgraph_launch(self._config["command"], str(app_dir), str(workdir))
 
     def _working_directory(self) -> str | None:
         """El directorio del código copiado (\`app_dir\`), de modo que
