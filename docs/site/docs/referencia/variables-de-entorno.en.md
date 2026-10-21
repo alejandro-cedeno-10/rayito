@@ -35,7 +35,7 @@ OpenTelemetry): those are only activated with an SDK option.
 
 | Variable | What it does |
 |---|---|
-| `RAYITO_BUCKET` | image artifacts bucket for `rayito image publish` and the `bucket` check of `rayito doctor` (equivalent to `--bucket`) |
+| `RAYITO_BUCKET` | image artifacts bucket for `rayito image publish` and the `bucket` check of `rayito doctor`; the bucket `rayito setup` reuses (if it does not exist, setup creates it with that name); and the build context bucket of `rayito agent deploy` and `deploy_agent()` / `deployAgent()`, also with `--target agentcore` (after `[deploy].bucket`). Equivalent to `--bucket` |
 | `RAYITO_ACCESS_TOKEN` | token for `sandbox connect`, `exec` and `metrics` if you do not pass `--token-file` (the file wins); `sandbox create` reuses it as the new sandbox's token instead of generating one |
 | `AWS_REGION` | default region for all commands (equivalent to `--region`); the CLI reads it even if `boto3` does not |
 

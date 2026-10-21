@@ -15,11 +15,13 @@ Documentación: **https://alejandro-cedeno-10.github.io/rayito/** ·
 
 ```bash
 pnpm add rayito        # o: npm i rayito / yarn add rayito / bun add rayito
-pip install "rayito[cli]"   # la CLI (publicar la imagen, rayito doctor) es Python
+npx rayito --help      # la CLI viene en el mismo paquete (setup, doctor, image publish…)
 ```
 
-Node ≥ 20. El paquete trae ESM y CommonJS con sus tipos, y el shim de E2B en
-`rayito/e2b`. Todo es asíncrono. Credenciales: la cadena por defecto del AWS
+Node ≥ 20. El paquete trae ESM y CommonJS con sus tipos, el shim de E2B en
+`rayito/e2b` y los constructos CDK en `rayito/cdk` (`RayitoAgent`,
+`RayitoMicrovmImage`; necesitan `npm i aws-cdk-lib constructs`). Todo es
+asíncrono. Credenciales: la cadena por defecto del AWS
 SDK v3 (`AWS_PROFILE`/`AWS_REGION`, variables de entorno o el rol de la
 máquina).
 
@@ -39,12 +41,14 @@ con el comando de instalación. Lista completa en
 
 Tu cuenta necesita una pila de IAM, un bucket y la imagen `rayito-base`
 publicada con el `rayd` de la misma serie que el SDK. Se hace una vez por
-cuenta y región: [Configurar AWS](https://alejandro-cedeno-10.github.io/rayito/primeros-pasos/configurar-aws/).
-Después:
+cuenta y región con `npx rayito setup`, que muestra el plan y el coste y
+pide confirmación: [Configurar AWS](https://alejandro-cedeno-10.github.io/rayito/primeros-pasos/configurar-aws/).
 
 ```bash
 export AWS_PROFILE=<tu-perfil> AWS_REGION=us-east-1 AWS_DEFAULT_REGION=us-east-1 RAYITO_TEMPLATE=rayito-base
-rayito doctor --template rayito-base     # credenciales, cuotas, IAM, imagen, versión del agente
+npx rayito setup --dry-run                   # sólo lectura: plan y coste
+npx rayito setup                             # pila de IAM, bucket e imagen rayito-base
+npx rayito doctor --template rayito-base     # credenciales, cuotas, IAM, imagen, versión del agente
 ```
 
 ## Primer sandbox
@@ -111,6 +115,40 @@ opcional:
 [¿Qué uso?](https://alejandro-cedeno-10.github.io/rayito/guias/agente-en-el-sandbox/#que-uso).
 Guía: [Agente en el sandbox](https://alejandro-cedeno-10.github.io/rayito/guias/agente-en-el-sandbox/).
 
+## Desplegar tu agente
+
+¿Ya tienes un agente (LangGraph, LangChain, Deep Agents, Strands, Hermes,
+OpenCode, Vercel AI SDK o tu propia app HTTP)? `npx rayito agent deploy ./mi-agente` (o
+`deployAgent()`) detecta el framework, el punto de entrada y el protocolo, y
+lo sirve desde MicroVMs de tu cuenta; devuelve un `AgentFleet` para
+invocarlo. `--dry-run` muestra el plan sin llamar a AWS.
+
+```ts
+import { deployAgent } from "rayito";
+
+const fleet = await deployAgent("./mi-agente", {
+  options: { bucket: "amzn-s3-demo-bucket" },
+});
+try {
+  const reply = await fleet.invoke("Resume el README.");
+  console.log(reply.text, reply.sessionId);
+} finally {
+  await fleet.stop();
+}
+```
+
+Con `npx rayito agent deploy ./mi-agente --target agentcore` (o
+`target: "agentcore"` en `deployAgent()`, que devuelve un `AgentCoreFleet`)
+el mismo proyecto va a Amazon Bedrock AgentCore Runtime, sin Docker local.
+Ese destino carga sus peers opcionales:
+`npm i @aws-sdk/client-bedrock-agentcore @aws-sdk/client-bedrock-agentcore-control @aws-sdk/client-cloudformation @aws-sdk/client-cloudwatch-logs @aws-sdk/client-codebuild @aws-sdk/client-ecr`.
+Con `aws-cdk-lib` y `constructs`, los constructos `RayitoAgent` y
+`RayitoMicrovmImage` de `rayito/cdk` hacen lo mismo dentro de tu app de CDK,
+con `cdk deploy`.
+Guías: [Despliega tu agente](https://alejandro-cedeno-10.github.io/rayito/guias/despliega-tu-agente/) ·
+[Desplegar en AgentCore](https://alejandro-cedeno-10.github.io/rayito/guias/desplegar-en-agentcore/) ·
+[Desplegar con CDK](https://alejandro-cedeno-10.github.io/rayito/guias/desplegar-con-cdk/).
+
 ## Qué incluye
 
 | Superficie | Guía |
@@ -130,6 +168,9 @@ Guía: [Agente en el sandbox](https://alejandro-cedeno-10.github.io/rayito/guias
 | `getMetricsHistory()`, `Sandbox.paginate()` | [Métricas y listado](https://alejandro-cedeno-10.github.io/rayito/observability/) |
 | `sbx.git` | [Git](https://alejandro-cedeno-10.github.io/rayito/git/) |
 | `sbx.agent`, `AgentSpec`, presets de pasarela | [Agente en el sandbox](https://alejandro-cedeno-10.github.io/rayito/guias/agente-en-el-sandbox/) |
+| `deployAgent()`, `AgentFleet`, `rayito agent deploy` | [Despliega tu agente](https://alejandro-cedeno-10.github.io/rayito/guias/despliega-tu-agente/) · [Flota de agentes](https://alejandro-cedeno-10.github.io/rayito/guias/flota-de-agentes/) |
+| `deployAgent(path, { target: "agentcore" })`, `AgentCoreFleet` | [Desplegar en AgentCore](https://alejandro-cedeno-10.github.io/rayito/guias/desplegar-en-agentcore/) |
+| `rayito/cdk`: `RayitoAgent`, `RayitoMicrovmImage` | [Desplegar con CDK](https://alejandro-cedeno-10.github.io/rayito/guias/desplegar-con-cdk/) |
 | Vercel AI SDK | [LangChain y Vercel AI](https://alejandro-cedeno-10.github.io/rayito/guias/langchain-y-vercel-ai/) |
 
 Cada llamada de ciclo de vida acepta `signal` (`AbortSignal`), y un `logger`
@@ -160,6 +201,7 @@ cómo apagarla: [Funciones opcionales](https://alejandro-cedeno-10.github.io/ray
 | `OptionalStacks` | [Pilas opcionales](https://alejandro-cedeno-10.github.io/rayito/funciones-opcionales/pilas-opcionales/) |
 | `volumes`, `VolumeStore` (experimental) | [Volúmenes EFS](https://alejandro-cedeno-10.github.io/rayito/funciones-opcionales/volumenes-efs/) |
 | `domain`, `CustomDomain` (experimental) | [Dominio propio](https://alejandro-cedeno-10.github.io/rayito/funciones-opcionales/dominio-propio/) |
+| `target: "agentcore"` en `deployAgent()` | [Desplegar en AgentCore](https://alejandro-cedeno-10.github.io/rayito/guias/desplegar-en-agentcore/): el agente en Amazon Bedrock AgentCore Runtime |
 
 ## Costes y límites
 

@@ -382,3 +382,13 @@ en AWS real irá en `AWS_API_NOTES.md` cuando se acepte el despliegue.
 `rayito agent deploy --target agentcore` imprime estas líneas en el plan, y
 `rayito agent delete <nombre> --target agentcore` deja de cobrar la imagen y los
 logs.
+
+Con los [constructos de CDK](guias/desplegar-con-cdk.md) (desde 0.15.0),
+`RayitoAgent` cuesta lo mismo que `--target agentcore`, porque crea los mismos
+recursos, más céntimos por despliegue de las Lambdas y Step Functions que esperan
+al build. `RayitoMicrovmImage` cuesta ≈ $0,04 por semana de snapshot (mínimo una
+semana) por cada versión de imagen, una por tamaño, como `rayito image publish`.
+Los assets que suben al bucket del bootstrap de CDK (el código del agente y el
+zip de la imagen) añaden almacenamiento en S3 estándar hasta `cdk gc`; con
+`localDocker()`, las imágenes del agente se acumulan además en el repositorio de
+ECR del bootstrap.

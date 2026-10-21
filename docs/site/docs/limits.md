@@ -150,8 +150,9 @@ GitHub Release `rayd-v*` y binario dentro de la imagen). Cada uno tiene su
 changelog en formato [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/)
 ([Changelog](referencia/changelog.md)).
 
-- **Qué es la API pública**: lo que exportan `rayito` y `rayito.e2b`
-  (Python), `rayito` y `rayito/e2b` (TypeScript) sin guion bajo inicial, la
+- **Qué es la API pública**: lo que exportan `rayito`, `rayito.e2b` y
+  `rayito.cdk` (Python), `rayito`, `rayito/e2b` y `rayito/cdk` (TypeScript) sin
+  guion bajo inicial, la
   CLI `rayito`, las herramientas de `rayito-mcp` y el contrato
   `proto/rayito/v1/`. Los módulos `_privados`, los tipos generados y los
   scripts del repositorio no lo son.

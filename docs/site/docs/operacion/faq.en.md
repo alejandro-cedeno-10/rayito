@@ -36,6 +36,11 @@ The ten with Lambda MicroVMs: `us-east-1`, `us-east-2`, `us-west-2`,
 `eu-west-1`, `eu-central-1`, `eu-north-1`, `ap-northeast-1`, `ap-south-1`,
 `ap-southeast-1` and `ap-southeast-2`.
 
+Deploying agents to AgentCore (`--target agentcore`, since 0.15.0) has its own
+list: the 21 regions with AgentCore Runtime and CodeBuild arm64 builds
+([Limits](../limits.md),
+[Deploy to AgentCore](../guias/desplegar-en-agentcore.md#antes-de-empezar)).
+
 ## Does it work from macOS or Windows? { #funciona-desde-macos-o-windows }
 
 Yes: the SDK and the CLI run on any system with Python ≥ 3.11 or
@@ -79,6 +84,26 @@ only goes through the secret gateway, and the agent's permissions are not a
 security boundary: the boundary is the MicroVM with egress closed
 ([Agent in the sandbox](../guias/agente-en-el-sandbox.md),
 [Security](../security.md#agente-de-codigo-dentro-del-sandbox)).
+
+## Can I deploy the agent I already have? { #puedo-desplegar-el-agente-que-ya-tengo }
+
+Yes. `rayito agent deploy ./my-agent` reads the project (LangGraph, LangChain,
+deepagents, Strands, Hermes, OpenCode, Vercel's AI SDK or your own HTTP app),
+without running your code, and serves it on a fleet of MicroVMs
+([Deploy your agent](../guias/despliega-tu-agente.md#sin-escribir-nada),
+[Several sessions and several VMs](../guias/flota-de-agentes.md)). Since
+0.15.0, with `--target agentcore` the same project goes to Amazon Bedrock
+AgentCore Runtime, without local Docker
+([Deploy to AgentCore](../guias/desplegar-en-agentcore.md)). Note: AgentCore
+has no secret gateway and the agent can read the runtime role's credentials.
+
+## Can I declare it as infrastructure as code? { #puedo-declararlo-como-infraestructura-como-codigo }
+
+Yes, with AWS CDK, since 0.15.0: `RayitoAgent` deploys the agent to AgentCore
+with the same resources and IAM as `--target agentcore`, and
+`RayitoMicrovmImage` publishes a MicroVMs image in your stack. They live in
+`rayito.cdk` (the `cdk` extra) and `rayito/cdk`, and are deployed with
+`cdk deploy` ([Deploy with CDK](../guias/desplegar-con-cdk.md)).
 
 ## What happens if my process dies with live sandboxes? { #que-pasa-si-mi-proceso-muere-con-sandboxes-vivos }
 

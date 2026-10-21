@@ -36,9 +36,11 @@ creando con el SDK (`Sandbox.create(template=...)`).
       (TypeScript), `import rayito` y la CLI no cargan nada de CDK.
     - **Recursos y llamadas AWS:** `RayitoAgent` crea una pila anidada (repositorio
       de ECR, proyecto de CodeBuild con su grupo de logs, rol de build y rol del
-      runtime), un asset de S3 con el código, dos funciones Lambda y una máquina de
-      estados de Step Functions que esperan al build (el `Provider` de los recursos
-      personalizados), el runtime de AgentCore y un recurso que exige MMDSv2
+      runtime), un asset de S3 con el código, los recursos personalizados que
+      esperan al build (dos funciones Lambda de Python de Rayito, `OnEvent` e
+      `IsComplete`, más lo que añade el `Provider` de `custom_resources` de CDK:
+      tres funciones Lambda de Node.js y una máquina de estados de Step
+      Functions), el runtime de AgentCore y un recurso que exige MMDSv2
       (`GetAgentRuntime`, `UpdateAgentRuntime`). En cada contenido nuevo, un build
       de CodeBuild (`StartBuild`, `BatchGetBuilds`, `ecr:DescribeImages`); con
       `localDocker()`, ningún build en CodeBuild: la imagen la construye tu Docker y
@@ -77,8 +79,9 @@ creando con el SDK (`Sandbox.create(template=...)`).
 !!! warning "Seguridad: sin pasarela de secretos en AgentCore"
     Un agente en AgentCore obtiene las credenciales del rol del runtime, y
     cualquier código que corra en la sesión puede leerlas. `RayitoAgent` crea el
-    mismo rol de mínimo privilegio que la CLI: sólo invoca los modelos de
-    `bedrockModels` y sólo lee los secretos de `readableSecrets`. Detalle en
+    mismo rol de mínimo privilegio que la CLI: sólo invoca el modelo del
+    proyecto y los de `bedrockModels`, y sólo lee los secretos de
+    `readableSecrets`. Detalle en
     [Seguridad en AgentCore](desplegar-en-agentcore.md#seguridad-en-agentcore).
 
 ## Antes de empezar { #antes-de-empezar }
@@ -238,7 +241,7 @@ La primera vez tarda unos minutos (casi todo es el build de la imagen); un
 |---|---|---|---|
 | `project` | `project` | el directorio | El directorio del agente o su fichero de proyecto (obligatoria). Se lee al sintetizar |
 | `name` | `name` | `name` del fichero de proyecto | Nombre del agente; por defecto, el del proyecto. Fija el runtime `rayito_<nombre>` y el repositorio `rayito/agentcore/<nombre>` |
-| `bedrockModels` | `bedrock_models` | `--bedrock-model` | Modelos o perfiles de inferencia que el rol del runtime puede invocar; por defecto, el modelo del proyecto |
+| `bedrockModels` | `bedrock_models` | `--bedrock-model` | Modelos o perfiles de inferencia que el rol del runtime puede invocar además del modelo del proyecto, que siempre se incluye; por defecto, ninguno más |
 | `readableSecrets` | `readable_secrets` | `--readable-secret` | Secretos que el rol puede leer con `GetSecretValue`; por defecto, ninguno. Nunca se copian al entorno |
 | `idleSessionTimeoutSeconds` | `idle_session_timeout_seconds` | `--idle-session-timeout` | Segundos sin uso tras los que AgentCore termina la microVM de una sesión: de {{agentcoreLifecycleMinSeconds}} a {{agentcoreLifecycleMaxSeconds}}, por defecto {{agentcoreIdleSessionTimeoutDefaultSeconds}} |
 | `maxSessionLifetimeSeconds` | `max_session_lifetime_seconds` | `--max-session-lifetime` | Vida máxima de la microVM de una sesión, por defecto {{agentcoreLifecycleMaxSeconds}} |
@@ -290,13 +293,19 @@ como `AgentCoreException` / `AgentCoreError`. Dos diferencias:
   versión nueva del runtime; si alguna llegara sin él, lo activaría con
   `UpdateAgentRuntime` (y entonces la detección de deriva de CloudFormation
   podría marcarlo como cambio hecho fuera de la pila).
-- **`Provider`** y **`Handler`**: las dos funciones Lambda (Python, código de
-  `infra/agentcore-cdk-handler.py`) y la máquina de estados que sirven a los dos
-  recursos personalizados, con logs de 14 días.
+- **`Handler`**: las dos funciones Lambda de Rayito, `OnEvent` e `IsComplete`
+  (Python, código de `infra/agentcore-cdk-handler.py`), con un rol que comparten
+  y un grupo de logs de 14 días cada una.
+- **`Provider`**: el `Provider` de `custom_resources` de CDK, que sirve a los
+  dos recursos personalizados y añade por su cuenta tres funciones Lambda de
+  Node.js (las del marco: `onEvent`, `isComplete` y `onTimeout`) y una máquina
+  de estados de Step Functions que consulta el build hasta que acaba, con sus
+  logs en `ProviderLogs` (14 días).
 
 Atributos para el resto de tu app: `agentName`, `runtimeName`, `runtimeArn`,
 `runtimeId`, `runtimeVersion`, `roleArn`, `repositoryUri`, `imageUri` y
-`runtime` (un `IRuntime` de la L2 de `aws-cdk-lib`, para combinarlo con otros
+`runtime` (un `IBedrockAgentRuntime` de `aws-cdk-lib/aws-bedrockagentcore`, la
+L2 de AgentCore, para combinarlo con otros
 constructos), en `snake_case` en Python. `runtimeVersion` es la versión viva
 del runtime, la que puedes fijar en un endpoint. Normalmente es la que creó
 CloudFormation, porque AgentCore ya la crea con MMDSv2 activo; `Mmds` sólo

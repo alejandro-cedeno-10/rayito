@@ -106,3 +106,8 @@ lo usa y no cobra cómputo.
   conversación a la vez, cola, plazas calientes y qué pasa si la app se cae.
 - [Despliega tu agente](../guias/despliega-tu-agente.md): el fichero de proyecto,
   los frameworks y cómo llega la credencial al modelo.
+- [Desplegar en AgentCore](../guias/desplegar-en-agentcore.md): el mismo
+  proyecto en Amazon Bedrock AgentCore Runtime con `--target agentcore`, sin
+  Docker local (la imagen se construye en CodeBuild).
+- [Desplegar con CDK](../guias/desplegar-con-cdk.md): el agente como un
+  constructo `RayitoAgent` en tu app de CDK, desplegado con `cdk deploy`.

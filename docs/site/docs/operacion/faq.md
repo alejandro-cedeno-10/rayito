@@ -35,6 +35,11 @@ Las diez con Lambda MicroVMs: `us-east-1`, `us-east-2`, `us-west-2`,
 `eu-west-1`, `eu-central-1`, `eu-north-1`, `ap-northeast-1`, `ap-south-1`,
 `ap-southeast-1` y `ap-southeast-2`.
 
+El despliegue de agentes en AgentCore (`--target agentcore`, desde 0.15.0)
+tiene su propia lista: las 21 regiones con AgentCore Runtime y builds arm64 de
+CodeBuild ([Límites](../limits.md),
+[Desplegar en AgentCore](../guias/desplegar-en-agentcore.md#antes-de-empezar)).
+
 ## ¿Funciona desde macOS o Windows?
 
 Sí: el SDK y la CLI corren en cualquier sistema con Python ≥ 3.11 o
@@ -78,6 +83,27 @@ sólo pasa por la pasarela de secretos, y los permisos del agente no son una
 frontera de seguridad: la frontera es el MicroVM con la salida cerrada
 ([Agente en el sandbox](../guias/agente-en-el-sandbox.md),
 [Seguridad](../security.md#agente-de-codigo-dentro-del-sandbox)).
+
+## ¿Puedo desplegar el agente que ya tengo?
+
+Sí. `rayito agent deploy ./mi-agente` lee el proyecto (LangGraph, LangChain,
+deepagents, Strands, Hermes, OpenCode, el AI SDK de Vercel o una app HTTP
+propia), sin ejecutar tu código, y lo sirve en una flota de MicroVMs
+([Despliega tu agente](../guias/despliega-tu-agente.md#sin-escribir-nada),
+[Varias sesiones y varias VMs](../guias/flota-de-agentes.md)). Desde 0.15.0,
+con `--target agentcore` el mismo proyecto va a Amazon Bedrock AgentCore
+Runtime, sin Docker local
+([Desplegar en AgentCore](../guias/desplegar-en-agentcore.md)). Ojo: en
+AgentCore no hay pasarela de secretos y el agente puede leer las credenciales
+del rol del runtime.
+
+## ¿Puedo declararlo como infraestructura como código?
+
+Sí, con AWS CDK, desde 0.15.0: `RayitoAgent` despliega el agente en AgentCore
+con los mismos recursos e IAM que `--target agentcore`, y
+`RayitoMicrovmImage` publica una imagen de MicroVMs en tu pila. Están en
+`rayito.cdk` (extra `cdk`) y `rayito/cdk`, y se despliegan con `cdk deploy`
+([Desplegar con CDK](../guias/desplegar-con-cdk.md)).
 
 ## ¿Qué pasa si mi proceso muere con sandboxes vivos?
 

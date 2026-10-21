@@ -1,7 +1,7 @@
 {
   "name": "rayito",
   "version": "0.15.0",
-  "description": "SDK TypeScript de Rayito: sandboxes de ejecución para agentes de IA sobre AWS Lambda MicroVMs, dentro de tu propia cuenta.",
+  "description": "SDK TypeScript de Rayito: sandboxes de ejecución para agentes de IA sobre AWS Lambda MicroVMs, dentro de tu propia cuenta, y despliegue de agentes en MicroVMs o en Amazon Bedrock AgentCore, con la CLI o con CDK.",
   "license": "Apache-2.0",
   "homepage": "https://alejandro-cedeno-10.github.io/rayito/",
   "bugs": {
@@ -81,7 +81,13 @@
     "lambda",
     "microvm",
     "agents",
-    "e2b"
+    "e2b",
+    "code-interpreter",
+    "bedrock",
+    "agentcore",
+    "aws-cdk",
+    "cdk",
+    "agent-deployment"
   ],
   "dependencies": {
     "@aws-sdk/client-lambda-microvms": "^3.1138.0",

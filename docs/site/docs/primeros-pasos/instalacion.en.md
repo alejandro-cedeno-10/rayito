@@ -75,10 +75,15 @@ None of this is needed to get started.
 | EFS volumes, experimental ([EFS volumes](../funciones-opcionales/volumenes-efs.md)) | (included: uses `boto3`) | `npm i @aws-sdk/client-efs @aws-sdk/client-ec2` |
 | Quotas and cost of the management dashboard ([Management dashboard](../funciones-opcionales/panel-de-gestion.md)) | (included: uses `boto3`) | `npm i @aws-sdk/client-service-quotas @aws-sdk/client-cost-explorer` |
 | Custom domain, experimental ([Custom domain](../funciones-opcionales/dominio-propio.md)) | `pip install "rayito[custom-domain]"` | `npm i @aws-sdk/client-cloudformation @aws-sdk/client-cloudfront-keyvaluestore @aws-sdk/signature-v4a` |
+| Deploying an agent to AgentCore ([Deploy to AgentCore](../guias/desplegar-en-agentcore.md)) | (included: uses `boto3`) | `npm i @aws-sdk/client-cloudformation @aws-sdk/client-codebuild @aws-sdk/client-ecr @aws-sdk/client-bedrock-agentcore @aws-sdk/client-bedrock-agentcore-control @aws-sdk/client-cloudwatch-logs` |
+| The `RayitoAgent` and `RayitoMicrovmImage` CDK constructs ([Deploy with CDK](../guias/desplegar-con-cdk.md)) | `pip install "rayito[cdk]"` (synthesis also needs Node ≥ 20, for jsii) | `npm i aws-cdk-lib constructs` (imported from `rayito/cdk`) |
 
 In TypeScript those packages are optional *peerDependencies*: the SDK only
 loads them when you enable the feature. If you enable it without installing
 them, the first call throws `InvalidArgumentError` with the install command.
+The CDK ones are the exception: `rayito/cdk` imports `aws-cdk-lib` and
+`constructs` when it loads, and `rayito` and its other entry points never load
+them.
 
 ## Credentials { #credenciales }
 

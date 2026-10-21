@@ -40,6 +40,13 @@ salida a internet.
 Guía: [Despliega tu agente](https://alejandro-cedeno-10.github.io/rayito/guias/despliega-tu-agente/) ·
 [Flota de agentes](https://alejandro-cedeno-10.github.io/rayito/guias/flota-de-agentes/).
 
+El mismo proyecto puede ir a Amazon Bedrock AgentCore Runtime con
+`--target agentcore` ([Desplegar en AgentCore](https://alejandro-cedeno-10.github.io/rayito/guias/desplegar-en-agentcore/)),
+o a tu propia app de CDK con los constructos `RayitoAgent` y
+`RayitoMicrovmImage`: `rayito.cdk` (`pip install "rayito[cdk]"`) y
+`rayito/cdk` (peers `aws-cdk-lib` y `constructs`), desplegados con
+`cdk deploy` ([Desplegar con CDK](https://alejandro-cedeno-10.github.io/rayito/guias/desplegar-con-cdk/)).
+
 ## Instalar
 
 ```bash
@@ -47,10 +54,12 @@ pip install "rayito[cli]"   # SDK Python (Python >= 3.11) y la CLI `rayito`
 pnpm add rayito             # SDK TypeScript (Node >= 20); o: npm i rayito / yarn add rayito / bun add rayito
 ```
 
-La CLI (`rayito setup`, `rayito image publish`, `rayito doctor`…) es Python aunque uses el
-SDK de TypeScript. Extras de Python: `cli`, `mcp` (servidor MCP), `otel`
-(trazas OpenTelemetry) y `custom-domain` (dominio propio, experimental); las
-funciones opcionales de TypeScript cargan *peerDependencies* opcionales
+La CLI `rayito` (`rayito setup`, `rayito image publish`, `rayito doctor`…)
+viene en los dos paquetes: `pip install "rayito[cli]"` o, si sólo usas el
+SDK de TypeScript, `npx rayito` desde el paquete npm. Extras de Python: `cli`,
+`mcp` (servidor MCP), `otel` (trazas OpenTelemetry), `custom-domain` (dominio
+propio, experimental) y `cdk` (constructos CDK); las funciones opcionales de
+TypeScript cargan *peerDependencies* opcionales
 ([Instalación](https://alejandro-cedeno-10.github.io/rayito/primeros-pasos/instalacion/#extras-opcionales)).
 
 ## Primer sandbox
@@ -150,7 +159,10 @@ Todo funciona igual en Python (sync y `asyncio`) y en TypeScript.
   y `rayito agent deploy ./mi-agente --target agentcore` para desplegar el mismo
   agente en Amazon Bedrock AgentCore Runtime sin Docker local, con un rol de
   mínimo privilegio y sin pasarela de secretos
-  ([Desplegar en AgentCore](https://alejandro-cedeno-10.github.io/rayito/guias/desplegar-en-agentcore/)).
+  ([Desplegar en AgentCore](https://alejandro-cedeno-10.github.io/rayito/guias/desplegar-en-agentcore/));
+  y los constructos CDK `RayitoAgent` y `RayitoMicrovmImage` (`rayito.cdk`,
+  `rayito/cdk`) para desplegar un agente o una imagen de MicroVMs con
+  `cdk deploy` ([Desplegar con CDK](https://alejandro-cedeno-10.github.io/rayito/guias/desplegar-con-cdk/)).
 - **CLI** `rayito`: publicar imágenes, `doctor`, operar sandboxes, pilas
   opcionales ([CLI](https://alejandro-cedeno-10.github.io/rayito/cli/)).
 - **Panel de gestión**: `rayito dashboard` abre un panel web local con los
@@ -302,8 +314,8 @@ crates/rayd/             agente Rust (tonic) que corre dentro del MicroVM
 crates/rayd-core/        dominio puro del agente (sin IO; puertos como traits)
 crates/rayito-proto/     código Rust generado desde proto/
 kernel-sidecar/          sidecar Python con jupyter_client (y Deno en -poly)
-clients/python/          SDK Python (paquete `rayito`, shim `rayito.e2b`)
-clients/typescript/      SDK TypeScript (paquete `rayito`, entrada `rayito/e2b`)
+clients/python/          SDK Python (paquete `rayito`, shim `rayito.e2b`, CDK `rayito.cdk`)
+clients/typescript/      SDK TypeScript (paquete `rayito`, entradas `rayito/e2b` y `rayito/cdk`)
 image/                   Dockerfile ARM64 de las imágenes
 infra/                   plantillas de CloudFormation (IAM, egress, CI OIDC)
 docs/site/               documentación de usuario (mkdocs)

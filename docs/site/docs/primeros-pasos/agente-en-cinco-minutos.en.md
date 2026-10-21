@@ -106,3 +106,8 @@ uses it and bills no compute.
   one conversation at a time, queue, warm slots and what happens if the app dies.
 - [Deploy your agent](../guias/despliega-tu-agente.md): the project file, the
   frameworks and how the credential reaches the model.
+- [Deploy to AgentCore](../guias/desplegar-en-agentcore.md): the same project
+  on Amazon Bedrock AgentCore Runtime with `--target agentcore`, without local
+  Docker (the image is built in CodeBuild).
+- [Deploy with CDK](../guias/desplegar-con-cdk.md): the agent as a
+  `RayitoAgent` construct in your CDK app, deployed with `cdk deploy`.

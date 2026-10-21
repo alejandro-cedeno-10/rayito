@@ -49,6 +49,8 @@ cuándo ocurre y qué hacer.
     CapacityException                (Exception)
     UnimplementedError               (NotImplementedError: la función no existe aquí)
     └── LifecycleUnsupportedException
+    AgentCoreException               (Exception: el despliegue en AgentCore, no un sandbox)
+    RayitoCdkException               (Exception, en rayito.cdk: un constructo CDK que no sintetiza)
     RayitoCompatWarning              (UserWarning: un aviso, no una excepción)
     ```
 
@@ -95,6 +97,8 @@ cuándo ocurre y qué hacer.
     CapacityError                    (Error)
     UnimplementedError               (Error)
     └── LifecycleUnsupportedError
+    AgentCoreError                   (Error)
+    RayitoCdkError                   (Error, en rayito/cdk)
     ```
 
     `instanceof` funciona en ESM y en CommonJS. En TypeScript
@@ -106,7 +110,8 @@ sandbox"; `AuthenticationException`, `QuotaExceededException` y
 `CapacityException` quedan fuera a propósito: dicen algo de tu cuenta o de
 AWS, no del sandbox. Tampoco lo es `AgentCoreException` /
 `AgentCoreError`, la del [despliegue en AgentCore](#agentcore), que no
-es atribuible a un sandbox. Un error **dentro de `run_code`** nunca es una
+es atribuible a un sandbox, ni `RayitoCdkException` / `RayitoCdkError`, la
+de los [constructos CDK](#cdk), que sale al sintetizar. Un error **dentro de `run_code`** nunca es una
 excepción: llega en `execution.error`.
 
 ## Tabla completa
@@ -152,6 +157,8 @@ excepción: llega en `execution.error`.
 | `CustomDomainException` | `CustomDomainError` | CloudFormation, CloudFront KVS | `CustomDomain` (experimental): deploy/status/destroy de la pila, o `expose()`/`get_host()` sin ruta válida | ver [Dominio propio](../funciones-opcionales/dominio-propio.md) |
 | `SandboxException` con `output_truncated` | `SandboxError` | el agente | nadie leyó la salida de un comando en 30 s y se llenó el búfer | consume el handle o redirige a un fichero |
 | `AgentException` | `AgentError` | el runtime del agente (`reason`) | `sbx.agent.run()`/`.stream()` falló: ver la tabla siguiente | lee `reason`, `session_id` y `usage`; nunca contiene el prompt ni la respuesta |
+| `AgentCoreException` (`code`, `exit_code`) | `AgentCoreError` (`code`, `exitCode`) | el SDK, CloudFormation, CodeBuild, AgentCore | el despliegue en AgentCore falló | ver [la tabla de AgentCore](#agentcore) |
+| `RayitoCdkException` (`code`, `fields`) | `RayitoCdkError` (`code`, `fields`) | el constructo, al sintetizar | `RayitoAgent` o `RayitoMicrovmImage` no se puede sintetizar con esas props o ese stack | ver [la tabla de CDK](#cdk) |
 
 ## Cómo se elige la excepción
 
@@ -252,7 +259,7 @@ un token ni el texto crudo de AWS. Guía:
 | `network_policy_unsupported` | el proyecto declara `egress` o `network` | quítalo: en modo PUBLIC AgentCore no filtra la salida |
 | `name_invalid` | el nombre del agente no cabe en los nombres derivados | hasta 41 caracteres, minúsculas y dígitos con `-` o `_` sueltos; cámbialo con `[image].template` |
 | `name_conflict` | ya hay un runtime con ese nombre que no es de Rayito | cambia el nombre con `[image].template`; Rayito no toca runtimes ajenos |
-| `model_required` | no se sabe qué modelo de Bedrock usa el agente | pásalo con `--bedrock-model` / `bedrock_models` |
+| `model_required` | reservado: hoy no se lanza (el rol del runtime siempre incluye el modelo del proyecto) | — |
 | `image_missing` | `--no-build` y no hay una imagen con ese contenido | despliega sin `--no-build` |
 | `lifecycle_invalid` | un tiempo de ciclo de vida fuera de rango, o no entero (en TypeScript, no múltiplo de 1000 ms) | entre 60 y 28 800 s |
 | `lifecycle_order` | `idle_session_timeout` mayor que `max_session_lifetime` | baja el tiempo de inactividad o sube la vida máxima |
@@ -291,6 +298,31 @@ sesiones superada es `QuotaExceededException`, un fallo del propio agente
 y un runtime que no existe, un permiso que falta o una petición rechazada son
 `AgentCoreException` (`runtime_not_found`, `access_denied`, `aws_error`).
 
+## `RayitoCdkException` / `RayitoCdkError` { #cdk }
+
+Desde 0.15.0. Las lanzan los constructos CDK: `RayitoCdkException` se importa de
+`rayito.cdk` y `RayitoCdkError` de `rayito/cdk`. Salen en el constructor, al
+sintetizar y antes de añadir ningún recurso (`release_download_failed` y los
+`artifact_*` salen antes, al preparar el `MicrovmImageArtifact`). No heredan de
+`SandboxException` / `SandboxError`. Llevan `code` (una lista cerrada, la de la
+tabla) y `fields` (los valores que interpola el mensaje). Los errores del plan
+del agente (`name_invalid`, `provider_unsupported`…) siguen siendo
+[`AgentCoreException` / `AgentCoreError`](#agentcore). Guía:
+[Desplegar con CDK](../guias/desplegar-con-cdk.md#errores).
+
+| `code` | Cuándo | Qué hacer |
+|---|---|---|
+| `region_unresolved` | el stack no tiene una región concreta (un stack sin `env`) | fija `env.region` en el stack |
+| `account_invalid` | la cuenta del stack está fijada y no es un id de 12 dígitos | corrige `env.account` o déjala sin fijar |
+| `image_name_invalid` | el nombre de la imagen, con el sufijo de tamaño, no es de letras, dígitos, `-` o `_`, o pasa de 64 caracteres | acórtalo o quita los caracteres que sobran |
+| `image_name_reserved` | el nombre empieza por `rayito-base` (el de `rayito setup` y `rayito image publish`) | elige otro nombre |
+| `artifact_not_found` | el zip de `from_file` / `fromFile` no existe | comprueba la ruta, o genera el zip con `rayito image zip` |
+| `artifact_checksum_mismatch` | el sha256 del zip no es el esperado (el que pasaste o el de `SHA256SUMS` de la release) | vuelve a descargarlo; si pasaste `sha256`, revísalo |
+| `artifact_variant_mismatch` | el zip es de otra variante que `variant` | pasa la `variant` del zip, o usa el zip de esa variante |
+| `artifact_efs_mismatch` | el marcador de EFS del zip no casa con `with_efs` / `withEfs` | ajusta `with_efs` / `withEfs` al zip, o usa el zip con o sin EFS |
+| `option_invalid` | una opción no vale: `latest` como versión base, `with_efs` sin la variante `full` y `os_capabilities`, tamaños fuera del catálogo, memoria que no es un entero positivo o, con `sizes`, distinta de la base, `environment`, `allowed_mount_buckets` o `tags` inválidos, o el plazo de CodeBuild fuera de 5-110 minutos | el mensaje dice qué opción y por qué |
+| `release_download_failed` | `download_release` / `downloadRelease` no pudo descargar el zip de la release | revisa la red y la versión; o descárgalo a mano y usa `from_file` / `fromFile` |
+
 ## Errores del shim de E2B
 
 `rayito.e2b` (y `rayito/e2b`) exporta los nombres de `e2b.exceptions`
@@ -310,3 +342,4 @@ fallido igual que `except rayito.BuildException`. Detalle:
   síntoma
 - [Referencia Python: excepciones](python/excepciones.md)
 - [Referencia TypeScript](typescript.md)
+- [Desplegar con CDK: errores](../guias/desplegar-con-cdk.md#errores)

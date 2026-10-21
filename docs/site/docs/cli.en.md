@@ -23,7 +23,7 @@ options and environment variables.
 | [`rayito domain`](#rayito-domain) (experimental) | `deploy`, `status`, `destroy` |
 | [`rayito events`](#rayito-events) | `deploy`, `status`, `destroy`, `list`, `webhook add`, `webhook list`, `webhook remove` |
 | [`rayito template`](#rayito-template) | `build`, `status`, `logs` |
-| [`rayito agent`](#rayito-agent) | `init`, `build`, `run`, `deploy`, `export`, `invoke`, `status`, `stop`, `list`, `delete`, `template build` |
+| [`rayito agent`](#rayito-agent) | `init`, `build`, `run`, `detect`, `deploy`, `export`, `invoke`, `status`, `stop`, `list`, `delete`, `template build` |
 | [`rayito dashboard`](#rayito-dashboard) | — |
 | [`rayito setup`](#rayito-setup) | — |
 | [`rayito doctor`](#rayito-doctor) | — |
@@ -654,7 +654,7 @@ each one does and why.
 
 **Exit 2** (usage or environment): `unsupported_region`, `option_not_supported`,
 `option_requires_agentcore`, `target_unsupported`, `provider_unsupported`,
-`network_policy_unsupported`, `name_invalid`, `name_conflict`, `model_required`,
+`network_policy_unsupported`, `name_invalid`, `name_conflict`, `model_required` (reserved: not raised today),
 `image_missing`, `lifecycle_invalid`, `lifecycle_order`, `tags_invalid`,
 `env_invalid`, `iam_resource_invalid`, `raw_protocol`, `no_bucket`, `bucket_region`, `needs_confirmation`,
 `delete_needs_confirmation` and `session_required`. **Exit 1** (what fails in

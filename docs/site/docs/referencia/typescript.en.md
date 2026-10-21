@@ -217,7 +217,9 @@ or with `"microvm"`, they return what they always did (`AgentFleet`,
 `AgentDeployPlan`) and no AgentCore, CodeBuild or ECR client is loaded. With
 `"agentcore"` you need, as optional peers,
 `@aws-sdk/client-bedrock-agentcore-control`, `@aws-sdk/client-bedrock-agentcore`,
-`@aws-sdk/client-codebuild` and `@aws-sdk/client-ecr`. Guide:
+`@aws-sdk/client-codebuild`, `@aws-sdk/client-ecr`,
+`@aws-sdk/client-cloudformation` (the agent's stack) and
+`@aws-sdk/client-cloudwatch-logs` (only when deleting). Guide:
 [Deploy to AgentCore](../guias/desplegar-en-agentcore.md).
 
 !!! info "Cost and activation"
@@ -290,12 +292,12 @@ Guide: [Deploy with CDK](../guias/desplegar-con-cdk.md).
 
 | TypeScript | Python | What it is |
 |---|---|---|
-| `new RayitoAgent(scope, id, { project, name?, bedrockModels?, readableSecrets?, idleSessionTimeoutSeconds?, maxSessionLifetimeSeconds?, tags?, build?, exportOutputs? })` | `RayitoAgent(scope, id, *, project, name=None, bedrock_models=(), ...)` | an agent on AgentCore Runtime; attributes `agentName`, `runtimeName`, `runtimeArn`, `runtimeId`, `runtimeVersion`, `roleArn`, `repositoryUri`, `imageUri`, `runtime` (`IRuntime`) |
+| `new RayitoAgent(scope, id, { project, name?, bedrockModels?, readableSecrets?, idleSessionTimeoutSeconds?, maxSessionLifetimeSeconds?, tags?, build?, exportOutputs? })` | `RayitoAgent(scope, id, *, project, name=None, bedrock_models=(), ...)` | an agent on AgentCore Runtime; attributes `agentName`, `runtimeName`, `runtimeArn`, `runtimeId`, `runtimeVersion`, `roleArn`, `repositoryUri`, `imageUri`, `runtime` (`IBedrockAgentRuntime`, from `aws-cdk-lib/aws-bedrockagentcore`) |
 | `agent.grantInvoke(grantee)` | `agent.grant_invoke(grantee)` | `bedrock-agentcore:InvokeAgentRuntime` on the runtime (`iam.Grant`) |
 | `AgentImageBuild.codeBuild({ timeoutMinutes? })` / `AgentImageBuild.localDocker()` | `AgentImageBuild.code_build(*, timeout_minutes=None)` / `AgentImageBuild.local_docker()` | how the image is built; CodeBuild by default |
 | `new RayitoMicrovmImage(scope, id, { name, artifact, baseImageVersion, variant?, withEfs?, osCapabilities?, memoryMib?, sizes?, allowedMountBuckets?, environment?, tags? })` | `RayitoMicrovmImage(scope, id, *, name, artifact, base_image_version, ...)` | a MicroVMs image with `rayd`; attributes `imageName`, `imageArn`, `latestActiveImageVersion`, `buildRoleArn`, `logGroupName`, `sizeImageArns` |
 | `MicrovmImageArtifact.fromFile(path, { sha256? })` / `await MicrovmImageArtifact.downloadRelease({ version?, directory? })` | `MicrovmImageArtifact.from_file(path, *, sha256=None)` / `MicrovmImageArtifact.download_release(*, version=None, directory=None)` | the image zip |
-| `RayitoCdkError` (`code`) | `RayitoCdkException` | synth errors ([codes](../guias/desplegar-con-cdk.md#errores)) |
+| `RayitoCdkError` (`code`, `fields`) | `RayitoCdkException` | synth errors ([codes](errores.md#cdk)) |
 
 ## Pool { #pool }
 
@@ -333,11 +335,14 @@ Off by default; each one loads its *peerDependency* only when activated.
 | `Quotas` (`report`) | `@aws-sdk/client-service-quotas` | [Management dashboard](../funciones-opcionales/panel-de-gestion.md) |
 | `UsageCost` (`billed`: paid, $0.01/request; `estimate`: free) | `@aws-sdk/client-cost-explorer` only for `billed` | [Management dashboard](../funciones-opcionales/panel-de-gestion.md) |
 | `Fleet` (`sandboxes`, `images`, `imageVersions`, `events`, `planBulk`, `runBulk`) | none of its own: `events` uses those of `LifecycleEvents` | [Management dashboard](../funciones-opcionales/panel-de-gestion.md) |
+| `deployAgent(path, { target: "agentcore" })`, `AgentCoreFleet` | `@aws-sdk/client-bedrock-agentcore-control`, `@aws-sdk/client-bedrock-agentcore` (invoking), `@aws-sdk/client-codebuild`, `@aws-sdk/client-ecr`, `@aws-sdk/client-cloudformation` and `@aws-sdk/client-cloudwatch-logs` (only when deleting) | [Deploy to AgentCore](../guias/desplegar-en-agentcore.md) |
+| `rayito/cdk` (`RayitoAgent`, `RayitoMicrovmImage`) | `aws-cdk-lib` and `constructs` | [Deploy with CDK](../guias/desplegar-con-cdk.md) |
 
 ## Errors { #errores }
 
 `SandboxError` and its subclasses, `AuthenticationError`, `QuotaExceededError`,
-`CapacityError`, `UnimplementedError` and `AgentCoreError` (the AgentCore deploy). Full table with their Python
+`CapacityError`, `UnimplementedError`, `AgentCoreError` (the AgentCore deploy) and
+`RayitoCdkError` (from `rayito/cdk`, the CDK constructs). Full table with their Python
 equivalent: [Errors](errores.md).
 
 ```ts
