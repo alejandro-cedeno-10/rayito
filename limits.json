@@ -122,7 +122,7 @@
   "agentDeepagentsRequirementsSha256": "465dd581598ae2d16e3258f6575fa4c2c95cf0e93151a398246ac61160dd5acc",
   "agentStrandsRequirementsSha256": "2795d8c2c5eabb05e866915651cb5435a16bfaeb037b711dc0e1af1d600ad967",
   "agentStrandsHarnessRequirementsSha256": "5a66609e6c9e66a537c4220f0f4b7a172e808bec72dda02998e933c3c512c634",
-  "agentHermesRequirementsSha256": "f9a5b57e84bb8f953ca279b33757efb3443551548ef605e5ce6e9bbda4dff776",
+  "agentHermesRequirementsSha256": "7e75708dfc716fb8261e9ec3d063945482c195f33436b7dd96866717dec53735",
   "agentHostSchema": "rayito.agent-host/1",
   "agentKernelWarmupMarkerPath": "/opt/rayito/sidecar/ipython/startup/warmup_variant",
   "agentKernelWarmupSlimValue": "slim",

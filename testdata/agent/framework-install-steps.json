@@ -329,7 +329,7 @@
         {
           "op": "run",
           "args": {
-            "cmd": "echo 'f9a5b57e84bb8f953ca279b33757efb3443551548ef605e5ce6e9bbda4dff776  /opt/agents/requirements-hermes.txt' | sha256sum -c - && /opt/agents/hermes/python/bin/python3 -m venv /opt/agents/hermes/venv && /opt/agents/hermes/venv/bin/python -m pip install --no-cache-dir --require-hashes --no-deps --only-binary=:all: -r /opt/agents/requirements-hermes.txt && /opt/agents/hermes/venv/bin/python -m pip check"
+            "cmd": "echo '7e75708dfc716fb8261e9ec3d063945482c195f33436b7dd96866717dec53735  /opt/agents/requirements-hermes.txt' | sha256sum -c - && /opt/agents/hermes/python/bin/python3 -m venv /opt/agents/hermes/venv && /opt/agents/hermes/venv/bin/python -m pip install --no-cache-dir --require-hashes --no-deps --only-binary=:all: -r /opt/agents/requirements-hermes.txt && /opt/agents/hermes/venv/bin/python -m pip check"
           }
         },
         {
@@ -362,7 +362,7 @@
         {
           "op": "run",
           "args": {
-            "cmd": "echo 'f9a5b57e84bb8f953ca279b33757efb3443551548ef605e5ce6e9bbda4dff776  /opt/agents/requirements-hermes.txt' | sha256sum -c - && /opt/agents/hermes/python/bin/python3 -m venv /opt/agents/hermes/venv && /opt/agents/hermes/venv/bin/python -m pip install --no-cache-dir --require-hashes --no-deps --only-binary=:all: -r /opt/agents/requirements-hermes.txt && /opt/agents/hermes/venv/bin/python -m pip check"
+            "cmd": "echo '7e75708dfc716fb8261e9ec3d063945482c195f33436b7dd96866717dec53735  /opt/agents/requirements-hermes.txt' | sha256sum -c - && /opt/agents/hermes/python/bin/python3 -m venv /opt/agents/hermes/venv && /opt/agents/hermes/venv/bin/python -m pip install --no-cache-dir --require-hashes --no-deps --only-binary=:all: -r /opt/agents/requirements-hermes.txt && /opt/agents/hermes/venv/bin/python -m pip check"
           }
         },
         {
@@ -373,15 +373,15 @@
         }
       ],
       "context_files": {
-        "requirements-hermes.txt": "f9a5b57e84bb8f953ca279b33757efb3443551548ef605e5ce6e9bbda4dff776"
+        "requirements-hermes.txt": "7e75708dfc716fb8261e9ec3d063945482c195f33436b7dd96866717dec53735"
       },
       "manifest_entry": {
         "version": "0.22.2",
         "commit": "d923a5eb487a17c0a68801bba9ef0f56c81040a8",
         "python_version": "3.14.8",
         "python_sha256": "6c3cfb175acca2748d5a9e42208c523bfbc1099ddb928615b5f328ba7c106e83",
-        "requirements_sha256": "f9a5b57e84bb8f953ca279b33757efb3443551548ef605e5ce6e9bbda4dff776",
-        "requirements_file_sha256": "f9a5b57e84bb8f953ca279b33757efb3443551548ef605e5ce6e9bbda4dff776"
+        "requirements_sha256": "7e75708dfc716fb8261e9ec3d063945482c195f33436b7dd96866717dec53735",
+        "requirements_file_sha256": "7e75708dfc716fb8261e9ec3d063945482c195f33436b7dd96866717dec53735"
       },
       "smoke_checks": [
         "su user -c \"cd /opt/agents/hermes/src && PYTHONPATH=/opt/agents/hermes/src /opt/agents/hermes/venv/bin/python -P -c 'import aiohttp, boto3, anthropic, hermes_cli.main, gateway.platforms.api_server'\""

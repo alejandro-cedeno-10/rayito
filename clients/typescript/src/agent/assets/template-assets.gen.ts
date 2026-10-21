@@ -4923,8 +4923,7 @@ export const HERMES_REQUIREMENTS = `# Pines del venv de Hermes Agent v0.22.2 de 
 # suben los pines de su pyproject.toml a certifi 2026.10.19, PyJWT 2.15.1,
 # urllib3 >=2.8.0, Pillow 13.0.0 y aiohttp 3.14.4, se añade
 # "pillow==13.0.0" a \`override-dependencies\` (browser-harness 0.1.13, su
-# última versión, fija pillow==12.3.0, pero sólo usa Image.open/new,
-# ImageDraw e ImageOps, que Pillow 13 no cambia) y:
+# última versión, fija pillow==12.3.0) y:
 #
 #   uvx --from uv==0.12.3 uv lock --upgrade-package pyjwt \\
 #     --upgrade-package urllib3 --upgrade-package pillow \\
@@ -4933,10 +4932,17 @@ export const HERMES_REQUIREMENTS = `# Pines del venv de Hermes Agent v0.22.2 de 
 #     --exclude-newer-package certifi=2026-10-21T00:00:00Z
 #
 # Sólo cambian esos paquetes más multidict 6.9.1 y yarl 1.25.1 (que exige
-# aiohttp 3.14.4); se exportan como arriba y sus bloques sustituyen a los de
-# este fichero, sin el marcador de 3.14. certifi 2026.10.19 tiene menos de
-# 3 días (el \`exclude-newer\` de Hermes) y de 7 (el cooldown de Dependabot):
-# excepción de seguridad, quita raíces de emSign con claves comprometidas.
+# aiohttp 3.14.4); se exportan como arriba, añadiendo
+# \`--no-emit-package browser-harness --no-emit-package cdp-use
+# --no-emit-package fetch-use\`, y sus bloques sustituyen a los de este
+# fichero, sin el marcador de 3.14. browser-harness (el motor del Browser
+# Use CLI de Hermes, con cdp-use y fetch-use, que sólo él usa) sale del
+# venv: la plantilla no activa el navegador (toolsets \`terminal\`, \`file\` y
+# \`web\`), Hermes vuelve a sus herramientas de navegador propias si falta, y
+# con él dentro el \`pip check\` de la imagen fallaría por su pillow==12.3.0.
+# certifi 2026.10.19 tiene menos de 3 días (el \`exclude-newer\` de Hermes) y
+# de 7 (el cooldown de Dependabot): excepción de seguridad, quita raíces de
+# emSign con claves comprometidas.
 #
 # La plantilla lo instala con --require-hashes --no-deps --only-binary=:all:.
 aiohappyeyeballs==2.7.1 \\
@@ -5086,14 +5092,6 @@ botocore==1.42.97 \\
     # via
     #   boto3
     #   s3transfer
-browser-harness==0.1.13 \\
-    --hash=sha256:2491459e4bfc0ee8aea22dc6c4680fc0f791b7ba553446323c50d2883449d769 \\
-    --hash=sha256:284dc547a042c309feafd9a9f4a74b2a8651b7963ea3ac6cb2f2d64889f6a8f3
-    # via hermes-agent
-cdp-use==1.4.5 \\
-    --hash=sha256:0da3a32df46336a03ff5a22bc6bc442cd7d2f2d50a118fd4856f29d37f6d26a0 \\
-    --hash=sha256:8f8e2435e3a20e4009d2974144192cf3c132f6c2971338e156198814d9b91ecb
-    # via browser-harness
 certifi==2026.10.19 \\
     --hash=sha256:035c1e85572b141bf1c3a3eff0e33a8eb74917522f2559075ff8d2fea780a1ae \\
     --hash=sha256:42d35340cc5b9ba78e818ddbff0c5b1c2b779de448a340fd1b989f5fa8670e1b
@@ -5360,10 +5358,6 @@ fastapi==0.133.1 \\
     --hash=sha256:658f34ba334605b1617a65adf2ea6461901bdb9af3a3080d63ff791ecf7dc2e2 \\
     --hash=sha256:ed152a45912f102592976fde6cbce7dae1a8a1053da94202e51dd35d184fadd6
     # via hermes-agent
-fetch-use==0.4.0 \\
-    --hash=sha256:9511987d4907ec6dac501e21d66946d10098f66b5d21bc2aba4189cd81ba189a \\
-    --hash=sha256:b7885f2907e7920373fa75dcdb00afd6e603a25a9ee2151aa2881f5465e1a2c0
-    # via browser-harness
 fire==0.7.1 \\
     --hash=sha256:3b208f05c736de98fb343310d090dcc4d8c78b2a89ea4f32b837c586270a9cbf \\
     --hash=sha256:e43fd8a5033a9001e7e2973bab96070694b9f12f2e0ecf96d4683971b5ab1882

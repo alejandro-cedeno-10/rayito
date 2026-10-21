@@ -366,7 +366,7 @@ export const AGENT_STRANDS_REQUIREMENTS_SHA256 =
 export const AGENT_STRANDS_HARNESS_REQUIREMENTS_SHA256 =
   "5a66609e6c9e66a537c4220f0f4b7a172e808bec72dda02998e933c3c512c634" as const;
 export const AGENT_HERMES_REQUIREMENTS_SHA256 =
-  "f9a5b57e84bb8f953ca279b33757efb3443551548ef605e5ce6e9bbda4dff776" as const;
+  "7e75708dfc716fb8261e9ec3d063945482c195f33436b7dd96866717dec53735" as const;
 export const AGENT_HOST_SCHEMA = "rayito.agent-host/1" as const;
 
 export const POOL_SIZE_MAX = 64 as const;
