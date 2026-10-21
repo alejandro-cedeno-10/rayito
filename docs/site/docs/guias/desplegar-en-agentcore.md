@@ -54,9 +54,9 @@ app propia con Flask o Express, y OpenCode.
     credenciales del rol del runtime, y cualquier código que corra en la sesión
     puede leerlas. Dentro de un MicroVM de Rayito el agente nunca ve la
     credencial del modelo; aquí sí puede leer lo que el rol permita. Por eso el
-    rol que crea Rayito es de mínimo privilegio: sólo puede invocar en Bedrock los
-    modelos que le indiques y sólo leer los secretos que declares con
-    `--readable-secret`. Detalle en [Seguridad en AgentCore](#seguridad-en-agentcore).
+    rol que crea Rayito es de mínimo privilegio: sólo puede invocar en Bedrock el
+    modelo del proyecto y los que añadas con `--bedrock-model`, y sólo leer los
+    secretos que declares con `--readable-secret`. Detalle en [Seguridad en AgentCore](#seguridad-en-agentcore).
 
 !!! tip "¿Gestionas la infraestructura con AWS CDK?"
     El constructo `RayitoAgent` despliega el mismo agente, con los mismos
@@ -97,6 +97,18 @@ app propia con Flask o Express, y OpenCode.
 
     `--dry-run` y `rayito agent detect` no necesitan ninguno: no llaman a AWS.
     Las tablas completas de IAM están en [IAM](../operacion/iam.md).
+
+5. **En TypeScript, los clientes de AWS que carga el despliegue.** Son peers
+   opcionales: sólo se importan al usar `--target agentcore`, y sin ellos la
+   llamada falla diciendo cuál falta.
+
+    ```bash
+    pnpm add @aws-sdk/client-bedrock-agentcore @aws-sdk/client-bedrock-agentcore-control @aws-sdk/client-cloudformation @aws-sdk/client-cloudwatch-logs @aws-sdk/client-codebuild @aws-sdk/client-ecr
+    ```
+
+    Con npm, lo mismo con `npm install`. `@aws-sdk/client-s3` y
+    `@aws-sdk/client-sts` ya vienen con `rayito`. En Python no hace falta nada
+    más: `boto3`, que ya instala `rayito`, trae todos los clientes.
 
 !!! note "Esto no usa MicroVMs"
     No hace falta `rayito-base-caps`, ni `RayitoSecretsReader`, ni
@@ -393,7 +405,7 @@ antes de llamar a AWS.
 
 | CLI | Python (`AgentCoreOptions`) | TypeScript (`agentcore`) | Qué hace |
 |---|---|---|---|
-| `--bedrock-model ID` (repetible) | `bedrock_models` | `bedrockModels` | Modelos o perfiles de inferencia de Bedrock que el rol del runtime puede invocar. Por defecto, el modelo del proyecto; si no se conoce, `model_required`. Sin comodines ni comas: un id, o un ARN de tu cuenta y región (`iam_resource_invalid`) |
+| `--bedrock-model ID` (repetible) | `bedrock_models` | `bedrockModels` | Modelos o perfiles de inferencia de Bedrock que el rol del runtime puede invocar **además** del modelo del proyecto, que siempre se incluye (los repetidos se ignoran). Por defecto, ninguno más. Sin comodines ni comas: un id, o un ARN de tu cuenta y región (`iam_resource_invalid`) |
 | `--readable-secret NOMBRE` (repetible) | `readable_secrets` | `readableSecrets` | Secretos de Secrets Manager que el rol puede leer. Por defecto, ninguno. Un nombre sin comodines ni comas, o un ARN de tu cuenta y región (`iam_resource_invalid`) |
 | `--idle-session-timeout S` | `idle_session_timeout_seconds` | `idleSessionTimeoutMs` | Segundos sin uso tras los que AgentCore termina la microVM de una sesión: de {{agentcoreLifecycleMinSeconds}} a {{agentcoreLifecycleMaxSeconds}}, por defecto {{agentcoreIdleSessionTimeoutDefaultSeconds}} |
 | `--max-session-lifetime S` | `max_session_lifetime_seconds` | `maxSessionLifetimeMs` | Vida máxima de la microVM de una sesión: de {{agentcoreLifecycleMinSeconds}} a {{agentcoreLifecycleMaxSeconds}}, por defecto {{agentcoreLifecycleMaxSeconds}} (8 h) |
@@ -405,8 +417,8 @@ es múltiplo de 1000 da `lifecycle_invalid`.
 
 ### Qué pasa con los modelos y los secretos { #modelos-y-secretos }
 
-El rol del runtime puede invocar en Bedrock sólo los ARNs de los modelos que
-indicas:
+El rol del runtime puede invocar en Bedrock sólo los ARNs del modelo del
+proyecto y de los que añadas con `--bedrock-model`, y cada uno se resuelve así:
 
 - Un **id de modelo** da el ARN del modelo base en la región del modelo (la del
   proyecto o, si no tiene, la del despliegue).
@@ -416,7 +428,8 @@ indicas:
   ARN del modelo base sin región.
 - Un **ARN completo** se usa tal cual.
 
-Sin ningún modelo, el rol no puede invocar ninguno. Del mismo modo, el rol sólo
+Ningún otro modelo: el rol no puede invocar nada fuera de esa lista. Del mismo
+modo, el rol sólo
 lee con `secretsmanager:GetSecretValue` los secretos de `--readable-secret`. Los
 valores nunca se copian a la configuración del runtime: el agente los lee con el
 rol, en ejecución. Un nombre de secreto se convierte en el ARN de ese secreto en
@@ -497,7 +510,7 @@ El rol que crea Rayito para el runtime puede:
   (`GetWorkloadAccessToken` y `GetWorkloadAccessTokenForJWT`), **sin**
   `GetWorkloadAccessTokenForUserId`, como recomienda la guía de seguridad de
   AgentCore;
-- invocar en Bedrock **sólo** los modelos de `--bedrock-model`;
+- invocar en Bedrock **sólo** el modelo del proyecto y los de `--bedrock-model`;
 - leer **sólo** los secretos de `--readable-secret`.
 
 No puede nada más: ni otros modelos, ni otros secretos, ni otros repositorios ni

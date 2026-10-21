@@ -1,6 +1,6 @@
 ---
 title: Rayito
-description: "Sandboxes aislados por hardware para agentes de IA sobre MicroVMs de AWS Lambda, en tu cuenta. API compatible con E2B, sin servidor ni API key."
+description: "Sandboxes aislados por hardware para agentes de IA en MicroVMs de AWS Lambda, en tu cuenta, compatibles con E2B. Despliega tu agente en MicroVMs o AgentCore."
 seo_title: "Rayito: sandboxes para agentes de IA en tu cuenta de AWS"
 template: home.html
 hide:
@@ -196,7 +196,8 @@ devuelve el resultado.
 
 ### Instala el SDK { #instala-el-sdk }
 
-Python ≥ 3.11 o Node ≥ 20. La CLI (`rayito doctor`) se instala con pip.
+Python ≥ 3.11 o Node ≥ 20. La CLI (`rayito setup`, `rayito doctor`) viene con
+`rayito[cli]` en Python y dentro del paquete npm (`npx rayito`).
 
 === "Python"
 
@@ -352,10 +353,19 @@ o deepagents, y el proveedor, el que prefieras (ver
 
 Instala el SDK y ejecuta `rayito agent deploy ./mi-agente` (o `deploy_agent` /
 `deployAgent`). El SDK detecta el framework, el punto de entrada y el
-protocolo leyendo tus ficheros, sin ejecutar tu código. El modelo se llama por
-la pasarela de secretos, así que el agente nunca ve la credencial. Y ajustas lo
-que importa: memoria, sesiones simultáneas, cola, pool de MicroVMs, variables
-de entorno y salida a internet.
+protocolo leyendo tus ficheros, sin ejecutar tu código.
+
+Elige dónde corre. En una flota de Lambda MicroVMs (por defecto), el modelo se
+llama por la pasarela de secretos, así que el agente nunca ve la credencial, y
+ajustas lo que importa: memoria, sesiones simultáneas, cola, pool de MicroVMs,
+variables de entorno y salida a internet.
+
+O en **Amazon Bedrock AgentCore Runtime** con `--target agentcore`, construido
+en AWS con CodeBuild, sin Docker local. AgentCore no tiene pasarela de
+secretos: el agente usa el rol del runtime, con mínimo privilegio (ver
+[Seguridad en AgentCore](guias/desplegar-en-agentcore.md#seguridad-en-agentcore)).
+Si tu equipo usa infraestructura como código, el constructo `RayitoAgent` de
+**AWS CDK** despliega lo mismo con `cdk deploy`.
 
 <ul class="rx-chips" aria-label="Frameworks compatibles">
 <li>LangGraph y LangGraph.js</li>
@@ -371,6 +381,8 @@ de entorno y salida a internet.
 <div class="rx-actions" markdown>
 [Despliega tu agente](guias/despliega-tu-agente.md){ .md-button .md-button--primary }
 [Flota de agentes](guias/flota-de-agentes.md)
+[Desplegar en AgentCore](guias/desplegar-en-agentcore.md)
+[Desplegar con CDK](guias/desplegar-con-cdk.md)
 </div>
 
 </div>
@@ -381,6 +393,7 @@ de entorno y salida a internet.
     ```bash
     rayito agent deploy ./mi-agente --dry-run   # solo detección, sin AWS
     rayito agent deploy ./mi-agente --memory 4096 --max-sessions 2 --queue 4
+    rayito agent deploy ./mi-agente --target agentcore   # AgentCore Runtime
     ```
 
 === "Python"
@@ -393,6 +406,8 @@ de entorno y salida a internet.
         print(fleet.invoke("Resume el README.").text)
     finally:
         fleet.stop()
+
+    # en AgentCore: deploy_agent("./mi-agente", target="agentcore")
     ```
 
 === "TypeScript"
@@ -406,6 +421,19 @@ de entorno y salida a internet.
     } finally {
       await fleet.stop();
     }
+    // en AgentCore: await deployAgent("./mi-agente", { target: "agentcore" });
+    ```
+
+=== "CDK"
+
+    ```ts
+    import { App, Stack } from "aws-cdk-lib";
+    import { RayitoAgent } from "rayito/cdk";
+
+    const stack = new Stack(new App(), "Agents");
+    // los mismos recursos e IAM que --target agentcore
+    new RayitoAgent(stack, "SupportBot", { project: "./mi-agente", name: "support-bot" });
+    // en Python: from rayito.cdk import RayitoAgent (extra rayito[cdk])
     ```
 
 </div>
@@ -472,6 +500,26 @@ Imágenes propias con el DSL `Template` de E2B.
 :material-chart-line:{ .lg .middle } [**Exportación OTLP**](funciones-opcionales/exportacion-otlp.md)
 
 Métricas del sandbox por OTLP a CloudWatch.
+</div>
+<div class="rx-feature" markdown>
+:material-cloud-upload-outline:{ .lg .middle } [**Despliega tu agente**](guias/despliega-tu-agente.md)
+
+De tu carpeta a una flota de MicroVMs en un comando.
+</div>
+<div class="rx-feature" markdown>
+:material-robot-outline:{ .lg .middle } [**AgentCore Runtime**](guias/desplegar-en-agentcore.md)
+
+Tu agente en Amazon Bedrock AgentCore, sin Docker local.
+</div>
+<div class="rx-feature" markdown>
+:material-code-braces-box:{ .lg .middle } [**Constructos de AWS CDK**](guias/desplegar-con-cdk.md)
+
+`RayitoAgent` y `RayitoMicrovmImage` en tu app de CDK.
+</div>
+<div class="rx-feature" markdown>
+:material-wrench-outline:{ .lg .middle } [**`rayito setup`**](primeros-pasos/configurar-aws.md)
+
+Tu cuenta y región listas en un comando.
 </div>
 
 </div>
@@ -561,8 +609,10 @@ us-east-1, precios de lista consultados el 2026-10-06.
 
     ---
 
-    El agente dentro del sandbox, el [servidor MCP](mcp.md) y las
-    integraciones con LangChain y Vercel AI.
+    El agente dentro del sandbox, el [servidor MCP](mcp.md), las
+    integraciones con LangChain y Vercel AI y
+    [desplegar tu agente](guias/despliega-tu-agente.md) en una flota de
+    MicroVMs o en AgentCore, también con AWS CDK.
 
 -   :material-toggle-switch-outline:{ .lg .middle } **[Funciones opcionales](optional-features.md)**
 
@@ -622,6 +672,7 @@ us-east-1, precios de lista consultados el 2026-10-06.
     | `rayito.e2b`, `rayito/e2b` | el SDK de E2B 2.x cambiando sólo el import | [Migrar desde E2B](migrar-desde-e2b/index.md) |
     | `rayito-mcp` | un sandbox para Claude Code, Cursor o VS Code por MCP | [Servidor MCP](mcp.md) |
     | LangChain, Vercel AI SDK | Rayito como herramienta de un agente que corre fuera del sandbox | [LangChain y Vercel AI](guias/langchain-y-vercel-ai.md) |
+    | `rayito setup` | preparar la cuenta y la región en una orden: pila de IAM, imagen `rayito-base` y bucket de artefactos | [Configurar AWS](primeros-pasos/configurar-aws.md) |
     | `rayito` (CLI) | publicar la imagen, diagnosticar la cuenta, operar sandboxes y pilas | [CLI](cli.md) |
     | `make local-up`, `make local-e2e` | probar los SDK contra un `rayd` real y un AWS emulado, sin cuenta | [Probar en local](guias/probar-en-local.md) |
 
@@ -645,6 +696,11 @@ us-east-1, precios de lista consultados el 2026-10-06.
     | `rayito sandbox proxy` | un puerto del sandbox en `http://127.0.0.1` de tu máquina | [Proxy local](funciones-opcionales/proxy-local.md) |
     | `volumes=`, `VolumeStore`, `EfsVolumes` (experimental) | un sistema de ficheros EFS compartido en vivo entre sandboxes, en tu VPC | [Volúmenes EFS](funciones-opcionales/volumenes-efs.md) |
     | `domain=`, `CustomDomain`, `rayito domain` (experimental) | una URL HTTPS bajo tu dominio para un puerto del sandbox | [Dominio propio](funciones-opcionales/dominio-propio.md) |
+    | `rayito dashboard` | un panel local con sandboxes, cuotas, coste e imágenes; sólo lectura salvo `--allow-actions` | [Panel de gestión](funciones-opcionales/panel-de-gestion.md) |
+    | `deploy_agent` / `deployAgent`, `rayito agent deploy` | el agente que ya tienes, detectado sin tocar su código, como servicio HTTP en MicroVMs | [Despliega tu agente](guias/despliega-tu-agente.md) |
+    | `AgentFleet`, `ScalingOptions` | una flota de MicroVMs con varias sesiones, cola y plazas calientes | [Varias sesiones y varias VMs](guias/flota-de-agentes.md) |
+    | `deploy_agent(target="agentcore")`, `AgentCoreFleet`, `rayito agent list` / `delete --target agentcore` | el agente en Amazon Bedrock AgentCore Runtime, sin Docker local y con un rol de mínimo privilegio | [Desplegar en AgentCore](guias/desplegar-en-agentcore.md) |
+    | `RayitoAgent`, `RayitoMicrovmImage` (`rayito[cdk]`, `rayito/cdk`) | el agente en AgentCore y la imagen de MicroVMs como constructos de tu app de AWS CDK | [Desplegar con CDK](guias/desplegar-con-cdk.md) |
 
     Todo funciona igual en Python (sync y `asyncio`) y en TypeScript, con
     `snake_case` y segundos en Python y `camelCase` y milisegundos en TypeScript.

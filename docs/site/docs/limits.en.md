@@ -151,8 +151,8 @@ SDKs (`rayito` on PyPI and npm) and the `rayd` agent (signed asset of the
 changelog in [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format
 ([Changelog](referencia/changelog.md)).
 
-- **What the public API is**: what `rayito` and `rayito.e2b` (Python),
-  `rayito` and `rayito/e2b` (TypeScript) export without a leading
+- **What the public API is**: what `rayito`, `rayito.e2b` and `rayito.cdk`
+  (Python), `rayito`, `rayito/e2b` and `rayito/cdk` (TypeScript) export without a leading
   underscore, the `rayito` CLI, the `rayito-mcp` tools and the
   `proto/rayito/v1/` contract. `_private` modules, generated types and the
   repository's scripts are not.

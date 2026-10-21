@@ -11,8 +11,9 @@ looking things up.
     ---
 
     `Sandbox`, `AsyncSandbox`, subclients (`commands`, `files`, `pty`,
-    `git`, `agent`...), pool, models, optional features, exceptions and the E2B
-    shim, generated from the docstrings.
+    `git`, `agent`...), `deploy_agent`, `AgentFleet` and `AgentCoreFleet`, pool,
+    models, optional features, the CDK constructs (`rayito.cdk`), exceptions and
+    the E2B shim, generated from the docstrings.
 
     [:octicons-arrow-right-24: Python reference](../api.md)
 
@@ -29,8 +30,8 @@ looking things up.
 
     ---
 
-    `rayito doctor`, `image`, `sandbox`, `stack`, `events`, `template`,
-    `domain` and `agent`.
+    `rayito setup`, `doctor`, `image`, `sandbox`, `stack`, `events`,
+    `template`, `domain`, `dashboard` and `agent`.
 
     [:octicons-arrow-right-24: CLI](../cli.md)
 
@@ -50,10 +51,10 @@ All the pages in the section:
 |---|---|
 | [Python: overview](../api.md) | what is imported from `rayito` and from `rayito.e2b`, and where to start |
 | [Python: Sandbox](python/sandbox.md) | `Sandbox` and `AsyncSandbox`: create, connect, lifecycle, network, persistence |
-| [Python: Subclients](python/subclientes.md) | `commands`, `files`, `pty`, `git` and `agent`, with their handles |
+| [Python: Subclients](python/subclientes.md) | `commands`, `files`, `pty`, `git` and `agent`, with their handles; `deploy_agent`, `AgentFleet` and `AgentCoreFleet` ([deploy and fleets](python/subclientes.md#despliegue-sin-configuracion-y-flotas)) |
 | [Python: Pool](python/pool.md) | `SandboxPool`, `AsyncSandboxPool`, `PoolConfig` and the backends |
 | [Python: Models](python/modelos.md) | the data types that calls return and accept |
-| [Python: Optional](python/opcionales.md) | the classes of the optional features (secrets, mounts, events, templates...) |
+| [Python: Optional](python/opcionales.md) | the classes of the optional features (secrets, mounts, events, templates...) and the [CDK constructs](python/opcionales.md#cdk) of `rayito.cdk` |
 | [Python: Exceptions](python/excepciones.md) | the exception hierarchy |
 | [Python: E2B shim](python/shim-e2b.md) | `rayito.e2b` |
 | [TypeScript](typescript.md) | public classes and methods of the npm package and of `rayito/e2b` |

@@ -1,7 +1,7 @@
 [project]
 name = "rayito"
 version = "0.15.0"
-description = "Sandboxes de ejecución para agentes de IA sobre AWS Lambda MicroVMs, en tu propia cuenta."
+description = "Sandboxes de ejecución para agentes de IA sobre AWS Lambda MicroVMs, en tu propia cuenta, y despliegue de agentes en MicroVMs o en Amazon Bedrock AgentCore, con la CLI o con CDK."
 readme = "README.md"
 requires-python = ">=3.11"
 license = "Apache-2.0"
@@ -11,7 +11,7 @@ dependencies = [
     "protobuf>=7.36.1,<8",
     "boto3>=1.43.82,<2",
 ]
-keywords = ["sandbox", "e2b", "aws", "microvm", "firecracker", "agents", "code-interpreter"]
+keywords = ["sandbox", "e2b", "aws", "lambda", "microvm", "firecracker", "agents", "code-interpreter", "bedrock", "agentcore", "aws-cdk", "cdk", "agent-deployment"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",

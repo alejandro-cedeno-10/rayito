@@ -10,8 +10,9 @@ por las [Guías](../guias/index.md); esta sección es para consultar.
     ---
 
     `Sandbox`, `AsyncSandbox`, subclientes (`commands`, `files`, `pty`,
-    `git`, `agent`…), pool, modelos, opcionales, excepciones y el shim de
-    E2B, generados desde los docstrings.
+    `git`, `agent`…), `deploy_agent`, `AgentFleet` y `AgentCoreFleet`, pool,
+    modelos, opcionales, los constructos CDK (`rayito.cdk`), excepciones y el
+    shim de E2B, generados desde los docstrings.
 
     [:octicons-arrow-right-24: Referencia de Python](../api.md)
 
@@ -28,8 +29,8 @@ por las [Guías](../guias/index.md); esta sección es para consultar.
 
     ---
 
-    `rayito doctor`, `image`, `sandbox`, `stack`, `events`, `template`,
-    `domain` y `agent`.
+    `rayito setup`, `doctor`, `image`, `sandbox`, `stack`, `events`,
+    `template`, `domain`, `dashboard` y `agent`.
 
     [:octicons-arrow-right-24: CLI](../cli.md)
 
@@ -49,10 +50,10 @@ Todas las páginas de la sección:
 |---|---|
 | [Python: resumen](../api.md) | qué se importa de `rayito` y de `rayito.e2b`, y por dónde empezar |
 | [Python: Sandbox](python/sandbox.md) | `Sandbox` y `AsyncSandbox`: crear, conectar, ciclo de vida, red, persistencia |
-| [Python: Subclientes](python/subclientes.md) | `commands`, `files`, `pty`, `git` y `agent`, con sus handles |
+| [Python: Subclientes](python/subclientes.md) | `commands`, `files`, `pty`, `git` y `agent`, con sus handles; `deploy_agent`, `AgentFleet` y `AgentCoreFleet` ([despliegue y flotas](python/subclientes.md#despliegue-sin-configuracion-y-flotas)) |
 | [Python: Pool](python/pool.md) | `SandboxPool`, `AsyncSandboxPool`, `PoolConfig` y los backends |
 | [Python: Modelos](python/modelos.md) | los tipos de datos que devuelven y aceptan las llamadas |
-| [Python: Opcionales](python/opcionales.md) | las clases de las funciones opcionales (secretos, montajes, eventos, templates…) |
+| [Python: Opcionales](python/opcionales.md) | las clases de las funciones opcionales (secretos, montajes, eventos, templates…) y los [constructos CDK](python/opcionales.md#cdk) de `rayito.cdk` |
 | [Python: Excepciones](python/excepciones.md) | la jerarquía de excepciones |
 | [Python: Shim E2B](python/shim-e2b.md) | `rayito.e2b` |
 | [TypeScript](typescript.md) | clases y métodos públicos del paquete npm y de `rayito/e2b` |

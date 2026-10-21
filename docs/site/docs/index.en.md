@@ -1,6 +1,6 @@
 ---
 title: Rayito
-description: "Hardware-isolated sandboxes for AI agents on AWS Lambda MicroVMs, in your own AWS account. E2B-compatible API, no server and no API key."
+description: "Hardware-isolated, E2B-compatible sandboxes for AI agents on AWS Lambda MicroVMs, in your account. Deploy your agent to MicroVMs or AgentCore."
 seo_title: "Rayito: AI agent sandboxes in your own AWS account"
 template: home.html
 hide:
@@ -196,7 +196,8 @@ hands back the result.
 
 ### Install the SDK { #instala-el-sdk }
 
-Python ≥ 3.11 or Node ≥ 20. The CLI (`rayito doctor`) is installed with pip.
+Python ≥ 3.11 or Node ≥ 20. The CLI (`rayito setup`, `rayito doctor`) comes
+with `rayito[cli]` in Python and inside the npm package (`npx rayito`).
 
 === "Python"
 
@@ -352,10 +353,19 @@ or deepagents, and the provider is whichever you prefer (see
 
 Install the SDK and run `rayito agent deploy ./my-agent` (or `deploy_agent` /
 `deployAgent`). The SDK detects the framework, the entrypoint and the protocol
-by reading your files, without running your code. The model is called through
-the secret gateway, so the agent never sees the credential. And you tune what
-matters: memory, concurrent sessions, queue, MicroVM pool, environment
-variables and internet egress.
+by reading your files, without running your code.
+
+Pick where it runs. On a fleet of Lambda MicroVMs (the default), the model is
+called through the secret gateway, so the agent never sees the credential, and
+you tune what matters: memory, concurrent sessions, queue, MicroVM pool,
+environment variables and internet egress.
+
+Or on **Amazon Bedrock AgentCore Runtime** with `--target agentcore`, built in
+AWS with CodeBuild, no local Docker. AgentCore has no secret gateway: the
+agent uses the runtime role, with least privilege (see
+[Security on AgentCore](guias/desplegar-en-agentcore.md#seguridad-en-agentcore)).
+If your team uses infrastructure as code, the `RayitoAgent` **AWS CDK**
+construct deploys the same thing with `cdk deploy`.
 
 <ul class="rx-chips" aria-label="Supported frameworks">
 <li>LangGraph and LangGraph.js</li>
@@ -371,6 +381,8 @@ variables and internet egress.
 <div class="rx-actions" markdown>
 [Deploy your agent](guias/despliega-tu-agente.md){ .md-button .md-button--primary }
 [Agent fleets](guias/flota-de-agentes.md)
+[Deploy to AgentCore](guias/desplegar-en-agentcore.md)
+[Deploy with CDK](guias/desplegar-con-cdk.md)
 </div>
 
 </div>
@@ -381,6 +393,7 @@ variables and internet egress.
     ```bash
     rayito agent deploy ./my-agent --dry-run   # detection only, no AWS
     rayito agent deploy ./my-agent --memory 4096 --max-sessions 2 --queue 4
+    rayito agent deploy ./my-agent --target agentcore   # AgentCore Runtime
     ```
 
 === "Python"
@@ -393,6 +406,8 @@ variables and internet egress.
         print(fleet.invoke("Summarize the README.").text)
     finally:
         fleet.stop()
+
+    # on AgentCore: deploy_agent("./my-agent", target="agentcore")
     ```
 
 === "TypeScript"
@@ -406,6 +421,19 @@ variables and internet egress.
     } finally {
       await fleet.stop();
     }
+    // on AgentCore: await deployAgent("./my-agent", { target: "agentcore" });
+    ```
+
+=== "CDK"
+
+    ```ts
+    import { App, Stack } from "aws-cdk-lib";
+    import { RayitoAgent } from "rayito/cdk";
+
+    const stack = new Stack(new App(), "Agents");
+    // same resources and IAM as --target agentcore
+    new RayitoAgent(stack, "SupportBot", { project: "./my-agent", name: "support-bot" });
+    // in Python: from rayito.cdk import RayitoAgent (rayito[cdk] extra)
     ```
 
 </div>
@@ -459,7 +487,7 @@ Cut or filter outbound internet access.
 A sandbox for your editor or assistant over MCP.
 </div>
 <div class="rx-feature" markdown>
-:material-link-variant:{ .lg .middle } [**LangChain y Vercel AI**](guias/langchain-y-vercel-ai.md)
+:material-link-variant:{ .lg .middle } [**LangChain and Vercel AI**](guias/langchain-y-vercel-ai.md)
 
 Rayito as a tool for your agent.
 </div>
@@ -472,6 +500,26 @@ Your own images with E2B's `Template` DSL.
 :material-chart-line:{ .lg .middle } [**OTLP export**](funciones-opcionales/exportacion-otlp.md)
 
 Sandbox metrics over OTLP to CloudWatch.
+</div>
+<div class="rx-feature" markdown>
+:material-cloud-upload-outline:{ .lg .middle } [**Deploy your agent**](guias/despliega-tu-agente.md)
+
+From your folder to a MicroVM fleet in one command.
+</div>
+<div class="rx-feature" markdown>
+:material-robot-outline:{ .lg .middle } [**AgentCore Runtime**](guias/desplegar-en-agentcore.md)
+
+Your agent on Amazon Bedrock AgentCore, no local Docker.
+</div>
+<div class="rx-feature" markdown>
+:material-code-braces-box:{ .lg .middle } [**AWS CDK constructs**](guias/desplegar-con-cdk.md)
+
+`RayitoAgent` and `RayitoMicrovmImage` in your CDK app.
+</div>
+<div class="rx-feature" markdown>
+:material-wrench-outline:{ .lg .middle } [**`rayito setup`**](primeros-pasos/configurar-aws.md)
+
+Your account and region ready in one command.
 </div>
 
 </div>
@@ -561,8 +609,10 @@ us-east-1, list prices queried on 2026-10-06.
 
     ---
 
-    The agent inside the sandbox, the [MCP server](mcp.md) and the
-    LangChain and Vercel AI integrations.
+    The agent inside the sandbox, the [MCP server](mcp.md), the LangChain
+    and Vercel AI integrations and
+    [deploying your agent](guias/despliega-tu-agente.md) to a MicroVM fleet
+    or to AgentCore, also with AWS CDK.
 
 -   :material-toggle-switch-outline:{ .lg .middle } **[Optional features](optional-features.md)**
 
@@ -622,6 +672,7 @@ us-east-1, list prices queried on 2026-10-06.
     | `rayito.e2b`, `rayito/e2b` | the E2B 2.x SDK by changing only the import | [Migrate from E2B](migrar-desde-e2b/index.md) |
     | `rayito-mcp` | a sandbox for Claude Code, Cursor or VS Code over MCP | [MCP server](mcp.md) |
     | LangChain, Vercel AI SDK | Rayito as a tool for an agent that runs outside the sandbox | [LangChain and Vercel AI](guias/langchain-y-vercel-ai.md) |
+    | `rayito setup` | prepare the account and region in one command: IAM stack, `rayito-base` image and artifacts bucket | [Set up AWS](primeros-pasos/configurar-aws.md) |
     | `rayito` (CLI) | publish the image, diagnose the account, operate sandboxes and stacks | [CLI](cli.md) |
     | `make local-up`, `make local-e2e` | test the SDKs against a real `rayd` and an emulated AWS, without an account | [Test locally](guias/probar-en-local.md) |
 
@@ -645,6 +696,11 @@ us-east-1, list prices queried on 2026-10-06.
     | `rayito sandbox proxy` | a sandbox port at `http://127.0.0.1` on your machine | [Local proxy](funciones-opcionales/proxy-local.md) |
     | `volumes=`, `VolumeStore`, `EfsVolumes` (experimental) | an EFS file system shared live between sandboxes, in your VPC | [EFS volumes](funciones-opcionales/volumenes-efs.md) |
     | `domain=`, `CustomDomain`, `rayito domain` (experimental) | an HTTPS URL under your domain for a sandbox port | [Custom domain](funciones-opcionales/dominio-propio.md) |
+    | `rayito dashboard` | a local dashboard with sandboxes, quotas, cost and images; read-only unless `--allow-actions` | [Management dashboard](funciones-opcionales/panel-de-gestion.md) |
+    | `deploy_agent` / `deployAgent`, `rayito agent deploy` | the agent you already have, detected without touching its code, as an HTTP service on MicroVMs | [Deploy your agent](guias/despliega-tu-agente.md) |
+    | `AgentFleet`, `ScalingOptions` | a MicroVM fleet with several sessions, a queue and warm slots | [Several sessions and several VMs](guias/flota-de-agentes.md) |
+    | `deploy_agent(target="agentcore")`, `AgentCoreFleet`, `rayito agent list` / `delete --target agentcore` | the agent on Amazon Bedrock AgentCore Runtime, with no local Docker and a least-privilege role | [Deploy to AgentCore](guias/desplegar-en-agentcore.md) |
+    | `RayitoAgent`, `RayitoMicrovmImage` (`rayito[cdk]`, `rayito/cdk`) | the AgentCore agent and the MicroVMs image as constructs in your AWS CDK app | [Deploy with CDK](guias/desplegar-con-cdk.md) |
 
     Everything works the same in Python (sync and `asyncio`) and in
     TypeScript, with `snake_case` and seconds in Python and `camelCase` and

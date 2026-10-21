@@ -35,7 +35,8 @@ diferencias con E2B.
 
     ---
 
-    MCP, LangChain y el agente en el sandbox.
+    MCP, LangChain, el agente en el sandbox y desplegar tu agente en
+    MicroVMs o AgentCore, también con CDK.
 
 -   :material-flask-outline:{ .lg .middle } **[Desarrollar y probar](#desarrollar-y-probar)**
 
@@ -85,7 +86,9 @@ diferencias con E2B.
 ¿Dónde corre el agente? **Fuera** (tu host MCP o tu app con LangChain/Vercel
 AI): el sandbox es su herramienta y basta `rayito-base`. **Dentro**
 (`sbx.agent`): el bucle entero corre en el sandbox; necesita la imagen
-`rayito-agent` y la pasarela de secretos.
+`rayito-agent` y la pasarela de secretos. ¿Ya tienes el agente? **Despliégalo**
+como servicio en una flota de MicroVMs o en Amazon Bedrock AgentCore Runtime,
+desde el SDK, la CLI o AWS CDK.
 
 | Guía | Para qué |
 |---|---|
@@ -94,7 +97,10 @@ AI): el sandbox es su herramienta y basta `rayito-base`. **Dentro**
 | [Agente en el sandbox](agente-en-el-sandbox.md) | un agente de código (OpenCode o deepagents) **dentro** del sandbox con `sbx.agent.run()`, el modelo tras la pasarela de secretos; el arranque rápido, opcional |
 | [Proveedores del agente](agente-proveedores.md) | los proveedores de modelo que admite `sbx.agent` tras la pasarela de secretos, cómo configurar cada uno y cuáles no se admiten |
 | [Templates de agente](../funciones-opcionales/templates-de-agente.md) | `AgentTemplate`: la imagen `rayito-agent` con OpenCode, ripgrep y deepagents, sus pines y el coste de cada versión |
+| [Despliega tu agente](despliega-tu-agente.md) | `deploy_agent` / `deployAgent` y `rayito agent deploy`: el agente que ya tienes, detectado sin ejecutar su código, como servicio HTTP en MicroVMs; también construir, ejecutar o exportar a un contenedor |
+| [Varias sesiones y varias VMs](flota-de-agentes.md) | `AgentFleet`: varias MicroVMs, sesiones compartidas o dedicadas, cola delante del límite y plazas calientes |
 | [Desplegar en AgentCore](desplegar-en-agentcore.md) | el agente que ya tienes en Amazon Bedrock AgentCore Runtime con `--target agentcore`: build con CodeBuild sin Docker local, rol de mínimo privilegio y la misma API de `invoke` que una flota de MicroVMs |
+| [Desplegar con CDK](desplegar-con-cdk.md) | `RayitoAgent` y `RayitoMicrovmImage` (`rayito[cdk]`, `rayito/cdk`): el agente en AgentCore y la imagen de MicroVMs en tu app de AWS CDK, con los mismos recursos e IAM que la CLI |
 
 ## Desarrollar y probar
 

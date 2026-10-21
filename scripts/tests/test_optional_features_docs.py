@@ -60,6 +60,20 @@ DASHBOARD_EXTRAS_ANCHORS = (
     "avisos-de-cuota",
 )
 
+#: Despliegue de agentes (0.14) y preparación de la cuenta, AgentCore y CDK
+#: (0.15): una fila por función; las que tienen guía propia enlazan a ella.
+FEATURE_LINKS_AGENTS = (
+    "primeros-pasos/configurar-aws.md#2-prepara-la-cuenta-con-rayito-setup",
+    "guias/despliega-tu-agente.md",
+    "guias/flota-de-agentes.md",
+    "guias/desplegar-en-agentcore.md",
+    "guias/desplegar-con-cdk.md#rayitoagent",
+    "guias/desplegar-con-cdk.md#rayitomicrovmimage",
+)
+#: Opciones de `AgentDeployOptions` sin guía propia (secreto del modelo e
+#: imagen base al desplegar).
+AGENT_ROWS_WITHOUT_PAGE = 2
+
 DOCSTRING_MARKER = "Coste y activación"
 
 REQUIRED_SUBHEADINGS = (
@@ -180,6 +194,8 @@ def test_optional_features_table_has_one_row_per_function() -> None:
         + len(FEATURE_PAGES_0_6)
         + len(FEATURE_PAGES_DASHBOARD)
         + len(DASHBOARD_EXTRAS_ANCHORS)
+        + len(FEATURE_LINKS_AGENTS)
+        + AGENT_ROWS_WITHOUT_PAGE
     )
     assert len(rows) == expected, (
         f"se esperaban {expected} filas de funciones con coste, hay {len(rows)}"
@@ -188,6 +204,10 @@ def test_optional_features_table_has_one_row_per_function() -> None:
     for feature_page in (*FEATURE_PAGES_0_6, *FEATURE_PAGES_DASHBOARD):
         assert f"({feature_page})" in linked, (
             f"{OPTIONAL_FEATURES_PAGE}: ninguna fila de la tabla enlaza a {feature_page}"
+        )
+    for link in FEATURE_LINKS_AGENTS:
+        assert f"({link})" in linked, (
+            f"{OPTIONAL_FEATURES_PAGE}: ninguna fila de la tabla enlaza a {link}"
         )
     for extra in DASHBOARD_EXTRAS_ANCHORS:
         assert f"({DASHBOARD_EXTRAS_PAGE}#{extra})" in linked, (

@@ -239,6 +239,15 @@ gateway secret holds the full credential (for Bedrock,
 that the model is in the preset's `models=`
 ([Agent in the sandbox](../guias/agente-en-el-sandbox.md)).
 
+**Agent deployed to AgentCore or with CDK.** Failures of
+`rayito agent deploy --target agentcore` and of `AgentCoreFleet` are
+`AgentCoreException` (TypeScript: `AgentCoreError`) with a closed `code`
+([Errors](../referencia/errores.md#agentcore) and
+[Deploy to AgentCore](../guias/desplegar-en-agentcore.md#errores)); those of
+the `RayitoAgent` and `RayitoMicrovmImage` constructs, at synth time or in
+`cdk deploy`, are in the
+[CDK troubleshooting](../guias/desplegar-con-cdk.md#solucion-de-problemas).
+
 ## Secrets { #secretos }
 
 !!! danger "botocore's DEBUG log prints the secrets"
@@ -268,6 +277,19 @@ enforced even if your process dies.
 **Accumulated image versions.** Each one costs ≈ $0.04 per week
 ([Pricing](../cost.md#cuanto-cuesta-con-ejemplos)):
 `rayito image prune --dry-run` and then `rayito image prune --keep 5`.
+
+**Forgotten AgentCore agents.** With no sessions they charge no compute, but
+they keep charging for the image in ECR and the logs
+([Pricing](../cost.md#coste-de-un-agente-en-agentcore)).
+`rayito agent list --target agentcore` shows them and
+`rayito agent delete <name> --target agentcore` removes the runtime, its stack
+and its log group.
+
+**Forgotten CDK stacks.** An agent or an image from the constructs is deleted
+with `cdk destroy`, not with the CLI. The bootstrap assets (the agent's code,
+the image zip and, with `localDocker()`, the agent's images) stay in the
+bootstrap bucket and repository until `cdk gc`
+([Deleting](../guias/desplegar-con-cdk.md#borrar)).
 
 ## See also { #ver-tambien }
 
