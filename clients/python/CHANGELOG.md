@@ -109,18 +109,6 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   «si la cuenta o la región aún no están preparadas, ejecuta `rayito setup`».
   La clase, el código y la causa de cada uno no cambian.
 
-### Seguridad
-
-- **El access token de una flota ya no puede acabar en la imagen del agente.**
-  `rayito agent deploy` escribe el token antes del build y, desde 0.14, un
-  `--token-file` dentro del proyecto o un `.rayito/` en un subdirectorio se
-  empaquetaba con el código (legible desde el sandbox; cada token nuevo forzaba
-  además otra versión de la imagen). Ahora `.rayito/` se excluye siempre, a
-  cualquier profundidad, de todos los contextos de build, la CLI excluye el
-  fichero de `--token-file` si cae dentro del proyecto y las exclusiones por
-  defecto se aplican a cualquier profundidad también en MicroVMs, como en
-  AgentCore. Vectores compartidos en `testdata/agent-deploy/source-context.json`.
-
 ## [0.14.0] - 2026-10-17
 
 ### Añadido
