@@ -1000,6 +1000,62 @@
           "megabytes": "2000"
         }
       }
+    },
+    {
+      "name": "secret_env añadido: RAYITO_SECRET_ENV cambia el entorno y el runtime se actualiza",
+      "input": {
+        "stack": {
+          "status": "UPDATE_COMPLETE",
+          "outputs": {
+            "RepositoryName": "rayito/agentcore/support-bot",
+            "RepositoryUri": "123456789012.dkr.ecr.us-east-1.amazonaws.com/rayito/agentcore/support-bot",
+            "RepositoryArn": "arn:aws:ecr:us-east-1:123456789012:repository/rayito/agentcore/support-bot",
+            "BuildProjectName": "rayito-agentcore-support-bot",
+            "BuildLogGroupName": "/aws/codebuild/rayito-agentcore-support-bot",
+            "RuntimeRoleArn": "arn:aws:iam::123456789012:role/rayito-agentcore-support-bot-RuntimeRole-ABCDEFGHIJKL"
+          }
+        },
+        "image": {
+          "exists": true,
+          "sizeBytes": 800000000
+        },
+        "runtime": {
+          "agentRuntimeName": "rayito_support_bot",
+          "agentRuntimeId": "rayito_support_bot-a1b2c3d4e5",
+          "agentRuntimeVersion": "2",
+          "status": "READY",
+          "description": "Rayito agent support-bot (rayito.agentcore/1)"
+        },
+        "runtimeDetails": {
+          "containerUri": "123456789012.dkr.ecr.us-east-1.amazonaws.com/rayito/agentcore/support-bot:src-0123456789abcdef",
+          "roleArn": "arn:aws:iam::123456789012:role/rayito-agentcore-support-bot-RuntimeRole-ABCDEFGHIJKL",
+          "networkMode": "PUBLIC",
+          "serverProtocol": "HTTP",
+          "environmentVariables": {
+            "AWS_DEFAULT_REGION": "us-east-1",
+            "AWS_REGION": "us-east-1"
+          },
+          "idleRuntimeSessionTimeout": 900,
+          "maxLifetime": 28800,
+          "requireMMDSV2": true
+        },
+        "buildImage": null,
+        "desired": {
+          "imageTag": "src-0123456789abcdef",
+          "environmentVariables": {
+            "AWS_DEFAULT_REGION": "us-east-1",
+            "AWS_REGION": "us-east-1",
+            "RAYITO_SECRET_ENV": "{\"env\":{\"DATABASE_URL\":{\"secret\":\"app/db-url\"}},\"from\":[],\"v\":1}"
+          },
+          "idleRuntimeSessionTimeout": 900,
+          "maxLifetime": 28800
+        }
+      },
+      "expected": {
+        "stack": "update",
+        "image": "reuse",
+        "runtime": "update"
+      }
     }
   ]
 }
