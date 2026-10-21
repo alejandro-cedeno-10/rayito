@@ -330,6 +330,23 @@ describe("AgentTemplate with runtime objects and an app", () => {
     }
   });
 
+  test("the state dir never enters the app even without excludes", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rayito-app-"));
+    try {
+      const app = await makeApp(root);
+      for (const relative of [".rayito/agent-token", "pkg/.rayito/agent-token"]) {
+        await mkdir(join(app, relative, ".."), { recursive: true });
+        await writeFile(join(app, relative), "secret");
+      }
+      await writeFile(join(app, ".dockerignore"), ".venv\n!.rayito/agent-token\n");
+      const files = (await appFiles(app, [])).map(([name]) => name);
+      expect(files.filter((name) => name.includes(".rayito"))).toEqual([]);
+      expect(files).toContain("pkg/agent.py");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   test("without an app there is no app copy", () => {
     expect(new AgentTemplate().toDockerfile()).not.toContain("__rayito_context/app");
   });

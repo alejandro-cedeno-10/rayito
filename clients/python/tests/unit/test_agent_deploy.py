@@ -38,18 +38,22 @@ from rayito._agent._deploy_plan import (
     AgentDeployOptions,
     AgentDeployStep,
     estimate_cost,
+    excluded_file_pattern,
+    source_excludes,
+    with_excluded_file,
 )
 from rayito._agent._detect_domain import DetectOverrides
 from rayito._agent._fleet import AgentFleet
 from rayito._agent._fleet_async import AsyncAgentFleet
 from rayito._agent._project_domain import AgentProject
 from rayito._agent._scaling_domain import ScalingOptions
-from rayito._agent._template import AgentTemplate, AsyncAgentTemplate
+from rayito._agent._template import AgentTemplate, AsyncAgentTemplate, _app_files
 from rayito._aws_sanitize import AwsErrorSummary
 from rayito._limits import AGENT_SOURCE_DEFAULT_EXCLUDES
 from rayito._payload import generate_access_token
 from rayito._sandbox_base import ACCESS_TOKEN_ENV_VAR
 from rayito._stacks._model import StackStatus
+from rayito._templates._context import files_hash
 from rayito._templates._models import BuildInfo
 from rayito.exceptions import InvalidArgumentException, StackException
 from tests.unit.fake_agent_fleet import FleetFlavor
@@ -59,6 +63,7 @@ from .fake_stacks import FakeStackProvisioner
 
 VECTORS = Path(__file__).parents[4] / "testdata" / "agent-deploy"
 RESOLVE = json.loads((VECTORS / "resolve.json").read_text(encoding="utf-8"))
+SOURCE_CONTEXT = json.loads((VECTORS / "source-context.json").read_text(encoding="utf-8"))
 SECRET_ENV = json.loads((VECTORS / "secret-env.json").read_text(encoding="utf-8"))
 BUCKET = "amzn-s3-demo-bucket"
 INFO = BuildInfo(template_id="arn", build_id="3.0/abc", alias="support-bot")
@@ -340,6 +345,81 @@ def test_a_deploy_never_ships_the_token_or_the_environment_files(harness: Harnes
     assert ".env" in template.app_exclude
     assert template.app_exclude.count(".git") == 1
     assert "dist" in template.app_exclude
+
+
+def _source_tree(root: Path) -> Path:
+    """El proyecto de `source-context.json` bajo `root`: cada fichero lleva
+    su propia ruta como contenido."""
+    source = root / "agent"
+    for relative in SOURCE_CONTEXT["files"]:
+        target = source / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(relative, encoding="utf-8")
+    return source
+
+
+def _context_of(source: Path, exclude: tuple[str, ...], token_file: str | None) -> list[str]:
+    patterns = list(source_excludes(exclude))
+    if token_file is not None:
+        pattern = excluded_file_pattern(source, source / token_file)
+        patterns += [] if pattern is None else [pattern]
+    return sorted(name for name, _ in _app_files(str(source), patterns))
+
+
+@pytest.mark.parametrize("case", SOURCE_CONTEXT["cases"], ids=lambda case: case["name"])
+def test_the_source_context_never_carries_the_token_nor_the_state_dir(
+    case: dict[str, Any], tmp_path: Path
+) -> None:
+    source = _source_tree(tmp_path)
+
+    included = _context_of(source, tuple(case["exclude"]), case["tokenFile"])
+
+    assert included == case["included"]
+
+
+def test_rewriting_the_token_file_keeps_the_context_hash(tmp_path: Path) -> None:
+    """Cada despliegue con un `--token-file` nuevo escribe otro token: como
+    queda fuera del contexto, el artefacto (y su hash) no cambia y la imagen
+    se reutiliza."""
+    source = _source_tree(tmp_path)
+    pattern = excluded_file_pattern(source, source / "secrets" / "agent-token")
+    assert pattern is not None
+    patterns = [*source_excludes(()), pattern]
+
+    before = files_hash(_app_files(str(source), patterns))
+    (source / "secrets" / "agent-token").write_text(generate_access_token(), encoding="utf-8")
+    (source / ".rayito" / "agent-token").write_text(generate_access_token(), encoding="utf-8")
+
+    assert files_hash(_app_files(str(source), patterns)) == before
+
+
+def test_the_token_file_pattern_is_anchored_escaped_and_none_outside(tmp_path: Path) -> None:
+    source = tmp_path / "agent"
+    source.mkdir()
+
+    assert excluded_file_pattern(source, source / "a" / "tok[1]*") == "a/tok\\[1\\]\\*"
+    assert excluded_file_pattern(source, source / "#token") == "\\#token"
+    assert excluded_file_pattern(source, tmp_path / "token") is None
+    assert excluded_file_pattern(source, source) is None
+
+
+def test_the_token_file_resolves_symlinks_before_comparing(tmp_path: Path) -> None:
+    real = tmp_path / "real"
+    real.mkdir()
+    link = tmp_path / "link"
+    link.symlink_to(real, target_is_directory=True)
+
+    assert excluded_file_pattern(link, real / "token") == "token"
+
+
+def test_the_token_file_exclusion_goes_last_and_only_once(tmp_path: Path) -> None:
+    excluded = with_excluded_file(
+        project(source=str(tmp_path), exclude=("token", "dist")), tmp_path / "token"
+    )
+
+    assert excluded.exclude == ("dist", "token")
+    assert with_excluded_file(project(), tmp_path / "token").exclude == ()
+    assert with_excluded_file(project(source=str(tmp_path)), None).exclude == ()
 
 
 def test_the_token_is_the_argument_then_the_environment_then_a_new_one() -> None:

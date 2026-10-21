@@ -172,7 +172,9 @@ environment variable and discovery; none of them creates anything silently:
   `--create-secret` is a missing one created, from the provider's standard
   variable, which is read in your process and written to neither disk nor logs.
 - The **access token** is `RAYITO_ACCESS_TOKEN`'s, `--token-file`'s or a new one
-  saved to `.rayito/agent-token` (mode `0600`).
+  saved to `.rayito/agent-token` (mode `0600`). The file never goes into the
+  image: `.rayito/` is excluded at any depth, and so is a `--token-file` inside
+  the project.
 
 The agent image is only built if its content changed (code, dependencies,
 runtime or memory); otherwise it is reused.

@@ -9,12 +9,11 @@ cosas juntas y devuelven la flota.
 from __future__ import annotations
 
 import asyncio
-import dataclasses
 import os
 import time
 from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Final
+from typing import TYPE_CHECKING, Any
 
 from rayito._agent._deploy_plan import (
     AgentDeployOptions,
@@ -35,7 +34,6 @@ from rayito._agentcore._models import (
 from rayito._agentcore._ports import AgentCoreGateways, RuntimeInvoker
 from rayito._agentcore._service import AgentCoreDeployer
 from rayito._aws_region import aws_session
-from rayito._limits import AGENT_SOURCE_DEFAULT_EXCLUDES
 from rayito.exceptions import AgentCoreException
 
 if TYPE_CHECKING:
@@ -66,19 +64,6 @@ class PlannedDeploy:
     options: AgentDeployOptions
     plan: AgentCoreDeployPlan
     tree: Mapping[str, bytes]
-
-
-NESTED_EXCLUDE_PREFIX: Final = "**/"
-
-
-def with_nested_default_excludes(project: AgentProject) -> AgentProject:
-    """El proyecto con las exclusiones por defecto también a cualquier
-    profundidad (`**/.env`, `**/.git`): `.dockerignore` ancla un patrón simple
-    en la raíz, y en AgentCore la imagen la construye CodeBuild con todo lo que
-    haya en el contexto, así que un `sub/.env` no debe colarse."""
-    nested = [f"{NESTED_EXCLUDE_PREFIX}{pattern}" for pattern in AGENT_SOURCE_DEFAULT_EXCLUDES]
-    merged = tuple(dict.fromkeys([*project.exclude, *nested]))
-    return dataclasses.replace(project, exclude=merged)
 
 
 def render_agentcore_tree(project: AgentProject) -> Mapping[str, bytes]:
@@ -113,7 +98,7 @@ def plan_agentcore(
     detected, report = project_for(path, project, overrides, region)
     if adjust is not None:
         detected = adjust(detected)
-    detected = with_nested_default_excludes(with_default_excludes(detected))
+    detected = with_default_excludes(detected)
     variables = os.environ if environ is None else environ
     effective = resolved_region(region, detected, session, variables)
     trees: list[Mapping[str, bytes]] = []

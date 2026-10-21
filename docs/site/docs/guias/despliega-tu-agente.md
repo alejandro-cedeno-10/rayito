@@ -174,7 +174,9 @@ variable de entorno y del descubrimiento; ninguno crea nada en silencio:
   se crea el que falte, desde la variable estándar del proveedor, que se lee en
   tu proceso y no se escribe en disco ni en logs.
 - El **access token** es el de `RAYITO_ACCESS_TOKEN`, el de `--token-file` o uno
-  nuevo que se guarda en `.rayito/agent-token` (modo `0600`).
+  nuevo que se guarda en `.rayito/agent-token` (modo `0600`). El fichero nunca
+  entra en la imagen: `.rayito/` se excluye a cualquier profundidad, y un
+  `--token-file` dentro del proyecto también.
 
 La imagen del agente sólo se construye si cambió su contenido (código,
 dependencias, runtime o memoria); si no, se reutiliza.

@@ -29,6 +29,7 @@ import {
   AGENT_PROTOCOL_VERSION,
   AGENT_TEMPLATE_MANIFEST_PATH,
   AGENT_TEMPLATE_MANIFEST_SCHEMA,
+  AGENT_TOKEN_FILE_DEFAULT,
 } from "../limits.js";
 import type { BuildInfo, BuildOptions } from "../templates/build.js";
 import { collectContextFiles, collectContextFilesSync } from "../templates/context-node.js";
@@ -407,18 +408,24 @@ function applySteps(
 
 const APP_COPY_STEPS = [{ kind: "copy", src: ".", dst: AGENT_APP_DIR }] as const;
 
-/** Los ficheros del código del usuario, sin lo que ignoran su `.dockerignore`
- * y `exclude`. */
+/** El directorio de estado de la CLI (`.rayito/`: el access token de la flota
+ * y las plazas calientes), a cualquier profundidad. Se excluye siempre del
+ * código del usuario y va el último, así que ni su `.dockerignore` ni
+ * `exclude` pueden volver a meterlo en la imagen ni en su hash. */
+export const AGENT_STATE_DIR_EXCLUDE = `**/${AGENT_TOKEN_FILE_DEFAULT.split("/")[0]}`;
+
+/** Los ficheros del código del usuario, sin lo que ignoran su `.dockerignore`,
+ * `exclude` y `AGENT_STATE_DIR_EXCLUDE`. */
 export async function appFiles(
   app: string,
   exclude: readonly string[],
 ): Promise<Array<[string, Uint8Array]>> {
-  return collectContextFiles(app, APP_COPY_STEPS, exclude);
+  return collectContextFiles(app, APP_COPY_STEPS, [...exclude, AGENT_STATE_DIR_EXCLUDE]);
 }
 
 /** `appFiles` con lecturas síncronas (los constructos CDK, ADR-032 D7). */
 export function appFilesSync(app: string, exclude: readonly string[]): Array<[string, Uint8Array]> {
-  return collectContextFilesSync(app, APP_COPY_STEPS, exclude);
+  return collectContextFilesSync(app, APP_COPY_STEPS, [...exclude, AGENT_STATE_DIR_EXCLUDE]);
 }
 
 async function writeContext(

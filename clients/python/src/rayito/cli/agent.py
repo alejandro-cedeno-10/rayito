@@ -40,7 +40,7 @@ from rayito import (
     deploy_agent,
     plan_deploy,
 )
-from rayito._agent._deploy_plan import project_for
+from rayito._agent._deploy_plan import project_for, with_excluded_file
 from rayito._agent._detect_report import DetectionReport
 from rayito._agent._events import AgentEvent, AgentFailed, Text, TextDelta, ToolCall
 from rayito._agent._fleet_base import fleet_settings_of
@@ -894,6 +894,10 @@ def deploy_command(
         token, written_to = deploy_token(token_file)
     except TokenFileError as exc:
         fail(str(exc), code=EXIT_USAGE)
+    # El fichero del token se escribe antes del build: si queda dentro del
+    # código del agente, se excluye para que no acabe en la imagen ni cambie
+    # su hash (que un nuevo despliegue la reutilice).
+    project = with_excluded_file(project, written_to)
     clients = clients_of(ctx)
     publisher = base_publisher_of(clients, base_artifact, bucket, yes=yes)
     for line in detection_lines(report):

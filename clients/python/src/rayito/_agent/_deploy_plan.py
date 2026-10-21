@@ -10,8 +10,9 @@ from __future__ import annotations
 
 import dataclasses
 import os
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
+from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Final
 
@@ -46,6 +47,12 @@ if TYPE_CHECKING:
     from rayito._pool_backends import PoolBackend
 
 SECONDS_PER_HOUR: Final = 3600
+#: El prefijo que lleva un patrón de `.dockerignore` a cualquier profundidad.
+NESTED_EXCLUDE_PREFIX: Final = "**/"
+#: Lo que `.dockerignore` lee como comodín, negación o comentario: se escapa
+#: con una barra invertida para excluir un fichero por su nombre literal.
+GLOB_SPECIALS: Final = frozenset("*?[]\\!#")
+DOCKERIGNORE_ESCAPE: Final = "\\"
 #: Días del mes de la lista de precios (`AWS_API_NOTES.md`, sección de coste:
 #: el almacenamiento se cotiza por GB-mes de 720 h).
 PRICING_DAYS_PER_MONTH: Final = 30
@@ -230,11 +237,51 @@ def token_source_of(options: AgentDeployOptions, environ: Any) -> str:
     return "environment" if environ.get(ACCESS_TOKEN_ENV_VAR) else "generated"
 
 
+def source_excludes(exclude: Sequence[str]) -> tuple[str, ...]:
+    """`AGENT_SOURCE_DEFAULT_EXCLUDES` en la raíz y a cualquier profundidad
+    (`**/.env`, `**/.git`) delante de `exclude`, sin repetir ninguna:
+    `.dockerignore` ancla un patrón simple en la raíz, y la imagen se
+    construye con todo lo que haya en el contexto, así que un `sub/.env` no
+    debe colarse ni en MicroVMs ni en AgentCore."""
+    nested = [f"{NESTED_EXCLUDE_PREFIX}{pattern}" for pattern in AGENT_SOURCE_DEFAULT_EXCLUDES]
+    return tuple(dict.fromkeys([*AGENT_SOURCE_DEFAULT_EXCLUDES, *nested, *exclude]))
+
+
 def with_default_excludes(project: AgentProject) -> AgentProject:
-    """El proyecto con `AGENT_SOURCE_DEFAULT_EXCLUDES` delante de sus propias
-    exclusiones, sin repetir ninguna."""
-    merged = tuple(dict.fromkeys([*AGENT_SOURCE_DEFAULT_EXCLUDES, *project.exclude]))
-    return dataclasses.replace(project, exclude=merged)
+    """El proyecto con `source_excludes` sobre sus propias exclusiones."""
+    return dataclasses.replace(project, exclude=source_excludes(project.exclude))
+
+
+def excluded_file_pattern(
+    source: str | os.PathLike[str], path: str | os.PathLike[str]
+) -> str | None:
+    """El patrón de `.dockerignore` que excluye exactamente `path` del código
+    de `source` (anclado en la raíz y con los comodines escapados); `None` si
+    `path` queda fuera de `source`. Las dos rutas se resuelven (enlaces
+    simbólicos incluidos) antes de compararlas."""
+    root = Path(source).resolve()
+    target = Path(path).resolve()
+    if not target.is_relative_to(root) or target == root:
+        return None
+    relative = target.relative_to(root).as_posix()
+    return "".join(
+        f"{DOCKERIGNORE_ESCAPE}{char}" if char in GLOB_SPECIALS else char for char in relative
+    )
+
+
+def with_excluded_file(project: AgentProject, path: str | os.PathLike[str] | None) -> AgentProject:
+    """El proyecto que además excluye `path` de su código si está dentro (el
+    fichero del access token que escribe la CLI: nunca debe acabar en la
+    imagen ni cambiar su hash). Va el último, así que ninguna negación de
+    `exclude` lo vuelve a meter; fuera del código, o sin código, no cambia
+    nada."""
+    if path is None or project.source is None:
+        return project
+    pattern = excluded_file_pattern(project.source, path)
+    if pattern is None:
+        return project
+    kept = [entry for entry in project.exclude if entry != pattern]
+    return dataclasses.replace(project, exclude=(*kept, pattern))
 
 
 def project_bucket(project: AgentProject) -> str | None:

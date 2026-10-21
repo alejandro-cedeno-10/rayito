@@ -127,6 +127,8 @@ class FakeProject:
     run_error: Exception | None = None
     run_events: tuple[Any, ...] = ()
     deployment: FakeDeployment = field(default_factory=FakeDeployment)
+    source: str | None = None
+    exclude: tuple[str, ...] = ()
 
     def run(self, prompt: str, **kwargs: Any) -> FakeResult:
         self.log.append(("run", {"prompt": prompt, **kwargs}))
@@ -726,6 +728,34 @@ def test_deploy_writes_a_new_token_to_the_token_file(
     assert token not in result.output
     assert token_file.stat().st_mode & 0o777 == 0o600
     assert calls.deployed[0]["options"].access_token == token
+
+
+@pytest.mark.usefixtures("no_access_token")
+def test_deploy_leaves_a_token_file_inside_the_project_out_of_the_image(
+    monkeypatch: pytest.MonkeyPatch, runner: CliRunner, clients: Clients, tmp_path: Path
+) -> None:
+    """El token se escribe antes del build: si cae dentro del código, el
+    proyecto que recibe el SDK lo excluye (ni en la imagen ni en su hash)."""
+    calls = install_deploy(monkeypatch, FakeProject(source=str(tmp_path), exclude=("dist",)))
+    token_file = tmp_path / "secrets" / "agent-token"
+    token_file.parent.mkdir()
+    result = runner.invoke(app, ["agent", "deploy", "--token-file", str(token_file)], obj=clients)
+    assert result.exit_code == 0, result.output
+    assert calls.deployed[0]["project"].exclude == ("dist", "secrets/agent-token")
+
+
+@pytest.mark.usefixtures("no_access_token")
+def test_deploy_keeps_the_excludes_when_the_token_file_is_outside_the_project(
+    monkeypatch: pytest.MonkeyPatch, runner: CliRunner, clients: Clients, tmp_path: Path
+) -> None:
+    source = tmp_path / "agent"
+    source.mkdir()
+    calls = install_deploy(monkeypatch, FakeProject(source=str(source)))
+    result = runner.invoke(
+        app, ["agent", "deploy", "--token-file", str(tmp_path / "token")], obj=clients
+    )
+    assert result.exit_code == 0, result.output
+    assert calls.deployed[0]["project"].exclude == ()
 
 
 @pytest.mark.usefixtures("no_access_token")
