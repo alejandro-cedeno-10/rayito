@@ -48,6 +48,12 @@ def test_normalise_template_applies_every_rule() -> None:
                 },
             },
             "Runtime": {"Properties": {"Tags": {"rayito:sdk-version": "0.15.0"}}},
+            "Build": {
+                "Properties": {
+                    "ImageTag": "src-0123456789abcdef",
+                    "Uri": "repo:src-0123456789abcdef",
+                }
+            },
         },
     }
     normalised = script.normalise_template(template)
@@ -61,6 +67,10 @@ def test_normalise_template_applies_every_rule() -> None:
     assert image["Properties"]["Tags"][0] == {"Key": "rayito:sdk-version", "Value": "<SDK_VERSION>"}
     assert normalised["Resources"]["Runtime"]["Properties"]["Tags"] == {
         "rayito:sdk-version": "<SDK_VERSION>"
+    }
+    assert normalised["Resources"]["Build"]["Properties"] == {
+        "ImageTag": "src-<SOURCE_HASH>",
+        "Uri": "repo:src-<SOURCE_HASH>",
     }
     assert template["Resources"]["Image"]["Metadata"]
 

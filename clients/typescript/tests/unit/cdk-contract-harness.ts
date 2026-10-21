@@ -31,6 +31,9 @@ export const STACK_NAME = "RayitoCdkCase";
 
 const ASSET_HASH = /[0-9a-f]{64}/g;
 const ASSET_HASH_PLACEHOLDER = "<ASSET_HASH>";
+/** La etiqueta por contenido de la imagen del agente: hashea el contexto de build, host incluido. */
+const SOURCE_TAG = /(?<![0-9A-Za-z])src-[0-9a-f]{16}(?![0-9a-f])/g;
+const SOURCE_TAG_PLACEHOLDER = "src-<SOURCE_HASH>";
 const BOOTSTRAP_QUALIFIER = "hnb659fds";
 const QUALIFIER_PLACEHOLDER = "<QUALIFIER>";
 const SDK_VERSION_TAG = "rayito:sdk-version";
@@ -118,6 +121,7 @@ function replaceStrings(value: Json): Json {
   if (typeof value === "string") {
     return value
       .replace(ASSET_HASH, ASSET_HASH_PLACEHOLDER)
+      .replace(SOURCE_TAG, SOURCE_TAG_PLACEHOLDER)
       .replaceAll(BOOTSTRAP_QUALIFIER, QUALIFIER_PLACEHOLDER);
   }
   if (Array.isArray(value)) {
