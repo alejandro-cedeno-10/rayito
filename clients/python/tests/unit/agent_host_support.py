@@ -148,12 +148,20 @@ def invoke(
 
 
 def sse_messages(data: bytes) -> list[tuple[str, dict[str, Any]]]:
+    """Los mensajes `(event, data)` de un cuerpo SSE, según la especificación
+    de WHATWG: los comentarios (`:`) se ignoran y el espacio tras `campo:` es
+    opcional. Un cuerpo que no es SSE (un JSON de error) falla con su texto."""
     messages: list[tuple[str, dict[str, Any]]] = []
-    for block in data.decode().split("\n\n"):
-        if not block.strip():
-            continue
-        fields = dict(line.split(": ", 1) for line in block.splitlines())
-        messages.append((fields["event"], json.loads(fields["data"])))
+    for block in data.decode().replace("\r\n", "\n").split("\n\n"):
+        fields: dict[str, str] = {}
+        for line in block.splitlines():
+            if not line or line.startswith(":"):
+                continue
+            name, separator, value = line.partition(":")
+            assert separator, f"cuerpo que no es SSE: {data!r}"
+            fields[name] = value.removeprefix(" ")
+        if fields:
+            messages.append((fields["event"], json.loads(fields["data"])))
     return messages
 
 
