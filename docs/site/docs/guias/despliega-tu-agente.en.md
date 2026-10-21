@@ -1049,6 +1049,13 @@ with a placeholder key:
   cap at the provider
   ([Agent providers](agente-proveedores.md#limites-del-lado-del-proveedor)).
 
+If your code reads from environment variables other values that live in
+Secrets Manager (a database URL, the key of a gateway that does not go through
+Rayito), `[secret_env]` and `--secret-env` set them at startup: the SDK reads
+them with your credentials and the host receives them only in its process
+environment. Unlike the gateway, the agent can read them. See
+[Secrets as environment variables](secretos-como-entorno.md).
+
 ## A deployment lasts 8 hours at most { #un-despliegue-dura-8-horas-como-mucho }
 
 A MicroVM cannot live more than 8 h between launched and suspended, and the AWS

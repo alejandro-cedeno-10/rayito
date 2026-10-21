@@ -501,7 +501,9 @@ rayito agent deploy [PATH] [--file PATH] [--timeout S] [--port N] [--token-file 
                     [--memory MIB] [--max-sessions N] [--sessions shared|dedicated]
                     [--min-vms N] [--max-vms N] [--warm N] [--idle S] [--queue N] [--queue-timeout S]
                     [--env K=V]... [--allow-out DEST]... [--bucket B] [--secret PROVEEDOR=NOMBRE]...
-                    [--create-secret] [--base-artifact ZIP] [--yes] [--dry-run]
+                    [--create-secret] [--secret-env NOMBRE=SECRETO]... [--secret-env-from SECRETO]...
+                    [--create-secrets-from FICHERO] [--check-env]
+                    [--base-artifact ZIP] [--yes] [--dry-run]
                     [--target microvm|agentcore] [--tag K=V]... [--bedrock-model ID]...
                     [--readable-secret NOMBRE]... [--idle-session-timeout S] [--max-session-lifetime S]
 rayito agent export --target docker|agentcore --out DIR [--file PATH] [--overwrite]
@@ -557,6 +559,15 @@ sus VMs); el `session_id` que devuelve `invoke` en una flota con varios VMs
 identifica el VM, y pasarlo con `--session-id` sigue la conversación. Los
 mensajes y las ayudas van en español. Ver
 [Despliega tu agente](guias/despliega-tu-agente.md#sin-escribir-nada).
+
+Con `--secret-env NOMBRE=<secreto>[#clave]` y `--secret-env-from
+<secreto>[,prefix=P][,keys=A|B]` (repetibles, en los dos destinos) el agente
+recibe valores de Secrets Manager como variables de entorno, sumados a los de
+`[secret_env]` y `[[secret_env_from]]` del fichero; `--create-secrets-from
+FICHERO.env` crea (o actualiza) un secreto JSON con los valores de ese `.env`,
+enseña sólo los nombres y pide `--yes` (cuesta $0,40 al mes), y `--check-env`
+avisa de las variables de `.env.example` que no reciben valor. Ver
+[Secretos como variables de entorno](guias/secretos-como-entorno.md).
 
 Construye la imagen de `AgentTemplate`
 ([Templates de agente](funciones-opcionales/templates-de-agente.md)): parte

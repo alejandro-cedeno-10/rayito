@@ -2487,3 +2487,43 @@ adicional), `State` (`MicrovmImageState`), `LatestActiveImageVersion`,
   actualizó ninguna imagen, así que no se vio si una actualización borra las
   versiones anteriores (el manejador de `update` pide
   `DeleteMicrovmImageVersion`, pero el esquema no dice cuándo lo usa).
+
+## Secretos como variables de entorno (`agent-secret-env`, ADR-033 D4)
+
+No hay parámetros nuevos de AWS: se usan sólo las operaciones y los parámetros
+de §19 (Secrets Manager).
+
+- **AgentCore, en el host**: `aws_secret_env.py` (el venv de botocore de la
+  imagen, el mismo de las credenciales de AgentCore) llama a `GetSecretValue`
+  con `SecretId` (nombre completo o ARN) y, si la referencia lo pide,
+  `VersionStage`; lee sólo `SecretString` (un secreto sin `SecretString` es
+  `secret_env_invalid`). El cliente sale de la cadena por defecto de botocore
+  (el rol del runtime, por el servicio de metadatos de la microVM) y de la
+  región de `AWS_REGION`. Por código: `AccessDeniedException` y
+  `ResourceNotFoundException` son `secret_env_denied`; cualquier otro error,
+  `secret_env_unavailable`. El mensaje de AWS nunca se lee ni se escribe.
+- **AgentCore, en la pila**: los secretos referenciados se unen a
+  `ReadableSecretArns` (el parámetro de `infra/agentcore-runtime.yaml` que ya
+  existía); la sentencia `ReadSecrets` sigue siendo sólo
+  `secretsmanager:GetSecretValue`, sin `kms:Decrypt`.
+- **MicroVMs**: el SDK lee con `SecretCache` sobre `SecretStore(prefix="")`
+  (`GetSecretValue`, credenciales de quien despliega).
+- **`--create-secrets-from`**: `SecretStore(prefix="").exists`, `create` o
+  `update` del secreto `rayito/agents/<nombre>/env` (`DescribeSecret`,
+  `CreateSecret` o `PutSecretValue`, con los parámetros de §19).
+
+Preguntas abiertas, para la aceptación en AWS real:
+
+- **Q187 — `GetSecretValue` desde el rol del runtime de AgentCore.**
+  **Pendiente.** Confirmar que el rol del runtime, con la sentencia
+  `ReadSecrets` (sólo `GetSecretValue` sobre los ARNs con el sufijo
+  `-??????`), lee un secreto cifrado con `aws/secretsmanager` sin
+  `kms:Decrypt`, con `SecretId` por nombre y por ARN y con `VersionStage`; que
+  un secreto fuera de la lista da `AccessDeniedException` (el arranque falla con
+  `secret_env_denied`); y que una sesión nueva ve el valor nuevo tras
+  `PutSecretValue`.
+- **Q188 — Latencia de arranque de una sesión con `secret_env`.** **Pendiente.**
+  Medir cuánto añade el ayudante de botocore (arranque del intérprete y una
+  llamada por secreto) al arranque en frío de una sesión, para confirmar o
+  cambiar `agentSecretEnvHelperTimeoutSeconds` (hoy
+  15 s provisionales, `limits.json`).

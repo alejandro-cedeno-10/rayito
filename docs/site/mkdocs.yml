@@ -160,6 +160,7 @@ plugins:
             Varias sesiones y varias VMs: Several sessions and several VMs
             Desplegar en AgentCore: Deploy to AgentCore
             Desplegar con CDK: Deploy with CDK
+            Secretos como variables de entorno: Secrets as environment variables
             Desarrollar: Develop
             Probar en local (Docker + Floci): Test locally (Docker + Floci)
             Funciones opcionales: Optional features
@@ -323,6 +324,7 @@ nav:
           - "Varias sesiones y varias VMs": guias/flota-de-agentes.md
           - "Desplegar en AgentCore": guias/desplegar-en-agentcore.md
           - "Desplegar con CDK": guias/desplegar-con-cdk.md
+          - "Secretos como variables de entorno": guias/secretos-como-entorno.md
       - Desarrollar:
           - Probar en local (Docker + Floci): guias/probar-en-local.md
   - Funciones opcionales:

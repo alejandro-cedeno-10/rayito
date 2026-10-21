@@ -236,6 +236,16 @@ del proveedor, el prompt ni el contenido generado.
 | `aborted` | `stream.abort()` / cancelación / `AbortSignal` |
 | `busy` | ya hay una ejecución en curso en ese sandbox (un `run`/`stream` a la vez por sandbox en esta fase) |
 
+Con `secret_env` o `secret_env_from` ([Secretos como variables de
+entorno](../guias/secretos-como-entorno.md)), el despliegue falla en cerrado con
+`reason="runtime_error"` y uno de estos `detail_code`, que nunca nombran el
+secreto ni el valor: `secret_env_unavailable` (no se pudieron leer),
+`secret_env_denied` (el rol o tus credenciales no pueden leer un secreto),
+`secret_env_invalid` (el valor no es lo que la referencia pide, o se pasa del
+tope), `secret_env_invalid_key` (falta una clave pedida, o una clave no es un
+nombre de variable válido) y `secret_env_reserved` (una clave daría un nombre
+reservado). En AgentCore es el código del marcador de fallo del host.
+
 ## `AgentCoreException` / `AgentCoreError` { #agentcore }
 
 Desde 0.15.0. Las lanza el despliegue en AgentCore

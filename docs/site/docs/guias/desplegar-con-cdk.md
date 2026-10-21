@@ -262,6 +262,11 @@ como `AgentCoreException` / `AgentCoreError`. Dos diferencias:
   `AWS::BedrockAgentCore::Runtime`, más estricto que la API): uno más largo es
   `env_invalid` al sintetizar.
 
+`[secret_env]` y `[[secret_env_from]]` no necesitan ninguna prop: salen del
+fichero de proyecto, el runtime recibe `RAYITO_SECRET_ENV` (sólo nombres y ARNs)
+y esos secretos se suman a `readableSecrets` en el rol
+([Secretos como variables de entorno](secretos-como-entorno.md)).
+
 ### Construir la imagen: CodeBuild o Docker local { #construir-la-imagen }
 
 | Modo | Qué hace | Cuándo |
