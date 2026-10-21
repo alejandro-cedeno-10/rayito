@@ -234,6 +234,13 @@ def build_model(config: Mapping[str, Any], model_id: str) -> Any:
     raise AgentFailure("protocol_error", "unknown_provider")
 
 
+def optional_model(config: Mapping[str, Any], model_id: str | None) -> Any:
+    """`build_model` sólo si hay un id (el de la petición o el de la
+    configuración); sin él tu `entrypoint` recibe `ctx.model = None` y elige
+    su modelo."""
+    return None if model_id is None else build_model(config, model_id)
+
+
 def register_permissions(agent: Any, rules: Mapping[str, Any], aliases: Mapping[str, str]) -> None:
     """Un gancho `BeforeToolCallEvent` que cancela con un resultado de error
     toda llamada que `decide()` deniega. Se añade una sola vez por agente."""
@@ -388,7 +395,7 @@ class Driver:
         state.session_id = session_id
         emit(build_event("session", session_id=session_id))
         try:
-            model = build_model(config, request.model or str(config["model"]))
+            model = optional_model(config, request.model or config.get("model"))
             agent = build_agent(config, model, session_id)
             register_permissions(
                 agent, config.get("permissions", {}), config.get("permission_aliases", {})

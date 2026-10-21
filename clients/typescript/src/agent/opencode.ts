@@ -25,7 +25,13 @@ import {
   MODEL_CREDENTIAL_PLACEHOLDER,
   OPENCODE_SESSION_TITLE,
 } from "../limits.js";
-import { type AgentPermissions, type AgentSpec, McpLocal, McpRemote } from "./domain.js";
+import {
+  type AgentPermissions,
+  type AgentSpec,
+  McpLocal,
+  McpRemote,
+  requiredModelId,
+} from "./domain.js";
 import {
   type AgentEvent,
   type AgentFailed,
@@ -59,6 +65,8 @@ import {
   wiringUrls,
 } from "./runtime.js";
 
+/** El nombre del runtime en el registro y en los mensajes. */
+export const OPENCODE_RUNTIME_NAME = "opencode";
 /** Directorio de OpenCode dentro de `AGENT_STATE_DIR`. */
 export const OPENCODE_STATE_DIR = `${AGENT_STATE_DIR}/opencode`;
 /** El `OPENCODE_CONFIG` de cada ejecución. */
@@ -254,11 +262,14 @@ function provider(spec: AgentSpec, gatewayUrl: string | undefined): Record<strin
 function models(spec: AgentSpec): Record<string, unknown> {
   const ids = new Set([spec.model.id, spec.effectiveSmallModel]);
   for (const sub of Object.values(spec.agents)) {
-    if (sub.model !== undefined) {
-      ids.add(sub.model);
-    }
+    ids.add(sub.model);
   }
-  return Object.fromEntries([...ids].sort().map((id) => [id, {}]));
+  return Object.fromEntries(
+    [...ids]
+      .filter((id) => id !== undefined)
+      .sort()
+      .map((id) => [id, {}]),
+  );
 }
 
 function mcp(
@@ -355,12 +366,13 @@ export function buildOpenCodeConfig(
     spec.requireGateways(Object.keys(gatewayUrls));
     gatewayUrl = gatewayUrls[spec.model.gateway] ?? "";
   }
+  const modelId = requiredModelId(spec.model, OPENCODE_RUNTIME_NAME);
   const providerId = providerIdOf(spec);
   let config: Record<string, unknown> = {
     // biome-ignore lint/style/useNamingConvention: clave fija del esquema de OpenCode.
     $schema: OPENCODE_CONFIG_SCHEMA,
-    model: modelRef(providerId, spec.model.id),
-    small_model: modelRef(providerId, spec.effectiveSmallModel),
+    model: modelRef(providerId, modelId),
+    small_model: modelRef(providerId, spec.smallModel ?? modelId),
     autoupdate: false,
     share: "disabled",
     snapshot: false,
@@ -470,7 +482,7 @@ function failed(
 
 /** `AgentRuntime` de OpenCode; lo de cada ejecución vive en su `OpenCodeState`. */
 export class OpenCodeRuntime implements AgentRuntime, InstallableRuntime, ServableRuntime {
-  readonly name = "opencode";
+  readonly name = OPENCODE_RUNTIME_NAME;
 
   /** `opencode.json` y, si hay `instructions`, su `AGENTS.md`. */
   buildConfig(

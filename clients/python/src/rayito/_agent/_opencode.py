@@ -30,6 +30,7 @@ from rayito._agent._domain import (
     McpLocal,
     McpRemote,
     ToolPermission,
+    required_model_id,
 )
 from rayito._agent._events import (
     AgentEvent,
@@ -74,6 +75,8 @@ from rayito._limits import (
 )
 from rayito.exceptions import InvalidArgumentException
 
+#: El nombre del runtime en el registro y en los mensajes.
+OPENCODE_RUNTIME_NAME: Final = "opencode"
 #: Directorio de OpenCode dentro de `AGENT_STATE_DIR`: configuración,
 #: instrucciones y cerrojo de ejecución.
 OPENCODE_STATE_DIR: Final = f"{AGENT_STATE_DIR}/opencode"
@@ -252,8 +255,9 @@ def _models(spec: AgentSpec) -> dict[str, object]:
     sin descargar el catálogo (`OPENCODE_DISABLE_MODELS_FETCH`), OpenCode
     sólo conoce los que se declaran."""
     model_ids = {spec.model.id, spec.effective_small_model}
-    model_ids.update(sub.model for sub in spec.agents.values() if sub.model is not None)
-    return {model_id: {} for model_id in sorted(model_ids)}
+    model_ids.update(sub.model for sub in spec.agents.values())
+    model_ids.discard(None)
+    return {model_id: {} for model_id in sorted(name for name in model_ids if name is not None)}
 
 
 def _mcp(spec: AgentSpec, gateway_urls: Mapping[str, str]) -> dict[str, object]:
@@ -321,11 +325,12 @@ def build_opencode_config(
     else:
         spec.require_gateways(gateway_urls.keys())
         gateway_url = gateway_urls[spec.model.gateway]
+    model_id = required_model_id(spec.model, OPENCODE_RUNTIME_NAME)
     provider_id = OPENCODE_PROVIDER_IDS[spec.model.provider]
     config: dict[str, object] = {
         "$schema": OPENCODE_CONFIG_SCHEMA,
-        "model": _model_ref(provider_id, spec.model.id),
-        "small_model": _model_ref(provider_id, spec.effective_small_model),
+        "model": _model_ref(provider_id, model_id),
+        "small_model": _model_ref(provider_id, spec.small_model or model_id),
         "autoupdate": False,
         "share": "disabled",
         "snapshot": False,
@@ -397,7 +402,7 @@ class OpenCodeRuntime:
     """`AgentRuntime` de OpenCode. Sin estado propio: lo de cada ejecución
     vive en el `OpenCodeState` que devuelve `new_state()`."""
 
-    name: str = "opencode"
+    name: str = OPENCODE_RUNTIME_NAME
 
     def build_config(
         self, spec: AgentSpec, *, gateway_urls: Mapping[str, str], workdir: str

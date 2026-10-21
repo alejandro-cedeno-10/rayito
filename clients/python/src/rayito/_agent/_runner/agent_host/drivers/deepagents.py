@@ -482,19 +482,27 @@ def _classify(exc: BaseException) -> tuple[str, str]:
     return classify_by_module(exc, MODEL_ERROR_MODULES)
 
 
-def build_context(config: Mapping[str, Any], model_id: str) -> RunnerContext:
+def build_context(config: Mapping[str, Any], model_id: str | None) -> RunnerContext:
+    """El `ctx` de tu `entrypoint`. Sin id (ni en la petición ni en la
+    configuración) no se construye ningún modelo y `ctx.model` es `None`: tu
+    grafo elige el suyo."""
     if not config.get("prompt_caching", True):
         disable_prompt_caching(importlib.import_module("deepagents.graph"))
     backends = importlib.import_module("deepagents.backends")
     workdir = str(config["workdir"])
     return RunnerContext(
-        model=build_model(config, model_id),
+        model=optional_model(config, model_id),
         instructions=config.get("instructions"),
         subagents=subagents_of(config, lambda sub_model: build_model(config, sub_model)),
         backend=backends.LocalShellBackend(root_dir=workdir, virtual_mode=False),
         middleware=[permission_middleware(config["permissions"])],
         workdir=workdir,
     )
+
+
+def optional_model(config: Mapping[str, Any], model_id: str | None) -> Any:
+    """`build_model` sólo si hay un id que construir."""
+    return None if model_id is None else build_model(config, model_id)
 
 
 def stream_events(

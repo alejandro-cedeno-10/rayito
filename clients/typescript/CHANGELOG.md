@@ -6,6 +6,44 @@ versionado [SemVer](https://semver.org/lang/es/).
 
 ## [Unreleased]
 
+### Añadido
+
+- **El id del modelo es opcional cuando no es Bedrock** (ADR-033 D2): un grafo
+  que elige su modelo por configuración
+  (`new ChatOpenAI({ model: process.env.LLM_MODEL, configuration: { baseURL } })`) se
+  detecta y se despliega sin escribir el id. `[model]` acepta los nombres de
+  variable `id_env`, `base_url_env` y `api_key_env` (`idEnv`, `baseUrlEnv`,
+  `apiKeyEnv` en `AgentModelOptions`; nunca valores), y en
+  MicroVMs Rayito los apunta a la pasarela con el marcador como clave. La
+  detección ve `base_url=` en el constructor del cliente (`openai` pasa a
+  `openai-compatible`) y los nombres de variable del modelo, y avisa con
+  `model_id_from_code`. El id sigue siendo obligatorio con las pasarelas
+  `bedrock` y `gemini` y con los runtimes que construyen el modelo; con un
+  `entrypoint`, `ctx.model` es `undefined` y la telemetría omite
+  `gen_ai.request.model`.
+- **`--model-id`, `--model-provider` y `--model-base-url`** en
+  `rayito agent detect` y `deploy` (`DetectOverrides.modelId`,
+  `modelProvider`, `modelBaseUrl`).
+- **`--external-model` en AgentCore** (`AgentCoreOptions.externalModel`, prop
+  `externalModel` de `RayitoAgent`): admite un modelo fuera de Bedrock sin dar
+  al rol permisos de Bedrock que no pidas; la URL base va al entorno del
+  runtime y la clave nunca. El plan lo dice con la línea `externalModel`.
+
+### Cambiado
+
+- `AgentModel.id` pasa de `string` a `string | undefined` (`AgentModel<Id>`:
+  un modelo construido con id sigue siendo `string`); sólo cambia el tipo que
+  se lee, ninguna llamada existente.
+- `model_required` se lanza por fin: AgentCore con un proveedor `bedrock` sin
+  `[model] id` ni `--bedrock-model` (antes reservado); su texto dice «fija
+  [model] id o pásalo con --bedrock-model».
+
+### Seguridad
+
+- Con `--external-model` el agente llama a un modelo fuera de Bedrock por
+  Internet con una clave que obtiene su código; la clave nunca va a las
+  variables de entorno del runtime (`SECURITY.md`, T36).
+
 ## [0.15.0] - 2026-10-21
 
 ### Añadido

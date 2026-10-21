@@ -399,6 +399,49 @@ interno, por ejemplo). Puedes apuntar a ellos directamente con
 de LiteLLM para tener claves virtuales y presupuestos. El `localhost` de tu
 portátil nunca es alcanzable desde la microVM.
 
+### Modelo elegido por tu código { #modelo-elegido-por-tu-codigo }
+
+Con una pasarela que no filtra por modelo (todas salvo `bedrock` y `gemini`) y
+un runtime con `entrypoint` (o `CustomRuntime`), el id del modelo es opcional:
+tu código lo lee de su propia configuración. Nombra las variables en las que lo
+lee y Rayito las apunta a la pasarela, con el marcador como clave:
+
+=== "Python"
+
+    ```python
+    from rayito import AgentModel
+
+    model = AgentModel(
+        provider="openai-compatible",
+        id=None,
+        gateway="litellm",
+        base_path="/v1",
+        id_env="LLM_MODEL",
+        base_url_env="LLM_BASE_URL",
+        api_key_env="LLM_API_KEY",
+    )
+    ```
+
+=== "TypeScript"
+
+    ```ts
+    import { AgentModel } from "rayito";
+
+    const model = new AgentModel({
+      provider: "openai-compatible",
+      gateway: "litellm",
+      basePath: "/v1",
+      idEnv: "LLM_MODEL",
+      baseUrlEnv: "LLM_BASE_URL",
+      apiKeyEnv: "LLM_API_KEY",
+    });
+    ```
+
+Sin id, `ctx.model` es `None` (`undefined` en Node) y `LLM_MODEL` no se fija. Un
+runtime que construye el modelo (`opencode`, `hermes`, `deepagents` o `strands`
+sin `entrypoint`) sigue pidiendo el id. Más en
+[Despliega tu agente](despliega-tu-agente.md#modelo-desde-tu-codigo).
+
 ## Límites del lado del proveedor
 
 Sólo Bedrock y Gemini llevan el modelo en la **ruta**, así que la allowlist

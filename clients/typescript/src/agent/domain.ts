@@ -87,6 +87,16 @@ const TOOL_NAME_PATTERN = new RegExp(`^[a-z0-9*][a-z0-9_*-]{0,${MAX_NAME_LEN - 1
 const MODEL_ID_PATTERN = new RegExp(`^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,${MAX_MODEL_ID_LEN - 1}}$`);
 const REGION_PATTERN = /^[a-z]{2}(-[a-z]+)+-[0-9]+$/;
 const ENV_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
+/** Las claves opcionales de `[model]` con el nombre de una variable de
+ * entorno que lee el código del agente (el id, la URL base y la clave) y su
+ * campo en `AgentModel`. */
+export const MODEL_ENV_FIELDS = Object.freeze({
+  id_env: "idEnv",
+  base_url_env: "baseUrlEnv",
+  api_key_env: "apiKeyEnv",
+} as const);
+export type ModelEnvKey = keyof typeof MODEL_ENV_FIELDS;
+export const MODEL_ENV_KEYS = Object.keys(MODEL_ENV_FIELDS) as readonly ModelEnvKey[];
 const FIRST_PRINTABLE_ASCII = 0x20;
 const ASCII_DELETE = 0x7f;
 
@@ -158,6 +168,14 @@ export function validateBasePath(basePath: unknown, label: string): string {
   return basePath;
 }
 
+/** Un nombre de variable de entorno (`[A-Za-z_][A-Za-z0-9_]*`). */
+export function validateEnvName(name: unknown, label: string): string {
+  if (typeof name !== "string" || !ENV_NAME_PATTERN.test(name)) {
+    throw new InvalidArgumentError(`${label} debe ser un nombre de variable de entorno`);
+  }
+  return name;
+}
+
 export function validateRegion(region: unknown, label: string): string {
   if (typeof region !== "string" || !REGION_PATTERN.test(region)) {
     throw new InvalidArgumentError(`${label} debe ser una región de AWS ('us-east-1')`);
@@ -165,13 +183,18 @@ export function validateRegion(region: unknown, label: string): string {
   return region;
 }
 
-export interface AgentModelOptions {
+/** `Id` es el tipo del id: `string` si lo pasas, y `string | undefined` si
+ * el modelo lo elige tu código. */
+export interface AgentModelOptions<Id extends string | undefined = string | undefined> {
   readonly provider: ModelProvider;
-  readonly id: string;
+  readonly id?: Id;
   readonly gateway: string;
   readonly region?: string | undefined;
   readonly basePath?: string | undefined;
   readonly promptCaching?: boolean | undefined;
+  readonly idEnv?: string | undefined;
+  readonly baseUrlEnv?: string | undefined;
+  readonly apiKeyEnv?: string | undefined;
 }
 
 /**
@@ -185,22 +208,34 @@ export interface AgentModelOptions {
  * `"openai"` va con `openaiGateway` o `xaiGateway`, `"google"` con
  * `geminiGateway` y `"azure"` con `azureOpenaiGateway`. `promptCaching`
  * (por defecto `true`) deja que el runtime marque puntos de caché.
+ *
+ * Sin `id`, el modelo lo elige el código del agente por su configuración
+ * (ADR-033 D2): sólo vale con un runtime que no construye el modelo (un
+ * `entrypoint` tuyo) y una pasarela que no filtra por modelo. `idEnv`,
+ * `baseUrlEnv` y `apiKeyEnv` son los **nombres** de las variables en las que
+ * tu código lee el id, la URL base y la clave (`"LLM_MODEL"`...), nunca
+ * valores; en MicroVMs Rayito las apunta a la pasarela y al marcador.
  */
-export class AgentModel {
+export class AgentModel<Id extends string | undefined = string | undefined> {
   readonly provider: ModelProvider;
-  readonly id: string;
+  readonly id: Id;
   readonly gateway: string;
   readonly region: string | undefined;
   readonly basePath: string;
   readonly promptCaching: boolean;
+  readonly idEnv: string | undefined;
+  readonly baseUrlEnv: string | undefined;
+  readonly apiKeyEnv: string | undefined;
 
-  constructor(options: AgentModelOptions) {
+  constructor(options: AgentModelOptions<Id>) {
     if (!(MODEL_PROVIDERS as readonly string[]).includes(options.provider)) {
       throw new InvalidArgumentError(
         `AgentModel.provider debe ser uno de ${JSON.stringify(MODEL_PROVIDERS)}`,
       );
     }
-    validateModelId(options.id, "AgentModel.id");
+    if (options.id !== undefined) {
+      validateModelId(options.id, "AgentModel.id");
+    }
     validateRouteName(options.gateway);
     if (options.provider === "bedrock" && options.region === undefined) {
       throw new InvalidArgumentError("AgentModel.region es obligatoria con 'bedrock'");
@@ -216,13 +251,47 @@ export class AgentModel {
     if (typeof promptCaching !== "boolean") {
       throw new InvalidArgumentError("AgentModel.promptCaching debe ser un boolean");
     }
+    for (const field of Object.values(MODEL_ENV_FIELDS)) {
+      const name = options[field];
+      if (name !== undefined) {
+        validateEnvName(name, `AgentModel.${field}`);
+      }
+    }
     this.provider = options.provider;
-    this.id = options.id;
+    this.id = options.id as Id;
     this.gateway = options.gateway;
     this.region = options.region;
     this.basePath = basePath;
     this.promptCaching = promptCaching;
+    this.idEnv = options.idEnv;
+    this.baseUrlEnv = options.baseUrlEnv;
+    this.apiKeyEnv = options.apiKeyEnv;
   }
+
+  /** Las claves de `MODEL_ENV_KEYS` que están puestas y el nombre de su
+   * variable, en ese orden. */
+  envNames(): Readonly<Partial<Record<ModelEnvKey, string>>> {
+    const names: Partial<Record<ModelEnvKey, string>> = {};
+    for (const key of MODEL_ENV_KEYS) {
+      const name = this[MODEL_ENV_FIELDS[key]];
+      if (name !== undefined) {
+        names[key] = name;
+      }
+    }
+    return Object.freeze(names);
+  }
+}
+
+/** El id de `model` para un runtime que construye él mismo el modelo
+ * (`opencode`, `hermes`, `deepagents` o `strands` sin `entrypoint`), o
+ * `InvalidArgumentError` antes de cualquier RPC si no lo tiene. */
+export function requiredModelId(model: AgentModel, runtime: string): string {
+  if (model.id === undefined) {
+    throw new InvalidArgumentError(
+      `el runtime '${runtime}' construye el modelo: fija AgentModel.id`,
+    );
+  }
+  return model.id;
 }
 
 function validateAction(action: unknown, label: string): PermissionAction {
@@ -456,7 +525,7 @@ export class AgentSpec {
     this.runtimeVersion = options.runtimeVersion;
   }
 
-  get effectiveSmallModel(): string {
+  get effectiveSmallModel(): string | undefined {
     return this.smallModel ?? this.model.id;
   }
 

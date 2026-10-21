@@ -135,6 +135,9 @@ export interface AgentDetectOverrides {
   readonly language: string | undefined;
   readonly entry: string | undefined;
   readonly protocol: string | undefined;
+  readonly modelId?: string | undefined;
+  readonly modelProvider?: string | undefined;
+  readonly modelBaseUrl?: string | undefined;
 }
 
 /** Lo que las banderas de `rayito agent deploy` cambian del proyecto

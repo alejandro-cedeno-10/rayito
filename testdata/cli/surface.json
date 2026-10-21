@@ -331,6 +331,45 @@
           "envvar": null
         },
         {
+          "name": "model_id",
+          "kind": "option",
+          "flags": [
+            "--model-id"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "model_provider",
+          "kind": "option",
+          "flags": [
+            "--model-provider"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "model_base_url",
+          "kind": "option",
+          "flags": [
+            "--model-base-url"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
           "name": "memory",
           "kind": "option",
           "flags": [
@@ -655,6 +694,19 @@
           "default": null,
           "is_flag": false,
           "envvar": null
+        },
+        {
+          "name": "external_model",
+          "kind": "option",
+          "flags": [
+            "--external-model"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "default": false,
+          "is_flag": true,
+          "envvar": null
         }
       ]
     },
@@ -722,6 +774,45 @@
           "kind": "option",
           "flags": [
             "--protocol"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "model_id",
+          "kind": "option",
+          "flags": [
+            "--model-id"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "model_provider",
+          "kind": "option",
+          "flags": [
+            "--model-provider"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "model_base_url",
+          "kind": "option",
+          "flags": [
+            "--model-base-url"
           ],
           "type": "str",
           "required": false,

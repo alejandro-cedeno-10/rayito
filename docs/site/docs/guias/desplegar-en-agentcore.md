@@ -442,6 +442,33 @@ rayito agent deploy ./mi-agente --target agentcore \
   --readable-secret mi-app/clave-externa
 ```
 
+### Modelos fuera de Bedrock { #modelos-fuera-de-bedrock }
+
+Sin pasarela de secretos, un modelo que no es de Bedrock no se cablea solo: es
+`provider_unsupported`. Si tu código llama a una pasarela de LLM compatible con
+OpenAI y obtiene su clave por su cuenta, `--external-model`
+(`external_model=True` / `externalModel: true`) lo permite:
+
+```bash
+rayito agent deploy ./mi-agente --target agentcore --external-model \
+  --readable-secret rayito/agents/mi-agente/llm
+```
+
+Con la opción:
+
+- El rol no recibe ningún permiso de Bedrock que no pidas: el modelo del
+  proyecto no se añade, y sin `--bedrock-model` el plan dice
+  `noBedrockModels`.
+- Si `[model]` nombra `base_url_env` y su pasarela tiene `upstream`, el entorno
+  del runtime lleva esa variable con el `upstream` más `base_path`. No es un
+  secreto.
+- La clave **nunca** va al entorno del runtime (`GetAgentRuntime` lo devuelve
+  en claro). Tu código la lee con el rol, gracias a `--readable-secret`.
+- El plan añade la línea de seguridad `externalModel`.
+
+Un proyecto con proveedor `bedrock` y sin `[model] id` necesita
+`--bedrock-model`; si no, el plan falla con `model_required`.
+
 ### Etiquetas para organizaciones que las exigen { #etiquetas }
 
 Una SCP que exige etiquetas deniega crear recursos sin ellas. `--tag K=V`
@@ -532,6 +559,11 @@ servicio de metadatos de la microVM. Para OpenCode, el contexto de build incluye
 el mismo ayudante y un perfil de AWS con `credential_process` que lo ejecuta
 (`AWS_CONFIG_FILE` y `AWS_PROFILE` en el entorno de la imagen): OpenCode obtiene
 credenciales con fecha de caducidad y las refresca solo.
+
+Con `--external-model` el agente llama a un modelo fuera de Bedrock por
+Internet con una clave que obtiene tu código (`--readable-secret` o
+`--secret-env`): Rayito no la ve ni filtra esa salida, y el plan
+lo dice con la línea `externalModel`.
 
 ## Errores { #errores }
 

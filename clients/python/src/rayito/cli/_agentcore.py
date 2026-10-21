@@ -84,6 +84,10 @@ MAX_SESSION_LIFETIME_HELP: Final = (
     "Segundos de vida máxima de la microVM de una sesión (60-28800; por defecto, 28800). "
     "Sólo con --target agentcore."
 )
+EXTERNAL_MODEL_HELP: Final = (
+    "Sólo con --target agentcore: permite un modelo fuera de Bedrock. Tu código obtiene la "
+    "clave (--secret-env o --readable-secret); Rayito no filtra esa salida."
+)
 STOP_SESSION_ID_HELP: Final = (
     "Con --target agentcore: la sesión cuya microVM se para (StopRuntimeSession)."
 )
@@ -109,6 +113,7 @@ BEDROCK_MODEL_FLAG: Final = "--bedrock-model"
 READABLE_SECRET_FLAG: Final = "--readable-secret"
 IDLE_SESSION_TIMEOUT_FLAG: Final = "--idle-session-timeout"
 MAX_SESSION_LIFETIME_FLAG: Final = "--max-session-lifetime"
+EXTERNAL_MODEL_FLAG: Final = "--external-model"
 SESSION_ID_FLAG: Final = "--session-id"
 TOKEN_FILE_FLAG: Final = "--token-file"
 TOKEN_FILE_REASON: Final = "AgentCore autentica con IAM (SigV4), no con un access token"
@@ -186,6 +191,7 @@ class AgentCoreDeployRequest:
     idle_session_timeout: int | None
     max_session_lifetime: int | None
     microvm_flags: Collection[str]
+    external_model: bool = False
 
 
 def adjust_with(request: AgentCoreDeployRequest) -> Callable[[AgentProject], AgentProject]:
@@ -220,6 +226,7 @@ def run_agentcore_deploy(ctx: typer.Context, request: AgentCoreDeployRequest) ->
             idle_session_timeout_seconds=request.idle_session_timeout,
             max_session_lifetime_seconds=request.max_session_lifetime,
             tags=parse_tag_pairs(request.tags, option="--tag"),
+            external_model=request.external_model,
         )
     except InvalidArgumentException as exc:
         fail(str(exc), code=EXIT_USAGE)

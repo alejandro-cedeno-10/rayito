@@ -131,6 +131,33 @@ export interface BridgeRules {
   readonly defaultUvManifest: string;
 }
 
+/** Una expresión de regla. */
+export interface PatternRule {
+  readonly pattern: string;
+}
+
+/** Los campos de una clase de pydantic-settings (`BaseSettings`). */
+export interface SettingsRule {
+  readonly marker: PatternRule;
+  readonly prefix: PatternRule;
+  readonly field: PatternRule;
+}
+
+/** Modelo elegido por el código (`modelFromCode`, ADR-033 D2). */
+export interface ModelFromCodeRules {
+  readonly clientBaseUrl: Readonly<Record<string, PatternRule>>;
+  readonly fromPreset: string;
+  readonly toPreset: string;
+  readonly baseUrlRule: string;
+  readonly modelEnvPattern: PatternRule;
+  readonly baseUrlEnvPattern: PatternRule;
+  readonly apiKeyEnvPattern: PatternRule;
+  readonly envExampleName: PatternRule;
+  readonly envReads: Readonly<Record<string, readonly PatternRule[]>>;
+  readonly settings: Readonly<Record<string, SettingsRule>>;
+  readonly langgraphJson: string;
+}
+
 export interface DetectionRules {
   readonly schema: string;
   readonly ignoredPathSegments: readonly string[];
@@ -141,6 +168,7 @@ export interface DetectionRules {
   readonly preferFiles: readonly string[];
   readonly maxCandidatesListed: number;
   readonly maxModelsListed: number;
+  readonly modelFromCode: ModelFromCodeRules;
   readonly languages: Readonly<Record<string, LanguageRule>>;
   readonly entryFiles: Readonly<Record<string, EntryFileRule>>;
   readonly frameworks: readonly FrameworkRule[];

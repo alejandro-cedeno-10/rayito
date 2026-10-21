@@ -99,7 +99,11 @@ def detect_project(
         return AgentProject.from_dict(document, base_dir=base_dir, read_text=read_text), None
     chosen_region = region or _document_region(document) or resolve_region(None)
     filled = detected_document(
-        document, report, name=project_name_of(directory), region=chosen_region
+        document,
+        report,
+        name=project_name_of(directory),
+        region=chosen_region,
+        overrides=overrides,
     )
     return AgentProject.from_dict(filled, base_dir=base_dir, read_text=read_text), report
 

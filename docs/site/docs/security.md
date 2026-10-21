@@ -597,6 +597,14 @@ runtime que no tiene la marca `rayito.agentcore/1` en su descripción nunca se t
 puede usarlo; una organización con SCP que exigen etiquetas necesita `--tag`, y
 las etiquetas de un runtime ya creado no se actualizan.
 
+**Modelo fuera de Bedrock (`--external-model`).** Es opt-in: sin la opción, un
+proveedor que no es `bedrock` sigue siendo `provider_unsupported`. Con ella, el
+agente llama a su pasarela de LLM por la red `PUBLIC` con una clave que obtiene
+su código (`--readable-secret` o `--secret-env`): el rol no recibe permisos de
+Bedrock que no se pidan, la clave nunca va a las variables de entorno del
+runtime (sólo la URL base, que no es secreta) y Rayito no la ve ni filtra esa
+salida. El plan lo dice con la línea `externalModel`.
+
 ## Constructos CDK: roles de los recursos personalizados y del build de la imagen (T37) { #cdk }
 
 Resumen de **T37** de

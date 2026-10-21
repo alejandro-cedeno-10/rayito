@@ -27,7 +27,7 @@ import re
 from collections.abc import Mapping, Sequence
 from typing import Final
 
-from rayito._agent._domain import AgentSpec
+from rayito._agent._domain import AgentSpec, required_model_id
 from rayito._agent._host_runtime import (
     PYTHON_FLAG_ENVS,
     HostBackedRuntime,
@@ -286,7 +286,7 @@ class HermesRuntime(HostBackedRuntime):
             "v": AGENT_PROTOCOL_VERSION,
             "provider": spec.model.provider,
             "client": client,
-            "model": spec.model.id,
+            "model": required_model_id(spec.model, self.name),
             "region": spec.model.region,
             "base_url": base_url,
             "credential_placeholder": MODEL_CREDENTIAL_PLACEHOLDER if base_url else None,

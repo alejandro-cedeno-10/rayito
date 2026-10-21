@@ -7143,8 +7143,12 @@ export async function loadTarget(config, preferred, importModule = (name) => imp
   return module.default;
 }
 
+// Sin id de modelo (lo elige tu código), \`model\` y \`modelId\` llegan como
+// \`undefined\`, nunca como \`null\`.
+const OPTIONAL_MODEL_KEYS = ["model", "modelId"];
+
 export function factoryContext(config, request, extra = {}) {
-  return {
+  const context = {
     instructions: config.instructions ?? null,
     workdir: config.workdir,
     stateDir: config.state_dir,
@@ -7152,6 +7156,12 @@ export function factoryContext(config, request, extra = {}) {
     sessionsDir: config.sessions_dir,
     ...extra,
   };
+  for (const key of OPTIONAL_MODEL_KEYS) {
+    if (context[key] === null) {
+      context[key] = undefined;
+    }
+  }
+  return context;
 }
 
 export async function loadAgent(config, model, sessionId, importModule = (name) => import(name)) {
@@ -7184,7 +7194,8 @@ function validRequest(request) {
 
 async function runStrands({ config, request, emit, importModule }) {
   const sdk = await importModule("@strands-agents/sdk");
-  const model = await buildModel(config, request.model ?? config.model, importModule);
+  const modelId = request.model ?? config.model;
+  const model = modelId == null ? undefined : await buildModel(config, modelId, importModule);
   const agent = await loadAgent(config, model, request.session_id, importModule);
   registerPermissions(agent, sdk, config.permissions ?? {});
   const translator = new Translator({ reasoning: request.reasoning === true });

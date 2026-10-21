@@ -44,39 +44,39 @@ follows merge rules M1-M8 of `design.md` and ticks only its own section here.
 
 ## A. Model optional when not Bedrock (`feat/agent-model-optional`)
 
-- [ ] A.1 `AgentModel` / `AgentModelOptions`: `id` optional, `id_env`,
+- [x] A.1 `AgentModel` / `AgentModelOptions`: `id` optional, `id_env`,
       `base_url_env`, `api_key_env` appended; `effective_small_model` optional;
       `_read_model`, `_model_to_dict`, schema.json (4.3); existing vectors
       byte-identical.
-- [ ] A.2 `MODEL_ID_REQUIRED_PRESETS` derived from the gateway presets;
+- [x] A.2 `MODEL_ID_REQUIRED_PRESETS` derived from the gateway presets;
       `require_model_id` / `requireModelId` over
       `testdata/agent-model-optional/requirement.json` (MicroVM rows).
-- [ ] A.3 `modelFromCode` in `agent-detection.json`, regenerate; base URL
+- [x] A.3 `modelFromCode` in `agent-detection.json`, regenerate; base URL
       evidence turns `openai` into `openai-compatible`; model variable names
       from `.env.example`, getenv/process.env and `langgraph.json` `env` keys;
       pydantic-settings mapping; `model_envs` and `model_id_from_code`.
       Test: the report holds no value (extend
       `test_the_report_holds_no_file_content_or_secret` with a new test).
-- [ ] A.4 `DetectOverrides.model_id`, `model_provider`, `model_base_url`;
+- [x] A.4 `DetectOverrides.model_id`, `model_provider`, `model_base_url`;
       flags `--model-id`, `--model-provider`, `--model-base-url` on
       `agent detect` / `agent deploy` in both CLIs (4.18, 4.19).
-- [ ] A.5 MicroVM wiring: `standard_model_envs` exports the `*_env` names;
+- [x] A.5 MicroVM wiring: `standard_model_envs` exports the `*_env` names;
       `RAYITO_MODEL_ID` omitted without id; `strands` / `deepagents`
       `build_context` lazy; `factoryContext` with `model: null`; telemetry
       without `gen_ai.request.model`; `opencode`, `hermes`, defaults without
       entrypoint raise `missing_key model.id`.
-- [ ] A.6 AgentCore: `AgentCoreOptions.external_model`, `--external-model`,
+- [x] A.6 AgentCore: `AgentCoreOptions.external_model`, `--external-model`,
       option row and label (4.5); `check_provider`, `bedrock_models_of`,
       `check_iam_inputs` conditional; `external_model_environment`;
       `runtime_environment` and `security_keys` final forms (4.16);
       `externalModel` security line; `model_required` raised in `build_plan`;
       AgentCore rows of `requirement.json`; new plan vectors (M5).
-- [ ] A.7 CDK prop `externalModel` / `external_model` (4.22) with a synth test
+- [x] A.7 CDK prop `externalModel` / `external_model` (4.22) with a synth test
       that has no Bedrock statement.
-- [ ] A.8 Docs (4.23), CHANGELOG (Añadido, and «Cambiado» for the type-only
+- [x] A.8 Docs (4.23), CHANGELOG (Añadido, and «Cambiado» for the type-only
       widening of `AgentModel.id`), `AWS_API_NOTES.md` Q190 placeholder for
       the acceptance.
-- [ ] A.9 Gates: Python and TypeScript unit suites, `ruff`, `mypy --strict`,
+- [x] A.9 Gates: Python and TypeScript unit suites, `ruff`, `mypy --strict`,
       Biome, typecheck, build, `pack:check`, `check_sdk_parity.py --cli`,
       generators `--check`, `mkdocs --strict`, `check_hygiene.py`, OpenSpec
       `--strict`.

@@ -19,13 +19,19 @@ export const ENTRY_OBJECT = "object";
 export const ENTRY_FACTORY = "factory";
 
 /** Lo que el usuario fuerza por encima de la detección (`--framework`,
- * `--language`, `--entry`, `--protocol`). `entrypoint: "http"` sirve la app
- * HTTP del proyecto en vez del framework del agente. */
+ * `--language`, `--entry`, `--protocol`, `--model-id`, `--model-provider`,
+ * `--model-base-url`). `entrypoint: "http"` sirve la app HTTP del proyecto en
+ * vez del framework del agente. `modelProvider` es un preset de pasarela
+ * (`openai-compatible`, `litellm`...) y `modelBaseUrl` la URL `https` de la
+ * pasarela de LLM, que pasa a ser su `upstream`. */
 export interface DetectOverrides {
   readonly framework?: string | undefined;
   readonly language?: string | undefined;
   readonly entrypoint?: string | undefined;
   readonly protocol?: string | undefined;
+  readonly modelId?: string | undefined;
+  readonly modelProvider?: string | undefined;
+  readonly modelBaseUrl?: string | undefined;
 }
 
 /** Un fichero (ruta relativa al proyecto) y la regla que lo reconoció; nunca
@@ -98,6 +104,7 @@ export interface DetectionReportInit {
   readonly evidence?: readonly DetectionEvidence[] | undefined;
   readonly warnings?: readonly DetectionWarning[] | undefined;
   readonly alternatives?: readonly DetectionAlternative[] | undefined;
+  readonly modelEnvs?: Readonly<Record<string, string>> | undefined;
 }
 
 function nullable<T>(value: T | undefined): T | null {
@@ -163,7 +170,9 @@ function appTable(app: DetectionApp, protocol: string): Record<string, unknown> 
  * TypeScript) y si es un objeto o una fábrica, el `protocol`, las `options`
  * propias del runtime, la `app` HTTP, el plan de instalación, los proveedores
  * de modelo y los literales de modelo vistos, la evidencia, los avisos y las
- * alternativas.
+ * alternativas. `modelEnvs` (claves `id_env`, `base_url_env`, `api_key_env`
+ * de `[model]`) son los nombres de variable con los que el código elige su
+ * modelo cuando no hay literal; sólo nombres, nunca valores.
  */
 export class DetectionReport {
   readonly language: string | undefined;
@@ -180,6 +189,7 @@ export class DetectionReport {
   readonly evidence: readonly DetectionEvidence[];
   readonly warnings: readonly DetectionWarning[];
   readonly alternatives: readonly DetectionAlternative[];
+  readonly modelEnvs: Readonly<Record<string, string>>;
 
   constructor(init: DetectionReportInit) {
     this.language = init.language;
@@ -196,11 +206,12 @@ export class DetectionReport {
     this.evidence = Object.freeze([...(init.evidence ?? [])]);
     this.warnings = Object.freeze([...(init.warnings ?? [])]);
     this.alternatives = Object.freeze([...(init.alternatives ?? [])]);
+    this.modelEnvs = Object.freeze({ ...(init.modelEnvs ?? {}) });
   }
 
-  /** La forma JSON compartida con Python. */
+  /** La forma JSON compartida con Python; `model_envs` sólo si hay. */
   toObject(): Record<string, unknown> {
-    return {
+    const document: Record<string, unknown> = {
       schema: AGENT_DETECTION_SCHEMA,
       language: nullable(this.language),
       framework: this.framework,
@@ -225,6 +236,10 @@ export class DetectionReport {
         entrypoint: nullable(alternative.entrypoint),
       })),
     };
+    if (Object.keys(this.modelEnvs).length > 0) {
+      document.model_envs = { ...this.modelEnvs };
+    }
+    return document;
   }
 
   /** La tabla `[runtime]` de `rayito-agent.toml` que describe este informe:

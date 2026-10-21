@@ -91,6 +91,12 @@ SECURITY_TEXTS: Final[Mapping[str, str]] = MappingProxyType(
         "bedrockModels": "el rol del runtime puede invocar en Bedrock: {models}",
         "noBedrockModels": "el rol del runtime no puede invocar ningún modelo de Bedrock",
         "readableSecrets": "el rol del runtime puede leer los secretos: {secrets}",
+        "externalModel": (
+            "modelo fuera de Bedrock (--external-model): el agente llama a su pasarela de LLM "
+            "por Internet con una clave que obtiene tu código (--secret-env o "
+            "--readable-secret); la clave nunca va en el entorno del runtime y Rayito no la ve "
+            "ni filtra esa salida"
+        ),
         "publicNetwork": (
             "red PUBLIC: el agente tiene salida a Internet y la política de salida de Rayito no "
             "se aplica"

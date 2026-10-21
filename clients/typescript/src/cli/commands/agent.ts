@@ -68,6 +68,7 @@ import {
 } from "../agentcore.js";
 import {
   bedrockModelOption,
+  externalModelOption,
   idleSessionTimeoutOption,
   maxSessionLifetimeOption,
   readableSecretOption,
@@ -398,11 +399,21 @@ const STEP_MESSAGES: Readonly<Record<string, string>> = {
   fleet: "{detail} VM(s) listos",
 };
 
+const MODEL_ID_HELP =
+  "Id del modelo, si la detección no lo encuentra (tu código puede elegirlo por configuración).";
+const MODEL_PROVIDER_HELP =
+  "Pasarela del modelo (bedrock, openai, openai-compatible, litellm…), si la detección se equivoca.";
+const MODEL_BASE_URL_HELP =
+  "URL https de una pasarela compatible con OpenAI (upstream de openai-compatible o litellm).";
+
 const detectOverrideOptions = [
   option(["--framework"], { help: DETECT_FLAGS_HELP }),
   option(["--language"], { help: DETECT_FLAGS_HELP }),
   option(["--entry"], { help: DETECT_FLAGS_HELP }),
   option(["--protocol"], { help: DETECT_FLAGS_HELP }),
+  option(["--model-id"], { help: MODEL_ID_HELP }),
+  option(["--model-provider"], { help: MODEL_PROVIDER_HELP }),
+  option(["--model-base-url"], { help: MODEL_BASE_URL_HELP }),
 ];
 
 function detectOverridesOf(context: CommandContext): AgentDetectOverrides {
@@ -412,6 +423,9 @@ function detectOverridesOf(context: CommandContext): AgentDetectOverrides {
     language: values.string("language"),
     entry: values.string("entry"),
     protocol: values.string("protocol"),
+    modelId: values.string("model_id"),
+    modelProvider: values.string("model_provider"),
+    modelBaseUrl: values.string("model_base_url"),
   };
 }
 
@@ -639,6 +653,7 @@ export const agentDeployCommand = defineCommand({
     readableSecretOption,
     idleSessionTimeoutOption,
     maxSessionLifetimeOption,
+    externalModelOption,
   ],
   run: (context) =>
     guarded(context, async () => {

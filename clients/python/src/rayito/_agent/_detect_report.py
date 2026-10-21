@@ -27,13 +27,19 @@ ENTRY_FACTORY: Final = "factory"
 @dataclass(frozen=True)
 class DetectOverrides:
     """Lo que el usuario fuerza por encima de la detección (`--framework`,
-    `--language`, `--entry`, `--protocol`). `entrypoint="http"` sirve la app
-    HTTP del proyecto en vez del framework del agente."""
+    `--language`, `--entry`, `--protocol`, `--model-id`, `--model-provider`,
+    `--model-base-url`). `entrypoint="http"` sirve la app HTTP del proyecto
+    en vez del framework del agente. `model_provider` es un preset de
+    pasarela (`openai-compatible`, `litellm`...) y `model_base_url` la URL
+    `https` de la pasarela de LLM, que pasa a ser su `upstream`."""
 
     framework: str | None = None
     language: str | None = None
     entrypoint: str | None = None
     protocol: str | None = None
+    model_id: str | None = None
+    model_provider: str | None = None
+    model_base_url: str | None = None
 
 
 @dataclass(frozen=True)
@@ -153,7 +159,9 @@ class DetectionReport:
     TypeScript) y si es un objeto o una fábrica, el `protocol`, las `options`
     propias del runtime, la `app` HTTP, el plan de instalación, los
     proveedores de modelo y los literales de modelo vistos, la evidencia, los
-    avisos y las alternativas."""
+    avisos y las alternativas. `model_envs` (`id_env`, `base_url_env`,
+    `api_key_env`) son los nombres de variable con los que el código elige su
+    modelo cuando no hay literal; sólo nombres, nunca valores."""
 
     language: str | None
     framework: str
@@ -169,13 +177,15 @@ class DetectionReport:
     evidence: tuple[DetectionEvidence, ...] = ()
     warnings: tuple[DetectionWarning, ...] = ()
     alternatives: tuple[DetectionAlternative, ...] = ()
+    model_envs: Mapping[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "options", MappingProxyType(dict(self.options)))
+        object.__setattr__(self, "model_envs", MappingProxyType(dict(self.model_envs)))
 
     def to_dict(self) -> dict[str, object]:
-        """La forma JSON compartida con TypeScript."""
-        return {
+        """La forma JSON compartida con TypeScript; `model_envs` sólo si hay."""
+        document: dict[str, object] = {
             "schema": AGENT_DETECTION_SCHEMA,
             "language": self.language,
             "framework": self.framework,
@@ -192,6 +202,9 @@ class DetectionReport:
             "warnings": [item.to_dict() for item in self.warnings],
             "alternatives": [item.to_dict() for item in self.alternatives],
         }
+        if self.model_envs:
+            document["model_envs"] = dict(self.model_envs)
+        return document
 
     def runtime_table(self) -> dict[str, object]:
         """La tabla `[runtime]` de `rayito-agent.toml` que describe este

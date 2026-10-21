@@ -495,15 +495,18 @@ rayito agent init [DIR] [--runtime R] [--language python|typescript] [--provider
                   [--region R] [--force]
 rayito agent build --bucket B [--file PATH] [--force] [--timeout 1800]
 rayito agent run PROMPT [--file PATH] [--session-id ID] [--model ID] [--stream]
-rayito agent detect [PATH] [--framework F] [--language L] [--entry E] [--protocol P] [--write]
+rayito agent detect [PATH] [--framework F] [--language L] [--entry E] [--protocol P]
+                    [--model-id ID] [--model-provider P] [--model-base-url URL] [--write]
 rayito agent deploy [PATH] [--file PATH] [--timeout S] [--port N] [--token-file F] [--keep-on-failure]
                     [--framework F] [--language L] [--entry E] [--protocol P]
+                    [--model-id ID] [--model-provider P] [--model-base-url URL]
                     [--memory MIB] [--max-sessions N] [--sessions shared|dedicated]
                     [--min-vms N] [--max-vms N] [--warm N] [--idle S] [--queue N] [--queue-timeout S]
                     [--env K=V]... [--allow-out DEST]... [--bucket B] [--secret PROVEEDOR=NOMBRE]...
                     [--create-secret] [--base-artifact ZIP] [--yes] [--dry-run]
                     [--target microvm|agentcore] [--tag K=V]... [--bedrock-model ID]...
                     [--readable-secret NOMBRE]... [--idle-session-timeout S] [--max-session-lifetime S]
+                    [--external-model]
 rayito agent export --target docker|agentcore --out DIR [--file PATH] [--overwrite]
 rayito agent invoke SANDBOX_ID PROMPT [--session-id ID] [--stream] [--token-file F]
                     [--target microvm|agentcore]
@@ -574,6 +577,14 @@ pool. El prefetch y los pools calientes son opcionales:
 almacenamiento de snapshot ([Precios](cost.md#cuanto-cuesta-con-ejemplos));
 las antiguas se borran con `rayito image prune --image-name <name>`.
 
+`--model-id`, `--model-provider` y `--model-base-url` (en `detect` y
+`deploy`) fijan el modelo cuando tu código lo
+elige por configuración: el id, la pasarela (`openai-compatible`, `litellm`…)
+y la URL `https` de tu pasarela de LLM, que pasa a ser su `upstream`. Con un
+fichero de proyecto se comportan como `--entry`: lo que el fichero dice gana.
+Un `--model-provider` desconocido da `invalid_value` en `model.provider`. Ver
+[Modelo elegido por tu código](guias/despliega-tu-agente.md#modelo-desde-tu-codigo).
+
 ### `agent` con `--target agentcore` { #agent-agentcore }
 
 Desde 0.15.0, `rayito agent deploy --target agentcore`
@@ -604,6 +615,7 @@ MicroVMs, y `invoke`, `status`, `stop`, `list` y `delete` lo operan. Sin
 | `--readable-secret NOMBRE` | `deploy` | Secreto de Secrets Manager que el rol del runtime puede leer; repetible. Por defecto, ninguno |
 | `--idle-session-timeout S` | `deploy` | Segundos sin uso tras los que AgentCore termina la microVM de una sesión ({{agentcoreLifecycleMinSeconds}}-{{agentcoreLifecycleMaxSeconds}}, por defecto {{agentcoreIdleSessionTimeoutDefaultSeconds}}) |
 | `--max-session-lifetime S` | `deploy` | Vida máxima de la microVM de una sesión ({{agentcoreLifecycleMinSeconds}}-{{agentcoreLifecycleMaxSeconds}}, por defecto {{agentcoreLifecycleMaxSeconds}}) |
+| `--external-model` | `deploy` | Permite un modelo fuera de Bedrock: el rol no recibe permisos de Bedrock que no pidas y tu código obtiene la clave (`--readable-secret`). Sin ella, un proveedor que no es `bedrock` da `provider_unsupported` ([guía](guias/desplegar-en-agentcore.md#modelos-fuera-de-bedrock)) |
 | `--session-id ID` | `stop` | La sesión cuya microVM se para (`StopRuntimeSession`); con `--target agentcore` es obligatoria |
 | `--yes` | `deploy`, `delete` | No pedir confirmación (hace falta sin terminal o con `--json`) |
 

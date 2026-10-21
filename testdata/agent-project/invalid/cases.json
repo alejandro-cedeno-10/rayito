@@ -203,6 +203,13 @@
       "path": "runtime.language",
       "code": "invalid_value",
       "schema": "rejects"
+    },
+    {
+      "case": "opencode-without-model-id",
+      "file": "opencode-without-model-id.toml",
+      "path": "model.id",
+      "code": "missing_key",
+      "schema": "semantic"
     }
   ]
 }

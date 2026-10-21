@@ -1194,7 +1194,8 @@
     "unsupported_version": "ninguna versión fijada de {runtime} cumple la restricción del proyecto; usa una de las soportadas",
     "unsupported_port": "la app escucha en un puerto reservado ({port}); léelo de la variable PORT",
     "not_detected_route": "no se encontró una ruta POST para invocar la app; indícala en [runtime.app] invoke_path o usa el protocolo raw",
-    "invalid_override": "{value} no es un valor válido para {option}; usa uno de {allowed}"
+    "invalid_override": "{value} no es un valor válido para {option}; usa uno de {allowed}",
+    "invalid_model_provider": "--model-provider {value} no es una pasarela conocida ({candidates})"
   },
   "warnings": {
     "scan_truncated": "el árbol del proyecto supera el límite de análisis; solo se leen los primeros ficheros",
@@ -1209,9 +1210,68 @@
     "request_field_assumed": "no se detectó el campo de la petición; se usa {field}",
     "protocol_ignored": "el protocolo solo aplica a una app HTTP; se ignora",
     "several_providers": "hay varios proveedores de modelo ({providers}); se usa {used}",
-    "no_provider": "no se detecta ningún proveedor de modelo; indícalo con --secret proveedor=nombre"
+    "no_provider": "no se detecta ningún proveedor de modelo; indícalo con --secret proveedor=nombre",
+    "model_id_from_code": "no se fija el id del modelo: lo elige tu código ({envs})"
   },
   "maxModelsListed": 5,
+  "modelFromCode": {
+    "comment": "Modelo elegido por el código (ADR-033 D2). `clientBaseUrl`: un constructor de cliente con URL base convierte el proveedor `fromPreset` detectado por dependencia en `toPreset` (lo sustituye, no lo añade). Los nombres de variable salen de `envExampleFiles` (`envExampleName`), de las lecturas del código (`envReads`), de los campos de pydantic-settings (`settings`: `env_prefix` más el campo, en mayúsculas) y de las claves del mapa `env` de `langgraphJson`; se clasifican con `modelEnvPattern`, `baseUrlEnvPattern` y `apiKeyEnvPattern`. Nunca se lee un valor.",
+    "clientBaseUrl": {
+      "python": {
+        "pattern": "\\b(?:ChatOpenAI|AzureChatOpenAI|OpenAI|AsyncOpenAI|OpenAIModel|init_chat_model)\\s*\\([\\s\\S]{0,400}?\\bbase_url\\s*="
+      },
+      "typescript": {
+        "pattern": "\\b(?:ChatOpenAI|OpenAI|createOpenAI|createOpenAICompatible)\\s*\\(\\s*\\{[\\s\\S]{0,400}?\\b(?:baseURL|baseUrl|configuration)\\b"
+      }
+    },
+    "fromPreset": "openai",
+    "toPreset": "openai-compatible",
+    "baseUrlRule": "code:base_url",
+    "modelEnvPattern": {
+      "pattern": "^(?:[A-Z][A-Z0-9]*_)*MODEL(?:_ID|_NAME)?$"
+    },
+    "baseUrlEnvPattern": {
+      "pattern": "^(?:[A-Z][A-Z0-9]*_)*(?:BASE_URL|API_BASE)$"
+    },
+    "apiKeyEnvPattern": {
+      "pattern": "^(?:[A-Z][A-Z0-9]*_)*API_KEY$"
+    },
+    "envExampleName": {
+      "pattern": "^[ \\t]*(?:export[ \\t]+)?([A-Za-z_][A-Za-z0-9_]*)[ \\t]*="
+    },
+    "envReads": {
+      "python": [
+        {
+          "pattern": "\\bos\\.(?:getenv|environ\\.get)\\(\\s*[\"']([A-Za-z_][A-Za-z0-9_]*)[\"']"
+        },
+        {
+          "pattern": "\\bos\\.environ\\[\\s*[\"']([A-Za-z_][A-Za-z0-9_]*)[\"']"
+        }
+      ],
+      "typescript": [
+        {
+          "pattern": "\\bprocess\\.env\\.([A-Za-z_][A-Za-z0-9_]*)"
+        },
+        {
+          "pattern": "\\bprocess\\.env\\[\\s*[\"']([A-Za-z_][A-Za-z0-9_]*)[\"']"
+        }
+      ]
+    },
+    "settings": {
+      "python": {
+        "marker": {
+          "pattern": "\\bBaseSettings\\b"
+        },
+        "prefix": {
+          "pattern": "\\benv_prefix\\s*=\\s*[\"']([A-Za-z0-9_]*)[\"']"
+        },
+        "field": {
+          "pattern": "^[ \\t]+([a-z_][a-z0-9_]*)[ \\t]*:[ \\t]*[A-Za-z]"
+        }
+      }
+    },
+    "langgraphJson": "langgraph.json"
+  },
   "configProviders": [
     {
       "framework": "hermes",

@@ -400,6 +400,49 @@ balancer, for example). You can point at them directly with
 behind LiteLLM to get virtual keys and budgets. The `localhost` on your
 laptop is never reachable from the microVM.
 
+### Model chosen by your code { #modelo-elegido-por-tu-codigo }
+
+With a gateway that does not filter by model (all of them except `bedrock` and
+`gemini`) and a runtime with an `entrypoint` (or `CustomRuntime`), the model id
+is optional: your code reads it from its own configuration. Name the variables
+it reads and Rayito points them at the gateway, with the placeholder as key:
+
+=== "Python"
+
+    ```python
+    from rayito import AgentModel
+
+    model = AgentModel(
+        provider="openai-compatible",
+        id=None,
+        gateway="litellm",
+        base_path="/v1",
+        id_env="LLM_MODEL",
+        base_url_env="LLM_BASE_URL",
+        api_key_env="LLM_API_KEY",
+    )
+    ```
+
+=== "TypeScript"
+
+    ```ts
+    import { AgentModel } from "rayito";
+
+    const model = new AgentModel({
+      provider: "openai-compatible",
+      gateway: "litellm",
+      basePath: "/v1",
+      idEnv: "LLM_MODEL",
+      baseUrlEnv: "LLM_BASE_URL",
+      apiKeyEnv: "LLM_API_KEY",
+    });
+    ```
+
+Without an id, `ctx.model` is `None` (`undefined` in Node) and `LLM_MODEL` is
+not set. A runtime that builds the model (`opencode`, `hermes`, `deepagents` or
+`strands` without an `entrypoint`) still needs the id. More in
+[Deploy your agent](despliega-tu-agente.md#modelo-desde-tu-codigo).
+
 ## Provider-side limits { #limites-del-lado-del-proveedor }
 
 Only Bedrock and Gemini carry the model in the **path**, so the gateway's

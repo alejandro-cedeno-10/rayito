@@ -118,9 +118,10 @@ export function appliedStepLines(deployed: AgentCoreDeployedView): string[] {
   return deployed.steps.map((step) => stepLine(step, actionText(step, deployed.runtimeVersion)));
 }
 
-/** El plan como documento de `--json`, con las claves de `json.planKeys`. */
+/** El plan como documento de `--json`, con las claves de `json.planKeys`;
+ * `externalModel` sólo aparece si el modelo está fuera de Bedrock. */
 export function planDocument(plan: AgentCoreDeployPlan): Record<string, unknown> {
-  return {
+  const document: Record<string, unknown> = {
     target: plan.target,
     name: plan.name,
     region: plan.region,
@@ -142,6 +143,10 @@ export function planDocument(plan: AgentCoreDeployPlan): Record<string, unknown>
     warnings: [...plan.warnings],
     cost: [...plan.cost],
   };
+  if (plan.externalModel === true) {
+    document.externalModel = true;
+  }
+  return document;
 }
 
 function stepDocument(step: AgentCoreStep): Record<string, unknown> {

@@ -153,6 +153,67 @@ adivina: `ambiguous` (hay dos frameworks o dos puntos de entrada posibles: usa
 el id del modelo: escríbelo como literal o en `[model]`) y `unsupported` (una
 combinación que no llega a la pasarela sin cambiar el código).
 
+### Modelo elegido por tu código { #modelo-desde-tu-codigo }
+
+Si tu código elige el modelo por configuración, por ejemplo
+`ChatOpenAI(model=settings.llm_model, base_url=settings.base_url)`, no hace falta
+escribir el id del modelo en ningún sitio. La detección reconoce dos cosas sin
+ejecutar tu código ni leer ningún valor:
+
+- Un `base_url=` en el constructor del cliente (en TypeScript, `baseURL` o
+  `configuration`). Con él, un proveedor `openai` detectado por dependencia
+  pasa a ser `openai-compatible`.
+- Los **nombres** de las variables del modelo, la URL base y la clave
+  (`LLM_MODEL`, `LLM_BASE_URL`, `LLM_API_KEY`). Salen de `.env.example`, de las
+  lecturas `os.getenv` / `process.env`, de los campos de pydantic-settings
+  (`env_prefix` más el campo) y de las claves de `env` en `langgraph.json`. Es
+  una heurística de mejor esfuerzo: si no acierta, escribe los nombres en
+  `[model]`.
+
+El proyecto resuelto lleva `[model]` sin `id` y con esos nombres, y el informe
+avisa con `model_id_from_code`. La URL de tu pasarela de LLM no se puede
+detectar, así que se pasa con una bandera:
+
+```bash
+rayito agent deploy --model-provider openai-compatible \
+  --model-base-url https://llm-gateway.example.com --secret openai-compatible=rayito/llm-key
+```
+
+En el fichero de proyecto queda así:
+
+```toml
+[model]
+provider = "openai-compatible"
+gateway = "llm"
+base_path = "/v1"
+id_env = "LLM_MODEL"
+base_url_env = "LLM_BASE_URL"
+api_key_env = "LLM_API_KEY"
+
+[gateways.llm]
+preset = "openai-compatible"
+secret = "rayito/llm-key"
+upstream = "https://llm-gateway.example.com"
+base_path = "/v1"
+```
+
+En MicroVMs, Rayito apunta `LLM_BASE_URL` a la pasarela de secretos y pone el
+marcador en `LLM_API_KEY`. Tu código lee su propia configuración y pasa por la
+pasarela sin ver nunca la clave real. `LLM_MODEL` sólo se fija si el proyecto
+conoce el id (`--model-id` o `[model] id`).
+
+El id sigue siendo obligatorio donde Rayito lo usa:
+
+- Con las pasarelas `bedrock` y `gemini`, que sólo dejan pasar los modelos de su
+  lista.
+- Con los runtimes que construyen el modelo: `opencode`, `hermes`, y
+  `deepagents` o `strands` sin `entrypoint`.
+
+En los demás casos (un grafo con `entrypoint`, una app HTTP, `CustomRuntime`),
+tu código recibe `ctx.model = None` (`undefined` en Node) y elige el suyo. En
+AgentCore, un modelo fuera de Bedrock necesita
+[`--external-model`](desplegar-en-agentcore.md#modelos-fuera-de-bedrock).
+
 ### Qué se resuelve solo y qué no { #que-se-resuelve-solo }
 
 Cada valor sale, en este orden, del argumento o la bandera, del fichero, de una

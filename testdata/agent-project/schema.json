@@ -356,7 +356,6 @@
       "type": "object",
       "required": [
         "provider",
-        "id",
         "gateway"
       ],
       "additionalProperties": false,
@@ -388,6 +387,18 @@
         },
         "prompt_caching": {
           "type": "boolean"
+        },
+        "id_env": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+        },
+        "base_url_env": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+        },
+        "api_key_env": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
         }
       }
     },

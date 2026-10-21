@@ -22,6 +22,7 @@ import {
   ERROR_PREFIX,
   STOPPED_TEMPLATE,
 } from "./agentcore-messages.js";
+import { EXTERNAL_MODEL_FLAG } from "./agentcore-options.js";
 import {
   appliedStepLines,
   deleteDocument,
@@ -91,6 +92,7 @@ export function agentCoreOptionGiven(context: CommandContext): string | undefine
     ["--readable-secret", values.strings("readable_secret").length > 0],
     ["--idle-session-timeout", values.optionalNumber("idle_session_timeout") !== undefined],
     ["--max-session-lifetime", values.optionalNumber("max_session_lifetime") !== undefined],
+    [EXTERNAL_MODEL_FLAG, values.flag("external_model")],
   ];
   return given.find(([, isGiven]) => isGiven)?.[0];
 }
@@ -139,6 +141,7 @@ function deployRequest(
       ...(idle === undefined ? {} : { idleSessionTimeoutMs: idle }),
       ...(max === undefined ? {} : { maxSessionLifetimeMs: max }),
       tags: pairsOrUsage(values.strings("tag"), "--tag"),
+      ...(values.flag("external_model") ? { externalModel: true } : {}),
     },
     tokenFile: values.string("token_file"),
     region,

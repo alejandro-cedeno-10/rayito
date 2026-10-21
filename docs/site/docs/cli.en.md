@@ -507,15 +507,18 @@ rayito agent init [DIR] [--runtime R] [--language python|typescript] [--provider
                   [--region R] [--force]
 rayito agent build --bucket B [--file PATH] [--force] [--timeout 1800]
 rayito agent run PROMPT [--file PATH] [--session-id ID] [--model ID] [--stream]
-rayito agent detect [PATH] [--framework F] [--language L] [--entry E] [--protocol P] [--write]
+rayito agent detect [PATH] [--framework F] [--language L] [--entry E] [--protocol P]
+                    [--model-id ID] [--model-provider P] [--model-base-url URL] [--write]
 rayito agent deploy [PATH] [--file PATH] [--timeout S] [--port N] [--token-file F] [--keep-on-failure]
                     [--framework F] [--language L] [--entry E] [--protocol P]
+                    [--model-id ID] [--model-provider P] [--model-base-url URL]
                     [--memory MIB] [--max-sessions N] [--sessions shared|dedicated]
                     [--min-vms N] [--max-vms N] [--warm N] [--idle S] [--queue N] [--queue-timeout S]
                     [--env K=V]... [--allow-out DEST]... [--bucket B] [--secret PROVIDER=NAME]...
                     [--create-secret] [--base-artifact ZIP] [--yes] [--dry-run]
                     [--target microvm|agentcore] [--tag K=V]... [--bedrock-model ID]...
                     [--readable-secret NAME]... [--idle-session-timeout S] [--max-session-lifetime S]
+                    [--external-model]
 rayito agent export --target docker|agentcore --out DIR [--file PATH] [--overwrite]
 rayito agent invoke SANDBOX_ID PROMPT [--session-id ID] [--stream] [--token-file F]
                     [--target microvm|agentcore]
@@ -586,6 +589,14 @@ pool. Prefetch and warm pools are optional:
 costs snapshot storage ([Pricing](cost.md#cuanto-cuesta-con-ejemplos)); old
 ones are deleted with `rayito image prune --image-name <name>`.
 
+`--model-id`, `--model-provider` and `--model-base-url` (on `detect` and
+`deploy`) pin the model when your code
+picks it from its configuration: the id, the gateway (`openai-compatible`,
+`litellm`…) and the `https` URL of your LLM gateway, which becomes its
+`upstream`. With a project file they behave like `--entry`: what the file says
+wins. An unknown `--model-provider` gives `invalid_value` on `model.provider`.
+See [Model chosen by your code](guias/despliega-tu-agente.md#modelo-desde-tu-codigo).
+
 ### `agent` with `--target agentcore` { #agent-agentcore }
 
 Since 0.15.0, `rayito agent deploy --target agentcore`
@@ -616,6 +627,7 @@ fleet, and `invoke`, `status`, `stop`, `list` and `delete` operate it. Without
 | `--readable-secret NAME` | `deploy` | Secrets Manager secret the runtime role may read; repeatable. Default: none |
 | `--idle-session-timeout S` | `deploy` | Seconds without use after which AgentCore ends a session's microVM ({{agentcoreLifecycleMinSeconds}}-{{agentcoreLifecycleMaxSeconds}}, default {{agentcoreIdleSessionTimeoutDefaultSeconds}}) |
 | `--max-session-lifetime S` | `deploy` | Maximum lifetime of a session's microVM ({{agentcoreLifecycleMinSeconds}}-{{agentcoreLifecycleMaxSeconds}}, default {{agentcoreLifecycleMaxSeconds}}) |
+| `--external-model` | `deploy` | Allows a model outside Bedrock: the role gets no Bedrock permission you do not ask for and your code obtains the key (`--readable-secret`). Without it, a provider other than `bedrock` gives `provider_unsupported` ([guide](guias/desplegar-en-agentcore.md#modelos-fuera-de-bedrock)) |
 | `--session-id ID` | `stop` | The session whose microVM is stopped (`StopRuntimeSession`); with `--target agentcore` it is required |
 | `--yes` | `deploy`, `delete` | Do not ask for confirmation (required with no terminal or with `--json`) |
 
