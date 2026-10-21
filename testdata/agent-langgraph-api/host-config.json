@@ -1,0 +1,111 @@
+{
+  "schema": "rayito.agent-langgraph-api-host-config/1",
+  "_comment": "La tabla `[runtime.app]` con `protocol = \"langgraph-api\"` (ADR-033 D5): `canonical` es la tabla que escribe `HttpApp.to_mapping()` / `toMapping()` y `hostOptions` lo que el SDK manda al driver `http-app` del host (además de `workdir`, `model` y las opciones de entorno). Con `health_path` por defecto el host llama a `/ok`, y la ruta de invocación siempre es la de una ejecución de un hilo. `invalid` son tablas que los dos SDK rechazan con `InvalidArgumentException` / `InvalidArgumentError`.",
+  "cases": [
+    {
+      "name": "default paths",
+      "app": {
+        "command": ["langgraph", "dev", "--no-browser", "--no-reload", "--host", "127.0.0.1", "--port", "8000", "--config", "langgraph.json"],
+        "port": 8000,
+        "protocol": "langgraph-api",
+        "assistant_id": "agent"
+      },
+      "canonical": {
+        "command": ["langgraph", "dev", "--no-browser", "--no-reload", "--host", "127.0.0.1", "--port", "8000", "--config", "langgraph.json"],
+        "port": 8000,
+        "protocol": "langgraph-api",
+        "assistant_id": "agent"
+      },
+      "hostOptions": {
+        "command": ["langgraph", "dev", "--no-browser", "--no-reload", "--host", "127.0.0.1", "--port", "8000", "--config", "langgraph.json"],
+        "port": 8000,
+        "health_path": "/ok",
+        "invoke_path": "/threads/{thread_id}/runs/wait",
+        "protocol": "langgraph-api",
+        "assistant_id": "agent"
+      }
+    },
+    {
+      "name": "detected table with a response field",
+      "app": {
+        "command": ["langgraph", "dev", "--port", "8000"],
+        "port": 8000,
+        "health_path": "/ok",
+        "protocol": "langgraph-api",
+        "assistant_id": "triage",
+        "response_field": "summary"
+      },
+      "canonical": {
+        "command": ["langgraph", "dev", "--port", "8000"],
+        "port": 8000,
+        "health_path": "/ok",
+        "protocol": "langgraph-api",
+        "response_field": "summary",
+        "assistant_id": "triage"
+      },
+      "hostOptions": {
+        "command": ["langgraph", "dev", "--port", "8000"],
+        "port": 8000,
+        "health_path": "/ok",
+        "invoke_path": "/threads/{thread_id}/runs/wait",
+        "protocol": "langgraph-api",
+        "response_field": "summary",
+        "assistant_id": "triage"
+      }
+    },
+    {
+      "name": "own health path and an assistant uuid",
+      "app": {
+        "command": ["langgraph", "dev"],
+        "port": 8123,
+        "health_path": "/info",
+        "protocol": "langgraph-api",
+        "assistant_id": "00000000-0000-4000-8000-000000000001",
+        "port_env": "PORT"
+      },
+      "canonical": {
+        "command": ["langgraph", "dev"],
+        "port": 8123,
+        "health_path": "/info",
+        "protocol": "langgraph-api",
+        "port_env": "PORT",
+        "assistant_id": "00000000-0000-4000-8000-000000000001"
+      },
+      "hostOptions": {
+        "command": ["langgraph", "dev"],
+        "port": 8123,
+        "health_path": "/info",
+        "invoke_path": "/threads/{thread_id}/runs/wait",
+        "protocol": "langgraph-api",
+        "port_env": "PORT",
+        "assistant_id": "00000000-0000-4000-8000-000000000001"
+      }
+    }
+  ],
+  "invalid": [
+    {
+      "name": "assistant_id missing",
+      "app": {"command": ["langgraph", "dev"], "port": 8000, "protocol": "langgraph-api"}
+    },
+    {
+      "name": "assistant_id that is not a graph name",
+      "app": {"command": ["langgraph", "dev"], "port": 8000, "protocol": "langgraph-api", "assistant_id": "../agent"}
+    },
+    {
+      "name": "assistant_id with the default protocol",
+      "app": {"command": ["python", "serve.py"], "port": 8000, "assistant_id": "agent"}
+    },
+    {
+      "name": "assistant_id with json",
+      "app": {"command": ["python", "serve.py"], "port": 8000, "protocol": "json", "assistant_id": "agent"}
+    },
+    {
+      "name": "own invoke_path",
+      "app": {"command": ["langgraph", "dev"], "port": 8000, "protocol": "langgraph-api", "assistant_id": "agent", "invoke_path": "/runs/wait"}
+    },
+    {
+      "name": "request_field",
+      "app": {"command": ["langgraph", "dev"], "port": 8000, "protocol": "langgraph-api", "assistant_id": "agent", "request_field": "question"}
+    }
+  ]
+}
