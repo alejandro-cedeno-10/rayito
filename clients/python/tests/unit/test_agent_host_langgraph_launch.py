@@ -125,6 +125,15 @@ def test_without_a_readable_config_the_app_starts_as_before(
     assert http_app.langgraph_launch(command, str(app_dir), str(tmp_path)) is None
 
 
+def test_a_workdir_that_cannot_be_written_keeps_the_usual_start(tmp_path: Path) -> None:
+    app_dir = _read_only_app(tmp_path)
+    workdir = tmp_path / "locked"
+    workdir.mkdir()
+    workdir.chmod(stat.S_IRUSR | stat.S_IXUSR)
+    command = ["langgraph", "dev", "--config", "langgraph.json"]
+    assert http_app.langgraph_launch(command, str(app_dir), str(workdir)) is None
+
+
 def _driver(tmp_path: Path, protocol: str, **extra: Any) -> http_app.Driver:
     script = tmp_path / "fake_langgraph_dev.py"
     script.write_text(textwrap.dedent(FAKE_LANGGRAPH_DEV), encoding="utf-8")

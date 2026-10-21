@@ -244,23 +244,24 @@ def langgraph_launch(
     """El argv y el directorio de trabajo de `langgraph dev`: su
     `--config` (de `app_dir`) copiado a `workdir` con las rutas absolutas, y
     `workdir` como directorio de trabajo, que es donde escribe su estado.
-    `None` si el comando no lleva `--config` o la configuración no se lee: la
-    app arranca como siempre y es ella quien informa del error."""
+    `None` si el comando no lleva `--config`, o si la configuración no se lee
+    o su copia no se escribe: la app arranca como siempre y es ella quien
+    informa del error."""
     argv = [str(part) for part in command]
     position = _config_position(argv)
     if position is None:
         return None
     index, inline = position
     value = argv[index].split("=", 1)[1] if inline else argv[index]
+    copy = Path(workdir) / LANGGRAPH_CONFIG_COPY
     try:
         loaded = json.loads(Path(_absolute_path(app_dir, value)).read_text("utf-8"))
+        if not isinstance(loaded, Mapping):
+            return None
+        copy.parent.mkdir(parents=True, exist_ok=True)
+        copy.write_text(json.dumps(langgraph_absolute_config(loaded, app_dir)), encoding="utf-8")
     except (OSError, ValueError):
         return None
-    if not isinstance(loaded, Mapping):
-        return None
-    copy = Path(workdir) / LANGGRAPH_CONFIG_COPY
-    copy.parent.mkdir(parents=True, exist_ok=True)
-    copy.write_text(json.dumps(langgraph_absolute_config(loaded, app_dir)), encoding="utf-8")
     argv[index] = f"{LANGGRAPH_CONFIG_FLAG}={copy}" if inline else str(copy)
     return argv, workdir
 

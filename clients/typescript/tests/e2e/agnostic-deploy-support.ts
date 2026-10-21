@@ -74,7 +74,7 @@ export function stagedProject(source: string, root: string, options: StageOption
     if (!text.includes(old)) {
       throw new Error(`el ejemplo no contiene ${old}`);
     }
-    text = text.replace(old, replacement);
+    text = text.split(old).join(replacement);
   }
   const lines = [text.trimEnd(), ...(options.extra ?? [])];
   if (options.base !== undefined) {
