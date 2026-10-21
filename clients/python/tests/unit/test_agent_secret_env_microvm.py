@@ -117,6 +117,7 @@ def test_the_host_process_receives_the_values_and_no_file_holds_them(
     assert envs["TICKETS_TOKEN"] == "tk-value"
     assert envs["APP_MODE"] == "demo"
     assert "RAYITO_SECRET_ENV" not in envs
+    assert envs["RAYITO_SECRET_ENV_NAMES"] == "APP_MODE,DATABASE_URL,TICKETS_TOKEN"
     assert flav.reader.reads == [
         ("app/db-url", None),
         ("app/tickets", "AWSPREVIOUS"),
@@ -256,6 +257,29 @@ def test_an_empty_env_file_is_refused(tmp_path: Path, text: str) -> None:
         read_env_file_secret("support-bot", path)
     with pytest.raises(InvalidArgumentException):
         read_env_file_secret("support-bot", tmp_path / "missing.env")
+
+
+def test_a_reserved_name_in_the_env_file_is_named_without_its_value(tmp_path: Path) -> None:
+    path = tmp_path / "local.env"
+    path.write_text("TICKETS_TOKEN=tk-value\nAWS_PROFILE=dev-profile-value\n")
+    with pytest.raises(InvalidArgumentException) as raised:
+        read_env_file_secret("support-bot", path)
+    assert "AWS_PROFILE" in str(raised.value)
+    assert "dev-profile-value" not in str(raised.value)
+
+
+def test_an_env_file_inside_the_source_is_excluded_from_it(tmp_path: Path) -> None:
+    source = tmp_path / "agent"
+    (source / "deploy").mkdir(parents=True)
+    inside = source / "deploy" / "prod.env"
+    outside = tmp_path / "values.env"
+    for path in (inside, outside):
+        path.write_text("TICKETS_TOKEN=tk-value\n")
+    the_project = project(source=str(source), exclude=("tests",))
+    prepared = prepare_secret_env(the_project, str(inside), check_env=False)
+    assert prepared.project.exclude == ("tests", "deploy/prod.env")
+    kept = prepare_secret_env(the_project, str(outside), check_env=False)
+    assert kept.project.exclude == ("tests",)
 
 
 # ------------------------------------------------------------------ --check-env

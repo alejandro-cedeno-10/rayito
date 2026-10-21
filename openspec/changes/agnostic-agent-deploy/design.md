@@ -71,7 +71,10 @@ start after B merges. The acceptance in AWS runs once on the tip of
 5. Detection (`agent-detection.json` → `modelFromCode`, common regex subset):
    `clientBaseUrl` per language turns an `openai` provider detected by
    dependency into `openai-compatible` (replaced, not added, so
-   `several_providers` is not triggered); `modelEnvPattern` and
+   `several_providers` is not triggered) when the base URL is not the
+   official one (`officialBaseUrl`); with a model id literal, which 0.15
+   already deployed as `openai`, only `--model-base-url` does it, and
+   otherwise the warning `custom_base_url` says so; `modelEnvPattern` and
    `baseUrlEnvPattern` find variable **names** in `.env.example`, in
    `os.getenv` / `os.environ` / `process.env` calls and in the keys of the
    `env` map of `langgraph.json`; pydantic-settings fields map to
@@ -398,7 +401,7 @@ textual conflict:
 |---|---|---|---|
 | A | top level | `maxModelsListed` | `modelFromCode` (`clientBaseUrl`, `modelEnvPattern`, `baseUrlEnvPattern`) |
 | A | `messages` | `invalid_override` | `invalid_model_provider` |
-| A | `warnings` | `no_provider` | `model_id_from_code` |
+| A | `warnings` | `no_provider` | `model_id_from_code`, `custom_base_url` |
 | B | `messages` | `ambiguous_entrypoint` | `ambiguous_graph` |
 | B | `messages` | `not_detected_entrypoint` | `graph_not_found`, `graph_conflict` |
 | C | `warnings` | `file_unreadable` | `env_missing` |

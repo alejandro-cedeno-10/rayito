@@ -8,6 +8,7 @@ de deepagents/langgraph con un grafo de mensajes (los mismos argumentos de
 
 from __future__ import annotations
 
+import io
 import json
 from collections.abc import Iterator, Mapping
 from pathlib import Path
@@ -16,11 +17,12 @@ from typing import Any
 import pytest
 
 from rayito._agent._runner.agent_host import limits as host_limits
-from rayito._agent._runner.agent_host import serve
+from rayito._agent._runner.agent_host import serve, task
 from rayito._agent._runner.agent_host.drivers import command, node_callable
 from rayito._agent._runner.agent_host.drivers import deepagents as driver
 from rayito._agent._runner.agent_host.protocol import (
     AgentFailure,
+    Emitter,
     Request,
     RunState,
     build_event,
@@ -117,6 +119,33 @@ def test_a_driver_without_input_support_rejects_input() -> None:
     require_input_support(driver.Driver({}), request)
 
 
+class _PromptOnlyDriver:
+    def __init__(self) -> None:
+        self.runs = 0
+
+    def warm(self) -> None:
+        return None
+
+    def run(self, request: Request, emit: Any, state: RunState) -> None:
+        self.runs += 1
+
+    def cancel(self) -> None:
+        return None
+
+
+def test_task_mode_refuses_an_input_for_a_driver_without_input() -> None:
+    stream = io.StringIO()
+    driver_instance = _PromptOnlyDriver()
+    task.run_task(lambda: driver_instance, {"v": 1, "input": TICKET}, Emitter(stream))
+    assert driver_instance.runs == 0
+    (event,) = [json.loads(line) for line in stream.getvalue().splitlines()]
+    assert (event["type"], event["reason"], event["detail_code"]) == (
+        "agent_failed",
+        "protocol_error",
+        "invalid_input",
+    )
+
+
 def test_the_output_limit_is_the_shared_limit() -> None:
     assert host_limits.MAX_SERVICE_OUTPUT_BYTES == AGENT_SERVICE_MAX_OUTPUT_BYTES
 
@@ -191,6 +220,25 @@ def test_a_message_graph_with_a_prompt_streams_exactly_as_before(
     )
     failing = SchemaGraph([], input_schema=RuntimeError("sin esquema"))
     for graph in (plain, with_schema, failing):
+        _, state = _execute(tmp_path, monkeypatch, graph, Request(prompt="hola"))
+        ((payload, kwargs),) = graph.inputs
+        assert kwargs == {
+            "config": {"recursion_limit": driver.RECURSION_LIMIT},
+            "stream_mode": ["messages", "updates"],
+            "subgraphs": True,
+        }
+        assert [message.content for message in payload["messages"]] == ["hola"]
+        assert state.output is None
+
+
+def test_a_prompt_to_a_graph_without_required_input_runs_as_before(
+    messages_module: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    optional = {"type": "object", "properties": {"result": {"type": "string"}}}
+    for schema in (optional, {**optional, "required": []}):
+        graph = SchemaGraph(
+            [("messages", (FakeMessage(content="hola"), MODEL_META))], input_schema=schema
+        )
         _, state = _execute(tmp_path, monkeypatch, graph, Request(prompt="hola"))
         ((payload, kwargs),) = graph.inputs
         assert kwargs == {

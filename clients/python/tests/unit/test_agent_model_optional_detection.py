@@ -157,6 +157,36 @@ def test_without_a_base_url_the_missing_upstream_names_the_flag() -> None:
     assert "--model-base-url" in str(raised.value)
 
 
+OPENAI_REQUIREMENTS = "langgraph==1.0.1\nlangchain-openai==1.0.1\n"
+
+
+def test_a_base_url_outside_the_client_call_does_not_count() -> None:
+    agent = (
+        "import os\nfrom langchain_openai import ChatOpenAI\n"
+        "from langgraph.prebuilt import create_react_agent\nfrom tickets import Client\n\n\n"
+        "def build_graph():\n"
+        '    model = ChatOpenAI(model=os.getenv("OPENAI_MODEL"))\n'
+        '    tickets = Client(base_url="https://tickets.example.com")\n'
+        "    return create_react_agent(model, [tickets.tool])\n"
+    )
+    files = {"requirements.txt": OPENAI_REQUIREMENTS, "agent.py": agent}
+    report = detect(MemoryTree(files))
+    assert [provider.preset for provider in report.providers] == ["openai"]
+
+
+def test_a_client_base_url_with_a_nested_call_still_counts() -> None:
+    agent = (
+        "import os\nfrom langchain_openai import ChatOpenAI\n"
+        "from langgraph.prebuilt import create_react_agent\n\n\n"
+        "def build_graph():\n"
+        '    model = ChatOpenAI(model=os.getenv("LLM_MODEL"), base_url=os.getenv("LLM_URL"))\n'
+        "    return create_react_agent(model, [])\n"
+    )
+    files = {"requirements.txt": OPENAI_REQUIREMENTS, "agent.py": agent}
+    report = detect(MemoryTree(files))
+    assert [provider.preset for provider in report.providers] == ["openai-compatible"]
+
+
 def test_the_override_provider_replaces_the_detected_ones_without_warnings() -> None:
     report = detect(MemoryTree(_leaky_tree()), DetectOverrides(model_provider="openai"))
     assert [provider.preset for provider in report.providers] == ["openai"]

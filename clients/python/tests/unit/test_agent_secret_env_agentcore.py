@@ -12,6 +12,7 @@ import dataclasses
 import importlib.util
 import json
 import logging
+import shutil
 import sys
 from pathlib import Path
 from typing import Any
@@ -290,6 +291,24 @@ def test_the_options_of_secret_env_apply_to_agentcore() -> None:
         Path(DATA), project=project(), options=options, region=fake.REGION, environ=ENVIRON
     )
     assert planned.env_file_secret is None
+
+
+def test_the_env_file_inside_the_source_never_reaches_the_image(tmp_path: Path) -> None:
+    source = tmp_path / "agent"
+    shutil.copytree(SAMPLE, source)
+    env_file = source / "deploy" / "prod.env"
+    env_file.parent.mkdir()
+    env_file.write_text("TICKETS_API_TOKEN=supersecretvalue123\n")
+    planned = plan_agentcore(
+        Path(DATA),
+        project=AgentProject.load(source),
+        options=AgentDeployOptions(create_secrets_from=str(env_file)),
+        region=fake.REGION,
+        environ=ENVIRON,
+    )
+    assert planned.env_file_secret is not None
+    assert not [path for path in planned.tree if path.endswith("prod.env")]
+    assert not [path for path, data in planned.tree.items() if b"supersecretvalue123" in data]
 
 
 # ------------------------------------------------------- sample secret-env-echo

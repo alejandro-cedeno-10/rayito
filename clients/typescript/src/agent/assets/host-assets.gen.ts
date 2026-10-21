@@ -182,11 +182,13 @@ def load_secret_env(
 ) -> tuple[str, ...] | None:
     """Exporta los secretos de \`RAYITO_SECRET_ENV\` antes de crear el driver
     y devuelve sus valores (para redactarlos en un diagnóstico); sin la
-    variable, nada. Si falla deja el marcador de fallo con el código (nunca
-    un nombre ni un valor) y devuelve \`None\`: el driver no arranca."""
+    variable, los que el SDK ya exportó en MicroVMs y nombra en
+    \`RAYITO_SECRET_ENV_NAMES\`, o nada. Si falla deja el marcador de fallo con
+    el código (nunca un nombre ni un valor) y devuelve \`None\`: el driver no
+    arranca."""
     module = importlib.import_module(".secret_env", package)
     if module.SPEC_VARIABLE not in os.environ:
-        return ()
+        return tuple(module.injected_values(os.environ))
     spec = host.get(module.HOST_KEY)
     try:
         loaded = module.load_secret_env(
@@ -1580,9 +1582,10 @@ def execute(config: Mapping[str, Any], request: Request, emit: Emit, state: RunS
         else default_graph(ctx)
     )
     kind, schema = input_kind(graph) if entrypoint else (MESSAGES_INPUT, {})
+    structured = kind == STRUCTURED_INPUT and (request.input is not None or requires_input(schema))
     new_messages = (
         _structured_run(graph, schema, request, emit, state)
-        if kind == STRUCTURED_INPUT
+        if structured
         else _messages_run(graph, request, emit, history)
     )
     save_history(sessions_dir, state.session_id, [*history, *new_messages])
@@ -1640,6 +1643,14 @@ def input_kind(graph: Any) -> tuple[str, Mapping[str, Any]]:
     if not isinstance(properties, Mapping) or MESSAGES_KEY in properties:
         return MESSAGES_INPUT, {}
     return STRUCTURED_INPUT, schema
+
+
+def requires_input(schema: Mapping[str, Any]) -> bool:
+    """Si un grafo de esquema propio exige \`input\`: sólo si declara claves
+    \`required\`. Sin ellas, un prompt sigue el camino de mensajes de siempre,
+    como antes de ADR-033 D3, en vez de fallar con \`input_required\`."""
+    required = schema.get("required")
+    return isinstance(required, list) and bool(required)
 
 
 def validate_input(schema: Mapping[str, Any], data: Mapping[str, Any]) -> None:
@@ -2293,7 +2304,9 @@ el \`input\` estructurado de la petición tal cual: \`accepts_input\`),
 \`app_<hex>\` que crea el driver, así que la misma sesión sigue el mismo hilo
 tras un relanzamiento de la app. El texto sale de \`response_field\` o del
 último mensaje del estado final (\`langgraph_text\`), el uso de su
-\`usage_metadata\`, y un grafo detenido en un \`interrupt\` es
+\`usage_metadata\`; con \`input\`, un estado final sin \`messages\` es además la
+salida estructurada (\`langgraph_output\`), como en el driver de deepagents. Un
+grafo detenido en un \`interrupt\` es
 \`protocol_error\`/\`graph_interrupted\`. La salud es \`GET /ok\`, la espera de
 arranque es \`LANGGRAPH_READY_WAIT_SECONDS\` y el hijo arranca sin la
 telemetría de la CLI ni las trazas a LangSmith salvo que el entorno las fije
@@ -2313,6 +2326,7 @@ from collections.abc import Iterator, Mapping
 from http import HTTPStatus
 from typing import Any, Final
 
+from ..limits import output_fits
 from ..process import (
     DEFAULT_START_TIMEOUT_SECONDS,
     STATE_FAILED,
@@ -2323,6 +2337,7 @@ from ..process import (
     Supervisor,
 )
 from ..protocol import (
+    OUTPUT_NOT_SERIALIZABLE,
     AgentFailure,
     Emit,
     Request,
@@ -2501,6 +2516,24 @@ def langgraph_text(state: object) -> str:
     if message is None:
         return json.dumps(state, ensure_ascii=False)
     return langgraph_message_text(message)
+
+
+def langgraph_output(state: object) -> dict[str, Any] | None:
+    """La salida estructurada de un grafo llamado con \`input\`: su estado
+    final si no es de mensajes (sin \`messages\`), como la de un grafo de
+    esquema propio en el driver de deepagents; si no, \`None\` y sólo texto.
+    Lo que no se codifica en JSON estricto o no cabe en
+    \`MAX_SERVICE_OUTPUT_BYTES\` es \`protocol_error\`/\`output_not_serializable\`."""
+    if not isinstance(state, Mapping) or LANGGRAPH_MESSAGES_KEY in state:
+        return None
+    output = dict(state)
+    try:
+        encoded = json.dumps(output, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
+    except ValueError:
+        raise AgentFailure("protocol_error", OUTPUT_NOT_SERIALIZABLE) from None
+    if not output_fits(encoded):
+        raise AgentFailure("protocol_error", OUTPUT_NOT_SERIALIZABLE)
+    return output
 
 
 def langgraph_usage(state: object) -> dict[str, int] | None:
@@ -2700,7 +2733,9 @@ class Driver:
         emit(build_event("session", session_id=state.session_id))
         emit(build_event("step_started", index=1))
         response = self._post(request, state.session_id)
-        text, usage = self._read(response, emit)
+        text, usage, final_state = self._read(response, emit)
+        if request.input is not None:
+            state.output = langgraph_output(final_state)
         emit(build_event("text", text=text))
         emit(build_event("step_finished", index=1, usage=usage, finish_reason="stop"))
 
@@ -2782,7 +2817,9 @@ class Driver:
 
     def _read(
         self, response: http.client.HTTPResponse, emit: Emit
-    ) -> tuple[str, dict[str, int] | None]:
+    ) -> tuple[str, dict[str, int] | None, object]:
+        """El texto, el uso y, con \`langgraph-api\`, el estado final del
+        grafo (\`None\` con cualquier otro protocolo)."""
         content_type = response.getheader("Content-Type", "")
         if "text/event-stream" not in content_type:
             try:
@@ -2790,10 +2827,11 @@ class Driver:
             except ValueError:
                 raise AgentFailure("protocol_error", "invalid_response") from None
             if self._langgraph:
-                return self._langgraph_result(payload)
+                graph_text, graph_usage = self._langgraph_result(payload)
+                return graph_text, graph_usage, payload
             reported = app_usage(payload.get("usage")) if isinstance(payload, Mapping) else None
             text = self._json_text(payload) if self._protocol == "json" else extract_text(payload)
-            return text, reported
+            return text, reported, None
         parts: list[str] = []
         usage: dict[str, int] | None = None
         for data in iter_sse_data(response):
@@ -2804,7 +2842,7 @@ class Driver:
             if delta:
                 parts.append(delta)
                 emit(build_event("text_delta", text=delta))
-        return "".join(parts), usage
+        return "".join(parts), usage, None
 
     def cancel(self) -> None:
         with self._lock:
@@ -4334,6 +4372,11 @@ from .protocol import AgentFailure
 
 #: La variable del runtime con la especificación (\`agentSecretEnvVariable\`).
 SPEC_VARIABLE: Final = "RAYITO_SECRET_ENV"
+#: En MicroVMs el SDK ya pone los valores en el entorno del host y aquí sólo
+#: manda sus nombres, separados por \`NAMES_SEPARATOR\`
+#: (\`agentSecretEnvNamesVariable\`), para redactarlos igual que en AgentCore.
+NAMES_VARIABLE: Final = "RAYITO_SECRET_ENV_NAMES"
+NAMES_SEPARATOR: Final = ","
 #: Versión del documento de la especificación (\`agentSecretEnvSpecVersion\`).
 SPEC_VERSION: Final = 1
 #: Tope de secretos por despliegue (\`agentSecretEnvMaxSecrets\`).
@@ -4589,6 +4632,15 @@ def reserved_of(config: object) -> frozenset[str]:
     if not isinstance(names, list):
         return frozenset()
     return frozenset(name for name in names if isinstance(name, str))
+
+
+def injected_values(environ: MutableMapping[str, str]) -> tuple[str, ...]:
+    """Los valores que el SDK ya exportó en MicroVMs: saca \`NAMES_VARIABLE\`
+    de \`environ\` (sólo nombres) y devuelve el valor de cada una de esas
+    variables, para redactarlo en un diagnóstico de arranque. Sin la
+    variable, nada."""
+    names = environ.pop(NAMES_VARIABLE, "")
+    return tuple(environ[name] for name in names.split(NAMES_SEPARATOR) if name in environ)
 
 
 def load_secret_env(
@@ -5368,6 +5420,7 @@ from .protocol import (
     RunState,
     classify_by_module,
     parse_request,
+    require_input_support,
     run_to_terminal,
 )
 
@@ -5379,11 +5432,15 @@ def forward(emitter: Emitter, event: Event) -> None:
 
 
 def run_task(create_driver: Callable[[], Driver], raw_request: object, emitter: Emitter) -> int:
-    """Una ejecución completa con el driver que crea \`create_driver\`."""
+    """Una ejecución completa con el driver que crea \`create_driver\`. Un
+    \`input\` sólo llega a un driver que lo entiende, como en el modo servicio
+    (\`require_input_support\`)."""
 
     def body(state: RunState) -> None:
         request = parse_request(raw_request)
-        create_driver().run(request, lambda event: forward(emitter, event), state)
+        driver = create_driver()
+        require_input_support(driver, request)
+        driver.run(request, lambda event: forward(emitter, event), state)
 
     run_to_terminal(emitter, body, lambda exc: classify_by_module(exc, ()))
     return 0

@@ -200,7 +200,9 @@ export function requirePromptOrInput(prompt: unknown, input: unknown): Invocatio
 }
 
 /** `input` si es un objeto JSON (valores codificables) que cabe en una
- * petición. */
+ * petición. Como en Python (`json.dumps(..., allow_nan=False)`), un número no
+ * finito, `undefined`, una función o un símbolo es un error y no un `null` o
+ * una clave que `JSON.stringify` callaría. */
 export function requireInputObject(input: unknown): JsonObject {
   if (!isRecord(input)) {
     throw new InvalidArgumentError(INPUT_NOT_OBJECT_MESSAGE);
@@ -209,6 +211,9 @@ export function requireInputObject(input: unknown): JsonObject {
   try {
     encoded = JSON.stringify(input);
   } catch {
+    throw new InvalidArgumentError(INPUT_NOT_OBJECT_MESSAGE);
+  }
+  if (!isJsonValue(input)) {
     throw new InvalidArgumentError(INPUT_NOT_OBJECT_MESSAGE);
   }
   if (UTF8.encode(encoded).length > AGENT_SERVICE_MAX_REQUEST_BYTES) {
@@ -287,6 +292,22 @@ export function httpError(
   return new SandboxError(`el agente desplegado respondió con un estado inesperado (${status})`, {
     statusCode: status,
   });
+}
+
+/** Si `value` se escribe en JSON tal cual: `null`, texto, booleanos,
+ * números finitos, listas y objetos de esos valores. Se llama después de
+ * `JSON.stringify`, que ya rechazó los ciclos y los `bigint`. */
+function isJsonValue(value: unknown): boolean {
+  if (value === null || typeof value === "string" || typeof value === "boolean") {
+    return true;
+  }
+  if (typeof value === "number") {
+    return Number.isFinite(value);
+  }
+  if (Array.isArray(value)) {
+    return value.every(isJsonValue);
+  }
+  return isRecord(value) && Object.values(value).every(isJsonValue);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

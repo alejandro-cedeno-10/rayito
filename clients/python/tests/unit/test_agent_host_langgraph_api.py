@@ -310,3 +310,60 @@ def test_odd_states_never_break_the_reading(state: object, message: object) -> N
     if message is not None:
         assert http_app.langgraph_text(state) == ""
     assert http_app.langgraph_usage(state) is None
+
+
+class _StateResponse:
+    """La respuesta JSON de `runs/wait` con un estado final dado."""
+
+    def __init__(self, state: object) -> None:
+        self._body = json.dumps(state).encode("utf-8")
+
+    def getheader(self, name: str, default: str = "") -> str:
+        return "application/json"
+
+    def read(self) -> bytes:
+        return self._body
+
+
+def _run_with_state(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, request: Request, state: object
+) -> RunState:
+    target = _driver(tmp_path)
+    monkeypatch.setattr(target, "_ensure_started", lambda: None)
+    monkeypatch.setattr(target, "_post", lambda *args: _StateResponse(state))
+    run_state = RunState()
+    target.run(request, lambda event: None, run_state)
+    return run_state
+
+
+TRIAGE_STATE = {"ticket_id": "T-1", "priority": "high", "summary": "printer offline"}
+
+
+def test_an_input_run_without_messages_returns_the_final_state_as_output(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    request = Request(prompt="", input={"ticket_id": "T-1"})
+    assert _run_with_state(monkeypatch, tmp_path, request, TRIAGE_STATE).output == TRIAGE_STATE
+
+
+def test_a_prompt_or_a_message_state_keeps_only_the_text(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    messages = {"messages": [{"type": "ai", "content": "hola"}]}
+    with_input = Request(prompt="", input={"ticket_id": "T-1"})
+    assert _run_with_state(monkeypatch, tmp_path, with_input, messages).output is None
+    prompt = Request(prompt="hola")
+    assert _run_with_state(monkeypatch, tmp_path, prompt, TRIAGE_STATE).output is None
+
+
+def test_an_output_that_does_not_fit_is_not_serializable(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(http_app, "output_fits", lambda encoded: False)
+    request = Request(prompt="", input={"ticket_id": "T-1"})
+    with pytest.raises(AgentFailure) as error:
+        _run_with_state(monkeypatch, tmp_path, request, TRIAGE_STATE)
+    assert (error.value.reason, error.value.detail_code) == (
+        "protocol_error",
+        "output_not_serializable",
+    )

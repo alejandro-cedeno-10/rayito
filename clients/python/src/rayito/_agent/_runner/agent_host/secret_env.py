@@ -28,6 +28,11 @@ from .protocol import AgentFailure
 
 #: La variable del runtime con la especificación (`agentSecretEnvVariable`).
 SPEC_VARIABLE: Final = "RAYITO_SECRET_ENV"
+#: En MicroVMs el SDK ya pone los valores en el entorno del host y aquí sólo
+#: manda sus nombres, separados por `NAMES_SEPARATOR`
+#: (`agentSecretEnvNamesVariable`), para redactarlos igual que en AgentCore.
+NAMES_VARIABLE: Final = "RAYITO_SECRET_ENV_NAMES"
+NAMES_SEPARATOR: Final = ","
 #: Versión del documento de la especificación (`agentSecretEnvSpecVersion`).
 SPEC_VERSION: Final = 1
 #: Tope de secretos por despliegue (`agentSecretEnvMaxSecrets`).
@@ -283,6 +288,15 @@ def reserved_of(config: object) -> frozenset[str]:
     if not isinstance(names, list):
         return frozenset()
     return frozenset(name for name in names if isinstance(name, str))
+
+
+def injected_values(environ: MutableMapping[str, str]) -> tuple[str, ...]:
+    """Los valores que el SDK ya exportó en MicroVMs: saca `NAMES_VARIABLE`
+    de `environ` (sólo nombres) y devuelve el valor de cada una de esas
+    variables, para redactarlo en un diagnóstico de arranque. Sin la
+    variable, nada."""
+    names = environ.pop(NAMES_VARIABLE, "")
+    return tuple(environ[name] for name in names.split(NAMES_SEPARATOR) if name in environ)
 
 
 def load_secret_env(

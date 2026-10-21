@@ -177,11 +177,13 @@ def load_secret_env(
 ) -> tuple[str, ...] | None:
     """Exporta los secretos de `RAYITO_SECRET_ENV` antes de crear el driver
     y devuelve sus valores (para redactarlos en un diagnóstico); sin la
-    variable, nada. Si falla deja el marcador de fallo con el código (nunca
-    un nombre ni un valor) y devuelve `None`: el driver no arranca."""
+    variable, los que el SDK ya exportó en MicroVMs y nombra en
+    `RAYITO_SECRET_ENV_NAMES`, o nada. Si falla deja el marcador de fallo con
+    el código (nunca un nombre ni un valor) y devuelve `None`: el driver no
+    arranca."""
     module = importlib.import_module(".secret_env", package)
     if module.SPEC_VARIABLE not in os.environ:
-        return ()
+        return tuple(module.injected_values(os.environ))
     spec = host.get(module.HOST_KEY)
     try:
         loaded = module.load_secret_env(

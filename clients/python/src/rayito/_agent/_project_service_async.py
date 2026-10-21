@@ -37,7 +37,12 @@ from rayito._agent._project_base import (
 )
 from rayito._agent._project_service import AGENT_SERVE_USER
 from rayito._agent._runtime import HostConfig
-from rayito._agent._secret_env_domain import AsyncSecretReader, aresolve_secret_env, spec_document
+from rayito._agent._secret_env_domain import (
+    AsyncSecretReader,
+    aresolve_secret_env,
+    injected_names_environment,
+    spec_document,
+)
 from rayito._agent._secret_env_project import check_runtime_collisions
 from rayito._agent._secret_env_reader import async_secret_reader_for
 from rayito._images import DEFAULT_BUILD_TIMEOUT_SECONDS
@@ -198,7 +203,7 @@ class AsyncProjectService:
             serve_command(host, project.serve.port),
             background=True,
             user=AGENT_SERVE_USER,
-            envs={**host.envs, **secret_env},
+            envs={**host.envs, **secret_env, **injected_names_environment(secret_env)},
             timeout=None,
             tag=AGENT_SERVE_TAG,
             kill_tree=True,

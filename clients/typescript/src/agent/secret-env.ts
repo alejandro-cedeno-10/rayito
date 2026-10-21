@@ -13,6 +13,7 @@ import { AgentError, InvalidArgumentError } from "../errors.js";
 import {
   AGENT_SECRET_ENV_MAX_SECRETS,
   AGENT_SECRET_ENV_MAX_TOTAL_BYTES,
+  AGENT_SECRET_ENV_NAMES_VARIABLE,
   AGENT_SECRET_ENV_RESERVED_NAMES,
   AGENT_SECRET_ENV_RESERVED_PREFIXES,
   AGENT_SECRET_ENV_SPEC_VERSION,
@@ -229,6 +230,23 @@ export function specDocument(
     env[name] = referenceDocument(referenceOf(secretEnv[name] as SecretEnvValue));
   }
   return { env, from: secretEnvFrom.map(sourceDocument), v: AGENT_SECRET_ENV_SPEC_VERSION };
+}
+
+/** Cómo separa `RAYITO_SECRET_ENV_NAMES` los nombres (el host lee el mismo,
+ * `NAMES_SEPARATOR` de `secret_env.py`). */
+export const SECRET_ENV_NAMES_SEPARATOR = ",";
+
+/** Lo que acompaña a los valores que el SDK exporta en MicroVMs:
+ * `RAYITO_SECRET_ENV_NAMES` con sus nombres (nunca valores), para que el host
+ * los redacte en un diagnóstico de arranque como en AgentCore; nada sin
+ * secretos. */
+export function injectedNamesEnvironment(
+  values: Readonly<Record<string, string>>,
+): Record<string, string> {
+  const names = Object.keys(values).sort();
+  return names.length === 0
+    ? {}
+    : { [AGENT_SECRET_ENV_NAMES_VARIABLE]: names.join(SECRET_ENV_NAMES_SEPARATOR) };
 }
 
 /** El valor de `RAYITO_SECRET_ENV`: JSON compacto con las claves ordenadas,

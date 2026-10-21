@@ -160,9 +160,12 @@ Si tu código elige el modelo por configuración, por ejemplo
 escribir el id del modelo en ningún sitio. La detección reconoce dos cosas sin
 ejecutar tu código ni leer ningún valor:
 
-- Un `base_url=` en el constructor del cliente (en TypeScript, `baseURL` o
-  `configuration`). Con él, un proveedor `openai` detectado por dependencia
-  pasa a ser `openai-compatible`.
+- Un `base_url=` propio en el constructor del cliente (en TypeScript,
+  `baseURL`, también dentro de `configuration`). Con él, un proveedor `openai`
+  detectado por dependencia pasa a ser `openai-compatible`. La URL oficial de
+  OpenAI no cuenta, y si tu código fija el id del modelo con un literal (lo
+  que ya se desplegaba antes), el proveedor sigue siendo `openai` salvo que
+  pases `--model-base-url`; la detección lo avisa con `custom_base_url`.
 - Los **nombres** de las variables del modelo, la URL base y la clave
   (`LLM_MODEL`, `LLM_BASE_URL`, `LLM_API_KEY`). Salen de `.env.example`, de las
   lecturas `os.getenv` / `process.env`, de los campos de pydantic-settings
@@ -1092,8 +1095,10 @@ Qué hace el host con cada invocación:
   la misma sesión siguen el mismo hilo. Una segunda ejecución sobre un hilo
   ocupado no se encola: falla con `app_http_409`.
 - El texto sale de `response_field` (si lo fijas) o del `content` del último
-  mensaje del estado final; sin mensajes, es el estado entero en JSON. El uso
-  de tokens sale de su `usage_metadata`, y sin él es desconocido, no cero.
+  mensaje del estado final; sin mensajes, es el estado entero en JSON. Si
+  llamaste con `input` y el estado final no tiene mensajes, ese estado es
+  además `output`, como con un grafo de esquema propio. El uso de tokens sale
+  de su `usage_metadata`, y sin él es desconocido, no cero.
 - Un grafo que se detiene en un `interrupt` (human-in-the-loop) devuelve
   `AgentException` con `reason="protocol_error"` y `detail_code`
   `graph_interrupted`; cualquier otro estado HTTP es `app_http_<n>`.
@@ -1214,7 +1219,7 @@ llama como siempre. Los fallos llegan como `AgentException` con
 
 | `detail_code` | Cuándo |
 |---|---|
-| `input_required` | llamaste con un prompt a un grafo que espera `input` |
+| `input_required` | llamaste con un prompt a un grafo cuyo esquema de entrada tiene claves obligatorias (`required`); sin ellas, el prompt va como mensaje, como siempre |
 | `invalid_input` | `input` no cumple el esquema (claves obligatorias, claves de más con `additionalProperties: false`, tipos de primer nivel), o el grafo lanzó un `ValidationError` de pydantic |
 | `output_not_serializable` | la salida no se puede convertir a JSON o pasa de {{agentServiceMaxOutputBytes}} bytes |
 

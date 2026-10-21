@@ -1233,18 +1233,22 @@
     "langgraph_dev_server": "langgraph dev es un servidor de desarrollo en memoria (experimental en Rayito)",
     "several_providers": "hay varios proveedores de modelo ({providers}); se usa {used}",
     "no_provider": "no se detecta ningún proveedor de modelo; indícalo con --secret proveedor=nombre",
-    "model_id_from_code": "no se fija el id del modelo: lo elige tu código ({envs})"
+    "model_id_from_code": "no se fija el id del modelo: lo elige tu código ({envs})",
+    "custom_base_url": "el cliente de {path} pasa su propia URL base y se mantiene {preset} porque el código fija el id del modelo; si apunta a una pasarela compatible con OpenAI, pasa --model-base-url"
   },
   "maxModelsListed": 5,
   "modelFromCode": {
-    "comment": "Modelo elegido por el código (ADR-033 D2). `clientBaseUrl`: un constructor de cliente con URL base convierte el proveedor `fromPreset` detectado por dependencia en `toPreset` (lo sustituye, no lo añade). Los nombres de variable salen de `envExampleFiles` (`envExampleName`), de las lecturas del código (`envReads`), de los campos de pydantic-settings (`settings`: `env_prefix` más el campo, en mayúsculas) y de las claves del mapa `env` de `langgraphJson`; se clasifican con `modelEnvPattern`, `baseUrlEnvPattern` y `apiKeyEnvPattern`. Nunca se lee un valor.",
+    "comment": "Modelo elegido por el código (ADR-033 D2). `clientBaseUrl`: un constructor de cliente con URL base (el grupo 1 es el valor tal como se escribe; uno que encaja con `officialBaseUrl` no cuenta) convierte el proveedor `fromPreset` detectado por dependencia en `toPreset` (lo sustituye, no lo añade). Si el código fija el id del modelo (lo que 0.15 ya desplegaba), sólo lo hace con `--model-base-url`; sin ella se mantiene `fromPreset` con el aviso `custom_base_url`. Los nombres de variable salen de `envExampleFiles` (`envExampleName`), de las lecturas del código (`envReads`), de los campos de pydantic-settings (`settings`: `env_prefix` más el campo, en mayúsculas) y de las claves del mapa `env` de `langgraphJson`; se clasifican con `modelEnvPattern`, `baseUrlEnvPattern` y `apiKeyEnvPattern`. Nunca se lee un valor.",
     "clientBaseUrl": {
       "python": {
-        "pattern": "\\b(?:ChatOpenAI|AzureChatOpenAI|OpenAI|AsyncOpenAI|OpenAIModel|init_chat_model)\\s*\\([\\s\\S]{0,400}?\\bbase_url\\s*="
+        "pattern": "\\b(?:ChatOpenAI|AzureChatOpenAI|OpenAI|AsyncOpenAI|OpenAIModel|init_chat_model)\\s*\\((?:[^()]|\\([^()]*\\)){0,400}?\\bbase_url\\s*=\\s*([^,()\\s]*)"
       },
       "typescript": {
-        "pattern": "\\b(?:ChatOpenAI|OpenAI|createOpenAI|createOpenAICompatible)\\s*\\(\\s*\\{[\\s\\S]{0,400}?\\b(?:baseURL|baseUrl|configuration)\\b"
+        "pattern": "\\b(?:ChatOpenAI|OpenAI|createOpenAI|createOpenAICompatible)\\s*\\(\\s*\\{(?:[^{}()]|\\{[^{}]*\\}|\\([^()]*\\)){0,400}?(?:\\bconfiguration\\s*:\\s*\\{[^{}]*?)?\\b(?:baseURL|baseUrl)\\b(?:\\s*:\\s*([^,{}()\\s]*))?"
       }
+    },
+    "officialBaseUrl": {
+      "pattern": "^[\\\"'`]https://api\\.openai\\.com(?:[/\\\"'`]|$)"
     },
     "fromPreset": "openai",
     "toPreset": "openai-compatible",

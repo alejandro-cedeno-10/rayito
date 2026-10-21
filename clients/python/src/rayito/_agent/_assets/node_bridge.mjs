@@ -755,7 +755,7 @@ async function loadGraph(config, request, importModule) {
 export async function runLanggraph({ config, request, emit, importModule }) {
   const graph = await loadGraph(config, request, importModule);
   const schema = await structuredInputSchema(graph);
-  if (schema !== undefined) {
+  if (schema !== undefined && (request.input !== undefined || requiresInput(schema))) {
     return runStructuredGraph({ graph, schema, request, emit });
   }
   const store = new HistoryStore(graph.checkpointer ? null : config.sessions_dir, request.session_id);
@@ -796,6 +796,13 @@ export async function structuredInputSchema(graph) {
   }
   const properties = schema?.properties;
   return isPlainObject(properties) && !(MESSAGES_KEY in properties) ? schema : undefined;
+}
+
+// Si un grafo de esquema propio exige `input`: sólo si declara claves
+// `required`. Sin ellas, un prompt sigue el camino de mensajes de siempre, como
+// antes de ADR-033 D3, en vez de fallar con `input_required`.
+export function requiresInput(schema) {
+  return Array.isArray(schema.required) && schema.required.length > 0;
 }
 
 // Un `input` para un grafo de mensajes: sus claves tal cual, con sus

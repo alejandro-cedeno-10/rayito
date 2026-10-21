@@ -54,6 +54,9 @@ SESSION = "rda_0123456789abcdef0123456789abcdef"
 
 def _input_of(args: dict[str, Any]) -> Any:
     generator = args.get("inputGenerator")
+    number = args.get("inputNumber")
+    if number is not None:
+        return {number["key"]: float(number["value"])}
     if generator is None:
         return args.get("input")
     return {generator["key"]: generator["char"] * generator["length"]}

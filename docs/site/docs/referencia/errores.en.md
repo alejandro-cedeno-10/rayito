@@ -243,7 +243,7 @@ With a graph that has its own schema invoked with `input`
 
 | `detail_code` | When |
 |---|---|
-| `input_required` | the graph expects `input` (a JSON object) and a prompt arrived |
+| `input_required` | the graph's input schema has required keys (`required`) and a prompt arrived |
 | `invalid_input` | `input` does not match the graph's input schema |
 | `output_not_serializable` | the graph's output cannot be converted to JSON or exceeds {{agentServiceMaxOutputBytes}} bytes |
 

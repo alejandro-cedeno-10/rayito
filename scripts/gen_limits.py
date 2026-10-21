@@ -514,6 +514,7 @@ GROUPS: tuple[tuple[str, ...], ...] = (
         "agentSecretEnvReservedNames",
         "agentSecretEnvReservedPrefixes",
         "agentSecretEnvRedactMinChars",
+        "agentSecretEnvNamesVariable",
         "agentTokenFileDefault",
     ),
     (

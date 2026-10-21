@@ -580,9 +580,10 @@ def execute(config: Mapping[str, Any], request: Request, emit: Emit, state: RunS
         else default_graph(ctx)
     )
     kind, schema = input_kind(graph) if entrypoint else (MESSAGES_INPUT, {})
+    structured = kind == STRUCTURED_INPUT and (request.input is not None or requires_input(schema))
     new_messages = (
         _structured_run(graph, schema, request, emit, state)
-        if kind == STRUCTURED_INPUT
+        if structured
         else _messages_run(graph, request, emit, history)
     )
     save_history(sessions_dir, state.session_id, [*history, *new_messages])
@@ -640,6 +641,14 @@ def input_kind(graph: Any) -> tuple[str, Mapping[str, Any]]:
     if not isinstance(properties, Mapping) or MESSAGES_KEY in properties:
         return MESSAGES_INPUT, {}
     return STRUCTURED_INPUT, schema
+
+
+def requires_input(schema: Mapping[str, Any]) -> bool:
+    """Si un grafo de esquema propio exige `input`: sólo si declara claves
+    `required`. Sin ellas, un prompt sigue el camino de mensajes de siempre,
+    como antes de ADR-033 D3, en vez de fallar con `input_required`."""
+    required = schema.get("required")
+    return isinstance(required, list) and bool(required)
 
 
 def validate_input(schema: Mapping[str, Any], data: Mapping[str, Any]) -> None:

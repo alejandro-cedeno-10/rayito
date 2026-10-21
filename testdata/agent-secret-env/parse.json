@@ -72,6 +72,30 @@
       }
     },
     {
+      "flag": "--secret-env",
+      "value": "sk-not-a-name-either",
+      "error": {
+        "code": "invalid_value",
+        "path": "secret_env"
+      }
+    },
+    {
+      "flag": "--secret-env",
+      "value": "DATABASE_URL",
+      "error": {
+        "code": "invalid_value",
+        "path": "secret_env"
+      }
+    },
+    {
+      "flag": "--secret-env",
+      "value": "MY KEY=app/db-url",
+      "error": {
+        "code": "invalid_value",
+        "path": "secret_env"
+      }
+    },
+    {
       "flag": "--secret-env-from",
       "value": "app/config",
       "expected": {

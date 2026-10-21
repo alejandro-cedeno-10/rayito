@@ -1,6 +1,6 @@
 {
   "schema": "rayito.agent-invocation-bodies/1",
-  "_comment": "El cuerpo de `POST /invocations` que construyen `invocation_body` / `invocationBody` (ADR-033 D3): exactamente uno de `prompt` (cadena no vacía) o `input` (objeto JSON); el resto, sólo si se pidió. `body` es la cadena JSON compacta exacta (separadores sin espacios, UTF-8 sin escapar). Un error es `InvalidArgumentException` / `InvalidArgumentError` con el texto de `messages[messageKey]`, antes de cualquier llamada. `inputGenerator` describe una entrada demasiado grande sin escribirla: un objeto con una clave `key` cuyo valor es `char` repetido `length` veces. `hostCases` los evalúa `parse_invocation` del host: `accepted` o `400 invalid_request`. `resultCases` los lee `result_from_body` / `resultFromBody`.",
+  "_comment": "El cuerpo de `POST /invocations` que construyen `invocation_body` / `invocationBody` (ADR-033 D3): exactamente uno de `prompt` (cadena no vacía) o `input` (objeto JSON); el resto, sólo si se pidió. `body` es la cadena JSON compacta exacta (separadores sin espacios, UTF-8 sin escapar). Un error es `InvalidArgumentException` / `InvalidArgumentError` con el texto de `messages[messageKey]`, antes de cualquier llamada. `inputGenerator` describe una entrada demasiado grande sin escribirla: un objeto con una clave `key` cuyo valor es `char` repetido `length` veces. `inputNumber` describe un número que JSON no escribe: un objeto con una clave `key` cuyo valor es el número `value` (`NaN`, `Infinity`; `float()` / `Number()`). `hostCases` los evalúa `parse_invocation` del host: `accepted` o `400 invalid_request`. `resultCases` los lee `result_from_body` / `resultFromBody`.",
   "maxRequestBytesLimit": "agentServiceMaxRequestBytes",
   "messages": {
     "prompt_or_input": "pasa prompt o input, uno de los dos",
@@ -70,6 +70,30 @@
         "input": [
           "T-1"
         ]
+      },
+      "error": {
+        "messageKey": "input_not_object"
+      }
+    },
+    {
+      "name": "input with a non-finite number",
+      "args": {
+        "inputNumber": {
+          "key": "score",
+          "value": "NaN"
+        }
+      },
+      "error": {
+        "messageKey": "input_not_object"
+      }
+    },
+    {
+      "name": "input with an infinite number",
+      "args": {
+        "inputNumber": {
+          "key": "score",
+          "value": "Infinity"
+        }
       },
       "error": {
         "messageKey": "input_not_object"

@@ -3726,9 +3726,12 @@ error.
    `MODEL_ID_REQUIRED_PRESETS`), runtimes que construyen el modelo
    (`opencode`, `hermes`, `deepagents` y `strands` sin `entrypoint`;
    `missing_key`) y AgentCore con `bedrock`, donde por fin se lanza
-   `model_required` si tampoco hay `--bedrock-model`. La detección ve
-   `base_url=` en el constructor del cliente (un `openai` detectado por
-   dependencia pasa a `openai-compatible`) y los nombres de variable del
+   `model_required` si tampoco hay `--bedrock-model`. La detección ve un
+   `base_url=` propio en el constructor del cliente (un `openai` detectado
+   por dependencia pasa a `openai-compatible`; la URL oficial no cuenta y,
+   si el código fija el id con un literal, como lo que 0.15 ya desplegaba,
+   sólo cambia con `--model-base-url` y si no avisa `custom_base_url`) y
+   los nombres de variable del
    modelo en `.env.example`, `os.getenv`/`process.env` y las claves de `env`
    de `langgraph.json`, sin leer nunca un valor. En MicroVM la pasarela se
    exporta también en `base_url_env` y el marcador en `api_key_env`, así que
@@ -3753,7 +3756,9 @@ error.
    exclusivo con `prompt`) en la petición y `output` en la respuesta y en el
    evento `done`. El host introspecciona el grafo cargado
    (`get_input_jsonschema`) sólo si hay `entrypoint`; ante cualquier fallo
-   sigue el camino de mensajes de hoy, idéntico byte a byte. Los fallos son
+   sigue el camino de mensajes de hoy, idéntico byte a byte, y también con
+   un prompt a un grafo cuyo esquema no tiene claves `required` (así lo
+   ejecutaba 0.15). Los fallos son
    `AgentException(reason="protocol_error")` con `detail_code`
    `input_required`, `invalid_input` u `output_not_serializable`. En el SDK,
    `invoke(prompt=None, ..., *, input=None)` y `stream` igual; en TypeScript,
@@ -3777,7 +3782,9 @@ error.
    referencias se unen a `ReadableSecretArns`: la plantilla y la pila
    anidada de CDK no cambian. En MicroVM el SDK lee los valores con las
    credenciales de quien despliega y los pasa como `secrets=` al proceso del
-   host. Para las claves de LLM en MicroVM se sigue recomendando la pasarela,
+   host, con sus nombres (nunca valores) en `RAYITO_SECRET_ENV_NAMES` para
+   que el diagnóstico de arranque los redacte igual que en AgentCore. Para
+   las claves de LLM en MicroVM se sigue recomendando la pasarela,
    que no expone la clave al agente. `--create-secrets-from .env` (crea un
    secreto JSON, $0,40/mes, pide `--yes`) y `--check-env` (avisa de las
    variables de `.env.example` sin valor) son opcionales. KMS con clave

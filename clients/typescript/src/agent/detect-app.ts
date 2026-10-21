@@ -17,7 +17,7 @@ import {
   AGENT_LANGGRAPH_HEALTH_PATH,
   AGENT_SERVICE_PORT,
 } from "../limits.js";
-import { type EntryChoice, graphChoices, selectGraph } from "./detect-entry.js";
+import type { EntryChoice } from "./detect-entry.js";
 import { APP_PROTOCOLS, type DetectionApp } from "./detect-report.js";
 import type { DetectionRules, EntryFileRule, FrameworkRule, LauncherRule } from "./detect-rules.js";
 import {
@@ -317,10 +317,10 @@ function graphLocation(value: unknown): string | undefined {
   return value.startsWith(CURRENT_DIRECTORY) ? value.slice(CURRENT_DIRECTORY.length) : value;
 }
 
-/** El grafo que se sirve: el de `--graph` (`selectGraph`, que rechaza un
- * nombre que no está en `graphs`) o, sin él, la clave de `graphs` que apunta al
- * punto de entrada elegido: la preferida por nombre si hay varias, o la primera
- * en orden. */
+/** El grafo que se sirve: el de `--graph`, que `selectGraph` ya validó al
+ * elegir el punto de entrada (`findEntryInFile`), o, sin él, la clave de
+ * `graphs` que apunta al punto de entrada elegido: la preferida por nombre si
+ * hay varias, o la primera en orden. */
 function assistantIdOf(
   index: ProjectIndex,
   rules: DetectionRules,
@@ -328,14 +328,11 @@ function assistantIdOf(
   entry: EntryChoice,
   graph?: string,
 ): string {
+  if (graph !== undefined) {
+    return graph;
+  }
   const spec = rules.entryFiles[specName] as EntryFileRule;
   const document = index.readJson(spec.file);
-  if (graph !== undefined) {
-    const selected = selectGraph(graphChoices(document, spec, entry.rule), graph, rules, specName);
-    if (selected !== undefined) {
-      return selected[0];
-    }
-  }
   const graphs =
     typeof document === "object" && document !== null && !Array.isArray(document)
       ? (document as Record<string, unknown>)[spec.key]

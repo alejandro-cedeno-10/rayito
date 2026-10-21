@@ -8,9 +8,10 @@
  * literales de modelo son identificadores públicos.
  *
  * Sin literal de modelo, el código puede elegirlo por su configuración
- * (`modelFromCode`, ADR-033 D2): una URL base en el constructor del cliente
- * convierte `openai` en `openai-compatible`, y los nombres de las variables
- * del id, la URL base y la clave se guardan en `modelEnvs`.
+ * (`modelFromCode`, ADR-033 D2): una URL base propia en el constructor del
+ * cliente convierte `openai` en `openai-compatible` (con un literal de modelo,
+ * sólo con `--model-base-url`), y los nombres de las variables del id, la URL
+ * base y la clave se guardan en `modelEnvs`.
  */
 
 import { InvalidArgumentError } from "../errors.js";
@@ -217,7 +218,7 @@ export function detectProviders(
   }
   let providers: readonly DetectionProvider[];
   if (overrides.modelProvider === undefined) {
-    providers = withBaseUrl(detected, index, rules, language, overrides);
+    providers = withBaseUrl(detected, index, rules, language, overrides, models, sink);
     warn(providers, sink);
   } else {
     providers = [overrideProvider(overrides.modelProvider, rules)];
@@ -289,6 +290,15 @@ function overrideProvider(preset: string, rules: DetectionRules): DetectionProvi
   return { preset, evidence: [{ path: undefined, rule: OVERRIDE_PROVIDER_RULE }] };
 }
 
+/** Si algún constructor de cliente de `text` pasa una URL base propia: una
+ * variable, una expresión o un literal que no es la URL oficial
+ * (`officialBaseUrl`). El grupo 1 de `rule` es el valor tal como se escribe,
+ * ausente si no lo hay (`{ baseURL }`). */
+function customBaseUrl(text: string, rule: string, official: string): boolean {
+  const officialUrl = compiledRegex(official);
+  return matchesOf(rule, text).some((match) => !officialUrl.test(match[1] ?? ""));
+}
+
 /** De dónde sale una URL base propia: el primer fichero cuyo constructor de
  * cliente la pasa (`clientBaseUrl`) o, si ninguno, `--model-base-url`. */
 function baseUrlEvidence(
@@ -300,10 +310,9 @@ function baseUrlEvidence(
   const spec = rules.modelFromCode;
   const rule = language === undefined ? undefined : spec.clientBaseUrl[language];
   if (rule !== undefined) {
-    const pattern = compiledRegex(rule.pattern);
     for (const path of index.sources(language as string)) {
       const text = index.read(path);
-      if (text !== undefined && pattern.test(text)) {
+      if (text !== undefined && customBaseUrl(text, rule.pattern, spec.officialBaseUrl.pattern)) {
         return { path, rule: spec.baseUrlRule };
       }
     }
@@ -315,13 +324,18 @@ function baseUrlEvidence(
 }
 
 /** `fromPreset` pasa a ser `toPreset` (en su sitio, sin añadir otro
- * proveedor) si el cliente apunta a una URL base propia. */
+ * proveedor) si el cliente apunta a una URL base propia. Si el código fija el
+ * id del modelo, el proyecto ya se desplegaba con `fromPreset` antes de
+ * ADR-033: sólo cambia con `--model-base-url`, y sin ella lo avisa
+ * `custom_base_url`. */
 function withBaseUrl(
   providers: readonly DetectionProvider[],
   index: ProjectIndex,
   rules: DetectionRules,
   language: string | undefined,
   overrides: DetectOverrides,
+  models: readonly string[],
+  sink: WarningSink,
 ): readonly DetectionProvider[] {
   const spec = rules.modelFromCode;
   if (!providers.some((provider) => provider.preset === spec.fromPreset)) {
@@ -329,6 +343,10 @@ function withBaseUrl(
   }
   const evidence = baseUrlEvidence(index, rules, language, overrides);
   if (evidence === undefined) {
+    return providers;
+  }
+  if (models.length > 0 && overrides.modelBaseUrl === undefined) {
+    sink.add("custom_base_url", { path: String(evidence.path), preset: spec.fromPreset });
     return providers;
   }
   return providers.map((provider) =>

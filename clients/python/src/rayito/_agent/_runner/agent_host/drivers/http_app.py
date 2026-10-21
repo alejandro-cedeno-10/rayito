@@ -45,7 +45,9 @@ el `input` estructurado de la petición tal cual: `accepts_input`),
 `app_<hex>` que crea el driver, así que la misma sesión sigue el mismo hilo
 tras un relanzamiento de la app. El texto sale de `response_field` o del
 último mensaje del estado final (`langgraph_text`), el uso de su
-`usage_metadata`, y un grafo detenido en un `interrupt` es
+`usage_metadata`; con `input`, un estado final sin `messages` es además la
+salida estructurada (`langgraph_output`), como en el driver de deepagents. Un
+grafo detenido en un `interrupt` es
 `protocol_error`/`graph_interrupted`. La salud es `GET /ok`, la espera de
 arranque es `LANGGRAPH_READY_WAIT_SECONDS` y el hijo arranca sin la
 telemetría de la CLI ni las trazas a LangSmith salvo que el entorno las fije
@@ -65,6 +67,7 @@ from collections.abc import Iterator, Mapping
 from http import HTTPStatus
 from typing import Any, Final
 
+from ..limits import output_fits
 from ..process import (
     DEFAULT_START_TIMEOUT_SECONDS,
     STATE_FAILED,
@@ -75,6 +78,7 @@ from ..process import (
     Supervisor,
 )
 from ..protocol import (
+    OUTPUT_NOT_SERIALIZABLE,
     AgentFailure,
     Emit,
     Request,
@@ -253,6 +257,24 @@ def langgraph_text(state: object) -> str:
     if message is None:
         return json.dumps(state, ensure_ascii=False)
     return langgraph_message_text(message)
+
+
+def langgraph_output(state: object) -> dict[str, Any] | None:
+    """La salida estructurada de un grafo llamado con `input`: su estado
+    final si no es de mensajes (sin `messages`), como la de un grafo de
+    esquema propio en el driver de deepagents; si no, `None` y sólo texto.
+    Lo que no se codifica en JSON estricto o no cabe en
+    `MAX_SERVICE_OUTPUT_BYTES` es `protocol_error`/`output_not_serializable`."""
+    if not isinstance(state, Mapping) or LANGGRAPH_MESSAGES_KEY in state:
+        return None
+    output = dict(state)
+    try:
+        encoded = json.dumps(output, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
+    except ValueError:
+        raise AgentFailure("protocol_error", OUTPUT_NOT_SERIALIZABLE) from None
+    if not output_fits(encoded):
+        raise AgentFailure("protocol_error", OUTPUT_NOT_SERIALIZABLE)
+    return output
 
 
 def langgraph_usage(state: object) -> dict[str, int] | None:
@@ -452,7 +474,9 @@ class Driver:
         emit(build_event("session", session_id=state.session_id))
         emit(build_event("step_started", index=1))
         response = self._post(request, state.session_id)
-        text, usage = self._read(response, emit)
+        text, usage, final_state = self._read(response, emit)
+        if request.input is not None:
+            state.output = langgraph_output(final_state)
         emit(build_event("text", text=text))
         emit(build_event("step_finished", index=1, usage=usage, finish_reason="stop"))
 
@@ -534,7 +558,9 @@ class Driver:
 
     def _read(
         self, response: http.client.HTTPResponse, emit: Emit
-    ) -> tuple[str, dict[str, int] | None]:
+    ) -> tuple[str, dict[str, int] | None, object]:
+        """El texto, el uso y, con `langgraph-api`, el estado final del
+        grafo (`None` con cualquier otro protocolo)."""
         content_type = response.getheader("Content-Type", "")
         if "text/event-stream" not in content_type:
             try:
@@ -542,10 +568,11 @@ class Driver:
             except ValueError:
                 raise AgentFailure("protocol_error", "invalid_response") from None
             if self._langgraph:
-                return self._langgraph_result(payload)
+                graph_text, graph_usage = self._langgraph_result(payload)
+                return graph_text, graph_usage, payload
             reported = app_usage(payload.get("usage")) if isinstance(payload, Mapping) else None
             text = self._json_text(payload) if self._protocol == "json" else extract_text(payload)
-            return text, reported
+            return text, reported, None
         parts: list[str] = []
         usage: dict[str, int] | None = None
         for data in iter_sse_data(response):
@@ -556,7 +583,7 @@ class Driver:
             if delta:
                 parts.append(delta)
                 emit(build_event("text_delta", text=delta))
-        return "".join(parts), usage
+        return "".join(parts), usage, None
 
     def cancel(self) -> None:
         with self._lock:

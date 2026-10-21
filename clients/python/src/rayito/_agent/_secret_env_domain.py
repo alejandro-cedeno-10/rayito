@@ -23,6 +23,7 @@ from typing import Any, Final
 from rayito._agent._events import failure_message
 from rayito._agent._runner.agent_host import secret_env as host_secret_env
 from rayito._limits import (
+    AGENT_SECRET_ENV_NAMES_VARIABLE,
     AGENT_SECRET_ENV_RESERVED_NAMES,
     AGENT_SECRET_ENV_RESERVED_PREFIXES,
     AGENT_SECRET_ENV_SPEC_VERSION,
@@ -208,6 +209,17 @@ def spec_variable(
     if document is None:
         return None
     return json.dumps(document, sort_keys=True, separators=(",", ":"))
+
+
+def injected_names_environment(values: Mapping[str, str]) -> dict[str, str]:
+    """Lo que acompaña a los valores que el SDK exporta en MicroVMs:
+    `RAYITO_SECRET_ENV_NAMES` con sus nombres (nunca valores), para que el
+    host los redacte en un diagnóstico de arranque como en AgentCore; nada
+    sin secretos."""
+    if not values:
+        return {}
+    names = host_secret_env.NAMES_SEPARATOR.join(sorted(values))
+    return {AGENT_SECRET_ENV_NAMES_VARIABLE: names}
 
 
 def secret_ids(

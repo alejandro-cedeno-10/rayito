@@ -146,6 +146,7 @@ export interface SettingsRule {
 /** Modelo elegido por el código (`modelFromCode`, ADR-033 D2). */
 export interface ModelFromCodeRules {
   readonly clientBaseUrl: Readonly<Record<string, PatternRule>>;
+  readonly officialBaseUrl: PatternRule;
   readonly fromPreset: string;
   readonly toPreset: string;
   readonly baseUrlRule: string;

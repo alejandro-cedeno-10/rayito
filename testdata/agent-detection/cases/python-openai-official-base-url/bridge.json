@@ -1,0 +1,13 @@
+{
+  "model": {
+    "provider": "openai",
+    "id": "gpt-4o-mini",
+    "gateway": "openai"
+  },
+  "gateways": {
+    "openai": {
+      "preset": "openai",
+      "secret": "rayito/agents/ticket-agent/openai"
+    }
+  }
+}

@@ -192,6 +192,14 @@ describe("parse.json", () => {
     });
   }
 
+  for (const pasted of ["sk-not-a-name-either", "tok_NotARealValue123", "MY KEY=app/x"]) {
+    test(`a flag without a valid name never repeats it: ${pasted}`, () => {
+      const error = errorOf(() => parseSecretEnvFlag(pasted));
+      expect(error.path).toBe("secret_env");
+      expect(error.message).not.toContain(pasted.split("=")[0] as string);
+    });
+  }
+
   test("a flag error never repeats the pasted value", () => {
     const error = errorOf(() => parseSecretEnvFlag("OPENAI_API_KEY=sk-not-a-name"));
     expect(error.message).not.toContain("sk-not-a-name");

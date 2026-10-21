@@ -145,6 +145,21 @@ describe("el proyecto detectado", () => {
   });
 });
 
+/** Un proyecto LangGraph.js con `@langchain/openai` y el `src/agent.ts` dado. */
+function openaiTree(agent: string): Record<string, string> {
+  return {
+    "package.json": JSON.stringify({
+      name: "ticket-agent",
+      type: "module",
+      dependencies: { "@langchain/langgraph": "*", "@langchain/openai": "*" },
+      engines: { node: ">=20" },
+    }),
+    "package-lock.json": '{"name": "ticket-agent", "lockfileVersion": 3}',
+    "langgraph.json": JSON.stringify({ graphs: { agent: "./src/agent.ts:graph" } }),
+    "src/agent.ts": agent,
+  };
+}
+
 function leakyTree(): Record<string, string> {
   return {
     "pyproject.toml":
@@ -216,6 +231,30 @@ describe("la detección del modelo", () => {
     );
     expect(error.path).toBe("gateways.openai-compatible.upstream");
     expect(error.message).toContain("--model-base-url");
+  });
+
+  test("una URL base fuera del constructor del cliente no cuenta", () => {
+    const agent = [
+      'import { ChatOpenAI } from "@langchain/openai";',
+      'import { createClient } from "./tickets.js";',
+      "const llm = new ChatOpenAI({ model: process.env.OPENAI_MODEL });",
+      "const tickets = createClient({ baseUrl: process.env.TICKETS_URL });",
+      "export const graph = [llm, tickets];",
+    ].join("\n");
+    const report = detect(new MemoryTree(openaiTree(agent)));
+    expect(report.providers.map((provider) => provider.preset)).toEqual(["openai"]);
+  });
+
+  test("baseURL dentro de configuration sí cuenta", () => {
+    const agent = [
+      'import { ChatOpenAI } from "@langchain/openai";',
+      "export const graph = new ChatOpenAI({",
+      "  model: process.env.LLM_MODEL,",
+      "  configuration: { organization: process.env.ORG, baseURL: process.env.LLM_URL },",
+      "});",
+    ].join("\n");
+    const report = detect(new MemoryTree(openaiTree(agent)));
+    expect(report.providers.map((provider) => provider.preset)).toEqual(["openai-compatible"]);
   });
 
   test("el proveedor forzado sustituye a los detectados sin avisos de proveedor", () => {

@@ -56,6 +56,10 @@ function inputOf(args: Json): unknown {
   const generator = args.inputGenerator as
     | { readonly key: string; readonly char: string; readonly length: number }
     | undefined;
+  const number = args.inputNumber as { readonly key: string; readonly value: string } | undefined;
+  if (number !== undefined) {
+    return { [number.key]: Number(number.value) };
+  }
   return generator === undefined
     ? args.input
     : { [generator.key]: generator.char.repeat(generator.length) };
@@ -117,6 +121,21 @@ describe("shared invocation bodies", () => {
     const circular: Json = {};
     circular.self = circular;
     for (const value of [circular, { big: 1n }]) {
+      expect(() =>
+        invocationBody(undefined, { input: value as unknown as Record<string, unknown> }),
+      ).toThrowError(new InvalidArgumentError(INPUT_NOT_OBJECT_MESSAGE));
+    }
+  });
+
+  test("an input that JSON.stringify would silently change is not an object", () => {
+    const values: Json[] = [
+      { missing: undefined },
+      { run: () => 1 },
+      { nested: { score: Number.NEGATIVE_INFINITY } },
+      { list: [1, Number.NaN] },
+      { tag: Symbol("x") },
+    ];
+    for (const value of values) {
       expect(() =>
         invocationBody(undefined, { input: value as unknown as Record<string, unknown> }),
       ).toThrowError(new InvalidArgumentError(INPUT_NOT_OBJECT_MESSAGE));

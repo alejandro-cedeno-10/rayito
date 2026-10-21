@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any, Final, Protocol
 
 from rayito._agent._aws_resolve import GATEWAY_SECRET_ENV_VARS
+from rayito._agent._deploy_plan import with_excluded_file
 from rayito._agent._detect_env_names import (
     env_missing_warnings,
     missing_env_names,
@@ -80,8 +81,9 @@ def env_file_secret_name(project: str) -> str:
 
 def read_env_file_secret(project: str, path: str | os.PathLike[str]) -> EnvFileSecret:
     """Lee el `.env` de `path` (`testdata/agent-secret-env/dotenv.json`). Un
-    fichero que no existe o sin variables es `InvalidArgumentException`, sin
-    nombrar ningún valor."""
+    fichero que no existe, sin variables o con un nombre reservado del
+    runtime (`AWS_REGION`, `AWS_PROFILE`... de un `.env` local) es
+    `InvalidArgumentException`, que nombra la variable y nunca un valor."""
     try:
         text = Path(path).read_text(encoding="utf-8")
     except OSError:
@@ -89,6 +91,12 @@ def read_env_file_secret(project: str, path: str | os.PathLike[str]) -> EnvFileS
     variables = parse_dotenv(text)
     if not variables:
         raise InvalidArgumentException("create_secrets_from: el fichero no tiene variables")
+    reserved = sorted(name for name in variables if is_reserved_name(name))
+    if reserved:
+        raise InvalidArgumentException(
+            f"create_secrets_from: {reserved[0]} es un nombre reservado del runtime; "
+            "quítalo del fichero"
+        )
     return EnvFileSecret(
         name=env_file_secret_name(project),
         variables=tuple(sorted(variables)),
@@ -160,13 +168,19 @@ def prepare_secret_env(
     project: AgentProject, create_secrets_from: str | None, *, check_env: bool
 ) -> PreparedSecretEnv:
     """Conecta el secreto de `create_secrets_from` y calcula los avisos
-    `env_missing`, que además registra en el logger `rayito.agent`."""
+    `env_missing`, que además registra en el logger `rayito.agent`. Si el
+    fichero está dentro del código, se excluye de él (`with_excluded_file`):
+    sus valores van al secreto, nunca a la imagen ni a la plantilla."""
     secret = (
         None
         if create_secrets_from is None
         else read_env_file_secret(project.name, create_secrets_from)
     )
-    prepared = project if secret is None else with_env_file_source(project, secret)
+    prepared = (
+        project
+        if secret is None
+        else with_excluded_file(with_env_file_source(project, secret), create_secrets_from)
+    )
     warnings = env_missing_of(prepared, check_env=check_env)
     for warning in warnings:
         logger.warning(warning)

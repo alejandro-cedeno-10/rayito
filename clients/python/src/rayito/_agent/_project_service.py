@@ -35,7 +35,12 @@ from rayito._agent._project_base import (
     version_args,
 )
 from rayito._agent._runtime import HostConfig
-from rayito._agent._secret_env_domain import SecretReader, resolve_secret_env, spec_document
+from rayito._agent._secret_env_domain import (
+    SecretReader,
+    injected_names_environment,
+    resolve_secret_env,
+    spec_document,
+)
 from rayito._agent._secret_env_project import check_runtime_collisions
 from rayito._agent._secret_env_reader import secret_reader_for
 from rayito._images import DEFAULT_BUILD_TIMEOUT_SECONDS
@@ -194,7 +199,7 @@ class ProjectService:
             serve_command(host, project.serve.port),
             background=True,
             user=AGENT_SERVE_USER,
-            envs={**host.envs, **secret_env},
+            envs={**host.envs, **secret_env, **injected_names_environment(secret_env)},
             timeout=None,
             tag=AGENT_SERVE_TAG,
             kill_tree=True,

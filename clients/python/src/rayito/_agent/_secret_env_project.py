@@ -14,6 +14,7 @@ from collections.abc import Mapping, Sequence
 from typing import Final
 
 from rayito._agent._project_domain import (
+    SECRET_ENV_KEY,
     AgentProject,
     _error,
     _guard,
@@ -24,6 +25,7 @@ from rayito._agent._project_domain import (
     secret_env_path,
 )
 from rayito._agent._secret_env_domain import (
+    ENV_NAME_PATTERN,
     KEY_SEPARATOR,
     SecretEnvRef,
     SecretEnvSource,
@@ -40,11 +42,12 @@ KEYS_OPTION: Final = "keys"
 
 def parse_secret_env_flag(value: str) -> tuple[str, SecretEnvValue]:
     """`NOMBRE=<id>[#clave]` -> el nombre y su secreto (un `SecretEnvRef` si
-    lleva clave)."""
+    lleva clave). Sin `=`, o con un nombre que no es de variable, lo escrito
+    podría ser un secreto mal pegado: el error va a la tabla, sin nombre."""
     name, separator, reference = value.partition(NAME_SEPARATOR)
-    path = secret_env_path(name)
     if not separator:
-        raise _error(path, "invalid_value", "se esperaba NOMBRE=<secreto>[#clave]")
+        raise _error(SECRET_ENV_KEY, "invalid_value", "se esperaba NOMBRE=<secreto>[#clave]")
+    path = secret_env_path(name) if ENV_NAME_PATTERN.fullmatch(name) else SECRET_ENV_KEY
     check_secret_env_name(name, path)
     secret, marker, key = reference.partition(KEY_SEPARATOR)
     if marker and not key:

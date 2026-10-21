@@ -6,9 +6,10 @@ proveedor es un preset de pasarela existente (`bedrock_gateway`,
 leen ni se guardan, y los literales de modelo son identificadores públicos.
 
 Sin literal de modelo, el código puede elegirlo por su configuración
-(`modelFromCode`, ADR-033 D2): una URL base en el constructor del cliente
-convierte `openai` en `openai-compatible`, y los nombres de las variables del
-id, la URL base y la clave se guardan en `model_envs`.
+(`modelFromCode`, ADR-033 D2): una URL base propia en el constructor del
+cliente convierte `openai` en `openai-compatible` (con un literal de modelo,
+sólo con `--model-base-url`), y los nombres de las variables del id, la URL
+base y la clave se guardan en `model_envs`.
 """
 
 from __future__ import annotations
@@ -159,7 +160,7 @@ def detect_providers(
             _override_provider(overrides.model_provider, rules),
         )
     else:
-        providers = _with_base_url(detected, index, rules, language, overrides)
+        providers = _with_base_url(detected, index, rules, language, overrides, models, sink)
         _warn(providers, sink)
     envs = _model_envs(index, rules, language, providers, models)
     if envs:
@@ -216,6 +217,18 @@ def _override_provider(preset: str, rules: Mapping[str, Any]) -> DetectionProvid
     return DetectionProvider(preset, (DetectionEvidence(None, OVERRIDE_PROVIDER_RULE),))
 
 
+def _custom_base_url(text: str, rule: Mapping[str, Any], official: Mapping[str, Any]) -> bool:
+    """Si algún constructor de cliente de `text` pasa una URL base propia:
+    una variable, una expresión o un literal que no es la URL oficial
+    (`officialBaseUrl`). El grupo 1 de `rule` es el valor tal como se
+    escribe, vacío si no lo hay (`{ baseURL }` en TypeScript)."""
+    official_url = compiled_regex(official["pattern"])
+    return any(
+        not official_url.search(match.group(1) or "")
+        for match in compiled_regex(rule["pattern"]).finditer(text)
+    )
+
+
 def _base_url_evidence(
     index: ProjectIndex,
     rules: Mapping[str, Any],
@@ -227,10 +240,9 @@ def _base_url_evidence(
     spec = rules["modelFromCode"]
     rule = spec["clientBaseUrl"].get(language) if language is not None else None
     if rule is not None:
-        pattern = compiled_regex(rule["pattern"])
         for path in index.sources(str(language)):
             text = index.read(path)
-            if text is not None and pattern.search(text):
+            if text is not None and _custom_base_url(text, rule, spec["officialBaseUrl"]):
                 return DetectionEvidence(path, spec["baseUrlRule"])
     if overrides.model_base_url is not None:
         return DetectionEvidence(None, OVERRIDE_BASE_URL_RULE)
@@ -243,14 +255,22 @@ def _with_base_url(
     rules: Mapping[str, Any],
     language: str | None,
     overrides: DetectOverrides,
+    models: tuple[str, ...],
+    sink: WarningSink,
 ) -> tuple[DetectionProvider, ...]:
     """`fromPreset` pasa a ser `toPreset` (en su sitio, sin añadir otro
-    proveedor) si el cliente apunta a una URL base propia."""
+    proveedor) si el cliente apunta a una URL base propia. Si el código fija
+    el id del modelo, el proyecto ya se desplegaba con `fromPreset` antes de
+    ADR-033: sólo cambia con `--model-base-url`, y sin ella lo avisa
+    `custom_base_url`."""
     spec = rules["modelFromCode"]
     if not any(provider.preset == spec["fromPreset"] for provider in providers):
         return providers
     evidence = _base_url_evidence(index, rules, language, overrides)
     if evidence is None:
+        return providers
+    if models and overrides.model_base_url is None:
+        sink.add("custom_base_url", path=str(evidence.path), preset=spec["fromPreset"])
         return providers
     return tuple(
         DetectionProvider(spec["toPreset"], (*provider.evidence, evidence))

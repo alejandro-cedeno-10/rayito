@@ -242,7 +242,7 @@ Con un grafo de esquema propio invocado con `input`
 
 | `detail_code` | Cuándo |
 |---|---|
-| `input_required` | el grafo espera `input` (un objeto JSON) y llegó un prompt |
+| `input_required` | el esquema de entrada del grafo tiene claves obligatorias (`required`) y llegó un prompt |
 | `invalid_input` | `input` no cumple el esquema de entrada del grafo |
 | `output_not_serializable` | la salida del grafo no se puede convertir a JSON o pasa de {{agentServiceMaxOutputBytes}} bytes |
 

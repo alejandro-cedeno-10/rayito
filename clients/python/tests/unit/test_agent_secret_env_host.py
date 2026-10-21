@@ -26,8 +26,8 @@ from rayito._agent._recipes import asset_bytes
 from rayito._agent._runner.agent_host import __main__ as host_main
 from rayito._agent._runner.agent_host import diagnostics, serve
 from rayito._agent._runner.agent_host import secret_env as host
-from rayito._agent._secret_env_domain import SCRIPT_NAME
-from rayito._limits import AGENT_SECRET_ENV_REDACT_MIN_CHARS
+from rayito._agent._secret_env_domain import SCRIPT_NAME, injected_names_environment
+from rayito._limits import AGENT_SECRET_ENV_NAMES_VARIABLE, AGENT_SECRET_ENV_REDACT_MIN_CHARS
 from tests.unit.fake_agentcore import CONTRACT
 
 SECRET_ENV_CONSTANTS: dict[str, Any] = CONTRACT["constants"]["secretEnv"]
@@ -150,6 +150,31 @@ def test_a_short_injected_value_is_redacted_from_the_startup_diagnostics(
     assert marker.startswith("_Stop")
     assert SHORT_VALUE not in marker
     assert diagnostics.REDACTED in marker
+
+
+def test_a_short_value_the_sdk_injected_on_microvms_is_redacted_too(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pin = "pin123"
+    fresh = {"PATH": os.environ.get("PATH", ""), "DB_PIN": pin, host.NAMES_VARIABLE: "DB_PIN"}
+    monkeypatch.setattr(os, "environ", fresh)
+    _, seen = _serve(tmp_path, _host_config(tmp_path, None), monkeypatch, failure=f"pin {pin}")
+    marker = _marker(tmp_path)
+    assert pin not in marker
+    assert diagnostics.REDACTED in marker
+    assert seen["DB_PIN"] == pin
+    assert host.NAMES_VARIABLE not in seen
+
+
+def test_the_names_variable_is_the_shared_limit_and_holds_no_value() -> None:
+    assert host.NAMES_VARIABLE == AGENT_SECRET_ENV_NAMES_VARIABLE
+    values = {"DB_PIN": "pin123", "API_KEY": "k-value"}
+    environment = injected_names_environment(values)
+    assert environment == {AGENT_SECRET_ENV_NAMES_VARIABLE: "API_KEY,DB_PIN"}
+    assert injected_names_environment({}) == {}
+    environ = {**values, **environment}
+    assert sorted(host.injected_values(environ)) == ["k-value", "pin123"]
+    assert AGENT_SECRET_ENV_NAMES_VARIABLE not in environ
 
 
 @pytest.mark.parametrize(

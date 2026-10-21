@@ -22,6 +22,7 @@ import {
 import { copyProject } from "./project-copy.js";
 import {
   SECRET_ENV_KEY_SEPARATOR,
+  SECRET_ENV_NAME_PATTERN,
   type SecretEnvMap,
   SecretEnvRef,
   SecretEnvSource,
@@ -47,13 +48,14 @@ function partition(value: string, separator: string): readonly [string, boolean,
 }
 
 /** `NOMBRE=<id>[#clave]` -> el nombre y su secreto (un `SecretEnvRef` si lleva
- * clave). */
+ * clave). Sin `=`, o con un nombre que no es de variable, lo escrito podría ser
+ * un secreto mal pegado: el error va a la tabla, sin nombre. */
 export function parseSecretEnvFlag(value: string): readonly [string, SecretEnvValue] {
   const [name, hasSeparator, reference] = partition(value, NAME_SEPARATOR);
-  const path = secretEnvPath(name);
   if (!hasSeparator) {
-    throw invalid(path, "se esperaba NOMBRE=<secreto>[#clave]");
+    throw invalid(secretEnvPath(""), "se esperaba NOMBRE=<secreto>[#clave]");
   }
+  const path = secretEnvPath(SECRET_ENV_NAME_PATTERN.test(name) ? name : "");
   checkSecretEnvName(name, path);
   const [secret, hasKey, key] = partition(reference, SECRET_ENV_KEY_SEPARATOR);
   if (hasKey && key === "") {

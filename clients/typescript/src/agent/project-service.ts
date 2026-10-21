@@ -35,7 +35,12 @@ import {
   type ServableRuntime,
 } from "./runtime.js";
 import { resolveRuntime } from "./runtimes.js";
-import { resolveSecretEnv, type SecretReader, specDocument } from "./secret-env.js";
+import {
+  injectedNamesEnvironment,
+  resolveSecretEnv,
+  type SecretReader,
+  specDocument,
+} from "./secret-env.js";
 import { secretReaderFor } from "./secret-env-deploy.js";
 import { checkRuntimeCollisions } from "./secret-env-project.js";
 import { type AgentSandbox, gatewayUrlsFor } from "./stream.js";
@@ -480,7 +485,7 @@ export class ProjectService {
     const handle = await sandbox.commands.run(serveCommand(host, project.serve.port), {
       background: true,
       user: AGENT_SERVE_USER,
-      envs: { ...host.envs, ...secretEnv },
+      envs: { ...host.envs, ...secretEnv, ...injectedNamesEnvironment(secretEnv) },
       timeoutMs: 0,
       tag: AGENT_SERVE_TAG,
       killTree: true,

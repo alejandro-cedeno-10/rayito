@@ -18,8 +18,6 @@ from rayito._agent._detect_entry import (
     CURRENT_DIRECTORY,
     PYTHON_ATTRIBUTE_SEPARATOR,
     EntryChoice,
-    graph_choices,
-    select_graph,
 )
 from rayito._agent._detect_report import APP_PROTOCOLS, DetectionApp
 from rayito._agent._detect_scan import (
@@ -267,16 +265,14 @@ def _assistant_id(
     entry: EntryChoice,
     graph: str | None = None,
 ) -> str:
-    """El grafo que se sirve: el de `--graph` (`select_graph`, que rechaza un
-    nombre que no está en `graphs`) o, sin él, la clave de `graphs` que apunta
-    al punto de entrada elegido: la preferida por nombre si hay varias, o la
-    primera en orden."""
+    """El grafo que se sirve: el de `--graph`, que `select_graph` ya validó
+    al elegir el punto de entrada (`find_entry_in_file`), o, sin él, la clave
+    de `graphs` que apunta al punto de entrada elegido: la preferida por
+    nombre si hay varias, o la primera en orden."""
+    if graph is not None:
+        return graph
     spec = rules["entryFiles"][spec_name]
     document = index.read_json(spec["file"])
-    if graph is not None:
-        selected = select_graph(graph_choices(document, spec, entry.rule), graph, rules, spec_name)
-        if selected is not None:
-            return selected[0]
     graphs = document.get(spec["key"]) if isinstance(document, dict) else None
     wanted = f"{entry.path}{PYTHON_ATTRIBUTE_SEPARATOR}{entry.attr}"
     keys = sorted(key for key, value in (graphs or {}).items() if _graph_location(value) == wanted)

@@ -460,6 +460,7 @@ export const AGENT_SECRET_ENV_RESERVED_NAMES = [
 ] as const;
 export const AGENT_SECRET_ENV_RESERVED_PREFIXES = ["AWS_", "LD_", "RAYITO_"] as const;
 export const AGENT_SECRET_ENV_REDACT_MIN_CHARS = 4 as const;
+export const AGENT_SECRET_ENV_NAMES_VARIABLE = "RAYITO_SECRET_ENV_NAMES" as const;
 export const AGENT_TOKEN_FILE_DEFAULT = ".rayito/agent-token" as const;
 
 export const AGENTCORE_SUPPORTED_REGIONS = [

@@ -699,6 +699,13 @@
       "text": "no se fija el id del modelo: lo elige tu código ({envs})"
     },
     {
+      "feature": "A",
+      "section": "warnings",
+      "key": "custom_base_url",
+      "after": "model_id_from_code",
+      "text": "el cliente de {path} pasa su propia URL base y se mantiene {preset} porque el código fija el id del modelo; si apunta a una pasarela compatible con OpenAI, pasa --model-base-url"
+    },
+    {
       "feature": "B",
       "section": "messages",
       "key": "ambiguous_graph",
@@ -837,6 +844,13 @@
       "value": 4,
       "after": "agentSecretEnvReservedPrefixes",
       "source": "redacción de valores inyectados más cortos que MIN_REDACTED_VALUE_LENGTH"
+    },
+    {
+      "feature": "C",
+      "key": "agentSecretEnvNamesVariable",
+      "value": "RAYITO_SECRET_ENV_NAMES",
+      "after": "agentSecretEnvRedactMinChars",
+      "source": "en MicroVMs, sólo los nombres de los valores que el SDK ya exportó, para que el host los redacte"
     },
     {
       "feature": "D",

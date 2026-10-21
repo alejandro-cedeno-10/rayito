@@ -166,6 +166,11 @@ secreto cuesta $0,40 al mes. El lector de `.env` es mínimo: `NOMBRE=valor`,
 `export`, comillas y comentarios, sin interpolación. Es la única vez que Rayito
 lee valores de un `.env`, y sólo porque se lo pides.
 
+Si el fichero está dentro del código del agente, se excluye de él: sus valores
+van al secreto, nunca a la imagen ni a la plantilla. Un nombre reservado (por
+ejemplo `AWS_REGION` o `AWS_PROFILE` de un `.env` local) es un error que nombra
+la variable, nunca su valor: quítalo del fichero.
+
 ## Avisar de lo que falta { #check-env }
 
 `--check-env` (`check_env=True` / `checkEnv: true`) compara los nombres de tu

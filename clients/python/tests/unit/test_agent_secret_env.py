@@ -122,6 +122,14 @@ def test_a_flag_error_never_repeats_the_pasted_value() -> None:
     assert "sk-not-a-name" not in str(raised.value)
 
 
+@pytest.mark.parametrize("pasted", ["sk-not-a-name-either", "tok_NotARealValue123", "MY KEY=app/x"])
+def test_a_flag_without_a_valid_name_never_repeats_it(pasted: str) -> None:
+    with pytest.raises(AgentProjectException) as raised:
+        parse_secret_env_flag(pasted)
+    assert raised.value.path == "secret_env"
+    assert pasted.partition("=")[0] not in str(raised.value)
+
+
 @pytest.mark.parametrize("case", PARSE["tableCases"], ids=[c["name"] for c in PARSE["tableCases"]])
 def test_the_table_vectors(case: dict[str, Any]) -> None:
     document = tomllib.loads(MINIMAL + "\n" + case["toml"])

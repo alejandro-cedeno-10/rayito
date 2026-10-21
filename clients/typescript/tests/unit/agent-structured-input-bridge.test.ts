@@ -2,7 +2,8 @@
  * Entrada estructurada en el puente de Node (`node_bridge.mjs`, adaptador
  * `langgraph`, ADR-033 D3): un grafo con `getInputJsonSchema` sin `messages`
  * se ejecuta con el `input` de la petición y cierra con `done` y su `output`;
- * un prompt es `input_required`, un `input` que no cumple el esquema es
+ * un prompt es `input_required` si el esquema tiene claves `required` (si no,
+ * sigue el camino de mensajes), un `input` que no cumple el esquema es
  * `invalid_input` y un grafo de mensajes sigue como siempre. Se ejecuta el
  * proceso real del puente con un grafo de doble.
  */
@@ -60,6 +61,18 @@ const MESSAGES_GRAPH = `
 export const graph = {
   getInputJsonSchema() {
     return { properties: { messages: { type: "array" } } };
+  },
+  async stream(input, options) {
+    process.stderr.write(JSON.stringify({ input, options }) + "\\n");
+    return (async function* () {})();
+  },
+};
+`;
+
+const OPTIONAL_INPUT_GRAPH = `
+export const graph = {
+  getInputJsonSchema() {
+    return { type: "object", properties: { result: { type: "string" } } };
   },
   async stream(input, options) {
     process.stderr.write(JSON.stringify({ input, options }) + "\\n");
@@ -139,6 +152,15 @@ describe("structured langgraph graphs in the bridge", () => {
       session_id: SESSION,
     });
     expect(seen).toEqual([]);
+  });
+
+  test("a prompt to a graph without required input keeps the prompt path", () => {
+    const { lines, seen } = runBridge(OPTIONAL_INPUT_GRAPH, { prompt: "hola" });
+    expect(seen[0]).toEqual({
+      input: { messages: [{ role: "user", content: "hola" }] },
+      options: { configurable: { thread_id: SESSION }, streamMode: "updates" },
+    });
+    expect(lines.at(-1)).toEqual({ v: 1, type: "done", session_id: SESSION });
   });
 
   test("a message graph keeps the prompt path and takes an input as is", () => {

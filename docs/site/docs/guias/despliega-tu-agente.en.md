@@ -158,9 +158,12 @@ If your code picks the model from its configuration, for example
 need to write the model id anywhere. Detection recognizes two things without
 running your code or reading any value:
 
-- A `base_url=` in the client constructor (in TypeScript, `baseURL` or
-  `configuration`). With it, an `openai` provider detected from a dependency
-  becomes `openai-compatible`.
+- A custom `base_url=` in the client constructor (in TypeScript, `baseURL`,
+  also inside `configuration`). With it, an `openai` provider detected from a
+  dependency becomes `openai-compatible`. The official OpenAI URL does not
+  count, and if your code sets the model id as a literal (what was already
+  deployed before), the provider stays `openai` unless you pass
+  `--model-base-url`; detection says so with `custom_base_url`.
 - The **names** of the model, base URL and key variables (`LLM_MODEL`,
   `LLM_BASE_URL`, `LLM_API_KEY`). They come from `.env.example`, from
   `os.getenv` / `process.env` reads, from pydantic-settings fields
@@ -1092,8 +1095,10 @@ What the host does with each invocation:
   is not queued: it fails with `app_http_409`.
 - The text comes from `response_field` (if you set it) or from the `content`
   of the last message of the final state; without messages, it is the whole
-  state as JSON. Token usage comes from its `usage_metadata`, and without it
-  usage is unknown, not zero.
+  state as JSON. If you called with `input` and the final state has no
+  messages, that state is also `output`, as with a graph with its own schema.
+  Token usage comes from its `usage_metadata`, and without it usage is
+  unknown, not zero.
 - A graph that stops at an `interrupt` (human-in-the-loop) returns
   `AgentException` with `reason="protocol_error"` and `detail_code`
   `graph_interrupted`; any other HTTP status is `app_http_<n>`.
@@ -1214,7 +1219,7 @@ and a `detail_code`:
 
 | `detail_code` | When |
 |---|---|
-| `input_required` | you called a graph that expects `input` with a prompt |
+| `input_required` | you called a graph whose input schema has required keys (`required`) with a prompt; without them, the prompt goes as a message, as always |
 | `invalid_input` | `input` does not match the schema (required keys, extra keys with `additionalProperties: false`, top-level types), or the graph raised a pydantic `ValidationError` |
 | `output_not_serializable` | the output cannot be converted to JSON or exceeds {{agentServiceMaxOutputBytes}} bytes |
 

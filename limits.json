@@ -383,6 +383,7 @@
     "RAYITO_"
   ],
   "agentSecretEnvRedactMinChars": 4,
+  "agentSecretEnvNamesVariable": "RAYITO_SECRET_ENV_NAMES",
   "agentTokenFileDefault": ".rayito/agent-token",
   "agentDetectionSchema": "rayito.agent-detection/1",
   "agentDetectionRulesSchema": "rayito.agent-detection-rules/1",

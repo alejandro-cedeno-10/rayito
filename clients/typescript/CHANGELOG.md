@@ -79,16 +79,35 @@ versionado [SemVer](https://semver.org/lang/es/).
   licencia Elastic-2.0). Sin streaming ni `langgraph up` en esta versión.
   `HttpApp.servedHealthPath` y `servedInvokePath` dicen las rutas a las
   que llama el host. Con `invoke({ input })` el objeto llega tal cual como
-  entrada del grafo, y `--graph` elige el `assistantId`.
+  entrada del grafo y, si el estado final no tiene mensajes, vuelve como
+  `AgentResult.output`; `--graph` elige el `assistantId`.
 
 ### Cambiado
 
 - `AgentModel.id` pasa de `string` a `string | undefined` (`AgentModel<Id>`:
-  un modelo construido con id sigue siendo `string`); sólo cambia el tipo que
-  se lee, ninguna llamada existente.
+  un modelo construido con id sigue siendo `string`), y con él
+  `AgentSpec.effectiveSmallModel`; sólo cambia el tipo que se lee, ninguna
+  llamada existente. Un proyecto con id se comporta igual, pero con `strict`
+  `tsc` avisa (TS2322/TS18048) donde el código lee `project.spec.model.id`
+  como `string`; estréchalo (`if (id !== undefined)`).
 - `model_required` se lanza por fin: AgentCore con un proveedor `bedrock` sin
   `[model] id` ni `--bedrock-model` (antes reservado); su texto dice «fija
   [model] id o pásalo con --bedrock-model».
+- Textos de error (los códigos, las rutas y el código de salida no cambian):
+  `model_required` ya no lleva la pista «(bedrock_models en el SDK)», y un
+  `langgraph.json` con varios grafos y ninguno llamado `agent` da el texto de
+  `ambiguous_graph` (los nombres de los grafos y `--graph`) en vez del de
+  `ambiguous_entrypoint`, con el mismo código `ambiguous` en
+  `runtime.entrypoint`.
+- La detección sólo convierte `openai` en `openai-compatible` por un
+  `baseURL` propio en el constructor del cliente (también dentro de
+  `configuration`; `configuration: { organization }` ya no cuenta); con la URL
+  oficial de OpenAI, o si el código fija el id del modelo con un literal y no
+  pasas `--model-base-url`, el proyecto se detecta como en 0.15 (en el
+  segundo caso, con el aviso `custom_base_url`).
+- Un prompt a un grafo con esquema de entrada propio sin claves `required`
+  sigue el camino de mensajes, como en 0.15; `input_required` queda para los
+  grafos que declaran claves obligatorias.
 
 ### Seguridad
 
@@ -100,6 +119,13 @@ versionado [SemVer](https://semver.org/lang/es/).
   secretos (`GetSecretValue`, sin `kms:Decrypt`), y un test falla si se amplía.
   El agente y lo que lance pueden leer su entorno: la guía, `security.md` y
   `SECURITY.md` lo dicen.
+- El fichero de `--create-secrets-from` se excluye del código si está dentro,
+  así que sus valores nunca llegan a la imagen ni a la plantilla; un nombre
+  reservado en él es un error que nombra la variable, nunca su valor. Un
+  `--secret-env` sin `=` o con un nombre que no es de variable da el error en
+  `secret_env`, sin repetir lo escrito. En MicroVMs el host recibe también
+  `RAYITO_SECRET_ENV_NAMES` (sólo nombres) y redacta los valores de
+  `secret_env` en el diagnóstico de arranque igual que en AgentCore.
 
 ## [0.15.0] - 2026-10-21
 

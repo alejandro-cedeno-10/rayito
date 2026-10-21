@@ -19,6 +19,7 @@ import { defineHidden } from "../hidden.js";
 import { AGENT_SECRET_NAME_TEMPLATE } from "../limits.js";
 import type { SecretStoreOptions } from "../secrets/store.js";
 import { GATEWAY_SECRET_ENV_VARS } from "./aws-resolve.js";
+import { withExcludedFile } from "./deploy-plan.js";
 import { envMissingWarnings, missingEnvNames, requiredEnvNames } from "./detect-env-names.js";
 import { LocalProjectTree } from "./detect-fs.js";
 import type { AgentProject } from "./project.js";
@@ -70,8 +71,9 @@ export function envFileSecretName(project: string): string {
 }
 
 /** Lee el `.env` de `path` (`testdata/agent-secret-env/dotenv.json`). Un
- * fichero que no existe o sin variables es `InvalidArgumentError`, sin
- * nombrar ningún valor. */
+ * fichero que no existe, sin variables o con un nombre reservado del runtime
+ * (`AWS_REGION`, `AWS_PROFILE`... de un `.env` local) es
+ * `InvalidArgumentError`, que nombra la variable y nunca un valor. */
 export function readEnvFileSecret(project: string, path: string): EnvFileSecret {
   let text: string;
   try {
@@ -83,6 +85,12 @@ export function readEnvFileSecret(project: string, path: string): EnvFileSecret 
   const names = Object.keys(variables).sort();
   if (names.length === 0) {
     throw new InvalidArgumentError("createSecretsFrom: el fichero no tiene variables");
+  }
+  const reserved = names.find((name) => isReservedName(name));
+  if (reserved !== undefined) {
+    throw new InvalidArgumentError(
+      `createSecretsFrom: ${reserved} es un nombre reservado del runtime; quítalo del fichero`,
+    );
   }
   const sorted = Object.fromEntries(names.map((name) => [name, variables[name]]));
   const secret = { name: envFileSecretName(project), variables: Object.freeze(names) };
@@ -151,6 +159,10 @@ export interface PreparedSecretEnv {
   readonly warnings: readonly string[];
 }
 
+/** Conecta el secreto de `createSecretsFrom` y calcula los avisos
+ * `env_missing`. Si el fichero está dentro del código, se excluye de él
+ * (`withExcludedFile`): sus valores van al secreto, nunca a la imagen ni a la
+ * plantilla. */
 export function prepareSecretEnv(
   project: AgentProject,
   createSecretsFrom: string | undefined,
@@ -160,7 +172,10 @@ export function prepareSecretEnv(
     createSecretsFrom === undefined
       ? undefined
       : readEnvFileSecret(project.name, createSecretsFrom);
-  const prepared = secret === undefined ? project : withEnvFileSource(project, secret);
+  const prepared =
+    secret === undefined
+      ? project
+      : withExcludedFile(withEnvFileSource(project, secret), createSecretsFrom);
   return { project: prepared, secret, warnings: envMissingOf(prepared, checkEnv) };
 }
 

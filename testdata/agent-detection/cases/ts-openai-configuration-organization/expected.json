@@ -1,0 +1,55 @@
+{
+  "schema": "rayito.agent-detection/1",
+  "language": "typescript",
+  "framework": "langgraph",
+  "kind": "langgraph",
+  "entrypoint": "src/agent.ts#graph",
+  "entrypoint_kind": "object",
+  "protocol": "framework",
+  "options": {},
+  "app": null,
+  "install": {
+    "manager": "npm",
+    "lockfile": "package-lock.json",
+    "requirements": null,
+    "require_hashes": false,
+    "reproducible": true,
+    "build_script": false,
+    "python_version": null,
+    "node_version": "22"
+  },
+  "providers": [
+    {
+      "preset": "openai",
+      "evidence": [
+        {
+          "path": "package.json",
+          "rule": "dep:@langchain/openai"
+        }
+      ]
+    }
+  ],
+  "models": [
+    "gpt-4o-mini"
+  ],
+  "evidence": [
+    {
+      "path": "langgraph.json",
+      "rule": "file:langgraph.json"
+    },
+    {
+      "path": "src/agent.ts",
+      "rule": "entry:langgraph-json"
+    },
+    {
+      "path": "package-lock.json",
+      "rule": "install:npm"
+    },
+    {
+      "path": "package.json",
+      "rule": "version:semver"
+    }
+  ],
+  "warnings": [],
+  "alternatives": []
+}

@@ -19,6 +19,7 @@ import { AgentProject, AgentProjectError } from "../../src/agent/project.js";
 import { ProjectService } from "../../src/agent/project-service.js";
 import {
   envFileSecretName,
+  prepareSecretEnv,
   publishEnvFileSecret,
   readEnvFileSecret,
 } from "../../src/agent/secret-env-deploy.js";
@@ -28,7 +29,7 @@ import { deployAgentCoreWith } from "../../src/agentcore/facade.js";
 import type { AgentCoreDeployPlan } from "../../src/agentcore/models.js";
 import { planLines } from "../../src/cli/agentcore-output.js";
 import { AgentError, SecretEnvRef, SecretEnvSource } from "../../src/index.js";
-import { AGENT_SECRET_ENV_VARIABLE } from "../../src/limits.js";
+import { AGENT_SECRET_ENV_NAMES_VARIABLE, AGENT_SECRET_ENV_VARIABLE } from "../../src/limits.js";
 import { FakeSandbox, FakeSandboxFactory, project, SANDBOX_ID } from "./agent-project-fake.js";
 import { ACCOUNT, BUCKET, clockOf, newAccount, REGION } from "./agentcore-fakes.js";
 
@@ -239,6 +240,29 @@ describe("--create-secrets-from", () => {
     ).toBe("updated");
     expect(updates).toEqual([secret.name]);
   });
+
+  test("a reserved name in the env file is named without its value", async () => {
+    const path = join(directory, "local.env");
+    await writeFile(path, `TICKETS_TOKEN=${TOKEN_VALUE}\nAWS_PROFILE=dev-profile-value\n`);
+    expect(() => readEnvFileSecret("support-bot", path)).toThrowError(/AWS_PROFILE/);
+    expect(() => readEnvFileSecret("support-bot", path)).not.toThrowError(/dev-profile-value/);
+  });
+
+  test("an env file inside the source is excluded from it", async () => {
+    const source = join(directory, "agent");
+    await mkdir(join(source, "deploy"), { recursive: true });
+    const inside = join(source, "deploy", "prod.env");
+    const outside = join(directory, "values.env");
+    for (const path of [inside, outside]) {
+      await writeFile(path, `TICKETS_TOKEN=${TOKEN_VALUE}\n`);
+    }
+    const theProject = project({ source, exclude: ["tests"] });
+    expect(prepareSecretEnv(theProject, inside, false).project.exclude).toEqual([
+      "tests",
+      "deploy/prod.env",
+    ]);
+    expect(prepareSecretEnv(theProject, outside, false).project.exclude).toEqual(["tests"]);
+  });
 });
 
 describe("MicroVMs", () => {
@@ -280,6 +304,7 @@ describe("MicroVMs", () => {
     expect(envs.LLM_GATEWAY_KEY).toBe(TOKEN_VALUE);
     expect(envs.APP_DB_HOST).toBe("db.internal.example");
     expect(envs).not.toHaveProperty(AGENT_SECRET_ENV_VARIABLE);
+    expect(envs[AGENT_SECRET_ENV_NAMES_VARIABLE]).toBe("APP_DB_HOST,DATABASE_URL,LLM_GATEWAY_KEY");
     expect(reads.map(([secret]) => secret)).toEqual([
       "app/db-url",
       "arn:aws:secretsmanager:us-east-1:123456789012:secret:llm-AbCdEf",
