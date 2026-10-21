@@ -21,7 +21,7 @@ import dataclasses
 import json
 import os
 import sys
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -47,6 +47,11 @@ from rayito._agent._fleet_base import fleet_settings_of
 from rayito._agent._project_base import app_hiding_own_routes
 from rayito._agent._project_file import project_name_of
 from rayito._agent._scaling_domain import SESSION_MODES
+from rayito._agent._secret_env_deploy import prepare_secret_env
+from rayito._agent._secret_env_project import (
+    parse_secret_env_flags,
+    parse_secret_env_from_flags,
+)
 from rayito._agent._template import (
     AGENT_TEMPLATE_RUNTIMES,
     DEFAULT_AGENT_TEMPLATE_BASE,
@@ -80,6 +85,13 @@ from rayito.cli._agent_scaffold import (
     ScaffoldRequest,
     scaffold_files,
     write_scaffold,
+)
+from rayito.cli._agent_secret_env import (
+    CREATE_SECRETS_NEEDS_CONFIRMATION,
+    confirmed,
+    env_file_secret_line,
+    env_file_secret_of,
+    env_warning_line,
 )
 from rayito.cli._agentcore import (
     BEDROCK_MODEL_FLAG,
@@ -566,6 +578,19 @@ STDIN_PATH = "-"
 INVOKE_INPUT_REQUIRED = "pasa PROMPT, --input o --input-file, sólo uno de los tres"
 INVOKE_INPUT_UNREADABLE = "no se pudo leer el fichero de --input-file"
 INVOKE_INPUT_INVALID = "la entrada no es un objeto JSON"
+SECRET_ENV_HELP = (
+    "NOMBRE=<secreto>[#clave]: variable de entorno con el valor de un secreto de Secrets "
+    "Manager (nombre completo o ARN); repetible."
+)
+SECRET_ENV_FROM_HELP = (
+    "<secreto>[,prefix=P][,keys=A|B]: cada clave de un secreto JSON como variable de entorno; "
+    "repetible."
+)
+CREATE_SECRETS_FROM_HELP = (
+    "Crea (o actualiza) un secreto JSON con los valores de este .env y lo usa como "
+    "--secret-env-from (cuesta $0,40/mes; pide --yes)."
+)
+CHECK_ENV_HELP = "Avisa de las variables de .env.example que no reciben valor."
 MICROVM_ID_PREFIX = "microvm-"
 STEP_MESSAGES = {
     "base_image": "imagen base publicada",
@@ -574,6 +599,8 @@ STEP_MESSAGES = {
     ),
     "image": "imagen lista: versión {detail}",
     "fleet": "{detail} VM(s) listos",
+    "secret_env_created": "secreto de --create-secrets-from: {detail}",
+    "env_missing": "aviso: {detail}",
 }
 
 
@@ -800,6 +827,14 @@ def deploy_command(
             help="Crea el secreto que falte desde la variable del proveedor (cuesta $0,40/mes).",
         ),
     ] = False,
+    secret_env: Annotated[list[str], typer.Option("--secret-env", help=SECRET_ENV_HELP)] = [],  # noqa: B006
+    secret_env_from: Annotated[
+        list[str], typer.Option("--secret-env-from", help=SECRET_ENV_FROM_HELP)
+    ] = [],  # noqa: B006
+    create_secrets_from: Annotated[
+        Path | None, typer.Option("--create-secrets-from", help=CREATE_SECRETS_FROM_HELP)
+    ] = None,
+    check_env: Annotated[bool, typer.Option("--check-env", help=CHECK_ENV_HELP)] = False,
     base_artifact: Annotated[
         Path | None,
         typer.Option(
@@ -908,6 +943,10 @@ def deploy_command(
                 readable_secrets=readable_secret,
                 idle_session_timeout=idle_session_timeout,
                 max_session_lifetime=max_session_lifetime,
+                secret_env=secret_env,
+                secret_env_from=secret_env_from,
+                create_secrets_from=create_secrets_from,
+                check_env=check_env,
                 microvm_flags=frozenset(
                     flag
                     for flag, passed in {
@@ -950,9 +989,12 @@ def deploy_command(
             memory=memory,
             env=parse_pairs(env, "--env"),
             allow_out=allow_out or [],
+            secret_env=parse_secret_env_flags(secret_env),
+            secret_env_from=parse_secret_env_from_flags(secret_env_from),
         )
         scaling = scaling_of(project, min_vms, max_vms, warm, sessions)
         secret_names = parse_pairs(secret, "--secret")
+        env_file_secret = env_file_secret_of(project, create_secrets_from)
     except InvalidArgumentException as exc:
         fail(str(exc), code=EXIT_USAGE)
     as_json = json_mode(ctx)
@@ -973,6 +1015,8 @@ def deploy_command(
             pool_backend=pool_backend,
             on_build_logs=(lambda line: echo(line, err=True)) if verbose else compact,
             on_step=step_printer(as_json),
+            create_secrets_from=None if create_secrets_from is None else str(create_secrets_from),
+            check_env=check_env,
         )
 
     if dry_run:
@@ -984,8 +1028,13 @@ def deploy_command(
             ),
             report,
             as_json=as_json,
+            notices=dry_run_notices(project, create_secrets_from, check_env=check_env),
         )
         return
+    if env_file_secret is not None:
+        echo(env_file_secret_line(env_file_secret), err=True)
+        if not confirmed(yes=yes, json_output=as_json):
+            fail(CREATE_SECRETS_NEEDS_CONFIRMATION, code=EXIT_USAGE)
     try:
         token, written_to = deploy_token(token_file)
     except TokenFileError as exc:
@@ -1065,7 +1114,19 @@ def scaling_of(
     )
 
 
-def print_plan(plan: Any, report: DetectionReport | None, *, as_json: bool) -> None:
+def dry_run_notices(
+    project: AgentProject, create_secrets_from: Path | None, *, check_env: bool
+) -> list[str]:
+    """Los avisos `env_missing` del plan, con el secreto de
+    `--create-secrets-from` ya conectado (sin crearlo)."""
+    path = None if create_secrets_from is None else str(create_secrets_from)
+    prepared = prepare_secret_env(project, path, check_env=check_env)
+    return [env_warning_line(warning) for warning in prepared.warnings]
+
+
+def print_plan(
+    plan: Any, report: DetectionReport | None, *, as_json: bool, notices: Sequence[str] = ()
+) -> None:
     if as_json:
         emit_json(
             {
@@ -1075,7 +1136,7 @@ def print_plan(plan: Any, report: DetectionReport | None, *, as_json: bool) -> N
             }
         )
         return
-    for line in [*detection_lines(report), *describe_plan(plan)]:
+    for line in [*detection_lines(report), *notices, *describe_plan(plan)]:
         echo(line)
     echo("no se llamó a AWS (--dry-run)")
 

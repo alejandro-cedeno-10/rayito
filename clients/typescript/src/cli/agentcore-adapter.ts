@@ -10,6 +10,7 @@ import type { DetectOverrides } from "../agent/detect-report.js";
 import type { AgentCorePorts } from "../agentcore/ports.js";
 import { type AwsClientSettings, awsClientSettingsOf } from "../aws/control-plane.js";
 import { applyProjectFlags, applyServeFlags } from "./agent-project-flags.js";
+import { envFileSecretLine, envWarningLine } from "./agent-secret-env.js";
 import type {
   AgentCoreClient,
   AgentCoreDeletePreview,
@@ -63,7 +64,9 @@ export class SdkAgentCoreTools implements AgentCoreTools {
   }
 
   async plan(request: AgentCoreDeployRequest): Promise<AgentCorePlanView> {
-    const { planAgentCoreWith, applyPlannedAgentCore } = await import("../agentcore/facade.js");
+    const { planAgentCoreWith, applyPlannedAgentCore, publishPlannedSecret } = await import(
+      "../agentcore/facade.js"
+    );
     const { projectFor } = await import("../agent/deploy-plan.js");
     const { settings, flags } = request;
     const detected = await projectFor(
@@ -83,6 +86,8 @@ export class SdkAgentCoreTools implements AgentCoreTools {
       buildImage: settings.buildImage,
       onBuildLogs: settings.onBuildLogs,
       onStep: settings.onStep,
+      createSecretsFrom: settings.createSecretsFrom,
+      checkEnv: settings.checkEnv,
     });
     const args = {
       project,
@@ -106,9 +111,15 @@ export class SdkAgentCoreTools implements AgentCoreTools {
     return {
       report: detected.report,
       plan: planned.plan,
+      notices: [
+        ...(planned.envWarnings ?? []).map(envWarningLine),
+        ...(planned.envFileSecret === undefined ? [] : [envFileSecretLine(planned.envFileSecret)]),
+      ],
       apply: async (): Promise<AgentCoreDeployedView> => {
         const connection = await this.#connection();
-        const applied = await applyPlannedAgentCore(ports, planned, { ...args, ...connection });
+        const connected = { ...args, ...connection };
+        await publishPlannedSecret(ports, { ...planned, envWarnings: [] }, connected);
+        const applied = await applyPlannedAgentCore(ports, planned, connected);
         return applied.result;
       },
     };

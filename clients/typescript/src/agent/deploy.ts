@@ -42,6 +42,7 @@ import {
   type AgentDeployOptions,
   type AgentDeployOptionsInput,
   type AgentDeployPlan,
+  type AgentDeployStep,
   baseVersionOf,
   buildPlan,
   deployOptionsOf,
@@ -61,6 +62,17 @@ import {
   type ProjectServiceOptions,
   templateName,
 } from "./project-service.js";
+import { usesSecretEnv } from "./secret-env.js";
+import {
+  type EnvFileSecret,
+  type EnvSecretStore,
+  envSecretStore,
+  prepareSecretEnv,
+  publishEnvFileSecret,
+  STEP_ENV_MISSING,
+  STEP_SECRET_ENV_CREATED,
+  secretReaderFor,
+} from "./secret-env-deploy.js";
 
 export const STEP_BASE_IMAGE = "base_image";
 export const STEP_SECRET_CREATED = "secret_created";
@@ -114,6 +126,9 @@ function requireKnownTarget(target: string | undefined): void {
 export interface DeployPorts {
   readonly aws?: DeployAws | undefined;
   readonly store?: SecretStorePort | undefined;
+  /** Dónde se crea el secreto de `createSecretsFrom` (por defecto,
+   * `SecretStore` con nombres completos). */
+  readonly secretEnvStore?: EnvSecretStore | undefined;
   readonly environ?: Environ | undefined;
   readonly serviceOptions?: ProjectServiceOptions | undefined;
   readonly fleetOptions?: Partial<AgentFleetOptions> | undefined;
@@ -162,7 +177,13 @@ export async function planDeploy<T extends AgentTarget = "microvm">(
   }
   rejectAgentCoreOptions(args.agentcore);
   const options = deployOptionsOf(args.options);
-  const { project, report } = await projectFor(path, args.project, args.overrides, args.region);
+  const detected = await projectFor(path, args.project, args.overrides, args.region);
+  const { project } = prepareSecretEnv(
+    detected.project,
+    options.createSecretsFrom,
+    options.checkEnv,
+  );
+  const report = detected.report;
   return buildPlan(project, options, {
     region: resolvedRegion(args.region, project, process.env),
     detection: report,
@@ -265,9 +286,15 @@ export async function deployWith(
   rejectAgentCoreOptions(args.agentcore);
   const options = deployOptionsOf(args.options);
   const detected = await projectFor(path, args.project, args.overrides, args.region);
-  const flight = await preflight(detected.project, options, ports, args);
+  const prepared = prepareSecretEnv(detected.project, options.createSecretsFrom, options.checkEnv);
+  emit(options, envMissingSteps(prepared.warnings));
+  const flight = await preflight(prepared.project, options, ports, args);
   emit(options, flight.steps);
-  const service = new ProjectService(flight.project, ports.serviceOptions);
+  await publishEnvSecret(prepared.secret, ports, flight, options, args);
+  const service = new ProjectService(flight.project, {
+    ...secretReaderOptions(flight, args),
+    ...ports.serviceOptions,
+  });
   if (flight.bucket !== undefined) {
     const info = await service.build({
       bucket: flight.bucket,
@@ -297,6 +324,41 @@ export async function deployWith(
     emit(options, [{ kind: STEP_WARM, detail: ready ? "ready" : "timeout" }]);
   }
   return fleet;
+}
+
+function envMissingSteps(warnings: readonly string[]): AgentDeployStep[] {
+  return warnings.map((warning) => ({ kind: STEP_ENV_MISSING, detail: warning }));
+}
+
+/** Crea o actualiza el secreto de `createSecretsFrom` (sólo si se pidió) y lo
+ * dice en `onStep`, sin nombrarlo. */
+async function publishEnvSecret(
+  secret: EnvFileSecret | undefined,
+  ports: DeployPorts,
+  flight: Preflight,
+  options: AgentDeployOptions,
+  args: DeployConnection,
+): Promise<void> {
+  if (secret === undefined) {
+    return;
+  }
+  const store =
+    ports.secretEnvStore ??
+    (await envSecretStore({ region: flight.region, credentials: args.credentials }));
+  const outcome = await publishEnvFileSecret(store, secret);
+  emit(options, [{ kind: STEP_SECRET_ENV_CREATED, detail: outcome }]);
+}
+
+/** El lector de `secretEnv` con la región y las credenciales del despliegue;
+ * nada si el proyecto no lo usa. */
+function secretReaderOptions(flight: Preflight, args: DeployConnection): ProjectServiceOptions {
+  const project = flight.project;
+  if (!usesSecretEnv(project.secretEnv, project.secretEnvFrom)) {
+    return {};
+  }
+  return {
+    secretReader: secretReaderFor({ region: flight.region, credentials: args.credentials }),
+  };
 }
 
 function connectionOf(args: DeployAgentOptions, region: string | undefined): ControlPlaneOptions {

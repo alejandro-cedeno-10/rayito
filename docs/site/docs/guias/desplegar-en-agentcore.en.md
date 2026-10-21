@@ -496,6 +496,25 @@ rayito agent deploy ./my-agent --target agentcore --tag Owner=platform --tag Pro
 
 The tags of a runtime that already exists are not updated on a redeploy.
 
+### Secrets as environment variables { #secretos-como-entorno }
+
+If your code reads from environment variables values that live in Secrets
+Manager (a database URL, the key of an LLM gateway), `--secret-env` and
+`--secret-env-from` (or `[secret_env]` and `[[secret_env_from]]` in the file)
+set them when each session starts, read with the runtime role:
+
+```bash
+rayito agent deploy ./my-agent --target agentcore \
+  --secret-env DATABASE_URL=app/db-url \
+  --secret-env-from 'app/config,prefix=APP_,keys=DB_HOST|DB_USER'
+```
+
+The runtime only receives `RAYITO_SECRET_ENV`, with names and ARNs; the secrets
+join those of `--readable-secret`, so the role can read exactly those.
+`--check-env` warns about the `.env.example` variables left without a value and
+`--create-secrets-from` creates the secret from a `.env`. All the detail is in
+[Secrets as environment variables](secretos-como-entorno.md).
+
 ## Which MicroVM options do not apply { #opciones-que-no-aplican }
 
 AgentCore is not a MicroVM fleet, and Rayito never silently approximates one
@@ -573,6 +592,13 @@ With `--external-model` the agent calls a model outside Bedrock over the
 Internet with a key your code obtains (`--readable-secret` or
 `--secret-env`): Rayito neither sees it nor filters that traffic, and the plan
 says so with the `externalModel` line.
+
+With `secret_env` or `secret_env_from`, the host reads those secrets when the
+session starts and sets them in the agent's environment before loading its
+code. The agent and everything it starts can read its environment, just as any
+code in the session can read those secrets with the role: the plan says so
+under `Seguridad` (`secretEnv`). More in
+[Secrets as environment variables](secretos-como-entorno.md#seguridad).
 
 ## Errors { #errores }
 

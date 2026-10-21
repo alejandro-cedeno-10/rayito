@@ -443,6 +443,19 @@ export const AGENT_YARN_BERRY_VERSION = "4.18.1" as const;
 export const AGENT_YARN_BERRY_INTEGRITY =
   "sha512-EH+A4TxAtBWXKE0DGQxW9Bo9crXHLJ73mfxjTQJuv8XonNWWTpei8BQ5JjczHJNU9GROTycwMFn8iOvRIZXUcA==" as const;
 export const AGENT_SECRET_NAME_TEMPLATE = "rayito/agents/{project}/{provider}" as const;
+export const AGENT_SECRET_ENV_VARIABLE = "RAYITO_SECRET_ENV" as const;
+export const AGENT_SECRET_ENV_SPEC_VERSION = 1 as const;
+export const AGENT_SECRET_ENV_MAX_SECRETS = 20 as const;
+export const AGENT_SECRET_ENV_MAX_TOTAL_BYTES = 262144 as const;
+export const AGENT_SECRET_ENV_HELPER_TIMEOUT_SECONDS = 15 as const;
+export const AGENT_SECRET_ENV_RESERVED_NAMES = [
+  "HOME",
+  "NODE_OPTIONS",
+  "PATH",
+  "PYTHONPATH",
+] as const;
+export const AGENT_SECRET_ENV_RESERVED_PREFIXES = ["AWS_", "LD_", "RAYITO_"] as const;
+export const AGENT_SECRET_ENV_REDACT_MIN_CHARS = 4 as const;
 export const AGENT_TOKEN_FILE_DEFAULT = ".rayito/agent-token" as const;
 
 export const AGENTCORE_SUPPORTED_REGIONS = [

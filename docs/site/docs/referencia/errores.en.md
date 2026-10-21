@@ -251,6 +251,16 @@ A `400` to a request with `input` is `InvalidArgumentException` /
 `InvalidArgumentError` with "redeploy it with this version of Rayito": the
 deployed agent predates structured input.
 
+With `secret_env` or `secret_env_from` ([Secrets as environment
+variables](../guias/secretos-como-entorno.md)), the deployment fails closed
+with `reason="runtime_error"` and one of these `detail_code`s, which never name
+the secret or the value: `secret_env_unavailable` (they could not be read),
+`secret_env_denied` (the role or your credentials cannot read a secret),
+`secret_env_invalid` (the value is not what the reference asks for, or goes
+over the cap), `secret_env_invalid_key` (a requested key is missing, or a key
+is not a valid variable name) and `secret_env_reserved` (a key would give a
+reserved name). On AgentCore it is the code of the host's failure marker.
+
 ## `AgentCoreException` / `AgentCoreError` { #agentcore }
 
 Since 0.15.0. Raised by the AgentCore deploy

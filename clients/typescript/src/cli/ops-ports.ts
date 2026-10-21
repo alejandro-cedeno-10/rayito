@@ -162,6 +162,10 @@ export interface AgentDeployFlags {
   readonly maxVms: number | undefined;
   readonly warm: number | undefined;
   readonly sessions: string | undefined;
+  /** `--secret-env NOMBRE=<id>[#clave]`, tal cual (se leen al aplicar). */
+  readonly secretEnv?: readonly string[] | undefined;
+  /** `--secret-env-from <id>[,prefix=P][,keys=A|B]`, tal cual. */
+  readonly secretEnvFrom?: readonly string[] | undefined;
 }
 
 /** Dónde y cómo despliega `rayito agent deploy`: lo de `DeployOptions` que
@@ -180,6 +184,10 @@ export interface AgentDeploySettings {
   readonly buildImage: boolean | undefined;
   readonly onBuildLogs: ((line: string) => void) | undefined;
   readonly onStep: ((step: { readonly kind: string; readonly detail: string }) => void) | undefined;
+  /** `--create-secrets-from`: el `.env` cuyos valores van a un secreto JSON. */
+  readonly createSecretsFrom?: string | undefined;
+  /** `--check-env`: avisa de las variables de `.env.example` sin valor. */
+  readonly checkEnv?: boolean | undefined;
 }
 
 export interface AgentDeployRequest {
@@ -289,6 +297,9 @@ export interface AgentCorePlanView {
   readonly report: unknown;
   readonly plan: AgentCoreDeployPlan;
   apply(): Promise<AgentCoreDeployedView>;
+  /** Lo que el plan avisa de `secretEnv` (`env_missing` y el secreto que
+   * `--create-secrets-from` creará): sólo nombres, nunca valores. */
+  readonly notices?: readonly string[] | undefined;
 }
 
 /** Un agente de AgentCore reconectado: lo que la CLI usa de `AgentCoreFleet`. */

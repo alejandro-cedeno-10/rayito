@@ -184,6 +184,11 @@ export async function runAgentCoreDeploy(
       console.echo(line);
     }
   }
+  if (!globals.json) {
+    for (const line of view.notices ?? []) {
+      console.echo(line, { err: true });
+    }
+  }
   if (input.dryRun) {
     console.echo(DRY_RUN_FOOTER);
     return undefined;

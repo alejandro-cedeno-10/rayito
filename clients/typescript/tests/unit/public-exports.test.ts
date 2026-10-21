@@ -112,6 +112,8 @@ const NATIVE_EXPORTS = [
   "ScaleType",
   "ScalingOptions",
   "SecretCache",
+  "SecretEnvRef",
+  "SecretEnvSource",
   "SecretError",
   "SecretGateway",
   "SecretNotFoundError",

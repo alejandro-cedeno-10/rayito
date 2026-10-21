@@ -89,6 +89,7 @@ from rayito._agent._runtime import (
     is_servable,
 )
 from rayito._agent._scaling_domain import ScalingOptions
+from rayito._agent._secret_env_domain import SecretEnvRef, SecretEnvSource
 from rayito._agent._strands import StrandsRuntime
 from rayito._agent._template import AgentTemplate, AsyncAgentTemplate
 from rayito._agent._warmup import agent_pool_warmup
@@ -145,6 +146,8 @@ __all__ = [
     "ModelWiring",
     "Reasoning",
     "ScalingOptions",
+    "SecretEnvRef",
+    "SecretEnvSource",
     "ServableRuntime",
     "ServeOptions",
     "StepFinished",

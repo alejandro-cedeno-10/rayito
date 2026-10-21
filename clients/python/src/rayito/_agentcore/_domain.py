@@ -27,6 +27,12 @@ from rayito._agent._fleet_base import AGENT_FLEET_WARM_READY_TIMEOUT_SECONDS
 from rayito._agent._project_base import template_name
 from rayito._agent._project_domain import ServeOptions
 from rayito._agent._scaling_domain import ScalingOptions
+from rayito._agent._secret_env_domain import (
+    secret_env_names,
+    secret_ids,
+    spec_variable,
+    uses_secret_env,
+)
 from rayito._agentcore._env_credentials import uses_env_credentials
 from rayito._agentcore._errors import cdk_managed_error
 from rayito._agentcore._iam_resources import (
@@ -49,6 +55,7 @@ from rayito._agentcore._models import (
 )
 from rayito._limits import (
     AGENT_MIN_MEMORY_MIB,
+    AGENT_SECRET_ENV_VARIABLE,
     AGENTCORE_BASE_IMAGE_MIRROR,
     AGENTCORE_DESCRIPTION_MARKER,
     AGENTCORE_ENDPOINT_NAME,
@@ -197,6 +204,7 @@ SECURITY_PUBLIC_NETWORK: Final = "publicNetwork"
 SECURITY_ISOLATION: Final = "sessionIsolation"
 SECURITY_ENV_CREDENTIALS: Final = "envCredentials"
 SECURITY_EXTERNAL_MODEL: Final = "externalModel"
+SECURITY_SECRET_ENV: Final = "secretEnv"
 
 StackAction = Literal["create", "update", "wait"]
 ImageAction = Literal["build", "reuse"]
@@ -840,6 +848,7 @@ def security_keys(
     secrets: Sequence[str],
     *,
     external_model: bool = False,
+    secret_env: bool = False,
 ) -> tuple[str, ...]:
     """Las claves de `SECURITY_TEXTS` del plan, en el orden en que se
     imprimen: la diferencia con la pasarela de MicroVMs va primero."""
@@ -848,10 +857,28 @@ def security_keys(
         keys.append(SECURITY_SECRETS)
     if external_model:
         keys.append(SECURITY_EXTERNAL_MODEL)
+    if secret_env:
+        keys.append(SECURITY_SECRET_ENV)
     keys.extend((SECURITY_PUBLIC_NETWORK, SECURITY_ISOLATION))
     if uses_env_credentials(project.runtime):
         keys.append(SECURITY_ENV_CREDENTIALS)
     return tuple(keys)
+
+
+def secret_env_environment(project: AgentProject) -> dict[str, str]:
+    """`RAYITO_SECRET_ENV` con la especificación de `secret_env` y
+    `secret_env_from` (sólo nombres y ARNs: `testdata/agent-secret-env/
+    spec.json`), o nada si el proyecto no los usa."""
+    variable = spec_variable(project.secret_env, project.secret_env_from)
+    return {} if variable is None else {AGENT_SECRET_ENV_VARIABLE: variable}
+
+
+def readable_secrets_of(project: AgentProject, agentcore: AgentCoreOptions) -> tuple[str, ...]:
+    """Los secretos que el rol puede leer: los de `readable_secrets` y los que
+    referencian `secret_env` y `secret_env_from`, sin repetir. Van por el
+    mismo `ReadableSecretArns`: la plantilla no cambia."""
+    referenced = secret_ids(project.secret_env, project.secret_env_from)
+    return _unique([*agentcore.readable_secrets, *referenced])
 
 
 def _usd(price: float) -> str:
@@ -928,13 +955,15 @@ def build_plan(
         model_environment=(
             external_model_environment(project) if agentcore.external_model else EMPTY_ENVIRONMENT
         ),
+        secret_environment=secret_env_environment(project),
     )
     models = bedrock_models_of(project, agentcore)
     check_model_known(project, agentcore)
+    readable = readable_secrets_of(project, agentcore)
     check_iam_inputs(
         bedrock_model_of(project),
         agentcore.bedrock_models,
-        agentcore.readable_secrets,
+        readable,
         model_region=project.spec.model.region or supported,
         region=supported,
     )
@@ -952,18 +981,23 @@ def build_plan(
         bucket_source=source,
         network=AGENTCORE_NETWORK_MODE,
         bedrock_models=models,
-        readable_secrets=agentcore.readable_secrets,
+        readable_secrets=readable,
         environment=MappingProxyType(environment),
         lifecycle=lifecycle,
         tags=MappingProxyType(tags),
         steps=planned_steps(name),
         security=security_keys(
-            project, models, agentcore.readable_secrets, external_model=agentcore.external_model
+            project,
+            models,
+            readable,
+            external_model=agentcore.external_model,
+            secret_env=uses_secret_env(project.secret_env, project.secret_env_from),
         ),
         warnings=file_warnings(project),
         cost=cost_lines(),
         detection=detection,
         external_model=agentcore.external_model,
+        secret_env_names=secret_env_names(project.secret_env, project.secret_env_from),
     )
 
 

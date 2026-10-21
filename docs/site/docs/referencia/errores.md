@@ -250,6 +250,16 @@ Un `400` a una petición con `input` es `InvalidArgumentException` /
 `InvalidArgumentError` con «vuelve a desplegarlo con esta versión de Rayito»: el
 agente desplegado es anterior a la entrada estructurada.
 
+Con `secret_env` o `secret_env_from` ([Secretos como variables de
+entorno](../guias/secretos-como-entorno.md)), el despliegue falla en cerrado con
+`reason="runtime_error"` y uno de estos `detail_code`, que nunca nombran el
+secreto ni el valor: `secret_env_unavailable` (no se pudieron leer),
+`secret_env_denied` (el rol o tus credenciales no pueden leer un secreto),
+`secret_env_invalid` (el valor no es lo que la referencia pide, o se pasa del
+tope), `secret_env_invalid_key` (falta una clave pedida, o una clave no es un
+nombre de variable válido) y `secret_env_reserved` (una clave daría un nombre
+reservado). En AgentCore es el código del marcador de fallo del host.
+
 ## `AgentCoreException` / `AgentCoreError` { #agentcore }
 
 Desde 0.15.0. Las lanza el despliegue en AgentCore

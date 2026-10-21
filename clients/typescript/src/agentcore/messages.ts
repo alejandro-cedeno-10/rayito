@@ -248,6 +248,8 @@ export const SECURITY_MESSAGES = {
     "cada sesión corre en su propia microVM de AgentCore, aislada de las demás; AgentCore no asocia sesiones a usuarios: eso es cosa de tu backend",
   envCredentials:
     "este framework lee las credenciales de variables de entorno: el host se las pone, leídas del rol del runtime, en cada invocación",
+  secretEnv:
+    "el host pone en el entorno del agente, al arrancar cada sesión, los valores de Secrets Manager de {names}: el agente y todo lo que lance pueden leer su entorno, y cualquier código de la sesión puede leer esos secretos con el rol del runtime",
 } as const;
 
 export type SecurityKey = keyof typeof SECURITY_MESSAGES;

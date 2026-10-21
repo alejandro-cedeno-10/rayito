@@ -651,3 +651,40 @@ crea cada versión con MMDSv2 activo; `Mmds` lo comprueba en cada versión nueva
 y sólo lo activaría fuera de CloudFormation (y la detección de deriva podría
 marcarlo) si alguna llegara sin él. Los assets (el código del agente, el zip de la imagen) se
 quedan en el bucket del bootstrap hasta `cdk gc`.
+
+## Secretos como entorno (T38) { #secretos-como-entorno }
+
+Resumen de **T38** de
+[`SECURITY.md`](https://github.com/alejandro-cedeno-10/rayito/blob/main/SECURITY.md)
+(`agent-secret-env`, ADR-033 D4): lo que cambia cuando un agente recibe valores
+de Secrets Manager como variables de entorno ([guía](guias/secretos-como-entorno.md)).
+
+**Sólo nombres en el proyecto, en el plan y en la imagen.** `[secret_env]` y
+`[[secret_env_from]]` llevan el nombre de la variable y el nombre o ARN del
+secreto, nunca el valor. En AgentCore el runtime sólo recibe
+`RAYITO_SECRET_ENV` (nombres y ARNs) y el host la borra de su entorno al
+arrancar; en MicroVMs los valores viajan sólo en el entorno del proceso del
+host, nunca en un fichero ni en la imagen. Ningún log, error, plan ni `repr`
+lleva un valor ni el nombre de un secreto: el host sólo registra
+`secret_env_loaded count=N`, falla en cerrado con un código (`secret_env_*`) y
+redacta del diagnóstico de arranque los valores inyectados, también los cortos.
+
+**Mínimo privilegio.** En AgentCore los secretos referenciados se suman a los de
+`--readable-secret` en la misma sentencia `ReadSecrets`: el rol sólo puede
+`secretsmanager:GetSecretValue` sobre esos ARNs (con el sufijo de seis
+caracteres de Secrets Manager), sin `kms:Decrypt`, sin `ListSecrets` y sin
+`secretsmanager:*`; un test falla si se amplía. Un ARN de otra cuenta o región
+es `iam_resource_invalid`. En MicroVMs el SDK los lee con tus credenciales.
+
+**Nombres reservados.** Un secreto no puede fijar `PATH`, `HOME`, `PYTHONPATH`,
+`NODE_OPTIONS`, nada que empiece por `AWS_`, `LD_` o `RAYITO_`, ni las variables
+que el runtime ya pone: se rechaza en el plan y otra vez en el host.
+
+**Riesgo residual.** Una variable de entorno la puede leer todo el código del
+agente: el proceso y lo que lance (`/proc/self/environ`, un volcado). En
+AgentCore, además, cualquier código de la sesión puede pedir las credenciales
+del rol al servicio de metadatos y leer esos secretos. En MicroVMs, quien tenga
+el token de acceso del sandbox ve el entorno del proceso con `commands.list()`,
+y una pausa guarda los valores en la instantánea de memoria. Para la clave de un
+modelo en MicroVMs, la [pasarela de secretos](funciones-opcionales/pasarela-de-secretos.md)
+sigue siendo mejor: el agente la usa sin poder leerla.

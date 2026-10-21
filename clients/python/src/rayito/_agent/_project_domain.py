@@ -68,6 +68,16 @@ from rayito._agent._runtimes import (
     runtime_to_options,
 )
 from rayito._agent._scaling_domain import ScalingOptions, max_sessions_for_memory
+from rayito._agent._secret_env_domain import (
+    SECRET_ENV_KEY_PATTERN,
+    SECRET_ID_PATTERN,
+    SecretEnvRef,
+    SecretEnvSource,
+    SecretEnvValue,
+    has_reserved_prefix,
+    is_reserved_name,
+    secret_ids,
+)
 from rayito._agent._template import DEFAULT_AGENT_TEMPLATE_BASE
 from rayito._images import DEFAULT_BUILD_TIMEOUT_SECONDS
 from rayito._lifecycle_base import DEFAULT_IDLE_POLICY
@@ -76,6 +86,7 @@ from rayito._limits import (
     AGENT_NODE_BUILD_VERSIONS,
     AGENT_PROJECT_SCHEMA,
     AGENT_PYTHON_BUILD_VERSIONS,
+    AGENT_SECRET_ENV_MAX_SECRETS,
     AGENT_SERVICE_MAX_CONCURRENCY,
     AGENT_SERVICE_PORT,
     AGENT_SERVICE_QUEUE_MAX,
@@ -332,6 +343,96 @@ def _validated_network(network: object) -> NetworkPolicy | None:
     return network
 
 
+SECRET_ENV_KEY: Final = "secret_env"
+SECRET_ENV_FROM_KEY: Final = "secret_env_from"
+
+
+def secret_env_path(name: str) -> str:
+    """La ruta de error de una variable de `secret_env` (la tabla, si el
+    nombre está vacío)."""
+    return f"{SECRET_ENV_KEY}.{name}" if name else SECRET_ENV_KEY
+
+
+def secret_env_from_path(index: int) -> str:
+    return f"{SECRET_ENV_FROM_KEY}[{index}]"
+
+
+def check_secret_env_name(name: object, path: str) -> str:
+    """Un nombre de variable válido y no reservado, o `invalid_value`."""
+    if not isinstance(name, str) or not _ENV_NAME_PATTERN.fullmatch(name):
+        raise _error(path, "invalid_value", "debe ser un nombre de variable de entorno")
+    if is_reserved_name(name):
+        raise _error(path, "invalid_value", "es un nombre reservado del runtime")
+    return name
+
+
+def check_secret_id(value: object, path: str) -> str:
+    """El nombre completo o el ARN de un secreto: `secret_value` si parece el
+    valor pegado en su lugar, `invalid_value` si no es un nombre."""
+    if not isinstance(value, str):
+        raise _error(path, "invalid_type", "debe ser el nombre o el ARN de un secreto")
+    if value.startswith(SECRET_VALUE_PREFIXES):
+        raise _error(
+            path, "secret_value", "parece un valor y no el nombre de un secreto; escribe el nombre"
+        )
+    if not SECRET_ID_PATTERN.fullmatch(value):
+        raise _error(path, "invalid_value", "debe ser el nombre o el ARN de un secreto")
+    return value
+
+
+def check_secret_env_ref(value: object, path: str) -> SecretEnvValue:
+    """Un valor de `secret_env`: el nombre de un secreto o un `SecretEnvRef`."""
+    if isinstance(value, str):
+        return check_secret_id(value, path)
+    if not isinstance(value, SecretEnvRef):
+        raise _error(path, "invalid_type", "debe ser el nombre de un secreto o un SecretEnvRef")
+    check_secret_id(value.secret, path)
+    for text in (value.key, value.version_stage):
+        if text is not None and not SECRET_ENV_KEY_PATTERN.fullmatch(text):
+            raise _error(path, "invalid_value", "debe ser ASCII imprimible sin espacios")
+    return value
+
+
+def check_secret_env_source(source: object, path: str) -> SecretEnvSource:
+    """Una entrada de `secret_env_from`: secreto válido, prefijo vacío o de
+    nombre de variable y no reservado, y claves que con el prefijo son
+    nombres válidos y no reservados."""
+    if not isinstance(source, SecretEnvSource):
+        raise _error(path, "invalid_type", "debe ser un SecretEnvSource")
+    check_secret_id(source.secret, f"{path}.secret")
+    prefix_path = f"{path}.prefix"
+    if source.prefix and not _ENV_NAME_PATTERN.fullmatch(source.prefix):
+        raise _error(prefix_path, "invalid_value", "debe ser un prefijo de nombre de variable")
+    if has_reserved_prefix(source.prefix):
+        raise _error(prefix_path, "invalid_value", "es un prefijo reservado del runtime")
+    for key in source.keys or ():
+        check_secret_env_name(f"{source.prefix}{key}", f"{path}.keys")
+    return source
+
+
+def _validated_secret_env(
+    secret_env: object, env: Mapping[str, str]
+) -> Mapping[str, SecretEnvValue]:
+    if not isinstance(secret_env, Mapping):
+        raise _error(SECRET_ENV_KEY, "invalid_type", "debe mapear nombres a secretos")
+    for name, value in secret_env.items():
+        path = secret_env_path(name if isinstance(name, str) else "")
+        check_secret_env_name(name, path)
+        check_secret_env_ref(value, path)
+        if name in env:
+            raise _error(path, "conflict", "la variable está a la vez en [env] y en [secret_env]")
+    return secret_env
+
+
+def _validated_secret_env_from(sources: object) -> tuple[SecretEnvSource, ...]:
+    if isinstance(sources, str) or not isinstance(sources, Sequence):
+        raise _error(SECRET_ENV_FROM_KEY, "invalid_type", "debe ser una lista de SecretEnvSource")
+    return tuple(
+        check_secret_env_source(source, secret_env_from_path(index))
+        for index, source in enumerate(sources)
+    )
+
+
 @dataclass(frozen=True)
 class AgentProject:
     """Un agente descrito una vez: runtime, `AgentSpec`, pasarelas del
@@ -356,6 +457,12 @@ class AgentProject:
     `graph` es el nombre del grafo de `langgraph.json` que se sirve (sólo con
     el runtime `langgraph`); `to_dict()` lo escribe en lugar del
     `entrypoint`.
+
+    `secret_env` (nombre de variable -> nombre o ARN de un secreto, o un
+    `SecretEnvRef`) y `secret_env_from` (`SecretEnvSource`) ponen valores de
+    Secrets Manager en el entorno del agente al arrancar (ADR-033 D4): el
+    proyecto sólo lleva nombres, nunca valores, y el agente puede leer su
+    entorno (ver `SecretEnvRef` para el coste).
 
     Coste y activación
     -------------------
@@ -398,6 +505,8 @@ class AgentProject:
     framework: str | None = None
     versions: RuntimeVersions = field(default_factory=RuntimeVersions)
     graph: str | None = None
+    secret_env: Mapping[str, SecretEnvValue] = field(default_factory=dict)
+    secret_env_from: Sequence[SecretEnvSource] = ()
 
     def __post_init__(self) -> None:
         validate_name(self.name, "AgentProject.name")
@@ -431,6 +540,7 @@ class AgentProject:
             raise InvalidArgumentException("AgentProject.base y base_dir no pueden ser vacíos")
         self._validate_fleet_options()
         _validate_graph(self.graph, self.runtime)
+        self._validate_secret_env()
 
     def _validate_fleet_options(self) -> None:
         if not isinstance(self.scaling, ScalingOptions):
@@ -452,6 +562,18 @@ class AgentProject:
             raise InvalidArgumentException(
                 f"AgentProject.language debe ser uno de {list(AGENT_LANGUAGES)}"
             )
+
+    def _validate_secret_env(self) -> None:
+        secret_env = _validated_secret_env(self.secret_env, self.env)
+        secret_env_from = _validated_secret_env_from(self.secret_env_from)
+        if len(secret_ids(secret_env, secret_env_from)) > AGENT_SECRET_ENV_MAX_SECRETS:
+            raise _error(
+                SECRET_ENV_KEY,
+                "invalid_value",
+                f"admite como mucho {AGENT_SECRET_ENV_MAX_SECRETS} secretos",
+            )
+        object.__setattr__(self, "secret_env", MappingProxyType(dict(secret_env)))
+        object.__setattr__(self, "secret_env_from", secret_env_from)
 
     @classmethod
     def load(cls, path: str | os.PathLike[str] = ".") -> Self:
@@ -521,6 +643,8 @@ class AgentProject:
             ("serve", _serve_to_dict(self.serve)),
             ("scaling", _scaling_to_dict(self.scaling)),
             ("env", dict(sorted(self.env.items()))),
+            ("secret_env", _secret_env_to_dict(self)),
+            ("secret_env_from", _secret_env_from_to_dict(self)),
             ("network", _network_to_dict(self)),
             ("deploy", _deploy_to_dict(self)),
             ("image", _image_to_dict(self)),
@@ -963,6 +1087,7 @@ def _project_kwargs(
     kwargs.update(_read_serve(root.table("serve")))
     kwargs.update(_read_scaling(root.table("scaling")))
     kwargs.update(_read_env(root.table("env")))
+    kwargs.update(_read_secret_env(root))
     kwargs.update(_read_network(root.table("network")))
     kwargs.update(_read_deploy(root.table("deploy")))
     kwargs.update(_read_image(root.table("image")))
@@ -1351,6 +1476,51 @@ def _read_env(table: _Table | None) -> dict[str, object]:
     return {"env": _guard("env", lambda: _validated_env(env))}
 
 
+def _read_secret_env_value(table: _Table, name: str) -> SecretEnvValue:
+    path = table.at(name)
+    check_secret_env_name(name, path)
+    value = table.raw(name)
+    if not isinstance(value, Mapping):
+        return check_secret_id(value, path)
+    reference = _Table(value, path)
+    secret = check_secret_id(reference.text("secret", required=True), reference.at("secret"))
+    key = reference.text("key")
+    stage = reference.text("version_stage")
+    reference.finish()
+    return check_secret_env_ref(SecretEnvRef(secret, key=key, version_stage=stage), path)
+
+
+def _read_secret_env_source(entry: _Table) -> SecretEnvSource:
+    secret = check_secret_id(entry.text("secret", required=True), entry.at("secret"))
+    prefix = entry.raw("prefix")
+    if prefix is not None and not isinstance(prefix, str):
+        raise _error(entry.at("prefix"), "invalid_type", "debe ser una cadena")
+    keys = entry.texts("keys")
+    entry.finish()
+    source = SecretEnvSource(secret, prefix=prefix or "", keys=keys)
+    return check_secret_env_source(source, entry.path)
+
+
+def _read_secret_env(root: _Table) -> dict[str, object]:
+    """`[secret_env]` y `[[secret_env_from]]` (ADR-033 D4), sólo si están."""
+    kwargs: dict[str, object] = {}
+    table = root.table(SECRET_ENV_KEY)
+    if table is not None:
+        kwargs["secret_env"] = {
+            name: _read_secret_env_value(table, name) for name in sorted(table.keys())
+        }
+        table.finish()
+    sources = root.raw(SECRET_ENV_FROM_KEY)
+    if sources is not None:
+        if isinstance(sources, str) or not isinstance(sources, Sequence):
+            raise _error(SECRET_ENV_FROM_KEY, "invalid_type", "debe ser una lista de tablas")
+        kwargs["secret_env_from"] = tuple(
+            _read_secret_env_source(_Table(item, secret_env_from_path(index)))
+            for index, item in enumerate(sources)
+        )
+    return kwargs
+
+
 _DEPLOY_CHECKS: Final[Mapping[str, Callable[[object, str], str]]] = {
     "bucket": validate_bucket_hint,
     "base_image_version": validate_image_version,
@@ -1583,6 +1753,33 @@ def _model_to_dict(model: AgentModel) -> dict[str, object]:
         table["prompt_caching"] = False
     table.update(model.env_names())
     return table
+
+
+def _secret_env_to_dict(project: AgentProject) -> dict[str, object]:
+    table: dict[str, object] = {}
+    for name, value in sorted(project.secret_env.items()):
+        if isinstance(value, str):
+            table[name] = value
+            continue
+        reference: dict[str, object] = {"secret": value.secret}
+        if value.key is not None:
+            reference["key"] = value.key
+        if value.version_stage is not None:
+            reference["version_stage"] = value.version_stage
+        table[name] = reference
+    return table
+
+
+def _secret_env_from_to_dict(project: AgentProject) -> list[dict[str, object]]:
+    entries: list[dict[str, object]] = []
+    for source in project.secret_env_from:
+        entry: dict[str, object] = {"secret": source.secret}
+        if source.prefix:
+            entry["prefix"] = source.prefix
+        if source.keys is not None:
+            entry["keys"] = list(source.keys)
+        entries.append(entry)
+    return entries
 
 
 def _secret_ref_name(value: str | SecretRef) -> str:

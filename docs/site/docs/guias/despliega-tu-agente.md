@@ -1199,6 +1199,13 @@ y con una clave de relleno:
   modelo: fija el tope de gasto en el proveedor
   ([Proveedores del agente](agente-proveedores.md#limites-del-lado-del-proveedor)).
 
+Si tu código lee de variables de entorno otros valores que viven en Secrets
+Manager (una URL de base de datos, la clave de una pasarela que no pasa por
+Rayito), `[secret_env]` y `--secret-env` se los ponen al arrancar: el SDK los
+lee con tus credenciales y el host los recibe sólo en el entorno de su
+proceso. A diferencia de la pasarela, el agente sí puede leerlos. Ver
+[Secretos como variables de entorno](secretos-como-entorno.md).
+
 ## Un despliegue dura 8 horas como mucho
 
 Un MicroVM no puede vivir más de 8 h entre lanzado y suspendido, y las cabeceras

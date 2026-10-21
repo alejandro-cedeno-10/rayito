@@ -19,9 +19,11 @@ import { AGENT_FLEET_WARM_READY_TIMEOUT_MS } from "../agent/fleet-base.js";
 import { type AgentProject, ServeOptions } from "../agent/project.js";
 import { templateName } from "../agent/project-service.js";
 import { ScalingOptions } from "../agent/scaling-domain.js";
+import { secretEnvNames, secretIds, specVariable, usesSecretEnv } from "../agent/secret-env.js";
 import { AgentCoreError, InvalidArgumentError } from "../errors.js";
 import {
   AGENT_MIN_MEMORY_MIB,
+  AGENT_SECRET_ENV_VARIABLE,
   AGENTCORE_ENVIRONMENT_VALUE_MAX_CHARS,
   AGENTCORE_IDLE_SESSION_TIMEOUT_DEFAULT_SECONDS,
   AGENTCORE_IMAGE_RETENTION_COUNT,
@@ -61,6 +63,8 @@ export const TAG_CHARACTERS = /^[a-zA-Z0-9\s._:/=+@-]*$/;
 /** `constants.runtimeRegionEnvironmentVariables`: las dos variables de región que ganan al entorno del proyecto. */
 export const RUNTIME_REGION_VARIABLES: readonly string[] = ["AWS_REGION", "AWS_DEFAULT_REGION"];
 export const EMPTY_ENVIRONMENT: Readonly<Record<string, string>> = Object.freeze({});
+/** La línea de seguridad de un plan con `secretEnv` (ADR-033 D4). */
+export const SECURITY_SECRET_ENV = "secretEnv";
 export const PLANNED_ACTION = "planned";
 export const BEDROCK_PROVIDER = "bedrock";
 const OPTION_IDLE = "idle_session_timeout";
@@ -498,7 +502,7 @@ function securityKeys(
   project: AgentProject,
   models: readonly string[],
   readableSecrets: readonly string[],
-  options: { readonly externalModel?: boolean } = {},
+  options: { readonly externalModel?: boolean; readonly secretEnv?: boolean | undefined } = {},
 ): SecurityKey[] {
   const keys: SecurityKey[] = [
     "noGateway",
@@ -510,11 +514,37 @@ function securityKeys(
   if (options.externalModel === true) {
     keys.push(SECURITY_EXTERNAL_MODEL);
   }
+  if (options.secretEnv === true) {
+    keys.push(SECURITY_SECRET_ENV);
+  }
   keys.push("publicNetwork", "sessionIsolation");
   if (usesEnvCredentials(project.runtime)) {
     keys.push("envCredentials");
   }
   return keys;
+}
+
+/** `RAYITO_SECRET_ENV` con la especificación de `secretEnv` y `secretEnvFrom`
+ * (sólo nombres y ARNs: `testdata/agent-secret-env/spec.json`), o nada si el
+ * proyecto no los usa. */
+export function secretEnvEnvironment(project: AgentProject): Record<string, string> {
+  const variable = specVariable(project.secretEnv, project.secretEnvFrom);
+  return variable === undefined ? {} : { [AGENT_SECRET_ENV_VARIABLE]: variable };
+}
+
+/** Los secretos que el rol puede leer: los de `readableSecrets` y los que
+ * referencian `secretEnv` y `secretEnvFrom`, sin repetir. Van por el mismo
+ * `ReadableSecretArns`: la plantilla no cambia. */
+export function readableSecretsOf(
+  project: AgentProject,
+  readableSecrets: readonly string[],
+): readonly string[] {
+  return [...new Set([...readableSecrets, ...secretIds(project.secretEnv, project.secretEnvFrom)])];
+}
+
+function secretEnvPlan(project: AgentProject): { readonly secretEnvNames?: readonly string[] } {
+  const names = secretEnvNames(project.secretEnv, project.secretEnvFrom);
+  return names.length === 0 ? {} : { secretEnvNames: names };
 }
 
 /** Las líneas de coste de lista del plan, en el orden del contrato. */
@@ -566,12 +596,14 @@ export function planWithoutImageTag(input: PlanInput): PlanWithoutImageTag {
     modelEnvironment: resolved.externalModel
       ? externalModelEnvironment(project)
       : EMPTY_ENVIRONMENT,
+    secretEnvironment: secretEnvEnvironment(project),
   });
   checkModelKnown(project, resolved);
+  const readableSecrets = readableSecretsOf(project, resolved.readableSecrets);
   checkIamInputs({
     projectModel: bedrockModelOf(project),
     bedrockModels: resolved.bedrockModels,
-    readableSecrets: resolved.readableSecrets,
+    readableSecrets,
     modelRegion: project.spec.model.region ?? region,
     region,
   });
@@ -595,16 +627,18 @@ export function planWithoutImageTag(input: PlanInput): PlanWithoutImageTag {
     bucketSource: bucket.source,
     network: AGENTCORE_NETWORK_MODE,
     bedrockModels: models,
-    readableSecrets: resolved.readableSecrets,
+    readableSecrets,
     environment,
     lifecycle,
     tags: sortedRecord(resolved.tags),
     steps: plannedSteps(names),
-    security: securityKeys(project, models, resolved.readableSecrets, {
+    security: securityKeys(project, models, readableSecrets, {
       externalModel: resolved.externalModel,
+      secretEnv: usesSecretEnv(project.secretEnv, project.secretEnvFrom),
     }),
     warnings: fileWarnings(project),
     cost: costLines(),
+    ...secretEnvPlan(project),
   };
 }
 

@@ -113,7 +113,9 @@ class AgentCoreDeployPlan:
     ciclo de vida del runtime, las etiquetas, los tres pasos, y las claves de
     las líneas de seguridad y de los avisos (`_messages.SECURITY_TEXTS` y
     `WARNING_TEXTS`), el coste de lista y si el modelo está fuera de Bedrock
-    (`external_model`)."""
+    (`external_model`). `secret_env_names` son las variables que el host
+    pondrá desde Secrets Manager (ADR-033 D4): sólo nombres, nunca
+    valores."""
 
     name: str
     region: str
@@ -137,6 +139,7 @@ class AgentCoreDeployPlan:
     detection: object | None = None
     target: str = "agentcore"
     external_model: bool = False
+    secret_env_names: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

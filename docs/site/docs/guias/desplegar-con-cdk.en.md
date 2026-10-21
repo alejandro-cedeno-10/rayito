@@ -260,6 +260,11 @@ The rules are the CLI's and so are the errors (`name_invalid`,
   `AWS::BedrockAgentCore::Runtime` resource, stricter than the API): a longer
   one is `env_invalid` at synth time.
 
+`[secret_env]` and `[[secret_env_from]]` need no prop: they come from the
+project file, the runtime receives `RAYITO_SECRET_ENV` (names and ARNs only)
+and those secrets join `readableSecrets` in the role
+([Secrets as environment variables](secretos-como-entorno.md)).
+
 ### Building the image: CodeBuild or local Docker { #construir-la-imagen }
 
 | Mode | What it does | When |

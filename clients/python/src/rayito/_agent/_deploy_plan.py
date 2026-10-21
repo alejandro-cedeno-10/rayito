@@ -97,18 +97,22 @@ class AgentDeployOptions:
     los VMs dedicados), `pool_backend` (plazas calientes que sobreviven al
     proceso), `on_build_logs`, `on_step` (recibe cada `AgentDeployStep`),
     `build_timeout_seconds` y `warm_timeout_seconds` (espera a que las plazas calientes queden
-    aparcadas).
+    aparcadas), `create_secrets_from` (un `.env` cuyos valores van a un secreto JSON
+    `rayito/agents/<nombre>/env` que el agente recibe como `secret_env_from`) y `check_env`
+    (avisa de las variables de `.env.example` que no reciben valor).
 
     Coste y activación
     -------------------
     Activa: nada por sí mismo; el valor es puro. `deploy_agent()` es lo que
         cuesta: `create_secret_from_env=True` crea un secreto,
+        `create_secrets_from` crea o actualiza el secreto de un `.env`
+        (`CreateSecret` o `PutSecretValue`, $0,40 al mes por secreto),
         `base_publisher` una imagen base, `session_index` filas de DynamoDB.
     Recursos y llamadas AWS: ninguno aquí.
     Coste aproximado: ninguno aquí; ver `deploy_agent()`.
     IAM: ninguna para este valor.
     Cómo apagarla: los valores por defecto no crean ningún secreto, imagen
-        base ni índice.
+        base ni índice; `check_env` sólo lee ficheros locales.
     Ejemplo:
         AgentDeployOptions(bucket="amzn-s3-demo-bucket", secret_names={"bedrock": "mi-clave"})
     """
@@ -129,6 +133,8 @@ class AgentDeployOptions:
     on_step: Callable[[AgentDeployStep], None] | None = None
     build_timeout_seconds: float = DEFAULT_BUILD_TIMEOUT_SECONDS
     warm_timeout_seconds: float = AGENT_FLEET_WARM_READY_TIMEOUT_SECONDS
+    create_secrets_from: str | None = None
+    check_env: bool = False
 
     def __post_init__(self) -> None:
         if self.bucket is not None:
@@ -159,6 +165,16 @@ class AgentDeployOptions:
             if isinstance(value, bool) or not isinstance(value, int | float) or value <= 0:
                 raise InvalidArgumentException(f"AgentDeployOptions.{label} debe ser un número > 0")
         object.__setattr__(self, "secret_names", MappingProxyType(dict(self.secret_names)))
+        self._validate_secret_env_options()
+
+    def _validate_secret_env_options(self) -> None:
+        path = self.create_secrets_from
+        if path is not None and (not isinstance(path, str) or not path):
+            raise InvalidArgumentException(
+                "AgentDeployOptions.create_secrets_from debe ser una ruta o None"
+            )
+        if not isinstance(self.check_env, bool):
+            raise InvalidArgumentException("AgentDeployOptions.check_env debe ser un bool")
 
 
 @dataclass(frozen=True)

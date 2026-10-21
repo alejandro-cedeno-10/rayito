@@ -2276,6 +2276,214 @@
         ],
         "warnings": []
       }
+    },
+    {
+      "name": "secret_env y secret_env_from: RAYITO_SECRET_ENV y los secretos en el rol",
+      "target": "agentcore",
+      "region": "us-east-1",
+      "project": {
+        "schema": "rayito.agent-project/1",
+        "name": "support-bot",
+        "runtime": {
+          "kind": "deepagents"
+        },
+        "model": {
+          "provider": "bedrock",
+          "id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "region": "us-east-1",
+          "gateway": "bedrock"
+        },
+        "gateways": {
+          "bedrock": {
+            "preset": "bedrock",
+            "secret": "rayito/bedrock-key",
+            "region": "us-east-1",
+            "models": [
+              "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+            ]
+          }
+        },
+        "secret_env": {
+          "DATABASE_URL": "app/db-url",
+          "LLM_GATEWAY_KEY": {
+            "secret": "arn:aws:secretsmanager:us-east-1:123456789012:secret:llm-AbCdEf",
+            "key": "api_key"
+          }
+        },
+        "secret_env_from": [
+          {
+            "secret": "app/config",
+            "prefix": "APP_",
+            "keys": [
+              "DB_HOST"
+            ]
+          }
+        ]
+      },
+      "call": {
+        "agentcore": {
+          "readableSecrets": [
+            "app/db-url"
+          ]
+        }
+      },
+      "environ": {
+        "RAYITO_BUCKET": "amzn-s3-demo-bucket"
+      },
+      "expected": {
+        "target": "agentcore",
+        "name": "support-bot",
+        "region": "us-east-1",
+        "runtimeName": "rayito_support_bot",
+        "stackName": "rayito-agentcore-support-bot",
+        "repositoryName": "rayito/agentcore/support-bot",
+        "buildProjectName": "rayito-agentcore-support-bot",
+        "bucket": "amzn-s3-demo-bucket",
+        "bucketSource": "environment",
+        "network": "PUBLIC",
+        "bedrockModels": [
+          "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+        ],
+        "readableSecrets": [
+          "app/db-url",
+          "arn:aws:secretsmanager:us-east-1:123456789012:secret:llm-AbCdEf",
+          "app/config"
+        ],
+        "environment": {
+          "AWS_DEFAULT_REGION": "us-east-1",
+          "AWS_REGION": "us-east-1",
+          "RAYITO_SECRET_ENV": "{\"env\":{\"DATABASE_URL\":{\"secret\":\"app/db-url\"},\"LLM_GATEWAY_KEY\":{\"key\":\"api_key\",\"secret\":\"arn:aws:secretsmanager:us-east-1:123456789012:secret:llm-AbCdEf\"}},\"from\":[{\"keys\":[\"DB_HOST\"],\"prefix\":\"APP_\",\"secret\":\"app/config\"}],\"v\":1}"
+        },
+        "lifecycle": {
+          "idleSessionTimeoutSeconds": 900,
+          "maxSessionLifetimeSeconds": 28800
+        },
+        "tags": {},
+        "steps": [
+          {
+            "resource": "stack",
+            "name": "rayito-agentcore-support-bot",
+            "action": "planned",
+            "status": null
+          },
+          {
+            "resource": "image",
+            "name": "rayito/agentcore/support-bot",
+            "action": "planned",
+            "status": null
+          },
+          {
+            "resource": "runtime",
+            "name": "rayito_support_bot",
+            "action": "planned",
+            "status": null
+          }
+        ],
+        "security": [
+          "noGateway",
+          "bedrockModels",
+          "readableSecrets",
+          "secretEnv",
+          "publicNetwork",
+          "sessionIsolation"
+        ],
+        "warnings": [],
+        "secretEnvNames": [
+          "APP_DB_HOST",
+          "DATABASE_URL",
+          "LLM_GATEWAY_KEY"
+        ]
+      }
+    },
+    {
+      "name": "secret_env con un ARN de otra región",
+      "target": "agentcore",
+      "region": "us-east-1",
+      "project": {
+        "schema": "rayito.agent-project/1",
+        "name": "support-bot",
+        "runtime": {
+          "kind": "deepagents"
+        },
+        "model": {
+          "provider": "bedrock",
+          "id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "region": "us-east-1",
+          "gateway": "bedrock"
+        },
+        "gateways": {
+          "bedrock": {
+            "preset": "bedrock",
+            "secret": "rayito/bedrock-key",
+            "region": "us-east-1",
+            "models": [
+              "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+            ]
+          }
+        },
+        "secret_env": {
+          "DATABASE_URL": "arn:aws:secretsmanager:eu-west-1:123456789012:secret:app/db-AbCdEf"
+        }
+      },
+      "call": {},
+      "environ": {
+        "RAYITO_BUCKET": "amzn-s3-demo-bucket"
+      },
+      "expected": {
+        "error": {
+          "code": "iam_resource_invalid",
+          "field": "readable_secrets"
+        }
+      }
+    },
+    {
+      "name": "especificación de secret_env de más de 5000 caracteres",
+      "target": "agentcore",
+      "region": "us-east-1",
+      "project": {
+        "schema": "rayito.agent-project/1",
+        "name": "support-bot",
+        "runtime": {
+          "kind": "deepagents"
+        },
+        "model": {
+          "provider": "bedrock",
+          "id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "region": "us-east-1",
+          "gateway": "bedrock"
+        },
+        "gateways": {
+          "bedrock": {
+            "preset": "bedrock",
+            "secret": "rayito/bedrock-key",
+            "region": "us-east-1",
+            "models": [
+              "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+            ]
+          }
+        },
+        "secret_env": {
+          "VAR_00": "app/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx-00",
+          "VAR_01": "app/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx-01",
+          "VAR_02": "app/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx-02",
+          "VAR_03": "app/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx-03",
+          "VAR_04": "app/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx-04",
+          "VAR_05": "app/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx-05",
+          "VAR_06": "app/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx-06",
+          "VAR_07": "app/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx-07",
+          "VAR_08": "app/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx-08",
+          "VAR_09": "app/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx-09"
+        }
+      },
+      "call": {},
+      "environ": {
+        "RAYITO_BUCKET": "amzn-s3-demo-bucket"
+      },
+      "expected": {
+        "error": {
+          "code": "env_invalid"
+        }
+      }
     }
   ]
 }

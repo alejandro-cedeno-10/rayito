@@ -231,6 +231,48 @@
       "path": "runtime.graph",
       "code": "invalid_value",
       "schema": "semantic"
+    },
+    {
+      "case": "secret-env-reserved-name",
+      "file": "secret-env-reserved-name.toml",
+      "path": "secret_env.PATH",
+      "code": "invalid_value",
+      "schema": "semantic"
+    },
+    {
+      "case": "secret-env-value-pasted",
+      "file": "secret-env-value-pasted.toml",
+      "path": "secret_env.LLM_GATEWAY_KEY",
+      "code": "secret_value",
+      "schema": "semantic"
+    },
+    {
+      "case": "secret-env-conflict-with-env",
+      "file": "secret-env-conflict-with-env.toml",
+      "path": "secret_env.DATABASE_URL",
+      "code": "conflict",
+      "schema": "semantic"
+    },
+    {
+      "case": "secret-env-unknown-key",
+      "file": "secret-env-unknown-key.toml",
+      "path": "secret_env.DATABASE_URL.stage",
+      "code": "unknown_key",
+      "schema": "rejects"
+    },
+    {
+      "case": "secret-env-from-reserved-prefix",
+      "file": "secret-env-from-reserved-prefix.toml",
+      "path": "secret_env_from[0].prefix",
+      "code": "invalid_value",
+      "schema": "semantic"
+    },
+    {
+      "case": "secret-env-from-missing-secret",
+      "file": "secret-env-from-missing-secret.toml",
+      "path": "secret_env_from[0].secret",
+      "code": "missing_key",
+      "schema": "rejects"
     }
   ]
 }

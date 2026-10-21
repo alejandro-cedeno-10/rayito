@@ -113,37 +113,37 @@ follows merge rules M1-M8 of `design.md` and ticks only its own section here.
 
 ## C. Secrets Manager values as environment variables (`feat/agent-secret-env`)
 
-- [ ] C.1 Domain `SecretEnvRef`, `SecretEnvSource`, parsing (flags and
+- [x] C.1 Domain `SecretEnvRef`, `SecretEnvSource`, parsing (flags and
       tables), expansion, reserved names, spec document; exports (4.20);
       vectors `parse.json`, `expand.json`, `reserved.json`, `spec.json`;
       limits (4.1).
-- [ ] C.2 Project: fields, readers and `to_dict` (4.6), schema (4.3),
+- [x] C.2 Project: fields, readers and `to_dict` (4.6), schema (4.3),
       `conflict` with `[env]`; project vectors.
-- [ ] C.3 Host: `secret_env.py`, the `serve()` call before `create_driver`,
+- [x] C.3 Host: `secret_env.py`, the `serve()` call before `create_driver`,
       fail-closed codes, `count=N` log, `extra_values` redaction; tests with a
       fake helper (order, every code, spec popped, nothing leaked).
-- [ ] C.4 AgentCore: `secret_env_environment`, union into readable secrets,
+- [x] C.4 AgentCore: `secret_env_environment`, union into readable secrets,
       `secretEnv` security line, plan `secret_env_names`, option rows (4.5);
       export adds `aws_secret_env.py` and `host.json` `secret_env` only when
       used (existing export vectors byte-identical); CDK lines (4.22).
-- [ ] C.5 IAM least-privilege test (fails if widened): `ReadSecrets` action
+- [x] C.5 IAM least-privilege test (fails if widened): `ReadSecrets` action
       exactly `secretsmanager:GetSecretValue`, resources exactly the expected
       ARNs, no `*` beyond the `-??????` suffix, no `secretsmanager:*`,
       `ListSecrets` or `kms:*`; same for the CDK template.
-- [ ] C.6 MicroVM: values resolved with the caller's credentials and passed
+- [x] C.6 MicroVM: values resolved with the caller's credentials and passed
       as `secrets=` in `_project_service.serve()` (sync, async, TS); fleets
       and pool slots covered.
-- [ ] C.7 Flags `--secret-env`, `--secret-env-from`, `--check-env`,
+- [x] C.7 Flags `--secret-env`, `--secret-env-from`, `--check-env`,
       `--create-secrets-from` (confirmation with names only, `--yes`,
       `needs_confirmation`); `required_env_names`; `env_missing`.
-- [ ] C.8 Zero-cost test extended: without the feature no `secretsmanager`
+- [x] C.8 Zero-cost test extended: without the feature no `secretsmanager`
       client is created, the export is identical and the golden trace does
       not change (both SDKs).
-- [ ] C.9 Docs: new guide, `secrets`, `security` (T38), `SECURITY.md`,
+- [x] C.9 Docs: new guide, `secrets`, `security` (T38), `SECURITY.md`,
       `optional-features` row, «Coste y activación» blocks (Python docstrings,
       TSDoc, `cost-declarations/secret-env.json`), `AWS_API_NOTES.md` Q187
       (and Q188 placeholder), CHANGELOG.
-- [ ] C.10 Gates as A.9.
+- [x] C.10 Gates as A.9.
 
 ## D. `langgraph-api` protocol (`feat/agent-langgraph-api`)
 

@@ -515,7 +515,9 @@ rayito agent deploy [PATH] [--file PATH] [--timeout S] [--port N] [--token-file 
                     [--memory MIB] [--max-sessions N] [--sessions shared|dedicated]
                     [--min-vms N] [--max-vms N] [--warm N] [--idle S] [--queue N] [--queue-timeout S]
                     [--env K=V]... [--allow-out DEST]... [--bucket B] [--secret PROVIDER=NAME]...
-                    [--create-secret] [--base-artifact ZIP] [--yes] [--dry-run]
+                    [--create-secret] [--secret-env NAME=SECRET]... [--secret-env-from SECRET]...
+                    [--create-secrets-from FILE] [--check-env]
+                    [--base-artifact ZIP] [--yes] [--dry-run]
                     [--target microvm|agentcore] [--tag K=V]... [--bedrock-model ID]...
                     [--readable-secret NAME]... [--idle-session-timeout S] [--max-session-lifetime S]
                     [--external-model]
@@ -579,6 +581,15 @@ object of a graph with its own schema; exactly one of the three, or it exits
 with 2 before calling anything. The graph's output (`output`) is printed as
 JSON, and with `--json` it goes in the `output` key. See
 [Several graphs and structured input](guias/despliega-tu-agente.md#varios-grafos-y-entrada-estructurada).
+
+With `--secret-env NAME=<secret>[#key]` and `--secret-env-from
+<secret>[,prefix=P][,keys=A|B]` (repeatable, on both targets) the agent
+receives Secrets Manager values as environment variables, added to the
+`[secret_env]` and `[[secret_env_from]]` of the file; `--create-secrets-from
+FILE.env` creates (or updates) a JSON secret with the values of that `.env`,
+shows only the names and asks for `--yes` (it costs $0.40 per month), and
+`--check-env` warns about the `.env.example` variables that receive no value.
+See [Secrets as environment variables](guias/secretos-como-entorno.md).
 
 Builds the `AgentTemplate` image
 ([Agent templates](funciones-opcionales/templates-de-agente.md)): it starts

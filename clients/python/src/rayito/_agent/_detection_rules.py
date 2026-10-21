@@ -1218,6 +1218,7 @@ _RULES_JSON: Final = r"""
  "warnings": {
   "scan_truncated": "el árbol del proyecto supera el límite de análisis; solo se leen los primeros ficheros",
   "file_unreadable": "no se pudo interpretar {file}; se ignora",
+  "env_missing": "{name} está en .env.example pero no recibe valor ([env], --secret-env o --secret-env-from)",
   "http_app_alternative": "el proyecto también tiene una app HTTP ({framework}); se sirve el framework del agente, y --entry http sirve la app",
   "entrypoint_not_found": "se reconoce {framework} pero no se encontró su punto de entrada; se prueba el siguiente",
   "multiple_lockfiles": "hay varios ficheros de bloqueo ({files}); se usa {used}",

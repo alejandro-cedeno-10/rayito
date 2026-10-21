@@ -56,6 +56,7 @@ import {
   TYPESCRIPT_LANGUAGE,
   writeScaffold,
 } from "../agent-scaffold.js";
+import { CREATE_SECRETS_NEEDS_CONFIRMATION, envFileSecretLine } from "../agent-secret-env.js";
 import {
   agentCoreOptionGiven,
   guardedAgentCore,
@@ -90,6 +91,7 @@ import { UsageError } from "../failures.js";
 import type {
   AgentDeployFlags,
   AgentDeployRequest,
+  AgentDeploySettings,
   AgentDetectOverrides,
   DeployedFleetView,
   HiddenAppRoutes,
@@ -392,6 +394,16 @@ const INPUT_HELP = "Objeto JSON de entrada para un grafo con esquema propio; exc
 const INPUT_FILE_HELP =
   "Fichero con el objeto JSON de entrada (- lee stdin); excluye PROMPT y --input.";
 const INVOKE_PROMPT_HELP = "Lo que se le pide al agente (o usa --input / --input-file).";
+const SECRET_ENV_HELP =
+  "NOMBRE=<secreto>[#clave]: variable de entorno con el valor de un secreto de Secrets " +
+  "Manager (nombre completo o ARN); repetible.";
+const SECRET_ENV_FROM_HELP =
+  "<secreto>[,prefix=P][,keys=A|B]: cada clave de un secreto JSON como variable de entorno; " +
+  "repetible.";
+const CREATE_SECRETS_FROM_HELP =
+  "Crea (o actualiza) un secreto JSON con los valores de este .env y lo usa como " +
+  "--secret-env-from (cuesta $0,40/mes; pide --yes).";
+const CHECK_ENV_HELP = "Avisa de las variables de .env.example que no reciben valor.";
 const SESSION_MODE_CHOICES = ["shared", "dedicated"] as const;
 const MICROVM_ID_PREFIX = "microvm-";
 const BASE_NEEDS_CONFIRMATION =
@@ -402,6 +414,8 @@ const STEP_MESSAGES: Readonly<Record<string, string>> = {
     "secreto creado para la pasarela {detail} (cuesta $0,40 al mes hasta que lo borres)",
   image: "imagen lista: versión {detail}",
   fleet: "{detail} VM(s) listos",
+  secret_env_created: "secreto de --create-secrets-from: {detail}",
+  env_missing: "aviso: {detail}",
 };
 
 const MODEL_ID_HELP =
@@ -528,6 +542,30 @@ function deployFlagsOf(context: CommandContext): AgentDeployFlags {
     maxVms: values.optionalNumber("max_vms"),
     warm: values.optionalNumber("warm"),
     sessions: values.string("sessions"),
+    ...secretEnvFlagsOf(context),
+  };
+}
+
+/** `--create-secrets-from` y `--check-env`, sólo si se pasaron. */
+function secretEnvSettingsOf(
+  context: CommandContext,
+): Pick<AgentDeploySettings, "createSecretsFrom" | "checkEnv"> {
+  const createSecretsFrom = context.values.string("create_secrets_from");
+  return {
+    ...(createSecretsFrom === undefined ? {} : { createSecretsFrom }),
+    ...(context.values.flag("check_env") ? { checkEnv: true } : {}),
+  };
+}
+
+/** `--secret-env` y `--secret-env-from` tal cual, sólo si se pasaron. */
+function secretEnvFlagsOf(
+  context: CommandContext,
+): Pick<AgentDeployFlags, "secretEnv" | "secretEnvFrom"> {
+  const secretEnv = context.values.strings("secret_env");
+  const secretEnvFrom = context.values.strings("secret_env_from");
+  return {
+    ...(secretEnv.length === 0 ? {} : { secretEnv }),
+    ...(secretEnvFrom.length === 0 ? {} : { secretEnvFrom }),
   };
 }
 
@@ -644,6 +682,10 @@ export const agentDeployCommand = defineCommand({
     flag(["--create-secret"], {
       help: "Crea el secreto que falte desde la variable del proveedor (cuesta $0,40/mes).",
     }),
+    option(["--secret-env"], { multiple: true, default: [], help: SECRET_ENV_HELP }),
+    option(["--secret-env-from"], { multiple: true, default: [], help: SECRET_ENV_FROM_HELP }),
+    option(["--create-secrets-from"], { type: "path", help: CREATE_SECRETS_FROM_HELP }),
+    flag(["--check-env"], { help: CHECK_ENV_HELP }),
     option(["--base-artifact"], {
       type: "path",
       help: "Zip de la imagen base: se publica si no existe (pide --yes).",
@@ -712,6 +754,7 @@ export const agentDeployCommand = defineCommand({
           buildImage: values.optionalFlag("build"),
           onBuildLogs: verbose ? (line) => context.console.echo(line, { err: true }) : compact?.log,
           onStep: stepPrinter(context),
+          ...secretEnvSettingsOf(context),
         },
       });
       if (chosen === TARGET_AGENTCORE) {
@@ -778,6 +821,7 @@ async function deployRequest(
     for (const line of detectionLines(detected.report)) {
       context.console.echo(line, { err: true });
     }
+    await confirmEnvFileSecret(context, request, String(detected.document.name));
     return await context.agentProjects.deployFleet(request);
   } catch (error) {
     if (error instanceof SandboxError && !(error instanceof InvalidArgumentError)) {
@@ -786,6 +830,24 @@ async function deployRequest(
     throw error;
   } finally {
     compact?.finish();
+  }
+}
+
+/** Con `--create-secrets-from`, dice qué secreto se creará o actualizará y
+ * con qué variables (nunca los valores) y exige `--yes`, porque cuesta. */
+async function confirmEnvFileSecret(
+  context: CommandContext,
+  request: AgentDeployRequest,
+  projectName: string,
+): Promise<void> {
+  const path = request.settings.createSecretsFrom;
+  if (path === undefined) {
+    return;
+  }
+  const { readEnvFileSecret } = await import("../../agent/secret-env-deploy.js");
+  context.console.echo(envFileSecretLine(readEnvFileSecret(projectName, path)), { err: true });
+  if (!context.values.flag("yes")) {
+    throw new UsageError(CREATE_SECRETS_NEEDS_CONFIRMATION);
   }
 }
 
