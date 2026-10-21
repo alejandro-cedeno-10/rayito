@@ -83,33 +83,33 @@ follows merge rules M1-M8 of `design.md` and ticks only its own section here.
 
 ## B. Structured input and graph selection (`feat/agent-structured-input`)
 
-- [ ] B.1 `select_graph` / `selectGraph` in `_detect_entry.py`;
+- [x] B.1 `select_graph` / `selectGraph` in `_detect_entry.py`;
       `DetectOverrides.graph`; `--graph` on `agent detect` / `agent deploy`;
       messages `ambiguous_graph`, `graph_not_found`, `graph_conflict`;
       detection cases (B list of design §3).
-- [ ] B.2 `[runtime] graph` (schema 4.3, `_read_runtime_extras`,
+- [x] B.2 `[runtime] graph` (schema 4.3, `_read_runtime_extras`,
       `_runtime_to_dict`, `AgentProject.graph`), resolved to `entrypoint`
       before the runtime is built; `_complete_runtime` and `_project_file.py`
       keep the file's graph; project vectors.
-- [ ] B.3 Host: `Request.input`, `parse_request`, `parse_invocation`
+- [x] B.3 Host: `Request.input`, `parse_request`, `parse_invocation`
       (`hostCases` of `invocation-bodies.json`), `output` in the JSON body and
       the `done` event, `agentServiceMaxOutputBytes`.
-- [ ] B.4 Driver deepagents/langgraph: `_messages_run` unchanged (test: same
+- [x] B.4 Driver deepagents/langgraph: `_messages_run` unchanged (test: same
       `stream` kwargs as today), `_structured_run`, `input_kind`,
       `validate_input`, output filter and serialization, `detail_code`s.
-- [ ] B.5 Node bridge `runLanggraph` with `getInputJsonSchema` when present.
-- [ ] B.6 SDKs: `invoke` / `stream` with `input` on every deployment and
+- [x] B.5 Node bridge `runLanggraph` with `getInputJsonSchema` when present.
+- [x] B.6 SDKs: `invoke` / `stream` with `input` on every deployment and
       fleet class (sync and async), `require_prompt_or_input`,
       `invocation_body` (`cases`), `result_from_body` (`resultCases`),
       `AgentResult.output`, `Done.output`, `host_too_old`; TS overloads and
       the parity entry (4.21).
-- [ ] B.7 CLI `rayito agent invoke`: optional `PROMPT`, `--input`,
+- [x] B.7 CLI `rayito agent invoke`: optional `PROMPT`, `--input`,
       `--input-file` (stdin with `-`), exclusivity, `print_result` with
       `output`; golden regenerated (M4).
-- [ ] B.8 Sample `testdata/agent-samples/python/langgraph-structured/`
+- [x] B.8 Sample `testdata/agent-samples/python/langgraph-structured/`
       (graphs `triage` and `echo`, no `agent`, deterministic nodes, no LLM).
-- [ ] B.9 Docs (4.23) and CHANGELOG.
-- [ ] B.10 Gates as A.9.
+- [x] B.9 Docs (4.23) and CHANGELOG.
+- [x] B.10 Gates as A.9.
 
 ## C. Secrets Manager values as environment variables (`feat/agent-secret-env`)
 

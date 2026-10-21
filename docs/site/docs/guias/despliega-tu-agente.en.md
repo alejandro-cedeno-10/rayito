@@ -968,6 +968,93 @@ the same way in a MicroVM and in an exported container:
   `X-Amzn-Bedrock-AgentCore-Runtime-Session-Id` header acts as the `session_id`
   if the body does not carry one.
 
+### Several graphs and structured input { #varios-grafos-y-entrada-estructurada }
+
+**Several graphs.** If `langgraph.json` declares more than one graph, choose the
+one to deploy with `--graph NAME` or with `[runtime] graph` in
+`rayito-agent.toml` (the name is the key in `graphs`). Without a choice, the only
+graph or the one named `agent` is used; with several and none named `agent`, the
+deploy fails with `ambiguous` and the message lists the names. A name that is
+not there is `invalid_value` on `runtime.graph`, and `graph` together with
+`entrypoint` (or `--graph` together with `--entry`) is `conflict`. The choice is
+made by reading `langgraph.json`, without running your code, and becomes the
+graph's `entrypoint` before the runtime is built.
+
+```toml
+[runtime]
+kind = "langgraph"
+graph = "triage"
+```
+
+**Structured input.** A graph whose input schema is not a messages schema (for
+example, `StateGraph(State, input_schema=InputState,
+output_schema=OutputState)` with `InputState` = `{"ticket_id": str}`) is not
+called with a prompt but with `input`, a JSON object, and returns `output`, its
+last state filtered to the output schema:
+
+=== "Python"
+
+    ```python
+    from rayito import AgentDeployment
+
+    deployment = AgentDeployment.connect("microvm-00000000-0000-0000-0000-000000000001")
+    result = deployment.invoke(input={"ticket_id": "T-1"})
+    print(result.output)
+    again = deployment.invoke(input={"ticket_id": "T-2"}, session_id=result.session_id)
+    ```
+
+=== "Python (async)"
+
+    ```python
+    from rayito import AsyncAgentDeployment
+
+
+    async def main() -> None:
+        deployment = await AsyncAgentDeployment.connect("microvm-00000000-0000-0000-0000-000000000001")
+        result = await deployment.invoke(input={"ticket_id": "T-1"})
+        print(result.output)
+    ```
+
+=== "TypeScript"
+
+    ```ts
+    import { AgentDeployment } from "rayito";
+
+    const deployment = await AgentDeployment.connect("microvm-00000000-0000-0000-0000-000000000001");
+    const result = await deployment.invoke({ input: { ticket_id: "T-1" } });
+    console.log(result.output);
+    ```
+
+=== "CLI"
+
+    ```bash
+    rayito agent deploy --graph triage
+    rayito agent invoke microvm-00000000-0000-0000-0000-000000000001 --input '{"ticket_id": "T-1"}'
+    rayito agent invoke microvm-00000000-0000-0000-0000-000000000001 --input-file ticket.json --stream
+    ```
+
+The same works for `stream()`, for a fleet and for an agent on
+[AgentCore](desplegar-en-agentcore.md#sesiones): the `done` event carries
+`output`. Exactly one of the two, `prompt` or `input`: otherwise the SDK raises
+`InvalidArgumentException` / `InvalidArgumentError` before calling anything, and
+the CLI exits with 2. Inside the MicroVM, the host reads the schema with
+`get_input_jsonschema()` (in LangGraph.js, `getInputJsonSchema`, since 1.1): a
+graph with `messages` in its schema, or whose schema cannot be read, is called
+as always. Failures arrive as `AgentException` with `reason="protocol_error"`
+and a `detail_code`:
+
+| `detail_code` | When |
+|---|---|
+| `input_required` | you called a graph that expects `input` with a prompt |
+| `invalid_input` | `input` does not match the schema (required keys, extra keys with `additionalProperties: false`, top-level types), or the graph raised a pydantic `ValidationError` |
+| `output_not_serializable` | the output cannot be converted to JSON or exceeds {{agentServiceMaxOutputBytes}} bytes |
+
+The `session_id` is the graph's `thread_id`: if the graph has its own
+`checkpointer`, passing the same `session_id` continues the thread. An agent
+deployed with an earlier version answers `400` to `input`: the SDK turns it into
+"redeploy it with this version of Rayito". Neither `input` nor `output` ever
+reaches the logs, only sizes and codes.
+
 ## 4. Export to a container { #4-exporta-a-un-contenedor }
 
 `export()` writes, with no network call, a directory with the `Dockerfile`

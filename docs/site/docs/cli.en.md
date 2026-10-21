@@ -517,8 +517,8 @@ rayito agent deploy [PATH] [--file PATH] [--timeout S] [--port N] [--token-file 
                     [--target microvm|agentcore] [--tag K=V]... [--bedrock-model ID]...
                     [--readable-secret NAME]... [--idle-session-timeout S] [--max-session-lifetime S]
 rayito agent export --target docker|agentcore --out DIR [--file PATH] [--overwrite]
-rayito agent invoke SANDBOX_ID PROMPT [--session-id ID] [--stream] [--token-file F]
-                    [--target microvm|agentcore]
+rayito agent invoke SANDBOX_ID [PROMPT] [--session-id ID] [--input JSON | --input-file F]
+                    [--stream] [--token-file F] [--target microvm|agentcore]
 rayito agent status SANDBOX_ID [--token-file F] [--target microvm|agentcore]
 rayito agent stop SANDBOX_ID [--target microvm|agentcore] [--session-id ID]
 rayito agent list --target agentcore
@@ -568,6 +568,14 @@ all its VMs); the `session_id` that `invoke` returns on a fleet with several VMs
 identifies the VM, and passing it with `--session-id` continues the
 conversation. Messages and help are in Spanish. See
 [Deploy your agent](guias/despliega-tu-agente.md#sin-escribir-nada).
+
+With several graphs in `langgraph.json`, `detect` and `deploy` accept
+`--graph NAME` (exclusive with `--entry`). Instead of `PROMPT`, `invoke`
+accepts `--input JSON` or `--input-file F` (`-` reads standard input): the input
+object of a graph with its own schema; exactly one of the three, or it exits
+with 2 before calling anything. The graph's output (`output`) is printed as
+JSON, and with `--json` it goes in the `output` key. See
+[Several graphs and structured input](guias/despliega-tu-agente.md#varios-grafos-y-entrada-estructurada).
 
 Builds the `AgentTemplate` image
 ([Agent templates](funciones-opcionales/templates-de-agente.md)): it starts

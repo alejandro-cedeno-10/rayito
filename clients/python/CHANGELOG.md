@@ -6,6 +6,25 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
 
 ## [Unreleased]
 
+### Añadido
+
+- **Entrada estructurada y selección de grafo** (ADR-033 D3): un grafo de
+  LangGraph cuyo esquema de entrada no es de mensajes (por ejemplo,
+  `InputState` con `ticket_id`) se invoca con `invoke(input={...})` y
+  `stream(input={...})` en `AgentDeployment`, `AgentFleet`, `AgentCoreFleet` y
+  sus gemelos asíncronos (`prompt` pasa a ser opcional; exactamente uno de los
+  dos), y devuelve `AgentResult.output` y `Done.output`. El host lee el esquema
+  con `get_input_jsonschema()`, comprueba el `input` con la biblioteca estándar y
+  pasa la sesión como `thread_id`; un grafo de mensajes sigue igual. Fallos
+  `protocol_error` con `input_required`, `invalid_input` u
+  `output_not_serializable`, con su propio mensaje, y `InvalidArgumentException`
+  con una pista de redespliegue si el host desplegado es anterior. Con varios
+  grafos en `langgraph.json`, `--graph`, `[runtime] graph` y
+  `DetectOverrides.graph` eligen uno; sin elegir y sin uno llamado `agent`, el
+  error lista los nombres. `rayito agent invoke` acepta `--input` y
+  `--input-file` (`-` lee stdin) en lugar de `PROMPT`. Límite nuevo
+  `AGENT_SERVICE_MAX_OUTPUT_BYTES`.
+
 ## [0.15.0] - 2026-10-21
 
 ### Añadido

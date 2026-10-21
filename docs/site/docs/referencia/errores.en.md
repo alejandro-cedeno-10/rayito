@@ -237,6 +237,20 @@ generated content.
 | `aborted` | `stream.abort()` / cancellation / `AbortSignal` |
 | `busy` | an execution is already in progress in that sandbox (one `run`/`stream` at a time per sandbox in this phase) |
 
+With a graph that has its own schema invoked with `input`
+([Several graphs and structured input](../guias/despliega-tu-agente.md#varios-grafos-y-entrada-estructurada)),
+`protocol_error` carries one of these `detail_code`s, each with its own message:
+
+| `detail_code` | When |
+|---|---|
+| `input_required` | the graph expects `input` (a JSON object) and a prompt arrived |
+| `invalid_input` | `input` does not match the graph's input schema |
+| `output_not_serializable` | the graph's output cannot be converted to JSON or exceeds {{agentServiceMaxOutputBytes}} bytes |
+
+A `400` to a request with `input` is `InvalidArgumentException` /
+`InvalidArgumentError` with "redeploy it with this version of Rayito": the
+deployed agent predates structured input.
+
 ## `AgentCoreException` / `AgentCoreError` { #agentcore }
 
 Since 0.15.0. Raised by the AgentCore deploy

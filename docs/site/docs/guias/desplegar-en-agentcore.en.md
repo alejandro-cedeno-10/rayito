@@ -321,6 +321,15 @@ The id travels only in the request header, not in the body. A session is an
 AgentCore microVM of its own, isolated from the others: AgentCore **does not tie
 sessions to users**, so who may continue which session is up to your backend.
 
+A graph with its own input schema is invoked as on a MicroVM, with `input`
+instead of the prompt (`fleet.invoke(input={"ticket_id": "T-1"})`,
+`fleet.invoke({ input: { ticket_id: "T-1" } })` or `rayito agent invoke NAME
+--target agentcore --input '{"ticket_id": "T-1"}'`), and the result carries
+`output`: see
+[Several graphs and structured input](despliega-tu-agente.md#varios-grafos-y-entrada-estructurada).
+No new permission or resource is needed: the graph is fixed when the image is
+built.
+
 ## Status, list, stop and delete { #ciclo-de-vida }
 
 === "CLI"
