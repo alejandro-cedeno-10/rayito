@@ -12,12 +12,13 @@ import json
 import logging
 import threading
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from rayito._agent._runner.agent_host import serve
 from rayito._agent._runner.agent_host.limits import Limits
-from rayito._agent._runner.agent_host.protocol import AgentFailure
+from rayito._agent._runner.agent_host.protocol import AgentFailure, run_to_terminal
 from rayito._limits import (
     AGENT_SERVICE_HEALTH_PATH,
     AGENT_SERVICE_INVOKE_PATH,
@@ -169,6 +170,84 @@ def test_a_second_invocation_gets_429_with_retry_after() -> None:
         gate.set()
         first.join(5)
         assert invoke(port)[0] == 200
+
+
+#: Lo que tarda en soltarse el cupo en las pruebas de orden: un manejador que
+#: lo suelta después de escribir la respuesta deja al cliente ver el `429`.
+SLOW_RELEASE_SECONDS = 0.3
+ACCEPTS = [{}, {"Accept": "text/event-stream"}]
+
+
+def _last_kind(headers: dict[str, str], data: bytes) -> str:
+    if headers.get("content-type") == "text/event-stream":
+        return sse_messages(data)[-1][0]
+    body = json.loads(data)
+    return "agent_failed" if body.get("failed") else "done"
+
+
+def _call_until_terminal(port: int, accept: dict[str, str]) -> tuple[int, str]:
+    """Una invocación leída como lo hace un cliente: el JSON por su
+    `Content-Length` y el SSE hasta el mensaje terminal, sin esperar al cierre
+    del socket."""
+    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+    try:
+        connection.request(
+            "POST",
+            "/invocations",
+            body=b'{"prompt":"x"}',
+            headers={"Content-Type": "application/json", **accept},
+        )
+        response = connection.getresponse()
+        if response.getheader("Content-Type") != serve.EVENT_STREAM:
+            return response.status, _last_kind({}, response.read())
+        kind = ""
+        while kind not in ("done", "agent_failed"):
+            line = response.fp.readline().decode()
+            if not line:
+                break
+            if line.startswith("event: "):
+                kind = line.removeprefix("event: ").strip()
+        return response.status, kind
+    finally:
+        connection.close()
+
+
+@pytest.mark.parametrize("accept", ACCEPTS)
+def test_the_slot_is_free_once_the_client_has_the_response(
+    monkeypatch: pytest.MonkeyPatch, accept: dict[str, str]
+) -> None:
+    release = serve.Service.release
+
+    def slow_release(self: serve.Service) -> None:
+        threading.Event().wait(SLOW_RELEASE_SECONDS)
+        release(self)
+
+    monkeypatch.setattr(serve.Service, "release", slow_release)
+    with running_service(FakeDriver(step(1, text="a"))) as (_, port):
+        for _ in range(2):
+            assert _call_until_terminal(port, accept) == (200, "done")
+        assert json.loads(request(port, "GET", "/ping")[2])["status"] == "Healthy"
+
+
+@pytest.mark.parametrize("accept", ACCEPTS)
+def test_a_finished_run_is_not_cancelled_while_its_thread_exits(
+    monkeypatch: pytest.MonkeyPatch, accept: dict[str, str]
+) -> None:
+    exiting = threading.Event()
+
+    def lingering(*args: Any) -> None:
+        run_to_terminal(*args)
+        exiting.wait(5)
+
+    monkeypatch.setattr(serve, "run_to_terminal", lingering)
+    driver = FakeDriver(step(1, text="a"))
+    try:
+        with running_service(driver) as (_, port):
+            status, headers, data = request(port, "POST", "/invocations", {"prompt": "x"}, accept)
+            assert (status, _last_kind(headers, data)) == (200, "done")
+            assert not driver.cancelled.is_set()
+    finally:
+        exiting.set()
 
 
 def test_not_ready_is_503_and_ping_still_answers() -> None:

@@ -371,9 +371,10 @@ def test_the_host_serves_an_http_app_through_the_service_contract(app_driver: An
         assert status == 200
         assert body["text"] == "eco:hola"
         assert body["session_id"].startswith("app_")
-        _, _, data = request(
+        status, _, data = request(
             port, "POST", "/invocations", {"prompt": "stream"}, {"Accept": "text/event-stream"}
         )
+        assert status == 200, data
         assert sse_messages(data)[-1][0] == "done"
 
 
