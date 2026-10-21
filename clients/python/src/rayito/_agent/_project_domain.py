@@ -19,6 +19,7 @@ un `code` de la lista cerrada `AGENT_PROJECT_ERROR_CODES`.
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import posixpath
 import re
@@ -31,6 +32,7 @@ from rayito._agent._deploy_domain import (
     validate_bucket_hint,
     validate_image_version,
 )
+from rayito._agent._detection_rules import DETECTION_RULES
 from rayito._agent._domain import (
     MODEL_ENV_KEYS,
     AgentLimits,
@@ -149,6 +151,16 @@ _RATE_KEY: Final = "rate_per_minute"
 _MODELS_KEY: Final = "models"
 _ENV_NAME_PATTERN: Final = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 _T = TypeVar("_T")
+
+
+#: `[runtime] graph`: el nombre de un grafo de `langgraph.json`, sólo con
+#: `kind = "langgraph"` (`testdata/agent-project/schema.json`). Se resuelve
+#: al `entrypoint` de ese grafo antes de construir el runtime.
+GRAPH_KEY: Final = "graph"
+GRAPH_RUNTIME_KIND: Final = "langgraph"
+GRAPH_NAME_PATTERN: Final = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
+ENTRYPOINT_KEY: Final = "entrypoint"
+LANGGRAPH_FILE: Final[str] = DETECTION_RULES["entryFiles"]["langgraph"]["file"]
 
 
 class AgentProjectException(InvalidArgumentException):
@@ -341,6 +353,9 @@ class AgentProject:
     `region`, `bucket` y `base_image_version` (los valores por defecto de
     `deploy_agent()`), `language` y `framework` (lo que la detección o el
     fichero declaran del proyecto) y `versions` (`RuntimeVersions`).
+    `graph` es el nombre del grafo de `langgraph.json` que se sirve (sólo con
+    el runtime `langgraph`); `to_dict()` lo escribe en lugar del
+    `entrypoint`.
 
     Coste y activación
     -------------------
@@ -382,6 +397,7 @@ class AgentProject:
     language: str | None = None
     framework: str | None = None
     versions: RuntimeVersions = field(default_factory=RuntimeVersions)
+    graph: str | None = None
 
     def __post_init__(self) -> None:
         validate_name(self.name, "AgentProject.name")
@@ -414,6 +430,7 @@ class AgentProject:
         if not self.base or not self.base_dir:
             raise InvalidArgumentException("AgentProject.base y base_dir no pueden ser vacíos")
         self._validate_fleet_options()
+        _validate_graph(self.graph, self.runtime)
 
     def _validate_fleet_options(self) -> None:
         if not isinstance(self.scaling, ScalingOptions):
@@ -748,6 +765,43 @@ class AsyncAgentProject(AgentProject):
 # ------------------------------------------------------------------ validation
 
 
+def _validate_graph(graph: object, runtime: str | AgentRuntime) -> None:
+    """`AgentProject.graph`: un nombre de grafo válido y sólo con el runtime
+    `langgraph`."""
+    if graph is None:
+        return
+    if not isinstance(graph, str) or not GRAPH_NAME_PATTERN.fullmatch(graph):
+        raise InvalidArgumentException(
+            f"AgentProject.graph debe casar con {GRAPH_NAME_PATTERN.pattern}"
+        )
+    if runtime_to_options(runtime).get("kind") != GRAPH_RUNTIME_KIND:
+        raise InvalidArgumentException(
+            f"AgentProject.graph sólo vale con el runtime {GRAPH_RUNTIME_KIND!r}"
+        )
+
+
+def _graph_entrypoint(
+    graph: str, base_dir: str, read_text: Callable[[str], str] | None, path: str
+) -> str:
+    """El `entrypoint` del grafo `graph` del `langgraph.json` de `base_dir`,
+    leído con el lector que inyecta `load` (sin él, `invalid_value`, como
+    `instructions_file`). Sólo se lee ese fichero; nunca se importa el código
+    del proyecto."""
+    from rayito._agent._detect_entry import graph_entrypoint
+
+    if read_text is None:
+        raise _error(path, "invalid_value", "no hay lector de ficheros disponible")
+    return graph_entrypoint(_langgraph_document(base_dir, read_text, path), graph, DETECTION_RULES)
+
+
+def _langgraph_document(base_dir: str, read_text: Callable[[str], str], path: str) -> object:
+    """El JSON de `langgraph.json`, o `None` si no existe o no es JSON."""
+    try:
+        return json.loads(read_text(_inside(base_dir, LANGGRAPH_FILE, path)))
+    except (AgentProjectException, ValueError):
+        return None
+
+
 def _optional_text(value: object, label: str) -> None:
     if value is not None and (not isinstance(value, str) or not value):
         raise InvalidArgumentException(f"{label} debe ser una cadena no vacía")
@@ -895,7 +949,7 @@ def _project_kwargs(
     if schema != AGENT_PROJECT_SCHEMA:
         raise _error("schema", "unsupported_schema", f"debe ser {AGENT_PROJECT_SCHEMA!r}")
     name = root.text("name", required=True)
-    runtime, runtime_extras = _read_runtime(root.table("runtime"))
+    runtime, runtime_extras = _read_runtime(root.table("runtime"), base_dir, read_text)
     kwargs: dict[str, Any] = {"name": name, "runtime": runtime, **runtime_extras}
     kwargs.update(_read_source(root.table("source"), base_dir))
     gateways = _read_gateways(root)
@@ -972,7 +1026,9 @@ def _check_gateways(spec: AgentSpec, gateways: Mapping[str, SecretGateway]) -> N
             )
 
 
-def _read_runtime(table: _Table | None) -> tuple[AgentRuntime, dict[str, object]]:
+def _read_runtime(
+    table: _Table | None, base_dir: str, read_text: Callable[[str], str] | None
+) -> tuple[AgentRuntime, dict[str, object]]:
     if table is None:
         raise _error("runtime", "missing_key", "es obligatoria")
     kind = table.text("kind", required=True)
@@ -982,6 +1038,9 @@ def _read_runtime(table: _Table | None) -> tuple[AgentRuntime, dict[str, object]
     options = {key: table.raw(key) for key in RUNTIME_OPTION_KEYS[kind]}
     table.finish()
     present = {key: value for key, value in options.items() if value is not None}
+    graph = extras.get(GRAPH_KEY)
+    if isinstance(graph, str):
+        present[ENTRYPOINT_KEY] = _graph_entrypoint(graph, base_dir, read_text, table.at(GRAPH_KEY))
     runtime = _guard("runtime", lambda: runtime_from_options(str(kind), present))
     return runtime, extras
 
@@ -1002,7 +1061,26 @@ def _read_runtime_extras(table: _Table) -> dict[str, object]:
     node = _read_version(table, "node_version", "node")
     if python is not None or node is not None:
         extras["versions"] = RuntimeVersions(python=python, node=node)
+    graph = _read_graph(table)
+    if graph is not None:
+        extras[GRAPH_KEY] = graph
     return extras
+
+
+def _read_graph(table: _Table) -> str | None:
+    """`[runtime] graph`: un nombre válido, sólo con `kind = "langgraph"` y
+    nunca junto a `entrypoint` (`conflict`)."""
+    graph = table.text(GRAPH_KEY)
+    if graph is None:
+        return None
+    path = table.at(GRAPH_KEY)
+    if table.raw("kind") != GRAPH_RUNTIME_KIND:
+        raise _error(path, "invalid_value", f"sólo vale con kind = {GRAPH_RUNTIME_KIND!r}")
+    if not GRAPH_NAME_PATTERN.fullmatch(graph):
+        raise _error(path, "invalid_value", f"debe casar con {GRAPH_NAME_PATTERN.pattern}")
+    if table.has(ENTRYPOINT_KEY):
+        raise _error(path, "conflict", DETECTION_RULES["messages"]["graph_conflict"])
+    return graph
 
 
 def _read_version(table: _Table, key: str, field_name: str) -> str | None:
@@ -1602,6 +1680,9 @@ def _limits_to_dict(limits: AgentLimits) -> dict[str, object]:
 
 def _runtime_to_dict(project: AgentProject) -> dict[str, object]:
     table = runtime_to_options(project.runtime)
+    if project.graph is not None:
+        table.pop(ENTRYPOINT_KEY, None)
+        table[GRAPH_KEY] = project.graph
     for key, value in (
         ("language", project.language),
         ("framework", project.framework),

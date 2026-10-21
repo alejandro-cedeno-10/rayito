@@ -6,6 +6,7 @@
  * tests con dobles en memoria, nunca con AWS.
  */
 
+import type { AgentInvocation } from "../agent/deployment.js";
 import type { AgentEvent, AgentResult } from "../agent/events.js";
 import type { AgentTemplate } from "../agent/template.js";
 import type {
@@ -107,9 +108,12 @@ export interface AgentExportResult {
 export interface DeployedAgent {
   readonly sandboxId: string;
   readonly url: string;
-  invoke(prompt: string, options: { readonly sessionId: string | undefined }): Promise<AgentResult>;
+  invoke(
+    request: AgentInvocation,
+    options: { readonly sessionId: string | undefined },
+  ): Promise<AgentResult>;
   stream(
-    prompt: string,
+    request: AgentInvocation,
     options: { readonly sessionId: string | undefined },
   ): AsyncIterable<AgentEvent>;
   status(): Promise<{
@@ -138,6 +142,7 @@ export interface AgentDetectOverrides {
   readonly modelId?: string | undefined;
   readonly modelProvider?: string | undefined;
   readonly modelBaseUrl?: string | undefined;
+  readonly graph?: string | undefined;
 }
 
 /** Lo que las banderas de `rayito agent deploy` cambian del proyecto
@@ -219,9 +224,12 @@ export interface FleetStatusView {
 
 /** Una flota reconectada: lo que la CLI usa de `AgentFleet`. */
 export interface FleetClient {
-  invoke(prompt: string, options: { readonly sessionId: string | undefined }): Promise<AgentResult>;
+  invoke(
+    request: AgentInvocation,
+    options: { readonly sessionId: string | undefined },
+  ): Promise<AgentResult>;
   stream(
-    prompt: string,
+    request: AgentInvocation,
     options: { readonly sessionId: string | undefined },
   ): Promise<AsyncIterable<AgentEvent>>;
   status(): Promise<FleetStatusView>;
@@ -285,9 +293,12 @@ export interface AgentCorePlanView {
 
 /** Un agente de AgentCore reconectado: lo que la CLI usa de `AgentCoreFleet`. */
 export interface AgentCoreClient {
-  invoke(prompt: string, options: { readonly sessionId: string | undefined }): Promise<AgentResult>;
+  invoke(
+    request: AgentInvocation,
+    options: { readonly sessionId: string | undefined },
+  ): Promise<AgentResult>;
   stream(
-    prompt: string,
+    request: AgentInvocation,
     options: { readonly sessionId: string | undefined },
   ): Promise<AsyncIterable<AgentEvent>>;
   status(): Promise<AgentCoreStatus>;

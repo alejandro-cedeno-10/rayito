@@ -210,6 +210,27 @@
       "path": "model.id",
       "code": "missing_key",
       "schema": "semantic"
+    },
+    {
+      "case": "langgraph-graph-and-entrypoint",
+      "file": "langgraph-graph-and-entrypoint.toml",
+      "path": "runtime.graph",
+      "code": "conflict",
+      "schema": "rejects"
+    },
+    {
+      "case": "graph-on-non-langgraph",
+      "file": "graph-on-non-langgraph.toml",
+      "path": "runtime.graph",
+      "code": "invalid_value",
+      "schema": "rejects"
+    },
+    {
+      "case": "langgraph-graph-unknown",
+      "file": "langgraph-graph-unknown.toml",
+      "path": "runtime.graph",
+      "code": "invalid_value",
+      "schema": "semantic"
     }
   ]
 }

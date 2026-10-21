@@ -7,7 +7,7 @@ eventos.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Mapping
 from types import TracebackType
 from typing import Any, Self, TypeVar
 
@@ -123,14 +123,18 @@ class AsyncAgentCoreFleet(AgentCoreFleetView):
 
     async def invoke(
         self,
-        prompt: str,
+        prompt: str | None = None,
         session_id: str | None = None,
         model: str | None = None,
         reasoning: bool = False,
+        *,
+        input: Mapping[str, Any] | None = None,
     ) -> AgentResult:
         """Una invocación sin streaming: el `AgentResult`, o `AgentException` si
         el agente falló. `result.session_id` es el id que usó AgentCore."""
-        request = invocation_request(prompt, session_id, model, reasoning, streaming=False)
+        request = invocation_request(
+            prompt, session_id, model, reasoning, streaming=False, input=input
+        )
         response = await self._call(
             lambda: self._invoker.invoke(
                 self._status.runtime_arn, request.session_id, request.body, request.accept
@@ -144,14 +148,18 @@ class AsyncAgentCoreFleet(AgentCoreFleetView):
 
     async def stream(
         self,
-        prompt: str,
+        prompt: str | None = None,
         session_id: str | None = None,
         model: str | None = None,
         reasoning: bool = False,
+        *,
+        input: Mapping[str, Any] | None = None,
     ) -> AsyncAgentCoreFleetStream:
         """Como `invoke()`, con los eventos a medida que llegan. La petición se
         hace aquí, así que un error de AWS salta antes del primer evento."""
-        request = invocation_request(prompt, session_id, model, reasoning, streaming=True)
+        request = invocation_request(
+            prompt, session_id, model, reasoning, streaming=True, input=input
+        )
         response = await self._call(
             lambda: self._invoker.stream(
                 self._status.runtime_arn, request.session_id, request.body, request.accept

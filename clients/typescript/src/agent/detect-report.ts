@@ -20,10 +20,11 @@ export const ENTRY_FACTORY = "factory";
 
 /** Lo que el usuario fuerza por encima de la detección (`--framework`,
  * `--language`, `--entry`, `--protocol`, `--model-id`, `--model-provider`,
- * `--model-base-url`). `entrypoint: "http"` sirve la app HTTP del proyecto en
- * vez del framework del agente. `modelProvider` es un preset de pasarela
- * (`openai-compatible`, `litellm`...) y `modelBaseUrl` la URL `https` de la
- * pasarela de LLM, que pasa a ser su `upstream`. */
+ * `--model-base-url`, `--graph`). `entrypoint: "http"` sirve la app HTTP del
+ * proyecto en vez del framework del agente. `modelProvider` es un preset de
+ * pasarela (`openai-compatible`, `litellm`...) y `modelBaseUrl` la URL
+ * `https` de la pasarela de LLM, que pasa a ser su `upstream`. `graph` elige
+ * un grafo de `langgraph.json` por su nombre. */
 export interface DetectOverrides {
   readonly framework?: string | undefined;
   readonly language?: string | undefined;
@@ -32,6 +33,7 @@ export interface DetectOverrides {
   readonly modelId?: string | undefined;
   readonly modelProvider?: string | undefined;
   readonly modelBaseUrl?: string | undefined;
+  readonly graph?: string | undefined;
 }
 
 /** Un fichero (ruta relativa al proyecto) y la regla que lo reconoció; nunca

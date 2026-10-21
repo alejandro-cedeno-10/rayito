@@ -44,6 +44,16 @@ TERMINAL_EVENT_TYPES: Final = ("done", "agent_failed")
 DRIVER_FAILURE_REASONS: Final = ("model_error", "runtime_error", "protocol_error")
 #: Claves del uso de tokens de un paso (`TokenUsage` del SDK).
 USAGE_KEYS: Final = ("input", "output", "reasoning", "cache_read", "cache_write")
+#: Los `detail_code` de `protocol_error` de una entrada estructurada
+#: (ADR-033 D3): un grafo con esquema propio llamado con un prompt, un `input`
+#: que no cumple ese esquema y una salida que no se puede devolver como JSON.
+INPUT_REQUIRED: Final = "input_required"
+INVALID_INPUT: Final = "invalid_input"
+OUTPUT_NOT_SERIALIZABLE: Final = "output_not_serializable"
+INVALID_REQUEST: Final = "invalid_request"
+#: El atributo con el que un driver declara que entiende `Request.input`;
+#: a los demás un `input` les llega como `protocol_error`/`invalid_input`.
+INPUT_CAPABILITY: Final = "accepts_input"
 
 Event = dict[str, Any]
 Emit = Callable[[Event], None]
@@ -75,46 +85,72 @@ class LimitExceeded(BaseException):
 @dataclass(frozen=True)
 class Request:
     """La petición de una ejecución, ya validada. `aws_env` lleva las
-    credenciales del rol del runtime y no sale en `repr`."""
+    credenciales del rol del runtime y no sale en `repr`. `input` es el objeto
+    JSON de entrada de un grafo con esquema propio (entonces `prompt` es
+    `""`); tampoco sale en `repr`, porque es contenido del usuario."""
 
     prompt: str
     session_id: str | None = None
     model: str | None = None
     reasoning: bool = False
     aws_env: Mapping[str, str] | None = field(default=None, repr=False)
+    input: Mapping[str, Any] | None = field(default=None, repr=False)
 
 
 @dataclass
 class RunState:
     """Lo que un driver comparte con quien cierra la ejecución: el id de
-    sesión, para que `agent_failed` lo lleve si ya se conocía."""
+    sesión, para que `agent_failed` lo lleve si ya se conocía, y la salida
+    estructurada (`output`), que viaja sólo en `done`."""
 
     session_id: str | None = None
+    output: Mapping[str, Any] | None = field(default=None, repr=False)
 
 
 def parse_request(raw: object) -> Request:
-    """`{"v":1,"prompt","session_id","model","reasoning"}` a `Request`; una
-    forma distinta es `protocol_error`/`invalid_request`."""
+    """`{"v":1,"prompt","session_id","model","reasoning"}` a `Request`; en vez
+    del prompt puede llegar `input` (un objeto JSON, con `prompt` ausente o
+    vacío). Una forma distinta es `protocol_error`/`invalid_request`."""
     if not isinstance(raw, Mapping) or raw.get("v") != PROTOCOL_VERSION:
-        raise AgentFailure("protocol_error", "invalid_request")
-    prompt = raw.get("prompt")
+        raise AgentFailure("protocol_error", INVALID_REQUEST)
+    data_input = raw.get("input")
+    prompt = raw.get("prompt", "" if data_input is not None else None)
     session_id = raw.get("session_id")
     model = raw.get("model")
     reasoning = raw.get("reasoning", False)
     valid = (
         isinstance(prompt, str)
+        and (data_input is None or (isinstance(data_input, Mapping) and not prompt))
         and (session_id is None or isinstance(session_id, str))
         and (model is None or isinstance(model, str))
         and isinstance(reasoning, bool)
     )
     if not valid:
-        raise AgentFailure("protocol_error", "invalid_request")
+        raise AgentFailure("protocol_error", INVALID_REQUEST)
     return Request(
         prompt=str(prompt),
         session_id=session_id or None,
         model=model or None,
         reasoning=reasoning,
+        input=None if data_input is None else dict(data_input),
     )
+
+
+def require_input_support(driver: object, request: Request) -> None:
+    """Un `input` sólo llega a un driver que lo entiende (`accepts_input`);
+    a cualquier otro es `protocol_error`/`invalid_input`, antes de ejecutar
+    nada."""
+    if request.input is not None and not getattr(driver, INPUT_CAPABILITY, False):
+        raise AgentFailure("protocol_error", INVALID_INPUT)
+
+
+def terminal_fields(state: RunState) -> dict[str, object]:
+    """Los campos del `done` de una ejecución: el id de sesión y, sólo si la
+    hubo, la salida estructurada."""
+    fields: dict[str, object] = {"session_id": state.session_id}
+    if state.output is not None:
+        fields["output"] = state.output
+    return fields
 
 
 def new_id(prefix: str) -> str:
@@ -202,7 +238,7 @@ def run_to_terminal(
         reason, detail = classify(exc)
         emitter.emit("agent_failed", reason=reason, detail_code=detail, session_id=state.session_id)
         return
-    emitter.emit("done", session_id=state.session_id)
+    emitter.emit("done", **terminal_fields(state))
 
 
 def classify_by_module(exc: BaseException, model_modules: tuple[str, ...]) -> tuple[str, str]:

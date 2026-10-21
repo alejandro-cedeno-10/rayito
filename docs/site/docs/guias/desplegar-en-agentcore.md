@@ -320,6 +320,15 @@ microVM propia de AgentCore, aislada de las demás: AgentCore **no asocia
 sesiones a usuarios**, así que quién puede continuar qué sesión lo decide tu
 backend.
 
+Un grafo con esquema de entrada propio se invoca igual que en un MicroVM, con
+`input` en lugar del prompt (`fleet.invoke(input={"ticket_id": "T-1"})`,
+`fleet.invoke({ input: { ticket_id: "T-1" } })` o `rayito agent invoke NOMBRE
+--target agentcore --input '{"ticket_id": "T-1"}'`), y el resultado trae
+`output`: ver
+[Varios grafos y entrada estructurada](despliega-tu-agente.md#varios-grafos-y-entrada-estructurada).
+No hace falta ningún permiso ni recurso nuevo: el grafo se fija al construir la
+imagen.
+
 ## Estado, listar, parar y borrar { #ciclo-de-vida }
 
 === "CLI"

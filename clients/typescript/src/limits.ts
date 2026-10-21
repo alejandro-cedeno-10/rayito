@@ -339,6 +339,7 @@ export const AGENT_SERVICE_INVOKE_PATH = "/invocations" as const;
 export const AGENT_SERVICE_SESSION_HEADER = "X-Amzn-Bedrock-AgentCore-Runtime-Session-Id" as const;
 export const AGENT_SERVICE_MAX_CONCURRENCY = 1 as const;
 export const AGENT_SERVICE_MAX_REQUEST_BYTES = 1048576 as const;
+export const AGENT_SERVICE_MAX_OUTPUT_BYTES = 1048576 as const;
 export const AGENT_SERVICE_READY_TIMEOUT_SECONDS = 120 as const;
 export const DEFAULT_AGENT_DEPLOY_TIMEOUT_SECONDS = 3600 as const;
 export const AGENT_RUN_SANDBOX_MARGIN_SECONDS = 60 as const;

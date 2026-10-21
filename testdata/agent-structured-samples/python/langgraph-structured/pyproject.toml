@@ -1,0 +1,9 @@
+[project]
+name = "ticket-triage"
+version = "0.1.0"
+description = "Grafos de LangGraph con entrada y salida estructuradas: triaje de tickets y eco"
+requires-python = ">=3.11"
+dependencies = [
+    "langchain-aws>=1.0",
+    "langgraph>=1.0",
+]

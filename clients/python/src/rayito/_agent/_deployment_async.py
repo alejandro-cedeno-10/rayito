@@ -41,7 +41,6 @@ from rayito._agent._deployment_base import (
 )
 from rayito._agent._events import AgentEvent, AgentResult
 from rayito._agent._sse import SseParser
-from rayito._agent._stream_base import require_prompt
 from rayito._limits import (
     AGENT_SERVICE_HEALTH_PATH,
     AGENT_SERVICE_INVOKE_PATH,
@@ -409,18 +408,28 @@ class AsyncAgentDeployment:
 
     async def invoke(
         self,
-        prompt: str,
+        prompt: str | None = None,
         session_id: str | None = None,
         model: str | None = None,
         reasoning: bool = False,
+        *,
+        input: Mapping[str, Any] | None = None,
     ) -> AgentResult:
         """Una invocación sin streaming: el `AgentResult`, o `AgentException`
-        si el agente falló (`busy` con el cupo lleno)."""
+        si el agente falló (`busy` con el cupo lleno). Con `input` (un objeto
+        JSON, en lugar de `prompt`) se invoca un grafo con esquema de entrada
+        propio y `result.output` trae su salida."""
         require_invocable(raw=self._raw)
         body = invocation_body(
-            require_prompt(prompt), session_id=session_id, model=model, reasoning=reasoning
+            prompt, session_id=session_id, model=model, reasoning=reasoning, input=input
         )
-        response = await self._exchange("POST", AGENT_SERVICE_INVOKE_PATH, JSON_CONTENT_TYPE, body)
+        response = await self._exchange(
+            "POST",
+            AGENT_SERVICE_INVOKE_PATH,
+            JSON_CONTENT_TYPE,
+            body,
+            sent_input=input is not None,
+        )
         try:
             return result_from_body(await response.read())
         finally:
@@ -428,21 +437,27 @@ class AsyncAgentDeployment:
 
     def stream(
         self,
-        prompt: str,
+        prompt: str | None = None,
         session_id: str | None = None,
         model: str | None = None,
         reasoning: bool = False,
+        *,
+        input: Mapping[str, Any] | None = None,
     ) -> AsyncAgentDeploymentStream:
         """Como `invoke()`, pero con los eventos a medida que llegan:
         `async with deployment.stream("hola") as events: async for event in
         events`."""
         require_invocable(raw=self._raw)
         body = invocation_body(
-            require_prompt(prompt), session_id=session_id, model=model, reasoning=reasoning
+            prompt, session_id=session_id, model=model, reasoning=reasoning, input=input
         )
         return AsyncAgentDeploymentStream(
             lambda: self._exchange(
-                "POST", AGENT_SERVICE_INVOKE_PATH, EVENT_STREAM_CONTENT_TYPE, body
+                "POST",
+                AGENT_SERVICE_INVOKE_PATH,
+                EVENT_STREAM_CONTENT_TYPE,
+                body,
+                sent_input=input is not None,
             )
         )
 
@@ -486,14 +501,20 @@ class AsyncAgentDeployment:
         await self._sandbox.kill()
 
     async def _exchange(
-        self, method: str, path: str, accept: str, body: bytes | None
+        self,
+        method: str,
+        path: str,
+        accept: str,
+        body: bytes | None,
+        *,
+        sent_input: bool = False,
     ) -> AsyncDeploymentResponse:
         response = await self._send(method, path, accept, body, self._request_timeout)
         if response.status == HTTP_OK:
             return response
         status = response.status
         await response.close()
-        raise http_error(status)
+        raise http_error(status, sent_input=sent_input)
 
     async def _send(
         self, method: str, path: str, accept: str, body: bytes | None, timeout: float

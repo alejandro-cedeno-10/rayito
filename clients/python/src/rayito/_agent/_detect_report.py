@@ -28,10 +28,11 @@ ENTRY_FACTORY: Final = "factory"
 class DetectOverrides:
     """Lo que el usuario fuerza por encima de la detección (`--framework`,
     `--language`, `--entry`, `--protocol`, `--model-id`, `--model-provider`,
-    `--model-base-url`). `entrypoint="http"` sirve la app HTTP del proyecto
-    en vez del framework del agente. `model_provider` es un preset de
+    `--model-base-url`, `--graph`). `entrypoint="http"` sirve la app HTTP del
+    proyecto en vez del framework del agente. `model_provider` es un preset de
     pasarela (`openai-compatible`, `litellm`...) y `model_base_url` la URL
-    `https` de la pasarela de LLM, que pasa a ser su `upstream`."""
+    `https` de la pasarela de LLM, que pasa a ser su `upstream`. `graph`
+    elige un grafo de `langgraph.json` por su nombre."""
 
     framework: str | None = None
     language: str | None = None
@@ -40,6 +41,7 @@ class DetectOverrides:
     model_id: str | None = None
     model_provider: str | None = None
     model_base_url: str | None = None
+    graph: str | None = None
 
 
 @dataclass(frozen=True)

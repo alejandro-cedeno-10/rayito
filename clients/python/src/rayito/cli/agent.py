@@ -21,7 +21,7 @@ import dataclasses
 import json
 import os
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -42,7 +42,7 @@ from rayito import (
 )
 from rayito._agent._deploy_plan import project_for, with_excluded_file
 from rayito._agent._detect_report import DetectionReport
-from rayito._agent._events import AgentEvent, AgentFailed, Text, TextDelta, ToolCall
+from rayito._agent._events import AgentEvent, AgentFailed, Done, Text, TextDelta, ToolCall
 from rayito._agent._fleet_base import fleet_settings_of
 from rayito._agent._project_base import app_hiding_own_routes
 from rayito._agent._project_file import project_name_of
@@ -271,7 +271,10 @@ def usage_document(result: AgentResult) -> dict[str, int]:
 
 
 def result_document(result: AgentResult) -> dict[str, Any]:
-    return {
+    """El resultado en `--json`; `output` (la salida de un grafo invocado con
+    `--input`) va tal cual, sin pasar sus claves a camelCase, y sólo si la
+    hay."""
+    document: dict[str, Any] = {
         "sessionId": result.session_id,
         "text": result.text,
         "steps": result.steps,
@@ -279,13 +282,35 @@ def result_document(result: AgentResult) -> dict[str, Any]:
         "usageReported": result.usage_reported,
         "exitCode": result.exit_code,
     }
+    output = result_output(result)
+    if output is not None:
+        document["output"] = dict(output)
+    return document
+
+
+def result_output(result: AgentResult) -> Mapping[str, Any] | None:
+    """La salida estructurada del resultado; un resultado que no la tiene
+    (el de un cliente anterior o el de un doble) cuenta como sin salida."""
+    output: Mapping[str, Any] | None = getattr(result, "output", None)
+    return output
+
+
+def output_text(output: Mapping[str, Any]) -> str:
+    """La salida estructurada como JSON legible."""
+    return json.dumps(output, ensure_ascii=False, indent=2)
 
 
 def print_result(result: AgentResult, *, as_json: bool) -> None:
     if as_json:
         emit_json(result_document(result))
         return
-    echo(result.text)
+    output = result_output(result)
+    if output is None:
+        echo(result.text)
+    else:
+        if result.text:
+            echo(result.text, err=True)
+        echo(output_text(output))
     echo(f"session_id={result.session_id}", err=True)
     tokens = result.usage.total if result.usage_reported else USAGE_UNKNOWN_LABEL
     echo(f"steps={result.steps} tokens={tokens}", err=True)
@@ -302,14 +327,12 @@ class EventPrinter:
         self._wrote_text = False
 
     def __call__(self, event: AgentEvent) -> None:
+        output = event.output if isinstance(event, Done) else None
         if self._as_json:
-            echo(
-                json.dumps(
-                    camel_keys(dataclasses.asdict(event)),
-                    ensure_ascii=False,
-                    separators=JSON_LINE_SEPARATORS,
-                )
-            )
+            document = camel_keys(dataclasses.asdict(event))
+            if output is not None:
+                document["output"] = dict(output)
+            echo(json.dumps(document, ensure_ascii=False, separators=JSON_LINE_SEPARATORS))
         elif isinstance(event, TextDelta):
             self._saw_delta = True
             self._write(event.text)
@@ -317,12 +340,16 @@ class EventPrinter:
             self._write(event.text)
         elif isinstance(event, ToolCall):
             echo(f"tool={event.name} status={event.status}", err=True)
+        elif output is not None:
+            self.finish()
+            echo(output_text(output))
         if isinstance(event, AgentFailed):
             self.finish()
             fail(event.message)
 
     def finish(self) -> None:
         if self._wrote_text:
+            self._wrote_text = False
             sys.stdout.write("\n")
             sys.stdout.flush()
 
@@ -530,6 +557,15 @@ MODEL_PROVIDER_HELP = (
 MODEL_BASE_URL_HELP = (
     "URL https de una pasarela compatible con OpenAI (upstream de openai-compatible o litellm)."
 )
+GRAPH_HELP = "Nombre del grafo de langgraph.json que se despliega, si hay varios."
+INPUT_HELP = "Objeto JSON de entrada para un grafo con esquema propio; excluye PROMPT."
+INPUT_FILE_HELP = "Fichero con el objeto JSON de entrada (- lee stdin); excluye PROMPT y --input."
+INVOKE_PROMPT_HELP = "Lo que se le pide al agente (o usa --input / --input-file)."
+#: `--input-file -` lee el objeto de la entrada estándar.
+STDIN_PATH = "-"
+INVOKE_INPUT_REQUIRED = "pasa PROMPT, --input o --input-file, sólo uno de los tres"
+INVOKE_INPUT_UNREADABLE = "no se pudo leer el fichero de --input-file"
+INVOKE_INPUT_INVALID = "la entrada no es un objeto JSON"
 MICROVM_ID_PREFIX = "microvm-"
 STEP_MESSAGES = {
     "base_image": "imagen base publicada",
@@ -559,8 +595,9 @@ def detect_overrides_of(
     model_id: str | None = None,
     model_provider: str | None = None,
     model_base_url: str | None = None,
+    graph: str | None = None,
 ) -> DetectOverrides | None:
-    chosen = (framework, language, entry, protocol, model_id, model_provider, model_base_url)
+    chosen = (framework, language, entry, protocol, model_id, model_provider, model_base_url, graph)
     if all(value is None for value in chosen):
         return None
     return DetectOverrides(
@@ -571,6 +608,7 @@ def detect_overrides_of(
         model_id=model_id,
         model_provider=model_provider,
         model_base_url=model_base_url,
+        graph=graph,
     )
 
 
@@ -614,6 +652,7 @@ def detect_command(
     model_base_url: Annotated[
         str | None, typer.Option("--model-base-url", help=MODEL_BASE_URL_HELP)
     ] = None,
+    graph: Annotated[str | None, typer.Option("--graph", help=GRAPH_HELP)] = None,
     write: Annotated[
         bool,
         typer.Option("--write", help="Guarda el proyecto resuelto como rayito-agent.json."),
@@ -627,7 +666,7 @@ def detect_command(
     rayito-agent.json (no sobrescribe un fichero de proyecto existente).
     """
     overrides = detect_overrides_of(
-        framework, language, entry, protocol, model_id, model_provider, model_base_url
+        framework, language, entry, protocol, model_id, model_provider, model_base_url, graph=graph
     )
     try:
         project, report = project_for(path, None, overrides, ctx.meta.get("region"))
@@ -699,6 +738,7 @@ def deploy_command(
     model_base_url: Annotated[
         str | None, typer.Option("--model-base-url", help=MODEL_BASE_URL_HELP)
     ] = None,
+    graph: Annotated[str | None, typer.Option("--graph", help=GRAPH_HELP)] = None,
     memory: Annotated[
         int | None,
         typer.Option(
@@ -844,7 +884,14 @@ def deploy_command(
             AgentCoreDeployRequest(
                 project_path=deploy_target(path, file),
                 overrides=detect_overrides_of(
-                    framework, language, entry, protocol, model_id, model_provider, model_base_url
+                    framework,
+                    language,
+                    entry,
+                    protocol,
+                    model_id,
+                    model_provider,
+                    model_base_url,
+                    graph=graph,
                 ),
                 max_sessions=max_sessions,
                 queue=queue,
@@ -885,7 +932,7 @@ def deploy_command(
         return
     project_path = deploy_target(path, file)
     overrides = detect_overrides_of(
-        framework, language, entry, protocol, model_id, model_provider, model_base_url
+        framework, language, entry, protocol, model_id, model_provider, model_base_url, graph=graph
     )
     try:
         project, report = project_for(project_path, None, overrides, ctx.meta.get("region"))
@@ -1186,10 +1233,12 @@ def invoke_command(
     sandbox_id: Annotated[
         str, typer.Argument(help="Id del sandbox desplegado o nombre de la flota.")
     ],
-    prompt: Annotated[str, typer.Argument(help="Lo que se le pide al agente.")],
+    prompt: Annotated[str | None, typer.Argument(help=INVOKE_PROMPT_HELP)] = None,
     session_id: Annotated[
         str | None, typer.Option("--session-id", help="Continúa una sesión anterior.")
     ] = None,
+    input_json: Annotated[str | None, typer.Option("--input", help=INPUT_HELP)] = None,
+    input_file: Annotated[Path | None, typer.Option("--input-file", help=INPUT_FILE_HELP)] = None,
     stream: Annotated[bool, typer.Option("--stream", help=STREAM_HELP)] = False,
     token_file: TokenFileOption = None,
     target: Annotated[
@@ -1202,8 +1251,11 @@ def invoke_command(
     reparte la sesión entre sus VMs (el `session_id` que devuelve identifica
     el VM: pásalo con --session-id para seguir la conversación). Con --target
     agentcore, `sandbox_id` es el nombre del agente: se invoca con SigV4 y el
-    `session_id` que devuelve continúa la conversación."""
+    `session_id` que devuelve continúa la conversación. Un grafo con esquema
+    de entrada propio se llama con --input (un objeto JSON) o --input-file en
+    lugar de PROMPT, y su salida se imprime como JSON."""
     as_json = json_mode(ctx)
+    data = invoke_input(prompt, input_json, input_file)
     with agentcore_errors(json_output=as_json):
         fleet: AgentDeployment | AgentFleet | AgentCoreFleet
         if target == TARGET_AGENTCORE:
@@ -1218,17 +1270,59 @@ def invoke_command(
         try:
             if stream:
                 printer = EventPrinter(as_json=as_json)
-                with fleet.stream(prompt, session_id=session_id) as events:
+                with fleet.stream(prompt, **invocation_options(session_id, data)) as events:
                     for event in events:
                         printer(event)
                 printer.finish()
                 return
-            result = fleet.invoke(prompt, session_id=session_id)
+            result = fleet.invoke(prompt, **invocation_options(session_id, data))
         except AgentException as exc:
             run_failed(exc)
+        except InvalidArgumentException as exc:
+            fail(str(exc), code=EXIT_USAGE)
         except (CapacityException, QuotaExceededException, SandboxException) as exc:
             fail(str(exc))
     print_result(result, as_json=as_json)
+
+
+def invocation_options(session_id: str | None, data: Mapping[str, Any] | None) -> dict[str, Any]:
+    """Los argumentos con nombre de `invoke()`/`stream()`: `input` sólo si la
+    orden lo trae, así que una llamada con PROMPT es la de siempre."""
+    options: dict[str, Any] = {"session_id": session_id}
+    if data is not None:
+        options["input"] = data
+    return options
+
+
+def invoke_input(
+    prompt: str | None, input_json: str | None, input_file: Path | None
+) -> Mapping[str, Any] | None:
+    """El objeto de `--input` o de `--input-file` (`-` lee stdin), o `None`
+    con PROMPT. Exactamente uno de los tres; si no, o si la entrada no es un
+    objeto JSON, sale con el código de uso antes de llamar a nadie. El error
+    nunca lleva el contenido."""
+    if sum(value is not None for value in (prompt, input_json, input_file)) != 1:
+        fail(INVOKE_INPUT_REQUIRED, code=EXIT_USAGE)
+    if input_file is not None:
+        input_json = read_input_file(input_file)
+    if input_json is None:
+        return None
+    try:
+        data = json.loads(input_json)
+    except ValueError:
+        fail(INVOKE_INPUT_INVALID, code=EXIT_USAGE)
+    if not isinstance(data, dict):
+        fail(INVOKE_INPUT_INVALID, code=EXIT_USAGE)
+    return data
+
+
+def read_input_file(path: Path) -> str:
+    if str(path) == STDIN_PATH:
+        return sys.stdin.read()
+    try:
+        return path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        fail(INVOKE_INPUT_UNREADABLE, code=EXIT_USAGE)
 
 
 @agent_app.command("status")

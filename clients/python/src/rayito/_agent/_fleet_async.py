@@ -60,6 +60,7 @@ from rayito._agent._scaling_domain import (
     replacements_needed,
     validate_caller_session_id,
 )
+from rayito._agent._stream_base import require_prompt_or_input
 from rayito._limits import AGENT_SERVICE_READY_MARKER_PATH
 from rayito.exceptions import (
     AgentException,
@@ -472,16 +473,21 @@ class AsyncAgentFleet:
 
     async def invoke(
         self,
-        prompt: str,
+        prompt: str | None = None,
         session_id: str | None = None,
         model: str | None = None,
         reasoning: bool = False,
+        *,
+        input: Mapping[str, Any] | None = None,
     ) -> AgentResult:
         """Una invocación sin streaming: el `AgentResult`, con el id de sesión
-        enrutable si la flota puede tener varios VMs."""
+        enrutable si la flota puede tener varios VMs. Con `input` en lugar de
+        `prompt`, `result.output` trae la salida del grafo; se comprueba antes
+        de reservar un VM."""
+        require_prompt_or_input(prompt, input)
 
         async def operation(deployment: AsyncAgentDeployment, inner: str | None) -> AgentResult:
-            return await deployment.invoke(prompt, inner, model, reasoning)
+            return await deployment.invoke(prompt, inner, model, reasoning, input=input)
 
         lease, result = await self._execute(session_id, operation)
         await self._release(lease, result.session_id)
@@ -489,17 +495,20 @@ class AsyncAgentFleet:
 
     async def stream(
         self,
-        prompt: str,
+        prompt: str | None = None,
         session_id: str | None = None,
         model: str | None = None,
         reasoning: bool = False,
+        *,
+        input: Mapping[str, Any] | None = None,
     ) -> AsyncAgentFleetStream:
         """Como `invoke()`, con los eventos a medida que llegan. La petición se
         hace aquí (un 429 se reintenta) y el VM queda ocupado hasta cerrar el
         stream."""
+        require_prompt_or_input(prompt, input)
 
         async def operation(deployment: AsyncAgentDeployment, inner: str | None) -> Any:
-            stream = deployment.stream(prompt, inner, model, reasoning)
+            stream = deployment.stream(prompt, inner, model, reasoning, input=input)
             await stream.__aenter__()
             return stream
 

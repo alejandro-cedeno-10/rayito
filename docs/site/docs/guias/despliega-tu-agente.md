@@ -1030,6 +1030,93 @@ sirve igual en un MicroVM y en un contenedor exportado:
   `X-Amzn-Bedrock-AgentCore-Runtime-Session-Id` hace de `session_id` si el cuerpo
   no lo trae.
 
+### Varios grafos y entrada estructurada { #varios-grafos-y-entrada-estructurada }
+
+**Varios grafos.** Si `langgraph.json` declara más de un grafo, elige el que se
+despliega con `--graph NOMBRE` o con `[runtime] graph` en `rayito-agent.toml`
+(el nombre es la clave de `graphs`). Sin elegir, se usa el único grafo o el que
+se llama `agent`; con varios y ninguno llamado `agent`, el despliegue falla con
+`ambiguous` y el mensaje lista los nombres. Un nombre que no está es
+`invalid_value` en `runtime.graph`, y `graph` junto a `entrypoint` (o `--graph`
+junto a `--entry`) es `conflict`. La elección se hace leyendo `langgraph.json`,
+sin ejecutar tu código, y se convierte en el `entrypoint` del grafo antes de
+construir el runtime.
+
+```toml
+[runtime]
+kind = "langgraph"
+graph = "triage"
+```
+
+**Entrada estructurada.** Un grafo cuyo esquema de entrada no es de mensajes
+(por ejemplo, `StateGraph(State, input_schema=InputState,
+output_schema=OutputState)` con `InputState` = `{"ticket_id": str}`) no se
+llama con un prompt sino con `input`, un objeto JSON, y devuelve `output`, su
+último estado filtrado al esquema de salida:
+
+=== "Python"
+
+    ```python
+    from rayito import AgentDeployment
+
+    deployment = AgentDeployment.connect("microvm-00000000-0000-0000-0000-000000000001")
+    result = deployment.invoke(input={"ticket_id": "T-1"})
+    print(result.output)
+    again = deployment.invoke(input={"ticket_id": "T-2"}, session_id=result.session_id)
+    ```
+
+=== "Python (async)"
+
+    ```python
+    from rayito import AsyncAgentDeployment
+
+
+    async def main() -> None:
+        deployment = await AsyncAgentDeployment.connect("microvm-00000000-0000-0000-0000-000000000001")
+        result = await deployment.invoke(input={"ticket_id": "T-1"})
+        print(result.output)
+    ```
+
+=== "TypeScript"
+
+    ```ts
+    import { AgentDeployment } from "rayito";
+
+    const deployment = await AgentDeployment.connect("microvm-00000000-0000-0000-0000-000000000001");
+    const result = await deployment.invoke({ input: { ticket_id: "T-1" } });
+    console.log(result.output);
+    ```
+
+=== "CLI"
+
+    ```bash
+    rayito agent deploy --graph triage
+    rayito agent invoke microvm-00000000-0000-0000-0000-000000000001 --input '{"ticket_id": "T-1"}'
+    rayito agent invoke microvm-00000000-0000-0000-0000-000000000001 --input-file ticket.json --stream
+    ```
+
+Lo mismo vale para `stream()`, para una flota y para un agente en
+[AgentCore](desplegar-en-agentcore.md#sesiones): el evento `done` lleva
+`output`. Exactamente uno de los dos, `prompt` o `input`: si no, el SDK lanza
+`InvalidArgumentException` / `InvalidArgumentError` antes de llamar a nadie, y
+la CLI sale con 2. Dentro del MicroVM, el host lee el esquema con
+`get_input_jsonschema()` (en LangGraph.js, `getInputJsonSchema`, desde la 1.1):
+un grafo con `messages` en su esquema, o cuyo esquema no se puede leer, se
+llama como siempre. Los fallos llegan como `AgentException` con
+`reason="protocol_error"` y un `detail_code`:
+
+| `detail_code` | Cuándo |
+|---|---|
+| `input_required` | llamaste con un prompt a un grafo que espera `input` |
+| `invalid_input` | `input` no cumple el esquema (claves obligatorias, claves de más con `additionalProperties: false`, tipos de primer nivel), o el grafo lanzó un `ValidationError` de pydantic |
+| `output_not_serializable` | la salida no se puede convertir a JSON o pasa de {{agentServiceMaxOutputBytes}} bytes |
+
+El `session_id` es el `thread_id` del grafo: si el grafo tiene su propio
+`checkpointer`, pasar el mismo `session_id` continúa el hilo. Un agente
+desplegado con una versión anterior contesta `400` a `input`: el SDK lo traduce
+a «vuelve a desplegarlo con esta versión de Rayito». Ni `input` ni `output`
+llegan nunca a los logs, sólo tamaños y códigos.
+
 ## 4. Exporta a un contenedor
 
 `export()` escribe, sin ninguna llamada de red, un directorio con el `Dockerfile`

@@ -35,6 +35,7 @@ function overridesOf(overrides: AgentDetectOverrides): DetectOverrides | undefin
         modelId: overrides.modelId,
         modelProvider: overrides.modelProvider,
         modelBaseUrl: overrides.modelBaseUrl,
+        graph: overrides.graph,
       };
 }
 

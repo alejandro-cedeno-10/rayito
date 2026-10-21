@@ -43,7 +43,7 @@ import {
   PairFlagError,
   parseFlagPairs,
 } from "../agent-deploy.js";
-import { EventPrinter, printResult } from "../agent-output.js";
+import { EventPrinter, invokeRequestOf, printResult } from "../agent-output.js";
 import {
   DEFAULT_PROVIDER,
   LANGUAGES,
@@ -387,6 +387,11 @@ export const agentRunCommand = defineCommand({
 });
 
 const DETECT_FLAGS_HELP = "Fija a mano lo que la detección decidiría.";
+const GRAPH_HELP = "Nombre del grafo de langgraph.json que se despliega, si hay varios.";
+const INPUT_HELP = "Objeto JSON de entrada para un grafo con esquema propio; excluye PROMPT.";
+const INPUT_FILE_HELP =
+  "Fichero con el objeto JSON de entrada (- lee stdin); excluye PROMPT y --input.";
+const INVOKE_PROMPT_HELP = "Lo que se le pide al agente (o usa --input / --input-file).";
 const SESSION_MODE_CHOICES = ["shared", "dedicated"] as const;
 const MICROVM_ID_PREFIX = "microvm-";
 const BASE_NEEDS_CONFIRMATION =
@@ -414,6 +419,7 @@ const detectOverrideOptions = [
   option(["--model-id"], { help: MODEL_ID_HELP }),
   option(["--model-provider"], { help: MODEL_PROVIDER_HELP }),
   option(["--model-base-url"], { help: MODEL_BASE_URL_HELP }),
+  option(["--graph"], { help: GRAPH_HELP }),
 ];
 
 function detectOverridesOf(context: CommandContext): AgentDetectOverrides {
@@ -426,6 +432,7 @@ function detectOverridesOf(context: CommandContext): AgentDetectOverrides {
     modelId: values.string("model_id"),
     modelProvider: values.string("model_provider"),
     modelBaseUrl: values.string("model_base_url"),
+    graph: values.string("graph"),
   };
 }
 
@@ -875,8 +882,10 @@ export const agentInvokeCommand = defineCommand({
     "sesión es la que devuelve el resultado.",
   parameters: [
     argument("sandbox_id", { required: true, help: TARGET_HELP }),
-    argument("prompt", { required: true, help: "Lo que se le pide al agente." }),
+    argument("prompt", { help: INVOKE_PROMPT_HELP }),
     option(["--session-id"], { help: SESSION_HELP }),
+    option(["--input"], { name: "input_json", help: INPUT_HELP }),
+    option(["--input-file"], { type: "path", help: INPUT_FILE_HELP }),
     flag(["--stream"], { help: STREAM_HELP }),
     tokenFileOption,
     targetOption,
@@ -891,22 +900,22 @@ export const agentInvokeCommand = defineCommand({
       if (chosen === TARGET_AGENTCORE) {
         return guardedAgentCore(context, () => runAgentCoreInvoke(context));
       }
+      const request = invokeRequestOf(context);
       const target = values.string("sandbox_id") ?? "";
       const client = isFleetName(target)
         ? await context.agentProjects.connectFleet(target, fleetTokenOrUsage(context))
         : await context.agentProjects.connect(target, tokenOrUsage(context));
-      const prompt = values.string("prompt") ?? "";
       const options = { sessionId: values.string("session_id") };
       try {
         if (values.flag("stream")) {
           const printer = new EventPrinter(context);
-          const events = await client.stream(prompt, options);
+          const events = await client.stream(request, options);
           for await (const event of events) {
             printer.print(event);
           }
           return printer.finish();
         }
-        printResult(context, await client.invoke(prompt, options));
+        printResult(context, await client.invoke(request, options));
         return undefined;
       } catch (error) {
         if (error instanceof CapacityError) {

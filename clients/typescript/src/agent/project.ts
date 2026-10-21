@@ -46,6 +46,7 @@ import type { BuildInfo } from "../templates/build.js";
 import { validateBucketHint, validateImageVersion } from "./deploy-domain.js";
 import type { AgentDeployment } from "./deployment.js";
 import type { DetectionReport, DetectOverrides } from "./detect-report.js";
+import { DETECTION_RULES } from "./detect-rules.js";
 import {
   AgentLimits,
   AgentModel,
@@ -91,6 +92,16 @@ import {
   type ScalingOptionsInput,
 } from "./scaling-domain.js";
 import { type AgentTemplateBuildOptions, DEFAULT_AGENT_TEMPLATE_BASE } from "./template.js";
+
+/** `[runtime] graph`: el nombre de un grafo de `langgraph.json`, sólo con
+ * `kind = "langgraph"` (`testdata/agent-project/schema.json`). Se resuelve al
+ * `entrypoint` de ese grafo antes de construir el runtime. */
+export const GRAPH_KEY = "graph";
+export const GRAPH_RUNTIME_KIND = "langgraph";
+export const GRAPH_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/;
+export const ENTRYPOINT_KEY = "entrypoint";
+export const LANGGRAPH_FILE = (DETECTION_RULES.entryFiles[GRAPH_RUNTIME_KIND] as { file: string })
+  .file;
 
 /** Los códigos de error de lectura de un proyecto: lista cerrada que los dos
  * SDK comparten (`testdata/agent-project/invalid/cases.json`). */
@@ -429,11 +440,17 @@ export interface AgentProjectOptions {
   readonly language?: AgentLanguage | undefined;
   readonly framework?: string | undefined;
   readonly versions?: RuntimeVersions | RuntimeVersionsInput | undefined;
+  readonly graph?: string | undefined;
 }
 
 /** El lector de ficheros de texto que `fromObject` usa para
  * `agent.instructions_file`. */
 export type TextReader = (path: string) => string;
+
+/** Lo que `fromObject` usa para `[runtime] graph`: el `entrypoint` del grafo
+ * de ese nombre en el `langgraph.json` del proyecto. Lo inyecta `load` (como
+ * `readText`); lee sólo ese fichero, nunca el código del proyecto. */
+export type GraphResolver = (graph: string) => string;
 
 /**
  * Un agente descrito una vez: runtime, `AgentSpec`, pasarelas del modelo,
@@ -453,7 +470,9 @@ export type TextReader = (path: string) => string;
  * del sandbox, que necesita `rayito-base-caps`), `region`, `bucket` y
  * `baseImageVersion` (los valores por defecto de `deployAgent()`), `language` y
  * `framework` (lo que la detección o el fichero declaran del proyecto) y
- * `versions` (`RuntimeVersions`).
+ * `versions` (`RuntimeVersions`). `graph` es el nombre del grafo de
+ * `langgraph.json` que se sirve (sólo con el runtime `langgraph`);
+ * `toObject()` lo escribe en lugar del `entrypoint`.
  *
  * Coste y activación
  * -------------------
@@ -495,6 +514,7 @@ export class AgentProject {
   readonly language: AgentLanguage | undefined;
   readonly framework: string | undefined;
   readonly versions: RuntimeVersions;
+  readonly graph: string | undefined;
 
   constructor(options: AgentProjectOptions) {
     validateName(options.name, "AgentProject.name");
@@ -578,6 +598,8 @@ export class AgentProject {
       );
     }
     this.language = options.language;
+    validateGraph(options.graph, options.runtime);
+    this.graph = options.graph;
   }
 
   /** Lee `rayito-agent.toml` o `rayito-agent.json` de `path` (un fichero, o
@@ -589,6 +611,7 @@ export class AgentProject {
     return AgentProject.fromObject(document.data, {
       baseDir: document.baseDir,
       readText: document.readText,
+      resolveGraph: document.resolveGraph,
     });
   }
 
@@ -612,13 +635,17 @@ export class AgentProject {
   /** El proyecto de un documento ya leído. Puro: las rutas relativas se
    * resuelven contra `baseDir` sin tocar el disco, y `instructions_file` pasa
    * por `readText` (el lector que inyecta `load`; sin él, esa clave es un
-   * error). */
+   * error), y `[runtime] graph`, por `resolveGraph` (también de `load`). */
   static fromObject(
     data: Readonly<Record<string, unknown>>,
-    options: { readonly baseDir: string; readonly readText?: TextReader | undefined },
+    options: {
+      readonly baseDir: string;
+      readonly readText?: TextReader | undefined;
+      readonly resolveGraph?: GraphResolver | undefined;
+    },
   ): AgentProject {
     return new AgentProject({
-      ...projectOptions(data, options.baseDir, options.readText),
+      ...projectOptions(data, options.baseDir, options.readText, options.resolveGraph),
       baseDir: options.baseDir,
     });
   }
@@ -909,6 +936,7 @@ function projectOptions(
   data: Readonly<Record<string, unknown>>,
   baseDir: string,
   readText: TextReader | undefined,
+  resolveGraph: GraphResolver | undefined,
 ): AgentProjectOptions {
   const root = new Table(data, "");
   const schema = root.text("schema", true);
@@ -916,7 +944,7 @@ function projectOptions(
     throw fail("schema", "unsupported_schema", `debe ser '${AGENT_PROJECT_SCHEMA}'`);
   }
   const name = root.text("name", true) as string;
-  const { runtime, ...runtimeExtras } = readRuntime(root.table("runtime"));
+  const { runtime, ...runtimeExtras } = readRuntime(root.table("runtime"), resolveGraph);
   const source = readSource(root.table("source"), baseDir);
   const gateways = readGateways(root);
   const modelTable = root.table("model");
@@ -1024,9 +1052,13 @@ interface RuntimeRead {
   readonly language?: AgentLanguage;
   readonly framework?: string;
   readonly versions?: RuntimeVersions;
+  readonly graph?: string;
 }
 
-function readRuntime(table: Table | undefined): RuntimeRead {
+function readRuntime(
+  table: Table | undefined,
+  resolveGraph: GraphResolver | undefined,
+): RuntimeRead {
   if (table === undefined) {
     throw fail("runtime", "missing_key", "es obligatoria");
   }
@@ -1043,7 +1075,61 @@ function readRuntime(table: Table | undefined): RuntimeRead {
     }
   }
   table.finish();
+  if (extras.graph !== undefined) {
+    options[ENTRYPOINT_KEY] = graphEntrypointOf(extras.graph, resolveGraph, table.at(GRAPH_KEY));
+  }
   return { runtime: guard("runtime", () => runtimeFromOptions(kind, options)), ...extras };
+}
+
+/** El `entrypoint` del grafo `graph`, con el resolvedor que inyecta `load`
+ * (sin él, `invalid_value`, como `instructions_file`). */
+function graphEntrypointOf(
+  graph: string,
+  resolveGraph: GraphResolver | undefined,
+  path: string,
+): string {
+  if (resolveGraph === undefined) {
+    throw fail(path, "invalid_value", "no hay lector de ficheros disponible");
+  }
+  return resolveGraph(graph);
+}
+
+/** `[runtime] graph`: un nombre válido, sólo con `kind = "langgraph"` y nunca
+ * junto a `entrypoint` (`conflict`). */
+function readGraph(table: Table): string | undefined {
+  const graph = table.text(GRAPH_KEY);
+  if (graph === undefined) {
+    return undefined;
+  }
+  const path = table.at(GRAPH_KEY);
+  if (table.raw("kind") !== GRAPH_RUNTIME_KIND) {
+    throw fail(path, "invalid_value", `sólo vale con kind = '${GRAPH_RUNTIME_KIND}'`);
+  }
+  if (!GRAPH_NAME_PATTERN.test(graph)) {
+    throw fail(path, "invalid_value", `debe casar con ${GRAPH_NAME_PATTERN.source}`);
+  }
+  if (table.raw(ENTRYPOINT_KEY) !== undefined) {
+    throw fail(path, "conflict", DETECTION_RULES.messages.graph_conflict as string);
+  }
+  return graph;
+}
+
+/** `AgentProject.graph`: un nombre de grafo válido y sólo con el runtime
+ * `langgraph`. */
+function validateGraph(graph: unknown, runtime: string | AgentRuntime): void {
+  if (graph === undefined) {
+    return;
+  }
+  if (typeof graph !== "string" || !GRAPH_NAME_PATTERN.test(graph)) {
+    throw new InvalidArgumentError(
+      `AgentProject.graph debe casar con ${GRAPH_NAME_PATTERN.source}`,
+    );
+  }
+  if (runtimeToOptions(runtime).kind !== GRAPH_RUNTIME_KIND) {
+    throw new InvalidArgumentError(
+      `AgentProject.graph sólo vale con el runtime '${GRAPH_RUNTIME_KIND}'`,
+    );
+  }
 }
 
 /** Las claves de `[runtime]` que son del proyecto y no de un runtime:
@@ -1069,6 +1155,10 @@ function readRuntimeExtras(table: Table): Omit<RuntimeRead, "runtime"> {
   }
   if (python !== undefined || node !== undefined) {
     extras.versions = new RuntimeVersions({ python, node });
+  }
+  const graph = readGraph(table);
+  if (graph !== undefined) {
+    extras.graph = graph;
   }
   return extras;
 }
@@ -1863,6 +1953,10 @@ function idleSeconds(idle: IdlePolicy | null): number {
 
 function runtimeToObject(project: AgentProject): Record<string, unknown> {
   const table = runtimeToOptions(project.runtime);
+  if (project.graph !== undefined) {
+    delete table[ENTRYPOINT_KEY];
+    table[GRAPH_KEY] = project.graph;
+  }
   for (const [key, value] of [
     ["language", project.language],
     ["framework", project.framework],

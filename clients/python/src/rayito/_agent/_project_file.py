@@ -6,6 +6,7 @@ interpreta el documento: eso es el dominio (`_project_domain.py`)."""
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 import re
@@ -15,7 +16,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Final
 
-from rayito._agent._project_domain import AgentProject, AgentProjectException
+from rayito._agent._project_domain import (
+    ENTRYPOINT_KEY,
+    GRAPH_KEY,
+    AgentProject,
+    AgentProjectException,
+)
 from rayito._aws_region import resolve_region
 from rayito._limits import AGENT_PROJECT_FILE_NAMES
 
@@ -92,7 +98,7 @@ def detect_project(
         base_dir = str(directory.resolve())
         read_text = _reader(base_dir)
     try:
-        report = detect(LocalProjectTree(directory), overrides)
+        report = detect(LocalProjectTree(directory), with_file_graph(overrides, document))
     except AgentProjectException as exc:
         if exc.code != NOT_DETECTED_CODE or not _declares_runtime(document):
             raise
@@ -106,6 +112,23 @@ def detect_project(
         overrides=overrides,
     )
     return AgentProject.from_dict(filled, base_dir=base_dir, read_text=read_text), report
+
+
+def with_file_graph(
+    overrides: DetectOverrides | None, document: Mapping[str, object]
+) -> DetectOverrides | None:
+    """Los `overrides` de la detección con el `[runtime] graph` del fichero
+    de proyecto si la bandera no fija otro, para que la detección elija ese
+    grafo y no falle con varios."""
+    from rayito._agent._detect_report import DetectOverrides
+
+    runtime = document.get("runtime")
+    graph = runtime.get(GRAPH_KEY) if isinstance(runtime, Mapping) else None
+    if not isinstance(graph, str) or (overrides is not None and overrides.graph is not None):
+        return overrides
+    if isinstance(runtime, Mapping) and ENTRYPOINT_KEY in runtime:
+        return overrides
+    return dataclasses.replace(overrides or DetectOverrides(), graph=graph)
 
 
 def _declares_runtime(document: Mapping[str, object]) -> bool:

@@ -508,8 +508,8 @@ rayito agent deploy [PATH] [--file PATH] [--timeout S] [--port N] [--token-file 
                     [--readable-secret NOMBRE]... [--idle-session-timeout S] [--max-session-lifetime S]
                     [--external-model]
 rayito agent export --target docker|agentcore --out DIR [--file PATH] [--overwrite]
-rayito agent invoke SANDBOX_ID PROMPT [--session-id ID] [--stream] [--token-file F]
-                    [--target microvm|agentcore]
+rayito agent invoke SANDBOX_ID [PROMPT] [--session-id ID] [--input JSON | --input-file F]
+                    [--stream] [--token-file F] [--target microvm|agentcore]
 rayito agent status SANDBOX_ID [--token-file F] [--target microvm|agentcore]
 rayito agent stop SANDBOX_ID [--target microvm|agentcore] [--session-id ID]
 rayito agent list --target agentcore
@@ -560,6 +560,14 @@ sus VMs); el `session_id` que devuelve `invoke` en una flota con varios VMs
 identifica el VM, y pasarlo con `--session-id` sigue la conversación. Los
 mensajes y las ayudas van en español. Ver
 [Despliega tu agente](guias/despliega-tu-agente.md#sin-escribir-nada).
+
+Con varios grafos en `langgraph.json`, `detect` y `deploy` aceptan
+`--graph NOMBRE` (excluyente con `--entry`). `invoke` acepta, en lugar de
+`PROMPT`, `--input JSON` o `--input-file F` (`-` lee la entrada estándar): el
+objeto de entrada de un grafo con esquema propio; exactamente uno de los tres,
+o sale con 2 antes de llamar a nadie. La salida del grafo (`output`) se imprime
+como JSON, y con `--json` va en la clave `output`. Ver
+[Varios grafos y entrada estructurada](guias/despliega-tu-agente.md#varios-grafos-y-entrada-estructurada).
 
 Construye la imagen de `AgentTemplate`
 ([Templates de agente](funciones-opcionales/templates-de-agente.md)): parte

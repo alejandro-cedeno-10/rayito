@@ -236,6 +236,20 @@ del proveedor, el prompt ni el contenido generado.
 | `aborted` | `stream.abort()` / cancelación / `AbortSignal` |
 | `busy` | ya hay una ejecución en curso en ese sandbox (un `run`/`stream` a la vez por sandbox en esta fase) |
 
+Con un grafo de esquema propio invocado con `input`
+([Varios grafos y entrada estructurada](../guias/despliega-tu-agente.md#varios-grafos-y-entrada-estructurada)),
+`protocol_error` lleva uno de estos `detail_code`, cada uno con su mensaje:
+
+| `detail_code` | Cuándo |
+|---|---|
+| `input_required` | el grafo espera `input` (un objeto JSON) y llegó un prompt |
+| `invalid_input` | `input` no cumple el esquema de entrada del grafo |
+| `output_not_serializable` | la salida del grafo no se puede convertir a JSON o pasa de {{agentServiceMaxOutputBytes}} bytes |
+
+Un `400` a una petición con `input` es `InvalidArgumentException` /
+`InvalidArgumentError` con «vuelve a desplegarlo con esta versión de Rayito»: el
+agente desplegado es anterior a la entrada estructurada.
+
 ## `AgentCoreException` / `AgentCoreError` { #agentcore }
 
 Desde 0.15.0. Las lanza el despliegue en AgentCore
