@@ -6,6 +6,35 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
 
 ## [Unreleased]
 
+### Añadido
+
+- **Secretos de Secrets Manager como variables de entorno del agente**
+  (ADR-033 D4): `[secret_env]` (`NOMBRE = "<secreto>"` o `{ secret, key,
+  version_stage }`) y `[[secret_env_from]]` (`secret`, `prefix`, `keys`) en el
+  fichero de proyecto, `AgentProject(secret_env=..., secret_env_from=...)` con
+  `SecretEnvRef` y `SecretEnvSource`, y `--secret-env NOMBRE=<secreto>[#clave]`
+  y `--secret-env-from <secreto>[,prefix=P][,keys=A|B]` en `rayito agent
+  deploy`. En AgentCore el runtime sólo recibe `RAYITO_SECRET_ENV` (nombres y
+  ARNs), el host lee cada secreto con el rol al arrancar la sesión, antes de
+  cargar el código, y falla en cerrado con `secret_env_*`; los secretos se suman
+  a `ReadableSecretArns` (la plantilla no cambia) y el plan lo dice con la
+  línea `secretEnv` y `secretEnvNames`. En MicroVMs el SDK los lee con tus
+  credenciales y los pasa sólo al proceso del host. Sin estas claves, el plan,
+  el export, la imagen y las llamadas no cambian.
+- **`--create-secrets-from FICHERO.env`** (`AgentDeployOptions.create_secrets_from`)
+  crea o actualiza el secreto JSON `rayito/agents/<nombre>/env` con los valores
+  de un `.env` y lo usa como `secret_env_from`; enseña sólo los nombres y pide
+  `--yes` (cuesta $0,40 al mes). **`--check-env`** (`check_env`) avisa
+  (`env_missing`) de las variables de `.env.example` que no reciben valor.
+
+### Seguridad
+
+- **T38**: los valores de `secret_env` nunca van al proyecto, al plan, a la
+  imagen, a los logs ni a los errores; el rol del runtime sólo lee esos
+  secretos (`GetSecretValue`, sin `kms:Decrypt`), y un test falla si se amplía.
+  El agente y lo que lance pueden leer su entorno: la guía, `security.md` y
+  `SECURITY.md` lo dicen.
+
 ## [0.15.0] - 2026-10-21
 
 ### Añadido
