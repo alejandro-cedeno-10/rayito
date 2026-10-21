@@ -82,6 +82,8 @@ export interface AgentDeployOptionsInput {
   readonly onStep?: ((step: AgentDeployStep) => void) | undefined;
   readonly buildTimeoutMs?: number | undefined;
   readonly warmTimeoutMs?: number | undefined;
+  readonly createSecretsFrom?: string | undefined;
+  readonly checkEnv?: boolean | undefined;
 }
 
 function optionalText(value: unknown, label: string): void {
@@ -111,18 +113,23 @@ function positiveNumber(value: unknown, label: string): number {
  * al del proyecto), `sessionIndex` (índice de sesiones de los VMs dedicados),
  * `poolBackend` (plazas calientes que sobreviven al proceso), `onBuildLogs`,
  * `onStep` (recibe cada `AgentDeployStep`), `buildTimeoutMs` y `warmTimeoutMs`
- * (espera a que las plazas calientes queden aparcadas).
+ * (espera a que las plazas calientes queden aparcadas), `createSecretsFrom` (un
+ * `.env` cuyos valores van a un secreto JSON `rayito/agents/<nombre>/env` que el
+ * agente recibe como `secretEnvFrom`) y `checkEnv` (avisa de las variables de
+ * `.env.example` que no reciben valor).
  *
  * Coste y activación
  * -------------------
  * Activa: nada por sí mismo; el valor es puro. `deployAgent()` es lo que
- *     cuesta: `createSecretFromEnv: true` crea un secreto, `basePublisher` una
- *     imagen base, `sessionIndex` filas de DynamoDB.
+ *     cuesta: `createSecretFromEnv: true` crea un secreto, `createSecretsFrom`
+ *     crea o actualiza el secreto de un `.env` (`CreateSecret` o
+ *     `PutSecretValue`, $0,40 al mes por secreto), `basePublisher` una imagen
+ *     base, `sessionIndex` filas de DynamoDB.
  * Recursos y llamadas AWS: ninguno aquí.
  * Coste aproximado: ninguno aquí; ver `deployAgent()`.
  * IAM: ninguna para este valor.
  * Cómo apagarla: los valores por defecto no crean ningún secreto, imagen base
- *     ni índice.
+ *     ni índice; `checkEnv` sólo lee ficheros locales.
  * Ejemplo:
  *   new AgentDeployOptions({ bucket: "amzn-s3-demo-bucket", secretNames: { bedrock: "mi-clave" } });
  */
@@ -145,6 +152,8 @@ export class AgentDeployOptions {
   readonly onStep: ((step: AgentDeployStep) => void) | undefined;
   readonly buildTimeoutMs: number;
   readonly warmTimeoutMs: number;
+  readonly createSecretsFrom: string | undefined;
+  readonly checkEnv: boolean;
 
   constructor(options: AgentDeployOptionsInput = {}) {
     if (options.bucket !== undefined) {
@@ -206,6 +215,12 @@ export class AgentDeployOptions {
       options.warmTimeoutMs ?? AGENT_FLEET_WARM_READY_TIMEOUT_MS,
       "warmTimeoutMs",
     );
+    optionalText(options.createSecretsFrom, "createSecretsFrom");
+    if (options.checkEnv !== undefined && typeof options.checkEnv !== "boolean") {
+      throw new InvalidArgumentError("AgentDeployOptions.checkEnv debe ser un bool");
+    }
+    this.createSecretsFrom = options.createSecretsFrom;
+    this.checkEnv = options.checkEnv ?? false;
   }
 }
 

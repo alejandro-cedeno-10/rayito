@@ -35,6 +35,9 @@ import {
   type ServableRuntime,
 } from "./runtime.js";
 import { resolveRuntime } from "./runtimes.js";
+import { resolveSecretEnv, type SecretReader, specDocument } from "./secret-env.js";
+import { secretReaderFor } from "./secret-env-deploy.js";
+import { checkRuntimeCollisions } from "./secret-env-project.js";
 import { type AgentSandbox, gatewayUrlsFor } from "./stream.js";
 import { AgentTemplate, type AgentTemplateBuildOptions } from "./template.js";
 
@@ -134,6 +137,10 @@ export interface ProjectServiceOptions {
   readonly fetch?: typeof fetch | undefined;
   readonly sleep?: ((ms: number) => Promise<void>) | undefined;
   readonly now?: (() => number) | undefined;
+  /** Quién lee los secretos de `secretEnv` en MicroVMs (por defecto, con las
+   * credenciales de quien despliega: `secretReaderFor()`). Sólo se usa si el
+   * proyecto tiene `secretEnv` o `secretEnvFrom`. */
+  readonly secretReader?: SecretReader | undefined;
 }
 
 /** La imagen del proyecto: `template` o, por defecto, `name`. */
@@ -467,12 +474,13 @@ export class ProjectService {
   async serve(sandbox: ServiceSandbox): Promise<AgentDeployment> {
     const project = this.#project;
     const host = hostConfigFor(project, sandbox);
+    const secretEnv = await this.#secretEnv(host);
     await sandbox.files.writeFiles(hostEntries(project, host));
     await sandbox.commands.run(clearMarkersCommand(), { user: AGENT_SERVE_USER });
     const handle = await sandbox.commands.run(serveCommand(host, project.serve.port), {
       background: true,
       user: AGENT_SERVE_USER,
-      envs: { ...host.envs },
+      envs: { ...host.envs, ...secretEnv },
       timeoutMs: 0,
       tag: AGENT_SERVE_TAG,
       killTree: true,
@@ -488,6 +496,20 @@ export class ProjectService {
       requestTimeoutMs: requestTimeoutMs(project),
       fetch: this.#options.fetch,
     });
+  }
+
+  /** Las variables de `secretEnv` y `secretEnvFrom`, leídas con las
+   * credenciales de quien despliega; nada, y ninguna llamada, sin ellas. Viajan
+   * sólo en el entorno del proceso del host, nunca en un fichero. */
+  async #secretEnv(host: HostConfig): Promise<Record<string, string>> {
+    const project = this.#project;
+    const spec = specDocument(project.secretEnv, project.secretEnvFrom);
+    if (spec === undefined) {
+      return {};
+    }
+    checkRuntimeCollisions(project, host.envs);
+    const reader = this.#options.secretReader ?? secretReaderFor();
+    return resolveSecretEnv(spec, reader, Object.keys(host.envs));
   }
 
   async #create(

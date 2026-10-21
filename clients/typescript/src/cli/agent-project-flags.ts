@@ -9,6 +9,11 @@ import { fleetSettingsOf } from "../agent/fleet-base.js";
 import { type AgentProject, ServeOptions, type ServeOptionsInput } from "../agent/project.js";
 import { copyProject } from "../agent/project-copy.js";
 import { ScalingOptions, type SessionMode } from "../agent/scaling-domain.js";
+import {
+  parseSecretEnvFlags,
+  parseSecretEnvFromFlags,
+  withSecretEnv,
+} from "../agent/secret-env-project.js";
 import { validateIdlePolicy } from "../models.js";
 import type { AgentDeployFlags } from "./ops-ports.js";
 
@@ -41,7 +46,8 @@ export function applyServeFlags(project: AgentProject, flags: AgentDeployFlags):
 
 /** El proyecto con la memoria, el entorno y las salidas de red de las
  * banderas: `--env` se suma al `env` del proyecto y `--allow-out` fija la
- * política de salida. */
+ * política de salida. `--secret-env` y `--secret-env-from` se suman a los del
+ * proyecto. */
 export function applyProjectFlags(project: AgentProject, flags: AgentDeployFlags): AgentProject {
   let result = project;
   if (flags.memory !== undefined) {
@@ -55,7 +61,11 @@ export function applyProjectFlags(project: AgentProject, flags: AgentDeployFlags
       network: { allowOut: [...flags.allowOut], denyOut: result.network?.denyOut ?? [] },
     });
   }
-  return result;
+  return withSecretEnv(
+    result,
+    parseSecretEnvFlags(flags.secretEnv ?? []),
+    parseSecretEnvFromFlags(flags.secretEnvFrom ?? []),
+  );
 }
 
 /** El `ScalingOptions` de las banderas sobre el del proyecto; `undefined` si no

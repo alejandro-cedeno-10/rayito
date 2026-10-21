@@ -24,6 +24,7 @@ import {
   AGENT_NODE_BUILD_VERSIONS,
   AGENT_PROJECT_SCHEMA,
   AGENT_PYTHON_BUILD_VERSIONS,
+  AGENT_SECRET_ENV_MAX_SECRETS,
   AGENT_SERVICE_MAX_CONCURRENCY,
   AGENT_SERVICE_PORT,
   AGENT_SERVICE_QUEUE_MAX,
@@ -88,6 +89,18 @@ import {
   ScalingOptions,
   type ScalingOptionsInput,
 } from "./scaling-domain.js";
+import {
+  hasReservedPrefix,
+  isReservedName,
+  SECRET_ENV_KEY_PATTERN,
+  SECRET_ENV_NAME_PATTERN,
+  SECRET_ID_PATTERN,
+  type SecretEnvMap,
+  SecretEnvRef,
+  SecretEnvSource,
+  type SecretEnvValue,
+  secretIds,
+} from "./secret-env.js";
 import { type AgentTemplateBuildOptions, DEFAULT_AGENT_TEMPLATE_BASE } from "./template.js";
 
 /** Los códigos de error de lectura de un proyecto: lista cerrada que los dos
@@ -426,6 +439,8 @@ export interface AgentProjectOptions {
   readonly language?: AgentLanguage | undefined;
   readonly framework?: string | undefined;
   readonly versions?: RuntimeVersions | RuntimeVersionsInput | undefined;
+  readonly secretEnv?: Readonly<Record<string, string | SecretEnvRef>> | undefined;
+  readonly secretEnvFrom?: readonly SecretEnvSource[] | undefined;
 }
 
 /** El lector de ficheros de texto que `fromObject` usa para
@@ -451,6 +466,12 @@ export type TextReader = (path: string) => string;
  * `baseImageVersion` (los valores por defecto de `deployAgent()`), `language` y
  * `framework` (lo que la detección o el fichero declaran del proyecto) y
  * `versions` (`RuntimeVersions`).
+ *
+ * `secretEnv` (nombre de variable -> nombre o ARN de un secreto, o un
+ * `SecretEnvRef`) y `secretEnvFrom` (`SecretEnvSource`) ponen valores de
+ * Secrets Manager en el entorno del agente al arrancar (ADR-033 D4): el
+ * proyecto sólo lleva nombres, nunca valores, y el agente puede leer su
+ * entorno (ver `SecretEnvRef` para el coste).
  *
  * Coste y activación
  * -------------------
@@ -492,6 +513,8 @@ export class AgentProject {
   readonly language: AgentLanguage | undefined;
   readonly framework: string | undefined;
   readonly versions: RuntimeVersions;
+  readonly secretEnv: SecretEnvMap;
+  readonly secretEnvFrom: readonly SecretEnvSource[];
 
   constructor(options: AgentProjectOptions) {
     validateName(options.name, "AgentProject.name");
@@ -575,6 +598,15 @@ export class AgentProject {
       );
     }
     this.language = options.language;
+    this.secretEnv = Object.freeze({ ...validatedSecretEnv(options.secretEnv ?? {}, this.env) });
+    this.secretEnvFrom = Object.freeze(validatedSecretEnvFrom(options.secretEnvFrom ?? []));
+    if (secretIds(this.secretEnv, this.secretEnvFrom).length > AGENT_SECRET_ENV_MAX_SECRETS) {
+      throw fail(
+        SECRET_ENV_KEY,
+        "invalid_value",
+        `admite como mucho ${AGENT_SECRET_ENV_MAX_SECRETS} secretos`,
+      );
+    }
   }
 
   /** Lee `rayito-agent.toml` o `rayito-agent.json` de `path` (un fichero, o
@@ -629,7 +661,7 @@ export class AgentProject {
       name: this.name,
       runtime: runtimeToObject(this),
     };
-    const tables: Array<[string, Record<string, unknown>]> = [
+    const tables: Array<[string, object]> = [
       ["source", sourceToObject(this)],
       ["model", modelToObject(this.spec.model)],
       ["gateways", gatewaysToObject(this.gateways)],
@@ -638,6 +670,8 @@ export class AgentProject {
       ["serve", serveToObject(this.serve)],
       ["scaling", scalingToObject(this.scaling)],
       ["env", Object.fromEntries(sortedEntries(this.env))],
+      ["secret_env", secretEnvToObject(this)],
+      ["secret_env_from", secretEnvFromToObject(this)],
       ["network", networkToObject(this)],
       ["deploy", deployToObject(this)],
       ["image", imageToObject(this)],
@@ -722,6 +756,118 @@ export class AgentProject {
 }
 
 // ------------------------------------------------------------------ validation
+
+const SECRET_ENV_KEY = "secret_env";
+const SECRET_ENV_FROM_KEY = "secret_env_from";
+
+/** La ruta de error de una variable de `secret_env` (la tabla, si el nombre
+ * está vacío). */
+export function secretEnvPath(name: string): string {
+  return name === "" ? SECRET_ENV_KEY : `${SECRET_ENV_KEY}.${name}`;
+}
+
+export function secretEnvFromPath(index: number): string {
+  return `${SECRET_ENV_FROM_KEY}[${index}]`;
+}
+
+/** Un nombre de variable válido y no reservado, o `invalid_value`. */
+export function checkSecretEnvName(name: unknown, path: string): string {
+  if (typeof name !== "string" || !SECRET_ENV_NAME_PATTERN.test(name)) {
+    throw fail(path, "invalid_value", "debe ser un nombre de variable de entorno");
+  }
+  if (isReservedName(name)) {
+    throw fail(path, "invalid_value", "es un nombre reservado del runtime");
+  }
+  return name;
+}
+
+/** El nombre completo o el ARN de un secreto: `secret_value` si parece el
+ * valor pegado en su lugar, `invalid_value` si no es un nombre. */
+export function checkSecretId(value: unknown, path: string): string {
+  if (typeof value !== "string") {
+    throw fail(path, "invalid_type", "debe ser el nombre o el ARN de un secreto");
+  }
+  if (SECRET_VALUE_PREFIXES.some((prefix) => value.startsWith(prefix))) {
+    throw fail(
+      path,
+      "secret_value",
+      "parece un valor y no el nombre de un secreto; escribe el nombre",
+    );
+  }
+  if (!SECRET_ID_PATTERN.test(value)) {
+    throw fail(path, "invalid_value", "debe ser el nombre o el ARN de un secreto");
+  }
+  return value;
+}
+
+function checkSecretEnvKey(value: string | undefined, path: string): void {
+  if (value !== undefined && !SECRET_ENV_KEY_PATTERN.test(value)) {
+    throw fail(path, "invalid_value", "debe ser ASCII imprimible sin espacios");
+  }
+}
+
+/** Un valor de `secret_env`: el nombre de un secreto o un `SecretEnvRef`. */
+export function checkSecretEnvRef(value: unknown, path: string): SecretEnvValue {
+  if (typeof value === "string") {
+    return checkSecretId(value, path);
+  }
+  if (!(value instanceof SecretEnvRef)) {
+    throw fail(path, "invalid_type", "debe ser el nombre de un secreto o un SecretEnvRef");
+  }
+  checkSecretId(value.secret, path);
+  checkSecretEnvKey(value.key, path);
+  checkSecretEnvKey(value.versionStage, path);
+  return value;
+}
+
+/** Una entrada de `secret_env_from`: secreto válido, prefijo vacío o de
+ * nombre de variable y no reservado, y claves que con el prefijo son nombres
+ * válidos y no reservados. */
+export function checkSecretEnvSource(source: unknown, path: string): SecretEnvSource {
+  if (!(source instanceof SecretEnvSource)) {
+    throw fail(path, "invalid_type", "debe ser un SecretEnvSource");
+  }
+  checkSecretId(source.secret, `${path}.secret`);
+  const prefixPath = `${path}.prefix`;
+  if (source.prefix !== "" && !SECRET_ENV_NAME_PATTERN.test(source.prefix)) {
+    throw fail(prefixPath, "invalid_value", "debe ser un prefijo de nombre de variable");
+  }
+  if (hasReservedPrefix(source.prefix)) {
+    throw fail(prefixPath, "invalid_value", "es un prefijo reservado del runtime");
+  }
+  for (const key of source.keys ?? []) {
+    checkSecretEnvName(`${source.prefix}${key}`, `${path}.keys`);
+  }
+  return source;
+}
+
+function validatedSecretEnv(
+  secretEnv: unknown,
+  env: Readonly<Record<string, string>>,
+): Record<string, SecretEnvValue> {
+  if (!isRecord(secretEnv)) {
+    throw fail(SECRET_ENV_KEY, "invalid_type", "debe mapear nombres a secretos");
+  }
+  const checked: Record<string, SecretEnvValue> = {};
+  for (const [name, value] of Object.entries(secretEnv)) {
+    const path = secretEnvPath(name);
+    checkSecretEnvName(name, path);
+    checked[name] = checkSecretEnvRef(value, path);
+    if (Object.hasOwn(env, name)) {
+      throw fail(path, "conflict", "la variable está a la vez en [env] y en [secret_env]");
+    }
+  }
+  return checked;
+}
+
+function validatedSecretEnvFrom(sources: unknown): SecretEnvSource[] {
+  if (!Array.isArray(sources)) {
+    throw fail(SECRET_ENV_FROM_KEY, "invalid_type", "debe ser una lista de SecretEnvSource");
+  }
+  return sources.map((source: unknown, index) =>
+    checkSecretEnvSource(source, secretEnvFromPath(index)),
+  );
+}
 
 function optionalText(value: unknown, label: string): void {
   if (value !== undefined && (typeof value !== "string" || value === "")) {
@@ -926,6 +1072,7 @@ function projectOptions(
   const serve = readServe(root.table("serve"));
   const scaling = readScaling(root.table("scaling"));
   const env = readEnv(root.table("env"));
+  const secretEnv = readSecretEnv(root);
   const network = readNetwork(root.table("network"));
   const deploy = readDeploy(root.table("deploy"));
   const image = readImage(root.table("image"));
@@ -943,6 +1090,7 @@ function projectOptions(
     ...serve,
     ...scaling,
     ...env,
+    ...secretEnv,
     ...network,
     ...deploy,
     ...image,
@@ -1342,6 +1490,57 @@ function readEnv(table: Table | undefined): Fields {
   return { env: guard("env", () => validatedEnv(env)) };
 }
 
+function readSecretEnvValue(table: Table, name: string): SecretEnvValue {
+  const path = table.at(name);
+  checkSecretEnvName(name, path);
+  const value = table.raw(name);
+  if (!isRecord(value)) {
+    return checkSecretId(value, path);
+  }
+  const reference = new Table(value, path);
+  const secret = checkSecretId(reference.text("secret", true), reference.at("secret"));
+  const key = reference.text("key");
+  const versionStage = reference.text("version_stage");
+  reference.finish();
+  return checkSecretEnvRef(new SecretEnvRef({ secret, key, versionStage }), path);
+}
+
+function readSecretEnvSource(entry: Table): SecretEnvSource {
+  const secret = checkSecretId(entry.text("secret", true), entry.at("secret"));
+  const prefix = entry.raw("prefix");
+  if (prefix !== undefined && prefix !== null && typeof prefix !== "string") {
+    throw fail(entry.at("prefix"), "invalid_type", "debe ser una cadena");
+  }
+  const keys = entry.texts("keys");
+  entry.finish();
+  const source = new SecretEnvSource({ secret, prefix: prefix ?? "", keys });
+  return checkSecretEnvSource(source, entry.path);
+}
+
+/** `[secret_env]` y `[[secret_env_from]]` (ADR-033 D4), sólo si están. */
+function readSecretEnv(root: Table): Fields {
+  const fields: Fields = {};
+  const table = root.table(SECRET_ENV_KEY);
+  if (table !== undefined) {
+    const secretEnv: Record<string, SecretEnvValue> = {};
+    for (const name of table.keys().sort()) {
+      secretEnv[name] = readSecretEnvValue(table, name);
+    }
+    table.finish();
+    fields.secretEnv = secretEnv;
+  }
+  const sources = root.raw(SECRET_ENV_FROM_KEY);
+  if (sources !== undefined && sources !== null) {
+    if (!Array.isArray(sources)) {
+      throw fail(SECRET_ENV_FROM_KEY, "invalid_type", "debe ser una lista de tablas");
+    }
+    fields.secretEnvFrom = sources.map((item: unknown, index) =>
+      readSecretEnvSource(new Table(item, secretEnvFromPath(index))),
+    );
+  }
+  return fields;
+}
+
 const DEPLOY_CHECKS: Readonly<Record<string, (value: string, label: string) => string>> = {
   bucket: validateBucketHint,
   base_image_version: validateImageVersion,
@@ -1580,6 +1779,38 @@ function modelToObject(model: AgentModel): Record<string, unknown> {
     table.prompt_caching = false;
   }
   return table;
+}
+
+function secretEnvToObject(project: AgentProject): Record<string, unknown> {
+  const table: Record<string, unknown> = {};
+  for (const [name, value] of sortedEntries(project.secretEnv)) {
+    if (typeof value === "string") {
+      table[name] = value;
+      continue;
+    }
+    const reference: Record<string, unknown> = { secret: value.secret };
+    if (value.key !== undefined) {
+      reference.key = value.key;
+    }
+    if (value.versionStage !== undefined) {
+      reference.version_stage = value.versionStage;
+    }
+    table[name] = reference;
+  }
+  return table;
+}
+
+function secretEnvFromToObject(project: AgentProject): Array<Record<string, unknown>> {
+  return project.secretEnvFrom.map((source) => {
+    const entry: Record<string, unknown> = { secret: source.secret };
+    if (source.prefix !== "") {
+      entry.prefix = source.prefix;
+    }
+    if (source.keys !== undefined) {
+      entry.keys = [...source.keys];
+    }
+    return entry;
+  });
 }
 
 function secretRefName(value: SecretLike): string {

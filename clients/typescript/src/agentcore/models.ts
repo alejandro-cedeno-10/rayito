@@ -97,6 +97,9 @@ export interface AgentCoreDeployPlan {
   readonly security: readonly string[];
   readonly warnings: readonly string[];
   readonly cost: readonly string[];
+  /** Las variables que el host pondrá desde Secrets Manager (ADR-033 D4): sólo
+   * nombres, nunca valores; ausente si el proyecto no usa `secretEnv`. */
+  readonly secretEnvNames?: readonly string[] | undefined;
 }
 
 /** El estado de un agente desplegado (`AgentCoreFleet.status()`). */

@@ -26,6 +26,15 @@ import {
   type SyncProjectReader,
   syncProjectReader,
 } from "../agent/project-reader.js";
+import {
+  type EnvFileSecret,
+  type EnvSecretStore,
+  envSecretStore,
+  prepareSecretEnv,
+  publishEnvFileSecret,
+  STEP_ENV_MISSING,
+  STEP_SECRET_ENV_CREATED,
+} from "../agent/secret-env-deploy.js";
 import { AgentCoreError, InvalidArgumentError } from "../errors.js";
 import { sdkAgentCorePorts } from "./aws-ports.js";
 import type { ServiceSettings } from "./clock.js";
@@ -41,6 +50,9 @@ export interface AgentCoreDeployPorts {
   readonly aws?: AgentCorePorts | undefined;
   readonly environ?: Environ | undefined;
   readonly settings?: ServiceSettings | undefined;
+  /** Dónde se crea el secreto de `createSecretsFrom` (por defecto,
+   * `SecretStore` con nombres completos). */
+  readonly secretEnvStore?: EnvSecretStore | undefined;
 }
 
 export interface PlannedAgentCore {
@@ -49,6 +61,10 @@ export interface PlannedAgentCore {
   readonly tree: ReadonlyMap<string, string | Uint8Array>;
   readonly project: AgentProject;
   readonly report: unknown;
+  /** El secreto que `createSecretsFrom` creará al aplicar, si se pidió. */
+  readonly envFileSecret?: EnvFileSecret | undefined;
+  /** Los avisos `env_missing` (sólo nombres de variable). */
+  readonly envWarnings?: readonly string[] | undefined;
 }
 
 /**
@@ -112,7 +128,8 @@ function* planSteps(
 ): ProjectSteps<PlannedAgentCore> {
   const options = deployOptionsOf(args.options);
   const detected = yield* projectSteps(path, args);
-  const project = withDefaultExcludes(detected.project);
+  const prepared = prepareSecretEnv(detected.project, options.createSecretsFrom, options.checkEnv);
+  const project = withDefaultExcludes(prepared.project);
   const region = resolvedRegion(args.region, project, environ);
   if (region === undefined) {
     throw new InvalidArgumentError(NO_REGION_MESSAGE);
@@ -134,7 +151,31 @@ function* planSteps(
     tree,
     project,
     report: detected.report,
+    envFileSecret: prepared.secret,
+    envWarnings: prepared.warnings,
   };
+}
+
+/** Crea o actualiza el secreto de `createSecretsFrom` antes de aplicar (sólo
+ * si se pidió) y cuenta los avisos y la creación en `onStep`. */
+export async function publishPlannedSecret(
+  ports: AgentCoreDeployPorts,
+  planned: PlannedAgentCore,
+  args: DeployAgentOptions<"agentcore">,
+): Promise<void> {
+  const options = deployOptionsOf(args.options);
+  for (const warning of planned.envWarnings ?? []) {
+    options.onStep?.({ kind: STEP_ENV_MISSING, detail: warning });
+  }
+  const secret = planned.envFileSecret;
+  if (secret === undefined) {
+    return;
+  }
+  const store =
+    ports.secretEnvStore ??
+    (await envSecretStore({ region: planned.plan.region, credentials: args.credentials }));
+  const outcome = await publishEnvFileSecret(store, secret);
+  options.onStep?.({ kind: STEP_SECRET_ENV_CREATED, detail: outcome });
 }
 
 /** Lo que un despliegue en AgentCore devuelve: el `AgentCoreFleet` y lo que se hizo (la CLI imprime sus pasos). */
@@ -186,5 +227,6 @@ export async function deployAgentCoreWith(
   args: DeployAgentOptions<"agentcore">,
 ): Promise<AgentCoreFleet> {
   const planned = await planAgentCoreWith(ports, path, args);
+  await publishPlannedSecret(ports, planned, args);
   return (await applyPlannedAgentCore(ports, planned, args)).fleet;
 }

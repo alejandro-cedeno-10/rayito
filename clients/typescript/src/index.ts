@@ -146,6 +146,12 @@ export {
   type ScalingOptionsInput,
   type SessionMode,
 } from "./agent/scaling-domain.js";
+export {
+  SecretEnvRef,
+  type SecretEnvRefOptions,
+  SecretEnvSource,
+  type SecretEnvSourceOptions,
+} from "./agent/secret-env.js";
 export { StrandsRuntime, type StrandsRuntimeOptions } from "./agent/strands.js";
 export { AgentStream } from "./agent/stream.js";
 export {

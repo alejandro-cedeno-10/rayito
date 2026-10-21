@@ -47,6 +47,9 @@ import type { AgentCoreDeletePreview, AgentCoreDeployedView } from "./ops-ports.
 
 export const TARGET_LABEL = "agentcore";
 const MODEL_SEPARATOR = ", ";
+/** Lo que nombra la línea `secretEnv` cuando las variables sólo se conocen al
+ * leer el secreto (un `secretEnvFrom` sin `keys`). */
+const SECRET_ENV_UNLISTED = "las claves de sus secretos JSON";
 const PLANNED_ACTIONS = {
   stack: ACTION_TEMPLATES.stackPlanned,
   image: ACTION_TEMPLATES.imagePlanned,
@@ -57,6 +60,10 @@ function securityText(key: SecurityKey, plan: AgentCoreDeployPlan): string {
   return formatTemplate(SECURITY_MESSAGES[key], {
     models: plan.bedrockModels.join(MODEL_SEPARATOR),
     secrets: plan.readableSecrets.join(MODEL_SEPARATOR),
+    names:
+      plan.secretEnvNames === undefined || plan.secretEnvNames.length === 0
+        ? SECRET_ENV_UNLISTED
+        : plan.secretEnvNames.join(MODEL_SEPARATOR),
   });
 }
 
@@ -141,7 +148,16 @@ export function planDocument(plan: AgentCoreDeployPlan): Record<string, unknown>
     security: [...plan.security],
     warnings: [...plan.warnings],
     cost: [...plan.cost],
+    ...secretEnvDocument(plan),
   };
+}
+
+/** `secretEnvNames` sólo si el plan pone variables desde Secrets Manager: sin
+ * ellas el documento no cambia. */
+function secretEnvDocument(plan: AgentCoreDeployPlan): Record<string, unknown> {
+  return plan.secretEnvNames === undefined || plan.secretEnvNames.length === 0
+    ? {}
+    : { secretEnvNames: [...plan.secretEnvNames] };
 }
 
 function stepDocument(step: AgentCoreStep): Record<string, unknown> {
