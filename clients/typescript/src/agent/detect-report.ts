@@ -19,13 +19,15 @@ export const ENTRY_OBJECT = "object";
 export const ENTRY_FACTORY = "factory";
 
 /** Lo que el usuario fuerza por encima de la detección (`--framework`,
- * `--language`, `--entry`, `--protocol`). `entrypoint: "http"` sirve la app
- * HTTP del proyecto en vez del framework del agente. */
+ * `--language`, `--entry`, `--protocol`, `--graph`). `entrypoint: "http"`
+ * sirve la app HTTP del proyecto en vez del framework del agente; `graph`
+ * elige un grafo de `langgraph.json` por su nombre. */
 export interface DetectOverrides {
   readonly framework?: string | undefined;
   readonly language?: string | undefined;
   readonly entrypoint?: string | undefined;
   readonly protocol?: string | undefined;
+  readonly graph?: string | undefined;
 }
 
 /** Un fichero (ruta relativa al proyecto) y la regla que lo reconoció; nunca

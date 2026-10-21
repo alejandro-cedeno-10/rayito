@@ -27,13 +27,15 @@ ENTRY_FACTORY: Final = "factory"
 @dataclass(frozen=True)
 class DetectOverrides:
     """Lo que el usuario fuerza por encima de la detección (`--framework`,
-    `--language`, `--entry`, `--protocol`). `entrypoint="http"` sirve la app
-    HTTP del proyecto en vez del framework del agente."""
+    `--language`, `--entry`, `--protocol`, `--graph`). `entrypoint="http"`
+    sirve la app HTTP del proyecto en vez del framework del agente; `graph`
+    elige un grafo de `langgraph.json` por su nombre."""
 
     framework: str | None = None
     language: str | None = None
     entrypoint: str | None = None
     protocol: str | None = None
+    graph: str | None = None
 
 
 @dataclass(frozen=True)

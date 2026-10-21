@@ -19,10 +19,12 @@ from typing import Any, Final
 
 from rayito._agent._detect_app import detect_app, validate_protocol_override
 from rayito._agent._detect_entry import (
+    GRAPH_PATH,
     EntryChoice,
     explicit_entry,
     find_entry,
     find_entry_in_file,
+    graph_not_found,
 )
 from rayito._agent._detect_install import detect_install
 from rayito._agent._detect_providers import detect_providers
@@ -43,6 +45,8 @@ _LANGUAGE_PATH: Final = "runtime.language"
 _KIND_PATH: Final = "runtime.kind"
 _ENTRYPOINT_PATH: Final = "runtime.entrypoint"
 _SOURCE_PATH: Final = "source"
+#: La opción del informe (y la clave de `[runtime]`) con el grafo elegido.
+GRAPH_OPTION: Final = "graph"
 
 
 @dataclass(frozen=True)
@@ -172,13 +176,27 @@ def _entry_for(
     overrides: DetectOverrides,
 ) -> EntryChoice | None:
     framework = candidate.framework
+    if overrides.graph is not None and overrides.entrypoint is not None:
+        raise _error(GRAPH_PATH, "conflict", rules["messages"]["graph_conflict"])
     if overrides.entrypoint is not None and overrides.entrypoint != rules[HTTP_KEYWORD_KEY]:
         return explicit_entry(overrides.entrypoint, candidate.language)
     if "entryFile" in framework:
-        return find_entry_in_file(index, rules, framework["entryFile"], framework["id"])
+        return find_entry_in_file(
+            index, rules, framework["entryFile"], framework["id"], overrides.graph
+        )
+    if overrides.graph is not None:
+        raise graph_not_found(overrides.graph, {}, rules)
     if "entries" in framework and candidate.language is not None:
         return find_entry(index, rules, framework, candidate.language)
     return None
+
+
+def _graph_option(framework: Mapping[str, Any], overrides: DetectOverrides) -> dict[str, str]:
+    """`{"graph": nombre}` cuando el grafo de `langgraph.json` lo eligió el
+    usuario; si no, nada, así que un informe sin `--graph` no cambia."""
+    if overrides.graph is None or "entryFile" not in framework:
+        return {}
+    return {GRAPH_OPTION: overrides.graph}
 
 
 def _needs_entry(framework: Mapping[str, Any]) -> bool:
@@ -308,7 +326,7 @@ def detect(
         entrypoint=None if entry is None else entry.entrypoint,
         entrypoint_kind=None if entry is None else entry.kind,
         protocol=protocol,
-        options=_skills_options(framework, index),
+        options={**_skills_options(framework, index), **_graph_option(framework, overrides)},
         app=app,
         install=install,
         providers=providers,

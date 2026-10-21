@@ -1,0 +1,28 @@
+{
+  "schema": "rayito.agent-project/1",
+  "name": "ticket-triage",
+  "runtime": {
+    "kind": "langgraph",
+    "graph": "triage"
+  },
+  "model": {
+    "provider": "anthropic",
+    "id": "claude-haiku-4-5",
+    "gateway": "anthropic"
+  },
+  "gateways": {
+    "anthropic": {
+      "preset": "custom",
+      "upstream": "https://api.anthropic.com",
+      "headers": {
+        "x-api-key": "rayito/anthropic-key"
+      },
+      "allow": [
+        [
+          "POST",
+          "/v1/messages"
+        ]
+      ]
+    }
+  }
+}

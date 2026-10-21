@@ -1,0 +1,55 @@
+{
+  "schema": "rayito.agent-detection/1",
+  "language": "python",
+  "framework": "langgraph",
+  "kind": "langgraph",
+  "entrypoint": "src.triage:graph",
+  "entrypoint_kind": "object",
+  "protocol": "framework",
+  "options": {
+    "graph": "triage"
+  },
+  "app": null,
+  "install": {
+    "manager": "uv",
+    "lockfile": "uv.lock",
+    "requirements": null,
+    "require_hashes": false,
+    "reproducible": true,
+    "build_script": false,
+    "python_version": "3.12",
+    "node_version": null
+  },
+  "providers": [
+    {
+      "preset": "openai",
+      "evidence": [
+        {
+          "path": "pyproject.toml",
+          "rule": "dep:langchain-openai"
+        }
+      ]
+    }
+  ],
+  "models": [],
+  "evidence": [
+    {
+      "path": "langgraph.json",
+      "rule": "file:langgraph.json"
+    },
+    {
+      "path": "src/triage.py",
+      "rule": "entry:langgraph-json"
+    },
+    {
+      "path": "uv.lock",
+      "rule": "install:uv"
+    },
+    {
+      "path": "pyproject.toml",
+      "rule": "version:specifier"
+    }
+  ],
+  "warnings": [],
+  "alternatives": []
+}

@@ -20,7 +20,13 @@ from typing import Any, Final
 from rayito._agent._detect_domain import fill_runtime
 from rayito._agent._detect_report import DetectionReport
 from rayito._agent._detection_rules import DETECTION_RULES
-from rayito._agent._project_domain import _GATEWAY_PRESETS, AgentProjectException
+from rayito._agent._project_domain import (
+    _GATEWAY_PRESETS,
+    ENTRYPOINT_KEY,
+    GRAPH_KEY,
+    GRAPH_RUNTIME_KIND,
+    AgentProjectException,
+)
 from rayito._limits import AGENT_PROJECT_SCHEMA, AGENT_SECRET_NAME_TEMPLATE
 
 _MODEL_PATH: Final = "model"
@@ -57,6 +63,7 @@ def _complete_runtime(
             runtime["kind"] = node_runtime["kind"]
         runtime.setdefault("adapter", node_runtime["adapter"])
     kind = str(runtime.get("kind", report.kind))
+    _keep_graph(runtime, declared, kind)
     entrypoint = runtime.get("entrypoint")
     if (
         isinstance(entrypoint, str)
@@ -77,6 +84,20 @@ def _complete_runtime(
             runtime.setdefault("python_version", install.python_version)
     elif install.node_version is not None:
         runtime.setdefault("node_version", install.node_version)
+
+
+def _keep_graph(runtime: dict[str, object], declared: Mapping[str, object], kind: str) -> None:
+    """Con un grafo elegido (`--graph` o `[runtime] graph`) y sin un
+    `entrypoint` del fichero, el runtime `langgraph` guarda el nombre del grafo
+    y no el `entrypoint` que la detección resolvió; otro runtime (un proyecto
+    de LangGraph.js se sirve como `custom`) guarda el `entrypoint` resuelto y
+    no el nombre, salvo que el fichero lo escriba."""
+    if GRAPH_KEY not in runtime or ENTRYPOINT_KEY in declared:
+        return
+    if kind == GRAPH_RUNTIME_KIND:
+        runtime.pop(ENTRYPOINT_KEY, None)
+    elif GRAPH_KEY not in declared:
+        runtime.pop(GRAPH_KEY)
 
 
 def _required_region(region: str | None) -> str:

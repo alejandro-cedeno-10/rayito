@@ -123,6 +123,10 @@
             "langgraph",
             "vercel-ai"
           ]
+        },
+        "graph": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$"
         }
       },
       "additionalProperties": false,
@@ -194,7 +198,8 @@
                 "python_version",
                 "node_version",
                 "requirements",
-                "package_manager"
+                "package_manager",
+                "graph"
               ]
             }
           }
@@ -320,8 +325,17 @@
             ]
           },
           "then": {
-            "required": [
-              "entrypoint"
+            "oneOf": [
+              {
+                "required": [
+                  "entrypoint"
+                ]
+              },
+              {
+                "required": [
+                  "graph"
+                ]
+              }
             ]
           }
         }

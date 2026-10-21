@@ -15,7 +15,13 @@ import { AGENT_PROJECT_SCHEMA, AGENT_SECRET_NAME_TEMPLATE } from "../limits.js";
 import { fillRuntime } from "./detect-domain.js";
 import type { DetectionReport } from "./detect-report.js";
 import { type BridgeRules, DETECTION_RULES, type DetectionRules } from "./detect-rules.js";
-import { AgentProjectError, gatewayPresetKeys } from "./project.js";
+import {
+  AgentProjectError,
+  ENTRYPOINT_KEY,
+  GRAPH_KEY,
+  GRAPH_RUNTIME_KIND,
+  gatewayPresetKeys,
+} from "./project.js";
 
 const MODEL_PATH = "model";
 const MODEL_ID_PATH = "model.id";
@@ -39,6 +45,22 @@ function failure(path: string, code: "missing_key" | "not_detected", text: strin
   return new AgentProjectError(`${path}: ${text}`, { path, code });
 }
 
+/** Con un grafo elegido (`--graph` o `[runtime] graph`) y sin un `entrypoint`
+ * del fichero, el runtime `langgraph` guarda el nombre del grafo y no el
+ * `entrypoint` que la detección resolvió; otro runtime (un proyecto de
+ * LangGraph.js se sirve como `custom`) guarda el `entrypoint` resuelto y no el
+ * nombre, salvo que el fichero lo escriba. */
+function keepGraph(runtime: Table, declared: Table, kind: string): void {
+  if (!(GRAPH_KEY in runtime) || ENTRYPOINT_KEY in declared) {
+    return;
+  }
+  if (kind === GRAPH_RUNTIME_KIND) {
+    delete runtime[ENTRYPOINT_KEY];
+  } else if (!(GRAPH_KEY in declared)) {
+    delete runtime[GRAPH_KEY];
+  }
+}
+
 function completeRuntime(
   runtime: Table,
   declared: Table,
@@ -53,6 +75,7 @@ function completeRuntime(
     runtime.adapter ??= nodeRuntime.adapter;
   }
   const kind = String(runtime.kind ?? report.kind);
+  keepGraph(runtime, declared, kind);
   const entrypoint = runtime.entrypoint;
   const pathKinds =
     report.language === undefined ? [] : (bridge.modulePathKinds[report.language] ?? []);
