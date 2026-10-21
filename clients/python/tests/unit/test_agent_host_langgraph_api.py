@@ -19,7 +19,12 @@ from typing import Any
 import pytest
 
 from rayito._agent._runner.agent_host.drivers import http_app
-from rayito._agent._runner.agent_host.protocol import AgentFailure, Request, RunState
+from rayito._agent._runner.agent_host.protocol import (
+    AgentFailure,
+    Request,
+    RunState,
+    require_input_support,
+)
 from rayito._limits import (
     AGENT_LANGGRAPH_HEALTH_PATH,
     AGENT_LANGGRAPH_INVOKE_PATH,
@@ -64,7 +69,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         size = int(self.headers.get("Content-Length") or 0)
         body = json.loads(self.rfile.read(size) or b"{}")
-        prompt = body["input"]["messages"][-1]["content"]
+        messages = body["input"].get("messages")
+        prompt = messages[-1]["content"] if messages else "__echo__"
         if prompt == "__echo__":
             seen = {
                 "path": self.path,
@@ -143,6 +149,64 @@ def test_a_prompt_becomes_the_body_and_path_of_the_vector(case: dict[str, Any]) 
     graph_input = http_app.langgraph_prompt_input(case["request"]["prompt"])
     assert path == case["path"]
     assert http_app.langgraph_body(case["assistantId"], graph_input) == case["body"]
+
+
+@pytest.mark.parametrize(
+    "case",
+    [case for case in REQUESTS["bodyCases"] if "input" in case["request"]],
+    ids=lambda case: case["name"],
+)
+def test_a_structured_input_becomes_the_body_and_path_of_the_vector(
+    case: dict[str, Any],
+) -> None:
+    session_id = case["request"]["sessionId"]
+    request = Request(prompt="", session_id=session_id, input=case["request"]["input"])
+    path = http_app.langgraph_invoke_path(http_app.LANGGRAPH_INVOKE_PATH, session_id)
+    assert path == case["path"]
+    assert (
+        http_app.langgraph_body(case["assistantId"], http_app.langgraph_input(request))
+        == (case["body"])
+    )
+
+
+@pytest.mark.parametrize(
+    "case",
+    [case for case in REQUESTS["bodyCases"] if "prompt" in case["request"]],
+    ids=lambda case: case["name"],
+)
+def test_without_input_the_prompt_is_the_graph_input(case: dict[str, Any]) -> None:
+    request = Request(prompt=case["request"]["prompt"], session_id=case["request"]["sessionId"])
+    assert http_app.langgraph_input(request) == case["body"]["input"]
+
+
+def test_only_langgraph_api_accepts_a_structured_input() -> None:
+    langgraph = http_app.Driver(
+        {"command": ["x"], "port": 1, "protocol": "langgraph-api", "assistant_id": "agent"}
+    )
+    assert langgraph.accepts_input is True
+    for protocol in ("agentcore", "json", "openai-chat", "raw"):
+        other = http_app.Driver({"command": ["x"], "port": 1, "protocol": protocol})
+        assert other.accepts_input is False
+        with pytest.raises(AgentFailure) as error:
+            require_input_support(other, Request(prompt="", input={"ticket_id": "T-1"}))
+        assert (error.value.reason, error.value.detail_code) == ("protocol_error", "invalid_input")
+    require_input_support(langgraph, Request(prompt="", input={"ticket_id": "T-1"}))
+
+
+def test_a_structured_input_reaches_the_graph_as_is(tmp_path: Path) -> None:
+    case = next(case for case in REQUESTS["bodyCases"] if "input" in case["request"])
+    target = _driver(tmp_path, assistant_id=case["assistantId"])
+    events: list[dict[str, Any]] = []
+    request = Request(
+        prompt="", session_id=case["request"]["sessionId"], input=case["request"]["input"]
+    )
+    try:
+        target.run(request, events.append, RunState())
+    finally:
+        target.cancel()
+    seen = json.loads(events[2]["text"])
+    assert seen["path"] == case["path"]
+    assert seen["body"] == case["body"]
 
 
 @pytest.mark.parametrize("case", RESPONSES["cases"], ids=lambda case: case["name"])

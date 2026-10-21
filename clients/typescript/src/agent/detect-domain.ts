@@ -391,7 +391,15 @@ export function detect(
     app = detected.app;
     protocol = detected.protocol;
   } else if (overrides.protocol === PROTOCOL_LANGGRAPH_API) {
-    const detected = detectLanggraphApi(index, rules, framework, entry, language, sink);
+    const detected = detectLanggraphApi(
+      index,
+      rules,
+      framework,
+      entry,
+      language,
+      sink,
+      overrides.graph,
+    );
     app = detected.app;
     protocol = detected.protocol;
   } else if (overrides.protocol !== undefined) {

@@ -1026,7 +1026,7 @@ rayito agent deploy ./ticket-agent --protocol langgraph-api
 With the option, detection serves the project as a `custom` app that starts
 `langgraph dev --no-browser --no-reload` on internal port 8000, with
 `protocol = "langgraph-api"` and `assistant_id` equal to the graph chosen from
-`graphs` (the one called `agent` if there are several). Without
+`graphs` (the one of `--graph`, or the one called `agent` if there are several). Without
 `langgraph.json` it fails with `invalid_value` on `runtime.app.protocol`. It
 always warns that `langgraph dev` is a development server and, if
 `langgraph-cli` is not among your dependencies, that you should add it. The
@@ -1083,7 +1083,10 @@ What the host does with each invocation:
 - It translates it to `POST /threads/{thread_id}/runs/wait` with
   `{"assistant_id", "input", "if_not_exists": "create", "multitask_strategy": "reject"}`;
   the prompt reaches the graph as a single user message
-  (`{"messages": [{"role": "user", "content": ...}]}`).
+  (`{"messages": [{"role": "user", "content": ...}]}`), and a structured
+  input (`invoke(input={...})`, see
+  [Several graphs and structured input](#varios-grafos-y-entrada-estructurada))
+  goes as is as `input`.
 - The thread comes from the session (`uuid5` of its id), so two invocations
   with the same session follow the same thread. A second run on a busy thread
   is not queued: it fails with `app_http_409`.

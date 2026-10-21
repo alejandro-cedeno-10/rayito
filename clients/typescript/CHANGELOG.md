@@ -78,7 +78,8 @@ versionado [SemVer](https://semver.org/lang/es/).
   Rayito no instala `langgraph-cli[inmem]` (el paquete `langgraph-api` usa la
   licencia Elastic-2.0). Sin streaming ni `langgraph up` en esta versión.
   `HttpApp.servedHealthPath` y `servedInvokePath` dicen las rutas a las
-  que llama el host.
+  que llama el host. Con `invoke({ input })` el objeto llega tal cual como
+  entrada del grafo, y `--graph` elige el `assistantId`.
 
 ### Cambiado
 

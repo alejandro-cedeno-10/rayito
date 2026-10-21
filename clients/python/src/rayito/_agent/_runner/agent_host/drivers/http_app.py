@@ -38,7 +38,8 @@ rutas (`forwards`).
 
 Con `langgraph-api` (ADR-033 D5, experimental) cada invocación es un
 `POST /threads/{thread_id}/runs/wait` con `assistant_id` (obligatorio en la
-configuración), la entrada del grafo (el prompt como un mensaje de usuario),
+configuración), la entrada del grafo (el prompt como un mensaje de usuario, o
+el `input` estructurado de la petición tal cual: `accepts_input`),
 `if_not_exists="create"` y `multitask_strategy="reject"`. El hilo es
 `uuid5(LANGGRAPH_THREAD_NAMESPACE, session_id)`, también para la sesión
 `app_<hex>` que crea el driver, así que la misma sesión sigue el mismo hilo
@@ -201,6 +202,14 @@ def langgraph_prompt_input(prompt: str) -> dict[str, Any]:
     return {LANGGRAPH_MESSAGES_KEY: [{"role": USER_ROLE, "content": prompt}]}
 
 
+def langgraph_input(request: Request) -> dict[str, Any]:
+    """La entrada del grafo de una petición: su `input` estructurado tal cual
+    (ADR-033 D3) o, si no lo trae, el prompt como un mensaje de usuario."""
+    if request.input is not None:
+        return dict(request.input)
+    return langgraph_prompt_input(request.prompt)
+
+
 def langgraph_body(assistant_id: str, graph_input: Mapping[str, Any]) -> dict[str, Any]:
     """El cuerpo de `POST /threads/{thread_id}/runs/wait`."""
     return {
@@ -313,6 +322,13 @@ class Driver:
     @property
     def _langgraph(self) -> bool:
         return self._protocol == PROTOCOL_LANGGRAPH_API
+
+    @property
+    def accepts_input(self) -> bool:
+        """Sólo `langgraph-api` entiende `Request.input`: va como la entrada
+        del grafo. Con cualquier otro protocolo un `input` es
+        `protocol_error`/`invalid_input` (`require_input_support`)."""
+        return self._langgraph
 
     @property
     def raw(self) -> bool:
@@ -443,7 +459,7 @@ class Driver:
     def _body(self, request: Request, session_id: str) -> dict[str, Any]:
         if self._langgraph:
             assistant_id = str(self._config["assistant_id"])
-            return langgraph_body(assistant_id, langgraph_prompt_input(request.prompt))
+            return langgraph_body(assistant_id, langgraph_input(request))
         if self._protocol == "openai-chat":
             return {
                 "model": request.model or self._config.get("model", ""),

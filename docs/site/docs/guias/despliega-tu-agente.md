@@ -1028,7 +1028,7 @@ rayito agent deploy ./ticket-agent --protocol langgraph-api
 Con la opción, la detección sirve el proyecto como una app `custom` que
 arranca `langgraph dev --no-browser --no-reload` en el puerto interno 8000,
 con `protocol = "langgraph-api"` y `assistant_id` igual al grafo elegido de
-`graphs` (el llamado `agent` si hay varios). Sin `langgraph.json` falla con
+`graphs` (el de `--graph`, o el llamado `agent` si hay varios). Sin `langgraph.json` falla con
 `invalid_value` en `runtime.app.protocol`. Avisa siempre de que `langgraph dev`
 es un servidor de desarrollo y, si `langgraph-cli` no está entre tus
 dependencias, de que lo añadas. El fichero de proyecto equivalente es:
@@ -1084,7 +1084,10 @@ Qué hace el host con cada invocación:
 - La traduce a `POST /threads/{thread_id}/runs/wait` con
   `{"assistant_id", "input", "if_not_exists": "create", "multitask_strategy": "reject"}`;
   el prompt llega al grafo como un único mensaje de usuario
-  (`{"messages": [{"role": "user", "content": ...}]}`).
+  (`{"messages": [{"role": "user", "content": ...}]}`), y una entrada
+  estructurada (`invoke(input={...})`, ver
+  [Varios grafos y entrada estructurada](#varios-grafos-y-entrada-estructurada))
+  va tal cual como `input`.
 - El hilo sale de la sesión (`uuid5` de su id), así que dos invocaciones con
   la misma sesión siguen el mismo hilo. Una segunda ejecución sobre un hilo
   ocupado no se encola: falla con `app_http_409`.

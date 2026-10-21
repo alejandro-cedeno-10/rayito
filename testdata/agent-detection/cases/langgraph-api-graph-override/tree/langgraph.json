@@ -1,0 +1,9 @@
+{
+  "dependencies": [
+    "."
+  ],
+  "graphs": {
+    "agent": "./src/agent.py:graph",
+    "support": "./src/agent.py:graph"
+  }
+}

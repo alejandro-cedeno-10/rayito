@@ -18,6 +18,8 @@ from rayito._agent._detect_entry import (
     CURRENT_DIRECTORY,
     PYTHON_ATTRIBUTE_SEPARATOR,
     EntryChoice,
+    graph_choices,
+    select_graph,
 )
 from rayito._agent._detect_report import APP_PROTOCOLS, DetectionApp
 from rayito._agent._detect_scan import (
@@ -259,12 +261,22 @@ def _graph_location(value: object) -> str | None:
 
 
 def _assistant_id(
-    index: ProjectIndex, rules: Mapping[str, Any], spec_name: str, entry: EntryChoice
+    index: ProjectIndex,
+    rules: Mapping[str, Any],
+    spec_name: str,
+    entry: EntryChoice,
+    graph: str | None = None,
 ) -> str:
-    """La clave de `graphs` que apunta al punto de entrada elegido: la
-    preferida por nombre si hay varias, o la primera en orden."""
+    """El grafo que se sirve: el de `--graph` (`select_graph`, que rechaza un
+    nombre que no está en `graphs`) o, sin él, la clave de `graphs` que apunta
+    al punto de entrada elegido: la preferida por nombre si hay varias, o la
+    primera en orden."""
     spec = rules["entryFiles"][spec_name]
     document = index.read_json(spec["file"])
+    if graph is not None:
+        selected = select_graph(graph_choices(document, spec, entry.rule), graph, rules, spec_name)
+        if selected is not None:
+            return selected[0]
     graphs = document.get(spec["key"]) if isinstance(document, dict) else None
     wanted = f"{entry.path}{PYTHON_ATTRIBUTE_SEPARATOR}{entry.attr}"
     keys = sorted(key for key, value in (graphs or {}).items() if _graph_location(value) == wanted)
@@ -281,14 +293,16 @@ def detect_langgraph_api(
     entry: EntryChoice | None,
     language: str | None,
     sink: WarningSink,
+    graph: str | None = None,
 ) -> tuple[DetectionApp, str]:
     """La app `langgraph dev` de un proyecto con `langgraph.json` y el
-    protocolo `langgraph-api`. Sin `langgraph.json` es `invalid_value`;
+    protocolo `langgraph-api`, con `assistant_id` el grafo de `graph`
+    (`--graph`) o el elegido. Sin `langgraph.json` es `invalid_value`;
     avisa de que es un servidor de desarrollo y, si falta, de que
     `langgraph-cli` no está entre las dependencias."""
     if framework["id"] != LANGGRAPH_JSON_FRAMEWORK or entry is None:
         raise _without_langgraph_json(rules)
-    assistant_id = _assistant_id(index, rules, framework["entryFile"], entry)
+    assistant_id = _assistant_id(index, rules, framework["entryFile"], entry, graph)
     dependencies = index.dependencies(language) if language is not None else {}
     if LANGGRAPH_CLI_DEPENDENCY not in dependencies:
         sink.add("langgraph_cli_missing")

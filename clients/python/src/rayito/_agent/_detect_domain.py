@@ -317,7 +317,9 @@ def detect(
             index, rules, framework, entry, manager, overrides.protocol, sink
         )
     elif overrides.protocol == PROTOCOL_LANGGRAPH_API:
-        app, protocol = detect_langgraph_api(index, rules, framework, entry, language, sink)
+        app, protocol = detect_langgraph_api(
+            index, rules, framework, entry, language, sink, overrides.graph
+        )
     elif overrides.protocol is not None:
         sink.add("protocol_ignored")
     alternatives = (

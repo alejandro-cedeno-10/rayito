@@ -76,7 +76,8 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   Rayito no instala `langgraph-cli[inmem]` (el paquete `langgraph-api` usa la
   licencia Elastic-2.0). Sin streaming ni `langgraph up` en esta versión.
   `HttpApp.served_health_path` y `served_invoke_path` dicen las rutas a las
-  que llama el host.
+  que llama el host. Con `invoke(input={...})` el objeto llega tal cual como
+  entrada del grafo, y `--graph` elige el `assistant_id`.
 
 ### Cambiado
 

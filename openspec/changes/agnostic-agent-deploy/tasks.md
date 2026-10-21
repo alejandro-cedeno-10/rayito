@@ -159,9 +159,9 @@ follows merge rules M1-M8 of `design.md` and ticks only its own section here.
       protocol; cases (D list of design §3).
 - [x] D.4 Child environment `LANGGRAPH_CLI_NO_ANALYTICS=1`,
       `LANGSMITH_TRACING=false` unless set.
-- [ ] D.int.1 (after B) `Request.input` goes as `input` (structured row of
+- [x] D.int.1 (after B) `Request.input` goes as `input` (structured row of
       `bodyCases`).
-- [ ] D.int.2 (after B) `assistant_id` from `select_graph`, honouring
+- [x] D.int.2 (after B) `assistant_id` from `select_graph`, honouring
       `--graph`.
 - [x] D.5 Docs (4.23: experimental, dev server, Elastic-2.0 license of
       `langgraph-api`, not installed by Rayito), CHANGELOG.

@@ -17,7 +17,7 @@ import {
   AGENT_LANGGRAPH_HEALTH_PATH,
   AGENT_SERVICE_PORT,
 } from "../limits.js";
-import type { EntryChoice } from "./detect-entry.js";
+import { type EntryChoice, graphChoices, selectGraph } from "./detect-entry.js";
 import { APP_PROTOCOLS, type DetectionApp } from "./detect-report.js";
 import type { DetectionRules, EntryFileRule, FrameworkRule, LauncherRule } from "./detect-rules.js";
 import {
@@ -317,16 +317,25 @@ function graphLocation(value: unknown): string | undefined {
   return value.startsWith(CURRENT_DIRECTORY) ? value.slice(CURRENT_DIRECTORY.length) : value;
 }
 
-/** La clave de `graphs` que apunta al punto de entrada elegido: la preferida
- * por nombre si hay varias, o la primera en orden. */
+/** El grafo que se sirve: el de `--graph` (`selectGraph`, que rechaza un
+ * nombre que no está en `graphs`) o, sin él, la clave de `graphs` que apunta al
+ * punto de entrada elegido: la preferida por nombre si hay varias, o la primera
+ * en orden. */
 function assistantIdOf(
   index: ProjectIndex,
   rules: DetectionRules,
   specName: string,
   entry: EntryChoice,
+  graph?: string,
 ): string {
   const spec = rules.entryFiles[specName] as EntryFileRule;
   const document = index.readJson(spec.file);
+  if (graph !== undefined) {
+    const selected = selectGraph(graphChoices(document, spec, entry.rule), graph, rules, specName);
+    if (selected !== undefined) {
+      return selected[0];
+    }
+  }
   const graphs =
     typeof document === "object" && document !== null && !Array.isArray(document)
       ? (document as Record<string, unknown>)[spec.key]
@@ -354,7 +363,8 @@ function assistantIdOf(
 
 /**
  * La app `langgraph dev` de un proyecto con `langgraph.json` y el protocolo
- * `langgraph-api`. Sin `langgraph.json` es `invalid_value`; avisa de que es un
+ * `langgraph-api`, con `assistantId` el grafo de `graph` (`--graph`) o el
+ * elegido. Sin `langgraph.json` es `invalid_value`; avisa de que es un
  * servidor de desarrollo y, si falta, de que `langgraph-cli` no está entre las
  * dependencias.
  */
@@ -365,6 +375,7 @@ export function detectLanggraphApi(
   entry: EntryChoice | undefined,
   language: string | undefined,
   sink: WarningSink,
+  graph?: string,
 ): { readonly app: DetectionApp; readonly protocol: string } {
   if (
     framework.id !== LANGGRAPH_JSON_FRAMEWORK ||
@@ -373,7 +384,7 @@ export function detectLanggraphApi(
   ) {
     throw withoutLanggraphJson(rules);
   }
-  const assistantId = assistantIdOf(index, rules, framework.entryFile, entry);
+  const assistantId = assistantIdOf(index, rules, framework.entryFile, entry, graph);
   const dependencies =
     language === undefined ? new Map<string, string>() : index.dependencies(language);
   if (!dependencies.has(LANGGRAPH_CLI_DEPENDENCY)) {
