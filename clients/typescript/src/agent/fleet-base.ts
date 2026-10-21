@@ -340,17 +340,20 @@ export function vmLostMessage(): string {
  * opciones de lanzamiento que un VM servido (imagen, vida, idle, red) y el
  * token único de la flota. Una plaza se recicla cuando le queda menos vida de
  * la que `minRemainingMs` exige: por defecto una hora, o lo que deje el plazo
- * del servicio. */
+ * del servicio. `templateVersion` fija la versión de la imagen (la que eligió
+ * el build del despliegue); `undefined` usa la más reciente activa. */
 export function poolConfigFor(
   project: AgentProject,
   scaling: ScalingOptions,
   accessToken: string,
   metadata: Readonly<Record<string, string>>,
+  templateVersion?: string | undefined,
 ): PoolConfig {
   const timeoutMs = Math.ceil(project.serve.timeoutMs / MS_PER_SECOND) * MS_PER_SECOND;
   return {
     size: scaling.warmVms,
     template: project.template ?? project.name,
+    ...(templateVersion === undefined ? {} : { templateVersion }),
     timeoutMs,
     minRemainingMs: Math.min(
       POOL_MIN_REMAINING_DEFAULT_MS,

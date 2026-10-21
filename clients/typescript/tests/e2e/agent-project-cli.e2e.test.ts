@@ -15,13 +15,14 @@
  * Python.
  */
 
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { cpSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { type Outcome, rayito } from "../shared/cli-scenarios.js";
 import {
   agentImage,
+  appFixture,
   BEDROCK_REGION,
   BEDROCK_SECRET,
   CASES,
@@ -53,12 +54,16 @@ describe.runIf(e2eEnabled() && Boolean(BEDROCK_SECRET))(
       }
     });
 
+    /** El proyecto del caso: el código de su tipo de imagen y el
+     * `rayito-agent.toml`. Va en un subdirectorio para que el fichero del
+     * token, junto a él, nunca entre en el código que `deploy` empaqueta. */
     async function projectDir(item: (typeof CASES)[number]): Promise<string | undefined> {
       const template = await agentImage(item.image, region);
       if (unsupportedReason(item, template) !== undefined) {
         return undefined;
       }
-      const directory = mkdtempSync(join(tmpdir(), "rayito-agent-e2e-"));
+      const directory = join(mkdtempSync(join(tmpdir(), "rayito-agent-e2e-")), "project");
+      cpSync(appFixture(item.image), directory, { recursive: true });
       writeFileSync(join(directory, PROJECT_FILE_NAME), projectFileText(item, template));
       return directory;
     }
@@ -112,7 +117,7 @@ describe.runIf(e2eEnabled() && Boolean(BEDROCK_SECRET))(
         if (directory === undefined) {
           return;
         }
-        const tokenFile = join(directory, "agent.token");
+        const tokenFile = join(dirname(directory), "agent.token");
         const deploy = jsonOf(
           await rayito(world, [
             "--json",

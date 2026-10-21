@@ -1081,7 +1081,13 @@ export class AgentFleet {
       return;
     }
     const project = this.#requireProject();
-    const config = poolConfigFor(project, scaling, this.#requireToken(), this.#poolMetadata());
+    const config = poolConfigFor(
+      project,
+      scaling,
+      this.#requireToken(),
+      this.#poolMetadata(),
+      this.#service?.imageVersion,
+    );
     const factory = this.#poolFactory ?? defaultPool;
     const pool = await factory(config, {
       ...this.#connection,

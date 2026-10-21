@@ -22,6 +22,7 @@ from rayito._agent._project_base import (
     failed_marker_path,
     host_config_for,
     host_entries,
+    image_version_of,
     is_raw_app,
     is_raw_project,
     kept_sandbox_note,
@@ -32,6 +33,7 @@ from rayito._agent._project_base import (
     serve_command,
     startup_failure_message,
     template_name,
+    version_args,
 )
 from rayito._agent._project_service import AGENT_SERVE_USER
 from rayito._images import DEFAULT_BUILD_TIMEOUT_SECONDS
@@ -58,12 +60,21 @@ class AsyncProjectService:
         transport_factory: Any = default_async_transport,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         clock: Callable[[], float] = time.monotonic,
+        image_version: str | None = None,
     ) -> None:
         self._project = project
         self._sandbox_class = sandbox_class
         self._transport_factory = transport_factory
         self._sleep = sleep
         self._clock = clock
+        self._image_version = image_version
+
+    @property
+    def image_version(self) -> str | None:
+        """La versión de la imagen con la que se crean los sandboxes: la que
+        fijó el constructor o el último `build()` (creada o reutilizada), o
+        `None` para la más reciente activa."""
+        return self._image_version
 
     async def build(
         self,
@@ -77,11 +88,14 @@ class AsyncProjectService:
         base_version: str | None = None,
     ) -> BuildInfo:
         """Construye la imagen del proyecto con `AsyncAgentTemplate.build()`;
-        `base_version` fija la versión de la base (`None`: la más reciente)."""
+        `base_version` fija la versión de la base (`None`: la más reciente).
+        La versión que el build crea o reutiliza queda fijada para los
+        sandboxes que este servicio cree después, aunque la imagen tenga otra
+        más reciente."""
         template: Any = project_template(
             self._project, asynchronous=True, base_version=base_version
         )
-        return await template.build(  # type: ignore[no-any-return]
+        info: BuildInfo = await template.build(
             bucket=bucket,
             force=force,
             timeout=timeout,
@@ -89,6 +103,8 @@ class AsyncProjectService:
             region=region,
             session=session,
         )
+        self._image_version = image_version_of(info)
+        return info
 
     async def run(
         self,
@@ -199,7 +215,12 @@ class AsyncProjectService:
 
             sandbox_class = AsyncSandbox
         extra = {key: value for key, value in (("region", region), ("session", session)) if value}
-        return await sandbox_class.create(template_name(self._project), **arguments, **extra)
+        return await sandbox_class.create(
+            template_name(self._project),
+            **arguments,
+            **version_args(self._image_version),
+            **extra,
+        )
 
     async def _wait_ready(self, sandbox: Any) -> None:
         """Espera al marcador de listo del host: `TimeoutException` al

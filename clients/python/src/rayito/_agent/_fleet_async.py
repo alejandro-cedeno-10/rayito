@@ -876,7 +876,13 @@ class AsyncAgentFleet:
         if scaling.warm_vms == 0 or self._pool is not None:
             return
         project = self._require_project()
-        config = pool_config_for(project, scaling, self._require_token(), self._pool_metadata())
+        config = pool_config_for(
+            project,
+            scaling,
+            self._require_token(),
+            self._pool_metadata(),
+            template_version=getattr(self._service, "image_version", None),
+        )
         factory = self._pool_factory or _default_pool
         pool = factory(
             config,

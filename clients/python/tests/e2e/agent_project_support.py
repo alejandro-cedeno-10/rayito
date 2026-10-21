@@ -136,6 +136,11 @@ def image_runtimes(kind: ImageKind) -> tuple[AgentRuntime | str, ...]:
     return (*CLI_RUNTIMES, StrandsRuntime(entrypoint="agent.ts", language="typescript"))
 
 
+def app_fixture(kind: ImageKind) -> Path:
+    """El código de prueba del tipo de imagen: `py` o, para `cli`, `ts`."""
+    return FIXTURES / ("py" if kind == "py" else "ts")
+
+
 def image_name(kind: ImageKind) -> str | None:
     """El nombre de la imagen del caso: el de la variable, o `<prefijo>-<tipo>`."""
     explicit = os.environ.get(PY_TEMPLATE_VAR if kind == "py" else CLI_TEMPLATE_VAR)
@@ -153,7 +158,7 @@ def build_image(kind: ImageKind, *, region: str) -> str:
     bucket = os.environ.get(BUCKET_VAR)
     if name is None or bucket is None:
         raise RuntimeError(f"faltan {PREFIX_VAR} y {BUCKET_VAR}")
-    app = FIXTURES / ("py" if kind == "py" else "ts")
+    app = app_fixture(kind)
     base = os.environ.get(BASE_VAR)
     template = AgentTemplate(name=name, runtimes=image_runtimes(kind), app=str(app))
     if base:
@@ -289,12 +294,16 @@ def telemetry_env_names(env_dump: str) -> list[str]:
 def project_file_text(case: RuntimeCase, template: str) -> str:
     """El `rayito-agent.toml` del caso: el mismo proyecto que `project_for`,
     sobre la imagen ya construida, para las pruebas de la CLI. Sólo Bedrock
-    (Hermes sin Bedrock se salta antes, con `unsupported`)."""
+    (Hermes sin Bedrock se salta antes, con `unsupported`). `[source]` apunta
+    al propio directorio, que lleva el código del caso (`app_fixture`):
+    `deploy` reconstruye la imagen desde ahí y, sin código, el punto de
+    entrada no existiría."""
     _, model, secret = provider_for(case)
     return (
         'schema = "rayito.agent-project/1"\n'
         f'name = "e2e-{case.id}"\n\n'
         f"[runtime]\n{case.runtime_toml}\n\n"
+        '[source]\npath = "."\n\n'
         f'[model]\nprovider = "bedrock"\nid = "{model}"\nregion = "{BEDROCK_REGION}"\n'
         f'gateway = "{GATEWAY_NAME}"\n\n'
         f'[gateways.{GATEWAY_NAME}]\npreset = "bedrock"\nsecret = "{secret}"\n'
