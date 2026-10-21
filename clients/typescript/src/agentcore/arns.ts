@@ -34,6 +34,25 @@ export interface ModelArnContext {
   readonly modelRegion: string;
   readonly account: string;
   readonly partition?: string | undefined;
+  /**
+   * `account` y `partition` son tokens de CDK (`AWS::AccountId`,
+   * `AWS::Partition`; ADR-032 D7): sólo dan forma a los ARN y un ARN del
+   * llamante se valida contra la partición `aws` y cualquier cuenta de doce
+   * dígitos.
+   */
+  readonly accountUnresolved?: boolean | undefined;
+}
+
+/** El contexto de validación de un ARN del llamante: sin cuenta ni partición si son tokens. */
+function referenceContext(context: {
+  readonly region: string;
+  readonly account: string;
+  readonly partition: string;
+  readonly accountUnresolved?: boolean | undefined;
+}): { readonly region: string; readonly account?: string; readonly partition: string } {
+  return context.accountUnresolved === true
+    ? { region: context.region, partition: AWS_PARTITION }
+    : { region: context.region, account: context.account, partition: context.partition };
 }
 
 function profilePrefixOf(modelId: string): string | undefined {
@@ -47,11 +66,15 @@ function profilePrefixOf(modelId: string): string | undefined {
 function arnsOfModel(modelId: string, context: ModelArnContext): string[] {
   const partition = context.partition ?? AWS_PARTITION;
   const fields = { partition, region: context.modelRegion, account: context.account };
-  checkModelReference(modelId, {
-    region: context.modelRegion,
-    account: context.account,
-    partition,
-  });
+  checkModelReference(
+    modelId,
+    referenceContext({
+      region: context.modelRegion,
+      account: context.account,
+      partition,
+      accountUnresolved: context.accountUnresolved,
+    }),
+  );
   if (modelId.startsWith(ARN_PREFIX)) {
     return [modelId];
   }
@@ -88,11 +111,12 @@ export function secretResourceArns(
     readonly region: string;
     readonly account: string;
     readonly partition?: string | undefined;
+    readonly accountUnresolved?: boolean | undefined;
   },
 ): string[] {
   const partition = context.partition ?? AWS_PARTITION;
   for (const name of names) {
-    checkSecretReference(name, { ...context, partition });
+    checkSecretReference(name, referenceContext({ ...context, partition }));
   }
   return unique(
     names.map((name) =>

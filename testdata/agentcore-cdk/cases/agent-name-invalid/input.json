@@ -1,0 +1,22 @@
+{
+  "construct": "RayitoAgent",
+  "stack": {
+    "account": "123456789012",
+    "region": "us-east-1"
+  },
+  "id": "Agent",
+  "project": "agent-samples/python/strands",
+  "props": {
+    "name": "Bad Name"
+  },
+  "build": "codeBuild",
+  "expected": {
+    "error": {
+      "code": "name_invalid",
+      "exception": "AgentCoreException",
+      "fields": {
+        "name": "Bad Name"
+      }
+    }
+  }
+}

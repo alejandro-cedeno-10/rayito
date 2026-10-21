@@ -24,7 +24,12 @@ import {
   type StackObservation,
   USABLE_STACK_STATES,
 } from "../stacks/condition.js";
-import { formatTemplate, type TemplateFields } from "../template-text.js";
+import {
+  formatTemplate,
+  type MessageFields,
+  messageFields,
+  type TemplateFields,
+} from "../template-text.js";
 
 /** La pila de IAM de `infra/iam.yaml` con su nombre histórico. */
 export const IAM_STACK_NAME = DEFAULT_STACK_NAME;
@@ -213,12 +218,15 @@ export {
 export class AccountSetupError extends Error {
   readonly code: ErrorCode;
   readonly exitCode: number;
+  /** Los valores del mensaje (los reutiliza `MicrovmImageArtifact.downloadRelease`). */
+  readonly fields: MessageFields;
 
   constructor(code: ErrorCode, fields: TemplateFields = {}) {
     super(formatTemplate(ERROR_MESSAGES[code], fields));
     this.name = "AccountSetupError";
     this.code = code;
     this.exitCode = ERROR_EXIT_CODES[code];
+    this.fields = messageFields(fields);
   }
 }
 

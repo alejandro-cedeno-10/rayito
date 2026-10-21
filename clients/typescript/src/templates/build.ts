@@ -185,12 +185,14 @@ export class AwsBuildClients implements BuildClients {
     return this.#accountId;
   }
 
-  async getMicrovmImage(arn: string): Promise<{ state: string } | undefined> {
+  async getMicrovmImage(
+    arn: string,
+  ): Promise<{ state: string; tags: Readonly<Record<string, string>> } | undefined> {
     try {
       const response = await this.#microvms.send(
         new GetMicrovmImageCommand({ imageIdentifier: arn }),
       );
-      return { state: response.state ?? "" };
+      return { state: response.state ?? "", tags: { ...(response.tags ?? {}) } };
     } catch (error) {
       if (awsCode(error) === "ResourceNotFoundException") {
         return undefined;

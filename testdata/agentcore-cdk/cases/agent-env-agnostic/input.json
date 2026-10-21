@@ -1,0 +1,20 @@
+{
+  "construct": "RayitoAgent",
+  "stack": {
+    "account": null,
+    "region": null
+  },
+  "id": "Agent",
+  "project": "agent-samples/python/strands",
+  "props": {},
+  "build": "codeBuild",
+  "expected": {
+    "error": {
+      "code": "region_unresolved",
+      "exception": "RayitoCdkException",
+      "fields": {
+        "construct": "RayitoAgent"
+      }
+    }
+  }
+}

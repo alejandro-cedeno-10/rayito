@@ -1,0 +1,30 @@
+{
+  "construct": "RayitoMicrovmImage",
+  "stack": {
+    "account": "123456789012",
+    "region": "us-east-1"
+  },
+  "id": "Image",
+  "artifact": {
+    "fixture": "fixtures/image-full"
+  },
+  "props": {
+    "name": "team-sandbox-caps",
+    "baseImageVersion": "1",
+    "osCapabilities": true,
+    "sizes": [
+      "512mb",
+      "4gb"
+    ],
+    "allowedMountBuckets": [
+      "amzn-s3-demo-bucket"
+    ],
+    "environment": {
+      "TEAM": "demo"
+    },
+    "tags": {
+      "team": "demo"
+    }
+  },
+  "expected": "template"
+}

@@ -46,6 +46,16 @@
         "default": "./dist/e2b.cjs"
       }
     },
+    "./cdk": {
+      "import": {
+        "types": "./dist/cdk.d.mts",
+        "default": "./dist/cdk.mjs"
+      },
+      "require": {
+        "types": "./dist/cdk.d.cts",
+        "default": "./dist/cdk.cjs"
+      }
+    },
     "./package.json": "./package.json"
   },
   "files": [
@@ -103,6 +113,8 @@
     "@aws-sdk/signature-v4a": "^3.1138.0",
     "@modelcontextprotocol/server": "^2.3.1",
     "@opentelemetry/api": "^1.9.0",
+    "aws-cdk-lib": "^2.261.0",
+    "constructs": "^10.5.0",
     "smol-toml": "^1.9.0",
     "zod": "^4.2.0"
   },
@@ -158,6 +170,12 @@
     "@opentelemetry/api": {
       "optional": true
     },
+    "aws-cdk-lib": {
+      "optional": true
+    },
+    "constructs": {
+      "optional": true
+    },
     "smol-toml": {
       "optional": true
     },
@@ -188,6 +206,8 @@
     "@opentelemetry/sdk-trace-base": "^2.11.0",
     "@types/node": "^20.19.43",
     "ajv": "8.17.1",
+    "aws-cdk-lib": "2.274.0",
+    "constructs": "10.8.1",
     "smol-toml": "1.9.0",
     "tsdown": "^0.23.0",
     "typescript": "^7.0.2",

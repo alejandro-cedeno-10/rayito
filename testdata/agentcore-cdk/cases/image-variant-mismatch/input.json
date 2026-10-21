@@ -1,0 +1,25 @@
+{
+  "construct": "RayitoMicrovmImage",
+  "stack": {
+    "account": "123456789012",
+    "region": "us-east-1"
+  },
+  "id": "Image",
+  "artifact": {
+    "fixture": "fixtures/image-slim"
+  },
+  "props": {
+    "name": "team-sandbox",
+    "baseImageVersion": "1"
+  },
+  "expected": {
+    "error": {
+      "code": "artifact_variant_mismatch",
+      "exception": "RayitoCdkException",
+      "fields": {
+        "found": "slim",
+        "variant": "full"
+      }
+    }
+  }
+}

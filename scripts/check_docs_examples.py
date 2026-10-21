@@ -622,6 +622,7 @@ TS_CONFIG = {
         "paths": {
             "rayito": ["../src/index.ts"],
             "rayito/e2b": ["../src/e2b/index.ts"],
+            "rayito/cdk": ["../src/cdk/index.ts"],
         },
     },
     "include": ["*.ts"],

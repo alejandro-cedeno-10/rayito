@@ -8,6 +8,7 @@ IAM mínimo del SDK (`iam.yaml`) y las piezas opcionales de egress y de CI.
 | `iam.yaml` | Build role, execution role (sólo logs; S3 con `PersistenceBucket`; siempre un `Deny` sobre `rayito/*` del bucket de artefactos) y tres managed policies del llamante: `SandboxLauncherPolicy` (sólo lanzar sandboxes: la del rol de un servicio en producción), `ImagePublisherPolicy` (sólo publicar imágenes) y `CallerPolicy` (las dos juntas, para una máquina de desarrollo); S3 de transferencias con `TransferBucket` | Siempre, antes de publicar la primera imagen. `rayito setup` la despliega (sobre el bucket que reutiliza o que crea con `artifact-bucket.yaml`) o se despliega a mano con `aws cloudformation deploy`, como en este documento. La pila y los recursos conservan los nombres `rayito-m0-iam` / `rayito-m0-*` con los que nacieron en M0: renombrarlos rompería los despliegues existentes |
 | `artifact-bucket.yaml` | Un `AWS::S3::Bucket` para los zips de la imagen (SSE-S3, todo el acceso público bloqueado, ACL desactivadas, los objetos de `rayito/images/` caducan a los 7 días) y su `AWS::S3::BucketPolicy` que niega el tráfico sin TLS; `DeletionPolicy: Retain` en los dos (borrar la pila conserva el bucket con su política sólo TLS) | Sólo cuando no hay ningún bucket que reutilizar: `rayito setup` la despliega como `rayito-m0-artifacts`, o a mano (sección siguiente). No es un componente de `rayito stack` |
 | `agentcore-runtime.yaml` | La infraestructura de un agente en Amazon Bedrock AgentCore Runtime (ADR-031): un repositorio de ECR (etiquetas inmutables, análisis al subir, se vacía al borrar la pila), un proyecto de CodeBuild arm64 con su grupo de logs, el rol de build y el rol del runtime (mínimo privilegio). El runtime en sí lo crea el SDK por la API de AgentCore, no la pila | Sólo con `rayito agent deploy --target agentcore` (`deploy_agent(target="agentcore")`): una pila `rayito-agentcore-<agente>` por agente, que el SDK despliega y borra ([sección](#agente-en-agentcore-agentcore-runtimeyaml-adr-031)). No es un componente de `rayito stack` |
+| `agentcore-cdk-handler.py` | No es una plantilla: el código Python 3.13 de las dos funciones Lambda de los recursos personalizados de los constructos CDK (ADR-032): `Custom::RayitoImageBuild` (lanza el build de CodeBuild del agente si su etiqueta no existe en ECR, lo espera y comprueba el tamaño de la imagen) y `Custom::RayitoRuntimeMmds` (exige MMDSv2 en el runtime). `scripts/gen_stack_assets.py` lo empaqueta con el modelo de botocore de `bedrock-agentcore-control` en el zip que llevan los dos SDK | Sólo con `RayitoAgent` (`rayito.cdk` / `rayito/cdk`) en una app de CDK: lo despliega `cdk deploy` ([sección](#constructos-cdk-agentcore-cdk-handlerpy-adr-032)) |
 | `egress-connector.yaml` | `AWS::Lambda::NetworkConnector` de egress por VPC + security group allowlist + rol operador | Cuando un sandbox no debe salir a Internet libremente (SECURITY.md T8) |
 | `secrets-access.yaml` | Opcional (M13a, $0): dos managed policies, `RayitoSecretsReader` y `RayitoSecretsAdmin`, sobre `secret:<SecretPrefix>*` (y KMS sólo con `KmsKeyArn`) | Sólo si usas `secrets=` / `SecretStore` / `Secret`: se adjuntan a las credenciales del llamante del SDK ([Secretos](#secretos-infrasecrets-accessyaml-m13a)) |
 | `metadata-index.yaml` | Opcional (M14, on-demand, $0 en reposo): tabla DynamoDB `PAY_PER_REQUEST` con TTL + políticas `RayitoIndexWriter` / `RayitoIndexReader` | Sólo si listas por metadatos con `index=DynamoDbIndex(...)` / `--index-table`, también sobre `SUSPENDED` ([Índice de metadatos](#índice-de-metadatos-inframetadata-indexyaml-m14)) |
@@ -121,6 +122,56 @@ el grupo de logs de éste. Las propiedades están en `AWS_API_NOTES.md`
 ("Despliegue en AgentCore Runtime"), `make infra-lint` la valida con `cfn-lint` y
 los valores que `cfn-lint` no juzga los fija
 `scripts/tests/test_agentcore_runtime_template.py`.
+
+## Constructos CDK (`agentcore-cdk-handler.py`, ADR-032)
+
+Los constructos `RayitoAgent` y `RayitoMicrovmImage` (`rayito.cdk` en Python con
+el extra `cdk`, `rayito/cdk` en TypeScript) no añaden plantillas nuevas: generan
+la suya con CDK y reutilizan las de aquí.
+
+- **`RayitoAgent`** carga `agentcore-runtime.yaml` como pila anidada
+  (`cloudformation_include.CfnInclude`) con los mismos parámetros que la CLI y el
+  bucket del bootstrap de CDK como `ArtifactBucket`, así que el repositorio, el
+  proyecto de CodeBuild y los dos roles son los de [arriba](#agente-en-agentcore-agentcore-runtimeyaml-adr-031).
+  Con `localDocker()` quita de la pila anidada el repositorio, el grupo de logs
+  del build, el rol de build y el proyecto. El runtime sí es un recurso de la pila
+  (`AWS::BedrockAgentCore::Runtime`), con la marca `rayito.agentcore/1+cdk` en la
+  descripción.
+- **`agentcore-cdk-handler.py`** es el código de los dos recursos personalizados
+  (`index.on_event` e `index.is_complete`, runtime `python3.13`, detrás de un
+  `custom_resources.Provider`):
+    - `Custom::RayitoImageBuild` (`ProjectName`, `RepositoryName`, `ImageTag`,
+      `SourceLocation`, `AgentBaseImage`, `MaxImageBytes`): si la etiqueta no
+      existe en ECR (`DescribeImages`), `StartBuild` con
+      `sourceLocationOverride` y un `idempotencyToken` igual a la etiqueta;
+      espera con `BatchGetBuilds` y comprueba el tamaño de la imagen.
+    - `Custom::RayitoRuntimeMmds` (`AgentRuntimeId`, `AgentRuntimeVersion`): lee el
+      runtime con `GetAgentRuntime` y, si no exige MMDSv2, lo actualiza con
+      `UpdateAgentRuntime` y `metadataConfiguration.requireMMDSV2` (con un
+      `clientToken` de la versión viva, no de la propiedad); vuelve a correr con
+      cada versión nueva del runtime y devuelve el atributo `AgentRuntimeVersion`
+      con la versión viva (la que expone `runtimeVersion`). Los runtimes que
+      crea CloudFormation ya salen con MMDSv2 activo (`AWS_API_NOTES.md` Q185),
+      así que normalmente es la de CloudFormation y no se publica ninguna.
+
+  Su rol sólo puede eso sobre **ese** proyecto, **ese** repositorio y **ese**
+  runtime, e `iam:PassRole` sólo sobre el rol del runtime (SECURITY.md T37). El
+  boto3 del runtime de Lambda puede no conocer `requireMMDSV2`, así que el zip
+  lleva los ficheros del modelo de botocore de
+  `docs/aws-api/bedrock-agentcore-control/2023-06-05/` y apunta `AWS_DATA_PATH` a
+  ellos (`AWS_API_NOTES.md` Q183).
+- **`RayitoMicrovmImage`** no usa `iam.yaml`: crea su propio rol de build (la
+  misma confianza que el `BuildRole` de `iam.yaml`, `lambda.amazonaws.com` con
+  `aws:SourceAccount`), que sólo lee el asset del zip y escribe en los grupos de
+  logs `/rayito/<nombre>`, y un `AWS::Lambda::MicrovmImage` por imagen.
+
+`python3 scripts/gen_stack_assets.py` escribe el zip del manejador en
+`clients/python/src/rayito/_stacks/_artifacts/agentcore-cdk-handler.zip` y en
+`clients/typescript/src/stacks/templates/agentcore-cdk-handler.gen.ts` (los mismos
+bytes, así que el hash del asset es el mismo en los dos SDK), y `--check` falla
+si no coinciden con la fuente; los tests del manejador están en
+`scripts/tests/test_agentcore_cdk_handler.py`. Guía:
+[Desplegar con CDK](../docs/site/docs/guias/desplegar-con-cdk.md).
 
 ## Egress allowlist (`egress-connector.yaml`)
 

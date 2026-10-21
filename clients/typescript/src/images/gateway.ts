@@ -69,7 +69,10 @@ export const INHERITED_CONFIGURATION_KEYS = [
 
 /** Puerto: lo que la puerta necesita de Lambda MicroVMs y S3. */
 export interface ImageBuildClients {
-  getMicrovmImage(arn: string): Promise<{ state: string } | undefined>;
+  /** `tags` son las etiquetas que devuelve `GetMicrovmImage`; un doble de tests puede omitirlas. */
+  getMicrovmImage(
+    arn: string,
+  ): Promise<{ state: string; tags?: Readonly<Record<string, string>> | undefined } | undefined>;
   getMicrovmImageVersion(
     arn: string,
     version: string,

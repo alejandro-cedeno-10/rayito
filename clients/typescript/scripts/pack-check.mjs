@@ -21,6 +21,10 @@ const REQUIRED_ENTRIES = [
   "package/dist/e2b.cjs",
   "package/dist/e2b.d.mts",
   "package/dist/e2b.d.cts",
+  "package/dist/cdk.mjs",
+  "package/dist/cdk.cjs",
+  "package/dist/cdk.d.mts",
+  "package/dist/cdk.d.cts",
   "package/dist/cli.mjs",
   "package/dist/mcp.mjs",
   "package/dist/dashboard-static/index.html",
@@ -40,6 +44,17 @@ const RUNTIME_OPENTELEMETRY_IMPORT = new RegExp(
     "|from\\s*[\"']@opentelemetry/api[\"']" +
     "|import\\(\\s*[\"']@opentelemetry/api[\"']\\s*\\)",
 );
+
+// `rayito/cdk` (ADR-032, D8): `aws-cdk-lib` y `constructs` son peers
+// opcionales que sólo carga la entrada `cdk`. Ningún otro fichero de `dist/`
+// (las entradas `index`, `e2b`, `cli` y `mcp` y los chunks que comparten) puede
+// importarlos: quien no usa los constructos no los instala.
+const RUNTIME_CDK_IMPORT = new RegExp(
+  "require\\(\\s*[\"'](?:aws-cdk-lib|constructs)(?:/[^\"']*)?[\"']\\s*\\)" +
+    "|from\\s*[\"'](?:aws-cdk-lib|constructs)(?:/[^\"']*)?[\"']" +
+    "|import\\(\\s*[\"'](?:aws-cdk-lib|constructs)(?:/[^\"']*)?[\"']\\s*\\)",
+);
+const CDK_ENTRY = /^cdk\.(?:mjs|cjs)$/;
 
 /**
  * Extensión de los tipos y del JavaScript de cada condición del mapa
@@ -65,6 +80,7 @@ const CONDITION_EXTENSIONS = {
  */
 function main() {
   assertNoRuntimeOpenTelemetryImport();
+  assertCdkImportsOnlyInCdkEntry();
   assertTypesMatchEachCondition();
   assertBinaryEntriesAreExecutable();
   rmSync(PACK_DIR, { recursive: true, force: true });
@@ -113,6 +129,29 @@ function assertNoRuntimeOpenTelemetryImport() {
   if (offenders.length > 0) {
     throw new Error(
       `dist/ importa @opentelemetry/api en tiempo de ejecución (debería ser sólo \`import type\`, borrado en el build): ${offenders.join(", ")}`,
+    );
+  }
+}
+
+function assertCdkImportsOnlyInCdkEntry() {
+  const scripts = readdirSync(DIST_DIR).filter(
+    (name) => name.endsWith(".mjs") || name.endsWith(".cjs"),
+  );
+  const offenders = scripts
+    .filter((name) => !CDK_ENTRY.test(name))
+    .filter((name) => RUNTIME_CDK_IMPORT.test(readFileSync(join(DIST_DIR, name), "utf-8")));
+  if (offenders.length > 0) {
+    throw new Error(
+      `dist/ importa aws-cdk-lib o constructs fuera de la entrada cdk: ${offenders.join(", ")}`,
+    );
+  }
+  const entries = scripts.filter((name) => CDK_ENTRY.test(name));
+  const missing = entries.filter(
+    (name) => !RUNTIME_CDK_IMPORT.test(readFileSync(join(DIST_DIR, name), "utf-8")),
+  );
+  if (entries.length === 0 || missing.length > 0) {
+    throw new Error(
+      "la entrada cdk de dist/ no importa aws-cdk-lib: la comprobación no prueba nada",
     );
   }
 }

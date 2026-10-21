@@ -3491,13 +3491,14 @@ sigue siendo el predeterminado.
     `bedrock-agentcore` y tokens de identidad de carga de trabajo sin
     `GetWorkloadAccessTokenForUserId`). El plan, el README exportado, la guía,
     `security.md` y `SECURITY.md` lo dicen con las mismas palabras.
-12. **Sin CDK por ahora (D12).** Un constructo de CDK de Rayito sería un tercer
-    paquete (jsii, su propio pipeline de release y de versiones, publicado en
-    npm y PyPI) que envolvería el `aws_bedrockagentcore.Runtime` de
-    `aws-cdk-lib`, que ya existe y admite una imagen de ECR o un asset local.
-    Es grande e independiente de la CLI y de los SDK, y va a un cambio
-    posterior; nada de éste lo bloquea: la plantilla, el contexto exportado y
-    las reglas de sesión son reutilizables.
+12. **Sin CDK por ahora (D12; sustituida por ADR-032).** Un constructo de
+    CDK de Rayito sería un tercer paquete (jsii, su propio pipeline de
+    release y de versiones, publicado en npm y PyPI) que envolvería el
+    `aws_bedrockagentcore.Runtime` de `aws-cdk-lib`, que ya existe y admite
+    una imagen de ECR o un asset local. Es grande e independiente de la CLI
+    y de los SDK, y va a un cambio posterior; nada de éste lo bloquea: la
+    plantilla, el contexto exportado y las reglas de sesión son
+    reutilizables.
 13. **Coste y activación (D13).** Sólo `target="agentcore"` (o `--target
     agentcore`) crea algo. El plan muestra las líneas de coste del contrato
     (precios de lista de la plataforma V1, CodeBuild por minuto con el nivel
@@ -3566,3 +3567,115 @@ destino deja 0.14 intacto y la exportación manual sigue documentada. Detalle
 `openspec/changes/agentcore-deploy/design.md`,
 `testdata/agentcore-deploy/contract.json` y `AWS_API_NOTES.md` («Despliegue en
 AgentCore Runtime»).
+
+## ADR-032 — agentcore-cdk: constructos CDK `RayitoAgent` y `RayitoMicrovmImage`
+
+**Contexto.** 0.15 despliega un agente en AgentCore con una orden (ADR-031) y
+prepara la cuenta con `rayito setup` (ADR-030), pero ni el runtime ni su
+imagen ni la imagen de MicroVM viven en CloudFormation: no salen en un
+`cdk diff`, `cdk destroy` no los borra y no se pueden referenciar desde el
+resto de la aplicación. ADR-031 D12 dejó el constructo para después como un
+tercer paquete jsii. Desde entonces AWS ha pasado la L2 de AgentCore a
+`aws-cdk-lib` estable (2.255.0) y ha publicado `CfnMicrovmImage` (2.261.0).
+Verificado de solo lectura el 2026-10-20 (`AWS_API_NOTES.md` Q181-Q184): el
+recurso `AWS::BedrockAgentCore::Runtime` no tiene ninguna propiedad de
+metadatos ni de MMDS; `AWS::Lambda::MicrovmImage` exige toda la configuración
+de la imagen (salvo `Tags`), su `Name` sólo se fija al crear y su manejador
+de actualización puede borrar versiones; no existe recurso para un MicroVM
+en marcha.
+
+**Decisión.** Sustituye a ADR-031 D12.
+
+1. **Dos constructos nativos dentro de los paquetes de siempre (D1).**
+   `rayito/cdk` (subruta de npm, `aws-cdk-lib ^2.261.0` y `constructs
+   ^10.5.0` como peers opcionales) y `rayito.cdk` (PyPI, extra `cdk`), con
+   la misma versión, etiquetas y trabajos de publicación que los SDK. La
+   paridad la dan el contrato `testdata/agentcore-cdk/` (plantillas
+   normalizadas que los dos SDK reproducen) y `check_sdk_parity.py`. Sin
+   jsii: fijaría TypeScript 6, añadiría un tercer flujo de release y haría
+   que Python ejecutara el SDK de TypeScript bajo Node. Nunca el paquete
+   alpha; recursos L1 (`CfnRuntime`, `CfnMicrovmImage`) para controlar cada
+   propiedad.
+2. **`RayitoAgent` despliega el mismo agente que la CLI (D3).** Las props son
+   las de `AgentCoreOptions`; el plan es el de los SDK (`plan_agentcore`,
+   `planAgentCoreSync` sobre un puerto `ProjectReader` síncrono). Una pila
+   anidada incluye `infra/agentcore-runtime.yaml` con los mismos parámetros
+   (IAM idéntico por construcción), el `source_zip` va como asset, un
+   recurso personalizado construye la imagen con el proyecto de CodeBuild de
+   la plantilla (se salta si la etiqueta ya existe) y `CfnRuntime` crea el
+   runtime. **Por defecto CodeBuild (D4)**, sin Docker local;
+   `AgentImageBuild.localDocker()` es opcional.
+3. **MMDSv2 con un recurso personalizado (D5).** Como CloudFormation no
+   puede fijarlo, `Custom::RayitoRuntimeMmds` manda `UpdateAgentRuntime` con
+   la configuración leída y `requireMMDSV2=true` cuando falta, y vuelve a
+   correr con cada versión nueva del runtime. El manejador es un solo
+   fichero, `infra/agentcore-cdk-handler.py`, empaquetado por
+   `gen_stack_assets.py` con el modelo de botocore de
+   `bedrock-agentcore-control` (el boto3 del runtime de Lambda puede no
+   conocer `metadataConfiguration`), así que el asset tiene el mismo hash en
+   los dos SDK.
+4. **Propiedad `+cdk` (D6).** La descripción de un runtime de CDK lleva
+   `rayito.agentcore/1+cdk` y cada recurso la etiqueta
+   `rayito:managed-by=rayito-cdk`. Los SDK y las CLI lo listan, lo muestran y
+   lo invocan como siempre, pero `rayito agent deploy` y `rayito agent
+   delete` lo rechazan con `name_conflict` y remiten a `cdk deploy` y `cdk
+   destroy`; `rayito image publish` rechaza una imagen con esa etiqueta
+   (`GetMicrovmImage` devuelve `tags`, no la descripción). Ningún recurso de
+   hoy lleva la marca: nada de lo que funciona cambia.
+5. **`RayitoMicrovmImage` (D9).** Publica una imagen de Rayito desde un
+   `rayito-image.zip` comprobado (un fichero con sha256 opcional, o la
+   descarga de la release verificada con `SHA256SUMS` antes de sintetizar y
+   reutilizada sin red después), con la configuración exacta de `rayito
+   image publish` (`desired_configuration` pasado a nombres de
+   CloudFormation), sus tamaños, capacidades del SO y lista de buckets de
+   montaje. Crea su propio rol de build, sólo con lectura del objeto del
+   asset, y un grupo de logs por imagen. `baseImageVersion` es obligatoria y
+   el nombre `rayito-base*` queda reservado para `rayito setup` y `rayito
+   image publish`. Los MicroVMs los sigue lanzando el SDK
+   (`Sandbox.create(template=…)`). Las imágenes de agente con runtimes
+   (`AgentTemplate`) quedan fuera: leen AWS al construir y una flota sólo
+   existe cuando el SDK arranca MicroVMs (D10).
+6. **La síntesis no llama a AWS (D7).** Nada de `fromLookup` ni clientes; la
+   región del stack debe ser concreta (`region_unresolved` si no) y la cuenta
+   puede ser un token.
+7. **Cero impacto sin el extra (D8).** `import rayito`, las CLI, MCP y E2B
+   nunca cargan `aws_cdk`, `jsii`, `constructs` ni `aws-cdk-lib`; lo prueban
+   un test de aislamiento, `check_wheel.py` y `pack-check.mjs`.
+8. **Coste y activación (D14).** Sintetizar es gratis. `cdk deploy` crea
+   recursos que cuestan: minutos de CodeBuild, ECR, builds y snapshots de la
+   imagen de MicroVM (uno por tamaño), logs a 14 días, sondeo de Lambda y
+   Step Functions y el uso de AgentCore. Trazas, VPC y entrega de logs siguen
+   apagadas. Los assets del bootstrap de CDK duran hasta `cdk gc`. Cada
+   docstring y TSDoc lleva el bloque «Coste y activación» y
+   `optional-features.md` una fila.
+
+**Consecuencias.** `cdk deploy` y `rayito agent deploy` producen el mismo
+agente desde el mismo proyecto, y una imagen de Rayito puede vivir en una
+pila de CDK junto al resto de una aplicación. Hay dos dependencias opcionales
+más y una pila anidada que depende de `infra/agentcore-runtime.yaml` (un test
+de igualdad de IAM y las plantillas del contrato lo vigilan). Riesgos: CloudFormation crea y actualiza el runtime con `requireMMDSV2`
+ya activo (Q185, medido), así que el recurso personalizado normalmente no
+escribe nada; si alguna versión llegara sin él, lo repararía en el mismo
+despliegue y la detección de deriva podría señalarlo; si CloudFormation
+conserva todas las versiones de la imagen (Q186, sin medir) el almacenamiento de snapshots crece y `rayito image prune` es
+la respuesta documentada; un build atascado bloquea la pila hasta el tiempo
+total del proveedor (40 min por defecto); `aws-cdk-lib` pesa unos 139 MB y la
+síntesis en Python necesita Node; un bootstrap de CDK con permisos
+restringidos necesita `CreateMicrovmImage` sobre `*`,
+`lambda:PassNetworkConnector` y `iam:PassRole` (Q114).
+
+**Alternativas descartadas.** Un paquete jsii (punto 1). La L2 `Runtime` con
+`fromAsset`: Docker local con arm64 y un rol distinto del de la CLI.
+`@cdklabs/deploy-time-build`: una dependencia de terceros para un build que la
+plantilla ya tiene. Una sola marca compartida: la CLI podría actualizar o
+borrar un runtime que es de CloudFormation. Dejar MicroVM fuera de 0.15: lo
+descartó el mantenedor, y el alcance se limita al recurso de imagen. Una marca
+en la descripción de la imagen: `GetMicrovmImage` no la devuelve. Resolver
+`latest` al sintetizar: pediría una llamada a AWS.
+
+**Reversible.** Aditivo: un módulo opcional en cada SDK, un manejador
+empaquetado, una marca nueva que sólo llevan recursos creados por CDK y el
+contrato de pruebas; quitar los constructos deja 0.15 intacto. Detalle (D1 a
+D14), hechos verificados y tareas en `openspec/changes/agentcore-cdk/`,
+`testdata/agentcore-cdk/contract.json` y `AWS_API_NOTES.md` («Constructos
+CDK»).

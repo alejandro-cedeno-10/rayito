@@ -9,7 +9,10 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from types import MappingProxyType
-from typing import Final, Literal
+from typing import TYPE_CHECKING, Final, Literal
+
+if TYPE_CHECKING:
+    from rayito.exceptions import AgentCoreException
 
 AgentCoreErrorCode = Literal[
     "unsupported_region",
@@ -202,3 +205,29 @@ ERROR_MESSAGES: Final[Mapping[AgentCoreErrorCode, str]] = MappingProxyType(
         ),
     }
 )
+
+
+#: El `name_conflict` de un runtime que gestiona CloudFormation (`RayitoAgent`,
+#: ADR-032 D6), tal cual `testdata/agentcore-cdk/contract.json`
+#: (`cliRefusals.agentDeploy.message`): `rayito agent deploy`, `rayito agent
+#: delete --target agentcore`, `deploy_agent(target="agentcore")` y el borrado
+#: del SDK lo devuelven antes de cualquier escritura.
+CDK_MANAGED_MESSAGE: Final = (
+    "el agente {name} lo gestiona CloudFormation (CDK, stack {stackHint}): despliégalo con "
+    "cdk deploy y bórralo con cdk destroy"
+)
+#: Qué stack es, sin una lectura más de AWS: `ListAgentRuntimes` no trae las
+#: etiquetas, así que se nombra por su runtime.
+CDK_STACK_HINT_TEMPLATE: Final = "del runtime {runtimeName}"
+
+
+def cdk_managed_error(name: str, runtime_name: str) -> AgentCoreException:
+    """`name_conflict` con `CDK_MANAGED_MESSAGE`: mismo código y salida que
+    cualquier otro conflicto de nombre, con el mensaje que apunta a
+    `cdk deploy` / `cdk destroy`."""
+    from rayito.exceptions import AgentCoreException
+
+    error = AgentCoreException("name_conflict", runtimeName=runtime_name, name=name)
+    error.fields["stackHint"] = CDK_STACK_HINT_TEMPLATE.format(runtimeName=runtime_name)
+    error.args = (CDK_MANAGED_MESSAGE.format(**error.fields),)
+    return error

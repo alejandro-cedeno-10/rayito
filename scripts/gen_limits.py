@@ -586,6 +586,30 @@ GROUPS: tuple[tuple[str, ...], ...] = (
         "bedrockInferenceProfilePrefixes",
         "bedrockGlobalProfilePrefix",
     ),
+    (
+        # agentcore-cdk (ADR-032): the CDK constructs `RayitoAgent` and
+        # `RayitoMicrovmImage`. The ownership suffix turns the AgentCore
+        # description marker into `rayito.agentcore/1+cdk` (the CLI reads it
+        # and refuses to deploy or delete over CloudFormation), and the
+        # managed-by tag value marks every resource they create. Floors:
+        # `CfnMicrovmImage` first ships in aws-cdk-lib 2.261.0 (CfnRuntime in
+        # 2.217.0, the AgentCore L2 in 2.255.0; unpkg, checked 2026-10-20),
+        # whose peer is constructs ^10.5.0. The custom-resource handler runs on
+        # the Lambda Python 3.13 runtime; its total timeout is the build
+        # timeout plus a margin, polled every 30 s (AWS_API_NOTES.md Q181-Q186).
+        # The resource schema caps an environment value at 2048 characters,
+        # stricter than the API's 5000 (Q181).
+        "cdkOwnershipSuffix",
+        "cdkManagedByTagValue",
+        "cdkAwsCdkLibMinVersion",
+        "cdkConstructsMinVersion",
+        "cdkHandlerRuntime",
+        "cdkHandlerTimeoutSeconds",
+        "cdkBuildQueryIntervalSeconds",
+        "cdkBuildTotalTimeoutMarginMinutes",
+        "cdkMicrovmImageLogRetentionDays",
+        "cdkRuntimeEnvironmentValueMaxChars",
+    ),
 )
 
 PYTHON_HEADER = '''"""Límites y cuotas de Lambda MicroVMs que el SDK valida en cliente.

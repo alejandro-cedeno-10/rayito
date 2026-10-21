@@ -1,0 +1,181 @@
+{
+  "nested": {},
+  "root": {
+    "Resources": {
+      "Image97B81D44": {
+        "DependsOn": [
+          "ImageLogGroup6EB105D4"
+        ],
+        "Properties": {
+          "AdditionalOsCapabilities": [],
+          "BaseImageArn": "arn:aws:lambda:us-east-1:aws:microvm-image:al2023-1",
+          "BaseImageVersion": "1",
+          "BuildRoleArn": {
+            "Fn::GetAtt": [
+              "ImageBuildRole8F8C26B2",
+              "Arn"
+            ]
+          },
+          "CodeArtifact": {
+            "Uri": "s3://cdk-<QUALIFIER>-assets-123456789012-us-east-1/<ASSET_HASH>.zip"
+          },
+          "CpuConfigurations": [
+            {
+              "Architecture": "ARM_64"
+            }
+          ],
+          "Description": "Rayito image team-sandbox-slim (rayito.microvm-image/1+cdk)",
+          "EgressNetworkConnectors": [],
+          "EnvironmentVariables": [],
+          "Hooks": {
+            "MicrovmHooks": {
+              "Resume": "ENABLED",
+              "ResumeTimeoutInSeconds": 30,
+              "Run": "ENABLED",
+              "RunTimeoutInSeconds": 30,
+              "Suspend": "ENABLED",
+              "SuspendTimeoutInSeconds": 30,
+              "Terminate": "ENABLED",
+              "TerminateTimeoutInSeconds": 10
+            },
+            "MicrovmImageHooks": {
+              "Ready": "ENABLED",
+              "ReadyTimeoutInSeconds": 600,
+              "Validate": "ENABLED",
+              "ValidateTimeoutInSeconds": 600
+            },
+            "Port": 9000
+          },
+          "Logging": {
+            "CloudWatch": {
+              "LogGroup": "/rayito/team-sandbox-slim"
+            }
+          },
+          "Name": "team-sandbox-slim",
+          "Resources": [
+            {
+              "MinimumMemoryInMiB": 1024
+            }
+          ],
+          "Tags": [
+            {
+              "Key": "rayito:component",
+              "Value": "microvm-image"
+            },
+            {
+              "Key": "rayito:managed-by",
+              "Value": "rayito-cdk"
+            },
+            {
+              "Key": "rayito:sdk-version",
+              "Value": "<SDK_VERSION>"
+            }
+          ]
+        },
+        "Type": "AWS::Lambda::MicrovmImage"
+      },
+      "ImageBuildRole8F8C26B2": {
+        "Properties": {
+          "AssumeRolePolicyDocument": {
+            "Statement": [
+              {
+                "Action": [
+                  "sts:AssumeRole",
+                  "sts:TagSession"
+                ],
+                "Condition": {
+                  "StringEquals": {
+                    "aws:SourceAccount": "123456789012"
+                  }
+                },
+                "Effect": "Allow",
+                "Principal": {
+                  "Service": "lambda.amazonaws.com"
+                }
+              }
+            ],
+            "Version": "2012-10-17"
+          },
+          "Policies": [
+            {
+              "PolicyDocument": {
+                "Statement": [
+                  {
+                    "Action": "s3:GetObject",
+                    "Effect": "Allow",
+                    "Resource": {
+                      "Fn::Join": [
+                        "",
+                        [
+                          "arn:",
+                          {
+                            "Ref": "AWS::Partition"
+                          },
+                          ":s3:::cdk-<QUALIFIER>-assets-123456789012-us-east-1/<ASSET_HASH>.zip"
+                        ]
+                      ]
+                    }
+                  },
+                  {
+                    "Action": [
+                      "logs:CreateLogGroup",
+                      "logs:CreateLogStream",
+                      "logs:PutLogEvents"
+                    ],
+                    "Effect": "Allow",
+                    "Resource": {
+                      "Fn::GetAtt": [
+                        "ImageLogGroup6EB105D4",
+                        "Arn"
+                      ]
+                    }
+                  }
+                ],
+                "Version": "2012-10-17"
+              },
+              "PolicyName": "build"
+            }
+          ],
+          "Tags": [
+            {
+              "Key": "rayito:component",
+              "Value": "microvm-image"
+            },
+            {
+              "Key": "rayito:managed-by",
+              "Value": "rayito-cdk"
+            },
+            {
+              "Key": "rayito:sdk-version",
+              "Value": "<SDK_VERSION>"
+            }
+          ]
+        },
+        "Type": "AWS::IAM::Role"
+      },
+      "ImageLogGroup6EB105D4": {
+        "DeletionPolicy": "Delete",
+        "Properties": {
+          "LogGroupName": "/rayito/team-sandbox-slim",
+          "RetentionInDays": 14,
+          "Tags": [
+            {
+              "Key": "rayito:component",
+              "Value": "microvm-image"
+            },
+            {
+              "Key": "rayito:managed-by",
+              "Value": "rayito-cdk"
+            },
+            {
+              "Key": "rayito:sdk-version",
+              "Value": "<SDK_VERSION>"
+            }
+          ]
+        },
+        "Type": "AWS::Logs::LogGroup",
+        "UpdateReplacePolicy": "Delete"
+      }
+    }
+  }
+}

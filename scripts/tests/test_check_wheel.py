@@ -39,6 +39,9 @@ BASE_METADATA_LINES = [
     "Requires-Dist: typer>=0.15,<1 ; extra == 'cli'",
     "Provides-Extra: otel",
     "Requires-Dist: opentelemetry-api>=1.27,<2 ; extra == 'otel'",
+    "Provides-Extra: cdk",
+    "Requires-Dist: aws-cdk-lib>=2.261.0,<3 ; extra == 'cdk'",
+    "Requires-Dist: constructs>=10.5.0,<11 ; extra == 'cdk'",
 ]
 
 ENTRY_POINTS = (
@@ -101,3 +104,18 @@ def test_missing_mcp_or_cli_lines_do_not_affect_otel_problems() -> None:
     ]
     metadata = "\n".join(lines)
     assert check_wheel.otel_problems(metadata) == []
+
+
+def test_missing_cdk_lines_are_the_only_problems(tmp_path: Path) -> None:
+    for required in check_wheel.CDK_METADATA_LINES:
+        lines = [line for line in BASE_METADATA_LINES if line != required]
+        wheel = build_wheel(tmp_path, metadata_lines=lines)
+        assert check_wheel.problems_for(wheel) == [f"METADATA sin `{required}`"]
+
+
+def test_the_cdk_files_are_required() -> None:
+    assert "rayito/cdk/__init__.py" in check_wheel.REQUIRED_FILES
+    assert (
+        "rayito/_stacks/_artifacts/agentcore-cdk-handler.zip"
+        in check_wheel.REQUIRED_FILES
+    )
