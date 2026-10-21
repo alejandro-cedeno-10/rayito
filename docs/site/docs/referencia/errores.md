@@ -255,11 +255,11 @@ un token ni el texto crudo de AWS. Guía:
 | `option_not_supported` | una opción de MicroVMs en la llamada no aplica a AgentCore | quítala; el mensaje dice cuál usar en su lugar ([tabla](../guias/desplegar-en-agentcore.md#opciones-que-no-aplican)) |
 | `option_requires_agentcore` | una opción de AgentCore (`--tag`, `--bedrock-model`…) con el destino `microvm` | añade `--target agentcore` o quítala |
 | `target_unsupported` | `rayito agent list` o `delete` sin `--target agentcore` | usa `--target agentcore`; una flota de MicroVMs se para con `rayito agent stop` |
-| `provider_unsupported` | el modelo del proyecto no es de Bedrock | AgentCore sólo cablea `bedrock`, con el rol del runtime |
+| `provider_unsupported` | el modelo del proyecto no es de Bedrock | AgentCore sólo cablea `bedrock`, con el rol del runtime; para otro modelo, `--external-model` ([guía](../guias/desplegar-en-agentcore.md#modelos-fuera-de-bedrock)) |
 | `network_policy_unsupported` | el proyecto declara `egress` o `network` | quítalo: en modo PUBLIC AgentCore no filtra la salida |
 | `name_invalid` | el nombre del agente no cabe en los nombres derivados | hasta 41 caracteres, minúsculas y dígitos con `-` o `_` sueltos; cámbialo con `[image].template` |
 | `name_conflict` | ya hay un runtime con ese nombre que no es de Rayito | cambia el nombre con `[image].template`; Rayito no toca runtimes ajenos |
-| `model_required` | reservado: hoy no se lanza (el rol del runtime siempre incluye el modelo del proyecto) | — |
+| `model_required` | el proyecto usa `bedrock` sin `[model] id` y no pasas `--bedrock-model` | fija `[model] id` o pásalo con `--bedrock-model` (`bedrock_models` / `bedrockModels`) |
 | `image_missing` | `--no-build` y no hay una imagen con ese contenido | despliega sin `--no-build` |
 | `lifecycle_invalid` | un tiempo de ciclo de vida fuera de rango, o no entero (en TypeScript, no múltiplo de 1000 ms) | entre 60 y 28 800 s |
 | `lifecycle_order` | `idle_session_timeout` mayor que `max_session_lifetime` | baja el tiempo de inactividad o sube la vida máxima |

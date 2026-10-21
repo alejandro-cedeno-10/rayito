@@ -151,6 +151,66 @@ or `--entry`), `not_detected` (the framework is not recognized, or the model id
 is missing: write it as a literal or in `[model]`) and `unsupported` (a
 combination that cannot reach the gateway without changing the code).
 
+### Model chosen by your code { #modelo-desde-tu-codigo }
+
+If your code picks the model from its configuration, for example
+`ChatOpenAI(model=settings.llm_model, base_url=settings.base_url)`, you do not
+need to write the model id anywhere. Detection recognizes two things without
+running your code or reading any value:
+
+- A `base_url=` in the client constructor (in TypeScript, `baseURL` or
+  `configuration`). With it, an `openai` provider detected from a dependency
+  becomes `openai-compatible`.
+- The **names** of the model, base URL and key variables (`LLM_MODEL`,
+  `LLM_BASE_URL`, `LLM_API_KEY`). They come from `.env.example`, from
+  `os.getenv` / `process.env` reads, from pydantic-settings fields
+  (`env_prefix` plus the field) and from the `env` keys of `langgraph.json`.
+  This is a best-effort heuristic: if it misses, write the names in `[model]`.
+
+The resolved project has `[model]` without `id` and with those names, and the
+report warns with `model_id_from_code`. The URL of your LLM gateway cannot be
+detected, so you pass it with a flag:
+
+```bash
+rayito agent deploy --model-provider openai-compatible \
+  --model-base-url https://llm-gateway.example.com --secret openai-compatible=rayito/llm-key
+```
+
+In the project file it looks like this:
+
+```toml
+[model]
+provider = "openai-compatible"
+gateway = "llm"
+base_path = "/v1"
+id_env = "LLM_MODEL"
+base_url_env = "LLM_BASE_URL"
+api_key_env = "LLM_API_KEY"
+
+[gateways.llm]
+preset = "openai-compatible"
+secret = "rayito/llm-key"
+upstream = "https://llm-gateway.example.com"
+base_path = "/v1"
+```
+
+On MicroVMs, Rayito points `LLM_BASE_URL` at the secret gateway and puts the
+placeholder in `LLM_API_KEY`. Your code reads its own configuration and goes
+through the gateway without ever seeing the real key. `LLM_MODEL` is only set
+when the project knows the id (`--model-id` or `[model] id`).
+
+The id is still required where Rayito uses it:
+
+- With the `bedrock` and `gemini` gateways, which only let the models on their
+  list through.
+- With the runtimes that build the model: `opencode`, `hermes`, and
+  `deepagents` or `strands` without an `entrypoint`.
+
+In every other case (a graph with an `entrypoint`, an HTTP app,
+`CustomRuntime`), your code gets `ctx.model = None` (`undefined` in Node) and
+picks its own. On AgentCore, a model outside Bedrock needs
+[`--external-model`](desplegar-en-agentcore.md#modelos-fuera-de-bedrock).
+
 ### What resolves by itself and what does not { #que-se-resuelve-solo }
 
 Each value comes, in this order, from the argument or flag, the file, an

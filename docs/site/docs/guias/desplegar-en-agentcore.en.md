@@ -444,6 +444,33 @@ rayito agent deploy ./my-agent --target agentcore \
   --readable-secret my-app/external-key
 ```
 
+### Models outside Bedrock { #modelos-fuera-de-bedrock }
+
+Without a secret gateway, a model that is not on Bedrock is not wired by
+itself: it is `provider_unsupported`. If your code calls an OpenAI-compatible
+LLM gateway and gets its key on its own, `--external-model`
+(`external_model=True` / `externalModel: true`) allows it:
+
+```bash
+rayito agent deploy ./my-agent --target agentcore --external-model \
+  --readable-secret rayito/agents/my-agent/llm
+```
+
+With the option:
+
+- The role gets no Bedrock permission you do not ask for: the project model is
+  not added, and without `--bedrock-model` the plan says `noBedrockModels`.
+- If `[model]` names `base_url_env` and its gateway has an `upstream`, the
+  runtime environment carries that variable with the `upstream` plus
+  `base_path`. It is not a secret.
+- The key **never** goes into the runtime environment (`GetAgentRuntime`
+  returns it in clear text). Your code reads it with the role, thanks to
+  `--readable-secret`.
+- The plan adds the `externalModel` security line.
+
+A project with a `bedrock` provider and no `[model] id` needs
+`--bedrock-model`; otherwise the plan fails with `model_required`.
+
 ### Tags for organizations that require them { #etiquetas }
 
 An SCP that requires tags denies creating resources without them. `--tag K=V`
@@ -532,6 +559,11 @@ is served only by the microVM metadata service. For OpenCode, the build context
 includes the same helper and an AWS profile with `credential_process` that runs
 it (`AWS_CONFIG_FILE` and `AWS_PROFILE` in the image environment): OpenCode gets
 credentials with an expiry time and refreshes them on its own.
+
+With `--external-model` the agent calls a model outside Bedrock over the
+Internet with a key your code obtains (`--readable-secret` or
+`--secret-env`): Rayito neither sees it nor filters that traffic, and the plan
+says so with the `externalModel` line.
 
 ## Errors { #errores }
 

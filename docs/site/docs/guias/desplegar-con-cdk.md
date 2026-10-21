@@ -248,6 +248,7 @@ La primera vez tarda unos minutos (casi todo es el build de la imagen); un
 | `tags` | `tags` | `--tag` | Etiquetas para todos los recursos del constructo |
 | `build` | `build` | — | `AgentImageBuild.codeBuild()` (por defecto) o `localDocker()` ([abajo](#construir-la-imagen)) |
 | `exportOutputs` | `export_outputs` | — | `true` añade `CfnOutput` con el ARN y el id del runtime; por defecto no se añade ninguno |
+| `externalModel` | `external_model` | `--external-model` | `true` admite un modelo fuera de Bedrock sin dar al rol permisos de Bedrock que no pidas ([guía](desplegar-en-agentcore.md#modelos-fuera-de-bedrock)); por defecto, `false` |
 
 Las reglas son las de la CLI y los errores también (`name_invalid`,
 `tags_invalid`, `lifecycle_order`, `iam_resource_invalid`,

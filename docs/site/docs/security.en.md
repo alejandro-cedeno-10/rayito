@@ -593,6 +593,14 @@ touched (`name_conflict`).
 organization with SCPs that require tags needs `--tag`, and the tags of an
 already created runtime are not updated.
 
+**Model outside Bedrock (`--external-model`).** It is opt-in: without the
+option, a provider other than `bedrock` is still `provider_unsupported`. With
+it, the agent calls its LLM gateway over the `PUBLIC` network with a key its
+code obtains (`--readable-secret` or `--secret-env`): the role gets no Bedrock
+permission nobody asked for, the key never goes into the runtime environment
+variables (only the base URL, which is not a secret) and Rayito neither sees it
+nor filters that traffic. The plan says so with the `externalModel` line.
+
 ## CDK constructs: custom-resource and image-build roles (T37) { #cdk }
 
 Summary of **T37** in

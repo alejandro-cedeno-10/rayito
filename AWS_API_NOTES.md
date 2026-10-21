@@ -2487,3 +2487,13 @@ adicional), `State` (`MicrovmImageState`), `LatestActiveImageVersion`,
   actualizó ninguna imagen, así que no se vio si una actualización borra las
   versiones anteriores (el manejador de `update` pide
   `DeleteMicrovmImageVersion`, pero el esquema no dice cuándo lo usa).
+- **Q190 — Un runtime de AgentCore sin permisos de Bedrock llamando a una
+  pasarela externa por la red `PUBLIC` (`--external-model`, ADR-033 D2).**
+  **Pendiente** de la aceptación de `agnostic-agent-deploy` (sección Z de su
+  `tasks.md`). Qué se mide: que el rol del runtime no tiene ninguna sentencia
+  `bedrock:InvokeModel*` sin `--bedrock-model`, que `GetSecretValue` sólo
+  alcanza el ARN de `--readable-secret`, que la variable de `base_url_env`
+  llega a `environmentVariables` y ninguna clave, y que una invocación sale a
+  `https://llm-gateway.example.com` (una pasarela compatible con OpenAI de
+  prueba) por la red `PUBLIC`. No introduce ningún parámetro nuevo de la API:
+  usa los de «Despliegue en AgentCore Runtime».

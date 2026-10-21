@@ -256,11 +256,11 @@ carries an ARN, a URL, a token or AWS's raw text. Guide:
 | `option_not_supported` | a MicroVM option in the call does not apply to AgentCore | remove it; the message says which one to use instead ([table](../guias/desplegar-en-agentcore.md#opciones-que-no-aplican)) |
 | `option_requires_agentcore` | an AgentCore option (`--tag`, `--bedrock-model`…) with the `microvm` target | add `--target agentcore` or remove it |
 | `target_unsupported` | `rayito agent list` or `delete` without `--target agentcore` | use `--target agentcore`; a MicroVM fleet is stopped with `rayito agent stop` |
-| `provider_unsupported` | the project's model is not a Bedrock one | AgentCore only wires `bedrock`, with the runtime role |
+| `provider_unsupported` | the project's model is not a Bedrock one | AgentCore only wires `bedrock`, with the runtime role; for another model, `--external-model` ([guide](../guias/desplegar-en-agentcore.md#modelos-fuera-de-bedrock)) |
 | `network_policy_unsupported` | the project declares `egress` or `network` | remove it: in PUBLIC mode AgentCore does not filter egress |
 | `name_invalid` | the agent name does not fit the derived names | up to 41 characters, lowercase letters and digits with single `-` or `_`; change it with `[image].template` |
 | `name_conflict` | a runtime with that name already exists and is not Rayito's | change the name with `[image].template`; Rayito does not touch other runtimes |
-| `model_required` | reserved: not raised today (the runtime role always includes the project's model) | — |
+| `model_required` | the project uses `bedrock` without `[model] id` and you pass no `--bedrock-model` | set `[model] id` or pass it with `--bedrock-model` (`bedrock_models` / `bedrockModels`) |
 | `image_missing` | `--no-build` and there is no image with that content | deploy without `--no-build` |
 | `lifecycle_invalid` | a lifecycle time out of range, or not an integer (in TypeScript, not a multiple of 1000 ms) | between 60 and 28,800 s |
 | `lifecycle_order` | `idle_session_timeout` greater than `max_session_lifetime` | lower the idle timeout or raise the maximum lifetime |
