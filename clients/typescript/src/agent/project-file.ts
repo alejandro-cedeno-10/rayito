@@ -252,6 +252,10 @@ export function* detectProjectSteps(
     return [AgentProject.fromObject(document, { baseDir, readText }), undefined];
   }
   const region = options.region ?? documentRegion(document) ?? environmentRegion();
-  const filled = detectedDocument(document, report, { name: projectNameOf(baseDir), region });
+  const filled = detectedDocument(document, report, {
+    name: projectNameOf(baseDir),
+    region,
+    overrides,
+  });
   return [AgentProject.fromObject(filled, { baseDir, readText }), report];
 }

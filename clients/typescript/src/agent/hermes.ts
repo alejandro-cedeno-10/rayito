@@ -32,7 +32,7 @@ import {
   MODEL_CREDENTIAL_PLACEHOLDER,
 } from "../limits.js";
 import { HERMES_REQUIREMENTS } from "./assets/template-assets.gen.js";
-import type { AgentSpec } from "./domain.js";
+import { type AgentSpec, requiredModelId } from "./domain.js";
 import {
   HostBackedRuntime,
   type HostSetup,
@@ -288,7 +288,7 @@ export class HermesRuntime extends HostBackedRuntime implements InstallableRunti
       v: AGENT_PROTOCOL_VERSION,
       provider: spec.model.provider,
       client,
-      model: spec.model.id,
+      model: requiredModelId(spec.model, this.name),
       region: spec.model.region ?? null,
       base_url: baseUrl ?? null,
       credential_placeholder: baseUrl === undefined ? null : MODEL_CREDENTIAL_PLACEHOLDER,

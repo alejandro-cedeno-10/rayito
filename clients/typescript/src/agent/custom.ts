@@ -564,7 +564,8 @@ export class CustomRuntime extends HostBackedRuntime implements InstallableRunti
     return PYTHON_FLAG_ENVS;
   }
 
-  /** Las variables estándar del proveedor más las `RAYITO_MODEL_*`. */
+  /** Las variables estándar del proveedor más las `RAYITO_MODEL_*`
+   * (`RAYITO_MODEL_ID` sólo si se conoce el id). */
   override wiringEnvs(
     spec: AgentSpec,
     urls: Readonly<Record<string, string>> | undefined,
@@ -572,7 +573,9 @@ export class CustomRuntime extends HostBackedRuntime implements InstallableRunti
     const envs = standardModelEnvs(spec, urls);
     const model = spec.model;
     envs[MODEL_PROVIDER_ENV] = model.provider;
-    envs[MODEL_ID_ENV] = model.id;
+    if (model.id !== undefined) {
+      envs[MODEL_ID_ENV] = model.id;
+    }
     if (model.region !== undefined) {
       envs[MODEL_REGION_ENV] = model.region;
     }
@@ -619,7 +622,7 @@ export class CustomRuntime extends HostBackedRuntime implements InstallableRunti
       invoke_path: app.invokePath,
       protocol: app.protocol,
       workdir,
-      model: spec.model.id,
+      model: spec.model.id ?? null,
       ...this.#environmentOptions(),
     };
     if (app.requestField !== undefined) {
@@ -641,7 +644,7 @@ export class CustomRuntime extends HostBackedRuntime implements InstallableRunti
       bridge: NODE_BRIDGE_PATH,
       adapter: this.adapter,
       entrypoint: this.entrypoint,
-      model: spec.model.id,
+      model: spec.model.id ?? null,
       instructions: spec.instructions ?? null,
       workdir,
       app_dir: AGENT_APP_DIR,

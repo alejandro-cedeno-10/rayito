@@ -1,0 +1,19 @@
+{
+  "overrides": {
+    "model_id": "demo-model",
+    "model_provider": "litellm",
+    "model_base_url": "https://llm-gateway.example.com"
+  },
+  "model": {
+    "provider": "openai-compatible",
+    "id": "demo-model",
+    "gateway": "litellm"
+  },
+  "gateways": {
+    "litellm": {
+      "preset": "litellm",
+      "secret": "rayito/agents/ticket-agent/litellm",
+      "upstream": "https://llm-gateway.example.com"
+    }
+  }
+}

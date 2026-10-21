@@ -195,23 +195,39 @@ def standard_model_envs(spec: AgentSpec, urls: Mapping[str, str] | None) -> dict
     """Las variables estándar del proveedor del modelo apuntadas a la
     pasarela con el marcador como clave, de modo que también un cliente que
     construyas tú (sin el `ctx.model` ya cableado) pase por ella y no por
-    credenciales que el agente pudiera leer. `urls=None` es el contenedor
-    exportado: sólo la región, la credencial la pone la plataforma."""
+    credenciales que el agente pudiera leer, más las que nombra `AgentModel`
+    (`model_env_names`). `urls=None` es el contenedor exportado: sólo la
+    región y el id, la credencial la pone la plataforma."""
     model = spec.model
     envs: dict[str, str] = {}
     if model.region is not None:
         envs[BEDROCK_REGION_ENV] = model.region
     if urls is None:
-        return envs
+        return {**envs, **model_env_names(spec, None)}
     base_url = model_base_url(spec, urls)
     if model.provider == "bedrock":
         envs[BEDROCK_KEY_ENV] = MODEL_CREDENTIAL_PLACEHOLDER
         envs[BEDROCK_ENDPOINT_ENV] = base_url
-        return envs
-    standard = STANDARD_PROVIDER_ENVS.get(model.provider)
-    if standard is not None:
-        envs[standard[0]] = MODEL_CREDENTIAL_PLACEHOLDER
-        envs[standard[1]] = base_url
+    else:
+        standard = STANDARD_PROVIDER_ENVS.get(model.provider)
+        if standard is not None:
+            envs[standard[0]] = MODEL_CREDENTIAL_PLACEHOLDER
+            envs[standard[1]] = base_url
+    return {**envs, **model_env_names(spec, base_url)}
+
+
+def model_env_names(spec: AgentSpec, base_url: str | None) -> dict[str, str]:
+    """Las variables con las que tu código lee su modelo (`AgentModel.id_env`,
+    `base_url_env` y `api_key_env`): el id si se conoce, y con pasarela su URL
+    y el marcador de la clave, nunca la clave real (ADR-033 D2)."""
+    model = spec.model
+    envs: dict[str, str] = {}
+    if model.id_env is not None and model.id is not None:
+        envs[model.id_env] = model.id
+    if base_url is not None and model.base_url_env is not None:
+        envs[model.base_url_env] = base_url
+    if base_url is not None and model.api_key_env is not None:
+        envs[model.api_key_env] = MODEL_CREDENTIAL_PLACEHOLDER
     return envs
 
 
@@ -399,6 +415,7 @@ __all__ = [
     "env_file_bytes",
     "failure_line",
     "model_base_url",
+    "model_env_names",
     "permission_rules",
     "provider_base_url",
     "require_supported_provider",

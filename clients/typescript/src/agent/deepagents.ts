@@ -28,6 +28,7 @@ import {
   type AgentPermissions,
   type AgentSpec,
   DEFAULT_DENIED_TOOLS,
+  requiredModelId,
   validateModelId,
 } from "./domain.js";
 import type { AgentEvent, AgentFailed, Done } from "./events.js";
@@ -73,6 +74,8 @@ import {
   wiringUrls,
 } from "./runtime.js";
 
+/** El nombre del runtime en el registro y en los mensajes. */
+export const DEEPAGENTS_RUNTIME_NAME = "deepagents";
 /** Estado de deepagents dentro de `AGENT_STATE_DIR`. */
 export const DEEPAGENTS_STATE_DIR = `${AGENT_STATE_DIR}/deepagents`;
 /** La configuración estática que lee el runner. */
@@ -238,7 +241,10 @@ export function buildDeepAgentsConfig(
   return {
     v: AGENT_PROTOCOL_VERSION,
     provider: model.provider,
-    model: model.id,
+    model:
+      options.entrypoint === undefined
+        ? requiredModelId(model, DEEPAGENTS_RUNTIME_NAME)
+        : (model.id ?? null),
     region: model.region ?? null,
     base_url: baseUrl ?? null,
     credential_placeholder: baseUrl === undefined ? null : MODEL_CREDENTIAL_PLACEHOLDER,
@@ -253,12 +259,17 @@ export function buildDeepAgentsConfig(
   };
 }
 
+/** La URL del cliente que construye el runner; sin pasarela y sin id no se
+ * construye ninguno (tu grafo elige su modelo) y no hace falta. */
 function baseUrlOf(
   spec: AgentSpec,
   gatewayUrls: Readonly<Record<string, string>> | undefined,
 ): string | undefined {
   const model = spec.model;
   if (gatewayUrls === undefined) {
+    if (model.id === undefined) {
+      return undefined;
+    }
     if (
       !(model.provider in DEEPAGENTS_NATIVE_BASE_PATHS) &&
       !["bedrock", "anthropic"].includes(model.provider)
@@ -315,7 +326,7 @@ function runScript(configPath: string): string {
  * `AgentModel({ promptCaching: false })` lo apaga.
  */
 export class DeepAgents implements AgentRuntime, InstallableRuntime, ServableRuntime {
-  readonly name = "deepagents";
+  readonly name = DEEPAGENTS_RUNTIME_NAME;
   readonly entrypoint: string | undefined;
   readonly requireEntrypoint: boolean;
   readonly requirements: string | undefined;

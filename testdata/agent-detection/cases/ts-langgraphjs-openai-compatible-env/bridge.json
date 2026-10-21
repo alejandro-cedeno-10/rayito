@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "missing_key",
+    "path": "gateways.openai-compatible.upstream"
+  }
+}

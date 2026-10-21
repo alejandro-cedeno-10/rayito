@@ -42,7 +42,7 @@ import {
   STRANDS_HARNESS_REQUIREMENTS,
   STRANDS_REQUIREMENTS,
 } from "./assets/template-assets.gen.js";
-import type { AgentSpec } from "./domain.js";
+import { type AgentSpec, requiredModelId } from "./domain.js";
 import {
   HostBackedRuntime,
   type HostSetup,
@@ -344,6 +344,15 @@ export class StrandsRuntime extends HostBackedRuntime implements InstallableRunt
     return standardModelEnvs(spec, urls);
   }
 
+  /** Sin `entrypoint` el host construye el agente y necesita el id; con él,
+   * `ctx.model` no existe si tu código elige el modelo. */
+  #modelId(spec: AgentSpec): string | null {
+    if (this.entrypoint === undefined) {
+      return requiredModelId(spec.model, this.name);
+    }
+    return spec.model.id ?? null;
+  }
+
   hostSetup(
     spec: AgentSpec,
     urls: Readonly<Record<string, string>> | undefined,
@@ -360,7 +369,7 @@ export class StrandsRuntime extends HostBackedRuntime implements InstallableRunt
       v: AGENT_PROTOCOL_VERSION,
       provider: spec.model.provider,
       client: entry.client,
-      model: spec.model.id,
+      model: this.#modelId(spec),
       region: spec.model.region ?? null,
       base_url: baseUrl ?? null,
       credential_placeholder: baseUrl === undefined ? null : MODEL_CREDENTIAL_PLACEHOLDER,

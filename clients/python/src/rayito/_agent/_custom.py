@@ -455,11 +455,13 @@ class CustomRuntime(HostBackedRuntime):
         return PYTHON_FLAG_ENVS
 
     def wiring_envs(self, spec: AgentSpec, urls: Mapping[str, str] | None) -> Mapping[str, str]:
-        """Las variables estándar del proveedor más las `RAYITO_MODEL_*`."""
+        """Las variables estándar del proveedor más las `RAYITO_MODEL_*`
+        (`RAYITO_MODEL_ID` sólo si se conoce el id)."""
         envs = standard_model_envs(spec, urls)
         model = spec.model
         envs[MODEL_PROVIDER_ENV] = model.provider
-        envs[MODEL_ID_ENV] = model.id
+        if model.id is not None:
+            envs[MODEL_ID_ENV] = model.id
         if model.region is not None:
             envs[MODEL_REGION_ENV] = model.region
         if urls is not None:

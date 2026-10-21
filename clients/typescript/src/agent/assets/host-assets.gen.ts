@@ -1421,19 +1421,27 @@ def _classify(exc: BaseException) -> tuple[str, str]:
     return classify_by_module(exc, MODEL_ERROR_MODULES)
 
 
-def build_context(config: Mapping[str, Any], model_id: str) -> RunnerContext:
+def build_context(config: Mapping[str, Any], model_id: str | None) -> RunnerContext:
+    """El \`ctx\` de tu \`entrypoint\`. Sin id (ni en la petición ni en la
+    configuración) no se construye ningún modelo y \`ctx.model\` es \`None\`: tu
+    grafo elige el suyo."""
     if not config.get("prompt_caching", True):
         disable_prompt_caching(importlib.import_module("deepagents.graph"))
     backends = importlib.import_module("deepagents.backends")
     workdir = str(config["workdir"])
     return RunnerContext(
-        model=build_model(config, model_id),
+        model=optional_model(config, model_id),
         instructions=config.get("instructions"),
         subagents=subagents_of(config, lambda sub_model: build_model(config, sub_model)),
         backend=backends.LocalShellBackend(root_dir=workdir, virtual_mode=False),
         middleware=[permission_middleware(config["permissions"])],
         workdir=workdir,
     )
+
+
+def optional_model(config: Mapping[str, Any], model_id: str | None) -> Any:
+    """\`build_model\` sólo si hay un id que construir."""
+    return None if model_id is None else build_model(config, model_id)
 
 
 def stream_events(
@@ -2855,6 +2863,13 @@ def build_model(config: Mapping[str, Any], model_id: str) -> Any:
     raise AgentFailure("protocol_error", "unknown_provider")
 
 
+def optional_model(config: Mapping[str, Any], model_id: str | None) -> Any:
+    """\`build_model\` sólo si hay un id (el de la petición o el de la
+    configuración); sin él tu \`entrypoint\` recibe \`ctx.model = None\` y elige
+    su modelo."""
+    return None if model_id is None else build_model(config, model_id)
+
+
 def register_permissions(agent: Any, rules: Mapping[str, Any], aliases: Mapping[str, str]) -> None:
     """Un gancho \`BeforeToolCallEvent\` que cancela con un resultado de error
     toda llamada que \`decide()\` deniega. Se añade una sola vez por agente."""
@@ -3009,7 +3024,7 @@ class Driver:
         state.session_id = session_id
         emit(build_event("session", session_id=session_id))
         try:
-            model = build_model(config, request.model or str(config["model"]))
+            model = optional_model(config, request.model or config.get("model"))
             agent = build_agent(config, model, session_id)
             register_permissions(
                 agent, config.get("permissions", {}), config.get("permission_aliases", {})

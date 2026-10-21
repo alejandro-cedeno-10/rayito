@@ -32,6 +32,7 @@ from rayito._agent._deploy_domain import (
     validate_image_version,
 )
 from rayito._agent._domain import (
+    MODEL_ENV_KEYS,
     AgentLimits,
     AgentModel,
     AgentPermissions,
@@ -145,6 +146,7 @@ SECRET_VALUE_PREFIXES: Final[tuple[str, ...]] = (
 #: Pasarelas de `[gateways.<nombre>] preset = ...`, además de `"custom"`.
 CUSTOM_GATEWAY_PRESET: Final = "custom"
 _RATE_KEY: Final = "rate_per_minute"
+_MODELS_KEY: Final = "models"
 _ENV_NAME_PATTERN: Final = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 _T = TypeVar("_T")
 
@@ -913,7 +915,38 @@ def _project_kwargs(
     root.finish()
     _check_gateways(kwargs["spec"], gateways)
     _check_concurrency(kwargs)
+    _check_model(kwargs, _gateway_presets(data))
     return kwargs
+
+
+def _gateway_presets(data: Mapping[str, object]) -> dict[str, str]:
+    """`[gateways.<nombre>] preset` de cada pasarela del documento (ya
+    validado): `AgentProject` sólo guarda la pasarela construida."""
+    gateways = data.get("gateways")
+    if not isinstance(gateways, Mapping):
+        return {}
+    return {
+        str(name): str(entry["preset"])
+        for name, entry in gateways.items()
+        if isinstance(entry, Mapping) and isinstance(entry.get("preset"), str)
+    }
+
+
+def _check_model(kwargs: Mapping[str, Any], presets: Mapping[str, str]) -> None:
+    """El id del modelo donde Rayito lo usa y los nombres de `[model]` que
+    no repiten una variable de `[env]` (`conflict`)."""
+    model: AgentModel = kwargs["spec"].model
+    runtime = runtime_to_options(kwargs["runtime"])
+    require_model_id(
+        model.id,
+        runtime=str(runtime["kind"]),
+        entrypoint=runtime.get("entrypoint") is not None,
+        gateway_preset=presets.get(model.gateway),
+    )
+    env = kwargs.get("env", {})
+    for key, name in model.env_names().items():
+        if name in env:
+            raise _error(f"model.{key}", "conflict", "esa variable ya está en [env]")
 
 
 def _check_concurrency(kwargs: Mapping[str, Any]) -> None:
@@ -997,26 +1030,40 @@ def _read_source(table: _Table | None, base_dir: str) -> dict[str, object]:
 
 def _read_model(table: _Table) -> AgentModel:
     provider = table.text("provider", required=True)
-    model_id = table.text("id", required=True)
+    model_id = table.text("id")
     gateway = table.text("gateway", required=True)
     region = table.text("region")
     base_path = table.text("base_path")
     caching = table.boolean("prompt_caching")
+    extra: dict[str, object] = _read_model_env_names(table)
     table.finish()
-    extra: dict[str, object] = {}
     if caching is not None:
         extra["prompt_caching"] = caching
     return _guard(
         "model",
         lambda: AgentModel(
             provider=provider,  # type: ignore[arg-type]
-            id=str(model_id),
+            id=model_id,
             gateway=str(gateway),
             region=region,
             base_path=base_path or "",
             **extra,  # type: ignore[arg-type]
         ),
     )
+
+
+def _read_model_env_names(table: _Table) -> dict[str, object]:
+    """Las claves `MODEL_ENV_KEYS` de `[model]` que el fichero fija: nombres
+    de variable, nunca valores."""
+    names: dict[str, object] = {}
+    for key in MODEL_ENV_KEYS:
+        name = table.text(key)
+        if name is None:
+            continue
+        if not _ENV_NAME_PATTERN.fullmatch(name):
+            raise _error(table.at(key), "invalid_value", "debe ser un nombre de variable")
+        names[key] = name
+    return names
 
 
 def _read_agent(
@@ -1305,6 +1352,58 @@ _GATEWAY_PRESETS: Final[Mapping[str, _Preset]] = {
 }
 
 
+#: Las pasarelas que filtran por modelo (la lista `models` de su ruta): con
+#: ellas el id del modelo es obligatorio (ADR-033 D2).
+MODEL_ID_REQUIRED_PRESETS: Final[tuple[str, ...]] = tuple(
+    name for name, preset in _GATEWAY_PRESETS.items() if _MODELS_KEY in preset.required
+)
+#: Los runtimes que siempre construyen ellos el modelo, y los que lo
+#: construyen sólo cuando no tienen `entrypoint` (sin código tuyo).
+MODEL_BUILDING_RUNTIMES: Final[tuple[str, ...]] = ("opencode", "hermes")
+DEFAULT_AGENT_RUNTIMES: Final[tuple[str, ...]] = ("deepagents", "strands", "strands-harness")
+_MODEL_ID_PATH: Final = "model.id"
+_MISSING_KEY: Final = "missing_key"
+_NOT_DETECTED: Final = "not_detected"
+
+
+def model_id_required(*, runtime: str, entrypoint: bool, gateway_preset: str | None) -> bool:
+    """Si Rayito necesita el id del modelo: lo pide una pasarela que filtra
+    por modelo o un runtime que construye el modelo
+    (`testdata/agent-model-optional/requirement.json`)."""
+    if gateway_preset in MODEL_ID_REQUIRED_PRESETS or runtime in MODEL_BUILDING_RUNTIMES:
+        return True
+    return runtime in DEFAULT_AGENT_RUNTIMES and not entrypoint
+
+
+def require_model_id(
+    model_id: str | None,
+    *,
+    runtime: str,
+    entrypoint: bool,
+    gateway_preset: str | None,
+    detected: bool = False,
+) -> None:
+    """`AgentProjectException` en `model.id` si falta y hace falta:
+    `not_detected` si el proyecto sale de la detección y `missing_key` si
+    sale de un fichero."""
+    if model_id is not None or not model_id_required(
+        runtime=runtime, entrypoint=entrypoint, gateway_preset=gateway_preset
+    ):
+        return
+    if detected:
+        raise _error(
+            _MODEL_ID_PATH,
+            _NOT_DETECTED,
+            "no se encontró el id del modelo en el código: escríbelo como literal, pásalo con "
+            "--model-id o define [model] id en rayito-agent.toml (rayito agent detect --write)",
+        )
+    raise _error(
+        _MODEL_ID_PATH,
+        _MISSING_KEY,
+        "es obligatoria con esta pasarela o con un runtime que construye el modelo",
+    )
+
+
 def _read_gateways(root: _Table) -> dict[str, SecretGateway]:
     return {name: _read_gateway(name, entry) for name, entry in root.entries("gateways")}
 
@@ -1392,17 +1491,19 @@ def _source_to_dict(project: AgentProject) -> dict[str, object]:
 
 
 def _model_to_dict(model: AgentModel) -> dict[str, object]:
-    table: dict[str, object] = {
-        "provider": model.provider,
-        "id": model.id,
-        "gateway": model.gateway,
-    }
+    """`[model]` canónico: `id` y los nombres de variable sólo si están
+    puestos, así que un proyecto con id se escribe igual que antes."""
+    table: dict[str, object] = {"provider": model.provider}
+    if model.id is not None:
+        table["id"] = model.id
+    table["gateway"] = model.gateway
     if model.region is not None:
         table["region"] = model.region
     if model.base_path:
         table["base_path"] = model.base_path
     if not model.prompt_caching:
         table["prompt_caching"] = False
+    table.update(model.env_names())
     return table
 
 

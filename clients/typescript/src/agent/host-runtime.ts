@@ -196,8 +196,8 @@ export function modelBaseUrl(spec: AgentSpec, urls: Readonly<Record<string, stri
 /** Las variables estándar del proveedor del modelo apuntadas a la pasarela con
  * el marcador como clave, de modo que también un cliente que construyas tú
  * (sin el `ctx.model` ya cableado) pase por ella y no por credenciales que el
- * agente pudiera leer. `urls` ausente es el contenedor exportado: sólo la
- * región. */
+ * agente pudiera leer, más las que nombra `AgentModel` (`modelEnvNames`).
+ * `urls` ausente es el contenedor exportado: sólo la región y el id. */
 export function standardModelEnvs(
   spec: AgentSpec,
   urls: Readonly<Record<string, string>> | undefined,
@@ -207,18 +207,39 @@ export function standardModelEnvs(
     envs[BEDROCK_REGION_ENV] = spec.model.region;
   }
   if (urls === undefined) {
-    return envs;
+    return { ...envs, ...modelEnvNames(spec, undefined) };
   }
   const baseUrl = modelBaseUrl(spec, urls);
   if (spec.model.provider === "bedrock") {
     envs[BEDROCK_KEY_ENV] = MODEL_CREDENTIAL_PLACEHOLDER;
     envs[BEDROCK_ENDPOINT_ENV] = baseUrl;
-    return envs;
+  } else {
+    const standard = STANDARD_PROVIDER_ENVS[spec.model.provider];
+    if (standard !== undefined) {
+      envs[standard[0]] = MODEL_CREDENTIAL_PLACEHOLDER;
+      envs[standard[1]] = baseUrl;
+    }
   }
-  const standard = STANDARD_PROVIDER_ENVS[spec.model.provider];
-  if (standard !== undefined) {
-    envs[standard[0]] = MODEL_CREDENTIAL_PLACEHOLDER;
-    envs[standard[1]] = baseUrl;
+  return { ...envs, ...modelEnvNames(spec, baseUrl) };
+}
+
+/** Las variables con las que tu código lee su modelo (`AgentModel.idEnv`,
+ * `baseUrlEnv` y `apiKeyEnv`): el id si se conoce, y con pasarela su URL y el
+ * marcador de la clave, nunca la clave real (ADR-033 D2). */
+export function modelEnvNames(
+  spec: AgentSpec,
+  baseUrl: string | undefined,
+): Record<string, string> {
+  const model = spec.model;
+  const envs: Record<string, string> = {};
+  if (model.idEnv !== undefined && model.id !== undefined) {
+    envs[model.idEnv] = model.id;
+  }
+  if (baseUrl !== undefined && model.baseUrlEnv !== undefined) {
+    envs[model.baseUrlEnv] = baseUrl;
+  }
+  if (baseUrl !== undefined && model.apiKeyEnv !== undefined) {
+    envs[model.apiKeyEnv] = MODEL_CREDENTIAL_PLACEHOLDER;
   }
   return envs;
 }

@@ -54,6 +54,8 @@ import {
   McpLocal,
   McpRemote,
   type McpServer,
+  MODEL_ENV_FIELDS,
+  MODEL_ENV_KEYS,
   type ModelProvider,
   SubAgent,
   validateName,
@@ -137,6 +139,7 @@ export const CUSTOM_GATEWAY_PRESET = "custom";
 /** Milisegundos por segundo: el fichero habla en segundos. */
 const MS_PER_SECOND = 1000;
 const RATE_KEY = "rate_per_minute";
+const MODELS_KEY = "models";
 const DEFAULT_SERVE_TIMEOUT_MS = DEFAULT_AGENT_DEPLOY_TIMEOUT_SECONDS * MS_PER_SECOND;
 /** Plazo por defecto de la cola del servicio (y de la del cliente de una flota). */
 export const DEFAULT_QUEUE_TIMEOUT_MS = AGENT_SERVICE_QUEUE_TIMEOUT_SECONDS_DEFAULT * MS_PER_SECOND;
@@ -932,6 +935,12 @@ function projectOptions(
   root.finish();
   checkGateways(spec, gateways);
   checkConcurrency(serve, image);
+  checkModel(
+    spec.model,
+    runtime,
+    gatewayPresets(data),
+    env.env as Readonly<Record<string, string>>,
+  );
   return {
     name,
     runtime,
@@ -947,6 +956,43 @@ function projectOptions(
     ...deploy,
     ...image,
   };
+}
+
+/** `[gateways.<nombre>] preset` de cada pasarela del documento (ya
+ * validado): `AgentProject` sólo guarda la pasarela construida. */
+function gatewayPresets(data: Readonly<Record<string, unknown>>): Record<string, string> {
+  const gateways = data.gateways;
+  if (!isRecord(gateways)) {
+    return {};
+  }
+  const presets: Record<string, string> = {};
+  for (const [name, entry] of Object.entries(gateways)) {
+    if (isRecord(entry) && typeof entry.preset === "string") {
+      presets[name] = entry.preset;
+    }
+  }
+  return presets;
+}
+
+/** El id del modelo donde Rayito lo usa y los nombres de `[model]` que no
+ * repiten una variable de `[env]` (`conflict`). */
+function checkModel(
+  model: AgentModel,
+  runtime: AgentRuntime | string,
+  presets: Readonly<Record<string, string>>,
+  env: Readonly<Record<string, string>> | undefined,
+): void {
+  const options = runtimeToOptions(runtime);
+  requireModelId(model.id, {
+    runtime: String(options.kind),
+    entrypoint: options.entrypoint !== undefined,
+    gatewayPreset: presets[model.gateway],
+  });
+  for (const [key, name] of Object.entries(model.envNames())) {
+    if (env !== undefined && Object.hasOwn(env, name)) {
+      throw fail(`model.${key}`, "conflict", "esa variable ya está en [env]");
+    }
+  }
 }
 
 function checkConcurrency(serveFields: Fields, imageFields: Fields): void {
@@ -1054,11 +1100,12 @@ function readSource(table: Table | undefined, baseDir: string): Fields {
 
 function readModel(table: Table): AgentModel {
   const provider = table.text("provider", true) as string;
-  const id = table.text("id", true) as string;
+  const id = table.text("id");
   const gateway = table.text("gateway", true) as string;
   const region = table.text("region");
   const basePath = table.text("base_path");
   const caching = table.boolean("prompt_caching");
+  const names = readModelEnvNames(table);
   table.finish();
   return guard(
     "model",
@@ -1070,8 +1117,26 @@ function readModel(table: Table): AgentModel {
         region,
         basePath: basePath ?? "",
         promptCaching: caching,
+        ...names,
       }),
   );
+}
+
+/** Las claves `MODEL_ENV_KEYS` de `[model]` que el fichero fija: nombres de
+ * variable, nunca valores. */
+function readModelEnvNames(table: Table): Record<string, string> {
+  const names: Record<string, string> = {};
+  for (const key of MODEL_ENV_KEYS) {
+    const name = table.text(key);
+    if (name === undefined) {
+      continue;
+    }
+    if (!ENV_NAME_PATTERN.test(name)) {
+      throw fail(table.at(key), "invalid_value", "debe ser un nombre de variable");
+    }
+    names[MODEL_ENV_FIELDS[key]] = name;
+  }
+  return names;
 }
 
 function readAgent(
@@ -1459,10 +1524,76 @@ const GATEWAY_PRESETS: Readonly<Record<string, Preset>> = Object.freeze({
   },
 });
 
+/** Las pasarelas que filtran por modelo (la lista `models` de su ruta): con
+ * ellas el id del modelo es obligatorio (ADR-033 D2). */
+export const MODEL_ID_REQUIRED_PRESETS: readonly string[] = Object.freeze(
+  Object.entries(GATEWAY_PRESETS)
+    .filter(([, preset]) => preset.required.includes(MODELS_KEY))
+    .map(([name]) => name),
+);
+/** Los runtimes que siempre construyen ellos el modelo, y los que lo
+ * construyen sólo cuando no tienen `entrypoint` (sin código tuyo). */
+export const MODEL_BUILDING_RUNTIMES: readonly string[] = Object.freeze(["opencode", "hermes"]);
+export const DEFAULT_AGENT_RUNTIMES: readonly string[] = Object.freeze([
+  "deepagents",
+  "strands",
+  "strands-harness",
+]);
+const MODEL_ID_PATH = "model.id";
+
+/** Lo que decide si hace falta el id del modelo. */
+export interface ModelIdRequirement {
+  readonly runtime: string;
+  readonly entrypoint: boolean;
+  readonly gatewayPreset: string | undefined;
+  readonly detected?: boolean | undefined;
+}
+
+/** Si Rayito necesita el id del modelo: lo pide una pasarela que filtra por
+ * modelo o un runtime que construye el modelo
+ * (`testdata/agent-model-optional/requirement.json`). */
+export function modelIdRequired(requirement: ModelIdRequirement): boolean {
+  const { runtime, entrypoint, gatewayPreset } = requirement;
+  if (
+    (gatewayPreset !== undefined && MODEL_ID_REQUIRED_PRESETS.includes(gatewayPreset)) ||
+    MODEL_BUILDING_RUNTIMES.includes(runtime)
+  ) {
+    return true;
+  }
+  return DEFAULT_AGENT_RUNTIMES.includes(runtime) && !entrypoint;
+}
+
+/** `AgentProjectError` en `model.id` si falta y hace falta: `not_detected` si
+ * el proyecto sale de la detección y `missing_key` si sale de un fichero. */
+export function requireModelId(modelId: string | undefined, requirement: ModelIdRequirement): void {
+  if (modelId !== undefined || !modelIdRequired(requirement)) {
+    return;
+  }
+  if (requirement.detected === true) {
+    throw fail(
+      MODEL_ID_PATH,
+      "not_detected",
+      "no se encontró el id del modelo en el código: escríbelo como literal, pásalo con " +
+        "--model-id o define [model] id en rayito-agent.toml (rayito agent detect --write)",
+    );
+  }
+  throw fail(
+    MODEL_ID_PATH,
+    "missing_key",
+    "es obligatoria con esta pasarela o con un runtime que construye el modelo",
+  );
+}
+
 /** Las claves de un preset de pasarela (además de `secret` y `rate_per_minute`):
  * lo que `AgentProject.detect` tiene que rellenar con la región y los modelos. */
 export function gatewayPresetKeys(preset: string): readonly string[] {
   return Object.hasOwn(GATEWAY_PRESETS, preset) ? (GATEWAY_PRESETS[preset]?.keys ?? []) : [];
+}
+
+/** Las claves obligatorias de un preset de pasarela (las demás son
+ * opcionales y la detección las deja fuera). */
+export function gatewayPresetRequiredKeys(preset: string): readonly string[] {
+  return Object.hasOwn(GATEWAY_PRESETS, preset) ? (GATEWAY_PRESETS[preset]?.required ?? []) : [];
 }
 
 /** El nombre de cada opción del fichero (snake_case) en `gateways.ts`. */
@@ -1564,12 +1695,14 @@ function sourceToObject(project: AgentProject): Record<string, unknown> {
   return table;
 }
 
+/** `[model]` canónico: `id` y los nombres de variable sólo si están
+ * puestos, así que un proyecto con id se escribe igual que antes. */
 function modelToObject(model: AgentModel): Record<string, unknown> {
-  const table: Record<string, unknown> = {
-    provider: model.provider,
-    id: model.id,
-    gateway: model.gateway,
-  };
+  const table: Record<string, unknown> = { provider: model.provider };
+  if (model.id !== undefined) {
+    table.id = model.id;
+  }
+  table.gateway = model.gateway;
   if (model.region !== undefined) {
     table.region = model.region;
   }
@@ -1579,7 +1712,7 @@ function modelToObject(model: AgentModel): Record<string, unknown> {
   if (!model.promptCaching) {
     table.prompt_caching = false;
   }
-  return table;
+  return { ...table, ...model.envNames() };
 }
 
 function secretRefName(value: SecretLike): string {

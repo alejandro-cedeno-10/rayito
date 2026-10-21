@@ -29,6 +29,7 @@ from rayito._agent._domain import (
     DEFAULT_DENIED_TOOLS,
     AgentPermissions,
     AgentSpec,
+    required_model_id,
     validate_model_id,
 )
 from rayito._agent._events import AgentEvent, AgentFailed, Done
@@ -99,6 +100,8 @@ DEEPAGENTS_REQUIREMENTS_NAME: Final = "requirements-deepagents.txt"
 #: Nombre con el que se copian los ficheros de dependencias de tu proyecto y
 #: el instalador por defecto (`pip`).
 DEEPAGENTS_USER_SLUG: Final = "deepagents"
+#: El nombre del runtime en el registro y en los mensajes.
+DEEPAGENTS_RUNTIME_NAME: Final = "deepagents"
 #: El runner (dato de paquete de `_agent/_runner/`) en el contexto de build.
 DEEPAGENTS_RUNNER_NAME: Final = "deepagents_runner.py"
 #: Donde la plantilla instala el runner, de root y 0755 (design.md §3).
@@ -201,7 +204,9 @@ def build_deepagents_config(
     return {
         "v": AGENT_PROTOCOL_VERSION,
         "provider": model.provider,
-        "model": model.id,
+        "model": model.id
+        if entrypoint is not None
+        else required_model_id(model, DEEPAGENTS_RUNTIME_NAME),
         "region": model.region,
         "base_url": base_url,
         "credential_placeholder": MODEL_CREDENTIAL_PLACEHOLDER if base_url is not None else None,
@@ -217,8 +222,12 @@ def build_deepagents_config(
 
 
 def _base_url(spec: AgentSpec, gateway_urls: Mapping[str, str] | None) -> str | None:
+    """La URL del cliente que construye el runner; sin pasarela y sin id no
+    se construye ninguno (tu grafo elige su modelo) y no hace falta."""
     model = spec.model
     if gateway_urls is None:
+        if model.id is None:
+            return None
         if model.provider not in DEEPAGENTS_NATIVE_BASE_PATHS and model.provider not in (
             "bedrock",
             "anthropic",
@@ -274,7 +283,7 @@ class DeepAgents:
     como clave). deepagents marca puntos de caché de prompts para Claude
     (Bedrock y Anthropic); `AgentModel(prompt_caching=False)` lo apaga."""
 
-    name: str = "deepagents"
+    name: str = DEEPAGENTS_RUNTIME_NAME
 
     def __init__(
         self,

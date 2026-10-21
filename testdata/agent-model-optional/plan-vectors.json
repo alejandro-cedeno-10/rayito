@@ -1,0 +1,327 @@
+{
+  "description": "Vectores del plan de `--target agentcore` con un modelo fuera de Bedrock (ADR-033 D2), con el formato de `testdata/agentcore-deploy/plan-vectors.json`; `call.agentcore.externalModel` es `AgentCoreOptions.external_model`. `expected` se compara entero salvo `imageTag` y `cost`; `externalModel` sólo aparece si vale true.",
+  "cases": [
+    {
+      "name": "modelo compatible con OpenAI con --external-model",
+      "target": "agentcore",
+      "region": "us-east-1",
+      "project": {
+        "schema": "rayito.agent-project/1",
+        "name": "ticket-agent",
+        "runtime": {
+          "kind": "langgraph",
+          "entrypoint": "agent:build_graph"
+        },
+        "model": {
+          "provider": "openai-compatible",
+          "gateway": "llm",
+          "base_path": "/v1",
+          "id_env": "LLM_MODEL",
+          "base_url_env": "LLM_BASE_URL",
+          "api_key_env": "LLM_API_KEY"
+        },
+        "gateways": {
+          "llm": {
+            "preset": "openai-compatible",
+            "secret": "rayito/agents/ticket-agent/llm",
+            "upstream": "https://llm-gateway.example.com",
+            "base_path": "/v1"
+          }
+        }
+      },
+      "call": {
+        "agentcore": {
+          "externalModel": true
+        }
+      },
+      "environ": {
+        "RAYITO_BUCKET": "amzn-s3-demo-bucket"
+      },
+      "expected": {
+        "target": "agentcore",
+        "name": "ticket-agent",
+        "region": "us-east-1",
+        "runtimeName": "rayito_ticket_agent",
+        "stackName": "rayito-agentcore-ticket-agent",
+        "repositoryName": "rayito/agentcore/ticket-agent",
+        "buildProjectName": "rayito-agentcore-ticket-agent",
+        "bucket": "amzn-s3-demo-bucket",
+        "bucketSource": "environment",
+        "network": "PUBLIC",
+        "bedrockModels": [],
+        "readableSecrets": [],
+        "environment": {
+          "AWS_DEFAULT_REGION": "us-east-1",
+          "AWS_REGION": "us-east-1",
+          "LLM_BASE_URL": "https://llm-gateway.example.com/v1"
+        },
+        "lifecycle": {
+          "idleSessionTimeoutSeconds": 900,
+          "maxSessionLifetimeSeconds": 28800
+        },
+        "tags": {},
+        "steps": [
+          {
+            "resource": "stack",
+            "name": "rayito-agentcore-ticket-agent",
+            "action": "planned",
+            "status": null
+          },
+          {
+            "resource": "image",
+            "name": "rayito/agentcore/ticket-agent",
+            "action": "planned",
+            "status": null
+          },
+          {
+            "resource": "runtime",
+            "name": "rayito_ticket_agent",
+            "action": "planned",
+            "status": null
+          }
+        ],
+        "security": [
+          "noGateway",
+          "noBedrockModels",
+          "externalModel",
+          "publicNetwork",
+          "sessionIsolation"
+        ],
+        "warnings": [],
+        "externalModel": true
+      }
+    },
+    {
+      "name": "modelo externo con su clave legible",
+      "target": "agentcore",
+      "region": "us-east-1",
+      "project": {
+        "schema": "rayito.agent-project/1",
+        "name": "ticket-agent",
+        "runtime": {
+          "kind": "langgraph",
+          "entrypoint": "agent:build_graph"
+        },
+        "model": {
+          "provider": "openai-compatible",
+          "gateway": "llm",
+          "base_path": "/v1",
+          "id_env": "LLM_MODEL",
+          "base_url_env": "LLM_BASE_URL",
+          "api_key_env": "LLM_API_KEY"
+        },
+        "gateways": {
+          "llm": {
+            "preset": "openai-compatible",
+            "secret": "rayito/agents/ticket-agent/llm",
+            "upstream": "https://llm-gateway.example.com",
+            "base_path": "/v1"
+          }
+        }
+      },
+      "call": {
+        "agentcore": {
+          "externalModel": true,
+          "readableSecrets": [
+            "rayito/agents/ticket-agent/llm"
+          ]
+        }
+      },
+      "environ": {
+        "RAYITO_BUCKET": "amzn-s3-demo-bucket"
+      },
+      "expected": {
+        "target": "agentcore",
+        "name": "ticket-agent",
+        "region": "us-east-1",
+        "runtimeName": "rayito_ticket_agent",
+        "stackName": "rayito-agentcore-ticket-agent",
+        "repositoryName": "rayito/agentcore/ticket-agent",
+        "buildProjectName": "rayito-agentcore-ticket-agent",
+        "bucket": "amzn-s3-demo-bucket",
+        "bucketSource": "environment",
+        "network": "PUBLIC",
+        "bedrockModels": [],
+        "readableSecrets": [
+          "rayito/agents/ticket-agent/llm"
+        ],
+        "environment": {
+          "AWS_DEFAULT_REGION": "us-east-1",
+          "AWS_REGION": "us-east-1",
+          "LLM_BASE_URL": "https://llm-gateway.example.com/v1"
+        },
+        "lifecycle": {
+          "idleSessionTimeoutSeconds": 900,
+          "maxSessionLifetimeSeconds": 28800
+        },
+        "tags": {},
+        "steps": [
+          {
+            "resource": "stack",
+            "name": "rayito-agentcore-ticket-agent",
+            "action": "planned",
+            "status": null
+          },
+          {
+            "resource": "image",
+            "name": "rayito/agentcore/ticket-agent",
+            "action": "planned",
+            "status": null
+          },
+          {
+            "resource": "runtime",
+            "name": "rayito_ticket_agent",
+            "action": "planned",
+            "status": null
+          }
+        ],
+        "security": [
+          "noGateway",
+          "noBedrockModels",
+          "readableSecrets",
+          "externalModel",
+          "publicNetwork",
+          "sessionIsolation"
+        ],
+        "warnings": [],
+        "externalModel": true
+      }
+    },
+    {
+      "name": "modelo externo y un modelo de Bedrock pedido",
+      "target": "agentcore",
+      "region": "us-east-1",
+      "project": {
+        "schema": "rayito.agent-project/1",
+        "name": "ticket-agent",
+        "runtime": {
+          "kind": "langgraph",
+          "entrypoint": "agent:build_graph"
+        },
+        "model": {
+          "provider": "openai-compatible",
+          "gateway": "llm",
+          "base_path": "/v1",
+          "id_env": "LLM_MODEL",
+          "base_url_env": "LLM_BASE_URL",
+          "api_key_env": "LLM_API_KEY"
+        },
+        "gateways": {
+          "llm": {
+            "preset": "openai-compatible",
+            "secret": "rayito/agents/ticket-agent/llm",
+            "upstream": "https://llm-gateway.example.com",
+            "base_path": "/v1"
+          }
+        }
+      },
+      "call": {
+        "agentcore": {
+          "externalModel": true,
+          "bedrockModels": [
+            "amazon.nova-lite-v1:0"
+          ]
+        }
+      },
+      "environ": {
+        "RAYITO_BUCKET": "amzn-s3-demo-bucket"
+      },
+      "expected": {
+        "target": "agentcore",
+        "name": "ticket-agent",
+        "region": "us-east-1",
+        "runtimeName": "rayito_ticket_agent",
+        "stackName": "rayito-agentcore-ticket-agent",
+        "repositoryName": "rayito/agentcore/ticket-agent",
+        "buildProjectName": "rayito-agentcore-ticket-agent",
+        "bucket": "amzn-s3-demo-bucket",
+        "bucketSource": "environment",
+        "network": "PUBLIC",
+        "bedrockModels": [
+          "amazon.nova-lite-v1:0"
+        ],
+        "readableSecrets": [],
+        "environment": {
+          "AWS_DEFAULT_REGION": "us-east-1",
+          "AWS_REGION": "us-east-1",
+          "LLM_BASE_URL": "https://llm-gateway.example.com/v1"
+        },
+        "lifecycle": {
+          "idleSessionTimeoutSeconds": 900,
+          "maxSessionLifetimeSeconds": 28800
+        },
+        "tags": {},
+        "steps": [
+          {
+            "resource": "stack",
+            "name": "rayito-agentcore-ticket-agent",
+            "action": "planned",
+            "status": null
+          },
+          {
+            "resource": "image",
+            "name": "rayito/agentcore/ticket-agent",
+            "action": "planned",
+            "status": null
+          },
+          {
+            "resource": "runtime",
+            "name": "rayito_ticket_agent",
+            "action": "planned",
+            "status": null
+          }
+        ],
+        "security": [
+          "noGateway",
+          "bedrockModels",
+          "externalModel",
+          "publicNetwork",
+          "sessionIsolation"
+        ],
+        "warnings": [],
+        "externalModel": true
+      }
+    },
+    {
+      "name": "modelo externo sin --external-model",
+      "target": "agentcore",
+      "region": "us-east-1",
+      "project": {
+        "schema": "rayito.agent-project/1",
+        "name": "ticket-agent",
+        "runtime": {
+          "kind": "langgraph",
+          "entrypoint": "agent:build_graph"
+        },
+        "model": {
+          "provider": "openai-compatible",
+          "gateway": "llm",
+          "base_path": "/v1",
+          "id_env": "LLM_MODEL",
+          "base_url_env": "LLM_BASE_URL",
+          "api_key_env": "LLM_API_KEY"
+        },
+        "gateways": {
+          "llm": {
+            "preset": "openai-compatible",
+            "secret": "rayito/agents/ticket-agent/llm",
+            "upstream": "https://llm-gateway.example.com",
+            "base_path": "/v1"
+          }
+        }
+      },
+      "call": {
+        "agentcore": {}
+      },
+      "environ": {
+        "RAYITO_BUCKET": "amzn-s3-demo-bucket"
+      },
+      "expected": {
+        "error": {
+          "code": "provider_unsupported",
+          "provider": "openai-compatible"
+        }
+      }
+    }
+  ]
+}

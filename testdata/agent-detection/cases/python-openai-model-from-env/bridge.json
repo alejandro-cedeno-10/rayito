@@ -1,0 +1,13 @@
+{
+  "model": {
+    "provider": "openai",
+    "gateway": "openai",
+    "id_env": "OPENAI_MODEL"
+  },
+  "gateways": {
+    "openai": {
+      "preset": "openai",
+      "secret": "rayito/agents/ticket-agent/openai"
+    }
+  }
+}

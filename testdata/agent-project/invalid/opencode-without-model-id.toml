@@ -1,0 +1,13 @@
+schema = "rayito.agent-project/1"
+name = "coder"
+
+[runtime]
+kind = "opencode"
+
+[model]
+provider = "openai"
+gateway = "openai"
+
+[gateways.openai]
+preset = "openai"
+secret = "rayito/openai-key"

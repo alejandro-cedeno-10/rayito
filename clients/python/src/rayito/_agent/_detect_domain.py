@@ -300,7 +300,7 @@ def detect(
         else _alternatives(index, rules, [language] if language else languages, sink)
     )
     deps = index.dependencies(language) if language is not None else {}
-    providers, models = detect_providers(index, rules, language, framework["framework"], deps, sink)
+    found = detect_providers(index, rules, language, framework["framework"], deps, sink, overrides)
     return DetectionReport(
         language=language,
         framework=framework["framework"],
@@ -311,11 +311,12 @@ def detect(
         options=_skills_options(framework, index),
         app=app,
         install=install,
-        providers=providers,
-        models=models,
+        providers=found.providers,
+        models=found.models,
         evidence=tuple(evidence),
         warnings=tuple(sink.items),
         alternatives=alternatives,
+        model_envs=found.model_envs,
     )
 
 

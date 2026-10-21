@@ -373,13 +373,14 @@ export function detect(
       ? []
       : alternativesOf(index, rules, language === undefined ? languages : [language], sink);
   const deps = language === undefined ? new Map<string, string>() : index.dependencies(language);
-  const { providers, models } = detectProviders(
+  const { providers, models, modelEnvs } = detectProviders(
     index,
     rules,
     language,
     framework.framework,
     deps,
     sink,
+    overrides,
   );
   return new DetectionReport({
     language,
@@ -396,6 +397,7 @@ export function detect(
     evidence,
     warnings: sink.items,
     alternatives,
+    modelEnvs,
   });
 }
 
