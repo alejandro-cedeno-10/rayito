@@ -2501,9 +2501,10 @@ adicional), `State` (`MicrovmImageState`), `LatestActiveImageVersion`,
   `--config` en el comando): el host escribe en `workdir` una copia de la
   configuración con esas rutas absolutas contra `app_dir` y arranca la app en
   `workdir`. Con el arreglo, la primera llamada de una sesión nueva tardó
-  14,5 s en AgentCore (medida desde la CLI, con el arranque de la microVM, de
-  `langgraph dev` y la retención de Q176) y 5,4 s en un MicroVM ya caliente; una
-  segunda sesión nueva en AgentCore, 11,9 s. Dos llamadas con la misma sesión
+  14,2 y 14,5 s en AgentCore en dos despliegues (medida desde la CLI, con el
+  arranque de la microVM, de `langgraph dev` y la retención de Q176; 11,9 s una
+  segunda sesión nueva) y 5,4 y 12,0 s la primera llamada a un MicroVM recién
+  desplegado. Dos llamadas con la misma sesión
   van al mismo hilo y un `input` estructurado llega tal cual al grafo. Los
   60 s de `agentLanggraphReadyWaitSeconds` bastan; no se cambian. No hay
   parámetros de AWS nuevos: el contenedor sigue hablando `/ping` y
