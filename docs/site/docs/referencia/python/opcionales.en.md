@@ -204,7 +204,7 @@ verified end to end on real AWS.
 
 ## CDK constructs (`rayito.cdk`) { #cdk }
 
-Since 0.15.0 (not published yet), behind the `cdk` extra
+Since 0.15.0, behind the `cdk` extra
 (`pip install "rayito[cdk]"`: `aws-cdk-lib` {{cdkAwsCdkLibMinVersion}} or later
 and `constructs` {{cdkConstructsMinVersion}} or later). It is a separate
 module: `import rayito` does not load it, and without the extra

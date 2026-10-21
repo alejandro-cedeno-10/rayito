@@ -507,17 +507,17 @@ cd ../.. && python3 scripts/check_hygiene.py && python3 scripts/gen_stack_assets
 
 ### 2.1 Shared constants moved, not duplicated
 
-- [ ] 2.1.1 `src/images/gateway.ts`: `BUILDING_VERSION_STATES:
+- [x] 2.1.1 `src/images/gateway.ts`: `BUILDING_VERSION_STATES:
       ReadonlySet<string>` (`PENDING`, `IN_PROGRESS`).
       `DEFAULT_STACK_NAME` and `BUILD_ROLE_OUTPUT_KEY` stay in
       `images/publish-domain.ts` and are imported, not copied.
-- [ ] 2.1.2 `src/account-setup/domain.ts` becomes the home of
+- [x] 2.1.2 `src/account-setup/domain.ts` becomes the home of
       `CDK_BOOTSTRAP_QUALIFIER` and `cdkBucketName`; `agent/aws-resolve.ts`
       imports and re-exports them (same exported names).
 
 ### 2.2 Domain `src/account-setup/` (pure; no `@aws-sdk/*`, no `node:` I/O)
 
-- [ ] 2.2.1 `domain.ts`: the types, constants, messages, error class and pure
+- [x] 2.2.1 `domain.ts`: the types, constants, messages, error class and pure
       functions of 1.2 with the name map of the contract
       (`RELEASE_DOWNLOAD_TIMEOUT_MS = 600_000`; `IAM_STACK_NAME =
       DEFAULT_STACK_NAME`; `BASE_IMAGE_NAME = DEFAULT_BASE_IMAGE_NAME`).
@@ -525,26 +525,26 @@ cd ../.. && python3 scripts/check_hygiene.py && python3 scripts/gen_stack_assets
       `SetupStep`/`SetupResult` JSON via `stepJson(step)`/`resultJson(result)`
       in contract key order. `AccountSetupError extends Error` with `code`
       and `exitCode`.
-- [ ] 2.2.2 `iam-stack.ts`: `IAM_STACK_COMPONENT: StackComponent` (as 1.2.6);
+- [x] 2.2.2 `iam-stack.ts`: `IAM_STACK_COMPONENT: StackComponent` (as 1.2.6);
       not added to `stacks/registry.ts`.
-- [ ] 2.2.3 `ports.ts`: `Progress`, `IamStackGateway`,
+- [x] 2.2.3 `ports.ts`: `Progress`, `IamStackGateway`,
       `ArtifactBucketGateway`, `BaseImageGateway`, `BaseImagePublisher`,
       `ReleaseArtifactSource`, `AccountSetupGateways` (async methods, same
       shapes as 1.3.1).
-- [ ] 2.2.4 `service.ts`: `class AccountSetup` (`constructor(gateways)`,
+- [x] 2.2.4 `service.ts`: `class AccountSetup` (`constructor(gateways)`,
       `plan(request): Promise<SetupPlan>`, `apply(plan, { workdir, onProgress
       }): Promise<SetupResult>`), same rules as 1.3.2, with the "Coste y
       activación" TSDoc block.
-- [ ] 2.2.5 `release.ts`: `GithubReleaseSource({ fetch = globalThis.fetch,
+- [x] 2.2.5 `release.ts`: `GithubReleaseSource({ fetch = globalThis.fetch,
       timeoutMs = RELEASE_DOWNLOAD_TIMEOUT_MS })`; streams the zip to
       `directory` with `node:fs` and hashes with `node:crypto`; same error
       mapping and reasons as 1.4.2 (`AbortSignal.timeout` for the deadline).
 
 ### 2.3 Adapters and CLI
 
-- [ ] 2.3.1 `src/stacks/packaging.ts`: `iam` in `ASSETS` (import of
+- [x] 2.3.1 `src/stacks/packaging.ts`: `iam` in `ASSETS` (import of
       `./templates/iam.gen.js`).
-- [ ] 2.3.2 `src/cli/setup-adapters.ts`: `SdkIamStack(provisioner:
+- [x] 2.3.2 `src/cli/setup-adapters.ts`: `SdkIamStack(provisioner:
       StackProvisioner, options)` building its own `OptionalStacks({
       provisioner })` (same methods as 1.4.1),
       `SdkArtifactBuckets(doctor: Pick<DoctorAws, "headBucket">, accountId: ()
@@ -556,64 +556,64 @@ cd ../.. && python3 scripts/check_hygiene.py && python3 scripts/gen_stack_assets
       over `resolveBaseImageVersion` + `buildOrReuse` with `fileArtifacts`
       (same settings as 1.4.3), and `sdkAccountSetupGateways({ region,
       credentials, doctor, publishPorts }): AccountSetupGateways`.
-- [ ] 2.3.3 `src/cli/services.ts`: `readonly accountSetup:
+- [x] 2.3.3 `src/cli/services.ts`: `readonly accountSetup:
       AccountSetupGateways` on `CliServices`; `aws-services.ts` builds it with
       `sdkAccountSetupGateways` from the same region, credentials, `doctor`
       and `publishPorts` (no AWS call at construction). Add a fake
       `accountSetup` to the three test files that build a `CliServices`
       (`tests/unit/cli/case-world.ts`, `tests/unit/cli/image-commands.test.ts`,
       `tests/unit/dashboard-command.test.ts`).
-- [ ] 2.3.4 `src/cli/doctor/render.ts`: export `doctorDocument(...)` used by
+- [x] 2.3.4 `src/cli/doctor/render.ts`: export `doctorDocument(...)` used by
       `renderJson`; no output change.
-- [ ] 2.3.5 `src/cli/console.ts`: a `canPrompt` getter (stdin is a TTY) if
+- [x] 2.3.5 `src/cli/console.ts`: a `canPrompt` getter (stdin is a TTY) if
       none exists, used to decide `needs_confirmation`.
-- [ ] 2.3.6 `src/cli/setup-output.ts`: `planLines`, `finalLines`,
+- [x] 2.3.6 `src/cli/setup-output.ts`: `planLines`, `finalLines`,
       `setupDocument` and the plan-rendering templates (as 1.5.2).
-- [ ] 2.3.7 `src/cli/commands/setup.ts`: `setupCommand = defineCommand({ path:
+- [x] 2.3.7 `src/cli/commands/setup.ts`: `setupCommand = defineCommand({ path:
       ["setup"], help, parameters: [option(["--bucket"]), option(["--artifact"],
       { type: "path" }), flag(["--yes"]), flag(["--dry-run"])], run })` with
       the same flow as 1.5.3 (`--artifact` checked with
       `images/artifact-node.inspectArtifact`; `mkdtemp` workdir removed in
       `finally`; `runDoctor(services.doctor, newDoctorContext({ template:
       BASE_IMAGE_NAME, bucket, launch: false }))`).
-- [ ] 2.3.8 `src/cli/registry.ts`: `setupCommand` in `COMMANDS`.
+- [x] 2.3.8 `src/cli/registry.ts`: `setupCommand` in `COMMANDS`.
 
 ### 2.4 Hint for unprepared accounts
 
-- [ ] 2.4.1 `src/aws/control-plane.ts` `runMicrovm`: a
+- [x] 2.4.1 `src/aws/control-plane.ts` `runMicrovm`: a
       `SandboxNotFoundError` from `#invoke` is rethrown as a new
       `SandboxNotFoundError(withSetupHint(error.message), { statusCode,
       awsCode, cause })` with the same fields.
-- [ ] 2.4.2 `src/agent/aws-resolve.ts`: `resolveBucket` and `ensureBaseImage`
+- [x] 2.4.2 `src/agent/aws-resolve.ts`: `resolveBucket` and `ensureBaseImage`
       messages wrapped with `withSetupHint`; update tests that assert them.
 
 ### 2.5 Tests (names by behaviour)
 
-- [ ] 2.5.1 `tests/unit/account-setup-fakes.ts` (as 1.7.1) and a
+- [x] 2.5.1 `tests/unit/account-setup-fakes.ts` (as 1.7.1) and a
       `loadAccountSetupTestdata(name)` helper next to `tests/unit/cli/paths.ts`.
-- [ ] 2.5.2 `tests/unit/account-setup.test.ts`: plan vectors, checksum
+- [x] 2.5.2 `tests/unit/account-setup.test.ts`: plan vectors, checksum
       vectors, contract constants and messages, service flows of 1.7.3,
       construction makes no call.
-- [ ] 2.5.3 `tests/unit/account-setup-release.test.ts`: as 1.7.5 with a fake
+- [x] 2.5.3 `tests/unit/account-setup-release.test.ts`: as 1.7.5 with a fake
       `fetch`.
-- [ ] 2.5.4 `tests/unit/cli/setup-adapters.test.ts`: as 1.7.4 over
+- [x] 2.5.4 `tests/unit/cli/setup-adapters.test.ts`: as 1.7.4 over
       `tests/unit/m15-fake-stacks.ts`, `tests/unit/cli/doctor-fakes.ts` and
       `tests/unit/cli/image-fakes.ts`; `IAM_STACK_COMPONENT` parameters equal
       the `iam.gen.ts` template parameters; `iam` not in the stack registry.
-- [ ] 2.5.5 `tests/unit/cli/setup.test.ts`: as 1.7.6 (every `cli-cases.json`
+- [x] 2.5.5 `tests/unit/cli/setup.test.ts`: as 1.7.6 (every `cli-cases.json`
       case; apply flows with a fake doctor; prompt "n"; JSON document).
-- [ ] 2.5.6 `tests/unit/account-setup-hint.test.ts`: as 1.7.7 for
+- [x] 2.5.6 `tests/unit/account-setup-hint.test.ts`: as 1.7.7 for
       `runMicrovm`, `resolveBucket`, `ensureBaseImage`.
-- [ ] 2.5.7 `tests/unit/cli/doctor.test.ts`: `renderJson` equals
+- [x] 2.5.7 `tests/unit/cli/doctor.test.ts`: `renderJson` equals
       `doctorDocument`. `tests/unit/cli/surface.test.ts` passes with the
       Track 0 golden unchanged.
-- [ ] 2.5.8 `tests/e2e/account-setup.e2e.test.ts`: as 1.7.10, reusing
+- [x] 2.5.8 `tests/e2e/account-setup.e2e.test.ts`: as 1.7.10, reusing
       `tests/e2e/image-cleanup.ts`; hooks get their own timeout (stack create
       plus a build exceed the default `hookTimeout`).
 
 ### 2.6 Changelog
 
-- [ ] 2.6.1 `clients/typescript/CHANGELOG.md`, `## [Unreleased]`, same two
+- [x] 2.6.1 `clients/typescript/CHANGELOG.md`, `## [Unreleased]`, same two
       entries as 1.8.1.
 
 ## 3. Track DOCS (no file under `clients/`)
@@ -631,15 +631,15 @@ python3 scripts/check_hygiene.py
 gitleaks git --log-opts=HEAD --redact --no-banner .
 ```
 
-- [ ] D.1 `ARCHITECTURE.md`: ADR-030 "rayito setup: preparar la cuenta en una
+- [x] D.1 `ARCHITECTURE.md`: ADR-030 "rayito setup: preparar la cuenta en una
       orden" (Spanish, from `design.md`: context, decisions D1-D9,
       alternatives, consequences).
-- [ ] D.2 `docs/site/docs/index.md` / `index.en.md`: the "Prepara tu cuenta,
+- [x] D.2 `docs/site/docs/index.md` / `index.en.md`: the "Prepara tu cuenta,
       una vez" / "Prepare your account, once" block becomes `rayito setup`
       (keep the anchor `prepara-tu-cuenta-una-vez`), with `rayito doctor`
       still shown as the check; the "15 minutos" sentence says the build
       wait is still about 10 minutes.
-- [ ] D.3 `docs/site/docs/primeros-pasos/configurar-aws.md` / `.en.md`
+- [x] D.3 `docs/site/docs/primeros-pasos/configurar-aws.md` / `.en.md`
       (tutorial): step 1 credentials and region, step 2 `rayito setup
       --dry-run` then `rayito setup`, with the plan and final output as a
       `text` block (copied from `cli-cases.json`, `{cdkBucket}` written as
@@ -651,33 +651,33 @@ gitleaks git --log-opts=HEAD --redact --no-banner .
       download with cosign, `rayito image publish`) move into a collapsible
       "A mano, sin `rayito setup`" / "By hand, without `rayito setup`", also
       used for cosign-verified artifacts with `--artifact`.
-- [ ] D.4 `AWS_API_NOTES.md`: in §21 add `Capabilities=["CAPABILITY_NAMED_IAM"]`
+- [x] D.4 `AWS_API_NOTES.md`: in §21 add `Capabilities=["CAPABILITY_NAMED_IAM"]`
       for `infra/iam.yaml` (named roles `rayito-m0-*`), verified offline
       against the `Capability` enum of botocore 1.43.103 (2026-10-19); a new
       short section "Preparación de la cuenta (`rayito setup`)" listing the
       calls it makes, each pointing to where it is already documented, and
       the HTTPS download of the two release assets (not an AWS API).
-- [ ] D.5 `docs/site/docs/cli.md` / `cli.en.md`: a `rayito setup` section
+- [x] D.5 `docs/site/docs/cli.md` / `cli.en.md`: a `rayito setup` section
       (synopsis, options, plan rules, exit codes, JSON keys, the "Coste y
       activación" box, `--dry-run` example); mention it in the command list.
-- [ ] D.6 `docs/site/docs/verify.md` / `verify.en.md` and `SECURITY.md` T10:
+- [x] D.6 `docs/site/docs/verify.md` / `verify.en.md` and `SECURITY.md` T10:
       what `rayito setup` checks (sha256 against the release `SHA256SUMS`,
       over HTTPS) and what it does not (the cosign signature); how to publish
       a cosign-verified zip with `rayito setup --artifact`.
-- [ ] D.7 `docs/site/docs/cost.md` / `cost.en.md`: one row "Preparar la cuenta
+- [x] D.7 `docs/site/docs/cost.md` / `cost.en.md`: one row "Preparar la cuenta
       (`rayito setup`)" in the summary table, quoting the existing figures
       (no new number).
-- [ ] D.8 `docs/site/docs/operacion/solucion-de-problemas.md` / `.en.md`: a
+- [x] D.8 `docs/site/docs/operacion/solucion-de-problemas.md` / `.en.md`: a
       "rayito setup" section with each error code, its exit code and the fix.
-- [ ] D.9 `docs/site/docs/migrar-desde-e2b/index.md` / `.en.md` step 1, and
+- [x] D.9 `docs/site/docs/migrar-desde-e2b/index.md` / `.en.md` step 1, and
       `docs/site/docs/guias/despliega-tu-agente.md` / `.en.md` prerequisites:
       point to `rayito setup`.
-- [ ] D.10 `README.md` / `README.es.md`: the account preparation steps become
+- [x] D.10 `README.md` / `README.es.md`: the account preparation steps become
       `rayito setup` (manual path linked to the tutorial).
-- [ ] D.11 `infra/README.md` (`iam.yaml` is deployed by `rayito setup` or by
+- [x] D.11 `infra/README.md` (`iam.yaml` is deployed by `rayito setup` or by
       hand) and `CONTRIBUTING.md` (the e2e precondition may use `rayito
       setup`; the manual command stays valid).
-- [ ] D.12 `rg -n "aws cloudformation deploy --stack-name rayito-m0-iam|Prepara tu cuenta" docs README* CONTRIBUTING.md`
+- [x] D.12 `rg -n "aws cloudformation deploy --stack-name rayito-m0-iam|Prepara tu cuenta" docs README* CONTRIBUTING.md`
       shows no stale first-time instructions that ignore `rayito setup`.
 
 ## 4. AWS acceptance (after the three lanes merge, on `feat/rayito-setup`)
@@ -701,7 +701,7 @@ targeted AWS check per language lane, with inventory before and after.
       `AWS_API_NOTES.md`.
 - [x] 4.5b If an organization SCP requires tags (D11), the run passes the
       organization's tags through `RAYITO_E2E_SETUP_TAGS` (see 6.AWS.1).
-- [ ] 4.6 Review sweep (`reference/review-checklist.md`), then archive this
+- [x] 4.6 Review sweep (`reference/review-checklist.md`), then archive this
       change (`openspec archive account-setup --yes`).
 
 ## 5. Bucket creation (maintainer decision 2026-10-19)
@@ -865,23 +865,23 @@ TypeScript `tests/unit/account-setup.test.ts`, `tests/unit/cli/setup.test.ts`.
 
 ### 5.TS Track TS (`clients/typescript/` only)
 
-- [ ] 5.TS.1 `src/account-setup/domain.ts`: the same types, constants,
+- [x] 5.TS.1 `src/account-setup/domain.ts`: the same types, constants,
       messages and pure functions as 5.PY.1 with the name map
       (`BucketProbe { state: BucketState; region: string | undefined }`;
       `chooseBucketCandidate` removed; `planSetup({ request, account, stack,
       bucketStep, image })`; `ARTIFACT_EXPIRATION_DAYS = 7`).
-- [ ] 5.TS.2 New `src/account-setup/artifact-stack.ts`:
+- [x] 5.TS.2 New `src/account-setup/artifact-stack.ts`:
       `ARTIFACT_STACK_COMPONENT: StackComponent` (as 5.PY.2); not in
       `src/stacks/registry.ts`.
-- [ ] 5.TS.3 `src/stacks/packaging.ts`: `"artifact-bucket"` in `ASSETS`
+- [x] 5.TS.3 `src/stacks/packaging.ts`: `"artifact-bucket"` in `ASSETS`
       (import of `./templates/artifact-bucket.gen.js`, already generated).
-- [ ] 5.TS.4 `src/account-setup/ports.ts`: `ArtifactStackGateway`
+- [x] 5.TS.4 `src/account-setup/ports.ts`: `ArtifactStackGateway`
       (`observe`, `create(bucket)`, `wait`, all async);
       `AccountSetupGateways.artifactStack`.
-- [ ] 5.TS.5 `src/account-setup/service.ts`: `plan`/`apply` as 5.PY.4
+- [x] 5.TS.5 `src/account-setup/service.ts`: `plan`/`apply` as 5.PY.4
       (`#resolveBucket`, `#applyBucket`), same progress lines and TSDoc
       "Coste y activación" update.
-- [ ] 5.TS.6 `src/cli/setup-adapters.ts`: `SdkIamStack` becomes
+- [x] 5.TS.6 `src/cli/setup-adapters.ts`: `SdkIamStack` becomes
       `SdkSetupStack(provisioner, { component, stackName, bucketParameter,
       waitTimeoutMs })` with `sdkIamStack(provisioner)` and
       `sdkArtifactStack(provisioner)`; `SdkArtifactBuckets.probe` returns
@@ -890,10 +890,10 @@ TypeScript `tests/unit/account-setup.test.ts`, `tests/unit/cli/setup.test.ts`.
       `agent/aws-resolve.ts` `BUCKET_MISSING_CODES` unchanged);
       `sdkAccountSetupGateways` builds one `CloudFormationProvisioner` for
       both stacks.
-- [ ] 5.TS.7 `src/cli/setup-output.ts`: `bucketCreate`/`bucketWait` action
+- [x] 5.TS.7 `src/cli/setup-output.ts`: `bucketCreate`/`bucketWait` action
       texts; `src/cli/commands/setup.ts`: command and `--bucket` help from
       the contract.
-- [ ] 5.TS.8 Tests: `tests/unit/account-setup-fakes.ts` (as 5.PY.7 fakes,
+- [x] 5.TS.8 Tests: `tests/unit/account-setup-fakes.ts` (as 5.PY.7 fakes,
       `{defaultBucket}`, `bucketReads`), `tests/unit/account-setup.test.ts`
       (plan vectors through `AccountSetup.plan`, contract, service flows of
       5.PY.7), `tests/unit/cli/setup-adapters.test.ts` (component parameters
@@ -905,13 +905,13 @@ TypeScript `tests/unit/account-setup.test.ts`, `tests/unit/cli/setup.test.ts`.
 
 ### 5.DOCS Track DOCS (no file under `clients/`, `infra/`, `scripts/`, `testdata/`, `Makefile`)
 
-- [ ] 5.D.1 `ARCHITECTURE.md` ADR-030: amend point 4 ("nunca crea un
+- [x] 5.D.1 `ARCHITECTURE.md` ADR-030: amend point 4 ("nunca crea un
       bucket") with the new rule and the reuse/creation phases (design D2,
       D4), add the template (D10), the new alternatives (raw S3 calls,
       bucket inside the IAM stack, adopting the default name, KMS,
       versioning, `Delete`), consequences and the permissions risk. Dated
       "Enmienda 2026-10-19".
-- [ ] 5.D.2 `AWS_API_NOTES.md`: in "Despliegue de agentes de cero
+- [x] 5.D.2 `AWS_API_NOTES.md`: in "Despliegue de agentes de cero
       configuración", say the "nunca llama a `CreateBucket`" rule is about
       the SDK's own calls (`deploy_agent` still only reuses). In
       "Preparación de la cuenta": the bucket row lists up to three
@@ -927,7 +927,7 @@ TypeScript `tests/unit/account-setup.test.ts`, `tests/unit/cli/setup.test.ts`.
       `s3:PutLifecycleConfiguration`, `s3:PutBucketTagging` among others)
       and `AWS::S3::BucketPolicy` (`s3:GetBucketPolicy`,
       `s3:PutBucketPolicy`). Nothing else.
-- [ ] 5.D.3 `docs/site/docs/primeros-pasos/configurar-aws.md` / `.en.md`:
+- [x] 5.D.3 `docs/site/docs/primeros-pasos/configurar-aws.md` / `.en.md`:
       the bucket is no longer a prerequisite; the plan example of an account
       without a bucket (from `cli-cases.json` "dry-run sin ningún bucket",
       the bucket name written as `rayito-artifacts-<cuenta>-<región>` /
@@ -936,38 +936,38 @@ TypeScript `tests/unit/account-setup.test.ts`, `tests/unit/cli/setup.test.ts`.
       deleted); credentials: run setup once with administrator or bootstrap
       credentials (CloudFormation, IAM, and S3 when it creates the bucket),
       `CallerPolicy` is not enough; "Coste y activación" box updated.
-- [ ] 5.D.4 `docs/site/docs/cli.md` / `.en.md`: `rayito setup` section:
+- [x] 5.D.4 `docs/site/docs/cli.md` / `.en.md`: `rayito setup` section:
       bucket resolution (reuse then creation, `--bucket`/`RAYITO_BUCKET`
       that do not exist are created with that name), the new actions,
       sources and error codes, exit codes.
-- [ ] 5.D.5 `docs/site/docs/operacion/solucion-de-problemas.md` / `.en.md`:
+- [x] 5.D.5 `docs/site/docs/operacion/solucion-de-problemas.md` / `.en.md`:
       remove `no_bucket`; `bucket_unavailable` (403), `bucket_taken`,
       `artifact_stack_conflict`, `stack_blocked`/`stack_incomplete` for
       `rayito-m0-artifacts`, each with exit code and fix (delete the stack,
       the retained bucket, pass `--bucket`).
-- [ ] 5.D.6 `docs/site/docs/cost.md` / `.en.md`: the `rayito setup` row
+- [x] 5.D.6 `docs/site/docs/cost.md` / `.en.md`: the `rayito setup` row
       adds the created bucket (no figure: zips expire after 7 days; the zip
       is the existing "céntimos").
-- [ ] 5.D.7 `docs/site/docs/index.md` / `.en.md`,
+- [x] 5.D.7 `docs/site/docs/index.md` / `.en.md`,
       `docs/site/docs/migrar-desde-e2b/index.md` / `.en.md`,
       `docs/site/docs/guias/despliega-tu-agente.md` / `.en.md`: drop "you
       need a bucket first" / "Rayito no crea buckets" where it refers to
       setup (`rayito agent deploy` still does not create one; say so
       there and point to `rayito setup`).
-- [ ] 5.D.8 `README.md` / `README.es.md`: `rayito setup` also creates the
+- [x] 5.D.8 `README.md` / `README.es.md`: `rayito setup` also creates the
       bucket when needed.
-- [ ] 5.D.9 `infra/README.md`: a section for `artifact-bucket.yaml` (what
+- [x] 5.D.9 `infra/README.md`: a section for `artifact-bucket.yaml` (what
       it creates, `Retain`, deployed by `rayito setup` as
       `rayito-m0-artifacts`, or by hand with `aws cloudformation deploy
       --stack-name rayito-m0-artifacts --parameter-overrides
       BucketName=<name>`), and that it is not a `rayito stack` component.
       (Docs-only edit of `infra/README.md`; the template itself is 0.6.)
-- [ ] 5.D.10 `SECURITY.md`: the created bucket's controls (SSE-S3, public
+- [x] 5.D.10 `SECURITY.md`: the created bucket's controls (SSE-S3, public
       access block, ACLs disabled, TLS-only policy) and why an unmanaged
       bucket with the default name is never adopted (`bucket_taken`).
       `CONTRIBUTING.md`: the e2e cleanup of `rayito-m0-artifacts` and its
       retained bucket.
-- [ ] 5.D.11 `git grep -n -i -E "no crea buckets|nunca crea|never creates? a bucket|no_bucket"`
+- [x] 5.D.11 `git grep -n -i -E "no crea buckets|nunca crea|never creates? a bucket|no_bucket"`
       outside `clients/`, `openspec/` and `testdata/` shows only statements
       about `rayito agent deploy`.
 
@@ -982,7 +982,7 @@ TypeScript `tests/unit/account-setup.test.ts`, `tests/unit/cli/setup.test.ts`.
 - [x] 5.AWS.3 Python and TypeScript e2e of 5.PY.8/5.TS.8 in their own
       regions; the prepared-account check (4.4) still reads no
       `rayito-m0-artifacts` (zero new reads on an account with a bucket).
-- [ ] 5.AWS.4 Regression level: `infra/` changed (one new template), so the
+- [x] 5.AWS.4 Regression level: `infra/` changed (one new template), so the
       targeted checks above plus the release's full regression
       (`reference/release-and-aws.md`); record the stack create time and
       any SCP finding as the next free Q row of `AWS_API_NOTES.md`.
@@ -991,18 +991,18 @@ TypeScript `tests/unit/account-setup.test.ts`, `tests/unit/cli/setup.test.ts`.
 
 ### 6.PY Track PY (`clients/python/` only)
 
-- [ ] 6.PY.1 `rayito setup --tag K=V` (repeatable, same parser as
+- [x] 6.PY.1 `rayito setup --tag K=V` (repeatable, same parser as
       `rayito stack deploy`), passed to the `CreateStack`/`UpdateStack` of
       `rayito-m0-artifacts` and `rayito-m0-iam`; reused stacks and the image
       untouched; bad format is exit 2. Help text from
       `testdata/account-setup/contract.json`.
-- [ ] 6.PY.2 Tests: tags on both creates, on the IAM update, no tags equals
+- [x] 6.PY.2 Tests: tags on both creates, on the IAM update, no tags equals
       the old calls, bad format; `RAYITO_E2E_SETUP_TAGS` read by the e2e.
 
 ### 6.TS Track TS (`clients/typescript/` only)
 
-- [ ] 6.TS.1 Same as 6.PY.1 in the TypeScript CLI and adapters.
-- [ ] 6.TS.2 Same tests as 6.PY.2 and `RAYITO_E2E_SETUP_TAGS`.
+- [x] 6.TS.1 Same as 6.PY.1 in the TypeScript CLI and adapters.
+- [x] 6.TS.2 Same tests as 6.PY.2 and `RAYITO_E2E_SETUP_TAGS`.
 
 ### 6.DOCS Track DOCS (no file under `clients/` or `testdata/`)
 
@@ -1018,7 +1018,7 @@ TypeScript `tests/unit/account-setup.test.ts`, `tests/unit/cli/setup.test.ts`.
 
 ### 6.AWS Acceptance addition
 
-- [ ] 6.AWS.1 The AWS run passes the organization's required tags to the
+- [x] 6.AWS.1 The AWS run passes the organization's required tags to the
       setup e2e through `RAYITO_E2E_SETUP_TAGS` (a comma-separated `K=V`
       list kept outside the repository); the inventory of 4.2/4.5 checks that
       the bucket, the roles and the stacks it created carry them.

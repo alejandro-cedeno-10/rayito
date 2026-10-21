@@ -211,7 +211,7 @@ Full guide: [Agent in the sandbox](../guias/agente-en-el-sandbox.md).
 
 ## Deploy to AgentCore (`deployAgent`) { #agentcore }
 
-Since 0.15.0 (not published yet). `deployAgent()` and `planDeploy()` accept
+Since 0.15.0. `deployAgent()` and `planDeploy()` accept
 `target: "agentcore"` and `agentcore` (the target's options). Without `target`,
 or with `"microvm"`, they return what they always did (`AgentFleet`,
 `AgentDeployPlan`) and no AgentCore, CodeBuild or ECR client is loaded. With
@@ -271,7 +271,7 @@ console.log(fleet.runtimeArn, fleet.runtimeVersion);
 
 ## CDK constructs (`rayito/cdk`) { #cdk }
 
-Since 0.15.0 (not published yet). A separate entry point, with `aws-cdk-lib`
+Since 0.15.0. A separate entry point, with `aws-cdk-lib`
 (`^{{cdkAwsCdkLibMinVersion}}`) and `constructs` (`^{{cdkConstructsMinVersion}}`)
 as optional peers: neither `rayito`, nor `rayito/e2b`, nor the CLI, nor the MCP
 server import them. Everything is synchronous except

@@ -266,7 +266,7 @@ model tokens), in [Pricing](https://alejandro-cedeno-10.github.io/rayito/en/cost
 
 ## Status
 
-**Alpha, 0.14 series** ([License, status and support](#license-status-and-support)).
+**Alpha, 0.15 series** ([License, status and support](#license-status-and-support)).
 The Python and TypeScript SDKs and `rayd` advance in `MAJOR.MINOR` lockstep:
 each SDK requires an image built with the `rayd` of its own series, and
 `rayito doctor` checks it (table in

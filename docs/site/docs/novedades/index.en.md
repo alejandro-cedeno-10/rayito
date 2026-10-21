@@ -12,7 +12,7 @@ detail, change by change, is in each component's
 
 <div class="grid cards" markdown>
 
--   :material-tag:{ .lg .middle } **0.15.0** · in development, not published
+-   :material-tag:{ .lg .middle } **0.15.0** · 2026-10-21 · current
 
     ---
 
@@ -26,7 +26,7 @@ detail, change by change, is in each component's
 
     [:octicons-arrow-right-24: What's new in 0.15.0](0.15.0.md)
 
--   :material-tag:{ .lg .middle } **0.14.0** · 2026-10-17 · current
+-   :material-tag:{ .lg .middle } **0.14.0** · 2026-10-17
 
     ---
 
@@ -160,7 +160,7 @@ detail, change by change, is in each component's
     ```python
     import rayito
 
-    print(rayito.__version__)  # "0.14.0"
+    print(rayito.__version__)  # "0.15.0"
     ```
 
 === "TypeScript"
@@ -168,7 +168,7 @@ detail, change by change, is in each component's
     ```ts
     import { VERSION } from "rayito";
 
-    console.log(VERSION); // "0.14.0"
+    console.log(VERSION); // "0.15.0"
     ```
 
 === "CLI"

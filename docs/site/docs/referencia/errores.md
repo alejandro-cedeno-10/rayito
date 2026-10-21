@@ -231,7 +231,7 @@ del proveedor, el prompt ni el contenido generado.
 
 ## `AgentCoreException` / `AgentCoreError` { #agentcore }
 
-Desde 0.15.0 (todavía sin publicar). Las lanza el despliegue en AgentCore
+Desde 0.15.0. Las lanza el despliegue en AgentCore
 (`deploy_agent(target="agentcore")`, `AgentCoreFleet` y `rayito agent ... --target
 agentcore`). No heredan de `SandboxException` / `SandboxError`: nada de esto es
 atribuible a un sandbox (es el mismo razonamiento que en `rayito setup`). Llevan

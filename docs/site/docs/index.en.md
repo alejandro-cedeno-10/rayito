@@ -11,7 +11,7 @@ hide:
 <div class="rx-hero" markdown>
 <div class="rx-hero__copy" markdown>
 
-[New in 0.14: deploy the agent you already have, with zero config, in Python and TypeScript](novedades/0.14.0.md){ .rx-pill }
+[New in 0.15: `rayito setup` and agent deploys to Amazon Bedrock AgentCore Runtime, with AWS CDK too](novedades/0.15.0.md){ .rx-pill }
 
 # Sandboxes for AI agents, in your own AWS account { .rx-hero__title }
 

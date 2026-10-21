@@ -16,7 +16,7 @@ región y una reproducción mínima sin datos de clientes. Acuse de recibo en
 7 días y corrección o mitigación en 90; no hay programa de recompensas.
 
 **Versiones soportadas**: sólo la última línea `MAJOR.MINOR`, hoy la
-**0.14.x** (SDK de Python y de TypeScript, y una imagen con `rayd` 0.14.x);
+**0.15.x** (SDK de Python y de TypeScript, y una imagen con `rayd` 0.15.x);
 mientras el proyecto esté en 0.x no hay ramas de mantenimiento de líneas
 anteriores ([Versionado y soporte](limits.md#versionado-y-soporte),
 [Compatibilidad SDK ↔ rayd ↔ imagen](limits.md#compatibilidad-sdk-rayd-imagen)).
@@ -531,7 +531,7 @@ permitida.
 
 Resumen de **T36** de
 [`SECURITY.md`](https://github.com/alejandro-cedeno-10/rayito/blob/main/SECURITY.md)
-(`agentcore-deploy`, desde 0.15.0, todavía sin publicar): el modelo de amenazas
+(`agentcore-deploy`, desde 0.15.0): el modelo de amenazas
 de [Desplegar en AgentCore](guias/desplegar-en-agentcore.md).
 
 **La diferencia.** En un MicroVM de Rayito el agente nunca ve la credencial del
@@ -601,7 +601,7 @@ las etiquetas de un runtime ya creado no se actualizan.
 
 Resumen de **T37** de
 [`SECURITY.md`](https://github.com/alejandro-cedeno-10/rayito/blob/main/SECURITY.md)
-(`agentcore-cdk`, ADR-032, desde 0.15.0, todavía sin publicar): lo que añaden
+(`agentcore-cdk`, ADR-032, desde 0.15.0): lo que añaden
 los constructos de [Desplegar con CDK](guias/desplegar-con-cdk.md) a lo que ya
 crea la CLI.
 

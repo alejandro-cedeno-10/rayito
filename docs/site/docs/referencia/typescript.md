@@ -211,7 +211,7 @@ Guía completa: [Agente en el sandbox](../guias/agente-en-el-sandbox.md).
 
 ## Desplegar en AgentCore (`deployAgent`) { #agentcore }
 
-Desde 0.15.0 (todavía sin publicar). `deployAgent()` y `planDeploy()` aceptan
+Desde 0.15.0. `deployAgent()` y `planDeploy()` aceptan
 `target: "agentcore"` y `agentcore` (las opciones del destino). Sin `target`, o
 con `"microvm"`, devuelven lo de siempre (`AgentFleet`, `AgentDeployPlan`) y no
 se carga ningún cliente de AgentCore, CodeBuild ni ECR. Con `"agentcore"` hacen
@@ -271,7 +271,7 @@ console.log(fleet.runtimeArn, fleet.runtimeVersion);
 
 ## Constructos CDK (`rayito/cdk`) { #cdk }
 
-Desde 0.15.0 (todavía sin publicar). Un punto de entrada aparte, con
+Desde 0.15.0. Un punto de entrada aparte, con
 `aws-cdk-lib` (`^{{cdkAwsCdkLibMinVersion}}`) y `constructs`
 (`^{{cdkConstructsMinVersion}}`) como peers opcionales: ni `rayito`, ni
 `rayito/e2b`, ni la CLI, ni el servidor MCP los importan. Todo es síncrono salvo
