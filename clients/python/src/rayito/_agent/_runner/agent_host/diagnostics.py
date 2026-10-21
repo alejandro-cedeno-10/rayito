@@ -13,7 +13,7 @@ credencial y se recorta a `MAX_DIAGNOSTICS_BYTES`.
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from typing import Final
 
 #: Tope en bytes UTF-8 del diagnóstico (`AGENT_STARTUP_DIAGNOSTICS_MAX_BYTES`
@@ -24,6 +24,10 @@ REDACTED: Final = "[redacted]"
 #: Un valor de entorno más corto que esto no se retira: sería ruido (`1`,
 #: `utf-8`) y no es una credencial.
 MIN_REDACTED_VALUE_LENGTH: Final = 8
+#: Largo mínimo de un valor que el host exportó desde Secrets Manager
+#: (`extra_values`, `agentSecretEnvRedactMinChars`): se retira aunque sea más
+#: corto que `MIN_REDACTED_VALUE_LENGTH`, porque sí es un secreto.
+MIN_EXTRA_REDACTED_VALUE_LENGTH: Final = 4
 #: Variables cuyo valor es estructura del sandbox (rutas, idioma), no un
 #: secreto; sus valores se dejan ver para que una traza se pueda leer.
 STRUCTURAL_ENV_NAMES: Final = frozenset(
@@ -75,13 +79,16 @@ _CREDENTIAL_PATTERNS: Final = (
 )
 
 
-def _without_environment_values(text: str, environ: Mapping[str, str]) -> str:
+def _without_environment_values(
+    text: str, environ: Mapping[str, str], extra_values: Iterable[str] = ()
+) -> str:
     values = sorted(
         {
             value
             for name, value in environ.items()
             if name not in STRUCTURAL_ENV_NAMES and len(value) >= MIN_REDACTED_VALUE_LENGTH
-        },
+        }
+        | {value for value in extra_values if len(value) >= MIN_EXTRA_REDACTED_VALUE_LENGTH},
         key=len,
         reverse=True,
     )
@@ -110,11 +117,15 @@ def bounded_tail(text: str, max_bytes: int = MAX_DIAGNOSTICS_BYTES) -> str:
     return tail[newline + 1 :] if 0 <= newline < len(tail) - 1 else tail
 
 
-def sanitize_diagnostics(text: str, environ: Mapping[str, str]) -> str:
+def sanitize_diagnostics(
+    text: str, environ: Mapping[str, str], extra_values: Iterable[str] = ()
+) -> str:
     """`text` sin caracteres de control, sin valores de `environ` ni
     patrones de credencial, acotado a `MAX_DIAGNOSTICS_BYTES`. La
     sustitución va antes del recorte para que un secreto partido por el
-    recorte no sobreviva."""
+    recorte no sobreviva. `extra_values` son valores que se retiran siempre
+    que midan al menos `MIN_EXTRA_REDACTED_VALUE_LENGTH` (los que el host
+    exportó desde Secrets Manager); por defecto, ninguno."""
     cleaned = _CONTROL_CHARACTERS.sub("", text.replace("\r\n", "\n").replace("\r", "\n"))
-    cleaned = _without_credentials(_without_environment_values(cleaned, environ))
+    cleaned = _without_credentials(_without_environment_values(cleaned, environ, extra_values))
     return bounded_tail(cleaned.strip()).strip()

@@ -24,6 +24,15 @@ from rayito._agent._deploy_plan import (
 )
 from rayito._agent._export import RawAppNotExportable, render_export
 from rayito._agent._project_domain import AgentProject
+from rayito._agent._secret_env_deploy import (
+    STEP_SECRET_ENV_CREATED,
+    EnvFileSecret,
+    EnvSecretStore,
+    env_missing_steps,
+    env_secret_store,
+    prepare_secret_env,
+    publish_env_file_secret,
+)
 from rayito._agentcore._domain import build_plan
 from rayito._agentcore._models import (
     AgentCoreApplyRequest,
@@ -53,17 +62,21 @@ class AgentCorePorts:
     environ: Mapping[str, str] | None = None
     clock: Callable[[], float] = time.monotonic
     sleep: Callable[[float], None] = time.sleep
+    secret_env_store: EnvSecretStore | None = None
 
 
 @dataclass(frozen=True)
 class PlannedDeploy:
     """Un despliegue planificado: el proyecto, las opciones de la llamada, el
-    plan y el árbol de ficheros del contexto de build."""
+    plan, el árbol de ficheros del contexto de build y, con
+    `create_secrets_from`, el secreto que se creará al aplicar."""
 
     project: AgentProject
     options: AgentDeployOptions
     plan: AgentCoreDeployPlan
     tree: Mapping[str, bytes]
+    env_file_secret: EnvFileSecret | None = None
+    env_warnings: tuple[str, ...] = ()
 
 
 def render_agentcore_tree(project: AgentProject) -> Mapping[str, bytes]:
@@ -98,7 +111,8 @@ def plan_agentcore(
     detected, report = project_for(path, project, overrides, region)
     if adjust is not None:
         detected = adjust(detected)
-    detected = with_default_excludes(detected)
+    prepared = prepare_secret_env(detected, chosen.create_secrets_from, check_env=chosen.check_env)
+    detected = with_default_excludes(prepared.project)
     variables = os.environ if environ is None else environ
     effective = resolved_region(region, detected, session, variables)
     trees: list[Mapping[str, bytes]] = []
@@ -117,7 +131,27 @@ def plan_agentcore(
         detection=report,
         cli_flags=cli_flags,
     )
-    return PlannedDeploy(detected, chosen, plan, trees[0])
+    return PlannedDeploy(detected, chosen, plan, trees[0], prepared.secret, prepared.warnings)
+
+
+def publish_planned_secret(
+    planned: PlannedDeploy, ports: AgentCorePorts | None, session: Any
+) -> None:
+    """Crea o actualiza el secreto de `create_secrets_from` antes de aplicar
+    (sólo si se pidió), en la región del despliegue, y cuenta los avisos y la
+    creación en `on_step`."""
+    on_step = planned.options.on_step
+    if on_step is not None:
+        for kind, detail in env_missing_steps(planned.env_warnings):
+            on_step(AgentDeployStep(kind, detail))
+    secret = planned.env_file_secret
+    if secret is None:
+        return
+    store = ports.secret_env_store if ports is not None else None
+    chosen = store or env_secret_store(planned.plan.region, session)
+    outcome = publish_env_file_secret(chosen, secret)
+    if on_step is not None:
+        on_step(AgentDeployStep(STEP_SECRET_ENV_CREATED, outcome))
 
 
 def agentcore_gateways(
@@ -210,6 +244,7 @@ def deploy_agentcore(
         environ=None if ports is None else ports.environ,
     )
     gateways = agentcore_gateways(planned, ports, session)
+    publish_planned_secret(planned, ports, session)
     deployment = apply_agentcore(planned, gateways, step_reporter(planned.options), ports)
     return AgentCoreFleet.from_deployment(
         deployment, gateways=gateways, invoker=agentcore_invoker(planned, ports, session)
@@ -244,6 +279,7 @@ async def deploy_agentcore_async(
         environ=None if ports is None else ports.environ,
     )
     gateways = agentcore_gateways(planned, ports, session)
+    await asyncio.to_thread(publish_planned_secret, planned, ports, session)
     request = apply_request(planned, step_reporter(planned.options))
     chosen = ports or AgentCorePorts()
     deployer = AsyncAgentCoreDeployer(gateways, clock=chosen.clock, sleep=chosen.sleep)

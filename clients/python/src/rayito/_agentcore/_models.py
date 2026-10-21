@@ -105,7 +105,9 @@ class AgentCoreDeployPlan:
     aplicar) y de dónde sale, los modelos y secretos del rol, el entorno y el
     ciclo de vida del runtime, las etiquetas, los tres pasos, y las claves de
     las líneas de seguridad y de los avisos (`_messages.SECURITY_TEXTS` y
-    `WARNING_TEXTS`) y el coste de lista."""
+    `WARNING_TEXTS`) y el coste de lista. `secret_env_names` son las
+    variables que el host pondrá desde Secrets Manager (ADR-033 D4): sólo
+    nombres, nunca valores."""
 
     name: str
     region: str
@@ -128,6 +130,7 @@ class AgentCoreDeployPlan:
     cost: tuple[str, ...]
     detection: object | None = None
     target: str = "agentcore"
+    secret_env_names: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

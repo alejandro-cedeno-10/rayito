@@ -12,9 +12,11 @@ export const AGENT_HOST_FILES: Readonly<Record<string, string>> = {
 \`DRIVERS\`), \`options\` (las opciones del driver de \`HostConfig.options\`, que
 el driver recibe como su configuración) y, opcionalmente, \`limits\`,
 \`max_concurrency\`, \`queue_max\`, \`queue_timeout_seconds\`, \`max_request_bytes\`,
-\`session_header\`, \`ready_marker\` y \`aws_env_credentials\` (\`{python, script}\`: la
+\`session_header\`, \`ready_marker\`, \`aws_env_credentials\` (\`{python, script}\`: la
 herramienta que lee las credenciales del rol de AgentCore, que se ejecuta antes de
-cada invocación).
+cada invocación) y \`secret_env\` (\`{python, script, reserved}\`: la herramienta que
+lee, al arrancar y antes de cargar el código del usuario, los secretos de
+\`RAYITO_SECRET_ENV\`; ver \`secret_env.py\`).
 Las variables de entorno de \`HostConfig.envs\` las pone quien lanza el host
 (el comando del SDK o el \`ENV\` del Dockerfile exportado). En \`task\` la
 petición llega por stdin y las líneas v1 salen por un descriptor privado; en
@@ -151,10 +153,13 @@ def serve(package: str, args: argparse.Namespace) -> int:
         Path(config.ready_marker).unlink(missing_ok=True)
         Path(config.ready_marker + serving.FAILED_SUFFIX).unlink(missing_ok=True)
     diagnostics = importlib.import_module(".diagnostics", package)
+    secrets = load_secret_env(package, host, config, log)
+    if secrets is None:
+        return 1
     try:
         driver = create_driver(package, host["driver"], host["options"])
     except Exception as exc:
-        code, detail = startup_failure(exc, diagnostics)
+        code, detail = startup_failure(exc, diagnostics, secrets)
         log.error("driver_unavailable code=%s", code)
         serving.write_failed_marker(config, code, detail)
         return 1
@@ -165,11 +170,34 @@ def serve(package: str, args: argparse.Namespace) -> int:
     )
     warm_failed = threading.Event()
     threading.Thread(
-        target=_warm, args=(service, server, log, warm_failed, diagnostics), daemon=True
+        target=_warm, args=(service, server, log, warm_failed, diagnostics, secrets), daemon=True
     ).start()
     log.info("listening port=%d driver=%s", args.port, host["driver"])
     server.serve_forever()
     return 1 if warm_failed.is_set() else 0
+
+
+def load_secret_env(
+    package: str, host: dict[str, Any], config: Any, log: logging.Logger
+) -> tuple[str, ...] | None:
+    """Exporta los secretos de \`RAYITO_SECRET_ENV\` antes de crear el driver
+    y devuelve sus valores (para redactarlos en un diagnóstico); sin la
+    variable, nada. Si falla deja el marcador de fallo con el código (nunca
+    un nombre ni un valor) y devuelve \`None\`: el driver no arranca."""
+    module = importlib.import_module(".secret_env", package)
+    if module.SPEC_VARIABLE not in os.environ:
+        return ()
+    spec = host.get(module.HOST_KEY)
+    try:
+        loaded = module.load_secret_env(
+            os.environ, module.helper_of(spec), module.reserved_of(spec)
+        )
+    except module.SecretEnvError as exc:
+        log.error("secret_env_failed code=%s", exc.detail_code)
+        importlib.import_module(".serve", package).write_failed_marker(config, exc.detail_code)
+        return None
+    log.info("secret_env_loaded count=%d", len(loaded))
+    return tuple(loaded.values())
 
 
 def _credentials_source(package: str, spec: Any) -> Any:
@@ -192,24 +220,33 @@ def _bounded(value: Any, default: Any, ceiling: Any) -> Any:
     return min(value, ceiling) if valid else default
 
 
-def startup_failure(exc: Exception, diagnostics: Any) -> tuple[str, str | None]:
+def startup_failure(
+    exc: Exception, diagnostics: Any, secrets: Sequence[str] = ()
+) -> tuple[str, str | None]:
     """El código y el diagnóstico saneado de un arranque fallido: el
     \`detail_code\` de un \`AgentFailure\` y la cola de la salida de error de la
-    app, o el nombre de la clase de cualquier otra excepción y su mensaje."""
+    app, o el nombre de la clase de cualquier otra excepción y su mensaje.
+    \`secrets\` son los valores exportados desde Secrets Manager, que se
+    retiran aunque sean cortos."""
     code = getattr(exc, "detail_code", None)
     text = getattr(exc, "diagnostics", None) if code is not None else str(exc)
-    detail = diagnostics.sanitize_diagnostics(text, os.environ) if text else ""
+    detail = diagnostics.sanitize_diagnostics(text, os.environ, secrets) if text else ""
     return str(code if code is not None else type(exc).__name__), detail or None
 
 
 def _warm(
-    service: Any, server: Any, log: logging.Logger, failed: threading.Event, diagnostics: Any
+    service: Any,
+    server: Any,
+    log: logging.Logger,
+    failed: threading.Event,
+    diagnostics: Any,
+    secrets: Sequence[str] = (),
 ) -> None:
     try:
         service.driver.warm()
         service.mark_ready()
     except Exception as exc:
-        code, detail = startup_failure(exc, diagnostics)
+        code, detail = startup_failure(exc, diagnostics, secrets)
         log.error("warm_failed code=%s", code)
         service.mark_failed(code, detail)
         failed.set()
@@ -303,7 +340,7 @@ credencial y se recorta a \`MAX_DIAGNOSTICS_BYTES\`.
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from typing import Final
 
 #: Tope en bytes UTF-8 del diagnóstico (\`AGENT_STARTUP_DIAGNOSTICS_MAX_BYTES\`
@@ -314,6 +351,10 @@ REDACTED: Final = "[redacted]"
 #: Un valor de entorno más corto que esto no se retira: sería ruido (\`1\`,
 #: \`utf-8\`) y no es una credencial.
 MIN_REDACTED_VALUE_LENGTH: Final = 8
+#: Largo mínimo de un valor que el host exportó desde Secrets Manager
+#: (\`extra_values\`, \`agentSecretEnvRedactMinChars\`): se retira aunque sea más
+#: corto que \`MIN_REDACTED_VALUE_LENGTH\`, porque sí es un secreto.
+MIN_EXTRA_REDACTED_VALUE_LENGTH: Final = 4
 #: Variables cuyo valor es estructura del sandbox (rutas, idioma), no un
 #: secreto; sus valores se dejan ver para que una traza se pueda leer.
 STRUCTURAL_ENV_NAMES: Final = frozenset(
@@ -365,13 +406,16 @@ _CREDENTIAL_PATTERNS: Final = (
 )
 
 
-def _without_environment_values(text: str, environ: Mapping[str, str]) -> str:
+def _without_environment_values(
+    text: str, environ: Mapping[str, str], extra_values: Iterable[str] = ()
+) -> str:
     values = sorted(
         {
             value
             for name, value in environ.items()
             if name not in STRUCTURAL_ENV_NAMES and len(value) >= MIN_REDACTED_VALUE_LENGTH
-        },
+        }
+        | {value for value in extra_values if len(value) >= MIN_EXTRA_REDACTED_VALUE_LENGTH},
         key=len,
         reverse=True,
     )
@@ -400,13 +444,17 @@ def bounded_tail(text: str, max_bytes: int = MAX_DIAGNOSTICS_BYTES) -> str:
     return tail[newline + 1 :] if 0 <= newline < len(tail) - 1 else tail
 
 
-def sanitize_diagnostics(text: str, environ: Mapping[str, str]) -> str:
+def sanitize_diagnostics(
+    text: str, environ: Mapping[str, str], extra_values: Iterable[str] = ()
+) -> str:
     """\`text\` sin caracteres de control, sin valores de \`environ\` ni
     patrones de credencial, acotado a \`MAX_DIAGNOSTICS_BYTES\`. La
     sustitución va antes del recorte para que un secreto partido por el
-    recorte no sobreviva."""
+    recorte no sobreviva. \`extra_values\` son valores que se retiran siempre
+    que midan al menos \`MIN_EXTRA_REDACTED_VALUE_LENGTH\` (los que el host
+    exportó desde Secrets Manager); por defecto, ninguno."""
     cleaned = _CONTROL_CHARACTERS.sub("", text.replace("\\r\\n", "\\n").replace("\\r", "\\n"))
-    cleaned = _without_credentials(_without_environment_values(cleaned, environ))
+    cleaned = _without_credentials(_without_environment_values(cleaned, environ, extra_values))
     return bounded_tail(cleaned.strip()).strip()
 `,
   "drivers/__init__.py": `"""Drivers del host del agente: cada módulo expone \`create(options)\`
@@ -3761,6 +3809,314 @@ class Driver(Protocol):
     def run(self, request: Request, emit: Emit, state: RunState) -> None: ...
 
     def cancel(self) -> None: ...
+`,
+  "secret_env.py": `"""Secretos de Secrets Manager como variables de entorno (ADR-033 D4).
+
+En AgentCore el runtime recibe sólo la especificación (\`RAYITO_SECRET_ENV\`:
+nombres de variable, nombres o ARNs de secreto, claves JSON; nunca valores).
+Antes de crear el driver, el host la saca de su entorno, pide los valores a
+la herramienta \`aws_secret_env.py\` (el venv de botocore del export, con el rol
+del runtime), los expande con el algoritmo de
+\`testdata/agent-secret-env/expand.json\`, rechaza los nombres reservados y los
+exporta. Cualquier fallo es cerrado: \`SecretEnvError\` con un \`detail_code\` de
+\`FAILURE_CODES\` y el driver no arranca. Ningún mensaje, log ni código lleva el
+nombre de un secreto, de una clave ni un valor.
+
+El algoritmo de expansión (\`expand_spec\`, \`expand_reference\`,
+\`expand_source\`) es puro: el SDK de Python lo reutiliza para MicroVMs, donde
+lee los valores con las credenciales de quien despliega. Sólo biblioteca
+estándar y nada de \`rayito\`.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+import subprocess
+from collections.abc import Callable, Collection, Mapping, MutableMapping, Sequence
+from typing import Any, Final
+
+from .protocol import AgentFailure
+
+#: La variable del runtime con la especificación (\`agentSecretEnvVariable\`).
+SPEC_VARIABLE: Final = "RAYITO_SECRET_ENV"
+#: Versión del documento de la especificación (\`agentSecretEnvSpecVersion\`).
+SPEC_VERSION: Final = 1
+#: Tope de secretos por despliegue (\`agentSecretEnvMaxSecrets\`).
+MAX_SECRETS: Final = 20
+#: Tope de bytes UTF-8 de todos los valores exportados (\`agentSecretEnvMaxTotalBytes\`).
+MAX_TOTAL_BYTES: Final = 262144
+#: Plazo de la herramienta (\`agentSecretEnvHelperTimeoutSeconds\`, provisional:
+#: se mide en la aceptación, \`AWS_API_NOTES.md\` Q188).
+HELPER_TIMEOUT_SECONDS: Final = 15
+#: Nombres y prefijos que un secreto no puede fijar
+#: (\`agentSecretEnvReservedNames\`, \`agentSecretEnvReservedPrefixes\`).
+RESERVED_NAMES: Final = frozenset({"HOME", "NODE_OPTIONS", "PATH", "PYTHONPATH"})
+RESERVED_PREFIXES: Final = ("AWS_", "LD_", "RAYITO_")
+#: Clave de \`host.json\` con la herramienta (\`python\`, \`script\`) y los nombres
+#: que el runtime ya fija (\`reserved\`).
+HOST_KEY: Final = "secret_env"
+FAILURE_REASON: Final = "runtime_error"
+UNAVAILABLE: Final = "secret_env_unavailable"
+DENIED: Final = "secret_env_denied"
+INVALID: Final = "secret_env_invalid"
+INVALID_KEY: Final = "secret_env_invalid_key"
+RESERVED: Final = "secret_env_reserved"
+FAILURE_CODES: Final = (UNAVAILABLE, DENIED, INVALID, INVALID_KEY, RESERVED)
+#: Códigos de salida de \`aws_secret_env.py\` que no son \`UNAVAILABLE\`.
+HELPER_EXIT_DENIED: Final = 3
+HELPER_EXIT_INVALID: Final = 4
+HELPER_EXIT_CODES: Final[Mapping[int, str]] = {
+    HELPER_EXIT_DENIED: DENIED,
+    HELPER_EXIT_INVALID: INVALID,
+}
+ENV_NAME_PATTERN: Final = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+#: Un secreto pedido a Secrets Manager: su nombre o ARN y la etiqueta de
+#: versión (\`None\` es \`AWSCURRENT\`).
+SecretRequest = tuple[str, str | None]
+SecretFetcher = Callable[[Sequence[SecretRequest]], Sequence[str]]
+
+
+class SecretEnvError(AgentFailure):
+    """Un fallo al cargar los secretos: \`detail_code\` es uno de
+    \`FAILURE_CODES\` y el mensaje es sólo ese código."""
+
+    def __init__(self, code: str) -> None:
+        super().__init__(FAILURE_REASON, code)
+
+
+def is_reserved(name: str, extra: Collection[str] = ()) -> bool:
+    """Si \`name\` es un nombre que un secreto no puede fijar: los de
+    \`RESERVED_NAMES\`, los que empiezan por un prefijo reservado y los de
+    \`extra\` (las variables que el runtime ya fija)."""
+    return name in RESERVED_NAMES or name.startswith(RESERVED_PREFIXES) or name in extra
+
+
+def _json_object(secret_string: str) -> dict[str, Any]:
+    try:
+        document = json.loads(secret_string)
+    except ValueError:
+        raise SecretEnvError(INVALID) from None
+    if not isinstance(document, dict):
+        raise SecretEnvError(INVALID)
+    return document
+
+
+def expand_reference(reference: Mapping[str, Any], secret_string: str) -> str:
+    """El valor de una referencia de \`secret_env\`: la cadena entera o, con
+    \`key\`, esa clave de tipo cadena del objeto JSON."""
+    key = reference.get("key")
+    if key is None:
+        return secret_string
+    document = _json_object(secret_string)
+    if key not in document:
+        raise SecretEnvError(INVALID_KEY)
+    value = document[key]
+    if not isinstance(value, str):
+        raise SecretEnvError(INVALID)
+    return value
+
+
+def _allow_listed(document: Mapping[str, Any], keys: Sequence[str]) -> dict[str, Any]:
+    missing = [key for key in keys if key not in document]
+    if missing:
+        raise SecretEnvError(INVALID_KEY)
+    return {key: document[key] for key in keys}
+
+
+def expand_source(
+    source: Mapping[str, Any], secret_string: str, reserved: Collection[str] = ()
+) -> dict[str, str]:
+    """Las variables de un \`secret_env_from\`: cada clave del objeto JSON (o
+    sólo las de \`keys\`, que deben existir), con el prefijo, como nombre de
+    variable válido y no reservado. Ninguna clave se descarta en silencio."""
+    document = _json_object(secret_string)
+    keys = source.get("keys")
+    chosen = document if keys is None else _allow_listed(document, keys)
+    prefix = source.get("prefix", "")
+    variables: dict[str, str] = {}
+    for key, value in chosen.items():
+        name = f"{prefix}{key}"
+        if not ENV_NAME_PATTERN.fullmatch(name):
+            raise SecretEnvError(INVALID_KEY)
+        if is_reserved(name, reserved):
+            raise SecretEnvError(RESERVED)
+        if not isinstance(value, str):
+            raise SecretEnvError(INVALID)
+        variables[name] = value
+    return variables
+
+
+def _valid_reference(reference: object) -> bool:
+    return (
+        isinstance(reference, dict)
+        and isinstance(reference.get("secret"), str)
+        and all(isinstance(reference.get(key, ""), str) for key in ("key", "version_stage"))
+    )
+
+
+def _valid_source(source: object) -> bool:
+    keys = source.get("keys", []) if isinstance(source, dict) else None
+    return (
+        isinstance(source, dict)
+        and isinstance(source.get("secret"), str)
+        and isinstance(source.get("prefix", ""), str)
+        and isinstance(keys, list)
+        and all(isinstance(key, str) for key in keys)
+    )
+
+
+def parse_spec(text: str) -> dict[str, Any]:
+    """El documento de \`RAYITO_SECRET_ENV\` validado, o \`INVALID\`."""
+    try:
+        spec = json.loads(text)
+    except ValueError:
+        raise SecretEnvError(INVALID) from None
+    valid = (
+        isinstance(spec, dict)
+        and spec.get("v") == SPEC_VERSION
+        and isinstance(spec.get("env"), dict)
+        and isinstance(spec.get("from"), list)
+        and all(_valid_reference(reference) for reference in spec["env"].values())
+        and all(_valid_source(source) for source in spec["from"])
+    )
+    if not valid:
+        raise SecretEnvError(INVALID)
+    return dict(spec)
+
+
+def _request_of(item: Mapping[str, Any]) -> SecretRequest:
+    return (str(item["secret"]), item.get("version_stage"))
+
+
+def secret_requests(spec: Mapping[str, Any]) -> tuple[SecretRequest, ...]:
+    """Los secretos a pedir, sin repetir: los de \`env\` por nombre de variable
+    y luego los de \`from\` en orden. Más de \`MAX_SECRETS\` es \`INVALID\`."""
+    references = [spec["env"][name] for name in sorted(spec["env"])]
+    requests = tuple(dict.fromkeys(_request_of(item) for item in [*references, *spec["from"]]))
+    if len(requests) > MAX_SECRETS:
+        raise SecretEnvError(INVALID)
+    return requests
+
+
+def expand_spec(
+    spec: Mapping[str, Any],
+    values: Mapping[SecretRequest, str],
+    reserved: Collection[str] = (),
+) -> dict[str, str]:
+    """Las variables de toda la especificación a partir de los valores de
+    cada secreto (\`secret_requests\`). Un nombre repetido entre \`env\` y
+    \`from\` es \`INVALID_KEY\`; pasar de \`MAX_TOTAL_BYTES\` es \`INVALID\`."""
+    variables: dict[str, str] = {}
+    for name in sorted(spec["env"]):
+        if not ENV_NAME_PATTERN.fullmatch(name):
+            raise SecretEnvError(INVALID_KEY)
+        if is_reserved(name, reserved):
+            raise SecretEnvError(RESERVED)
+        reference = spec["env"][name]
+        variables[name] = expand_reference(reference, values[_request_of(reference)])
+    for source in spec["from"]:
+        expanded = expand_source(source, values[_request_of(source)], reserved)
+        if set(expanded) & set(variables):
+            raise SecretEnvError(INVALID_KEY)
+        variables.update(expanded)
+    if sum(len(value.encode("utf-8")) for value in variables.values()) > MAX_TOTAL_BYTES:
+        raise SecretEnvError(INVALID)
+    return variables
+
+
+class SecretEnvHelper:
+    """Ejecuta \`python script\` con las peticiones por stdin y lee los
+    valores por stdout, en el mismo orden. Nunca lee ni guarda su stderr."""
+
+    def __init__(
+        self,
+        python: str,
+        script: str,
+        *,
+        timeout_seconds: float = HELPER_TIMEOUT_SECONDS,
+        run: Callable[..., Any] = subprocess.run,
+    ) -> None:
+        self._argv = [python, script]
+        self._timeout_seconds = timeout_seconds
+        self._run = run
+
+    def __call__(self, requests: Sequence[SecretRequest]) -> Sequence[str]:
+        payload = json.dumps({"secrets": [_request_document(item) for item in requests]})
+        try:
+            completed = self._run(
+                self._argv,
+                input=payload.encode("utf-8"),
+                capture_output=True,
+                timeout=self._timeout_seconds,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            raise SecretEnvError(UNAVAILABLE) from None
+        if completed.returncode != 0:
+            raise SecretEnvError(HELPER_EXIT_CODES.get(completed.returncode, UNAVAILABLE))
+        return _helper_values(completed.stdout, len(requests))
+
+
+def _request_document(request: SecretRequest) -> dict[str, str]:
+    secret, stage = request
+    return {"secret": secret} if stage is None else {"secret": secret, "version_stage": stage}
+
+
+def _helper_values(output: bytes, expected: int) -> list[str]:
+    try:
+        document = json.loads(output)
+    except ValueError:
+        raise SecretEnvError(UNAVAILABLE) from None
+    values = document.get("values") if isinstance(document, dict) else None
+    if (
+        not isinstance(values, list)
+        or len(values) != expected
+        or not all(isinstance(value, str) for value in values)
+    ):
+        raise SecretEnvError(UNAVAILABLE)
+    return values
+
+
+def helper_of(config: object) -> SecretEnvHelper | None:
+    """La herramienta de la clave \`secret_env\` de \`host.json\`, o \`None\`."""
+    if not isinstance(config, dict):
+        return None
+    python, script = config.get("python"), config.get("script")
+    if not isinstance(python, str) or not isinstance(script, str):
+        return None
+    return SecretEnvHelper(python, script)
+
+
+def reserved_of(config: object) -> frozenset[str]:
+    """Los nombres que el runtime ya fija (\`reserved\` de esa clave)."""
+    names = config.get("reserved") if isinstance(config, dict) else None
+    if not isinstance(names, list):
+        return frozenset()
+    return frozenset(name for name in names if isinstance(name, str))
+
+
+def load_secret_env(
+    environ: MutableMapping[str, str],
+    fetch: SecretFetcher | None,
+    reserved: Collection[str] = (),
+) -> dict[str, str]:
+    """Saca \`SPEC_VARIABLE\` de \`environ\`, lee los secretos con \`fetch\` y
+    exporta sus variables en \`environ\`. Devuelve lo exportado (para redactar
+    los valores en un diagnóstico); sin especificación, nada. Sin \`fetch\`
+    (un \`host.json\` sin herramienta), \`UNAVAILABLE\`."""
+    text = environ.pop(SPEC_VARIABLE, None)
+    if text is None:
+        return {}
+    if fetch is None:
+        raise SecretEnvError(UNAVAILABLE)
+    spec = parse_spec(text)
+    requests = secret_requests(spec)
+    values = fetch(requests)
+    variables = expand_spec(spec, dict(zip(requests, values, strict=True)), reserved)
+    environ.update(variables)
+    return variables
 `,
   "serve.py": `"""Modo \`serve\` del host (ADR-028, D3 y D4): sirve \`rayito.agent-service/1\`,
 el contrato HTTP de AgentCore, con \`http.server.ThreadingHTTPServer\`.

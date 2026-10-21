@@ -34,6 +34,10 @@ from rayito._agent._project_base import (
     template_name,
     version_args,
 )
+from rayito._agent._runtime import HostConfig
+from rayito._agent._secret_env_domain import SecretReader, resolve_secret_env, spec_document
+from rayito._agent._secret_env_project import check_runtime_collisions
+from rayito._agent._secret_env_reader import secret_reader_for
 from rayito._images import DEFAULT_BUILD_TIMEOUT_SECONDS
 from rayito._limits import AGENT_SERVICE_READY_MARKER_PATH, AGENT_SERVICE_READY_TIMEOUT_SECONDS
 from rayito.exceptions import SandboxException, TimeoutException
@@ -64,8 +68,10 @@ class ProjectService:
         sleep: Callable[[float], None] = time.sleep,
         clock: Callable[[], float] = time.monotonic,
         image_version: str | None = None,
+        secret_reader: SecretReader | None = None,
     ) -> None:
         self._project = project
+        self._secret_reader = secret_reader
         self._sandbox_class = sandbox_class
         self._transport_factory = transport_factory
         self._sleep = sleep
@@ -181,13 +187,14 @@ class ProjectService:
         No mata el sandbox si falla: lo decide quien lo creó."""
         project = self._project
         host = host_config_for(project, sandbox.gateways)
+        secret_env = self._secret_env(sandbox, host)
         sandbox.files.write_files(host_entries(project, host))
         sandbox.commands.run(clear_markers_command(), user=AGENT_SERVE_USER)
         handle = sandbox.commands.run(
             serve_command(host, project.serve.port),
             background=True,
             user=AGENT_SERVE_USER,
-            envs=dict(host.envs),
+            envs={**host.envs, **secret_env},
             timeout=None,
             tag=AGENT_SERVE_TAG,
             kill_tree=True,
@@ -202,6 +209,19 @@ class ProjectService:
             request_timeout=request_timeout(project),
             transport_factory=self._transport_factory,
         )
+
+    def _secret_env(self, sandbox: Any, host: HostConfig) -> dict[str, str]:
+        """Las variables de `secret_env` y `secret_env_from`, leídas con las
+        credenciales de quien despliega (`secret_reader`, o las de boto3 en
+        la región del sandbox); nada, y ninguna llamada, sin ellas. Viajan
+        sólo en el entorno del proceso del host, nunca en un fichero."""
+        project = self._project
+        spec = spec_document(project.secret_env, project.secret_env_from)
+        if spec is None:
+            return {}
+        check_runtime_collisions(project, host.envs)
+        reader = self._secret_reader or secret_reader_for(sandbox.region)
+        return resolve_secret_env(spec, reader, tuple(host.envs))
 
     def _create(self, arguments: dict[str, Any], region: str | None, session: Any) -> Any:
         sandbox_class = self._sandbox_class

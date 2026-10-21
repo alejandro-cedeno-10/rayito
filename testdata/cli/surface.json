@@ -513,6 +513,58 @@
           "envvar": null
         },
         {
+          "name": "secret_env",
+          "kind": "option",
+          "flags": [
+            "--secret-env"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": true,
+          "default": [],
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "secret_env_from",
+          "kind": "option",
+          "flags": [
+            "--secret-env-from"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": true,
+          "default": [],
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "create_secrets_from",
+          "kind": "option",
+          "flags": [
+            "--create-secrets-from"
+          ],
+          "type": "path",
+          "required": false,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "check_env",
+          "kind": "option",
+          "flags": [
+            "--check-env"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "default": false,
+          "is_flag": true,
+          "envvar": null
+        },
+        {
           "name": "base_artifact",
           "kind": "option",
           "flags": [
