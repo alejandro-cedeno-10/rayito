@@ -4937,9 +4937,10 @@ export const HERMES_REQUIREMENTS = `# Pines del venv de Hermes Agent v0.22.2 de 
 # --no-emit-package fetch-use\`, y sus bloques sustituyen a los de este
 # fichero, sin el marcador de 3.14. browser-harness (el motor del Browser
 # Use CLI de Hermes, con cdp-use y fetch-use, que sólo él usa) sale del
-# venv: la plantilla no activa el navegador (toolsets \`terminal\`, \`file\` y
-# \`web\`), Hermes vuelve a sus herramientas de navegador propias si falta, y
-# con él dentro el \`pip check\` de la imagen fallaría por su pillow==12.3.0.
+# venv: la plantilla no activa el navegador (toolsets \`terminal\` y \`file\`
+# por defecto), Hermes vuelve a sus herramientas de navegador propias si
+# falta, y con él dentro el \`pip check\` de la imagen fallaría por su
+# pillow==12.3.0.
 # certifi 2026.10.19 tiene menos de 3 días (el \`exclude-newer\` de Hermes) y
 # de 7 (el cooldown de Dependabot): excepción de seguridad, quita raíces de
 # emSign con claves comprometidas.
