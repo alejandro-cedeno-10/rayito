@@ -20,7 +20,7 @@ export const TARGET_AGENTCORE: AgentTarget = "agentcore";
  * milisegundos y se convierten a segundos enteros: un valor que no es múltiplo
  * de 1000 es `lifecycle_invalid`. `externalModel` permite un modelo fuera de
  * Bedrock: el rol no recibe permisos de Bedrock que no pidas y la clave la
- * obtiene tu código con `readableSecrets`; nunca va en el entorno del runtime.
+ * obtiene tu código con `readableSecrets`; nunca va en la configuración del runtime.
  *
  * Coste y activación
  * -------------------

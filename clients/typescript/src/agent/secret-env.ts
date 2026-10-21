@@ -510,7 +510,8 @@ export function dotenvNames(textValue: string): readonly string[] {
  * `NOMBRE=valor`, `export`, comillas, comentarios; sin interpolación. Una
  * variable repetida gana la última. */
 export function parseDotenv(textValue: string): Record<string, string> {
-  const variables: Record<string, string> = {};
+  // Sin prototipo: una línea `__proto__=...` es una variable más, como en Python.
+  const variables: Record<string, string> = Object.create(null) as Record<string, string>;
   for (const [name, raw] of dotenvAssignments(textValue)) {
     variables[name] = dotenvValue(raw);
   }

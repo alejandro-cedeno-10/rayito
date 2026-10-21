@@ -28,7 +28,7 @@ class AgentCoreOptions:
     (etiquetas de la pila y del runtime, para organizaciones que las exigen)
     y `external_model` (permite un modelo fuera de Bedrock: el rol no recibe
     permisos de Bedrock que no pidas y la clave la obtiene tu código con
-    `readable_secrets`; nunca va en el entorno del runtime). Sólo valida los
+    `readable_secrets`; nunca va en la configuración del runtime). Sólo valida los
     tipos: los rangos se comprueban al planificar, antes de llamar a AWS.
 
     Coste y activación

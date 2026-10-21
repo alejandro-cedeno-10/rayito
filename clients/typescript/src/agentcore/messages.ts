@@ -241,7 +241,7 @@ export const SECURITY_MESSAGES = {
   externalModel:
     "modelo fuera de Bedrock (--external-model): el agente llama a su pasarela de LLM por " +
     "Internet con una clave que obtiene tu código (--secret-env o --readable-secret); la " +
-    "clave nunca va en el entorno del runtime y Rayito no la ve ni filtra esa salida",
+    "clave nunca va en la configuración del runtime y Rayito no la ve ni filtra esa salida",
   publicNetwork:
     "red PUBLIC: el agente tiene salida a Internet y la política de salida de Rayito no se aplica",
   sessionIsolation:
