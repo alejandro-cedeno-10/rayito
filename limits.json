@@ -286,6 +286,7 @@
   "agentServiceSessionHeader": "X-Amzn-Bedrock-AgentCore-Runtime-Session-Id",
   "agentServiceMaxConcurrency": 1,
   "agentServiceMaxRequestBytes": 1048576,
+  "agentServiceMaxOutputBytes": 1048576,
   "agentServiceReadyTimeoutSeconds": 120,
   "defaultAgentDeployTimeoutSeconds": 3600,
   "agentRunSandboxMarginSeconds": 60,

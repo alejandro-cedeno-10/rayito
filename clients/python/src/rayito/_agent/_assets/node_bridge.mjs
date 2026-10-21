@@ -13,7 +13,10 @@
 //     toda llamada de herramienta con un gancho `BeforeToolCallEvent`.
 //   - `langgraph`: un grafo compilado de LangGraph.js o de deepagents-js
 //     (`graph`, `agent` o `createGraph(ctx)`), que se ejecuta con
-//     `graph.stream({ messages }, { configurable: { thread_id } })`.
+//     `graph.stream({ messages }, { configurable: { thread_id } })`. Si el grafo
+//     tiene `getInputJsonSchema` (LangGraph.js 1.1 o posterior) y su esquema no
+//     es de mensajes, se ejecuta con el objeto `input` de la petición y devuelve
+//     su último estado como `output` en `done` (ADR-033 D3).
 //   - `vercel-ai`: un agente del AI SDK (`ToolLoopAgent`: `agent`, o
 //     `createAgent(ctx)`), con `agent.stream()` o, si no lo tiene,
 //     `agent.generate()`.
@@ -51,6 +54,24 @@ export const ENTRYPOINT_SEPARATOR = "#";
 export const HISTORY_MAX_MESSAGES = 200;
 export const SESSION_FILE_MODE = 0o600;
 export const SESSION_DIR_MODE = 0o700;
+// Entrada estructurada (ADR-033 D3): el modo de `stream` con el estado completo,
+// la clave de los mensajes de un grafo de mensajes, el tope de `output`
+// (`AGENT_SERVICE_MAX_OUTPUT_BYTES` de `limits.json`) y los `detail_code`.
+export const VALUES_STREAM_MODE = "values";
+export const MESSAGES_KEY = "messages";
+export const MAX_SERVICE_OUTPUT_BYTES = 1048576;
+export const INPUT_REQUIRED = "input_required";
+export const INVALID_INPUT = "invalid_input";
+export const OUTPUT_NOT_SERIALIZABLE = "output_not_serializable";
+const JSON_TYPE_CHECKS = {
+  string: (value) => typeof value === "string",
+  integer: (value) => Number.isInteger(value),
+  number: (value) => typeof value === "number",
+  boolean: (value) => typeof value === "boolean",
+  object: (value) => isPlainObject(value),
+  array: (value) => Array.isArray(value),
+  null: (value) => value === null,
+};
 // Clases de error del modelo o de la pasarela: las de Strands, las del AI SDK
 // y las del cliente de Bedrock de AWS (que usan `@langchain/aws` y los
 // proveedores de Bedrock). Se reconocen por nombre de clase, nunca por mensaje.
@@ -320,6 +341,16 @@ export class BridgeError extends Error {
   }
 }
 
+// Un fallo de la entrada o la salida estructurada de un grafo
+// (`protocol_error` con `input_required`, `invalid_input` u
+// `output_not_serializable`), nunca con el valor.
+export class InputError extends Error {
+  constructor(code) {
+    super(code);
+    this.code = code;
+  }
+}
+
 export function sanitizeDetailCode(value) {
   return String(value).toLowerCase().replace(DETAIL_CODE_PATTERN, "_").slice(0, MAX_DETAIL_CODE_LENGTH);
 }
@@ -327,6 +358,9 @@ export function sanitizeDetailCode(value) {
 export function classify(error) {
   if (error instanceof BridgeError) {
     return ["runtime_error", sanitizeDetailCode(error.code)];
+  }
+  if (error instanceof InputError) {
+    return ["protocol_error", sanitizeDetailCode(error.code)];
   }
   const detail = sanitizeDetailCode(error?.constructor?.name ?? "error");
   for (let current = error, depth = 0; current && depth < 6; depth += 1) {
@@ -455,6 +489,7 @@ function validRequest(request) {
     request &&
     request.v === PROTOCOL_VERSION &&
     typeof request.prompt === "string" &&
+    (request.input === undefined || isPlainObject(request.input)) &&
     typeof request.session_id === "string" &&
     SESSION_ID_PATTERN.test(request.session_id)
   );
@@ -708,9 +743,16 @@ async function loadGraph(config, request, importModule) {
 
 export async function runLanggraph({ config, request, emit, importModule }) {
   const graph = await loadGraph(config, request, importModule);
+  const schema = await structuredInputSchema(graph);
+  if (schema !== undefined) {
+    return runStructuredGraph({ graph, schema, request, emit });
+  }
   const store = new HistoryStore(graph.checkpointer ? null : config.sessions_dir, request.session_id);
   const history = store.load();
-  const input = { messages: [...history, { role: "user", content: request.prompt }] };
+  const input =
+    request.input === undefined
+      ? { messages: [...history, { role: "user", content: request.prompt }] }
+      : messagesInput(request.input, history);
   const options = { configurable: { thread_id: request.session_id } };
   const translator = new GraphTranslator();
   for await (const chunk of await graph.stream(input, { ...options, streamMode: GRAPH_STREAM_MODE })) {
@@ -718,7 +760,138 @@ export async function runLanggraph({ config, request, emit, importModule }) {
       emit(translated);
     }
   }
-  store.save(history, request.prompt, translator.answer);
+  if (request.input === undefined) {
+    store.save(history, request.prompt, translator.answer);
+  }
+  return undefined;
+}
+
+function isPlainObject(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+// El esquema de entrada de un grafo que no es de mensajes, o `undefined`: sin
+// `getInputJsonSchema`, si falla, si no tiene `properties` o si tiene
+// `messages`, el grafo se ejecuta como siempre.
+export async function structuredInputSchema(graph) {
+  if (typeof graph?.getInputJsonSchema !== "function") {
+    return undefined;
+  }
+  let schema;
+  try {
+    schema = await graph.getInputJsonSchema();
+  } catch {
+    return undefined;
+  }
+  const properties = schema?.properties;
+  return isPlainObject(properties) && !(MESSAGES_KEY in properties) ? schema : undefined;
+}
+
+// Un `input` para un grafo de mensajes: sus claves tal cual, con sus
+// `messages` detrás del historial de la sesión.
+function messagesInput(input, history) {
+  const own = Array.isArray(input[MESSAGES_KEY]) ? input[MESSAGES_KEY] : [];
+  return { ...input, [MESSAGES_KEY]: [...history, ...own] };
+}
+
+function matchesSchema(value, spec) {
+  if (!isPlainObject(spec)) {
+    return true;
+  }
+  if (spec.type !== undefined) {
+    const checks = (Array.isArray(spec.type) ? spec.type : [spec.type])
+      .map((name) => JSON_TYPE_CHECKS[name])
+      .filter((check) => check !== undefined);
+    return checks.length === 0 || checks.some((check) => check(value));
+  }
+  const branches = spec.anyOf ?? spec.oneOf;
+  return Array.isArray(branches) ? branches.some((branch) => matchesSchema(value, branch)) : true;
+}
+
+// Lo básico del esquema, como el driver de Python: un objeto, las claves de
+// `required`, ninguna de más con `additionalProperties: false` y el tipo de
+// cada clave de primer nivel.
+export function validateInput(schema, data) {
+  const known = isPlainObject(schema.properties) ? schema.properties : {};
+  const required = Array.isArray(schema.required) ? schema.required : [];
+  const valid =
+    isPlainObject(data) &&
+    required.every((key) => key in data) &&
+    (schema.additionalProperties !== false || Object.keys(data).every((key) => key in known)) &&
+    Object.entries(data).every(([key, value]) => matchesSchema(value, known[key]));
+  if (!valid) {
+    throw new InputError(INVALID_INPUT);
+  }
+}
+
+async function outputKeys(graph) {
+  if (typeof graph.getOutputJsonSchema !== "function") {
+    return undefined;
+  }
+  try {
+    const properties = (await graph.getOutputJsonSchema())?.properties;
+    return isPlainObject(properties) ? new Set(Object.keys(properties)) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function jsonable(value) {
+  if (typeof value?.toDict === "function") {
+    return value.toDict();
+  }
+  if (Array.isArray(value)) {
+    return value.map(jsonable);
+  }
+  if (isPlainObject(value)) {
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, jsonable(item)]));
+  }
+  return value;
+}
+
+// El último estado filtrado al esquema de salida y en JSON (los mensajes, con
+// `toDict()`); lo que no se codifica o no cabe es `output_not_serializable`.
+export async function structuredOutput(graph, values) {
+  const keys = await outputKeys(graph);
+  const state = isPlainObject(values) ? values : {};
+  const selected = Object.fromEntries(
+    Object.entries(state).filter(([key]) => keys === undefined || keys.has(key)),
+  );
+  let encoded;
+  try {
+    encoded = JSON.stringify(jsonable(selected));
+  } catch {
+    throw new InputError(OUTPUT_NOT_SERIALIZABLE);
+  }
+  if (encoded === undefined || Buffer.byteLength(encoded, "utf8") > MAX_SERVICE_OUTPUT_BYTES) {
+    throw new InputError(OUTPUT_NOT_SERIALIZABLE);
+  }
+  return JSON.parse(encoded);
+}
+
+// Un grafo con esquema de entrada propio: exige `input`, lo comprueba y lo
+// pasa con `thread_id` igual a la sesión; devuelve la salida estructurada.
+async function runStructuredGraph({ graph, schema, request, emit }) {
+  if (request.input === undefined) {
+    throw new InputError(INPUT_REQUIRED);
+  }
+  validateInput(schema, request.input);
+  const options = {
+    configurable: { thread_id: request.session_id },
+    streamMode: [GRAPH_STREAM_MODE, VALUES_STREAM_MODE],
+  };
+  const translator = new GraphTranslator();
+  let last;
+  for await (const [mode, chunk] of await graph.stream(request.input, options)) {
+    if (mode === VALUES_STREAM_MODE) {
+      last = chunk;
+    } else {
+      for (const translated of translator.feed(chunk)) {
+        emit(translated);
+      }
+    }
+  }
+  return structuredOutput(graph, last);
 }
 
 // ---- adaptador `vercel-ai` (AI SDK) ----------------------------------------
@@ -896,7 +1069,7 @@ export async function run({ config, request, emit, importModule = (name) => impo
   if (!adapter) {
     throw new BridgeError("unknown_adapter");
   }
-  await adapter({ config, request, emit, importModule });
+  return adapter({ config, request, emit, importModule });
 }
 
 function protocolEmitter() {
@@ -953,14 +1126,15 @@ export async function main(argv) {
   if (process.env[GATEWAY_ENDPOINT_ENV]) {
     forceHttp1ForAwsSdk();
   }
+  let output;
   try {
-    await withAwsEnv(request.aws_env, () => run({ config, request, emit }));
+    output = await withAwsEnv(request.aws_env, () => run({ config, request, emit }));
   } catch (error) {
     const [reason, detail] = classify(error);
     emit(event("agent_failed", { reason, detail_code: detail, session_id: request.session_id }));
     return;
   }
-  emit(event("done", { session_id: request.session_id }));
+  emit(event("done", { session_id: request.session_id, ...(isPlainObject(output) ? { output } : {}) }));
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

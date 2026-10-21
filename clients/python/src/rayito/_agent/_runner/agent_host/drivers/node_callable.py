@@ -26,6 +26,8 @@ from ._common import load_config
 NODE_BINARY: Final = "node"
 #: El adaptador que el puente usa si la configuración no trae `adapter`.
 DEFAULT_ADAPTER: Final = "strands"
+#: El único adaptador del puente que entiende `input` (ADR-033 D3).
+INPUT_ADAPTER: Final = "langgraph"
 
 
 def create(options: Mapping[str, Any]) -> command.Driver:
@@ -39,5 +41,6 @@ def create(options: Mapping[str, Any]) -> command.Driver:
             "command": [NODE_BINARY, bridge, config_path],
             "protocol": command.PROTOCOL_V1,
             "workdir": config.get("workdir"),
+            command.ACCEPTS_INPUT_KEY: config.get("adapter") == INPUT_ADAPTER,
         }
     )

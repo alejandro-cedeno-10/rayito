@@ -390,6 +390,7 @@ GROUPS: tuple[tuple[str, ...], ...] = (
         "agentServiceSessionHeader",
         "agentServiceMaxConcurrency",
         "agentServiceMaxRequestBytes",
+        "agentServiceMaxOutputBytes",
         "agentServiceReadyTimeoutSeconds",
         "defaultAgentDeployTimeoutSeconds",
         "agentRunSandboxMarginSeconds",
