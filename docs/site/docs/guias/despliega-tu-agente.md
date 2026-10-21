@@ -949,6 +949,110 @@ de `/ping` y `/invocations` sólo los usa el host por dentro: pedir `/health` o
 ese caso, y `rayito agent init --runtime custom` escribe `protocol = "raw"`
 porque su app declara sus propias rutas.
 
+### LangGraph Platform API (experimental) { #langgraph-platform-api }
+
+Si tu proyecto ya se sirve con `langgraph dev` (un `langgraph.json` y el
+LangGraph Platform API: `/ok`, `/threads`, `/runs/wait`), puedes desplegarlo
+tal cual con `--protocol langgraph-api`. Sin la opción nada cambia: Rayito
+sigue sirviendo un `langgraph.json` como siempre, importando el grafo en el
+proceso del host (protocolo `framework`). El protocolo nuevo sólo te aporta
+algo si dependes de la semántica del Platform API (assistants, el estado del
+hilo o una entrada que no son mensajes).
+
+```bash
+rayito agent detect ./ticket-agent --protocol langgraph-api
+rayito agent deploy ./ticket-agent --protocol langgraph-api
+```
+
+Con la opción, la detección sirve el proyecto como una app `custom` que
+arranca `langgraph dev --no-browser --no-reload` en el puerto interno 8000,
+con `protocol = "langgraph-api"` y `assistant_id` igual al grafo elegido de
+`graphs` (el llamado `agent` si hay varios). Sin `langgraph.json` falla con
+`invalid_value` en `runtime.app.protocol`. Avisa siempre de que `langgraph dev`
+es un servidor de desarrollo y, si `langgraph-cli` no está entre tus
+dependencias, de que lo añadas. El fichero de proyecto equivalente es:
+
+```toml
+[runtime]
+kind = "custom"
+requirements = "requirements.txt"
+
+[runtime.app]
+command = ["langgraph", "dev", "--no-browser", "--no-reload", "--host", "127.0.0.1", "--port", "8000", "--config", "langgraph.json"]
+port = 8000
+health_path = "/ok"
+protocol = "langgraph-api"
+assistant_id = "agent"
+```
+
+=== "Python"
+
+    ```python
+    from rayito import CustomRuntime, HttpApp
+
+    runtime = CustomRuntime(
+        requirements="requirements.txt",
+        app=HttpApp(
+            command=["langgraph", "dev", "--no-browser", "--no-reload", "--port", "8000"],
+            port=8000,
+            protocol="langgraph-api",
+            assistant_id="agent",
+        ),
+    )
+    ```
+
+=== "TypeScript"
+
+    ```ts
+    import { CustomRuntime, HttpApp } from "rayito";
+
+    const runtime = new CustomRuntime({
+      requirements: "requirements.txt",
+      app: new HttpApp({
+        command: ["langgraph", "dev", "--no-browser", "--no-reload", "--port", "8000"],
+        port: 8000,
+        protocol: "langgraph-api",
+        assistantId: "agent",
+      }),
+    });
+    console.log(runtime);
+    ```
+
+Qué hace el host con cada invocación:
+
+- La traduce a `POST /threads/{thread_id}/runs/wait` con
+  `{"assistant_id", "input", "if_not_exists": "create", "multitask_strategy": "reject"}`;
+  el prompt llega al grafo como un único mensaje de usuario
+  (`{"messages": [{"role": "user", "content": ...}]}`).
+- El hilo sale de la sesión (`uuid5` de su id), así que dos invocaciones con
+  la misma sesión siguen el mismo hilo. Una segunda ejecución sobre un hilo
+  ocupado no se encola: falla con `app_http_409`.
+- El texto sale de `response_field` (si lo fijas) o del `content` del último
+  mensaje del estado final; sin mensajes, es el estado entero en JSON. El uso
+  de tokens sale de su `usage_metadata`, y sin él es desconocido, no cero.
+- Un grafo que se detiene en un `interrupt` (human-in-the-loop) devuelve
+  `AgentException` con `reason="protocol_error"` y `detail_code`
+  `graph_interrupted`; cualquier otro estado HTTP es `app_http_<n>`.
+- La salud es `GET /ok` (si dejas `health_path` por defecto) y el host espera
+  hasta 60 segundos a que `langgraph dev` arranque. `invoke_path` no se
+  cambia: la ruta la fija el API.
+- `langgraph dev` arranca con `LANGGRAPH_CLI_NO_ANALYTICS=1` y
+  `LANGSMITH_TRACING=false`, salvo que tu proyecto fije esas variables.
+
+!!! warning "Experimental: un servidor de desarrollo"
+    `langgraph dev` guarda el estado en memoria: los hilos se pierden cuando
+    el VM o la sesión de AgentCore terminan. Rayito no instala
+    `langgraph-cli[inmem]` (añádelo a tus requisitos) y el paquete
+    `langgraph-api` que trae se distribuye con la licencia Elastic-2.0:
+    revísala antes de usarlo. No se admiten el servidor de producción
+    (`langgraph up` o el Agent Server, que necesitan Postgres, Redis y una
+    licencia), el streaming (`stream()` entrega el texto entero en un evento),
+    reanudar un `interrupt`, ni `langgraphjs dev`. Sólo `/ping` e
+    `/invocations` se exponen: el resto del Platform API no se alcanza desde
+    fuera. Un `rayito-agent.toml` con `protocol = "langgraph-api"` o
+    `assistant_id` falla con `clave desconocida` en un SDK anterior a esta
+    función.
+
 ### El contrato del servicio
 
 El servicio habla el contrato de runtime de AgentCore, así que el mismo agente

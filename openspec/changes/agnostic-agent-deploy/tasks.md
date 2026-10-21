@@ -147,25 +147,25 @@ follows merge rules M1-M8 of `design.md` and ticks only its own section here.
 
 ## D. `langgraph-api` protocol (`feat/agent-langgraph-api`)
 
-- [ ] D.1 `HttpApp.assistant_id`, protocol value, validation, `to_mapping`,
+- [x] D.1 `HttpApp.assistant_id`, protocol value, validation, `to_mapping`,
       `hides_own_routes`, `_app_options` key tuple (4.10); TS mirror.
-- [ ] D.2 Driver branch: body, thread derivation (`requests.json`
+- [x] D.2 Driver branch: body, thread derivation (`requests.json`
       `threadCases`, prompt rows of `bodyCases`), reading
       (`responses.json`), `graph_interrupted`, health `/ok`, own ready wait;
       limits (4.1); fake loopback server tests.
-- [ ] D.3 Detection with `--protocol langgraph-api`: launcher, kind
+- [x] D.3 Detection with `--protocol langgraph-api`: launcher, kind
       `custom`, `assistant_id` from `preferKeys`, error without
       `langgraph.json`, warnings; `protocol_ignored` unchanged for any other
       protocol; cases (D list of design §3).
-- [ ] D.4 Child environment `LANGGRAPH_CLI_NO_ANALYTICS=1`,
+- [x] D.4 Child environment `LANGGRAPH_CLI_NO_ANALYTICS=1`,
       `LANGSMITH_TRACING=false` unless set.
 - [ ] D.int.1 (after B) `Request.input` goes as `input` (structured row of
       `bodyCases`).
 - [ ] D.int.2 (after B) `assistant_id` from `select_graph`, honouring
       `--graph`.
-- [ ] D.5 Docs (4.23: experimental, dev server, Elastic-2.0 license of
+- [x] D.5 Docs (4.23: experimental, dev server, Elastic-2.0 license of
       `langgraph-api`, not installed by Rayito), CHANGELOG.
-- [ ] D.6 Gates as A.9.
+- [x] D.6 Gates as A.9.
 
 ## Z. Integration and acceptance (on `feat/agnostic-deploy` after A-D merge)
 

@@ -237,6 +237,11 @@ generated content.
 | `aborted` | `stream.abort()` / cancellation / `AbortSignal` |
 | `busy` | an execution is already in progress in that sandbox (one `run`/`stream` at a time per sandbox in this phase) |
 
+With a `protocol = "langgraph-api"` app (experimental), a graph that stops at
+an `interrupt` gives `protocol_error` with `detail_code` `graph_interrupted`:
+the host does not resume a human-in-the-loop
+([LangGraph Platform API](../guias/despliega-tu-agente.md#langgraph-platform-api)).
+
 ## `AgentCoreException` / `AgentCoreError` { #agentcore }
 
 Since 0.15.0. Raised by the AgentCore deploy

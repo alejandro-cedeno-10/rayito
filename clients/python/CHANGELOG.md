@@ -6,6 +6,25 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
 
 ## [Unreleased]
 
+### Añadido
+
+- **Protocolo `langgraph-api` (experimental) para servir un `langgraph.json`
+  con `langgraph dev`**: `HttpApp(protocol="langgraph-api", assistant_id=...)`
+  (y `[runtime.app] protocol = "langgraph-api"` con `assistant_id`) hace que el
+  host traduzca cada invocación a `POST /threads/{thread_id}/runs/wait` del
+  LangGraph Platform API, con el hilo derivado de la sesión (la misma sesión
+  sigue el mismo hilo), salud en `/ok`, el texto de `response_field` o del
+  último mensaje y el uso de su `usage_metadata`. Un `interrupt` del grafo es
+  `AgentException(protocol_error)` con `detail_code` `graph_interrupted`.
+  `rayito agent detect` y `deploy` con `--protocol langgraph-api` sirven así
+  un proyecto con `langgraph.json` (`kind = "custom"`, el launcher de
+  `langgraph dev` y el grafo elegido como `assistant_id`), y sin la opción la
+  detección no cambia. `langgraph dev` es un servidor de desarrollo en memoria;
+  Rayito no instala `langgraph-cli[inmem]` (el paquete `langgraph-api` usa la
+  licencia Elastic-2.0). Sin streaming ni `langgraph up` en esta versión.
+  `HttpApp.served_health_path` y `served_invoke_path` dicen las rutas a las
+  que llama el host.
+
 ## [0.15.0] - 2026-10-21
 
 ### Añadido

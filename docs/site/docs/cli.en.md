@@ -569,6 +569,12 @@ identifies the VM, and passing it with `--session-id` continues the
 conversation. Messages and help are in Spanish. See
 [Deploy your agent](guias/despliega-tu-agente.md#sin-escribir-nada).
 
+`--protocol` accepts `agentcore`, `json`, `raw` and, since this version,
+`langgraph-api` (experimental): on a project with `langgraph.json` it serves
+the graph with `langgraph dev` and its LangGraph Platform API instead of
+importing it; without `langgraph.json` it fails with `invalid_value`. See
+[LangGraph Platform API](guias/despliega-tu-agente.md#langgraph-platform-api).
+
 Builds the `AgentTemplate` image
 ([Agent templates](funciones-opcionales/templates-de-agente.md)): it starts
 from `--base` (an image already published with `rayito image publish`) and

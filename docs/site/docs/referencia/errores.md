@@ -236,6 +236,11 @@ del proveedor, el prompt ni el contenido generado.
 | `aborted` | `stream.abort()` / cancelación / `AbortSignal` |
 | `busy` | ya hay una ejecución en curso en ese sandbox (un `run`/`stream` a la vez por sandbox en esta fase) |
 
+Con una app `protocol = "langgraph-api"` (experimental), un grafo que se
+detiene en un `interrupt` da `protocol_error` con `detail_code`
+`graph_interrupted`: el host no reanuda un human-in-the-loop
+([LangGraph Platform API](../guias/despliega-tu-agente.md#langgraph-platform-api)).
+
 ## `AgentCoreException` / `AgentCoreError` { #agentcore }
 
 Desde 0.15.0. Las lanza el despliegue en AgentCore

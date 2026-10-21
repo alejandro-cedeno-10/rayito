@@ -558,6 +558,12 @@ identifica el VM, y pasarlo con `--session-id` sigue la conversación. Los
 mensajes y las ayudas van en español. Ver
 [Despliega tu agente](guias/despliega-tu-agente.md#sin-escribir-nada).
 
+`--protocol` acepta `agentcore`, `json`, `raw` y, desde esta versión,
+`langgraph-api` (experimental): sobre un proyecto con `langgraph.json` sirve
+el grafo con `langgraph dev` y su LangGraph Platform API en vez de importarlo;
+sin `langgraph.json` falla con `invalid_value`. Ver
+[LangGraph Platform API](guias/despliega-tu-agente.md#langgraph-platform-api).
+
 Construye la imagen de `AgentTemplate`
 ([Templates de agente](funciones-opcionales/templates-de-agente.md)): parte
 de `--base` (una imagen ya publicada con `rayito image publish`) e instala
