@@ -6,6 +6,8 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-10-21
+
 ### Añadido
 
 - **`rayito setup` prepara una cuenta y una región en una orden idempotente**:
@@ -2090,7 +2092,8 @@ Pasos manuales, fuera de CI, antes del primer tag (pasos canónicos en
 
 Builds internos de los hitos M1-M5, nunca publicados.
 
-[Unreleased]: https://github.com/alejandro-cedeno-10/rayito/compare/python-v0.14.0...HEAD
+[Unreleased]: https://github.com/alejandro-cedeno-10/rayito/compare/python-v0.15.0...HEAD
+[0.15.0]: https://github.com/alejandro-cedeno-10/rayito/compare/python-v0.14.0...python-v0.15.0
 [0.14.0]: https://github.com/alejandro-cedeno-10/rayito/compare/python-v0.13.0...python-v0.14.0
 [0.13.0]: https://github.com/alejandro-cedeno-10/rayito/compare/python-v0.12.0...python-v0.13.0
 [0.12.0]: https://github.com/alejandro-cedeno-10/rayito/compare/python-v0.11.0...python-v0.12.0
