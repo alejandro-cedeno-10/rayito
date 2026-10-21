@@ -300,19 +300,27 @@ def vm_lost_message() -> str:
 
 
 def pool_config_for(
-    project: AgentProject, scaling: ScalingOptions, access_token: str, metadata: Mapping[str, str]
+    project: AgentProject,
+    scaling: ScalingOptions,
+    access_token: str,
+    metadata: Mapping[str, str],
+    *,
+    template_version: str | None = None,
 ) -> PoolConfig:
     """La configuración del pool de plazas calientes de una flota: las
     mismas opciones de lanzamiento que un VM servido (imagen, vida, idle,
     red) y el token único de la flota. Una plaza se recicla cuando le queda
     menos vida de la que `min_remaining_seconds` exige: por defecto una hora,
-    o lo que deje el plazo del servicio."""
+    o lo que deje el plazo del servicio. `template_version` fija la versión
+    de la imagen (la que eligió el build del despliegue); `None` usa la más
+    reciente activa."""
     serve = project.serve
     timeout = seconds_ceiling(serve.timeout_seconds)
     min_remaining = min(DEFAULT_MIN_REMAINING_SECONDS, timeout - MIN_REMAINING_FLOOR_SECONDS)
     return PoolConfig(
         size=scaling.warm_vms,
         template=project.template or project.name,
+        template_version=template_version,
         timeout=timeout,
         min_remaining_seconds=min_remaining,
         idle=serve.idle or DEFAULT_IDLE_POLICY,

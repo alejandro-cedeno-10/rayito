@@ -128,6 +128,9 @@ export interface SandboxFactory {
 
 export interface ProjectServiceOptions {
   readonly sandboxFactory?: SandboxFactory | undefined;
+  /** Versión de la imagen con la que crear los sandboxes (`undefined`: la
+   * más reciente activa); un `build()` posterior la sustituye. */
+  readonly imageVersion?: string | undefined;
   readonly fetch?: typeof fetch | undefined;
   readonly sleep?: ((ms: number) => Promise<void>) | undefined;
   readonly now?: (() => number) | undefined;
@@ -136,6 +139,13 @@ export interface ProjectServiceOptions {
 /** La imagen del proyecto: `template` o, por defecto, `name`. */
 export function templateName(project: AgentProject): string {
   return project.template ?? project.name;
+}
+
+/** La versión de la imagen de un `BuildInfo`: la primera parte de su
+ * `buildId` (`"<versión>/<build>"`). Es la versión que el build creó o
+ * reutilizó, no necesariamente la más reciente de la imagen. */
+export function imageVersionOf(info: Pick<BuildInfo, "buildId">): string {
+  return info.buildId.split("/")[0] ?? "";
 }
 
 export function installableRuntime(project: AgentProject): InstallableRuntime {
@@ -367,19 +377,33 @@ function sleepMs(ms: number): Promise<void> {
 export class ProjectService {
   readonly #project: AgentProject;
   readonly #options: ProjectServiceOptions;
+  #imageVersion: string | undefined;
 
   constructor(project: AgentProject, options: ProjectServiceOptions = {}) {
     this.#project = project;
     this.#options = options;
+    this.#imageVersion = options.imageVersion;
+  }
+
+  /** La versión de la imagen con la que se crean los sandboxes: la que fijó
+   * el constructor o el último `build()` (creada o reutilizada), o
+   * `undefined` para la más reciente activa. */
+  get imageVersion(): string | undefined {
+    return this.#imageVersion;
   }
 
   /** Construye la imagen del proyecto con `AgentTemplate.build()`;
-   * `baseVersion` fija la versión de la base (`undefined`: la más reciente). */
+   * `baseVersion` fija la versión de la base (`undefined`: la más reciente).
+   * La versión que el build crea o reutiliza queda fijada para los sandboxes
+   * que este servicio cree después, aunque la imagen tenga otra más
+   * reciente. */
   async build(
     options: AgentTemplateBuildOptions & { readonly baseVersion?: string | undefined },
   ): Promise<BuildInfo> {
     const { baseVersion, ...buildOptions } = options;
-    return projectTemplate(this.#project, { baseVersion }).build(buildOptions);
+    const info = await projectTemplate(this.#project, { baseVersion }).build(buildOptions);
+    this.#imageVersion = imageVersionOf(info);
+    return info;
   }
 
   /** Un sandbox desde la imagen del proyecto, una ejecución con
@@ -470,7 +494,11 @@ export class ProjectService {
     createOptions: SandboxCreateOptions,
     options: AgentProjectSandboxOptions,
   ): Promise<ServiceSandbox> {
-    const merged: SandboxCreateOptions = { ...createOptions, ...definedOnly(options) };
+    const merged: SandboxCreateOptions = {
+      ...createOptions,
+      ...(this.#imageVersion === undefined ? {} : { templateVersion: this.#imageVersion }),
+      ...definedOnly(options),
+    };
     const factory = this.#options.sandboxFactory;
     if (factory !== undefined) {
       return factory.create(merged);

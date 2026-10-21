@@ -55,7 +55,12 @@ import { AgentFleet, type AgentFleetOptions } from "./fleet.js";
 import { AGENT_FLEET_WARM_POLL_MS } from "./fleet-base.js";
 import type { AgentProject } from "./project.js";
 import { copyProject } from "./project-copy.js";
-import { ProjectService, type ProjectServiceOptions, templateName } from "./project-service.js";
+import {
+  imageVersionOf,
+  ProjectService,
+  type ProjectServiceOptions,
+  templateName,
+} from "./project-service.js";
 
 export const STEP_BASE_IMAGE = "base_image";
 export const STEP_SECRET_CREATED = "secret_created";
@@ -272,7 +277,7 @@ export async function deployWith(
       ...(args.credentials === undefined ? {} : { credentials: args.credentials }),
       baseVersion: baseVersionOf(options, flight.project),
     });
-    emit(options, [{ kind: STEP_IMAGE, detail: info.buildId.split("/")[0] ?? "" }]);
+    emit(options, [{ kind: STEP_IMAGE, detail: imageVersionOf(info) }]);
   }
   const fleet = new AgentFleet({
     project: flight.project,

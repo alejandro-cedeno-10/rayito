@@ -288,6 +288,7 @@
       "Quitar Resources.CDKMetadata, Conditions.CDKMetadataAvailable, Parameters.BootstrapVersion y Rules.CheckBootstrapVersion.",
       "Quitar la clave Metadata de cada recurso (aws:cdk:path y aws:asset:* dependen del directorio de salida).",
       "Sustituir cada secuencia de 64 hex en minúsculas (hash de asset) por <ASSET_HASH>.",
+      "Sustituir cada etiqueta de imagen por contenido src-<16 hex> por src-<SOURCE_HASH>: hashea el contexto de build, que incluye los ficheros del host del agente del SDK, así que cambia con cada cambio del host (la paridad de la etiqueta entre SDK la cubren los vectores de testdata/agentcore-deploy).",
       "Sustituir el calificador de bootstrap hnb659fds por <QUALIFIER>.",
       "Sustituir el valor de la etiqueta rayito:sdk-version (en Tags como lista Key/Value o como mapa) por <SDK_VERSION>.",
       "Serializar con claves ordenadas, sangría de 2 espacios, ensure_ascii=false y salto de línea final."
