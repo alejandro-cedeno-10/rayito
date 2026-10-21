@@ -124,8 +124,8 @@ ERROR_MESSAGES: Final[Mapping[AgentCoreErrorCode, str]] = MappingProxyType(
             "--no-build"
         ),
         "model_required": (
-            "no se sabe qué modelo de Bedrock usa el agente: pásalo con --bedrock-model "
-            "(bedrock_models en el SDK)"
+            "no se sabe qué modelo de Bedrock usa el agente: fija [model] id o pásalo con "
+            "--bedrock-model"
         ),
         "lifecycle_invalid": "{option} debe ser un número entero de segundos entre {min} y {max}",
         "tags_invalid": (

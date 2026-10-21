@@ -24,10 +24,12 @@ class AgentCoreOptions:
     perfiles de inferencia que el rol del runtime puede invocar, además del
     modelo del proyecto), `readable_secrets` (nombres o ARNs de secretos de
     Secrets Manager que el rol puede leer), `idle_session_timeout_seconds` y
-    `max_session_lifetime_seconds` (60-28800; `None`, 900 y 28800) y `tags`
-    (etiquetas de la pila y del runtime, para organizaciones que las exigen).
-    Sólo valida los tipos: los rangos se comprueban al planificar, antes de
-    llamar a AWS.
+    `max_session_lifetime_seconds` (60-28800; `None`, 900 y 28800), `tags`
+    (etiquetas de la pila y del runtime, para organizaciones que las exigen)
+    y `external_model` (permite un modelo fuera de Bedrock: el rol no recibe
+    permisos de Bedrock que no pidas y la clave la obtiene tu código con
+    `readable_secrets`; nunca va en el entorno del runtime). Sólo valida los
+    tipos: los rangos se comprueban al planificar, antes de llamar a AWS.
 
     Coste y activación
     -------------------
@@ -37,7 +39,9 @@ class AgentCoreOptions:
     Coste aproximado: ninguno aquí; ver `deploy_agent()`.
     IAM: ninguna para este valor.
     Cómo apagarla: los valores por defecto no dan al rol del runtime ningún
-        permiso de Bedrock extra ni de Secrets Manager.
+        permiso de Bedrock extra ni de Secrets Manager, y sin
+        `external_model=True` un proveedor que no es Bedrock es
+        `provider_unsupported`.
     Ejemplo:
         AgentCoreOptions(bedrock_models=("amazon.nova-lite-v1:0",), tags={"team": "agents"})
     """
@@ -47,6 +51,7 @@ class AgentCoreOptions:
     idle_session_timeout_seconds: int | None = None
     max_session_lifetime_seconds: int | None = None
     tags: Mapping[str, str] = field(default_factory=dict)
+    external_model: bool = False
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -68,6 +73,8 @@ class AgentCoreOptions:
         ):
             raise InvalidArgumentException("AgentCoreOptions.tags debe mapear cadenas a cadenas")
         object.__setattr__(self, "tags", MappingProxyType(dict(self.tags)))
+        if not isinstance(self.external_model, bool):
+            raise InvalidArgumentException("AgentCoreOptions.external_model debe ser un bool")
 
 
 def _texts(values: object, label: str) -> tuple[str, ...]:
@@ -105,7 +112,8 @@ class AgentCoreDeployPlan:
     aplicar) y de dónde sale, los modelos y secretos del rol, el entorno y el
     ciclo de vida del runtime, las etiquetas, los tres pasos, y las claves de
     las líneas de seguridad y de los avisos (`_messages.SECURITY_TEXTS` y
-    `WARNING_TEXTS`) y el coste de lista."""
+    `WARNING_TEXTS`), el coste de lista y si el modelo está fuera de Bedrock
+    (`external_model`)."""
 
     name: str
     region: str
@@ -128,6 +136,7 @@ class AgentCoreDeployPlan:
     cost: tuple[str, ...]
     detection: object | None = None
     target: str = "agentcore"
+    external_model: bool = False
 
 
 @dataclass(frozen=True)

@@ -6,7 +6,7 @@
  * mismos que la CLI de Python.
  */
 
-import { option } from "./command.js";
+import { flag, option } from "./command.js";
 
 export const targetOption = option(["--target"], {
   help: "Dónde se despliega: microvm (por defecto, una flota de Lambda MicroVMs) o agentcore (Amazon Bedrock AgentCore Runtime).",
@@ -39,6 +39,12 @@ export const idleSessionTimeoutOption = option(["--idle-session-timeout"], {
 export const maxSessionLifetimeOption = option(["--max-session-lifetime"], {
   type: "int",
   help: "Segundos de vida máxima de la microVM de una sesión (60-28800; por defecto, 28800). Sólo con --target agentcore.",
+});
+
+export const EXTERNAL_MODEL_FLAG = "--external-model";
+
+export const externalModelOption = flag([EXTERNAL_MODEL_FLAG], {
+  help: "Sólo con --target agentcore: permite un modelo fuera de Bedrock. Tu código obtiene la clave (--secret-env o --readable-secret); Rayito no filtra esa salida.",
 });
 
 export const stopSessionIdOption = option(["--session-id"], {

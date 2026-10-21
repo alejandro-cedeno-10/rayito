@@ -89,8 +89,9 @@ def step_document(step: AgentCoreStep) -> dict[str, object]:
 
 def plan_document(plan: AgentCoreDeployPlan) -> dict[str, Any]:
     """El plan con las claves del contrato (`json.planKeys`); `security` y
-    `warnings` llevan las claves de los textos, estables para un script."""
-    return {
+    `warnings` llevan las claves de los textos, estables para un script.
+    `externalModel` sólo aparece si el modelo está fuera de Bedrock."""
+    document: dict[str, Any] = {
         "target": TARGET,
         "name": plan.name,
         "region": plan.region,
@@ -115,6 +116,9 @@ def plan_document(plan: AgentCoreDeployPlan) -> dict[str, Any]:
         "warnings": list(plan.warnings),
         "cost": list(plan.cost),
     }
+    if plan.external_model:
+        document["externalModel"] = True
+    return document
 
 
 def dry_run_document(plan: AgentCoreDeployPlan, detection: Any) -> dict[str, Any]:

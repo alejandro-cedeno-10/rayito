@@ -89,6 +89,8 @@ from rayito.cli._agentcore import (
     DELETE_TARGET_HELP,
     DELETE_YES_HELP,
     DEPLOY_TARGET_CHECK,
+    EXTERNAL_MODEL_FLAG,
+    EXTERNAL_MODEL_HELP,
     IDLE_SESSION_TIMEOUT_FLAG,
     IDLE_SESSION_TIMEOUT_HELP,
     LIST_HELP,
@@ -518,6 +520,16 @@ def run_project_command(
 #: `--sessions`: los modos de `ScalingOptions.sessions`.
 SESSIONS_HELP = "Sesiones compartidas entre VMs (shared) o un MicroVM por sesión (dedicated)."
 DETECT_FLAGS_HELP = "Fija a mano lo que la detección decidiría."
+MODEL_ID_HELP = (
+    "Id del modelo, si la detección no lo encuentra (tu código puede elegirlo por configuración)."
+)
+MODEL_PROVIDER_HELP = (
+    "Pasarela del modelo (bedrock, openai, openai-compatible, litellm…), si la detección se "
+    "equivoca."
+)
+MODEL_BASE_URL_HELP = (
+    "URL https de una pasarela compatible con OpenAI (upstream de openai-compatible o litellm)."
+)
 MICROVM_ID_PREFIX = "microvm-"
 STEP_MESSAGES = {
     "base_image": "imagen base publicada",
@@ -540,13 +552,25 @@ def optional_choice_of(allowed: tuple[str, ...], flag: str) -> Callable[[str | N
 
 
 def detect_overrides_of(
-    framework: str | None, language: str | None, entry: str | None, protocol: str | None
+    framework: str | None,
+    language: str | None,
+    entry: str | None,
+    protocol: str | None,
+    model_id: str | None = None,
+    model_provider: str | None = None,
+    model_base_url: str | None = None,
 ) -> DetectOverrides | None:
-    chosen = (framework, language, entry, protocol)
+    chosen = (framework, language, entry, protocol, model_id, model_provider, model_base_url)
     if all(value is None for value in chosen):
         return None
     return DetectOverrides(
-        framework=framework, language=language, entrypoint=entry, protocol=protocol
+        framework=framework,
+        language=language,
+        entrypoint=entry,
+        protocol=protocol,
+        model_id=model_id,
+        model_provider=model_provider,
+        model_base_url=model_base_url,
     )
 
 
@@ -583,6 +607,13 @@ def detect_command(
     language: Annotated[str | None, typer.Option("--language", help=DETECT_FLAGS_HELP)] = None,
     entry: Annotated[str | None, typer.Option("--entry", help=DETECT_FLAGS_HELP)] = None,
     protocol: Annotated[str | None, typer.Option("--protocol", help=DETECT_FLAGS_HELP)] = None,
+    model_id: Annotated[str | None, typer.Option("--model-id", help=MODEL_ID_HELP)] = None,
+    model_provider: Annotated[
+        str | None, typer.Option("--model-provider", help=MODEL_PROVIDER_HELP)
+    ] = None,
+    model_base_url: Annotated[
+        str | None, typer.Option("--model-base-url", help=MODEL_BASE_URL_HELP)
+    ] = None,
     write: Annotated[
         bool,
         typer.Option("--write", help="Guarda el proyecto resuelto como rayito-agent.json."),
@@ -595,7 +626,9 @@ def detect_command(
     --protocol. No llama a AWS. Con --write guarda el resultado como
     rayito-agent.json (no sobrescribe un fichero de proyecto existente).
     """
-    overrides = detect_overrides_of(framework, language, entry, protocol)
+    overrides = detect_overrides_of(
+        framework, language, entry, protocol, model_id, model_provider, model_base_url
+    )
     try:
         project, report = project_for(path, None, overrides, ctx.meta.get("region"))
     except InvalidArgumentException as exc:
@@ -659,6 +692,13 @@ def deploy_command(
     language: Annotated[str | None, typer.Option("--language", help=DETECT_FLAGS_HELP)] = None,
     entry: Annotated[str | None, typer.Option("--entry", help=DETECT_FLAGS_HELP)] = None,
     protocol: Annotated[str | None, typer.Option("--protocol", help=DETECT_FLAGS_HELP)] = None,
+    model_id: Annotated[str | None, typer.Option("--model-id", help=MODEL_ID_HELP)] = None,
+    model_provider: Annotated[
+        str | None, typer.Option("--model-provider", help=MODEL_PROVIDER_HELP)
+    ] = None,
+    model_base_url: Annotated[
+        str | None, typer.Option("--model-base-url", help=MODEL_BASE_URL_HELP)
+    ] = None,
     memory: Annotated[
         int | None,
         typer.Option(
@@ -760,6 +800,9 @@ def deploy_command(
     max_session_lifetime: Annotated[
         int | None, typer.Option("--max-session-lifetime", help=MAX_SESSION_LIFETIME_HELP)
     ] = None,
+    external_model: Annotated[
+        bool, typer.Option("--external-model", help=EXTERNAL_MODEL_HELP)
+    ] = False,
 ) -> None:
     """Despliega el agente de un directorio como una flota de MicroVMs.
 
@@ -792,6 +835,7 @@ def deploy_command(
                 READABLE_SECRET_FLAG: readable_secret,
                 IDLE_SESSION_TIMEOUT_FLAG: idle_session_timeout,
                 MAX_SESSION_LIFETIME_FLAG: max_session_lifetime,
+                EXTERNAL_MODEL_FLAG: external_model or None,
             },
         )
     if target == TARGET_AGENTCORE:
@@ -799,7 +843,9 @@ def deploy_command(
             ctx,
             AgentCoreDeployRequest(
                 project_path=deploy_target(path, file),
-                overrides=detect_overrides_of(framework, language, entry, protocol),
+                overrides=detect_overrides_of(
+                    framework, language, entry, protocol, model_id, model_provider, model_base_url
+                ),
                 max_sessions=max_sessions,
                 queue=queue,
                 queue_timeout=queue_timeout,
@@ -833,11 +879,14 @@ def deploy_command(
                     }.items()
                     if passed
                 ),
+                external_model=external_model,
             ),
         )
         return
     project_path = deploy_target(path, file)
-    overrides = detect_overrides_of(framework, language, entry, protocol)
+    overrides = detect_overrides_of(
+        framework, language, entry, protocol, model_id, model_provider, model_base_url
+    )
     try:
         project, report = project_for(project_path, None, overrides, ctx.meta.get("region"))
         project = apply_serve_flags(

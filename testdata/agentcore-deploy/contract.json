@@ -762,8 +762,8 @@
         "option": "model provider",
         "python": "AgentProject.spec.model.provider",
         "typescript": "AgentProject.spec.model.provider",
-        "call": "error provider_unsupported unless bedrock",
-        "file": "error provider_unsupported unless bedrock",
+        "call": "error provider_unsupported unless bedrock or external_model",
+        "file": "error provider_unsupported unless bedrock or external_model",
         "reason": "sin pasarela, la credencial de otro proveedor iría en claro en la configuración del runtime"
       },
       {
@@ -775,7 +775,7 @@
         "reason": "AgentCore autentica con IAM (SigV4), no con un access token"
       },
       {
-        "option": "agentcore / AgentCoreOptions, --tag, --bedrock-model, --readable-secret, --idle-session-timeout, --max-session-lifetime, --session-id (stop)",
+        "option": "agentcore / AgentCoreOptions, --tag, --bedrock-model, --readable-secret, --idle-session-timeout, --max-session-lifetime, --external-model, --session-id (stop)",
         "python": "deploy_agent(agentcore=...)",
         "typescript": "DeployAgentOptions.agentcore",
         "call": "error option_requires_agentcore unless target agentcore",
@@ -966,6 +966,7 @@
       "bedrockModels": "el rol del runtime puede invocar en Bedrock: {models}",
       "noBedrockModels": "el rol del runtime no puede invocar ningún modelo de Bedrock",
       "readableSecrets": "el rol del runtime puede leer los secretos: {secrets}",
+      "externalModel": "modelo fuera de Bedrock (--external-model): el agente llama a su pasarela de LLM por Internet con una clave que obtiene tu código (--secret-env o --readable-secret); la clave nunca va en el entorno del runtime y Rayito no la ve ni filtra esa salida",
       "publicNetwork": "red PUBLIC: el agente tiene salida a Internet y la política de salida de Rayito no se aplica",
       "sessionIsolation": "cada sesión corre en su propia microVM de AgentCore, aislada de las demás; AgentCore no asocia sesiones a usuarios: eso es cosa de tu backend",
       "envCredentials": "este framework lee las credenciales de variables de entorno: el host se las pone, leídas del rol del runtime, en cada invocación"
@@ -1055,7 +1056,7 @@
       "name_invalid": "el nombre {name} no vale para AgentCore: hasta {max} caracteres, minúsculas y dígitos, con - o _ sueltos entre ellos; cámbialo con [image].template",
       "name_conflict": "ya existe un runtime {runtimeName} que no es del agente {name} de Rayito: cambia el nombre con [image].template",
       "image_missing": "--no-build: no hay ninguna imagen {imageTag} en {repositoryName}; despliega sin --no-build",
-      "model_required": "no se sabe qué modelo de Bedrock usa el agente: pásalo con --bedrock-model (bedrock_models en el SDK)",
+      "model_required": "no se sabe qué modelo de Bedrock usa el agente: fija [model] id o pásalo con --bedrock-model",
       "lifecycle_invalid": "{option} debe ser un número entero de segundos entre {min} y {max}",
       "tags_invalid": "--tag necesita CLAVE=VALOR, hasta {max} etiquetas, con letras, dígitos, espacios y _ . : / = + - @",
       "env_invalid": "AgentCore admite como mucho {maxVariables} variables de entorno de hasta {maxChars} caracteres",
@@ -1102,7 +1103,8 @@
           "readable_secrets: tuple[str, ...] = ()",
           "idle_session_timeout_seconds: int | None = None",
           "max_session_lifetime_seconds: int | None = None",
-          "tags: Mapping[str, str] = {}"
+          "tags: Mapping[str, str] = {}",
+          "external_model: bool = False"
         ]
       },
       "fleet": {
@@ -1188,7 +1190,8 @@
           "readableSecrets?: readonly string[]",
           "idleSessionTimeoutMs?: number",
           "maxSessionLifetimeMs?: number",
-          "tags?: Readonly<Record<string, string>>"
+          "tags?: Readonly<Record<string, string>>",
+          "externalModel?: boolean"
         ],
         "note": "Los milisegundos se convierten a segundos enteros; un valor que no es múltiplo de 1000 da lifecycle_invalid."
       },

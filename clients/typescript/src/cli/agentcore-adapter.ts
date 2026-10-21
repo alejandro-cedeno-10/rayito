@@ -32,6 +32,9 @@ function overridesOf(overrides: AgentDetectOverrides): DetectOverrides | undefin
         language: overrides.language,
         entrypoint: overrides.entry,
         protocol: overrides.protocol,
+        modelId: overrides.modelId,
+        modelProvider: overrides.modelProvider,
+        modelBaseUrl: overrides.modelBaseUrl,
       };
 }
 

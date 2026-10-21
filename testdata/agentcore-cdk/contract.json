@@ -124,7 +124,7 @@
         "RayitoCdkException"
       ],
       "RayitoAgent": {
-        "signature": "RayitoAgent(scope, id, *, project, name=None, bedrock_models=(), readable_secrets=(), idle_session_timeout_seconds=None, max_session_lifetime_seconds=None, tags=None, build=None, export_outputs=False)",
+        "signature": "RayitoAgent(scope, id, *, project, name=None, bedrock_models=(), readable_secrets=(), idle_session_timeout_seconds=None, max_session_lifetime_seconds=None, tags=None, build=None, export_outputs=False, external_model=False)",
         "attributes": [
           "agent_name",
           "runtime_name",
@@ -174,7 +174,7 @@
         "type DownloadReleaseOptions"
       ],
       "RayitoAgent": {
-        "signature": "new RayitoAgent(scope, id, { project, name?, bedrockModels?, readableSecrets?, idleSessionTimeoutSeconds?, maxSessionLifetimeSeconds?, tags?, build?, exportOutputs? })",
+        "signature": "new RayitoAgent(scope, id, { project, name?, bedrockModels?, readableSecrets?, idleSessionTimeoutSeconds?, maxSessionLifetimeSeconds?, tags?, build?, exportOutputs?, externalModel? })",
         "attributes": [
           "agentName",
           "runtimeName",
@@ -220,6 +220,7 @@
       "tags": "tags",
       "build": "build",
       "exportOutputs": "export_outputs",
+      "externalModel": "external_model",
       "timeoutMinutes": "timeout_minutes",
       "artifact": "artifact",
       "baseImageVersion": "base_image_version",
