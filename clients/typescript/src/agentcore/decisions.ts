@@ -23,7 +23,7 @@ import type {
   RuntimeDetails,
   StackAction,
 } from "./models.js";
-import { isOwned, runtimeNameFor } from "./names.js";
+import { isOwned, refuseCdkManaged, runtimeNameFor } from "./names.js";
 import { STACK_OUTPUTS, STACK_PARAMETERS } from "./stack.js";
 
 /** Los megabytes de los mensajes son decimales (`bytes // 1000000`), como el límite de 2 GB de AgentCore. */
@@ -187,8 +187,8 @@ export function runtimeMatches(details: RuntimeDetails, desired: DesiredRuntime)
 }
 
 /**
- * `name_conflict` si el runtime con ese nombre no es del agente `name` y
- * `runtime_blocked` si está en un estado que no se toca. Se comprueba antes de
+ * `name_conflict` si el runtime con ese nombre no es del agente `name` o lo
+ * gestiona CloudFormation (`+cdk`, ADR-032 D6), y `runtime_blocked` si está en un estado que no se toca. Se comprueba antes de
  * crear la pila y construir la imagen: ahorra el coste de un despliegue que
  * acabaría fallando.
  */
@@ -203,6 +203,7 @@ export function checkRuntimeUsable(
   if (!isOwned(listed, name)) {
     throw new AgentCoreError("name_conflict", { runtimeName, name });
   }
+  refuseCdkManaged(listed, name);
   if (RUNTIME_BLOCKED_STATES.has(listed.status)) {
     throw new AgentCoreError("runtime_blocked", { runtimeName, status: listed.status, name });
   }

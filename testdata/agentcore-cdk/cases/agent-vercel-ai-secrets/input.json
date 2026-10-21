@@ -1,0 +1,27 @@
+{
+  "construct": "RayitoAgent",
+  "stack": {
+    "account": "123456789012",
+    "region": "us-east-1"
+  },
+  "id": "Agent",
+  "project": "agent-samples/typescript/vercel-ai-sdk",
+  "props": {
+    "name": "web-agent",
+    "bedrockModels": [
+      "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+    ],
+    "readableSecrets": [
+      "rayito/demo-key"
+    ],
+    "idleSessionTimeoutSeconds": 600,
+    "maxSessionLifetimeSeconds": 3600,
+    "exportOutputs": true
+  },
+  "build": {
+    "codeBuild": {
+      "timeoutMinutes": 20
+    }
+  },
+  "expected": "template"
+}

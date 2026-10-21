@@ -1,0 +1,24 @@
+{
+  "construct": "RayitoMicrovmImage",
+  "stack": {
+    "account": null,
+    "region": null
+  },
+  "id": "Image",
+  "artifact": {
+    "fixture": "fixtures/image-full"
+  },
+  "props": {
+    "name": "team-sandbox",
+    "baseImageVersion": "1"
+  },
+  "expected": {
+    "error": {
+      "code": "region_unresolved",
+      "exception": "RayitoCdkException",
+      "fields": {
+        "construct": "RayitoMicrovmImage"
+      }
+    }
+  }
+}

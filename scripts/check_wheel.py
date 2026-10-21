@@ -15,8 +15,11 @@ typer>=0.15,<1 ; extra == 'cli'`, misma grafía de `uv_build`) y el console
 script `rayito`. Desde M13b comprueba también el extra opcional `otel`
 (`Provides-Extra: otel` y `Requires-Dist: opentelemetry-api>=1.27,<2 ;
 extra == 'otel'`): no añade ningún fichero ni entry point, sólo metadatos,
-porque `rayito._otel` ya está en el paquete base. Se ejecuta desde la raíz
-del repo:
+porque `rayito._otel` ya está en el paquete base. Desde 0.15 comprueba los
+constructos CDK (`agentcore-cdk`, ADR-032): `rayito/cdk/__init__.py`, el zip
+del manejador `_stacks/_artifacts/agentcore-cdk-handler.zip` y el extra `cdk`
+(`Provides-Extra: cdk` y sus dos `Requires-Dist` con `extra == 'cdk'`). Se
+ejecuta desde la raíz del repo:
 
     python scripts/check_wheel.py clients/python/dist/rayito-*.whl
 """
@@ -35,6 +38,8 @@ REQUIRED_FILES = (
     "rayito/mcp/__init__.py",
     "rayito/mcp/__main__.py",
     "rayito/cli/__init__.py",
+    "rayito/cdk/__init__.py",
+    "rayito/_stacks/_artifacts/agentcore-cdk-handler.zip",
 )
 FORBIDDEN_PREFIXES = ("tests/",)
 REQUIRED_PYTHON = "Requires-Python: >=3.11"
@@ -62,6 +67,11 @@ CLI_ENTRY_POINT = "rayito = rayito.cli.__main__:main"
 OTEL_METADATA_LINES = (
     "Provides-Extra: otel",
     "Requires-Dist: opentelemetry-api>=1.27,<2 ; extra == 'otel'",
+)
+CDK_METADATA_LINES = (
+    "Provides-Extra: cdk",
+    "Requires-Dist: aws-cdk-lib>=2.261.0,<3 ; extra == 'cdk'",
+    "Requires-Dist: constructs>=10.5.0,<11 ; extra == 'cdk'",
 )
 ENTRY_POINTS_SUFFIX = ".dist-info/entry_points.txt"
 
@@ -115,7 +125,17 @@ def problems_for(wheel: Path) -> list[str]:
         + mcp_problems(metadata, entry_points)
         + cli_problems(metadata, entry_points)
         + otel_problems(metadata)
+        + cdk_problems(metadata)
     )
+
+
+def cdk_problems(metadata: str) -> list[str]:
+    lines = metadata.splitlines()
+    return [
+        f"METADATA sin `{required}`"
+        for required in CDK_METADATA_LINES
+        if required not in lines
+    ]
 
 
 def otel_problems(metadata: str) -> list[str]:

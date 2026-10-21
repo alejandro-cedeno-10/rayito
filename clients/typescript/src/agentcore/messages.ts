@@ -216,6 +216,21 @@ export const ERROR_MESSAGES: Readonly<Record<AgentCoreErrorCode, string>> = {
     "borrar un agente no se puede deshacer: confírmalo con --yes (o desde una terminal)",
 };
 
+/**
+ * `name_conflict` de un runtime que gestiona CloudFormation con los
+ * constructos CDK (`+cdk`, ADR-032 D6): `rayito agent deploy`, `rayito agent
+ * delete --target agentcore`, `deployAgent` y `AgentCoreFleet.delete()` no lo
+ * tocan (`testdata/agentcore-cdk/contract.json`, `cliRefusals.agentDeploy`).
+ */
+export const CDK_MANAGED_MESSAGE =
+  "el agente {name} lo gestiona CloudFormation (CDK, stack {stackHint}): despliégalo con cdk deploy y bórralo con cdk destroy";
+
+/**
+ * Qué pila es, sin una lectura más de AWS: `ListAgentRuntimes` no trae las
+ * etiquetas, así que se nombra por su runtime (igual que Python).
+ */
+export const CDK_STACK_HINT_TEMPLATE = "del runtime {runtimeName}";
+
 /** Las líneas de la sección «Seguridad:» del plan; el plan guarda sus claves. */
 export const SECURITY_MESSAGES = {
   noGateway:

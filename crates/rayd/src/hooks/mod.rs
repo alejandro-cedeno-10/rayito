@@ -129,7 +129,8 @@ pub const VALIDATE_SKIPPED: &str = "validate_skipped";
 pub const PEER_LOOKUP_TIMEOUT: Duration = Duration::from_secs(1);
 
 /// Timeouts declared in the image's `hooks` configuration
-/// (`scripts/publish_image.py`, `IMAGE_HOOKS`). The budgets below derive from
+/// (`IMAGE_HOOKS` in `clients/python/src/rayito/_images_publish_domain.py`,
+/// sent by `rayito image publish` and the CDK construct). The budgets below derive from
 /// them, so both must change together.
 #[must_use]
 pub fn declared_timeout(hook: Hook) -> Duration {
@@ -1120,12 +1121,14 @@ mod tests {
     }
 
     /// `declared_timeout` mirrors `IMAGE_HOOKS` in
-    /// `clients/python/src/rayito/cli/_publish.py` (the publish pipeline
-    /// behind `scripts/publish_image.py`); a change on either side must be
-    /// made on both.
+    /// `clients/python/src/rayito/_images_publish_domain.py`, the pure image
+    /// configuration shared by `rayito image publish` (`cli/_publish.py`,
+    /// behind `scripts/publish_image.py`) and the `RayitoMicrovmImage` CDK
+    /// construct; a change on either side must be made on both.
     #[test]
     fn declared_timeouts_match_the_published_image_hooks() {
-        let publish_script = include_str!("../../../../clients/python/src/rayito/cli/_publish.py");
+        let publish_script =
+            include_str!("../../../../clients/python/src/rayito/_images_publish_domain.py");
         for (key, hook) in [
             ("suspendTimeoutInSeconds", Hook::Suspend),
             ("resumeTimeoutInSeconds", Hook::Resume),

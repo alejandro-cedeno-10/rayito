@@ -34,6 +34,10 @@ otel = ["opentelemetry-api>=1.27,<2"]
 # endpoint-rule-set-1.json de ese servicio exige ese firmante, que boto3
 # sólo sabe usar con `awscrt` instalado (AWS_API_NOTES.md §29).
 custom-domain = ["awscrt>=0.23,<1"]
+# Constructos CDK `rayito.cdk` (`RayitoAgent`, `RayitoMicrovmImage`,
+# agentcore-cdk, ADR-032): `CfnMicrovmImage` aparece en aws-cdk-lib 2.261.0
+# (AWS_API_NOTES.md Q184). La síntesis en Python necesita Node (jsii).
+cdk = ["aws-cdk-lib>=2.261.0,<3", "constructs>=10.5.0,<11"]
 
 [project.scripts]
 rayito = "rayito.cli.__main__:main"
@@ -58,6 +62,7 @@ dev = [
     "rayito[mcp]",
     "rayito[otel]",
     "rayito[custom-domain]",
+    "rayito[cdk]",
     "opentelemetry-sdk>=1.27,<2",
     # scripts/tests/test_iam_template.py parsea infra/iam.yaml (CI corre
     # scripts/tests con este entorno).

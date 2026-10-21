@@ -592,3 +592,50 @@ touched (`name_conflict`).
 **Residual risk.** Whatever the role allows, any code in the session can use; an
 organization with SCPs that require tags needs `--tag`, and the tags of an
 already created runtime are not updated.
+
+## CDK constructs: custom-resource and image-build roles (T37) { #cdk }
+
+Summary of **T37** in
+[`SECURITY.md`](https://github.com/alejandro-cedeno-10/rayito/blob/main/SECURITY.md)
+(`agentcore-cdk`, ADR-032, since 0.15.0, not published yet): what the
+constructs in [Deploy with CDK](guias/desplegar-con-cdk.md) add to what the
+CLI already creates.
+
+**The agent's role does not change.** `RayitoAgent` deploys the same
+`infra/agentcore-runtime.yaml` template as `rayito agent deploy`, so the runtime
+role is the same, with the same least privilege as [AgentCore](#agentcore).
+What is new are two pieces that the CLI did with the deployer's credentials
+and that CloudFormation does here:
+
+- **The custom-resource functions** (`Custom::RayitoImageBuild` and
+  `Custom::RayitoRuntimeMmds`, code in `infra/agentcore-cdk-handler.py`). Their
+  role can only call `codebuild:StartBuild` and `BatchGetBuilds` on **that**
+  agent's CodeBuild project, `ecr:DescribeImages` on **its** repository,
+  `bedrock-agentcore:GetAgentRuntime` and `UpdateAgentRuntime` on **its**
+  runtime, and `iam:PassRole` **only** on the runtime role (required by
+  `UpdateAgentRuntime`). It cannot create or delete runtimes, pass any other
+  role, or read images, secrets or models.
+- **The MicroVMs image build role** (`RayitoMicrovmImage`). Only Lambda in your
+  account can assume it (`aws:SourceAccount`), it reads **only** the zip asset
+  object and writes **only** to its images' `/rayito/<name>` log groups. It does
+  not use the shared `rayito-m0-iam` role.
+
+**The code asset.** The agent's CodeBuild build role can read, besides its
+usual prefix, the exact object of the code asset in the CDK bootstrap bucket;
+nothing else in that bucket.
+
+**Who can change what.** The runtime carries the marker
+`rayito.agentcore/1+cdk` and the image the tag `rayito:managed-by=rayito-cdk`:
+`rayito agent deploy`, `rayito agent delete` and `rayito image publish` refuse
+to modify them before writing anything (not even the artifact in S3), so the
+CLI cannot silently undo what the stack declares.
+
+**Residual risk.** Deployment runs with the CDK bootstrap execution role,
+which has `AdministratorAccess` by default: whoever can run `cdk deploy` in the
+account can change the runtime role. If that is not acceptable, restrict the
+bootstrap ([Restricted bootstrap](guias/desplegar-con-cdk.md#bootstrap-restringido)).
+The CloudFormation resource has no MMDSv2 property, but AgentCore already
+creates every version with MMDSv2 on; `Mmds` checks it on every new version
+and would only turn it on outside CloudFormation (where drift detection could
+flag it) if one ever came without it. Assets (the agent code, the image zip) stay in the bootstrap
+bucket until `cdk gc`.

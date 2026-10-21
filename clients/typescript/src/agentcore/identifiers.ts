@@ -10,6 +10,8 @@
 import { createHash, randomUUID } from "node:crypto";
 import { InvalidArgumentError } from "../errors.js";
 import {
+  AGENT_EXPORT_BASE_IMAGE_DIGEST,
+  AGENTCORE_BASE_IMAGE_MIRROR,
   AGENTCORE_IMAGE_TAG_HEX_CHARS,
   AGENTCORE_IMAGE_TAG_PREFIX,
   AGENTCORE_SESSION_ID_MAX_LENGTH,
@@ -134,4 +136,13 @@ export function agentcoreSessionId(sessionId: string | undefined): string {
   }
   const digest = sha256Hex(UTF8.encode(sessionId));
   return `${AGENTCORE_SESSION_ID_PREFIX}${digest.slice(0, CLIENT_TOKEN_HEX_CHARS)}`;
+}
+
+/**
+ * La imagen base del build de AgentCore (`AGENT_BASE_IMAGE`): el espejo de
+ * ECR Public con el mismo digest que fija el export (como
+ * `base_image_reference` de Python). La usan la CLI y `RayitoAgent`.
+ */
+export function baseImageReference(): string {
+  return `${AGENTCORE_BASE_IMAGE_MIRROR}@${AGENT_EXPORT_BASE_IMAGE_DIGEST}`;
 }

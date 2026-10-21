@@ -432,5 +432,15 @@
   "ecrStorageGbMonthPriceUsd": 0.1,
   "cloudwatchLogsIngestionGbPriceUsd": 0.5,
   "bedrockInferenceProfilePrefixes": ["us", "eu", "apac", "au", "global"],
-  "bedrockGlobalProfilePrefix": "global"
+  "bedrockGlobalProfilePrefix": "global",
+  "cdkOwnershipSuffix": "+cdk",
+  "cdkManagedByTagValue": "rayito-cdk",
+  "cdkAwsCdkLibMinVersion": "2.261.0",
+  "cdkConstructsMinVersion": "10.5.0",
+  "cdkHandlerRuntime": "python3.13",
+  "cdkHandlerTimeoutSeconds": 60,
+  "cdkBuildQueryIntervalSeconds": 30,
+  "cdkBuildTotalTimeoutMarginMinutes": 10,
+  "cdkMicrovmImageLogRetentionDays": 14,
+  "cdkRuntimeEnvironmentValueMaxChars": 2048
 }

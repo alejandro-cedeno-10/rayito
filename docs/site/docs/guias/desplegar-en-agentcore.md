@@ -58,6 +58,11 @@ app propia con Flask o Express, y OpenCode.
     modelos que le indiques y sólo leer los secretos que declares con
     `--readable-secret`. Detalle en [Seguridad en AgentCore](#seguridad-en-agentcore).
 
+!!! tip "¿Gestionas la infraestructura con AWS CDK?"
+    El constructo `RayitoAgent` despliega el mismo agente, con los mismos
+    recursos e IAM, desde tu app de CDK con `cdk deploy`:
+    [Desplegar con CDK](desplegar-con-cdk.md).
+
 ## Antes de empezar { #antes-de-empezar }
 
 1. **Una región con AgentCore Runtime y builds arm64 de CodeBuild.** Son 21:
@@ -360,6 +365,10 @@ backend.
   hay nada, dice «nada que borrar» y sale con 0. Las imágenes de otro agente, el
   bucket de artefactos y el resto de tu cuenta no se tocan.
 
+Un agente desplegado con CDK (`RayitoAgent`) aparece en `list` y `status` y se
+invoca igual, pero `deploy` y `delete` lo rechazan con `name_conflict`: lo
+gestiona CloudFormation ([Convivencia con la CLI](desplegar-con-cdk.md#convivencia)).
+
 ## Redesplegar { #redesplegar }
 
 Vuelve a ejecutar la misma orden. Rayito calcula el contenido que va a la imagen
@@ -526,6 +535,8 @@ agente (el contenedor respondió 4xx o 5xx) es
 
 ## Ver también { #ver-tambien }
 
+- [Desplegar con CDK](desplegar-con-cdk.md): el mismo agente con el constructo
+  `RayitoAgent` en tu app de CDK.
 - [Despliega tu agente](despliega-tu-agente.md): la detección, el fichero de
   proyecto y el despliegue en MicroVMs.
 - [Varias sesiones y varias VMs](flota-de-agentes.md): las flotas de MicroVMs.

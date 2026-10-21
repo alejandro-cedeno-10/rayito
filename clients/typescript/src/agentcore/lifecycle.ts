@@ -18,7 +18,7 @@ import type {
   ListedRuntime,
   RuntimeDetails,
 } from "./models.js";
-import { isOwned, ownedAgentName, runtimeLogGroupFor } from "./names.js";
+import { isOwned, ownedAgentName, refuseCdkManaged, runtimeLogGroupFor } from "./names.js";
 import type { AgentCorePorts } from "./ports.js";
 import { deleteEmitter, type EmitDelete, type OnStep } from "./progress.js";
 
@@ -64,7 +64,7 @@ export interface DeleteRequest {
   readonly onStep?: OnStep;
 }
 
-/** Lo que existe de un agente en la región: su runtime de Rayito (si hay) y si tiene pila. Un runtime con el nombre y sin la marca es `name_conflict`. */
+/** Lo que existe de un agente en la región: su runtime de Rayito (si hay) y si tiene pila. Un runtime con el nombre y sin la marca, o con la marca `+cdk` (lo borra `cdk destroy`), es `name_conflict`. */
 export async function inspectDeletion(
   ports: AgentCorePorts,
   target: Pick<DeleteRequest, "name" | "runtimeName" | "stackName">,
@@ -77,6 +77,9 @@ export async function inspectDeletion(
       runtimeName: target.runtimeName,
       name: target.name,
     });
+  }
+  if (listed !== undefined) {
+    refuseCdkManaged(listed, target.name);
   }
   const stack = await ports.stacks.describe(target.stackName);
   if (stack !== undefined) {

@@ -35,6 +35,7 @@ from rayito._agentcore._domain import (
     bedrock_resource_arns,
     canonical_agent_name,
     check_image_size,
+    check_not_cdk_managed,
     check_runtime_usable,
     check_stack_owner,
     decide_image,
@@ -442,6 +443,7 @@ class AgentCoreDeployer:
                 raise AgentCoreException(
                     "name_conflict", runtimeName=spec.name, name=plan.name
                 ) from None
+            check_not_cdk_managed(winner, plan.name)
             self._await_ready(winner.runtime_id, spec.name)
             return self._update(winner.runtime_id, spec, report), "update"
         self._await_ready(created.runtime_id, spec.name)
@@ -544,6 +546,7 @@ class AgentCoreDeleter:
         listing = find_runtime(self._gateways.runtimes, runtime_name)
         if listing is not None and not is_owned_by(listing, name):
             raise AgentCoreException("name_conflict", runtimeName=runtime_name, name=name)
+        check_not_cdk_managed(listing, name)
         observed = self._gateways.stack.observe()
         check_stack_owner(observed, name)
         stack_exists = observed.status is not None

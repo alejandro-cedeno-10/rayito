@@ -1,0 +1,25 @@
+{
+  "construct": "RayitoMicrovmImage",
+  "stack": {
+    "account": "123456789012",
+    "region": "us-east-1"
+  },
+  "id": "Image",
+  "artifact": {
+    "fixture": "fixtures/image-full"
+  },
+  "props": {
+    "name": "rayito-base",
+    "baseImageVersion": "1"
+  },
+  "expected": {
+    "error": {
+      "code": "image_name_reserved",
+      "exception": "RayitoCdkException",
+      "fields": {
+        "name": "rayito-base",
+        "prefix": "rayito-base"
+      }
+    }
+  }
+}

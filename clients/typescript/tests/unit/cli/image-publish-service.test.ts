@@ -101,9 +101,9 @@ describe("publish", () => {
     const summary = await publish(deps, settingsFor(artifact));
     const key = keyOf(artifact);
     expect(ports.calls.slice(0, 3)).toEqual([
+      "getMicrovmImage",
       `headObject:${BUCKET}/${key}`,
       `putObject:${BUCKET}/${key}`,
-      "getMicrovmImage",
     ]);
     expect(ports.objectOwners).toEqual(["123456789012", "123456789012"]);
     expect(ports.calls).toContain("createMicrovmImage");

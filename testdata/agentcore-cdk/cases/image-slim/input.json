@@ -1,0 +1,18 @@
+{
+  "construct": "RayitoMicrovmImage",
+  "stack": {
+    "account": "123456789012",
+    "region": "us-east-1"
+  },
+  "id": "Image",
+  "artifact": {
+    "fixture": "fixtures/image-slim"
+  },
+  "props": {
+    "name": "team-sandbox-slim",
+    "baseImageVersion": "1",
+    "variant": "slim",
+    "memoryMib": 1024
+  },
+  "expected": "template"
+}

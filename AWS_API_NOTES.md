@@ -2355,3 +2355,135 @@ esos permisos.
 | CodeBuild `arm1.small` (`Build-Min:ARM:g1.small`) | $0,0034 por minuto, redondeado al minuto; 100 minutos gratis al mes | Price List API (publicación 2026-09-11) y <https://aws.amazon.com/codebuild/pricing/> |
 | ECR, almacenamiento | $0,10 por GB-mes | Price List API |
 | CloudWatch Logs, ingesta | $0,50 por GB | Price List API |
+
+## Constructos CDK (`agentcore-cdk`, ADR-032, **contrato de parámetros**)
+
+`RayitoAgent` y `RayitoMicrovmImage` (`rayito.cdk`, `rayito/cdk`) sólo
+declaran estos dos recursos de CloudFormation y sus propiedades, más los
+recursos de `aws-cdk-lib` de siempre (asset de S3, rol de IAM, grupo de logs,
+pila anidada, `custom_resources.Provider`). El manejador de sus recursos
+personalizados (`infra/agentcore-cdk-handler.py`) sólo usa las operaciones de
+«Despliegue en AgentCore Runtime» (`StartBuild`, `BatchGetBuilds`,
+`DescribeImages`, `GetAgentRuntime`, `UpdateAgentRuntime`) con esos mismos
+parámetros. Esquemas leídos el 2026-10-20 con
+`aws cloudformation describe-type --type RESOURCE --type-name <tipo>` en
+us-east-1 (solo lectura; la cuenta de la lectura no figura aquí) y en
+<https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-bedrockagentcore-runtime.html>
+y
+<https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-lambda-microvmimage.html>.
+
+### `AWS::BedrockAgentCore::Runtime`
+
+| Propiedad | Obligatoria | Actualización | Uso en `RayitoAgent` |
+|---|---|---|---|
+| `AgentRuntimeName` | sí | sólo al crear (cambiarla reemplaza) | `rayito_<nombre>` (`runtime_name_for`) |
+| `AgentRuntimeArtifact.ContainerConfiguration.ContainerUri` | sí | sí | `<RepositoryUri>:src-<hash>` |
+| `RoleArn` | sí | sí | el `RuntimeRole` de la pila anidada |
+| `NetworkConfiguration.NetworkMode` | no | sí | `PUBLIC` |
+| `ProtocolConfiguration` | no | sí | `HTTP` (en el esquema es una cadena, no un objeto) |
+| `LifecycleConfiguration.{IdleRuntimeSessionTimeout, MaxLifetime}` | no | sí | los del plan |
+| `EnvironmentVariables` | no | sí | mapa del plan, sin secretos; claves `^[a-zA-Z_][a-zA-Z0-9_]*$`, ≤ 50, valores de **hasta 2048** caracteres (la API admite 5000) |
+| `Description` | no | sí | `Rayito agent <nombre> (rayito.agentcore/1+cdk)` (1-1200) |
+| `Tags` | no | sí (`tagUpdatable`) | las tres fijas y las del usuario (mapa) |
+| `AuthorizerConfiguration`, `CapacityProviderConfiguration`, `FilesystemConfigurations`, `PlatformVersion`, `RequestHeaderConfiguration` | no | sí | **no se mandan** |
+
+Sólo lectura (`Fn::GetAtt`): `AgentRuntimeArn`, `AgentRuntimeId`
+(identificador primario), `AgentRuntimeVersion`, `Status`, `CreatedAt`,
+`LastUpdatedAt`, `FailureReason`, `WorkloadIdentityDetails`. Los constructos
+usan `GetAtt`, nunca `Ref`.
+
+### `AWS::Lambda::MicrovmImage`
+
+Todas las propiedades de entrada salvo `Name` y `Tags` son **write-only**
+(CloudFormation no las lee de vuelta). Tipo de aprovisionamiento
+`FULLY_MUTABLE`.
+
+| Propiedad | Obligatoria | Forma | Uso en `RayitoMicrovmImage` |
+|---|---|---|---|
+| `Name` | sí | `^[a-zA-Z0-9-_]+$`, 1-64; **sólo al crear** | el nombre (más `-<tamaño>`); `rayito-base*` reservado |
+| `BaseImageArn` | sí | cadena sin espacios, 1-2048 | `arn:aws:lambda:<región>:aws:microvm-image:al2023-1` |
+| `BaseImageVersion` | sí | cadena sin espacios | la prop obligatoria (versión mayor, Q115) |
+| `BuildRoleArn` | sí | `^arn:aws[a-zA-Z-]*:iam::\d{12}:role/…` | el rol de build del constructo |
+| `Description` | sí | cadena | `Rayito image <nombre> (rayito.microvm-image/1+cdk)` |
+| `CodeArtifact.Uri` | sí | cadena sin espacios, 1-2048 | `s3://<bucket del bootstrap>/<hash>.zip` (asset) |
+| `Logging` | sí | `{Disabled?, CloudWatch{LogGroup, LogStream?}}` | `{CloudWatch: {LogGroup: /rayito/<nombre>}}` |
+| `EgressNetworkConnectors` | sí | lista única, ≤ 10 | `[]` |
+| `CpuConfigurations` | sí | lista de `{Architecture: ARM_64}` | `[{Architecture: ARM_64}]` |
+| `Resources` | sí | lista ≤ 1 de `{MinimumMemoryInMiB}` | memoria del tamaño |
+| `AdditionalOsCapabilities` | sí | lista de `ALL` | `[]` o `["ALL"]` |
+| `Hooks` | sí | `{Port, MicrovmHooks{Run, Resume, Suspend, Terminate y sus *TimeoutInSeconds 1-60}, MicrovmImageHooks{Ready, Validate y sus *TimeoutInSeconds 1-3600}}`, estados `ENABLED`/`DISABLED` | `IMAGE_HOOKS` de `rayito image publish` |
+| `EnvironmentVariables` | sí | lista ≤ 50 de `{Key, Value}` (clave 1-256 sin espacios, valor 0-4096) | ordenadas por clave |
+| `Tags` | no | lista de `{Key, Value}` | las tres fijas y las del usuario |
+
+Sólo lectura: `ImageArn` (identificador primario; `Name` es identificador
+adicional), `State` (`MicrovmImageState`), `LatestActiveImageVersion`,
+`LatestFailedImageVersion`, `CreatedAt`, `UpdatedAt`.
+
+### Preguntas medidas o pendientes
+
+- **Q181 — El recurso de runtime no fija MMDSv2 (2026-10-20, esquema).** El
+  esquema de `AWS::BedrockAgentCore::Runtime` (22 propiedades) no contiene
+  ninguna cadena `metadata` ni `mmds`: no hay forma declarativa de exigir
+  `requireMMDSV2`, igual que `CreateAgentRuntime`. El manejador de `create`
+  pide `CreateAgentRuntime`, `CreateAgentRuntimeEndpoint`,
+  `CreateWorkloadIdentity`, `iam:PassRole` e `iam:CreateServiceLinkedRole`
+  (crea el endpoint `DEFAULT` y la identidad de carga de trabajo); el de
+  `update`, `UpdateAgentRuntime`. Por eso `RayitoAgent` declara
+  `Custom::RayitoRuntimeMmds` (ADR-032 D5). El esquema es más estricto que
+  la API en dos límites: un valor de `EnvironmentVariables` mide como mucho
+  2048 caracteres (la API, 5000; `cdkRuntimeEnvironmentValueMaxChars`) y
+  `Description` 1200. `ProtocolConfiguration` es una cadena
+  (`MCP`/`HTTP`/`A2A`/`AGUI`) y `LifecycleConfiguration` admite 60-1209600
+  como el modelo (la guía limita los microVMs a 28800, que el plan ya
+  aplica).
+- **Q182 — `AWS::Lambda::MicrovmImage` (2026-10-20, esquema).** Propiedades
+  obligatorias y formas de la tabla de arriba. Manejadores: `create`
+  (`CreateMicrovmImage`, `GetMicrovmImage`, `PassNetworkConnector`,
+  `iam:PassRole`, `TagResource`), `update` (`UpdateMicrovmImage`,
+  `GetMicrovmImage`, `GetMicrovmImageVersion`, `DeleteMicrovmImageVersion`,
+  `PassNetworkConnector`, `iam:PassRole`, `TagResource`, `UntagResource`),
+  `delete` (`GetMicrovmImage`, `DeleteMicrovmImage`), `list`
+  (`ListMicrovmImages`). Etiquetado `tagOnCreate` y `tagUpdatable`. La
+  documentación del recurso dice que el build es asíncrono (`CREATING` →
+  `CREATED` o `CREATE_FAILED`). No existe recurso para un MicroVM en marcha.
+- **Q183 — `metadataConfiguration` en botocore (2026-10-20).** En el modelo
+  `bedrock-agentcore-control/2023-06-05` de botocore 1.43.103,
+  `UpdateAgentRuntime` tiene `metadataConfiguration.requireMMDSV2` (booleano),
+  `CreateAgentRuntime` no, y `GetAgentRuntime` lo devuelve. El boto3 del
+  runtime Python de Lambda puede ser anterior: el zip del manejador lleva
+  `service-2.json.gz` y `endpoint-rule-set-1.json.gz` de esa versión, copiados
+  sin cambios en `docs/aws-api/bedrock-agentcore-control/2023-06-05/`, y
+  apunta `AWS_DATA_PATH` a ellos.
+- **Q184 — Versiones de `aws-cdk-lib` (2026-10-20, unpkg y PyPI).**
+  `CfnRuntime` aparece en 2.217.0 (no en 2.216.0); la L2 de AgentCore
+  (`Runtime`, `AgentRuntimeArtifact`, …) en 2.255.0 (no en 2.254.0);
+  `CfnMicrovmImage` en **2.261.0** (no en 2.260.0). 2.261.0 pide
+  `constructs ^10.5.0` y Node ≥ 20 en npm, y Python ≥ 3.10 y
+  `jsii>=1.133.0,<2` en PyPI. `CfnRuntime` y `CfnMicrovmImage` implementan
+  `ITaggableV2` y exponen `attrAgentRuntimeArn`, `attrAgentRuntimeId`,
+  `attrAgentRuntimeVersion` y `attrImageArn`, `attrLatestActiveImageVersion`,
+  `attrState`. Fuentes:
+  <https://unpkg.com/aws-cdk-lib@2.261.0/aws-lambda/lib/lambda.generated.d.ts>,
+  <https://unpkg.com/aws-cdk-lib@2.255.0/aws-bedrockagentcore/lib/index.d.ts>,
+  <https://unpkg.com/aws-cdk-lib@2.217.0/aws-bedrockagentcore/lib/bedrockagentcore.generated.d.ts>,
+  <https://pypi.org/project/aws-cdk-lib/2.261.0/>.
+- **Q185 — ¿Una actualización del runtime por CloudFormation devuelve
+  `requireMMDSV2` a falso?** No (medido 2026-10-20 en us-east-1, aceptación de
+  `agentcore-cdk`, Python y TypeScript). El runtime que crea
+  `AWS::BedrockAgentCore::Runtime` ya sale con `requireMMDSV2=true` en la
+  versión 1, aunque el recurso no tenga la propiedad, y la versión 2 que crea
+  una actualización (cambio de código) también. `Custom::RayitoRuntimeMmds`
+  no escribe nada en ninguno de los dos casos (create y update en ≈ 3 s, sin
+  `UpdateAgentRuntime`), y su atributo `AgentRuntimeVersion` es la versión de
+  CloudFormation (1 y luego 2). El recurso se queda como red de seguridad: sólo
+  publicaría una versión nueva, fuera de CloudFormation, si una llegara sin
+  MMDSv2.
+- **Q186 — ¿Espera CloudFormation a una versión `SUCCESSFUL`/`ACTIVE` de la
+  imagen, y borra una actualización las versiones anteriores?** Lo primero, sí
+  (medido 2026-10-20 en us-east-1, Python y TypeScript): el create de
+  `AWS::Lambda::MicrovmImage` tarda lo que el build de la imagen (≈ 3,5-4,5
+  min) y acaba con la versión `1.0`; un sandbox creado justo después desde
+  esa imagen arranca. Lo segundo sigue **pendiente**: la aceptación no
+  actualizó ninguna imagen, así que no se vio si una actualización borra las
+  versiones anteriores (el manejador de `update` pide
+  `DeleteMicrovmImageVersion`, pero el esquema no dice cuándo lo usa).

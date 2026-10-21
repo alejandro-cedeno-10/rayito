@@ -11,7 +11,12 @@
 import type { Code } from "@connectrpc/connect";
 import type { TokenUsage } from "./agent/events.js";
 import { type AgentCoreErrorCode, ERROR_EXIT_CODES, ERROR_MESSAGES } from "./agentcore/messages.js";
-import { formatTemplate, type TemplateFields } from "./template-text.js";
+import {
+  formatTemplate,
+  type MessageFields,
+  messageFields,
+  type TemplateFields,
+} from "./template-text.js";
 
 export interface SandboxErrorOptions {
   readonly statusCode?: number | undefined;
@@ -560,19 +565,26 @@ export class AgentError extends SandboxError {
 export class AgentCoreError extends Error {
   readonly code: AgentCoreErrorCode;
   readonly exitCode: number;
+  /** Los valores del mensaje (como `AgentCoreException.fields` de Python). */
+  readonly fields: MessageFields;
 
+  /**
+   * `options.template` sustituye el mensaje del código por otro del contrato
+   * con el mismo código (el rechazo `+cdk` de `name_conflict`, ADR-032 D6).
+   */
   constructor(
     code: AgentCoreErrorCode,
     fields: TemplateFields = {},
-    options: { readonly cause?: unknown } = {},
+    options: { readonly cause?: unknown; readonly template?: string | undefined } = {},
   ) {
     super(
-      formatTemplate(ERROR_MESSAGES[code], fields),
+      formatTemplate(options.template ?? ERROR_MESSAGES[code], fields),
       options.cause === undefined ? undefined : { cause: options.cause },
     );
     Object.setPrototypeOf(this, new.target.prototype);
     this.name = new.target.name;
     this.code = code;
     this.exitCode = ERROR_EXIT_CODES[code];
+    this.fields = messageFields(fields);
   }
 }

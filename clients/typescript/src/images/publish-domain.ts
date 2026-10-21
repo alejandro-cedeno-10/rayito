@@ -13,6 +13,7 @@
  * ya publicadas.
  */
 
+import { CDK_MANAGED_BY_TAG_VALUE } from "../limits.js";
 import { EFS_IMAGE_NAME } from "../role-policy.js";
 import {
   BASELINE_MEMORY_MIB,
@@ -20,6 +21,7 @@ import {
   SIZE_NAMES,
   type SizeName,
 } from "../sizing/sizing.js";
+import { MANAGED_BY_TAG_KEY } from "../stacks/model.js";
 import { pythonStringRepr } from "../strings.js";
 import { IMAGE_VARIANTS, type ImageVariant } from "./artifact.js";
 import { DEFAULT_BASE_IMAGE_NAME, DEFAULT_MEMORY_MIB, LOG_GROUP_PREFIX } from "./gateway.js";
@@ -91,6 +93,21 @@ export class ImageSettingsError extends Error {
   }
 }
 
+/** `cliRefusals.imagePublish` de `testdata/agentcore-cdk/contract.json`. */
+export const CDK_MANAGED_IMAGE_MESSAGE =
+  "la imagen {name} la gestiona CloudFormation (CDK): cámbiala con cdk deploy";
+
+/**
+ * `true` si `GetMicrovmImage` devolvió `rayito:managed-by=rayito-cdk`: la
+ * imagen la gestiona CloudFormation y `rayito image publish` no la cambia
+ * (`rayito image prune` sí puede borrar sus versiones viejas).
+ */
+export function isCdkManagedImage(
+  image: { readonly tags?: Readonly<Record<string, string>> | undefined } | undefined,
+): boolean {
+  return image?.tags?.[MANAGED_BY_TAG_KEY] === CDK_MANAGED_BY_TAG_VALUE;
+}
+
 /** Todo lo que una publicación necesita saber (inmutable). */
 export interface PublishSettings {
   readonly artifact: string;
@@ -109,6 +126,15 @@ export interface PublishSettings {
   /** `undefined` conserva la clave compartida direccionada por contenido. */
   readonly artifactRunId: string | undefined;
 }
+
+/**
+ * Lo que la configuración deseada lee de unos ajustes: `PublishSettings` de
+ * la CLI y los de `RayitoMicrovmImage` (`rayito/cdk`, ADR-032 D9.4).
+ */
+export type ImageSettings = Pick<
+  PublishSettings,
+  "imageName" | "baseImageVersion" | "memoryMib" | "osCapabilities" | "environmentVariables"
+>;
 
 export function logGroupOf(settings: Pick<PublishSettings, "imageName">): string {
   return `${LOG_GROUP_PREFIX}/${settings.imageName}`;
@@ -174,7 +200,7 @@ export function artifactKey(sha256Hex: string, runId: string | undefined): strin
 /** El cuerpo de `create` y `update-microvm-image`, sin nombre ni descripción. */
 export function desiredConfiguration(input: {
   readonly region: string;
-  readonly settings: PublishSettings;
+  readonly settings: ImageSettings;
   readonly artifactUri: string;
   readonly buildRoleArn: string;
 }): Record<string, unknown> {
@@ -199,7 +225,7 @@ export function desiredConfiguration(input: {
 }
 
 /** `base` con el sufijo de tamaño: nombre `<imagen>-<size>`, memoria del catálogo y el baseline horneado en el entorno de la imagen. */
-export function sizedSettings(base: PublishSettings, sizeName: SizeName): PublishSettings {
+export function sizedSettings<T extends ImageSettings>(base: T, sizeName: SizeName): T {
   const memoryMib = NAME_TO_MEMORY_MIB[sizeName];
   return {
     ...base,

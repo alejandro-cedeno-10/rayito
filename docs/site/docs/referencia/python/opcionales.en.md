@@ -201,3 +201,23 @@ verified end to end on real AWS.
 ::: rayito.BulkItemResult
 
 ::: rayito.BulkResult
+
+## CDK constructs (`rayito.cdk`) { #cdk }
+
+Since 0.15.0 (not published yet), behind the `cdk` extra
+(`pip install "rayito[cdk]"`: `aws-cdk-lib` {{cdkAwsCdkLibMinVersion}} or later
+and `constructs` {{cdkConstructsMinVersion}} or later). It is a separate
+module: `import rayito` does not load it, and without the extra
+`import rayito.cdk` fails with a message saying it is missing. The TypeScript
+equivalents are in the [TypeScript reference](../typescript.md#cdk), and usage,
+cost and errors in [Deploy with CDK](../../guias/desplegar-con-cdk.md).
+
+::: rayito.cdk.RayitoAgent
+
+::: rayito.cdk.AgentImageBuild
+
+::: rayito.cdk.RayitoMicrovmImage
+
+::: rayito.cdk.MicrovmImageArtifact
+
+::: rayito.cdk.RayitoCdkException

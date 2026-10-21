@@ -68,6 +68,28 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   petición en cuanto arranca la microVM, antes de que el agente esté caliente: el
   host la retiene hasta 25 s esperando el calentamiento en vez de contestar 503
   (un calentamiento fallido sigue contestando 503 al instante).
+- **Constructos de AWS CDK en `rayito.cdk`** (extra `cdk`: `aws-cdk-lib>=2.261.0,<3`
+  y `constructs>=10.5.0,<11`). `RayitoAgent` despliega con `cdk deploy` el mismo
+  agente que `rayito agent deploy --target agentcore`, con la misma plantilla
+  `infra/agentcore-runtime.yaml` (IAM idéntico): la imagen se construye en
+  CodeBuild por defecto (`AgentImageBuild.code_build()`, sin Docker local) o con
+  tu Docker (`AgentImageBuild.local_docker()`), y `Custom::RayitoRuntimeMmds`
+  exige MMDSv2. `RayitoMicrovmImage` publica una imagen de Lambda MicroVMs con
+  `rayd` (y sus tamaños) desde `MicrovmImageArtifact.download_release()`
+  (comprobado contra `SHA256SUMS`, con caché para síntesis sin red) o
+  `from_file()`, con su propio rol de build y la misma configuración que
+  `rayito image publish`. `cdk synth` no llama a AWS; la región del stack debe
+  ser concreta. Errores propios en `RayitoCdkException` (`region_unresolved`,
+  `image_name_reserved`, `artifact_checksum_mismatch`…); los del plan siguen
+  siendo `AgentCoreException`. Sin el extra, `import rayito` y la CLI no cargan
+  nada de CDK. Guía: `guias/desplegar-con-cdk.md`.
+- **La CLI respeta lo que gestiona CloudFormation**: un runtime con la marca
+  `rayito.agentcore/1+cdk` se lista, se consulta y se invoca como cualquier otro
+  (`rayito agent list/status/invoke`, `AgentCoreFleet.connect`), pero
+  `rayito agent deploy`, `rayito agent delete` y `deploy_agent(target="agentcore")`
+  lo rechazan con `name_conflict`, y `rayito image publish` rechaza una imagen
+  con la etiqueta `rayito:managed-by=rayito-cdk`. Los runtimes con la marca
+  `rayito.agentcore/1` no cambian.
 
 ### Cambiado
 

@@ -58,6 +58,11 @@ your own Flask or Express app, and OpenCode.
     the secrets you declare with `--readable-secret`. Details in
     [Security on AgentCore](#seguridad-en-agentcore).
 
+!!! tip "Managing infrastructure with AWS CDK?"
+    The `RayitoAgent` construct deploys the same agent, with the same
+    resources and IAM, from your CDK app with `cdk deploy`:
+    [Deploy with CDK](desplegar-con-cdk.md).
+
 ## Before you start { #antes-de-empezar }
 
 1. **A region with AgentCore Runtime and CodeBuild arm64 builds.** There are 21:
@@ -360,6 +365,11 @@ sessions to users**, so who may continue which session is up to your backend.
   there is nothing, it says «nothing to delete» and exits 0. Another agent's
   images, the artifact bucket and the rest of your account are not touched.
 
+An agent deployed with CDK (`RayitoAgent`) shows up in `list` and `status` and
+is invoked the same way, but `deploy` and `delete` refuse it with
+`name_conflict`: CloudFormation manages it
+([Coexisting with the CLI](desplegar-con-cdk.md#convivencia)).
+
 ## Redeploy { #redesplegar }
 
 Run the same command again. Rayito computes the content that goes into the
@@ -522,6 +532,8 @@ container answered 4xx or 5xx) is `AgentException(reason="runtime_error")`.
 
 ## See also { #ver-tambien }
 
+- [Deploy with CDK](desplegar-con-cdk.md): the same agent with the
+  `RayitoAgent` construct in your CDK app.
 - [Deploy your agent](despliega-tu-agente.md): detection, the project file and
   the MicroVM deploy.
 - [Several sessions and several VMs](flota-de-agentes.md): MicroVM fleets.

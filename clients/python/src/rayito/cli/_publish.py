@@ -99,7 +99,7 @@ import hashlib
 import re
 import time
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
@@ -110,39 +110,62 @@ from rayito._images import (
     BUILD_ROLE_OUTPUT_KEY as BUILD_ROLE_OUTPUT_KEY,
 )
 from rayito._images import (
-    DEFAULT_BASE_IMAGE_NAME,
     DEFAULT_IAM_STACK_NAME,
-    LOG_GROUP_PREFIX,
     VersionGate,
     account_image_arn,
+    existing_image,
     find_reusable_version,
     gate_progress_line,
-    image_exists,
     submit_image_build,
     upload_if_absent,
 )
 from rayito._images import wait_for_gate as wait_for_image_gate
-from rayito._limits import MAX_CONCURRENT_IMAGE_BUILDS
-from rayito._sizing import NAME_TO_MEMORY_MIB
-from rayito.cli._artifact import VARIANTS, marker_has_efs, marker_variant
+from rayito._images_publish_domain import (
+    ALL_OS_CAPABILITIES as ALL_OS_CAPABILITIES,
+)
+from rayito._images_publish_domain import (
+    BASELINE_MEMORY_ENV_VAR as BASELINE_MEMORY_ENV_VAR,
+)
+from rayito._images_publish_domain import (
+    DEFAULT_IMAGE_NAME as DEFAULT_IMAGE_NAME,
+)
+from rayito._images_publish_domain import (
+    DEFAULT_IMAGE_NAMES as DEFAULT_IMAGE_NAMES,
+)
+from rayito._images_publish_domain import (
+    EFS_BASE_VARIANT as EFS_BASE_VARIANT,
+)
+from rayito._images_publish_domain import (
+    EFS_IMAGE_NAME as EFS_IMAGE_NAME,
+)
+from rayito._images_publish_domain import (
+    HOOKS_PORT as HOOKS_PORT,
+)
+from rayito._images_publish_domain import (
+    IMAGE_HOOKS as IMAGE_HOOKS,
+)
+from rayito._images_publish_domain import (
+    MANAGED_BASE_IMAGE_NAME as MANAGED_BASE_IMAGE_NAME,
+)
+from rayito._images_publish_domain import (
+    base_image_arn as base_image_arn,
+)
+from rayito._images_publish_domain import (
+    default_image_name as default_image_name,
+)
+from rayito._images_publish_domain import desired_configuration as desired_build_configuration
+from rayito._images_publish_domain import log_group_for
+from rayito._images_publish_domain import (
+    require_efs_combination as require_efs_combination,
+)
+from rayito._images_publish_domain import (
+    sized_settings as sized_settings,
+)
+from rayito._limits import CDK_MANAGED_BY_TAG_VALUE, MAX_CONCURRENT_IMAGE_BUILDS
+from rayito.cli._artifact import marker_has_efs, marker_variant
 from rayito.cli._console import client_error_code, echo, emit_json, fail
 
-DEFAULT_IMAGE_NAME = DEFAULT_BASE_IMAGE_NAME
-DEFAULT_IMAGE_NAMES = {
-    "full": DEFAULT_IMAGE_NAME,
-    "slim": f"{DEFAULT_IMAGE_NAME}-slim",
-    "poly": f"{DEFAULT_IMAGE_NAME}-poly",
-}
-#: `--with-efs` (m15-efs-volumes): the caps image with `amazon-efs-utils`;
-#: `_role_policy.EFS_CAPS_VARIANT` counts it as a caps variant.
-EFS_IMAGE_NAME = f"{DEFAULT_IMAGE_NAME}-caps-efs"
-#: The only variant `--with-efs` combines with: it is the caps image (the
-#: `full` artifact) plus one layer, never slim or poly.
-EFS_BASE_VARIANT = "full"
 DEFAULT_STACK_NAME = DEFAULT_IAM_STACK_NAME
-#: `additionalOsCapabilities` value (the only one the service model accepts):
-#: `--with-efs` requires it, because `rayd` only mounts with `CAP_SYS_ADMIN`.
-ALL_OS_CAPABILITIES = "ALL"
 OS_CAPABILITY_CHOICES = (ALL_OS_CAPABILITIES,)
 S3_KEY_PREFIX = "rayito/images"
 #: Segmento de las claves de `--artifact-run-id`: queda bajo `S3_KEY_PREFIX`,
@@ -152,8 +175,6 @@ RUN_SCOPED_KEY_SEGMENT = "runs"
 #: Un id de ejecución es un único segmento de clave S3: letras, dígitos y
 #: guiones, sin `/` ni `..`, de 1 a 64 caracteres.
 RUN_ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]{0,63}")
-HOOKS_PORT = 9000
-MANAGED_BASE_IMAGE_NAME = "al2023-1"
 #: ``--base-image-version latest`` publishes on the newest version of the
 #: managed base image instead of a pinned one.
 LATEST_BASE_IMAGE_VERSION = "latest"
@@ -161,32 +182,6 @@ NO_MANAGED_VERSION_MESSAGE = (
     "la base gestionada no lista ninguna versión: pasa --base-image-version con una versión "
     "de list-managed-microvm-image-versions"
 )
-# Nombre de la variable de imagen que `--sizes` hornea: información
-# declarada para que el código del usuario sepa el baseline de la imagen
-# (Q88) sin llamar a AWS; `rayd` no la lee hoy (0.6), ver el docstring del
-# módulo y `sized_settings`.
-BASELINE_MEMORY_ENV_VAR = "RAYITO_BASELINE_MEMORY_MIB"
-
-IMAGE_HOOKS: dict[str, Any] = {
-    "port": HOOKS_PORT,
-    "microvmImageHooks": {
-        "ready": "ENABLED",
-        "readyTimeoutInSeconds": 600,
-        "validate": "ENABLED",
-        "validateTimeoutInSeconds": 600,
-    },
-    "microvmHooks": {
-        "run": "ENABLED",
-        "runTimeoutInSeconds": 30,
-        "resume": "ENABLED",
-        "resumeTimeoutInSeconds": 30,
-        "suspend": "ENABLED",
-        "suspendTimeoutInSeconds": 30,
-        "terminate": "ENABLED",
-        "terminateTimeoutInSeconds": 10,
-    },
-}
-
 Sleeper = Callable[[float], None]
 Emitter = Callable[[str], None]
 
@@ -239,31 +234,7 @@ class PublishSettings:
 
     @property
     def log_group(self) -> str:
-        return f"{LOG_GROUP_PREFIX}/{self.image_name}"
-
-
-def default_image_name(variant: str, *, with_efs: bool = False) -> str:
-    if variant not in VARIANTS:
-        raise ValueError(f"variant desconocida: {variant!r} (admitidas: {', '.join(VARIANTS)})")
-    if with_efs:
-        require_efs_combination(variant, ALL_OS_CAPABILITIES)
-        return EFS_IMAGE_NAME
-    return DEFAULT_IMAGE_NAMES[variant]
-
-
-def require_efs_combination(variant: str, os_capabilities: str | None) -> None:
-    """`--with-efs` only on the `full` variant with `--os-capabilities ALL`:
-    the image is `rayito-base-caps` plus the `amazon-efs-utils` layer, and
-    without `CAP_SYS_ADMIN` `rayd` would never advertise
-    `Health.features.efs_volumes` (an image that pays for the layer and can
-    never use it)."""
-    if variant != EFS_BASE_VARIANT:
-        raise ValueError(f"--with-efs sólo con --variant {EFS_BASE_VARIANT}, no {variant!r}")
-    if os_capabilities != ALL_OS_CAPABILITIES:
-        raise ValueError(
-            f"--with-efs necesita --os-capabilities {ALL_OS_CAPABILITIES}: rayd sólo monta "
-            "EFS con CAP_SYS_ADMIN"
-        )
+        return log_group_for(self.image_name)
 
 
 def utc_now() -> str:
@@ -335,10 +306,6 @@ def image_arn(clients: PublishClients, image_name: str) -> str:
     return account_image_arn(clients.region, clients.account_id, image_name)
 
 
-def base_image_arn(region: str) -> str:
-    return f"arn:aws:lambda:{region}:aws:microvm-image:{MANAGED_BASE_IMAGE_NAME}"
-
-
 def newest_managed_version(microvms: Any, arn: str) -> tuple[str, datetime] | None:
     """The newest version of the managed base image `arn` (`imageVersion` and
     `createdAt` of ``list-managed-microvm-image-versions``), or ``None`` when
@@ -368,22 +335,15 @@ def resolve_base_image_version(microvms: Any, region: str, requested: str) -> st
 def desired_configuration(
     clients: PublishClients, settings: PublishSettings, artifact_uri: str
 ) -> dict[str, Any]:
-    """The PUT body shared by create and update, minus name and description."""
-    configuration: dict[str, Any] = {
-        "baseImageArn": base_image_arn(clients.region),
-        "baseImageVersion": settings.base_image_version,
-        "buildRoleArn": build_role_arn(clients, settings),
-        "codeArtifact": {"uri": artifact_uri},
-        "resources": [{"minimumMemoryInMiB": settings.memory_mib}],
-        "cpuConfigurations": [{"architecture": "ARM_64"}],
-        "hooks": IMAGE_HOOKS,
-        "logging": {"cloudWatch": {"logGroup": settings.log_group}},
-    }
-    if settings.os_capabilities:
-        configuration["additionalOsCapabilities"] = [settings.os_capabilities]
-    if settings.environment_variables:
-        configuration["environmentVariables"] = dict(settings.environment_variables)
-    return configuration
+    """The PUT body shared by create and update, minus name and description
+    (`_images_publish_domain.desired_configuration` with the account's build
+    role)."""
+    return desired_build_configuration(
+        region=clients.region,
+        settings=settings,
+        artifact_uri=artifact_uri,
+        build_role_arn=build_role_arn(clients, settings),
+    )
 
 
 def submit_build(
@@ -538,21 +498,28 @@ def progress_emitter(json_output: bool) -> Emitter:
 class PreparedBuild:
     """Lo común a reusar-o-construir: `arn` y `artifact` no cambian
     entre comprobar si hay una versión que reutilizar y, si no la hay,
-    pedir una nueva con la misma `desired`."""
+    pedir una nueva con la misma `desired`. `existing` es la respuesta de
+    `GetMicrovmImage` ya leída (o `None`), para no volver a pedirla."""
 
     arn: str
     artifact: UploadedArtifact
     desired: dict[str, Any]
+    existing: dict[str, Any] | None
 
 
 def prepare_build(
     clients: PublishClients, settings: PublishSettings, emit: Emitter
 ) -> PreparedBuild:
-    """Sube el artefacto (si hace falta) y arma la configuración deseada;
-    no decide si hay que construir, eso es `reusable_version`."""
+    """Rechaza una imagen gestionada por CDK *antes* de cualquier escritura
+    (ni siquiera sube el artefacto: spec `agentcore-cdk`, "SHALL fail without
+    any write"), sube el artefacto (si hace falta) y arma la configuración
+    deseada; no decide si hay que construir, eso es `reusable_version`."""
     arn = image_arn(clients, settings.image_name)
+    existing = existing_image(clients, arn)
+    refuse_cdk_managed(settings.image_name, existing)
     artifact = upload_artifact(clients, settings, emit)
-    return PreparedBuild(arn, artifact, desired_configuration(clients, settings, artifact.uri))
+    desired = desired_configuration(clients, settings, artifact.uri)
+    return PreparedBuild(arn, artifact, desired, existing)
 
 
 def reusable_version(
@@ -561,9 +528,27 @@ def reusable_version(
     """La versión lanzable más nueva que ya coincide, o `None` si no hay
     ninguna o `--force` la ignora. `settings` sólo aporta `force`: el resto
     ya está en `prepared`."""
-    if settings.force or not image_exists(clients, prepared.arn):
+    if settings.force or prepared.existing is None:
         return None
     return find_reusable_version(clients, prepared.arn, prepared.desired)
+
+
+#: Una imagen que gestiona CloudFormation (`RayitoMicrovmImage`, ADR-032 D6),
+#: tal cual `testdata/agentcore-cdk/contract.json`
+#: (`cliRefusals.imagePublish.message`).
+CDK_MANAGED_IMAGE_MESSAGE = (
+    "la imagen {name} la gestiona CloudFormation (CDK): cámbiala con cdk deploy"
+)
+MANAGED_BY_TAG_KEY = "rayito:managed-by"
+
+
+def refuse_cdk_managed(image_name: str, existing: Mapping[str, Any] | None) -> None:
+    """`GetMicrovmImage.tags["rayito:managed-by"] == "rayito-cdk"`: la imagen es
+    de un stack de CDK y publicar encima crearía deriva; se para antes de
+    `UpdateMicrovmImage`. `rayito image prune` sigue funcionando sobre ella."""
+    tags = (existing or {}).get("tags") or {}
+    if tags.get(MANAGED_BY_TAG_KEY) == CDK_MANAGED_BY_TAG_VALUE:
+        fail(CDK_MANAGED_IMAGE_MESSAGE.format(name=image_name))
 
 
 def reusable_summary(
@@ -642,26 +627,6 @@ def publish(
         return 1
     report_success(summary, json_output=json_output)
     return 0
-
-
-def sized_settings(base: PublishSettings, size_name: str) -> PublishSettings:
-    """`base` con el sufijo de tamaño aplicado (m15-sizes-catalog):
-    `image_name` lleva `-<size_name>`, `memory_mib` es el valor del
-    catálogo cerrado y `environment_variables` gana `BASELINE_MEMORY_ENV_VAR`
-    horneado: información declarada para que el código del usuario (no
-    `rayd`, que hoy no la lee) sepa el baseline de la imagen sin llamar a
-    AWS (Q88: el guest ve hasta 4x más en `free -m`). `size_name` ya viene
-    validado contra `_sizing.SIZE_NAMES` por la CLI."""
-    memory_mib = NAME_TO_MEMORY_MIB[size_name]
-    return replace(
-        base,
-        image_name=f"{base.image_name}-{size_name}",
-        memory_mib=memory_mib,
-        environment_variables={
-            **base.environment_variables,
-            BASELINE_MEMORY_ENV_VAR: str(memory_mib),
-        },
-    )
 
 
 def publish_sizes(
