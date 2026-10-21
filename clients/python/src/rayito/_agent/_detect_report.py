@@ -16,9 +16,10 @@ from typing import Final
 from rayito._limits import AGENT_DETECTION_SCHEMA
 
 #: Los protocolos que el informe puede nombrar: `framework` lo sirve el driver
-#: del framework; el resto es una app HTTP (`agentcore`, `json`, `raw`).
+#: del framework; el resto es una app HTTP (`agentcore`, `json`, `raw` y,
+#: sólo con `--protocol`, `langgraph-api`).
 PROTOCOL_FRAMEWORK: Final = "framework"
-APP_PROTOCOLS: Final[tuple[str, ...]] = ("agentcore", "json", "raw")
+APP_PROTOCOLS: Final[tuple[str, ...]] = ("agentcore", "json", "raw", "langgraph-api")
 #: Cómo se obtiene el objeto del agente: ya construido o con una fábrica.
 ENTRY_OBJECT: Final = "object"
 ENTRY_FACTORY: Final = "factory"
@@ -74,8 +75,10 @@ class DetectionProvider:
 class DetectionApp:
     """La app HTTP del proyecto: el comando que la arranca, el puerto en el
     que escucha dentro del sandbox (y la variable de entorno con la que se le
-    indica, si la lee de ella), sus rutas de salud e invocación y, con el
-    protocolo `json`, los campos de la petición y la respuesta."""
+    indica, si la lee de ella), sus rutas de salud e invocación, con el
+    protocolo `json` los campos de la petición y la respuesta y, con
+    `langgraph-api`, el grafo que se ejecuta (`assistant_id`, que sólo sale
+    en `to_dict()` si tiene valor)."""
 
     framework: str
     command: tuple[str, ...]
@@ -85,9 +88,10 @@ class DetectionApp:
     invoke_path: str | None
     request_field: str | None
     response_field: str | None
+    assistant_id: str | None = None
 
     def to_dict(self) -> dict[str, object]:
-        return {
+        shape: dict[str, object] = {
             "framework": self.framework,
             "command": list(self.command),
             "port": self.port,
@@ -97,6 +101,9 @@ class DetectionApp:
             "request_field": self.request_field,
             "response_field": self.response_field,
         }
+        if self.assistant_id is not None:
+            shape["assistant_id"] = self.assistant_id
+        return shape
 
 
 @dataclass(frozen=True)
@@ -224,6 +231,8 @@ def _app_table(app: DetectionApp, protocol: str) -> dict[str, object]:
         table["request_field"] = app.request_field
     if app.response_field is not None:
         table["response_field"] = app.response_field
+    if app.assistant_id is not None:
+        table["assistant_id"] = app.assistant_id
     return table
 
 

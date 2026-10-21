@@ -4,12 +4,22 @@
  * petición. Espejo de `rayito._agent._detect_app`: todo sale de patrones de
  * línea sobre el fichero de la app y de `package.json`; nunca se ejecuta
  * nada. Las reglas son datos de `agent-detection.json`.
+ *
+ * Con `--protocol langgraph-api` (ADR-033 D5) un proyecto con `langgraph.json`
+ * se sirve con su propio servidor (`langgraph dev`, el launcher
+ * `langgraph-dev`) como app `custom`, y `assistantId` es el grafo elegido de
+ * `graphs`.
  */
 
-import { AGENT_APP_INTERNAL_PORT, AGENT_APP_PORT_ENV, AGENT_SERVICE_PORT } from "../limits.js";
+import {
+  AGENT_APP_INTERNAL_PORT,
+  AGENT_APP_PORT_ENV,
+  AGENT_LANGGRAPH_HEALTH_PATH,
+  AGENT_SERVICE_PORT,
+} from "../limits.js";
 import type { EntryChoice } from "./detect-entry.js";
 import { APP_PROTOCOLS, type DetectionApp } from "./detect-report.js";
-import type { DetectionRules, FrameworkRule, LauncherRule } from "./detect-rules.js";
+import type { DetectionRules, EntryFileRule, FrameworkRule, LauncherRule } from "./detect-rules.js";
 import {
   compiledRegex,
   matchesOf,
@@ -23,6 +33,16 @@ import { AgentProjectError } from "./project.js";
 const PROTOCOL_AGENTCORE = "agentcore";
 const PROTOCOL_JSON = "json";
 const PROTOCOL_RAW = "raw";
+export const PROTOCOL_LANGGRAPH_API = "langgraph-api";
+/** El framework de `langgraph.json`, el launcher de `langgraph dev`, el paquete
+ * de Python que lo trae y el `kind` con el que se sirve. */
+const LANGGRAPH_JSON_FRAMEWORK = "langgraph-json";
+const LANGGRAPH_DEV_LAUNCHER = "langgraph-dev";
+const LANGGRAPH_CLI_DEPENDENCY = "langgraph-cli";
+export const CUSTOM_KIND = "custom";
+/** Cómo escribe `langgraph.json` un grafo: `./ruta:atributo`. */
+const CURRENT_DIRECTORY = "./";
+const GRAPH_ATTRIBUTE_SEPARATOR = ":";
 const METHOD_GET = "GET";
 const METHOD_POST = "POST";
 const NODE_MAIN_COMMAND = "node";
@@ -38,6 +58,7 @@ const DEFAULT_RUNNER = "npm";
 const APP_COMMAND_PATH = "runtime.app.command";
 const INVOKE_PATH = "runtime.app.invoke_path";
 const PROTOCOL_PATH = "runtime.app.protocol";
+const ENTRY_PATH = "runtime.entrypoint";
 
 type Route = readonly [string, string];
 
@@ -235,6 +256,9 @@ export function detectApp(
   protocolOverride: string | undefined,
   sink: WarningSink,
 ): { readonly app: DetectionApp; readonly protocol: string } {
+  if (protocolOverride === PROTOCOL_LANGGRAPH_API) {
+    throw withoutLanggraphJson(rules);
+  }
   const spec = framework.app as NonNullable<FrameworkRule["app"]>;
   const launcher = rules.app.launchers[spec.launcher] as LauncherRule;
   const text = index.read(entry.path) ?? "";
@@ -274,6 +298,103 @@ export function detectApp(
       responseField,
     },
     protocol,
+  };
+}
+
+function withoutLanggraphJson(rules: DetectionRules): AgentProjectError {
+  const text = rules.messages.langgraph_api_without_langgraph_json as string;
+  return new AgentProjectError(`${PROTOCOL_PATH}: ${text}`, {
+    path: PROTOCOL_PATH,
+    code: "invalid_value",
+  });
+}
+
+/** `ruta:atributo` de un valor de `graphs`, sin el `./` inicial. */
+function graphLocation(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  return value.startsWith(CURRENT_DIRECTORY) ? value.slice(CURRENT_DIRECTORY.length) : value;
+}
+
+/** La clave de `graphs` que apunta al punto de entrada elegido: la preferida
+ * por nombre si hay varias, o la primera en orden. */
+function assistantIdOf(
+  index: ProjectIndex,
+  rules: DetectionRules,
+  specName: string,
+  entry: EntryChoice,
+): string {
+  const spec = rules.entryFiles[specName] as EntryFileRule;
+  const document = index.readJson(spec.file);
+  const graphs =
+    typeof document === "object" && document !== null && !Array.isArray(document)
+      ? (document as Record<string, unknown>)[spec.key]
+      : undefined;
+  const wanted = `${entry.path}${GRAPH_ATTRIBUTE_SEPARATOR}${entry.attr}`;
+  const keys =
+    typeof graphs === "object" && graphs !== null && !Array.isArray(graphs)
+      ? Object.entries(graphs as Record<string, unknown>)
+          .filter(([, value]) => graphLocation(value) === wanted)
+          .map(([key]) => key)
+          .sort()
+      : [];
+  const first = keys[0];
+  if (first === undefined) {
+    const text = render(rules.messages.not_detected_entrypoint as string, {
+      framework: spec.file,
+    });
+    throw new AgentProjectError(`${ENTRY_PATH}: ${text}`, {
+      path: ENTRY_PATH,
+      code: "not_detected",
+    });
+  }
+  return spec.preferKeys.find((key) => keys.includes(key)) ?? first;
+}
+
+/**
+ * La app `langgraph dev` de un proyecto con `langgraph.json` y el protocolo
+ * `langgraph-api`. Sin `langgraph.json` es `invalid_value`; avisa de que es un
+ * servidor de desarrollo y, si falta, de que `langgraph-cli` no está entre las
+ * dependencias.
+ */
+export function detectLanggraphApi(
+  index: ProjectIndex,
+  rules: DetectionRules,
+  framework: FrameworkRule,
+  entry: EntryChoice | undefined,
+  language: string | undefined,
+  sink: WarningSink,
+): { readonly app: DetectionApp; readonly protocol: string } {
+  if (
+    framework.id !== LANGGRAPH_JSON_FRAMEWORK ||
+    framework.entryFile === undefined ||
+    entry === undefined
+  ) {
+    throw withoutLanggraphJson(rules);
+  }
+  const assistantId = assistantIdOf(index, rules, framework.entryFile, entry);
+  const dependencies =
+    language === undefined ? new Map<string, string>() : index.dependencies(language);
+  if (!dependencies.has(LANGGRAPH_CLI_DEPENDENCY)) {
+    sink.add("langgraph_cli_missing");
+  }
+  sink.add("langgraph_dev_server");
+  const launcher = rules.app.launchers[LANGGRAPH_DEV_LAUNCHER] as LauncherRule;
+  const port = AGENT_APP_INTERNAL_PORT;
+  return {
+    app: {
+      framework: framework.id,
+      command: (launcher.command ?? []).map((part) => render(part, { port: String(port) })),
+      port,
+      portEnv: undefined,
+      healthPath: AGENT_LANGGRAPH_HEALTH_PATH,
+      invokePath: undefined,
+      requestField: undefined,
+      responseField: undefined,
+      assistantId,
+    },
+    protocol: PROTOCOL_LANGGRAPH_API,
   };
 }
 
