@@ -119,6 +119,7 @@ describe("normalización (contract.normalisation)", () => {
     Rules: { CheckBootstrapVersion: { Assertions: [] }, Keep: { Assertions: [] } },
     Resources: {
       CDKMetadata: { Type: "AWS::CDK::Metadata" },
+      Build: { Properties: { ImageTag: "src-0123456789abcdef", Uri: "repo:src-0123456789abcdef" } },
       Bucket: {
         Type: "AWS::S3::Bucket",
         Metadata: { "aws:cdk:path": "Stack/Bucket" },
@@ -139,6 +140,7 @@ describe("normalización (contract.normalisation)", () => {
     expect(normaliseTemplate(raw)).toEqual({
       Rules: { Keep: { Assertions: [] } },
       Resources: {
+        Build: { Properties: { ImageTag: "src-<SOURCE_HASH>", Uri: "repo:src-<SOURCE_HASH>" } },
         Bucket: {
           Type: "AWS::S3::Bucket",
           Properties: {

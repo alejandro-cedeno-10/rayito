@@ -47,10 +47,15 @@ caso de prueba de cada SDK comprueba que coinciden):
    sección si queda vacía).
 2. Quitar `Metadata` de cada recurso.
 3. Cada secuencia de 64 hex en minúsculas → `<ASSET_HASH>`.
-4. `hnb659fds` → `<QUALIFIER>`.
-5. El valor de `rayito:sdk-version` (lista `Key`/`Value` o mapa) →
+4. Cada etiqueta de imagen por contenido `src-<16 hex>` → `src-<SOURCE_HASH>`.
+   Hashea el contexto de build, que incluye los ficheros del host del agente
+   del SDK: sin esta regla, cualquier cambio del host rompería los goldens. La
+   paridad de la etiqueta entre los dos SDK la cubren los vectores de
+   `testdata/agentcore-deploy/`.
+5. `hnb659fds` → `<QUALIFIER>`.
+6. El valor de `rayito:sdk-version` (lista `Key`/`Value` o mapa) →
    `<SDK_VERSION>`.
-6. JSON con claves ordenadas, sangría de 2, sin escapar no-ASCII y salto de
+7. JSON con claves ordenadas, sangría de 2, sin escapar no-ASCII y salto de
    línea final.
 
 ## Regenerar

@@ -51,6 +51,10 @@ EXPECTED_TEMPLATE = "template"
 
 ASSET_HASH_PATTERN = re.compile(r"[0-9a-f]{64}")
 ASSET_HASH_PLACEHOLDER = "<ASSET_HASH>"
+#: The content tag of the agent image (`src-` and 16 hex): it hashes the build
+#: context, host files of the SDK included, so any host change would move it.
+SOURCE_TAG_PATTERN = re.compile(r"(?<![0-9A-Za-z])src-[0-9a-f]{16}(?![0-9a-f])")
+SOURCE_TAG_PLACEHOLDER = "src-<SOURCE_HASH>"
 BOOTSTRAP_QUALIFIER = "hnb659fds"
 QUALIFIER_PLACEHOLDER = "<QUALIFIER>"
 SDK_VERSION_TAG = "rayito:sdk-version"
@@ -87,6 +91,7 @@ def _without_sdk_version(value: Any) -> Any:
 def _replace_strings(value: Any) -> Any:
     if isinstance(value, str):
         replaced = ASSET_HASH_PATTERN.sub(ASSET_HASH_PLACEHOLDER, value)
+        replaced = SOURCE_TAG_PATTERN.sub(SOURCE_TAG_PLACEHOLDER, replaced)
         return replaced.replace(BOOTSTRAP_QUALIFIER, QUALIFIER_PLACEHOLDER)
     if isinstance(value, list):
         return [_replace_strings(item) for item in value]
