@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Final, Literal
+from typing import Any, Final, Literal
 
 from rayito._agent._events import (
     AGENT_FAILURE_REASONS,
@@ -29,6 +29,7 @@ from rayito._agent._events import (
 )
 from rayito._agent._protocol_v1 import ProtocolV1State, parse_v1_line
 from rayito._agent._sse import SseMessage
+from rayito._agent._stream_base import require_prompt_or_input
 from rayito.exceptions import (
     AgentException,
     AuthenticationException,
@@ -60,6 +61,12 @@ HTTP_UNAVAILABLE: Final = 503
 PING_BUSY: Final = "HealthyBusy"
 PING_HEALTHY: Final = "Healthy"
 DeploymentState = Literal["healthy", "busy", "unavailable"]
+#: Un `400` a una petición con `input`: el host desplegado es anterior a la
+#: entrada estructurada (ADR-033 D3) y no conoce la clave.
+HOST_TOO_OLD_MESSAGE: Final = (
+    "el agente desplegado no acepta input: vuelve a desplegarlo con esta versión de Rayito"
+)
+OUTPUT_KEY: Final = "output"
 
 
 @dataclass(frozen=True)
@@ -76,10 +83,19 @@ class DeploymentStatus:
 
 
 def invocation_body(
-    prompt: str, *, session_id: str | None, model: str | None, reasoning: bool
+    prompt: str | None,
+    *,
+    session_id: str | None,
+    model: str | None,
+    reasoning: bool,
+    input: Mapping[str, Any] | None = None,
 ) -> bytes:
-    """El cuerpo JSON de `POST /invocations`: sólo lo que se pidió."""
-    payload: dict[str, object] = {"prompt": prompt}
+    """El cuerpo JSON de `POST /invocations`: exactamente uno de `prompt` o
+    `input` (`require_prompt_or_input`) y sólo lo demás que se pidió."""
+    checked_prompt, checked_input = require_prompt_or_input(prompt, input)
+    payload: dict[str, object] = (
+        {"prompt": checked_prompt} if checked_input is None else {"input": dict(checked_input)}
+    )
     if session_id is not None:
         payload["session_id"] = session_id
     if model is not None:
@@ -95,11 +111,14 @@ def invocation_headers(proxy_headers: Mapping[str, str], *, accept: str) -> dict
     return {**proxy_headers, "Content-Type": JSON_CONTENT_TYPE, "Accept": accept}
 
 
-def http_error(status: int, *, attempt: int = 1) -> Exception:
+def http_error(status: int, *, attempt: int = 1, sent_input: bool = False) -> Exception:
     """La excepción de un código HTTP del contrato. `403` es del proxy de
     AWS (JWE ausente o caducado): `proxy_rejected=True`, que el llamante
     reintenta una vez tras reacuñar el token; `401` es el token del
-    contenedor, que no existe en un MicroVM."""
+    contenedor, que no existe en un MicroVM. Un `400` a una petición con
+    `input` (`sent_input`) es un host anterior a la entrada estructurada."""
+    if status == HTTP_BAD_REQUEST and sent_input:
+        return InvalidArgumentException(HOST_TOO_OLD_MESSAGE)
     if status == HTTP_TOO_MANY_REQUESTS:
         return AgentException(failure_message("busy"), reason="busy")
     if status in (HTTP_FORBIDDEN, HTTP_UNAUTHORIZED):
@@ -163,7 +182,15 @@ def result_from_body(body: bytes) -> AgentResult:
         usage=usage,
         exit_code=0,
         usage_reported=reported,
+        output=output_of(payload),
     )
+
+
+def output_of(payload: Mapping[str, object]) -> Mapping[str, Any] | None:
+    """La salida estructurada (`output`) de un cuerpo o de un evento `done`,
+    si es un objeto; `None` si no la hay."""
+    output = payload.get(OUTPUT_KEY)
+    return output if isinstance(output, Mapping) else None
 
 
 @dataclass
@@ -198,6 +225,7 @@ class EventDecoder:
                     exit_code=0,
                     usage=self.state.usage,
                     usage_reported=self.state.usage_reported,
+                    output=output_of(payload),
                 )
             ]
         if kind == "agent_failed":
@@ -238,6 +266,7 @@ class ResultBuilder:
                 tool_calls=tuple(self.tool_calls),
                 dropped_lines=dropped_lines,
                 usage_reported=final.usage_reported,
+                output=final.output,
             )
         failed = final or AgentFailed(reason="protocol_error")
         raise failed.to_exception()

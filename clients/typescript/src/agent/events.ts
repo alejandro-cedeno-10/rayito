@@ -45,6 +45,22 @@ export const AGENT_FAILURE_MESSAGES: Readonly<Record<AgentFailureReason, string>
   busy: "ya hay otra ejecución del agente en curso en este sandbox",
 });
 
+/** Un objeto JSON: la entrada (`input`) y la salida (`output`) de un grafo
+ * con esquema propio (ADR-033 D3). */
+export type JsonObject = { readonly [key: string]: unknown };
+
+const PROTOCOL_ERROR = "protocol_error";
+
+/** El mensaje de los `detailCode` de `protocol_error` de una entrada
+ * estructurada (ADR-033 D3; misma tabla en `rayito._agent._events`,
+ * comprobada contra `testdata/agent-deploy/invocation-bodies.json`): sustituye
+ * al de `protocol_error`, que no diría qué falló. */
+export const AGENT_DETAIL_MESSAGES: Readonly<Record<string, string>> = Object.freeze({
+  input_required: "este grafo espera input (un objeto JSON), no un prompt",
+  invalid_input: "input no cumple el esquema de entrada del grafo",
+  output_not_serializable: "la salida del grafo no se puede convertir a JSON",
+});
+
 /** Nombres de los discriminadores, en el orden del protocolo. */
 export const AGENT_EVENT_TYPES = [
   "text_delta",
@@ -82,8 +98,12 @@ export function failureMessage(reason: string, detailCode?: string | null): stri
       `reason de fallo del agente desconocido; uno de ${JSON.stringify(AGENT_FAILURE_REASONS)}`,
     );
   }
-  const base = AGENT_FAILURE_MESSAGES[reason];
   const code = safeDetailCode(detailCode);
+  const detail =
+    reason === PROTOCOL_ERROR && code !== undefined && Object.hasOwn(AGENT_DETAIL_MESSAGES, code)
+      ? AGENT_DETAIL_MESSAGES[code]
+      : undefined;
+  const base = detail ?? AGENT_FAILURE_MESSAGES[reason];
   return code === undefined ? base : `${base} (${code})`;
 }
 
@@ -211,13 +231,15 @@ export interface AgentFailed {
  * `usageReported` es `false` cuando el agente no informó de tokens (una app
  * HTTP, un comando o una función propios): `usage` es entonces cero porque se
  * desconoce, no porque no se gastara nada. Ausente vale `true`, como en los
- * eventos de 0.13. */
+ * eventos de 0.13. `output` es la salida estructurada de un grafo llamado con
+ * `input`. */
 export interface Done {
   readonly type: "done";
   readonly sessionId: string;
   readonly exitCode: number;
   readonly usage: TokenUsage;
   readonly usageReported?: boolean | undefined;
+  readonly output?: JsonObject | undefined;
 }
 
 export type AgentEvent =
@@ -270,7 +292,8 @@ export function agentFailedToError(event: AgentFailed, usage?: TokenUsage): Agen
  * `usageReported` es `false` si el agente no informó de tokens (una app HTTP,
  * un comando o una función propios que no devuelven `usage`): `usage` vale
  * entonces cero porque se desconoce, no porque no se gastara nada. Ausente
- * vale `true`.
+ * vale `true`. `output` es la salida estructurada (un objeto JSON) de un grafo
+ * invocado con `input`; ausente en cualquier otro caso.
  */
 export interface AgentResult {
   readonly sessionId: string;
@@ -281,4 +304,5 @@ export interface AgentResult {
   readonly toolCalls: readonly ToolCall[];
   readonly droppedLines: number;
   readonly usageReported?: boolean | undefined;
+  readonly output?: JsonObject | undefined;
 }

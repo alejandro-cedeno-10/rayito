@@ -13,7 +13,7 @@ import { AgentCoreError } from "../errors.js";
 import { formatTemplate } from "../template-text.js";
 import { MS_PER_SECOND } from "../units.js";
 import { detectionLines } from "./agent-deploy.js";
-import { EventPrinter, printResult } from "./agent-output.js";
+import { EventPrinter, invokeRequestOf, printResult } from "./agent-output.js";
 import {
   CONFIRM_QUESTION,
   DELETE_CONFIRM_QUESTION,
@@ -215,17 +215,17 @@ function rejectTokenFile(context: CommandContext): void {
 export async function runAgentCoreInvoke(context: CommandContext): Promise<number | undefined> {
   const { values } = context;
   rejectTokenFile(context);
+  const request = invokeRequestOf(context);
   const client = await context.agentcore.connect(values.string("sandbox_id") ?? "");
-  const prompt = values.string("prompt") ?? "";
   const options = { sessionId: values.string("session_id") };
   if (values.flag("stream")) {
     const printer = new EventPrinter(context);
-    for await (const event of await client.stream(prompt, options)) {
+    for await (const event of await client.stream(request, options)) {
       printer.print(event);
     }
     return printer.finish();
   }
-  printResult(context, await client.invoke(prompt, options));
+  printResult(context, await client.invoke(request, options));
   return undefined;
 }
 

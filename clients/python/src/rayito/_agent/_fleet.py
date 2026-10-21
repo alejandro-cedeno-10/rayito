@@ -62,6 +62,7 @@ from rayito._agent._scaling_domain import (
     replacements_needed,
     validate_caller_session_id,
 )
+from rayito._agent._stream_base import require_prompt_or_input
 from rayito._limits import AGENT_SERVICE_READY_MARKER_PATH
 from rayito.exceptions import (
     AgentException,
@@ -516,32 +517,44 @@ class AgentFleet:
 
     def invoke(
         self,
-        prompt: str,
+        prompt: str | None = None,
         session_id: str | None = None,
         model: str | None = None,
         reasoning: bool = False,
+        *,
+        input: Mapping[str, Any] | None = None,
     ) -> AgentResult:
         """Una invocación sin streaming: el `AgentResult`, con el id de sesión
-        enrutable si la flota puede tener varios VMs."""
+        enrutable si la flota puede tener varios VMs. Con `input` en lugar de
+        `prompt`, `result.output` trae la salida del grafo; se comprueba antes
+        de reservar un VM."""
+        require_prompt_or_input(prompt, input)
         lease, result = self._execute(
             session_id,
-            lambda deployment, inner: deployment.invoke(prompt, inner, model, reasoning),
+            lambda deployment, inner: deployment.invoke(
+                prompt, inner, model, reasoning, input=input
+            ),
         )
         self._release(lease, result.session_id)
         return with_handle(result, lease.member.sandbox_id) if self._routable else result
 
     def stream(
         self,
-        prompt: str,
+        prompt: str | None = None,
         session_id: str | None = None,
         model: str | None = None,
         reasoning: bool = False,
+        *,
+        input: Mapping[str, Any] | None = None,
     ) -> AgentFleetStream:
         """Como `invoke()`, con los eventos a medida que llegan. El VM queda
         ocupado hasta cerrar el stream."""
+        require_prompt_or_input(prompt, input)
         lease, stream = self._execute(
             session_id,
-            lambda deployment, inner: deployment.stream(prompt, inner, model, reasoning),
+            lambda deployment, inner: deployment.stream(
+                prompt, inner, model, reasoning, input=input
+            ),
         )
         return AgentFleetStream(
             stream,

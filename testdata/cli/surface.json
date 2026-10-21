@@ -331,6 +331,19 @@
           "envvar": null
         },
         {
+          "name": "graph",
+          "kind": "option",
+          "flags": [
+            "--graph"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
           "name": "memory",
           "kind": "option",
           "flags": [
@@ -731,6 +744,19 @@
           "envvar": null
         },
         {
+          "name": "graph",
+          "kind": "option",
+          "flags": [
+            "--graph"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
           "name": "write",
           "kind": "option",
           "flags": [
@@ -935,7 +961,7 @@
             "prompt"
           ],
           "type": "str",
-          "required": true,
+          "required": false,
           "multiple": false,
           "default": null
         },
@@ -946,6 +972,32 @@
             "--session-id"
           ],
           "type": "str",
+          "required": false,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "input_json",
+          "kind": "option",
+          "flags": [
+            "--input"
+          ],
+          "type": "str",
+          "required": false,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "input_file",
+          "kind": "option",
+          "flags": [
+            "--input-file"
+          ],
+          "type": "path",
           "required": false,
           "multiple": false,
           "default": null,

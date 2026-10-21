@@ -10,6 +10,7 @@ en líneas, imponer `AgentLimits` sobre los eventos del runtime y montar el
 from __future__ import annotations
 
 import dataclasses
+import json
 from collections.abc import Mapping
 from typing import Any, Final, Protocol
 
@@ -25,7 +26,7 @@ from rayito._agent._events import (
     ToolCall,
 )
 from rayito._agent._runtime import AgentRuntime, RunRequest, RuntimeFiles, RuntimeState
-from rayito._limits import MAX_AGENT_EVENT_LINE_BYTES
+from rayito._limits import AGENT_SERVICE_MAX_REQUEST_BYTES, MAX_AGENT_EVENT_LINE_BYTES
 from rayito._otel import Instrumentation
 from rayito.exceptions import InvalidArgumentException
 
@@ -154,6 +155,43 @@ def require_prompt(prompt: object) -> str:
     return prompt
 
 
+#: Los mensajes de `invoke()`/`stream()` con `prompt` o `input` (ADR-033 D3):
+#: los mismos en `agent/deployment.ts`, comprobados contra
+#: `testdata/agent-deploy/invocation-bodies.json`. Nunca llevan el valor.
+PROMPT_OR_INPUT_MESSAGE: Final = "pasa prompt o input, uno de los dos"
+INPUT_NOT_OBJECT_MESSAGE: Final = "input debe ser un objeto JSON"
+INPUT_TOO_LARGE_MESSAGE: Final = "input no cabe en una petición ({maxBytes} bytes como mucho)"
+
+
+def require_prompt_or_input(
+    prompt: object, input: object
+) -> tuple[str | None, Mapping[str, Any] | None]:
+    """Exactamente uno de los dos: un `prompt` no vacío (como siempre) o un
+    `input` que sea un objeto JSON y quepa en `AGENT_SERVICE_MAX_REQUEST_BYTES`.
+    Si no, `InvalidArgumentException` antes de cualquier llamada."""
+    if (prompt is None) == (input is None):
+        raise InvalidArgumentException(PROMPT_OR_INPUT_MESSAGE)
+    if input is None:
+        return require_prompt(prompt), None
+    return None, require_input_object(input)
+
+
+def require_input_object(input: object) -> Mapping[str, Any]:
+    """`input` si es un objeto JSON (claves de texto, valores codificables)
+    que cabe en una petición."""
+    if not isinstance(input, Mapping) or not all(isinstance(key, str) for key in input):
+        raise InvalidArgumentException(INPUT_NOT_OBJECT_MESSAGE)
+    try:
+        encoded = json.dumps(input, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
+    except (TypeError, ValueError):
+        raise InvalidArgumentException(INPUT_NOT_OBJECT_MESSAGE) from None
+    if len(encoded.encode("utf-8")) > AGENT_SERVICE_MAX_REQUEST_BYTES:
+        raise InvalidArgumentException(
+            INPUT_TOO_LARGE_MESSAGE.format(maxBytes=AGENT_SERVICE_MAX_REQUEST_BYTES)
+        )
+    return input
+
+
 class ConfigCache:
     """Guarda el sha256 de la configuración del runtime ya escrita en el
     sandbox, por runtime (`AgentRuntime.name`). Vive en la instancia de
@@ -200,5 +238,7 @@ __all__ = [
     "RuntimeState",
     "build_run_request",
     "gateway_urls_for",
+    "require_input_object",
     "require_prompt",
+    "require_prompt_or_input",
 ]

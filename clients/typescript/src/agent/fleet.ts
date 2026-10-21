@@ -28,11 +28,15 @@ import type { SandboxPoolOptions, TakeOptions } from "../pool/pool.js";
 import type { ControlPlaneOptions } from "../sandbox/sandbox.js";
 import {
   AgentDeployment,
+  type AgentInputRequest,
+  type AgentInvocation,
   type AgentInvokeOptions,
   type DeploymentSandbox,
+  invocationOf,
   labelsFor,
   parseLabels,
   ResultBuilder,
+  requirePromptOrInput,
 } from "./deployment.js";
 import type { AgentEvent, AgentResult } from "./events.js";
 import {
@@ -592,11 +596,18 @@ export class AgentFleet {
   // --------------------------------------------------------- invocations
 
   /** Una invocación sin streaming: el `AgentResult`, con el id de sesión
-   * enrutable si la flota puede tener varios VMs. */
-  async invoke(prompt: string, options: AgentInvokeOptions = {}): Promise<AgentResult> {
+   * enrutable si la flota puede tener varios VMs. Con `{ input }` en lugar del
+   * prompt, `result.output` trae la salida del grafo; se comprueba antes de
+   * reservar un VM. */
+  invoke(prompt: string, options?: AgentInvokeOptions): Promise<AgentResult>;
+  invoke(request: AgentInputRequest, options?: AgentInvokeOptions): Promise<AgentResult>;
+  invoke(request: AgentInvocation, options?: AgentInvokeOptions): Promise<AgentResult>;
+  async invoke(request: AgentInvocation, options: AgentInvokeOptions = {}): Promise<AgentResult> {
+    const checked = invocationOf(request);
+    requirePromptOrInput(checked.prompt, checked.input);
     const { sessionId, ...rest } = options;
     const [lease, result] = await this.#execute(sessionId, (deployment, inner) =>
-      deployment.invoke(prompt, { ...rest, sessionId: inner }),
+      deployment.invoke(request, { ...rest, sessionId: inner }),
     );
     await this.#release(lease, result.sessionId);
     return this.#routable ? withHandle(result, lease.member.sandboxId) : result;
@@ -604,10 +615,18 @@ export class AgentFleet {
 
   /** Como `invoke()`, con los eventos a medida que llegan. La petición se hace
    * aquí (un 429 se reintenta) y el VM queda ocupado hasta cerrar el stream. */
-  async stream(prompt: string, options: AgentInvokeOptions = {}): Promise<AgentFleetStream> {
+  stream(prompt: string, options?: AgentInvokeOptions): Promise<AgentFleetStream>;
+  stream(request: AgentInputRequest, options?: AgentInvokeOptions): Promise<AgentFleetStream>;
+  stream(request: AgentInvocation, options?: AgentInvokeOptions): Promise<AgentFleetStream>;
+  async stream(
+    request: AgentInvocation,
+    options: AgentInvokeOptions = {},
+  ): Promise<AgentFleetStream> {
+    const checked = invocationOf(request);
+    requirePromptOrInput(checked.prompt, checked.input);
     const { sessionId, ...rest } = options;
     const [lease, opened] = await this.#execute(sessionId, async (deployment, inner) => {
-      const stream = deployment.stream(prompt, { ...rest, sessionId: inner });
+      const stream = deployment.stream(request, { ...rest, sessionId: inner });
       const iterator = stream[Symbol.asyncIterator]();
       const first = await iterator.next();
       return { stream, iterator, first };
