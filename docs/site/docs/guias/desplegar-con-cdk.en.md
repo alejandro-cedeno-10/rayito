@@ -5,7 +5,7 @@ description: Two AWS CDK constructs, RayitoAgent and RayitoMicrovmImage, to decl
 
 # Deploy with CDK
 
-<small>Since 0.15.0 (not published yet).</small>
+<small>Since 0.15.0.</small>
 
 If your team already manages infrastructure with
 [AWS CDK](https://docs.aws.amazon.com/cdk/v2/guide/home.html), Rayito ships two

@@ -3274,7 +3274,7 @@ pública `AccountSetup`: especulativa.
 **Reversible.** Aditivo: una orden, un paquete privado en cada SDK, dos
 plantillas empaquetadas, una frase añadida a tres mensajes y el contrato de
 pruebas; quitar `rayito setup` deja el 0.14 anterior intacto y el camino a mano
-sigue documentado. Detalle en `openspec/changes/account-setup/design.md`.
+sigue documentado. Detalle en `openspec/changes/archive/2026-10-21-account-setup/design.md`.
 
 **Enmienda 2026-10-19: `rayito setup` crea el bucket de artefactos cuando no
 hay ninguno.** El mantenedor decidió que una sola orden debe dejar la cuenta
@@ -3319,7 +3319,7 @@ prohibía crear un bucket) y a la alternativa descartada «crear el bucket si fa
   `rayito-m0-iam`; CloudFormation las propaga a los recursos. Una pila
   reutilizada no se reetiqueta y la imagen no las recibe. Existe porque una SCP
   que exige etiquetas deniega `s3:CreateBucket` sin ellas (D11).
-- Detalle (D2, D4, D10, D11) en `openspec/changes/account-setup/design.md`.
+- Detalle (D2, D4, D10, D11) en `openspec/changes/archive/2026-10-21-account-setup/design.md`.
 
 ## ADR-031 — agentcore-deploy: despliega en Amazon Bedrock AgentCore Runtime
 
@@ -3564,7 +3564,7 @@ paquete privado en cada SDK, una plantilla empaquetada, dos argumentos y una
 variable en la exportación `agentcore` y el contrato de pruebas; quitar el
 destino deja 0.14 intacto y la exportación manual sigue documentada. Detalle
 (D1 a D13), fuentes oficiales con fecha de consulta y el contrato en
-`openspec/changes/agentcore-deploy/design.md`,
+`openspec/changes/archive/2026-10-21-agentcore-deploy/design.md`,
 `testdata/agentcore-deploy/contract.json` y `AWS_API_NOTES.md` («Despliegue en
 AgentCore Runtime»).
 
@@ -3676,6 +3676,6 @@ en la descripción de la imagen: `GetMicrovmImage` no la devuelve. Resolver
 **Reversible.** Aditivo: un módulo opcional en cada SDK, un manejador
 empaquetado, una marca nueva que sólo llevan recursos creados por CDK y el
 contrato de pruebas; quitar los constructos deja 0.15 intacto. Detalle (D1 a
-D14), hechos verificados y tareas en `openspec/changes/agentcore-cdk/`,
+D14), hechos verificados y tareas en `openspec/changes/archive/2026-10-21-agentcore-cdk/`,
 `testdata/agentcore-cdk/contract.json` y `AWS_API_NOTES.md` («Constructos
 CDK»).

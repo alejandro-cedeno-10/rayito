@@ -16,7 +16,7 @@ Acknowledgement within 7 days and a fix or mitigation within 90; there is no
 bounty program.
 
 **Supported versions**: only the latest `MAJOR.MINOR` line, today
-**0.14.x** (Python and TypeScript SDKs, and an image with `rayd` 0.14.x);
+**0.15.x** (Python and TypeScript SDKs, and an image with `rayd` 0.15.x);
 while the project is 0.x there are no maintenance branches for earlier lines
 ([Versioning and support](limits.md#versionado-y-soporte),
 [SDK ↔ rayd ↔ image compatibility](limits.md#compatibilidad-sdk-rayd-imagen)).
@@ -528,7 +528,7 @@ outbound connection.
 
 Summary of **T36** of
 [`SECURITY.md`](https://github.com/alejandro-cedeno-10/rayito/blob/main/SECURITY.md)
-(`agentcore-deploy`, since 0.15.0, not published yet): the threat model of
+(`agentcore-deploy`, since 0.15.0): the threat model of
 [Deploy to AgentCore](guias/desplegar-en-agentcore.md).
 
 **The difference.** In a Rayito MicroVM the agent never sees the model
@@ -597,7 +597,7 @@ already created runtime are not updated.
 
 Summary of **T37** in
 [`SECURITY.md`](https://github.com/alejandro-cedeno-10/rayito/blob/main/SECURITY.md)
-(`agentcore-cdk`, ADR-032, since 0.15.0, not published yet): what the
+(`agentcore-cdk`, ADR-032, since 0.15.0): what the
 constructs in [Deploy with CDK](guias/desplegar-con-cdk.md) add to what the
 CLI already creates.
 

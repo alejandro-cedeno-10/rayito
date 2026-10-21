@@ -12,7 +12,7 @@ actualizar. El detalle completo, cambio a cambio, está en el
 
 <div class="grid cards" markdown>
 
--   :material-tag:{ .lg .middle } **0.15.0** · en desarrollo, sin publicar
+-   :material-tag:{ .lg .middle } **0.15.0** · 2026-10-21 · actual
 
     ---
 
@@ -27,7 +27,7 @@ actualizar. El detalle completo, cambio a cambio, está en el
 
     [:octicons-arrow-right-24: Novedades de 0.15.0](0.15.0.md)
 
--   :material-tag:{ .lg .middle } **0.14.0** · 2026-10-17 · actual
+-   :material-tag:{ .lg .middle } **0.14.0** · 2026-10-17
 
     ---
 
@@ -165,7 +165,7 @@ actualizar. El detalle completo, cambio a cambio, está en el
     ```python
     import rayito
 
-    print(rayito.__version__)  # "0.14.0"
+    print(rayito.__version__)  # "0.15.0"
     ```
 
 === "TypeScript"
@@ -173,7 +173,7 @@ actualizar. El detalle completo, cambio a cambio, está en el
     ```ts
     import { VERSION } from "rayito";
 
-    console.log(VERSION); // "0.14.0"
+    console.log(VERSION); // "0.15.0"
     ```
 
 === "CLI"

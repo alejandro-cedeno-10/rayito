@@ -265,13 +265,13 @@ python3 scripts/check_hygiene.py $(git ls-files --others --exclude-standard)
 ## 2. Track TS (`clients/typescript/` only)
 
 ### 2.1 Shared code moved, not duplicated
-- [ ] 2.1.1 Move `StackObservation`, `StackCondition`, `classifyStack`,
+- [x] 2.1.1 Move `StackObservation`, `StackCondition`, `classifyStack`,
       `USABLE_STACK_STATES` and related constants from
       `src/account-setup/domain.ts` to `src/stacks/condition.ts`;
       account-setup imports them.
 
 ### 2.2 Domain `src/agentcore/domain.ts`, `models.ts` (pure; no `@aws-sdk/*`, no `node:` I/O)
-- [ ] The same functions as 1.2.4-1.2.10 in camelCase
+- [x] The same functions as 1.2.4-1.2.10 in camelCase
       (`agentcoreSessionId`, `imageTagFor` over `Map<string, Uint8Array>`,
       `bedrockResourceArns`, `checkCallOptions`, `fileWarnings`, `buildPlan`,
       `decideStack`, `decideImage`, `decideRuntime`, `runtimeMatches`);
@@ -281,7 +281,7 @@ python3 scripts/check_hygiene.py $(git ls-files --others --exclude-standard)
       (`code`, `exitCode`).
 
 ### 2.3 Ports, service, adapters
-- [ ] `src/agentcore/ports.ts`, `service.ts`, `stack.ts`
+- [x] `src/agentcore/ports.ts`, `service.ts`, `stack.ts`
       (`AGENTCORE_STACK_COMPONENT`, not in the registry), `aws.ts` with
       `loadOptionalSdkClient` for `@aws-sdk/client-bedrock-agentcore-control`,
       `@aws-sdk/client-bedrock-agentcore`, `@aws-sdk/client-codebuild`,
@@ -289,40 +289,40 @@ python3 scripts/check_hygiene.py $(git ls-files --others --exclude-standard)
       CloudWatch Logs clients; `requestTimeout` 900000 / 3600000 ms for
       invoke and stream; errors by `name` through `awsErrorMap`,
       `sanitizeAwsError`.
-- [ ] `package.json`: the four clients as optional peers (`^3.1138.0`) in
+- [x] `package.json`: the four clients as optional peers (`^3.1138.0`) in
       `peerDependencies` + `peerDependenciesMeta` and in `devDependencies`;
       `pnpm install` updates `pnpm-lock.yaml`.
-- [ ] Deterministic zip of the export tree (same entries and order as
+- [x] Deterministic zip of the export tree (same entries and order as
       Python; the bytes need not be identical, the tag is computed on the
       tree).
 
 ### 2.4 Public surface
-- [ ] `src/agentcore/fleet.ts`: `AgentCoreFleet`, `AgentCoreFleetStream`
+- [x] `src/agentcore/fleet.ts`: `AgentCoreFleet`, `AgentCoreFleetStream`
       (`contract.sdk.typescript`), reusing `agent/deployment.ts` decoders.
-- [ ] `src/agent/deploy.ts`: `target` and `agentcore` in
+- [x] `src/agent/deploy.ts`: `target` and `agentcore` in
       `DeployAgentOptions`, overloads of `deployAgent` and `planDeploy` by
       target; MicroVM branch untouched.
-- [ ] TSDoc «Coste y activación» on `deployAgent`, `AgentCoreFleet`,
+- [x] TSDoc «Coste y activación» on `deployAgent`, `AgentCoreFleet`,
       `AgentCoreOptions`; `scripts/cost-declarations/agentcore-deploy.json`.
-- [ ] `src/index.ts` exports; `tests/unit/public-exports.test.ts`.
-- [ ] `src/agent/export.ts`: the same additions as 1.5.1 (goldens decide).
+- [x] `src/index.ts` exports; `tests/unit/public-exports.test.ts`.
+- [x] `src/agent/export.ts`: the same additions as 1.5.1 (goldens decide).
 
 ### 2.5 CLI
-- [ ] `src/cli/agentcore.ts` and the registrations in `src/cli/registry.ts`
+- [x] `src/cli/agentcore.ts` and the registrations in `src/cli/registry.ts`
       (options and help verbatim from the contract), output and JSON like 1.6;
       `--tag` with `cli/tokens.ts` `parsePairs`.
 
 ### 2.6 Tests
-- [ ] `tests/unit/agentcore-contract.test.ts`, `agentcore-plan.test.ts`,
+- [x] `tests/unit/agentcore-contract.test.ts`, `agentcore-plan.test.ts`,
       `agentcore-apply.test.ts`, `agentcore-model-arns.test.ts`,
       `agentcore-session-ids.test.ts`, `agentcore-image-tag.test.ts`,
       `agentcore-invoke.test.ts`, `agentcore-delete.test.ts`,
       `agentcore-zero-cost.test.ts`, `agentcore-cli.test.ts`, the export
       tests (after rebasing on Track PY for `vercel-ai-agentcore`).
-- [ ] e2e `tests/e2e/agentcore-deploy.e2e.test.ts` (section 4).
+- [x] e2e `tests/e2e/agentcore-deploy.e2e.test.ts` (section 4).
 
 ### 2.7 Changelog
-- [ ] `clients/typescript/CHANGELOG.md` `## [Unreleased]` → `Added`.
+- [x] `clients/typescript/CHANGELOG.md` `## [Unreleased]` → `Added`.
 
 ### Gates (Track TS)
 
@@ -341,10 +341,10 @@ python3 scripts/check_hygiene.py $(git ls-files --others --exclude-standard)
 
 ## 3. Track DOCS (no file under `clients/`, `infra/*.yaml`, `scripts/`, `testdata/`, `limits.json`, `AWS_API_NOTES.md`)
 
-- [ ] D.1 `ARCHITECTURE.md`: ADR-031 «agentcore-deploy: despliega en Amazon
+- [x] D.1 `ARCHITECTURE.md`: ADR-031 «agentcore-deploy: despliega en Amazon
       Bedrock AgentCore Runtime», in Spanish, summarising `design.md` (context,
       decision D1-D13, consequences, alternatives, reversibility).
-- [ ] D.2 Guide `docs/site/docs/guias/desplegar-en-agentcore.md` +
+- [x] D.2 Guide `docs/site/docs/guias/desplegar-en-agentcore.md` +
       `.en.md` (how-to): prerequisites (region list, bucket from `rayito
       setup`, caller IAM permissions list), deploy, invoke, session reuse,
       status, list, stop a session, delete, redeploy, `--tag` for SCPs,
@@ -353,23 +353,23 @@ python3 scripts/check_hygiene.py $(git ls-files --others --exclude-standard)
       with the contract wording; tabs `=== "Python"` / `=== "TypeScript"`
       (examples compiled by `check_docs_examples.py`); nav entry and
       `nav_translations`.
-- [ ] D.3 `despliega-tu-agente.md/.en.md` and `flota-de-agentes.md/.en.md`:
+- [x] D.3 `despliega-tu-agente.md/.en.md` and `flota-de-agentes.md/.en.md`:
       a short section linking the new guide; `export --target agentcore` now
       has `AGENT_BASE_IMAGE`.
-- [ ] D.4 Reference: `cli.md/.en.md` (the new options and commands, exit
+- [x] D.4 Reference: `cli.md/.en.md` (the new options and commands, exit
       codes, JSON documents), `referencia/typescript.md/.en.md`, the Python API
       page entries (mkdocstrings), `referencia/errores.md/.en.md`
       (`AgentCoreException`/`AgentCoreError` codes), `limits.md/.en.md`
       (AgentCore quotas), `cost.md/.en.md` (the four price lines with source
       and date).
-- [ ] D.5 `optional-features.md/.en.md`: one row for `--target agentcore`.
-- [ ] D.6 `security.md/.en.md` and `SECURITY.md`: the security difference
+- [x] D.5 `optional-features.md/.en.md`: one row for `--target agentcore`.
+- [x] D.6 `security.md/.en.md` and `SECURITY.md`: the security difference
       and the least-privilege role (what the runtime role can and cannot do;
       MMDSv2 always on).
-- [ ] D.7 `infra/README.md`: `agentcore-runtime.yaml` (resources, parameters,
+- [x] D.7 `infra/README.md`: `agentcore-runtime.yaml` (resources, parameters,
       outputs, not a catalog component).
-- [ ] D.8 `README.md` / `README.es.md`: one line in the feature list.
-- [ ] D.9 `docs/site/docs/novedades/` entry for the next minor (es + en).
+- [x] D.8 `README.md` / `README.es.md`: one line in the feature list.
+- [x] D.9 `docs/site/docs/novedades/` entry for the next minor (es + en).
 
 ### Gates (Track DOCS)
 

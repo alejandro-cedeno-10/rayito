@@ -576,7 +576,7 @@ las antiguas se borran con `rayito image prune --image-name <name>`.
 
 ### `agent` con `--target agentcore` { #agent-agentcore }
 
-Desde 0.15.0 (todavía sin publicar), `rayito agent deploy --target agentcore`
+Desde 0.15.0, `rayito agent deploy --target agentcore`
 despliega el agente en Amazon Bedrock AgentCore Runtime en vez de en una flota de
 MicroVMs, y `invoke`, `status`, `stop`, `list` y `delete` lo operan. Sin
 `--target`, o con `--target microvm`, todo es como en 0.14. Guía completa:

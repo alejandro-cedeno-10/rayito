@@ -5,7 +5,7 @@ description: Despliega el agente que ya tienes en Amazon Bedrock AgentCore Runti
 
 # Desplegar en AgentCore
 
-<small>Desde 0.15.0 (todavía sin publicar).</small>
+<small>Desde 0.15.0.</small>
 
 `rayito agent deploy ./mi-agente --target agentcore` despliega el mismo proyecto
 que [`rayito agent deploy`](despliega-tu-agente.md#sin-escribir-nada) lleva a

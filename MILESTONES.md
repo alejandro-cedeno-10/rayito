@@ -2092,6 +2092,105 @@ La 37.0 se queda como estaba.
 
 ---
 
+## 0.15.0 — `rayito setup`, despliegue en AgentCore y constructos de CDK (2026-10-21)
+
+Publicada el 2026-10-21 en PyPI, npm y las GitHub Releases `python-v0.15.0`,
+`typescript-v0.15.0` y `rayd-v0.15.0` (firmas de cosign de `rayd`,
+`rayito-image.zip` y `SHA256SUMS` contra la identidad de `rayd-v0.15.0`,
+`shasum -c` limpio, attestation de PyPI verificada con `pypi-attestations` y
+proveniencia SLSA v1 de npm, como en `docs/site/docs/verify.md`;
+`npx rayito@0.15.0 --version` y `uvx --from 'rayito[cli]==0.15.0' rayito
+--version` responden 0.15.0). Los cambios OpenSpec `account-setup`,
+`agentcore-deploy` y `agentcore-cdk` se archivaron tras esta aceptación. Sigue
+abierto `m15-custom-domain` (ver 0.7.0).
+
+- **`rayito setup`** (`account-setup`, ADR-030): prepara una cuenta y una región
+  en una orden idempotente en las dos CLI. Reutiliza el bucket de artefactos
+  (`--bucket`, `RAYITO_BUCKET`, la pila de IAM o el bootstrap de CDK) o lo crea
+  con la pila `rayito-m0-artifacts`, crea o actualiza `rayito-m0-iam` y publica
+  `rayito-base` desde el `rayito-image.zip` de la release de su versión,
+  comprobado contra `SHA256SUMS`. Plan y coste antes de escribir, `--yes`,
+  `--dry-run`, `--json` y `--tag K=V`; reanuda un build en curso y termina con
+  `rayito doctor`. Los errores de una cuenta sin preparar apuntan a
+  `rayito setup`.
+- **`deploy --target agentcore`** (`agentcore-deploy`, ADR-031): `deploy_agent` /
+  `deployAgent`, `plan_deploy` / `planDeploy` y `rayito agent deploy
+  --target agentcore` en Python y TypeScript despliegan el agente en Amazon
+  Bedrock AgentCore Runtime sin Docker local: una pila por agente (ECR,
+  CodeBuild y dos roles), build arm64 sólo si cambia el contenido, runtime
+  creado o actualizado por nombre, MMDSv2 exigido y un rol de mínimo
+  privilegio. `AgentCoreFleet` tiene la API de `AgentFleet`; `rayito agent
+  invoke|status|stop --target agentcore` y las órdenes nuevas `agent list` y
+  `agent delete`. OpenCode recibe el rol con un perfil `credential_process`.
+  AgentCore no tiene la pasarela de secretos: lo dicen el plan y las guías.
+- **Constructos de AWS CDK** (`agentcore-cdk`, ADR-032): `RayitoAgent` y
+  `RayitoMicrovmImage` en `rayito.cdk` (extra `rayito[cdk]`) y `rayito/cdk`
+  (peers `aws-cdk-lib` y `constructs`), con la misma plantilla e IAM que la
+  CLI. La CLI lista e invoca los runtimes gestionados por CDK, pero `agent
+  deploy`, `agent delete` e `image publish` los rechazan. Sin el extra no se
+  carga nada de CDK.
+- **Correcciones**: el despliegue en MicroVMs fija en cada `Sandbox.create()` y
+  en las plazas calientes la versión de imagen que su build creó o reutilizó,
+  en vez de arrancar la más reciente; el host del agente libera la plaza antes
+  de escribir la respuesta final (una carrera que podía dar un `429 busy`
+  falso al encadenar llamadas) y retiene hasta 25 s la primera petición de una
+  sesión nueva de AgentCore en vez de contestar 503; el directorio `.rayito/`
+  y el `--token-file` dentro del proyecto quedan fuera de toda imagen de
+  agente, y las exclusiones por defecto (ficheros de secretos incluidos) se
+  aplican a cualquier profundidad del contexto de build.
+- **Seguridad de dependencias**: pines de los venvs de agente con los parches
+  publicados (certifi, mcp, PyJWT, Pillow, aiohttp, urllib3, multidict, yarl),
+  browser-harness fuera del venv de Hermes y vite (desarrollo) al día;
+  pip-audit no encuentra vulnerabilidades conocidas en ellos.
+- **Cambios de comportamiento** (sin romper la API): el hash de contenido de
+  las imágenes de agentes de MicroVMs cambia una vez (host y puente de Node con
+  el soporte de AgentCore), así que el primer `deploy_agent` tras actualizar
+  construye una versión nueva. Fila 0.15 de compatibilidad en `rayito doctor`
+  y en `limits.md`: el SDK 0.15 exige `agent_version` ≥ 0.15.0.
+
+**Aceptación de la release (2026-10-19 a 2026-10-21, cuenta de pruebas)**:
+
+- **`rayito setup`**: preparación de cero en dos regiones sin bucket, una por
+  SDK en paralelo (bucket, pila de IAM, descarga y verificación de la release,
+  build de la imagen y `rayito doctor` en unos 316 s), una segunda ejecución
+  con tres `reuse` y cero escrituras, y un sandbox sobre la imagen creada. Las
+  etiquetas de `--tag` llegan a los recursos de la pila, así que funciona en
+  organizaciones que exigen etiquetas al crear.
+- **AgentCore**: matriz de dieciséis ejemplos (todos los frameworks, Python y
+  TypeScript, por los SDK y por la CLI): despliegue, `invoke` y `stream`,
+  sesión continuada, redespliegue sin cambios sin build, cambio de código con
+  build y actualización del runtime (uno solo por nombre), parada, borrado y la
+  simulación de IAM del rol del runtime. OpenCode, que la primera pasada no
+  podía llamar al modelo con el rol, pasa tras la corrección del perfil
+  `credential_process`. La pasada encontró y corrigió la llamada que llegaba
+  antes del calentamiento.
+- **CDK**: una app de Python y otra de TypeScript con `RayitoAgent` (build en
+  CodeBuild) y `RayitoMicrovmImage`: despliegue, `invoke` y `stream`, la CLI
+  los lista e invoca y rechaza modificarlos, redespliegue sin cambios sin
+  rebuild, cambio de código con rebuild, un sandbox desde la imagen de CDK y
+  `cdk destroy`. El workflow de e2e de CDK en CI y su runbook quedan para
+  después.
+- **MicroVMs y compatibilidad con 0.14**: sin `--target` el plan es el de
+  0.14 y no llama a AWS; despliegues de Strands (Python) y Strands TS con el
+  destino por defecto, con opciones y sesiones dedicadas, que contestan y
+  paran sin dejar VMs.
+- Lo que cuesta sigue apagado por defecto: sin `--target agentcore` no se crea
+  ningún cliente de AgentCore, CodeBuild ni ECR, sin el extra no se carga CDK y
+  `--dry-run` no llama a AWS. Inventario de antes y después idéntico en cada
+  pasada: sólo se borró lo creado por la ejecución.
+
+**Imagen publicada (2026-10-21)**: `rayito-base` **39.0** desde el
+`rayito-image.zip` firmado de la release `rayd-v0.15.0`, cuyo sha256 consta en
+el `SHA256SUMS` firmado (`rayito image publish --base-image-version 1` con la
+CLI 0.15.0), `SUCCESSFUL` y `ACTIVE`, construida en unos 227 s. `rayito doctor
+--launch` con el SDK 0.15.0 sobre ella termina 8 OK / 1 WARN / 0 FAIL / 1 SKIP
+(el WARN es la simulación IAM orientativa y el SKIP, el bucket, porque la
+comprobación se lanzó sin `RAYITO_BUCKET`), con `rayd` 0.15.0 `agent_ready` y
+la comprobación de compatibilidad en verde; los sandboxes de la prueba se
+terminaron. La 38.0 se queda como estaba.
+
+---
+
 ## Orden de trabajo dentro de cada hito
 
 1. Escribir el test de aceptación primero. Debe fallar.

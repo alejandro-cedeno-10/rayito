@@ -232,7 +232,7 @@ generated content.
 
 ## `AgentCoreException` / `AgentCoreError` { #agentcore }
 
-Since 0.15.0 (not published yet). Raised by the AgentCore deploy
+Since 0.15.0. Raised by the AgentCore deploy
 (`deploy_agent(target="agentcore")`, `AgentCoreFleet` and `rayito agent ...
 --target agentcore`). They do not inherit from `SandboxException` /
 `SandboxError`: nothing here is attributable to a sandbox (the same reasoning as

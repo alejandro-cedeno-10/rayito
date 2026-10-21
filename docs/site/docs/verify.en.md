@@ -18,7 +18,7 @@ lists every asset except itself and its bundle, so its signature covers the
 SBOM and the notices, which have no bundle of their own.
 
 ```bash
-RAYD_VERSION=0.14.0   # the version you are going to install, without the "v"
+RAYD_VERSION=0.15.0   # the version you are going to install, without the "v"
 
 cosign verify-blob --bundle rayito-image.zip.sigstore.json \
   --certificate-identity "https://github.com/alejandro-cedeno-10/rayito/.github/workflows/release.yml@refs/tags/rayd-v${RAYD_VERSION}" \

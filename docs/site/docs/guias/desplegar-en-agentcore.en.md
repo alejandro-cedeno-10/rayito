@@ -5,7 +5,7 @@ description: Deploy the agent you already have to Amazon Bedrock AgentCore Runti
 
 # Deploy to AgentCore
 
-<small>Since 0.15.0 (not published yet).</small>
+<small>Since 0.15.0.</small>
 
 `rayito agent deploy ./my-agent --target agentcore` deploys the same project
 that [`rayito agent deploy`](despliega-tu-agente.md#sin-escribir-nada) takes to
