@@ -138,6 +138,13 @@ en [Límites](limits.md#tamano-cpuram).
     }
     ```
 
+!!! tip "Con AWS CDK"
+    El constructo `RayitoMicrovmImage` publica una imagen con `rayd` (y sus
+    tamaños) desde tu app de CDK, con la misma configuración que
+    `rayito image publish`; los sandboxes se siguen creando con el SDK por su
+    nombre. Los nombres `rayito-base*` quedan para `rayito setup` y
+    `rayito image publish`: [Desplegar con CDK](guias/desplegar-con-cdk.md#rayitomicrovmimage).
+
 ## IAM del llamante
 
 El SDK corre con **tus** credenciales (la cadena de boto3 / AWS SDK v3).

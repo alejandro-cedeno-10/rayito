@@ -4,11 +4,19 @@ nombre derivado sale de la forma canónica y el segundo agente falla con
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import pytest
 
 from rayito._agentcore import _domain as domain
+from rayito._agentcore._errors import CDK_MANAGED_MESSAGE
 from rayito._agentcore._models import RuntimeListing
-from rayito._agentcore._service import AgentCoreDeleter, AgentCoreDeployer
+from rayito._agentcore._service import (
+    AgentCoreDeleter,
+    AgentCoreDeployer,
+    list_agents,
+)
 from rayito._stacks._condition import StackObservation
 from rayito.exceptions import AgentCoreException
 from tests.unit import fake_agentcore as fake
@@ -90,3 +98,68 @@ def test_delete_never_touches_the_resources_of_the_other_spelling() -> None:
         deleter.plan(OTHER, fake.RUNTIME_NAME, fake.STACK_NAME)
     assert raised.value.code == "name_conflict"
     assert not {"delete_runtime", "delete_stack"} & set(cloud.recorder.names())
+
+
+# ------------------------------------- runtimes que gestiona CloudFormation
+
+CDK_CONTRACT = Path(__file__).resolve().parents[4] / "testdata" / "agentcore-cdk" / "contract.json"
+
+
+def _cdk_listing(name: str = fake.AGENT) -> RuntimeListing:
+    return RuntimeListing(
+        fake.RUNTIME_ID,
+        "arn",
+        fake.RUNTIME_NAME,
+        "1",
+        "READY",
+        domain.runtime_description_for(name, managed_by_cdk=True),
+    )
+
+
+def test_the_cdk_marker_is_the_contracts() -> None:
+    contract = json.loads(CDK_CONTRACT.read_text(encoding="utf-8"))
+    constants = contract["constants"]
+    assert constants["agentcoreDescriptionMarker"] == domain.CDK_DESCRIPTION_MARKER
+    assert domain.runtime_description_for("x", managed_by_cdk=True) == constants[
+        "runtimeDescriptionTemplate"
+    ].format(name="x")
+    assert contract["cliRefusals"]["agentDeploy"]["message"] == CDK_MANAGED_MESSAGE
+
+
+def test_a_cdk_runtime_is_rayitos_but_cdk_managed() -> None:
+    listing = _cdk_listing()
+    assert domain.is_owned(listing)
+    assert domain.is_owned_by(listing, fake.AGENT)
+    assert domain.is_cdk_managed(listing)
+    assert domain.agent_name_of_runtime(listing) == fake.AGENT
+    assert not domain.is_cdk_managed(_owned_by(fake.AGENT))
+
+
+def test_deploy_over_a_cdk_runtime_is_refused_before_anything_is_written() -> None:
+    cloud = fake.cloud(listing=_cdk_listing())
+    deployer = AgentCoreDeployer(cloud.gateways, clock=cloud.clock, sleep=cloud.clock.sleep)
+    with pytest.raises(AgentCoreException) as raised:
+        deployer.apply(fake.make_plan(), fake.make_request())
+    assert raised.value.code == "name_conflict"
+    assert raised.value.exit_code == 2
+    assert "cdk deploy" in str(raised.value) and "cdk destroy" in str(raised.value)
+    assert raised.value.fields["stackHint"] == f"del runtime {fake.RUNTIME_NAME}"
+    assert not {"create_stack", "update_stack", "put_object", "start_build"} & set(
+        cloud.recorder.names()
+    )
+
+
+def test_delete_of_a_cdk_runtime_is_refused_and_deletes_nothing() -> None:
+    cloud = fake.cloud(listing=_cdk_listing())
+    deleter = AgentCoreDeleter(cloud.gateways, clock=cloud.clock, sleep=cloud.clock.sleep)
+    with pytest.raises(AgentCoreException) as raised:
+        deleter.plan(fake.AGENT, fake.RUNTIME_NAME, fake.STACK_NAME)
+    assert raised.value.code == "name_conflict"
+    assert "cdk destroy" in str(raised.value)
+    assert not {"delete_runtime", "delete_stack"} & set(cloud.recorder.names())
+
+
+def test_list_still_reads_a_cdk_runtime() -> None:
+    cloud = fake.cloud(listing=_cdk_listing())
+    listed = list_agents(cloud.gateways.runtimes)
+    assert [item.name for item in listed] == [fake.AGENT]

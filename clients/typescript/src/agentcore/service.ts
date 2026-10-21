@@ -36,8 +36,6 @@
 
 import { AgentCoreError, StackError } from "../errors.js";
 import {
-  AGENT_EXPORT_BASE_IMAGE_DIGEST,
-  AGENTCORE_BASE_IMAGE_MIRROR,
   AGENTCORE_BUILD_LOG_RETENTION_DAYS,
   AGENTCORE_BUILD_POLL_SECONDS,
   AGENTCORE_BUILD_TIMEOUT_MINUTES,
@@ -62,6 +60,7 @@ import {
   type StackOutputs,
   stackObservation,
 } from "./decisions.js";
+import { baseImageReference } from "./identifiers.js";
 import type {
   AgentCoreDeployPlan,
   AgentCoreDeployResult,
@@ -345,7 +344,7 @@ export class AgentCoreDeployer {
         projectName: outputs.buildProjectName,
         sourceLocation: `${bucket}/${key}`,
         imageTag: plan.imageTag,
-        baseImage: `${AGENTCORE_BASE_IMAGE_MIRROR}@${AGENT_EXPORT_BASE_IMAGE_DIGEST}`,
+        baseImage: baseImageReference(),
       }));
       emit("buildStart", { imageTag: plan.imageTag, buildId });
       await this.#waitBuild(request, buildId, outputs.buildLogGroupName);

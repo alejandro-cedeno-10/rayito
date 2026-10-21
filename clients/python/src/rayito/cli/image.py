@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import re
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -18,9 +17,9 @@ from rayito._dashboard._aws import (
     list_image_version_summaries,
 )
 from rayito._images import DEFAULT_BUILD_TIMEOUT_SECONDS, DEFAULT_MEMORY_MIB
+from rayito._images_publish_domain import BASELINE_SIZE_NAME, size_names_problem
+from rayito._images_publish_domain import ENV_KEY_PATTERN as DOMAIN_ENV_KEY_PATTERN
 from rayito._sizing import (
-    BASELINE_MEMORY_MIB,
-    NAME_TO_MEMORY_MIB,
     SIZE_NAMES,
     apply_size_suffix,
     resolve_size,
@@ -116,9 +115,6 @@ def validate_os_capabilities(value: str | None) -> str | None:
     return value
 
 
-BASELINE_SIZE_NAME = next(
-    name for name, mib in NAME_TO_MEMORY_MIB.items() if mib == BASELINE_MEMORY_MIB
-)
 # `--sizes` nunca admite el baseline (ya lo publica `publish_command` sin
 # sufijo, ver `validate_sizes`): la ayuda de `--sizes` lista sólo lo que de
 # verdad se puede pasar, en vez de repetir `SIZE_NAMES` a mano y dejar que
@@ -133,18 +129,9 @@ def validate_sizes(raw: str | None) -> tuple[str, ...]:
     if raw is None:
         return ()
     names = [piece.strip() for piece in raw.split(",") if piece.strip()]
-    for name in names:
-        if name not in SIZE_NAMES:
-            raise typer.BadParameter(
-                f"{name!r}: admitidos {', '.join(SIZE_NAMES)}", param_hint="--sizes"
-            )
-        if name == BASELINE_SIZE_NAME:
-            raise typer.BadParameter(
-                f"{BASELINE_SIZE_NAME!r} ya es el baseline sin sufijo; quítalo de --sizes",
-                param_hint="--sizes",
-            )
-    if len(set(names)) != len(names):
-        raise typer.BadParameter("tamaños repetidos", param_hint="--sizes")
+    problem = size_names_problem(names)
+    if problem is not None:
+        raise typer.BadParameter(problem, param_hint="--sizes")
     return tuple(names)
 
 
@@ -171,7 +158,7 @@ def validate_baseline_memory_mib(memory_mib: int, size_names: tuple[str, ...]) -
 # `=valor` (clave vacía) y claves con espacios o símbolos que
 # `environmentVariables` aceptaría pero que `rayd`/el guest no podrían
 # exportar como variable de entorno de verdad.
-ENV_KEY_PATTERN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+ENV_KEY_PATTERN = DOMAIN_ENV_KEY_PATTERN
 
 
 def parse_environment_assignments(raw: list[str]) -> dict[str, str]:

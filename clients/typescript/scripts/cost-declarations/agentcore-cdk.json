@@ -1,0 +1,12 @@
+[
+  { "name": "class RayitoAgent", "pattern": "^(export )?declare class RayitoAgent\\b" },
+  { "name": "class AgentImageBuild", "pattern": "^(export )?declare class AgentImageBuild\\b" },
+  {
+    "name": "class RayitoMicrovmImage",
+    "pattern": "^(export )?declare class RayitoMicrovmImage\\b"
+  },
+  {
+    "name": "class MicrovmImageArtifact",
+    "pattern": "^(export )?declare class MicrovmImageArtifact\\b"
+  }
+]

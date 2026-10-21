@@ -515,3 +515,14 @@ export const ECR_STORAGE_GB_MONTH_PRICE_USD = 0.1 as const;
 export const CLOUDWATCH_LOGS_INGESTION_GB_PRICE_USD = 0.5 as const;
 export const BEDROCK_INFERENCE_PROFILE_PREFIXES = ["us", "eu", "apac", "au", "global"] as const;
 export const BEDROCK_GLOBAL_PROFILE_PREFIX = "global" as const;
+
+export const CDK_OWNERSHIP_SUFFIX = "+cdk" as const;
+export const CDK_MANAGED_BY_TAG_VALUE = "rayito-cdk" as const;
+export const CDK_AWS_CDK_LIB_MIN_VERSION = "2.261.0" as const;
+export const CDK_CONSTRUCTS_MIN_VERSION = "10.5.0" as const;
+export const CDK_HANDLER_RUNTIME = "python3.13" as const;
+export const CDK_HANDLER_TIMEOUT_SECONDS = 60 as const;
+export const CDK_BUILD_QUERY_INTERVAL_SECONDS = 30 as const;
+export const CDK_BUILD_TOTAL_TIMEOUT_MARGIN_MINUTES = 10 as const;
+export const CDK_MICROVM_IMAGE_LOG_RETENTION_DAYS = 14 as const;
+export const CDK_RUNTIME_ENVIRONMENT_VALUE_MAX_CHARS = 2048 as const;

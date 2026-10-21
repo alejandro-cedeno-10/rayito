@@ -23,7 +23,7 @@ describe("paquete npm", () => {
   });
 
   it("no cambia las entradas públicas de la biblioteca", () => {
-    expect(Object.keys(manifest.exports)).toEqual([".", "./e2b", "./package.json"]);
+    expect(Object.keys(manifest.exports)).toEqual([".", "./e2b", "./cdk", "./package.json"]);
   });
 
   it("mantiene sideEffects en false", () => {
@@ -38,10 +38,13 @@ describe("paquete npm", () => {
     },
   );
 
-  it.each(["@modelcontextprotocol/server", "zod"])("%s es un peer opcional", (peer) => {
-    expect(manifest.peerDependencies[peer]).toBeDefined();
-    expect(manifest.peerDependenciesMeta[peer]?.optional).toBe(true);
-  });
+  it.each(["@modelcontextprotocol/server", "zod", "aws-cdk-lib", "constructs"])(
+    "%s es un peer opcional",
+    (peer) => {
+      expect(manifest.peerDependencies[peer]).toBeDefined();
+      expect(manifest.peerDependenciesMeta[peer]?.optional).toBe(true);
+    },
+  );
 
   it("tsdown construye el ejecutable sólo en ESM", () => {
     const config = readFileSync(join(PACKAGE_DIR, "tsdown.config.ts"), "utf8");

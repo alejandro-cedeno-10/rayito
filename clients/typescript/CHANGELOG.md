@@ -56,6 +56,27 @@ versionado [SemVer](https://semver.org/lang/es/).
 - `rayito agent deploy` y `deployAgent()` encuentran el bucket que creó
   `rayito setup` (la salida `BucketName` de `rayito-m0-artifacts`, sólo
   lectura) cuando no hay `RAYITO_BUCKET` ni bucket del bootstrap de CDK.
+- **Constructos de AWS CDK en `rayito/cdk`** (peers opcionales `aws-cdk-lib`
+  `^2.261.0` y `constructs` `^10.5.0`). `RayitoAgent` despliega con `cdk deploy`
+  el mismo agente que `deployAgent(ruta, { target: "agentcore" })`, con la misma
+  plantilla `infra/agentcore-runtime.yaml` (IAM idéntico): la imagen se construye
+  en CodeBuild por defecto (`AgentImageBuild.codeBuild()`, sin Docker local) o
+  con tu Docker (`AgentImageBuild.localDocker()`), y `Custom::RayitoRuntimeMmds`
+  exige MMDSv2. `RayitoMicrovmImage` publica una imagen de Lambda MicroVMs con
+  `rayd` (y sus tamaños) desde `await MicrovmImageArtifact.downloadRelease()`
+  (comprobado contra `SHA256SUMS`, con caché para síntesis sin red) o
+  `fromFile()`, con su propio rol de build y la misma configuración que
+  `rayito image publish`. `cdk synth` no llama a AWS; la región del stack debe
+  ser concreta. Errores propios en `RayitoCdkError`; los del plan siguen siendo
+  `AgentCoreError`. Ningún otro punto de entrada (`rayito`, `rayito/e2b`, la CLI,
+  el servidor MCP) importa `aws-cdk-lib`. Guía: `guias/desplegar-con-cdk.md`.
+- **La CLI respeta lo que gestiona CloudFormation**: un runtime con la marca
+  `rayito.agentcore/1+cdk` se lista, se consulta y se invoca como cualquier otro,
+  pero `rayito agent deploy`, `rayito agent delete` y
+  `deployAgent(ruta, { target: "agentcore" })` lo rechazan con `name_conflict`, y
+  `rayito image publish` rechaza una imagen con la etiqueta
+  `rayito:managed-by=rayito-cdk`. Los runtimes con la marca `rayito.agentcore/1`
+  no cambian.
 
 ### Cambiado
 

@@ -64,7 +64,17 @@ SURFACES: Final = (
         PYTHON_SOURCE / "e2b" / "__init__.py",
         TYPESCRIPT_SOURCE / "e2b" / "index.ts",
     ),
+    (
+        "rayito.cdk",
+        PYTHON_SOURCE / "cdk" / "__init__.py",
+        TYPESCRIPT_SOURCE / "cdk" / "index.ts",
+    ),
 )
+#: Los exports de los constructos CDK que fija el contrato (`agentcore-cdk`,
+#: ADR-032): `sdk.python.exports` y `sdk.typescript.exports` (con `type ` los
+#: que sólo son tipos).
+CDK_CONTRACT: Final = Path("testdata/agentcore-cdk/contract.json")
+CDK_SURFACE: Final = "rayito.cdk"
 
 CLI_SURFACE: Final = Path("testdata/cli/surface.json")
 TYPESCRIPT_CLI_COMMANDS: Final = Path("clients/typescript/src/cli/commands")
@@ -342,6 +352,33 @@ def problems_for(root: Path) -> list[str]:
             surface,
             python_exports(root / python_path),
             typescript_exports(root / typescript_path),
+        )
+    return problems + cdk_contract_problems(root)
+
+
+def cdk_contract_problems(root: Path) -> list[str]:
+    """`rayito.cdk.__all__` y los exports de `src/cdk/index.ts` son
+    exactamente los de `testdata/agentcore-cdk/contract.json` (sin el
+    contrato en `root`, nada que comprobar)."""
+    contract_path = root / CDK_CONTRACT
+    if not contract_path.is_file():
+        return []
+    sdk = json.loads(contract_path.read_text(encoding="utf-8"))["sdk"]
+    paths = {surface: (python, ts) for surface, python, ts in SURFACES}
+    python_path, typescript_path = paths[CDK_SURFACE]
+    problems: list[str] = []
+    python = python_exports(root / python_path)
+    if python != set(sdk["python"]["exports"]):
+        problems.append(
+            f"{CDK_SURFACE}: `__all__` no es `sdk.python.exports` del contrato "
+            f"({sorted(python ^ set(sdk['python']['exports']))})"
+        )
+    expected = dict(exported_name(name) for name in sdk["typescript"]["exports"])
+    found = typescript_exports(root / typescript_path)
+    if found != expected:
+        problems.append(
+            f"{CDK_SURFACE}: `src/cdk/index.ts` no exporta `sdk.typescript.exports` del "
+            f"contrato ({sorted(set(found.items()) ^ set(expected.items()))})"
         )
     return problems
 

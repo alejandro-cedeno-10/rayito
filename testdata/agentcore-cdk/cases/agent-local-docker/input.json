@@ -1,0 +1,16 @@
+{
+  "construct": "RayitoAgent",
+  "stack": {
+    "account": "123456789012",
+    "region": "us-east-1"
+  },
+  "id": "Agent",
+  "project": "agent-samples/python/flask-custom",
+  "props": {
+    "bedrockModels": [
+      "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+    ]
+  },
+  "build": "localDocker",
+  "expected": "template"
+}
