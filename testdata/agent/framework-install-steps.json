@@ -18,7 +18,7 @@
         {
           "op": "run",
           "args": {
-            "cmd": "echo '554a410059d58109d971d8c298137b475438e4a111ac2bd8e05c2893abbf48ab  /opt/agents/requirements-strands.txt' | sha256sum -c - && python3 -m venv /opt/agents/strands && /opt/agents/strands/bin/python -m pip install --no-cache-dir --require-hashes --no-deps --only-binary=:all: -r /opt/agents/requirements-strands.txt && /opt/agents/strands/bin/python -m pip check"
+            "cmd": "echo '2795d8c2c5eabb05e866915651cb5435a16bfaeb037b711dc0e1af1d600ad967  /opt/agents/requirements-strands.txt' | sha256sum -c - && python3 -m venv /opt/agents/strands && /opt/agents/strands/bin/python -m pip install --no-cache-dir --require-hashes --no-deps --only-binary=:all: -r /opt/agents/requirements-strands.txt && /opt/agents/strands/bin/python -m pip check"
           }
         }
       ],
@@ -33,17 +33,17 @@
         {
           "op": "run",
           "args": {
-            "cmd": "echo '554a410059d58109d971d8c298137b475438e4a111ac2bd8e05c2893abbf48ab  /opt/agents/requirements-strands.txt' | sha256sum -c - && python3 -m venv /opt/agents/strands && /opt/agents/strands/bin/python -m pip install --no-cache-dir --require-hashes --no-deps --only-binary=:all: -r /opt/agents/requirements-strands.txt && /opt/agents/strands/bin/python -m pip check"
+            "cmd": "echo '2795d8c2c5eabb05e866915651cb5435a16bfaeb037b711dc0e1af1d600ad967  /opt/agents/requirements-strands.txt' | sha256sum -c - && python3 -m venv /opt/agents/strands && /opt/agents/strands/bin/python -m pip install --no-cache-dir --require-hashes --no-deps --only-binary=:all: -r /opt/agents/requirements-strands.txt && /opt/agents/strands/bin/python -m pip check"
           }
         }
       ],
       "context_files": {
-        "requirements-strands.txt": "554a410059d58109d971d8c298137b475438e4a111ac2bd8e05c2893abbf48ab"
+        "requirements-strands.txt": "2795d8c2c5eabb05e866915651cb5435a16bfaeb037b711dc0e1af1d600ad967"
       },
       "manifest_entry": {
         "language": "python",
         "version": "1.61.1",
-        "requirements_sha256": "554a410059d58109d971d8c298137b475438e4a111ac2bd8e05c2893abbf48ab"
+        "requirements_sha256": "2795d8c2c5eabb05e866915651cb5435a16bfaeb037b711dc0e1af1d600ad967"
       },
       "smoke_checks": [
         "su user -c \"/opt/agents/strands/bin/python -c 'import strands, boto3, anthropic, openai, google.genai'\""
@@ -75,7 +75,7 @@
         {
           "op": "run",
           "args": {
-            "cmd": "echo '554a410059d58109d971d8c298137b475438e4a111ac2bd8e05c2893abbf48ab  /opt/agents/requirements-strands.txt' | sha256sum -c - && python3 -m venv /opt/agents/strands && /opt/agents/strands/bin/python -m pip install --no-cache-dir --require-hashes --no-deps --only-binary=:all: -r /opt/agents/requirements-strands.txt && /opt/agents/strands/bin/python -m pip check"
+            "cmd": "echo '2795d8c2c5eabb05e866915651cb5435a16bfaeb037b711dc0e1af1d600ad967  /opt/agents/requirements-strands.txt' | sha256sum -c - && python3 -m venv /opt/agents/strands && /opt/agents/strands/bin/python -m pip install --no-cache-dir --require-hashes --no-deps --only-binary=:all: -r /opt/agents/requirements-strands.txt && /opt/agents/strands/bin/python -m pip check"
           }
         },
         {
@@ -103,7 +103,7 @@
         {
           "op": "run",
           "args": {
-            "cmd": "echo '554a410059d58109d971d8c298137b475438e4a111ac2bd8e05c2893abbf48ab  /opt/agents/requirements-strands.txt' | sha256sum -c - && python3 -m venv /opt/agents/strands && /opt/agents/strands/bin/python -m pip install --no-cache-dir --require-hashes --no-deps --only-binary=:all: -r /opt/agents/requirements-strands.txt && /opt/agents/strands/bin/python -m pip check"
+            "cmd": "echo '2795d8c2c5eabb05e866915651cb5435a16bfaeb037b711dc0e1af1d600ad967  /opt/agents/requirements-strands.txt' | sha256sum -c - && python3 -m venv /opt/agents/strands && /opt/agents/strands/bin/python -m pip install --no-cache-dir --require-hashes --no-deps --only-binary=:all: -r /opt/agents/requirements-strands.txt && /opt/agents/strands/bin/python -m pip check"
           }
         },
         {
@@ -121,12 +121,12 @@
         }
       ],
       "context_files": {
-        "requirements-strands.txt": "554a410059d58109d971d8c298137b475438e4a111ac2bd8e05c2893abbf48ab"
+        "requirements-strands.txt": "2795d8c2c5eabb05e866915651cb5435a16bfaeb037b711dc0e1af1d600ad967"
       },
       "manifest_entry": {
         "language": "python",
         "version": "1.61.1",
-        "requirements_sha256": "554a410059d58109d971d8c298137b475438e4a111ac2bd8e05c2893abbf48ab"
+        "requirements_sha256": "2795d8c2c5eabb05e866915651cb5435a16bfaeb037b711dc0e1af1d600ad967"
       },
       "smoke_checks": [
         "su user -c \"/opt/agents/strands/bin/python -c 'import strands, boto3, anthropic, openai, google.genai'\""
@@ -156,7 +156,7 @@
         {
           "op": "run",
           "args": {
-            "cmd": "echo 'a3714e7732bf2f32d65a10b76490757930e193123c2713004e994d44b3538d95  /opt/agents/requirements-strands-harness.txt' | sha256sum -c - && python3 -m venv /opt/agents/strands-harness && /opt/agents/strands-harness/bin/python -m pip install --no-cache-dir --require-hashes --no-deps --only-binary=:all: -r /opt/agents/requirements-strands-harness.txt && /opt/agents/strands-harness/bin/python -m pip check"
+            "cmd": "echo '5a66609e6c9e66a537c4220f0f4b7a172e808bec72dda02998e933c3c512c634  /opt/agents/requirements-strands-harness.txt' | sha256sum -c - && python3 -m venv /opt/agents/strands-harness && /opt/agents/strands-harness/bin/python -m pip install --no-cache-dir --require-hashes --no-deps --only-binary=:all: -r /opt/agents/requirements-strands-harness.txt && /opt/agents/strands-harness/bin/python -m pip check"
           }
         }
       ],
@@ -171,18 +171,18 @@
         {
           "op": "run",
           "args": {
-            "cmd": "echo 'a3714e7732bf2f32d65a10b76490757930e193123c2713004e994d44b3538d95  /opt/agents/requirements-strands-harness.txt' | sha256sum -c - && python3 -m venv /opt/agents/strands-harness && /opt/agents/strands-harness/bin/python -m pip install --no-cache-dir --require-hashes --no-deps --only-binary=:all: -r /opt/agents/requirements-strands-harness.txt && /opt/agents/strands-harness/bin/python -m pip check"
+            "cmd": "echo '5a66609e6c9e66a537c4220f0f4b7a172e808bec72dda02998e933c3c512c634  /opt/agents/requirements-strands-harness.txt' | sha256sum -c - && python3 -m venv /opt/agents/strands-harness && /opt/agents/strands-harness/bin/python -m pip install --no-cache-dir --require-hashes --no-deps --only-binary=:all: -r /opt/agents/requirements-strands-harness.txt && /opt/agents/strands-harness/bin/python -m pip check"
           }
         }
       ],
       "context_files": {
-        "requirements-strands-harness.txt": "a3714e7732bf2f32d65a10b76490757930e193123c2713004e994d44b3538d95"
+        "requirements-strands-harness.txt": "5a66609e6c9e66a537c4220f0f4b7a172e808bec72dda02998e933c3c512c634"
       },
       "manifest_entry": {
         "language": "python",
         "version": "1.61.1",
         "harness_version": "0.3.1",
-        "requirements_sha256": "a3714e7732bf2f32d65a10b76490757930e193123c2713004e994d44b3538d95"
+        "requirements_sha256": "5a66609e6c9e66a537c4220f0f4b7a172e808bec72dda02998e933c3c512c634"
       },
       "smoke_checks": [
         "su user -c \"/opt/agents/strands-harness/bin/python -c 'import strands, boto3, anthropic, openai, google.genai, strands_harness'\""
@@ -329,7 +329,7 @@
         {
           "op": "run",
           "args": {
-            "cmd": "echo '216a22be69129215f1ddc2ee4d1dc0b401e02cf83121d3a865ffe16415540c54  /opt/agents/requirements-hermes.txt' | sha256sum -c - && /opt/agents/hermes/python/bin/python3 -m venv /opt/agents/hermes/venv && /opt/agents/hermes/venv/bin/python -m pip install --no-cache-dir --require-hashes --no-deps --only-binary=:all: -r /opt/agents/requirements-hermes.txt && /opt/agents/hermes/venv/bin/python -m pip check"
+            "cmd": "echo 'ed3d706acaa356a3b89cf19ea4be237689e6fccfaf31bd4d8bb59b51a39e7ee7  /opt/agents/requirements-hermes.txt' | sha256sum -c - && /opt/agents/hermes/python/bin/python3 -m venv /opt/agents/hermes/venv && /opt/agents/hermes/venv/bin/python -m pip install --no-cache-dir --require-hashes --no-deps --only-binary=:all: -r /opt/agents/requirements-hermes.txt && /opt/agents/hermes/venv/bin/python -m pip check"
           }
         },
         {
@@ -362,7 +362,7 @@
         {
           "op": "run",
           "args": {
-            "cmd": "echo '216a22be69129215f1ddc2ee4d1dc0b401e02cf83121d3a865ffe16415540c54  /opt/agents/requirements-hermes.txt' | sha256sum -c - && /opt/agents/hermes/python/bin/python3 -m venv /opt/agents/hermes/venv && /opt/agents/hermes/venv/bin/python -m pip install --no-cache-dir --require-hashes --no-deps --only-binary=:all: -r /opt/agents/requirements-hermes.txt && /opt/agents/hermes/venv/bin/python -m pip check"
+            "cmd": "echo 'ed3d706acaa356a3b89cf19ea4be237689e6fccfaf31bd4d8bb59b51a39e7ee7  /opt/agents/requirements-hermes.txt' | sha256sum -c - && /opt/agents/hermes/python/bin/python3 -m venv /opt/agents/hermes/venv && /opt/agents/hermes/venv/bin/python -m pip install --no-cache-dir --require-hashes --no-deps --only-binary=:all: -r /opt/agents/requirements-hermes.txt && /opt/agents/hermes/venv/bin/python -m pip check"
           }
         },
         {
@@ -373,15 +373,15 @@
         }
       ],
       "context_files": {
-        "requirements-hermes.txt": "216a22be69129215f1ddc2ee4d1dc0b401e02cf83121d3a865ffe16415540c54"
+        "requirements-hermes.txt": "ed3d706acaa356a3b89cf19ea4be237689e6fccfaf31bd4d8bb59b51a39e7ee7"
       },
       "manifest_entry": {
         "version": "0.22.2",
         "commit": "d923a5eb487a17c0a68801bba9ef0f56c81040a8",
         "python_version": "3.14.8",
         "python_sha256": "6c3cfb175acca2748d5a9e42208c523bfbc1099ddb928615b5f328ba7c106e83",
-        "requirements_sha256": "216a22be69129215f1ddc2ee4d1dc0b401e02cf83121d3a865ffe16415540c54",
-        "requirements_file_sha256": "216a22be69129215f1ddc2ee4d1dc0b401e02cf83121d3a865ffe16415540c54"
+        "requirements_sha256": "ed3d706acaa356a3b89cf19ea4be237689e6fccfaf31bd4d8bb59b51a39e7ee7",
+        "requirements_file_sha256": "ed3d706acaa356a3b89cf19ea4be237689e6fccfaf31bd4d8bb59b51a39e7ee7"
       },
       "smoke_checks": [
         "su user -c \"cd /opt/agents/hermes/src && PYTHONPATH=/opt/agents/hermes/src /opt/agents/hermes/venv/bin/python -P -c 'import aiohttp, boto3, anthropic, hermes_cli.main, gateway.platforms.api_server'\""
@@ -1122,7 +1122,7 @@
         {
           "op": "run",
           "args": {
-            "cmd": "echo 'b73cb891e585c59f532eed1bfe5cf2d903ab4585d50249ae6d3e3246a205a8a3  /opt/agents/requirements-deepagents.txt' | sha256sum -c - && python3 -m venv /opt/agents/deepagents && /opt/agents/deepagents/bin/python -m pip install --no-cache-dir --require-hashes --no-deps --only-binary=:all: -r /opt/agents/requirements-deepagents.txt && /opt/agents/deepagents/bin/python -m pip check"
+            "cmd": "echo '465dd581598ae2d16e3258f6575fa4c2c95cf0e93151a398246ac61160dd5acc  /opt/agents/requirements-deepagents.txt' | sha256sum -c - && python3 -m venv /opt/agents/deepagents && /opt/agents/deepagents/bin/python -m pip install --no-cache-dir --require-hashes --no-deps --only-binary=:all: -r /opt/agents/requirements-deepagents.txt && /opt/agents/deepagents/bin/python -m pip check"
           }
         },
         {
@@ -1158,7 +1158,7 @@
         {
           "op": "run",
           "args": {
-            "cmd": "echo 'b73cb891e585c59f532eed1bfe5cf2d903ab4585d50249ae6d3e3246a205a8a3  /opt/agents/requirements-deepagents.txt' | sha256sum -c - && python3 -m venv /opt/agents/deepagents && /opt/agents/deepagents/bin/python -m pip install --no-cache-dir --require-hashes --no-deps --only-binary=:all: -r /opt/agents/requirements-deepagents.txt && /opt/agents/deepagents/bin/python -m pip check"
+            "cmd": "echo '465dd581598ae2d16e3258f6575fa4c2c95cf0e93151a398246ac61160dd5acc  /opt/agents/requirements-deepagents.txt' | sha256sum -c - && python3 -m venv /opt/agents/deepagents && /opt/agents/deepagents/bin/python -m pip install --no-cache-dir --require-hashes --no-deps --only-binary=:all: -r /opt/agents/requirements-deepagents.txt && /opt/agents/deepagents/bin/python -m pip check"
           }
         },
         {
@@ -1185,10 +1185,10 @@
       ],
       "context_files": {
         "deepagents_runner.py": "db83255bb04b522fb2caa4271462b0a4c2bf2425e7ceeede06eee563cf2c82b1",
-        "requirements-deepagents.txt": "b73cb891e585c59f532eed1bfe5cf2d903ab4585d50249ae6d3e3246a205a8a3"
+        "requirements-deepagents.txt": "465dd581598ae2d16e3258f6575fa4c2c95cf0e93151a398246ac61160dd5acc"
       },
       "manifest_entry": {
-        "requirements_sha256": "b73cb891e585c59f532eed1bfe5cf2d903ab4585d50249ae6d3e3246a205a8a3",
+        "requirements_sha256": "465dd581598ae2d16e3258f6575fa4c2c95cf0e93151a398246ac61160dd5acc",
         "runner_sha256": "db83255bb04b522fb2caa4271462b0a4c2bf2425e7ceeede06eee563cf2c82b1",
         "user_requirements": "requirements.txt",
         "package_manager": "pip"
@@ -1226,7 +1226,7 @@
         {
           "op": "run",
           "args": {
-            "cmd": "echo 'b73cb891e585c59f532eed1bfe5cf2d903ab4585d50249ae6d3e3246a205a8a3  /opt/agents/requirements-deepagents.txt' | sha256sum -c - && python3 -m venv /opt/agents/deepagents && /opt/agents/deepagents/bin/python -m pip install --no-cache-dir --require-hashes --no-deps --only-binary=:all: -r /opt/agents/requirements-deepagents.txt && /opt/agents/deepagents/bin/python -m pip check"
+            "cmd": "echo '465dd581598ae2d16e3258f6575fa4c2c95cf0e93151a398246ac61160dd5acc  /opt/agents/requirements-deepagents.txt' | sha256sum -c - && python3 -m venv /opt/agents/deepagents && /opt/agents/deepagents/bin/python -m pip install --no-cache-dir --require-hashes --no-deps --only-binary=:all: -r /opt/agents/requirements-deepagents.txt && /opt/agents/deepagents/bin/python -m pip check"
           }
         },
         {
@@ -1275,7 +1275,7 @@
         {
           "op": "run",
           "args": {
-            "cmd": "echo 'b73cb891e585c59f532eed1bfe5cf2d903ab4585d50249ae6d3e3246a205a8a3  /opt/agents/requirements-deepagents.txt' | sha256sum -c - && python3 -m venv /opt/agents/deepagents && /opt/agents/deepagents/bin/python -m pip install --no-cache-dir --require-hashes --no-deps --only-binary=:all: -r /opt/agents/requirements-deepagents.txt && /opt/agents/deepagents/bin/python -m pip check"
+            "cmd": "echo '465dd581598ae2d16e3258f6575fa4c2c95cf0e93151a398246ac61160dd5acc  /opt/agents/requirements-deepagents.txt' | sha256sum -c - && python3 -m venv /opt/agents/deepagents && /opt/agents/deepagents/bin/python -m pip install --no-cache-dir --require-hashes --no-deps --only-binary=:all: -r /opt/agents/requirements-deepagents.txt && /opt/agents/deepagents/bin/python -m pip check"
           }
         },
         {
@@ -1321,10 +1321,10 @@
       ],
       "context_files": {
         "deepagents_runner.py": "db83255bb04b522fb2caa4271462b0a4c2bf2425e7ceeede06eee563cf2c82b1",
-        "requirements-deepagents.txt": "b73cb891e585c59f532eed1bfe5cf2d903ab4585d50249ae6d3e3246a205a8a3"
+        "requirements-deepagents.txt": "465dd581598ae2d16e3258f6575fa4c2c95cf0e93151a398246ac61160dd5acc"
       },
       "manifest_entry": {
-        "requirements_sha256": "b73cb891e585c59f532eed1bfe5cf2d903ab4585d50249ae6d3e3246a205a8a3",
+        "requirements_sha256": "465dd581598ae2d16e3258f6575fa4c2c95cf0e93151a398246ac61160dd5acc",
         "runner_sha256": "db83255bb04b522fb2caa4271462b0a4c2bf2425e7ceeede06eee563cf2c82b1",
         "user_requirements": "uv.lock",
         "package_manager": "uv"
@@ -1362,7 +1362,7 @@
         {
           "op": "run",
           "args": {
-            "cmd": "echo 'b73cb891e585c59f532eed1bfe5cf2d903ab4585d50249ae6d3e3246a205a8a3  /opt/agents/requirements-deepagents.txt' | sha256sum -c - && python3 -m venv /opt/agents/deepagents && /opt/agents/deepagents/bin/python -m pip install --no-cache-dir --require-hashes --no-deps --only-binary=:all: -r /opt/agents/requirements-deepagents.txt && /opt/agents/deepagents/bin/python -m pip check"
+            "cmd": "echo '465dd581598ae2d16e3258f6575fa4c2c95cf0e93151a398246ac61160dd5acc  /opt/agents/requirements-deepagents.txt' | sha256sum -c - && python3 -m venv /opt/agents/deepagents && /opt/agents/deepagents/bin/python -m pip install --no-cache-dir --require-hashes --no-deps --only-binary=:all: -r /opt/agents/requirements-deepagents.txt && /opt/agents/deepagents/bin/python -m pip check"
           }
         },
         {
@@ -1404,7 +1404,7 @@
         {
           "op": "run",
           "args": {
-            "cmd": "echo 'b73cb891e585c59f532eed1bfe5cf2d903ab4585d50249ae6d3e3246a205a8a3  /opt/agents/requirements-deepagents.txt' | sha256sum -c - && python3 -m venv /opt/agents/deepagents && /opt/agents/deepagents/bin/python -m pip install --no-cache-dir --require-hashes --no-deps --only-binary=:all: -r /opt/agents/requirements-deepagents.txt && /opt/agents/deepagents/bin/python -m pip check"
+            "cmd": "echo '465dd581598ae2d16e3258f6575fa4c2c95cf0e93151a398246ac61160dd5acc  /opt/agents/requirements-deepagents.txt' | sha256sum -c - && python3 -m venv /opt/agents/deepagents && /opt/agents/deepagents/bin/python -m pip install --no-cache-dir --require-hashes --no-deps --only-binary=:all: -r /opt/agents/requirements-deepagents.txt && /opt/agents/deepagents/bin/python -m pip check"
           }
         },
         {
@@ -1443,10 +1443,10 @@
       ],
       "context_files": {
         "deepagents_runner.py": "db83255bb04b522fb2caa4271462b0a4c2bf2425e7ceeede06eee563cf2c82b1",
-        "requirements-deepagents.txt": "b73cb891e585c59f532eed1bfe5cf2d903ab4585d50249ae6d3e3246a205a8a3"
+        "requirements-deepagents.txt": "465dd581598ae2d16e3258f6575fa4c2c95cf0e93151a398246ac61160dd5acc"
       },
       "manifest_entry": {
-        "requirements_sha256": "b73cb891e585c59f532eed1bfe5cf2d903ab4585d50249ae6d3e3246a205a8a3",
+        "requirements_sha256": "465dd581598ae2d16e3258f6575fa4c2c95cf0e93151a398246ac61160dd5acc",
         "runner_sha256": "db83255bb04b522fb2caa4271462b0a4c2bf2425e7ceeede06eee563cf2c82b1",
         "user_requirements": "deploy/requirements.txt",
         "package_manager": "uv"

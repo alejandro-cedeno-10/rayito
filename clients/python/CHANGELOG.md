@@ -109,6 +109,22 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   «si la cuenta o la región aún no están preparadas, ejecuta `rayito setup`».
   La clase, el código y la causa de cada uno no cambian.
 
+### Seguridad
+
+- **Pines de los venvs de agente con los parches de seguridad publicados**:
+  certifi 2026.10.19 (retira raíces de emSign con claves intermedias
+  comprometidas) en Strands, el harness de Strands, Deep Agents y Hermes;
+  mcp 1.30.0 en Strands y el harness (strands-agents 1.61.1 exige mcp <2.2,
+  así que es el parche de la rama 1.x); y, en Hermes, PyJWT 2.15.1, Pillow
+  13.0.0, aiohttp 3.14.4, urllib3 2.8.0, multidict 6.9.1 y yarl 1.25.1 sobre
+  el lock de Hermes v0.22.2. pip-audit no encuentra ninguna vulnerabilidad
+  conocida en ellos. browser-harness (el motor del Browser Use CLI de Hermes,
+  que fija pillow==12.3.0) sale del venv de Hermes: la plantilla no activa el
+  navegador y Hermes usa sus herramientas propias si falta. Como los ficheros
+  de pines forman parte del contexto de build, el primer `deploy_agent` o build de
+  `AgentTemplate` de esos frameworks tras actualizar construye una versión de
+  imagen nueva.
+
 ## [0.14.0] - 2026-10-17
 
 ### Añadido

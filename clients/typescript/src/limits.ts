@@ -323,7 +323,7 @@ export const CLOUDWATCH_CUSTOM_METRIC_PRICE_USD_PER_MONTH = 0.3 as const;
 export const AGENT_PREFETCH_RESTORE_JUMP_SECONDS = 30 as const;
 export const AGENT_PREFETCH_INTERVAL_SECONDS = 2 as const;
 export const AGENT_DEEPAGENTS_REQUIREMENTS_SHA256 =
-  "b73cb891e585c59f532eed1bfe5cf2d903ab4585d50249ae6d3e3246a205a8a3" as const;
+  "465dd581598ae2d16e3258f6575fa4c2c95cf0e93151a398246ac61160dd5acc" as const;
 
 export const AGENT_KERNEL_WARMUP_MARKER_PATH =
   "/opt/rayito/sidecar/ipython/startup/warmup_variant" as const;
@@ -362,11 +362,11 @@ export const MCP_MAX_OUTPUT_CHARS = 100000 as const;
 export const MAX_CONCURRENT_IMAGE_BUILDS = 10 as const;
 
 export const AGENT_STRANDS_REQUIREMENTS_SHA256 =
-  "554a410059d58109d971d8c298137b475438e4a111ac2bd8e05c2893abbf48ab" as const;
+  "2795d8c2c5eabb05e866915651cb5435a16bfaeb037b711dc0e1af1d600ad967" as const;
 export const AGENT_STRANDS_HARNESS_REQUIREMENTS_SHA256 =
-  "a3714e7732bf2f32d65a10b76490757930e193123c2713004e994d44b3538d95" as const;
+  "5a66609e6c9e66a537c4220f0f4b7a172e808bec72dda02998e933c3c512c634" as const;
 export const AGENT_HERMES_REQUIREMENTS_SHA256 =
-  "216a22be69129215f1ddc2ee4d1dc0b401e02cf83121d3a865ffe16415540c54" as const;
+  "ed3d706acaa356a3b89cf19ea4be237689e6fccfaf31bd4d8bb59b51a39e7ee7" as const;
 export const AGENT_HOST_SCHEMA = "rayito.agent-host/1" as const;
 
 export const POOL_SIZE_MAX = 64 as const;
