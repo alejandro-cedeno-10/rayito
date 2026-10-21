@@ -2487,6 +2487,18 @@ adicional), `State` (`MicrovmImageState`), `LatestActiveImageVersion`,
   actualizó ninguna imagen, así que no se vio si una actualización borra las
   versiones anteriores (el manejador de `update` pide
   `DeleteMicrovmImageVersion`, pero el esquema no dice cuándo lo usa).
+- **Q189 — Arranque en frío de `langgraph dev` dentro del host (MicroVM y
+  AgentCore).** **Pendiente** de la aceptación de `agnostic-agent-deploy`
+  (ADR-033 D5). Con `protocol = "langgraph-api"` el host espera a que
+  `GET /ok` conteste 200 hasta `agentLanggraphReadyWaitSeconds` (60 s,
+  provisional), y en AgentCore la primera llamada de una sesión nueva sigue
+  retenida como mucho los 25 s de Q176. Medido sólo en local (2026-10-21,
+  `langgraph-cli[inmem]` con `langgraph-api` 0.16.2 y el ejemplo
+  `testdata/agent-langgraph-api/sample/`): ≈ 8 s hasta `/ok`, y dos
+  invocaciones con la misma sesión dejaron 4 mensajes en el mismo hilo. Falta
+  medir la primera invocación en un MicroVM y en AgentCore y fijar el valor.
+  No hay parámetros de AWS nuevos: el contenedor sigue hablando `/ping` y
+  `/invocations` en el puerto 8080 (`serverProtocol=HTTP`).
 - **Q190 — Un runtime de AgentCore sin permisos de Bedrock llamando a una
   pasarela externa por la red `PUBLIC` (`--external-model`, ADR-033 D2).**
   **Pendiente** de la aceptación de `agnostic-agent-deploy` (sección Z de su

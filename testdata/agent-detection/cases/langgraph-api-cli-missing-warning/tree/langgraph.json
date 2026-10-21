@@ -1,0 +1,9 @@
+{
+  "dependencies": [
+    "."
+  ],
+  "graphs": {
+    "agent": "./agent.py:graph",
+    "triage": "./triage.py:graph"
+  }
+}

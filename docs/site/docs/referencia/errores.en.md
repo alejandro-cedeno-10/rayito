@@ -261,6 +261,11 @@ over the cap), `secret_env_invalid_key` (a requested key is missing, or a key
 is not a valid variable name) and `secret_env_reserved` (a key would give a
 reserved name). On AgentCore it is the code of the host's failure marker.
 
+With a `protocol = "langgraph-api"` app (experimental), a graph that stops at
+an `interrupt` gives `protocol_error` with `detail_code` `graph_interrupted`:
+the host does not resume a human-in-the-loop
+([LangGraph Platform API](../guias/despliega-tu-agente.md#langgraph-platform-api)).
+
 ## `AgentCoreException` / `AgentCoreError` { #agentcore }
 
 Since 0.15.0. Raised by the AgentCore deploy

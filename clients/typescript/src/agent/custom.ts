@@ -26,7 +26,8 @@
  *   ruta de salud y traduce `/invocations`. Con `protocol: "json"` (una app con
  *   su propio contrato) también reenvía tus demás rutas; con `protocol: "raw"`
  *   (un servidor MCP por Streamable HTTP, por ejemplo) sólo se expone, sin
- *   traducir.
+ *   traducir; con `protocol: "langgraph-api"` (experimental) la app es
+ *   `langgraph dev` y el host habla su LangGraph Platform API.
  *
  * Ese es el contrato mínimo de cualquier framework que no tiene su propio
  * adaptador (CrewAI, OpenAI Agents SDK, Google ADK, Claude Agent SDK...): una app
@@ -45,6 +46,8 @@ import { createHash } from "node:crypto";
 import { InvalidArgumentError } from "../errors.js";
 import {
   AGENT_DEFAULT_NODE_MAJOR,
+  AGENT_LANGGRAPH_HEALTH_PATH,
+  AGENT_LANGGRAPH_INVOKE_PATH,
   AGENT_NODE_BUILD_SHA256,
   AGENT_NODE_BUILD_VERSIONS,
   AGENT_PROTOCOL_VERSION,
@@ -96,8 +99,18 @@ import {
 
 export const CUSTOM_PROTOCOLS = ["rayito-v1", "text"] as const;
 export type CustomProtocol = (typeof CUSTOM_PROTOCOLS)[number];
-export const HTTP_APP_PROTOCOLS = ["agentcore", "json", "openai-chat", "raw"] as const;
+/** El LangGraph Platform API de `langgraph dev` (experimental, ADR-033 D5). */
+export const LANGGRAPH_API_PROTOCOL = "langgraph-api";
+export const HTTP_APP_PROTOCOLS = [
+  "agentcore",
+  "json",
+  "openai-chat",
+  "raw",
+  LANGGRAPH_API_PROTOCOL,
+] as const;
 export type HttpAppProtocol = (typeof HTTP_APP_PROTOCOLS)[number];
+/** Los protocolos con los que la respuesta se lee de `responseField`. */
+const RESPONSE_FIELD_PROTOCOLS: readonly HttpAppProtocol[] = ["json", LANGGRAPH_API_PROTOCOL];
 export const CUSTOM_NAME = "custom";
 export const DEFAULT_CUSTOM_PROTOCOL: CustomProtocol = "rayito-v1";
 export const DEFAULT_HTTP_APP_PROTOCOL: HttpAppProtocol = "agentcore";
@@ -110,6 +123,7 @@ export const HTTP_APP_KEYS: readonly string[] = [
   "request_field",
   "response_field",
   "port_env",
+  "assistant_id",
 ];
 /** Los adaptadores del puente de Node que un `CustomRuntime` con un gestor de
  * Node puede elegir (el de Strands lo trae `StrandsRuntime`). */
@@ -139,6 +153,8 @@ const NODE_ENTRYPOINT_PATTERN = /^[A-Za-z0-9_][A-Za-z0-9_./-]*(#[A-Za-z_$][A-Za-
 const FIELD_PATTERN = /^[A-Za-z_][A-Za-z0-9_.]*$/;
 const ENV_NAME_PATTERN = /^[A-Z_][A-Z0-9_]*$/;
 const URL_PATH_PATTERN = /^\/[A-Za-z0-9._~!$&'()*+,;=:@%/-]*$/;
+/** Un grafo de `langgraph.json` o el id de un assistant (un UUID cabe). */
+const ASSISTANT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/;
 
 function argv(value: unknown, label: string): readonly string[] {
   if (
@@ -169,6 +185,9 @@ export interface HttpAppOptions {
   /** La variable de entorno con la que se le dice a tu app en qué `port`
    * escuchar (por ejemplo `PORT`). */
   readonly portEnv?: string | undefined;
+  /** Con `protocol: "langgraph-api"` (y obligatorio con él): el grafo de
+   * `langgraph.json` que se ejecuta. */
+  readonly assistantId?: string | undefined;
 }
 
 /**
@@ -189,7 +208,16 @@ export interface HttpAppOptions {
  * siguen alcanzables; con `"raw"` el despliegue reenvía tus rutas tal cual (un
  * servidor MCP) y `invoke()` no existe: usa `deployment.url` y
  * `deployment.headers` con tu cliente. `portEnv` es la variable de entorno con
- * la que se le dice a tu app en qué `port` escuchar (por ejemplo `PORT`). Tu `command` se ejecuta con el
+ * la que se le dice a tu app en qué `port` escuchar (por ejemplo `PORT`).
+ *
+ * Con `"langgraph-api"` (experimental, ADR-033 D5) tu `command` es `langgraph
+ * dev` y el host traduce cada invocación a `POST /threads/{thread_id}/runs/wait`
+ * del LangGraph Platform API: el hilo sale de la sesión y `assistantId`
+ * (obligatorio, y sólo con este protocolo) es el grafo de `langgraph.json` que
+ * se ejecuta. La salud es `/ok` si dejas `healthPath` por defecto, la ruta de
+ * invocación la fija el API (`invokePath` no se cambia) y el texto sale de
+ * `responseField` o del último mensaje. Sólo `/ping` e `/invocations` se
+ * exponen: el resto del Platform API no se alcanza desde fuera. Tu `command` se ejecuta con el
  * directorio del código copiado como directorio de trabajo y en su
  * `PYTHONPATH`; con `requirements`, `python` y `pip` son los del venv (sin él,
  * `python` es el intérprete de la imagen).
@@ -203,6 +231,7 @@ export class HttpApp {
   readonly requestField: string | undefined;
   readonly responseField: string | undefined;
   readonly portEnv: string | undefined;
+  readonly assistantId: string | undefined;
 
   constructor(options: HttpAppOptions) {
     this.command = argv(options.command, "HttpApp.command");
@@ -230,15 +259,16 @@ export class HttpApp {
         `HttpApp.protocol debe ser uno de ${JSON.stringify(HTTP_APP_PROTOCOLS)}`,
       );
     }
-    for (const [label, value] of [
-      ["requestField", options.requestField],
-      ["responseField", options.responseField],
+    for (const [label, value, protocols] of [
+      ["requestField", options.requestField, ["json"]],
+      ["responseField", options.responseField, RESPONSE_FIELD_PROTOCOLS],
     ] as const) {
       if (value === undefined) {
         continue;
       }
-      if (protocol !== "json") {
-        throw new InvalidArgumentError(`HttpApp.${label} sólo se usa con protocol 'json'`);
+      if (!(protocols as readonly string[]).includes(protocol)) {
+        const allowed = protocols.map((name) => `'${name}'`).join(" o ");
+        throw new InvalidArgumentError(`HttpApp.${label} sólo se usa con protocol ${allowed}`);
       }
       if (typeof value !== "string" || !FIELD_PATTERN.test(value)) {
         throw new InvalidArgumentError(
@@ -251,6 +281,7 @@ export class HttpApp {
         "HttpApp.portEnv debe ser un nombre de variable de entorno (MAYÚSCULAS)",
       );
     }
+    checkLanggraphFields(protocol, options.assistantId, invokePath);
     this.port = options.port;
     this.healthPath = healthPath;
     this.invokePath = invokePath;
@@ -258,11 +289,27 @@ export class HttpApp {
     this.requestField = options.requestField;
     this.responseField = options.responseField;
     this.portEnv = options.portEnv;
+    this.assistantId = options.assistantId;
   }
 
-  /** Con `protocol: "agentcore"` u `"openai-chat"` el despliegue sólo expone
-   * `/ping` y `/invocations` (el host traduce a tu `invokePath`): tus rutas
-   * propias (`healthPath`, `invokePath` distintas de esas dos) no se alcanzan
+  /** La ruta de salud a la que llama el host: `healthPath`, o `/ok` con
+   * `langgraph-api` si se dejó la de por defecto. */
+  get servedHealthPath(): string {
+    return this.protocol === LANGGRAPH_API_PROTOCOL && this.healthPath === AGENT_SERVICE_HEALTH_PATH
+      ? AGENT_LANGGRAPH_HEALTH_PATH
+      : this.healthPath;
+  }
+
+  /** La ruta de invocación a la que llama el host: `invokePath`, o la de una
+   * ejecución de un hilo (`/threads/{thread_id}/runs/wait`) con
+   * `langgraph-api`. */
+  get servedInvokePath(): string {
+    return this.protocol === LANGGRAPH_API_PROTOCOL ? AGENT_LANGGRAPH_INVOKE_PATH : this.invokePath;
+  }
+
+  /** Con `protocol: "agentcore"`, `"openai-chat"` o `"langgraph-api"` el
+   * despliegue sólo expone `/ping` y `/invocations` (el host traduce a tu
+   * `invokePath`): tus rutas propias (`healthPath`, `invokePath` distintas de esas dos) no se alcanzan
    * desde fuera. Con `protocol: "json"` o `"raw"` se exponen tal cual. */
   get hidesOwnRoutes(): boolean {
     return (
@@ -290,6 +337,7 @@ export class HttpApp {
       requestField: table.request_field as string | undefined,
       responseField: table.response_field as string | undefined,
       portEnv: table.port_env as string | undefined,
+      assistantId: table.assistant_id as string | undefined,
     });
   }
 
@@ -314,7 +362,37 @@ export class HttpApp {
     if (this.portEnv !== undefined) {
       table.port_env = this.portEnv;
     }
+    if (this.assistantId !== undefined) {
+      table.assistant_id = this.assistantId;
+    }
     return table;
+  }
+}
+
+/** `assistantId` es obligatorio con `langgraph-api` y no se usa con otro
+ * protocolo; la ruta de invocación la fija el Platform API. */
+function checkLanggraphFields(
+  protocol: HttpAppProtocol,
+  assistantId: string | undefined,
+  invokePath: string,
+): void {
+  if (protocol !== LANGGRAPH_API_PROTOCOL) {
+    if (assistantId !== undefined) {
+      throw new InvalidArgumentError(
+        `HttpApp.assistantId sólo se usa con protocol '${LANGGRAPH_API_PROTOCOL}'`,
+      );
+    }
+    return;
+  }
+  if (typeof assistantId !== "string" || !ASSISTANT_ID_PATTERN.test(assistantId)) {
+    throw new InvalidArgumentError(
+      `HttpApp.assistantId es obligatorio con protocol '${LANGGRAPH_API_PROTOCOL}' y es el nombre de un grafo de langgraph.json`,
+    );
+  }
+  if (invokePath !== AGENT_SERVICE_INVOKE_PATH) {
+    throw new InvalidArgumentError(
+      `HttpApp.invokePath no se usa con protocol '${LANGGRAPH_API_PROTOCOL}': la ruta la fija el LangGraph Platform API`,
+    );
   }
 }
 
@@ -618,8 +696,8 @@ export class CustomRuntime extends HostBackedRuntime implements InstallableRunti
     const options: Record<string, unknown> = {
       command: [...app.command],
       port: app.port,
-      health_path: app.healthPath,
-      invoke_path: app.invokePath,
+      health_path: app.servedHealthPath,
+      invoke_path: app.servedInvokePath,
       protocol: app.protocol,
       workdir,
       model: spec.model.id ?? null,
@@ -633,6 +711,9 @@ export class CustomRuntime extends HostBackedRuntime implements InstallableRunti
     }
     if (app.portEnv !== undefined) {
       options.port_env = app.portEnv;
+    }
+    if (app.assistantId !== undefined) {
+      options.assistant_id = app.assistantId;
     }
     return options;
   }

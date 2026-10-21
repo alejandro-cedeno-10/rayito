@@ -13,7 +13,13 @@
  * los comprueban en TypeScript y en Python.
  */
 
-import { detectApp, validateProtocolOverride } from "./detect-app.js";
+import {
+  CUSTOM_KIND,
+  detectApp,
+  detectLanggraphApi,
+  PROTOCOL_LANGGRAPH_API,
+  validateProtocolOverride,
+} from "./detect-app.js";
 import {
   type EntryChoice,
   entryKind,
@@ -384,6 +390,10 @@ export function detect(
     );
     app = detected.app;
     protocol = detected.protocol;
+  } else if (overrides.protocol === PROTOCOL_LANGGRAPH_API) {
+    const detected = detectLanggraphApi(index, rules, framework, entry, language, sink);
+    app = detected.app;
+    protocol = detected.protocol;
   } else if (overrides.protocol !== undefined) {
     sink.add("protocol_ignored");
   }
@@ -404,7 +414,7 @@ export function detect(
   return new DetectionReport({
     language,
     framework: framework.framework,
-    kind: kindOf(framework, language),
+    kind: protocol === PROTOCOL_LANGGRAPH_API ? CUSTOM_KIND : kindOf(framework, language),
     entrypoint: entry?.entrypoint,
     entrypointKind: entry === undefined ? undefined : entryKind(entry),
     protocol,

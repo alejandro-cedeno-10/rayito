@@ -580,6 +580,12 @@ enseña sólo los nombres y pide `--yes` (cuesta $0,40 al mes), y `--check-env`
 avisa de las variables de `.env.example` que no reciben valor. Ver
 [Secretos como variables de entorno](guias/secretos-como-entorno.md).
 
+`--protocol` acepta `agentcore`, `json`, `raw` y, desde esta versión,
+`langgraph-api` (experimental): sobre un proyecto con `langgraph.json` sirve
+el grafo con `langgraph dev` y su LangGraph Platform API en vez de importarlo;
+sin `langgraph.json` falla con `invalid_value`. Ver
+[LangGraph Platform API](guias/despliega-tu-agente.md#langgraph-platform-api).
+
 Construye la imagen de `AgentTemplate`
 ([Templates de agente](funciones-opcionales/templates-de-agente.md)): parte
 de `--base` (una imagen ya publicada con `rayito image publish`) e instala

@@ -745,6 +745,21 @@
         ],
         "portLiteral": false
       },
+      "langgraph-dev": {
+        "command": [
+          "langgraph",
+          "dev",
+          "--no-browser",
+          "--no-reload",
+          "--host",
+          "127.0.0.1",
+          "--port",
+          "{port}",
+          "--config",
+          "langgraph.json"
+        ],
+        "portLiteral": false
+      },
       "node": {
         "portLiteral": true,
         "startScript": "start"
@@ -1196,6 +1211,7 @@
     "not_detected_start": "la app de Node no tiene script start ni main; indica el comando en [runtime.app] command",
     "unsupported_version": "ninguna versión fijada de {runtime} cumple la restricción del proyecto; usa una de las soportadas",
     "unsupported_port": "la app escucha en un puerto reservado ({port}); léelo de la variable PORT",
+    "langgraph_api_without_langgraph_json": "--protocol langgraph-api necesita un langgraph.json en el proyecto",
     "not_detected_route": "no se encontró una ruta POST para invocar la app; indícala en [runtime.app] invoke_path o usa el protocolo raw",
     "invalid_override": "{value} no es un valor válido para {option}; usa uno de {allowed}",
     "invalid_model_provider": "--model-provider {value} no es una pasarela conocida ({candidates})"
@@ -1213,6 +1229,8 @@
     "health_path_assumed": "la app no declara una ruta de salud; se usa {path}",
     "request_field_assumed": "no se detectó el campo de la petición; se usa {field}",
     "protocol_ignored": "el protocolo solo aplica a una app HTTP; se ignora",
+    "langgraph_cli_missing": "langgraph-cli[inmem] no está en tus dependencias: añádelo para usar --protocol langgraph-api",
+    "langgraph_dev_server": "langgraph dev es un servidor de desarrollo en memoria (experimental en Rayito)",
     "several_providers": "hay varios proveedores de modelo ({providers}); se usa {used}",
     "no_provider": "no se detecta ningún proveedor de modelo; indícalo con --secret proveedor=nombre",
     "model_id_from_code": "no se fija el id del modelo: lo elige tu código ({envs})"

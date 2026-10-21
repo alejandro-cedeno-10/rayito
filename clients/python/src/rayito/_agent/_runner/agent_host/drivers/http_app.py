@@ -10,7 +10,8 @@ Configuración del driver:
   `json` (una app con su propio contrato: el prompt va en el campo
   `request_field` y el texto sale de `response_field`, o del primer campo de
   texto de `JSON_TEXT_KEYS`; sus demás rutas siguen alcanzables),
-  `openai-chat` (Chat Completions con streaming) o `raw`.
+  `openai-chat` (Chat Completions con streaming), `raw` o `langgraph-api`
+  (el LangGraph Platform API de `langgraph dev`; ver abajo).
 - `port_env`: la variable de entorno con la que se le dice a la app en qué
   `port` escuchar (por ejemplo `PORT`); sin ella no se toca el entorno.
 - Supervisión: una app que muere después de estar lista se relanza con una
@@ -34,6 +35,23 @@ Con `raw` no hay traducción: el host reenvía tal cual todo lo que no es
 o cualquier otro protocolo sólo se expone, no se invoca con `invoke()`. Con
 `json` el host traduce `/invocations` y además reenvía tal cual el resto de
 rutas (`forwards`).
+
+Con `langgraph-api` (ADR-033 D5, experimental) cada invocación es un
+`POST /threads/{thread_id}/runs/wait` con `assistant_id` (obligatorio en la
+configuración), la entrada del grafo (el prompt como un mensaje de usuario),
+`if_not_exists="create"` y `multitask_strategy="reject"`. El hilo es
+`uuid5(LANGGRAPH_THREAD_NAMESPACE, session_id)`, también para la sesión
+`app_<hex>` que crea el driver, así que la misma sesión sigue el mismo hilo
+tras un relanzamiento de la app. El texto sale de `response_field` o del
+último mensaje del estado final (`langgraph_text`), el uso de su
+`usage_metadata`, y un grafo detenido en un `interrupt` es
+`protocol_error`/`graph_interrupted`. La salud es `GET /ok`, la espera de
+arranque es `LANGGRAPH_READY_WAIT_SECONDS` y el hijo arranca sin la
+telemetría de la CLI ni las trazas a LangSmith salvo que el entorno las fije
+(`LANGGRAPH_CHILD_ENV_DEFAULTS`). Fuentes, consultadas el 2026-10-21:
+https://docs.langchain.com/langsmith/agent-server-api/thread-runs/create-run-wait-for-output.md,
+https://docs.langchain.com/langsmith/agent-server-api/system/health-check.md y
+https://docs.langchain.com/langsmith/data-storage-and-privacy.
 """
 
 from __future__ import annotations
@@ -41,6 +59,7 @@ from __future__ import annotations
 import http.client
 import json
 import threading
+import uuid
 from collections.abc import Iterator, Mapping
 from http import HTTPStatus
 from typing import Any, Final
@@ -73,7 +92,38 @@ REQUEST_TIMEOUT_SECONDS: Final = 600.0
 #: Claves de una respuesta JSON donde buscar el texto, en este orden.
 TEXT_KEYS: Final = ("text", "response", "result", "output", "message", "content", "answer")
 SESSION_HEADER: Final = "X-Amzn-Bedrock-AgentCore-Runtime-Session-Id"
-PROTOCOLS: Final = ("agentcore", "json", "openai-chat", "raw")
+PROTOCOL_LANGGRAPH_API: Final = "langgraph-api"
+PROTOCOLS: Final = ("agentcore", "json", "openai-chat", "raw", PROTOCOL_LANGGRAPH_API)
+#: Rutas por defecto de la app si la configuración no trae `health_path` o
+#: `invoke_path` (el contrato de AgentCore).
+DEFAULT_HEALTH_PATH: Final = "/ping"
+DEFAULT_INVOKE_PATH: Final = "/invocations"
+#: Lo que el host usa con `langgraph-api`: `AGENT_LANGGRAPH_HEALTH_PATH`,
+#: `AGENT_LANGGRAPH_INVOKE_PATH`, `AGENT_LANGGRAPH_THREAD_NAMESPACE` y
+#: `AGENT_LANGGRAPH_READY_WAIT_SECONDS` de `limits.json` (el host no importa
+#: `rayito`; una prueba comprueba que coinciden). La espera es provisional
+#: hasta medir el arranque de `langgraph dev` (`AWS_API_NOTES.md` Q189).
+LANGGRAPH_HEALTH_PATH: Final = "/ok"
+LANGGRAPH_INVOKE_PATH: Final = "/threads/{thread_id}/runs/wait"
+LANGGRAPH_THREAD_PLACEHOLDER: Final = "{thread_id}"
+LANGGRAPH_THREAD_NAMESPACE: Final = uuid.UUID("9f31c836-3dec-4f92-9808-a4a78225e7b9")
+LANGGRAPH_READY_WAIT_SECONDS: Final = 60.0
+#: Un hilo que no existe se crea, y una segunda ejecución sobre un hilo
+#: ocupado falla (`409`) en vez de encolarse sin plazo (por defecto el
+#: servidor usa `reject` y `enqueue`).
+LANGGRAPH_IF_NOT_EXISTS: Final = "create"
+LANGGRAPH_MULTITASK_STRATEGY: Final = "reject"
+LANGGRAPH_MESSAGES_KEY: Final = "messages"
+LANGGRAPH_INTERRUPT_KEY: Final = "__interrupt__"
+LANGGRAPH_USAGE_KEY: Final = "usage_metadata"
+LANGGRAPH_TEXT_BLOCK: Final = "text"
+USER_ROLE: Final = "user"
+#: El entorno que el hijo de `langgraph-api` recibe si el del host no lo
+#: fija: sin la telemetría de la CLI de LangGraph ni trazas a LangSmith.
+LANGGRAPH_CHILD_ENV_DEFAULTS: Final = (
+    ("LANGGRAPH_CLI_NO_ANALYTICS", "1"),
+    ("LANGSMITH_TRACING", "false"),
+)
 #: El campo del cuerpo que lleva el prompt con `json`, si la
 #: configuración no trae `request_field`.
 DEFAULT_REQUEST_FIELD: Final = "prompt"
@@ -135,6 +185,81 @@ def field_text(payload: object, path: str) -> str | None:
     return current if isinstance(current, str) else None
 
 
+def langgraph_thread_id(session_id: str) -> str:
+    """El hilo del LangGraph Platform API de una sesión: determinista y sin
+    estado, así que sobrevive a un relanzamiento de la app."""
+    return str(uuid.uuid5(LANGGRAPH_THREAD_NAMESPACE, session_id))
+
+
+def langgraph_invoke_path(template: str, session_id: str) -> str:
+    """La ruta de la ejecución con el hilo de la sesión en `{thread_id}`."""
+    return template.replace(LANGGRAPH_THREAD_PLACEHOLDER, langgraph_thread_id(session_id))
+
+
+def langgraph_prompt_input(prompt: str) -> dict[str, Any]:
+    """La entrada del grafo para un prompt: un único mensaje de usuario."""
+    return {LANGGRAPH_MESSAGES_KEY: [{"role": USER_ROLE, "content": prompt}]}
+
+
+def langgraph_body(assistant_id: str, graph_input: Mapping[str, Any]) -> dict[str, Any]:
+    """El cuerpo de `POST /threads/{thread_id}/runs/wait`."""
+    return {
+        "assistant_id": assistant_id,
+        "input": dict(graph_input),
+        "if_not_exists": LANGGRAPH_IF_NOT_EXISTS,
+        "multitask_strategy": LANGGRAPH_MULTITASK_STRATEGY,
+    }
+
+
+def langgraph_last_message(state: object) -> Mapping[str, Any] | None:
+    """El último mensaje de `messages` del estado final, o `None`."""
+    messages = state.get(LANGGRAPH_MESSAGES_KEY) if isinstance(state, Mapping) else None
+    if not isinstance(messages, list) or not messages:
+        return None
+    last = messages[-1]
+    return last if isinstance(last, Mapping) else None
+
+
+def langgraph_message_text(message: Mapping[str, Any]) -> str:
+    """El `content` de un mensaje: una cadena tal cual, o la concatenación de
+    sus bloques de texto (los de herramientas se descartan)."""
+    content = message.get("content")
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        return ""
+    return "".join(
+        block["text"]
+        for block in content
+        if isinstance(block, Mapping)
+        and block.get("type") == LANGGRAPH_TEXT_BLOCK
+        and isinstance(block.get("text"), str)
+    )
+
+
+def langgraph_text(state: object) -> str:
+    """El texto del estado final: el del último mensaje o, sin mensajes, el
+    JSON entero."""
+    message = langgraph_last_message(state)
+    if message is None:
+        return json.dumps(state, ensure_ascii=False)
+    return langgraph_message_text(message)
+
+
+def langgraph_usage(state: object) -> dict[str, int] | None:
+    """El uso de tokens de `usage_metadata` del último mensaje, o `None`
+    (desconocido, no cero)."""
+    message = langgraph_last_message(state)
+    return None if message is None else app_usage(message.get(LANGGRAPH_USAGE_KEY))
+
+
+def check_langgraph_interrupt(state: object) -> None:
+    """Un grafo detenido en un `interrupt` (human-in-the-loop) no se
+    reanuda desde el host: es `protocol_error`/`graph_interrupted`."""
+    if isinstance(state, Mapping) and state.get(LANGGRAPH_INTERRUPT_KEY):
+        raise AgentFailure("protocol_error", "graph_interrupted")
+
+
 def iter_sse_data(response: http.client.HTTPResponse) -> Iterator[str]:
     """Los campos `data` de un stream SSE, uno por mensaje."""
     data: list[str] = []
@@ -178,10 +303,16 @@ class Driver:
         self._protocol = str(config.get("protocol", "agentcore"))
         if self._protocol not in PROTOCOLS:
             raise AgentFailure("protocol_error", "invalid_protocol")
+        if self._langgraph and not config.get("assistant_id"):
+            raise AgentFailure("protocol_error", "invalid_protocol")
         self._supervisor: Supervisor | None = None
         self._listeners: list[FailureListener] = []
         self._lock = threading.Lock()
         self._request_timeout = REQUEST_TIMEOUT_SECONDS
+
+    @property
+    def _langgraph(self) -> bool:
+        return self._protocol == PROTOCOL_LANGGRAPH_API
 
     @property
     def raw(self) -> bool:
@@ -227,7 +358,7 @@ class Driver:
                 failure_codes=("app_exited", "app_not_ready"),
                 policy=RestartPolicy.from_config(self._config),
                 start_timeout_seconds=float(
-                    self._config.get("start_timeout_seconds", DEFAULT_START_TIMEOUT_SECONDS)
+                    self._config.get("start_timeout_seconds", self._default_start_timeout())
                 ),
             )
             for listener in self._listeners:
@@ -240,8 +371,21 @@ class Driver:
                 self._supervisor = None
             raise
 
+    def _default_start_timeout(self) -> float:
+        """La espera de arranque si la configuración no la trae: la propia de
+        `langgraph dev` con `langgraph-api` y la general en otro caso."""
+        return LANGGRAPH_READY_WAIT_SECONDS if self._langgraph else DEFAULT_START_TIMEOUT_SECONDS
+
+    def _path(self, key: str, default: str, langgraph_default: str) -> str:
+        """`health_path` o `invoke_path` de la configuración, o su valor por
+        defecto según el protocolo."""
+        return str(self._config.get(key, langgraph_default if self._langgraph else default))
+
     def _spawn(self) -> ChildProcess:
         env = child_environment(self._config)
+        if self._langgraph:
+            for name, value in LANGGRAPH_CHILD_ENV_DEFAULTS:
+                env.setdefault(name, value)
         port_env = self._config.get("port_env")
         if port_env:
             env[str(port_env)] = str(self._config["port"])
@@ -263,7 +407,9 @@ class Driver:
     def _healthy(self) -> bool:
         try:
             connection = self._connection()
-            connection.request("GET", str(self._config.get("health_path", "/ping")))
+            connection.request(
+                "GET", self._path("health_path", DEFAULT_HEALTH_PATH, LANGGRAPH_HEALTH_PATH)
+            )
             status = connection.getresponse().status
             connection.close()
         except OSError:
@@ -295,6 +441,9 @@ class Driver:
         emit(build_event("step_finished", index=1, usage=usage, finish_reason="stop"))
 
     def _body(self, request: Request, session_id: str) -> dict[str, Any]:
+        if self._langgraph:
+            assistant_id = str(self._config["assistant_id"])
+            return langgraph_body(assistant_id, langgraph_prompt_input(request.prompt))
         if self._protocol == "openai-chat":
             return {
                 "model": request.model or self._config.get("model", ""),
@@ -311,12 +460,12 @@ class Driver:
         return body
 
     def _post(self, request: Request, session_id: str) -> http.client.HTTPResponse:
-        invoke_path = str(self._config.get("invoke_path", "/invocations"))
+        invoke_path = self._invoke_path(session_id)
         headers = {
             "Content-Type": "application/json",
             "Accept": "text/event-stream, application/json",
         }
-        if self._protocol != "openai-chat":
+        if self._protocol not in ("openai-chat", PROTOCOL_LANGGRAPH_API):
             headers[SESSION_HEADER] = session_id
         body = self._body(request, session_id)
         try:
@@ -329,13 +478,32 @@ class Driver:
             raise AgentFailure("runtime_error", f"app_http_{count(response.status)}")
         return response
 
+    def _invoke_path(self, session_id: str) -> str:
+        """La ruta de la invocación; con `langgraph-api`, la del hilo de la
+        sesión."""
+        path = self._path("invoke_path", DEFAULT_INVOKE_PATH, LANGGRAPH_INVOKE_PATH)
+        return langgraph_invoke_path(path, session_id) if self._langgraph else path
+
     def _json_text(self, payload: object) -> str:
         """El texto de una respuesta `json`: `response_field` si se
         configuró (y es un error que falte) o el primer candidato."""
         field = self._config.get("response_field")
         if not field:
             return extract_text(payload, JSON_TEXT_KEYS)
-        text = field_text(payload, str(field))
+        return self._field_text(payload, str(field))
+
+    def _langgraph_result(self, state: object) -> tuple[str, dict[str, int] | None]:
+        """El texto y el uso del estado final de un grafo: `response_field`
+        si se configuró o el último mensaje (`langgraph_text`)."""
+        check_langgraph_interrupt(state)
+        field = self._config.get("response_field")
+        text = self._field_text(state, str(field)) if field else langgraph_text(state)
+        return text, langgraph_usage(state)
+
+    @staticmethod
+    def _field_text(payload: object, field: str) -> str:
+        """El texto en `field`; que falte es `invalid_response`."""
+        text = field_text(payload, field)
         if text is None:
             raise AgentFailure("protocol_error", "invalid_response")
         return text
@@ -357,6 +525,8 @@ class Driver:
                 payload = json.loads(response.read())
             except ValueError:
                 raise AgentFailure("protocol_error", "invalid_response") from None
+            if self._langgraph:
+                return self._langgraph_result(payload)
             reported = app_usage(payload.get("usage")) if isinstance(payload, Mapping) else None
             text = self._json_text(payload) if self._protocol == "json" else extract_text(payload)
             return text, reported

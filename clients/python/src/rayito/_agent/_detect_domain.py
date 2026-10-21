@@ -17,7 +17,13 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Final
 
-from rayito._agent._detect_app import detect_app, validate_protocol_override
+from rayito._agent._detect_app import (
+    CUSTOM_KIND,
+    PROTOCOL_LANGGRAPH_API,
+    detect_app,
+    detect_langgraph_api,
+    validate_protocol_override,
+)
 from rayito._agent._detect_entry import (
     GRAPH_PATH,
     EntryChoice,
@@ -310,6 +316,8 @@ def detect(
         app, protocol = detect_app(
             index, rules, framework, entry, manager, overrides.protocol, sink
         )
+    elif overrides.protocol == PROTOCOL_LANGGRAPH_API:
+        app, protocol = detect_langgraph_api(index, rules, framework, entry, language, sink)
     elif overrides.protocol is not None:
         sink.add("protocol_ignored")
     alternatives = (
@@ -322,7 +330,7 @@ def detect(
     return DetectionReport(
         language=language,
         framework=framework["framework"],
-        kind=_kind(framework, language),
+        kind=CUSTOM_KIND if protocol == PROTOCOL_LANGGRAPH_API else _kind(framework, language),
         entrypoint=None if entry is None else entry.entrypoint,
         entrypoint_kind=None if entry is None else entry.kind,
         protocol=protocol,

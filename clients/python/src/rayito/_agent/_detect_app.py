@@ -3,6 +3,10 @@ el puerto, las rutas de salud e invocación, el protocolo y los campos de la
 petición. Todo sale de patrones de línea sobre el fichero de la app y de
 `package.json`; nunca se ejecuta nada. Las reglas son datos de
 `agent-detection.json`.
+
+Con `--protocol langgraph-api` (ADR-033 D5) un proyecto con `langgraph.json`
+se sirve con su propio servidor (`langgraph dev`, el launcher `langgraph-dev`)
+como app `custom`, y `assistant_id` es el grafo elegido de `graphs`.
 """
 
 from __future__ import annotations
@@ -10,7 +14,11 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any, Final
 
-from rayito._agent._detect_entry import EntryChoice
+from rayito._agent._detect_entry import (
+    CURRENT_DIRECTORY,
+    PYTHON_ATTRIBUTE_SEPARATOR,
+    EntryChoice,
+)
 from rayito._agent._detect_report import APP_PROTOCOLS, DetectionApp
 from rayito._agent._detect_scan import (
     PACKAGE_JSON,
@@ -20,11 +28,23 @@ from rayito._agent._detect_scan import (
     render,
 )
 from rayito._agent._project_domain import AgentProjectException
-from rayito._limits import AGENT_APP_INTERNAL_PORT, AGENT_APP_PORT_ENV, AGENT_SERVICE_PORT
+from rayito._limits import (
+    AGENT_APP_INTERNAL_PORT,
+    AGENT_APP_PORT_ENV,
+    AGENT_LANGGRAPH_HEALTH_PATH,
+    AGENT_SERVICE_PORT,
+)
 
 PROTOCOL_AGENTCORE: Final = "agentcore"
 PROTOCOL_JSON: Final = "json"
 PROTOCOL_RAW: Final = "raw"
+PROTOCOL_LANGGRAPH_API: Final = "langgraph-api"
+#: El framework de `langgraph.json`, el launcher de `langgraph dev`, el
+#: paquete de Python que lo trae y el `kind` con el que se sirve.
+LANGGRAPH_JSON_FRAMEWORK: Final = "langgraph-json"
+LANGGRAPH_DEV_LAUNCHER: Final = "langgraph-dev"
+LANGGRAPH_CLI_DEPENDENCY: Final = "langgraph-cli"
+CUSTOM_KIND: Final = "custom"
 METHOD_GET: Final = "GET"
 METHOD_POST: Final = "POST"
 NODE_MAIN_COMMAND: Final = "node"
@@ -40,6 +60,7 @@ DEFAULT_RUNNER: Final = "npm"
 _APP_COMMAND_PATH: Final = "runtime.app.command"
 _INVOKE_PATH: Final = "runtime.app.invoke_path"
 _PROTOCOL_PATH: Final = "runtime.app.protocol"
+_ENTRY_PATH: Final = "runtime.entrypoint"
 
 
 def _routes(
@@ -173,6 +194,8 @@ def detect_app(
     """La app de `entry` y su protocolo. Sin ruta POST el protocolo es
     `raw`; `agentcore` si la app ya habla el contrato (`/ping` y
     `/invocations`) y `json` en otro caso."""
+    if protocol_override == PROTOCOL_LANGGRAPH_API:
+        raise _without_langgraph_json(rules)
     spec = framework["app"]
     launcher = rules["app"]["launchers"][spec["launcher"]]
     text = index.read(entry.path) or ""
@@ -221,6 +244,71 @@ def _fields(
     return request, response
 
 
+def _without_langgraph_json(rules: Mapping[str, Any]) -> AgentProjectException:
+    text = rules["messages"]["langgraph_api_without_langgraph_json"]
+    return AgentProjectException(
+        f"{_PROTOCOL_PATH}: {text}", path=_PROTOCOL_PATH, code="invalid_value"
+    )
+
+
+def _graph_location(value: object) -> str | None:
+    """`ruta:atributo` de un valor de `graphs`, sin el `./` inicial."""
+    if not isinstance(value, str):
+        return None
+    return value[len(CURRENT_DIRECTORY) :] if value.startswith(CURRENT_DIRECTORY) else value
+
+
+def _assistant_id(
+    index: ProjectIndex, rules: Mapping[str, Any], spec_name: str, entry: EntryChoice
+) -> str:
+    """La clave de `graphs` que apunta al punto de entrada elegido: la
+    preferida por nombre si hay varias, o la primera en orden."""
+    spec = rules["entryFiles"][spec_name]
+    document = index.read_json(spec["file"])
+    graphs = document.get(spec["key"]) if isinstance(document, dict) else None
+    wanted = f"{entry.path}{PYTHON_ATTRIBUTE_SEPARATOR}{entry.attr}"
+    keys = sorted(key for key, value in (graphs or {}).items() if _graph_location(value) == wanted)
+    if not keys:
+        text = render(rules["messages"]["not_detected_entrypoint"], {"framework": spec["file"]})
+        raise AgentProjectException(f"{_ENTRY_PATH}: {text}", path=_ENTRY_PATH, code="not_detected")
+    return str(next((key for key in spec["preferKeys"] if key in keys), keys[0]))
+
+
+def detect_langgraph_api(
+    index: ProjectIndex,
+    rules: Mapping[str, Any],
+    framework: Mapping[str, Any],
+    entry: EntryChoice | None,
+    language: str | None,
+    sink: WarningSink,
+) -> tuple[DetectionApp, str]:
+    """La app `langgraph dev` de un proyecto con `langgraph.json` y el
+    protocolo `langgraph-api`. Sin `langgraph.json` es `invalid_value`;
+    avisa de que es un servidor de desarrollo y, si falta, de que
+    `langgraph-cli` no está entre las dependencias."""
+    if framework["id"] != LANGGRAPH_JSON_FRAMEWORK or entry is None:
+        raise _without_langgraph_json(rules)
+    assistant_id = _assistant_id(index, rules, framework["entryFile"], entry)
+    dependencies = index.dependencies(language) if language is not None else {}
+    if LANGGRAPH_CLI_DEPENDENCY not in dependencies:
+        sink.add("langgraph_cli_missing")
+    sink.add("langgraph_dev_server")
+    launcher = rules["app"]["launchers"][LANGGRAPH_DEV_LAUNCHER]
+    port = AGENT_APP_INTERNAL_PORT
+    app = DetectionApp(
+        framework=framework["id"],
+        command=tuple(render(part, {"port": str(port)}) for part in launcher["command"]),
+        port=port,
+        port_env=None,
+        health_path=AGENT_LANGGRAPH_HEALTH_PATH,
+        invoke_path=None,
+        request_field=None,
+        response_field=None,
+        assistant_id=assistant_id,
+    )
+    return app, PROTOCOL_LANGGRAPH_API
+
+
 def validate_protocol_override(protocol: str | None) -> None:
     """Un `--protocol` desconocido es `invalid_value`."""
     if protocol is not None and protocol not in APP_PROTOCOLS:
@@ -231,4 +319,10 @@ def validate_protocol_override(protocol: str | None) -> None:
         )
 
 
-__all__ = ["detect_app", "validate_protocol_override"]
+__all__ = [
+    "CUSTOM_KIND",
+    "PROTOCOL_LANGGRAPH_API",
+    "detect_app",
+    "detect_langgraph_api",
+    "validate_protocol_override",
+]
