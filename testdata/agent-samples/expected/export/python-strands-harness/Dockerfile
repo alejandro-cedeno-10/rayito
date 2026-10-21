@@ -4,7 +4,7 @@
 FROM --platform=linux/arm64 python:3.12-slim-bookworm@sha256:34386ef0cb081344d7ec1c103ba398e6e9f64e9ab3a1509accc92a4e24a07258
 RUN useradd --create-home --uid 1000 --shell /bin/bash user && mkdir -p /home/user/.rayito/agent /home/user/.rayito/agent/strands && chown -R user:user /home/user/.rayito
 COPY requirements-strands-harness.txt /opt/agents/requirements-strands-harness.txt
-RUN echo 'a3714e7732bf2f32d65a10b76490757930e193123c2713004e994d44b3538d95  /opt/agents/requirements-strands-harness.txt' | sha256sum -c - && python3 -m venv /opt/agents/strands-harness && /opt/agents/strands-harness/bin/python -m pip install --no-cache-dir --require-hashes --no-deps --only-binary=:all: -r /opt/agents/requirements-strands-harness.txt && /opt/agents/strands-harness/bin/python -m pip check
+RUN echo '5a66609e6c9e66a537c4220f0f4b7a172e808bec72dda02998e933c3c512c634  /opt/agents/requirements-strands-harness.txt' | sha256sum -c - && python3 -m venv /opt/agents/strands-harness && /opt/agents/strands-harness/bin/python -m pip install --no-cache-dir --require-hashes --no-deps --only-binary=:all: -r /opt/agents/requirements-strands-harness.txt && /opt/agents/strands-harness/bin/python -m pip check
 RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates && rm -rf /var/lib/apt/lists/*
 RUN curl -fsSL --retry 3 -o /tmp/uv.tar.gz https://github.com/astral-sh/uv/releases/download/0.13.1/uv-aarch64-unknown-linux-gnu.tar.gz && echo '9041c73c99fdc5892cf128140beb354eca9231d502068cc36e6cb53a8e59ad14  /tmp/uv.tar.gz' | sha256sum -c - && mkdir -p /opt/agents/uv && tar -xzf /tmp/uv.tar.gz -C /opt/agents/uv --strip-components=1 && rm -f /tmp/uv.tar.gz
 COPY app/pyproject.toml /opt/agents/strands-harness-project/pyproject.toml

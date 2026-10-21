@@ -79,6 +79,17 @@ jobs:
           for requirements in .github/release/requirements-*.txt; do
             "$RUNNER_TEMP/pip-audit/bin/pip-audit" -r "$requirements" --no-deps --strict
           done
+      - name: pip-audit over the agent template pins (clients/python/src/rayito/_agent/_assets/requirements-*.txt)
+        # Each file is fully hash-pinned, so --disable-pip audits it as written
+        # (Hermes's is a CPython 3.14 lock that pip on 3.12 cannot dry-run).
+        # Direct URL entries (`name @ git+...`, only on Android in Hermes's
+        # lock) have no PyPI version to audit and pip-audit rejects them unhashed.
+        run: |
+          for requirements in clients/python/src/rayito/_agent/_assets/requirements-*.txt; do
+            sed '/^[A-Za-z0-9._-]* @ /d' "$requirements" > "$RUNNER_TEMP/agent-requirements.txt"
+            echo "pip-audit: $requirements"
+            "$RUNNER_TEMP/pip-audit/bin/pip-audit" -r "$RUNNER_TEMP/agent-requirements.txt" --no-deps --disable-pip --strict
+          done
 
   node:
     name: pnpm audit (prod moderate, all scopes high)
