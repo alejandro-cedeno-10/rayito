@@ -7,6 +7,9 @@ entrypoint = "graph.mjs#graph"
 adapter = "langgraph"
 package_manager = "npm"
 
+[source]
+path = "."
+
 [model]
 provider = "openai-compatible"
 gateway = "llm"

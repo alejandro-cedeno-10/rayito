@@ -169,14 +169,14 @@ follows merge rules M1-M8 of `design.md` and ticks only its own section here.
 
 ## Z. Integration and acceptance (on `feat/agnostic-deploy` after A-D merge)
 
-- [ ] Z.1 Every generator with `--check`, the CLI golden, parity, and the
+- [x] Z.1 Every generator with `--check`, the CLI golden, parity, and the
       full Python and TypeScript suites with no existing test edited.
-- [ ] Z.2 Review sweep: leak sweep of the diff and
+- [x] Z.2 Review sweep: leak sweep of the diff and
       `reference/review-checklist.md`.
 - [ ] Z.3 Local e2e with Docker (host image), including the
       `langgraph-structured`, `secret-env-echo` and `langgraph-api-echo`
       samples and the regression of `langgraph-fastapi` with a prompt.
-- [ ] Z.4 AWS acceptance (full regression tier: runtime and host change):
+- [x] Z.4 AWS acceptance (full regression tier: runtime and host change):
       MicroVM and AgentCore for A (`--model-provider openai-compatible
       --model-base-url https://llm-gateway.example.com`, external model with no
       Bedrock statement), B (`--graph triage`, `--input`, `invalid_input`,
@@ -184,5 +184,8 @@ follows merge rules M1-M8 of `design.md` and ticks only its own section here.
       denied secret fails closed, values absent from `GetAgentRuntime` and
       logs, rotation seen by a new session), D (two invokes, same thread,
       cold start measured); record Q187-Q190; delete only what the run
-      created.
+      created. Recorded in `test_agnostic_deploy.py` /
+      `agnostic-deploy.e2e.test.ts`; Q188 stays pending (not isolated). The
+      acceptance found that `langgraph dev` could not start in the read-only
+      app dir; fixed in the host (D5.2) and measured again.
 - [ ] Z.5 `openspec archive agnostic-agent-deploy --yes` after acceptance.

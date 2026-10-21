@@ -5,6 +5,9 @@ name = "openai-compatible-env"
 kind = "langgraph"
 entrypoint = "graph:build_graph"
 
+[source]
+path = "."
+
 [model]
 provider = "openai-compatible"
 gateway = "llm"

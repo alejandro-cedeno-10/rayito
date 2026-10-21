@@ -2488,27 +2488,39 @@ adicional), `State` (`MicrovmImageState`), `LatestActiveImageVersion`,
   versiones anteriores (el manejador de `update` pide
   `DeleteMicrovmImageVersion`, pero el esquema no dice cuándo lo usa).
 - **Q189 — Arranque en frío de `langgraph dev` dentro del host (MicroVM y
-  AgentCore).** **Pendiente** de la aceptación de `agnostic-agent-deploy`
-  (ADR-033 D5). Con `protocol = "langgraph-api"` el host espera a que
-  `GET /ok` conteste 200 hasta `agentLanggraphReadyWaitSeconds` (60 s,
-  provisional), y en AgentCore la primera llamada de una sesión nueva sigue
-  retenida como mucho los 25 s de Q176. Medido sólo en local (2026-10-21,
-  `langgraph-cli[inmem]` con `langgraph-api` 0.16.2 y el ejemplo
-  `testdata/agent-langgraph-api/sample/`): ≈ 8 s hasta `/ok`, y dos
-  invocaciones con la misma sesión dejaron 4 mensajes en el mismo hilo. Falta
-  medir la primera invocación en un MicroVM y en AgentCore y fijar el valor.
-  No hay parámetros de AWS nuevos: el contenedor sigue hablando `/ping` y
+  AgentCore).** **Medido 2026-10-21** (us-east-1, aceptación de
+  `agnostic-agent-deploy`, ADR-033 D5, ejemplo
+  `testdata/agent-langgraph-api/sample/` con `langgraph-cli[inmem]` y
+  `langgraph-api` 0.16.2). Primero falló en los dos destinos: `langgraph dev`
+  crea `.langgraph_api/` (el estado de `langgraph_runtime_inmem`) en su
+  directorio de trabajo al importarse, y el host lo arrancaba en el código
+  copiado, que es de `root` y de sólo lectura: `PermissionError` y
+  `warm_failed code=app_exited` en cada sesión. Además resuelve las rutas de
+  `langgraph.json` (`graphs`, `dependencies`, `env`) contra el directorio de
+  trabajo, no contra el del fichero. Arreglo (sólo con `langgraph-api` y un
+  `--config` en el comando): el host escribe en `workdir` una copia de la
+  configuración con esas rutas absolutas contra `app_dir` y arranca la app en
+  `workdir`. Con el arreglo, la primera llamada de una sesión nueva tardó
+  14,5 s en AgentCore (medida desde la CLI, con el arranque de la microVM, de
+  `langgraph dev` y la retención de Q176) y 5,4 s en un MicroVM ya caliente; una
+  segunda sesión nueva en AgentCore, 11,9 s. Dos llamadas con la misma sesión
+  van al mismo hilo y un `input` estructurado llega tal cual al grafo. Los
+  60 s de `agentLanggraphReadyWaitSeconds` bastan; no se cambian. No hay
+  parámetros de AWS nuevos: el contenedor sigue hablando `/ping` y
   `/invocations` en el puerto 8080 (`serverProtocol=HTTP`).
 - **Q190 — Un runtime de AgentCore sin permisos de Bedrock llamando a una
   pasarela externa por la red `PUBLIC` (`--external-model`, ADR-033 D2).**
-  **Pendiente** de la aceptación de `agnostic-agent-deploy` (sección Z de su
-  `tasks.md`). Qué se mide: que el rol del runtime no tiene ninguna sentencia
-  `bedrock:InvokeModel*` sin `--bedrock-model`, que `GetSecretValue` sólo
-  alcanza el ARN de `--readable-secret`, que la variable de `base_url_env`
-  llega a `environmentVariables` y ninguna clave, y que una invocación sale a
-  `https://llm-gateway.example.com` (una pasarela compatible con OpenAI de
-  prueba) por la red `PUBLIC`. No introduce ningún parámetro nuevo de la API:
-  usa los de «Despliegue en AgentCore Runtime».
+  **Medido 2026-10-21** (us-east-1, `openai-compatible-env` de Python y de
+  TypeScript con `external_model` / `externalModel`): la simulación de IAM
+  del rol del runtime deniega `bedrock:InvokeModel` sobre el modelo y el perfil
+  de inferencia de los ejemplos (el plan dice `noBedrockModels`);
+  `environmentVariables` de `GetAgentRuntime` lleva `LLM_BASE_URL` con el
+  `upstream` más `base_path` y ninguna clave; la clave llegó al código sólo por
+  `secret_env` (`LLM_API_KEY`), leída con el rol. No se midió una llamada real
+  a una pasarela externa: el grafo de prueba no llama a ningún modelo (la
+  aceptación no depende de un LLM) y `llm-gateway.example.com` no existe. No
+  introduce ningún parámetro nuevo de la API: usa los de «Despliegue en
+  AgentCore Runtime».
 
 ## Secretos como variables de entorno (`agent-secret-env`, ADR-033 D4)
 
@@ -2537,15 +2549,26 @@ de §19 (Secrets Manager).
 Preguntas abiertas, para la aceptación en AWS real:
 
 - **Q187 — `GetSecretValue` desde el rol del runtime de AgentCore.**
-  **Pendiente.** Confirmar que el rol del runtime, con la sentencia
-  `ReadSecrets` (sólo `GetSecretValue` sobre los ARNs con el sufijo
-  `-??????`), lee un secreto cifrado con `aws/secretsmanager` sin
-  `kms:Decrypt`, con `SecretId` por nombre y por ARN y con `VersionStage`; que
-  un secreto fuera de la lista da `AccessDeniedException` (el arranque falla con
-  `secret_env_denied`); y que una sesión nueva ve el valor nuevo tras
-  `PutSecretValue`.
+  **Medido 2026-10-21** (us-east-1, `secret-env-echo` con tres secretos
+  creados por la prueba y cifrados con `aws/secretsmanager`): el rol del
+  runtime, con la sentencia `ReadSecrets` (sólo `GetSecretValue` sobre los
+  ARNs con el sufijo `-??????`), leyó sin `kms:Decrypt` un secreto de texto por
+  nombre con `VersionStage=AWSCURRENT`, la clave `token` de un secreto JSON por
+  ARN y una clave de otro secreto JSON por nombre (`secret_env_from` con
+  `keys`); el agente vio los tres valores (comprobados por su resumen SHA-256)
+  y el log del runtime sólo dice `secret_env_loaded count=3`. Ningún valor
+  apareció en `environmentVariables` de `GetAgentRuntime` (sólo
+  `RAYITO_SECRET_ENV`, con nombres y ARNs), en la configuración ni en las capas
+  de la imagen de ECR, ni en el grupo de logs del runtime. La simulación de IAM
+  permite cada uno de esos ARNs y deniega otro secreto. Tras un
+  `PutSecretValue`, una sesión nueva vio el valor nuevo. Un secreto que no
+  existe en `secret_env` hace fallar el arranque en cerrado: el host deja
+  `secret_env_failed code=secret_env_denied` en el log, `invoke` lanza
+  `AgentException` y ni el mensaje ni el log nombran el secreto. Lo mismo pasó
+  con `--secret-env` y `--secret-env-from` desde la CLI de Python y de
+  TypeScript, y en MicroVMs (leídos con las credenciales de quien despliega).
 - **Q188 — Latencia de arranque de una sesión con `secret_env`.** **Pendiente.**
-  Medir cuánto añade el ayudante de botocore (arranque del intérprete y una
-  llamada por secreto) al arranque en frío de una sesión, para confirmar o
-  cambiar `agentSecretEnvHelperTimeoutSeconds` (hoy
-  15 s provisionales, `limits.json`).
+  La aceptación del 2026-10-21 no separó lo que añade el ayudante de botocore
+  (arranque del intérprete y una llamada por secreto): ningún arranque con tres
+  secretos agotó `agentSecretEnvHelperTimeoutSeconds` (15 s provisionales,
+  `limits.json`), pero falta medirlo aislado antes de fijar el valor.
