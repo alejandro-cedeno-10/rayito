@@ -498,6 +498,24 @@ def test_a_deploy_builds_once_and_starts_min_vms_with_the_resolved_token(
     assert harness.steps[1].detail == "3.0"
 
 
+def test_every_vm_and_the_warm_pool_start_the_version_the_build_chose(harness: Harness) -> None:
+    """El build puede reutilizar una versión anterior a la más reciente de la
+    imagen: los VMs y las plazas calientes arrancan esa, no la última."""
+    scaling = ScalingOptions(min_vms=2, max_vms=3, warm_vms=1)
+
+    harness.deploy(options=AgentDeployOptions(scaling=scaling))
+
+    versions = [args["template_version"] for _, args in harness.flav.classes.created]
+    assert versions[:2] == ["3.0", "3.0"]
+    assert [pool.config.template_version for pool in harness.flav.pools] == ["3.0"]
+
+
+def test_without_a_build_the_newest_active_version_is_used(harness: Harness) -> None:
+    harness.deploy(options=AgentDeployOptions(build_image=False))
+
+    assert all("template_version" not in args for _, args in harness.flav.classes.created)
+
+
 def test_a_deploy_without_a_token_makes_one_and_the_fleet_returns_it(harness: Harness) -> None:
     fleet = harness.deploy()
 
