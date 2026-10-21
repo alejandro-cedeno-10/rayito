@@ -1,0 +1,62 @@
+{
+  "schema": "rayito.agent-langgraph-api-requests/1",
+  "_comment": "Lo que el driver `http-app` con `protocol = \"langgraph-api\"` manda a `langgraph dev` (ADR-033 D5). El hilo es siempre `uuid5(namespace, session_id)`, también para la sesión `app_<hex>` que el driver crea cuando la petición no trae ninguna, así que el mismo id continúa el mismo hilo tras un reinicio de la app. `path` sale de `agentLanggraphInvokePath`. Con `prompt` la entrada es un mensaje de usuario; con `input` (cuando `Request.input` exista, D3) va tal cual.",
+  "threadNamespace": "9f31c836-3dec-4f92-9808-a4a78225e7b9",
+  "threadCases": [
+    {
+      "sessionId": "app_0123456789abcdef0123456789abcdef",
+      "threadId": "63882a65-33be-591d-ab47-cb6bb6e05a1f"
+    },
+    {
+      "sessionId": "app_fedcba9876543210fedcba9876543210",
+      "threadId": "73e588f8-0eec-5003-bc2a-a79d060957bb"
+    },
+    {
+      "sessionId": "customer-session-1",
+      "threadId": "178e9b50-7b02-5b70-b680-904e2ba5160f"
+    }
+  ],
+  "bodyCases": [
+    {
+      "name": "prompt becomes one user message",
+      "request": {
+        "prompt": "hola",
+        "sessionId": "app_0123456789abcdef0123456789abcdef"
+      },
+      "assistantId": "agent",
+      "path": "/threads/63882a65-33be-591d-ab47-cb6bb6e05a1f/runs/wait",
+      "body": {
+        "assistant_id": "agent",
+        "input": {
+          "messages": [
+            {
+              "role": "user",
+              "content": "hola"
+            }
+          ]
+        },
+        "if_not_exists": "create",
+        "multitask_strategy": "reject"
+      }
+    },
+    {
+      "name": "structured input goes as is",
+      "request": {
+        "input": {
+          "ticket_id": "T-1"
+        },
+        "sessionId": "app_fedcba9876543210fedcba9876543210"
+      },
+      "assistantId": "triage",
+      "path": "/threads/73e588f8-0eec-5003-bc2a-a79d060957bb/runs/wait",
+      "body": {
+        "assistant_id": "triage",
+        "input": {
+          "ticket_id": "T-1"
+        },
+        "if_not_exists": "create",
+        "multitask_strategy": "reject"
+      }
+    }
+  ]
+}

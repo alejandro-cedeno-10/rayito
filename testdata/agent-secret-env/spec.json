@@ -1,0 +1,69 @@
+{
+  "schema": "rayito.agent-secret-env-spec/1",
+  "_comment": "De un proyecto con `secret_env` / `secret_env_from` a la variable `RAYITO_SECRET_ENV` del runtime de AgentCore (JSON compacto con las claves ordenadas; sólo nombres y ARNs, nunca valores; `key`, `version_stage`, `prefix` vacío y `keys` nulas se omiten) y a los ARNs que se suman a `ReadableSecretArns` (únicos, primero los de `secret_env` por nombre de variable y luego los de `secret_env_from` en orden). Región `us-east-1`, cuenta `123456789012`, partición `aws`.",
+  "region": "us-east-1",
+  "account": "123456789012",
+  "cases": [
+    {
+      "name": "both tables",
+      "project": {
+        "secret_env": {
+          "OPENAI_API_KEY": {
+            "secret": "arn:aws:secretsmanager:us-east-1:123456789012:secret:llm-AbCdEf",
+            "key": "api_key"
+          },
+          "DATABASE_URL": "app/db-url"
+        },
+        "secret_env_from": [
+          {
+            "secret": "app/config",
+            "prefix": "APP_",
+            "keys": [
+              "DB_HOST",
+              "DB_USER"
+            ]
+          }
+        ],
+        "readable_secrets": []
+      },
+      "expected": {
+        "variable": "{\"env\":{\"DATABASE_URL\":{\"secret\":\"app/db-url\"},\"OPENAI_API_KEY\":{\"key\":\"api_key\",\"secret\":\"arn:aws:secretsmanager:us-east-1:123456789012:secret:llm-AbCdEf\"}},\"from\":[{\"keys\":[\"DB_HOST\",\"DB_USER\"],\"prefix\":\"APP_\",\"secret\":\"app/config\"}],\"v\":1}",
+        "readableSecretArns": [
+          "arn:aws:secretsmanager:us-east-1:123456789012:secret:app/db-url-??????",
+          "arn:aws:secretsmanager:us-east-1:123456789012:secret:llm-AbCdEf",
+          "arn:aws:secretsmanager:us-east-1:123456789012:secret:app/config-??????"
+        ]
+      }
+    },
+    {
+      "name": "union with readable_secrets keeps one copy",
+      "project": {
+        "secret_env": {
+          "DATABASE_URL": "app/db-url"
+        },
+        "secret_env_from": [],
+        "readable_secrets": [
+          "app/db-url"
+        ]
+      },
+      "expected": {
+        "variable": "{\"env\":{\"DATABASE_URL\":{\"secret\":\"app/db-url\"}},\"from\":[],\"v\":1}",
+        "readableSecretArns": [
+          "arn:aws:secretsmanager:us-east-1:123456789012:secret:app/db-url-??????"
+        ]
+      }
+    },
+    {
+      "name": "no secret env leaves the environment untouched",
+      "project": {
+        "secret_env": {},
+        "secret_env_from": [],
+        "readable_secrets": []
+      },
+      "expected": {
+        "variable": null,
+        "readableSecretArns": []
+      }
+    }
+  ]
+}

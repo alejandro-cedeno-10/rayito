@@ -1,0 +1,155 @@
+{
+  "schema": "rayito.agent-langgraph-api-responses/1",
+  "_comment": "De la respuesta de `POST /threads/{id}/runs/wait` (el estado final del grafo; su esquema está vacío en el OpenAPI) al resultado del host (ADR-033 D5). Orden: `responseField` si está puesto; si no, el `content` del último mensaje de `messages` (cadena, o la concatenación de sus bloques `type == \"text\"`); si no hay mensajes, el JSON entero (`textIsJson`). El uso sale de `usage_metadata` del último mensaje; sin él es desconocido, no cero. `__interrupt__` es `protocol_error` / `graph_interrupted`; un estado HTTP no 2xx sigue el mapeo actual `runtime_error` / `app_http_<n>`.",
+  "cases": [
+    {
+      "name": "last message text",
+      "status": 200,
+      "response": {
+        "messages": [
+          {
+            "type": "human",
+            "content": "hola"
+          },
+          {
+            "type": "ai",
+            "content": "buenas"
+          }
+        ]
+      },
+      "expected": {
+        "text": "buenas",
+        "usage": null
+      }
+    },
+    {
+      "name": "text blocks",
+      "status": 200,
+      "response": {
+        "messages": [
+          {
+            "type": "ai",
+            "content": [
+              {
+                "type": "text",
+                "text": "a"
+              },
+              {
+                "type": "tool_use",
+                "id": "t1",
+                "name": "lookup",
+                "input": {}
+              },
+              {
+                "type": "text",
+                "text": "b"
+              }
+            ]
+          }
+        ]
+      },
+      "expected": {
+        "text": "ab",
+        "usage": null
+      }
+    },
+    {
+      "name": "usage metadata",
+      "status": 200,
+      "response": {
+        "messages": [
+          {
+            "type": "ai",
+            "content": "ok",
+            "usage_metadata": {
+              "input_tokens": 10,
+              "output_tokens": 5,
+              "total_tokens": 15
+            }
+          }
+        ]
+      },
+      "expected": {
+        "text": "ok",
+        "usage": {
+          "input_tokens": 10,
+          "output_tokens": 5
+        }
+      }
+    },
+    {
+      "name": "no messages",
+      "status": 200,
+      "response": {
+        "priority": "high",
+        "summary": "printer offline"
+      },
+      "expected": {
+        "textIsJson": true,
+        "usage": null
+      }
+    },
+    {
+      "name": "response field",
+      "status": 200,
+      "responseField": "summary",
+      "response": {
+        "summary": "printer offline",
+        "messages": [
+          {
+            "type": "ai",
+            "content": "x"
+          }
+        ]
+      },
+      "expected": {
+        "text": "printer offline",
+        "usage": null
+      }
+    },
+    {
+      "name": "interrupt",
+      "status": 200,
+      "response": {
+        "messages": [],
+        "__interrupt__": [
+          {
+            "value": "approve?"
+          }
+        ]
+      },
+      "expected": {
+        "failure": {
+          "reason": "protocol_error",
+          "detail_code": "graph_interrupted"
+        }
+      }
+    },
+    {
+      "name": "unknown assistant",
+      "status": 404,
+      "response": {
+        "detail": "not found"
+      },
+      "expected": {
+        "failure": {
+          "reason": "runtime_error",
+          "detail_code": "app_http_404"
+        }
+      }
+    },
+    {
+      "name": "busy thread",
+      "status": 409,
+      "response": {
+        "detail": "busy"
+      },
+      "expected": {
+        "failure": {
+          "reason": "runtime_error",
+          "detail_code": "app_http_409"
+        }
+      }
+    }
+  ]
+}

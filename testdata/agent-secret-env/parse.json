@@ -1,0 +1,153 @@
+{
+  "schema": "rayito.agent-secret-env-parse/1",
+  "_comment": "Cómo se leen `--secret-env NOMBRE=<id>[#clave]`, `--secret-env-from <id>[,prefix=P][,keys=A|B]` y las tablas `[secret_env]` / `[[secret_env_from]]` (ADR-033 D4). `<id>` es un nombre completo de Secrets Manager (sin el prefijo `rayito/`) o un ARN; `#` separa la clave JSON porque Secrets Manager no lo admite en nombres ni ARNs. Un error es `AgentProjectException` / `AgentProjectError` con `code` y `path`.",
+  "flagCases": [
+    {
+      "flag": "--secret-env",
+      "value": "DATABASE_URL=app/db-url",
+      "expected": {
+        "name": "DATABASE_URL",
+        "ref": {
+          "secret": "app/db-url"
+        }
+      }
+    },
+    {
+      "flag": "--secret-env",
+      "value": "OPENAI_API_KEY=arn:aws:secretsmanager:us-east-1:123456789012:secret:llm-AbCdEf#api_key",
+      "expected": {
+        "name": "OPENAI_API_KEY",
+        "ref": {
+          "secret": "arn:aws:secretsmanager:us-east-1:123456789012:secret:llm-AbCdEf",
+          "key": "api_key"
+        }
+      }
+    },
+    {
+      "flag": "--secret-env",
+      "value": "=app/db-url",
+      "error": {
+        "code": "invalid_value",
+        "path": "secret_env"
+      }
+    },
+    {
+      "flag": "--secret-env",
+      "value": "DATABASE_URL=",
+      "error": {
+        "code": "invalid_value",
+        "path": "secret_env.DATABASE_URL"
+      }
+    },
+    {
+      "flag": "--secret-env",
+      "value": "DATABASE_URL=app/db-url#",
+      "error": {
+        "code": "invalid_value",
+        "path": "secret_env.DATABASE_URL"
+      }
+    },
+    {
+      "flag": "--secret-env",
+      "value": "DATABASE_URL=app db",
+      "error": {
+        "code": "invalid_value",
+        "path": "secret_env.DATABASE_URL"
+      }
+    },
+    {
+      "flag": "--secret-env",
+      "value": "OPENAI_API_KEY=sk-not-a-name",
+      "error": {
+        "code": "secret_value",
+        "path": "secret_env.OPENAI_API_KEY"
+      }
+    },
+    {
+      "flag": "--secret-env",
+      "value": "PATH=app/path",
+      "error": {
+        "code": "invalid_value",
+        "path": "secret_env.PATH"
+      }
+    },
+    {
+      "flag": "--secret-env-from",
+      "value": "app/config",
+      "expected": {
+        "secret": "app/config",
+        "prefix": "",
+        "keys": null
+      }
+    },
+    {
+      "flag": "--secret-env-from",
+      "value": "app/config,prefix=APP_,keys=DB_HOST|DB_USER",
+      "expected": {
+        "secret": "app/config",
+        "prefix": "APP_",
+        "keys": [
+          "DB_HOST",
+          "DB_USER"
+        ]
+      }
+    },
+    {
+      "flag": "--secret-env-from",
+      "value": "app/config,colour=blue",
+      "error": {
+        "code": "invalid_value",
+        "path": "secret_env_from[0]"
+      }
+    },
+    {
+      "flag": "--secret-env-from",
+      "value": "app/config,prefix=AWS_",
+      "error": {
+        "code": "invalid_value",
+        "path": "secret_env_from[0].prefix"
+      }
+    }
+  ],
+  "tableCases": [
+    {
+      "name": "both tables",
+      "toml": "[secret_env]\nDATABASE_URL = \"app/db-url\"\nOPENAI_API_KEY = { secret = \"arn:aws:secretsmanager:us-east-1:123456789012:secret:llm-AbCdEf\", key = \"api_key\" }\n\n[[secret_env_from]]\nsecret = \"app/config\"\nprefix = \"APP_\"\nkeys = [\"DB_HOST\", \"DB_USER\"]\n",
+      "expected": {
+        "secret_env": {
+          "DATABASE_URL": "app/db-url",
+          "OPENAI_API_KEY": {
+            "secret": "arn:aws:secretsmanager:us-east-1:123456789012:secret:llm-AbCdEf",
+            "key": "api_key"
+          }
+        },
+        "secret_env_from": [
+          {
+            "secret": "app/config",
+            "prefix": "APP_",
+            "keys": [
+              "DB_HOST",
+              "DB_USER"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "same name in env and secret_env",
+      "toml": "[env]\nDATABASE_URL = \"postgres://db.internal.example/app\"\n\n[secret_env]\nDATABASE_URL = \"app/db-url\"\n",
+      "error": {
+        "code": "conflict",
+        "path": "secret_env.DATABASE_URL"
+      }
+    },
+    {
+      "name": "unknown key in a reference",
+      "toml": "[secret_env]\nDATABASE_URL = { secret = \"app/db-url\", stage = \"AWSCURRENT\" }\n",
+      "error": {
+        "code": "unknown_key",
+        "path": "secret_env.DATABASE_URL.stage"
+      }
+    }
+  ]
+}

@@ -1,0 +1,122 @@
+{
+  "schema": "rayito.agent-secret-env-expand/1",
+  "_comment": "Del valor de un secreto (`SecretString`) a variables de entorno, la misma función en el host (AgentCore), en el SDK (MicroVM) y en los dos SDK (ADR-033 D4). `refCases`: una referencia de `secret_env`; sin `key` el valor es la cadena entera; con `key` el secreto debe ser un objeto JSON con esa clave de tipo cadena. `sourceCases`: un `secret_env_from`; el secreto debe ser un objeto JSON de cadenas; cada clave (con el prefijo) debe ser un nombre de variable válido y no reservado; con `keys` sólo se toman ésas y deben existir todas. Nunca se descarta una clave en silencio. Los errores son los `detail_code` del host; ningún mensaje lleva el nombre del secreto ni su valor.",
+  "refCases": [
+    {
+      "name": "whole string",
+      "ref": {
+        "secret": "app/db-url"
+      },
+      "secretString": "postgres://db.internal.example/app",
+      "expected": "postgres://db.internal.example/app"
+    },
+    {
+      "name": "json key",
+      "ref": {
+        "secret": "llm",
+        "key": "api_key"
+      },
+      "secretString": "{\"api_key\":\"demo-value\",\"org\":\"demo\"}",
+      "expected": "demo-value"
+    },
+    {
+      "name": "key on a plain string",
+      "ref": {
+        "secret": "app/db-url",
+        "key": "url"
+      },
+      "secretString": "postgres://db.internal.example/app",
+      "error": "secret_env_invalid"
+    },
+    {
+      "name": "missing key",
+      "ref": {
+        "secret": "llm",
+        "key": "api_key"
+      },
+      "secretString": "{\"org\":\"demo\"}",
+      "error": "secret_env_invalid_key"
+    },
+    {
+      "name": "non-string value",
+      "ref": {
+        "secret": "llm",
+        "key": "port"
+      },
+      "secretString": "{\"port\":5432}",
+      "error": "secret_env_invalid"
+    }
+  ],
+  "sourceCases": [
+    {
+      "name": "all keys",
+      "source": {
+        "secret": "app/config"
+      },
+      "secretString": "{\"DB_HOST\":\"db.internal.example\",\"DB_USER\":\"app\"}",
+      "expected": {
+        "DB_HOST": "db.internal.example",
+        "DB_USER": "app"
+      }
+    },
+    {
+      "name": "prefix",
+      "source": {
+        "secret": "app/config",
+        "prefix": "APP_"
+      },
+      "secretString": "{\"DB_HOST\":\"db.internal.example\"}",
+      "expected": {
+        "APP_DB_HOST": "db.internal.example"
+      }
+    },
+    {
+      "name": "allowlist",
+      "source": {
+        "secret": "app/config",
+        "keys": [
+          "DB_HOST"
+        ]
+      },
+      "secretString": "{\"DB_HOST\":\"db.internal.example\",\"DB_USER\":\"app\"}",
+      "expected": {
+        "DB_HOST": "db.internal.example"
+      }
+    },
+    {
+      "name": "allowlisted key missing",
+      "source": {
+        "secret": "app/config",
+        "keys": [
+          "DB_PASSWORD"
+        ]
+      },
+      "secretString": "{\"DB_HOST\":\"db.internal.example\"}",
+      "error": "secret_env_invalid_key"
+    },
+    {
+      "name": "invalid variable name",
+      "source": {
+        "secret": "app/config"
+      },
+      "secretString": "{\"db-host\":\"db.internal.example\"}",
+      "error": "secret_env_invalid_key"
+    },
+    {
+      "name": "reserved name",
+      "source": {
+        "secret": "app/config"
+      },
+      "secretString": "{\"PATH\":\"/tmp\"}",
+      "error": "secret_env_reserved"
+    },
+    {
+      "name": "not a json object",
+      "source": {
+        "secret": "app/config"
+      },
+      "secretString": "plain",
+      "error": "secret_env_invalid"
+    }
+  ]
+}

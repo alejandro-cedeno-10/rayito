@@ -1,0 +1,153 @@
+{
+  "schema": "rayito.agent-invocation-bodies/1",
+  "_comment": "El cuerpo de `POST /invocations` que construyen `invocation_body` / `invocationBody` (ADR-033 D3): exactamente uno de `prompt` (cadena no vacía) o `input` (objeto JSON); el resto, sólo si se pidió. `body` es la cadena JSON compacta exacta (separadores sin espacios, UTF-8 sin escapar). Un error es `InvalidArgumentException` / `InvalidArgumentError` con el texto de `messages[messageKey]`, antes de cualquier llamada. `inputGenerator` describe una entrada demasiado grande sin escribirla: un objeto con una clave `key` cuyo valor es `char` repetido `length` veces. `hostCases` los evalúa `parse_invocation` del host: `accepted` o `400 invalid_request`. `resultCases` los lee `result_from_body` / `resultFromBody`.",
+  "maxRequestBytesLimit": "agentServiceMaxRequestBytes",
+  "messages": {
+    "prompt_or_input": "pasa prompt o input, uno de los dos",
+    "input_not_object": "input debe ser un objeto JSON",
+    "input_too_large": "input no cabe en una petición ({maxBytes} bytes como mucho)",
+    "host_too_old": "el agente desplegado no acepta input: vuelve a desplegarlo con esta versión de Rayito"
+  },
+  "cases": [
+    {
+      "name": "prompt only",
+      "args": {
+        "prompt": "hola"
+      },
+      "body": "{\"prompt\":\"hola\"}"
+    },
+    {
+      "name": "prompt with session and reasoning",
+      "args": {
+        "prompt": "hola",
+        "sessionId": "rda_0123456789abcdef0123456789abcdef",
+        "reasoning": true
+      },
+      "body": "{\"prompt\":\"hola\",\"session_id\":\"rda_0123456789abcdef0123456789abcdef\",\"reasoning\":true}"
+    },
+    {
+      "name": "input only",
+      "args": {
+        "input": {
+          "ticket_id": "T-1"
+        }
+      },
+      "body": "{\"input\":{\"ticket_id\":\"T-1\"}}"
+    },
+    {
+      "name": "input with session and model",
+      "args": {
+        "input": {
+          "ticket_id": "T-1"
+        },
+        "sessionId": "rda_0123456789abcdef0123456789abcdef",
+        "model": "demo-model"
+      },
+      "body": "{\"input\":{\"ticket_id\":\"T-1\"},\"session_id\":\"rda_0123456789abcdef0123456789abcdef\",\"model\":\"demo-model\"}"
+    },
+    {
+      "name": "prompt and input",
+      "args": {
+        "prompt": "hola",
+        "input": {
+          "ticket_id": "T-1"
+        }
+      },
+      "error": {
+        "messageKey": "prompt_or_input"
+      }
+    },
+    {
+      "name": "neither",
+      "args": {},
+      "error": {
+        "messageKey": "prompt_or_input"
+      }
+    },
+    {
+      "name": "input is a list",
+      "args": {
+        "input": [
+          "T-1"
+        ]
+      },
+      "error": {
+        "messageKey": "input_not_object"
+      }
+    },
+    {
+      "name": "input too large",
+      "args": {
+        "inputGenerator": {
+          "key": "blob",
+          "char": "x",
+          "length": 1048576
+        }
+      },
+      "error": {
+        "messageKey": "input_too_large",
+        "fields": {
+          "maxBytes": 1048576
+        }
+      }
+    }
+  ],
+  "hostCases": [
+    {
+      "name": "prompt",
+      "body": "{\"prompt\":\"hola\"}",
+      "expected": "accepted"
+    },
+    {
+      "name": "input",
+      "body": "{\"input\":{\"ticket_id\":\"T-1\"}}",
+      "expected": "accepted"
+    },
+    {
+      "name": "prompt and input",
+      "body": "{\"prompt\":\"hola\",\"input\":{}}",
+      "expected": "invalid_request"
+    },
+    {
+      "name": "input is not an object",
+      "body": "{\"input\":[\"T-1\"]}",
+      "expected": "invalid_request"
+    },
+    {
+      "name": "empty body object",
+      "body": "{}",
+      "expected": "invalid_request"
+    },
+    {
+      "name": "unknown key stays invalid",
+      "body": "{\"prompt\":\"hola\",\"extra\":1}",
+      "expected": "invalid_request"
+    }
+  ],
+  "resultCases": [
+    {
+      "name": "no output key",
+      "body": "{\"v\":1,\"text\":\"hola\",\"session_id\":\"rda_0123456789abcdef0123456789abcdef\",\"usage\":{\"input_tokens\":1,\"output_tokens\":1},\"steps\":1,\"failed\":null}",
+      "expected": {
+        "text": "hola",
+        "output": null
+      }
+    },
+    {
+      "name": "structured output",
+      "body": "{\"v\":1,\"text\":\"\",\"session_id\":\"rda_0123456789abcdef0123456789abcdef\",\"usage\":{\"input_tokens\":0,\"output_tokens\":0},\"usage_reported\":false,\"steps\":2,\"failed\":null,\"output\":{\"priority\":\"high\",\"summary\":\"printer offline\"}}",
+      "expected": {
+        "text": "",
+        "output": {
+          "priority": "high",
+          "summary": "printer offline"
+        }
+      }
+    }
+  ],
+  "detailCodes": {
+    "input_required": "este grafo espera input (un objeto JSON), no un prompt",
+    "invalid_input": "input no cumple el esquema de entrada del grafo",
+    "output_not_serializable": "la salida del grafo no se puede convertir a JSON"
+  }
+}
