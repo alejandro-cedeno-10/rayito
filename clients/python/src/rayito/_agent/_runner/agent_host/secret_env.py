@@ -19,8 +19,11 @@ estándar y nada de `rayito`.
 from __future__ import annotations
 
 import json
+import os
 import re
+import selectors
 import subprocess
+import time
 from collections.abc import Callable, Collection, Mapping, MutableMapping, Sequence
 from typing import Any, Final
 
@@ -64,6 +67,15 @@ HELPER_EXIT_CODES: Final[Mapping[int, str]] = {
     HELPER_EXIT_INVALID: INVALID,
 }
 ENV_NAME_PATTERN: Final = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+#: Argumento con el que la herramienta recibe el número del descriptor por el
+#: que devuelve los valores. Su stdout y su stderr van a `/dev/null`: un valor
+#: nunca pasa por la salida estándar de un proceso (`aws_secret_env.py`,
+#: `VALUES_FD_ARGUMENT`).
+VALUES_FD_ARGUMENT: Final = "--values-fd"
+#: Bytes que se leen de una vez del descriptor de los valores.
+READ_CHUNK_BYTES: Final = 65536
+#: Marca de un documento que no es JSON (`_json_or_invalid`).
+_NOT_JSON: Final = object()
 
 #: Un secreto pedido a Secrets Manager: su nombre o ARN y la etiqueta de
 #: versión (`None` es `AWSCURRENT`).
@@ -86,11 +98,19 @@ def is_reserved(name: str, extra: Collection[str] = ()) -> bool:
     return name in RESERVED_NAMES or name.startswith(RESERVED_PREFIXES) or name in extra
 
 
-def _json_object(secret_string: str) -> dict[str, Any]:
+def _json_or_invalid(text: str | bytes) -> object:
+    """`text` decodificado como JSON, o `_NOT_JSON`. El error de `json` lleva
+    el documento entero (`JSONDecodeError.doc`, un valor de secreto); se
+    descarta aquí para que ninguna excepción posterior lo tenga en su
+    `__context__`."""
     try:
-        document = json.loads(secret_string)
+        return json.loads(text)
     except ValueError:
-        raise SecretEnvError(INVALID) from None
+        return _NOT_JSON
+
+
+def _json_object(secret_string: str) -> dict[str, Any]:
+    document = _json_or_invalid(secret_string)
     if not isinstance(document, dict):
         raise SecretEnvError(INVALID)
     return document
@@ -162,10 +182,7 @@ def _valid_source(source: object) -> bool:
 
 def parse_spec(text: str) -> dict[str, Any]:
     """El documento de `RAYITO_SECRET_ENV` validado, o `INVALID`."""
-    try:
-        spec = json.loads(text)
-    except ValueError:
-        raise SecretEnvError(INVALID) from None
+    spec = _json_or_invalid(text)
     valid = (
         isinstance(spec, dict)
         and spec.get("v") == SPEC_VERSION
@@ -174,7 +191,7 @@ def parse_spec(text: str) -> dict[str, Any]:
         and all(_valid_reference(reference) for reference in spec["env"].values())
         and all(_valid_source(source) for source in spec["from"])
     )
-    if not valid:
+    if not valid or not isinstance(spec, dict):
         raise SecretEnvError(INVALID)
     return dict(spec)
 
@@ -220,8 +237,10 @@ def expand_spec(
 
 
 class SecretEnvHelper:
-    """Ejecuta `python script` con las peticiones por stdin y lee los
-    valores por stdout, en el mismo orden. Nunca lee ni guarda su stderr."""
+    """Ejecuta `python script VALUES_FD_ARGUMENT <fd>` con las peticiones por
+    stdin y lee los valores, en el mismo orden, del extremo de lectura de un
+    `os.pipe()` cuyo extremo de escritura sólo hereda la herramienta. Su
+    stdout y su stderr van a `/dev/null`: nunca se leen ni se guardan."""
 
     def __init__(
         self,
@@ -229,27 +248,89 @@ class SecretEnvHelper:
         script: str,
         *,
         timeout_seconds: float = HELPER_TIMEOUT_SECONDS,
-        run: Callable[..., Any] = subprocess.run,
     ) -> None:
         self._argv = [python, script]
         self._timeout_seconds = timeout_seconds
-        self._run = run
 
     def __call__(self, requests: Sequence[SecretRequest]) -> Sequence[str]:
         payload = json.dumps({"secrets": [_request_document(item) for item in requests]})
+        outcome = _run_helper(self._argv, payload.encode("utf-8"), self._timeout_seconds)
+        if outcome is None:
+            raise SecretEnvError(UNAVAILABLE)
+        returncode, output = outcome
+        if returncode != 0:
+            raise SecretEnvError(HELPER_EXIT_CODES.get(returncode, UNAVAILABLE))
+        return _helper_values(output, len(requests))
+
+
+def _run_helper(
+    argv: Sequence[str], payload: bytes, timeout_seconds: float
+) -> tuple[int, bytes] | None:
+    """El código de salida de la herramienta y lo que escribió en su
+    descriptor, o `None` si no arrancó, no terminó en `timeout_seconds` (que
+    cubre la lectura y la espera) o falló la tubería. El fallo se devuelve,
+    no se lanza, para que ningún error posterior arrastre estos bytes."""
+    deadline = time.monotonic() + timeout_seconds
+    read_fd, write_fd = os.pipe()
+    try:
+        return _exchange(argv, payload, read_fd, write_fd, deadline)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    finally:
+        os.close(read_fd)
+
+
+def _exchange(
+    argv: Sequence[str], payload: bytes, read_fd: int, write_fd: int, deadline: float
+) -> tuple[int, bytes]:
+    try:
+        process = subprocess.Popen(
+            [*argv, VALUES_FD_ARGUMENT, str(write_fd)],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            pass_fds=(write_fd,),
+        )
+    finally:
+        os.close(write_fd)
+    with process:
         try:
-            completed = self._run(
-                self._argv,
-                input=payload.encode("utf-8"),
-                capture_output=True,
-                timeout=self._timeout_seconds,
-                check=False,
-            )
-        except (OSError, subprocess.SubprocessError):
-            raise SecretEnvError(UNAVAILABLE) from None
-        if completed.returncode != 0:
-            raise SecretEnvError(HELPER_EXIT_CODES.get(completed.returncode, UNAVAILABLE))
-        return _helper_values(completed.stdout, len(requests))
+            _send(process, payload)
+            output = _read_until_eof(read_fd, deadline)
+            returncode = process.wait(timeout=max(0.0, deadline - time.monotonic()))
+        except BaseException:
+            process.kill()
+            raise
+    return returncode, output
+
+
+def _send(process: subprocess.Popen[bytes], payload: bytes) -> None:
+    """Manda las peticiones y cierra stdin. Una herramienta que ya salió
+    (tubería rota) se juzga por su código de salida, como `communicate`."""
+    stdin = process.stdin
+    if stdin is None:
+        return
+    try:
+        stdin.write(payload)
+        stdin.close()
+    except BrokenPipeError:
+        pass
+
+
+def _read_until_eof(fd: int, deadline: float) -> bytes:
+    """Todo lo que llega por `fd` hasta que la herramienta cierra su extremo,
+    o `subprocess.TimeoutExpired` si vence `deadline` antes."""
+    chunks: list[bytes] = []
+    with selectors.DefaultSelector() as selector:
+        selector.register(fd, selectors.EVENT_READ)
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0 or not selector.select(remaining):
+                raise subprocess.TimeoutExpired(VALUES_FD_ARGUMENT, 0)
+            chunk = os.read(fd, READ_CHUNK_BYTES)
+            if not chunk:
+                return b"".join(chunks)
+            chunks.append(chunk)
 
 
 def _request_document(request: SecretRequest) -> dict[str, str]:
@@ -258,10 +339,7 @@ def _request_document(request: SecretRequest) -> dict[str, str]:
 
 
 def _helper_values(output: bytes, expected: int) -> list[str]:
-    try:
-        document = json.loads(output)
-    except ValueError:
-        raise SecretEnvError(UNAVAILABLE) from None
+    document = _json_or_invalid(output)
     values = document.get("values") if isinstance(document, dict) else None
     if (
         not isinstance(values, list)

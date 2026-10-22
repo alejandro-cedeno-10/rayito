@@ -14,7 +14,6 @@ import io
 import json
 import logging
 import os
-import subprocess
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -47,14 +46,26 @@ SPEC = json.dumps(
 TOKEN_JSON = json.dumps({"token": "x"})
 VALUES = [DATABASE_URL, json.dumps({"token": SHORT_VALUE}), json.dumps({"MODE": "demo"})]
 HELPER_TEMPLATE = """
-import json, sys
+import json, os, sys
+assert sys.argv[1] == {flag!r}
+fd = int(sys.argv[2])
 request = json.load(sys.stdin)
 with open({log!r}, "w") as log:
     json.dump(request, log)
+sys.stdout.write("STDOUT-CANARY")
 code = {code}
 if code:
     sys.exit(code)
-sys.stdout.write(json.dumps({{"values": {values!r}}}))
+os.write(fd, json.dumps({{"values": {values!r}}}).encode())
+"""
+RAW_HELPER_TEMPLATE = """
+import os, sys, time
+fd = int(sys.argv[2])
+sys.stdin.read()
+time.sleep({sleep})
+os.write(fd, {output!r})
+os.close(fd)
+sys.exit({code})
 """
 
 
@@ -62,7 +73,10 @@ def _helper(tmp_path: Path, *, code: int = 0, values: list[str] | None = None) -
     script = tmp_path / "fake_secret_env.py"
     script.write_text(
         HELPER_TEMPLATE.format(
-            log=str(tmp_path / "requests.json"), code=code, values=values or VALUES
+            flag=host.VALUES_FD_ARGUMENT,
+            log=str(tmp_path / "requests.json"),
+            code=code,
+            values=values or VALUES,
         ),
         encoding="utf-8",
     )
@@ -250,29 +264,84 @@ def test_without_the_spec_the_host_starts_as_before(
     assert "DATABASE_URL" not in seen
 
 
-def test_the_helper_timeout_is_unavailable() -> None:
-    def run(*args: Any, **kwargs: Any) -> Any:
-        assert kwargs["timeout"] == host.HELPER_TIMEOUT_SECONDS
-        raise subprocess.TimeoutExpired("helper", host.HELPER_TIMEOUT_SECONDS)
+def _raw_helper(
+    tmp_path: Path, output: bytes, *, code: int = 0, sleep: float = 0, timeout: float = 5
+) -> host.SecretEnvHelper:
+    script = tmp_path / "raw_secret_env.py"
+    script.write_text(
+        RAW_HELPER_TEMPLATE.format(output=output, code=code, sleep=sleep), encoding="utf-8"
+    )
+    return host.SecretEnvHelper(sys.executable, str(script), timeout_seconds=timeout)
 
-    helper = host.SecretEnvHelper("python", "script", run=run)
+
+def test_the_helper_timeout_is_unavailable(tmp_path: Path) -> None:
+    helper = _raw_helper(tmp_path, b'{"values": ["a"]}', sleep=30, timeout=0.5)
     with pytest.raises(host.SecretEnvError) as raised:
         helper([("app/db-url", None)])
     assert raised.value.detail_code == host.UNAVAILABLE
+    assert raised.value.__context__ is None
 
 
-def test_the_helper_sends_the_version_stage_only_when_set() -> None:
-    sent: list[bytes] = []
-
-    def run(argv: list[str], **kwargs: Any) -> Any:
-        sent.append(kwargs["input"])
-        return subprocess.CompletedProcess(argv, 0, stdout=b'{"values": ["a", "b"]}')
-
-    helper = host.SecretEnvHelper("python", "script", run=run)
+def test_the_helper_sends_the_version_stage_only_when_set(tmp_path: Path) -> None:
+    script = _helper(tmp_path, values=["a", "b"])
+    helper = host.SecretEnvHelper(sys.executable, str(script))
     assert helper([("one", None), ("two", "AWSPREVIOUS")]) == ["a", "b"]
-    assert json.loads(sent[0]) == {
+    assert json.loads((tmp_path / "requests.json").read_text(encoding="utf-8")) == {
         "secrets": [{"secret": "one"}, {"secret": "two", "version_stage": "AWSPREVIOUS"}]
     }
+
+
+def test_the_helper_values_come_from_the_pipe_never_from_stdout(
+    tmp_path: Path, capfd: pytest.CaptureFixture[str]
+) -> None:
+    helper = host.SecretEnvHelper(sys.executable, str(_helper(tmp_path, values=["a"])))
+    assert helper([("one", None)]) == ["a"]
+    captured = capfd.readouterr()
+    assert "STDOUT-CANARY" not in captured.out + captured.err
+
+
+def test_a_large_answer_is_read_whole(tmp_path: Path) -> None:
+    value = "v" * (host.READ_CHUNK_BYTES * 3)
+    helper = _raw_helper(tmp_path, json.dumps({"values": [value]}).encode())
+    assert helper([("one", None)]) == [value]
+
+
+@pytest.mark.parametrize(
+    ("output", "code", "detail_code"),
+    [
+        (b'{"values": ["a"]}', host.HELPER_EXIT_DENIED, host.DENIED),
+        (b'{"values": ["a"]}', 7, host.UNAVAILABLE),
+        (b"not json " + SHORT_VALUE.encode(), 0, host.UNAVAILABLE),
+        (b'{"values": ["a", "b"', 0, host.UNAVAILABLE),
+        (b'{"values": []}', 0, host.UNAVAILABLE),
+        (b"", 0, host.UNAVAILABLE),
+    ],
+    ids=["exit-denied", "exit-other", "bad-json", "short-write", "fewer-values", "no-write"],
+)
+def test_a_bad_helper_answer_is_closed_and_keeps_no_bytes(
+    tmp_path: Path, output: bytes, code: int, detail_code: str
+) -> None:
+    helper = _raw_helper(tmp_path, output, code=code)
+    with pytest.raises(host.SecretEnvError) as raised:
+        helper([("one", None)])
+    assert raised.value.detail_code == detail_code
+    assert raised.value.__context__ is None
+    assert raised.value.__cause__ is None
+
+
+def test_a_helper_that_cannot_start_is_unavailable(tmp_path: Path) -> None:
+    helper = host.SecretEnvHelper(str(tmp_path / "missing-python"), "script")
+    with pytest.raises(host.SecretEnvError) as raised:
+        helper([("one", None)])
+    assert raised.value.detail_code == host.UNAVAILABLE
+    assert raised.value.__context__ is None
+
+
+def test_a_secret_that_is_not_json_leaves_no_context() -> None:
+    with pytest.raises(host.SecretEnvError) as raised:
+        host.expand_reference({"secret": "app/x", "key": "token"}, "plain " + SHORT_VALUE)
+    assert raised.value.detail_code == host.INVALID
+    assert raised.value.__context__ is None
 
 
 def test_the_host_reads_its_config_key_defensively() -> None:
@@ -289,6 +358,32 @@ def test_extra_values_are_redacted_down_to_the_limit() -> None:
     assert "abcd" not in cleaned
     assert "xyz" in cleaned
     assert diagnostics.sanitize_diagnostics(text, {}) == text
+
+
+PEM_CRLF = "-----BEGIN KEY-----\r\nMIIBOgIBAAJBAKj34\r\nGkxFhD90vcNLYLInFEX6\r\n-----END KEY-----"
+
+
+@pytest.mark.parametrize(
+    ("value", "environ"),
+    [
+        (PEM_CRLF, False),
+        (PEM_CRLF, True),
+        ("tok\x01en-" + SHORT_VALUE, False),
+        ("tok\x01en-" + SHORT_VALUE, True),
+        ("ab\rcd", False),
+    ],
+    ids=["pem-crlf-extra", "pem-crlf-env", "control-extra", "control-env", "lone-cr-extra"],
+)
+def test_a_value_with_crlf_or_control_characters_is_redacted(value: str, environ: bool) -> None:
+    text = f"arranque fallido: {value} fin"
+    if environ:
+        cleaned = diagnostics.sanitize_diagnostics(text, {"APP_SECRET_MATERIAL": value})
+    else:
+        cleaned = diagnostics.sanitize_diagnostics(text, {}, (value,))
+    normalized = value.replace("\r\n", "\n").replace("\r", "\n").replace("\x01", "")
+    assert normalized not in cleaned
+    assert diagnostics.REDACTED in cleaned
+    assert cleaned.startswith("arranque fallido:") and cleaned.endswith("fin")
 
 
 def test_the_contract_names_the_host_key_and_the_helper() -> None:
@@ -367,17 +462,30 @@ def _request(*items: dict[str, str]) -> io.StringIO:
     return io.StringIO(json.dumps({"secrets": list(items)}))
 
 
+def _main(module: ModuleType, stdin: io.StringIO) -> tuple[int, bytes]:
+    """`main` con el extremo de escritura de una tubería real: el código de
+    salida y lo que escribió. `main` cierra su descriptor siempre."""
+    read_fd, write_fd = os.pipe()
+    try:
+        code = module.main(stdin, write_fd)
+        with os.fdopen(read_fd, "rb") as reader:
+            read_fd = -1
+            return code, reader.read()
+    finally:
+        if read_fd >= 0:
+            os.close(read_fd)
+
+
 def test_the_script_reads_each_secret_with_only_the_documented_parameters(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     client = _Client({"one": {"SecretString": "a"}, "two": {"SecretString": "b"}}, None)
     module = _script(tmp_path, monkeypatch, client)
-    out = io.StringIO()
-    code = module.main(
-        _request({"secret": "one"}, {"secret": "two", "version_stage": "AWSPREVIOUS"}), out
+    code, written = _main(
+        module, _request({"secret": "one"}, {"secret": "two", "version_stage": "AWSPREVIOUS"})
     )
     assert code == module.EXIT_OK
-    assert json.loads(out.getvalue()) == {"values": ["a", "b"]}
+    assert json.loads(written) == {"values": ["a", "b"]}
     assert client.calls == [
         {"SecretId": "one"},
         {"SecretId": "two", "VersionStage": "AWSPREVIOUS"},
@@ -404,10 +512,9 @@ def test_the_script_exit_codes_are_the_hosts(
     expected: int,
 ) -> None:
     module = _script(tmp_path, monkeypatch, _Client(values, error))
-    out = io.StringIO()
-    assert module.main(_request({"secret": "one"}), out) == expected
-    assert out.getvalue() == ""
+    assert _main(module, _request({"secret": "one"})) == (expected, b"")
     captured = capsys.readouterr()
+    assert captured.out == ""
     assert "one" not in captured.err and "app/db-url" not in captured.err
 
 
@@ -415,7 +522,35 @@ def test_the_script_refuses_a_malformed_request(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     module = _script(tmp_path, monkeypatch, _Client({}, None))
-    assert module.main(io.StringIO("{"), io.StringIO()) == host.HELPER_EXIT_INVALID
-    assert module.main(io.StringIO('{"secrets": [1]}'), io.StringIO()) == host.HELPER_EXIT_INVALID
+    assert _main(module, io.StringIO("{")) == (host.HELPER_EXIT_INVALID, b"")
+    assert _main(module, io.StringIO('{"secrets": [1]}')) == (host.HELPER_EXIT_INVALID, b"")
     assert module.EXIT_DENIED == host.HELPER_EXIT_DENIED
     assert module.EXIT_INVALID == host.HELPER_EXIT_INVALID
+
+
+def test_the_script_takes_its_descriptor_from_the_host_flag_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _script(tmp_path, monkeypatch, _Client({}, None))
+    assert module.VALUES_FD_ARGUMENT == host.VALUES_FD_ARGUMENT
+    assert module.values_fd([host.VALUES_FD_ARGUMENT, "5"]) == 5
+    assert module.values_fd([]) is None
+    assert module.values_fd(["--other", "5"]) is None
+    assert module.values_fd([host.VALUES_FD_ARGUMENT, "-1"]) is None
+    assert module.run([]) == module.EXIT_UNAVAILABLE
+
+
+def test_the_script_never_writes_to_stdout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    client = _Client({"one": {"SecretString": "value-" + SHORT_VALUE}}, None)
+    module = _script(tmp_path, monkeypatch, client)
+    code, written = _main(module, _request({"secret": "one"}))
+    assert code == module.EXIT_OK
+    assert SHORT_VALUE in written.decode()
+    assert capsys.readouterr().out == ""
+
+
+def test_the_script_does_not_use_stdout() -> None:
+    source = asset_bytes(SCRIPT_NAME).decode("utf-8")
+    assert "stdout" not in source.split('"""', 2)[2]

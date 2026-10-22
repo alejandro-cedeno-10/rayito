@@ -188,6 +188,12 @@ export function usesSecretEnv(
   return Object.keys(secretEnv).length > 0 || secretEnvFrom.length > 0;
 }
 
+/** Un mapa sin prototipo: una clave `__proto__` (un nombre de variable válido)
+ * es una entrada más, como en un `dict` de Python, y no cambia el prototipo. */
+function bareRecord<T>(): Record<string, T> {
+  return Object.create(null) as Record<string, T>;
+}
+
 function byName(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;
 }
@@ -225,7 +231,7 @@ export function specDocument(
   if (!usesSecretEnv(secretEnv, secretEnvFrom)) {
     return undefined;
   }
-  const env: Record<string, Record<string, string>> = {};
+  const env = bareRecord<Record<string, string>>();
   for (const name of Object.keys(secretEnv).sort(byName)) {
     env[name] = referenceDocument(referenceOf(secretEnv[name] as SecretEnvValue));
   }
@@ -365,7 +371,7 @@ export function expandSource(
   const keys = source.keys as readonly string[] | undefined | null;
   const chosen = keys === undefined || keys === null ? document : allowListed(document, keys);
   const prefix = (source.prefix as string | undefined) ?? "";
-  const variables: Record<string, string> = {};
+  const variables = bareRecord<string>();
   for (const [key, value] of Object.entries(chosen)) {
     const name = `${prefix}${key}`;
     if (!SECRET_ENV_NAME_PATTERN.test(name)) {
@@ -423,7 +429,7 @@ export function expandSpec(
 ): Record<string, string> {
   const secretValueOf = (item: Readonly<Record<string, unknown>>): string =>
     values.get(requestKey(requestOf(item))) as string;
-  const variables: Record<string, string> = {};
+  const variables = bareRecord<string>();
   for (const name of Object.keys(spec.env).sort(byName)) {
     if (!SECRET_ENV_NAME_PATTERN.test(name)) {
       throw failure(SECRET_ENV_INVALID_KEY);
@@ -510,8 +516,7 @@ export function dotenvNames(textValue: string): readonly string[] {
  * `NOMBRE=valor`, `export`, comillas, comentarios; sin interpolación. Una
  * variable repetida gana la última. */
 export function parseDotenv(textValue: string): Record<string, string> {
-  // Sin prototipo: una línea `__proto__=...` es una variable más, como en Python.
-  const variables: Record<string, string> = Object.create(null) as Record<string, string>;
+  const variables = bareRecord<string>();
   for (const [name, raw] of dotenvAssignments(textValue)) {
     variables[name] = dotenvValue(raw);
   }

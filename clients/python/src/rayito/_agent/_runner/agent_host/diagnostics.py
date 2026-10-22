@@ -79,20 +79,30 @@ _CREDENTIAL_PATTERNS: Final = (
 )
 
 
+def _normalized(text: str) -> str:
+    """`text` con los saltos de línea unificados a LF y sin caracteres de
+    control, la misma limpieza que recibe el diagnóstico antes de buscar
+    valores en él."""
+    return _CONTROL_CHARACTERS.sub("", text.replace("\r\n", "\n").replace("\r", "\n"))
+
+
+def _redaction_forms(value: str, min_length: int) -> set[str]:
+    """El valor tal cual y en su forma normalizada (`_normalized`), los que
+    midan al menos `min_length`. Sin la forma normalizada, un PEM con CRLF o
+    un valor con un carácter de control no casaría con el texto ya limpio."""
+    return {form for form in (value, _normalized(value)) if len(form) >= min_length}
+
+
 def _without_environment_values(
     text: str, environ: Mapping[str, str], extra_values: Iterable[str] = ()
 ) -> str:
-    values = sorted(
-        {
-            value
-            for name, value in environ.items()
-            if name not in STRUCTURAL_ENV_NAMES and len(value) >= MIN_REDACTED_VALUE_LENGTH
-        }
-        | {value for value in extra_values if len(value) >= MIN_EXTRA_REDACTED_VALUE_LENGTH},
-        key=len,
-        reverse=True,
-    )
-    for value in values:
+    candidates: set[str] = set()
+    for name, value in environ.items():
+        if name not in STRUCTURAL_ENV_NAMES:
+            candidates |= _redaction_forms(value, MIN_REDACTED_VALUE_LENGTH)
+    for value in extra_values:
+        candidates |= _redaction_forms(value, MIN_EXTRA_REDACTED_VALUE_LENGTH)
+    for value in sorted(candidates, key=len, reverse=True):
         text = text.replace(value, REDACTED)
     return text
 
@@ -126,6 +136,7 @@ def sanitize_diagnostics(
     recorte no sobreviva. `extra_values` son valores que se retiran siempre
     que midan al menos `MIN_EXTRA_REDACTED_VALUE_LENGTH` (los que el host
     exportó desde Secrets Manager); por defecto, ninguno."""
-    cleaned = _CONTROL_CHARACTERS.sub("", text.replace("\r\n", "\n").replace("\r", "\n"))
-    cleaned = _without_credentials(_without_environment_values(cleaned, environ, extra_values))
+    cleaned = _without_credentials(
+        _without_environment_values(_normalized(text), environ, extra_values)
+    )
     return bounded_tail(cleaned.strip()).strip()

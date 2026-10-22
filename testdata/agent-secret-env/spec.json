@@ -54,6 +54,24 @@
       }
     },
     {
+      "name": "a __proto__ variable name is an entry like any other",
+      "project": {
+        "secret_env": {
+          "__proto__": "app/proto",
+          "DATABASE_URL": "app/db-url"
+        },
+        "secret_env_from": [],
+        "readable_secrets": []
+      },
+      "expected": {
+        "variable": "{\"env\":{\"DATABASE_URL\":{\"secret\":\"app/db-url\"},\"__proto__\":{\"secret\":\"app/proto\"}},\"from\":[],\"v\":1}",
+        "readableSecretArns": [
+          "arn:aws:secretsmanager:us-east-1:123456789012:secret:app/db-url-??????",
+          "arn:aws:secretsmanager:us-east-1:123456789012:secret:app/proto-??????"
+        ]
+      }
+    },
+    {
       "name": "no secret env leaves the environment untouched",
       "project": {
         "secret_env": {},

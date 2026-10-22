@@ -45,6 +45,24 @@
       },
       "secretString": "{\"port\":5432}",
       "error": "secret_env_invalid"
+    },
+    {
+      "name": "__proto__ key",
+      "ref": {
+        "secret": "llm",
+        "key": "__proto__"
+      },
+      "secretString": "{\"__proto__\":\"demo-value\"}",
+      "expected": "demo-value"
+    },
+    {
+      "name": "inherited name is not a key",
+      "ref": {
+        "secret": "llm",
+        "key": "toString"
+      },
+      "secretString": "{\"org\":\"demo\"}",
+      "error": "secret_env_invalid_key"
     }
   ],
   "sourceCases": [
@@ -117,6 +135,31 @@
       },
       "secretString": "plain",
       "error": "secret_env_invalid"
+    },
+    {
+      "name": "__proto__ and toString keys are variables",
+      "source": {
+        "secret": "app/config"
+      },
+      "secretString": "{\"__proto__\":\"p-value\",\"toString\":\"t-value\"}",
+      "expected": {
+        "__proto__": "p-value",
+        "toString": "t-value"
+      }
+    },
+    {
+      "name": "__proto__ allowlisted with prefix",
+      "source": {
+        "secret": "app/config",
+        "prefix": "APP",
+        "keys": [
+          "__proto__"
+        ]
+      },
+      "secretString": "{\"__proto__\":\"p-value\",\"OTHER\":\"o\"}",
+      "expected": {
+        "APP__proto__": "p-value"
+      }
     }
   ]
 }
