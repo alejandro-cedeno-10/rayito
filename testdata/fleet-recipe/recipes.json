@@ -1,6 +1,6 @@
 {
   "schema": "rayito.fleet-recipe-vectors/1",
-  "_comment": "Vectores de la receta (design.md D1-D2). `document` es la entrada; `encoding` el resultado esperado (`json` o `gzip+base64`) y `value` el valor que escribió la implementación de Python. Con `json`, los dos SDK deben producir `value` byte a byte. Con `gzip+base64`, el sobre (`schema`, `encoding`) es el mismo pero los bytes de deflate dependen de la build de zlib de cada plataforma: los dos SDK deben leer el `value` del otro y devolver el mismo documento. `large-instructions` y `too-large` son `small-bedrock` con `project.agent.instructions` = `instructions.repeat` repetido `instructions.times` veces, o los primeros `instructions.sha256HexChars` caracteres de concatenar sha256(\"0\"), sha256(\"1\")... en hexadecimal (incompresible por debajo de 4 bits por carácter). El `project` es el documento que serializa AgentProject para un proyecto de ejemplo genérico.",
+  "_comment": "Vectores de la receta (design.md D1-D2). `document` es la entrada; `encoding` el resultado esperado (`json` o `gzip+base64`) y `value` el valor que escribió la implementación de Python. Con `json`, los dos SDK deben producir `value` byte a byte. Con `gzip+base64`, el sobre (`schema`, `encoding`) es el mismo pero los bytes de deflate dependen de la build de zlib de cada plataforma: los dos SDK deben leer el `value` del otro y devolver el mismo documento. `large-instructions` y `too-large` son `small-bedrock` con `project.agent.instructions` = `instructions.repeat` repetido `instructions.times` veces, o los primeros `instructions.sha256HexChars` caracteres de concatenar sha256(\"0\"), sha256(\"1\")... en hexadecimal (incompresible por debajo de 4 bits por carácter). El `project` es el documento que serializa AgentProject para un proyecto de ejemplo genérico. `loadFailures`: un fallo de Parameter Store al leer la receta (el `SandboxException`/`SandboxError` del adaptador, con su `awsCode` o sin él, como un endpoint inalcanzable) es un aviso con `warning` y la flota de 0.16: nunca impide conectar, listar ni terminar.",
   "cases": [
     {
       "id": "small-bedrock",
@@ -123,6 +123,28 @@
       "fleet": "bad name",
       "parameter": null,
       "warning": "recipe_not_saved"
+    }
+  ],
+  "loadFailures": [
+    {
+      "id": "internal-error",
+      "awsCode": "InternalServerError",
+      "warning": "recipe_unreadable"
+    },
+    {
+      "id": "throttled",
+      "awsCode": "ThrottlingException",
+      "warning": "recipe_unreadable"
+    },
+    {
+      "id": "invalid-key",
+      "awsCode": "InvalidKeyId",
+      "warning": "recipe_unreadable"
+    },
+    {
+      "id": "endpoint-unreachable",
+      "awsCode": null,
+      "warning": "recipe_unreadable"
     }
   ]
 }

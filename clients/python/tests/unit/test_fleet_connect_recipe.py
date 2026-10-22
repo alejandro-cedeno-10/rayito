@@ -8,6 +8,9 @@ ninguna prueba llama a AWS."""
 from __future__ import annotations
 
 import dataclasses
+import json
+import sys
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -27,7 +30,12 @@ from rayito._agent._fleet_recipe import (
 )
 from rayito._agent._project_domain import AgentProject
 from rayito._agent._scaling_domain import ScalingOptions
-from rayito.exceptions import AgentCoreException, InvalidArgumentException, SandboxException
+from rayito.exceptions import (
+    AgentCoreException,
+    InvalidArgumentException,
+    SandboxException,
+    SecretException,
+)
 from tests.unit.fake_agent_fleet import FLEET_TOKEN, FleetFlavor
 from tests.unit.fake_agent_project import MODEL_ID
 from tests.unit.fake_fleet_recipe import MemoryRecipeStore, denied
@@ -35,6 +43,11 @@ from tests.unit.test_agent_deploy import Harness
 
 NAME = "support-bot"
 PARAMETER = f"/rayito/agents/{NAME}/recipe"
+RECIPE_VECTORS: dict[str, Any] = json.loads(
+    (Path(__file__).resolve().parents[4] / "testdata" / "fleet-recipe" / "recipes.json").read_text(
+        encoding="utf-8"
+    )
+)
 RECIPE_SCALING = ScalingOptions(min_vms=2, max_vms=5, warm_vms=0, scale_in_after_seconds=300)
 
 
@@ -195,12 +208,20 @@ def test_a_recipe_without_permission_warns_and_is_the_0_16_fleet(
     assert PARAMETER not in caplog.text
 
 
-def test_any_other_read_error_propagates(flavor: FleetFlavor) -> None:
+@pytest.mark.parametrize("case", RECIPE_VECTORS["loadFailures"], ids=lambda case: case["id"])
+def test_a_parameter_store_failure_is_a_warning_and_the_0_16_fleet(
+    flavor: FleetFlavor, case: dict[str, Any], caplog: pytest.LogCaptureFixture
+) -> None:
     store = store_with(saved_recipe())
-    store.failures["load"] = SandboxException("Parameter Store falló", aws_code="InternalError")
+    store.failures["load"] = SandboxException("Parameter Store falló", aws_code=case["awsCode"])
+    flavor.classes.add()
 
-    with pytest.raises(SandboxException, match="Parameter Store"):
-        connect(flavor, recipe_store=store)
+    fleet = connect(flavor, recipe_store=store)
+
+    assert flavor.call(fleet.status()).scaling_source == "default"
+    assert caplog.text.count(case["warning"]) == 1
+    flavor.call(fleet.stop())
+    assert not flavor.classes.live
 
 
 def test_stop_deletes_the_recipe_it_read(flavor: FleetFlavor) -> None:
@@ -242,7 +263,61 @@ def test_the_renewal_option_of_the_recipe_needs_its_extra_only_when_on(
 
     fleet = connect(flavor, recipe_store=store, renew_gateway_keys=False)
 
-    assert fleet._renewer is None
+    assert not fleet._key_renewal.enabled
+
+
+def test_a_renewing_recipe_without_the_extra_still_lists_stops_and_creates(
+    flavor: FleetFlavor, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setitem(sys.modules, "aws_bedrock_token_generator", None)
+    store = store_with(saved_recipe(renew_gateway_keys=True))
+
+    fleet = connect(flavor, recipe_store=store)
+    flavor.call(fleet.status())
+    result = flavor.call(fleet.invoke("hola"))
+    flavor.call(fleet.stop())
+
+    assert result.text == "respuesta a hola"
+    assert caplog.text.count("missing_extra") == 1
+    assert not flavor.classes.live
+
+
+def test_a_renewal_inherited_from_the_recipe_without_permission_only_warns(
+    flavor: FleetFlavor, caplog: pytest.LogCaptureFixture
+) -> None:
+    keys = DeniedRenewer()
+    fleet = connect(
+        flavor, recipe_store=store_with(saved_recipe(renew_gateway_keys=True)), key_renewer=keys
+    )
+
+    flavor.call(fleet.invoke("hola"))
+    flavor.call(fleet.scale(min_vms=2, max_vms=2))
+
+    assert keys.calls == 1
+    assert "permission_denied" in caplog.text
+
+
+def test_an_explicit_renewal_without_permission_fails(flavor: FleetFlavor) -> None:
+    fleet = connect(
+        flavor,
+        recipe_store=store_with(saved_recipe(renew_gateway_keys=True)),
+        renew_gateway_keys=True,
+        key_renewer=DeniedRenewer(),
+    )
+
+    with pytest.raises(SecretException, match="sin permiso"):
+        flavor.call(fleet.invoke("hola"))
+
+
+class DeniedRenewer:
+    """Un renovador sin `secretsmanager:PutSecretValue`."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def renew(self) -> bool:
+        self.calls += 1
+        raise SecretException("sin permiso", code="permission_denied")
 
 
 # ------------------------------------------------------------------ deploy

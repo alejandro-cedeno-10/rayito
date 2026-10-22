@@ -25,6 +25,7 @@ from rayito._agent._fleet_recipe import (
     RECIPE_ACCESS_DENIED,
     RECIPE_NOT_SAVED,
     RECIPE_TOO_LARGE,
+    RECIPE_UNREADABLE,
     FleetRecipe,
     RecipeWarning,
     decode_recipe,
@@ -210,7 +211,9 @@ def store_recipe(store: FleetRecipeStore, recipe: FleetRecipe) -> str:
 def load_recipe(store: FleetRecipeStore, name: str) -> tuple[FleetRecipe, AgentProject] | None:
     """La receta de la flota `name` y su proyecto, o `None` si no tiene, no
     hay permiso (`recipe_access_denied`) o no se puede leer
-    (`recipe_unreadable`). Cualquier otro error de AWS se propaga."""
+    (`recipe_unreadable`, también cuando Parameter Store no responde:
+    sin endpoint, limitación de tasa o un error de KMS). La receta es
+    opcional: nunca impide conectar, listar ni terminar la flota de 0.16."""
     parameter = recipe_parameter_name(name)
     if parameter is None:
         return None
@@ -222,6 +225,9 @@ def load_recipe(store: FleetRecipeStore, name: str) -> tuple[FleetRecipe, AgentP
         return recipe, recipe_project(recipe)
     except RecipeWarning as warning:
         warn_recipe(warning.code)
+        return None
+    except SandboxException:
+        warn_recipe(RECIPE_UNREADABLE)
         return None
 
 

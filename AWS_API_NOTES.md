@@ -2617,6 +2617,7 @@ Errores que se mapean (por código, nunca por mensaje):
 | `ParameterLimitExceeded` | `PutParameter` | Aviso `recipe_not_saved`; el despliegue no falla (límite de 10 000 parámetros estándar por región) |
 | `ParameterPatternMismatchException`, `HierarchyLevelLimitExceededException` | `PutParameter` | No debería ocurrir: el nombre se valida antes con la regla de nombres de abajo; si ocurre, aviso `recipe_not_saved` |
 | `TooManyUpdates`, `ThrottlingException` | `PutParameter` | Reintentos `standard` del cliente; si se agotan, aviso `recipe_not_saved` |
+| Cualquier otro: `InternalServerError`, `InvalidKeyId` (los `error_shapes` de `GetParameter` en botocore 1.43.103), `ThrottlingException` tras los reintentos o un endpoint inalcanzable (sin endpoint de VPC para SSM) | `GetParameter` | Aviso `recipe_unreadable` y la flota de 0.16: la receta es opcional y nunca impide conectar, listar ni terminar (`testdata/fleet-recipe/recipes.json`, `loadFailures`) |
 
 Restricciones (API_PutParameter.html): nombres sensibles a mayúsculas,
 únicos por región, sólo `a-zA-Z0-9_.-` y `/` como separador, hasta 15 niveles,

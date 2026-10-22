@@ -7,6 +7,8 @@
  * Espejo de `test_fleet_connect_recipe.py`. Sobre dobles: nada llama a AWS.
  */
 
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 import type { DeployAws, SecretStorePort } from "../../src/agent/aws-resolve.js";
 import { deployWith, planDeploy } from "../../src/agent/deploy.js";
@@ -25,10 +27,25 @@ import {
 } from "../../src/agent/fleet-recipe.js";
 import { AgentProject } from "../../src/agent/project.js";
 import { ScalingOptions } from "../../src/agent/scaling-domain.js";
-import { AgentCoreError, InvalidArgumentError, SandboxError } from "../../src/errors.js";
+import {
+  AgentCoreError,
+  InvalidArgumentError,
+  SandboxError,
+  SecretError,
+} from "../../src/errors.js";
 import { FLEET_TOKEN, FleetHarness } from "./agent-fleet-fake.js";
 import { MODEL_ID } from "./agent-project-fake.js";
 import { denied, MemoryRecipeStore } from "./fleet-recipe-fake.js";
+
+interface LoadFailure {
+  readonly id: string;
+  readonly awsCode: string | null;
+  readonly warning: string;
+}
+
+const RECIPE_VECTORS = JSON.parse(
+  readFileSync(join(import.meta.dirname, "../../../../testdata/fleet-recipe/recipes.json"), "utf8"),
+) as { readonly loadFailures: readonly LoadFailure[] };
 
 const NAME = "support-bot";
 const PARAMETER = `/rayito/agents/${NAME}/recipe`;
@@ -96,6 +113,18 @@ function connect(
     },
     ...options,
   });
+}
+
+/** Un renovador que siempre falla con `error`, y cuántas veces se llamó. */
+function failingRenewer(error: Error): { calls: number; renew: () => Promise<boolean> } {
+  const renewer = {
+    calls: 0,
+    renew: async (): Promise<boolean> => {
+      renewer.calls += 1;
+      throw error;
+    },
+  };
+  return renewer;
 }
 
 async function failureOf(promise: Promise<unknown>): Promise<unknown> {
@@ -183,12 +212,25 @@ describe("connect by name", () => {
     ]);
   });
 
-  test("any other read error propagates", async () => {
-    const h = new FleetHarness();
-    const store = storeWith(savedRecipe());
-    store.failures.set("load", new SandboxError("Parameter Store falló"));
-    expect(await failureOf(connect(h, { recipeStore: store }))).toBeInstanceOf(SandboxError);
-  });
+  test.each(RECIPE_VECTORS.loadFailures)(
+    "a Parameter Store failure ($id) is a warning and the 0.16 fleet",
+    async ({ awsCode, warning }) => {
+      const h = new FleetHarness();
+      const store = storeWith(savedRecipe());
+      store.failures.set(
+        "load",
+        new SandboxError("Parameter Store falló", awsCode === null ? {} : { awsCode }),
+      );
+      const warnings: unknown[] = [];
+      const fleet = await connect(h, {
+        recipeStore: store,
+        logger: { warn: (message, fields) => warnings.push({ message, fields }) },
+      });
+      expect((await fleet.status()).scalingSource).toBe("default");
+      expect(warnings).toEqual([{ message: "receta de la flota", fields: { code: warning } }]);
+      await fleet.stop();
+    },
+  );
 
   test("stop deletes the recipe it read, unless it keeps it", async () => {
     const h = new FleetHarness();
@@ -199,6 +241,68 @@ describe("connect by name", () => {
     await (await connect(h, { recipeStore: kept })).stop({ keepRecipe: true });
     expect(kept.operations).toEqual(["load"]);
     expect(kept.values.has(PARAMETER)).toBe(true);
+  });
+
+  test("a renewing recipe without the generator peer still lists, stops and creates", async () => {
+    const h = new FleetHarness();
+    const keys = failingRenewer(
+      new InvalidArgumentError("renewGatewayKeys necesita el paquete opcional"),
+    );
+    const warnings: unknown[] = [];
+    const fleet = await connect(h, {
+      recipeStore: storeWith(savedRecipe(true)),
+      keyRenewer: keys,
+      logger: { warn: (message, fields) => warnings.push({ message, fields }) },
+    });
+    await fleet.status();
+    expect((await fleet.invoke("hola")).text).toBe("respuesta a hola");
+    await fleet.scale({ minVms: 2, maxVms: 2 });
+    await fleet.stop();
+    expect(keys.calls).toBe(1);
+    expect(warnings).toContainEqual({
+      message: "la flota no renovó la clave de su pasarela (receta)",
+      fields: { code: "missing_extra" },
+    });
+  });
+
+  test("an inherited renewal without permission only warns", async () => {
+    const h = new FleetHarness();
+    const keys = failingRenewer(new SecretError("sin permiso", { code: "permission_denied" }));
+    const fleet = await connect(h, {
+      recipeStore: storeWith(savedRecipe(true)),
+      keyRenewer: keys,
+    });
+    await fleet.invoke("hola");
+    await fleet.scale({ minVms: 2, maxVms: 2 });
+    expect(keys.calls).toBe(1);
+  });
+
+  test("an explicit renewal without permission fails", async () => {
+    const h = new FleetHarness();
+    const fleet = await connect(h, {
+      recipeStore: storeWith(savedRecipe(true)),
+      renewGatewayKeys: true,
+      keyRenewer: failingRenewer(new SecretError("sin permiso", { code: "permission_denied" })),
+    });
+    expect(await failureOf(fleet.invoke("hola"))).toBeInstanceOf(SecretError);
+  });
+
+  test("concurrent renewals share the one in flight", async () => {
+    const h = new FleetHarness();
+    let calls = 0;
+    const fleet = await connect(h, {
+      recipeStore: storeWith(savedRecipe(true)),
+      scaling: new ScalingOptions({ minVms: 3, maxVms: 3 }),
+      keyRenewer: {
+        renew: async () => {
+          calls += 1;
+          await Promise.resolve();
+          return false;
+        },
+      },
+    });
+    await fleet.start();
+    expect(calls).toBe(1);
   });
 
   test("an explicit renewGatewayKeys false wins over the recipe", async () => {

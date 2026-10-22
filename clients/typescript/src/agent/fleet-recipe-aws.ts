@@ -25,6 +25,7 @@ import {
   RECIPE_ACCESS_DENIED,
   RECIPE_NOT_SAVED,
   RECIPE_TOO_LARGE,
+  RECIPE_UNREADABLE,
   RecipeWarning,
   type RecipeWarningCode,
   recipeDocument,
@@ -268,7 +269,9 @@ export async function storeRecipe(
 
 /** La receta de la flota `name` y su proyecto, o `undefined` si no tiene, no
  * hay permiso (`recipe_access_denied`) o no se puede leer
- * (`recipe_unreadable`). Cualquier otro error de AWS se propaga. */
+ * (`recipe_unreadable`, también cuando Parameter Store no responde: sin
+ * endpoint, limitación de tasa o un error de KMS). La receta es opcional:
+ * nunca impide conectar, listar ni terminar la flota de 0.16. */
 export async function loadRecipe(
   store: FleetRecipeStore,
   name: string,
@@ -288,6 +291,10 @@ export async function loadRecipe(
   } catch (error) {
     if (error instanceof RecipeWarning) {
       warnRecipe(logger, error.code);
+      return undefined;
+    }
+    if (error instanceof SandboxError) {
+      warnRecipe(logger, RECIPE_UNREADABLE);
       return undefined;
     }
     throw error;
