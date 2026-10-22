@@ -159,6 +159,17 @@ export interface ModelFromCodeRules {
   readonly langgraphJson: string;
 }
 
+/** La configuración cero de un framework que se configura (OpenCode): su
+ * fichero de instrucciones, sus ficheros de configuración, la clave de los
+ * permisos, la acción con la que se aplica `ask` y el motivo de cada aviso. */
+export interface ZeroConfigRule {
+  readonly instructionsFile: string;
+  readonly configFiles: readonly string[];
+  readonly permissionKey: string;
+  readonly askAction: string;
+  readonly reasons: Readonly<Record<string, string>>;
+}
+
 export interface DetectionRules {
   readonly schema: string;
   readonly ignoredPathSegments: readonly string[];
@@ -178,6 +189,7 @@ export interface DetectionRules {
   readonly versions: Readonly<Record<string, { readonly sources: readonly VersionSource[] }>>;
   readonly providers: readonly ProviderRule[];
   readonly configProviders: readonly ConfigProviderRule[];
+  readonly zeroConfig: Readonly<Record<string, ZeroConfigRule | string>>;
   readonly messages: Readonly<Record<string, string>>;
   readonly warnings: Readonly<Record<string, string>>;
   readonly bridge: BridgeRules;

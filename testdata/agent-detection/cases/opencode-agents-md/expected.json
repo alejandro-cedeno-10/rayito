@@ -1,0 +1,51 @@
+{
+  "schema": "rayito.agent-detection/1",
+  "language": null,
+  "framework": "opencode",
+  "kind": "opencode",
+  "entrypoint": null,
+  "entrypoint_kind": null,
+  "protocol": "framework",
+  "options": {},
+  "app": null,
+  "install": null,
+  "providers": [
+    {
+      "preset": "bedrock",
+      "evidence": [
+        {
+          "path": "opencode.jsonc",
+          "rule": "config"
+        }
+      ]
+    }
+  ],
+  "models": [
+    "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+  ],
+  "evidence": [
+    {
+      "path": "opencode.jsonc",
+      "rule": "file:opencode.jsonc"
+    },
+    {
+      "path": "AGENTS.md",
+      "rule": "file:AGENTS.md"
+    },
+    {
+      "path": "opencode.jsonc",
+      "rule": "config:permission"
+    }
+  ],
+  "warnings": [
+    {
+      "code": "opencode_permission_ignored",
+      "detail": "opencode.jsonc: permission.bash usa ask, que se aplica como deny: nadie contesta en una ejecución desatendida"
+    },
+    {
+      "code": "opencode_permission_ignored",
+      "detail": "opencode.jsonc: permission.<clave> no es una herramienta con allow, ask o deny (o patrones de ellas) y se ignora"
+    }
+  ],
+  "alternatives": []
+}

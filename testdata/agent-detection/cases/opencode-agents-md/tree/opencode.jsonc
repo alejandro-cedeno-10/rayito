@@ -1,0 +1,15 @@
+{
+  // Configuración de ejemplo: el modelo y los permisos del agente.
+  "$schema": "https://opencode.ai/config.json",
+  "model": "amazon-bedrock/us.anthropic.claude-haiku-4-5-20251001-v1:0",
+  /* Los permisos que Rayito traslada a [agent.permissions]. */
+  "permission": {
+    "edit": "deny",
+    "bash": {
+      "*": "ask",
+      "git status": "allow", // sólo lectura
+    },
+    "webfetch": "allow",
+    "Remote Tool": "allow",
+  },
+}

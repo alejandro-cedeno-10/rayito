@@ -442,6 +442,46 @@ runtime que construye el modelo (`opencode`, `hermes`, `deepagents` o `strands`
 sin `entrypoint`) sigue pidiendo el id. Más en
 [Despliega tu agente](despliega-tu-agente.md#modelo-desde-tu-codigo).
 
+## OpenCode sin fichero de proyecto { #opencode-sin-fichero-de-proyecto }
+
+<small>Desde 0.17.0.</small>
+
+Un proyecto de OpenCode que sólo trae `opencode.json` (u `opencode.jsonc`) y
+`AGENTS.md` se despliega sin `rayito-agent.toml`. La detección completa la
+tabla `[agent]` con dos cosas:
+
+- **`AGENTS.md`** de la raíz pasa a ser `agent.instructions_file`. El agente
+  servido lo lee como su `AGENTS.md`. Un `AGENTS.md` vacío se ignora.
+- **El bloque `permission`** pasa a `agent.permissions`. `"*"` es el
+  `default`, cada herramienta lleva `allow` o `deny`, y `bash` admite un
+  objeto de patrones. `opencode.jsonc` se lee sin comentarios ni comas
+  finales.
+
+```json
+{
+  "model": "amazon-bedrock/us.anthropic.claude-haiku-4-5-20251001-v1:0",
+  "permission": {
+    "edit": "deny",
+    "bash": { "*": "ask", "git status": "allow" }
+  }
+}
+```
+
+La ejecución es desatendida y nadie contesta a una pregunta, así que `ask` se
+aplica como `deny`. Una clave que no es una herramienta o un valor que no es
+`allow`, `ask` o `deny` se ignora. Los dos casos dan el aviso
+`opencode_permission_ignored`. En el ejemplo, el agente sólo puede ejecutar
+`git status`.
+
+El informe de `rayito agent detect --json` lista la evidencia (`file:AGENTS.md` y
+`config:permission`), nunca el texto de los ficheros. Con `--write`,
+`rayito-agent.json` guarda las instrucciones y los permisos ya resueltos.
+
+Lo que escribe `rayito-agent.toml` gana, clave por clave. `[agent]
+instructions` o `instructions_file` ganan a `AGENTS.md`, y
+`[agent.permissions]` gana al bloque `permission`. Si el fichero declara otro
+`[runtime] kind`, no se aplica nada.
+
 ## Límites del lado del proveedor
 
 Sólo Bedrock y Gemini llevan el modelo en la **ruta**, así que la allowlist

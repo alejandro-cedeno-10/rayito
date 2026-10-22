@@ -32,5 +32,15 @@
         ]
       ]
     }
+  },
+  "agent": {
+    "instructions": "# Project rules\n\nYou are a calculator and glossary assistant. Answer every question in one\nshort sentence. When asked to add numbers, add them yourself and state the\nresult. The glossary: a MicroVM is a lightweight virtual machine, and a\nsnapshot is a saved machine state.\n",
+    "permissions": {
+      "tools": {
+        "bash": "deny",
+        "edit": "deny",
+        "webfetch": "deny"
+      }
+    }
   }
 }
