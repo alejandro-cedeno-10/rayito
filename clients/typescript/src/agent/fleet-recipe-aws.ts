@@ -17,6 +17,7 @@ import { sanitizeAwsError } from "../aws/sanitize.js";
 import { SandboxError } from "../errors.js";
 import { AGENT_RECIPE_DESCRIPTION } from "../limits.js";
 import type { Logger } from "../logger.js";
+import { isMissingOptionalPeer } from "../optional.js";
 import {
   decodeRecipe,
   encodeRecipe,
@@ -167,7 +168,9 @@ export class SsmRecipeStore implements FleetRecipeStore {
     );
   }
 
-  /** El valor descifrado, o `undefined` si la flota no tiene receta. */
+  /** El valor descifrado, o `undefined` si la flota no tiene receta o si
+   * `@aws-sdk/client-ssm` no está instalado: sin el peer, conectar por
+   * nombre sigue como en 0.16 en vez de fallar. */
   async load(parameter: string): Promise<string | undefined> {
     try {
       const response = await this.#call("getParameter", (api) =>
@@ -176,7 +179,7 @@ export class SsmRecipeStore implements FleetRecipeStore {
       const value = response.Parameter?.Value;
       return typeof value === "string" ? value : undefined;
     } catch (error) {
-      if (error instanceof NotFound) {
+      if (error instanceof NotFound || isMissingOptionalPeer(error, SSM_PEER)) {
         return undefined;
       }
       throw error;

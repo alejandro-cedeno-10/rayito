@@ -25,7 +25,8 @@ versionado [SemVer](https://semver.org/lang/es/).
   escalado) en un parámetro `SecureString` estándar de Parameter Store
   (`/rayito/agents/<nombre>/recipe`), con nombres de secretos y nunca valores.
   `AgentFleet.connect(nombre)` sin `project` la lee y puede crear VMs iguales;
-  `useRecipe: false` la ignora; `@aws-sdk/client-ssm` es un peer opcional. Es
+  `useRecipe: false` la ignora; `@aws-sdk/client-ssm` es un peer opcional y,
+  sin él, conectar por nombre sigue como en 0.16. Es
   la única función encendida por defecto (no cuesta en el nivel estándar):
   `saveRecipe: false` / `--no-save-recipe` la apagan. Un fallo al guardarla es un aviso
   (`recipe_access_denied`, `recipe_not_saved`, `recipe_too_large`), nunca un
