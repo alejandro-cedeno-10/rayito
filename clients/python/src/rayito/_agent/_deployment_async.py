@@ -497,6 +497,11 @@ class AsyncAgentDeployment:
         sin servidor propio."""
         await self._sandbox.set_timeout(timeout)
 
+    async def refresh_gateways(self) -> None:
+        """Como `AgentDeployment.refresh_gateways()`: vuelve a mandar las
+        pasarelas del sandbox (`sbx.gateways.arefresh()`)."""
+        await self._sandbox.gateways.arefresh()
+
     async def stop(self) -> None:
         """Termina el sandbox del despliegue. Idempotente."""
         await self._sandbox.kill()

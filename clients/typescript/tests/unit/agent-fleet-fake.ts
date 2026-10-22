@@ -123,6 +123,9 @@ export class FleetFakeSandbox extends FakeSandbox {
   state: string;
   readonly timeouts: number[] = [];
   killError: Error | undefined;
+  /** Las pasarelas que la flota abrió en esta plaza (`openGateways`). */
+  readonly configured: string[][] = [];
+  configureError: Error | undefined;
 
   constructor(
     number: number,
@@ -247,6 +250,19 @@ export class FleetWorld implements SandboxFactory, FleetDirectory {
   async findSession(_template: string, label: string): Promise<string | undefined> {
     this.foundSessions.push(label);
     return this.sessionHits.get(label);
+  }
+
+  /** `ConfigureSandbox` de doble: anota las pasarelas que la flota abre en una
+   * plaza aparcada o falla si se le pide. */
+  async openGateways(
+    sandbox: FleetSandbox,
+    gateways: Readonly<Record<string, unknown>>,
+  ): Promise<void> {
+    const fake = this.sandboxes.get(sandbox.sandboxId);
+    if (fake?.configureError !== undefined) {
+      throw fake.configureError;
+    }
+    fake?.configured.push(Object.keys(gateways));
   }
 
   get live(): FleetFakeSandbox[] {

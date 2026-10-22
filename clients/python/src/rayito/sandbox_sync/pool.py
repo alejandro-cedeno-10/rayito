@@ -36,7 +36,6 @@ from typing import TYPE_CHECKING, Final, Self
 import boto3
 
 from rayito._aws import ControlPlane, LaunchRequest, PortSpec, control_plane_session
-from rayito._feature_options import FeatureOptions, plan_features
 from rayito._limits import DEFAULT_PORT, TERMINAL_STATES
 from rayito._models import ImageVersionInfo, MicrovmListPage, SandboxInfo, SandboxListItem
 from rayito._pool_backends import InMemoryPoolBackend, PoolBackend
@@ -48,6 +47,7 @@ from rayito._pool_base import (
     SlotRecord,
     TakePoll,
     drain_requires_persistence_error,
+    gateway_sections,
     launch_kwargs,
     pick_ready_slot,
     pool_closed_error,
@@ -72,6 +72,7 @@ from rayito.exceptions import SandboxNotFoundException, SandboxStateException
 from rayito.sandbox_sync.main import Sandbox, resolve_control_plane
 
 if TYPE_CHECKING:
+    from rayito._configure_base import PlannedSection
     from rayito._secret_gateway import SecretGateway
 
 logger = logging.getLogger("rayito.pool")
@@ -329,7 +330,7 @@ class SandboxPool:
         """
         # Pura (ninguna llamada a AWS): una forma inválida falla antes de
         # reclamar ninguna plaza.
-        feature_plan = plan_features(FeatureOptions(gateways=gateways))
+        sections = gateway_sections(gateways)
         binding = warm(bind_secrets(secrets, secret_cache), self._default_secret_cache)
         record = self._claim_ready_slot(wait)
         sandbox = (
@@ -343,8 +344,8 @@ class SandboxPool:
             sandbox._secrets = binding
         # Las plazas del pool se lanzan siempre con `keep_on_failure=False`:
         # una sección que no se aplica termina la plaza ya tomada.
-        sandbox._apply_configure_sections(
-            feature_plan.configure_sections, timeout=request_timeout, terminate_on_failure=True
+        apply_gateway_sections(
+            sandbox, sections, timeout=request_timeout, terminate_on_failure=True
         )
         return sandbox
 
@@ -829,4 +830,30 @@ def parked_age_seconds(record: SlotRecord, now: datetime) -> float:
     return max(0.0, (now - record.parked_at).total_seconds())
 
 
-__all__ = ["LaunchObserver", "SandboxPool"]
+def apply_gateway_sections(
+    sandbox: Sandbox,
+    sections: Sequence[PlannedSection],
+    *,
+    timeout: float,
+    terminate_on_failure: bool,
+) -> None:
+    """Aplica en `sandbox` las secciones de pasarela ya planificadas
+    (`gateway_sections`); sin ninguna, no llama a nada nuevo."""
+    sandbox._apply_configure_sections(
+        sections, timeout=timeout, terminate_on_failure=terminate_on_failure
+    )
+
+
+def apply_gateways(
+    sandbox: Sandbox, gateways: Mapping[str, SecretGateway], *, timeout: float
+) -> None:
+    """Abre `gateways` en un sandbox ya arrancado (una plaza aparcada que la
+    flota abre): el mismo camino que `SandboxPool.take(gateways=)`. Un fallo
+    no termina el sandbox (`terminate_on_failure=False`): quien llama lo
+    descarta y lo sustituye."""
+    apply_gateway_sections(
+        sandbox, gateway_sections(gateways), timeout=timeout, terminate_on_failure=False
+    )
+
+
+__all__ = ["LaunchObserver", "SandboxPool", "apply_gateway_sections", "apply_gateways"]

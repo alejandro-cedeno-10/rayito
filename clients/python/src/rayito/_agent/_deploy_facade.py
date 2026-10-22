@@ -39,6 +39,7 @@ from rayito._agent._deploy_plan import (
     AgentDeployStep,
     base_version_of,
     build_plan,
+    deploy_scaling,
     project_bucket,
     project_for,
     resolved_region,
@@ -47,6 +48,8 @@ from rayito._agent._deploy_plan import (
 from rayito._agent._fleet import AgentFleet
 from rayito._agent._fleet_async import AsyncAgentFleet
 from rayito._agent._fleet_base import AGENT_FLEET_WARM_POLL_SECONDS
+from rayito._agent._fleet_recipe_aws import RECIPE_SAVED
+from rayito._agent._gateway_keys import renewable_gateways
 from rayito._agent._project_base import image_version_of, template_name
 from rayito._agent._project_domain import AgentProject
 from rayito._agent._project_service import ProjectService
@@ -68,7 +71,7 @@ from rayito._agentcore._targets import (
     require_target,
 )
 from rayito._secrets import SecretStore
-from rayito.exceptions import InvalidArgumentException
+from rayito.exceptions import AgentCoreException, InvalidArgumentException
 
 if TYPE_CHECKING:
     from rayito._agent._detect_report import DetectOverrides
@@ -84,6 +87,45 @@ STEP_BUCKET: Final = "bucket"
 STEP_IMAGE: Final = "image"
 STEP_FLEET: Final = "fleet"
 STEP_WARM: Final = "warm"
+#: El paso de la receta de la flota que no se guardó: su detalle es el código
+#: del aviso (`recipe_access_denied`, `recipe_not_saved`, `recipe_too_large`).
+STEP_RECIPE: Final = "recipe"
+#: Las opciones de la receta y de la renovación de claves que sólo tienen
+#: sentido en MicroVMs: con `target="agentcore"`, `option_not_supported`
+#: (nombre, bandera de la CLI, motivo y si la llamada la trae).
+MICROVM_ONLY_OPTIONS: Final[
+    tuple[tuple[str, str, str, Callable[[AgentDeployOptions], bool]], ...]
+] = (
+    (
+        "scale_in_after_seconds",
+        "--scale-in-after",
+        "usa idle_session_timeout_seconds / --idle-session-timeout",
+        lambda options: options.scale_in_after_seconds is not None,
+    ),
+    (
+        "save_recipe",
+        "--no-save-recipe",
+        "AgentCore guarda su configuración en el runtime: no hay receta",
+        lambda options: not options.save_recipe,
+    ),
+    (
+        "renew_gateway_keys",
+        "--renew-gateway-keys",
+        "no hay pasarela de secretos",
+        lambda options: options.renew_gateway_keys,
+    ),
+)
+
+
+def check_microvm_only_options(options: AgentDeployOptions | None, target: str) -> None:
+    """Con `target="agentcore"`, `AgentCoreException` `option_not_supported`
+    con la primera opción de la receta o de la renovación de claves que la
+    llamada trae, antes de cualquier llamada a AWS."""
+    if target != TARGET_AGENTCORE or options is None:
+        return
+    for name, _flag, reason, passed in MICROVM_ONLY_OPTIONS:
+        if passed(options):
+            raise AgentCoreException("option_not_supported", option=name, reason=reason)
 
 
 @dataclass
@@ -173,6 +215,7 @@ def plan_deploy(
     """
     require_target(target)
     check_agentcore_options_target(agentcore, target)
+    check_microvm_only_options(options, target)
     if target == TARGET_AGENTCORE:
         from rayito._agentcore._deploy import plan_agentcore
 
@@ -280,7 +323,11 @@ def deploy_agent(
         `GetCallerIdentity`, `HeadBucket`, `GetMicrovmImage` y
         `DescribeSecret` de lectura; con `create_secret_from_env=True`,
         `CreateSecret`; con `base_publisher`, una imagen base; con
-        `session_index`, DynamoDB. Con `target="agentcore"`: la pila
+        `session_index`, DynamoDB; tras arrancar la flota, la receta en
+        Parameter Store (`PutParameter` de un `SecureString` estándar, salvo
+        con `save_recipe=False`); con `renew_gateway_keys`, `DescribeSecret`
+        y `PutSecretValue` sobre el secreto de cada pasarela `bedrock`.
+        Con `target="agentcore"`: la pila
         `rayito-agentcore-<nombre>` (repositorio de ECR, proyecto de CodeBuild
         con su grupo de logs y dos roles), un zip del contexto de build en el
         bucket de artefactos mientras dura el build, un build de CodeBuild si
@@ -307,15 +354,20 @@ def deploy_agent(
         (`RayitoSandboxRunner`, `RayitoTemplateBuilder`),
         `secretsmanager:DescribeSecret` y, con `create_secret_from_env`,
         `secretsmanager:CreateSecret`, `sts:GetCallerIdentity` y
-        `s3:ListBucket` sobre el bucket del artefacto. Con
+        `s3:ListBucket` sobre el bucket del artefacto; `ssm:PutParameter`
+        sobre `parameter/rayito/agents/*` para la receta (sin él, un aviso
+        `recipe_access_denied` y el despliegue sigue); con
+        `renew_gateway_keys`, `secretsmanager:PutSecretValue` y
+        `bedrock:CallWithBearerToken`. Con
         `target="agentcore"`: CloudFormation sobre `rayito-agentcore-*` con
         `CAPABILITY_IAM`, ECR, CodeBuild, S3 sobre
         `rayito/images/agentcore/*`, AgentCore (`CreateAgentRuntime`,
         `UpdateAgentRuntime`, `GetAgentRuntime`, `ListAgentRuntimes`) e
         `iam:PassRole` del rol del runtime.
-    Cómo apagarla: `AgentFleet.stop()` termina los VMs; los valores por
-        defecto de `AgentDeployOptions` no crean ningún secreto, imagen
-        base ni índice; sin llamar a `deploy_agent()` nada se crea. Un agente
+    Cómo apagarla: `AgentFleet.stop()` termina los VMs (y borra la
+        receta); los valores por defecto de `AgentDeployOptions` no crean
+        ningún secreto, imagen base ni índice; `save_recipe=False` no guarda
+        la receta; sin llamar a `deploy_agent()` nada se crea. Un agente
         de AgentCore se borra con `AgentCoreFleet.delete()` (`rayito agent
         delete --target agentcore`).
     Ejemplo:
@@ -326,6 +378,7 @@ def deploy_agent(
     """
     require_target(target)
     check_agentcore_options_target(agentcore, target)
+    check_microvm_only_options(options, target)
     if target == TARGET_AGENTCORE:
         from rayito._agentcore._deploy import deploy_agentcore
 
@@ -414,6 +467,7 @@ async def deploy_agent_async(
     """
     require_target(target)
     check_agentcore_options_target(agentcore, target)
+    check_microvm_only_options(options, target)
     if target == TARGET_AGENTCORE:
         from rayito._agentcore._deploy import deploy_agentcore_async
 
@@ -474,16 +528,18 @@ def deploy_with(
     fleet = AgentFleet(
         flight.project,
         access_token=flight.token,
-        scaling=chosen.scaling,
+        scaling=deploy_scaling(flight.project, chosen),
         session_index=chosen.session_index,
         pool_backend=chosen.pool_backend,
         keep_on_failure=chosen.keep_on_failure,
         region=flight.region,
         session=session,
+        renew_gateway_keys=chosen.renew_gateway_keys,
         **{"service": service, **dict(ports.fleet_kwargs)},
     )
     fleet.start()
     _emit(chosen, (AgentDeployStep(STEP_FLEET, str(len(fleet.sandbox_ids))),))
+    _emit(chosen, _recipe_steps(fleet._save_recipe() if chosen.save_recipe else None))
     _wait_warm(fleet, chosen)
     return fleet
 
@@ -528,16 +584,18 @@ async def deploy_with_async(
     fleet = AsyncAgentFleet(
         flight.project,
         access_token=flight.token,
-        scaling=chosen.scaling,
+        scaling=deploy_scaling(flight.project, chosen),
         session_index=chosen.session_index,
         pool_backend=chosen.pool_backend,
         keep_on_failure=chosen.keep_on_failure,
         region=flight.region,
         session=session,
+        renew_gateway_keys=chosen.renew_gateway_keys,
         **{"service": service, **dict(ports.fleet_kwargs)},
     )
     await fleet.start()
     _emit(chosen, (AgentDeployStep(STEP_FLEET, str(len(fleet.sandbox_ids))),))
+    _emit(chosen, _recipe_steps(await fleet._save_recipe() if chosen.save_recipe else None))
     await _wait_warm_async(fleet, chosen)
     return fleet
 
@@ -554,6 +612,8 @@ def preflight(
     modelo, el bucket y el token. Todo lo que lee AWS ocurre aquí, y lo único
     que puede crear es un secreto (con `create_secret_from_env`) o la imagen
     base (con `base_publisher`)."""
+    if options.renew_gateway_keys:
+        renewable_gateways(project)
     environ = os.environ if ports.environ is None else ports.environ
     effective_region = resolved_region(region, project, session, environ)
     aws = ports.aws or AwsResolver(region=effective_region, session=session)
@@ -578,6 +638,15 @@ def preflight(
     bucket = _bucket_for(resolved, options, aws, environ, steps)
     token = resolve_token(options.access_token, environ)
     return Preflight(resolved, bucket, token, effective_region, tuple(steps))
+
+
+def _recipe_steps(outcome: str | None) -> tuple[AgentDeployStep, ...]:
+    """El paso `recipe` sólo si la receta no se guardó: su detalle es el
+    código del aviso. Guardada (o sin pedirla), ningún paso: un despliegue
+    sin incidencias informa de los mismos pasos que en 0.16."""
+    if outcome is None or outcome == RECIPE_SAVED:
+        return ()
+    return (AgentDeployStep(STEP_RECIPE, outcome),)
 
 
 def _publish_env_secret(

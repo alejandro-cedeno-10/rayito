@@ -36,6 +36,8 @@ from rayito.exceptions import InvalidArgumentException, PoolClosedException
 
 if TYPE_CHECKING:
     from rayito._agent._runtime import WarmupStep
+    from rayito._configure_base import PlannedSection
+    from rayito._secret_gateway import SecretGateway
 
 POOL_SCHEMA: Final = "rayito.pool/1"
 FILL_CONCURRENCY_MAX: Final = 8
@@ -707,3 +709,16 @@ __all__ = [
     "slot_is_stale",
     "stats_from_records",
 ]
+
+
+def gateway_sections(
+    gateways: Mapping[str, SecretGateway] | None,
+) -> tuple[PlannedSection, ...]:
+    """Las secciones de `ConfigureSandbox` que abren `gateways` en un sandbox
+    ya arrancado (`plan_features`, puro: una forma inválida falla aquí, antes
+    de tocar ningún VM). Sin pasarelas, ninguna. Es el plan que comparten
+    `SandboxPool.take(gateways=)` y la flota al abrir una plaza aparcada
+    (`apply_gateways`)."""
+    from rayito._feature_options import FeatureOptions, plan_features
+
+    return plan_features(FeatureOptions(gateways=gateways)).configure_sections

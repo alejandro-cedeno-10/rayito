@@ -194,12 +194,13 @@ export class SdkAgentProjectTools implements AgentProjectTools {
           name: status.name,
           minVms: status.minVms,
           maxVms: status.maxVms,
+          scalingSource: status.scalingSource,
           members: status.members.map(({ sandboxId, state }) => ({ sandboxId, state })),
         };
       },
-      stop: async () => {
+      stop: async (options = {}) => {
         const count = fleet.sandboxIds.length;
-        await fleet.stop();
+        await fleet.stop(options);
         return count;
       },
     };
@@ -276,6 +277,8 @@ async function prepared(request: AgentDeployRequest, park: boolean, region: stri
     onStep: settings.onStep,
     createSecretsFrom: settings.createSecretsFrom,
     checkEnv: settings.checkEnv,
+    saveRecipe: settings.saveRecipe,
+    renewGatewayKeys: settings.renewGatewayKeys,
   });
   return { project, report: detected.report, options };
 }

@@ -456,6 +456,17 @@ GROUPS: tuple[tuple[str, ...], ...] = (
         "agentServiceReservedConnections",
         "agentFleetPingTtlSeconds",
         "agentFleetUnhealthyPings",
+        # Fleet recipe and short-term Bedrock keys (ADR-034, AWS_API_NOTES
+        # «Receta de la flota y claves de corta duración de Bedrock»): the
+        # Parameter Store path and schema, the 4 096-byte Standard-tier value
+        # limit, the fixed description, the 900 s renewal window (above the
+        # 10-minute PutSecretValue guidance) and the 12 h token expiry.
+        "agentRecipeParameterTemplate",
+        "agentRecipeSchema",
+        "agentRecipeMaxBytes",
+        "agentRecipeDescription",
+        "gatewayKeyRenewAfterSeconds",
+        "gatewayKeyExpirySeconds",
         "agentAppRestartMax",
         "agentAppRestartWindowSeconds",
         "agentAppRestartBackoffSeconds",

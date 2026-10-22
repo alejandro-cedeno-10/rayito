@@ -39,7 +39,7 @@ from rayito._pool_base import (
     MIN_REMAINING_FLOOR_SECONDS,
     PoolConfig,
 )
-from rayito.exceptions import InvalidArgumentException
+from rayito.exceptions import InvalidArgumentException, SandboxException
 
 if TYPE_CHECKING:
     from rayito._agent._deployment_base import DeploymentState
@@ -74,6 +74,11 @@ AGENT_CAPACITY_CODE: Final = "agent_capacity"
 AGENT_VM_LOST_CODE: Final = "agent_vm_lost"
 
 MemberHealth = Literal["healthy", "busy", "unavailable", "unknown"]
+#: De dónde sale el escalado de una flota: `scaling=` explícito, el
+#: proyecto, la receta guardada por `deploy_agent()` o, sin ninguno, los
+#: valores por defecto (que no dicen nada de la flota real).
+ScalingSource = Literal["explicit", "project", "recipe", "default"]
+SCALING_SOURCES: Final[tuple[str, ...]] = ("explicit", "project", "recipe", "default")
 PlanKind = Literal["use", "grow", "wait"]
 UNKNOWN_HEALTH: Final = "unknown"
 
@@ -177,7 +182,9 @@ class FleetMemberStatus:
 class FleetStatus:
     """El estado de una flota: sus miembros, cuántos están sanos u ocupados y
     los límites de `ScalingOptions`. Un miembro que este proceso aún no abrió
-    figura como `unknown`: preguntarle lo reanudaría."""
+    figura como `unknown`: preguntarle lo reanudaría. `scaling_source` dice
+    de dónde salen los límites: con `default` (sin proyecto ni receta) no
+    describen la flota real."""
 
     name: str
     members: tuple[FleetMemberStatus, ...]
@@ -185,6 +192,7 @@ class FleetStatus:
     max_vms: int
     warm_vms: int
     warm_ready: int
+    scaling_source: ScalingSource = "default"
 
     @property
     def healthy(self) -> int:
@@ -335,33 +343,61 @@ def pool_config_for(
 
 @dataclass(frozen=True)
 class FleetSettings:
-    """Lo que la flota lee de un `AgentProject`: el escalado, el plazo de la
-    cola y la concurrencia por VM."""
+    """Lo que la flota lee de un `AgentProject` (o de su receta): el
+    escalado y de dónde sale, el plazo de la cola y la concurrencia por VM."""
 
     scaling: ScalingOptions
     queue_timeout_seconds: float
     max_concurrency: int
+    scaling_source: ScalingSource = "default"
+
+
+def scaling_source_of(
+    project: AgentProject | None,
+    scaling: ScalingOptions | None,
+    recipe_scaling: ScalingOptions | None,
+) -> ScalingSource:
+    """De dónde sale el escalado: lo explícito gana a la receta, y la receta
+    (que guarda las banderas del despliegue) al proyecto."""
+    if scaling is not None:
+        return "explicit"
+    if recipe_scaling is not None:
+        return "recipe"
+    return "default" if project is None else "project"
 
 
 def fleet_settings_of(
-    project: AgentProject | None, scaling: ScalingOptions | None = None
+    project: AgentProject | None,
+    scaling: ScalingOptions | None = None,
+    recipe_scaling: ScalingOptions | None = None,
 ) -> FleetSettings:
     """Un único sitio donde la flota mira el proyecto: un `scaling` explícito
-    gana al del proyecto (`AgentProject.scaling`), y la cola cliente comparte
-    el plazo de la cola del host. Una flota reconectada sin proyecto usa los
-    valores por defecto."""
+    gana al de la receta (`recipe_scaling`) y éste al del proyecto
+    (`AgentProject.scaling`), y la cola cliente comparte el plazo de la cola
+    del host. Una flota reconectada sin proyecto ni receta usa los valores por
+    defecto."""
+    source = scaling_source_of(project, scaling, recipe_scaling)
+    chosen = scaling or recipe_scaling
     if project is None:
         return FleetSettings(
-            scaling=scaling or ScalingOptions(),
+            scaling=chosen or ScalingOptions(),
             queue_timeout_seconds=AGENT_SERVICE_QUEUE_TIMEOUT_SECONDS_DEFAULT,
             max_concurrency=1,
+            scaling_source=source,
         )
     project_scaling = getattr(project, "scaling", None)
     queue_timeout = getattr(project.serve, "queue_timeout_seconds", None)
     return FleetSettings(
-        scaling=scaling or project_scaling or ScalingOptions(),
+        scaling=chosen or project_scaling or ScalingOptions(),
         queue_timeout_seconds=float(
             AGENT_SERVICE_QUEUE_TIMEOUT_SECONDS_DEFAULT if queue_timeout is None else queue_timeout
         ),
         max_concurrency=project.serve.max_concurrency,
+        scaling_source=source,
     )
+
+
+class ParkedSlotError(SandboxException):
+    """Una plaza aparcada que no pudo abrir las pasarelas del proyecto: la
+    flota ya la sacó y la sustituyó (`_replace`), y quien la eligió busca
+    otra."""

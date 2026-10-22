@@ -15,6 +15,7 @@ import {
   withSecretEnv,
 } from "../agent/secret-env-project.js";
 import { validateIdlePolicy } from "../models.js";
+import { MS_PER_SECOND } from "../units.js";
 import type { AgentDeployFlags } from "./ops-ports.js";
 
 /** Lo que las banderas fijan en `ServeOptions`: sólo lo que se pasó (un valor
@@ -78,7 +79,8 @@ export function scalingOf(
     flags.minVms === undefined &&
     flags.maxVms === undefined &&
     flags.warm === undefined &&
-    flags.sessions === undefined
+    flags.sessions === undefined &&
+    flags.scaleInAfter === undefined
   ) {
     return undefined;
   }
@@ -88,6 +90,9 @@ export function scalingOf(
     maxVms: flags.maxVms ?? current.maxVms,
     warmVms: flags.warm ?? current.warmVms,
     sessions: (flags.sessions ?? current.sessions) as SessionMode,
-    scaleInAfterMs: current.scaleInAfterMs,
+    scaleInAfterMs:
+      flags.scaleInAfter === undefined
+        ? current.scaleInAfterMs
+        : flags.scaleInAfter * MS_PER_SECOND,
   });
 }

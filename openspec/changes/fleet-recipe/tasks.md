@@ -44,7 +44,7 @@ Hard rules:
 - [x] 0.4 Vector skeletons: `testdata/fleet-recipe/{recipes,renewal,env-rejection}.json`.
 - [x] 0.5 Spec deltas validated with
       `pnpm dlx @fission-ai/openspec@1.10.0 validate fleet-recipe --strict --no-interactive`.
-- [ ] 0.6 (G5, first commit) Verify the SSM names against the
+- [x] 0.6 (G5, first commit) Verify the SSM names against the
       `@aws-sdk/client-ssm` `.d.ts` and record the version in
       `AWS_API_NOTES.md`. Botocore is already verified.
 
@@ -110,36 +110,36 @@ Hard rules:
 
 ## G5. Fleet recipe, warm gateways, scale-in, renewal and status (`feat/sdk-017-fleet-recipe`, items 8–12)
 
-- [ ] G5.1 `limits.json` keys from the contract; `gen_limits.py`.
-- [ ] G5.2 Pure recipe domain (`_fleet_recipe.py` / `fleet-recipe.ts`):
+- [x] G5.1 `limits.json` keys from the contract; `gen_limits.py`.
+- [x] G5.2 Pure recipe domain (`_fleet_recipe.py` / `fleet-recipe.ts`):
       build from project, flags, image, scaling and presets; encode as JSON
       or envelope; decode; validate. Fill `value` in `recipes.json` and
       compare it byte-for-byte in both SDKs.
-- [ ] G5.3 SSM adapter (`_fleet_recipe_aws.py` / `fleet-recipe-aws.ts`):
+- [x] G5.3 SSM adapter (`_fleet_recipe_aws.py` / `fleet-recipe-aws.ts`):
       only the contract operations and parameters, with errors mapped by
       code. Add the allowed-operations test.
-- [ ] G5.4 `deploy_agent*` saves the recipe (`save_recipe`), and the plan
+- [x] G5.4 `deploy_agent*` saves the recipe (`save_recipe`), and the plan
       shows `recipe: save|off`.
-- [ ] G5.5 `AgentFleet.connect(use_recipe=)` reads it and rebuilds the
+- [x] G5.5 `AgentFleet.connect(use_recipe=)` reads it and rebuilds the
       project, image version, scaling and renewal (sync, async and TS).
-- [ ] G5.6 `FleetStatus.scaling_source`; CLI status text and JSON.
-- [ ] G5.7 `stop(keep_recipe=)`, `rayito agent stop --keep-recipe`.
-- [ ] G5.8 `apply_gateways` helper used by `SandboxPool.take` and by the
+- [x] G5.6 `FleetStatus.scaling_source`; CLI status text and JSON.
+- [x] G5.7 `stop(keep_recipe=)`, `rayito agent stop --keep-recipe`.
+- [x] G5.8 `apply_gateways` helper used by `SandboxPool.take` and by the
       fleet when it opens a parked slot (sync, async and TS).
-- [ ] G5.9 `scale_in_after_seconds` / `scaleInAfterMs` and
+- [x] G5.9 `scale_in_after_seconds` / `scaleInAfterMs` and
       `--scale-in-after` in both CLIs.
-- [ ] G5.10 `--env` secret-looking rejection with the contract message.
-- [ ] G5.11 Gateway key renewal (`_gateway_keys.py` / `gateway-keys.ts`),
+- [x] G5.10 `--env` secret-looking rejection with the contract message.
+- [x] G5.11 Gateway key renewal (`_gateway_keys.py` / `gateway-keys.ts`),
       driven by the `renewal.json` decisions; optional dependency (extra and
       peer); «Coste y activación» block and cost declaration.
-- [ ] G5.12 `infra/iam.yaml` launcher statement `AgentRecipe`. Add it to the
+- [x] G5.12 `infra/iam.yaml` launcher statement `AgentRecipe`. Add it to the
       stack tests and the cost statements if they list actions.
-- [ ] G5.13 Zero-cost traces: no SSM, `DescribeSecret` or `PutSecretValue`
+- [x] G5.13 Zero-cost traces: no SSM, `DescribeSecret` or `PutSecretValue`
       call without `deploy_agent()`, with `project=`, with
       `save_recipe=False`, and without renewal.
-- [ ] G5.14 Unit tests in both SDKs (see design §4). Env-gated e2e for warm
+- [x] G5.14 Unit tests in both SDKs (see design §4). Env-gated e2e for warm
       slot plus reconnect plus status plus stop.
-- [ ] G5.15 Docs: `guias/flota-de-agentes.md`/`.en.md`,
+- [x] G5.15 Docs: `guias/flota-de-agentes.md`/`.en.md`,
       `funciones-opcionales/pasarela-de-secretos.md`/`.en.md`,
       `optional-features.md`/`.en.md`, `cost.md`/`.en.md`,
       `operacion/iam.md`/`.en.md`, `cli.md`/`.en.md`,

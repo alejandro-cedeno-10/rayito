@@ -15,7 +15,7 @@ from typing import Any, Final
 
 from rayito._agent._deploy_plan import AgentDeployPlan
 from rayito._agent._detect_report import DetectionReport
-from rayito._agent._project_domain import AgentProject
+from rayito._agent._project_domain import SECRET_LIKE_KEYS, AgentProject
 from rayito._agent._secret_env_domain import SecretEnvSource, SecretEnvValue
 from rayito._agent._secret_env_project import with_secret_env
 from rayito._limits import AGENT_TOKEN_FILE_DEFAULT as AGENT_TOKEN_FILE_NAME
@@ -46,6 +46,29 @@ COMPACT_LOG_PROGRESS_LINES: Final = 200
 #: Una línea de log con alguno de estos textos siempre se imprime.
 COMPACT_LOG_ALERT_MARKERS: Final[tuple[str, ...]] = ("error", "failed", "fatal")
 SECRET_FLAG_SEPARATOR: Final = "="
+#: Los nombres de `--env` que parecen un secreto: los de `AgentProject.env`
+#: más `secret` (`*_SECRET`). Sólo la bandera los rechaza: `AgentProject.env`
+#: conserva la regla de 0.16 (`testdata/fleet-recipe/env-rejection.json`).
+ENV_FLAG_SECRET_LIKE_KEYS: Final[tuple[str, ...]] = (*SECRET_LIKE_KEYS, "secret")
+ENV_LOOKS_SECRET_MESSAGE: Final = (
+    "--env no admite secretos ({name} parece uno): usa --secret-env {name}=<secreto> "
+    "o --secret-env-from <secreto>"
+)
+SCALE_IN_AFTER_HELP: Final = (
+    "Segundos sin uso tras los que se termina un VM por encima de --min-vms (por defecto, 900)."
+)
+SAVE_RECIPE_HELP: Final = (
+    "No guarda la receta de la flota en Parameter Store (por defecto se guarda, sin coste en "
+    "el nivel estándar)."
+)
+RENEW_GATEWAY_KEYS_HELP: Final = (
+    "Renueva la clave de corta duración de Bedrock de las pasarelas antes de crear cada VM "
+    "(apagado por defecto)."
+)
+KEEP_RECIPE_HELP: Final = "Conserva la receta de la flota al pararla."
+#: La línea de `rayito agent status` de una flota sin proyecto ni receta: su
+#: escalado real no se conoce, así que no se imprime `min`/`max`.
+STATUS_UNKNOWN_SCALING: Final = "members: {count} (escalado desconocido: sin proyecto ni receta)"
 
 
 class CompactBuildLog:
@@ -69,6 +92,23 @@ class CompactBuildLog:
     def finish(self) -> None:
         if self._lines:
             self._emit(f"build: {self._lines} líneas de log (--verbose las imprime todas)")
+
+
+def env_flag_looks_secret(name: str) -> bool:
+    """Si el nombre de una `--env` parece un secreto (`ENV_FLAG_SECRET_LIKE_KEYS`
+    entero o como sufijo `_<palabra>`, sin distinguir mayúsculas)."""
+    lowered = name.lower()
+    return any(
+        lowered == word or lowered.endswith(f"_{word}") for word in ENV_FLAG_SECRET_LIKE_KEYS
+    )
+
+
+def reject_secret_env_flags(env: Mapping[str, str]) -> None:
+    """`InvalidArgumentException` con la primera `--env` que parece un
+    secreto, antes de cualquier llamada a AWS. Nunca repite el valor."""
+    for name in env:
+        if env_flag_looks_secret(name):
+            raise InvalidArgumentException(ENV_LOOKS_SECRET_MESSAGE.format(name=name))
 
 
 def parse_pairs(values: Sequence[str] | None, flag: str) -> dict[str, str]:
@@ -208,6 +248,7 @@ def describe_plan(plan: AgentDeployPlan) -> list[str]:
         ),
         f"bucket del artefacto: {_source_label(plan.bucket_source)}",
         f"access token: {_source_label(plan.token_source)}",
+        f"recipe: {plan.recipe}",
     ]
     lines.extend(
         f"secreto de la pasarela {item.gateway}: {_source_label(item.source)}"

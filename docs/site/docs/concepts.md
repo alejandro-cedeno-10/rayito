@@ -70,6 +70,15 @@ código del sandbox pueda leerla. Lo normal es un `Sandbox.create()` y
 acorta el arranque ([¿Qué uso?](guias/agente-en-el-sandbox.md#que-uso)), y
 `persist=` guarda los ficheros si la conversación se para más de 8 h.
 
+Un agente desplegado con `deploy_agent()` es una
+[flota](guias/flota-de-agentes.md) sin servidor propio: el reparto de sesiones
+lo hace el cliente, y la flota vive en el proceso que la usa. Para que otro
+proceso pueda crear VMs iguales sólo con el nombre y el token, el despliegue
+guarda una [receta](guias/flota-de-agentes.md#la-receta-de-la-flota) (lo que
+usó, con nombres de secretos y nunca sus valores) en un parámetro de
+Parameter Store de tu cuenta; `AgentFleet.connect(nombre)` la lee y `stop()`
+la borra.
+
 <a id="desde-que-lenguajes-se-usa-rayito"></a>
 
 ## Desde otros lenguajes

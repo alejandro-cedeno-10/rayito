@@ -243,6 +243,18 @@ Resources:
                 StringLike:
                   s3:prefix: !Sub \${TransferPrefix}/*
             - !Ref AWS::NoValue
+          # The fleet recipe (ADR-034): \`deploy_agent()\` saves one Standard
+          # SecureString per fleet, \`AgentFleet.connect(name)\` reads it and
+          # \`stop()\` deletes it. Encrypted with the AWS managed key aws/ssm,
+          # which needs no KMS statement (AWS_API_NOTES.md, «Receta de la
+          # flota y claves de corta duración de Bedrock»).
+          - Sid: AgentRecipe
+            Effect: Allow
+            Action:
+              - ssm:PutParameter
+              - ssm:GetParameter
+              - ssm:DeleteParameter
+            Resource: !Sub arn:\${AWS::Partition}:ssm:\${AWS::Region}:\${AWS::AccountId}:parameter/rayito/agents/*
           - Sid: ReadQuotas
             Effect: Allow
             Action: servicequotas:ListServiceQuotas
@@ -412,6 +424,18 @@ Resources:
                 StringLike:
                   s3:prefix: !Sub \${TransferPrefix}/*
             - !Ref AWS::NoValue
+          # The fleet recipe (ADR-034): \`deploy_agent()\` saves one Standard
+          # SecureString per fleet, \`AgentFleet.connect(name)\` reads it and
+          # \`stop()\` deletes it. Encrypted with the AWS managed key aws/ssm,
+          # which needs no KMS statement (AWS_API_NOTES.md, «Receta de la
+          # flota y claves de corta duración de Bedrock»).
+          - Sid: AgentRecipe
+            Effect: Allow
+            Action:
+              - ssm:PutParameter
+              - ssm:GetParameter
+              - ssm:DeleteParameter
+            Resource: !Sub arn:\${AWS::Partition}:ssm:\${AWS::Region}:\${AWS::AccountId}:parameter/rayito/agents/*
           - Sid: ReadQuotas
             Effect: Allow
             Action: servicequotas:ListServiceQuotas

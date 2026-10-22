@@ -19,6 +19,30 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
 - `AgentProject.gateway_presets`: pasarela -> preset, tal como lo declara
   `[gateways.<nombre>] preset`. Lo rellenan la lectura del fichero y la
   detección; no entra en el documento canónico del proyecto.
+- **Receta de la flota** (ADR-034): `deploy_agent()` y `rayito agent deploy`
+  guardan, tras arrancar la flota de MicroVMs, lo que usaron (el proyecto tras
+  las banderas, la versión de la imagen, los presets de las pasarelas, el
+  escalado) en un parámetro `SecureString` estándar de Parameter Store
+  (`/rayito/agents/<nombre>/recipe`), con nombres de secretos y nunca valores.
+  `AgentFleet.connect(nombre)` sin `project` la lee y puede crear VMs iguales;
+  `use_recipe=False` la ignora. Es la única función encendida por defecto (no
+  cuesta en el nivel estándar): `AgentDeployOptions(save_recipe=False)` /
+  `--no-save-recipe` la apagan. Un fallo al guardarla es un aviso
+  (`recipe_access_denied`, `recipe_not_saved`, `recipe_too_large`), nunca un
+  despliegue fallido. Nueva sentencia `AgentRecipe` en
+  `SandboxLauncherPolicy` y `CallerPolicy`.
+- **`FleetStatus.scaling_source`** (`explicit`, `project`, `recipe` o
+  `default`).
+- **`AgentFleet.stop(keep_recipe=...)`** y `rayito agent stop --keep-recipe`:
+  por defecto `stop()` borra la receta que leyó o guardó.
+- **`AgentDeployOptions.scale_in_after_seconds`** y
+  `rayito agent deploy --scale-in-after SECONDS`.
+- **Renovación opcional de la clave de corta duración de Bedrock**
+  (`renew_gateway_keys` en `AgentFleet`, `AgentFleet.connect`,
+  `AsyncAgentFleet` y `AgentDeployOptions`; `--renew-gateway-keys`), apagada
+  por defecto, con el extra `bedrock-keys`
+  (`aws-bedrock-token-generator==1.1.0`).
+- **`AgentDeployment.refresh_gateways()`**.
 
 ### Corregido
 
@@ -51,6 +75,16 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   `opencode_permission_ignored`. Lo que dice `rayito-agent.toml` gana, y el
   informe sólo lleva la evidencia (`file:AGENTS.md`, `config:permission`),
   nunca el texto de los ficheros.
+- Una flota reconectada en otro proceso abría una plaza caliente sin las
+  pasarelas del proyecto (el agente arrancaba sin la pasarela del modelo): la
+  flota las abre ahora con el mismo camino que `SandboxPool.take(gateways=)` y
+  sustituye la plaza si no puede.
+- `rayito agent status <flota>` sin proyecto mostraba un escalado inventado
+  (`min 1, max 1`); ahora imprime el de la receta o
+  `escalado desconocido: sin proyecto ni receta`.
+- `rayito agent deploy --env` rechaza un nombre que parece un secreto
+  (también `*_SECRET`) y apunta a `--secret-env` y `--secret-env-from`, para
+  que ningún valor secreto acabe en la receta.
 
 ## [0.16.0] - 2026-10-22
 

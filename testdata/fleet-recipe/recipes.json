@@ -1,6 +1,6 @@
 {
   "schema": "rayito.fleet-recipe-vectors/1",
-  "_comment": "Vectores de la receta (design.md D1-D2). `document` es la entrada; `encoding` el resultado esperado (`json` o `gzip+base64`), y `value` los bytes exactos que deben producir los dos SDK. G5 rellena `value` desde la implementación de Python en su primer commit y el test de TypeScript lo compara byte a byte; un `value` nulo hace fallar el test. El `project` de estos vectores es un esqueleto: G5 lo sustituye por el documento real que serializa AgentProject para un proyecto de ejemplo genérico.",
+  "_comment": "Vectores de la receta (design.md D1-D2). `document` es la entrada; `encoding` el resultado esperado (`json` o `gzip+base64`) y `value` el valor que escribió la implementación de Python. Con `json`, los dos SDK deben producir `value` byte a byte. Con `gzip+base64`, el sobre (`schema`, `encoding`) es el mismo pero los bytes de deflate dependen de la build de zlib de cada plataforma: los dos SDK deben leer el `value` del otro y devolver el mismo documento. `large-instructions` y `too-large` son `small-bedrock` con `project.agent.instructions` = `instructions.repeat` repetido `instructions.times` veces, o los primeros `instructions.sha256HexChars` caracteres de concatenar sha256(\"0\"), sha256(\"1\")... en hexadecimal (incompresible por debajo de 4 bits por carácter). El `project` es el documento que serializa AgentProject para un proyecto de ejemplo genérico.",
   "cases": [
     {
       "id": "small-bedrock",
@@ -13,24 +13,48 @@
           "version": "3"
         },
         "project": {
+          "schema": "rayito.agent-project/1",
           "name": "my-agent",
           "runtime": {
             "kind": "opencode"
           },
-          "env": {
-            "LOG_LEVEL": "info"
+          "model": {
+            "provider": "bedrock",
+            "id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+            "gateway": "model",
+            "region": "us-east-1"
           },
-          "secret_env_from": [
-            "app/config"
-          ],
           "gateways": {
             "model": {
               "preset": "custom",
               "upstream": "https://bedrock-runtime.us-east-1.amazonaws.com",
               "headers": {
-                "authorization": "rayito/agents/my-agent/bedrock"
-              }
+                "authorization": "agents/my-agent/model"
+              },
+              "allow": [
+                [
+                  "POST",
+                  "/model/us.anthropic.claude-haiku-4-5-20251001-v1%3A0/converse-stream"
+                ],
+                [
+                  "POST",
+                  "/model/us.anthropic.claude-haiku-4-5-20251001-v1%3A0/converse"
+                ]
+              ]
             }
+          },
+          "env": {
+            "LOG_LEVEL": "info"
+          },
+          "secret_env_from": [
+            {
+              "secret": "app/config"
+            }
+          ],
+          "network": {
+            "allow_out": [
+              "api.example.com"
+            ]
           }
         },
         "gatewayPresets": {
@@ -46,19 +70,27 @@
         "renewGatewayKeys": false
       },
       "encoding": "json",
-      "value": null
+      "value": "{\"gatewayPresets\":{\"model\":\"bedrock\"},\"image\":{\"name\":\"my-agent\",\"version\":\"3\"},\"name\":\"my-agent\",\"project\":{\"env\":{\"LOG_LEVEL\":\"info\"},\"gateways\":{\"model\":{\"allow\":[[\"POST\",\"/model/us.anthropic.claude-haiku-4-5-20251001-v1%3A0/converse-stream\"],[\"POST\",\"/model/us.anthropic.claude-haiku-4-5-20251001-v1%3A0/converse\"]],\"headers\":{\"authorization\":\"agents/my-agent/model\"},\"preset\":\"custom\",\"upstream\":\"https://bedrock-runtime.us-east-1.amazonaws.com\"}},\"model\":{\"gateway\":\"model\",\"id\":\"us.anthropic.claude-haiku-4-5-20251001-v1:0\",\"provider\":\"bedrock\",\"region\":\"us-east-1\"},\"name\":\"my-agent\",\"network\":{\"allow_out\":[\"api.example.com\"]},\"runtime\":{\"kind\":\"opencode\"},\"schema\":\"rayito.agent-project/1\",\"secret_env_from\":[{\"secret\":\"app/config\"}]},\"renewGatewayKeys\":false,\"savedBy\":\"python/0.17.0\",\"scaling\":{\"maxVms\":3,\"minVms\":1,\"scaleInAfterSeconds\":900,\"sessions\":\"shared\",\"warmVms\":1},\"schema\":\"rayito.agent-recipe/1\"}"
     },
     {
       "id": "large-instructions",
-      "document": "small-bedrock with project.spec.instructions = 'Responde en español. ' * 400",
       "encoding": "gzip+base64",
-      "value": null
+      "value": "{\"data\":\"H4sIAAAAAAAC/+2azWrcMBDHXyUM9ObPpKHUtxRCKA0kNCWXZVmm8uxaXVsykrybzbIP1Wfoi3VkuyHQFnrocU6Sfppv6fg/wgYD7fFw78hT8FAdobM1tVDBV6qdVVs4JaA73FC8M9jxCt0hZWACJLAj57U1DC+i5e8GvbPfSIXoPSHeaOODG1RgR04Jn8n31tR0RuaMt/jju22zM6FChQoVKlSoUKFChQoVKlSoUKFChQoVKlSoUKFChQoVKlSoUKFCJxqFKWR2UXlye3ezur1+vL6FCrRZ23g1S2Bei1+OgG1r91AtFnB/9/AFEsjHq3zwGZrQONtrlakWh5rSBvV2SN+ml+l5cX5ZFkWZ7so3F1dFrqyJAhlKfXCEHSyT/xMPlssEGsKaD2O1Q2is088YJi3OqLTx+S8ZzpQr9tqPOh+2UIMPtuM6hn6urYImhN5XeT4rf1I3mKA7ygafEvqQlhl2+GwN7n2m2PnEAV8GNk8xin9GlICu+fDP/VXFJBbaaW7qlfwoAUebqauXOv6sNDIU9tZtX15vZQfudAHY64yesOtbGstesvfcWrTdahMLtT0ZxZXH2F411CFDhwcdbDZmSGclU15yLk/KUVjxr1qtHcesFseZxen3fXyptd7AaUxGhvY303w+Ufxoa2w9cRTcUf0hzqw/8AOavMjKd1kchFfYarMZvyQ+PXbsc8HD1mbclpMBfTRX60DugThbzfx9UcTSvJ+FVb5BRzWH26PrJs+/dudI6Z64udNPtGL8vxUmAAA=\",\"encoding\":\"gzip+base64\",\"schema\":\"rayito.agent-recipe/1\"}",
+      "base": "small-bedrock",
+      "instructions": {
+        "repeat": "Responde en español. ",
+        "times": 400
+      }
     },
     {
       "id": "too-large",
-      "document": "small-bedrock with 6000 random hex bytes of instructions (incompressible)",
       "encoding": null,
-      "warning": "recipe_too_large"
+      "warning": "recipe_too_large",
+      "base": "small-bedrock",
+      "instructions": {
+        "sha256HexChars": 8000
+      },
+      "value": null
     }
   ],
   "rejected": [

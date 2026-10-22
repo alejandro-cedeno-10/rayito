@@ -7,6 +7,9 @@ export default defineConfig({
         test: {
           name: "unit",
           include: ["tests/unit/**/*.test.ts"],
+          // Ningún test llega a Parameter Store: la tienda de recetas por
+          // defecto de la flota es una vacía en memoria (ADR-034).
+          setupFiles: ["tests/unit/setup-recipe-store.ts"],
           testTimeout: 20_000,
         },
       },

@@ -319,6 +319,8 @@ deployment yet.
 | A deployment active for the 8 h maximum | 8 × $0.126 + $0.0014 ≈ **$1.01** |
 | A deployment with `idle`: 1 h active and 7 h suspended | $0.126 + 7 h × $0.0001 + one suspend/resume cycle ($0.0049) + $0.0014 ≈ **$0.133** |
 | An `AgentProject` image version | the `rayito-agent` one is ≈ **$0.056/week**; with Hermes or Node the snapshot weighs more (measure it with `rayito image sizes`) |
+| The [fleet recipe](guias/flota-de-agentes.md#la-receta-de-la-flota) (since 0.17, by default) | **$0**: the standard Parameter Store parameter has no charge; each deploy, reconnect without a project and stop makes one KMS request, inside the 20,000 free per month (then $0.03 per 10,000) |
+| [Renewing the Bedrock key](funciones-opcionales/pasarela-de-secretos.md#renovar-la-clave-de-bedrock) (optional) | $0.05 per 10,000 Secrets Manager calls: one `DescribeSecret` per VM created outside the 900 s window and at most one `PutSecretValue` per window |
 
 A deployment nobody calls keeps costing until it suspends: leave `idle` on
 (the default), or stop it with `rayito agent stop`.

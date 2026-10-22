@@ -57,6 +57,11 @@ const POOL_MIN_REMAINING_DEFAULT_MS = 3_600_000;
 const POOL_MIN_REMAINING_FLOOR_MS = 60_000;
 
 export type MemberHealth = DeploymentState | "unknown";
+/** De dónde sale el escalado de una flota: `scaling` explícito, el proyecto,
+ * la receta guardada por `deployAgent()` o, sin ninguno, los valores por
+ * defecto (que no dicen nada de la flota real). */
+export const SCALING_SOURCES = ["explicit", "project", "recipe", "default"] as const;
+export type ScalingSource = (typeof SCALING_SOURCES)[number];
 
 /** El destino de `sessionId` si es un id de sesión enrutable de la flota;
  * `undefined` si es un id cualquiera (el del llamante o el de un despliegue de
@@ -179,7 +184,9 @@ export interface FleetMemberStatus {
 
 /** El estado de una flota: sus miembros, cuántos están sanos u ocupados y los
  * límites de `ScalingOptions`. Un miembro que este proceso aún no abrió figura
- * como `unknown`: preguntarle lo reanudaría. */
+ * como `unknown`: preguntarle lo reanudaría. `scalingSource` dice de dónde
+ * salen los límites: con `default` (sin proyecto ni receta) no describen la
+ * flota real. */
 export interface FleetStatus {
   readonly name: string;
   readonly members: readonly FleetMemberStatus[];
@@ -189,6 +196,7 @@ export interface FleetStatus {
   readonly maxVms: number;
   readonly warmVms: number;
   readonly warmReady: number;
+  readonly scalingSource: ScalingSource;
 }
 
 export function fleetStatusOf(
@@ -196,6 +204,7 @@ export function fleetStatusOf(
   members: readonly FleetMemberStatus[],
   scaling: ScalingOptions,
   warmReady: number,
+  scalingSource: ScalingSource = "default",
 ): FleetStatus {
   return Object.freeze({
     name,
@@ -206,6 +215,7 @@ export function fleetStatusOf(
     maxVms: scaling.maxVms,
     warmVms: scaling.warmVms,
     warmReady,
+    scalingSource,
   });
 }
 
@@ -371,34 +381,57 @@ export function poolConfigFor(
   };
 }
 
-/** Lo que la flota lee de un `AgentProject`: el escalado, el plazo de la cola
- * y la concurrencia por VM. */
+/** Lo que la flota lee de un `AgentProject` (o de su receta): el escalado y
+ * de dónde sale, el plazo de la cola y la concurrencia por VM. */
 export interface FleetSettings {
   readonly scaling: ScalingOptions;
   readonly queueTimeoutMs: number;
   readonly maxConcurrency: number;
+  readonly scalingSource: ScalingSource;
+}
+
+/** De dónde sale el escalado: lo explícito gana a la receta, y la receta (que
+ * guarda las banderas del despliegue) al proyecto. */
+export function scalingSourceOf(
+  project: AgentProject | undefined,
+  scaling: ScalingOptions | undefined,
+  recipeScaling: ScalingOptions | undefined,
+): ScalingSource {
+  if (scaling !== undefined) {
+    return "explicit";
+  }
+  if (recipeScaling !== undefined) {
+    return "recipe";
+  }
+  return project === undefined ? "default" : "project";
 }
 
 /** Un único sitio donde la flota mira el proyecto: un `scaling` explícito
- * gana al del proyecto (`AgentProject.scaling`), y la cola cliente comparte el
- * plazo de la cola del host. Una flota reconectada sin proyecto usa los
- * valores por defecto. */
+ * gana al de la receta (`recipeScaling`) y éste al del proyecto
+ * (`AgentProject.scaling`), y la cola cliente comparte el plazo de la cola del
+ * host. Una flota reconectada sin proyecto ni receta usa los valores por
+ * defecto. */
 export function fleetSettingsOf(
   project: AgentProject | undefined,
   scaling?: ScalingOptions | undefined,
+  recipeScaling?: ScalingOptions | undefined,
 ): FleetSettings {
+  const scalingSource = scalingSourceOf(project, scaling, recipeScaling);
+  const chosen = scaling ?? recipeScaling;
   if (project === undefined) {
     return {
-      scaling: scaling ?? new ScalingOptions(),
+      scaling: chosen ?? new ScalingOptions(),
       queueTimeoutMs: DEFAULT_QUEUE_TIMEOUT_MS,
       maxConcurrency: 1,
+      scalingSource,
     };
   }
   const extras = project as unknown as { scaling?: ScalingOptions };
   const serve = project.serve as unknown as { queueTimeoutMs?: number };
   return {
-    scaling: scaling ?? extras.scaling ?? new ScalingOptions(),
+    scaling: chosen ?? extras.scaling ?? new ScalingOptions(),
     queueTimeoutMs: serve.queueTimeoutMs ?? DEFAULT_QUEUE_TIMEOUT_MS,
     maxConcurrency: project.serve.maxConcurrency,
+    scalingSource,
   };
 }

@@ -772,6 +772,46 @@
           "default": false,
           "is_flag": true,
           "envvar": null
+        },
+        {
+          "name": "scale_in_after",
+          "kind": "option",
+          "flags": [
+            "--scale-in-after"
+          ],
+          "type": "int",
+          "required": false,
+          "multiple": false,
+          "default": null,
+          "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "save_recipe",
+          "kind": "option",
+          "flags": [
+            "--save-recipe",
+            "--no-save-recipe"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "default": true,
+          "is_flag": true,
+          "envvar": null
+        },
+        {
+          "name": "renew_gateway_keys",
+          "kind": "option",
+          "flags": [
+            "--renew-gateway-keys"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "default": false,
+          "is_flag": true,
+          "envvar": null
         }
       ]
     },
@@ -1378,6 +1418,19 @@
           "multiple": false,
           "default": null,
           "is_flag": false,
+          "envvar": null
+        },
+        {
+          "name": "keep_recipe",
+          "kind": "option",
+          "flags": [
+            "--keep-recipe"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "default": false,
+          "is_flag": true,
           "envvar": null
         }
       ]

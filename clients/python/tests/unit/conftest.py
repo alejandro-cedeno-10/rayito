@@ -537,6 +537,20 @@ TRANSFER_ENV_VARS = ("RAYITO_TRANSFER_BUCKET", "RAYITO_TRANSFER_PREFIX", "RAYITO
 
 
 @pytest.fixture(autouse=True)
+def isolated_recipe_store(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ningún test llega a Parameter Store: la tienda de recetas por defecto
+    de la flota (ADR-034) es una vacía en memoria por test. Los tests de la
+    receta pasan la suya (`recipe_store=`) o prueban `SsmRecipeStore` con
+    `Stubber`."""
+    from rayito._agent import _fleet_recipe_aws
+    from tests.unit.fake_fleet_recipe import MemoryRecipeStore
+
+    monkeypatch.setattr(
+        _fleet_recipe_aws, "default_recipe_store", lambda region, session: MemoryRecipeStore()
+    )
+
+
+@pytest.fixture(autouse=True)
 def isolated_transfer_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """Ningún test hereda el bucket de transferencias del entorno de quien
     los corre: con él, `files.write`/`files.read` grandes irían por S3."""
