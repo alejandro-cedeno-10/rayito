@@ -12,6 +12,7 @@
  * de la flota espera (`await`) a medias.
  */
 
+import type { AwsClientSettings } from "../aws/control-plane.js";
 import {
   AgentError,
   CapacityError,
@@ -21,11 +22,14 @@ import {
 } from "../errors.js";
 import type { DynamoDbIndex } from "../index/dynamodb.js";
 import { AGENT_SERVICE_READY_MARKER_PATH } from "../limits.js";
+import type { Logger } from "../logger.js";
 import type { PoolBackend } from "../pool/backend.js";
 import type { PoolConfig } from "../pool/config.js";
 import type { PoolStats } from "../pool/core.js";
 import type { SandboxPoolOptions, TakeOptions } from "../pool/pool.js";
-import type { ControlPlaneOptions } from "../sandbox/sandbox.js";
+import { DEFAULT_REQUEST_TIMEOUT_MS } from "../sandbox/launch.js";
+import type { ControlPlaneOptions, Sandbox } from "../sandbox/sandbox.js";
+import type { SecretGateway } from "../secret-gateway/domain.js";
 import {
   AgentDeployment,
   type AgentInputRequest,
@@ -73,6 +77,21 @@ import {
   vmLostMessage,
   withHandle,
 } from "./fleet-base.js";
+import { type FleetRecipe, recipeOf } from "./fleet-recipe.js";
+import {
+  defaultRecipeStore,
+  type FleetRecipeStore,
+  forgetRecipe,
+  loadRecipe,
+  RECIPE_SAVED,
+  storeRecipe,
+} from "./fleet-recipe-aws.js";
+import {
+  type GatewayKeyRenewer,
+  gatewayKeyRenewer,
+  RENEW_NEEDS_BEDROCK,
+  renewableGateways,
+} from "./gateway-keys.js";
 import type { AgentProject } from "./project.js";
 import {
   ProjectService,
@@ -91,8 +110,13 @@ const NO_TOKEN_MESSAGE =
   "esta flota se reconectó sin access token: sólo puede listarse o terminarse; " +
   "pasa accessToken a AgentFleet.connect() para usarla";
 const NO_PROJECT_MESSAGE =
-  "esta flota se reconectó sin proyecto: no puede crear ni arrancar VMs; " +
-  "pasa project a AgentFleet.connect()";
+  "esta flota se reconectó sin proyecto ni receta: no puede crear ni arrancar VMs; " +
+  "pasa project a AgentFleet.connect() o despliégala con rayito agent deploy";
+const PARKED_SLOT_MESSAGE = "una plaza aparcada no pudo abrir las pasarelas del proyecto";
+
+/** Una plaza aparcada que no pudo abrir las pasarelas del proyecto: la flota
+ * ya la sacó y la sustituyó, y quien la eligió busca otra. */
+class ParkedSlotError extends SandboxError {}
 
 /** El `Sandbox` que la flota abre de un VM existente. */
 export type FleetSandbox = ServiceSandbox & DeploymentSandbox;
@@ -104,6 +128,13 @@ export interface FleetDirectory {
   connect(sandboxId: string, accessToken: string): Promise<FleetSandbox>;
   kill(sandboxId: string): Promise<boolean>;
   findSession(template: string, label: string, index: DynamoDbIndex): Promise<string | undefined>;
+  /** Abre `gateways` en un VM ya conectado (una plaza aparcada) con el mismo
+   * camino que `SandboxPool.take({ gateways })`, sin terminarlo si falla. */
+  openGateways(
+    sandbox: FleetSandbox,
+    gateways: Readonly<Record<string, SecretGateway>>,
+    options: { readonly timeoutMs: number },
+  ): Promise<void>;
 }
 
 /** El adaptador de producción de la flota: lista los VMs de la imagen
@@ -170,6 +201,15 @@ export class SandboxDirectory implements FleetDirectory {
     }
     return undefined;
   }
+
+  async openGateways(
+    sandbox: FleetSandbox,
+    gateways: Readonly<Record<string, SecretGateway>>,
+    options: { readonly timeoutMs: number },
+  ): Promise<void> {
+    const { applyGateways } = await import("../pool/pool.js");
+    await applyGateways(sandbox as unknown as Sandbox, gateways, options);
+  }
 }
 
 /** El pool de plazas calientes que la flota usa (`SandboxPool` o un doble). */
@@ -207,9 +247,52 @@ export interface AgentFleetOptions {
   readonly fetch?: typeof fetch | undefined;
   readonly now?: (() => number) | undefined;
   readonly sleep?: ((ms: number) => Promise<void>) | undefined;
+  /** Credenciales de las llamadas de la receta y de la renovación de claves;
+   * por defecto la cadena por defecto. */
+  readonly credentials?: AwsClientSettings["credentials"] | undefined;
+  /** Dónde avisa la flota (los códigos de la receta); en silencio por
+   * defecto. */
+  readonly logger?: Logger | undefined;
+  /**
+   * Renueva la clave de corta duración de Bedrock de las pasarelas `bedrock`
+   * antes de crear cada VM o abrir cada plaza (por defecto `false`).
+   *
+   * Coste y activación
+   * -------------------
+   * Activa: `renewGatewayKeys: true` (`--renew-gateway-keys`); necesita los
+   *     peers opcionales `@aws/bedrock-token-generator` y
+   *     `@aws-sdk/client-secrets-manager`.
+   * Recursos y llamadas AWS: la firma es local; `DescribeSecret` y, como
+   *     mucho una vez cada `gatewayKeyRenewAfterSeconds`, `PutSecretValue`
+   *     sobre el secreto de la pasarela.
+   * Coste aproximado: $0,05 por 10 000 llamadas a Secrets Manager (us-east-1,
+   *     consultado 2026-10-22 en https://aws.amazon.com/secrets-manager/pricing/).
+   * IAM: `secretsmanager:DescribeSecret`, `secretsmanager:PutSecretValue` y
+   *     `bedrock:CallWithBearerToken` en el principal que firma.
+   * Cómo apagarla: no la pases (por defecto `false`).
+   * Ejemplo:
+   *   await AgentFleet.connect("my-agent", { accessToken, renewGatewayKeys: true });
+   */
+  readonly renewGatewayKeys?: boolean | undefined;
+  /** La receta que leyó `connect()`; sólo la pasa `connect()`. */
+  readonly recipe?: FleetRecipe | undefined;
+  /** Dónde vive la receta (por defecto, Parameter Store). */
+  readonly recipeStore?: FleetRecipeStore | undefined;
+  /** Un renovador de claves propio, p. ej. en tests. */
+  readonly keyRenewer?: Pick<GatewayKeyRenewer, "renew"> | undefined;
 }
 
-export type AgentFleetConnectOptions = Omit<AgentFleetOptions, "name">;
+export interface AgentFleetConnectOptions extends Omit<AgentFleetOptions, "name" | "recipe"> {
+  /** Sin `project`, lee la receta que guardó `deployAgent()` (por defecto
+   * `true`); con `false` la flota es la de 0.16. */
+  readonly useRecipe?: boolean | undefined;
+}
+
+export interface AgentFleetStopOptions {
+  /** Conserva la receta de la flota (por defecto se borra si este proceso la
+   * guardó o la leyó). */
+  readonly keepRecipe?: boolean | undefined;
+}
 
 /** Una invocación en curso en un VM: el miembro, la sesión que ve el host y la
  * reserva de un VM dedicado hasta conocer la sesión real. */
@@ -344,10 +427,14 @@ export class AgentFleetStream implements AsyncIterable<AgentEvent> {
  *     aparcada no factura cómputo pero sí almacenamiento de snapshot.
  * IAM: los de `Sandbox.create()`, `Sandbox.list()` y `Sandbox.connect()`
  *     (`RayitoSandboxRunner`) y `secretsmanager:GetSecretValue` por
- *     pasarela; con `sessionIndex`, los de `DynamoDbIndex`.
+ *     pasarela; con `sessionIndex`, los de `DynamoDbIndex`. Leer y borrar la
+ *     receta (`connect(nombre)` sin `project`, `stop()`), los de
+ *     `SsmRecipeStore`; con `renewGatewayKeys`, los de `GatewayKeyRenewer`.
  * Cómo apagarla: `stop()` termina todos los VMs; `minVms: 1, maxVms: 1,
  *     warmVms: 0` (por defecto) es un solo VM; sin llamar a `deployAgent()`
- *     nada se crea.
+ *     nada se crea. `connect(nombre, { useRecipe: false })` no lee la receta
+ *     y `stop({ keepRecipe: true })` no la borra; sin `renewGatewayKeys` no
+ *     se renueva ninguna clave.
  * Ejemplo:
  *   const fleet = await deployAgent("./mi-agente");
  *   (await fleet.invoke("Resume el README.")).text;
@@ -368,6 +455,12 @@ export class AgentFleet {
   readonly #fetch: typeof fetch | undefined;
   readonly #now: () => number;
   readonly #sleep: (ms: number) => Promise<void>;
+  readonly #credentials: AwsClientSettings["credentials"] | undefined;
+  readonly #logger: Logger | undefined;
+  readonly #renewKeys: boolean;
+  #renewer: Pick<GatewayKeyRenewer, "renew"> | undefined;
+  #recipeStore: FleetRecipeStore | undefined;
+  #recipeKnown: boolean;
   #members: Member<AgentDeployment>[] = [];
   #growing = 0;
   readonly #sessions = new Map<string, string>();
@@ -380,9 +473,10 @@ export class AgentFleet {
     this.#project = options.project;
     this.#name = options.name ?? options.project?.template ?? options.project?.name ?? "";
     this.#token = options.accessToken;
-    this.#settings = fleetSettingsOf(options.project, options.scaling);
+    this.#settings = fleetSettingsOf(options.project, options.scaling, options.recipe?.scaling);
     this.#connection = options.connection ?? {};
     this.#fetch = options.fetch;
+    const imageVersion = options.recipe?.imageVersion;
     this.#service =
       options.service ??
       (options.project === undefined
@@ -390,7 +484,20 @@ export class AgentFleet {
         : new ProjectService(options.project, {
             ...options.serviceOptions,
             ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
+            ...(imageVersion === undefined ? {} : { imageVersion }),
           }));
+    this.#credentials = options.credentials;
+    this.#logger = options.logger;
+    this.#renewKeys = options.renewGatewayKeys ?? false;
+    if (this.#renewKeys) {
+      if (options.project === undefined) {
+        throw new InvalidArgumentError(RENEW_NEEDS_BEDROCK);
+      }
+      renewableGateways(options.project);
+    }
+    this.#renewer = this.#renewKeys ? options.keyRenewer : undefined;
+    this.#recipeStore = options.recipeStore;
+    this.#recipeKnown = options.recipe !== undefined;
     this.#directory = options.directory ?? new SandboxDirectory(this.#connection);
     this.#poolFactory = options.poolFactory;
     this.#poolBackend = options.poolBackend;
@@ -402,10 +509,37 @@ export class AgentFleet {
 
   /** Reconstruye la flota de la imagen `name` en cualquier proceso: todos sus
    * MicroVMs no terminados, sin reanudar ninguno (un VM se abre al usarlo).
-   * Sin `project` la flota enruta y consulta pero no puede crear VMs; sin
+   *
+   * Sin `project` y con `useRecipe` (por defecto) lee la receta que guardó
+   * `deployAgent()` (un `GetParameter`): con ella la flota crea VMs iguales a
+   * los del despliegue (proyecto tras las banderas, versión de la imagen,
+   * escalado y renovación de claves) y `status()` da su escalado real. Un
+   * `scaling` o un `renewGatewayKeys` explícitos ganan a la receta. Sin
+   * receta (o con `project`, o `useRecipe: false`), la flota es la de 0.16:
+   * sin `project` enruta y consulta pero no puede crear VMs; sin
    * `accessToken`, sólo puede listarse o terminarse. */
   static async connect(name: string, options: AgentFleetConnectOptions = {}): Promise<AgentFleet> {
-    const fleet = new AgentFleet({ ...options, name });
+    const { useRecipe, ...rest } = options;
+    let project = options.project;
+    let recipe: FleetRecipe | undefined;
+    let recipeStore = options.recipeStore;
+    if (project === undefined && useRecipe !== false) {
+      recipeStore ??= defaultRecipeStore({
+        region: options.connection?.region,
+        credentials: options.credentials,
+      });
+      const loaded = await loadRecipe(recipeStore, name, options.logger);
+      project = loaded?.project;
+      recipe = loaded?.recipe;
+    }
+    const fleet = new AgentFleet({
+      ...rest,
+      name,
+      project,
+      recipe,
+      recipeStore,
+      renewGatewayKeys: options.renewGatewayKeys ?? recipe?.renewGatewayKeys ?? false,
+    });
     await fleet.refreshMembers();
     return fleet;
   }
@@ -525,6 +659,7 @@ export class AgentFleet {
         sessions: current.sessions,
         scaleInAfterMs: current.scaleInAfterMs,
       }),
+      scalingSource: "explicit",
     };
     await this.reconcile();
   }
@@ -537,9 +672,10 @@ export class AgentFleet {
     await this.#closePool(this.#poolBackend === undefined);
   }
 
-  /** Termina todos los VMs de la flota y las plazas del pool. Sigue aunque
-   * uno falle y, al final, lanza el primer error. */
-  async stop(): Promise<void> {
+  /** Termina todos los VMs de la flota y las plazas del pool y, si este
+   * proceso guardó o leyó su receta, la borra (`keepRecipe: true` la
+   * conserva). Sigue aunque uno falle y, al final, lanza el primer error. */
+  async stop(options: AgentFleetStopOptions = {}): Promise<void> {
     const errors: unknown[] = [];
     await this.#closePool(true, errors);
     const members = this.#members;
@@ -547,6 +683,14 @@ export class AgentFleet {
     for (const member of members) {
       try {
         await this.#terminate(member);
+      } catch (error) {
+        errors.push(error);
+      }
+    }
+    if (this.#recipeKnown && options.keepRecipe !== true) {
+      try {
+        await forgetRecipe(this.#recipes(), this.#name, this.#logger);
+        this.#recipeKnown = false;
       } catch (error) {
         errors.push(error);
       }
@@ -572,7 +716,13 @@ export class AgentFleet {
       });
     }
     const warmReady = this.#pool?.stats().ready ?? 0;
-    return fleetStatusOf(this.#name, statuses, this.scaling, warmReady);
+    return fleetStatusOf(
+      this.#name,
+      statuses,
+      this.scaling,
+      warmReady,
+      this.#settings.scalingSource,
+    );
   }
 
   /** Espera a que las plazas calientes queden aparcadas; `false` si se agota
@@ -871,6 +1021,7 @@ export class AgentFleet {
     if (service === undefined) {
       throw new InvalidArgumentError(NO_PROJECT_MESSAGE);
     }
+    await this.#renewGatewayKeys();
     const label = this.#indexLabel(sessionId);
     let deployment: AgentDeployment;
     if (extra && this.#pool !== undefined && label === undefined) {
@@ -933,20 +1084,42 @@ export class AgentFleet {
       return member.deployment;
     }
     const sandbox = await this.#directory.connect(member.sandboxId, this.#requireToken());
-    const deployment = await this.#serving(sandbox);
+    const deployment = await this.#serving(member, sandbox);
     member.deployment = deployment;
     await this.#limitLifetime(member);
     return deployment;
   }
 
-  async #serving(sandbox: FleetSandbox): Promise<AgentDeployment> {
+  async #serving(member: Member<AgentDeployment>, sandbox: FleetSandbox): Promise<AgentDeployment> {
     if (await sandbox.files.exists(AGENT_SERVICE_READY_MARKER_PATH)) {
       return this.#deploymentOf(sandbox);
     }
     if (this.#service === undefined) {
       throw new InvalidArgumentError(NO_PROJECT_MESSAGE);
     }
+    await this.#openParked(member, sandbox);
     return this.#service.serve(sandbox);
+  }
+
+  /** Una plaza aparcada (de este proceso o de otro) nace sin pasarelas: se
+   * abren las del proyecto (o de la receta) antes de arrancar el host, con el
+   * mismo camino que `SandboxPool.take({ gateways })`. Si no se pueden abrir,
+   * la plaza se sustituye y quien la eligió busca otra. */
+  async #openParked(member: Member<AgentDeployment>, sandbox: FleetSandbox): Promise<void> {
+    const project = this.#project;
+    if (project === undefined || Object.keys(project.gateways).length === 0) {
+      return;
+    }
+    await this.#renewGatewayKeys();
+    try {
+      await this.#directory.openGateways(sandbox, project.gateways, {
+        timeoutMs: DEFAULT_REQUEST_TIMEOUT_MS,
+      });
+    } catch (error) {
+      this.#logger?.warn?.("una plaza aparcada no pudo abrir sus pasarelas: se sustituye");
+      await this.#replace(member);
+      throw new ParkedSlotError(PARKED_SLOT_MESSAGE, { cause: error });
+    }
   }
 
   async #deploymentOf(sandbox: FleetSandbox): Promise<AgentDeployment> {
@@ -971,6 +1144,9 @@ export class AgentFleet {
     } catch (error) {
       if (error instanceof SandboxNotFoundError) {
         this.#drop(member);
+        return false;
+      }
+      if (error instanceof ParkedSlotError) {
         return false;
       }
       throw error;
@@ -1083,6 +1259,59 @@ export class AgentFleet {
         await this.#terminate(member);
       } catch {
         // Un VM de un arranque fallido que no se puede terminar acabará por su plazo.
+      }
+    }
+  }
+
+  // ------------------------------------------------------- recipe and keys
+
+  #recipes(): FleetRecipeStore {
+    this.#recipeStore ??= defaultRecipeStore({
+      region: this.#connection.region,
+      credentials: this.#credentials,
+    });
+    return this.#recipeStore;
+  }
+
+  /** Guarda la receta de la flota recién arrancada (sólo lo llama
+   * `deployAgent()`): `saved` o el código del aviso, nunca un error. */
+  async saveRecipeForDeploy(): Promise<string> {
+    const project = this.#requireProject();
+    const recipe = recipeOf(project, {
+      name: this.#name,
+      imageVersion: this.#service?.imageVersion,
+      scaling: this.scaling,
+      renewGatewayKeys: this.#renewKeys,
+    });
+    const outcome = await storeRecipe(this.#recipes(), recipe, this.#logger);
+    if (outcome === RECIPE_SAVED) {
+      this.#recipeKnown = true;
+    }
+    return outcome;
+  }
+
+  /** Con `renewGatewayKeys`, renueva las claves que lo necesiten y, si
+   * escribió alguna, refresca las pasarelas de los VMs abiertos. El
+   * renovador (y sus peers opcionales) se carga en el primer uso. */
+  async #renewGatewayKeys(): Promise<void> {
+    if (!this.#renewKeys) {
+      return;
+    }
+    this.#renewer ??= await gatewayKeyRenewer(this.#requireProject(), {
+      region: this.#connection.region,
+      credentials: this.#credentials,
+    });
+    if (!(await this.#renewer.renew())) {
+      return;
+    }
+    for (const deployment of this.deployments) {
+      try {
+        await deployment.refreshGateways();
+      } catch (error) {
+        if (!(error instanceof SandboxError)) {
+          throw error;
+        }
+        this.#logger?.warn?.("no se pudo refrescar la pasarela de un VM de la flota");
       }
     }
   }

@@ -40,8 +40,14 @@ import {
   deployToken,
   detectionLines,
   fleetToken,
+  KEEP_RECIPE_HELP,
   PairFlagError,
   parseFlagPairs,
+  RENEW_GATEWAY_KEYS_HELP,
+  SAVE_RECIPE_HELP,
+  SCALE_IN_AFTER_HELP,
+  STATUS_UNKNOWN_SCALING,
+  secretEnvFlagMessage,
 } from "../agent-deploy.js";
 import { EventPrinter, invokeRequestOf, printResult } from "../agent-output.js";
 import {
@@ -420,7 +426,11 @@ const STEP_MESSAGES: Readonly<Record<string, string>> = {
   fleet: "{detail} VM(s) listos",
   secret_env_created: "secreto de --create-secrets-from: {detail}",
   env_missing: "aviso: {detail}",
+  recipe: "aviso: la receta de la flota no se guardó ({detail})",
 };
+
+/** El paso de `deployAgent()` de una receta que no se guardó. */
+const RECIPE_STEP = "recipe";
 
 const MODEL_ID_HELP =
   "Id del modelo, si la detección no lo encuentra (tu código puede elegirlo por configuración).";
@@ -459,9 +469,13 @@ function detectOverridesOf(context: CommandContext): AgentDetectOverrides {
  * dónde fue el artefacto; nunca se nombra un secreto. */
 function stepPrinter(
   context: CommandContext,
+  warnings?: string[],
 ): (step: { readonly kind: string; readonly detail: string }) => void {
   return (step) => {
     const { console } = context;
+    if (step.kind === RECIPE_STEP) {
+      warnings?.push(step.detail);
+    }
     if (step.kind === "bucket") {
       const separator = step.detail.indexOf(":");
       const origin = step.detail.slice(0, separator);
@@ -546,8 +560,34 @@ function deployFlagsOf(context: CommandContext): AgentDeployFlags {
     maxVms: values.optionalNumber("max_vms"),
     warm: values.optionalNumber("warm"),
     sessions: values.string("sessions"),
+    scaleInAfter: values.optionalNumber("scale_in_after"),
     ...secretEnvFlagsOf(context),
   };
+}
+
+/** Las banderas de la receta y de la renovación de claves que se pasaron
+ * (sólo tienen sentido en MicroVMs). */
+function microvmOnlyFlagsOf(context: CommandContext): readonly string[] {
+  const { values } = context;
+  return [
+    ...(values.optionalNumber("scale_in_after") === undefined ? [] : ["--scale-in-after"]),
+    ...(values.optionalFlag("save_recipe") === false ? ["--no-save-recipe"] : []),
+    ...(values.flag("renew_gateway_keys") ? ["--renew-gateway-keys"] : []),
+  ];
+}
+
+/** Con --target agentcore, la primera bandera sólo de MicroVMs que se pasó,
+ * como `option_not_supported` (por su bandera), antes de cualquier llamada. */
+async function microvmOnlyFlagError(context: CommandContext): Promise<AgentCoreError | undefined> {
+  const passed = microvmOnlyFlagsOf(context);
+  if (passed.length === 0) {
+    return undefined;
+  }
+  const { MICROVM_ONLY_OPTIONS } = await import("../../agent/deploy.js");
+  const found = MICROVM_ONLY_OPTIONS.find((option) => passed.includes(option.flag));
+  return found === undefined
+    ? undefined
+    : new AgentCoreError("option_not_supported", { option: found.flag, reason: found.reason });
 }
 
 /** `--create-secrets-from` y `--check-env`, sólo si se pasaron. */
@@ -707,6 +747,9 @@ export const agentDeployCommand = defineCommand({
     idleSessionTimeoutOption,
     maxSessionLifetimeOption,
     externalModelOption,
+    option(["--scale-in-after"], { type: "int", help: SCALE_IN_AFTER_HELP }),
+    toggle(["--save-recipe", "--no-save-recipe"], { default: true, help: SAVE_RECIPE_HELP }),
+    flag(["--renew-gateway-keys"], { help: RENEW_GATEWAY_KEYS_HELP }),
   ],
   run: (context) =>
     guarded(context, async () => {
@@ -721,6 +764,12 @@ export const agentDeployCommand = defineCommand({
           context,
           new AgentCoreError("option_requires_agentcore", { option: agentCoreOnly }),
         );
+      }
+      if (chosen === TARGET_AGENTCORE) {
+        const microvmOnly = await microvmOnlyFlagError(context);
+        if (microvmOnly !== undefined) {
+          return reportFailure(context, microvmOnly);
+        }
       }
       const target = deployTarget(context);
       const sessions = values.string("sessions");
@@ -738,7 +787,12 @@ export const agentDeployCommand = defineCommand({
         }
         throw error;
       }
+      const secretEnvFlag = secretEnvFlagMessage(flags.env);
+      if (secretEnvFlag !== undefined) {
+        return usageFailure(context, secretEnvFlag);
+      }
       const bucket = values.string("bucket");
+      const recipeWarnings: string[] = [];
       const verbose = values.flag("verbose");
       const compact = verbose
         ? undefined
@@ -757,8 +811,10 @@ export const agentDeployCommand = defineCommand({
           keepOnFailure: values.flag("keep_on_failure"),
           buildImage: values.optionalFlag("build"),
           onBuildLogs: verbose ? (line) => context.console.echo(line, { err: true }) : compact?.log,
-          onStep: stepPrinter(context),
+          onStep: stepPrinter(context, recipeWarnings),
           ...secretEnvSettingsOf(context),
+          saveRecipe: values.optionalFlag("save_recipe") ?? true,
+          renewGatewayKeys: values.flag("renew_gateway_keys"),
         },
       });
       if (chosen === TARGET_AGENTCORE) {
@@ -810,7 +866,7 @@ export const agentDeployCommand = defineCommand({
       if (typeof deployed === "number") {
         return deployed;
       }
-      printDeployed(context, deployed, token.file);
+      printDeployed(context, deployed, token.file, recipeWarnings);
       return undefined;
     }),
 });
@@ -865,6 +921,7 @@ function printDeployed(
   context: CommandContext,
   fleet: DeployedFleetView,
   tokenFile: string | undefined,
+  warnings: readonly string[] = [],
 ): void {
   if (fleet.hiddenRoutes !== undefined) {
     context.console.echo(rawRoutesHint(fleet.hiddenRoutes), { err: true });
@@ -878,6 +935,7 @@ function printDeployed(
       url: fleet.url,
       port: fleet.port,
       tokenFile: tokenFile ?? null,
+      ...(warnings.length === 0 ? {} : { warnings: [...warnings] }),
     });
     return;
   }
@@ -1049,7 +1107,9 @@ export const agentStatusCommand = defineCommand({
         }
         context.console.echo(`name: ${status.name}`);
         context.console.echo(
-          `members: ${status.members.length} (min ${status.minVms}, max ${status.maxVms})`,
+          status.scalingSource === "default"
+            ? STATUS_UNKNOWN_SCALING.replace("{count}", String(status.members.length))
+            : `members: ${status.members.length} (min ${status.minVms}, max ${status.maxVms})`,
         );
         for (const member of status.members) {
           context.console.echo(`sandbox_id=${member.sandboxId} state=${member.state}`);
@@ -1081,12 +1141,14 @@ export const agentStopCommand = defineCommand({
   path: ["agent", "stop"],
   help:
     "Para un agente desplegado: destruye su sandbox, o todos los de la flota si le pasas su " +
-    "nombre. No necesita el access token. Con --target agentcore, --session-id para la " +
-    "microVM de esa sesión (para quitar el agente usa `rayito agent delete`).",
+    "nombre, y borra la receta de la flota (--keep-recipe la conserva). No necesita el " +
+    "access token. Con --target agentcore, --session-id para la microVM de esa sesión (para " +
+    "quitar el agente usa `rayito agent delete`).",
   parameters: [
     argument("sandbox_id", { required: true, help: TARGET_HELP }),
     targetOption,
     stopSessionIdOption,
+    flag(["--keep-recipe"], { help: KEEP_RECIPE_HELP }),
   ],
   run: (context) =>
     guarded(context, async () => {
@@ -1106,7 +1168,9 @@ export const agentStopCommand = defineCommand({
       const sandboxId = context.values.string("sandbox_id") ?? "";
       if (isFleetName(sandboxId)) {
         const fleet = await context.agentProjects.connectFleet(sandboxId, undefined);
-        const count = await fleet.stop();
+        const count = await fleet.stop(
+          context.values.flag("keep_recipe") ? { keepRecipe: true } : undefined,
+        );
         if (context.globals.json) {
           context.console.emitJson({ name: sandboxId, stopped: count });
           return undefined;

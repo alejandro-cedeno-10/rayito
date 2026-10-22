@@ -85,9 +85,10 @@ export {
   AgentFleet,
   type AgentFleetConnectOptions,
   type AgentFleetOptions,
+  type AgentFleetStopOptions,
   AgentFleetStream,
 } from "./agent/fleet.js";
-export type { FleetMemberStatus, FleetStatus } from "./agent/fleet-base.js";
+export type { FleetMemberStatus, FleetStatus, ScalingSource } from "./agent/fleet-base.js";
 export {
   type AnthropicGatewayOptions,
   type AzureOpenaiGatewayOptions,

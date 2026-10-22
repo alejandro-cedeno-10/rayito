@@ -166,6 +166,9 @@ export interface AgentDeployFlags {
   readonly secretEnv?: readonly string[] | undefined;
   /** `--secret-env-from <id>[,prefix=P][,keys=A|B]`, tal cual. */
   readonly secretEnvFrom?: readonly string[] | undefined;
+  /** `--scale-in-after`: segundos sin uso tras los que se termina un VM por
+   * encima de `--min-vms`. */
+  readonly scaleInAfter?: number | undefined;
 }
 
 /** Dónde y cómo despliega `rayito agent deploy`: lo de `DeployOptions` que
@@ -188,6 +191,10 @@ export interface AgentDeploySettings {
   readonly createSecretsFrom?: string | undefined;
   /** `--check-env`: avisa de las variables de `.env.example` sin valor. */
   readonly checkEnv?: boolean | undefined;
+  /** `--no-save-recipe` la apaga: por defecto se guarda la receta. */
+  readonly saveRecipe?: boolean | undefined;
+  /** `--renew-gateway-keys`. */
+  readonly renewGatewayKeys?: boolean | undefined;
 }
 
 export interface AgentDeployRequest {
@@ -227,6 +234,9 @@ export interface FleetStatusView {
   readonly name: string;
   readonly minVms: number;
   readonly maxVms: number;
+  /** De dónde salen `minVms` y `maxVms` (`explicit`, `project`, `recipe` o
+   * `default`); con `default` no describen la flota real. */
+  readonly scalingSource?: string | undefined;
   readonly members: readonly { readonly sandboxId: string; readonly state: string }[];
 }
 
@@ -241,8 +251,9 @@ export interface FleetClient {
     options: { readonly sessionId: string | undefined },
   ): Promise<AsyncIterable<AgentEvent>>;
   status(): Promise<FleetStatusView>;
-  /** Termina todos los VMs de la flota; devuelve cuántos eran. */
-  stop(): Promise<number>;
+  /** Termina todos los VMs de la flota (y borra su receta salvo con
+   * `keepRecipe`); devuelve cuántos eran. */
+  stop(options?: { readonly keepRecipe?: boolean | undefined }): Promise<number>;
 }
 
 /** `rayito agent ...` sobre `AgentProject` y `AgentDeployment`; `init` no los usa. */
