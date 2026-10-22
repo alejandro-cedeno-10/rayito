@@ -16,7 +16,7 @@ import time
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Self
+from typing import TYPE_CHECKING, Any, Final, Self
 
 from rayito._agent import _fleet_recipe_aws as recipe_aws
 from rayito._agent._deployment import AgentDeployment, default_transport
@@ -35,7 +35,7 @@ from rayito._agent._fleet_base import (
     FleetStatus,
     Member,
     MemberListing,
-    ParkedSlotError,
+    ParkedSlotException,
     capacity_message,
     event_with_handle,
     fleet_settings_of,
@@ -64,9 +64,11 @@ from rayito._agent._fleet_recipe_aws import (
     store_recipe,
 )
 from rayito._agent._gateway_keys import (
+    PERMISSION_DENIED_CODE,
     RENEW_NEEDS_BEDROCK,
     GatewayKeyRenewer,
     gateway_key_renewer,
+    renewable_gateways,
 )
 from rayito._agent._project_base import request_timeout
 from rayito._agent._project_service import ProjectService
@@ -86,6 +88,7 @@ from rayito.exceptions import (
     InvalidArgumentException,
     SandboxException,
     SandboxNotFoundException,
+    SecretException,
 )
 
 if TYPE_CHECKING:
@@ -108,22 +111,81 @@ NO_PROJECT_MESSAGE = (
 PARKED_SLOT_MESSAGE = "una plaza aparcada no pudo abrir las pasarelas del proyecto"
 
 
-def renewer_for(
-    project: AgentProject | None,
-    renew_gateway_keys: bool,
-    key_renewer: GatewayKeyRenewer | None,
-    *,
-    region: str | None,
-    session: Any,
-) -> GatewayKeyRenewer | None:
-    """El renovador de claves de la flota, sólo con `renew_gateway_keys`
-    (sin la opción no se importa el generador). Sin proyecto no hay
-    pasarelas que renovar: `InvalidArgumentException`."""
-    if not renew_gateway_keys:
-        return None
-    if project is None:
-        raise InvalidArgumentException(RENEW_NEEDS_BEDROCK)
-    return key_renewer or gateway_key_renewer(project, region=region, session=session)
+#: El código del aviso cuando falta el extra `bedrock-keys`.
+RENEWAL_MISSING_EXTRA: Final = "missing_extra"
+#: Los códigos que apagan una renovación heredada de la receta: el extra
+#: `bedrock-keys` no está instalado o el llamante no puede escribir el secreto.
+RENEWAL_DISABLING_CODES: Final = frozenset({RENEWAL_MISSING_EXTRA, PERMISSION_DENIED_CODE})
+
+
+class FleetKeyRenewal:
+    """La renovación de claves de una flota (`renew_gateway_keys`).
+
+    Al construirla sólo se valida que haya una pasarela `bedrock`: el
+    renovador (y el generador opcional de `bedrock-keys`) se carga en la
+    primera renovación, como en TypeScript, para que listar, consultar o
+    terminar la flota nunca lo necesite. Un candado serializa las
+    renovaciones: los VMs que arrancan en paralelo escriben como mucho una
+    clave por ventana.
+
+    Con la opción heredada de la receta (`inherited`), quien conecta por
+    nombre no la pidió: si le falta el extra o el permiso de escribir el
+    secreto, la renovación se apaga con un aviso y la flota sigue con la
+    clave que haya; cualquier otro fallo sólo avisa y se reintenta en la
+    siguiente. Pedida de forma explícita, el error se propaga."""
+
+    def __init__(
+        self,
+        project: AgentProject | None,
+        *,
+        enabled: bool,
+        key_renewer: GatewayKeyRenewer | None,
+        region: str | None,
+        session: Any,
+    ) -> None:
+        if enabled:
+            if project is None:
+                raise InvalidArgumentException(RENEW_NEEDS_BEDROCK)
+            renewable_gateways(project)
+        self._project = project
+        self._enabled = enabled
+        self._renewer = key_renewer if enabled else None
+        self._region = region
+        self._session = session
+        self.inherited = False
+        self._lock = threading.Lock()
+
+    @property
+    def enabled(self) -> bool:
+        return self._enabled
+
+    def renew(self) -> bool:
+        """Renueva las claves que lo necesitan; `True` si escribió alguna."""
+        with self._lock:
+            if not self._enabled or self._project is None:
+                return False
+            try:
+                if self._renewer is None:
+                    self._renewer = gateway_key_renewer(
+                        self._project, region=self._region, session=self._session
+                    )
+                return self._renewer.renew()
+            except (InvalidArgumentException, SecretException) as exc:
+                if not self.inherited:
+                    raise
+                self._skip(exc)
+                return False
+
+    def _skip(self, exc: SandboxException) -> None:
+        fallback = (
+            RENEWAL_MISSING_EXTRA
+            if isinstance(exc, InvalidArgumentException)
+            else type(exc).__name__
+        )
+        code = exc.code or fallback
+        if code in RENEWAL_DISABLING_CODES:
+            self._enabled = False
+        logger.warning("la flota no renovó la clave de su pasarela (receta): %s", code)
 
 
 class SandboxDirectory:
@@ -343,8 +405,12 @@ class AgentFleet:
             if project
             else None
         )
-        self._renewer = renewer_for(
-            project, renew_gateway_keys, key_renewer, region=region, session=session
+        self._key_renewal = FleetKeyRenewal(
+            project,
+            enabled=renew_gateway_keys,
+            key_renewer=key_renewer,
+            region=region,
+            session=session,
         )
         self._recipe_store = recipe_store
         self._recipe_known = recipe is not None
@@ -411,6 +477,7 @@ class AgentFleet:
             recipe=recipe,
             **dependencies,
         )
+        fleet._key_renewal.inherited = renew_gateway_keys is None
         fleet.refresh_members()
         return fleet
 
@@ -921,7 +988,7 @@ class AgentFleet:
         except Exception as exc:
             logger.warning("una plaza aparcada no pudo abrir sus pasarelas: se sustituye")
             self._replace(member)
-            raise ParkedSlotError(PARKED_SLOT_MESSAGE) from exc
+            raise ParkedSlotException(PARKED_SLOT_MESSAGE) from exc
 
     def _deployment_of(self, sandbox: Any) -> AgentDeployment:
         labels = parse_labels(sandbox.metadata)
@@ -945,7 +1012,7 @@ class AgentFleet:
         except SandboxNotFoundException:
             self._drop(member)
             return False
-        except ParkedSlotError:
+        except ParkedSlotException:
             return False
         now = self._clock()
         if not force and ping_is_fresh(member, now):
@@ -1057,7 +1124,7 @@ class AgentFleet:
             name=self._name,
             image_version=getattr(self._service, "image_version", None),
             scaling=self.scaling,
-            renew_gateway_keys=self._renewer is not None,
+            renew_gateway_keys=self._key_renewal.enabled,
         )
         outcome = store_recipe(self._recipes(), recipe)
         if outcome == RECIPE_SAVED:
@@ -1067,7 +1134,7 @@ class AgentFleet:
     def _renew_keys(self) -> None:
         """Con `renew_gateway_keys`, renueva las claves que lo necesiten y,
         si escribió alguna, refresca las pasarelas de los VMs abiertos."""
-        if self._renewer is None or not self._renewer.renew():
+        if not self._key_renewal.renew():
             return
         for deployment in self.deployments:
             try:

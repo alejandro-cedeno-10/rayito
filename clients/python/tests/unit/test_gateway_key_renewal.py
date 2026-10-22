@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import json
 import sys
+import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -17,7 +19,7 @@ import pytest
 from botocore.exceptions import ClientError
 
 from rayito._agent import _gateway_keys
-from rayito._agent._fleet import AgentFleet
+from rayito._agent._fleet import AgentFleet, FleetKeyRenewal
 from rayito._agent._gateway_keys import (
     RENEW_NEEDS_BEDROCK,
     GatewayKeyRenewer,
@@ -203,11 +205,40 @@ def test_the_message_is_the_contract_one() -> None:
     assert contract["messages"]["renewNeedsBedrock"] == RENEW_NEEDS_BEDROCK
 
 
-def test_without_the_extra_the_option_names_the_install(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_without_the_extra_the_first_renewal_names_the_install(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setitem(sys.modules, "aws_bedrock_token_generator", None)
+    fleet = AgentFleet(bedrock_project(), access_token=FLEET_TOKEN, renew_gateway_keys=True)
 
     with pytest.raises(InvalidArgumentException, match=r"rayito\[bedrock-keys\]"):
-        AgentFleet(bedrock_project(), access_token=FLEET_TOKEN, renew_gateway_keys=True)
+        fleet._renew_keys()
+
+
+def test_concurrent_renewals_write_one_key_per_window() -> None:
+    secrets = SlowSecrets(changed=NOW - timedelta(hours=1))
+    renewal = FleetKeyRenewal(
+        bedrock_project(),
+        enabled=True,
+        key_renewer=renewer(secrets, Clock(), []),
+        region="us-east-1",
+        session=None,
+    )
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        results = list(pool.map(lambda _: renewal.renew(), range(4)))
+
+    assert results.count(True) == 1
+    assert secrets.names.count("PutSecretValue") == 1
+
+
+class SlowSecrets(FakeSecrets):
+    """`FakeSecrets` que tarda en responder, para que las renovaciones se
+    solapen si nada las serializa."""
+
+    def describe_secret(self, **params: Any) -> dict[str, Any]:
+        time.sleep(0.01)
+        return super().describe_secret(**params)
 
 
 def test_without_the_option_the_generator_is_never_imported(

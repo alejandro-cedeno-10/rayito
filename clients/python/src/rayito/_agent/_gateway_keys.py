@@ -297,6 +297,7 @@ def gateway_key_renewer(
 
 __all__ = [
     "BEDROCK_PRESET",
+    "PERMISSION_DENIED_CODE",
     "RENEW_NEEDS_BEDROCK",
     "GatewayKeyRenewer",
     "RenewableGateway",

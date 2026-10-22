@@ -397,7 +397,7 @@ def fleet_settings_of(
     )
 
 
-class ParkedSlotError(SandboxException):
+class ParkedSlotException(SandboxException):
     """Una plaza aparcada que no pudo abrir las pasarelas del proyecto: la
     flota ya la sacó y la sustituyó (`_replace`), y quien la eligió busca
     otra."""

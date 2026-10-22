@@ -19,6 +19,7 @@ import {
   InvalidArgumentError,
   SandboxError,
   SandboxNotFoundError,
+  SecretError,
 } from "../errors.js";
 import type { DynamoDbIndex } from "../index/dynamodb.js";
 import { AGENT_SERVICE_READY_MARKER_PATH } from "../limits.js";
@@ -89,6 +90,7 @@ import {
 import {
   type GatewayKeyRenewer,
   gatewayKeyRenewer,
+  PERMISSION_DENIED_CODE,
   RENEW_NEEDS_BEDROCK,
   renewableGateways,
 } from "./gateway-keys.js";
@@ -113,6 +115,18 @@ const NO_PROJECT_MESSAGE =
   "esta flota se reconectó sin proyecto ni receta: no puede crear ni arrancar VMs; " +
   "pasa project a AgentFleet.connect() o despliégala con rayito agent deploy";
 const PARKED_SLOT_MESSAGE = "una plaza aparcada no pudo abrir las pasarelas del proyecto";
+/** El código del aviso cuando falta el peer `@aws/bedrock-token-generator`. */
+const RENEWAL_MISSING_PEER = "missing_extra";
+/** Los códigos que apagan una renovación heredada de la receta: falta el peer
+ * del generador o el llamante no puede escribir el secreto. */
+const RENEWAL_DISABLING_CODES: ReadonlySet<string> = new Set([
+  RENEWAL_MISSING_PEER,
+  PERMISSION_DENIED_CODE,
+]);
+
+function isRenewalError(error: unknown): error is InvalidArgumentError | SecretError {
+  return error instanceof InvalidArgumentError || error instanceof SecretError;
+}
 
 /** Una plaza aparcada que no pudo abrir las pasarelas del proyecto: la flota
  * ya la sacó y la sustituyó, y quien la eligió busca otra. */
@@ -457,8 +471,10 @@ export class AgentFleet {
   readonly #sleep: (ms: number) => Promise<void>;
   readonly #credentials: AwsClientSettings["credentials"] | undefined;
   readonly #logger: Logger | undefined;
-  readonly #renewKeys: boolean;
+  #renewKeys: boolean;
+  #renewInherited = false;
   #renewer: Pick<GatewayKeyRenewer, "renew"> | undefined;
+  #renewing: Promise<void> | undefined;
   #recipeStore: FleetRecipeStore | undefined;
   #recipeKnown: boolean;
   #members: Member<AgentDeployment>[] = [];
@@ -540,6 +556,7 @@ export class AgentFleet {
       recipeStore,
       renewGatewayKeys: options.renewGatewayKeys ?? recipe?.renewGatewayKeys ?? false,
     });
+    fleet.#renewInherited = options.renewGatewayKeys === undefined;
     await fleet.refreshMembers();
     return fleet;
   }
@@ -1292,16 +1309,39 @@ export class AgentFleet {
 
   /** Con `renewGatewayKeys`, renueva las claves que lo necesiten y, si
    * escribió alguna, refresca las pasarelas de los VMs abiertos. El
-   * renovador (y sus peers opcionales) se carga en el primer uso. */
+   * renovador (y sus peers opcionales) se carga en el primer uso, y una
+   * renovación en curso se comparte: los VMs que arrancan en paralelo
+   * escriben como mucho una clave por ventana. */
   async #renewGatewayKeys(): Promise<void> {
     if (!this.#renewKeys) {
       return;
     }
-    this.#renewer ??= await gatewayKeyRenewer(this.#requireProject(), {
-      region: this.#connection.region,
-      credentials: this.#credentials,
+    this.#renewing ??= this.#renewOnce().finally(() => {
+      this.#renewing = undefined;
     });
-    if (!(await this.#renewer.renew())) {
+    await this.#renewing;
+  }
+
+  /** Heredada de la receta (sin `renewGatewayKeys` explícito), una
+   * renovación sin el peer o sin permiso de escribir el secreto se apaga
+   * con un aviso y la flota sigue con la clave que haya; cualquier otro
+   * fallo sólo avisa. Pedida de forma explícita, el error se propaga. */
+  async #renewOnce(): Promise<void> {
+    let renewed: boolean;
+    try {
+      this.#renewer ??= await gatewayKeyRenewer(this.#requireProject(), {
+        region: this.#connection.region,
+        credentials: this.#credentials,
+      });
+      renewed = await this.#renewer.renew();
+    } catch (error) {
+      if (!this.#renewInherited || !isRenewalError(error)) {
+        throw error;
+      }
+      this.#skipRenewal(error);
+      return;
+    }
+    if (!renewed) {
       return;
     }
     for (const deployment of this.deployments) {
@@ -1314,6 +1354,15 @@ export class AgentFleet {
         this.#logger?.warn?.("no se pudo refrescar la pasarela de un VM de la flota");
       }
     }
+  }
+
+  #skipRenewal(error: InvalidArgumentError | SecretError): void {
+    const code =
+      error.code ?? (error instanceof InvalidArgumentError ? RENEWAL_MISSING_PEER : error.name);
+    if (RENEWAL_DISABLING_CODES.has(code)) {
+      this.#renewKeys = false;
+    }
+    this.#logger?.warn?.("la flota no renovó la clave de su pasarela (receta)", { code });
   }
 
   // -------------------------------------------------------------- warm pool

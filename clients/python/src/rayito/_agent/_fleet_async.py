@@ -23,8 +23,8 @@ from rayito._agent._fleet import (
     NO_PROJECT_MESSAGE,
     NO_TOKEN_MESSAGE,
     PARKED_SLOT_MESSAGE,
+    FleetKeyRenewal,
     Lease,
-    renewer_for,
 )
 from rayito._agent._fleet_base import (
     AGENT_CAPACITY_CODE,
@@ -39,7 +39,7 @@ from rayito._agent._fleet_base import (
     FleetStatus,
     Member,
     MemberListing,
-    ParkedSlotError,
+    ParkedSlotException,
     capacity_message,
     event_with_handle,
     fleet_settings_of,
@@ -291,8 +291,12 @@ class AsyncAgentFleet:
             if project
             else None
         )
-        self._renewer = renewer_for(
-            project, renew_gateway_keys, key_renewer, region=region, session=session
+        self._key_renewal = FleetKeyRenewal(
+            project,
+            enabled=renew_gateway_keys,
+            key_renewer=key_renewer,
+            region=region,
+            session=session,
         )
         self._recipe_store = recipe_store
         self._recipe_known = recipe is not None
@@ -350,6 +354,7 @@ class AsyncAgentFleet:
             recipe=recipe,
             **dependencies,
         )
+        fleet._key_renewal.inherited = renew_gateway_keys is None
         await fleet.refresh_members()
         return fleet
 
@@ -840,7 +845,7 @@ class AsyncAgentFleet:
         except Exception as exc:
             logger.warning("una plaza aparcada no pudo abrir sus pasarelas: se sustituye")
             await self._replace(member)
-            raise ParkedSlotError(PARKED_SLOT_MESSAGE) from exc
+            raise ParkedSlotException(PARKED_SLOT_MESSAGE) from exc
 
     async def _deployment_of(self, sandbox: Any) -> AsyncAgentDeployment:
         labels = parse_labels(sandbox.metadata)
@@ -865,7 +870,7 @@ class AsyncAgentFleet:
         except SandboxNotFoundException:
             self._drop(member)
             return False
-        except ParkedSlotError:
+        except ParkedSlotException:
             return False
         if not force and ping_is_fresh(member, self._clock()):
             return member.health != "unavailable"
@@ -970,7 +975,7 @@ class AsyncAgentFleet:
             name=self._name,
             image_version=getattr(self._service, "image_version", None),
             scaling=self.scaling,
-            renew_gateway_keys=self._renewer is not None,
+            renew_gateway_keys=self._key_renewal.enabled,
         )
         outcome = await asyncio.to_thread(store_recipe, self._recipes(), recipe)
         if outcome == RECIPE_SAVED:
@@ -980,8 +985,7 @@ class AsyncAgentFleet:
     async def _renew_keys(self) -> None:
         """Como `AgentFleet._renew_keys`: la renovación (síncrona) corre en
         un hilo y los VMs abiertos refrescan su pasarela."""
-        renewer = self._renewer
-        if renewer is None or not await asyncio.to_thread(renewer.renew):
+        if not self._key_renewal.enabled or not await asyncio.to_thread(self._key_renewal.renew):
             return
         for deployment in self.deployments:
             try:

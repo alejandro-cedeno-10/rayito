@@ -35,7 +35,8 @@ const SECRETS_MANAGER_PEER = "@aws-sdk/client-secrets-manager";
 const RENEWAL_FEATURE = "renewGatewayKeys";
 const BEDROCK_RUNTIME_HOST_PREFIX = "bedrock-runtime.";
 const AMAZONAWS_HOST_SUFFIX = ".amazonaws.com";
-const PERMISSION_DENIED_CODE = "permission_denied";
+/** El código propio de un permiso que falta, con el nombre de la pasarela. */
+export const PERMISSION_DENIED_CODE = "permission_denied";
 const ACCESS_DENIED_PREFIX = "AccessDenied";
 
 type Credentials = AwsClientSettings["credentials"];
