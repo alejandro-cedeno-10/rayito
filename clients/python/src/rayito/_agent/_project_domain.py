@@ -546,9 +546,7 @@ class AgentProject:
         self._validate_fleet_options()
         _validate_graph(self.graph, self.runtime)
         self._validate_secret_env()
-        object.__setattr__(
-            self, "gateway_presets", MappingProxyType(dict(self.gateway_presets))
-        )
+        object.__setattr__(self, "gateway_presets", MappingProxyType(dict(self.gateway_presets)))
 
     def _validate_fleet_options(self) -> None:
         if not isinstance(self.scaling, ScalingOptions):

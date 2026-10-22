@@ -182,3 +182,53 @@ def test_building_optionalstacks_creates_no_aws_client(monkeypatch: pytest.Monke
     monkeypatch.setattr(boto3.session.Session, "client", recording_client)
     OptionalStacks()
     assert calls == []
+
+
+def test_a_fleet_without_deploy_agent_reaches_no_recipe_or_key_service(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """La receta y la renovación de claves (ADR-034) no cuestan nada fuera
+    de `deploy_agent()`: construir una flota, arrancarla, reconectarla con
+    `project=` o `use_recipe=False`, pararla y planificar un despliegue no
+    crean ningún cliente de `ssm` ni de `secretsmanager` ni importan el
+    generador de claves. Se usa la tienda de recetas real (perezosa), no la
+    de memoria del `conftest`."""
+    import sys
+
+    from rayito._agent import _fleet_recipe_aws
+    from rayito._agent._deploy_facade import plan_deploy
+    from rayito._agent._fleet import AgentFleet
+    from tests.unit.fake_agent_fleet import FLEET_TOKEN, FleetFlavor
+    from tests.unit.fake_agent_project import project
+
+    monkeypatch.setattr(
+        _fleet_recipe_aws,
+        "default_recipe_store",
+        lambda region, session: _fleet_recipe_aws.SsmRecipeStore(region=region, session=session),
+    )
+    monkeypatch.delitem(sys.modules, "aws_bedrock_token_generator", raising=False)
+    calls: list[str] = []
+    original = boto3.session.Session.client
+
+    def recording_client(self: Any, service_name: str, *args: Any, **kwargs: Any) -> Any:
+        calls.append(service_name)
+        return original(self, service_name, *args, **kwargs)
+
+    monkeypatch.setattr(boto3.session.Session, "client", recording_client)
+    flavor = FleetFlavor("sync")
+    fleet = flavor.fleet(None)
+    fleet.start()
+    fleet.status()
+    fleet.stop()
+    for options in ({"project": project()}, {"use_recipe": False}):
+        reconnected = AgentFleet.connect(
+            "support-bot",
+            access_token=FLEET_TOKEN,
+            directory=flavor.classes_directory(),
+            **options,
+        )
+        reconnected.stop()
+    plan_deploy(project=project())
+
+    assert not {"ssm", "secretsmanager"} & set(calls)
+    assert "aws_bedrock_token_generator" not in sys.modules

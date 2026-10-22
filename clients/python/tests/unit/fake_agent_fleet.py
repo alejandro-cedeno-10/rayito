@@ -224,6 +224,8 @@ class FleetSandbox:
         self.timeouts: list[int] = []
         self.closed = False
         self.kill_error: Exception | None = None
+        self.configured: list[tuple[Any, ...]] = []
+        self.configure_error: Exception | None = None
 
     def _host(self, port: int) -> HostAccess:
         return HostAccess(
@@ -239,6 +241,20 @@ class FleetSandbox:
 
     def close(self) -> None:
         self.closed = True
+
+    def _configure(self, planned: Any, terminate_on_failure: bool) -> None:
+        """`ConfigureSandbox` de doble: anota las secciones (las pasarelas que
+        la flota abre en una plaza aparcada) o falla si se le pide."""
+        if self.configure_error is not None:
+            raise self.configure_error
+        self.configured.append(tuple(planned))
+
+    def _apply_configure_sections(
+        self, planned: Any, *, timeout: float, terminate_on_failure: bool
+    ) -> Any:
+        if self.asynchronous:
+            return self._async_call(lambda: self._configure(planned, terminate_on_failure))
+        return self._configure(planned, terminate_on_failure)
 
     def get_host(self, port: int) -> Any:
         if self.asynchronous:

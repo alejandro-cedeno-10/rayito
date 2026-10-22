@@ -14,7 +14,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, Final
+from typing import TYPE_CHECKING, Any, Final, Literal
 
 from rayito._agent._aws_resolve import BUCKET_ENV_VAR
 from rayito._agent._deploy_domain import (
@@ -63,6 +63,11 @@ AGENT_IMAGE_SNAPSHOT_GB_ESTIMATE: Final = 3.0
 PARKED_SLOTS_NOTE: Final = (
     "las plazas calientes se aparcan en el pool: cuestan almacenamiento de snapshot, no cómputo"
 )
+#: La línea `recipe` del plan: si `deploy_agent()` guardará la receta de la
+#: flota en Parameter Store (ADR-034 D1).
+RECIPE_PLAN_SAVE: Final = "save"
+RECIPE_PLAN_OFF: Final = "off"
+RecipePlan = Literal["save", "off"]
 IMAGE_MEMORY_NOTE: Final = (
     "la memoria se fija en la imagen: cambiarla construye una versión nueva (almacenamiento "
     "de snapshot de una semana como mínimo)"
@@ -73,9 +78,9 @@ IMAGE_MEMORY_NOTE: Final = (
 class AgentDeployStep:
     """Un paso de `deploy_agent()` que ya ocurrió: `kind` es de una lista
     cerrada (`base_image`, `secret_created`, `bucket`, `image`, `fleet`,
-    `warm`) y `detail` un dato corto para mostrar (la pasarela, el origen y el
-    bucket, la versión de la imagen); nunca el valor ni el nombre de un
-    secreto. Con `target="agentcore"`, `kind` es la clave de la línea de
+    `warm`, `recipe`) y `detail` un dato corto para mostrar (la pasarela, el
+    origen y el bucket, la versión de la imagen, el código del aviso de una
+    receta que no se guardó); nunca el valor ni el nombre de un secreto. Con `target="agentcore"`, `kind` es la clave de la línea de
     progreso (`stackDeploy`, `buildStart`, `runtimeReady`...) y `detail` la
     línea ya escrita."""
 
@@ -101,6 +106,13 @@ class AgentDeployOptions:
     `rayito/agents/<nombre>/env` que el agente recibe como `secret_env_from`) y `check_env`
     (avisa de las variables de `.env.example` que no reciben valor).
 
+    `save_recipe` (por defecto `True`) guarda la receta de la flota en
+    Parameter Store tras arrancarla, para que `AgentFleet.connect(nombre)`
+    cree VMs iguales desde otro proceso; `scale_in_after_seconds` fija tras
+    cuántos segundos sin uso se termina un VM por encima de `min_vms`, y
+    `renew_gateway_keys` (por defecto `False`) renueva la clave de corta
+    duración de Bedrock de las pasarelas `bedrock` antes de crear cada VM.
+
     Coste y activación
     -------------------
     Activa: nada por sí mismo; el valor es puro. `deploy_agent()` es lo que
@@ -108,11 +120,22 @@ class AgentDeployOptions:
         `create_secrets_from` crea o actualiza el secreto de un `.env`
         (`CreateSecret` o `PutSecretValue`, $0,40 al mes por secreto),
         `base_publisher` una imagen base, `session_index` filas de DynamoDB.
-    Recursos y llamadas AWS: ninguno aquí.
-    Coste aproximado: ninguno aquí; ver `deploy_agent()`.
-    IAM: ninguna para este valor.
+        `save_recipe=True` (por defecto, la única excepción de ADR-034)
+        guarda un parámetro `SecureString` estándar; `renew_gateway_keys`
+        escribe la clave en el secreto de la pasarela.
+    Recursos y llamadas AWS: ninguno aquí. Con `save_recipe`, un
+        `PutParameter` tras arrancar la flota (ver `SsmRecipeStore`); con
+        `renew_gateway_keys`, `DescribeSecret` y `PutSecretValue` (ver
+        `GatewayKeyRenewer`).
+    Coste aproximado: ninguno aquí; ver `deploy_agent()`. La receta: el
+        parámetro estándar no tiene cargo y su petición de KMS entra en las
+        20 000 gratuitas al mes (después $0,03 por 10 000;
+        https://aws.amazon.com/kms/pricing/, consultado 2026-10-22).
+    IAM: ninguna para este valor. Guardar la receta: `ssm:PutParameter`
+        sobre `parameter/rayito/agents/*`.
     Cómo apagarla: los valores por defecto no crean ningún secreto, imagen
-        base ni índice; `check_env` sólo lee ficheros locales.
+        base ni índice; `check_env` sólo lee ficheros locales;
+        `save_recipe=False` (`--no-save-recipe`) no guarda la receta.
     Ejemplo:
         AgentDeployOptions(bucket="amzn-s3-demo-bucket", secret_names={"bedrock": "mi-clave"})
     """
@@ -135,6 +158,9 @@ class AgentDeployOptions:
     warm_timeout_seconds: float = AGENT_FLEET_WARM_READY_TIMEOUT_SECONDS
     create_secrets_from: str | None = None
     check_env: bool = False
+    save_recipe: bool = True
+    scale_in_after_seconds: float | None = None
+    renew_gateway_keys: bool = False
 
     def __post_init__(self) -> None:
         if self.bucket is not None:
@@ -153,7 +179,13 @@ class AgentDeployOptions:
             raise InvalidArgumentException("AgentDeployOptions.secret_names debe mapear cadenas")
         for value in self.secret_names.values():
             validate_secret_name(value, "AgentDeployOptions.secret_names")
-        for label in ("create_secret_from_env", "ensure_base_image", "keep_on_failure"):
+        for label in (
+            "create_secret_from_env",
+            "ensure_base_image",
+            "keep_on_failure",
+            "save_recipe",
+            "renew_gateway_keys",
+        ):
             if not isinstance(getattr(self, label), bool):
                 raise InvalidArgumentException(f"AgentDeployOptions.{label} debe ser un bool")
         if self.build_image is not None and not isinstance(self.build_image, bool):
@@ -166,6 +198,8 @@ class AgentDeployOptions:
                 raise InvalidArgumentException(f"AgentDeployOptions.{label} debe ser un número > 0")
         object.__setattr__(self, "secret_names", MappingProxyType(dict(self.secret_names)))
         self._validate_secret_env_options()
+        if self.scale_in_after_seconds is not None:
+            ScalingOptions(scale_in_after_seconds=self.scale_in_after_seconds)
 
     def _validate_secret_env_options(self) -> None:
         path = self.create_secrets_from
@@ -220,6 +254,7 @@ class AgentDeployPlan:
     cost: AgentDeployCostEstimate
     notes: tuple[str, ...]
     detection: object | None = None
+    recipe: RecipePlan = RECIPE_PLAN_SAVE
 
 
 def estimate_cost(memory_mib: int, scaling: ScalingOptions) -> AgentDeployCostEstimate:
@@ -324,6 +359,16 @@ def planned_secrets(
     )
 
 
+def deploy_scaling(project: AgentProject, options: AgentDeployOptions) -> ScalingOptions | None:
+    """El escalado que `deploy_agent()` pasa a la flota: `options.scaling`
+    (o el del proyecto) con `scale_in_after_seconds` si la opción lo fija;
+    `None` si ninguna de las dos lo fija (decide el proyecto)."""
+    if options.scale_in_after_seconds is None:
+        return options.scaling
+    base = fleet_settings_of(project, options.scaling).scaling
+    return dataclasses.replace(base, scale_in_after_seconds=options.scale_in_after_seconds)
+
+
 def build_plan(
     project: AgentProject,
     options: AgentDeployOptions,
@@ -334,7 +379,7 @@ def build_plan(
 ) -> AgentDeployPlan:
     """El plan de desplegar `project` con `options` (puro)."""
     environment = os.environ if environ is None else environ
-    scaling = fleet_settings_of(project, options.scaling).scaling
+    scaling = fleet_settings_of(project, deploy_scaling(project, options)).scaling
     notes = [IMAGE_MEMORY_NOTE] if options.build_image is not False else []
     if scaling.warm_vms:
         notes.append(
@@ -354,6 +399,7 @@ def build_plan(
         cost=estimate_cost(project.memory_mib, scaling),
         notes=tuple(notes),
         detection=detection,
+        recipe=RECIPE_PLAN_SAVE if options.save_recipe else RECIPE_PLAN_OFF,
     )
 
 

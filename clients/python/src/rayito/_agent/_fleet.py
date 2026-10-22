@@ -18,6 +18,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Self
 
+from rayito._agent import _fleet_recipe_aws as recipe_aws
 from rayito._agent._deployment import AgentDeployment, default_transport
 from rayito._agent._deployment_base import labels_for, parse_labels
 from rayito._agent._events import AgentEvent, AgentResult
@@ -34,6 +35,7 @@ from rayito._agent._fleet_base import (
     FleetStatus,
     Member,
     MemberListing,
+    ParkedSlotError,
     capacity_message,
     event_with_handle,
     fleet_settings_of,
@@ -53,6 +55,19 @@ from rayito._agent._fleet_base import (
     vm_lost_message,
     with_handle,
 )
+from rayito._agent._fleet_recipe import FleetRecipe, recipe_of
+from rayito._agent._fleet_recipe_aws import (
+    RECIPE_SAVED,
+    FleetRecipeStore,
+    forget_recipe,
+    load_recipe,
+    store_recipe,
+)
+from rayito._agent._gateway_keys import (
+    RENEW_NEEDS_BEDROCK,
+    GatewayKeyRenewer,
+    gateway_key_renewer,
+)
 from rayito._agent._project_base import request_timeout
 from rayito._agent._project_service import ProjectService
 from rayito._agent._scaling_domain import (
@@ -64,6 +79,7 @@ from rayito._agent._scaling_domain import (
 )
 from rayito._agent._stream_base import require_prompt_or_input
 from rayito._limits import AGENT_SERVICE_READY_MARKER_PATH
+from rayito._sandbox_base import DEFAULT_REQUEST_TIMEOUT_SECONDS
 from rayito.exceptions import (
     AgentException,
     CapacityException,
@@ -86,9 +102,28 @@ NO_TOKEN_MESSAGE = (
     "pasa access_token= a AgentFleet.connect() para usarla"
 )
 NO_PROJECT_MESSAGE = (
-    "esta flota se reconectó sin proyecto: no puede crear ni arrancar VMs; "
-    "pasa project= a AgentFleet.connect()"
+    "esta flota se reconectó sin proyecto ni receta: no puede crear ni arrancar VMs; "
+    "pasa project= a AgentFleet.connect() o despliégala con rayito agent deploy"
 )
+PARKED_SLOT_MESSAGE = "una plaza aparcada no pudo abrir las pasarelas del proyecto"
+
+
+def renewer_for(
+    project: AgentProject | None,
+    renew_gateway_keys: bool,
+    key_renewer: GatewayKeyRenewer | None,
+    *,
+    region: str | None,
+    session: Any,
+) -> GatewayKeyRenewer | None:
+    """El renovador de claves de la flota, sólo con `renew_gateway_keys`
+    (sin la opción no se importa el generador). Sin proyecto no hay
+    pasarelas que renovar: `InvalidArgumentException`."""
+    if not renew_gateway_keys:
+        return None
+    if project is None:
+        raise InvalidArgumentException(RENEW_NEEDS_BEDROCK)
+    return key_renewer or gateway_key_renewer(project, region=region, session=session)
 
 
 class SandboxDirectory:
@@ -253,10 +288,15 @@ class AgentFleet:
         aparcada no factura cómputo pero sí almacenamiento de snapshot.
     IAM: los de `Sandbox.create()`, `Sandbox.list()` y `Sandbox.connect()`
         (`RayitoSandboxRunner`) y `secretsmanager:GetSecretValue` por
-        pasarela; con `session_index`, los de `DynamoDbIndex`.
+        pasarela; con `session_index`, los de `DynamoDbIndex`. Leer y borrar
+        la receta (`connect(nombre)` sin `project`, `stop()`), los de
+        `SsmRecipeStore`; con `renew_gateway_keys`, los de
+        `GatewayKeyRenewer`.
     Cómo apagarla: `stop()` termina todos los VMs; `min_vms=1, max_vms=1,
         warm_vms=0` (por defecto) es un solo VM; sin llamar a
-        `deploy_agent()` nada se crea.
+        `deploy_agent()` nada se crea. `connect(..., use_recipe=False)` no
+        lee la receta y `stop(keep_recipe=True)` no la borra;
+        `renew_gateway_keys=False` (por defecto) no renueva ninguna clave.
     Ejemplo:
         fleet = deploy_agent("./mi-agente")
         fleet.invoke("Resume el README.").text
@@ -281,16 +321,33 @@ class AgentFleet:
         transport_factory: Any = default_transport,
         clock: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], None] = time.sleep,
+        renew_gateway_keys: bool = False,
+        recipe: FleetRecipe | None = None,
+        recipe_store: FleetRecipeStore | None = None,
+        key_renewer: GatewayKeyRenewer | None = None,
     ) -> None:
         if project is None and name is None:
             raise InvalidArgumentException("AgentFleet necesita project o name")
         self._project = project
         self._name = name or (project.template or project.name if project else "")
         self._token = access_token
-        self._settings: FleetSettings = fleet_settings_of(project, scaling)
-        self._service = service or (
-            ProjectService(project, transport_factory=transport_factory) if project else None
+        self._settings: FleetSettings = fleet_settings_of(
+            project, scaling, recipe.scaling if recipe else None
         )
+        self._service = service or (
+            ProjectService(
+                project,
+                transport_factory=transport_factory,
+                image_version=recipe.image_version if recipe else None,
+            )
+            if project
+            else None
+        )
+        self._renewer = renewer_for(
+            project, renew_gateway_keys, key_renewer, region=region, session=session
+        )
+        self._recipe_store = recipe_store
+        self._recipe_known = recipe is not None
         self._directory = directory or SandboxDirectory(region=region, session=session)
         self._pool_factory = pool_factory
         self._pool_backend = pool_backend
@@ -317,12 +374,32 @@ class AgentFleet:
         scaling: ScalingOptions | None = None,
         region: str | None = None,
         session: Any = None,
+        use_recipe: bool = True,
+        renew_gateway_keys: bool | None = None,
         **dependencies: Any,
     ) -> Self:
         """Reconstruye la flota de la imagen `name` en cualquier proceso: todos
         sus MicroVMs no terminados, sin reanudar ninguno (un VM se abre al
-        usarlo). Sin `project` la flota enruta y consulta pero no puede crear
-        VMs."""
+        usarlo).
+
+        Sin `project` y con `use_recipe` (por defecto) lee la receta que
+        guardó `deploy_agent()` (un `GetParameter`): con ella la flota crea
+        VMs iguales a los del despliegue (proyecto tras las banderas, versión
+        de la imagen, escalado y renovación de claves) y `status()` da su
+        escalado real. Un `scaling=` o un `renew_gateway_keys=` explícitos
+        ganan a la receta. Sin receta (o con `project=`, o
+        `use_recipe=False`), la flota es la de 0.16: sin `project` enruta y
+        consulta pero no puede crear VMs."""
+        recipe: FleetRecipe | None = None
+        if project is None and use_recipe:
+            store = dependencies.pop("recipe_store", None) or recipe_aws.default_recipe_store(
+                region, session
+            )
+            loaded = load_recipe(store, name)
+            if loaded is not None:
+                recipe, project = loaded
+            dependencies["recipe_store"] = store
+        renew = recipe.renew_gateway_keys if recipe is not None else False
         fleet = cls(
             project,
             name=name,
@@ -330,6 +407,8 @@ class AgentFleet:
             scaling=scaling,
             region=region,
             session=session,
+            renew_gateway_keys=renew if renew_gateway_keys is None else renew_gateway_keys,
+            recipe=recipe,
             **dependencies,
         )
         fleet.refresh_members()
@@ -451,6 +530,7 @@ class AgentFleet:
             ),
             queue_timeout_seconds=self._settings.queue_timeout_seconds,
             max_concurrency=self._settings.max_concurrency,
+            scaling_source="explicit",
         )
         self.reconcile()
 
@@ -461,9 +541,11 @@ class AgentFleet:
         pool persistente (`pool_backend`)."""
         self._close_pool(drain=self._pool_backend is None)
 
-    def stop(self) -> None:
-        """Termina todos los VMs de la flota y las plazas del pool. Sigue
-        aunque uno falle y, al final, lanza el primer error."""
+    def stop(self, *, keep_recipe: bool = False) -> None:
+        """Termina todos los VMs de la flota y las plazas del pool y, si este
+        proceso guardó o leyó su receta, la borra (`keep_recipe=True` la
+        conserva). Sigue aunque uno falle y, al final, lanza el primer
+        error."""
         errors: list[Exception] = []
         self._close_pool(drain=True, errors=errors)
         with self._lock:
@@ -473,6 +555,12 @@ class AgentFleet:
                 self._terminate(member)
             except Exception as exc:
                 logger.warning("no se pudo terminar un VM de la flota", exc_info=True)
+                errors.append(exc)
+        if self._recipe_known and not keep_recipe:
+            try:
+                forget_recipe(self._recipes(), self._name)
+                self._recipe_known = False
+            except SandboxException as exc:
                 errors.append(exc)
         if errors:
             raise errors[0]
@@ -498,6 +586,7 @@ class AgentFleet:
             max_vms=scaling.max_vms,
             warm_vms=scaling.warm_vms,
             warm_ready=warm_ready,
+            scaling_source=self._settings.scaling_source,
         )
 
     def wait_warm(self, timeout: float, poll: float) -> bool:
@@ -743,6 +832,7 @@ class AgentFleet:
         project = self._require_project()
         service = self._service
         assert service is not None
+        self._renew_keys()
         label = (
             session_label(session_id)
             if session_id is not None and self._index is not None
@@ -800,19 +890,38 @@ class AgentFleet:
         if deployment is not None:
             return deployment  # type: ignore[no-any-return]
         sandbox = self._directory.connect(member.sandbox_id, self._require_token())
-        deployment = self._serving(sandbox)
+        deployment = self._serving(member, sandbox)
         with self._lock:
             member.deployment = deployment
         self._limit_lifetime(member)
         return deployment
 
-    def _serving(self, sandbox: Any) -> AgentDeployment:
+    def _serving(self, member: Member, sandbox: Any) -> AgentDeployment:
         if sandbox.files.exists(AGENT_SERVICE_READY_MARKER_PATH):
             return self._deployment_of(sandbox)
         service = self._service
         if service is None:
             raise InvalidArgumentException(NO_PROJECT_MESSAGE)
+        self._open_parked(member, sandbox)
         return service.serve(sandbox)
+
+    def _open_parked(self, member: Member, sandbox: Any) -> None:
+        """Una plaza aparcada (de este proceso o de otro) nace sin pasarelas:
+        se abren las del proyecto (o de la receta) antes de arrancar el host,
+        con el mismo camino que `SandboxPool.take(gateways=)`. Si no se
+        pueden abrir, la plaza se sustituye y quien la eligió busca otra."""
+        project = self._project
+        if project is None or not project.gateways:
+            return
+        from rayito.sandbox_sync.pool import apply_gateways
+
+        self._renew_keys()
+        try:
+            apply_gateways(sandbox, dict(project.gateways), timeout=DEFAULT_REQUEST_TIMEOUT_SECONDS)
+        except Exception as exc:
+            logger.warning("una plaza aparcada no pudo abrir sus pasarelas: se sustituye")
+            self._replace(member)
+            raise ParkedSlotError(PARKED_SLOT_MESSAGE) from exc
 
     def _deployment_of(self, sandbox: Any) -> AgentDeployment:
         labels = parse_labels(sandbox.metadata)
@@ -835,6 +944,8 @@ class AgentFleet:
             deployment = self._open_or_connect(member)
         except SandboxNotFoundException:
             self._drop(member)
+            return False
+        except ParkedSlotError:
             return False
         now = self._clock()
         if not force and ping_is_fresh(member, now):
@@ -929,6 +1040,40 @@ class AgentFleet:
                 self._terminate(member)
             except Exception:
                 logger.warning("no se pudo terminar un VM de un arranque fallido", exc_info=True)
+
+    # ------------------------------------------------------- recipe and keys
+
+    def _recipes(self) -> FleetRecipeStore:
+        if self._recipe_store is None:
+            self._recipe_store = recipe_aws.default_recipe_store(self._region, self._session)
+        return self._recipe_store
+
+    def _save_recipe(self) -> str:
+        """Guarda la receta de la flota recién arrancada (sólo lo llama
+        `deploy_agent()`): `saved` o el código del aviso, nunca un error."""
+        project = self._require_project()
+        recipe = recipe_of(
+            project,
+            name=self._name,
+            image_version=getattr(self._service, "image_version", None),
+            scaling=self.scaling,
+            renew_gateway_keys=self._renewer is not None,
+        )
+        outcome = store_recipe(self._recipes(), recipe)
+        if outcome == RECIPE_SAVED:
+            self._recipe_known = True
+        return outcome
+
+    def _renew_keys(self) -> None:
+        """Con `renew_gateway_keys`, renueva las claves que lo necesiten y,
+        si escribió alguna, refresca las pasarelas de los VMs abiertos."""
+        if self._renewer is None or not self._renewer.renew():
+            return
+        for deployment in self.deployments:
+            try:
+                deployment.refresh_gateways()
+            except SandboxException:
+                logger.warning("no se pudo refrescar la pasarela de un VM de la flota")
 
     # -------------------------------------------------------------- warm pool
 

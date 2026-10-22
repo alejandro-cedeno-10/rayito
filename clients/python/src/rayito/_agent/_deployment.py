@@ -388,6 +388,12 @@ class AgentDeployment:
         servidor propio."""
         self._sandbox.set_timeout(timeout)
 
+    def refresh_gateways(self) -> None:
+        """Vuelve a mandar las pasarelas del sandbox (`sbx.gateways.refresh()`):
+        releen de Secrets Manager el valor actual de cada secreto. Una flota lo
+        usa tras renovar una clave (`renew_gateway_keys`)."""
+        self._sandbox.gateways.refresh()
+
     def stop(self) -> None:
         """Termina el sandbox del despliegue. Idempotente."""
         self._sandbox.kill()

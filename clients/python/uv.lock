@@ -113,6 +113,18 @@ wheels = [
 ]
 
 [[package]]
+name = "aws-bedrock-token-generator"
+version = "1.1.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "botocore" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/fb/39/cf1c2e12bc5a84af0f96a546481213f81fa6e7927d2bbabd81758c6558ca/aws_bedrock_token_generator-1.1.0.tar.gz", hash = "sha256:95ccb07f63a91ac486561f6df05cc4e04784c8ff5086dc687ed9c5fd3ab1b5ba", size = 19123, upload-time = "2025-07-29T19:53:19.511Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/f9/fd/745ece98870c3824d294bcdce5dc5e15381188a41bc80832c246b205e40e/aws_bedrock_token_generator-1.1.0-py3-none-any.whl", hash = "sha256:bd12854f7c7e52dde5d980d369379f12d0cc5f0855099d87f38688b0f9de5cd4", size = 10291, upload-time = "2025-07-29T19:53:18.704Z" },
+]
+
+[[package]]
 name = "aws-cdk-asset-awscli-v1"
 version = "2.2.292"
 source = { registry = "https://pypi.org/simple" }
@@ -1716,6 +1728,9 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+bedrock-keys = [
+    { name = "aws-bedrock-token-generator" },
+]
 cdk = [
     { name = "aws-cdk-lib" },
     { name = "constructs" },
@@ -1742,7 +1757,7 @@ dev = [
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "pyyaml" },
-    { name = "rayito", extra = ["cdk", "custom-domain", "mcp", "otel"] },
+    { name = "rayito", extra = ["bedrock-keys", "cdk", "custom-domain", "mcp", "otel"] },
     { name = "ruff" },
     { name = "typer" },
     { name = "types-protobuf" },
@@ -1755,6 +1770,7 @@ docs = [
 
 [package.metadata]
 requires-dist = [
+    { name = "aws-bedrock-token-generator", marker = "extra == 'bedrock-keys'", specifier = "==1.1.0" },
     { name = "aws-cdk-lib", marker = "extra == 'cdk'", specifier = ">=2.261.0,<3" },
     { name = "awscrt", marker = "extra == 'custom-domain'", specifier = ">=0.23,<1" },
     { name = "boto3", specifier = ">=1.43.82,<2" },
@@ -1765,7 +1781,7 @@ requires-dist = [
     { name = "protobuf", specifier = ">=7.36.1,<8" },
     { name = "typer", marker = "extra == 'cli'", specifier = ">=0.15,<1" },
 ]
-provides-extras = ["cli", "mcp", "otel", "custom-domain", "cdk"]
+provides-extras = ["cli", "mcp", "otel", "custom-domain", "cdk", "bedrock-keys"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -1776,6 +1792,7 @@ dev = [
     { name = "pytest", specifier = ">=8.3" },
     { name = "pytest-asyncio", specifier = ">=0.25" },
     { name = "pyyaml", specifier = ">=6.0" },
+    { name = "rayito", extras = ["bedrock-keys"] },
     { name = "rayito", extras = ["cdk"] },
     { name = "rayito", extras = ["custom-domain"] },
     { name = "rayito", extras = ["mcp"] },
