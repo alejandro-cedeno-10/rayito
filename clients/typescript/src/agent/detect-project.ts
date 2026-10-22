@@ -14,6 +14,7 @@
 import { AGENT_PROJECT_SCHEMA, AGENT_SECRET_NAME_TEMPLATE } from "../limits.js";
 import { DEFAULT_SECRET_PREFIX } from "../secrets/names.js";
 import { fillRuntime } from "./detect-domain.js";
+import { INSTRUCTIONS_FILE_KEY, PERMISSIONS_KEY } from "./detect-opencode.js";
 import type { DetectionReport, DetectOverrides } from "./detect-report.js";
 import { type BridgeRules, DETECTION_RULES, type DetectionRules } from "./detect-rules.js";
 import {
@@ -46,6 +47,9 @@ export const GATEWAY_SECRET_NAME_TEMPLATE = AGENT_SECRET_NAME_TEMPLATE.startsWit
 )
   ? AGENT_SECRET_NAME_TEMPLATE.slice(DEFAULT_SECRET_PREFIX.length)
   : AGENT_SECRET_NAME_TEMPLATE;
+/** Las claves de `[agent]` que ya dan instrucciones: con cualquiera, el
+ * `instructions_file` detectado no se usa. */
+const INSTRUCTION_KEYS = ["instructions", INSTRUCTIONS_FILE_KEY] as const;
 
 type Table = Record<string, unknown>;
 
@@ -216,6 +220,33 @@ function modelTables(
   return [{ ...model, ...report.modelEnvs }, { [preset]: gateway }];
 }
 
+/**
+ * `[agent]` con lo que aporta la configuración del framework
+ * (`report.agentTable`: el `AGENTS.md` y los permisos de OpenCode) donde el
+ * fichero calla: unas instrucciones del fichero (en línea o en otro fichero)
+ * ganan al `AGENTS.md`, y sus permisos, a los de la configuración. Sólo si el
+ * runtime es el detectado; un `[agent]` que no es una tabla se deja
+ * para que lo valide el proyecto.
+ */
+function agentTable(current: unknown, runtime: Table, report: DetectionReport): unknown {
+  const detected = report.agentTable;
+  if (Object.keys(detected).length === 0 || runtime.kind !== report.kind) {
+    return current;
+  }
+  const isTable = typeof current === "object" && current !== null && !Array.isArray(current);
+  if (current !== undefined && current !== null && !isTable) {
+    return current;
+  }
+  const agent = asTable(current);
+  if (INSTRUCTIONS_FILE_KEY in detected && !INSTRUCTION_KEYS.some((key) => key in agent)) {
+    agent[INSTRUCTIONS_FILE_KEY] = detected[INSTRUCTIONS_FILE_KEY];
+  }
+  if (PERMISSIONS_KEY in detected && !(PERMISSIONS_KEY in agent)) {
+    agent[PERMISSIONS_KEY] = detected[PERMISSIONS_KEY];
+  }
+  return agent;
+}
+
 /** El documento de proyecto con lo detectado donde el fichero calla.
  * `overrides.modelBaseUrl` es el `upstream` de la pasarela detectada. */
 export function detectedDocument(
@@ -236,6 +267,10 @@ export function detectedDocument(
   completeRuntime(runtime, asTable(document.runtime), report, bridge);
   filled.runtime = runtime;
   filled.source ??= { path: bridge.defaultSource };
+  const agent = agentTable(filled.agent, runtime, report);
+  if (agent !== undefined) {
+    filled.agent = agent;
+  }
   if (!("model" in filled)) {
     const [model, gateways] = modelTables(
       report,

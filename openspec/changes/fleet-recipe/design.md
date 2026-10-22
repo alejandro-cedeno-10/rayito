@@ -266,16 +266,26 @@ five parallel work groups.
 ### D10. OpenCode zero-config reads `AGENTS.md` and permissions
 
 - When detection resolves framework `opencode` and the project has no
-  explicit `[spec] instructions` / `[spec.permissions]`, the project builder
-  does two things:
-  - It reads `AGENTS.md` at the project root (UTF-8, ≤
-    `agentInstructionsMaxBytes` if present in `limits.json`, otherwise the
-    existing spec limit) into `spec.instructions`.
+  explicit `[agent] instructions`/`instructions_file` or
+  `[agent.permissions]`, the project builder does two things:
+  - It sets `[agent] instructions_file = "AGENTS.md"` when a non-empty
+    `AGENTS.md` is at the project root, so the existing reader (UTF-8,
+    confined to the project directory) loads it into `spec.instructions`.
+    `limits.json` has no instruction size limit, and none is added.
   - It maps `opencode.json` `permission` into `AgentPermissions`: string
     values `allow`/`ask`/`deny` per tool, and `bash` object patterns to the
-    existing pattern rules. Unknown keys produce the detection warning
-    `opencode_permission_ignored`.
-- `opencode.jsonc` is read with the existing comment-stripping reader.
+    existing pattern rules. `AgentPermissions` has no `ask` (the run is
+    unattended), so `ask` is applied as `deny`. Unknown keys are ignored.
+    Both produce the detection warning `opencode_permission_ignored`.
+  - The report carries the proposed `[agent]` table in a field that
+    `to_dict()`/`toObject()` leave out (`agent_table` / `agentTable`), and
+    `detected_document` fills only the keys the project file does not set,
+    and only when the runtime kind is the detected one.
+- `opencode.json` and `opencode.jsonc` are read with a new comment and
+  trailing-comma stripper (`strip_jsonc` / `stripJsonc`, same output in both
+  SDKs); no such reader existed. The rules (file names, permission key, `ask`
+  action, warning reasons) are data under `zeroConfig` in
+  `agent-detection.json`.
 - The detection report records evidence `file:AGENTS.md` and the rule
   `config:permission`. The report never includes the instruction text.
 - New detection case: `testdata/agent-detection/cases/opencode-agents-md/`.

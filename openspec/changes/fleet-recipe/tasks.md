@@ -88,16 +88,16 @@ Hard rules:
 
 ## G3. OpenCode zero-config (`feat/sdk-017-opencode`, item 5)
 
-- [ ] G3.1 Read `AGENTS.md` into `spec.instructions` when the project
+- [x] G3.1 Read `AGENTS.md` into `spec.instructions` when the project
       defines none.
-- [ ] G3.2 Map the `opencode.json`/`.jsonc` `permission` block to
+- [x] G3.2 Map the `opencode.json`/`.jsonc` `permission` block to
       `AgentPermissions`. Unknown keys give `opencode_permission_ignored`.
-- [ ] G3.3 Detection evidence for both files, never their text. New case
+- [x] G3.3 Detection evidence for both files, never their text. New case
       `testdata/agent-detection/cases/opencode-agents-md/`. Regenerate the
       detection rules if `agent-detection.json` changes.
-- [ ] G3.4 Tests in both SDKs (extend `*opencode*` tests, add
+- [x] G3.4 Tests in both SDKs (extend `*opencode*` tests, add
       zero-config-files tests).
-- [ ] G3.5 Docs: `guias/agente-proveedores.md`/`.en.md` and
+- [x] G3.5 Docs: `guias/agente-proveedores.md`/`.en.md` and
       `funciones-opcionales/templates-de-agente.md`/`.en.md`. CHANGELOG.
 
 ## G4. TypeScript e2e secret names (`feat/sdk-017-e2e-secrets`, item 6)

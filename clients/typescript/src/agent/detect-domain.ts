@@ -30,6 +30,7 @@ import {
   graphNotFound,
 } from "./detect-entry.js";
 import { detectInstall } from "./detect-install.js";
+import { zeroConfig } from "./detect-opencode.js";
 import { detectProviders } from "./detect-providers.js";
 import {
   type DetectionAlternative,
@@ -419,6 +420,8 @@ export function detect(
     sink,
     overrides,
   );
+  const configured = zeroConfig(index, rules, framework.framework, sink);
+  evidence.push(...configured.evidence);
   return new DetectionReport({
     language,
     framework: framework.framework,
@@ -435,6 +438,7 @@ export function detect(
     warnings: sink.items,
     alternatives,
     modelEnvs,
+    agentTable: configured.agent,
   });
 }
 

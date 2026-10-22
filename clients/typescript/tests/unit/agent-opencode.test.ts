@@ -10,12 +10,14 @@ import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 import type { ModelProvider } from "../../src/agent/domain.js";
 import {
+  buildOpenCodeConfig,
   OPENCODE_CONFIG_PATH,
   OPENCODE_INSTRUCTIONS_PATH,
   OPENCODE_NATIVE_BASE_PATHS,
   OPENCODE_NATIVE_NPM,
   OpenCodeRuntime,
   type OpenCodeState,
+  permissionsFromOpenCode,
 } from "../../src/agent/opencode.js";
 import type { RunRequest } from "../../src/agent/runtime.js";
 import { resolveRuntime } from "../../src/agent/runtimes.js";
@@ -267,4 +269,58 @@ test("los mapas de proveedores nativos comparten claves", () => {
   expect(Object.keys(OPENCODE_NATIVE_NPM).sort()).toEqual(
     Object.keys(OPENCODE_NATIVE_BASE_PATHS).sort(),
   );
+});
+
+describe("permisos de un opencode.json (configuración cero)", () => {
+  test("son el inverso de la configuración del runtime", () => {
+    const permissions = new AgentPermissions({
+      default: "deny",
+      tools: { edit: "allow", bash: { "git *": "allow", "*": "deny" } },
+    });
+    const spec = bedrockSpec();
+    const config = buildOpenCodeConfig(new AgentSpec({ model: spec.model, permissions }), {
+      gatewayUrls: GATEWAY_URLS,
+    });
+    // biome-ignore lint/suspicious/noExplicitAny: configuración JSON de OpenCode.
+    const block = (config.agent as any).build.permission;
+    const found = permissionsFromOpenCode(block, { askAction: "deny" });
+    expect(found.notes).toEqual([]);
+    expect(new AgentPermissions(found.table as never).effectiveTools()).toEqual(
+      permissions.effectiveTools(),
+    );
+    expect(found.table.default).toBe("deny");
+  });
+
+  test("ask se aplica como la acción desatendida", () => {
+    const found = permissionsFromOpenCode(
+      { edit: "ask", bash: { "*": "ask", "git status": "allow" } },
+      { askAction: "deny" },
+    );
+    expect(found.table).toEqual({
+      tools: { edit: "deny", bash: { "*": "deny", "git status": "allow" } },
+    });
+    expect(found.notes).toEqual([
+      ["edit", "ask"],
+      ["bash", "ask"],
+    ]);
+  });
+
+  test.each([
+    ["bad-name", { "Remote Tool": "allow" }, [["Remote Tool", "unknown"]]],
+    ["bad-action", { edit: "maybe" }, [["edit", "unknown"]]],
+    ["empty-patterns", { bash: {} }, [["bash", "unknown"]]],
+    ["default-patterns", { "*": { x: "allow" } }, [["*", "unknown"]]],
+    ["null-default", { "*": null }, [["*", "unknown"]]],
+    ["list", ["allow"], [["*", "unknown"]]],
+  ])("lo que no se puede aplicar se ignora (%s)", (_id, block, notes) => {
+    const found = permissionsFromOpenCode(block, { askAction: "deny" });
+    expect(found.table).toEqual({});
+    expect(found.notes).toEqual(notes);
+  });
+
+  test("una cadena sola es el default", () => {
+    expect(permissionsFromOpenCode("deny", { askAction: "deny" }).table).toEqual({
+      default: "deny",
+    });
+  });
 });

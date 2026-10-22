@@ -170,7 +170,12 @@ class DetectionReport:
     proveedores de modelo y los literales de modelo vistos, la evidencia, los
     avisos y las alternativas. `model_envs` (`id_env`, `base_url_env`,
     `api_key_env`) son los nombres de variable con los que el código elige su
-    modelo cuando no hay literal; sólo nombres, nunca valores."""
+    modelo cuando no hay literal; sólo nombres, nunca valores.
+
+    `agent_table` es la tabla `[agent]` que aporta la configuración de un
+    framework que se configura (OpenCode: `instructions_file` y
+    `permissions`, ADR-034 D8). No sale en `to_dict()`: el informe sólo
+    lleva su evidencia."""
 
     language: str | None
     framework: str
@@ -187,10 +192,12 @@ class DetectionReport:
     warnings: tuple[DetectionWarning, ...] = ()
     alternatives: tuple[DetectionAlternative, ...] = ()
     model_envs: Mapping[str, str] = field(default_factory=dict)
+    agent_table: Mapping[str, object] = field(default_factory=dict, repr=False)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "options", MappingProxyType(dict(self.options)))
         object.__setattr__(self, "model_envs", MappingProxyType(dict(self.model_envs)))
+        object.__setattr__(self, "agent_table", MappingProxyType(dict(self.agent_table)))
 
     def to_dict(self) -> dict[str, object]:
         """La forma JSON compartida con TypeScript; `model_envs` sólo si hay."""

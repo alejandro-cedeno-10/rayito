@@ -41,6 +41,16 @@ versionado [SemVer](https://semver.org/lang/es/).
   secreto queda en `rayito/agents/<proyecto>/<proveedor>`, el nombre que lee la
   pasarela. Si sólo existe el secreto de 0.16, el despliegue lo reutiliza y no
   crea otro; un `rayito-agent.toml` con un nombre propio no cambia.
+- **OpenCode sin fichero de proyecto usa `AGENTS.md` y los permisos de
+  `opencode.json`** (ADR-034 D8). Antes sólo `rayito-agent.toml` los aplicaba.
+  Ahora la detección lleva el `AGENTS.md` de la raíz a
+  `agent.instructions_file`, y el bloque `permission` de `opencode.json` u
+  `opencode.jsonc` (sin comentarios ni comas finales) a `agent.permissions`.
+  `ask` se aplica como `deny`, porque la ejecución es desatendida, y una clave
+  que no se puede aplicar se ignora. Los dos casos avisan con
+  `opencode_permission_ignored`. Lo que dice `rayito-agent.toml` gana, y el
+  informe sólo lleva la evidencia (`file:AGENTS.md`, `config:permission`),
+  nunca el texto de los ficheros.
 
 ## [0.16.0] - 2026-10-22
 

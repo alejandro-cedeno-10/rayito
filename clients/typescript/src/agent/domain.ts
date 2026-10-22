@@ -46,7 +46,7 @@ export const DEFAULT_AGENT_RUNTIME = "opencode";
 export const DEFAULT_AGENT_TIMEOUT_MS = DEFAULT_AGENT_TIMEOUT_SECONDS * 1000;
 /** La ejecución es desatendida: una acción `"ask"` la colgaría hasta el
  * timeout. */
-const ASK_ACTION = "ask";
+export const ASK_ACTION = "ask";
 /**
  * Denegadas por defecto, por debajo de las entradas del llamante:
  * `question` espera una respuesta humana que nunca llega, y

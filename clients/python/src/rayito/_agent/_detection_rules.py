@@ -1249,7 +1249,8 @@ _RULES_JSON: Final = r"""
   "several_providers": "hay varios proveedores de modelo ({providers}); se usa {used}",
   "no_provider": "no se detecta ningún proveedor de modelo; indícalo con --secret proveedor=nombre",
   "model_id_from_code": "no se fija el id del modelo: lo elige tu código ({envs})",
-  "custom_base_url": "el cliente de {path} pasa su propia URL base y se mantiene {preset} porque el código fija el id del modelo; si apunta a una pasarela compatible con OpenAI, pasa --model-base-url"
+  "custom_base_url": "el cliente de {path} pasa su propia URL base y se mantiene {preset} porque el código fija el id del modelo; si apunta a una pasarela compatible con OpenAI, pasa --model-base-url",
+  "opencode_permission_ignored": "{file}: permission.{key} {reason}"
  },
  "maxModelsListed": 5,
  "modelFromCode": {
@@ -1340,6 +1341,22 @@ _RULES_JSON: Final = r"""
    }
   }
  ],
+ "zeroConfig": {
+  "comment": "Lo que un framework que se configura (OpenCode) aporta a la tabla [agent] del proyecto cuando el fichero de proyecto no la escribe: el fichero de instrucciones de la raíz y el bloque de permisos de su configuración (opencode.json u opencode.jsonc, sin comentarios). 'ask' se aplica como askAction porque la ejecución es desatendida; lo que no se puede aplicar se avisa con opencode_permission_ignored y nunca copia el texto de los ficheros.",
+  "opencode": {
+   "instructionsFile": "AGENTS.md",
+   "configFiles": [
+    "opencode.json",
+    "opencode.jsonc"
+   ],
+   "permissionKey": "permission",
+   "askAction": "deny",
+   "reasons": {
+    "ask": "usa ask, que se aplica como deny: nadie contesta en una ejecución desatendida",
+    "unknown": "no es una herramienta con allow, ask o deny (o patrones de ellas) y se ignora"
+   }
+  }
+ },
  "bridge": {
   "comment": "Del informe de detección al proyecto (`AgentProject.detect`): cómo se llama cada proveedor en el modelo, qué runtime sirve cada framework de JavaScript, qué tipos de runtime llevan las claves de instalación y cuáles esperan sólo la ruta del módulo.",
   "modelProviders": {

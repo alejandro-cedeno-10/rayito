@@ -10,6 +10,7 @@ COPY host.json /opt/agents/rayito/host.json
 COPY app /opt/agents/app
 RUN chown -R root:root /opt/agents && chmod -R a+rX,go-w /opt/agents
 COPY --chown=user:user --chmod=0644 config/0 /home/user/.rayito/agent/opencode/opencode.json
+COPY --chown=user:user --chmod=0644 config/1 /home/user/.rayito/agent/opencode/AGENTS.md
 ENV AWS_REGION="us-east-1"
 ENV HOME="/home/user"
 ENV OPENCODE_CONFIG="/home/user/.rayito/agent/opencode/opencode.json"
