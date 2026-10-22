@@ -243,15 +243,19 @@ Resources:
                 StringLike:
                   s3:prefix: !Sub \${TransferPrefix}/*
             - !Ref AWS::NoValue
-          # The fleet recipe (ADR-034): \`deploy_agent()\` saves one Standard
-          # SecureString per fleet, \`AgentFleet.connect(name)\` reads it and
-          # \`stop()\` deletes it. Encrypted with the AWS managed key aws/ssm,
-          # which needs no KMS statement (AWS_API_NOTES.md, «Receta de la
-          # flota y claves de corta duración de Bedrock»).
+          # The fleet recipe (ADR-034): \`AgentFleet.connect(name)\` reads it
+          # and \`stop()\` deletes it. No ssm:PutParameter here: the recipe
+          # decides the image, egress, env and gateway upstreams and secret
+          # names of every process that connects by name, so writing it is a
+          # deploy right (ImagePublisherPolicy, CallerPolicy). A deploy with
+          # this policy alone continues with a \`recipe_access_denied\`
+          # warning. Encrypted with
+          # the AWS managed key aws/ssm, which needs no KMS statement
+          # (AWS_API_NOTES.md, «Receta de la flota y claves de corta
+          # duración de Bedrock»).
           - Sid: AgentRecipe
             Effect: Allow
             Action:
-              - ssm:PutParameter
               - ssm:GetParameter
               - ssm:DeleteParameter
             Resource: !Sub arn:\${AWS::Partition}:ssm:\${AWS::Region}:\${AWS::AccountId}:parameter/rayito/agents/*
@@ -323,6 +327,13 @@ Resources:
             Effect: Allow
             Action: s3:ListBucket
             Resource: !Sub arn:aws:s3:::\${ArtifactBucket}
+          # Writing the fleet recipe (ADR-034 D9) decides what every process
+          # that connects by name runs, like publishing an image: it lives
+          # here and in CallerPolicy, never in SandboxLauncherPolicy.
+          - Sid: AgentRecipeWrite
+            Effect: Allow
+            Action: ssm:PutParameter
+            Resource: !Sub arn:\${AWS::Partition}:ssm:\${AWS::Region}:\${AWS::AccountId}:parameter/rayito/agents/*
           - Sid: ReadQuotas
             Effect: Allow
             Action: servicequotas:ListServiceQuotas
