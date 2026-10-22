@@ -1,0 +1,70 @@
+{
+  "schema": "rayito.gateway-key-renewal-vectors/1",
+  "_comment": "Decisión de renovar la clave de una pasarela bedrock (design.md D6), pura: `processRenewedAgoSeconds` es lo que recuerda este proceso (null: nunca), `secretChangedAgoSeconds` sale de DescribeSecret.LastChangedDate (null: no se pregunta). `calls` son las llamadas esperadas, en orden. Ventana: gatewayKeyRenewAfterSeconds = 900.",
+  "cases": [
+    {
+      "id": "fresh-in-process",
+      "processRenewedAgoSeconds": 60,
+      "secretChangedAgoSeconds": null,
+      "calls": [],
+      "renew": false
+    },
+    {
+      "id": "secret-recent",
+      "processRenewedAgoSeconds": null,
+      "secretChangedAgoSeconds": 300,
+      "calls": [
+        "DescribeSecret"
+      ],
+      "renew": false
+    },
+    {
+      "id": "secret-old",
+      "processRenewedAgoSeconds": null,
+      "secretChangedAgoSeconds": 3600,
+      "calls": [
+        "DescribeSecret",
+        "PutSecretValue"
+      ],
+      "renew": true
+    },
+    {
+      "id": "process-old-secret-old",
+      "processRenewedAgoSeconds": 1200,
+      "secretChangedAgoSeconds": 1200,
+      "calls": [
+        "DescribeSecret",
+        "PutSecretValue"
+      ],
+      "renew": true
+    },
+    {
+      "id": "boundary",
+      "processRenewedAgoSeconds": null,
+      "secretChangedAgoSeconds": 900,
+      "calls": [
+        "DescribeSecret",
+        "PutSecretValue"
+      ],
+      "renew": true
+    }
+  ],
+  "regions": [
+    {
+      "upstream": "https://bedrock-runtime.us-east-1.amazonaws.com",
+      "region": "us-east-1"
+    },
+    {
+      "upstream": "https://bedrock-runtime.eu-west-1.amazonaws.com",
+      "region": "eu-west-1"
+    },
+    {
+      "upstream": "https://llm-gateway.example.com",
+      "region": null
+    }
+  ],
+  "secretValue": {
+    "token": "bedrock-api-key-EXAMPLE",
+    "value": "Bearer bedrock-api-key-EXAMPLE"
+  }
+}

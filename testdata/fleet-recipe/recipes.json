@@ -1,0 +1,96 @@
+{
+  "schema": "rayito.fleet-recipe-vectors/1",
+  "_comment": "Vectores de la receta (design.md D1-D2). `document` es la entrada; `encoding` el resultado esperado (`json` o `gzip+base64`), y `value` los bytes exactos que deben producir los dos SDK. G5 rellena `value` desde la implementación de Python en su primer commit y el test de TypeScript lo compara byte a byte; un `value` nulo hace fallar el test. El `project` de estos vectores es un esqueleto: G5 lo sustituye por el documento real que serializa AgentProject para un proyecto de ejemplo genérico.",
+  "cases": [
+    {
+      "id": "small-bedrock",
+      "document": {
+        "schema": "rayito.agent-recipe/1",
+        "name": "my-agent",
+        "savedBy": "python/0.17.0",
+        "image": {
+          "name": "my-agent",
+          "version": "3"
+        },
+        "project": {
+          "name": "my-agent",
+          "runtime": {
+            "kind": "opencode"
+          },
+          "env": {
+            "LOG_LEVEL": "info"
+          },
+          "secret_env_from": [
+            "app/config"
+          ],
+          "gateways": {
+            "model": {
+              "preset": "custom",
+              "upstream": "https://bedrock-runtime.us-east-1.amazonaws.com",
+              "headers": {
+                "authorization": "rayito/agents/my-agent/bedrock"
+              }
+            }
+          }
+        },
+        "gatewayPresets": {
+          "model": "bedrock"
+        },
+        "scaling": {
+          "minVms": 1,
+          "maxVms": 3,
+          "warmVms": 1,
+          "sessions": "shared",
+          "scaleInAfterSeconds": 900
+        },
+        "renewGatewayKeys": false
+      },
+      "encoding": "json",
+      "value": null
+    },
+    {
+      "id": "large-instructions",
+      "document": "small-bedrock with project.spec.instructions = 'Responde en español. ' * 400",
+      "encoding": "gzip+base64",
+      "value": null
+    },
+    {
+      "id": "too-large",
+      "document": "small-bedrock with 6000 random hex bytes of instructions (incompressible)",
+      "encoding": null,
+      "warning": "recipe_too_large"
+    }
+  ],
+  "rejected": [
+    {
+      "id": "unknown-schema",
+      "value": "{\"schema\":\"rayito.agent-recipe/2\"}",
+      "warning": "recipe_unreadable"
+    },
+    {
+      "id": "unknown-encoding",
+      "value": "{\"schema\":\"rayito.agent-recipe/1\",\"encoding\":\"zstd\",\"data\":\"\"}",
+      "warning": "recipe_unreadable"
+    },
+    {
+      "id": "not-json",
+      "value": "not json",
+      "warning": "recipe_unreadable"
+    }
+  ],
+  "names": [
+    {
+      "fleet": "my-agent",
+      "parameter": "/rayito/agents/my-agent/recipe"
+    },
+    {
+      "fleet": "agent_v2.prod",
+      "parameter": "/rayito/agents/agent_v2.prod/recipe"
+    },
+    {
+      "fleet": "bad name",
+      "parameter": null,
+      "warning": "recipe_not_saved"
+    }
+  ]
+}

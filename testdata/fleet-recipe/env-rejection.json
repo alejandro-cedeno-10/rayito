@@ -1,0 +1,18 @@
+{
+  "schema": "rayito.fleet-recipe-env-vectors/1",
+  "_comment": "Nombres de --env que la CLI rechaza (SECRET_LIKE_KEYS de AgentProject.env más `secret`, constante ENV_FLAG_SECRET_LIKE_KEYS; AgentProject.env no cambia) y los que acepta. Sin valores.",
+  "rejected": [
+    "API_TOKEN",
+    "OPENAI_API_KEY",
+    "CLIENT_SECRET",
+    "DB_PASSWORD",
+    "TOKEN",
+    "KEY"
+  ],
+  "accepted": [
+    "LOG_LEVEL",
+    "APP_ENV",
+    "MAX_TOKENS_PER_CALL",
+    "KEYBOARD_LAYOUT"
+  ]
+}

@@ -1,0 +1,248 @@
+{
+  "schema": "rayito.fleet-recipe-contract/1",
+  "_comment": "Contrato de integración de fleet-recipe (ADR-034, openspec/changes/fleet-recipe/design.md «Integration contract»). Fija nombres, valores por defecto, propietario y orden de fusión de todo lo que los cinco grupos añaden a ficheros o superficies compartidos. Cada grupo añade en cada SDK un test que compara su parte de este fichero con la superficie real.",
+  "baseBranch": "feat/sdk-017",
+  "mergeOrder": [
+    "G1",
+    "G2",
+    "G3",
+    "G4",
+    "G5"
+  ],
+  "groups": {
+    "G1": {
+      "branch": "feat/sdk-017-host-logging",
+      "items": [
+        1,
+        7
+      ],
+      "adr": "ADR-034 D8"
+    },
+    "G2": {
+      "branch": "feat/sdk-017-secrets-setup",
+      "items": [
+        2,
+        3,
+        4
+      ],
+      "adr": "ADR-034 D8",
+      "vectors": [
+        "testdata/agent-deploy/create-secret.json",
+        "testdata/account-setup/plan-vectors.json"
+      ]
+    },
+    "G3": {
+      "branch": "feat/sdk-017-opencode",
+      "items": [
+        5
+      ],
+      "adr": "ADR-034 D8",
+      "vectors": [
+        "testdata/agent-detection/cases/opencode-agents-md/"
+      ]
+    },
+    "G4": {
+      "branch": "feat/sdk-017-e2e-secrets",
+      "items": [
+        6
+      ],
+      "adr": "ADR-034 D8"
+    },
+    "G5": {
+      "branch": "feat/sdk-017-fleet-recipe",
+      "items": [
+        8,
+        9,
+        10,
+        11,
+        12
+      ],
+      "adr": "ADR-034 D1-D7",
+      "dependsOn": [
+        "G2"
+      ],
+      "vectors": [
+        "testdata/fleet-recipe/recipes.json",
+        "testdata/fleet-recipe/renewal.json",
+        "testdata/fleet-recipe/env-rejection.json"
+      ]
+    }
+  },
+  "limits": {
+    "agentRecipeParameterTemplate": "/rayito/agents/{name}/recipe",
+    "agentRecipeSchema": "rayito.agent-recipe/1",
+    "agentRecipeMaxBytes": 4096,
+    "agentRecipeDescription": "Receta de una flota de agentes de Rayito",
+    "gatewayKeyRenewAfterSeconds": 900,
+    "gatewayKeyExpirySeconds": 43200
+  },
+  "sdkNames": {
+    "gatewayPresets": {
+      "python": "AgentProject.gateway_presets",
+      "typescript": "AgentProject.gatewayPresets",
+      "owner": "G2"
+    },
+    "saveRecipe": {
+      "python": "AgentDeployOptions.save_recipe",
+      "typescript": "AgentDeployOptions.saveRecipe",
+      "default": true,
+      "owner": "G5"
+    },
+    "useRecipe": {
+      "python": "AgentFleet.connect(use_recipe=)",
+      "typescript": "AgentFleetConnectOptions.useRecipe",
+      "default": true,
+      "owner": "G5"
+    },
+    "keepRecipe": {
+      "python": "AgentFleet.stop(keep_recipe=)",
+      "typescript": "AgentFleet.stop({ keepRecipe })",
+      "default": false,
+      "owner": "G5"
+    },
+    "scalingSource": {
+      "python": "FleetStatus.scaling_source",
+      "typescript": "FleetStatus.scalingSource",
+      "values": [
+        "explicit",
+        "project",
+        "recipe",
+        "default"
+      ],
+      "owner": "G5"
+    },
+    "scaleInAfter": {
+      "python": "AgentDeployOptions.scale_in_after_seconds",
+      "typescript": "AgentDeployOptions.scaleInAfterMs",
+      "owner": "G5"
+    },
+    "renewGatewayKeys": {
+      "python": "renew_gateway_keys",
+      "typescript": "renewGatewayKeys",
+      "default": false,
+      "on": [
+        "AgentFleet",
+        "AgentFleet.connect",
+        "AsyncAgentFleet",
+        "AgentDeployOptions"
+      ],
+      "owner": "G5"
+    },
+    "capsImage": {
+      "python": "SetupRequest.caps_image",
+      "typescript": "SetupRequest.capsImage",
+      "default": true,
+      "owner": "G2"
+    },
+    "applyGateways": {
+      "python": "apply_gateways(sandbox, gateways, *, timeout)",
+      "typescript": "applyGateways(sandbox, gateways, { timeoutMs })",
+      "owner": "G5"
+    },
+    "quietHttpLoggers": {
+      "python": "agent_host.serve.QUIET_HTTP_LOGGERS",
+      "value": [
+        "httpx",
+        "httpcore"
+      ],
+      "owner": "G1"
+    }
+  },
+  "dependencies": {
+    "pythonExtra": {
+      "bedrock-keys": [
+        "aws-bedrock-token-generator==1.1.0"
+      ]
+    },
+    "typescriptOptionalPeers": {
+      "@aws/bedrock-token-generator": "1.1.0",
+      "@aws-sdk/client-ssm": "same range as the other @aws-sdk peers"
+    }
+  },
+  "warningCodes": [
+    "recipe_access_denied",
+    "recipe_not_saved",
+    "recipe_too_large",
+    "recipe_unreadable",
+    "opencode_permission_ignored"
+  ],
+  "cliFlags": [
+    {
+      "command": "agent deploy",
+      "flag": "--scale-in-after",
+      "value": "SECONDS",
+      "help": "Segundos sin uso tras los que se termina un VM por encima de --min-vms (por defecto, 900).",
+      "owner": "G5"
+    },
+    {
+      "command": "agent deploy",
+      "flag": "--no-save-recipe",
+      "python": "--save-recipe/--no-save-recipe",
+      "help": "No guarda la receta de la flota en Parameter Store (por defecto se guarda, sin coste en el nivel estándar).",
+      "microvmOnly": true,
+      "owner": "G5"
+    },
+    {
+      "command": "agent deploy",
+      "flag": "--renew-gateway-keys",
+      "help": "Renueva la clave de corta duración de Bedrock de las pasarelas antes de crear cada VM (apagado por defecto).",
+      "microvmOnly": true,
+      "owner": "G5"
+    },
+    {
+      "command": "agent stop",
+      "flag": "--keep-recipe",
+      "help": "Conserva la receta de la flota al pararla.",
+      "owner": "G5"
+    },
+    {
+      "command": "setup",
+      "flag": "--no-caps-image",
+      "help": "No publica rayito-base-caps (la base de las plantillas de agente).",
+      "owner": "G2"
+    }
+  ],
+  "messages": {
+    "envLooksSecret": "--env no admite secretos ({name} parece uno): usa --secret-env {name}=<secreto> o --secret-env-from <secreto>",
+    "statusUnknownScaling": "members: {count} (escalado desconocido: sin proyecto ni receta)",
+    "renewNeedsBedrock": "renew_gateway_keys necesita una pasarela con preset bedrock"
+  },
+  "awsOperations": {
+    "ssm": {
+      "PutParameter": [
+        "Name",
+        "Value",
+        "Type",
+        "Tier",
+        "Overwrite",
+        "Description"
+      ],
+      "GetParameter": [
+        "Name",
+        "WithDecryption"
+      ],
+      "DeleteParameter": [
+        "Name"
+      ]
+    },
+    "secretsmanager": {
+      "DescribeSecret": [
+        "SecretId"
+      ],
+      "PutSecretValue": [
+        "SecretId",
+        "SecretString",
+        "ClientRequestToken"
+      ]
+    }
+  },
+  "iam": {
+    "launcherStatement": "AgentRecipe",
+    "actions": [
+      "ssm:PutParameter",
+      "ssm:GetParameter",
+      "ssm:DeleteParameter"
+    ],
+    "resource": "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/rayito/agents/*"
+  }
+}
