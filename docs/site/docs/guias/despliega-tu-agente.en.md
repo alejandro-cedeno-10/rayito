@@ -1092,13 +1092,20 @@ What the host does with each invocation:
   goes as is as `input`.
 - The thread comes from the session (`uuid5` of its id), so two invocations
   with the same session follow the same thread. A second run on a busy thread
-  is not queued: it fails with `app_http_409`.
+  is not queued: it fails with `app_http_409`. If the client stops waiting
+  (its timeout expires or it cancels the invocation), the run keeps going on
+  the server until it finishes, and meanwhile another invocation with the
+  same session may get `app_http_409`: wait for it to finish or use another
+  session.
 - The text comes from `response_field` (if you set it) or from the `content`
   of the last message of the final state; without messages, it is the whole
-  state as JSON. If you called with `input` and the final state has no
-  messages, that state is also `output`, as with a graph with its own schema.
-  Token usage comes from its `usage_metadata`, and without it usage is
-  unknown, not zero.
+  state as strict JSON (a `NaN` or an infinity is `invalid_response`). If you
+  called with `input` and the final state has no messages, that state is
+  `output`, as with a graph with its own schema, and the text is empty so it
+  is not repeated; if the final state has messages, there is no `output` and
+  the text is that of its last message, as with a messages graph in
+  deepagents. Token usage comes from its `usage_metadata`, and without it
+  usage is unknown, not zero.
 - A graph that stops at an `interrupt` (human-in-the-loop) returns
   `AgentException` with `reason="protocol_error"` and `detail_code`
   `graph_interrupted`; any other HTTP status is `app_http_<n>`.

@@ -109,6 +109,22 @@ describe("HttpApp con langgraph-api", () => {
     expect(app.hidesOwnRoutes).toBe(false);
   });
 
+  test.each([
+    [AGENT_LANGGRAPH_HEALTH_PATH, false],
+    ["/salud", true],
+  ])("la salud %s de langgraph-api no es una ruta propia salvo otra", (healthPath, hidden) => {
+    const app = new HttpApp({
+      command: ["langgraph", "dev"],
+      port: 8000,
+      protocol: "langgraph-api",
+      assistantId: "a",
+      healthPath,
+    });
+    expect(app.hidesOwnRoutes).toBe(hidden);
+    const other = new HttpApp({ command: ["x"], port: 8000, protocol: "agentcore", healthPath });
+    expect(other.hidesOwnRoutes).toBe(true);
+  });
+
   test("un proyecto detectado acaba en la configuración del host de langgraph-api", () => {
     const report = detect(new LocalProjectTree(join(DETECTION_CASE, "tree")), {
       protocol: "langgraph-api",

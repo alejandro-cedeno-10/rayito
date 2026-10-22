@@ -1,0 +1,51 @@
+{
+  "schema": "rayito.agent-input-validation/1",
+  "_comment": "Lo básico del esquema de entrada de un grafo con esquema propio (ADR-033 D3), la misma comprobación en el driver de Python (`validate_input`) y en el puente de Node (`validateInput`): un objeto, las claves de `required` (propias, nunca heredadas), ninguna clave de más con `additionalProperties: false` (sólo cuentan las de `properties`, nunca un nombre heredado como `toString`) y el tipo de cada clave de primer nivel. Un tipo que no es de JSON Schema (`constructor`, `toString`) es desconocido y no se comprueba. `integer` acepta un número sin parte fraccionaria aunque se escriba `3.0`, como JSON Schema. `valid: false` es `protocol_error`/`invalid_input`.",
+  "schemas": {
+    "ticket": {
+      "type": "object",
+      "properties": { "ticket_id": { "type": "string" } },
+      "required": ["ticket_id"],
+      "additionalProperties": false
+    },
+    "inheritedRequired": {
+      "type": "object",
+      "properties": { "hasOwnProperty": { "type": "string" } },
+      "required": ["hasOwnProperty"]
+    },
+    "unknownType": {
+      "type": "object",
+      "properties": {
+        "only_unknown": { "type": "constructor" },
+        "unknown_or_string": { "type": ["toString", "string"] }
+      }
+    },
+    "numbers": {
+      "type": "object",
+      "properties": {
+        "count": { "type": "integer" },
+        "ratio": { "type": "number" },
+        "note": { "anyOf": [{ "type": "string" }, { "type": "null" }] }
+      }
+    }
+  },
+  "cases": [
+    { "name": "the required key", "schema": "ticket", "input": { "ticket_id": "T-1" }, "valid": true },
+    { "name": "a missing required key", "schema": "ticket", "input": {}, "valid": false },
+    { "name": "an extra key", "schema": "ticket", "input": { "ticket_id": "T-1", "extra": 1 }, "valid": false },
+    { "name": "an extra key named like an inherited property", "schema": "ticket", "input": { "ticket_id": "T-1", "toString": 1 }, "valid": false },
+    { "name": "an extra __proto__ key", "schema": "ticket", "input": { "ticket_id": "T-1", "__proto__": 1 }, "valid": false },
+    { "name": "a required key named like an inherited property is missing", "schema": "inheritedRequired", "input": {}, "valid": false },
+    { "name": "a required key named like an inherited property is present", "schema": "inheritedRequired", "input": { "hasOwnProperty": "x" }, "valid": true },
+    { "name": "an unknown type is not checked", "schema": "unknownType", "input": { "only_unknown": 5 }, "valid": true },
+    { "name": "an unknown type next to a known one checks only the known one", "schema": "unknownType", "input": { "unknown_or_string": 5 }, "valid": false },
+    { "name": "an unknown type next to a known one that matches", "schema": "unknownType", "input": { "unknown_or_string": "x" }, "valid": true },
+    { "name": "an integer", "schema": "numbers", "input": { "count": 3 }, "valid": true },
+    { "name": "an integer written with a zero fraction", "schema": "numbers", "input": { "count": 3.0 }, "valid": true },
+    { "name": "a fraction is not an integer", "schema": "numbers", "input": { "count": 3.5 }, "valid": false },
+    { "name": "a boolean is not an integer", "schema": "numbers", "input": { "count": true }, "valid": false },
+    { "name": "an integer is a number", "schema": "numbers", "input": { "ratio": 2 }, "valid": true },
+    { "name": "any branch of anyOf", "schema": "numbers", "input": { "note": null }, "valid": true },
+    { "name": "no branch of anyOf", "schema": "numbers", "input": { "note": 3 }, "valid": false }
+  ]
+}

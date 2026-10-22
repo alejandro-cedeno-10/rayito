@@ -9,7 +9,7 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -30,6 +30,12 @@ const BRIDGE = join(
   "node_bridge.mjs",
 );
 const SESSION = `rda_${"e".repeat(32)}`;
+const INPUT_VALIDATION = JSON.parse(
+  readFileSync(join(REPO, "testdata", "agent-deploy", "input-validation.json"), "utf8"),
+) as {
+  schemas: Record<string, Json>;
+  cases: { name: string; schema: string; input: Json; valid: boolean }[];
+};
 const TICKET = { ticket_id: "T-1" };
 
 const STRUCTURED_GRAPH = `
@@ -117,6 +123,23 @@ function runBridge(source: string, request: Json): { lines: Json[]; seen: Json[]
   return { lines: parse(result.stdout), seen: parse(result.stderr) };
 }
 
+describe("input-validation.json", () => {
+  for (const testCase of INPUT_VALIDATION.cases) {
+    test(testCase.name, async () => {
+      const bridge = (await import(pathToFileURL(BRIDGE).href)) as {
+        validateInput: (schema: Json, data: Json) => void;
+      };
+      const run = () =>
+        bridge.validateInput(INPUT_VALIDATION.schemas[testCase.schema] ?? {}, testCase.input);
+      if (testCase.valid) {
+        expect(run).not.toThrow();
+        return;
+      }
+      expect(run).toThrow(expect.objectContaining({ code: "invalid_input" }));
+    });
+  }
+});
+
 describe("structured langgraph graphs in the bridge", () => {
   test("the output limit is the shared limit", async () => {
     const bridge = (await import(pathToFileURL(BRIDGE).href)) as Json;
@@ -176,5 +199,18 @@ describe("structured langgraph graphs in the bridge", () => {
     });
     expect(input.seen[0]).toMatchObject({ input: { locale: "es" } });
     expect(input.lines.at(-1)).toEqual({ v: 1, type: "done", session_id: SESSION });
+  });
+
+  test("an input to a message graph without checkpointer is kept in the session", () => {
+    const turn = { role: "user", content: "sigue" };
+    runBridge(MESSAGES_GRAPH, { prompt: "", input: { locale: "es", messages: [turn] } });
+    const saved = JSON.parse(
+      readFileSync(join(directory, "sessions", `${SESSION}.json`), "utf8"),
+    ) as Json[];
+    expect(saved).toEqual([turn]);
+    const next = runBridge(MESSAGES_GRAPH, { prompt: "hola" });
+    expect(next.seen[0]).toMatchObject({
+      input: { messages: [turn, { role: "user", content: "hola" }] },
+    });
   });
 });

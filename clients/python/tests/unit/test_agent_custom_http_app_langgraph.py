@@ -74,6 +74,24 @@ def test_the_served_paths_of_langgraph_api() -> None:
     assert app.hides_own_routes is False
 
 
+@pytest.mark.parametrize(
+    ("health_path", "hidden"), [(AGENT_LANGGRAPH_HEALTH_PATH, False), ("/salud", True)]
+)
+def test_the_detected_langgraph_health_path_is_not_an_own_route(
+    health_path: str, hidden: bool
+) -> None:
+    app = HttpApp(
+        command=["langgraph", "dev"],
+        port=8000,
+        protocol="langgraph-api",
+        assistant_id="a",
+        health_path=health_path,
+    )
+    assert app.hides_own_routes is hidden
+    other = HttpApp(command=["x"], port=8000, protocol="agentcore", health_path=health_path)
+    assert other.hides_own_routes is True
+
+
 def test_a_detected_project_becomes_a_langgraph_api_host_config() -> None:
     report = detect(MemoryTree(_tree_of(DETECTION_CASE)), _overrides_of(DETECTION_CASE))
     table = report.runtime_table()

@@ -1093,12 +1093,19 @@ Qué hace el host con cada invocación:
   va tal cual como `input`.
 - El hilo sale de la sesión (`uuid5` de su id), así que dos invocaciones con
   la misma sesión siguen el mismo hilo. Una segunda ejecución sobre un hilo
-  ocupado no se encola: falla con `app_http_409`.
+  ocupado no se encola: falla con `app_http_409`. Si el cliente deja de
+  esperar (vence su plazo o cancela la invocación), la ejecución sigue en el
+  servidor hasta terminar, y mientras tanto otra invocación con la misma
+  sesión puede recibir `app_http_409`: espera a que termine o usa otra
+  sesión.
 - El texto sale de `response_field` (si lo fijas) o del `content` del último
-  mensaje del estado final; sin mensajes, es el estado entero en JSON. Si
-  llamaste con `input` y el estado final no tiene mensajes, ese estado es
-  además `output`, como con un grafo de esquema propio. El uso de tokens sale
-  de su `usage_metadata`, y sin él es desconocido, no cero.
+  mensaje del estado final; sin mensajes, es el estado entero en JSON
+  estricto (un `NaN` o un infinito es `invalid_response`). Si llamaste con
+  `input` y el estado final no tiene mensajes, ese estado es `output`, como
+  con un grafo de esquema propio, y el texto queda vacío para no repetirlo;
+  si el estado final tiene mensajes, no hay `output` y el texto es el de su
+  último mensaje, como con un grafo de mensajes en deepagents. El uso de
+  tokens sale de su `usage_metadata`, y sin él es desconocido, no cero.
 - Un grafo que se detiene en un `interrupt` (human-in-the-loop) devuelve
   `AgentException` con `reason="protocol_error"` y `detail_code`
   `graph_interrupted`; cualquier otro estado HTTP es `app_http_<n>`.

@@ -45,9 +45,10 @@ el `input` estructurado de la petición tal cual: `accepts_input`),
 `app_<hex>` que crea el driver, así que la misma sesión sigue el mismo hilo
 tras un relanzamiento de la app. El texto sale de `response_field` o del
 último mensaje del estado final (`langgraph_text`), el uso de su
-`usage_metadata`; con `input`, un estado final sin `messages` es además la
-salida estructurada (`langgraph_output`), como en el driver de deepagents. Un
-grafo detenido en un `interrupt` es
+`usage_metadata`; con `input`, un estado final sin `messages` es la salida
+estructurada (`langgraph_output`) y el texto queda vacío para no repetir el
+estado, y un estado final con `messages` da sólo el texto de su último
+mensaje, como en el driver de deepagents. Un grafo detenido en un `interrupt` es
 `protocol_error`/`graph_interrupted`. La salud es `GET /ok`, la espera de
 arranque es `LANGGRAPH_READY_WAIT_SECONDS` y el hijo arranca sin la
 telemetría de la CLI ni las trazas a LangSmith salvo que el entorno las fije
@@ -347,11 +348,26 @@ def langgraph_message_text(message: Mapping[str, Any]) -> str:
 
 def langgraph_text(state: object) -> str:
     """El texto del estado final: el del último mensaje o, sin mensajes, el
-    JSON entero."""
+    JSON entero (estricto: un `NaN` o un infinito es
+    `protocol_error`/`invalid_response`)."""
     message = langgraph_last_message(state)
     if message is None:
-        return json.dumps(state, ensure_ascii=False)
+        return _strict_json_text(state)
     return langgraph_message_text(message)
+
+
+def _strict_json_text(state: object) -> str:
+    try:
+        return json.dumps(state, ensure_ascii=False, allow_nan=False)
+    except ValueError:
+        pass
+    raise AgentFailure("protocol_error", "invalid_response")
+
+
+def is_structured_state(state: object) -> bool:
+    """Si el estado final es de un grafo con esquema propio: un objeto sin
+    `messages`."""
+    return isinstance(state, Mapping) and LANGGRAPH_MESSAGES_KEY not in state
 
 
 def langgraph_output(state: object) -> dict[str, Any] | None:
@@ -360,7 +376,7 @@ def langgraph_output(state: object) -> dict[str, Any] | None:
     esquema propio en el driver de deepagents; si no, `None` y sólo texto.
     Lo que no se codifica en JSON estricto o no cabe en
     `MAX_SERVICE_OUTPUT_BYTES` es `protocol_error`/`output_not_serializable`."""
-    if not isinstance(state, Mapping) or LANGGRAPH_MESSAGES_KEY in state:
+    if not isinstance(state, Mapping) or not is_structured_state(state):
         return None
     output = dict(state)
     try:
@@ -575,10 +591,11 @@ class Driver:
         emit(build_event("session", session_id=state.session_id))
         emit(build_event("step_started", index=1))
         response = self._post(request, state.session_id)
-        text, usage, final_state = self._read(response, emit)
+        text, usage, final_state = self._read(response, emit, request.input is not None)
         if request.input is not None:
             state.output = langgraph_output(final_state)
-        emit(build_event("text", text=text))
+        if state.output is None:
+            emit(build_event("text", text=text))
         emit(build_event("step_finished", index=1, usage=usage, finish_reason="stop"))
 
     def _body(self, request: Request, session_id: str) -> dict[str, Any]:
@@ -633,10 +650,16 @@ class Driver:
             return extract_text(payload, JSON_TEXT_KEYS)
         return self._field_text(payload, str(field))
 
-    def _langgraph_result(self, state: object) -> tuple[str, dict[str, int] | None]:
+    def _langgraph_result(
+        self, state: object, with_input: bool
+    ) -> tuple[str, dict[str, int] | None]:
         """El texto y el uso del estado final de un grafo: `response_field`
-        si se configuró o el último mensaje (`langgraph_text`)."""
+        si se configuró o el último mensaje (`langgraph_text`). Con `input` y
+        un estado sin `messages`, el estado es la salida (`langgraph_output`)
+        y no hay texto."""
         check_langgraph_interrupt(state)
+        if with_input and is_structured_state(state):
+            return "", langgraph_usage(state)
         field = self._config.get("response_field")
         text = self._field_text(state, str(field)) if field else langgraph_text(state)
         return text, langgraph_usage(state)
@@ -658,7 +681,7 @@ class Driver:
         return (str(field),) if field else JSON_TEXT_KEYS
 
     def _read(
-        self, response: http.client.HTTPResponse, emit: Emit
+        self, response: http.client.HTTPResponse, emit: Emit, with_input: bool = False
     ) -> tuple[str, dict[str, int] | None, object]:
         """El texto, el uso y, con `langgraph-api`, el estado final del
         grafo (`None` con cualquier otro protocolo)."""
@@ -669,7 +692,7 @@ class Driver:
             except ValueError:
                 raise AgentFailure("protocol_error", "invalid_response") from None
             if self._langgraph:
-                graph_text, graph_usage = self._langgraph_result(payload)
+                graph_text, graph_usage = self._langgraph_result(payload, with_input)
                 return graph_text, graph_usage, payload
             reported = app_usage(payload.get("usage")) if isinstance(payload, Mapping) else None
             text = self._json_text(payload) if self._protocol == "json" else extract_text(payload)

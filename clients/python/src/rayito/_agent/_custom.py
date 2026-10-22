@@ -309,11 +309,16 @@ class HttpApp:
         el despliegue sólo expone `/ping` y `/invocations` (el host traduce
         a tu `invoke_path`): tus rutas propias (`health_path`, `invoke_path`
         distintas de esas dos) no se alcanzan desde fuera. Con
-        `protocol="json"` o `"raw"` se exponen tal cual."""
-        return self.protocol not in ("raw", "json") and (
-            self.health_path != AGENT_SERVICE_HEALTH_PATH
-            or self.invoke_path != AGENT_SERVICE_INVOKE_PATH
+        `protocol="json"` o `"raw"` se exponen tal cual. Con `langgraph-api`,
+        `/ok` (la salud del API, la que escribe la detección) no es una ruta
+        propia."""
+        if self.protocol in ("raw", "json"):
+            return False
+        own_health = self.health_path not in (
+            AGENT_SERVICE_HEALTH_PATH,
+            *((AGENT_LANGGRAPH_HEALTH_PATH,) if self.protocol == LANGGRAPH_API_PROTOCOL else ()),
         )
+        return own_health or self.invoke_path != AGENT_SERVICE_INVOKE_PATH
 
     @classmethod
     def from_mapping(cls, table: Mapping[str, object]) -> HttpApp:

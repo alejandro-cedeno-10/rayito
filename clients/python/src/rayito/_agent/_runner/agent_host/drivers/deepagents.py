@@ -24,6 +24,7 @@ lo ejercitan con módulos de doble en `sys.modules`.
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 import fnmatch
 import importlib
 import json
@@ -101,11 +102,17 @@ MESSAGES_KEY: Final = "messages"
 #: valor sale `output` (la documentación de LangGraph avisa de que `stream` no
 #: aplica el `output_schema`, así que se filtra aquí).
 VALUES_MODE: Final = "values"
-#: Comprobación de los tipos de JSON Schema de primer nivel de un `input`.
+#: Comprobación de los tipos de JSON Schema de primer nivel de un `input`
+#: (`testdata/agent-deploy/input-validation.json`). `integer` acepta un
+#: `float` sin parte fraccionaria (`3.0`), como JSON Schema y como el puente
+#: de Node, que no distingue `3` de `3.0`.
 JSON_TYPE_CHECKS: Final[Mapping[str, Callable[[object], bool]]] = MappingProxyType(
     {
         "string": lambda value: isinstance(value, str),
-        "integer": lambda value: isinstance(value, int) and not isinstance(value, bool),
+        "integer": lambda value: (
+            (isinstance(value, int) and not isinstance(value, bool))
+            or (isinstance(value, float) and value.is_integer())
+        ),
         "number": lambda value: isinstance(value, int | float) and not isinstance(value, bool),
         "boolean": lambda value: isinstance(value, bool),
         "object": lambda value: isinstance(value, Mapping),
@@ -117,6 +124,9 @@ JSON_TYPE_CHECKS: Final[Mapping[str, Callable[[object], bool]]] = MappingProxyTy
 #: valida su entrada: se reconoce por módulo y clase, nunca por el mensaje.
 VALIDATION_ERROR_MODULES: Final = ("pydantic", "pydantic_core")
 VALIDATION_ERROR_CLASS: Final = "ValidationError"
+#: La clase base de un modelo de pydantic en un estado de salida: se
+#: serializa con `model_dump(mode="json")`.
+PYDANTIC_MODEL_CLASS: Final = "BaseModel"
 
 _SESSION_ID_PATTERN: Final = re.compile(r"rda_[0-9a-f]{32}")
 _REASONING_BLOCK_TYPES: Final = ("reasoning", "thinking", "reasoning_content")
@@ -773,11 +783,17 @@ def _output_keys(graph: Any) -> frozenset[str] | None:
 
 
 def _jsonable(value: Any, messages: Any) -> Any:
-    """`value` con cada mensaje de LangChain como su diccionario; el resto,
-    tal cual (`json.dumps` decide si se puede codificar)."""
+    """`value` con cada mensaje de LangChain como su diccionario, cada modelo
+    de pydantic como `model_dump(mode="json")` y cada dataclass como
+    `dataclasses.asdict`; el resto, tal cual (`json.dumps` decide si se puede
+    codificar)."""
     message_type = getattr(messages, "BaseMessage", None)
     if message_type is not None and isinstance(value, message_type):
         return messages.messages_to_dict([value])[0]
+    if _is_pydantic_model(value):
+        return _jsonable(value.model_dump(mode="json"), messages)
+    if dataclasses.is_dataclass(value) and not isinstance(value, type):
+        return _jsonable(dataclasses.asdict(value), messages)
     if isinstance(value, Mapping):
         if not all(isinstance(key, str) for key in value):
             raise TypeError("clave no textual")
@@ -785,6 +801,16 @@ def _jsonable(value: Any, messages: Any) -> Any:
     if isinstance(value, list | tuple):
         return [_jsonable(item, messages) for item in value]
     return value
+
+
+def _is_pydantic_model(value: object) -> bool:
+    """Si `value` es una instancia de un `BaseModel` de pydantic (v2), por su
+    clase y sin importar pydantic: el host no depende de él."""
+    return not isinstance(value, type) and any(
+        klass.__name__ == PYDANTIC_MODEL_CLASS
+        and klass.__module__.split(".", 1)[0] in VALIDATION_ERROR_MODULES
+        for klass in type(value).__mro__
+    )
 
 
 def run(config: Mapping[str, Any], request: Mapping[str, Any], emitter: Emitter) -> int:

@@ -543,10 +543,16 @@ export class HistoryStore {
   }
 
   save(history, prompt, answer) {
+    this.saveTurns(history, [{ role: "user", content: prompt }], answer);
+  }
+
+  // Guarda el historial con los turnos nuevos del usuario (el prompt, o los
+  // `messages` de un `input`) y la respuesta, si la hay.
+  saveTurns(history, userTurns, answer) {
     if (!this.path) {
       return;
     }
-    const turns = [...history, { role: "user", content: prompt }];
+    const turns = [...history, ...userTurns];
     if (answer) {
       turns.push({ role: "assistant", content: answer });
     }
@@ -773,6 +779,8 @@ export async function runLanggraph({ config, request, emit, importModule }) {
   }
   if (request.input === undefined) {
     store.save(history, request.prompt, translator.answer);
+  } else {
+    store.saveTurns(history, inputMessages(request.input), translator.answer);
   }
   return undefined;
 }
@@ -805,11 +813,15 @@ export function requiresInput(schema) {
   return Array.isArray(schema.required) && schema.required.length > 0;
 }
 
+// Los `messages` propios de un `input`, o ninguno.
+function inputMessages(input) {
+  return Array.isArray(input[MESSAGES_KEY]) ? input[MESSAGES_KEY] : [];
+}
+
 // Un `input` para un grafo de mensajes: sus claves tal cual, con sus
 // `messages` detrás del historial de la sesión.
 function messagesInput(input, history) {
-  const own = Array.isArray(input[MESSAGES_KEY]) ? input[MESSAGES_KEY] : [];
-  return { ...input, [MESSAGES_KEY]: [...history, ...own] };
+  return { ...input, [MESSAGES_KEY]: [...history, ...inputMessages(input)] };
 }
 
 function matchesSchema(value, spec) {
@@ -818,8 +830,8 @@ function matchesSchema(value, spec) {
   }
   if (spec.type !== undefined) {
     const checks = (Array.isArray(spec.type) ? spec.type : [spec.type])
-      .map((name) => JSON_TYPE_CHECKS[name])
-      .filter((check) => check !== undefined);
+      .filter((name) => Object.hasOwn(JSON_TYPE_CHECKS, name))
+      .map((name) => JSON_TYPE_CHECKS[name]);
     return checks.length === 0 || checks.some((check) => check(value));
   }
   const branches = spec.anyOf ?? spec.oneOf;
@@ -828,15 +840,19 @@ function matchesSchema(value, spec) {
 
 // Lo básico del esquema, como el driver de Python: un objeto, las claves de
 // `required`, ninguna de más con `additionalProperties: false` y el tipo de
-// cada clave de primer nivel.
+// cada clave de primer nivel. Sólo cuentan las claves propias
+// (`Object.hasOwn`): `toString` o `hasOwnProperty` heredados no son claves,
+// como en un `dict` (`testdata/agent-deploy/input-validation.json`).
 export function validateInput(schema, data) {
   const known = isPlainObject(schema.properties) ? schema.properties : {};
   const required = Array.isArray(schema.required) ? schema.required : [];
+  const specOf = (key) => (Object.hasOwn(known, key) ? known[key] : undefined);
   const valid =
     isPlainObject(data) &&
-    required.every((key) => key in data) &&
-    (schema.additionalProperties !== false || Object.keys(data).every((key) => key in known)) &&
-    Object.entries(data).every(([key, value]) => matchesSchema(value, known[key]));
+    required.every((key) => Object.hasOwn(data, key)) &&
+    (schema.additionalProperties !== false ||
+      Object.keys(data).every((key) => Object.hasOwn(known, key))) &&
+    Object.entries(data).every(([key, value]) => matchesSchema(value, specOf(key)));
   if (!valid) {
     throw new InputError(INVALID_INPUT);
   }

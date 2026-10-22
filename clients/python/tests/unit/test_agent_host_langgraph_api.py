@@ -356,6 +356,46 @@ def test_a_prompt_or_a_message_state_keeps_only_the_text(
     assert _run_with_state(monkeypatch, tmp_path, prompt, TRIAGE_STATE).output is None
 
 
+def _events_with_state(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, request: Request, state: object
+) -> tuple[list[dict[str, Any]], RunState]:
+    target = _driver(tmp_path)
+    monkeypatch.setattr(target, "_ensure_started", lambda: None)
+    monkeypatch.setattr(target, "_post", lambda *args: _StateResponse(state))
+    events: list[dict[str, Any]] = []
+    run_state = RunState()
+    target.run(request, events.append, run_state)
+    return events, run_state
+
+
+@pytest.mark.parametrize("case", RESPONSES["inputCases"], ids=lambda case: case["name"])
+def test_an_input_run_reads_the_final_state_as_the_vector_says(
+    case: dict[str, Any], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    request = Request(prompt="", input=case["input"])
+    events, run_state = _events_with_state(monkeypatch, tmp_path, request, case["response"])
+    texts = [event["text"] for event in events if event["type"] == "text"]
+    assert "".join(texts) == case["expected"]["text"]
+    assert run_state.output == case["expected"]["output"]
+    if run_state.output is not None:
+        assert texts == []
+
+
+def test_a_state_that_is_not_strict_json_is_refused(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    state = {"priority": "high", "score": float("nan")}
+    with pytest.raises(AgentFailure) as error:
+        _run_with_state(monkeypatch, tmp_path, Request(prompt="hola"), state)
+    assert (error.value.reason, error.value.detail_code) == ("protocol_error", "invalid_response")
+    with pytest.raises(AgentFailure) as error:
+        _run_with_state(monkeypatch, tmp_path, Request(prompt="", input={"a": "b"}), state)
+    assert (error.value.reason, error.value.detail_code) == (
+        "protocol_error",
+        "output_not_serializable",
+    )
+
+
 def test_an_output_that_does_not_fit_is_not_serializable(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

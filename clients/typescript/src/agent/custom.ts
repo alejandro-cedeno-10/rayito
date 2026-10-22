@@ -310,14 +310,18 @@ export class HttpApp {
   /** Con `protocol: "agentcore"`, `"openai-chat"` o `"langgraph-api"` el
    * despliegue sólo expone `/ping` y `/invocations` (el host traduce a tu
    * `invokePath`): tus rutas propias (`healthPath`, `invokePath` distintas de esas dos) no se alcanzan
-   * desde fuera. Con `protocol: "json"` o `"raw"` se exponen tal cual. */
+   * desde fuera. Con `protocol: "json"` o `"raw"` se exponen tal cual. Con
+   * `langgraph-api`, `/ok` (la salud del API, la que escribe la detección) no
+   * es una ruta propia. */
   get hidesOwnRoutes(): boolean {
-    return (
-      this.protocol !== "raw" &&
-      this.protocol !== "json" &&
-      (this.healthPath !== AGENT_SERVICE_HEALTH_PATH ||
-        this.invokePath !== AGENT_SERVICE_INVOKE_PATH)
-    );
+    if (this.protocol === "raw" || this.protocol === "json") {
+      return false;
+    }
+    const servicePaths: readonly string[] =
+      this.protocol === LANGGRAPH_API_PROTOCOL
+        ? [AGENT_SERVICE_HEALTH_PATH, AGENT_LANGGRAPH_HEALTH_PATH]
+        : [AGENT_SERVICE_HEALTH_PATH];
+    return !servicePaths.includes(this.healthPath) || this.invokePath !== AGENT_SERVICE_INVOKE_PATH;
   }
 
   /** La tabla `[runtime.app]` de `rayito-agent.toml`. */
