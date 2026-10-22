@@ -80,9 +80,10 @@ class AgentDeployStep:
     cerrada (`base_image`, `secret_created`, `bucket`, `image`, `fleet`,
     `warm`, `recipe`) y `detail` un dato corto para mostrar (la pasarela, el
     origen y el bucket, la versión de la imagen, el código del aviso de una
-    receta que no se guardó); nunca el valor ni el nombre de un secreto. Con `target="agentcore"`, `kind` es la clave de la línea de
-    progreso (`stackDeploy`, `buildStart`, `runtimeReady`...) y `detail` la
-    línea ya escrita."""
+    receta que no se guardó); nunca el valor ni el nombre de un secreto. Con
+    `target="agentcore"`, `kind` es la clave de la línea de progreso
+    (`stackDeploy`, `buildStart`, `runtimeReady`...) y `detail` la línea ya
+    escrita."""
 
     kind: str
     detail: str
