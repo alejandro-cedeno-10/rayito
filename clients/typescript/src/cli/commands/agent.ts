@@ -56,7 +56,11 @@ import {
   TYPESCRIPT_LANGUAGE,
   writeScaffold,
 } from "../agent-scaffold.js";
-import { CREATE_SECRETS_NEEDS_CONFIRMATION, envFileSecretLine } from "../agent-secret-env.js";
+import {
+  CREATE_SECRETS_NEEDS_CONFIRMATION,
+  CREATE_SECRETS_QUESTION,
+  envFileSecretLine,
+} from "../agent-secret-env.js";
 import {
   agentCoreOptionGiven,
   guardedAgentCore,
@@ -834,7 +838,9 @@ async function deployRequest(
 }
 
 /** Con `--create-secrets-from`, dice qué secreto se creará o actualizará y
- * con qué variables (nunca los valores) y exige `--yes`, porque cuesta. */
+ * con qué variables (nunca los valores) y lo confirma, porque cuesta: con
+ * `--yes`, sí; en una terminal y sin `--json`, lo que se responda; si no, o si
+ * la respuesta es que no, es un error de uso (como `confirmed` de Python). */
 async function confirmEnvFileSecret(
   context: CommandContext,
   request: AgentDeployRequest,
@@ -846,7 +852,11 @@ async function confirmEnvFileSecret(
   }
   const { readEnvFileSecret } = await import("../../agent/secret-env-deploy.js");
   context.console.echo(envFileSecretLine(readEnvFileSecret(projectName, path)), { err: true });
-  if (!context.values.flag("yes")) {
+  if (context.values.flag("yes")) {
+    return;
+  }
+  const canAsk = !context.globals.json && context.console.canPrompt;
+  if (!canAsk || !(await context.console.confirm(CREATE_SECRETS_QUESTION))) {
     throw new UsageError(CREATE_SECRETS_NEEDS_CONFIRMATION);
   }
 }

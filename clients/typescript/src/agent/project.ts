@@ -81,12 +81,18 @@ import {
 import type { AgentProjectDeployOptions, AgentProjectRunOptions } from "./project-service.js";
 import type { AgentRuntime } from "./runtime.js";
 import {
+  DEFAULT_AGENT_RUNTIMES,
+  MODEL_BUILDING_RUNTIMES,
   RUNTIME_KINDS,
   RUNTIME_OPTION_KEYS,
+  requireRuntimeModelId,
   resolveRuntime,
   runtimeFromOptions,
   runtimeToOptions,
 } from "./runtimes.js";
+
+export { DEFAULT_AGENT_RUNTIMES, MODEL_BUILDING_RUNTIMES };
+
 import {
   maxSessionsForMemory,
   ScalingOptions,
@@ -545,6 +551,7 @@ export class AgentProject {
     if (!(options.spec instanceof AgentSpec)) {
       throw new InvalidArgumentError("AgentProject.spec debe ser un AgentSpec");
     }
+    requireRuntimeModelId(options.spec, options.runtime);
     const gateways = validatedGateways(options.gateways ?? {});
     options.spec.requireGateways(Object.keys(gateways));
     optionalText(options.source, "AgentProject.source");
@@ -1820,14 +1827,6 @@ export const MODEL_ID_REQUIRED_PRESETS: readonly string[] = Object.freeze(
     .filter(([, preset]) => preset.required.includes(MODELS_KEY))
     .map(([name]) => name),
 );
-/** Los runtimes que siempre construyen ellos el modelo, y los que lo
- * construyen sólo cuando no tienen `entrypoint` (sin código tuyo). */
-export const MODEL_BUILDING_RUNTIMES: readonly string[] = Object.freeze(["opencode", "hermes"]);
-export const DEFAULT_AGENT_RUNTIMES: readonly string[] = Object.freeze([
-  "deepagents",
-  "strands",
-  "strands-harness",
-]);
 const MODEL_ID_PATH = "model.id";
 
 /** Lo que decide si hace falta el id del modelo. */

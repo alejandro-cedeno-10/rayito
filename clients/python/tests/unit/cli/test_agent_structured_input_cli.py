@@ -17,6 +17,7 @@ from rayito._agent._events import Done, TokenUsage
 from rayito.cli import agent as agent_cli
 from rayito.cli._session import Clients
 from rayito.cli.app import app
+from rayito.exceptions import InvalidArgumentException
 from tests.unit.cli.test_agent_project_cli import ACCESS_TOKEN, SANDBOX_ID, TOKEN_ENV
 
 TESTDATA = Path(__file__).resolve().parents[5] / "testdata"
@@ -49,9 +50,12 @@ class InputResult:
 @dataclass
 class InputDeployment:
     calls: list[tuple[str, Any, dict[str, Any]]] = field(default_factory=list)
+    error: Exception | None = None
 
     def invoke(self, prompt: str | None = None, **options: Any) -> InputResult:
         self.calls.append(("invoke", prompt, options))
+        if self.error is not None:
+            raise self.error
         return InputResult()
 
     def stream(self, prompt: str | None = None, **options: Any) -> Any:
@@ -132,6 +136,24 @@ def test_invoke_input_errors_are_usage_errors_before_any_call(
     assert result.exit_code == 2
     assert deployment.calls == []
     assert "no-es-json" not in result.output
+
+
+@pytest.mark.parametrize(
+    ("extra", "exit_code"),
+    [(["hola"], 1), (["--input", json.dumps(TICKET)], 2)],
+    ids=["prompt-keeps-its-exit-code", "input-is-a-usage-error"],
+)
+def test_an_invalid_argument_from_the_sdk_keeps_the_prompt_exit_code(
+    deployment: InputDeployment,
+    runner: CliRunner,
+    clients: Clients,
+    extra: list[str],
+    exit_code: int,
+) -> None:
+    deployment.error = InvalidArgumentException("el agente desplegado rechazó la petición")
+    result = runner.invoke(app, ["agent", "invoke", SANDBOX_ID, *extra], obj=clients)
+    assert result.exit_code == exit_code
+    assert "rechazó la petición" in result.output
 
 
 def test_detect_passes_the_graph(runner: CliRunner, clients: Clients) -> None:

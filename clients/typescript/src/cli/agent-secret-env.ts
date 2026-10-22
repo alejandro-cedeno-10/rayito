@@ -9,6 +9,8 @@
 export const CREATE_SECRETS_LINE =
   "secreto {name}: se crea o se actualiza con {variables} (cuesta $0,40 al mes hasta que lo " +
   "borres)";
+/** La pregunta de `--create-secrets-from` en una terminal (`CREATE_SECRETS_QUESTION`). */
+export const CREATE_SECRETS_QUESTION = "¿Crear o actualizar el secreto con esas variables?";
 export const CREATE_SECRETS_NEEDS_CONFIRMATION =
   "--create-secrets-from crea un secreto que cuesta dinero: confírmalo con --yes (o desde una " +
   "terminal)";

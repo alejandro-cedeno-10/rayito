@@ -127,7 +127,7 @@ from rayito.cli._agentcore import (
     show_status,
     stop_session,
 )
-from rayito.cli._console import EXIT_USAGE, echo, emit_json, fail, visible_controls
+from rayito.cli._console import EXIT_FAILURE, EXIT_USAGE, echo, emit_json, fail, visible_controls
 from rayito.cli._session import clients_of, json_mode
 from rayito.cli._tokens import TOKEN_ENV_VAR, TokenFileError
 from rayito.cli.sandbox import TokenFileOption, kill_one, token_or_exit
@@ -1340,10 +1340,18 @@ def invoke_command(
         except AgentException as exc:
             run_failed(exc)
         except InvalidArgumentException as exc:
-            fail(str(exc), code=EXIT_USAGE)
+            fail(str(exc), code=invalid_argument_exit_code(data))
         except (CapacityException, QuotaExceededException, SandboxException) as exc:
             fail(str(exc))
     print_result(result, as_json=as_json)
+
+
+def invalid_argument_exit_code(data: Mapping[str, Any] | None) -> int:
+    """El código de salida de un `InvalidArgumentException` de `invoke()`:
+    el de uso con `--input`/`--input-file` (un `input` que el SDK o el host
+    rechazan) y, con PROMPT, el de siempre (`EXIT_FAILURE`), para no cambiar
+    lo que ve un script que ya existía."""
+    return EXIT_FAILURE if data is None else EXIT_USAGE
 
 
 def invocation_options(session_id: str | None, data: Mapping[str, Any] | None) -> dict[str, Any]:

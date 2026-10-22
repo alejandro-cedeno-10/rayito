@@ -173,6 +173,36 @@ def test_a_runtime_that_builds_the_model_needs_its_id(build: Any) -> None:
         build(_spec())
 
 
+@pytest.mark.parametrize(
+    "runtime",
+    [
+        "opencode",
+        "hermes",
+        "deepagents",
+        "strands",
+        DeepAgents(),
+        StrandsRuntime(),
+        HermesRuntime(),
+    ],
+    ids=["opencode", "hermes", "deepagents", "strands", "DeepAgents()", "Strands()", "Hermes()"],
+)
+def test_a_project_whose_runtime_builds_the_model_needs_its_id_when_built(runtime: Any) -> None:
+    gateways = {LLM_GATEWAY: openai_compatible_gateway("llm-key", upstream=GATEWAY_URL)}
+    with pytest.raises(InvalidArgumentException, match="construye el modelo"):
+        AgentProject(name="no-model", runtime=runtime, spec=_spec(), gateways=gateways)
+
+
+@pytest.mark.parametrize(
+    "runtime",
+    [DeepAgents(entrypoint="agent:graph"), StrandsRuntime(entrypoint="agent:agent"), "langgraph"],
+    ids=["langgraph-entrypoint", "strands-entrypoint", "langgraph-name"],
+)
+def test_a_project_with_its_own_code_needs_no_model_id(runtime: Any) -> None:
+    gateways = {LLM_GATEWAY: openai_compatible_gateway("llm-key", upstream=GATEWAY_URL)}
+    project = AgentProject(name="own-model", runtime=runtime, spec=_spec(), gateways=gateways)
+    assert project.spec.model.id is None
+
+
 def test_with_an_entrypoint_the_model_travels_as_null() -> None:
     config = build_deepagents_config(
         _spec(), gateway_urls={LLM_GATEWAY: GATEWAY_URL}, workdir="/w", entrypoint="agent:graph"

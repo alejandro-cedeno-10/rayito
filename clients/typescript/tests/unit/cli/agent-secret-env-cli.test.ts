@@ -11,7 +11,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { applyProjectFlags } from "../../../src/cli/agent-project-flags.js";
-import { CREATE_SECRETS_NEEDS_CONFIRMATION } from "../../../src/cli/agent-secret-env.js";
+import {
+  CREATE_SECRETS_NEEDS_CONFIRMATION,
+  CREATE_SECRETS_QUESTION,
+} from "../../../src/cli/agent-secret-env.js";
+import type { TerminalInput } from "../../../src/cli/interactive-terminal.js";
 import type { AgentDeployFlags } from "../../../src/cli/ops-ports.js";
 import { InvalidArgumentError } from "../../../src/errors.js";
 import { project } from "../agent-project-fake.js";
@@ -23,14 +27,33 @@ const WITH_TOKEN = { RAYITO_ACCESS_TOKEN: "fake-access-token" };
 const EXIT_USAGE = 2;
 const TOKEN_VALUE = "tk-value";
 
-async function invoke(projects: FakeAgentProjects, args: string[]) {
+const TTY: TerminalInput = {
+  isTTY: true,
+  on: () => undefined,
+  off: () => undefined,
+  pause: () => undefined,
+  resume: () => undefined,
+};
+
+async function invoke(
+  projects: FakeAgentProjects,
+  args: string[],
+  terminal: { readonly stdin?: string; readonly tty?: boolean } = {},
+) {
   const built = buildWorld({});
   const services = new Proxy(built.services, {
     get() {
       throw new Error("el comando no debía abrir la sesión de AWS");
     },
   });
-  return runWithServices({ args, services, agentProjects: projects, env: WITH_TOKEN });
+  return runWithServices({
+    args,
+    services,
+    agentProjects: projects,
+    env: WITH_TOKEN,
+    stdin: terminal.stdin,
+    rawInput: terminal.tty === true ? TTY : undefined,
+  });
 }
 
 function envFile(): string {
@@ -94,6 +117,49 @@ describe("agent deploy con secret env", () => {
     expect(outcome.stderr).toContain(CREATE_SECRETS_NEEDS_CONFIRMATION);
     expect(projects.deployRequests).toEqual([]);
     expect(outcome.stdout + outcome.stderr).not.toContain(TOKEN_VALUE);
+  });
+
+  it("en una terminal pregunta y un sí despliega", async () => {
+    const projects = new FakeAgentProjects();
+    const outcome = await invoke(
+      projects,
+      ["agent", "deploy", "--create-secrets-from", envFile()],
+      {
+        stdin: "y\n",
+        tty: true,
+      },
+    );
+    expect(outcome.exitCode).toBe(0);
+    expect(outcome.stdout).toContain(CREATE_SECRETS_QUESTION);
+    expect(projects.deployRequests).toHaveLength(1);
+    expect(outcome.stdout + outcome.stderr).not.toContain(TOKEN_VALUE);
+  });
+
+  it("en una terminal un no es un error de uso y no despliega", async () => {
+    const projects = new FakeAgentProjects();
+    const outcome = await invoke(
+      projects,
+      ["agent", "deploy", "--create-secrets-from", envFile()],
+      {
+        stdin: "n\n",
+        tty: true,
+      },
+    );
+    expect(outcome.exitCode).toBe(EXIT_USAGE);
+    expect(outcome.stderr).toContain(CREATE_SECRETS_NEEDS_CONFIRMATION);
+    expect(projects.deployRequests).toEqual([]);
+  });
+
+  it("con --json no pregunta aunque haya terminal", async () => {
+    const projects = new FakeAgentProjects();
+    const outcome = await invoke(
+      projects,
+      ["--json", "agent", "deploy", "--create-secrets-from", envFile()],
+      { stdin: "y\n", tty: true },
+    );
+    expect(outcome.exitCode).toBe(EXIT_USAGE);
+    expect(outcome.stdout).not.toContain(CREATE_SECRETS_QUESTION);
+    expect(projects.deployRequests).toEqual([]);
   });
 
   it("las banderas se aplican al proyecto y una mal formada no repite el valor", () => {

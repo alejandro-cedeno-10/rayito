@@ -11,8 +11,9 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { describe, expect, test } from "vitest";
 import { CustomRuntime, MODEL_ID_ENV } from "../../src/agent/custom.js";
-import { buildDeepAgentsConfig } from "../../src/agent/deepagents.js";
+import { buildDeepAgentsConfig, DeepAgents } from "../../src/agent/deepagents.js";
 import { AgentModel, AgentSpec, MODEL_ENV_KEYS, requiredModelId } from "../../src/agent/domain.js";
+import { openaiCompatibleGateway } from "../../src/agent/gateways.js";
 import { HermesRuntime } from "../../src/agent/hermes.js";
 import { modelEnvNames, standardModelEnvs } from "../../src/agent/host-runtime.js";
 import { buildOpenCodeConfig } from "../../src/agent/opencode.js";
@@ -212,6 +213,40 @@ describe("los runtimes que construyen el modelo", () => {
     const error = catchError(build);
     expect(error).toBeInstanceOf(InvalidArgumentError);
     expect(String(error)).toContain("construye el modelo");
+  });
+
+  const gateways = () => ({
+    [LLM_GATEWAY]: openaiCompatibleGateway("llm-key", { upstream: GATEWAY_URL }),
+  });
+
+  test.each([
+    ["opencode", "opencode"],
+    ["hermes", "hermes"],
+    ["deepagents", "deepagents"],
+    ["strands", "strands"],
+    ["DeepAgents()", new DeepAgents()],
+    ["Strands()", new StrandsRuntime()],
+    ["Hermes()", new HermesRuntime()],
+  ] as const)("un AgentProject con %s necesita el id al construirlo", (_, runtime) => {
+    const error = catchError(
+      () => new AgentProject({ name: "no-model", runtime, spec: specOf(), gateways: gateways() }),
+    );
+    expect(error).toBeInstanceOf(InvalidArgumentError);
+    expect(String(error)).toContain("construye el modelo");
+  });
+
+  test.each([
+    ["langgraph con entrypoint", new DeepAgents({ entrypoint: "agent:graph" })],
+    ["strands con entrypoint", new StrandsRuntime({ entrypoint: "agent:agent" })],
+    ["langgraph por nombre", "langgraph"],
+  ] as const)("un AgentProject con %s no necesita el id", (_, runtime) => {
+    const project = new AgentProject({
+      name: "own-model",
+      runtime,
+      spec: specOf(),
+      gateways: gateways(),
+    });
+    expect(project.spec.model.id).toBeUndefined();
   });
 
   test("con entrypoint el modelo viaja como null", () => {

@@ -17,6 +17,7 @@ from typing import Final
 
 from rayito._agent._custom import CustomRuntime
 from rayito._agent._deepagents import DeepAgents
+from rayito._agent._domain import AgentSpec, required_model_id
 from rayito._agent._hermes import HermesRuntime
 from rayito._agent._opencode import OpenCodeRuntime
 from rayito._agent._runtime import AgentRuntime
@@ -174,11 +175,42 @@ def runtime_to_options(runtime: str | AgentRuntime) -> dict[str, object]:
     )
 
 
+#: Los runtimes que siempre construyen ellos el modelo, y los que lo
+#: construyen sólo cuando no tienen `entrypoint` (sin código tuyo)
+#: (`testdata/agent-model-optional/requirement.json`).
+MODEL_BUILDING_RUNTIMES: Final[tuple[str, ...]] = ("opencode", "hermes")
+DEFAULT_AGENT_RUNTIMES: Final[tuple[str, ...]] = ("deepagents", "strands", "strands-harness")
+
+
+def require_runtime_model_id(spec: AgentSpec, runtime: str | AgentRuntime) -> None:
+    """`InvalidArgumentException` si `spec.model.id` falta y `runtime` es de
+    los que construyen el modelo con ese id (`MODEL_BUILDING_RUNTIMES`, o los
+    de `DEFAULT_AGENT_RUNTIMES` sin `entrypoint`), antes de cualquier llamada.
+    Un runtime sin forma de fichero (uno propio) no se comprueba: elige él.
+    La pasarela no se mira aquí (`AgentProject` sólo guarda la pasarela
+    construida); el fichero y la detección ya lo hacen (`require_model_id`)."""
+    if spec.model.id is not None:
+        return
+    try:
+        options = runtime_to_options(runtime)
+    except InvalidArgumentException:
+        return
+    kind = str(options["kind"])
+    builds = kind in MODEL_BUILDING_RUNTIMES or (
+        kind in DEFAULT_AGENT_RUNTIMES and options.get("entrypoint") is None
+    )
+    if builds:
+        required_model_id(spec.model, kind)
+
+
 __all__ = [
     "AGENT_RUNTIMES",
     "CUSTOM_RUNTIME_KIND",
+    "DEFAULT_AGENT_RUNTIMES",
+    "MODEL_BUILDING_RUNTIMES",
     "RUNTIME_KINDS",
     "RUNTIME_OPTION_KEYS",
+    "require_runtime_model_id",
     "resolve_runtime",
     "runtime_from_options",
     "runtime_to_options",

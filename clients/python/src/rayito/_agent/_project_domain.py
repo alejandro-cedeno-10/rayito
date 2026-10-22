@@ -61,8 +61,11 @@ from rayito._agent._gateways import (
 )
 from rayito._agent._runtime import AgentRuntime
 from rayito._agent._runtimes import (
+    DEFAULT_AGENT_RUNTIMES,
+    MODEL_BUILDING_RUNTIMES,
     RUNTIME_KINDS,
     RUNTIME_OPTION_KEYS,
+    require_runtime_model_id,
     resolve_runtime,
     runtime_from_options,
     runtime_to_options,
@@ -513,6 +516,7 @@ class AgentProject:
         resolve_runtime(self.runtime)
         if not isinstance(self.spec, AgentSpec):
             raise InvalidArgumentException("AgentProject.spec debe ser un AgentSpec")
+        require_runtime_model_id(self.spec, self.runtime)
         gateways = _validated_gateways(self.gateways)
         self.spec.require_gateways(gateways)
         object.__setattr__(self, "gateways", MappingProxyType(dict(gateways)))
@@ -1605,10 +1609,6 @@ _GATEWAY_PRESETS: Final[Mapping[str, _Preset]] = {
 MODEL_ID_REQUIRED_PRESETS: Final[tuple[str, ...]] = tuple(
     name for name, preset in _GATEWAY_PRESETS.items() if _MODELS_KEY in preset.required
 )
-#: Los runtimes que siempre construyen ellos el modelo, y los que lo
-#: construyen sólo cuando no tienen `entrypoint` (sin código tuyo).
-MODEL_BUILDING_RUNTIMES: Final[tuple[str, ...]] = ("opencode", "hermes")
-DEFAULT_AGENT_RUNTIMES: Final[tuple[str, ...]] = ("deepagents", "strands", "strands-harness")
 _MODEL_ID_PATH: Final = "model.id"
 _MISSING_KEY: Final = "missing_key"
 _NOT_DETECTED: Final = "not_detected"
