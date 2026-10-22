@@ -472,7 +472,7 @@ The run is unattended and nobody answers a question, so `ask` is applied as
 `deny`, is ignored. Both cases give the warning `opencode_permission_ignored`.
 In the example, the agent can only run `git status`.
 
-The `rayito agent detect --json` report lists the evidence (`file:AGENTS.md` and
+The `rayito agent detect` report lists the evidence (`file:AGENTS.md` and
 `config:permission`), never the text of the files. With `--write`,
 `rayito-agent.json` stores the resolved instructions and permissions.
 

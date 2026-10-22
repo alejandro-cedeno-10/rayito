@@ -147,9 +147,9 @@ Hard rules:
 
 ## Z. Integration on `feat/sdk-017`
 
-- [ ] Z.1 Regenerate the generated files (limits, detection, host assets,
+- [x] Z.1 Regenerate the generated files (limits, detection, host assets,
       CLI surface) and run the full gates in both SDKs plus Rust untouched.
-- [ ] Z.2 `novedades/0.17.0.md`/`.en.md`, `mkdocs.yml` nav and
+- [x] Z.2 `novedades/0.17.0.md`/`.en.md`, `mkdocs.yml` nav and
       `nav_translations`, and `MILESTONES.md`.
 - [ ] Z.3 Review sweep (`reference/review-checklist.md`): leaks first, then
       hexagonal design, clean code, parity, cost and gates.

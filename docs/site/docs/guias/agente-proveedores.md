@@ -473,7 +473,7 @@ aplica como `deny`. Una clave que no es una herramienta o un valor que no es
 `opencode_permission_ignored`. En el ejemplo, el agente sólo puede ejecutar
 `git status`.
 
-El informe de `rayito agent detect --json` lista la evidencia (`file:AGENTS.md` y
+El informe de `rayito agent detect` lista la evidencia (`file:AGENTS.md` y
 `config:permission`), nunca el texto de los ficheros. Con `--write`,
 `rayito-agent.json` guarda las instrucciones y los permisos ya resueltos.
 

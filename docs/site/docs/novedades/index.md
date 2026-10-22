@@ -12,6 +12,19 @@ actualizar. El detalle completo, cambio a cambio, está en el
 
 <div class="grid cards" markdown>
 
+-   :material-tag:{ .lg .middle } **0.17.0** · en desarrollo
+
+    ---
+
+    La receta de la flota: `deploy_agent()` la guarda en Parameter Store y
+    `AgentFleet.connect(nombre)` reconecta sin proyecto, con las mismas VMs,
+    las plazas calientes con sus pasarelas y el escalado real en `status`.
+    Además, `--scale-in-after`, renovación opcional de la clave de Bedrock,
+    `rayito setup` publica `rayito-base-caps`, y correcciones en los logs del
+    host, `--create-secret` y OpenCode. Sin cambios que rompan la API.
+
+    [:octicons-arrow-right-24: Novedades de 0.17.0](0.17.0.md)
+
 -   :material-tag:{ .lg .middle } **0.15.0** · 2026-10-21 · actual
 
     ---

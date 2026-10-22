@@ -12,6 +12,19 @@ detail, change by change, is in each component's
 
 <div class="grid cards" markdown>
 
+-   :material-tag:{ .lg .middle } **0.17.0** · in development
+
+    ---
+
+    The fleet recipe: `deploy_agent()` saves it in Parameter Store and
+    `AgentFleet.connect(name)` reconnects with no project, with the same VMs,
+    warm slots with their gateways and the real scaling in `status`. Plus
+    `--scale-in-after`, opt-in Bedrock key renewal, `rayito setup` publishes
+    `rayito-base-caps`, and fixes to the host logs, `--create-secret` and
+    OpenCode. No API-breaking changes.
+
+    [:octicons-arrow-right-24: What's new in 0.17.0](0.17.0.md)
+
 -   :material-tag:{ .lg .middle } **0.15.0** · 2026-10-21 · current
 
     ---
