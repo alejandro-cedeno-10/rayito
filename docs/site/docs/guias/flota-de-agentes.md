@@ -184,8 +184,10 @@ escalado real. Un `scaling=` o `project=` explícitos ganan a la receta, y
 - **Avisos.** Un fallo al guardarla nunca hace fallar el despliegue: deja un
   aviso con un código (`recipe_access_denied`, `recipe_not_saved`,
   `recipe_too_large`) en el log y en `warnings` de `--json`. Al leerla, sin
-  permiso es `recipe_access_denied` y una receta ilegible es
-  `recipe_unreadable`; en los dos casos la flota sigue como en 0.16. Tras
+  permiso es `recipe_access_denied`, y una receta ilegible o un Parameter
+  Store que no responde (sin endpoint de VPC para SSM, limitación de tasa) es
+  `recipe_unreadable`; en todos los casos la flota sigue como en 0.16, y
+  `rayito agent stop <nombre>` la termina igual. Tras
   `stop`, Parameter Store tarda unos 30 s en dejar crear otro parámetro con el
   mismo nombre: un `deploy` inmediato avisa `recipe_not_saved`.
 - **Tamaño.** Una receta va en JSON si cabe en 4 096 bytes (un parámetro
@@ -194,7 +196,17 @@ escalado real. Un `scaling=` o `project=` explícitos ganan a la receta, y
 - **`--env` y los secretos.** `rayito agent deploy` rechaza un `--env` cuyo
   nombre parece un secreto (`*_TOKEN`, `*_KEY`, `*_SECRET`, `*_PASSWORD`...):
   usa `--secret-env NOMBRE=<secreto>` o `--secret-env-from <secreto>`, así la
-  receta sólo guarda el nombre.
+  receta sólo guarda el nombre. Es un cambio incompatible con 0.16 para
+  `*_SECRET`. Ojo: la regla es de la bandera `--env`; los valores de `env`
+  del proyecto (`[env]` de `rayito-agent.toml` o `env=` de la biblioteca) se
+  guardan tal cual en la receta, legibles por quien tenga
+  `ssm:GetParameter` sobre `parameter/rayito/agents/*`. Nada secreto en
+  `env`, tampoco una URL con credenciales: va en `secret_env`.
+- **Quién puede escribirla.** La receta decide la imagen, la salida a red,
+  `env` y el upstream y los secretos de cada pasarela de todo proceso que
+  conecta por nombre: escribir en `parameter/rayito/agents/*` equivale a
+  poder desplegar. Por eso `SandboxLauncherPolicy` sólo la lee y la borra, y
+  `ssm:PutParameter` está en `ImagePublisherPolicy` y `CallerPolicy`.
 
 !!! info "Coste y activación"
     - **Activa:** `deploy_agent()` / `rayito agent deploy` contra MicroVMs, por
@@ -210,8 +222,10 @@ escalado real. Un `scaling=` o `project=` explícitos ganan a la receta, y
       después $0,03 por 10 000). Consultado el 2026-10-22:
       [Systems Manager](https://aws.amazon.com/systems-manager/pricing/) y
       [KMS](https://aws.amazon.com/kms/pricing/).
-    - **IAM:** `ssm:PutParameter`, `ssm:GetParameter` y `ssm:DeleteParameter`
-      sobre `parameter/rayito/agents/*` (la sentencia `AgentRecipe` de
+    - **IAM:** `ssm:PutParameter` (quien despliega: `CallerPolicy` o
+      `ImagePublisherPolicy`),
+      `ssm:GetParameter` y `ssm:DeleteParameter` sobre
+      `parameter/rayito/agents/*` (la sentencia `AgentRecipe` de
       [IAM](../operacion/iam.md)); ningún permiso de KMS.
     - **Cómo apagarla:** `AgentDeployOptions(save_recipe=False)`
       (`saveRecipe: false`, `--no-save-recipe`).

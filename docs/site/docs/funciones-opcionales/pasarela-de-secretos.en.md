@@ -147,8 +147,8 @@ the in-flight request finish.
 <small>Since 0.17.0. Off by default.</small>
 
 The `bedrock` gateway injects `Bearer <Bedrock API key>`. A long-term key comes
-from an IAM user; a **short-term** one is signed locally with the deployer's
-credentials, lasts at most 12 h (and never longer than that session) and only
+from an IAM user; a **short-term** one is signed locally with the credentials of
+the process that renews it, lasts at most 12 h (and never longer than that session) and only
 in its region. With `renew_gateway_keys=True` (`renewGatewayKeys: true`,
 `--renew-gateway-keys`), the fleet renews it by itself: before creating each VM
 or opening each slot, for every gateway with the `bedrock` preset:
@@ -167,6 +167,20 @@ The key and the secret name never appear in logs, errors or the
 (`renew_gateway_keys necesita una pasarela con preset bedrock`). VMs opened by
 another process keep the previous key until they are refreshed; bound their
 life with `scale_in_after_seconds`.
+
+- **Fixed-size fleet.** Renewal only runs when a VM is created or a slot is
+  opened. A fleet that never grows (for example `--min-vms 1 --max-vms 1`)
+  renews nothing after its first VM, and its key expires after 12 h at most
+  (sooner if the signing session is shorter). Renew it yourself periodically
+  (for example, a `scale` or a new `deploy`) or use a long-term key.
+- **Inherited from the recipe.** `AgentFleet.connect(name)` without `project`
+  inherits the option from the recipe, and the signer is the connecting
+  process, with its own credentials. The renewer loads on the first renewal:
+  listing, querying or stopping the fleet never needs the extra. If that
+  process lacks the `bedrock-keys` extra or permission to write the secret
+  (`permission_denied`), renewal turns off with a warning and the fleet keeps
+  whatever key is there; with an explicit `renew_gateway_keys=True`, the error
+  propagates.
 
 === "Python"
 

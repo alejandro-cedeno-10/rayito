@@ -3974,6 +3974,25 @@ opción existente cambia de valor por defecto.
    configuración de OpenCode respeta `AGENTS.md` y los permisos de
    `opencode.json`; `--scale-in-after` llega a las dos CLI; y los e2e de
    TypeScript usan un secreto distinto por test.
+9. **Ajustes de la revisión (D9).** (a) El renovador de claves se carga en
+   la primera renovación, no al construir la flota: listar, consultar o
+   terminar nunca necesita el extra `bedrock-keys`. Heredada de la receta
+   (sin `renew_gateway_keys` explícito), una renovación sin el extra o sin
+   permiso de escribir el secreto se apaga con un aviso y la flota sigue;
+   explícita, el error se propaga. Un candado (Python) o una promesa en
+   curso (TypeScript) serializa las renovaciones de los VMs que arrancan en
+   paralelo. (b) Leer la receta nunca falla: cualquier error de Parameter
+   Store es el aviso `recipe_unreadable` y la flota de 0.16. (c)
+   `SandboxLauncherPolicy` sólo lee y borra la receta; `ssm:PutParameter`
+   queda en `ImagePublisherPolicy` y `CallerPolicy` (la unión de las dos),
+   porque escribirla equivale a poder desplegar.
+   (d) `rayito setup` publica `rayito-base-caps` por defecto (lo pide D8):
+   no es una función del SDK encendida por defecto sino un paso más de una
+   orden explícita que ya publica `rayito-base`, con coste recurrente
+   (≈ $0,04 por semana por versión); el plan y `--dry-run` lo muestran,
+   `--no-caps-image` lo omite y `optional-features.md` tiene su fila. (e) Los
+   valores de `env` del proyecto se guardan en la receta: sólo la bandera
+   `--env` rechaza nombres de secreto, y la guía lo dice.
 
 **Consecuencias.** Un agente desplegado se puede invocar, escalar y parar
 desde cualquier proceso con sólo su nombre y su access token. `agent status`

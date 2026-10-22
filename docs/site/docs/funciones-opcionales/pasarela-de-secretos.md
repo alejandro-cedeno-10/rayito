@@ -148,8 +148,8 @@ terminar como mucho la petición en curso.
 
 La pasarela `bedrock` inyecta `Bearer <clave de API de Bedrock>`. Una clave de
 larga duración sale de un usuario de IAM; una de **corta duración** se firma
-en local con las credenciales de quien despliega, vale como mucho 12 h (y nunca
-más que esa sesión) y sólo en su región. Con `renew_gateway_keys=True`
+en local con las credenciales del proceso que la renueva, vale como mucho 12 h
+(y nunca más que esa sesión) y sólo en su región. Con `renew_gateway_keys=True`
 (`renewGatewayKeys: true`, `--renew-gateway-keys`), la flota la renueva sola:
 antes de crear cada VM o abrir cada plaza, por cada pasarela con preset
 `bedrock`:
@@ -169,6 +169,21 @@ Sin una pasarela `bedrock`, la opción es `InvalidArgumentException`
 (`renew_gateway_keys necesita una pasarela con preset bedrock`). Los VMs que
 abrió otro proceso conservan la clave anterior hasta que se refresquen; acota
 su vida con `scale_in_after_seconds`.
+
+- **Flota de tamaño fijo.** La renovación sólo corre al crear un VM o abrir
+  una plaza. Una flota que no crece (por ejemplo `--min-vms 1 --max-vms 1`)
+  no renueva nada tras el primer VM, y su clave caduca a las 12 h como
+  mucho (antes si la sesión que la firmó dura menos). Renuévala por tu
+  cuenta de forma periódica (por ejemplo, un `scale` o un nuevo `deploy`)
+  o usa una clave de larga duración.
+- **Heredada de la receta.** `AgentFleet.connect(nombre)` sin `project`
+  hereda la opción de la receta, y quien firma es el proceso que conecta,
+  con sus credenciales. El renovador se carga en la primera renovación:
+  listar, consultar o terminar la flota nunca necesita el extra. Si a ese
+  proceso le falta el extra `bedrock-keys` o el permiso de escribir el
+  secreto (`permission_denied`), la renovación se apaga con un aviso y la
+  flota sigue con la clave que haya; con `renew_gateway_keys=True`
+  explícito, el error se propaga.
 
 === "Python"
 

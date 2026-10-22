@@ -30,8 +30,10 @@ versionado [SemVer](https://semver.org/lang/es/).
   la única función encendida por defecto (no cuesta en el nivel estándar):
   `saveRecipe: false` / `--no-save-recipe` la apagan. Un fallo al guardarla es un aviso
   (`recipe_access_denied`, `recipe_not_saved`, `recipe_too_large`), nunca un
-  despliegue fallido. Nueva sentencia `AgentRecipe` en
-  `SandboxLauncherPolicy` y `CallerPolicy`.
+  despliegue fallido. Nueva sentencia `AgentRecipe`: `CallerPolicy` la
+  guarda, la lee y la borra; `SandboxLauncherPolicy` sólo la lee y la borra
+  (escribirla equivale a poder desplegar) e `ImagePublisherPolicy` sólo la
+  guarda (`AgentRecipeWrite`).
 - **`FleetStatus.scalingSource`** (`explicit`, `project`, `recipe` o
   `default`).
 - **`AgentFleet.stop({ keepRecipe })`** y `rayito agent stop --keep-recipe`:
@@ -44,6 +46,19 @@ versionado [SemVer](https://semver.org/lang/es/).
   peers opcionales `@aws/bedrock-token-generator` 1.1.0 y
   `@aws-sdk/client-secrets-manager`.
 - **`AgentDeployment.refreshGateways()`** y `applyGateways` en el pool.
+
+### Cambiado
+
+- **Incompatible con 0.16: `rayito agent deploy --env` rechaza un nombre que
+  parece un secreto**, también `*_SECRET` y `SECRET` (antes pasaba), antes de
+  cualquier llamada a AWS y con los dos destinos. Migración: pasa el valor por
+  `--secret-env NOMBRE=<secreto>` o `--secret-env-from <secreto>`. La regla es
+  sólo de la bandera: los valores de `env` del proyecto (`[env]` de
+  `rayito-agent.toml` o la biblioteca) se guardan tal cual en la receta, así
+  que no pongas en `env` nada secreto.
+- **`rayito setup` publica `rayito-base-caps` por defecto**: una versión de
+  imagen más que factura almacenamiento de snapshot (≈ $0,04 por semana)
+  aunque no despliegues en MicroVM. `--no-caps-image` la omite (ADR-034 D9).
 
 ### Corregido
 
@@ -83,9 +98,20 @@ versionado [SemVer](https://semver.org/lang/es/).
 - `rayito agent status <flota>` sin proyecto mostraba un escalado inventado
   (`min 1, max 1`); ahora imprime el de la receta o
   `escalado desconocido: sin proyecto ni receta`.
-- `rayito agent deploy --env` rechaza un nombre que parece un secreto
-  (también `*_SECRET`) y apunta a `--secret-env` y `--secret-env-from`, para
-  que ningún valor secreto acabe en la receta.
+- `AgentFleet.connect(nombre)` sin `project` ya no falla si Parameter Store no responde (sin
+  endpoint de VPC para SSM, limitación de tasa, un error de KMS): es el aviso
+  `recipe_unreadable` y la flota de 0.16, y `rayito agent stop <nombre>` la
+  termina igual.
+- Con `renewGatewayKeys` heredado de la receta, `AgentFleet.connect(nombre)` ya no necesita el peer `@aws/bedrock-token-generator` para
+  listar, consultar o terminar la flota: el renovador se carga en la primera
+  renovación. Si al proceso que conecta le falta el peer o el permiso de
+  escribir el secreto, la renovación se apaga con un aviso y la flota sigue
+  creando VMs. Las renovaciones simultáneas se serializan con una promesa en curso: los VMs
+  que arrancan en paralelo escriben una sola clave.
+- `rayito setup` informa `artifactUploaded` también cuando sólo publica
+  `rayito-base-caps` (una cuenta que viene de 0.16).
+- La ayuda de `--scale-in-after` sale de la constante del SDK y dice que,
+  sin la bandera, manda el `[scaling]` del proyecto.
 
 ### Pruebas
 

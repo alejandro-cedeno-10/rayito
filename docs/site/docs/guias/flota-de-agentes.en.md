@@ -184,8 +184,10 @@ An explicit `scaling=` or `project=` wins over the recipe, and
 - **Warnings.** A failure to save it never fails the deploy: it leaves a
   warning with a code (`recipe_access_denied`, `recipe_not_saved`,
   `recipe_too_large`) in the log and in `warnings` of `--json`. When reading,
-  no permission is `recipe_access_denied` and an unreadable recipe is
-  `recipe_unreadable`; in both cases the fleet behaves as in 0.16. After
+  no permission is `recipe_access_denied`, and an unreadable recipe or a
+  Parameter Store that does not answer (no SSM VPC endpoint, throttling) is
+  `recipe_unreadable`; in every case the fleet behaves as in 0.16, and
+  `rayito agent stop <name>` still stops it. After
   `stop`, Parameter Store takes about 30 s before it lets another parameter use
   the same name: an immediate `deploy` warns `recipe_not_saved`.
 - **Size.** A recipe is stored as JSON if it fits in 4,096 bytes (a standard
@@ -195,7 +197,17 @@ An explicit `scaling=` or `project=` wins over the recipe, and
 - **`--env` and secrets.** `rayito agent deploy` rejects an `--env` whose name
   looks like a secret (`*_TOKEN`, `*_KEY`, `*_SECRET`, `*_PASSWORD`...): use
   `--secret-env NAME=<secret>` or `--secret-env-from <secret>`, so the recipe
-  only keeps the name.
+  only keeps the name. This breaks 0.16 command lines for `*_SECRET`. Note:
+  the rule belongs to the `--env` flag; the project's `env` values
+  (`[env]` in `rayito-agent.toml` or `env=` in the library) are stored as is
+  in the recipe, readable by anyone with `ssm:GetParameter` on
+  `parameter/rayito/agents/*`. Nothing secret in `env`, not even a URL with
+  credentials: it belongs in `secret_env`.
+- **Who can write it.** The recipe decides the image, egress, `env` and each
+  gateway's upstream and secrets for every process that connects by name:
+  write access to `parameter/rayito/agents/*` amounts to deploy rights. That
+  is why `SandboxLauncherPolicy` only reads and deletes it, and
+  `ssm:PutParameter` is in `ImagePublisherPolicy` and `CallerPolicy`.
 
 !!! info "Cost and activation"
     - **Turns on:** `deploy_agent()` / `rayito agent deploy` to MicroVMs, by
@@ -210,8 +222,10 @@ An explicit `scaling=` or `project=` wins over the recipe, and
       10,000). Checked on 2026-10-22:
       [Systems Manager](https://aws.amazon.com/systems-manager/pricing/) and
       [KMS](https://aws.amazon.com/kms/pricing/).
-    - **IAM:** `ssm:PutParameter`, `ssm:GetParameter` and `ssm:DeleteParameter`
-      on `parameter/rayito/agents/*` (the `AgentRecipe` statement of
+    - **IAM:** `ssm:PutParameter` (the deployer: `CallerPolicy` or
+      `ImagePublisherPolicy`),
+      `ssm:GetParameter` and `ssm:DeleteParameter` on
+      `parameter/rayito/agents/*` (the `AgentRecipe` statement of
       [IAM](../operacion/iam.md)); no KMS permission.
     - **How to turn it off:** `AgentDeployOptions(save_recipe=False)`
       (`saveRecipe: false`, `--no-save-recipe`).
