@@ -204,3 +204,4 @@ diverjan, y una release que suba un mínimo añade la fila en los dos sitios.
 | `0.13` | `0.13.0` | 0.13: la CLI y el servidor MCP de TypeScript (ADR-027) y el formato de instantes en UTC de la CLI se validan con el rayd del tag rayd-v0.13.0 |
 | `0.14` | `0.14.0` | 0.14: el despliegue sin configuración de un agente que ya tienes (Strands, Hermes, LangGraph, OpenCode o propio), sus opciones tipadas de escalado y la CLI rayito agent se validan con el rayd del tag rayd-v0.14.0 |
 | `0.15` | `0.15.0` | 0.15: rayito setup (preparar una cuenta en un comando) y el despliegue de agentes en Amazon Bedrock AgentCore Runtime (--target agentcore) se validan con el rayd del tag rayd-v0.15.0 |
+| `0.16` | `0.16.0` | 0.16: el despliegue agnóstico de agentes (modelo externo opcional, entrada estructurada y --graph, secretos como variables de entorno y el protocolo langgraph-api) se valida con el rayd del tag rayd-v0.16.0 |
