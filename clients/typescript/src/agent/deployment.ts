@@ -80,10 +80,24 @@ export const PROMPT_OR_INPUT_MESSAGE = "pasa prompt o input, uno de los dos";
 export const INPUT_NOT_OBJECT_MESSAGE = "input debe ser un objeto JSON";
 export const INPUT_TOO_LARGE_MESSAGE =
   "input no cabe en una petición ({maxBytes} bytes como mucho)";
-/** Un `400` a una petición con `input`: el host desplegado es anterior a la
- * entrada estructurada y no conoce la clave. */
+/** Un `400` a una petición con `input` cuyo cuerpo es el `invalid_request` de
+ * un host anterior a la entrada estructurada, que no conoce la clave: sin
+ * `INPUT_SUPPORT_FIELD`. */
 export const HOST_TOO_OLD_MESSAGE =
   "el agente desplegado no acepta input: vuelve a desplegarlo con esta versión de Rayito";
+/** Un `400` a una petición con `input` cuyo cuerpo no es el de ningún host
+ * conocido (un proxy, un cuerpo cortado): puede ser un host anterior o no. */
+export const HOST_MAYBE_TOO_OLD_MESSAGE =
+  "el agente desplegado rechazó la petición con input: si su host es anterior a la " +
+  "entrada estructurada, vuelve a desplegarlo con esta versión de Rayito";
+/** Un `400` o un `413` del host por un cuerpo que no acepta. */
+export const REQUEST_REJECTED_MESSAGE =
+  "el agente desplegado rechazó la petición: cuerpo inválido o demasiado grande";
+/** El código del cuerpo `{"error": ...}` de un `400` del host. */
+const INVALID_REQUEST_ERROR = "invalid_request";
+/** Lo que el host con entrada estructurada añade a ese cuerpo (`true`): los
+ * hosts anteriores no lo mandan (`INPUT_SUPPORT_FIELD` de `serve.py`). */
+export const INPUT_SUPPORT_FIELD = "accepts_input";
 const UTF8 = new TextEncoder();
 
 export type DeploymentState = "healthy" | "busy" | "unavailable";
@@ -202,18 +216,18 @@ export function requirePromptOrInput(prompt: unknown, input: unknown): Invocatio
 /** `input` si es un objeto JSON (valores codificables) que cabe en una
  * petición. Como en Python (`json.dumps(..., allow_nan=False)`), un número no
  * finito, `undefined`, una función o un símbolo es un error y no un `null` o
- * una clave que `JSON.stringify` callaría. */
+ * una clave que `JSON.stringify` callaría; y, como Python rechaza un
+ * `datetime`, sólo valen objetos planos (prototipo `Object.prototype` o
+ * `null`): un `Date`, un `Map`, una instancia de clase o un objeto con un
+ * `toJSON` heredado son un error, no lo que `JSON.stringify` haría de ellos. */
 export function requireInputObject(input: unknown): JsonObject {
-  if (!isRecord(input)) {
+  if (!isPlainRecord(input) || !isJsonValue(input)) {
     throw new InvalidArgumentError(INPUT_NOT_OBJECT_MESSAGE);
   }
   let encoded: string;
   try {
     encoded = JSON.stringify(input);
   } catch {
-    throw new InvalidArgumentError(INPUT_NOT_OBJECT_MESSAGE);
-  }
-  if (!isJsonValue(input)) {
     throw new InvalidArgumentError(INPUT_NOT_OBJECT_MESSAGE);
   }
   if (UTF8.encode(encoded).length > AGENT_SERVICE_MAX_REQUEST_BYTES) {
@@ -229,14 +243,17 @@ export function invocationOf(request: unknown): InvocationPayload {
   if (typeof request === "string") {
     return { prompt: request };
   }
-  if (isRecord(request) && "input" in request) {
+  if (isRecord(request) && Object.hasOwn(request, "input")) {
     return { input: request.input as JsonObject };
   }
   return {};
 }
 
 /** El cuerpo JSON de `POST /invocations`: exactamente uno de `prompt` o
- * `input` (`requirePromptOrInput`) y sólo lo demás que se pidió. */
+ * `input` (`requirePromptOrInput`) y sólo lo demás que se pidió. Con `input`,
+ * el cuerpo entero (no sólo `input`) tiene que caber en
+ * `AGENT_SERVICE_MAX_REQUEST_BYTES`, el tope del host; con un prompt no se
+ * comprueba aquí, como siempre. */
 export function invocationBody(
   prompt: string | undefined,
   options: {
@@ -258,20 +275,26 @@ export function invocationBody(
   if (options.reasoning === true) {
     payload.reasoning = true;
   }
-  return JSON.stringify(payload);
+  const body = JSON.stringify(payload);
+  if (checked.input !== undefined && UTF8.encode(body).length > AGENT_SERVICE_MAX_REQUEST_BYTES) {
+    throw new InvalidArgumentError(
+      INPUT_TOO_LARGE_MESSAGE.replace("{maxBytes}", String(AGENT_SERVICE_MAX_REQUEST_BYTES)),
+    );
+  }
+  return body;
 }
 
 /** La excepción de un código HTTP del contrato. `403` es del proxy de AWS
  * (JWE ausente o caducado): `proxyRejected`, que el llamante reintenta una
  * vez tras reacuñar el token; `401` es el token del contenedor, que no existe
- * en un MicroVM. Un `400` a una petición con `input` (`sentInput`) es un host
- * anterior a la entrada estructurada. */
+ * en un MicroVM. Un `400` a una petición con `input` (`sentInput`) se explica
+ * con el cuerpo del host (`badRequestAfterInputMessage`). */
 export function httpError(
   status: number,
-  options: { readonly sentInput?: boolean | undefined } = {},
+  options: { readonly sentInput?: boolean | undefined; readonly body?: string | undefined } = {},
 ): Error {
   if (status === HTTP_BAD_REQUEST && options.sentInput === true) {
-    return new InvalidArgumentError(HOST_TOO_OLD_MESSAGE);
+    return new InvalidArgumentError(badRequestAfterInputMessage(options.body));
   }
   if (status === HTTP_TOO_MANY_REQUESTS) {
     return new AgentError(failureMessage("busy"), { reason: "busy" });
@@ -285,29 +308,64 @@ export function httpError(
     return new TimeoutError("el agente desplegado aún no está listo");
   }
   if (status === HTTP_BAD_REQUEST || status === HTTP_PAYLOAD_TOO_LARGE) {
-    return new InvalidArgumentError(
-      "el agente desplegado rechazó la petición: cuerpo inválido o demasiado grande",
-    );
+    return new InvalidArgumentError(REQUEST_REJECTED_MESSAGE);
   }
   return new SandboxError(`el agente desplegado respondió con un estado inesperado (${status})`, {
     statusCode: status,
   });
 }
 
+/** El mensaje de un `400` a una petición con `input`, según el cuerpo del
+ * host: el `invalid_request` sin `INPUT_SUPPORT_FIELD` es un host anterior
+ * (`HOST_TOO_OLD_MESSAGE`); con él, una petición que el host no acepta
+ * (`REQUEST_REJECTED_MESSAGE`); cualquier otro cuerpo, o ninguno, no lo dice
+ * (`HOST_MAYBE_TOO_OLD_MESSAGE`). Nunca repite el cuerpo. */
+export function badRequestAfterInputMessage(body: string | undefined): string {
+  let payload: unknown;
+  try {
+    payload = body ? JSON.parse(body) : undefined;
+  } catch {
+    payload = undefined;
+  }
+  if (!isRecord(payload) || payload.error !== INVALID_REQUEST_ERROR) {
+    return HOST_MAYBE_TOO_OLD_MESSAGE;
+  }
+  return payload[INPUT_SUPPORT_FIELD] === true ? REQUEST_REJECTED_MESSAGE : HOST_TOO_OLD_MESSAGE;
+}
+
 /** Si `value` se escribe en JSON tal cual: `null`, texto, booleanos,
- * números finitos, listas y objetos de esos valores. Se llama después de
- * `JSON.stringify`, que ya rechazó los ciclos y los `bigint`. */
-function isJsonValue(value: unknown): boolean {
+ * números finitos, listas y objetos planos de esos valores. Un ciclo es
+ * `false`: `seen` lleva los contenedores del camino actual. */
+function isJsonValue(value: unknown, seen: Set<object> = new Set()): boolean {
   if (value === null || typeof value === "string" || typeof value === "boolean") {
     return true;
   }
   if (typeof value === "number") {
     return Number.isFinite(value);
   }
-  if (Array.isArray(value)) {
-    return value.every(isJsonValue);
+  if (typeof value !== "object" || seen.has(value)) {
+    return false;
   }
-  return isRecord(value) && Object.values(value).every(isJsonValue);
+  if (!Array.isArray(value) && !isPlainRecord(value)) {
+    return false;
+  }
+  seen.add(value);
+  const valid = (Array.isArray(value) ? value : Object.values(value)).every((item) =>
+    isJsonValue(item, seen),
+  );
+  seen.delete(value);
+  return valid;
+}
+
+/** Un objeto plano: prototipo `Object.prototype` o `null`. Un `toJSON` sólo
+ * puede llegar heredado (uno propio es una función, que `isJsonValue`
+ * rechaza, o un dato, que `JSON.stringify` escribe tal cual). */
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  if (!isRecord(value)) {
+    return false;
+  }
+  const prototype: unknown = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -783,6 +841,10 @@ export class AgentDeployment {
     });
     if (response.status === HTTP_OK) {
       return response;
+    }
+    if (response.status === HTTP_BAD_REQUEST && sentInput) {
+      const errorBody = await response.text().catch(() => undefined);
+      throw httpError(response.status, { sentInput, body: errorBody });
     }
     await response.body?.cancel().catch(() => undefined);
     throw httpError(response.status, { sentInput });

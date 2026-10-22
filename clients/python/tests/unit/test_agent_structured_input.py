@@ -15,7 +15,10 @@ import pytest
 
 from rayito import AgentCoreFleet
 from rayito._agent._deployment_base import (
+    HOST_MAYBE_TOO_OLD_MESSAGE,
     HOST_TOO_OLD_MESSAGE,
+    INPUT_SUPPORT_FIELD,
+    REQUEST_REJECTED_MESSAGE,
     EventDecoder,
     ResultBuilder,
     http_error,
@@ -29,6 +32,7 @@ from rayito._agent._events import (
     TokenUsage,
     failure_message,
 )
+from rayito._agent._runner.agent_host import serve
 from rayito._agent._sse import SseMessage
 from rayito._agent._stream_base import (
     INPUT_NOT_OBJECT_MESSAGE,
@@ -92,6 +96,8 @@ def test_the_sdk_messages_are_the_vector_messages() -> None:
     assert VECTORS["messages"]["input_not_object"] == INPUT_NOT_OBJECT_MESSAGE
     assert VECTORS["messages"]["input_too_large"] == INPUT_TOO_LARGE_MESSAGE
     assert VECTORS["messages"]["host_too_old"] == HOST_TOO_OLD_MESSAGE
+    assert VECTORS["messages"]["host_maybe_too_old"] == HOST_MAYBE_TOO_OLD_MESSAGE
+    assert VECTORS["messages"]["request_rejected"] == REQUEST_REJECTED_MESSAGE
     assert dict(AGENT_DETAIL_MESSAGES) == VECTORS["detailCodes"]
     assert VECTORS["maxRequestBytesLimit"] == "agentServiceMaxRequestBytes"
 
@@ -117,12 +123,23 @@ def test_an_input_that_cannot_be_encoded_is_not_an_object() -> None:
         assert str(raised.value) == INPUT_NOT_OBJECT_MESSAGE
 
 
-def test_an_input_that_fits_exactly_is_accepted() -> None:
-    padding = AGENT_SERVICE_MAX_REQUEST_BYTES - len(json.dumps({"k": ""}, separators=(",", ":")))
+def test_an_input_whose_body_fits_exactly_is_accepted() -> None:
+    envelope = len(json.dumps({"input": {"k": ""}}, separators=(",", ":")))
+    padding = AGENT_SERVICE_MAX_REQUEST_BYTES - envelope
     body = invocation_body(
         None, session_id=None, model=None, reasoning=False, input={"k": "x" * padding}
     )
-    assert body.startswith(b'{"input":{"k":"x')
+    assert len(body) == AGENT_SERVICE_MAX_REQUEST_BYTES
+    with pytest.raises(InvalidArgumentException):
+        invocation_body(
+            None, session_id="s", model=None, reasoning=False, input={"k": "x" * padding}
+        )
+
+
+def test_a_large_prompt_is_not_measured_as_before() -> None:
+    prompt = "x" * (AGENT_SERVICE_MAX_REQUEST_BYTES + 1)
+    body = invocation_body(prompt, session_id=None, model=None, reasoning=False)
+    assert len(body) > AGENT_SERVICE_MAX_REQUEST_BYTES
 
 
 @pytest.mark.parametrize("detail", sorted(VECTORS["detailCodes"]))
@@ -132,10 +149,22 @@ def test_a_structured_detail_code_has_its_own_message(detail: str) -> None:
     assert failure_message("runtime_error", detail).startswith("el runtime del agente")
 
 
-def test_a_bad_request_after_input_is_a_host_that_is_too_old() -> None:
-    assert str(http_error(400, sent_input=True)) == HOST_TOO_OLD_MESSAGE
-    assert str(http_error(400)) != HOST_TOO_OLD_MESSAGE
-    assert isinstance(http_error(400, sent_input=True), InvalidArgumentException)
+@pytest.mark.parametrize("case", VECTORS["badRequestCases"], ids=lambda case: case["name"])
+def test_a_bad_request_is_explained_by_the_host_body(case: dict[str, Any]) -> None:
+    body = None if case["body"] is None else case["body"].encode("utf-8")
+    error = http_error(400, sent_input=case["sentInput"], body=body)
+    assert isinstance(error, InvalidArgumentException)
+    assert str(error) == VECTORS["messages"][case["messageKey"]]
+    if case["body"] is not None and len(case["body"]) > 2:
+        assert case["body"] not in str(error)
+
+
+def test_the_host_says_it_accepts_input_in_its_bad_request() -> None:
+    assert serve.INPUT_SUPPORT_FIELD == INPUT_SUPPORT_FIELD
+    assert json.loads(VECTORS["hostBadRequestBody"]) == {
+        "error": "invalid_request",
+        INPUT_SUPPORT_FIELD: True,
+    }
 
 
 def test_done_keeps_its_dataclass_shape_and_carries_output() -> None:
@@ -218,11 +247,22 @@ def test_deployment_validates_before_any_request(flavor_name: str, call: dict[st
     assert harness.transport.requests == []
 
 
-def test_a_host_that_rejects_input_asks_for_a_new_deploy(flavor_name: str) -> None:
-    harness = Harness(flavor_name, Scripted(status=400, body=b"{}"))
+@pytest.mark.parametrize(
+    ("body", "message"),
+    [
+        (b'{"error":"invalid_request"}', HOST_TOO_OLD_MESSAGE),
+        (b'{"error":"invalid_request","accepts_input":true}', REQUEST_REJECTED_MESSAGE),
+        (b"{}", HOST_MAYBE_TOO_OLD_MESSAGE),
+    ],
+    ids=["older-host", "current-host", "unknown-body"],
+)
+def test_a_host_that_rejects_input_reads_its_body(
+    flavor_name: str, body: bytes, message: str
+) -> None:
+    harness = Harness(flavor_name, Scripted(status=400, body=body))
     with pytest.raises(InvalidArgumentException) as raised:
         harness.call("invoke", input=TICKET)
-    assert str(raised.value) == HOST_TOO_OLD_MESSAGE
+    assert str(raised.value) == message
 
 
 def test_a_structured_failure_is_an_agent_exception_with_its_detail(flavor_name: str) -> None:
@@ -265,7 +305,7 @@ def test_a_fleet_sends_the_input_to_its_vm(fleet_flavor: FleetFlavor) -> None:
     host.invoke_status = 400
     with pytest.raises(InvalidArgumentException) as raised:
         fleet_flavor.call(fleet.invoke(input=TICKET))
-    assert str(raised.value) == HOST_TOO_OLD_MESSAGE
+    assert str(raised.value) == HOST_MAYBE_TOO_OLD_MESSAGE
     assert host.invocations[-1] == {"input": TICKET}
 
 

@@ -8,7 +8,8 @@ el contrato HTTP de AgentCore, con `http.server.ThreadingHTTPServer`.
   mensaje SSE por evento v1 hasta `done` o `agent_failed`; si no, `{"v",
   "text", "session_id", "usage", "usage_reported", "steps", "failed"}`, más
   `output` sólo si la ejecución lo produjo (también va en `done`). `400`
-  cuerpo inválido, `413` demasiado grande, `429` con
+  cuerpo inválido (`{"error": "invalid_request", "accepts_input": true}`: el
+  campo dice al SDK que este host sí entiende `input`), `413` demasiado grande, `429` con
   `Retry-After` por encima de `max_concurrency` (con `queue_max` > 0 la
   petición espera su turno en una cola FIFO acotada hasta
   `queue_timeout_seconds` y sólo entonces recibe el `429`), `503` antes de
@@ -71,6 +72,10 @@ INVOKE_PATH: Final = "/invocations"
 SESSION_HEADER: Final = "X-Amzn-Bedrock-AgentCore-Runtime-Session-Id"
 #: Tope del cuerpo de una petición (`AGENT_SERVICE_MAX_REQUEST_BYTES`).
 MAX_REQUEST_BYTES: Final = 1_048_576
+#: Campo del cuerpo de un `400` `invalid_request`: este host entiende `input`
+#: (ADR-033 D3). Un host anterior no lo manda, y así el SDK sabe si debe pedir
+#: que se vuelva a desplegar (`INPUT_SUPPORT_FIELD` de `_deployment_base`).
+INPUT_SUPPORT_FIELD: Final = "accepts_input"
 MAX_CONCURRENCY: Final = 1
 STATUS_HEALTHY: Final = "Healthy"
 STATUS_BUSY: Final = "HealthyBusy"
@@ -557,6 +562,15 @@ def make_handler(service: Service) -> type[BaseHTTPRequestHandler]:
             self.close_connection = True
             self._send_json(status, {"error": code}, {"Connection": "close", **(extra or {})})
 
+        def _invalid_request(self) -> None:
+            """`400 invalid_request`, con `INPUT_SUPPORT_FIELD`."""
+            self.close_connection = True
+            self._send_json(
+                HTTPStatus.BAD_REQUEST,
+                {"error": "invalid_request", INPUT_SUPPORT_FIELD: True},
+                {"Connection": "close"},
+            )
+
         def _is_raw(self) -> bool:
             return bool(getattr(service.driver, "raw", False))
 
@@ -686,7 +700,7 @@ def make_handler(service: Service) -> type[BaseHTTPRequestHandler]:
             except ValueError:
                 length = -1
             if length < 0:
-                self._error(HTTPStatus.BAD_REQUEST, "invalid_request")
+                self._invalid_request()
                 return None
             if length > service.config.max_request_bytes:
                 self._error(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, "request_too_large")
@@ -700,7 +714,7 @@ def make_handler(service: Service) -> type[BaseHTTPRequestHandler]:
             try:
                 return parse_invocation(body, self.headers.get(service.config.session_header))
             except AgentFailure:
-                self._error(HTTPStatus.BAD_REQUEST, "invalid_request")
+                self._invalid_request()
                 return None
 
         def _respond(self, invocation: Invocation) -> None:

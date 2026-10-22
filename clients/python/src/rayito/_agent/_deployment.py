@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any, Final, Protocol, Self
 
 from rayito._agent._deployment_base import (
     EVENT_STREAM_CONTENT_TYPE,
+    HTTP_BAD_REQUEST,
     HTTP_FORBIDDEN,
     HTTP_OK,
     JSON_CONTENT_TYPE,
@@ -404,8 +405,9 @@ class AgentDeployment:
         if response.status == HTTP_OK:
             return response
         status = response.status
+        body = _error_body(response) if status == HTTP_BAD_REQUEST and sent_input else None
         response.close()
-        raise http_error(status, sent_input=sent_input)
+        raise http_error(status, sent_input=sent_input, body=body)
 
     def _send(
         self, method: str, path: str, accept: str, body: bytes | None, timeout: float
@@ -427,3 +429,12 @@ class AgentDeployment:
         raise AuthenticationException(
             "el proxy de AWS rechazó el token del despliegue", proxy_rejected=True
         )
+
+
+def _error_body(response: DeploymentResponse) -> bytes | None:
+    """El cuerpo de un `400` (el `{"error": ...}` del host), o `None` si no
+    se pudo leer: sólo explica el error, nunca lo sustituye."""
+    try:
+        return response.read()
+    except Exception:
+        return None

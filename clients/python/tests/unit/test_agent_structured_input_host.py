@@ -8,6 +8,8 @@ de deepagents/langgraph con un grafo de mensajes (los mismos argumentos de
 
 from __future__ import annotations
 
+import dataclasses
+import datetime
 import io
 import json
 from collections.abc import Iterator, Mapping
@@ -31,6 +33,7 @@ from rayito._agent._runner.agent_host.protocol import (
     run_to_terminal,
 )
 from rayito._limits import AGENT_SERVICE_MAX_OUTPUT_BYTES
+from tests.unit.agent_host_support import FakeDriver, request, running_service
 from tests.unit.test_agent_deepagents_runner import (
     MODEL_META,
     FakeGraph,
@@ -41,6 +44,7 @@ from tests.unit.test_agent_deepagents_runner import (
 
 ROOT = Path(__file__).resolve().parents[4] / "testdata"
 VECTORS = json.loads((ROOT / "agent-deploy" / "invocation-bodies.json").read_text("utf-8"))
+INPUT_VALIDATION = json.loads((ROOT / "agent-deploy" / "input-validation.json").read_text("utf-8"))
 TICKET = {"ticket_id": "T-1"}
 INPUT_SCHEMA = {
     "type": "object",
@@ -52,6 +56,15 @@ OUTPUT_SCHEMA = {"type": "object", "properties": {"priority": {}, "summary": {}}
 FINAL_STATE = {"ticket_id": "T-1", "priority": "high", "summary": "printer offline"}
 
 __all__ = ["stubs"]
+
+
+def test_a_bad_request_says_the_host_accepts_input() -> None:
+    with running_service(FakeDriver()) as (_, port):
+        status, _, data = request(
+            port, "POST", "/invocations", raw_body=b'{"input":{"a":1},"extra":1}'
+        )
+    assert status == 400
+    assert data.decode("utf-8") == VECTORS["hostBadRequestBody"]
 
 
 @pytest.mark.parametrize("case", VECTORS["hostCases"], ids=lambda case: case["name"])
@@ -316,6 +329,17 @@ def test_a_structured_graph_rejects_what_its_schema_does_not_allow(
     assert graph.inputs == []
 
 
+@pytest.mark.parametrize("case", INPUT_VALIDATION["cases"], ids=lambda case: str(case["name"]))
+def test_the_input_validation_vectors(case: dict[str, Any]) -> None:
+    schema = INPUT_VALIDATION["schemas"][case["schema"]]
+    if case["valid"]:
+        driver.validate_input(schema, case["input"])
+        return
+    with pytest.raises(AgentFailure) as raised:
+        driver.validate_input(schema, case["input"])
+    assert raised.value.detail_code == "invalid_input"
+
+
 def test_optional_fields_accept_any_of_their_branches() -> None:
     schema = {
         "properties": {"note": {"anyOf": [{"type": "string"}, {"type": "null"}]}},
@@ -353,6 +377,32 @@ def test_messages_in_the_output_are_serialized_and_unknown_schemas_are_not_filte
     graph = SchemaGraph([], output_schema=RuntimeError("sin esquema"), final=final)
     _, state = _execute(tmp_path, monkeypatch, graph, Request(prompt="", input=TICKET))
     assert state.output == {"messages": [{"kind": "ai", "content": "listo"}], "priority": "high"}
+
+
+def test_pydantic_models_and_dataclasses_in_the_output_are_serialized(
+    messages_module: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pydantic = pytest.importorskip("pydantic")
+
+    class Summary(pydantic.BaseModel):  # type: ignore[misc,name-defined]
+        text: str
+        when: datetime.date
+
+    @dataclasses.dataclass
+    class Priority:
+        level: str
+        summary: Any
+
+    final = {
+        "priority": Priority("high", Summary(text="listo", when=datetime.date(2026, 1, 2))),
+        "summary": Summary(text="otro", when=datetime.date(2026, 1, 3)),
+    }
+    graph = SchemaGraph([], final=final)
+    _, state = _execute(tmp_path, monkeypatch, graph, Request(prompt="", input=TICKET))
+    assert state.output == {
+        "priority": {"level": "high", "summary": {"text": "listo", "when": "2026-01-02"}},
+        "summary": {"text": "otro", "when": "2026-01-03"},
+    }
 
 
 @pytest.mark.parametrize(

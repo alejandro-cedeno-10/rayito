@@ -13,12 +13,15 @@ import { describe, expect, test } from "vitest";
 import {
   AgentDeployment,
   EventDecoder,
+  HOST_MAYBE_TOO_OLD_MESSAGE,
   HOST_TOO_OLD_MESSAGE,
   httpError,
   INPUT_NOT_OBJECT_MESSAGE,
+  INPUT_SUPPORT_FIELD,
   INPUT_TOO_LARGE_MESSAGE,
   invocationBody,
   PROMPT_OR_INPUT_MESSAGE,
+  REQUEST_REJECTED_MESSAGE,
   ResultBuilder,
   resultFromBody,
 } from "../../src/agent/deployment.js";
@@ -44,6 +47,13 @@ const VECTORS = JSON.parse(
   readonly detailCodes: Record<string, string>;
   readonly cases: readonly Json[];
   readonly resultCases: readonly Json[];
+  readonly hostBadRequestBody: string;
+  readonly badRequestCases: readonly {
+    readonly name: string;
+    readonly sentInput: boolean;
+    readonly body: string | null;
+    readonly messageKey: string;
+  }[];
 };
 const CONTRACT = JSON.parse(
   readFileSync(join(TESTDATA, "agnostic-deploy", "contract.json"), "utf8"),
@@ -108,6 +118,12 @@ describe("shared invocation bodies", () => {
     expect(INPUT_NOT_OBJECT_MESSAGE).toBe(VECTORS.messages.input_not_object);
     expect(INPUT_TOO_LARGE_MESSAGE).toBe(VECTORS.messages.input_too_large);
     expect(HOST_TOO_OLD_MESSAGE).toBe(VECTORS.messages.host_too_old);
+    expect(HOST_MAYBE_TOO_OLD_MESSAGE).toBe(VECTORS.messages.host_maybe_too_old);
+    expect(REQUEST_REJECTED_MESSAGE).toBe(VECTORS.messages.request_rejected);
+    expect(JSON.parse(VECTORS.hostBadRequestBody)).toEqual({
+      error: "invalid_request",
+      [INPUT_SUPPORT_FIELD]: true,
+    });
     expect({ ...AGENT_DETAIL_MESSAGES }).toEqual(VECTORS.detailCodes);
     expect(VECTORS.maxRequestBytesLimit).toBe("agentServiceMaxRequestBytes");
     const limit = CONTRACT.limits.find((item) => item.feature === "B");
@@ -142,10 +158,45 @@ describe("shared invocation bodies", () => {
     }
   });
 
-  test("an input that fits exactly is accepted", () => {
-    const padding = AGENT_SERVICE_MAX_REQUEST_BYTES - JSON.stringify({ k: "" }).length;
-    expect(invocationBody(undefined, { input: { k: "x".repeat(padding) } })).toMatch(
-      /^\{"input":\{"k":"x/,
+  test("an input whose body fits exactly is accepted", () => {
+    const padding = AGENT_SERVICE_MAX_REQUEST_BYTES - JSON.stringify({ input: { k: "" } }).length;
+    const input = { k: "x".repeat(padding) };
+    expect(invocationBody(undefined, { input })).toHaveLength(AGENT_SERVICE_MAX_REQUEST_BYTES);
+    expect(() => invocationBody(undefined, { input, sessionId: "s" })).toThrowError(
+      InvalidArgumentError,
+    );
+  });
+
+  test("a large prompt is not measured, as before", () => {
+    const prompt = "x".repeat(AGENT_SERVICE_MAX_REQUEST_BYTES + 1);
+    expect(invocationBody(prompt, {}).length).toBeGreaterThan(AGENT_SERVICE_MAX_REQUEST_BYTES);
+  });
+
+  class Ticket {
+    readonly ticketId = "T-1";
+  }
+
+  test.each([
+    ["a Date", { when: new Date(0) }],
+    ["a Map", { tags: new Map([["a", 1]]) }],
+    ["a class instance", { ticket: new Ticket() }],
+    ["an inherited toJSON", { ticket: Object.create({ toJSON: () => ({}) }) as Json }],
+    ["a class instance at the top", new Ticket()],
+    ["a Date at the top", new Date(0)],
+  ])("an input with %s is not a plain JSON object", (_name, value) => {
+    expect(() =>
+      invocationBody(undefined, { input: value as unknown as Record<string, unknown> }),
+    ).toThrowError(new InvalidArgumentError(INPUT_NOT_OBJECT_MESSAGE));
+  });
+
+  test("plain objects without prototype and data keys named toJSON are accepted", () => {
+    const bare = Object.create(null) as Json;
+    bare.ticket_id = "T-1";
+    expect(invocationBody(undefined, { input: bare })).toBe('{"input":{"ticket_id":"T-1"}}');
+    expect(invocationBody(undefined, { input: { toJSON: 1 } })).toBe('{"input":{"toJSON":1}}');
+    const shared = { a: 1 };
+    expect(invocationBody(undefined, { input: { x: shared, y: shared } })).toBe(
+      '{"input":{"x":{"a":1},"y":{"a":1}}}',
     );
   });
 });
@@ -158,12 +209,13 @@ describe("structured failures and output", () => {
     expect(failureMessage("runtime_error", detail)).toMatch(/^el runtime del agente/);
   });
 
-  test("a bad request after input is a host that is too old", () => {
-    expect(httpError(400, { sentInput: true })).toEqual(
-      new InvalidArgumentError(HOST_TOO_OLD_MESSAGE),
-    );
-    expect(httpError(400).message).not.toBe(HOST_TOO_OLD_MESSAGE);
-  });
+  test.each(VECTORS.badRequestCases.map((item) => [item.name, item] as const))(
+    "a bad request is explained by the host body: %s",
+    (_name, item) => {
+      const error = httpError(400, { sentInput: item.sentInput, body: item.body ?? undefined });
+      expect(error).toEqual(new InvalidArgumentError(VECTORS.messages[item.messageKey] ?? ""));
+    },
+  );
 
   test("the done event and the result builder carry the output", () => {
     const decoder = new EventDecoder();
@@ -239,10 +291,18 @@ describe("AgentDeployment with input", () => {
     expect(transport.requests).toEqual([]);
   });
 
-  test("a host that rejects input asks for a new deploy", async () => {
-    const { deployment } = await deploymentWith({ status: 400, body: "{}" });
+  test.each([
+    ["an older host", '{"error":"invalid_request"}', HOST_TOO_OLD_MESSAGE],
+    [
+      "a current host",
+      '{"error":"invalid_request","accepts_input":true}',
+      REQUEST_REJECTED_MESSAGE,
+    ],
+    ["an unknown body", "{}", HOST_MAYBE_TOO_OLD_MESSAGE],
+  ])("a host that rejects input reads its body: %s", async (_name, body, message) => {
+    const { deployment } = await deploymentWith({ status: 400, body });
     await expect(deployment.invoke({ input: TICKET })).rejects.toThrowError(
-      new InvalidArgumentError(HOST_TOO_OLD_MESSAGE),
+      new InvalidArgumentError(message),
     );
   });
 
