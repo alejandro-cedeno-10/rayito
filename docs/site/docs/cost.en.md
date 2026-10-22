@@ -23,7 +23,7 @@ page carries one of two labels:
 | An agent with 100 five-minute sessions a day | VM only: 100 × (300 s × $0.126/h + $0.0014) ≈ **$1.19/day**; the model is paid separately ([cost of an agent](#coste-de-un-agente-vm-frente-a-modelo)) |
 | The same sandbox paused for 8 hours | snapshot storage (≈ 0.92 GB × $0.08/GB-month for 8 h) ≈ **$0.0008** + one suspend/resume cycle ($0.0049) |
 | Keeping an image version published | ≈ **$0.04 per week** (one-week minimum per version) |
-| Prepare the account (`rayito setup`) | the IAM stack is free; the image, ≈ **$0.04 per week** per published version (minimum one week); the zip in the bucket, cents; if there is no bucket, it creates one whose zips expire after 7 days (no figure of its own: it is the same "cents" of the zip); `--dry-run` costs nothing |
+| Prepare the account (`rayito setup`) | the IAM stack is free; each image (`rayito-base` and, since 0.17, `rayito-base-caps`, the base of the MicroVM agent), ≈ **$0.04 per week** per published version ($0.08 per GB-month, minimum one week; `--no-caps-image` publishes only the first); the zip in the bucket, one for both, cents; if there is no bucket, it creates one whose zips expire after 7 days (no figure of its own: it is the same "cents" of the zip); `--dry-run` costs nothing |
 | `rayito doctor --launch` | ≈ **$0.002** |
 | A pool of 3 idle slots | ≈ 3 × $0.60 = **$1.80/month** (see below) |
 

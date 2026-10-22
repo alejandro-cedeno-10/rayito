@@ -20,8 +20,12 @@ Both CLIs SHALL add the following, with the names, defaults and help texts of `t
 `rayito agent deploy --create-secret` SHALL read the gateway key from the standard variable of the gateway's preset (`testdata/agent-deploy/secret-env.json`), falling back to the gateway name. It SHALL check and create the secret under the exact name the gateway reads, without adding the `rayito/` prefix again (`testdata/agent-deploy/create-secret.json`).
 
 #### Scenario: gateway named model with preset bedrock
-- **WHEN** the project has `[gateways.model] preset = "bedrock"` and `AWS_BEARER_TOKEN_BEDROCK` is set
-- **THEN** the secret `rayito/agents/my-agent/bedrock` is created once, with no `rayito/rayito/` prefix
+- **WHEN** the project has `[gateways.model] preset = "bedrock"` with `secret = "agents/my-agent/model"` and `AWS_BEARER_TOKEN_BEDROCK` is set
+- **THEN** the secret is created once from `AWS_BEARER_TOKEN_BEDROCK` as `rayito/agents/my-agent/model` in Secrets Manager, with no `rayito/rayito/` prefix
+
+#### Scenario: detection writes the name relative to the gateway prefix
+- **WHEN** detection fills the gateway of project `my-agent` with provider `bedrock`
+- **THEN** the gateway secret is `agents/my-agent/bedrock`, read by the gateway as `rayito/agents/my-agent/bedrock`, and a deploy that finds only the 0.16 secret `rayito/rayito/agents/my-agent/bedrock` reuses it instead of creating another
 
 ### Requirement: rayito setup can skip the caps image
 `rayito setup` in both CLIs SHALL accept `--no-caps-image`, which removes the publishing of `rayito-base-caps` from the plan.

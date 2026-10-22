@@ -43,7 +43,7 @@
       "preset": "custom",
       "upstream": "https://bedrock-runtime.us-east-1.amazonaws.com",
       "headers": {
-        "authorization": "rayito/agents/flask-custom/bedrock"
+        "authorization": "agents/flask-custom/bedrock"
       },
       "allow": [
         [

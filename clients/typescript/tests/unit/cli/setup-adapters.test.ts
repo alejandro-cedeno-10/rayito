@@ -313,7 +313,12 @@ function artifactZip(): string {
 }
 
 describe("PipelineImagePublisher", () => {
-  const options = { bucket: BUCKET, buildRoleArn: BUILD_ROLE };
+  const options = {
+    name: "rayito-base",
+    osCapabilities: undefined,
+    bucket: BUCKET,
+    buildRoleArn: BUILD_ROLE,
+  };
 
   it("publishes rayito-base over the latest managed base and reports it", async () => {
     const ports = new FakePublishPorts();
@@ -333,6 +338,19 @@ describe("PipelineImagePublisher", () => {
       buildRoleArn: BUILD_ROLE,
       baseImageVersion: "1",
     });
+  });
+
+  it("publishes rayito-base-caps from the same zip with every OS capability", async () => {
+    const ports = new FakePublishPorts();
+    await new PipelineImagePublisher(ports, clock).publish(artifactZip(), {
+      ...options,
+      name: "rayito-base-caps",
+      osCapabilities: "ALL",
+      onProgress: () => undefined,
+    });
+    expect(ports.requests).toHaveLength(1);
+    expect(JSON.stringify(ports.requests[0]?.body)).toContain('"additionalOsCapabilities":["ALL"]');
+    expect(JSON.stringify(ports.requests[0]?.body)).toContain("rayito-base-caps");
   });
 
   it("an identical version is reused and the artifact is not uploaded twice", async () => {

@@ -156,7 +156,14 @@ describe("rayito setup: shared CLI cases", () => {
       "describe",
       "head_bucket",
       "get_image",
+      "get_image:caps",
     ]);
+  });
+
+  it("a dry run with --no-caps-image never reads rayito-base-caps", async () => {
+    const outcome = await invoke({ args: ["setup", "--dry-run", "--no-caps-image"] });
+    expect(outcome.fake.calls.map(([name]) => name)).not.toContain("get_image:caps");
+    expect(outcome.stdout).toContain("omitida (--no-caps-image)");
   });
 
   it("a dry run that would create the bucket only reads", async () => {
@@ -210,6 +217,7 @@ describe("rayito setup: apply", () => {
       "download",
       "download",
       "publish",
+      "publish:caps",
     ]);
   });
 
@@ -291,6 +299,7 @@ describe("rayito setup: an account without a bucket", () => {
       "download",
       "download",
       "publish",
+      "publish:caps",
     ]);
   });
 });

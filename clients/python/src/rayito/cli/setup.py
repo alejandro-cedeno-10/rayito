@@ -282,15 +282,27 @@ def setup(
             "--dry-run", help="Sólo lee la cuenta y muestra el plan; no crea ni cambia nada."
         ),
     ] = False,
+    no_caps_image: Annotated[
+        bool,
+        typer.Option(
+            "--no-caps-image",
+            help=(
+                "No publicar rayito-base-caps, la base del agente en MicroVM (la misma imagen "
+                "con additionalOsCapabilities ALL); por defecto se publica desde el mismo zip."
+            ),
+        ),
+    ] = False,
 ) -> None:
     """Prepara la cuenta y la región para Rayito en una orden idempotente, como `cdk bootstrap`: el
     bucket de artefactos (el tuyo, el de la pila de IAM o el del bootstrap de CDK; si no hay
     ninguno, lo crea con la pila rayito-m0-artifacts: cifrado, privado, sólo TLS y con los zips
-    caducando a los 7 días), la pila de IAM rayito-m0-iam y la imagen rayito-base desde el
-    rayito-image.zip de la release de tu versión, comprobado contra su SHA256SUMS. Muestra el
-    plan y el coste, pide confirmación y termina con rayito doctor. Coste: cada versión
-    publicada de la imagen ≈ $0,04 por semana de almacenamiento (mínimo una semana); la pila de
-    IAM es gratis; el zip en el bucket, céntimos; con --dry-run sólo lee."""
+    caducando a los 7 días), la pila de IAM rayito-m0-iam y las imágenes rayito-base y
+    rayito-base-caps (la base del agente en MicroVM; --no-caps-image la omite) desde el
+    rayito-image.zip de la release de tu versión, descargado una vez y comprobado contra su
+    SHA256SUMS. Muestra el plan y el coste, pide confirmación y termina con rayito doctor.
+    Coste: cada versión publicada de cada imagen ≈ $0,04 por semana de almacenamiento ($0,08
+    por GB-mes, mínimo una semana); la pila de IAM es gratis; el zip en el bucket, céntimos; con
+    --dry-run sólo lee."""
     clients = clients_of(ctx)
     json_output = json_mode(ctx)
     plan: SetupPlan | None = None
@@ -305,6 +317,7 @@ def setup(
                 environment_bucket=os.environ.get(BUCKET_ENV_VAR) or None,
                 artifact=artifact,
                 sdk_version=__version__,
+                caps_image=not no_caps_image,
             )
         )
         if not json_output:

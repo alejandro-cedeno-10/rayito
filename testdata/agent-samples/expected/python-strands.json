@@ -24,7 +24,7 @@
       "preset": "custom",
       "upstream": "https://bedrock-runtime.us-east-1.amazonaws.com",
       "headers": {
-        "authorization": "rayito/agents/strands/bedrock"
+        "authorization": "agents/strands/bedrock"
       },
       "allow": [
         [

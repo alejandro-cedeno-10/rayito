@@ -55,6 +55,7 @@ WRITING_CALLS = {
     "wait_artifact_stack",
     "download",
     "publish",
+    "publish:caps",
     "gate",
 }
 
@@ -144,6 +145,7 @@ def test_a_dry_run_only_reads() -> None:
         "describe",
         "head_bucket",
         "get_image",
+        "get_image:caps",
     }
 
 
@@ -267,7 +269,7 @@ def test_an_apply_error_keeps_the_plan_in_the_json_document() -> None:
     document = json.loads(result.stdout)
     assert result.exit_code == 1
     assert document["error"]["code"] == "checksum_mismatch"
-    assert len(document["steps"]) == 3
+    assert len(document["steps"]) == 4
     assert document["result"] is None
     assert document["ready"] is False
     assert result.stderr.splitlines()[-1] == f"rayito: {document['error']['message']}"

@@ -3590,6 +3590,19 @@
           "default": false,
           "is_flag": true,
           "envvar": null
+        },
+        {
+          "name": "no_caps_image",
+          "kind": "option",
+          "flags": [
+            "--no-caps-image"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "default": false,
+          "is_flag": true,
+          "envvar": null
         }
       ]
     },

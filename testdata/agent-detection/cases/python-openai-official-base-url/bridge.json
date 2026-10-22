@@ -7,7 +7,7 @@
   "gateways": {
     "openai": {
       "preset": "openai",
-      "secret": "rayito/agents/ticket-agent/openai"
+      "secret": "agents/ticket-agent/openai"
     }
   }
 }

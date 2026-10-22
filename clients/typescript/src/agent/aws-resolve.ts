@@ -30,7 +30,7 @@ import { accountImageArn } from "../images/gateway.js";
 import { generateAccessToken } from "../payload.js";
 import { ACCESS_TOKEN_ENV_VAR } from "../sandbox/launch.js";
 import { SecretGateway } from "../secret-gateway/domain.js";
-import { SecretRef } from "../secrets/names.js";
+import { DEFAULT_SECRET_PREFIX, SecretRef } from "../secrets/names.js";
 import { CloudFormationProvisioner } from "../stacks/cloudformation.js";
 import type { StackProvisioner } from "../stacks/port.js";
 import { AwsBuildClients } from "../templates/build.js";
@@ -39,6 +39,11 @@ import type { AgentProject } from "./project.js";
 /** El mensaje cuando ni el argumento ni el entorno dan la región de AWS. */
 export const NO_REGION_MESSAGE =
   "no hay región de AWS: pasa region (--region) o exporta AWS_REGION";
+/** El prefijo con el que la pasarela lee su secreto en tiempo de ejecución
+ * (la `SecretCache` compartida de `secrets`/`gateways`): `--create-secret`
+ * comprueba y crea con el mismo, para que el nombre sea exactamente el que se
+ * leerá. */
+export const GATEWAY_SECRET_PREFIX = DEFAULT_SECRET_PREFIX;
 export const BEARER_PREFIX = "Bearer ";
 export const AUTHORIZATION_HEADER = "authorization";
 /** Códigos de `HeadBucket` que dan el bucket por inexistente o ajeno: sin
@@ -123,8 +128,10 @@ export interface ResolvedSecrets {
 // ------------------------------------------------------------------- puras
 
 /** El nombre convencional del secreto de la pasarela `gateway` del proyecto
- * `project`, bajo el prefijo `rayito/` de `SecretStore` (el secreto queda en
- * `rayito/agents/<proyecto>/<pasarela>`). */
+ * `project`, bajo el prefijo `rayito/` con el que la pasarela lo lee y
+ * `SecretStore` lo crea (el secreto queda en
+ * `rayito/agents/<proyecto>/<pasarela>`). Es el mismo que escribe la detección
+ * (`GATEWAY_SECRET_NAME_TEMPLATE` de `detect-project.ts`). */
 export function secretNameFor(project: string, gateway: string): string {
   return `agents/${project}/${gateway}`;
 }
@@ -169,16 +176,26 @@ export function resolveToken(explicit: string | undefined, environ: Environ): st
   return explicit || environ[ACCESS_TOKEN_ENV_VAR] || generateAccessToken();
 }
 
+/** La variable de entorno estándar de la pasarela `gateway`: la de su
+ * `preset` (`[gateways.<nombre>] preset`, p. ej. `bedrock` para una pasarela
+ * llamada `model`) y, si el preset no tiene una (`custom`) o no se conoce, la
+ * del nombre de la pasarela, como en 0.16. */
+export function gatewayEnvVar(gateway: string, preset?: string): string | undefined {
+  const byPreset = preset ? GATEWAY_SECRET_ENV_VARS[preset] : undefined;
+  return byPreset ?? GATEWAY_SECRET_ENV_VARS[gateway];
+}
+
 /** El valor que se guardaría en el secreto de `gateway` a partir de su
- * variable de entorno estándar: `Bearer <clave>` para la cabecera
- * `authorization` (salvo que ya lo traiga) y la clave tal cual para las demás.
- * `undefined` si la variable no está o está vacía. */
+ * variable de entorno estándar (`gatewayEnvVar`): `Bearer <clave>` para la
+ * cabecera `authorization` (salvo que ya lo traiga) y la clave tal cual para
+ * las demás. `undefined` si la variable no está o está vacía. */
 export function secretValueFromEnv(
   gateway: string,
   header: string,
   environ: Environ,
+  options: { readonly preset?: string | undefined } = {},
 ): string | undefined {
-  const variable = GATEWAY_SECRET_ENV_VARS[gateway];
+  const variable = gatewayEnvVar(gateway, options.preset);
   const value = variable === undefined ? "" : (environ[variable] ?? "");
   if (value === "") {
     return undefined;
@@ -203,8 +220,8 @@ function renamed(value: string | SecretRef, name: string): string | SecretRef {
   });
 }
 
-function missingSecretMessage(gateway: string): string {
-  const variable = GATEWAY_SECRET_ENV_VARS[gateway];
+function missingSecretMessage(gateway: string, preset: string | undefined): string {
+  const variable = gatewayEnvVar(gateway, preset);
   const creation =
     variable === undefined
       ? "crea el secreto tú mismo con SecretStore"
@@ -215,8 +232,8 @@ function missingSecretMessage(gateway: string): string {
   );
 }
 
-function missingValueMessage(gateway: string): string {
-  const variable = GATEWAY_SECRET_ENV_VARS[gateway];
+function missingValueMessage(gateway: string, preset: string | undefined): string {
+  const variable = gatewayEnvVar(gateway, preset);
   return variable === undefined
     ? `no se puede crear el secreto de la pasarela '${gateway}' desde el entorno`
     : `no se puede crear el secreto de la pasarela '${gateway}': la variable ${variable} no está definida`;
@@ -272,11 +289,42 @@ export function applySecretNames(
 
 // ------------------------------------------------------------- con E/S
 
+/** El nombre con el prefijo `rayito/` duplicado que 0.16 escribía en la
+ * pasarela detectada (`rayito/agents/<proyecto>/<proveedor>` relativo a
+ * `rayito/`) si `name` es el nombre convencional de esa pasarela; `undefined`
+ * para cualquier otro nombre, que nunca se reinterpreta. */
+export function legacySecretName(
+  project: string,
+  gateway: string,
+  name: string,
+): string | undefined {
+  return name === secretNameFor(project, gateway) ? GATEWAY_SECRET_PREFIX + name : undefined;
+}
+
+/** `name` si el secreto existe (`DescribeSecret`); si no, el nombre de 0.16
+ * (`legacySecretName`) si ése existe, para que un despliegue de 0.16 hecho con
+ * `--create-secret` siga usando su secreto sin crear otro. */
+async function existingName(
+  project: AgentProject,
+  gateway: string,
+  name: string,
+  store: SecretStorePort,
+): Promise<string | undefined> {
+  if (await store.exists(name)) {
+    return name;
+  }
+  const legacy = legacySecretName(project.name, gateway, name);
+  return legacy !== undefined && (await store.exists(legacy)) ? legacy : undefined;
+}
+
 /** Comprueba que existe el secreto de cada pasarela del proyecto
  * (`DescribeSecret`) y, sólo con `createFromEnv`, crea el que falte con el
- * valor de la variable estándar de su proveedor (`CreateSecret`). El valor
- * sale de `environ` a Secrets Manager y no se escribe en disco ni en logs; los
- * errores nombran la pasarela, nunca el secreto. */
+ * valor de la variable estándar del preset de la pasarela (o de su nombre:
+ * `gatewayEnvVar`) (`CreateSecret`). `store` usa el mismo prefijo con el que
+ * la pasarela lee el secreto (`rayito/`), así que el nombre que se comprueba y
+ * se crea es exactamente el que se leerá. El valor sale de `environ` a Secrets
+ * Manager y no se escribe en disco ni en logs; los errores nombran la
+ * pasarela, nunca el secreto. */
 export async function ensureModelSecrets(
   project: AgentProject,
   options: {
@@ -289,20 +337,31 @@ export async function ensureModelSecrets(
   const gateways = applySecretNames(project.gateways, options.secretNames);
   const created: string[] = [];
   for (const [gateway, definition] of Object.entries(gateways)) {
+    const preset = project.gatewayPresets[gateway];
+    const headers: Record<string, string | SecretRef> = { ...definition.headers };
+    let renamedAny = false;
     for (const [header, reference] of Object.entries(definition.headers)) {
       const name = secretNameOf(reference);
-      if (await options.store.exists(name)) {
+      const existing = await existingName(project, gateway, name, options.store);
+      if (existing !== undefined) {
+        if (existing !== name) {
+          headers[header] = renamed(reference, existing);
+          renamedAny = true;
+        }
         continue;
       }
       if (!options.createFromEnv) {
-        throw new InvalidArgumentError(missingSecretMessage(gateway));
+        throw new InvalidArgumentError(missingSecretMessage(gateway, preset));
       }
-      const value = secretValueFromEnv(gateway, header, options.environ);
+      const value = secretValueFromEnv(gateway, header, options.environ, { preset });
       if (value === undefined) {
-        throw new InvalidArgumentError(missingValueMessage(gateway));
+        throw new InvalidArgumentError(missingValueMessage(gateway, preset));
       }
       await options.store.create(name, value);
       created.push(gateway);
+    }
+    if (renamedAny) {
+      gateways[gateway] = withHeaders(definition, headers);
     }
   }
   return { gateways: Object.freeze(gateways), created };

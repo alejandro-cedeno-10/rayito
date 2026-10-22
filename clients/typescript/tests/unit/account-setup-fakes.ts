@@ -10,6 +10,7 @@ import {
   BUCKET_NAME_OUTPUT_KEY,
   BUCKET_NAME_PARAMETER,
   type BucketProbe,
+  CAPS_IMAGE_NAME,
   cdkBucketName,
   type DownloadedRelease,
   defaultArtifactBucketName,
@@ -60,7 +61,23 @@ export interface VectorInput {
   readonly buckets: Record<string, string>;
   readonly forbiddenBuckets: string[];
   readonly artifactStack: VectorStack | null;
-  readonly image: { readonly state: string; readonly versions: VectorImageVersion[] } | null;
+  readonly image: VectorImage | null;
+  /** `rayito-base-caps`, con la misma forma que `image`; sin la clave, el mismo estado que `image`. */
+  readonly capsImage?: VectorImage | null;
+  /** `--no-caps-image` (`capsImage: false` en la petición). */
+  readonly noCapsImage?: boolean;
+}
+
+export interface VectorImage {
+  readonly state: string;
+  readonly versions: VectorImageVersion[];
+}
+
+/** Sufijo de las llamadas que tocan `rayito-base-caps` en el registro. */
+export const CAPS_CALL_SUFFIX = ":caps";
+
+function capsObservation(input: VectorInput): VectorImage | null {
+  return input.capsImage === undefined ? input.image : input.capsImage;
 }
 
 /** Sustituye `{sdkVersion}`, `{cdkBucket}` y `{defaultBucket}` del texto de un caso compartido. */
@@ -205,17 +222,20 @@ export class FakeAccountSetup implements AccountSetupGateways {
     };
     this.images = {
       observe: async (name): Promise<ImageObservation> => {
-        record("get_image");
+        const caps = name === CAPS_IMAGE_NAME;
+        const suffix = caps ? CAPS_CALL_SUFFIX : "";
+        const observed = caps ? capsObservation(input) : input.image;
+        record(`get_image${suffix}`);
         const imageArn = `arn:aws:lambda:${input.region}:${input.account}:microvm-image:${name}`;
-        if (input.image === null) {
+        if (observed === null) {
           return { name, imageArn, state: undefined, versions: [] };
         }
-        record("list_versions");
+        record(`list_versions${suffix}`);
         return {
           name,
           imageArn,
-          state: input.image.state,
-          versions: input.image.versions.map((item) => ({
+          state: observed.state,
+          versions: observed.versions.map((item) => ({
             ...item,
             createdAt: new Date(item.createdAt),
           })),
@@ -232,9 +252,20 @@ export class FakeAccountSetup implements AccountSetupGateways {
     };
     this.publisher = {
       publish: async (artifact, options): Promise<PublishedImage> => {
+        const imageArn = `arn:aws:lambda:${input.region}:${input.account}:microvm-image:${options.name}`;
+        if (options.name === CAPS_IMAGE_NAME) {
+          record(
+            `publish${CAPS_CALL_SUFFIX}`,
+            artifact,
+            options.bucket,
+            options.buildRoleArn,
+            options.osCapabilities,
+          );
+          return { imageArn, imageVersion: PUBLISHED_VERSION, artifactUploaded: false };
+        }
         record("publish", artifact, options.bucket, options.buildRoleArn);
         return {
-          imageArn: `arn:aws:lambda:${input.region}:${input.account}:microvm-image:rayito-base`,
+          imageArn,
           imageVersion: PUBLISHED_VERSION,
           artifactUploaded: behavior.publishedArtifactUploaded ?? true,
         };
@@ -256,7 +287,9 @@ export class FakeAccountSetup implements AccountSetupGateways {
   /** Las llamadas que cambian algo en la cuenta o descargan algo. */
   get writes(): Call[] {
     return this.calls.filter(([name]) =>
-      ["create", "update", "create_artifact_stack", "publish", "download"].includes(name),
+      ["create", "update", "create_artifact_stack", "publish", "publish:caps", "download"].includes(
+        name,
+      ),
     );
   }
 }

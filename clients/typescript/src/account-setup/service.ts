@@ -12,17 +12,20 @@
  *
  * Recursos y llamadas AWS: la pila de IAM `rayito-m0-iam` (`CreateStack` o
  * `UpdateStack`), el zip de la imagen en el bucket (`PutObject`) y una versión
- * de `rayito-base` (`CreateMicrovmImage` o `UpdateMicrovmImage`); sólo si no
+ * de `rayito-base` y otra de `rayito-base-caps` (`CreateMicrovmImage` o
+ * `UpdateMicrovmImage`; ésta con `additionalOsCapabilities: ["ALL"]`) desde el
+ * mismo zip, descargado una sola vez; sólo si no
  * hay ningún bucket que reutilizar, también la pila `rayito-m0-artifacts`
  * (`CreateStack`, la plantilla `infra/artifact-bucket.yaml`) que crea el
  * bucket: el SDK nunca llama a `CreateBucket` por sí mismo. Lee con
  * `GetCallerIdentity`, `DescribeStacks`, `HeadBucket` (hasta tres, y un
  * `DescribeStacks` más de `rayito-m0-artifacts`, sólo en una cuenta sin bucket
- * utilizable), `GetMicrovmImage` y `ListMicrovmImageVersions`.
+ * utilizable), `GetMicrovmImage` y `ListMicrovmImageVersions` (de las dos
+ * imágenes; de `rayito-base-caps` no con `capsImage: false`).
  *
  * Coste aproximado: el bucket creado y su pila son gratis salvo los zips, que
- * caducan a los 7 días (céntimos); la pila de IAM es gratis; cada versión publicada de la
- * imagen ≈ $0,04 por semana de almacenamiento, con mínimo de una semana
+ * caducan a los 7 días (céntimos); la pila de IAM es gratis; cada versión publicada de
+ * cada imagen ≈ $0,04 por semana de almacenamiento ($0,08 por GB-mes), con mínimo de una semana
  * (`cost.md`, "Mantener publicada una versión de imagen"); el zip, céntimos.
  *
  * IAM: `cloudformation:CreateStack`/`UpdateStack`/`DescribeStacks` y los
@@ -35,7 +38,8 @@
  * otros): `CallerPolicy` no los da, así que ese paso pide credenciales de
  * administrador o de bootstrap.
  *
- * Cómo apagarla: no ejecutes `rayito setup` (o usa `--dry-run`); para borrar lo
+ * Cómo apagarla: no ejecutes `rayito setup` (o usa `--dry-run`); `--no-caps-image`
+ * (`capsImage: false`) no publica `rayito-base-caps`; para borrar lo
  * creado, `aws cloudformation delete-stack` (el bucket de
  * `rayito-m0-artifacts` se conserva) y `rayito image prune`.
  *
@@ -51,6 +55,8 @@ import {
   BUCKET_NAME_OUTPUT_KEY,
   BUILD_ROLE_OUTPUT_KEY,
   bucketCandidates,
+  CAPS_IMAGE_NAME,
+  CAPS_IMAGE_OS_CAPABILITIES,
   creationTarget,
   decideBucket,
   formatTemplate,
@@ -97,15 +103,30 @@ export class AccountSetup {
     const stack = await iamStack.observe();
     const bucketStep = await this.#resolveBucket(request, stack, account);
     const image = await images.observe(BASE_IMAGE_NAME);
-    return planSetup({ request, account, stack, bucketStep, image });
+    const caps = request.capsImage === false ? undefined : await images.observe(CAPS_IMAGE_NAME);
+    return planSetup({ request, account, stack, bucketStep, image, caps });
   }
 
-  /** Aplica el plan: el bucket (si falta), luego la pila de IAM y por último la imagen. */
+  /** Aplica el plan: el bucket (si falta), luego la pila de IAM y por último las dos imágenes. */
   async apply(plan: SetupPlan, options: ApplyOptions): Promise<SetupResult> {
     const tags = options.tags ?? {};
     const bucket = await this.#applyBucket(plan, options.onProgress, tags);
     const stack = await this.#applyStack(plan, bucket, options.onProgress, tags);
-    return this.#applyImage(plan, bucket, stack, options);
+    const publishing = new Publishing(this.#gateways, plan, bucket, stack, options);
+    const base = await publishing.image(stepOf(plan, "baseImage"), plan.imageArn, undefined);
+    const caps = await publishing.image(
+      stepOf(plan, "capsImage"),
+      plan.capsImageArn,
+      CAPS_IMAGE_OS_CAPABILITIES,
+    );
+    return {
+      bucket,
+      imageArn: base.imageArn ?? plan.imageArn,
+      imageVersion: base.imageVersion ?? "",
+      artifactUploaded: base.artifactUploaded,
+      capsImageArn: caps.imageArn,
+      capsImageVersion: caps.imageVersion,
+    };
   }
 
   /**
@@ -187,92 +208,108 @@ export class AccountSetup {
     onProgress(formatTemplate(PROGRESS_MESSAGES.stackReady, name));
     return observed;
   }
+}
 
-  async #applyImage(
+interface ImageOutcome {
+  readonly imageArn: string | undefined;
+  readonly imageVersion: string | undefined;
+  readonly artifactUploaded: boolean | undefined;
+}
+
+/**
+ * Los dos pasos de imagen de un `apply`: espera, reutiliza o publica cada uno.
+ * El zip (el de `--artifact` o el de la release, descargado y verificado una
+ * sola vez) y la pila de IAM se piden la primera vez que una publicación los
+ * necesita y se reutilizan en la segunda.
+ */
+class Publishing {
+  readonly #gateways: AccountSetupGateways;
+  readonly #plan: SetupPlan;
+  readonly #bucket: string;
+  readonly #options: ApplyOptions;
+  #stack: StackObservation | undefined;
+  #artifact: string | undefined;
+
+  constructor(
+    gateways: AccountSetupGateways,
     plan: SetupPlan,
     bucket: string,
     stack: StackObservation | undefined,
     options: ApplyOptions,
-  ): Promise<SetupResult> {
-    const step = stepOf(plan, "baseImage");
-    const { onProgress } = options;
-    if (step.action === "reuse") {
-      return {
-        bucket,
-        imageArn: plan.imageArn,
-        imageVersion: step.imageVersion ?? "",
-        artifactUploaded: undefined,
-      };
-    }
-    if (step.action === "wait") {
-      const imageVersion = await this.#waitForBuild(plan, step.imageVersion ?? "", onProgress);
-      return { bucket, imageArn: plan.imageArn, imageVersion, artifactUploaded: undefined };
-    }
-    const buildRoleArn = requireBuildRole(stack ?? (await this.#gateways.iamStack.observe()));
-    const artifact = await this.#artifactToPublish(plan, options);
-    const published = await this.#gateways.publisher.publish(artifact, {
-      bucket,
-      buildRoleArn,
-      onProgress,
-    });
-    onProgress(
-      formatTemplate(PROGRESS_MESSAGES.imageReady, {
-        name: BASE_IMAGE_NAME,
-        imageVersion: published.imageVersion,
-      }),
-    );
-    return {
-      bucket,
-      imageArn: published.imageArn,
-      imageVersion: published.imageVersion,
-      artifactUploaded: published.artifactUploaded,
-    };
+  ) {
+    this.#gateways = gateways;
+    this.#plan = plan;
+    this.#bucket = bucket;
+    this.#stack = stack;
+    this.#options = options;
+    this.#artifact = plan.artifact;
   }
 
-  async #waitForBuild(
-    plan: SetupPlan,
-    imageVersion: string,
-    onProgress: Progress,
-  ): Promise<string> {
-    onProgress(
-      formatTemplate(PROGRESS_MESSAGES.imageWait, { name: BASE_IMAGE_NAME, imageVersion }),
-    );
-    const gate = await this.#gateways.images.wait(plan.imageArn, imageVersion, onProgress);
+  async image(
+    step: SetupStep,
+    imageArn: string | undefined,
+    osCapabilities: string | undefined,
+  ): Promise<ImageOutcome> {
+    if (step.action === "skip" || imageArn === undefined) {
+      return { imageArn: undefined, imageVersion: undefined, artifactUploaded: undefined };
+    }
+    if (step.action === "wait") {
+      await this.#wait(imageArn, step.name, step.imageVersion ?? "");
+    } else if (step.action === "publish") {
+      const published = await this.#publish(step.name, osCapabilities);
+      this.#reportReady(step.name, published.imageVersion);
+      return published;
+    }
+    return { imageArn, imageVersion: step.imageVersion ?? "", artifactUploaded: undefined };
+  }
+
+  async #wait(imageArn: string, name: string, imageVersion: string): Promise<void> {
+    const { onProgress } = this.#options;
+    onProgress(formatTemplate(PROGRESS_MESSAGES.imageWait, { name, imageVersion }));
+    const gate = await this.#gateways.images.wait(imageArn, imageVersion, onProgress);
     if (!gate.launchable) {
       throw new AccountSetupError("image_build_failed", {
-        name: BASE_IMAGE_NAME,
+        name,
         imageVersion,
         state: gate.versionState,
       });
     }
-    onProgress(
-      formatTemplate(PROGRESS_MESSAGES.imageReady, { name: BASE_IMAGE_NAME, imageVersion }),
-    );
-    return imageVersion;
+    this.#reportReady(name, imageVersion);
   }
 
-  /** `--artifact` se publica tal cual; sin él se descarga la release y se comprueba su sha256. */
-  async #artifactToPublish(plan: SetupPlan, options: ApplyOptions): Promise<string> {
-    if (plan.artifact !== undefined) {
-      return plan.artifact;
-    }
-    const tag = stepOf(plan, "baseImage").release;
+  async #publish(name: string, osCapabilities: string | undefined) {
+    this.#stack ??= await this.#gateways.iamStack.observe();
+    const buildRoleArn = requireBuildRole(this.#stack);
+    this.#artifact ??= await this.#downloadRelease();
+    return this.#gateways.publisher.publish(this.#artifact, {
+      name,
+      osCapabilities,
+      bucket: this.#bucket,
+      buildRoleArn,
+      onProgress: this.#options.onProgress,
+    });
+  }
+
+  /** Sin `--artifact` se descarga la release una vez y se comprueba su sha256. */
+  async #downloadRelease(): Promise<string> {
+    const tag = this.#plan.steps.find((step) => step.release !== undefined)?.release;
     if (tag === undefined) {
       throw new Error("el plan de publicación no nombra la release ni el artefacto");
     }
-    const downloaded = await this.#gateways.releases.fetch(
-      tag,
-      options.workdir,
-      options.onProgress,
-    );
+    const { onProgress, workdir } = this.#options;
+    const downloaded = await this.#gateways.releases.fetch(tag, workdir, onProgress);
     verifyChecksum(downloaded, tag);
-    options.onProgress(
+    onProgress(
       formatTemplate(PROGRESS_MESSAGES.verified, {
         asset: IMAGE_ASSET_NAME,
         sha256: downloaded.artifactSha256,
       }),
     );
     return downloaded.artifact;
+  }
+
+  #reportReady(name: string, imageVersion: string): void {
+    this.#options.onProgress(formatTemplate(PROGRESS_MESSAGES.imageReady, { name, imageVersion }));
   }
 }
 

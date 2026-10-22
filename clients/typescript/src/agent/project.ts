@@ -462,6 +462,9 @@ export interface AgentProjectOptions {
   readonly graph?: string | undefined;
   readonly secretEnv?: Readonly<Record<string, string | SecretEnvRef>> | undefined;
   readonly secretEnvFrom?: readonly SecretEnvSource[] | undefined;
+  /** Pasarela -> preset (`[gateways.<nombre>] preset`); ver
+   * `AgentProject.gatewayPresets`. */
+  readonly gatewayPresets?: Readonly<Record<string, string>> | undefined;
 }
 
 /** El lector de ficheros de texto que `fromObject` usa para
@@ -544,6 +547,12 @@ export class AgentProject {
   readonly graph: string | undefined;
   readonly secretEnv: SecretEnvMap;
   readonly secretEnvFrom: readonly SecretEnvSource[];
+  /** Pasarela -> preset (p. ej. `{ model: "bedrock" }`): lo que el fichero
+   * declara en `[gateways.<nombre>] preset`. Lo rellenan `load()`,
+   * `fromObject()` y `detect()`, sirve para elegir la variable estándar de
+   * `--create-secret` y `toObject()` no lo escribe (cada pasarela ya va en su
+   * forma `custom`), así que el documento canónico no cambia. */
+  readonly gatewayPresets: Readonly<Record<string, string>>;
 
   constructor(options: AgentProjectOptions) {
     validateName(options.name, "AgentProject.name");
@@ -581,6 +590,7 @@ export class AgentProject {
     this.runtime = options.runtime;
     this.spec = options.spec;
     this.gateways = Object.freeze({ ...gateways });
+    this.gatewayPresets = validatedPresets(options.gatewayPresets ?? {});
     this.source = options.source;
     this.exclude = textList(options.exclude ?? [], "AgentProject.exclude");
     this.requirements = options.requirements;
@@ -922,6 +932,16 @@ function textList(values: unknown, label: string): readonly string[] {
   return Object.freeze([...values]);
 }
 
+/** `AgentProject.gatewayPresets` de sólo lectura: un objeto de cadenas. */
+function validatedPresets(presets: unknown): Readonly<Record<string, string>> {
+  if (!isRecord(presets) || !Object.values(presets).every((value) => typeof value === "string")) {
+    throw new InvalidArgumentError(
+      "AgentProject.gatewayPresets debe ser un objeto pasarela -> preset (cadenas)",
+    );
+  }
+  return Object.freeze({ ...(presets as Record<string, string>) });
+}
+
 function validatedGateways(gateways: unknown): Readonly<Record<string, SecretGateway>> {
   if (!isRecord(gateways)) {
     throw new InvalidArgumentError("AgentProject.gateways debe ser un objeto nombre -> pasarela");
@@ -1117,18 +1137,15 @@ function projectOptions(
   root.finish();
   checkGateways(spec, gateways);
   checkConcurrency(serve, image);
-  checkModel(
-    spec.model,
-    runtime,
-    gatewayPresets(data),
-    env.env as Readonly<Record<string, string>>,
-  );
+  const presets = gatewayPresets(data);
+  checkModel(spec.model, runtime, presets, env.env as Readonly<Record<string, string>>);
   return {
     name,
     runtime,
     ...runtimeExtras,
     spec,
     gateways,
+    gatewayPresets: presets,
     ...source,
     ...limits,
     ...serve,

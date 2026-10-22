@@ -176,7 +176,7 @@ detected, so you pass it with a flag:
 
 ```bash
 rayito agent deploy --model-provider openai-compatible \
-  --model-base-url https://llm-gateway.example.com --secret openai-compatible=rayito/llm-key
+  --model-base-url https://llm-gateway.example.com --secret openai-compatible=llm-key
 ```
 
 In the project file it looks like this:
@@ -192,7 +192,7 @@ api_key_env = "LLM_API_KEY"
 
 [gateways.llm]
 preset = "openai-compatible"
-secret = "rayito/llm-key"
+secret = "llm-key"
 upstream = "https://llm-gateway.example.com"
 base_path = "/v1"
 ```
@@ -220,8 +220,9 @@ Each value comes, in this order, from the argument or flag, the file, an
 environment variable and discovery; none of them creates anything silently:
 
 - The **region** is `--region`, `[deploy] region`, `AWS_REGION` or your profile's.
-- The **base image** is the newest version of `rayito-base-caps`. If it does not
-  exist it is published only with `--base-artifact` and `--yes`.
+- The **base image** is the newest version of `rayito-base-caps`, which
+  `rayito setup` publishes since 0.17. If it does not exist it is published only
+  with `--base-artifact` and `--yes`.
 - The artifact **bucket** is, in this order, `--bucket`, `[deploy] bucket`,
   `RAYITO_BUCKET`, the account's CDK bootstrap bucket if it exists (`HeadBucket`)
   and, otherwise, the one `rayito setup` created: the `BucketName` output of the
@@ -231,9 +232,14 @@ environment variable and discovery; none of them creates anything silently:
   [`rayito setup`](../primeros-pasos/configurar-aws.md#2-prepara-la-cuenta-con-rayito-setup)
   first, which creates one if needed.
 - The **model secret** is `--secret`, the file's, or the one with the
-  conventional name `rayito/agents/<project>/<provider>`. Only with
-  `--create-secret` is a missing one created, from the provider's standard
-  variable, which is read in your process and written to neither disk nor logs.
+  conventional name, which detection writes as `agents/<project>/<provider>`. A
+  gateway's secret name is relative to the `rayito/` prefix the gateway reads it
+  with, so in Secrets Manager it is `rayito/agents/<project>/<provider>`. Only
+  with `--create-secret` is a missing one created, under that same name, from
+  the standard variable of the gateway's **preset**: `AWS_BEARER_TOKEN_BEDROCK`
+  for `[gateways.model] preset = "bedrock"`, even though the gateway is called
+  `model` (with `preset = "custom"`, the one of the gateway name). The variable
+  is read in your process and written to neither disk nor logs.
 - The **access token** is `RAYITO_ACCESS_TOKEN`'s, `--token-file`'s or a new one
   saved to `.rayito/agent-token` (mode `0600`). The file never goes into the
   image: `.rayito/` is excluded at any depth, and so is a `--token-file` inside
@@ -256,6 +262,18 @@ runtime or memory); otherwise it is reused.
     one. And `max_concurrency` in `[serve]` is capped by memory (7 with 2048
     MiB, 15 with 4096, 31 with 8192): a higher value fails when the project
     loads.
+
+!!! warning "Coming from 0.16"
+    0.16 detection wrote the secret as `rayito/agents/<project>/<provider>`,
+    and since the gateway reads it under `rayito/`, `--create-secret` created it
+    as `rayito/rayito/agents/...`. Since 0.17 detection writes
+    `agents/<project>/<provider>` and the secret lives at
+    `rayito/agents/<project>/<provider>`. If that name does not exist but the
+    0.16 one does, `rayito agent deploy` reuses the 0.16 one and creates no
+    other. To connect from another process with `AgentFleet.connect(project=...)`
+    without a project file, rename the secret or pin its name in
+    `rayito-agent.toml` (`secret = "rayito/agents/<project>/<provider>"`). A
+    `rayito-agent.toml` that already wrote that name stays as it was.
 
 ### A framework that is not on the list { #un-framework-que-no-esta-en-la-lista }
 
@@ -342,9 +360,9 @@ these three shapes, those of [`CustomRuntime`](#otros-frameworks-customruntime):
 
 ## Before you start { #antes-de-empezar }
 
-1. [Configure AWS](../primeros-pasos/configurar-aws.md) done (`rayito setup`)
-   and `rayito-base-caps` published: it is the base of the agent image, the only
-   one that enforces closed egress.
+1. [Configure AWS](../primeros-pasos/configurar-aws.md) done (`rayito setup`,
+   which since 0.17 also publishes `rayito-base-caps`): it is the base of the
+   agent image, the only one that enforces closed egress.
 2. The model key in Secrets Manager, and `RayitoSecretsReader` for whoever
    calls the SDK ([Agent in the sandbox](agente-en-el-sandbox.md#1-el-secreto-y-la-pasarela)).
 3. Access to the model at your provider
@@ -365,7 +383,7 @@ your requirements) and deploying it (≈ 20 seconds until the service answers).
 | What | How | How long |
 |---|---|---|
 | An S3 bucket for the build artifact | `rayito setup` reuses or creates one and prints `RAYITO_BUCKET=<bucket>`; if you prefer your own, `export RAYITO_BUCKET=amzn-s3-demo-bucket` ([Configure AWS](../primeros-pasos/configurar-aws.md#2-prepara-la-cuenta-con-rayito-setup)) | included in `rayito setup` |
-| The `rayito-base-caps` base image | publish it from the release `rayito-image.zip` ([Configure AWS](../primeros-pasos/configurar-aws.md#a-mano-sin-rayito-setup)) | ≈ 4 min |
+| The `rayito-base-caps` base image | `rayito setup` publishes it since 0.17 (unless `--no-caps-image`); by hand, from the release `rayito-image.zip` ([Configure AWS](../primeros-pasos/configurar-aws.md#a-mano-sin-rayito-setup)) | included in `rayito setup`; by hand, ≈ 4 min |
 | The version of the AWS managed base | no need to look it up by hand: with `--base-image-version latest`, `rayito image publish` uses the newest one AWS lists and prints it; an explicit number pins a reproducible build | — |
 
 ```bash

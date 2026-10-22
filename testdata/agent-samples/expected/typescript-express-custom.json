@@ -35,7 +35,7 @@
       "preset": "custom",
       "upstream": "https://bedrock-runtime.us-east-1.amazonaws.com",
       "headers": {
-        "authorization": "rayito/agents/express-custom/bedrock"
+        "authorization": "agents/express-custom/bedrock"
       },
       "allow": [
         [

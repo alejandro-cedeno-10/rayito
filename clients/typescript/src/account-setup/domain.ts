@@ -1,5 +1,5 @@
 /**
- * `rayito setup` (dominio puro, ADR-030): el plan de tres pasos que prepara
+ * `rayito setup` (dominio puro, ADR-030): el plan de cuatro pasos que prepara
  * una cuenta y una región, las reglas que lo deciden, la lectura de
  * `SHA256SUMS` y el error cerrado `AccountSetupError`. Espejo de
  * `rayito._account_setup._domain`; `testdata/account-setup/` fija los mismos
@@ -14,7 +14,11 @@ import {
   LAUNCHABLE_IMAGE_STATES,
   SUCCESSFUL_VERSION_STATE,
 } from "../images/gateway.js";
-import { BUILD_ROLE_OUTPUT_KEY, DEFAULT_STACK_NAME } from "../images/publish-domain.js";
+import {
+  ALL_OS_CAPABILITIES,
+  BUILD_ROLE_OUTPUT_KEY,
+  DEFAULT_STACK_NAME,
+} from "../images/publish-domain.js";
 import { SUPPORTED_REGIONS } from "../limits.js";
 import {
   classifyStack,
@@ -61,6 +65,14 @@ export const EXPLICIT_BUCKET_SOURCES: ReadonlySet<BucketSource> = new Set([
 ]);
 export const BASE_IMAGE_NAME = DEFAULT_BASE_IMAGE_NAME;
 export const BASE_IMAGE_VARIANT = "full";
+/** La base que el agente en MicroVM usa por defecto (igual a
+ * `DEFAULT_AGENT_TEMPLATE_BASE`, que un test compara): la misma imagen `full`
+ * publicada con `additionalOsCapabilities` (`AWS_API_NOTES.md` §4, el camino
+ * de `rayito image publish --os-capabilities ALL`). */
+export const CAPS_IMAGE_NAME = "rayito-base-caps";
+/** El único valor de `additionalOsCapabilities` (§4), el de `rayito image
+ * publish --os-capabilities ALL`. */
+export const CAPS_IMAGE_OS_CAPABILITIES = ALL_OS_CAPABILITIES;
 /** Variable con el bucket de artefactos, la misma de `rayito image publish`. */
 export const BUCKET_ENV_VAR = "RAYITO_BUCKET";
 /** Calificador por defecto del bootstrap de CDK (docs.aws.amazon.com/cdk/v2/guide/bootstrapping-env.html, consultado 2026-10-16). */
@@ -75,8 +87,22 @@ export const RELEASE_DOWNLOAD_TIMEOUT_MS = 600_000;
 /** Una línea de `sha256sum`: 64 hexadecimales en minúsculas, un espacio y el modo (espacio o `*`). */
 const CHECKSUM_LINE_PATTERN = /^([0-9a-f]{64}) [ *](\S.*)$/;
 
-export type ResourceKind = "bucket" | "iamStack" | "baseImage";
-export type SetupAction = "create" | "update" | "reuse" | "wait" | "publish";
+export type ResourceKind = "bucket" | "iamStack" | "baseImage" | "capsImage";
+export type SetupAction = "create" | "update" | "reuse" | "wait" | "publish" | "skip";
+/** Los cuatro pasos del plan, siempre en este orden. */
+export const RESOURCE_ORDER: readonly ResourceKind[] = [
+  "bucket",
+  "iamStack",
+  "baseImage",
+  "capsImage",
+];
+/** Las acciones que admite cada recurso (diseño D2). */
+export const ALLOWED_ACTIONS: Readonly<Record<ResourceKind, readonly SetupAction[]>> = {
+  bucket: ["create", "reuse", "wait"],
+  iamStack: ["create", "update", "reuse", "wait"],
+  baseImage: ["publish", "reuse", "wait"],
+  capsImage: ["publish", "reuse", "wait", "skip"],
+};
 export type BucketSource =
   | "argument"
   | "environment"
@@ -196,6 +222,8 @@ export const COST_TEXTS = {
   iamStack: "pila de IAM: gratis",
   image: "imagen: ≈ $0,04 por semana por versión publicada (mínimo una semana)",
   artifact: "zip de la imagen en el bucket: céntimos",
+  capsImage:
+    "imagen con capacidades: ≈ $0,04 por semana por versión publicada ($0,08 por GB-mes, mínimo una semana); --no-caps-image la omite",
 } as const;
 
 export const ACCOUNT_SETUP_HINT =
@@ -236,6 +264,32 @@ export interface SetupRequest {
   readonly environmentBucket: string | undefined;
   readonly artifact: string | undefined;
   readonly sdkVersion: string;
+  /**
+   * El paso `capsImage`: publicar `rayito-base-caps`, la base del agente en
+   * MicroVM, desde el mismo zip que `rayito-base`. Por defecto `true`; con
+   * `false` (`--no-caps-image`) el paso es `skip` y no hace ninguna llamada.
+   *
+   * Coste y activación
+   *
+   * Activa: `rayito setup` (y `--dry-run`, que sólo lee); `capsImage: false`
+   * quita el paso.
+   *
+   * Recursos y llamadas AWS: `GetMicrovmImage` y `ListMicrovmImageVersions` de
+   * `rayito-base-caps` en el plan y, si falta, `CreateMicrovmImage` o
+   * `UpdateMicrovmImage` con `additionalOsCapabilities: ["ALL"]` desde el zip
+   * ya subido (§4).
+   *
+   * Coste aproximado: otra versión de imagen publicada, ≈ $0,04 por semana
+   * ($0,08 por GB-mes de snapshot, mínimo una semana; us-east-1, consultado
+   * 2026-10-22, https://aws.amazon.com/lambda/pricing/).
+   *
+   * IAM: las mismas de publicar `rayito-base` (`infra/iam.yaml`).
+   *
+   * Cómo apagarla: `capsImage: false` / `rayito setup --no-caps-image`.
+   *
+   * Ejemplo: `{ region: "us-east-1", ..., capsImage: false }`.
+   */
+  readonly capsImage?: boolean | undefined;
 }
 
 export interface BucketCandidate {
@@ -278,11 +332,13 @@ export interface SetupStep {
 export interface SetupPlan {
   readonly region: string;
   readonly account: string;
-  /** Siempre tres pasos, en el orden `bucket`, `iamStack`, `baseImage`. */
+  /** Siempre cuatro pasos, en el orden `bucket`, `iamStack`, `baseImage`, `capsImage`. */
   readonly steps: readonly SetupStep[];
   readonly cost: readonly string[];
   readonly artifact: string | undefined;
   readonly imageArn: string;
+  /** El ARN de `rayito-base-caps`; `undefined` con `capsImage: false`. */
+  readonly capsImageArn: string | undefined;
   readonly ready: boolean;
   readonly needsConfirmation: boolean;
 }
@@ -293,6 +349,9 @@ export interface SetupResult {
   readonly imageVersion: string;
   /** `undefined` si no hubo publicación. */
   readonly artifactUploaded: boolean | undefined;
+  /** Los de `rayito-base-caps`; `undefined` con `--no-caps-image`. */
+  readonly capsImageArn: string | undefined;
+  readonly capsImageVersion: string | undefined;
 }
 
 export interface DownloadedRelease {
@@ -355,6 +414,8 @@ export function resultJson(result: SetupResult): Record<string, unknown> {
     imageArn: result.imageArn,
     imageVersion: result.imageVersion,
     artifactUploaded: result.artifactUploaded ?? null,
+    capsImageArn: result.capsImageArn ?? null,
+    capsImageVersion: result.capsImageVersion ?? null,
   };
 }
 
@@ -615,9 +676,17 @@ export function classifyImage(image: ImageObservation): ImageCondition {
   return launchableVersions(image).length > 0 ? "launchable" : "unlaunchable";
 }
 
-/** Esperar un build en curso, reutilizar una versión lanzable o publicar. */
-export function planImage(image: ImageObservation, request: SetupRequest): SetupStep {
-  const base = { resource: "baseImage", name: BASE_IMAGE_NAME } as const;
+/** Esperar un build en curso, reutilizar una versión lanzable o publicar; vale
+ * para `rayito-base` y para `rayito-base-caps` (`target`). */
+export function planImage(
+  image: ImageObservation,
+  request: SetupRequest,
+  target: { readonly resource: ResourceKind; readonly name: string } = {
+    resource: "baseImage",
+    name: BASE_IMAGE_NAME,
+  },
+): SetupStep {
+  const base = { resource: target.resource, name: target.name };
   const condition = classifyImage(image);
   if (condition === "building") {
     return newStep(
@@ -640,7 +709,20 @@ export function planImage(image: ImageObservation, request: SetupRequest): Setup
   );
 }
 
-/** Las líneas de coste de las acciones que cuestan, en orden: bucket, pila, imagen y zip. */
+/** El paso `capsImage`: `skip` sin `capsImage` (y entonces no se observó nada);
+ * si no, la misma decisión que la imagen base. */
+export function planCapsImage(
+  caps: ImageObservation | undefined,
+  request: SetupRequest,
+): SetupStep {
+  if (request.capsImage === false || caps === undefined) {
+    return newStep({ resource: "capsImage", name: CAPS_IMAGE_NAME, action: "skip" });
+  }
+  return planImage(caps, request, { resource: "capsImage", name: CAPS_IMAGE_NAME });
+}
+
+/** Las líneas de coste de las acciones que cuestan, en orden: bucket, pila,
+ * imagen y zip, e imagen con capacidades (y el zip si sólo se publica ésa). */
 export function costLines(steps: readonly SetupStep[]): readonly string[] {
   const lines: string[] = [];
   if (steps.find((step) => step.resource === "bucket")?.action === "create") {
@@ -650,14 +732,22 @@ export function costLines(steps: readonly SetupStep[]): readonly string[] {
   if (stack?.action === "create" || stack?.action === "update") {
     lines.push(COST_TEXTS.iamStack);
   }
-  const image = steps.find((step) => step.resource === "baseImage");
-  if (image?.action === "publish") {
+  const basePublishes = steps.find((step) => step.resource === "baseImage")?.action === "publish";
+  if (basePublishes) {
     lines.push(COST_TEXTS.image, COST_TEXTS.artifact);
+  }
+  if (steps.find((step) => step.resource === "capsImage")?.action === "publish") {
+    lines.push(COST_TEXTS.capsImage);
+    if (!basePublishes) {
+      lines.push(COST_TEXTS.artifact);
+    }
   }
   return lines;
 }
 
 const WRITE_ACTIONS: ReadonlySet<SetupAction> = new Set(["create", "update", "publish"]);
+/** Las acciones de una cuenta ya preparada: nada que hacer. */
+const READY_ACTIONS: ReadonlySet<SetupAction> = new Set(["reuse", "skip"]);
 
 export function planSetup(input: {
   readonly request: SetupRequest;
@@ -666,9 +756,16 @@ export function planSetup(input: {
   /** El paso `bucket` ya decidido (`reuse`, `wait` o `create`). */
   readonly bucketStep: SetupStep;
   readonly image: ImageObservation;
+  /** `rayito-base-caps`, o `undefined` con `capsImage: false`. */
+  readonly caps?: ImageObservation | undefined;
 }): SetupPlan {
-  const { request, stack, bucketStep, image } = input;
-  const steps = [bucketStep, planStack(stack, bucketStep.name), planImage(image, request)];
+  const { request, stack, bucketStep, image, caps } = input;
+  const steps = [
+    bucketStep,
+    planStack(stack, bucketStep.name),
+    planImage(image, request),
+    planCapsImage(caps, request),
+  ];
   return {
     region: request.region,
     account: input.account,
@@ -676,7 +773,8 @@ export function planSetup(input: {
     cost: costLines(steps),
     artifact: request.artifact,
     imageArn: image.imageArn,
-    ready: steps.every((step) => step.action === "reuse"),
+    capsImageArn: request.capsImage === false ? undefined : caps?.imageArn,
+    ready: steps.every((step) => READY_ACTIONS.has(step.action)),
     needsConfirmation: steps.some((step) => WRITE_ACTIONS.has(step.action)),
   };
 }

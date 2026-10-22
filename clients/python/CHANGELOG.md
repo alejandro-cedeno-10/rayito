@@ -6,6 +6,20 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
 
 ## [Unreleased]
 
+### Añadido
+
+- **`rayito setup` publica también `rayito-base-caps`**, la base que usa
+  `rayito agent deploy` en MicroVM y que antes había que publicar a mano. Es un
+  cuarto paso del plan (`capsImage`) que sale del mismo `rayito-image.zip` (una
+  sola descarga) con `additionalOsCapabilities=["ALL"]`; el plan y `--dry-run`
+  muestran el paso y su coste (otra versión de imagen, ≈ $0,04 por semana,
+  $0,08 por GB-mes). `rayito setup --no-caps-image` (`SetupRequest.caps_image` a falso) lo
+  omite: el paso sale como `skip` y no se lee ni se publica esa imagen. El
+  documento de `--json` gana `capsImageArn` y `capsImageVersion` en `result`.
+- `AgentProject.gateway_presets`: pasarela -> preset, tal como lo declara
+  `[gateways.<nombre>] preset`. Lo rellenan la lectura del fichero y la
+  detección; no entra en el documento canónico del proyecto.
+
 ### Corregido
 
 - **El host del agente ya no escribe URLs con credenciales en sus logs**:
@@ -16,6 +30,17 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
 - **El log de peticiones del host del agente ya no lanza `AttributeError`**
   tras responder `400` a una línea de petición mal formada; las invocaciones
   siguientes nunca se vieron afectadas.
+- **`--create-secret` busca la clave por el preset de la pasarela**: una
+  pasarela `[gateways.model] preset = "bedrock"` lee `AWS_BEARER_TOKEN_BEDROCK`
+  en vez de buscar una variable por el nombre `model`. Con `preset = "custom"`
+  sigue mirando el nombre de la pasarela, como en 0.16.
+- **`--create-secret` ya no duplica el prefijo `rayito/`**: la detección
+  escribía el secreto de la pasarela como `rayito/agents/<proyecto>/<proveedor>`
+  y, como la pasarela lo lee bajo `rayito/`, el secreto acababa en
+  `rayito/rayito/agents/...`. Ahora escribe `agents/<proyecto>/<proveedor>` y el
+  secreto queda en `rayito/agents/<proyecto>/<proveedor>`, el nombre que lee la
+  pasarela. Si sólo existe el secreto de 0.16, el despliegue lo reutiliza y no
+  crea otro; un `rayito-agent.toml` con un nombre propio no cambia.
 
 ## [0.16.0] - 2026-10-22
 
