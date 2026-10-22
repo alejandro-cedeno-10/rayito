@@ -510,6 +510,7 @@ class AgentProject:
     graph: str | None = None
     secret_env: Mapping[str, SecretEnvValue] = field(default_factory=dict)
     secret_env_from: Sequence[SecretEnvSource] = ()
+    gateway_presets: Mapping[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         validate_name(self.name, "AgentProject.name")
@@ -545,6 +546,9 @@ class AgentProject:
         self._validate_fleet_options()
         _validate_graph(self.graph, self.runtime)
         self._validate_secret_env()
+        object.__setattr__(
+            self, "gateway_presets", MappingProxyType(dict(self.gateway_presets))
+        )
 
     def _validate_fleet_options(self) -> None:
         if not isinstance(self.scaling, ScalingOptions):
@@ -1098,7 +1102,9 @@ def _project_kwargs(
     root.finish()
     _check_gateways(kwargs["spec"], gateways)
     _check_concurrency(kwargs)
-    _check_model(kwargs, _gateway_presets(data))
+    presets = _gateway_presets(data)
+    _check_model(kwargs, presets)
+    kwargs["gateway_presets"] = presets
     return kwargs
 
 

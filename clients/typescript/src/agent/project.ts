@@ -462,6 +462,7 @@ export interface AgentProjectOptions {
   readonly graph?: string | undefined;
   readonly secretEnv?: Readonly<Record<string, string | SecretEnvRef>> | undefined;
   readonly secretEnvFrom?: readonly SecretEnvSource[] | undefined;
+  readonly gatewayPresets?: Readonly<Record<string, string>> | undefined;
 }
 
 /** El lector de ficheros de texto que `fromObject` usa para
@@ -544,6 +545,9 @@ export class AgentProject {
   readonly graph: string | undefined;
   readonly secretEnv: SecretEnvMap;
   readonly secretEnvFrom: readonly SecretEnvSource[];
+  /** `[gateways.<nombre>] preset` de cada pasarela leída de un fichero o de
+   * la detección; no se escribe en `toObject()`. */
+  readonly gatewayPresets: Readonly<Record<string, string>>;
 
   constructor(options: AgentProjectOptions) {
     validateName(options.name, "AgentProject.name");
@@ -632,6 +636,7 @@ export class AgentProject {
     this.graph = options.graph;
     this.secretEnv = Object.freeze({ ...validatedSecretEnv(options.secretEnv ?? {}, this.env) });
     this.secretEnvFrom = Object.freeze(validatedSecretEnvFrom(options.secretEnvFrom ?? []));
+    this.gatewayPresets = Object.freeze({ ...(options.gatewayPresets ?? {}) });
     if (secretIds(this.secretEnv, this.secretEnvFrom).length > AGENT_SECRET_ENV_MAX_SECRETS) {
       throw fail(
         SECRET_ENV_KEY,
@@ -1117,13 +1122,10 @@ function projectOptions(
   root.finish();
   checkGateways(spec, gateways);
   checkConcurrency(serve, image);
-  checkModel(
-    spec.model,
-    runtime,
-    gatewayPresets(data),
-    env.env as Readonly<Record<string, string>>,
-  );
+  const presets = gatewayPresets(data);
+  checkModel(spec.model, runtime, presets, env.env as Readonly<Record<string, string>>);
   return {
+    gatewayPresets: presets,
     name,
     runtime,
     ...runtimeExtras,
