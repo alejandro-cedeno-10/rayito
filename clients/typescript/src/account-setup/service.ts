@@ -313,7 +313,6 @@ class Publishing {
   }
 }
 
-/** El rol de build de la pila; sin la salida no es la plantilla de Rayito. */
 /** Si la publicación subió el artefacto, para la base o para la imagen con
  * capacidades (en una cuenta de 0.16 sólo se publica la segunda);
  * `undefined` si ninguna de las dos publicó. */
@@ -327,6 +326,7 @@ function uploadedByEither(
   return base === true || caps === true;
 }
 
+/** El rol de build de la pila; sin la salida no es la plantilla de Rayito. */
 function requireBuildRole(stack: StackObservation): string {
   return stackOutput(stack, BUILD_ROLE_OUTPUT_KEY, IAM_TEMPLATE_PATH);
 }

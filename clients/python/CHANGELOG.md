@@ -99,8 +99,8 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   `escalado desconocido: sin proyecto ni receta`.
 - `AgentFleet.connect(nombre)` sin `project` ya no falla si Parameter Store no responde (sin
   endpoint de VPC para SSM, limitación de tasa, un error de KMS): es el aviso
-  `recipe_unreadable` y la flota de 0.16, y `rayito agent stop <nombre>` la
-  termina igual.
+  `recipe_unreadable` y la flota de 0.16, y `rayito agent stop <nombre>`
+  termina sus VMs.
 - Con `renew_gateway_keys` heredado de la receta, `AgentFleet.connect(nombre)` ya no necesita el extra `bedrock-keys` para
   listar, consultar o terminar la flota: el renovador se carga en la primera
   renovación. Si al proceso que conecta le falta el extra o el permiso de

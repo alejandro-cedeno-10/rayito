@@ -213,7 +213,7 @@ def load_recipe(store: FleetRecipeStore, name: str) -> tuple[FleetRecipe, AgentP
     hay permiso (`recipe_access_denied`) o no se puede leer
     (`recipe_unreadable`, también cuando Parameter Store no responde:
     sin endpoint, limitación de tasa o un error de KMS). La receta es
-    opcional: nunca impide conectar, listar ni terminar la flota de 0.16."""
+    opcional: leerla nunca impide conectar ni listar la flota de 0.16."""
     parameter = recipe_parameter_name(name)
     if parameter is None:
         return None

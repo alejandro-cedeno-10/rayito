@@ -187,7 +187,8 @@ escalado real. Un `scaling=` o `project=` explícitos ganan a la receta, y
   permiso es `recipe_access_denied`, y una receta ilegible o un Parameter
   Store que no responde (sin endpoint de VPC para SSM, limitación de tasa) es
   `recipe_unreadable`; en todos los casos la flota sigue como en 0.16, y
-  `rayito agent stop <nombre>` la termina igual. Tras
+  `rayito agent stop <nombre>` termina sus VMs (si tampoco puede borrar la
+  receta, lo dice al final con un error). Tras
   `stop`, Parameter Store tarda unos 30 s en dejar crear otro parámetro con el
   mismo nombre: un `deploy` inmediato avisa `recipe_not_saved`.
 - **Tamaño.** Una receta va en JSON si cabe en 4 096 bytes (un parámetro

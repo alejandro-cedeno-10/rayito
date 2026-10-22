@@ -187,7 +187,8 @@ An explicit `scaling=` or `project=` wins over the recipe, and
   no permission is `recipe_access_denied`, and an unreadable recipe or a
   Parameter Store that does not answer (no SSM VPC endpoint, throttling) is
   `recipe_unreadable`; in every case the fleet behaves as in 0.16, and
-  `rayito agent stop <name>` still stops it. After
+  `rayito agent stop <name>` still terminates its VMs (if it cannot delete
+  the recipe either, it reports that error at the end). After
   `stop`, Parameter Store takes about 30 s before it lets another parameter use
   the same name: an immediate `deploy` warns `recipe_not_saved`.
 - **Size.** A recipe is stored as JSON if it fits in 4,096 bytes (a standard

@@ -100,8 +100,8 @@ versionado [SemVer](https://semver.org/lang/es/).
   `escalado desconocido: sin proyecto ni receta`.
 - `AgentFleet.connect(nombre)` sin `project` ya no falla si Parameter Store no responde (sin
   endpoint de VPC para SSM, limitación de tasa, un error de KMS): es el aviso
-  `recipe_unreadable` y la flota de 0.16, y `rayito agent stop <nombre>` la
-  termina igual.
+  `recipe_unreadable` y la flota de 0.16, y `rayito agent stop <nombre>`
+  termina sus VMs.
 - Con `renewGatewayKeys` heredado de la receta, `AgentFleet.connect(nombre)` ya no necesita el peer `@aws/bedrock-token-generator` para
   listar, consultar o terminar la flota: el renovador se carga en la primera
   renovación. Si al proceso que conecta le falta el peer o el permiso de
