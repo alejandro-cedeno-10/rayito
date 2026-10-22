@@ -508,12 +508,13 @@ rayito agent deploy [PATH] [--file PATH] [--timeout S] [--port N] [--token-file 
                     [--base-artifact ZIP] [--yes] [--dry-run]
                     [--target microvm|agentcore] [--tag K=V]... [--bedrock-model ID]...
                     [--readable-secret NOMBRE]... [--idle-session-timeout S] [--max-session-lifetime S]
-                    [--external-model]
+                    [--external-model] [--scale-in-after S] [--no-save-recipe]
+                    [--renew-gateway-keys]
 rayito agent export --target docker|agentcore --out DIR [--file PATH] [--overwrite]
 rayito agent invoke SANDBOX_ID [PROMPT] [--session-id ID] [--input JSON | --input-file F]
                     [--stream] [--token-file F] [--target microvm|agentcore]
 rayito agent status SANDBOX_ID [--token-file F] [--target microvm|agentcore]
-rayito agent stop SANDBOX_ID [--target microvm|agentcore] [--session-id ID]
+rayito agent stop SANDBOX_ID [--target microvm|agentcore] [--session-id ID] [--keep-recipe]
 rayito agent list --target agentcore
 rayito agent delete NOMBRE --target agentcore [--yes]
 rayito agent template build --bucket B [--name rayito-agent] [--base rayito-base-caps] [--memory-mb 2048]
@@ -562,6 +563,25 @@ sus VMs); el `session_id` que devuelve `invoke` en una flota con varios VMs
 identifica el VM, y pasarlo con `--session-id` sigue la conversación. Los
 mensajes y las ayudas van en español. Ver
 [Despliega tu agente](guias/despliega-tu-agente.md#sin-escribir-nada).
+
+Desde 0.17.0, `deploy` guarda la
+[receta de la flota](guias/flota-de-agentes.md#la-receta-de-la-flota) en
+Parameter Store tras arrancarla (`--no-save-recipe` no la guarda): con ella,
+`invoke`, `status` y `stop` con el nombre de la flota la reconstruyen como se
+desplegó, y `status` imprime el escalado real o, sin proyecto ni receta,
+`members: N (escalado desconocido: sin proyecto ni receta)` (con `--json`, la
+clave `scalingSource`). `stop <nombre>` borra la receta (`--keep-recipe` la
+conserva). Un aviso de la receta (`recipe_access_denied`, `recipe_not_saved`,
+`recipe_too_large`) va a stderr y, con `--json`, en `warnings`; nunca hace
+fallar el despliegue. `--scale-in-after S` fija los segundos sin uso tras los
+que se termina un VM por encima de `--min-vms` (por defecto 900, mínimo 60).
+`--renew-gateway-keys` renueva la clave de corta duración de Bedrock de las
+pasarelas `bedrock` antes de crear cada VM
+([Pasarela de secretos](funciones-opcionales/pasarela-de-secretos.md#renovar-la-clave-de-bedrock)).
+Con `--target agentcore`, esas tres banderas salen con 2
+(`option_not_supported`). `--env` rechaza, antes de llamar a nadie, un nombre
+que parece un secreto (`*_TOKEN`, `*_KEY`, `*_SECRET`, `*_PASSWORD`...): usa
+`--secret-env` o `--secret-env-from`.
 
 Con varios grafos en `langgraph.json`, `detect` y `deploy` aceptan
 `--graph NOMBRE` (excluyente con `--entry`). `invoke` acepta, en lugar de

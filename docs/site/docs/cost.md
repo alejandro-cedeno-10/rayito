@@ -329,6 +329,8 @@ suspende. Los números son aritmética sobre el precio de lista (**List**, VM de
 | Un despliegue activo las 8 h del máximo | 8 × $0,126 + $0,0014 ≈ **$1,01** |
 | Un despliegue con `idle`: 1 h activo y 7 h suspendido | $0,126 + 7 h × $0,0001 + un ciclo suspend/resume ($0,0049) + $0,0014 ≈ **$0,133** |
 | Una versión de imagen de `AgentProject` | la de `rayito-agent` es ≈ **$0,056/semana**; con Hermes o Node el snapshot pesa más (mídelo con `rayito image sizes`) |
+| La [receta de la flota](guias/flota-de-agentes.md#la-receta-de-la-flota) (desde 0.17, por defecto) | **$0**: el parámetro estándar de Parameter Store no tiene cargo; cada despliegue, reconexión sin proyecto y parada hace una petición de KMS, dentro de las 20 000 gratuitas al mes (después $0,03 por 10 000) |
+| [Renovar la clave de Bedrock](funciones-opcionales/pasarela-de-secretos.md#renovar-la-clave-de-bedrock) (opcional) | $0,05 por 10 000 llamadas a Secrets Manager: un `DescribeSecret` por VM creado fuera de la ventana de 900 s y como mucho un `PutSecretValue` por ventana |
 
 Un despliegue que nadie llama sigue costando mientras no se suspenda:
 déjale `idle` (el valor por defecto), o páralo con `rayito agent stop`.
