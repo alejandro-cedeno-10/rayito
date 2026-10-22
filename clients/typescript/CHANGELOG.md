@@ -6,6 +6,15 @@ versionado [SemVer](https://semver.org/lang/es/).
 
 ## [Unreleased]
 
+### Pruebas
+
+- Los e2e de despliegue agnóstico ya no repiten nombre de secreto entre
+  AgentCore y MicroVM en una misma ejecución (antes chocaban con
+  `ResourceExistsException` mientras el anterior seguía pendiente de borrado):
+  `secretName(scope, kind)` devuelve
+  `rayito-e2e/<run>/<scope>-<kind>-<sufijo aleatorio>`, y cada prueba borra
+  al terminar sólo los secretos que creó.
+
 ## [0.16.0] - 2026-10-22
 
 ### Añadido

@@ -42,6 +42,9 @@ export const NORMAL_TICKET = "T-200";
 export const SECRET_ENV_NAMES = ["DATABASE_URL", "TICKETS_TOKEN", "APP_DB_HOST"] as const;
 const DIGEST_CHARS = 8;
 const SECRET_VALUE_BYTES = 16;
+const SECRET_NAME_ROOT = "rayito-e2e";
+/** 4 bytes (8 caracteres hex) de sufijo: basta para no repetir nombre en una ejecución. */
+const SECRET_SUFFIX_BYTES = 4;
 const MS_PER_SECOND = 1000;
 export const CLI_DEPLOY_BUDGET_MS = 3000 * MS_PER_SECOND;
 export const CLI_READ_BUDGET_MS = 180 * MS_PER_SECOND;
@@ -92,8 +95,20 @@ export function randomValue(): string {
   return randomBytes(SECRET_VALUE_BYTES).toString("hex");
 }
 
-export function secretName(kind: string): string {
-  return `rayito-e2e/${RUN_ID}/${kind}`;
+/** El prefijo de todos los secretos de la ejecución: `rayito-e2e/<RAYITO_E2E_RUN_ID>/`. */
+export function secretPrefix(): string {
+  return `${SECRET_NAME_ROOT}/${RUN_ID}/`;
+}
+
+/**
+ * Un nombre de secreto propio de una prueba: `rayito-e2e/<run>/<scope>-<kind>-<sufijo>`.
+ * `scope` es el destino y la prueba (`agentcore-senv`, `microvm-model`) y el
+ * sufijo aleatorio hace único cada nombre aunque AgentCore y MicroVM usen el
+ * mismo `kind` en la misma ejecución, o un secreto anterior siga pendiente de
+ * borrado (`ResourceExistsException`).
+ */
+export function secretName(scope: string, kind: string): string {
+  return `${secretPrefix()}${scope}-${kind}-${randomBytes(SECRET_SUFFIX_BYTES).toString("hex")}`;
 }
 
 /** Las posiciones de `values` que aparecen en algún texto (nunca el valor). */
@@ -151,6 +166,22 @@ export class RunSecrets {
       );
       this.#created.delete(name);
     }
+  }
+}
+
+/**
+ * Ejecuta `body` con un `RunSecrets` propio y borra al final (también si falla)
+ * sólo los secretos que creó esa prueba.
+ */
+export async function withRunSecrets<T>(
+  tags: Readonly<Record<string, string>>,
+  body: (secrets: RunSecrets) => Promise<T>,
+): Promise<T> {
+  const secrets = new RunSecrets(tags);
+  try {
+    return await body(secrets);
+  } finally {
+    await secrets.deleteAll();
   }
 }
 
