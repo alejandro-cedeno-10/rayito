@@ -1,0 +1,79 @@
+{
+  "schema": "rayito.agent-detection/1",
+  "language": "python",
+  "framework": "langgraph",
+  "kind": "custom",
+  "entrypoint": "src.agent:graph",
+  "entrypoint_kind": "object",
+  "protocol": "langgraph-api",
+  "options": {},
+  "app": {
+    "framework": "langgraph-json",
+    "command": [
+      "langgraph",
+      "dev",
+      "--no-browser",
+      "--no-reload",
+      "--host",
+      "127.0.0.1",
+      "--port",
+      "8000",
+      "--config",
+      "langgraph.json"
+    ],
+    "port": 8000,
+    "port_env": null,
+    "health_path": "/ok",
+    "invoke_path": null,
+    "request_field": null,
+    "response_field": null,
+    "assistant_id": "agent"
+  },
+  "install": {
+    "manager": "uv",
+    "lockfile": "uv.lock",
+    "requirements": null,
+    "require_hashes": false,
+    "reproducible": true,
+    "build_script": false,
+    "python_version": "3.12",
+    "node_version": null
+  },
+  "providers": [
+    {
+      "preset": "openai",
+      "evidence": [
+        {
+          "path": "pyproject.toml",
+          "rule": "dep:langchain-openai"
+        }
+      ]
+    }
+  ],
+  "models": [],
+  "evidence": [
+    {
+      "path": "langgraph.json",
+      "rule": "file:langgraph.json"
+    },
+    {
+      "path": "src/agent.py",
+      "rule": "entry:langgraph-json"
+    },
+    {
+      "path": "uv.lock",
+      "rule": "install:uv"
+    },
+    {
+      "path": "pyproject.toml",
+      "rule": "version:specifier"
+    }
+  ],
+  "warnings": [
+    {
+      "code": "langgraph_dev_server",
+      "detail": "langgraph dev es un servidor de desarrollo en memoria (experimental en Rayito)"
+    }
+  ],
+  "alternatives": []
+}

@@ -16,9 +16,10 @@ from typing import Final
 from rayito._limits import AGENT_DETECTION_SCHEMA
 
 #: Los protocolos que el informe puede nombrar: `framework` lo sirve el driver
-#: del framework; el resto es una app HTTP (`agentcore`, `json`, `raw`).
+#: del framework; el resto es una app HTTP (`agentcore`, `json`, `raw` y,
+#: sólo con `--protocol`, `langgraph-api`).
 PROTOCOL_FRAMEWORK: Final = "framework"
-APP_PROTOCOLS: Final[tuple[str, ...]] = ("agentcore", "json", "raw")
+APP_PROTOCOLS: Final[tuple[str, ...]] = ("agentcore", "json", "raw", "langgraph-api")
 #: Cómo se obtiene el objeto del agente: ya construido o con una fábrica.
 ENTRY_OBJECT: Final = "object"
 ENTRY_FACTORY: Final = "factory"
@@ -27,13 +28,21 @@ ENTRY_FACTORY: Final = "factory"
 @dataclass(frozen=True)
 class DetectOverrides:
     """Lo que el usuario fuerza por encima de la detección (`--framework`,
-    `--language`, `--entry`, `--protocol`). `entrypoint="http"` sirve la app
-    HTTP del proyecto en vez del framework del agente."""
+    `--language`, `--entry`, `--protocol`, `--model-id`, `--model-provider`,
+    `--model-base-url`, `--graph`). `entrypoint="http"` sirve la app HTTP del
+    proyecto en vez del framework del agente. `model_provider` es un preset de
+    pasarela (`openai-compatible`, `litellm`...) y `model_base_url` la URL
+    `https` de la pasarela de LLM, que pasa a ser su `upstream`. `graph`
+    elige un grafo de `langgraph.json` por su nombre."""
 
     framework: str | None = None
     language: str | None = None
     entrypoint: str | None = None
     protocol: str | None = None
+    model_id: str | None = None
+    model_provider: str | None = None
+    model_base_url: str | None = None
+    graph: str | None = None
 
 
 @dataclass(frozen=True)
@@ -74,8 +83,10 @@ class DetectionProvider:
 class DetectionApp:
     """La app HTTP del proyecto: el comando que la arranca, el puerto en el
     que escucha dentro del sandbox (y la variable de entorno con la que se le
-    indica, si la lee de ella), sus rutas de salud e invocación y, con el
-    protocolo `json`, los campos de la petición y la respuesta."""
+    indica, si la lee de ella), sus rutas de salud e invocación, con el
+    protocolo `json` los campos de la petición y la respuesta y, con
+    `langgraph-api`, el grafo que se ejecuta (`assistant_id`, que sólo sale
+    en `to_dict()` si tiene valor)."""
 
     framework: str
     command: tuple[str, ...]
@@ -85,9 +96,10 @@ class DetectionApp:
     invoke_path: str | None
     request_field: str | None
     response_field: str | None
+    assistant_id: str | None = None
 
     def to_dict(self) -> dict[str, object]:
-        return {
+        shape: dict[str, object] = {
             "framework": self.framework,
             "command": list(self.command),
             "port": self.port,
@@ -97,6 +109,9 @@ class DetectionApp:
             "request_field": self.request_field,
             "response_field": self.response_field,
         }
+        if self.assistant_id is not None:
+            shape["assistant_id"] = self.assistant_id
+        return shape
 
 
 @dataclass(frozen=True)
@@ -153,7 +168,9 @@ class DetectionReport:
     TypeScript) y si es un objeto o una fábrica, el `protocol`, las `options`
     propias del runtime, la `app` HTTP, el plan de instalación, los
     proveedores de modelo y los literales de modelo vistos, la evidencia, los
-    avisos y las alternativas."""
+    avisos y las alternativas. `model_envs` (`id_env`, `base_url_env`,
+    `api_key_env`) son los nombres de variable con los que el código elige su
+    modelo cuando no hay literal; sólo nombres, nunca valores."""
 
     language: str | None
     framework: str
@@ -169,13 +186,15 @@ class DetectionReport:
     evidence: tuple[DetectionEvidence, ...] = ()
     warnings: tuple[DetectionWarning, ...] = ()
     alternatives: tuple[DetectionAlternative, ...] = ()
+    model_envs: Mapping[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "options", MappingProxyType(dict(self.options)))
+        object.__setattr__(self, "model_envs", MappingProxyType(dict(self.model_envs)))
 
     def to_dict(self) -> dict[str, object]:
-        """La forma JSON compartida con TypeScript."""
-        return {
+        """La forma JSON compartida con TypeScript; `model_envs` sólo si hay."""
+        document: dict[str, object] = {
             "schema": AGENT_DETECTION_SCHEMA,
             "language": self.language,
             "framework": self.framework,
@@ -192,6 +211,9 @@ class DetectionReport:
             "warnings": [item.to_dict() for item in self.warnings],
             "alternatives": [item.to_dict() for item in self.alternatives],
         }
+        if self.model_envs:
+            document["model_envs"] = dict(self.model_envs)
+        return document
 
     def runtime_table(self) -> dict[str, object]:
         """La tabla `[runtime]` de `rayito-agent.toml` que describe este
@@ -224,6 +246,8 @@ def _app_table(app: DetectionApp, protocol: str) -> dict[str, object]:
         table["request_field"] = app.request_field
     if app.response_field is not None:
         table["response_field"] = app.response_field
+    if app.assistant_id is not None:
+        table["assistant_id"] = app.assistant_id
     return table
 
 

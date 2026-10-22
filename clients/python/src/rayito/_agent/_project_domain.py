@@ -19,6 +19,7 @@ un `code` de la lista cerrada `AGENT_PROJECT_ERROR_CODES`.
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import posixpath
 import re
@@ -31,7 +32,9 @@ from rayito._agent._deploy_domain import (
     validate_bucket_hint,
     validate_image_version,
 )
+from rayito._agent._detection_rules import DETECTION_RULES
 from rayito._agent._domain import (
+    MODEL_ENV_KEYS,
     AgentLimits,
     AgentModel,
     AgentPermissions,
@@ -58,13 +61,26 @@ from rayito._agent._gateways import (
 )
 from rayito._agent._runtime import AgentRuntime
 from rayito._agent._runtimes import (
+    DEFAULT_AGENT_RUNTIMES,
+    MODEL_BUILDING_RUNTIMES,
     RUNTIME_KINDS,
     RUNTIME_OPTION_KEYS,
+    require_runtime_model_id,
     resolve_runtime,
     runtime_from_options,
     runtime_to_options,
 )
 from rayito._agent._scaling_domain import ScalingOptions, max_sessions_for_memory
+from rayito._agent._secret_env_domain import (
+    SECRET_ENV_KEY_PATTERN,
+    SECRET_ID_PATTERN,
+    SecretEnvRef,
+    SecretEnvSource,
+    SecretEnvValue,
+    has_reserved_prefix,
+    is_reserved_name,
+    secret_ids,
+)
 from rayito._agent._template import DEFAULT_AGENT_TEMPLATE_BASE
 from rayito._images import DEFAULT_BUILD_TIMEOUT_SECONDS
 from rayito._lifecycle_base import DEFAULT_IDLE_POLICY
@@ -73,6 +89,7 @@ from rayito._limits import (
     AGENT_NODE_BUILD_VERSIONS,
     AGENT_PROJECT_SCHEMA,
     AGENT_PYTHON_BUILD_VERSIONS,
+    AGENT_SECRET_ENV_MAX_SECRETS,
     AGENT_SERVICE_MAX_CONCURRENCY,
     AGENT_SERVICE_PORT,
     AGENT_SERVICE_QUEUE_MAX,
@@ -145,8 +162,19 @@ SECRET_VALUE_PREFIXES: Final[tuple[str, ...]] = (
 #: Pasarelas de `[gateways.<nombre>] preset = ...`, además de `"custom"`.
 CUSTOM_GATEWAY_PRESET: Final = "custom"
 _RATE_KEY: Final = "rate_per_minute"
+_MODELS_KEY: Final = "models"
 _ENV_NAME_PATTERN: Final = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 _T = TypeVar("_T")
+
+
+#: `[runtime] graph`: el nombre de un grafo de `langgraph.json`, sólo con
+#: `kind = "langgraph"` (`testdata/agent-project/schema.json`). Se resuelve
+#: al `entrypoint` de ese grafo antes de construir el runtime.
+GRAPH_KEY: Final = "graph"
+GRAPH_RUNTIME_KIND: Final = "langgraph"
+GRAPH_NAME_PATTERN: Final = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
+ENTRYPOINT_KEY: Final = "entrypoint"
+LANGGRAPH_FILE: Final[str] = DETECTION_RULES["entryFiles"]["langgraph"]["file"]
 
 
 class AgentProjectException(InvalidArgumentException):
@@ -318,6 +346,96 @@ def _validated_network(network: object) -> NetworkPolicy | None:
     return network
 
 
+SECRET_ENV_KEY: Final = "secret_env"
+SECRET_ENV_FROM_KEY: Final = "secret_env_from"
+
+
+def secret_env_path(name: str) -> str:
+    """La ruta de error de una variable de `secret_env` (la tabla, si el
+    nombre está vacío)."""
+    return f"{SECRET_ENV_KEY}.{name}" if name else SECRET_ENV_KEY
+
+
+def secret_env_from_path(index: int) -> str:
+    return f"{SECRET_ENV_FROM_KEY}[{index}]"
+
+
+def check_secret_env_name(name: object, path: str) -> str:
+    """Un nombre de variable válido y no reservado, o `invalid_value`."""
+    if not isinstance(name, str) or not _ENV_NAME_PATTERN.fullmatch(name):
+        raise _error(path, "invalid_value", "debe ser un nombre de variable de entorno")
+    if is_reserved_name(name):
+        raise _error(path, "invalid_value", "es un nombre reservado del runtime")
+    return name
+
+
+def check_secret_id(value: object, path: str) -> str:
+    """El nombre completo o el ARN de un secreto: `secret_value` si parece el
+    valor pegado en su lugar, `invalid_value` si no es un nombre."""
+    if not isinstance(value, str):
+        raise _error(path, "invalid_type", "debe ser el nombre o el ARN de un secreto")
+    if value.startswith(SECRET_VALUE_PREFIXES):
+        raise _error(
+            path, "secret_value", "parece un valor y no el nombre de un secreto; escribe el nombre"
+        )
+    if not SECRET_ID_PATTERN.fullmatch(value):
+        raise _error(path, "invalid_value", "debe ser el nombre o el ARN de un secreto")
+    return value
+
+
+def check_secret_env_ref(value: object, path: str) -> SecretEnvValue:
+    """Un valor de `secret_env`: el nombre de un secreto o un `SecretEnvRef`."""
+    if isinstance(value, str):
+        return check_secret_id(value, path)
+    if not isinstance(value, SecretEnvRef):
+        raise _error(path, "invalid_type", "debe ser el nombre de un secreto o un SecretEnvRef")
+    check_secret_id(value.secret, path)
+    for text in (value.key, value.version_stage):
+        if text is not None and not SECRET_ENV_KEY_PATTERN.fullmatch(text):
+            raise _error(path, "invalid_value", "debe ser ASCII imprimible sin espacios")
+    return value
+
+
+def check_secret_env_source(source: object, path: str) -> SecretEnvSource:
+    """Una entrada de `secret_env_from`: secreto válido, prefijo vacío o de
+    nombre de variable y no reservado, y claves que con el prefijo son
+    nombres válidos y no reservados."""
+    if not isinstance(source, SecretEnvSource):
+        raise _error(path, "invalid_type", "debe ser un SecretEnvSource")
+    check_secret_id(source.secret, f"{path}.secret")
+    prefix_path = f"{path}.prefix"
+    if source.prefix and not _ENV_NAME_PATTERN.fullmatch(source.prefix):
+        raise _error(prefix_path, "invalid_value", "debe ser un prefijo de nombre de variable")
+    if has_reserved_prefix(source.prefix):
+        raise _error(prefix_path, "invalid_value", "es un prefijo reservado del runtime")
+    for key in source.keys or ():
+        check_secret_env_name(f"{source.prefix}{key}", f"{path}.keys")
+    return source
+
+
+def _validated_secret_env(
+    secret_env: object, env: Mapping[str, str]
+) -> Mapping[str, SecretEnvValue]:
+    if not isinstance(secret_env, Mapping):
+        raise _error(SECRET_ENV_KEY, "invalid_type", "debe mapear nombres a secretos")
+    for name, value in secret_env.items():
+        path = secret_env_path(name if isinstance(name, str) else "")
+        check_secret_env_name(name, path)
+        check_secret_env_ref(value, path)
+        if name in env:
+            raise _error(path, "conflict", "la variable está a la vez en [env] y en [secret_env]")
+    return secret_env
+
+
+def _validated_secret_env_from(sources: object) -> tuple[SecretEnvSource, ...]:
+    if isinstance(sources, str) or not isinstance(sources, Sequence):
+        raise _error(SECRET_ENV_FROM_KEY, "invalid_type", "debe ser una lista de SecretEnvSource")
+    return tuple(
+        check_secret_env_source(source, secret_env_from_path(index))
+        for index, source in enumerate(sources)
+    )
+
+
 @dataclass(frozen=True)
 class AgentProject:
     """Un agente descrito una vez: runtime, `AgentSpec`, pasarelas del
@@ -339,6 +457,15 @@ class AgentProject:
     `region`, `bucket` y `base_image_version` (los valores por defecto de
     `deploy_agent()`), `language` y `framework` (lo que la detección o el
     fichero declaran del proyecto) y `versions` (`RuntimeVersions`).
+    `graph` es el nombre del grafo de `langgraph.json` que se sirve (sólo con
+    el runtime `langgraph`); `to_dict()` lo escribe en lugar del
+    `entrypoint`.
+
+    `secret_env` (nombre de variable -> nombre o ARN de un secreto, o un
+    `SecretEnvRef`) y `secret_env_from` (`SecretEnvSource`) ponen valores de
+    Secrets Manager en el entorno del agente al arrancar (ADR-033 D4): el
+    proyecto sólo lleva nombres, nunca valores, y el agente puede leer su
+    entorno (ver `SecretEnvRef` para el coste).
 
     Coste y activación
     -------------------
@@ -380,12 +507,16 @@ class AgentProject:
     language: str | None = None
     framework: str | None = None
     versions: RuntimeVersions = field(default_factory=RuntimeVersions)
+    graph: str | None = None
+    secret_env: Mapping[str, SecretEnvValue] = field(default_factory=dict)
+    secret_env_from: Sequence[SecretEnvSource] = ()
 
     def __post_init__(self) -> None:
         validate_name(self.name, "AgentProject.name")
         resolve_runtime(self.runtime)
         if not isinstance(self.spec, AgentSpec):
             raise InvalidArgumentException("AgentProject.spec debe ser un AgentSpec")
+        require_runtime_model_id(self.spec, self.runtime)
         gateways = _validated_gateways(self.gateways)
         self.spec.require_gateways(gateways)
         object.__setattr__(self, "gateways", MappingProxyType(dict(gateways)))
@@ -412,6 +543,8 @@ class AgentProject:
         if not self.base or not self.base_dir:
             raise InvalidArgumentException("AgentProject.base y base_dir no pueden ser vacíos")
         self._validate_fleet_options()
+        _validate_graph(self.graph, self.runtime)
+        self._validate_secret_env()
 
     def _validate_fleet_options(self) -> None:
         if not isinstance(self.scaling, ScalingOptions):
@@ -433,6 +566,18 @@ class AgentProject:
             raise InvalidArgumentException(
                 f"AgentProject.language debe ser uno de {list(AGENT_LANGUAGES)}"
             )
+
+    def _validate_secret_env(self) -> None:
+        secret_env = _validated_secret_env(self.secret_env, self.env)
+        secret_env_from = _validated_secret_env_from(self.secret_env_from)
+        if len(secret_ids(secret_env, secret_env_from)) > AGENT_SECRET_ENV_MAX_SECRETS:
+            raise _error(
+                SECRET_ENV_KEY,
+                "invalid_value",
+                f"admite como mucho {AGENT_SECRET_ENV_MAX_SECRETS} secretos",
+            )
+        object.__setattr__(self, "secret_env", MappingProxyType(dict(secret_env)))
+        object.__setattr__(self, "secret_env_from", secret_env_from)
 
     @classmethod
     def load(cls, path: str | os.PathLike[str] = ".") -> Self:
@@ -502,6 +647,8 @@ class AgentProject:
             ("serve", _serve_to_dict(self.serve)),
             ("scaling", _scaling_to_dict(self.scaling)),
             ("env", dict(sorted(self.env.items()))),
+            ("secret_env", _secret_env_to_dict(self)),
+            ("secret_env_from", _secret_env_from_to_dict(self)),
             ("network", _network_to_dict(self)),
             ("deploy", _deploy_to_dict(self)),
             ("image", _image_to_dict(self)),
@@ -746,6 +893,43 @@ class AsyncAgentProject(AgentProject):
 # ------------------------------------------------------------------ validation
 
 
+def _validate_graph(graph: object, runtime: str | AgentRuntime) -> None:
+    """`AgentProject.graph`: un nombre de grafo válido y sólo con el runtime
+    `langgraph`."""
+    if graph is None:
+        return
+    if not isinstance(graph, str) or not GRAPH_NAME_PATTERN.fullmatch(graph):
+        raise InvalidArgumentException(
+            f"AgentProject.graph debe casar con {GRAPH_NAME_PATTERN.pattern}"
+        )
+    if runtime_to_options(runtime).get("kind") != GRAPH_RUNTIME_KIND:
+        raise InvalidArgumentException(
+            f"AgentProject.graph sólo vale con el runtime {GRAPH_RUNTIME_KIND!r}"
+        )
+
+
+def _graph_entrypoint(
+    graph: str, base_dir: str, read_text: Callable[[str], str] | None, path: str
+) -> str:
+    """El `entrypoint` del grafo `graph` del `langgraph.json` de `base_dir`,
+    leído con el lector que inyecta `load` (sin él, `invalid_value`, como
+    `instructions_file`). Sólo se lee ese fichero; nunca se importa el código
+    del proyecto."""
+    from rayito._agent._detect_entry import graph_entrypoint
+
+    if read_text is None:
+        raise _error(path, "invalid_value", "no hay lector de ficheros disponible")
+    return graph_entrypoint(_langgraph_document(base_dir, read_text, path), graph, DETECTION_RULES)
+
+
+def _langgraph_document(base_dir: str, read_text: Callable[[str], str], path: str) -> object:
+    """El JSON de `langgraph.json`, o `None` si no existe o no es JSON."""
+    try:
+        return json.loads(read_text(_inside(base_dir, LANGGRAPH_FILE, path)))
+    except (AgentProjectException, ValueError):
+        return None
+
+
 def _optional_text(value: object, label: str) -> None:
     if value is not None and (not isinstance(value, str) or not value):
         raise InvalidArgumentException(f"{label} debe ser una cadena no vacía")
@@ -893,7 +1077,7 @@ def _project_kwargs(
     if schema != AGENT_PROJECT_SCHEMA:
         raise _error("schema", "unsupported_schema", f"debe ser {AGENT_PROJECT_SCHEMA!r}")
     name = root.text("name", required=True)
-    runtime, runtime_extras = _read_runtime(root.table("runtime"))
+    runtime, runtime_extras = _read_runtime(root.table("runtime"), base_dir, read_text)
     kwargs: dict[str, Any] = {"name": name, "runtime": runtime, **runtime_extras}
     kwargs.update(_read_source(root.table("source"), base_dir))
     gateways = _read_gateways(root)
@@ -907,13 +1091,45 @@ def _project_kwargs(
     kwargs.update(_read_serve(root.table("serve")))
     kwargs.update(_read_scaling(root.table("scaling")))
     kwargs.update(_read_env(root.table("env")))
+    kwargs.update(_read_secret_env(root))
     kwargs.update(_read_network(root.table("network")))
     kwargs.update(_read_deploy(root.table("deploy")))
     kwargs.update(_read_image(root.table("image")))
     root.finish()
     _check_gateways(kwargs["spec"], gateways)
     _check_concurrency(kwargs)
+    _check_model(kwargs, _gateway_presets(data))
     return kwargs
+
+
+def _gateway_presets(data: Mapping[str, object]) -> dict[str, str]:
+    """`[gateways.<nombre>] preset` de cada pasarela del documento (ya
+    validado): `AgentProject` sólo guarda la pasarela construida."""
+    gateways = data.get("gateways")
+    if not isinstance(gateways, Mapping):
+        return {}
+    return {
+        str(name): str(entry["preset"])
+        for name, entry in gateways.items()
+        if isinstance(entry, Mapping) and isinstance(entry.get("preset"), str)
+    }
+
+
+def _check_model(kwargs: Mapping[str, Any], presets: Mapping[str, str]) -> None:
+    """El id del modelo donde Rayito lo usa y los nombres de `[model]` que
+    no repiten una variable de `[env]` (`conflict`)."""
+    model: AgentModel = kwargs["spec"].model
+    runtime = runtime_to_options(kwargs["runtime"])
+    require_model_id(
+        model.id,
+        runtime=str(runtime["kind"]),
+        entrypoint=runtime.get("entrypoint") is not None,
+        gateway_preset=presets.get(model.gateway),
+    )
+    env = kwargs.get("env", {})
+    for key, name in model.env_names().items():
+        if name in env:
+            raise _error(f"model.{key}", "conflict", "esa variable ya está en [env]")
 
 
 def _check_concurrency(kwargs: Mapping[str, Any]) -> None:
@@ -939,7 +1155,9 @@ def _check_gateways(spec: AgentSpec, gateways: Mapping[str, SecretGateway]) -> N
             )
 
 
-def _read_runtime(table: _Table | None) -> tuple[AgentRuntime, dict[str, object]]:
+def _read_runtime(
+    table: _Table | None, base_dir: str, read_text: Callable[[str], str] | None
+) -> tuple[AgentRuntime, dict[str, object]]:
     if table is None:
         raise _error("runtime", "missing_key", "es obligatoria")
     kind = table.text("kind", required=True)
@@ -949,6 +1167,9 @@ def _read_runtime(table: _Table | None) -> tuple[AgentRuntime, dict[str, object]
     options = {key: table.raw(key) for key in RUNTIME_OPTION_KEYS[kind]}
     table.finish()
     present = {key: value for key, value in options.items() if value is not None}
+    graph = extras.get(GRAPH_KEY)
+    if isinstance(graph, str):
+        present[ENTRYPOINT_KEY] = _graph_entrypoint(graph, base_dir, read_text, table.at(GRAPH_KEY))
     runtime = _guard("runtime", lambda: runtime_from_options(str(kind), present))
     return runtime, extras
 
@@ -969,7 +1190,26 @@ def _read_runtime_extras(table: _Table) -> dict[str, object]:
     node = _read_version(table, "node_version", "node")
     if python is not None or node is not None:
         extras["versions"] = RuntimeVersions(python=python, node=node)
+    graph = _read_graph(table)
+    if graph is not None:
+        extras[GRAPH_KEY] = graph
     return extras
+
+
+def _read_graph(table: _Table) -> str | None:
+    """`[runtime] graph`: un nombre válido, sólo con `kind = "langgraph"` y
+    nunca junto a `entrypoint` (`conflict`)."""
+    graph = table.text(GRAPH_KEY)
+    if graph is None:
+        return None
+    path = table.at(GRAPH_KEY)
+    if table.raw("kind") != GRAPH_RUNTIME_KIND:
+        raise _error(path, "invalid_value", f"sólo vale con kind = {GRAPH_RUNTIME_KIND!r}")
+    if not GRAPH_NAME_PATTERN.fullmatch(graph):
+        raise _error(path, "invalid_value", f"debe casar con {GRAPH_NAME_PATTERN.pattern}")
+    if table.has(ENTRYPOINT_KEY):
+        raise _error(path, "conflict", DETECTION_RULES["messages"]["graph_conflict"])
+    return graph
 
 
 def _read_version(table: _Table, key: str, field_name: str) -> str | None:
@@ -997,26 +1237,40 @@ def _read_source(table: _Table | None, base_dir: str) -> dict[str, object]:
 
 def _read_model(table: _Table) -> AgentModel:
     provider = table.text("provider", required=True)
-    model_id = table.text("id", required=True)
+    model_id = table.text("id")
     gateway = table.text("gateway", required=True)
     region = table.text("region")
     base_path = table.text("base_path")
     caching = table.boolean("prompt_caching")
+    extra: dict[str, object] = _read_model_env_names(table)
     table.finish()
-    extra: dict[str, object] = {}
     if caching is not None:
         extra["prompt_caching"] = caching
     return _guard(
         "model",
         lambda: AgentModel(
             provider=provider,  # type: ignore[arg-type]
-            id=str(model_id),
+            id=model_id,
             gateway=str(gateway),
             region=region,
             base_path=base_path or "",
             **extra,  # type: ignore[arg-type]
         ),
     )
+
+
+def _read_model_env_names(table: _Table) -> dict[str, object]:
+    """Las claves `MODEL_ENV_KEYS` de `[model]` que el fichero fija: nombres
+    de variable, nunca valores."""
+    names: dict[str, object] = {}
+    for key in MODEL_ENV_KEYS:
+        name = table.text(key)
+        if name is None:
+            continue
+        if not _ENV_NAME_PATTERN.fullmatch(name):
+            raise _error(table.at(key), "invalid_value", "debe ser un nombre de variable")
+        names[key] = name
+    return names
 
 
 def _read_agent(
@@ -1226,6 +1480,51 @@ def _read_env(table: _Table | None) -> dict[str, object]:
     return {"env": _guard("env", lambda: _validated_env(env))}
 
 
+def _read_secret_env_value(table: _Table, name: str) -> SecretEnvValue:
+    path = table.at(name)
+    check_secret_env_name(name, path)
+    value = table.raw(name)
+    if not isinstance(value, Mapping):
+        return check_secret_id(value, path)
+    reference = _Table(value, path)
+    secret = check_secret_id(reference.text("secret", required=True), reference.at("secret"))
+    key = reference.text("key")
+    stage = reference.text("version_stage")
+    reference.finish()
+    return check_secret_env_ref(SecretEnvRef(secret, key=key, version_stage=stage), path)
+
+
+def _read_secret_env_source(entry: _Table) -> SecretEnvSource:
+    secret = check_secret_id(entry.text("secret", required=True), entry.at("secret"))
+    prefix = entry.raw("prefix")
+    if prefix is not None and not isinstance(prefix, str):
+        raise _error(entry.at("prefix"), "invalid_type", "debe ser una cadena")
+    keys = entry.texts("keys")
+    entry.finish()
+    source = SecretEnvSource(secret, prefix=prefix or "", keys=keys)
+    return check_secret_env_source(source, entry.path)
+
+
+def _read_secret_env(root: _Table) -> dict[str, object]:
+    """`[secret_env]` y `[[secret_env_from]]` (ADR-033 D4), sólo si están."""
+    kwargs: dict[str, object] = {}
+    table = root.table(SECRET_ENV_KEY)
+    if table is not None:
+        kwargs["secret_env"] = {
+            name: _read_secret_env_value(table, name) for name in sorted(table.keys())
+        }
+        table.finish()
+    sources = root.raw(SECRET_ENV_FROM_KEY)
+    if sources is not None:
+        if isinstance(sources, str) or not isinstance(sources, Sequence):
+            raise _error(SECRET_ENV_FROM_KEY, "invalid_type", "debe ser una lista de tablas")
+        kwargs["secret_env_from"] = tuple(
+            _read_secret_env_source(_Table(item, secret_env_from_path(index)))
+            for index, item in enumerate(sources)
+        )
+    return kwargs
+
+
 _DEPLOY_CHECKS: Final[Mapping[str, Callable[[object, str], str]]] = {
     "bucket": validate_bucket_hint,
     "base_image_version": validate_image_version,
@@ -1303,6 +1602,54 @@ _GATEWAY_PRESETS: Final[Mapping[str, _Preset]] = {
     "xai": _Preset((), (), xai_gateway),
     "litellm": _Preset(("upstream", "base_path"), ("upstream",), litellm_gateway),
 }
+
+
+#: Las pasarelas que filtran por modelo (la lista `models` de su ruta): con
+#: ellas el id del modelo es obligatorio (ADR-033 D2).
+MODEL_ID_REQUIRED_PRESETS: Final[tuple[str, ...]] = tuple(
+    name for name, preset in _GATEWAY_PRESETS.items() if _MODELS_KEY in preset.required
+)
+_MODEL_ID_PATH: Final = "model.id"
+_MISSING_KEY: Final = "missing_key"
+_NOT_DETECTED: Final = "not_detected"
+
+
+def model_id_required(*, runtime: str, entrypoint: bool, gateway_preset: str | None) -> bool:
+    """Si Rayito necesita el id del modelo: lo pide una pasarela que filtra
+    por modelo o un runtime que construye el modelo
+    (`testdata/agent-model-optional/requirement.json`)."""
+    if gateway_preset in MODEL_ID_REQUIRED_PRESETS or runtime in MODEL_BUILDING_RUNTIMES:
+        return True
+    return runtime in DEFAULT_AGENT_RUNTIMES and not entrypoint
+
+
+def require_model_id(
+    model_id: str | None,
+    *,
+    runtime: str,
+    entrypoint: bool,
+    gateway_preset: str | None,
+    detected: bool = False,
+) -> None:
+    """`AgentProjectException` en `model.id` si falta y hace falta:
+    `not_detected` si el proyecto sale de la detección y `missing_key` si
+    sale de un fichero."""
+    if model_id is not None or not model_id_required(
+        runtime=runtime, entrypoint=entrypoint, gateway_preset=gateway_preset
+    ):
+        return
+    if detected:
+        raise _error(
+            _MODEL_ID_PATH,
+            _NOT_DETECTED,
+            "no se encontró el id del modelo en el código: escríbelo como literal, pásalo con "
+            "--model-id o define [model] id en rayito-agent.toml (rayito agent detect --write)",
+        )
+    raise _error(
+        _MODEL_ID_PATH,
+        _MISSING_KEY,
+        "es obligatoria con esta pasarela o con un runtime que construye el modelo",
+    )
 
 
 def _read_gateways(root: _Table) -> dict[str, SecretGateway]:
@@ -1392,18 +1739,47 @@ def _source_to_dict(project: AgentProject) -> dict[str, object]:
 
 
 def _model_to_dict(model: AgentModel) -> dict[str, object]:
-    table: dict[str, object] = {
-        "provider": model.provider,
-        "id": model.id,
-        "gateway": model.gateway,
-    }
+    """`[model]` canónico: `id` y los nombres de variable sólo si están
+    puestos, así que un proyecto con id se escribe igual que antes."""
+    table: dict[str, object] = {"provider": model.provider}
+    if model.id is not None:
+        table["id"] = model.id
+    table["gateway"] = model.gateway
     if model.region is not None:
         table["region"] = model.region
     if model.base_path:
         table["base_path"] = model.base_path
     if not model.prompt_caching:
         table["prompt_caching"] = False
+    table.update(model.env_names())
     return table
+
+
+def _secret_env_to_dict(project: AgentProject) -> dict[str, object]:
+    table: dict[str, object] = {}
+    for name, value in sorted(project.secret_env.items()):
+        if isinstance(value, str):
+            table[name] = value
+            continue
+        reference: dict[str, object] = {"secret": value.secret}
+        if value.key is not None:
+            reference["key"] = value.key
+        if value.version_stage is not None:
+            reference["version_stage"] = value.version_stage
+        table[name] = reference
+    return table
+
+
+def _secret_env_from_to_dict(project: AgentProject) -> list[dict[str, object]]:
+    entries: list[dict[str, object]] = []
+    for source in project.secret_env_from:
+        entry: dict[str, object] = {"secret": source.secret}
+        if source.prefix:
+            entry["prefix"] = source.prefix
+        if source.keys is not None:
+            entry["keys"] = list(source.keys)
+        entries.append(entry)
+    return entries
 
 
 def _secret_ref_name(value: str | SecretRef) -> str:
@@ -1501,6 +1877,9 @@ def _limits_to_dict(limits: AgentLimits) -> dict[str, object]:
 
 def _runtime_to_dict(project: AgentProject) -> dict[str, object]:
     table = runtime_to_options(project.runtime)
+    if project.graph is not None:
+        table.pop(ENTRYPOINT_KEY, None)
+        table[GRAPH_KEY] = project.graph
     for key, value in (
         ("language", project.language),
         ("framework", project.framework),

@@ -1,0 +1,4 @@
+{
+  "graph": "triage",
+  "entrypoint": "src.echo:graph"
+}

@@ -16,6 +16,8 @@ from typing import Any, Final
 from rayito._agent._deploy_plan import AgentDeployPlan
 from rayito._agent._detect_report import DetectionReport
 from rayito._agent._project_domain import AgentProject
+from rayito._agent._secret_env_domain import SecretEnvSource, SecretEnvValue
+from rayito._agent._secret_env_project import with_secret_env
 from rayito._limits import AGENT_TOKEN_FILE_DEFAULT as AGENT_TOKEN_FILE_NAME
 from rayito._models import IdlePolicy, NetworkPolicy
 from rayito._payload import generate_access_token
@@ -117,10 +119,13 @@ def apply_project_flags(
     memory: int | None,
     env: Mapping[str, str],
     allow_out: Sequence[str],
+    secret_env: Mapping[str, SecretEnvValue] | None = None,
+    secret_env_from: Sequence[SecretEnvSource] = (),
 ) -> AgentProject:
     """El proyecto con la memoria, el entorno y las salidas de red de las
     banderas: `--env` se suma al `env` del proyecto y `--allow-out` fija la
-    política de salida (conserva el `deny_out` que ya tuviera)."""
+    política de salida (conserva el `deny_out` que ya tuviera).
+    `--secret-env` y `--secret-env-from` se suman a los del proyecto."""
     result = project
     if memory is not None:
         result = dataclasses.replace(result, memory_mib=memory)
@@ -130,7 +135,7 @@ def apply_project_flags(
         deny_out = () if result.network is None else tuple(result.network.deny_out)
         network = NetworkPolicy(allow_out=tuple(allow_out), deny_out=deny_out)
         result = dataclasses.replace(result, network=network)
-    return result
+    return with_secret_env(result, secret_env or {}, secret_env_from)
 
 
 def deploy_token(

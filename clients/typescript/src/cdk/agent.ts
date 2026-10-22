@@ -182,6 +182,9 @@ export interface RayitoAgentProps {
   readonly build?: AgentImageBuild | undefined;
   /** Añade `CfnOutput` con el ARN y el id del runtime (apagado por defecto). */
   readonly exportOutputs?: boolean | undefined;
+  /** Admite un modelo fuera de Bedrock sin dar al rol permisos de Bedrock que
+   * no pidas; la clave la obtiene tu código (apagado por defecto). */
+  readonly externalModel?: boolean | undefined;
 }
 
 function secondsToMs(seconds: number | undefined): number | undefined {
@@ -204,6 +207,7 @@ function planAgent(props: RayitoAgentProps, region: string): PlannedAgentCore {
         idleSessionTimeoutMs: secondsToMs(props.idleSessionTimeoutSeconds),
         maxSessionLifetimeMs: secondsToMs(props.maxSessionLifetimeSeconds),
         tags: props.tags,
+        externalModel: props.externalModel,
       },
     },
     { environ: {} },

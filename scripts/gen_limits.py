@@ -390,6 +390,7 @@ GROUPS: tuple[tuple[str, ...], ...] = (
         "agentServiceSessionHeader",
         "agentServiceMaxConcurrency",
         "agentServiceMaxRequestBytes",
+        "agentServiceMaxOutputBytes",
         "agentServiceReadyTimeoutSeconds",
         "defaultAgentDeployTimeoutSeconds",
         "agentRunSandboxMarginSeconds",
@@ -461,6 +462,14 @@ GROUPS: tuple[tuple[str, ...], ...] = (
         "agentAppRestartBackoffMaxSeconds",
         "agentAppInternalPort",
         "agentAppPortEnv",
+        # langgraph-api protocol (ADR-033 D5): the health and thread-run
+        # paths of the LangGraph Platform API (docs.langchain.com
+        # agent-server-api, checked 2026-10-21), the uuid5 namespace of the
+        # thread ids and the app start wait (provisional, AWS_API_NOTES Q189).
+        "agentLanggraphHealthPath",
+        "agentLanggraphInvokePath",
+        "agentLanggraphThreadNamespace",
+        "agentLanggraphReadyWaitSeconds",
         "agentSessionHandlePrefix",
         "agentDetectionMaxFiles",
         "agentDetectionMaxDepth",
@@ -497,6 +506,15 @@ GROUPS: tuple[tuple[str, ...], ...] = (
         "agentYarnBerryVersion",
         "agentYarnBerryIntegrity",
         "agentSecretNameTemplate",
+        "agentSecretEnvVariable",
+        "agentSecretEnvSpecVersion",
+        "agentSecretEnvMaxSecrets",
+        "agentSecretEnvMaxTotalBytes",
+        "agentSecretEnvHelperTimeoutSeconds",
+        "agentSecretEnvReservedNames",
+        "agentSecretEnvReservedPrefixes",
+        "agentSecretEnvRedactMinChars",
+        "agentSecretEnvNamesVariable",
         "agentTokenFileDefault",
     ),
     (

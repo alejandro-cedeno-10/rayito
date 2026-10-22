@@ -123,6 +123,10 @@
             "langgraph",
             "vercel-ai"
           ]
+        },
+        "graph": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$"
         }
       },
       "additionalProperties": false,
@@ -194,7 +198,8 @@
                 "python_version",
                 "node_version",
                 "requirements",
-                "package_manager"
+                "package_manager",
+                "graph"
               ]
             }
           }
@@ -320,8 +325,17 @@
             ]
           },
           "then": {
-            "required": [
-              "entrypoint"
+            "oneOf": [
+              {
+                "required": [
+                  "entrypoint"
+                ]
+              },
+              {
+                "required": [
+                  "graph"
+                ]
+              }
             ]
           }
         }
@@ -356,7 +370,6 @@
       "type": "object",
       "required": [
         "provider",
-        "id",
         "gateway"
       ],
       "additionalProperties": false,
@@ -388,6 +401,18 @@
         },
         "prompt_caching": {
           "type": "boolean"
+        },
+        "id_env": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+        },
+        "base_url_env": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+        },
+        "api_key_env": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
         }
       }
     },
@@ -1101,6 +1126,68 @@
       },
       "additionalProperties": {
         "type": "string"
+      }
+    },
+    "secret_env": {
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+      },
+      "additionalProperties": {
+        "oneOf": [
+          {
+            "type": "string",
+            "minLength": 1
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "secret"
+            ],
+            "properties": {
+              "secret": {
+                "type": "string",
+                "minLength": 1
+              },
+              "key": {
+                "type": "string",
+                "minLength": 1
+              },
+              "version_stage": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        ]
+      }
+    },
+    "secret_env_from": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "secret"
+        ],
+        "properties": {
+          "secret": {
+            "type": "string",
+            "minLength": 1
+          },
+          "prefix": {
+            "type": "string",
+            "pattern": "^([A-Za-z_][A-Za-z0-9_]*)?$"
+          },
+          "keys": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+            }
+          }
+        }
       }
     },
     "network": {

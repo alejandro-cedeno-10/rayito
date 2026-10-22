@@ -27,6 +27,12 @@ from rayito._agent._fleet_base import AGENT_FLEET_WARM_READY_TIMEOUT_SECONDS
 from rayito._agent._project_base import template_name
 from rayito._agent._project_domain import ServeOptions
 from rayito._agent._scaling_domain import ScalingOptions
+from rayito._agent._secret_env_domain import (
+    secret_env_names,
+    secret_ids,
+    spec_variable,
+    uses_secret_env,
+)
 from rayito._agentcore._env_credentials import uses_env_credentials
 from rayito._agentcore._errors import cdk_managed_error
 from rayito._agentcore._iam_resources import (
@@ -49,6 +55,7 @@ from rayito._agentcore._models import (
 )
 from rayito._limits import (
     AGENT_MIN_MEMORY_MIB,
+    AGENT_SECRET_ENV_VARIABLE,
     AGENTCORE_BASE_IMAGE_MIRROR,
     AGENTCORE_DESCRIPTION_MARKER,
     AGENTCORE_ENDPOINT_NAME,
@@ -129,6 +136,7 @@ TAG_VALUE_MAX_CHARS: Final = 256
 TAG_TEXT_PATTERN: Final = re.compile(r"[a-zA-Z0-9\s._:/=+@-]*")
 
 REGION_ENV_VARIABLES: Final = ("AWS_REGION", "AWS_DEFAULT_REGION")
+EMPTY_ENVIRONMENT: Final[Mapping[str, str]] = MappingProxyType({})
 SECRET_ARN_TEMPLATE: Final = (
     "arn:{partition}:secretsmanager:{region}:{account}:secret:{name}-??????"
 )
@@ -195,6 +203,8 @@ SECURITY_SECRETS: Final = "readableSecrets"
 SECURITY_PUBLIC_NETWORK: Final = "publicNetwork"
 SECURITY_ISOLATION: Final = "sessionIsolation"
 SECURITY_ENV_CREDENTIALS: Final = "envCredentials"
+SECURITY_EXTERNAL_MODEL: Final = "externalModel"
+SECURITY_SECRET_ENV: Final = "secretEnv"
 
 StackAction = Literal["create", "update", "wait"]
 ImageAction = Literal["build", "reuse"]
@@ -405,11 +415,17 @@ def require_supported_region(region: str | None) -> str:
     return region
 
 
-def check_provider(project: AgentProject) -> None:
-    """Sólo `bedrock` se cablea: sin pasarela, la credencial de otro proveedor
-    iría en claro en la configuración del runtime."""
+#: El único proveedor que el rol del runtime cablea sin `external_model`.
+BEDROCK_PROVIDER: Final = "bedrock"
+
+
+def check_provider(project: AgentProject, agentcore: AgentCoreOptions) -> None:
+    """Sólo `bedrock` se cablea con el rol del runtime: sin pasarela, la
+    credencial de otro proveedor iría en claro en la configuración del
+    runtime. `external_model=True` acepta otro proveedor porque su clave la
+    obtiene el código del agente (ADR-033 D2), nunca el entorno."""
     provider = project.spec.model.provider
-    if provider != "bedrock":
+    if provider != BEDROCK_PROVIDER and not agentcore.external_model:
         raise AgentCoreException("provider_unsupported", provider=provider)
 
 
@@ -427,8 +443,8 @@ def check_network(project: AgentProject) -> None:
         raise AgentCoreException("network_policy_unsupported", what=", ".join(present))
 
 
-def check_project(project: AgentProject) -> None:
-    check_provider(project)
+def check_project(project: AgentProject, agentcore: AgentCoreOptions) -> None:
+    check_provider(project, agentcore)
     check_network(project)
 
 
@@ -731,11 +747,23 @@ def validate_tags(tags: Mapping[str, str]) -> dict[str, str]:
     return dict(sorted(tags.items()))
 
 
-def runtime_environment(project: AgentProject, region: str) -> dict[str, str]:
-    """`environmentVariables` del runtime: el `env` del proyecto y las dos
-    variables de región, que ganan (`env_invalid` si no caben). Nunca
-    secretos."""
-    environment = {**project.env, **dict.fromkeys(REGION_ENV_VARIABLES, region)}
+def runtime_environment(
+    project: AgentProject,
+    region: str,
+    *,
+    model_environment: Mapping[str, str] = EMPTY_ENVIRONMENT,
+    secret_environment: Mapping[str, str] = EMPTY_ENVIRONMENT,
+) -> dict[str, str]:
+    """`environmentVariables` del runtime: el `env` del proyecto, la URL del
+    modelo externo (`external_model_environment`), la especificación de los
+    secretos como entorno y las dos variables de región, que ganan
+    (`env_invalid` si no caben). Nunca secretos."""
+    environment = {
+        **project.env,
+        **model_environment,
+        **secret_environment,
+        **dict.fromkeys(REGION_ENV_VARIABLES, region),
+    }
     too_many = len(environment) > AGENTCORE_MAX_ENVIRONMENT_VARIABLES
     too_long = any(
         len(value) > AGENTCORE_ENVIRONMENT_VALUE_MAX_CHARS for value in environment.values()
@@ -780,24 +808,77 @@ def file_warnings(project: AgentProject) -> tuple[str, ...]:
     return tuple(key for key, differs in checks if differs)
 
 
+def bedrock_model_of(project: AgentProject) -> str | None:
+    """El modelo de Bedrock del proyecto: su id si el proveedor es `bedrock`,
+    y `None` si no lo hay o el modelo está fuera de Bedrock."""
+    model = project.spec.model
+    return model.id if model.provider == BEDROCK_PROVIDER else None
+
+
 def bedrock_models_of(project: AgentProject, agentcore: AgentCoreOptions) -> tuple[str, ...]:
-    """Los modelos que el rol puede invocar: el del proyecto y los de
-    `AgentCoreOptions.bedrock_models`, sin repetir."""
-    return _unique([project.spec.model.id, *agentcore.bedrock_models])
+    """Los modelos que el rol puede invocar: el del proyecto (sólo con
+    `bedrock` y si tiene id) y los de `AgentCoreOptions.bedrock_models`, sin
+    repetir."""
+    project_model = bedrock_model_of(project)
+    return _unique([*([] if project_model is None else [project_model]), *agentcore.bedrock_models])
+
+
+def check_model_known(project: AgentProject, agentcore: AgentCoreOptions) -> None:
+    """`model_required` si el rol no tendría ningún modelo de Bedrock que
+    invocar: proveedor `bedrock` sin `[model] id` ni `bedrock_models`."""
+    model = project.spec.model
+    if model.provider == BEDROCK_PROVIDER and model.id is None and not agentcore.bedrock_models:
+        raise AgentCoreException("model_required")
+
+
+def external_model_environment(project: AgentProject) -> dict[str, str]:
+    """La URL base del modelo externo en `base_url_env` (el `upstream` de su
+    pasarela más `base_path`) si el proyecto nombra la variable; no es un
+    secreto. La clave nunca va aquí."""
+    model = project.spec.model
+    gateway = project.gateways.get(model.gateway)
+    if model.base_url_env is None or gateway is None:
+        return {}
+    return {model.base_url_env: gateway.upstream.rstrip("/") + model.base_path}
 
 
 def security_keys(
-    project: AgentProject, models: Sequence[str], secrets: Sequence[str]
+    project: AgentProject,
+    models: Sequence[str],
+    secrets: Sequence[str],
+    *,
+    external_model: bool = False,
+    secret_env: bool = False,
 ) -> tuple[str, ...]:
     """Las claves de `SECURITY_TEXTS` del plan, en el orden en que se
     imprimen: la diferencia con la pasarela de MicroVMs va primero."""
     keys = [SECURITY_NO_GATEWAY, SECURITY_MODELS if models else SECURITY_NO_MODELS]
     if secrets:
         keys.append(SECURITY_SECRETS)
+    if external_model:
+        keys.append(SECURITY_EXTERNAL_MODEL)
+    if secret_env:
+        keys.append(SECURITY_SECRET_ENV)
     keys.extend((SECURITY_PUBLIC_NETWORK, SECURITY_ISOLATION))
     if uses_env_credentials(project.runtime):
         keys.append(SECURITY_ENV_CREDENTIALS)
     return tuple(keys)
+
+
+def secret_env_environment(project: AgentProject) -> dict[str, str]:
+    """`RAYITO_SECRET_ENV` con la especificación de `secret_env` y
+    `secret_env_from` (sólo nombres y ARNs: `testdata/agent-secret-env/
+    spec.json`), o nada si el proyecto no los usa."""
+    variable = spec_variable(project.secret_env, project.secret_env_from)
+    return {} if variable is None else {AGENT_SECRET_ENV_VARIABLE: variable}
+
+
+def readable_secrets_of(project: AgentProject, agentcore: AgentCoreOptions) -> tuple[str, ...]:
+    """Los secretos que el rol puede leer: los de `readable_secrets` y los que
+    referencian `secret_env` y `secret_env_from`, sin repetir. Van por el
+    mismo `ReadableSecretArns`: la plantilla no cambia."""
+    referenced = secret_ids(project.secret_env, project.secret_env_from)
+    return _unique([*agentcore.readable_secrets, *referenced])
 
 
 def _usd(price: float) -> str:
@@ -862,18 +943,27 @@ def build_plan(
     llamada (`AgentDeployOptions.bucket`)."""
     supported = require_supported_region(region)
     check_call_options(options, cli_flags)
-    check_project(project)
+    check_project(project, agentcore)
     name = validate_agent_name(agent_name_of(project))
     lifecycle = resolve_lifecycle(
         agentcore.idle_session_timeout_seconds, agentcore.max_session_lifetime_seconds
     )
     tags = validate_tags(agentcore.tags)
-    environment = runtime_environment(project, supported)
+    environment = runtime_environment(
+        project,
+        supported,
+        model_environment=(
+            external_model_environment(project) if agentcore.external_model else EMPTY_ENVIRONMENT
+        ),
+        secret_environment=secret_env_environment(project),
+    )
     models = bedrock_models_of(project, agentcore)
+    check_model_known(project, agentcore)
+    readable = readable_secrets_of(project, agentcore)
     check_iam_inputs(
-        project.spec.model.id,
+        bedrock_model_of(project),
         agentcore.bedrock_models,
-        agentcore.readable_secrets,
+        readable,
         model_region=project.spec.model.region or supported,
         region=supported,
     )
@@ -891,15 +981,23 @@ def build_plan(
         bucket_source=source,
         network=AGENTCORE_NETWORK_MODE,
         bedrock_models=models,
-        readable_secrets=agentcore.readable_secrets,
+        readable_secrets=readable,
         environment=MappingProxyType(environment),
         lifecycle=lifecycle,
         tags=MappingProxyType(tags),
         steps=planned_steps(name),
-        security=security_keys(project, models, agentcore.readable_secrets),
+        security=security_keys(
+            project,
+            models,
+            readable,
+            external_model=agentcore.external_model,
+            secret_env=uses_secret_env(project.secret_env, project.secret_env_from),
+        ),
         warnings=file_warnings(project),
         cost=cost_lines(),
         detection=detection,
+        external_model=agentcore.external_model,
+        secret_env_names=secret_env_names(project.secret_env, project.secret_env_from),
     )
 
 

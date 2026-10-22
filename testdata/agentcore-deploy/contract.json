@@ -503,6 +503,36 @@
           "note": "Sólo OpenCode: el proceso lee el perfil, ejecuta la herramienta y refresca al llegar Expiration. La herramienta quita AWS_PROFILE y AWS_CONFIG_FILE de su entorno para no llamarse a sí misma."
         }
       }
+    },
+    "secretEnv": {
+      "appliesTo": "target agentcore y un proyecto con secret_env o secret_env_from (ADR-033 D4)",
+      "variable": "RAYITO_SECRET_ENV",
+      "specVersion": 1,
+      "reservedNames": [
+        "HOME",
+        "NODE_OPTIONS",
+        "PATH",
+        "PYTHONPATH"
+      ],
+      "reservedPrefixes": [
+        "AWS_",
+        "LD_",
+        "RAYITO_"
+      ],
+      "scriptAsset": "aws_secret_env.py",
+      "scriptPath": "/opt/agents/rayito/aws_secret_env.py",
+      "hostConfigKey": "secret_env",
+      "hostConfigKeys": [
+        "python",
+        "reserved",
+        "script"
+      ],
+      "dockerfileOrder": "el venv de awsCredentials (COPY del requirements y RUN) y, tras el COPY de aws_env_credentials.py si lo hay, COPY de aws_secret_env.py; sin secret_env el Dockerfile no cambia",
+      "helperExitCodes": {
+        "secret_env_denied": 3,
+        "secret_env_invalid": 4
+      },
+      "note": "El valor de RAYITO_SECRET_ENV es el JSON compacto de testdata/agent-secret-env/spec.json; los secretos se suman a ReadableSecretArns, así que la plantilla y sus parámetros no cambian."
     }
   },
   "resources": [
@@ -759,11 +789,43 @@
         "reason": "environmentVariables del runtime (nunca secretos)"
       },
       {
+        "option": "secret_env / --secret-env",
+        "python": "AgentProject.secret_env",
+        "typescript": "AgentProject.secretEnv",
+        "call": "applies",
+        "file": "applies",
+        "reason": "el host lee los secretos al arrancar con el rol del runtime; el runtime sólo recibe RAYITO_SECRET_ENV (nombres y ARNs)"
+      },
+      {
+        "option": "secret_env_from / --secret-env-from",
+        "python": "AgentProject.secret_env_from",
+        "typescript": "AgentProject.secretEnvFrom",
+        "call": "applies",
+        "file": "applies",
+        "reason": "como secret_env, una variable por clave de un secreto JSON"
+      },
+      {
+        "option": "create_secrets_from / --create-secrets-from",
+        "python": "AgentDeployOptions.create_secrets_from",
+        "typescript": "AgentDeployOptions.createSecretsFrom",
+        "call": "applies",
+        "file": "applies",
+        "reason": "crea o actualiza el secreto JSON y lo usa como secret_env_from"
+      },
+      {
+        "option": "check_env / --check-env",
+        "python": "AgentDeployOptions.check_env",
+        "typescript": "AgentDeployOptions.checkEnv",
+        "call": "applies",
+        "file": "applies",
+        "reason": "avisa de las variables de .env.example sin valor"
+      },
+      {
         "option": "model provider",
         "python": "AgentProject.spec.model.provider",
         "typescript": "AgentProject.spec.model.provider",
-        "call": "error provider_unsupported unless bedrock",
-        "file": "error provider_unsupported unless bedrock",
+        "call": "error provider_unsupported unless bedrock or external_model",
+        "file": "error provider_unsupported unless bedrock or external_model",
         "reason": "sin pasarela, la credencial de otro proveedor iría en claro en la configuración del runtime"
       },
       {
@@ -775,7 +837,7 @@
         "reason": "AgentCore autentica con IAM (SigV4), no con un access token"
       },
       {
-        "option": "agentcore / AgentCoreOptions, --tag, --bedrock-model, --readable-secret, --idle-session-timeout, --max-session-lifetime, --session-id (stop)",
+        "option": "agentcore / AgentCoreOptions, --tag, --bedrock-model, --readable-secret, --idle-session-timeout, --max-session-lifetime, --external-model, --session-id (stop)",
         "python": "deploy_agent(agentcore=...)",
         "typescript": "DeployAgentOptions.agentcore",
         "call": "error option_requires_agentcore unless target agentcore",
@@ -966,9 +1028,11 @@
       "bedrockModels": "el rol del runtime puede invocar en Bedrock: {models}",
       "noBedrockModels": "el rol del runtime no puede invocar ningún modelo de Bedrock",
       "readableSecrets": "el rol del runtime puede leer los secretos: {secrets}",
+      "externalModel": "modelo fuera de Bedrock (--external-model): el agente llama a su pasarela de LLM por Internet con una clave que obtiene tu código (--secret-env o --readable-secret); la clave nunca va en la configuración del runtime y Rayito no la ve ni filtra esa salida",
       "publicNetwork": "red PUBLIC: el agente tiene salida a Internet y la política de salida de Rayito no se aplica",
       "sessionIsolation": "cada sesión corre en su propia microVM de AgentCore, aislada de las demás; AgentCore no asocia sesiones a usuarios: eso es cosa de tu backend",
-      "envCredentials": "este framework lee las credenciales de variables de entorno: el host se las pone, leídas del rol del runtime, en cada invocación"
+      "envCredentials": "este framework lee las credenciales de variables de entorno: el host se las pone, leídas del rol del runtime, en cada invocación",
+      "secretEnv": "el host pone en el entorno del agente, al arrancar cada sesión, los valores de Secrets Manager de {names}: el agente y todo lo que lance pueden leer su entorno, y cualquier código de la sesión puede leer esos secretos con el rol del runtime"
     },
     "warningsHeader": "Avisos:",
     "warningLine": "  aviso: {text}",
@@ -1055,7 +1119,7 @@
       "name_invalid": "el nombre {name} no vale para AgentCore: hasta {max} caracteres, minúsculas y dígitos, con - o _ sueltos entre ellos; cámbialo con [image].template",
       "name_conflict": "ya existe un runtime {runtimeName} que no es del agente {name} de Rayito: cambia el nombre con [image].template",
       "image_missing": "--no-build: no hay ninguna imagen {imageTag} en {repositoryName}; despliega sin --no-build",
-      "model_required": "no se sabe qué modelo de Bedrock usa el agente: pásalo con --bedrock-model (bedrock_models en el SDK)",
+      "model_required": "no se sabe qué modelo de Bedrock usa el agente: fija [model] id o pásalo con --bedrock-model",
       "lifecycle_invalid": "{option} debe ser un número entero de segundos entre {min} y {max}",
       "tags_invalid": "--tag necesita CLAVE=VALOR, hasta {max} etiquetas, con letras, dígitos, espacios y _ . : / = + - @",
       "env_invalid": "AgentCore admite como mucho {maxVariables} variables de entorno de hasta {maxChars} caracteres",
@@ -1102,7 +1166,8 @@
           "readable_secrets: tuple[str, ...] = ()",
           "idle_session_timeout_seconds: int | None = None",
           "max_session_lifetime_seconds: int | None = None",
-          "tags: Mapping[str, str] = {}"
+          "tags: Mapping[str, str] = {}",
+          "external_model: bool = False"
         ]
       },
       "fleet": {
@@ -1188,7 +1253,8 @@
           "readableSecrets?: readonly string[]",
           "idleSessionTimeoutMs?: number",
           "maxSessionLifetimeMs?: number",
-          "tags?: Readonly<Record<string, string>>"
+          "tags?: Readonly<Record<string, string>>",
+          "externalModel?: boolean"
         ],
         "note": "Los milisegundos se convierten a segundos enteros; un valor que no es múltiplo de 1000 da lifecycle_invalid."
       },

@@ -3679,3 +3679,192 @@ contrato de pruebas; quitar los constructos deja 0.15 intacto. Detalle (D1 a
 D14), hechos verificados y tareas en `openspec/changes/archive/2026-10-21-agentcore-cdk/`,
 `testdata/agentcore-cdk/contract.json` y `AWS_API_NOTES.md` («Constructos
 CDK»).
+
+## ADR-033 — agnostic-agent-deploy: modelo, entrada, secretos y protocolo sin atarse a un proveedor
+
+**Contexto.** 0.15 despliega el agente que ya tienes (ADR-029) en MicroVMs o
+en AgentCore (ADR-031), pero cuatro supuestos lo atan a una forma concreta de
+agente. (1) `[model] id` es obligatorio aunque el código del usuario elija el
+modelo desde su configuración (`ChatOpenAI(model=settings.llm_model,
+base_url=settings.base_url)`): la detección falla con `model.id:
+not_detected` y AgentCore rechaza cualquier proveedor que no sea Bedrock
+(ADR-031 D10). (2) El contrato `rayito.agent-service/1` sólo acepta `prompt`:
+un grafo de LangGraph con `input_schema` propio (`{"ticket_id": ...}`) no se
+puede invocar, y con varios grafos en `langgraph.json` sin uno llamado
+`agent` no hay forma de elegir salvo `--entry`. (3) Las variables que el
+código lee de Secrets Manager (una URL de base de datos, la clave de una
+pasarela de LLM compatible con OpenAI) no tienen camino: `[env]` rechaza lo
+que parece un secreto y AgentCore no tiene pasarela. (4) Un proyecto que ya
+habla el LangGraph Platform API no puede desplegarse con su propio servidor.
+Las cuatro piezas tocan los mismos ficheros compartidos (esquema del
+proyecto, reglas de detección, opciones de la CLI, plan de AgentCore), así
+que se deciden juntas y se implementan en cuatro ramas en paralelo.
+
+**Decisión.** Todo es aditivo: ningún comportamiento, bandera, clave del
+fichero, API ni valor por defecto de 0.15 cambia, y los tests existentes no
+se tocan. Lo nuevo es opcional o sólo se activa con datos que hoy son un
+error.
+
+1. **Integración (D1).** Cuatro funciones, cuatro ramas desde
+   `feat/agnostic-deploy` (A `feat/agent-model-optional`, B
+   `feat/agent-structured-input`, C `feat/agent-secret-env`, D
+   `feat/agent-langgraph-api`), con PR hacia esa rama y fusión en el orden A,
+   B, C, D. Cada rama es dueña exclusiva de sus ficheros; en los compartidos
+   añade exactamente lo que fija el contrato de integración de
+   `openspec/changes/agnostic-agent-deploy/design.md` (nombres, tipos, orden
+   y punto de inserción) y los nombres normativos de
+   `testdata/agnostic-deploy/contract.json`. Un conflicto en un fichero
+   compartido se resuelve conservando los dos lados en el orden A, B, C, D;
+   los ficheros generados (`_limits.py`, `limits.ts`, reglas de detección,
+   assets del host, `testdata/cli/surface.json`) se regeneran, nunca se
+   fusionan a mano. D depende de B (`Request.input` y la elección de grafo):
+   esas dos tareas de D esperan a que B esté fusionada.
+2. **Modelo opcional cuando no es Bedrock (D2).** `[model] id` deja de ser
+   obligatorio y gana tres nombres opcionales, nunca valores: `id_env`,
+   `base_url_env` y `api_key_env`. El id sólo hace falta donde Rayito lo usa:
+   pasarelas que filtran por modelo (`bedrock`, `gemini`, constante
+   `MODEL_ID_REQUIRED_PRESETS`), runtimes que construyen el modelo
+   (`opencode`, `hermes`, `deepagents` y `strands` sin `entrypoint`;
+   `missing_key`) y AgentCore con `bedrock`, donde por fin se lanza
+   `model_required` si tampoco hay `--bedrock-model`. La detección ve un
+   `base_url=` propio en el constructor del cliente (un `openai` detectado
+   por dependencia pasa a `openai-compatible`; la URL oficial no cuenta y,
+   si el código fija el id con un literal, como lo que 0.15 ya desplegaba,
+   sólo cambia con `--model-base-url` y si no avisa `custom_base_url`) y
+   los nombres de variable del
+   modelo en `.env.example`, `os.getenv`/`process.env` y las claves de `env`
+   de `langgraph.json`, sin leer nunca un valor. En MicroVM la pasarela se
+   exporta también en `base_url_env` y el marcador en `api_key_env`, así que
+   el código que lee su propia configuración pasa por la pasarela sin cambios.
+   Los drivers con `entrypoint` no construyen un modelo que no se pidió
+   (`ctx.model = None`), y la telemetría omite `gen_ai.request.model` sin id.
+   En AgentCore, el opt-in `external_model` / `--external-model` /
+   `externalModel` enmienda ADR-031 D10: un proveedor externo deja de ser
+   `provider_unsupported`, el rol no recibe permisos de Bedrock que no se
+   piden, `base_url_env` va al entorno del runtime (no es secreto) y la
+   clave nunca: la lee el código con el rol (`--readable-secret`) o la
+   inyecta D4. El plan lo dice con la línea de seguridad `externalModel`
+   (enmienda de ADR-031 D11). `AgentModel.id` pasa de `str` a `str | None`
+   (TypeScript `id?: string`): no cambia ninguna llamada existente, sólo el
+   tipo que se lee, y el CHANGELOG lo dice en «Cambiado».
+3. **Entrada estructurada y elección de grafo (D3).** `--graph NOMBRE`,
+   `[runtime] graph` y `DetectOverrides.graph` eligen un grafo de
+   `langgraph.json` sin ejecutar código; sin elección se mantiene la
+   preferencia por `agent`, y varios grafos sin `agent` dan `ambiguous` con
+   los nombres. `graph` y `entrypoint` a la vez son `conflict`. El contrato
+   `rayito.agent-service/1` gana, de forma aditiva, `input` (un objeto JSON,
+   exclusivo con `prompt`) en la petición y `output` en la respuesta y en el
+   evento `done`. El host introspecciona el grafo cargado
+   (`get_input_jsonschema`) sólo si hay `entrypoint`; ante cualquier fallo
+   sigue el camino de mensajes de hoy, idéntico byte a byte, y también con
+   un prompt a un grafo cuyo esquema no tiene claves `required` (así lo
+   ejecutaba 0.15). Los fallos son
+   `AgentException(reason="protocol_error")` con `detail_code`
+   `input_required`, `invalid_input` u `output_not_serializable`. En el SDK,
+   `invoke(prompt=None, ..., *, input=None)` y `stream` igual; en TypeScript,
+   una sobrecarga `invoke({ input }, options)`. La CLI acepta `--input` y
+   `--input-file` (`-` lee stdin) en lugar de `PROMPT`. Un host antiguo
+   responde `400` a `input` y el SDK lo explica («vuelve a desplegar»); un
+   SDK antiguo ignora `output`. `sbx.agent.run()` dentro de un sandbox queda
+   fuera.
+4. **Secretos de Secrets Manager como variables de entorno (D4).**
+   `[secret_env]` (`NOMBRE = "<id>"` o `{ secret, key, version_stage }`) y
+   `[[secret_env_from]]` (`secret`, `prefix`, `keys`), con las banderas
+   `--secret-env NOMBRE=<id>[#clave]` y `--secret-env-from
+   <id>[,prefix=P][,keys=A|B]`. `<id>` es un nombre completo o un ARN, como
+   `--readable-secret`; `#` separa la clave porque Secrets Manager no lo
+   admite en nombres. En AgentCore la especificación (sólo nombres y ARNs)
+   viaja en `RAYITO_SECRET_ENV`; el host la lee antes de cargar el código del
+   usuario, pide cada secreto con el rol del runtime mediante un ayudante de
+   botocore en el venv que ya existe para las credenciales, valida nombres
+   reservados, exporta las variables, borra la especificación y falla en
+   cerrado (`secret_env_*`) sin nombrar nunca un secreto ni un valor. Las
+   referencias se unen a `ReadableSecretArns`: la plantilla y la pila
+   anidada de CDK no cambian. En MicroVM el SDK lee los valores con las
+   credenciales de quien despliega y los pasa como `secrets=` al proceso del
+   host, con sus nombres (nunca valores) en `RAYITO_SECRET_ENV_NAMES` para
+   que el diagnóstico de arranque los redacte igual que en AgentCore. Para
+   las claves de LLM en MicroVM se sigue recomendando la pasarela,
+   que no expone la clave al agente. `--create-secrets-from .env` (crea un
+   secreto JSON, $0,40/mes, pide `--yes`) y `--check-env` (avisa de las
+   variables de `.env.example` sin valor) son opcionales. KMS con clave
+   propia, secretos de otra cuenta y el export a Docker quedan para una
+   fase 2. El compromiso se dice en el plan (`secretEnv`), `security.md` y
+   `SECURITY.md` (T38): el proceso del agente y lo que lance pueden leer su
+   entorno; en AgentCore cualquier código de la sesión puede obtener las
+   credenciales del rol; en MicroVM el titular del token ve el entorno con
+   `commands.list()` y una pausa lo guarda en la instantánea.
+5. **Protocolo `langgraph-api`, experimental y opcional (D5).**
+   `[runtime.app] protocol = "langgraph-api"` (o `--protocol langgraph-api`
+   sobre un proyecto con `langgraph.json`; nunca por detección automática)
+   lanza `langgraph dev --no-browser --no-reload` en el puerto interno del
+   host y traduce `/invocations` a `POST /threads/{id}/runs/wait` con
+   `if_not_exists=create` y `multitask_strategy=reject`; la salud es
+   `GET /ok`. El hilo es `uuid5` de la sesión con un espacio de nombres fijo,
+   así que el mismo `session_id` continúa el mismo hilo. `assistant_id` es
+   obligatorio y sale del grafo elegido (D3). `__interrupt__` es
+   `protocol_error/graph_interrupted`. Sin streaming, sin servidor de
+   producción (pide Postgres, Redis y licencia, y no se recomienda en
+   serverless) y sin human-in-the-loop. Rayito no instala `langgraph-api`
+   (licencia Elastic-2.0): lo pone el usuario en sus dependencias, y la
+   detección avisa si falta. La CLI de LangGraph corre con la analítica
+   apagada. Como `langgraph dev` escribe su estado en su directorio de
+   trabajo y resuelve allí las rutas de `langgraph.json`, y el código copiado
+   es de sólo lectura, el host lo arranca en `workdir` con una copia de la
+   configuración de rutas absolutas (medido en la aceptación,
+   `AWS_API_NOTES.md` Q189).
+
+**Consecuencias.** Un agente LangGraph que elige su modelo por
+configuración, recibe un objeto de entrada y lee secretos de Secrets Manager
+se despliega sin tocar su código, en MicroVM y en AgentCore. Crecen el
+esquema del proyecto, el contrato del servicio y el plan de AgentCore, todos
+de forma aditiva; un SDK anterior rechaza un fichero que use las claves
+nuevas (`unknown_key`), lo que se documenta. Riesgos: la detección de
+nombres de variable es heurística y puede no ver una configuración muy
+indirecta (se fija con `--model-id`, `--model-provider` o el fichero); en
+AgentCore la llamada a un modelo externo sale por Internet sin filtro de
+Rayito; un secreto en el entorno es legible por todo el código del agente;
+`langgraph dev` arranca más despacio que uvicorn (la espera se mide en la
+aceptación, `AWS_API_NOTES.md` Q189).
+
+**Alternativas descartadas.** Un centinela para el id desconocido (un valor
+mágico que todo el código tendría que conocer). Pasar la clave del modelo
+externo en `environmentVariables` (`GetAgentRuntime` las devuelve en claro).
+La sintaxis de ECS `arn:…:json-key:stage:id` para `--secret-env` (ambigua con
+nombres que no son ARN). Una sentencia nueva de IAM para los secretos del
+entorno (cambiaría parámetros de la pila; `ReadableSecretArns` ya es el
+mínimo privilegio). Un modo `input_mode` propio de `langgraph-api` que
+codificara el objeto dentro de `prompt` (D3 ya da `input`). Autodetectar
+`langgraph-api` desde `langgraph.json` (hoy esos proyectos ya se despliegan
+con el grafo en proceso). Cuatro ADR separados (las cuatro piezas comparten
+los mismos ficheros y se fusionan juntas).
+
+**Reversible.** Cada pieza es opcional y aditiva: sin las claves, banderas u
+opciones nuevas, los SDK producen los mismos documentos, planes, imágenes y
+llamadas que 0.15. Detalle, contrato de integración y tareas en
+`openspec/changes/agnostic-agent-deploy/`; vectores en
+`testdata/agnostic-deploy/`, `testdata/agent-model-optional/`,
+`testdata/agent-deploy/invocation-bodies.json`,
+`testdata/agent-secret-env/` y `testdata/agent-langgraph-api/`.
+
+**Fuentes (consultadas el 2026-10-21).**
+[ChatOpenAI](https://reference.langchain.com/python/langchain-openai/chat_models/base/ChatOpenAI),
+[`langgraph.json`](https://docs.langchain.com/langsmith/cli),
+[Graph API](https://docs.langchain.com/oss/python/langgraph/graph-api),
+[`get_input_jsonschema`](https://reference.langchain.com/python/langgraph/graph/state/CompiledStateGraph/get_input_jsonschema),
+[`getInputJsonSchema`](https://reference.langchain.com/javascript/langchain-langgraph/index/StateSchema/getInputJsonSchema),
+[pydantic-settings](https://pydantic.dev/docs/validation/latest/concepts/pydantic_settings/),
+[contrato HTTP de AgentCore Runtime](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-http-protocol-contract.html),
+[límites de AgentCore](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/bedrock-agentcore-limits.html),
+[seguridad de AgentCore Runtime](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-security-best-practices.html),
+[`CreateAgentRuntime`](https://docs.aws.amazon.com/bedrock-agentcore-control/latest/APIReference/API_CreateAgentRuntime.html),
+[`GetAgentRuntime`](https://docs.aws.amazon.com/bedrock-agentcore-control/latest/APIReference/API_GetAgentRuntime.html),
+[buenas prácticas de Secrets Manager](https://docs.aws.amazon.com/secretsmanager/latest/userguide/best-practices.html),
+[secretos como variables en ECS](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/secrets-envvar-secrets-manager.html),
+[`runs/wait` del Agent Server](https://docs.langchain.com/langsmith/agent-server-api/thread-runs/create-run-wait-for-output.md),
+[salud del Agent Server](https://docs.langchain.com/langsmith/agent-server-api/system/health-check.md),
+[servidor local](https://docs.langchain.com/langsmith/local-server),
+[servidor standalone](https://docs.langchain.com/langsmith/deploy-standalone-server),
+[`langgraph-api` en PyPI](https://pypi.org/project/langgraph-api/),
+[privacidad de la CLI de LangGraph](https://docs.langchain.com/langsmith/data-storage-and-privacy),
+[convenciones GenAI de OpenTelemetry](https://github.com/open-telemetry/semantic-conventions-genai).

@@ -31,7 +31,7 @@ import re
 from collections.abc import Mapping, Sequence
 from typing import Final, Literal
 
-from rayito._agent._domain import AgentSpec
+from rayito._agent._domain import AgentSpec, required_model_id
 from rayito._agent._host_runtime import (
     PYTHON_FLAG_ENVS,
     HostBackedRuntime,
@@ -385,6 +385,13 @@ class StrandsRuntime(HostBackedRuntime):
         `standard_model_envs`)."""
         return standard_model_envs(spec, urls)
 
+    def _model_id(self, spec: AgentSpec) -> str | None:
+        """Sin `entrypoint` el host construye el agente y necesita el id;
+        con él, `ctx.model` es `None` si tu código elige el modelo."""
+        if self.entrypoint is None:
+            return required_model_id(spec.model, self.name)
+        return spec.model.id
+
     def host_setup(
         self, spec: AgentSpec, urls: Mapping[str, str] | None, workdir: str
     ) -> HostSetup:
@@ -395,7 +402,7 @@ class StrandsRuntime(HostBackedRuntime):
             "v": AGENT_PROTOCOL_VERSION,
             "provider": spec.model.provider,
             "client": entry.client,
-            "model": spec.model.id,
+            "model": self._model_id(spec),
             "region": spec.model.region,
             "base_url": base_url,
             "credential_placeholder": MODEL_CREDENTIAL_PLACEHOLDER if base_url else None,

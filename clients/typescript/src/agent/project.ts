@@ -24,6 +24,7 @@ import {
   AGENT_NODE_BUILD_VERSIONS,
   AGENT_PROJECT_SCHEMA,
   AGENT_PYTHON_BUILD_VERSIONS,
+  AGENT_SECRET_ENV_MAX_SECRETS,
   AGENT_SERVICE_MAX_CONCURRENCY,
   AGENT_SERVICE_PORT,
   AGENT_SERVICE_QUEUE_MAX,
@@ -46,6 +47,7 @@ import type { BuildInfo } from "../templates/build.js";
 import { validateBucketHint, validateImageVersion } from "./deploy-domain.js";
 import type { AgentDeployment } from "./deployment.js";
 import type { DetectionReport, DetectOverrides } from "./detect-report.js";
+import { DETECTION_RULES } from "./detect-rules.js";
 import {
   AgentLimits,
   AgentModel,
@@ -54,6 +56,8 @@ import {
   McpLocal,
   McpRemote,
   type McpServer,
+  MODEL_ENV_FIELDS,
+  MODEL_ENV_KEYS,
   type ModelProvider,
   SubAgent,
   validateName,
@@ -77,18 +81,46 @@ import {
 import type { AgentProjectDeployOptions, AgentProjectRunOptions } from "./project-service.js";
 import type { AgentRuntime } from "./runtime.js";
 import {
+  DEFAULT_AGENT_RUNTIMES,
+  MODEL_BUILDING_RUNTIMES,
   RUNTIME_KINDS,
   RUNTIME_OPTION_KEYS,
+  requireRuntimeModelId,
   resolveRuntime,
   runtimeFromOptions,
   runtimeToOptions,
 } from "./runtimes.js";
+
+export { DEFAULT_AGENT_RUNTIMES, MODEL_BUILDING_RUNTIMES };
+
 import {
   maxSessionsForMemory,
   ScalingOptions,
   type ScalingOptionsInput,
 } from "./scaling-domain.js";
+import {
+  hasReservedPrefix,
+  isReservedName,
+  SECRET_ENV_KEY_PATTERN,
+  SECRET_ENV_NAME_PATTERN,
+  SECRET_ID_PATTERN,
+  type SecretEnvMap,
+  SecretEnvRef,
+  SecretEnvSource,
+  type SecretEnvValue,
+  secretIds,
+} from "./secret-env.js";
 import { type AgentTemplateBuildOptions, DEFAULT_AGENT_TEMPLATE_BASE } from "./template.js";
+
+/** `[runtime] graph`: el nombre de un grafo de `langgraph.json`, sólo con
+ * `kind = "langgraph"` (`testdata/agent-project/schema.json`). Se resuelve al
+ * `entrypoint` de ese grafo antes de construir el runtime. */
+export const GRAPH_KEY = "graph";
+export const GRAPH_RUNTIME_KIND = "langgraph";
+export const GRAPH_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/;
+export const ENTRYPOINT_KEY = "entrypoint";
+export const LANGGRAPH_FILE = (DETECTION_RULES.entryFiles[GRAPH_RUNTIME_KIND] as { file: string })
+  .file;
 
 /** Los códigos de error de lectura de un proyecto: lista cerrada que los dos
  * SDK comparten (`testdata/agent-project/invalid/cases.json`). */
@@ -137,6 +169,7 @@ export const CUSTOM_GATEWAY_PRESET = "custom";
 /** Milisegundos por segundo: el fichero habla en segundos. */
 const MS_PER_SECOND = 1000;
 const RATE_KEY = "rate_per_minute";
+const MODELS_KEY = "models";
 const DEFAULT_SERVE_TIMEOUT_MS = DEFAULT_AGENT_DEPLOY_TIMEOUT_SECONDS * MS_PER_SECOND;
 /** Plazo por defecto de la cola del servicio (y de la del cliente de una flota). */
 export const DEFAULT_QUEUE_TIMEOUT_MS = AGENT_SERVICE_QUEUE_TIMEOUT_SECONDS_DEFAULT * MS_PER_SECOND;
@@ -426,11 +459,19 @@ export interface AgentProjectOptions {
   readonly language?: AgentLanguage | undefined;
   readonly framework?: string | undefined;
   readonly versions?: RuntimeVersions | RuntimeVersionsInput | undefined;
+  readonly graph?: string | undefined;
+  readonly secretEnv?: Readonly<Record<string, string | SecretEnvRef>> | undefined;
+  readonly secretEnvFrom?: readonly SecretEnvSource[] | undefined;
 }
 
 /** El lector de ficheros de texto que `fromObject` usa para
  * `agent.instructions_file`. */
 export type TextReader = (path: string) => string;
+
+/** Lo que `fromObject` usa para `[runtime] graph`: el `entrypoint` del grafo
+ * de ese nombre en el `langgraph.json` del proyecto. Lo inyecta `load` (como
+ * `readText`); lee sólo ese fichero, nunca el código del proyecto. */
+export type GraphResolver = (graph: string) => string;
 
 /**
  * Un agente descrito una vez: runtime, `AgentSpec`, pasarelas del modelo,
@@ -450,7 +491,15 @@ export type TextReader = (path: string) => string;
  * del sandbox, que necesita `rayito-base-caps`), `region`, `bucket` y
  * `baseImageVersion` (los valores por defecto de `deployAgent()`), `language` y
  * `framework` (lo que la detección o el fichero declaran del proyecto) y
- * `versions` (`RuntimeVersions`).
+ * `versions` (`RuntimeVersions`). `graph` es el nombre del grafo de
+ * `langgraph.json` que se sirve (sólo con el runtime `langgraph`);
+ * `toObject()` lo escribe en lugar del `entrypoint`.
+ *
+ * `secretEnv` (nombre de variable -> nombre o ARN de un secreto, o un
+ * `SecretEnvRef`) y `secretEnvFrom` (`SecretEnvSource`) ponen valores de
+ * Secrets Manager en el entorno del agente al arrancar (ADR-033 D4): el
+ * proyecto sólo lleva nombres, nunca valores, y el agente puede leer su
+ * entorno (ver `SecretEnvRef` para el coste).
  *
  * Coste y activación
  * -------------------
@@ -492,6 +541,9 @@ export class AgentProject {
   readonly language: AgentLanguage | undefined;
   readonly framework: string | undefined;
   readonly versions: RuntimeVersions;
+  readonly graph: string | undefined;
+  readonly secretEnv: SecretEnvMap;
+  readonly secretEnvFrom: readonly SecretEnvSource[];
 
   constructor(options: AgentProjectOptions) {
     validateName(options.name, "AgentProject.name");
@@ -499,6 +551,7 @@ export class AgentProject {
     if (!(options.spec instanceof AgentSpec)) {
       throw new InvalidArgumentError("AgentProject.spec debe ser un AgentSpec");
     }
+    requireRuntimeModelId(options.spec, options.runtime);
     const gateways = validatedGateways(options.gateways ?? {});
     options.spec.requireGateways(Object.keys(gateways));
     optionalText(options.source, "AgentProject.source");
@@ -575,6 +628,17 @@ export class AgentProject {
       );
     }
     this.language = options.language;
+    validateGraph(options.graph, options.runtime);
+    this.graph = options.graph;
+    this.secretEnv = Object.freeze({ ...validatedSecretEnv(options.secretEnv ?? {}, this.env) });
+    this.secretEnvFrom = Object.freeze(validatedSecretEnvFrom(options.secretEnvFrom ?? []));
+    if (secretIds(this.secretEnv, this.secretEnvFrom).length > AGENT_SECRET_ENV_MAX_SECRETS) {
+      throw fail(
+        SECRET_ENV_KEY,
+        "invalid_value",
+        `admite como mucho ${AGENT_SECRET_ENV_MAX_SECRETS} secretos`,
+      );
+    }
   }
 
   /** Lee `rayito-agent.toml` o `rayito-agent.json` de `path` (un fichero, o
@@ -586,6 +650,7 @@ export class AgentProject {
     return AgentProject.fromObject(document.data, {
       baseDir: document.baseDir,
       readText: document.readText,
+      resolveGraph: document.resolveGraph,
     });
   }
 
@@ -609,13 +674,17 @@ export class AgentProject {
   /** El proyecto de un documento ya leído. Puro: las rutas relativas se
    * resuelven contra `baseDir` sin tocar el disco, y `instructions_file` pasa
    * por `readText` (el lector que inyecta `load`; sin él, esa clave es un
-   * error). */
+   * error), y `[runtime] graph`, por `resolveGraph` (también de `load`). */
   static fromObject(
     data: Readonly<Record<string, unknown>>,
-    options: { readonly baseDir: string; readonly readText?: TextReader | undefined },
+    options: {
+      readonly baseDir: string;
+      readonly readText?: TextReader | undefined;
+      readonly resolveGraph?: GraphResolver | undefined;
+    },
   ): AgentProject {
     return new AgentProject({
-      ...projectOptions(data, options.baseDir, options.readText),
+      ...projectOptions(data, options.baseDir, options.readText, options.resolveGraph),
       baseDir: options.baseDir,
     });
   }
@@ -629,7 +698,7 @@ export class AgentProject {
       name: this.name,
       runtime: runtimeToObject(this),
     };
-    const tables: Array<[string, Record<string, unknown>]> = [
+    const tables: Array<[string, object]> = [
       ["source", sourceToObject(this)],
       ["model", modelToObject(this.spec.model)],
       ["gateways", gatewaysToObject(this.gateways)],
@@ -638,6 +707,8 @@ export class AgentProject {
       ["serve", serveToObject(this.serve)],
       ["scaling", scalingToObject(this.scaling)],
       ["env", Object.fromEntries(sortedEntries(this.env))],
+      ["secret_env", secretEnvToObject(this)],
+      ["secret_env_from", secretEnvFromToObject(this)],
       ["network", networkToObject(this)],
       ["deploy", deployToObject(this)],
       ["image", imageToObject(this)],
@@ -722,6 +793,118 @@ export class AgentProject {
 }
 
 // ------------------------------------------------------------------ validation
+
+const SECRET_ENV_KEY = "secret_env";
+const SECRET_ENV_FROM_KEY = "secret_env_from";
+
+/** La ruta de error de una variable de `secret_env` (la tabla, si el nombre
+ * está vacío). */
+export function secretEnvPath(name: string): string {
+  return name === "" ? SECRET_ENV_KEY : `${SECRET_ENV_KEY}.${name}`;
+}
+
+export function secretEnvFromPath(index: number): string {
+  return `${SECRET_ENV_FROM_KEY}[${index}]`;
+}
+
+/** Un nombre de variable válido y no reservado, o `invalid_value`. */
+export function checkSecretEnvName(name: unknown, path: string): string {
+  if (typeof name !== "string" || !SECRET_ENV_NAME_PATTERN.test(name)) {
+    throw fail(path, "invalid_value", "debe ser un nombre de variable de entorno");
+  }
+  if (isReservedName(name)) {
+    throw fail(path, "invalid_value", "es un nombre reservado del runtime");
+  }
+  return name;
+}
+
+/** El nombre completo o el ARN de un secreto: `secret_value` si parece el
+ * valor pegado en su lugar, `invalid_value` si no es un nombre. */
+export function checkSecretId(value: unknown, path: string): string {
+  if (typeof value !== "string") {
+    throw fail(path, "invalid_type", "debe ser el nombre o el ARN de un secreto");
+  }
+  if (SECRET_VALUE_PREFIXES.some((prefix) => value.startsWith(prefix))) {
+    throw fail(
+      path,
+      "secret_value",
+      "parece un valor y no el nombre de un secreto; escribe el nombre",
+    );
+  }
+  if (!SECRET_ID_PATTERN.test(value)) {
+    throw fail(path, "invalid_value", "debe ser el nombre o el ARN de un secreto");
+  }
+  return value;
+}
+
+function checkSecretEnvKey(value: string | undefined, path: string): void {
+  if (value !== undefined && !SECRET_ENV_KEY_PATTERN.test(value)) {
+    throw fail(path, "invalid_value", "debe ser ASCII imprimible sin espacios");
+  }
+}
+
+/** Un valor de `secret_env`: el nombre de un secreto o un `SecretEnvRef`. */
+export function checkSecretEnvRef(value: unknown, path: string): SecretEnvValue {
+  if (typeof value === "string") {
+    return checkSecretId(value, path);
+  }
+  if (!(value instanceof SecretEnvRef)) {
+    throw fail(path, "invalid_type", "debe ser el nombre de un secreto o un SecretEnvRef");
+  }
+  checkSecretId(value.secret, path);
+  checkSecretEnvKey(value.key, path);
+  checkSecretEnvKey(value.versionStage, path);
+  return value;
+}
+
+/** Una entrada de `secret_env_from`: secreto válido, prefijo vacío o de
+ * nombre de variable y no reservado, y claves que con el prefijo son nombres
+ * válidos y no reservados. */
+export function checkSecretEnvSource(source: unknown, path: string): SecretEnvSource {
+  if (!(source instanceof SecretEnvSource)) {
+    throw fail(path, "invalid_type", "debe ser un SecretEnvSource");
+  }
+  checkSecretId(source.secret, `${path}.secret`);
+  const prefixPath = `${path}.prefix`;
+  if (source.prefix !== "" && !SECRET_ENV_NAME_PATTERN.test(source.prefix)) {
+    throw fail(prefixPath, "invalid_value", "debe ser un prefijo de nombre de variable");
+  }
+  if (hasReservedPrefix(source.prefix)) {
+    throw fail(prefixPath, "invalid_value", "es un prefijo reservado del runtime");
+  }
+  for (const key of source.keys ?? []) {
+    checkSecretEnvName(`${source.prefix}${key}`, `${path}.keys`);
+  }
+  return source;
+}
+
+function validatedSecretEnv(
+  secretEnv: unknown,
+  env: Readonly<Record<string, string>>,
+): Record<string, SecretEnvValue> {
+  if (!isRecord(secretEnv)) {
+    throw fail(SECRET_ENV_KEY, "invalid_type", "debe mapear nombres a secretos");
+  }
+  const checked: Record<string, SecretEnvValue> = {};
+  for (const [name, value] of Object.entries(secretEnv)) {
+    const path = secretEnvPath(name);
+    checkSecretEnvName(name, path);
+    checked[name] = checkSecretEnvRef(value, path);
+    if (Object.hasOwn(env, name)) {
+      throw fail(path, "conflict", "la variable está a la vez en [env] y en [secret_env]");
+    }
+  }
+  return checked;
+}
+
+function validatedSecretEnvFrom(sources: unknown): SecretEnvSource[] {
+  if (!Array.isArray(sources)) {
+    throw fail(SECRET_ENV_FROM_KEY, "invalid_type", "debe ser una lista de SecretEnvSource");
+  }
+  return sources.map((source: unknown, index) =>
+    checkSecretEnvSource(source, secretEnvFromPath(index)),
+  );
+}
 
 function optionalText(value: unknown, label: string): void {
   if (value !== undefined && (typeof value !== "string" || value === "")) {
@@ -906,6 +1089,7 @@ function projectOptions(
   data: Readonly<Record<string, unknown>>,
   baseDir: string,
   readText: TextReader | undefined,
+  resolveGraph: GraphResolver | undefined,
 ): AgentProjectOptions {
   const root = new Table(data, "");
   const schema = root.text("schema", true);
@@ -913,7 +1097,7 @@ function projectOptions(
     throw fail("schema", "unsupported_schema", `debe ser '${AGENT_PROJECT_SCHEMA}'`);
   }
   const name = root.text("name", true) as string;
-  const { runtime, ...runtimeExtras } = readRuntime(root.table("runtime"));
+  const { runtime, ...runtimeExtras } = readRuntime(root.table("runtime"), resolveGraph);
   const source = readSource(root.table("source"), baseDir);
   const gateways = readGateways(root);
   const modelTable = root.table("model");
@@ -926,12 +1110,19 @@ function projectOptions(
   const serve = readServe(root.table("serve"));
   const scaling = readScaling(root.table("scaling"));
   const env = readEnv(root.table("env"));
+  const secretEnv = readSecretEnv(root);
   const network = readNetwork(root.table("network"));
   const deploy = readDeploy(root.table("deploy"));
   const image = readImage(root.table("image"));
   root.finish();
   checkGateways(spec, gateways);
   checkConcurrency(serve, image);
+  checkModel(
+    spec.model,
+    runtime,
+    gatewayPresets(data),
+    env.env as Readonly<Record<string, string>>,
+  );
   return {
     name,
     runtime,
@@ -943,10 +1134,48 @@ function projectOptions(
     ...serve,
     ...scaling,
     ...env,
+    ...secretEnv,
     ...network,
     ...deploy,
     ...image,
   };
+}
+
+/** `[gateways.<nombre>] preset` de cada pasarela del documento (ya
+ * validado): `AgentProject` sólo guarda la pasarela construida. */
+function gatewayPresets(data: Readonly<Record<string, unknown>>): Record<string, string> {
+  const gateways = data.gateways;
+  if (!isRecord(gateways)) {
+    return {};
+  }
+  const presets: Record<string, string> = {};
+  for (const [name, entry] of Object.entries(gateways)) {
+    if (isRecord(entry) && typeof entry.preset === "string") {
+      presets[name] = entry.preset;
+    }
+  }
+  return presets;
+}
+
+/** El id del modelo donde Rayito lo usa y los nombres de `[model]` que no
+ * repiten una variable de `[env]` (`conflict`). */
+function checkModel(
+  model: AgentModel,
+  runtime: AgentRuntime | string,
+  presets: Readonly<Record<string, string>>,
+  env: Readonly<Record<string, string>> | undefined,
+): void {
+  const options = runtimeToOptions(runtime);
+  requireModelId(model.id, {
+    runtime: String(options.kind),
+    entrypoint: options.entrypoint !== undefined,
+    gatewayPreset: presets[model.gateway],
+  });
+  for (const [key, name] of Object.entries(model.envNames())) {
+    if (env !== undefined && Object.hasOwn(env, name)) {
+      throw fail(`model.${key}`, "conflict", "esa variable ya está en [env]");
+    }
+  }
 }
 
 function checkConcurrency(serveFields: Fields, imageFields: Fields): void {
@@ -978,9 +1207,13 @@ interface RuntimeRead {
   readonly language?: AgentLanguage;
   readonly framework?: string;
   readonly versions?: RuntimeVersions;
+  readonly graph?: string;
 }
 
-function readRuntime(table: Table | undefined): RuntimeRead {
+function readRuntime(
+  table: Table | undefined,
+  resolveGraph: GraphResolver | undefined,
+): RuntimeRead {
   if (table === undefined) {
     throw fail("runtime", "missing_key", "es obligatoria");
   }
@@ -997,7 +1230,61 @@ function readRuntime(table: Table | undefined): RuntimeRead {
     }
   }
   table.finish();
+  if (extras.graph !== undefined) {
+    options[ENTRYPOINT_KEY] = graphEntrypointOf(extras.graph, resolveGraph, table.at(GRAPH_KEY));
+  }
   return { runtime: guard("runtime", () => runtimeFromOptions(kind, options)), ...extras };
+}
+
+/** El `entrypoint` del grafo `graph`, con el resolvedor que inyecta `load`
+ * (sin él, `invalid_value`, como `instructions_file`). */
+function graphEntrypointOf(
+  graph: string,
+  resolveGraph: GraphResolver | undefined,
+  path: string,
+): string {
+  if (resolveGraph === undefined) {
+    throw fail(path, "invalid_value", "no hay lector de ficheros disponible");
+  }
+  return resolveGraph(graph);
+}
+
+/** `[runtime] graph`: un nombre válido, sólo con `kind = "langgraph"` y nunca
+ * junto a `entrypoint` (`conflict`). */
+function readGraph(table: Table): string | undefined {
+  const graph = table.text(GRAPH_KEY);
+  if (graph === undefined) {
+    return undefined;
+  }
+  const path = table.at(GRAPH_KEY);
+  if (table.raw("kind") !== GRAPH_RUNTIME_KIND) {
+    throw fail(path, "invalid_value", `sólo vale con kind = '${GRAPH_RUNTIME_KIND}'`);
+  }
+  if (!GRAPH_NAME_PATTERN.test(graph)) {
+    throw fail(path, "invalid_value", `debe casar con ${GRAPH_NAME_PATTERN.source}`);
+  }
+  if (table.raw(ENTRYPOINT_KEY) !== undefined) {
+    throw fail(path, "conflict", DETECTION_RULES.messages.graph_conflict as string);
+  }
+  return graph;
+}
+
+/** `AgentProject.graph`: un nombre de grafo válido y sólo con el runtime
+ * `langgraph`. */
+function validateGraph(graph: unknown, runtime: string | AgentRuntime): void {
+  if (graph === undefined) {
+    return;
+  }
+  if (typeof graph !== "string" || !GRAPH_NAME_PATTERN.test(graph)) {
+    throw new InvalidArgumentError(
+      `AgentProject.graph debe casar con ${GRAPH_NAME_PATTERN.source}`,
+    );
+  }
+  if (runtimeToOptions(runtime).kind !== GRAPH_RUNTIME_KIND) {
+    throw new InvalidArgumentError(
+      `AgentProject.graph sólo vale con el runtime '${GRAPH_RUNTIME_KIND}'`,
+    );
+  }
 }
 
 /** Las claves de `[runtime]` que son del proyecto y no de un runtime:
@@ -1023,6 +1310,10 @@ function readRuntimeExtras(table: Table): Omit<RuntimeRead, "runtime"> {
   }
   if (python !== undefined || node !== undefined) {
     extras.versions = new RuntimeVersions({ python, node });
+  }
+  const graph = readGraph(table);
+  if (graph !== undefined) {
+    extras.graph = graph;
   }
   return extras;
 }
@@ -1054,11 +1345,12 @@ function readSource(table: Table | undefined, baseDir: string): Fields {
 
 function readModel(table: Table): AgentModel {
   const provider = table.text("provider", true) as string;
-  const id = table.text("id", true) as string;
+  const id = table.text("id");
   const gateway = table.text("gateway", true) as string;
   const region = table.text("region");
   const basePath = table.text("base_path");
   const caching = table.boolean("prompt_caching");
+  const names = readModelEnvNames(table);
   table.finish();
   return guard(
     "model",
@@ -1070,8 +1362,26 @@ function readModel(table: Table): AgentModel {
         region,
         basePath: basePath ?? "",
         promptCaching: caching,
+        ...names,
       }),
   );
+}
+
+/** Las claves `MODEL_ENV_KEYS` de `[model]` que el fichero fija: nombres de
+ * variable, nunca valores. */
+function readModelEnvNames(table: Table): Record<string, string> {
+  const names: Record<string, string> = {};
+  for (const key of MODEL_ENV_KEYS) {
+    const name = table.text(key);
+    if (name === undefined) {
+      continue;
+    }
+    if (!ENV_NAME_PATTERN.test(name)) {
+      throw fail(table.at(key), "invalid_value", "debe ser un nombre de variable");
+    }
+    names[MODEL_ENV_FIELDS[key]] = name;
+  }
+  return names;
 }
 
 function readAgent(
@@ -1342,6 +1652,57 @@ function readEnv(table: Table | undefined): Fields {
   return { env: guard("env", () => validatedEnv(env)) };
 }
 
+function readSecretEnvValue(table: Table, name: string): SecretEnvValue {
+  const path = table.at(name);
+  checkSecretEnvName(name, path);
+  const value = table.raw(name);
+  if (!isRecord(value)) {
+    return checkSecretId(value, path);
+  }
+  const reference = new Table(value, path);
+  const secret = checkSecretId(reference.text("secret", true), reference.at("secret"));
+  const key = reference.text("key");
+  const versionStage = reference.text("version_stage");
+  reference.finish();
+  return checkSecretEnvRef(new SecretEnvRef({ secret, key, versionStage }), path);
+}
+
+function readSecretEnvSource(entry: Table): SecretEnvSource {
+  const secret = checkSecretId(entry.text("secret", true), entry.at("secret"));
+  const prefix = entry.raw("prefix");
+  if (prefix !== undefined && prefix !== null && typeof prefix !== "string") {
+    throw fail(entry.at("prefix"), "invalid_type", "debe ser una cadena");
+  }
+  const keys = entry.texts("keys");
+  entry.finish();
+  const source = new SecretEnvSource({ secret, prefix: prefix ?? "", keys });
+  return checkSecretEnvSource(source, entry.path);
+}
+
+/** `[secret_env]` y `[[secret_env_from]]` (ADR-033 D4), sólo si están. */
+function readSecretEnv(root: Table): Fields {
+  const fields: Fields = {};
+  const table = root.table(SECRET_ENV_KEY);
+  if (table !== undefined) {
+    const secretEnv: Record<string, SecretEnvValue> = {};
+    for (const name of table.keys().sort()) {
+      secretEnv[name] = readSecretEnvValue(table, name);
+    }
+    table.finish();
+    fields.secretEnv = secretEnv;
+  }
+  const sources = root.raw(SECRET_ENV_FROM_KEY);
+  if (sources !== undefined && sources !== null) {
+    if (!Array.isArray(sources)) {
+      throw fail(SECRET_ENV_FROM_KEY, "invalid_type", "debe ser una lista de tablas");
+    }
+    fields.secretEnvFrom = sources.map((item: unknown, index) =>
+      readSecretEnvSource(new Table(item, secretEnvFromPath(index))),
+    );
+  }
+  return fields;
+}
+
 const DEPLOY_CHECKS: Readonly<Record<string, (value: string, label: string) => string>> = {
   bucket: validateBucketHint,
   base_image_version: validateImageVersion,
@@ -1459,10 +1820,68 @@ const GATEWAY_PRESETS: Readonly<Record<string, Preset>> = Object.freeze({
   },
 });
 
+/** Las pasarelas que filtran por modelo (la lista `models` de su ruta): con
+ * ellas el id del modelo es obligatorio (ADR-033 D2). */
+export const MODEL_ID_REQUIRED_PRESETS: readonly string[] = Object.freeze(
+  Object.entries(GATEWAY_PRESETS)
+    .filter(([, preset]) => preset.required.includes(MODELS_KEY))
+    .map(([name]) => name),
+);
+const MODEL_ID_PATH = "model.id";
+
+/** Lo que decide si hace falta el id del modelo. */
+export interface ModelIdRequirement {
+  readonly runtime: string;
+  readonly entrypoint: boolean;
+  readonly gatewayPreset: string | undefined;
+  readonly detected?: boolean | undefined;
+}
+
+/** Si Rayito necesita el id del modelo: lo pide una pasarela que filtra por
+ * modelo o un runtime que construye el modelo
+ * (`testdata/agent-model-optional/requirement.json`). */
+export function modelIdRequired(requirement: ModelIdRequirement): boolean {
+  const { runtime, entrypoint, gatewayPreset } = requirement;
+  if (
+    (gatewayPreset !== undefined && MODEL_ID_REQUIRED_PRESETS.includes(gatewayPreset)) ||
+    MODEL_BUILDING_RUNTIMES.includes(runtime)
+  ) {
+    return true;
+  }
+  return DEFAULT_AGENT_RUNTIMES.includes(runtime) && !entrypoint;
+}
+
+/** `AgentProjectError` en `model.id` si falta y hace falta: `not_detected` si
+ * el proyecto sale de la detección y `missing_key` si sale de un fichero. */
+export function requireModelId(modelId: string | undefined, requirement: ModelIdRequirement): void {
+  if (modelId !== undefined || !modelIdRequired(requirement)) {
+    return;
+  }
+  if (requirement.detected === true) {
+    throw fail(
+      MODEL_ID_PATH,
+      "not_detected",
+      "no se encontró el id del modelo en el código: escríbelo como literal, pásalo con " +
+        "--model-id o define [model] id en rayito-agent.toml (rayito agent detect --write)",
+    );
+  }
+  throw fail(
+    MODEL_ID_PATH,
+    "missing_key",
+    "es obligatoria con esta pasarela o con un runtime que construye el modelo",
+  );
+}
+
 /** Las claves de un preset de pasarela (además de `secret` y `rate_per_minute`):
  * lo que `AgentProject.detect` tiene que rellenar con la región y los modelos. */
 export function gatewayPresetKeys(preset: string): readonly string[] {
   return Object.hasOwn(GATEWAY_PRESETS, preset) ? (GATEWAY_PRESETS[preset]?.keys ?? []) : [];
+}
+
+/** Las claves obligatorias de un preset de pasarela (las demás son
+ * opcionales y la detección las deja fuera). */
+export function gatewayPresetRequiredKeys(preset: string): readonly string[] {
+  return Object.hasOwn(GATEWAY_PRESETS, preset) ? (GATEWAY_PRESETS[preset]?.required ?? []) : [];
 }
 
 /** El nombre de cada opción del fichero (snake_case) en `gateways.ts`. */
@@ -1564,12 +1983,14 @@ function sourceToObject(project: AgentProject): Record<string, unknown> {
   return table;
 }
 
+/** `[model]` canónico: `id` y los nombres de variable sólo si están
+ * puestos, así que un proyecto con id se escribe igual que antes. */
 function modelToObject(model: AgentModel): Record<string, unknown> {
-  const table: Record<string, unknown> = {
-    provider: model.provider,
-    id: model.id,
-    gateway: model.gateway,
-  };
+  const table: Record<string, unknown> = { provider: model.provider };
+  if (model.id !== undefined) {
+    table.id = model.id;
+  }
+  table.gateway = model.gateway;
   if (model.region !== undefined) {
     table.region = model.region;
   }
@@ -1579,7 +2000,39 @@ function modelToObject(model: AgentModel): Record<string, unknown> {
   if (!model.promptCaching) {
     table.prompt_caching = false;
   }
+  return { ...table, ...model.envNames() };
+}
+
+function secretEnvToObject(project: AgentProject): Record<string, unknown> {
+  const table: Record<string, unknown> = {};
+  for (const [name, value] of sortedEntries(project.secretEnv)) {
+    if (typeof value === "string") {
+      table[name] = value;
+      continue;
+    }
+    const reference: Record<string, unknown> = { secret: value.secret };
+    if (value.key !== undefined) {
+      reference.key = value.key;
+    }
+    if (value.versionStage !== undefined) {
+      reference.version_stage = value.versionStage;
+    }
+    table[name] = reference;
+  }
   return table;
+}
+
+function secretEnvFromToObject(project: AgentProject): Array<Record<string, unknown>> {
+  return project.secretEnvFrom.map((source) => {
+    const entry: Record<string, unknown> = { secret: source.secret };
+    if (source.prefix !== "") {
+      entry.prefix = source.prefix;
+    }
+    if (source.keys !== undefined) {
+      entry.keys = [...source.keys];
+    }
+    return entry;
+  });
 }
 
 function secretRefName(value: SecretLike): string {
@@ -1730,6 +2183,10 @@ function idleSeconds(idle: IdlePolicy | null): number {
 
 function runtimeToObject(project: AgentProject): Record<string, unknown> {
   const table = runtimeToOptions(project.runtime);
+  if (project.graph !== undefined) {
+    delete table[ENTRYPOINT_KEY];
+    table[GRAPH_KEY] = project.graph;
+  }
   for (const [key, value] of [
     ["language", project.language],
     ["framework", project.framework],

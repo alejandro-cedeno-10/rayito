@@ -219,6 +219,15 @@ Rules:
   with the access token; `rayd` builds the child's environment from scratch and does not
   log `envs`. There is no new RPC: it works with 0.4.0 images.
 
+### For a deployed agent { #agente-desplegado }
+
+An agent of `rayito agent deploy` (on MicroVMs or on AgentCore) receives
+Secrets Manager values as environment variables with `[secret_env]` and
+`[[secret_env_from]]` in its project file, or with `--secret-env` and
+`--secret-env-from`. There the names are **full** (without the `rayito/`
+prefix, like `--readable-secret`) and a key of a JSON secret is chosen with
+`#key`. See [Secrets as environment variables](guias/secretos-como-entorno.md).
+
 ## The cache: never on every call { #la-cache-nunca-en-cada-llamada }
 
 `SecretCache(ttl_seconds=300)` (TS: `new SecretCache({ ttlSeconds: 300 })`):

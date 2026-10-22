@@ -35,6 +35,7 @@ import {
 import {
   AWS_CREDENTIALS_REQUIREMENTS,
   AWS_ENV_CREDENTIALS_SCRIPT,
+  AWS_SECRET_ENV_SCRIPT,
 } from "./assets/template-assets.gen.js";
 import { canonicalJson } from "./opencode.js";
 import type { AgentProject } from "./project.js";
@@ -75,6 +76,8 @@ import {
   STEP_RUN,
   type TemplateStep,
 } from "./runtime.js";
+import { SECRET_ENV_HOST_KEY, SECRET_ENV_SCRIPT_NAME, usesSecretEnv } from "./secret-env.js";
+import { checkRuntimeCollisions } from "./secret-env-project.js";
 
 export const EXPORT_TARGETS = ["docker", "agentcore"] as const;
 export type ExportTarget = (typeof EXPORT_TARGETS)[number];
@@ -113,6 +116,13 @@ export const AWS_CREDENTIALS_VENV_DIR = `${AGENT_RAYITO_DIR}/aws-credentials`;
 export const AWS_ENV_CREDENTIALS_SCRIPT_PATH = `${AGENT_RAYITO_DIR}/${AWS_ENV_CREDENTIALS_SCRIPT_NAME}`;
 export const AWS_CONFIG_PATH = `${AGENT_RAYITO_DIR}/${AWS_CONFIG_NAME}`;
 export const HOST_AWS_ENV_CREDENTIALS_KEY = "aws_env_credentials";
+/** La herramienta que lee los secretos de `secretEnv` al arrancar en AgentCore
+ * (ADR-033 D4), en el mismo venv de botocore. */
+export const SECRET_ENV_SCRIPT_PATH = `${AGENT_RAYITO_DIR}/${SECRET_ENV_SCRIPT_NAME}`;
+/** Lo que dice el README de un export a Docker con `secretEnv` (fase 2). */
+export const DOCKER_SECRET_ENV_WARNING =
+  "secret_env y secret_env_from no se exportan a Docker: pon esas variables con la " +
+  "plataforma donde corras el contenedor";
 const DEFAULT_FILE_MODE = 0o644;
 const OCTAL = 8;
 const MODE_DIGITS = 4;
@@ -178,7 +188,12 @@ function envLines(envs: Readonly<Record<string, string>>): string[] {
     .map((name) => `ENV ${name}=${pythonJsonString(envs[name] as string)}`);
 }
 
-function hostConfigBytes(project: AgentProject, host: HostConfig, target: string): Uint8Array {
+function hostConfigBytes(
+  project: AgentProject,
+  host: HostConfig,
+  target: string,
+  secretEnv = false,
+): Uint8Array {
   const { ready_marker: _ready, ...document } = hostDocument(project, host);
   const credentials = needsAwsEnvCredentials(project, target)
     ? {
@@ -188,11 +203,32 @@ function hostConfigBytes(project: AgentProject, host: HostConfig, target: string
         },
       }
     : {};
+  const secrets = secretEnv
+    ? {
+        [SECRET_ENV_HOST_KEY]: {
+          python: `${AWS_CREDENTIALS_VENV_DIR}/bin/python`,
+          reserved: Object.keys(host.envs).sort(),
+          script: SECRET_ENV_SCRIPT_PATH,
+        },
+      }
+    : {};
   return canonicalJson({
     ...document,
     ...credentials,
+    ...secrets,
     schema: AGENT_HOST_SCHEMA,
   });
+}
+
+/** Si el export lleva la herramienta de `secretEnv`: sólo con AgentCore (con
+ * Docker se ignora y el README lo dice: fase 2, ADR-033 D4). Un nombre que el
+ * runtime ya fija es `invalid_value` antes de escribir nada. */
+function secretEnvTarget(project: AgentProject, host: HostConfig, target: string): boolean {
+  if (target !== "agentcore" || !usesSecretEnv(project.secretEnv, project.secretEnvFrom)) {
+    return false;
+  }
+  checkRuntimeCollisions(project, host.envs);
+  return true;
 }
 
 /** Si el adaptador del proyecto sólo lee las credenciales de AWS de variables de entorno, en AgentCore el host se las pone leídas del rol del runtime. */
@@ -200,7 +236,10 @@ function needsAwsEnvCredentials(project: AgentProject, target: string): boolean 
   return target === "agentcore" && usesEnvCredentials(project.runtime);
 }
 
-function awsCredentialSteps(install: InstallTarget): readonly TemplateStep[] {
+function awsCredentialSteps(
+  install: InstallTarget,
+  options: { readonly credentials: boolean; readonly secretEnv: boolean },
+): readonly TemplateStep[] {
   return [
     copyStep(AWS_CREDENTIALS_REQUIREMENTS_NAME, AWS_CREDENTIALS_REQUIREMENTS_PATH),
     runStep(
@@ -210,7 +249,10 @@ function awsCredentialSteps(install: InstallTarget): readonly TemplateStep[] {
         requirementsSha256: AGENT_AWS_CREDENTIALS_REQUIREMENTS_SHA256,
       }),
     ),
-    copyStep(AWS_ENV_CREDENTIALS_SCRIPT_NAME, AWS_ENV_CREDENTIALS_SCRIPT_PATH),
+    ...(options.credentials
+      ? [copyStep(AWS_ENV_CREDENTIALS_SCRIPT_NAME, AWS_ENV_CREDENTIALS_SCRIPT_PATH)]
+      : []),
+    ...(options.secretEnv ? [copyStep(SECRET_ENV_SCRIPT_NAME, SECRET_ENV_SCRIPT_PATH)] : []),
   ];
 }
 
@@ -324,10 +366,27 @@ function readme(project: AgentProject, target: string): string {
     "rol de IAM) y el agente puede leerla. La garantía de que el agente nunca ve la",
     "credencial sólo vale dentro de Rayito.",
   ];
+  if (usesSecretEnv(project.secretEnv, project.secretEnvFrom)) {
+    lines.push(...secretEnvReadmeLines(target));
+  }
   if (target === "agentcore") {
     lines.push(...agentCoreReadmeLines(port));
   }
   return `${lines.join("\n")}\n`;
+}
+
+function secretEnvReadmeLines(target: string): string[] {
+  if (target !== "agentcore") {
+    return ["", DOCKER_SECRET_ENV_WARNING];
+  }
+  return [
+    "",
+    "### Secretos como variables de entorno",
+    "",
+    "El host lee los secretos de `secret_env` al arrancar, con el rol del runtime, y",
+    "los pone en el entorno del agente antes de cargar su código. El agente y todo lo",
+    "que lance pueden leer su entorno: da al rol sólo los secretos que necesita.",
+  ];
 }
 
 function containerHost(project: AgentProject): HostConfig {
@@ -387,11 +446,17 @@ export function* renderExportSteps(
   host.files.files.forEach((file, index) => {
     tree.set(`${RUNTIME_FILES_CONTEXT_DIR}/${index}`, file.data);
   });
-  tree.set(HOST_CONFIG_NAME, hostConfigBytes(project, host, target));
+  const secretEnv = secretEnvTarget(project, host, target);
+  tree.set(HOST_CONFIG_NAME, hostConfigBytes(project, host, target, secretEnv));
   const envCredentials = needsAwsEnvCredentials(project, target);
-  if (envCredentials || credentialProcess) {
+  if (envCredentials || credentialProcess || secretEnv) {
     tree.set(AWS_CREDENTIALS_REQUIREMENTS_NAME, AWS_CREDENTIALS_REQUIREMENTS);
+  }
+  if (envCredentials || credentialProcess) {
     tree.set(AWS_ENV_CREDENTIALS_SCRIPT_NAME, AWS_ENV_CREDENTIALS_SCRIPT);
+  }
+  if (secretEnv) {
+    tree.set(SECRET_ENV_SCRIPT_NAME, AWS_SECRET_ENV_SCRIPT);
   }
   if (credentialProcess) {
     tree.set(
@@ -406,7 +471,12 @@ export function* renderExportSteps(
   }
   const steps = [
     ...runtime.installSteps(install),
-    ...(envCredentials || credentialProcess ? awsCredentialSteps(install) : []),
+    ...(envCredentials || credentialProcess || secretEnv
+      ? awsCredentialSteps(install, {
+          credentials: envCredentials || credentialProcess,
+          secretEnv,
+        })
+      : []),
     ...(credentialProcess ? [copyStep(AWS_CONFIG_NAME, AWS_CONFIG_PATH)] : []),
   ];
   tree.set(DOCKERFILE_NAME, dockerfile(project, host, steps, target));

@@ -1,0 +1,10 @@
+{
+  "node_version": "22",
+  "graphs": {
+    "agent": "./src/agent.ts:graph"
+  },
+  "env": {
+    "LLM_MODEL": "",
+    "LLM_BASE_URL": ""
+  }
+}

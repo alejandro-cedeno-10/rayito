@@ -760,6 +760,21 @@ _RULES_JSON: Final = r"""
     ],
     "portLiteral": false
    },
+   "langgraph-dev": {
+    "command": [
+     "langgraph",
+     "dev",
+     "--no-browser",
+     "--no-reload",
+     "--host",
+     "127.0.0.1",
+     "--port",
+     "{port}",
+     "--config",
+     "langgraph.json"
+    ],
+    "portLiteral": false
+   },
    "node": {
     "portLiteral": true,
     "startScript": "start"
@@ -1197,23 +1212,29 @@ _RULES_JSON: Final = r"""
  "messages": {
   "ambiguous_language": "hay proyectos de Python y de TypeScript con el mismo peso; indica el lenguaje con --language",
   "ambiguous_entrypoint": "hay varios puntos de entrada posibles ({candidates}); indica uno con --entry o [runtime] entrypoint",
+  "ambiguous_graph": "langgraph.json tiene varios grafos ({candidates}); elige uno con --graph o [runtime] graph",
   "ambiguous_factory": "la fábrica {candidates} necesita argumentos; indica el objeto o una fábrica sin argumentos con --entry o [runtime] entrypoint",
   "ambiguous_requirements": "hay varios ficheros de requisitos ({candidates}); indica uno con [source] requirements",
   "ambiguous_route": "la app tiene varias rutas POST posibles ({candidates}); indica la de invocación en [runtime.app] invoke_path",
   "not_detected_manifest": "no hay ningún proyecto de Python ni de TypeScript en la ruta (falta pyproject.toml, requirements.txt o package.json)",
   "not_detected_agent": "no se reconoce ningún framework de agente ni app HTTP; indica el framework con --framework y el punto de entrada con --entry",
   "not_detected_entrypoint": "se reconoce {framework} pero no se encuentra su punto de entrada; indícalo con --entry o [runtime] entrypoint",
+  "graph_not_found": "langgraph.json no tiene el grafo {value} ({candidates})",
+  "graph_conflict": "usa --graph o --entry, no los dos",
   "not_detected_poetry": "poetry.lock sin requirements.txt: exporta los requisitos (poetry export) o usa uv.lock",
   "not_detected_pipenv": "Pipfile.lock sin requirements.txt: exporta los requisitos (pipenv requirements) o usa uv.lock",
   "not_detected_start": "la app de Node no tiene script start ni main; indica el comando en [runtime.app] command",
   "unsupported_version": "ninguna versión fijada de {runtime} cumple la restricción del proyecto; usa una de las soportadas",
   "unsupported_port": "la app escucha en un puerto reservado ({port}); léelo de la variable PORT",
+  "langgraph_api_without_langgraph_json": "--protocol langgraph-api necesita un langgraph.json en el proyecto",
   "not_detected_route": "no se encontró una ruta POST para invocar la app; indícala en [runtime.app] invoke_path o usa el protocolo raw",
-  "invalid_override": "{value} no es un valor válido para {option}; usa uno de {allowed}"
+  "invalid_override": "{value} no es un valor válido para {option}; usa uno de {allowed}",
+  "invalid_model_provider": "--model-provider {value} no es una pasarela conocida ({candidates})"
  },
  "warnings": {
   "scan_truncated": "el árbol del proyecto supera el límite de análisis; solo se leen los primeros ficheros",
   "file_unreadable": "no se pudo interpretar {file}; se ignora",
+  "env_missing": "{name} está en .env.example pero no recibe valor ([env], --secret-env o --secret-env-from)",
   "http_app_alternative": "el proyecto también tiene una app HTTP ({framework}); se sirve el framework del agente, y --entry http sirve la app",
   "entrypoint_not_found": "se reconoce {framework} pero no se encontró su punto de entrada; se prueba el siguiente",
   "multiple_lockfiles": "hay varios ficheros de bloqueo ({files}); se usa {used}",
@@ -1223,10 +1244,75 @@ _RULES_JSON: Final = r"""
   "health_path_assumed": "la app no declara una ruta de salud; se usa {path}",
   "request_field_assumed": "no se detectó el campo de la petición; se usa {field}",
   "protocol_ignored": "el protocolo solo aplica a una app HTTP; se ignora",
+  "langgraph_cli_missing": "langgraph-cli[inmem] no está en tus dependencias: añádelo para usar --protocol langgraph-api",
+  "langgraph_dev_server": "langgraph dev es un servidor de desarrollo en memoria (experimental en Rayito)",
   "several_providers": "hay varios proveedores de modelo ({providers}); se usa {used}",
-  "no_provider": "no se detecta ningún proveedor de modelo; indícalo con --secret proveedor=nombre"
+  "no_provider": "no se detecta ningún proveedor de modelo; indícalo con --secret proveedor=nombre",
+  "model_id_from_code": "no se fija el id del modelo: lo elige tu código ({envs})",
+  "custom_base_url": "el cliente de {path} pasa su propia URL base y se mantiene {preset} porque el código fija el id del modelo; si apunta a una pasarela compatible con OpenAI, pasa --model-base-url"
  },
  "maxModelsListed": 5,
+ "modelFromCode": {
+  "comment": "Modelo elegido por el código (ADR-033 D2). `clientBaseUrl`: un constructor de cliente con URL base (el grupo 1 es el valor tal como se escribe; uno que encaja con `officialBaseUrl` no cuenta) convierte el proveedor `fromPreset` detectado por dependencia en `toPreset` (lo sustituye, no lo añade). Si el código fija el id del modelo (lo que 0.15 ya desplegaba), sólo lo hace con `--model-base-url`; sin ella se mantiene `fromPreset` con el aviso `custom_base_url`. Los nombres de variable salen de `envExampleFiles` (`envExampleName`), de las lecturas del código (`envReads`), de los campos de pydantic-settings (`settings`: `env_prefix` más el campo, en mayúsculas) y de las claves del mapa `env` de `langgraphJson`; se clasifican con `modelEnvPattern`, `baseUrlEnvPattern` y `apiKeyEnvPattern`. Nunca se lee un valor.",
+  "clientBaseUrl": {
+   "python": {
+    "pattern": "\\b(?:ChatOpenAI|AzureChatOpenAI|OpenAI|AsyncOpenAI|OpenAIModel|init_chat_model)\\s*\\((?:[^()]|\\([^()]*\\)){0,400}?\\bbase_url\\s*=\\s*([^,()\\s]*)"
+   },
+   "typescript": {
+    "pattern": "\\b(?:ChatOpenAI|OpenAI|createOpenAI|createOpenAICompatible)\\s*\\(\\s*\\{(?:[^{}()]|\\{[^{}]*\\}|\\([^()]*\\)){0,400}?(?:\\bconfiguration\\s*:\\s*\\{[^{}]*?)?\\b(?:baseURL|baseUrl)\\b(?:\\s*:\\s*([^,{}()\\s]*))?"
+   }
+  },
+  "officialBaseUrl": {
+   "pattern": "^[\\\"'`]https://api\\.openai\\.com(?:[/\\\"'`]|$)"
+  },
+  "fromPreset": "openai",
+  "toPreset": "openai-compatible",
+  "baseUrlRule": "code:base_url",
+  "modelEnvPattern": {
+   "pattern": "^(?:[A-Z][A-Z0-9]*_)*MODEL(?:_ID|_NAME)?$"
+  },
+  "baseUrlEnvPattern": {
+   "pattern": "^(?:[A-Z][A-Z0-9]*_)*(?:BASE_URL|API_BASE)$"
+  },
+  "apiKeyEnvPattern": {
+   "pattern": "^(?:[A-Z][A-Z0-9]*_)*API_KEY$"
+  },
+  "envExampleName": {
+   "pattern": "^[ \\t]*(?:export[ \\t]+)?([A-Za-z_][A-Za-z0-9_]*)[ \\t]*="
+  },
+  "envReads": {
+   "python": [
+    {
+     "pattern": "\\bos\\.(?:getenv|environ\\.get)\\(\\s*[\"']([A-Za-z_][A-Za-z0-9_]*)[\"']"
+    },
+    {
+     "pattern": "\\bos\\.environ\\[\\s*[\"']([A-Za-z_][A-Za-z0-9_]*)[\"']"
+    }
+   ],
+   "typescript": [
+    {
+     "pattern": "\\bprocess\\.env\\.([A-Za-z_][A-Za-z0-9_]*)"
+    },
+    {
+     "pattern": "\\bprocess\\.env\\[\\s*[\"']([A-Za-z_][A-Za-z0-9_]*)[\"']"
+    }
+   ]
+  },
+  "settings": {
+   "python": {
+    "marker": {
+     "pattern": "\\bBaseSettings\\b"
+    },
+    "prefix": {
+     "pattern": "\\benv_prefix\\s*=\\s*[\"']([A-Za-z0-9_]*)[\"']"
+    },
+    "field": {
+     "pattern": "^[ \\t]+([a-z_][a-z0-9_]*)[ \\t]*:[ \\t]*[A-Za-z]"
+    }
+   }
+  },
+  "langgraphJson": "langgraph.json"
+ },
  "configProviders": [
   {
    "framework": "hermes",

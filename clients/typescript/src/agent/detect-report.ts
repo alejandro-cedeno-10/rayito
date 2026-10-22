@@ -11,21 +11,30 @@
 import { AGENT_DETECTION_SCHEMA } from "../limits.js";
 
 /** Los protocolos que el informe puede nombrar: `framework` lo sirve el driver
- * del framework; el resto es una app HTTP (`agentcore`, `json`, `raw`). */
+ * del framework; el resto es una app HTTP (`agentcore`, `json`, `raw` y, sólo
+ * con `--protocol`, `langgraph-api`). */
 export const PROTOCOL_FRAMEWORK = "framework";
-export const APP_PROTOCOLS = ["agentcore", "json", "raw"] as const;
+export const APP_PROTOCOLS = ["agentcore", "json", "raw", "langgraph-api"] as const;
 /** Cómo se obtiene el objeto del agente: ya construido o con una fábrica. */
 export const ENTRY_OBJECT = "object";
 export const ENTRY_FACTORY = "factory";
 
 /** Lo que el usuario fuerza por encima de la detección (`--framework`,
- * `--language`, `--entry`, `--protocol`). `entrypoint: "http"` sirve la app
- * HTTP del proyecto en vez del framework del agente. */
+ * `--language`, `--entry`, `--protocol`, `--model-id`, `--model-provider`,
+ * `--model-base-url`, `--graph`). `entrypoint: "http"` sirve la app HTTP del
+ * proyecto en vez del framework del agente. `modelProvider` es un preset de
+ * pasarela (`openai-compatible`, `litellm`...) y `modelBaseUrl` la URL
+ * `https` de la pasarela de LLM, que pasa a ser su `upstream`. `graph` elige
+ * un grafo de `langgraph.json` por su nombre. */
 export interface DetectOverrides {
   readonly framework?: string | undefined;
   readonly language?: string | undefined;
   readonly entrypoint?: string | undefined;
   readonly protocol?: string | undefined;
+  readonly modelId?: string | undefined;
+  readonly modelProvider?: string | undefined;
+  readonly modelBaseUrl?: string | undefined;
+  readonly graph?: string | undefined;
 }
 
 /** Un fichero (ruta relativa al proyecto) y la regla que lo reconoció; nunca
@@ -48,8 +57,10 @@ export interface DetectionProvider {
 }
 
 /** La app HTTP del proyecto: el comando que la arranca, el puerto en el que
- * escucha dentro del sandbox, sus rutas de salud e invocación y, con el
- * protocolo `json`, los campos de la petición y la respuesta. */
+ * escucha dentro del sandbox, sus rutas de salud e invocación, con el
+ * protocolo `json` los campos de la petición y la respuesta y, con
+ * `langgraph-api`, el grafo que se ejecuta (`assistantId`, que sólo sale en
+ * `toObject()` si tiene valor). */
 export interface DetectionApp {
   readonly framework: string;
   readonly command: readonly string[];
@@ -59,6 +70,7 @@ export interface DetectionApp {
   readonly invokePath: string | undefined;
   readonly requestField: string | undefined;
   readonly responseField: string | undefined;
+  readonly assistantId?: string;
 }
 
 /** Cómo se instalan las dependencias: el gestor, el fichero de bloqueo (o los
@@ -98,6 +110,7 @@ export interface DetectionReportInit {
   readonly evidence?: readonly DetectionEvidence[] | undefined;
   readonly warnings?: readonly DetectionWarning[] | undefined;
   readonly alternatives?: readonly DetectionAlternative[] | undefined;
+  readonly modelEnvs?: Readonly<Record<string, string>> | undefined;
 }
 
 function nullable<T>(value: T | undefined): T | null {
@@ -109,7 +122,7 @@ function evidenceObject(item: DetectionEvidence): Record<string, unknown> {
 }
 
 function appObject(app: DetectionApp): Record<string, unknown> {
-  return {
+  const shape: Record<string, unknown> = {
     framework: app.framework,
     command: [...app.command],
     port: app.port,
@@ -119,6 +132,10 @@ function appObject(app: DetectionApp): Record<string, unknown> {
     request_field: nullable(app.requestField),
     response_field: nullable(app.responseField),
   };
+  if (app.assistantId !== undefined) {
+    shape.assistant_id = app.assistantId;
+  }
+  return shape;
 }
 
 function installObject(install: DetectionInstall): Record<string, unknown> {
@@ -153,6 +170,9 @@ function appTable(app: DetectionApp, protocol: string): Record<string, unknown> 
   if (app.responseField !== undefined) {
     table.response_field = app.responseField;
   }
+  if (app.assistantId !== undefined) {
+    table.assistant_id = app.assistantId;
+  }
   return table;
 }
 
@@ -163,7 +183,9 @@ function appTable(app: DetectionApp, protocol: string): Record<string, unknown> 
  * TypeScript) y si es un objeto o una fábrica, el `protocol`, las `options`
  * propias del runtime, la `app` HTTP, el plan de instalación, los proveedores
  * de modelo y los literales de modelo vistos, la evidencia, los avisos y las
- * alternativas.
+ * alternativas. `modelEnvs` (claves `id_env`, `base_url_env`, `api_key_env`
+ * de `[model]`) son los nombres de variable con los que el código elige su
+ * modelo cuando no hay literal; sólo nombres, nunca valores.
  */
 export class DetectionReport {
   readonly language: string | undefined;
@@ -180,6 +202,7 @@ export class DetectionReport {
   readonly evidence: readonly DetectionEvidence[];
   readonly warnings: readonly DetectionWarning[];
   readonly alternatives: readonly DetectionAlternative[];
+  readonly modelEnvs: Readonly<Record<string, string>>;
 
   constructor(init: DetectionReportInit) {
     this.language = init.language;
@@ -196,11 +219,12 @@ export class DetectionReport {
     this.evidence = Object.freeze([...(init.evidence ?? [])]);
     this.warnings = Object.freeze([...(init.warnings ?? [])]);
     this.alternatives = Object.freeze([...(init.alternatives ?? [])]);
+    this.modelEnvs = Object.freeze({ ...(init.modelEnvs ?? {}) });
   }
 
-  /** La forma JSON compartida con Python. */
+  /** La forma JSON compartida con Python; `model_envs` sólo si hay. */
   toObject(): Record<string, unknown> {
-    return {
+    const document: Record<string, unknown> = {
       schema: AGENT_DETECTION_SCHEMA,
       language: nullable(this.language),
       framework: this.framework,
@@ -225,6 +249,10 @@ export class DetectionReport {
         entrypoint: nullable(alternative.entrypoint),
       })),
     };
+    if (Object.keys(this.modelEnvs).length > 0) {
+      document.model_envs = { ...this.modelEnvs };
+    }
+    return document;
   }
 
   /** La tabla `[runtime]` de `rayito-agent.toml` que describe este informe:

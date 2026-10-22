@@ -7,9 +7,11 @@
 `DRIVERS`), `options` (las opciones del driver de `HostConfig.options`, que
 el driver recibe como su configuración) y, opcionalmente, `limits`,
 `max_concurrency`, `queue_max`, `queue_timeout_seconds`, `max_request_bytes`,
-`session_header`, `ready_marker` y `aws_env_credentials` (`{python, script}`: la
+`session_header`, `ready_marker`, `aws_env_credentials` (`{python, script}`: la
 herramienta que lee las credenciales del rol de AgentCore, que se ejecuta antes de
-cada invocación).
+cada invocación) y `secret_env` (`{python, script, reserved}`: la herramienta que
+lee, al arrancar y antes de cargar el código del usuario, los secretos de
+`RAYITO_SECRET_ENV`; ver `secret_env.py`).
 Las variables de entorno de `HostConfig.envs` las pone quien lanza el host
 (el comando del SDK o el `ENV` del Dockerfile exportado). En `task` la
 petición llega por stdin y las líneas v1 salen por un descriptor privado; en
@@ -146,10 +148,13 @@ def serve(package: str, args: argparse.Namespace) -> int:
         Path(config.ready_marker).unlink(missing_ok=True)
         Path(config.ready_marker + serving.FAILED_SUFFIX).unlink(missing_ok=True)
     diagnostics = importlib.import_module(".diagnostics", package)
+    secrets = load_secret_env(package, host, config, log)
+    if secrets is None:
+        return 1
     try:
         driver = create_driver(package, host["driver"], host["options"])
     except Exception as exc:
-        code, detail = startup_failure(exc, diagnostics)
+        code, detail = startup_failure(exc, diagnostics, secrets)
         log.error("driver_unavailable code=%s", code)
         serving.write_failed_marker(config, code, detail)
         return 1
@@ -160,11 +165,36 @@ def serve(package: str, args: argparse.Namespace) -> int:
     )
     warm_failed = threading.Event()
     threading.Thread(
-        target=_warm, args=(service, server, log, warm_failed, diagnostics), daemon=True
+        target=_warm, args=(service, server, log, warm_failed, diagnostics, secrets), daemon=True
     ).start()
     log.info("listening port=%d driver=%s", args.port, host["driver"])
     server.serve_forever()
     return 1 if warm_failed.is_set() else 0
+
+
+def load_secret_env(
+    package: str, host: dict[str, Any], config: Any, log: logging.Logger
+) -> tuple[str, ...] | None:
+    """Exporta los secretos de `RAYITO_SECRET_ENV` antes de crear el driver
+    y devuelve sus valores (para redactarlos en un diagnóstico); sin la
+    variable, los que el SDK ya exportó en MicroVMs y nombra en
+    `RAYITO_SECRET_ENV_NAMES`, o nada. Si falla deja el marcador de fallo con
+    el código (nunca un nombre ni un valor) y devuelve `None`: el driver no
+    arranca."""
+    module = importlib.import_module(".secret_env", package)
+    if module.SPEC_VARIABLE not in os.environ:
+        return tuple(module.injected_values(os.environ))
+    spec = host.get(module.HOST_KEY)
+    try:
+        loaded = module.load_secret_env(
+            os.environ, module.helper_of(spec), module.reserved_of(spec)
+        )
+    except module.SecretEnvError as exc:
+        log.error("secret_env_failed code=%s", exc.detail_code)
+        importlib.import_module(".serve", package).write_failed_marker(config, exc.detail_code)
+        return None
+    log.info("secret_env_loaded count=%d", len(loaded))
+    return tuple(loaded.values())
 
 
 def _credentials_source(package: str, spec: Any) -> Any:
@@ -187,24 +217,33 @@ def _bounded(value: Any, default: Any, ceiling: Any) -> Any:
     return min(value, ceiling) if valid else default
 
 
-def startup_failure(exc: Exception, diagnostics: Any) -> tuple[str, str | None]:
+def startup_failure(
+    exc: Exception, diagnostics: Any, secrets: Sequence[str] = ()
+) -> tuple[str, str | None]:
     """El código y el diagnóstico saneado de un arranque fallido: el
     `detail_code` de un `AgentFailure` y la cola de la salida de error de la
-    app, o el nombre de la clase de cualquier otra excepción y su mensaje."""
+    app, o el nombre de la clase de cualquier otra excepción y su mensaje.
+    `secrets` son los valores exportados desde Secrets Manager, que se
+    retiran aunque sean cortos."""
     code = getattr(exc, "detail_code", None)
     text = getattr(exc, "diagnostics", None) if code is not None else str(exc)
-    detail = diagnostics.sanitize_diagnostics(text, os.environ) if text else ""
+    detail = diagnostics.sanitize_diagnostics(text, os.environ, secrets) if text else ""
     return str(code if code is not None else type(exc).__name__), detail or None
 
 
 def _warm(
-    service: Any, server: Any, log: logging.Logger, failed: threading.Event, diagnostics: Any
+    service: Any,
+    server: Any,
+    log: logging.Logger,
+    failed: threading.Event,
+    diagnostics: Any,
+    secrets: Sequence[str] = (),
 ) -> None:
     try:
         service.driver.warm()
         service.mark_ready()
     except Exception as exc:
-        code, detail = startup_failure(exc, diagnostics)
+        code, detail = startup_failure(exc, diagnostics, secrets)
         log.error("warm_failed code=%s", code)
         service.mark_failed(code, detail)
         failed.set()

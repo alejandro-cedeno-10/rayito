@@ -131,7 +131,8 @@ export function checkModelReference(model: string, context: ReferenceContext): v
 }
 
 export interface IamInputs {
-  readonly projectModel: string;
+  /** `undefined`: un modelo que no es un recurso de IAM (fuera de Bedrock, o sin id). */
+  readonly projectModel: string | undefined;
   readonly bedrockModels: readonly string[];
   readonly readableSecrets: readonly string[];
   readonly modelRegion: string;
@@ -140,10 +141,12 @@ export interface IamInputs {
 
 /** Valida, sin AWS, el modelo del proyecto, `bedrockModels` y `readableSecrets`, en ese orden. */
 export function checkIamInputs(inputs: IamInputs): void {
-  checkModelReference(inputs.projectModel, {
-    region: inputs.modelRegion,
-    field: FIELD_MODEL_ID,
-  });
+  if (inputs.projectModel !== undefined) {
+    checkModelReference(inputs.projectModel, {
+      region: inputs.modelRegion,
+      field: FIELD_MODEL_ID,
+    });
+  }
   for (const model of inputs.bedrockModels) {
     checkModelReference(model, { region: inputs.modelRegion });
   }

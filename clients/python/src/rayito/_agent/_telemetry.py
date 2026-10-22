@@ -8,11 +8,13 @@ de una respuesta ni argumentos de herramienta."""
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Final
 
 from rayito._agent._domain import AgentSpec
 from rayito._agent._events import AgentFailed, Done, TokenUsage
 
+#: El atributo del modelo pedido (condicional en la convención GenAI).
+REQUEST_MODEL_ATTRIBUTE: Final = "gen_ai.request.model"
 #: `gen_ai.provider.name` según el `provider` de `AgentModel`.
 _PROVIDER_NAMES: dict[str, str] = {
     "bedrock": "aws.bedrock",
@@ -26,14 +28,17 @@ _PROVIDER_NAMES: dict[str, str] = {
 
 def start_attributes(spec: AgentSpec, *, runtime_name: str) -> dict[str, Any]:
     """Atributos conocidos antes de ejecutar nada: el modelo pedido, su
-    proveedor y qué runtime lo corre."""
-    return {
+    proveedor y qué runtime lo corre. Sin id (lo elige el código del agente)
+    no hay `gen_ai.request.model`: la convención lo pide sólo si se conoce."""
+    attrs: dict[str, Any] = {
         "gen_ai.operation.name": "invoke_agent",
         "gen_ai.provider.name": _PROVIDER_NAMES.get(spec.model.provider, spec.model.provider),
-        "gen_ai.request.model": spec.model.id,
         "gen_ai.agent.name": runtime_name,
         "rayito.agent.runtime": runtime_name,
     }
+    if spec.model.id is not None:
+        attrs[REQUEST_MODEL_ATTRIBUTE] = spec.model.id
+    return attrs
 
 
 def result_attributes(

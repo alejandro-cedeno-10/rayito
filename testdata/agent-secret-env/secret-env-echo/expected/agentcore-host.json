@@ -1,0 +1,32 @@
+{
+  "driver": "callable",
+  "limits": {
+    "max_output_bytes": 16777216,
+    "max_steps": 50,
+    "max_total_tokens": 1000000,
+    "timeout_seconds": 600
+  },
+  "max_concurrency": 1,
+  "options": {
+    "app_dir": "/opt/agents/app",
+    "entrypoint": "agent:echo",
+    "workdir": "/home/user"
+  },
+  "queue_max": 0,
+  "queue_timeout_seconds": 30,
+  "schema": "rayito.agent-host/1",
+  "secret_env": {
+    "python": "/opt/agents/rayito/aws-credentials/bin/python",
+    "reserved": [
+      "AWS_REGION",
+      "PYTHONDONTWRITEBYTECODE",
+      "PYTHONUNBUFFERED",
+      "RAYITO_MODEL_ID",
+      "RAYITO_MODEL_PROVIDER",
+      "RAYITO_MODEL_REGION"
+    ],
+    "script": "/opt/agents/rayito/aws_secret_env.py"
+  },
+  "session_header": "X-Amzn-Bedrock-AgentCore-Runtime-Session-Id",
+  "v": 1
+}

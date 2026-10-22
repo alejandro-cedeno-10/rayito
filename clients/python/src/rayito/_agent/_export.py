@@ -16,6 +16,7 @@ sandbox de Rayito; el README generado lo dice.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import posixpath
 from collections.abc import Mapping, Sequence
@@ -49,6 +50,14 @@ from rayito._agent._runtime import (
     InstallTarget,
     TemplateStep,
 )
+from rayito._agent._secret_env_domain import (
+    HOST_KEY as SECRET_ENV_HOST_KEY,
+)
+from rayito._agent._secret_env_domain import (
+    SCRIPT_NAME as SECRET_ENV_SCRIPT_NAME,
+)
+from rayito._agent._secret_env_domain import uses_secret_env
+from rayito._agent._secret_env_project import check_runtime_collisions
 from rayito._agent._template import _app_files
 from rayito._agentcore import _env_credentials
 from rayito._limits import (
@@ -63,6 +72,8 @@ from rayito.exceptions import InvalidArgumentException
 
 if TYPE_CHECKING:
     from rayito._agent._project_domain import AgentProject
+
+logger = logging.getLogger("rayito.agent")
 
 ExportTarget = Literal["docker", "agentcore"]
 EXPORT_TARGETS: Final[tuple[str, ...]] = ("docker", "agentcore")
@@ -83,6 +94,9 @@ AWS_CREDENTIALS_REQUIREMENTS_PATH: Final = (
 AWS_CREDENTIALS_VENV_DIR: Final = f"{AGENT_RAYITO_DIR}/aws-credentials"
 AWS_CREDENTIALS_SCRIPT_PATH: Final = f"{AGENT_RAYITO_DIR}/{_env_credentials.SCRIPT_NAME}"
 AWS_CONFIG_PATH: Final = f"{AGENT_RAYITO_DIR}/{_env_credentials.CONFIG_NAME}"
+#: La herramienta que lee los secretos de `secret_env` al arrancar en AgentCore
+#: (ADR-033 D4), en el mismo venv de botocore.
+SECRET_ENV_SCRIPT_PATH: Final = f"{AGENT_RAYITO_DIR}/{SECRET_ENV_SCRIPT_NAME}"
 AGENT_USER: Final = "user"
 #: `~/.rayito`: lo que `user` debe poder escribir (sesiones del agente).
 RAYITO_HOME_DIR: Final = f"{DEFAULT_AGENT_WORKDIR}/.rayito"
@@ -175,10 +189,16 @@ def render_export(project: AgentProject, *, target: str = "docker") -> dict[str,
     for index, runtime_file in enumerate(host.files.files):
         tree[f"{RUNTIME_FILES_CONTEXT_DIR}/{index}"] = runtime_file.data
     env_credentials = agentcore and _env_credentials.uses_env_credentials(project.runtime)
-    tree[HOST_CONFIG_NAME] = _host_config_bytes(project, host, env_credentials=env_credentials)
-    if env_credentials or credential_process:
+    secret_env = _secret_env_target(project, host, target)
+    tree[HOST_CONFIG_NAME] = _host_config_bytes(
+        project, host, env_credentials=env_credentials, secret_env=secret_env
+    )
+    if env_credentials or credential_process or secret_env:
         tree[_env_credentials.REQUIREMENTS_NAME] = asset_bytes(_env_credentials.REQUIREMENTS_NAME)
+    if env_credentials or credential_process:
         tree[_env_credentials.SCRIPT_NAME] = asset_bytes(_env_credentials.SCRIPT_NAME)
+    if secret_env:
+        tree[SECRET_ENV_SCRIPT_NAME] = asset_bytes(SECRET_ENV_SCRIPT_NAME)
     if credential_process:
         tree[_env_credentials.CONFIG_NAME] = _env_credentials.config_text(
             f"{AWS_CREDENTIALS_VENV_DIR}/bin/python", AWS_CREDENTIALS_SCRIPT_PATH
@@ -194,13 +214,29 @@ def render_export(project: AgentProject, *, target: str = "docker") -> dict[str,
         target=target,
         helper=env_credentials or credential_process,
         config=credential_process,
+        secret_env=secret_env,
     ).encode()
     tree[DOCKERIGNORE_NAME] = DOCKERIGNORE_CONTENT.encode()
     tree[README_NAME] = _readme(project, target).encode()
     return dict(sorted(tree.items()))
 
 
-def _host_config_bytes(project: AgentProject, host: HostConfig, *, env_credentials: bool) -> bytes:
+def _secret_env_target(project: AgentProject, host: HostConfig, target: str) -> bool:
+    """Si el export lleva la herramienta de `secret_env`: sólo con AgentCore.
+    Con Docker se ignora con un aviso (fase 2, ADR-033 D4). Un nombre que el
+    runtime ya fija es `invalid_value` antes de escribir nada."""
+    if not uses_secret_env(project.secret_env, project.secret_env_from):
+        return False
+    if target != "agentcore":
+        logger.warning(DOCKER_SECRET_ENV_WARNING)
+        return False
+    check_runtime_collisions(project, host.envs)
+    return True
+
+
+def _host_config_bytes(
+    project: AgentProject, host: HostConfig, *, env_credentials: bool, secret_env: bool = False
+) -> bytes:
     document = host_document(project, host)
     del document["ready_marker"]
     document["schema"] = AGENT_HOST_SCHEMA
@@ -208,6 +244,12 @@ def _host_config_bytes(project: AgentProject, host: HostConfig, *, env_credentia
         document[_env_credentials.HOST_KEY] = {
             "python": f"{AWS_CREDENTIALS_VENV_DIR}/bin/python",
             "script": AWS_CREDENTIALS_SCRIPT_PATH,
+        }
+    if secret_env:
+        document[SECRET_ENV_HOST_KEY] = {
+            "python": f"{AWS_CREDENTIALS_VENV_DIR}/bin/python",
+            "reserved": sorted(host.envs),
+            "script": SECRET_ENV_SCRIPT_PATH,
         }
     return (json.dumps(document, indent=2, sort_keys=True) + "\n").encode()
 
@@ -229,21 +271,26 @@ def _env_lines(envs: Mapping[str, str]) -> list[str]:
     return [f"ENV {name}={json.dumps(value)}" for name, value in sorted(envs.items())]
 
 
-def _credentials_lines(target: InstallTarget) -> list[str]:
-    """Los pasos que instalan la herramienta que lee las credenciales del rol
-    de AgentCore (un venv con botocore fijado por hash) para un adaptador que
-    sólo las lee de variables de entorno."""
+def _credentials_lines(target: InstallTarget, *, credentials: bool, secret_env: bool) -> list[str]:
+    """Los pasos que instalan las herramientas de AgentCore (un venv con
+    botocore fijado por hash): la que lee las credenciales del rol para un
+    adaptador que sólo las lee de variables de entorno y, con `secret_env`, la
+    que lee los secretos al arrancar."""
     install = hashed_venv_install(
         target,
         venv_dir=AWS_CREDENTIALS_VENV_DIR,
         requirements_path=AWS_CREDENTIALS_REQUIREMENTS_PATH,
         requirements_sha256=AGENT_AWS_CREDENTIALS_REQUIREMENTS_SHA256,
     )
-    return [
+    lines = [
         f"COPY {_env_credentials.REQUIREMENTS_NAME} {AWS_CREDENTIALS_REQUIREMENTS_PATH}",
         f"RUN {install}",
-        f"COPY {_env_credentials.SCRIPT_NAME} {AWS_CREDENTIALS_SCRIPT_PATH}",
     ]
+    if credentials:
+        lines.append(f"COPY {_env_credentials.SCRIPT_NAME} {AWS_CREDENTIALS_SCRIPT_PATH}")
+    if secret_env:
+        lines.append(f"COPY {SECRET_ENV_SCRIPT_NAME} {SECRET_ENV_SCRIPT_PATH}")
+    return lines
 
 
 def _from_lines(target: str) -> list[str]:
@@ -266,6 +313,7 @@ def _dockerfile(
     target: str,
     helper: bool,
     config: bool,
+    secret_env: bool = False,
 ) -> str:
     install_lines, executables = _step_lines(steps)
     config_dirs = sorted({posixpath.dirname(file.path) for file in host.files.files})
@@ -296,7 +344,13 @@ def _dockerfile(
         f" && mkdir -p {AGENT_STATE_DIR} {' '.join(config_dirs)}"
         f" && chown -R {AGENT_USER}:{AGENT_USER} {RAYITO_HOME_DIR}",
         *install_lines,
-        *(_credentials_lines(InstallTarget(platform="container")) if helper else []),
+        *(
+            _credentials_lines(
+                InstallTarget(platform="container"), credentials=helper, secret_env=secret_env
+            )
+            if helper or secret_env
+            else []
+        ),
         *([f"COPY {_env_credentials.CONFIG_NAME} {AWS_CONFIG_PATH}"] if config else []),
         f"COPY {AGENT_HOST_CONTEXT_DIR} {AGENT_HOST_DIR}",
         f"COPY {HOST_CONFIG_NAME} {HOST_CONFIG_PATH}",
@@ -344,9 +398,24 @@ def _readme(project: AgentProject, target: str) -> str:
         "rol de IAM) y el agente puede leerla. La garantía de que el agente nunca ve la",
         "credencial sólo vale dentro de Rayito.",
     ]
+    if uses_secret_env(project.secret_env, project.secret_env_from):
+        lines += _secret_env_readme(target)
     if target == "agentcore":
         lines += _agentcore_readme(port)
     return "\n".join(lines) + "\n"
+
+
+def _secret_env_readme(target: str) -> list[str]:
+    if target != "agentcore":
+        return ["", DOCKER_SECRET_ENV_WARNING]
+    return [
+        "",
+        "### Secretos como variables de entorno",
+        "",
+        "El host lee los secretos de `secret_env` al arrancar, con el rol del runtime, y",
+        "los pone en el entorno del agente antes de cargar su código. El agente y todo lo",
+        "que lance pueden leer su entorno: da al rol sólo los secretos que necesita.",
+    ]
 
 
 def _agentcore_readme(port: int) -> list[str]:
@@ -376,5 +445,10 @@ def _agentcore_readme(port: int) -> list[str]:
         "que debe leer.",
     ]
 
+
+DOCKER_SECRET_ENV_WARNING: Final = (
+    "secret_env y secret_env_from no se exportan a Docker: pon esas variables con la "
+    "plataforma donde corras el contenedor"
+)
 
 __all__ = ["EXPORT_TARGETS", "AgentExport", "export_project", "render_export"]

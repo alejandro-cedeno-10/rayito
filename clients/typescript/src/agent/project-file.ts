@@ -11,10 +11,20 @@ import { readFileSync, realpathSync, statSync } from "node:fs";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import { AGENT_PROJECT_FILE_NAMES } from "../limits.js";
 import { detect } from "./detect-domain.js";
+import { graphEntrypoint } from "./detect-entry.js";
 import { LocalProjectTree } from "./detect-fs.js";
 import { detectedDocument } from "./detect-project.js";
 import type { DetectionReport, DetectOverrides } from "./detect-report.js";
-import { AgentProject, AgentProjectError, type TextReader } from "./project.js";
+import { DETECTION_RULES } from "./detect-rules.js";
+import {
+  AgentProject,
+  AgentProjectError,
+  ENTRYPOINT_KEY,
+  GRAPH_KEY,
+  type GraphResolver,
+  LANGGRAPH_FILE,
+  type TextReader,
+} from "./project.js";
 import {
   nodeProjectReader,
   type ProjectSteps,
@@ -41,12 +51,14 @@ const MAX_PROJECT_NAME_CHARS = 63;
 const REGION_ENV_VARS = ["AWS_REGION", "AWS_DEFAULT_REGION"] as const;
 const TOML_FEATURE = "AgentProject.load de un .toml";
 
-/** El documento leído: su contenido, el directorio del fichero y el lector de
- * ficheros de texto que no puede salir de ese directorio. */
+/** El documento leído: su contenido, el directorio del fichero, el lector de
+ * ficheros de texto que no puede salir de ese directorio y el resolvedor de
+ * `[runtime] graph` que lee el `langgraph.json` de ese directorio. */
 export interface ProjectDocument {
   readonly data: Record<string, unknown>;
   readonly baseDir: string;
   readonly readText: TextReader;
+  readonly resolveGraph: GraphResolver;
 }
 
 function kindOf(path: string): "file" | "directory" | undefined {
@@ -132,12 +144,29 @@ function reader(baseDir: string): TextReader {
   };
 }
 
+/** El JSON de `langgraph.json` de `baseDir`, o `undefined` si no existe o no
+ * es JSON. */
+function langgraphDocument(baseDir: string, readText: TextReader): unknown {
+  try {
+    return JSON.parse(readText(join(baseDir, LANGGRAPH_FILE)));
+  } catch {
+    return undefined;
+  }
+}
+
+/** El resolvedor de `[runtime] graph` de un directorio: el `entrypoint` del
+ * grafo de ese nombre en su `langgraph.json` (`selectGraph`). */
+export function graphResolver(baseDir: string, readText: TextReader): GraphResolver {
+  return (graph) => graphEntrypoint(langgraphDocument(baseDir, readText), graph, DETECTION_RULES);
+}
+
 /** Los pasos de `readProjectDocument`, para la ruta asíncrona y la síncrona. */
 export function* projectDocumentSteps(path: string): ProjectSteps<ProjectDocument> {
   const file = locate(path);
   const data = yield* parse(file, yield* readTextStep(file));
   const baseDir = realpathSync(dirname(resolve(file)));
-  return { data, baseDir, readText: reader(baseDir) };
+  const readText = reader(baseDir);
+  return { data, baseDir, readText, resolveGraph: graphResolver(baseDir, readText) };
 }
 
 /** Lee el fichero de proyecto de `path`: un fichero, o un directorio donde se
@@ -164,6 +193,23 @@ export function projectNameOf(directory: string): string {
     basename(resolve(directory)).toLowerCase().replace(INVALID_NAME_CHARS, "-"),
   );
   return trimNameEdges(cleaned.slice(0, MAX_PROJECT_NAME_CHARS)) || DEFAULT_PROJECT_NAME;
+}
+
+/** Los `overrides` de la detección con el `[runtime] graph` del fichero de
+ * proyecto si la bandera no fija otro, para que la detección elija ese grafo
+ * y no falle con varios. */
+export function withFileGraph(
+  overrides: DetectOverrides | undefined,
+  document: Record<string, unknown>,
+): DetectOverrides | undefined {
+  const runtime = document.runtime;
+  const table =
+    typeof runtime === "object" && runtime !== null ? (runtime as Record<string, unknown>) : {};
+  const graph = table[GRAPH_KEY];
+  if (typeof graph !== "string" || overrides?.graph !== undefined || ENTRYPOINT_KEY in table) {
+    return overrides;
+  }
+  return { ...overrides, graph };
 }
 
 function declaresRuntime(document: Record<string, unknown>): boolean {
@@ -240,7 +286,7 @@ export function* detectProjectSteps(
   }
   let report: DetectionReport;
   try {
-    report = detect(new LocalProjectTree(baseDir), overrides);
+    report = detect(new LocalProjectTree(baseDir), withFileGraph(overrides, document));
   } catch (error) {
     if (
       !(error instanceof AgentProjectError) ||
@@ -249,9 +295,15 @@ export function* detectProjectSteps(
     ) {
       throw error;
     }
-    return [AgentProject.fromObject(document, { baseDir, readText }), undefined];
+    const resolveGraph = graphResolver(baseDir, readText);
+    return [AgentProject.fromObject(document, { baseDir, readText, resolveGraph }), undefined];
   }
   const region = options.region ?? documentRegion(document) ?? environmentRegion();
-  const filled = detectedDocument(document, report, { name: projectNameOf(baseDir), region });
-  return [AgentProject.fromObject(filled, { baseDir, readText }), report];
+  const filled = detectedDocument(document, report, {
+    name: projectNameOf(baseDir),
+    region,
+    overrides,
+  });
+  const resolveGraph = graphResolver(baseDir, readText);
+  return [AgentProject.fromObject(filled, { baseDir, readText, resolveGraph }), report];
 }

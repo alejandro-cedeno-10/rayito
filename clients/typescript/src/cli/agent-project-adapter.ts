@@ -14,6 +14,7 @@ import { type AwsClientSettings, awsClientSettingsOf } from "../aws/control-plan
 import { InvalidArgumentError, SandboxNotFoundError } from "../errors.js";
 import type { BuildInfo } from "../templates/build.js";
 import { describePlan, poolBackendFileFor } from "./agent-deploy.js";
+import { envWarningLine } from "./agent-secret-env.js";
 import type {
   AgentBuildRequest,
   AgentDeployRequest,
@@ -153,10 +154,12 @@ export class SdkAgentProjectTools implements AgentProjectTools {
       region: this.#region(),
     });
     const { detection: _detection, ...rest } = plan;
+    const { prepareSecretEnv } = await import("../agent/secret-env-deploy.js");
+    const { warnings } = prepareSecretEnv(project, options.createSecretsFrom, options.checkEnv);
     return {
       report,
       document: { ...rest, scaling: { ...plan.scaling } },
-      lines: describePlan(plan),
+      lines: [...warnings.map(envWarningLine), ...describePlan(plan)],
     };
   }
 
@@ -224,6 +227,10 @@ function overridesOf(overrides: AgentDetectOverrides): DetectOverrides | undefin
         language: overrides.language,
         entrypoint: overrides.entry,
         protocol: overrides.protocol,
+        modelId: overrides.modelId,
+        modelProvider: overrides.modelProvider,
+        modelBaseUrl: overrides.modelBaseUrl,
+        graph: overrides.graph,
       };
 }
 
@@ -267,6 +274,8 @@ async function prepared(request: AgentDeployRequest, park: boolean, region: stri
     poolBackend,
     onBuildLogs: settings.onBuildLogs,
     onStep: settings.onStep,
+    createSecretsFrom: settings.createSecretsFrom,
+    checkEnv: settings.checkEnv,
   });
   return { project, report: detected.report, options };
 }

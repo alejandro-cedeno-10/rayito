@@ -19,9 +19,11 @@ import { AGENT_FLEET_WARM_READY_TIMEOUT_MS } from "../agent/fleet-base.js";
 import { type AgentProject, ServeOptions } from "../agent/project.js";
 import { templateName } from "../agent/project-service.js";
 import { ScalingOptions } from "../agent/scaling-domain.js";
+import { secretEnvNames, secretIds, specVariable, usesSecretEnv } from "../agent/secret-env.js";
 import { AgentCoreError, InvalidArgumentError } from "../errors.js";
 import {
   AGENT_MIN_MEMORY_MIB,
+  AGENT_SECRET_ENV_VARIABLE,
   AGENTCORE_ENVIRONMENT_VALUE_MAX_CHARS,
   AGENTCORE_IDLE_SESSION_TIMEOUT_DEFAULT_SECONDS,
   AGENTCORE_IMAGE_RETENTION_COUNT,
@@ -33,6 +35,7 @@ import {
   AGENTCORE_SUPPORTED_REGIONS,
 } from "../limits.js";
 import { FIXED_TAG_KEYS } from "../stacks/model.js";
+import { stripTrailing } from "../strings.js";
 import { formatTemplate } from "../template-text.js";
 import { MS_PER_SECOND } from "../units.js";
 import { usesEnvCredentials } from "./env-credentials.js";
@@ -60,6 +63,9 @@ export const TAG_VALUE_MAX_CHARS = 256;
 export const TAG_CHARACTERS = /^[a-zA-Z0-9\s._:/=+@-]*$/;
 /** `constants.runtimeRegionEnvironmentVariables`: las dos variables de región que ganan al entorno del proyecto. */
 export const RUNTIME_REGION_VARIABLES: readonly string[] = ["AWS_REGION", "AWS_DEFAULT_REGION"];
+export const EMPTY_ENVIRONMENT: Readonly<Record<string, string>> = Object.freeze({});
+/** La línea de seguridad de un plan con `secretEnv` (ADR-033 D4). */
+export const SECURITY_SECRET_ENV = "secretEnv";
 export const PLANNED_ACTION = "planned";
 export const BEDROCK_PROVIDER = "bedrock";
 const OPTION_IDLE = "idle_session_timeout";
@@ -273,12 +279,23 @@ function hasEgressPolicy(project: AgentProject): string | undefined {
   return (project.network?.denyOut ?? []).length > 0 ? "deny_out" : undefined;
 }
 
-/** El proveedor del modelo (`provider_unsupported` salvo `bedrock`) y la política de red (`network_policy_unsupported`). */
-export function checkProject(project: AgentProject): void {
+/** Sólo `bedrock` se cablea con el rol del runtime: sin pasarela, la
+ * credencial de otro proveedor iría en claro en la configuración del runtime.
+ * `externalModel` acepta otro proveedor porque su clave la obtiene el código
+ * del agente (ADR-033 D2), nunca el entorno. */
+export function checkProvider(
+  project: AgentProject,
+  agentcore: AgentCoreOptions | undefined,
+): void {
   const { provider } = project.spec.model;
-  if (provider !== BEDROCK_PROVIDER) {
+  if (provider !== BEDROCK_PROVIDER && agentcore?.externalModel !== true) {
     throw new AgentCoreError("provider_unsupported", { provider });
   }
+}
+
+/** El proveedor del modelo (`provider_unsupported` salvo `bedrock` o `externalModel`) y la política de red (`network_policy_unsupported`). */
+export function checkProject(project: AgentProject, agentcore?: AgentCoreOptions): void {
+  checkProvider(project, agentcore);
   const what = hasEgressPolicy(project);
   if (what !== undefined) {
     throw new AgentCoreError("network_policy_unsupported", { what });
@@ -336,7 +353,15 @@ export function resolveAgentCoreOptions(
     idleSessionTimeoutSeconds: secondsOf(given.idleSessionTimeoutMs, OPTION_IDLE),
     maxSessionLifetimeSeconds: secondsOf(given.maxSessionLifetimeMs, OPTION_MAX),
     tags: { ...(given.tags ?? {}) },
+    externalModel: booleanOf(given.externalModel, "externalModel"),
   };
+}
+
+function booleanOf(value: unknown, label: string): boolean {
+  if (value !== undefined && typeof value !== "boolean") {
+    throw new InvalidArgumentError(`AgentCoreOptions.${label} debe ser un boolean`);
+  }
+  return value === true;
 }
 
 /**
@@ -376,12 +401,25 @@ export function validateTags(tags: Readonly<Record<string, string>>): void {
 }
 
 /**
- * `environmentVariables` del runtime: el entorno del proyecto más las dos
- * variables de región con la región del despliegue (ganan al proyecto), con las
- * claves ordenadas. Hasta 50 variables de 5000 caracteres; nunca secretos.
+ * `environmentVariables` del runtime: el entorno del proyecto, la URL del
+ * modelo externo (`externalModelEnvironment`), la especificación de los
+ * secretos como entorno y las dos variables de región con la región del
+ * despliegue (ganan al resto), con las claves ordenadas. Hasta 50 variables de
+ * 5000 caracteres; nunca secretos.
  */
-export function runtimeEnvironment(project: AgentProject, region: string): Record<string, string> {
-  const merged: Record<string, string> = { ...project.env };
+export function runtimeEnvironment(
+  project: AgentProject,
+  region: string,
+  options: {
+    readonly modelEnvironment?: Readonly<Record<string, string>>;
+    readonly secretEnvironment?: Readonly<Record<string, string>>;
+  } = {},
+): Record<string, string> {
+  const merged: Record<string, string> = {
+    ...project.env,
+    ...(options.modelEnvironment ?? EMPTY_ENVIRONMENT),
+    ...(options.secretEnvironment ?? EMPTY_ENVIRONMENT),
+  };
   for (const variable of RUNTIME_REGION_VARIABLES) {
     merged[variable] = region;
   }
@@ -415,16 +453,99 @@ function bucketPlan(
   return { bucket: named || null, source };
 }
 
-function securityKeys(project: AgentProject, readableSecrets: readonly string[]): SecurityKey[] {
-  const keys: SecurityKey[] = ["noGateway", "bedrockModels"];
+/** El modelo de Bedrock del proyecto: su id si el proveedor es `bedrock`, y
+ * `undefined` si no lo hay o el modelo está fuera de Bedrock. */
+export function bedrockModelOf(project: AgentProject): string | undefined {
+  const model = project.spec.model;
+  return model.provider === BEDROCK_PROVIDER ? model.id : undefined;
+}
+
+/** Los modelos que el rol puede invocar: el del proyecto (sólo con `bedrock`
+ * y si tiene id) y los de `bedrockModels`, sin repetir. */
+export function bedrockModelsOf(
+  project: AgentProject,
+  resolved: ResolvedAgentCoreOptions,
+): string[] {
+  const projectModel = bedrockModelOf(project);
+  return [
+    ...new Set([...(projectModel === undefined ? [] : [projectModel]), ...resolved.bedrockModels]),
+  ];
+}
+
+/** `model_required` si el rol no tendría ningún modelo de Bedrock que invocar:
+ * proveedor `bedrock` sin `[model] id` ni `bedrockModels`. */
+export function checkModelKnown(project: AgentProject, resolved: ResolvedAgentCoreOptions): void {
+  const model = project.spec.model;
+  if (
+    model.provider === BEDROCK_PROVIDER &&
+    model.id === undefined &&
+    resolved.bedrockModels.length === 0
+  ) {
+    throw new AgentCoreError("model_required");
+  }
+}
+
+/** La URL base del modelo externo en `baseUrlEnv` (el `upstream` de su
+ * pasarela más `basePath`) si el proyecto nombra la variable; no es un
+ * secreto. La clave nunca va aquí. */
+export function externalModelEnvironment(project: AgentProject): Record<string, string> {
+  const model = project.spec.model;
+  const gateway = project.gateways[model.gateway];
+  if (model.baseUrlEnv === undefined || gateway === undefined) {
+    return {};
+  }
+  return { [model.baseUrlEnv]: stripTrailing(gateway.upstream, "/") + model.basePath };
+}
+
+export const SECURITY_EXTERNAL_MODEL: SecurityKey = "externalModel";
+
+function securityKeys(
+  project: AgentProject,
+  models: readonly string[],
+  readableSecrets: readonly string[],
+  options: { readonly externalModel?: boolean; readonly secretEnv?: boolean | undefined } = {},
+): SecurityKey[] {
+  const keys: SecurityKey[] = [
+    "noGateway",
+    models.length > 0 ? "bedrockModels" : "noBedrockModels",
+  ];
   if (readableSecrets.length > 0) {
     keys.push("readableSecrets");
+  }
+  if (options.externalModel === true) {
+    keys.push(SECURITY_EXTERNAL_MODEL);
+  }
+  if (options.secretEnv === true) {
+    keys.push(SECURITY_SECRET_ENV);
   }
   keys.push("publicNetwork", "sessionIsolation");
   if (usesEnvCredentials(project.runtime)) {
     keys.push("envCredentials");
   }
   return keys;
+}
+
+/** `RAYITO_SECRET_ENV` con la especificación de `secretEnv` y `secretEnvFrom`
+ * (sólo nombres y ARNs: `testdata/agent-secret-env/spec.json`), o nada si el
+ * proyecto no los usa. */
+export function secretEnvEnvironment(project: AgentProject): Record<string, string> {
+  const variable = specVariable(project.secretEnv, project.secretEnvFrom);
+  return variable === undefined ? {} : { [AGENT_SECRET_ENV_VARIABLE]: variable };
+}
+
+/** Los secretos que el rol puede leer: los de `readableSecrets` y los que
+ * referencian `secretEnv` y `secretEnvFrom`, sin repetir. Van por el mismo
+ * `ReadableSecretArns`: la plantilla no cambia. */
+export function readableSecretsOf(
+  project: AgentProject,
+  readableSecrets: readonly string[],
+): readonly string[] {
+  return [...new Set([...readableSecrets, ...secretIds(project.secretEnv, project.secretEnvFrom)])];
+}
+
+function secretEnvPlan(project: AgentProject): { readonly secretEnvNames?: readonly string[] } {
+  const names = secretEnvNames(project.secretEnv, project.secretEnvFrom);
+  return names.length === 0 ? {} : { secretEnvNames: names };
 }
 
 /** Las líneas de coste de lista del plan, en el orden del contrato. */
@@ -467,21 +588,28 @@ export function planWithoutImageTag(input: PlanInput): PlanWithoutImageTag {
   const { project, options, region } = input;
   requireSupportedRegion(region);
   checkCallOptions(options, input.flags);
-  checkProject(project);
+  checkProject(project, input.agentcore);
   const name = validateAgentName(templateName(project));
   const resolved = resolveAgentCoreOptions(input.agentcore);
   const lifecycle = resolveLifecycle(resolved);
   validateTags(resolved.tags);
-  const environment = runtimeEnvironment(project, region);
+  const environment = runtimeEnvironment(project, region, {
+    modelEnvironment: resolved.externalModel
+      ? externalModelEnvironment(project)
+      : EMPTY_ENVIRONMENT,
+    secretEnvironment: secretEnvEnvironment(project),
+  });
+  checkModelKnown(project, resolved);
+  const readableSecrets = readableSecretsOf(project, resolved.readableSecrets);
   checkIamInputs({
-    projectModel: project.spec.model.id,
+    projectModel: bedrockModelOf(project),
     bedrockModels: resolved.bedrockModels,
-    readableSecrets: resolved.readableSecrets,
+    readableSecrets,
     modelRegion: project.spec.model.region ?? region,
     region,
   });
   const bucket = bucketPlan(options, project, input.environ);
-  const models = [...new Set([project.spec.model.id, ...resolved.bedrockModels])];
+  const models = bedrockModelsOf(project, resolved);
   const names = {
     stack: stackNameFor(name),
     repository: repositoryNameFor(name),
@@ -489,6 +617,7 @@ export function planWithoutImageTag(input: PlanInput): PlanWithoutImageTag {
   };
   return {
     target: "agentcore",
+    externalModel: resolved.externalModel,
     name,
     region,
     runtimeName: names.runtime,
@@ -499,14 +628,18 @@ export function planWithoutImageTag(input: PlanInput): PlanWithoutImageTag {
     bucketSource: bucket.source,
     network: AGENTCORE_NETWORK_MODE,
     bedrockModels: models,
-    readableSecrets: resolved.readableSecrets,
+    readableSecrets,
     environment,
     lifecycle,
     tags: sortedRecord(resolved.tags),
     steps: plannedSteps(names),
-    security: securityKeys(project, resolved.readableSecrets),
+    security: securityKeys(project, models, readableSecrets, {
+      externalModel: resolved.externalModel,
+      secretEnv: usesSecretEnv(project.secretEnv, project.secretEnvFrom),
+    }),
     warnings: fileWarnings(project),
     cost: costLines(),
+    ...secretEnvPlan(project),
   };
 }
 

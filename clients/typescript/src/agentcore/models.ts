@@ -18,7 +18,9 @@ export const TARGET_AGENTCORE: AgentTarget = "agentcore";
  * secretos que el rol del runtime puede usar (ninguno por defecto), la vida de
  * una sesión y las etiquetas de la pila y del runtime. Los plazos van en
  * milisegundos y se convierten a segundos enteros: un valor que no es múltiplo
- * de 1000 es `lifecycle_invalid`.
+ * de 1000 es `lifecycle_invalid`. `externalModel` permite un modelo fuera de
+ * Bedrock: el rol no recibe permisos de Bedrock que no pidas y la clave la
+ * obtiene tu código con `readableSecrets`; nunca va en la configuración del runtime.
  *
  * Coste y activación
  * -------------------
@@ -30,8 +32,9 @@ export const TARGET_AGENTCORE: AgentTarget = "agentcore";
  * Coste aproximado: ninguno aquí; ver `deployAgent()`.
  * IAM: ninguna para este valor.
  * Cómo apagarla: los valores por defecto no dan al rol ningún modelo propio ni
- *     ningún secreto, y la vida de la sesión es la de AgentCore (15 min sin uso,
- *     8 h como máximo).
+ *     ningún secreto, la vida de la sesión es la de AgentCore (15 min sin uso,
+ *     8 h como máximo) y sin `externalModel: true` un proveedor que no es
+ *     Bedrock es `provider_unsupported`.
  * Ejemplo:
  *   const agentcore: AgentCoreOptions = { bedrockModels: ["amazon.nova-lite-v1:0"] };
  */
@@ -41,6 +44,7 @@ export interface AgentCoreOptions {
   readonly idleSessionTimeoutMs?: number | undefined;
   readonly maxSessionLifetimeMs?: number | undefined;
   readonly tags?: Readonly<Record<string, string>> | undefined;
+  readonly externalModel?: boolean | undefined;
 }
 
 /** `AgentCoreOptions` ya validadas, con los plazos en segundos enteros. */
@@ -50,6 +54,7 @@ export interface ResolvedAgentCoreOptions {
   readonly idleSessionTimeoutSeconds: number | undefined;
   readonly maxSessionLifetimeSeconds: number | undefined;
   readonly tags: Readonly<Record<string, string>>;
+  readonly externalModel: boolean;
 }
 
 export type ResourceKind = "stack" | "image" | "runtime";
@@ -74,10 +79,14 @@ export interface AgentCoreLifecycle {
  * a AWS: los nombres derivados, el bucket y de dónde saldrá, los modelos de
  * Bedrock, los secretos legibles, el entorno y la vida del runtime, las
  * etiquetas, los tres pasos, las claves de seguridad y de avisos (los textos
- * están en `messages.ts`) y las líneas de coste de lista.
+ * están en `messages.ts`), las líneas de coste de lista y si el modelo está
+ * fuera de Bedrock (`externalModel`).
  */
 export interface AgentCoreDeployPlan {
   readonly target: "agentcore";
+  /** Opcional en el tipo para que un plan escrito a mano siga compilando; el
+   * plan que calcula el SDK siempre lo trae. */
+  readonly externalModel?: boolean | undefined;
   readonly name: string;
   readonly region: string;
   readonly runtimeName: string;
@@ -97,6 +106,9 @@ export interface AgentCoreDeployPlan {
   readonly security: readonly string[];
   readonly warnings: readonly string[];
   readonly cost: readonly string[];
+  /** Las variables que el host pondrá desde Secrets Manager (ADR-033 D4): sólo
+   * nombres, nunca valores; ausente si el proyecto no usa `secretEnv`. */
+  readonly secretEnvNames?: readonly string[] | undefined;
 }
 
 /** El estado de un agente desplegado (`AgentCoreFleet.status()`). */

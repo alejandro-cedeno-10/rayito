@@ -36,6 +36,8 @@ export {
 export {
   AgentDeployment,
   AgentDeploymentStream,
+  type AgentInputRequest,
+  type AgentInvocation,
   type AgentInvokeOptions,
   type DeploymentStatus,
 } from "./agent/deployment.js";
@@ -68,6 +70,7 @@ export {
   type AgentResult,
   agentFailed,
   type Done,
+  type JsonObject,
   type Reasoning,
   type StepFinished,
   type StepStarted,
@@ -146,6 +149,12 @@ export {
   type ScalingOptionsInput,
   type SessionMode,
 } from "./agent/scaling-domain.js";
+export {
+  SecretEnvRef,
+  type SecretEnvRefOptions,
+  SecretEnvSource,
+  type SecretEnvSourceOptions,
+} from "./agent/secret-env.js";
 export { StrandsRuntime, type StrandsRuntimeOptions } from "./agent/strands.js";
 export { AgentStream } from "./agent/stream.js";
 export {

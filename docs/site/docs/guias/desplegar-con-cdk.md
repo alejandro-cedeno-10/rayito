@@ -248,6 +248,7 @@ La primera vez tarda unos minutos (casi todo es el build de la imagen); un
 | `tags` | `tags` | `--tag` | Etiquetas para todos los recursos del constructo |
 | `build` | `build` | — | `AgentImageBuild.codeBuild()` (por defecto) o `localDocker()` ([abajo](#construir-la-imagen)) |
 | `exportOutputs` | `export_outputs` | — | `true` añade `CfnOutput` con el ARN y el id del runtime; por defecto no se añade ninguno |
+| `externalModel` | `external_model` | `--external-model` | `true` admite un modelo fuera de Bedrock sin dar al rol permisos de Bedrock que no pidas ([guía](desplegar-en-agentcore.md#modelos-fuera-de-bedrock)); por defecto, `false` |
 
 Las reglas son las de la CLI y los errores también (`name_invalid`,
 `tags_invalid`, `lifecycle_order`, `iam_resource_invalid`,
@@ -261,6 +262,11 @@ como `AgentCoreException` / `AgentCoreError`. Dos diferencias:
   {{cdkRuntimeEnvironmentValueMaxChars}} caracteres (el límite del recurso
   `AWS::BedrockAgentCore::Runtime`, más estricto que la API): uno más largo es
   `env_invalid` al sintetizar.
+
+`[secret_env]` y `[[secret_env_from]]` no necesitan ninguna prop: salen del
+fichero de proyecto, el runtime recibe `RAYITO_SECRET_ENV` (sólo nombres y ARNs)
+y esos secretos se suman a `readableSecrets` en el rol
+([Secretos como variables de entorno](secretos-como-entorno.md)).
 
 ### Construir la imagen: CodeBuild o Docker local { #construir-la-imagen }
 

@@ -3,9 +3,11 @@
 stdout a eventos del protocolo v1.
 
 - `protocol="rayito-v1"`: el hijo recibe `{"v":1,"prompt","session_id",
-  "model","reasoning"}` en una línea y escribe líneas v1 (`session`,
+  "model","reasoning"}` (con `input` si la petición lo trae y el driver lo
+  admite, `accepts_input`) en una línea y escribe líneas v1 (`session`,
   `text_delta`, `text`, `tool_call`, `step_started`, `step_finished`...,
-  `agent_failed` y `done`); el driver las reenvía tal cual.
+  `agent_failed` y `done`, que puede llevar `output`); el driver las reenvía
+  tal cual.
 - `protocol="text"`: el hijo recibe el prompt tal cual por stdin y la sesión,
   el modelo y el razonamiento por `RAYITO_SESSION_ID`, `RAYITO_MODEL` y
   `RAYITO_REASONING`; cada línea de stdout sale como `text_delta`, y el
@@ -54,6 +56,9 @@ SESSION_ID_ENV: Final = "RAYITO_SESSION_ID"
 MODEL_ENV: Final = "RAYITO_MODEL"
 REASONING_ENV: Final = "RAYITO_REASONING"
 FALLBACK_DETAIL_CODE: Final = "child_failed"
+#: La clave de la configuración con la que quien crea el driver declara que
+#: el hijo entiende `input` (el adaptador `langgraph` del puente de Node).
+ACCEPTS_INPUT_KEY: Final = "accepts_input"
 
 
 def _request_line(request: Request, session_id: str) -> bytes:
@@ -66,6 +71,8 @@ def _request_line(request: Request, session_id: str) -> bytes:
     }
     if request.aws_env is not None:
         payload["aws_env"] = dict(request.aws_env)
+    if request.input is not None:
+        payload["input"] = dict(request.input)
     return (json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8")
 
 
@@ -111,6 +118,9 @@ class Relay:
             )
         elif kind == "done":
             self.done = True
+            output = payload.get("output")
+            if isinstance(output, Mapping):
+                state.output = dict(output)
         else:
             self.ignored_lines += 1
 
@@ -123,6 +133,9 @@ class Driver:
         self._protocol = str(config.get("protocol", PROTOCOL_V1))
         if self._protocol not in (PROTOCOL_V1, PROTOCOL_TEXT):
             raise AgentFailure("protocol_error", "invalid_protocol")
+        self.accepts_input = self._protocol == PROTOCOL_V1 and bool(
+            config.get(ACCEPTS_INPUT_KEY, False)
+        )
         self._child: ChildProcess | None = None
         self._lock = threading.Lock()
 

@@ -35,6 +35,12 @@ const CURRENT_DIRECTORY = "./";
 const IDENTIFIER = /^[A-Za-z_]\w*$/;
 const ENTRY_PATH = "runtime.entrypoint";
 const OVERRIDE_RULE = "override:entrypoint";
+/** La clave del proyecto con el nombre del grafo de `langgraph.json`. */
+export const GRAPH_PATH = "runtime.graph";
+/** Las reglas de `entryFiles` de `langgraph.json` y la regla con la que un
+ * `[runtime] graph` del fichero de proyecto elige su grafo. */
+export const LANGGRAPH_SPEC = "langgraph";
+const GRAPH_FILE_RULE = "project:graph";
 
 /** El punto de entrada elegido: su fichero, el atributo (o export), si es un
  * objeto o una fábrica, la regla que acertó, el lenguaje y la cadena
@@ -217,49 +223,114 @@ function fromGraphValue(
   return { path, attr, factory: false, rule, language, entrypoint };
 }
 
-/** El punto de entrada que declara un fichero de configuración (el `graphs`
- * de `langgraph.json`): uno solo, el preferido por nombre, o `ambiguous`. */
-export function findEntryInFile(
-  index: ProjectIndex,
-  rules: DetectionRules,
-  specName: string,
+/** Los grafos utilizables del documento de un fichero de configuración
+ * (`graphs` de `langgraph.json`), por nombre. Un valor que no es una cadena
+ * `ruta:variable` de un lenguaje conocido (una fábrica en forma de objeto) no
+ * es utilizable y se ignora. */
+export function graphChoices(
+  document: unknown,
+  spec: EntryFileRule,
   rule: string,
-): EntryChoice | undefined {
-  const spec = rules.entryFiles[specName] as EntryFileRule;
-  const document = index.readJson(spec.file);
+): Map<string, EntryChoice> {
   const graphs =
     typeof document === "object" && document !== null && !Array.isArray(document)
       ? (document as Record<string, unknown>)[spec.key]
       : undefined;
-  if (typeof graphs !== "object" || graphs === null || Array.isArray(graphs)) {
-    return undefined;
-  }
   const usable = new Map<string, EntryChoice>();
+  if (typeof graphs !== "object" || graphs === null || Array.isArray(graphs)) {
+    return usable;
+  }
   for (const key of Object.keys(graphs).sort(comparePaths)) {
     const choice = fromGraphValue((graphs as Record<string, unknown>)[key], spec, rule);
     if (choice !== undefined) {
       usable.set(key, choice);
     }
   }
-  if (usable.size === 0) {
+  return usable;
+}
+
+function graphNames(graphs: ReadonlyMap<string, EntryChoice>, rules: DetectionRules): string {
+  return [...graphs.keys()].sort(comparePaths).slice(0, rules.maxCandidatesListed).join(", ");
+}
+
+/** `invalid_value` en `runtime.graph`: el grafo pedido no está entre los de
+ * `graphs`, que el mensaje nombra. */
+export function graphNotFound(
+  requested: string,
+  graphs: ReadonlyMap<string, EntryChoice>,
+  rules: DetectionRules,
+): AgentProjectError {
+  const text = render(rules.messages.graph_not_found as string, {
+    value: requested,
+    candidates: graphNames(graphs, rules),
+  });
+  return new AgentProjectError(`${GRAPH_PATH}: ${text}`, {
+    path: GRAPH_PATH,
+    code: "invalid_value",
+  });
+}
+
+/** El grafo que se sirve, con su nombre: el pedido (`--graph`,
+ * `[runtime] graph`), el único, o el preferido por nombre (`agent`). Sin
+ * grafos es `undefined`; un nombre que no está es `invalid_value` en
+ * `runtime.graph` y varios sin preferencia, `ambiguous` en
+ * `runtime.entrypoint`, con los nombres en el mensaje. Puro y determinista:
+ * nunca importa ni ejecuta el código del proyecto. */
+export function selectGraph(
+  graphs: ReadonlyMap<string, EntryChoice>,
+  requested: string | undefined,
+  rules: DetectionRules,
+  specName: string = LANGGRAPH_SPEC,
+): readonly [string, EntryChoice] | undefined {
+  if (requested !== undefined) {
+    const chosen = graphs.get(requested);
+    if (chosen === undefined) {
+      throw graphNotFound(requested, graphs, rules);
+    }
+    return [requested, chosen];
+  }
+  const [first] = graphs;
+  if (first === undefined) {
     return undefined;
   }
-  if (usable.size === 1) {
-    return [...usable.values()][0];
+  if (graphs.size === 1) {
+    return first;
   }
-  for (const key of spec.preferKeys) {
-    const preferred = usable.get(key);
+  for (const key of (rules.entryFiles[specName] as EntryFileRule).preferKeys) {
+    const preferred = graphs.get(key);
     if (preferred !== undefined) {
-      return preferred;
+      return [key, preferred];
     }
   }
-  const names = [...usable.values()]
-    .map((choice) => choice.entrypoint)
-    .sort(comparePaths)
-    .slice(0, rules.maxCandidatesListed)
-    .join(", ");
-  const text = render(rules.messages.ambiguous_entrypoint as string, { candidates: names });
+  const text = render(rules.messages.ambiguous_graph as string, {
+    candidates: graphNames(graphs, rules),
+  });
   throw new AgentProjectError(`${ENTRY_PATH}: ${text}`, { path: ENTRY_PATH, code: "ambiguous" });
+}
+
+/** El punto de entrada que declara un fichero de configuración (el `graphs`
+ * de `langgraph.json`), elegido con `selectGraph`: el de `graph`, uno solo,
+ * el preferido por nombre, o `ambiguous`. */
+export function findEntryInFile(
+  index: ProjectIndex,
+  rules: DetectionRules,
+  specName: string,
+  rule: string,
+  graph?: string,
+): EntryChoice | undefined {
+  const spec = rules.entryFiles[specName] as EntryFileRule;
+  const choices = graphChoices(index.readJson(spec.file), spec, rule);
+  return selectGraph(choices, graph, rules, specName)?.[1];
+}
+
+/** El `entrypoint` del grafo `graph` de un `langgraph.json` ya leído
+ * (`undefined` si no existe o no es JSON): lo que `[runtime] graph` resuelve
+ * antes de construir el runtime. Un nombre que no está es `invalid_value` en
+ * `runtime.graph`. */
+export function graphEntrypoint(document: unknown, graph: string, rules: DetectionRules): string {
+  const spec = rules.entryFiles[LANGGRAPH_SPEC] as EntryFileRule;
+  const selected = selectGraph(graphChoices(document, spec, GRAPH_FILE_RULE), graph, rules);
+  return (selected as readonly [string, EntryChoice])[1].entrypoint;
 }
 
 /** Un punto de entrada que da el usuario: se usa tal cual. `ruta#export` es

@@ -18,6 +18,7 @@ from .protocol import (
     RunState,
     classify_by_module,
     parse_request,
+    require_input_support,
     run_to_terminal,
 )
 
@@ -29,11 +30,15 @@ def forward(emitter: Emitter, event: Event) -> None:
 
 
 def run_task(create_driver: Callable[[], Driver], raw_request: object, emitter: Emitter) -> int:
-    """Una ejecución completa con el driver que crea `create_driver`."""
+    """Una ejecución completa con el driver que crea `create_driver`. Un
+    `input` sólo llega a un driver que lo entiende, como en el modo servicio
+    (`require_input_support`)."""
 
     def body(state: RunState) -> None:
         request = parse_request(raw_request)
-        create_driver().run(request, lambda event: forward(emitter, event), state)
+        driver = create_driver()
+        require_input_support(driver, request)
+        driver.run(request, lambda event: forward(emitter, event), state)
 
     run_to_terminal(emitter, body, lambda exc: classify_by_module(exc, ()))
     return 0

@@ -250,8 +250,10 @@ class RayitoAgent(Construct):
 
     `project` es el directorio (o el fichero de proyecto) del agente, igual
     que `rayito agent deploy --target agentcore`; las demás opciones son las
-    de `AgentCoreOptions`. Valida con el plan de AgentCore del SDK (los
-    errores salen como `AgentCoreException`) y sintetiza: la pila anidada
+    de `AgentCoreOptions` (`external_model=True` admite un modelo fuera de
+    Bedrock sin dar al rol permisos de Bedrock que no pidas). Valida con el
+    plan de AgentCore del SDK (los errores salen como `AgentCoreException`) y
+    sintetiza: la pila anidada
     `Build` con `infra/agentcore-runtime.yaml` (repositorio de ECR, proyecto
     de CodeBuild, rol de build y rol del runtime, con la misma IAM que la
     CLI), el asset `Source` con el contexto de build, el recurso
@@ -305,6 +307,7 @@ class RayitoAgent(Construct):
         tags: Mapping[str, str] | None = None,
         build: AgentImageBuild | None = None,
         export_outputs: bool = False,
+        external_model: bool = False,
     ) -> None:
         env = stack_environment(scope, CONSTRUCT_NAME)
         chosen = build if build is not None else AgentImageBuild.code_build()
@@ -317,6 +320,7 @@ class RayitoAgent(Construct):
                 idle_session_timeout_seconds=idle_session_timeout_seconds,
                 max_session_lifetime_seconds=max_session_lifetime_seconds,
                 tags=dict(tags or {}),
+                external_model=external_model,
             ),
             environ={},
             adjust=_renamed(name),

@@ -18,7 +18,7 @@ import asyncio
 import dataclasses
 import logging
 import os
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Final, Literal, overload
 
@@ -50,6 +50,17 @@ from rayito._agent._project_base import image_version_of, template_name
 from rayito._agent._project_domain import AgentProject
 from rayito._agent._project_service import ProjectService
 from rayito._agent._project_service_async import AsyncProjectService
+from rayito._agent._secret_env_deploy import (
+    STEP_SECRET_ENV_CREATED,
+    EnvFileSecret,
+    EnvSecretStore,
+    env_missing_steps,
+    env_secret_store,
+    prepare_secret_env,
+    publish_env_file_secret,
+)
+from rayito._agent._secret_env_domain import uses_secret_env
+from rayito._agent._secret_env_reader import async_secret_reader_for, secret_reader_for
 from rayito._agentcore._targets import (
     TARGET_AGENTCORE,
     check_agentcore_options_target,
@@ -86,6 +97,7 @@ class DeployPorts:
     environ: Mapping[str, str] | None = None
     fleet_kwargs: Mapping[str, Any] = field(default_factory=dict)
     service_kwargs: Mapping[str, Any] = field(default_factory=dict)
+    secret_env_store: EnvSecretStore | None = None
 
 
 @dataclass(frozen=True)
@@ -174,6 +186,9 @@ def plan_deploy(
         ).plan
     chosen = options or AgentDeployOptions()
     detected, report = project_for(path, project, overrides, region)
+    detected = prepare_secret_env(
+        detected, chosen.create_secrets_from, check_env=chosen.check_env
+    ).project
     return build_plan(
         detected,
         chosen,
@@ -435,9 +450,16 @@ def deploy_with(
     """`deploy_agent()` con las dependencias de `ports`."""
     chosen = options or AgentDeployOptions()
     detected, _ = project_for(path, project, overrides, region)
-    flight = preflight(detected, chosen, ports, region=region, session=session)
+    prepared = prepare_secret_env(detected, chosen.create_secrets_from, check_env=chosen.check_env)
+    _emit(chosen, _warning_steps(prepared.warnings))
+    flight = preflight(prepared.project, chosen, ports, region=region, session=session)
     _emit(chosen, flight.steps)
-    service = ProjectService(flight.project, **dict(ports.service_kwargs))
+    _publish_env_secret(prepared.secret, ports, flight, chosen, session)
+    service = ProjectService(
+        flight.project,
+        **_secret_reader_kwargs(flight, secret_reader_for, session),
+        **dict(ports.service_kwargs),
+    )
     if flight.bucket is not None:
         info = service.build(
             bucket=flight.bucket,
@@ -478,11 +500,20 @@ async def deploy_with_async(
     """`deploy_agent_async()` con las dependencias de `ports`."""
     chosen = options or AgentDeployOptions()
     detected, _ = await asyncio.to_thread(project_for, path, project, overrides)
+    prepared = await asyncio.to_thread(
+        prepare_secret_env, detected, chosen.create_secrets_from, check_env=chosen.check_env
+    )
+    _emit(chosen, _warning_steps(prepared.warnings))
     flight = await asyncio.to_thread(
-        preflight, detected, chosen, ports, region=region, session=session
+        preflight, prepared.project, chosen, ports, region=region, session=session
     )
     _emit(chosen, flight.steps)
-    service = AsyncProjectService(flight.project, **dict(ports.service_kwargs))
+    await asyncio.to_thread(_publish_env_secret, prepared.secret, ports, flight, chosen, session)
+    service = AsyncProjectService(
+        flight.project,
+        **_secret_reader_kwargs(flight, async_secret_reader_for, session),
+        **dict(ports.service_kwargs),
+    )
     if flight.bucket is not None:
         info = await service.build(
             bucket=flight.bucket,
@@ -544,6 +575,37 @@ def preflight(
     bucket = _bucket_for(resolved, options, aws, environ, steps)
     token = resolve_token(options.access_token, environ)
     return Preflight(resolved, bucket, token, effective_region, tuple(steps))
+
+
+def _publish_env_secret(
+    secret: EnvFileSecret | None,
+    ports: DeployPorts,
+    flight: Preflight,
+    options: AgentDeployOptions,
+    session: Any,
+) -> None:
+    """Crea o actualiza el secreto de `create_secrets_from` (sólo si se pidió)
+    y lo dice en `on_step`, sin nombrarlo."""
+    if secret is None:
+        return
+    store = ports.secret_env_store or env_secret_store(flight.region, session)
+    outcome = publish_env_file_secret(store, secret)
+    _emit(options, (AgentDeployStep(STEP_SECRET_ENV_CREATED, outcome),))
+
+
+def _warning_steps(warnings: tuple[str, ...]) -> tuple[AgentDeployStep, ...]:
+    return tuple(AgentDeployStep(kind, detail) for kind, detail in env_missing_steps(warnings))
+
+
+def _secret_reader_kwargs(
+    flight: Preflight, reader_for: Callable[[str | None, Any], Any], session: Any
+) -> dict[str, Any]:
+    """El lector de `secret_env` con la región y la sesión del despliegue;
+    nada (ni cliente) si el proyecto no lo usa."""
+    project = flight.project
+    if not uses_secret_env(project.secret_env, project.secret_env_from):
+        return {}
+    return {"secret_reader": reader_for(flight.region, session)}
 
 
 def _bucket_for(

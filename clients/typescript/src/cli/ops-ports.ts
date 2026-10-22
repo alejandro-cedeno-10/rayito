@@ -6,6 +6,7 @@
  * tests con dobles en memoria, nunca con AWS.
  */
 
+import type { AgentInvocation } from "../agent/deployment.js";
 import type { AgentEvent, AgentResult } from "../agent/events.js";
 import type { AgentTemplate } from "../agent/template.js";
 import type {
@@ -107,9 +108,12 @@ export interface AgentExportResult {
 export interface DeployedAgent {
   readonly sandboxId: string;
   readonly url: string;
-  invoke(prompt: string, options: { readonly sessionId: string | undefined }): Promise<AgentResult>;
+  invoke(
+    request: AgentInvocation,
+    options: { readonly sessionId: string | undefined },
+  ): Promise<AgentResult>;
   stream(
-    prompt: string,
+    request: AgentInvocation,
     options: { readonly sessionId: string | undefined },
   ): AsyncIterable<AgentEvent>;
   status(): Promise<{
@@ -135,6 +139,10 @@ export interface AgentDetectOverrides {
   readonly language: string | undefined;
   readonly entry: string | undefined;
   readonly protocol: string | undefined;
+  readonly modelId?: string | undefined;
+  readonly modelProvider?: string | undefined;
+  readonly modelBaseUrl?: string | undefined;
+  readonly graph?: string | undefined;
 }
 
 /** Lo que las banderas de `rayito agent deploy` cambian del proyecto
@@ -154,6 +162,10 @@ export interface AgentDeployFlags {
   readonly maxVms: number | undefined;
   readonly warm: number | undefined;
   readonly sessions: string | undefined;
+  /** `--secret-env NOMBRE=<id>[#clave]`, tal cual (se leen al aplicar). */
+  readonly secretEnv?: readonly string[] | undefined;
+  /** `--secret-env-from <id>[,prefix=P][,keys=A|B]`, tal cual. */
+  readonly secretEnvFrom?: readonly string[] | undefined;
 }
 
 /** Dónde y cómo despliega `rayito agent deploy`: lo de `DeployOptions` que
@@ -172,6 +184,10 @@ export interface AgentDeploySettings {
   readonly buildImage: boolean | undefined;
   readonly onBuildLogs: ((line: string) => void) | undefined;
   readonly onStep: ((step: { readonly kind: string; readonly detail: string }) => void) | undefined;
+  /** `--create-secrets-from`: el `.env` cuyos valores van a un secreto JSON. */
+  readonly createSecretsFrom?: string | undefined;
+  /** `--check-env`: avisa de las variables de `.env.example` sin valor. */
+  readonly checkEnv?: boolean | undefined;
 }
 
 export interface AgentDeployRequest {
@@ -216,9 +232,12 @@ export interface FleetStatusView {
 
 /** Una flota reconectada: lo que la CLI usa de `AgentFleet`. */
 export interface FleetClient {
-  invoke(prompt: string, options: { readonly sessionId: string | undefined }): Promise<AgentResult>;
+  invoke(
+    request: AgentInvocation,
+    options: { readonly sessionId: string | undefined },
+  ): Promise<AgentResult>;
   stream(
-    prompt: string,
+    request: AgentInvocation,
     options: { readonly sessionId: string | undefined },
   ): Promise<AsyncIterable<AgentEvent>>;
   status(): Promise<FleetStatusView>;
@@ -278,13 +297,19 @@ export interface AgentCorePlanView {
   readonly report: unknown;
   readonly plan: AgentCoreDeployPlan;
   apply(): Promise<AgentCoreDeployedView>;
+  /** Lo que el plan avisa de `secretEnv` (`env_missing` y el secreto que
+   * `--create-secrets-from` creará): sólo nombres, nunca valores. */
+  readonly notices?: readonly string[] | undefined;
 }
 
 /** Un agente de AgentCore reconectado: lo que la CLI usa de `AgentCoreFleet`. */
 export interface AgentCoreClient {
-  invoke(prompt: string, options: { readonly sessionId: string | undefined }): Promise<AgentResult>;
+  invoke(
+    request: AgentInvocation,
+    options: { readonly sessionId: string | undefined },
+  ): Promise<AgentResult>;
   stream(
-    prompt: string,
+    request: AgentInvocation,
     options: { readonly sessionId: string | undefined },
   ): Promise<AsyncIterable<AgentEvent>>;
   status(): Promise<AgentCoreStatus>;

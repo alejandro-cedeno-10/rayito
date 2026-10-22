@@ -495,18 +495,23 @@ rayito agent init [DIR] [--runtime R] [--language python|typescript] [--provider
                   [--region R] [--force]
 rayito agent build --bucket B [--file PATH] [--force] [--timeout 1800]
 rayito agent run PROMPT [--file PATH] [--session-id ID] [--model ID] [--stream]
-rayito agent detect [PATH] [--framework F] [--language L] [--entry E] [--protocol P] [--write]
+rayito agent detect [PATH] [--framework F] [--language L] [--entry E] [--protocol P]
+                    [--model-id ID] [--model-provider P] [--model-base-url URL] [--write]
 rayito agent deploy [PATH] [--file PATH] [--timeout S] [--port N] [--token-file F] [--keep-on-failure]
                     [--framework F] [--language L] [--entry E] [--protocol P]
+                    [--model-id ID] [--model-provider P] [--model-base-url URL]
                     [--memory MIB] [--max-sessions N] [--sessions shared|dedicated]
                     [--min-vms N] [--max-vms N] [--warm N] [--idle S] [--queue N] [--queue-timeout S]
                     [--env K=V]... [--allow-out DEST]... [--bucket B] [--secret PROVEEDOR=NOMBRE]...
-                    [--create-secret] [--base-artifact ZIP] [--yes] [--dry-run]
+                    [--create-secret] [--secret-env NOMBRE=SECRETO]... [--secret-env-from SECRETO]...
+                    [--create-secrets-from FICHERO] [--check-env]
+                    [--base-artifact ZIP] [--yes] [--dry-run]
                     [--target microvm|agentcore] [--tag K=V]... [--bedrock-model ID]...
                     [--readable-secret NOMBRE]... [--idle-session-timeout S] [--max-session-lifetime S]
+                    [--external-model]
 rayito agent export --target docker|agentcore --out DIR [--file PATH] [--overwrite]
-rayito agent invoke SANDBOX_ID PROMPT [--session-id ID] [--stream] [--token-file F]
-                    [--target microvm|agentcore]
+rayito agent invoke SANDBOX_ID [PROMPT] [--session-id ID] [--input JSON | --input-file F]
+                    [--stream] [--token-file F] [--target microvm|agentcore]
 rayito agent status SANDBOX_ID [--token-file F] [--target microvm|agentcore]
 rayito agent stop SANDBOX_ID [--target microvm|agentcore] [--session-id ID]
 rayito agent list --target agentcore
@@ -558,6 +563,29 @@ identifica el VM, y pasarlo con `--session-id` sigue la conversación. Los
 mensajes y las ayudas van en español. Ver
 [Despliega tu agente](guias/despliega-tu-agente.md#sin-escribir-nada).
 
+Con varios grafos en `langgraph.json`, `detect` y `deploy` aceptan
+`--graph NOMBRE` (excluyente con `--entry`). `invoke` acepta, en lugar de
+`PROMPT`, `--input JSON` o `--input-file F` (`-` lee la entrada estándar): el
+objeto de entrada de un grafo con esquema propio; exactamente uno de los tres,
+o sale con 2 antes de llamar a nadie. La salida del grafo (`output`) se imprime
+como JSON, y con `--json` va en la clave `output`. Ver
+[Varios grafos y entrada estructurada](guias/despliega-tu-agente.md#varios-grafos-y-entrada-estructurada).
+
+Con `--secret-env NOMBRE=<secreto>[#clave]` y `--secret-env-from
+<secreto>[,prefix=P][,keys=A|B]` (repetibles, en los dos destinos) el agente
+recibe valores de Secrets Manager como variables de entorno, sumados a los de
+`[secret_env]` y `[[secret_env_from]]` del fichero; `--create-secrets-from
+FICHERO.env` crea (o actualiza) un secreto JSON con los valores de ese `.env`,
+enseña sólo los nombres y pide `--yes` (cuesta $0,40 al mes), y `--check-env`
+avisa de las variables de `.env.example` que no reciben valor. Ver
+[Secretos como variables de entorno](guias/secretos-como-entorno.md).
+
+`--protocol` acepta `agentcore`, `json`, `raw` y, desde esta versión,
+`langgraph-api` (experimental): sobre un proyecto con `langgraph.json` sirve
+el grafo con `langgraph dev` y su LangGraph Platform API en vez de importarlo;
+sin `langgraph.json` falla con `invalid_value`. Ver
+[LangGraph Platform API](guias/despliega-tu-agente.md#langgraph-platform-api).
+
 Construye la imagen de `AgentTemplate`
 ([Templates de agente](funciones-opcionales/templates-de-agente.md)): parte
 de `--base` (una imagen ya publicada con `rayito image publish`) e instala
@@ -573,6 +601,14 @@ pool. El prefetch y los pools calientes son opcionales:
 [¿Qué uso?](guias/agente-en-el-sandbox.md#que-uso). Cada versión nueva cuesta
 almacenamiento de snapshot ([Precios](cost.md#cuanto-cuesta-con-ejemplos));
 las antiguas se borran con `rayito image prune --image-name <name>`.
+
+`--model-id`, `--model-provider` y `--model-base-url` (en `detect` y
+`deploy`) fijan el modelo cuando tu código lo
+elige por configuración: el id, la pasarela (`openai-compatible`, `litellm`…)
+y la URL `https` de tu pasarela de LLM, que pasa a ser su `upstream`. Con un
+fichero de proyecto se comportan como `--entry`: lo que el fichero dice gana.
+Un `--model-provider` desconocido da `invalid_value` en `model.provider`. Ver
+[Modelo elegido por tu código](guias/despliega-tu-agente.md#modelo-desde-tu-codigo).
 
 ### `agent` con `--target agentcore` { #agent-agentcore }
 
@@ -604,6 +640,7 @@ MicroVMs, y `invoke`, `status`, `stop`, `list` y `delete` lo operan. Sin
 | `--readable-secret NOMBRE` | `deploy` | Secreto de Secrets Manager que el rol del runtime puede leer; repetible. Por defecto, ninguno |
 | `--idle-session-timeout S` | `deploy` | Segundos sin uso tras los que AgentCore termina la microVM de una sesión ({{agentcoreLifecycleMinSeconds}}-{{agentcoreLifecycleMaxSeconds}}, por defecto {{agentcoreIdleSessionTimeoutDefaultSeconds}}) |
 | `--max-session-lifetime S` | `deploy` | Vida máxima de la microVM de una sesión ({{agentcoreLifecycleMinSeconds}}-{{agentcoreLifecycleMaxSeconds}}, por defecto {{agentcoreLifecycleMaxSeconds}}) |
+| `--external-model` | `deploy` | Permite un modelo fuera de Bedrock: el rol no recibe permisos de Bedrock que no pidas y tu código obtiene la clave (`--readable-secret`). Sin ella, un proveedor que no es `bedrock` da `provider_unsupported` ([guía](guias/desplegar-en-agentcore.md#modelos-fuera-de-bedrock)) |
 | `--session-id ID` | `stop` | La sesión cuya microVM se para (`StopRuntimeSession`); con `--target agentcore` es obligatoria |
 | `--yes` | `deploy`, `delete` | No pedir confirmación (hace falta sin terminal o con `--json`) |
 

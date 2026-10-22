@@ -13,13 +13,21 @@
  * los comprueban en TypeScript y en Python.
  */
 
-import { detectApp, validateProtocolOverride } from "./detect-app.js";
+import {
+  CUSTOM_KIND,
+  detectApp,
+  detectLanggraphApi,
+  PROTOCOL_LANGGRAPH_API,
+  validateProtocolOverride,
+} from "./detect-app.js";
 import {
   type EntryChoice,
   entryKind,
   explicitEntry,
   findEntry,
   findEntryInFile,
+  GRAPH_PATH,
+  graphNotFound,
 } from "./detect-entry.js";
 import { detectInstall } from "./detect-install.js";
 import { detectProviders } from "./detect-providers.js";
@@ -40,6 +48,8 @@ const LANGUAGE_PATH = "runtime.language";
 const KIND_PATH = "runtime.kind";
 const SOURCE_PATH = "source";
 const FORCED_RULE = "override:framework";
+/** La opción del informe (y la clave de `[runtime]`) con el grafo elegido. */
+const GRAPH_OPTION = "graph";
 
 interface Candidate {
   readonly order: number;
@@ -205,16 +215,31 @@ function entryFor(
   overrides: DetectOverrides,
 ): EntryChoice | undefined {
   const framework = candidate.framework;
+  if (overrides.graph !== undefined && overrides.entrypoint !== undefined) {
+    throw failure(GRAPH_PATH, "conflict", rules.messages.graph_conflict as string);
+  }
   if (overrides.entrypoint !== undefined && overrides.entrypoint !== rules.httpEntryKeyword) {
     return explicitEntry(overrides.entrypoint, candidate.language);
   }
   if (framework.entryFile !== undefined) {
-    return findEntryInFile(index, rules, framework.entryFile, framework.id);
+    return findEntryInFile(index, rules, framework.entryFile, framework.id, overrides.graph);
+  }
+  if (overrides.graph !== undefined) {
+    throw graphNotFound(overrides.graph, new Map(), rules);
   }
   if (framework.entries !== undefined && candidate.language !== undefined) {
     return findEntry(index, rules, framework, candidate.language);
   }
   return undefined;
+}
+
+/** `{ graph: nombre }` cuando el grafo de `langgraph.json` lo eligió el
+ * usuario; si no, nada, así que un informe sin `--graph` no cambia. */
+function graphOption(framework: FrameworkRule, overrides: DetectOverrides): Record<string, string> {
+  if (overrides.graph === undefined || framework.entryFile === undefined) {
+    return {};
+  }
+  return { [GRAPH_OPTION]: overrides.graph };
 }
 
 function needsEntry(framework: FrameworkRule): boolean {
@@ -365,6 +390,18 @@ export function detect(
     );
     app = detected.app;
     protocol = detected.protocol;
+  } else if (overrides.protocol === PROTOCOL_LANGGRAPH_API) {
+    const detected = detectLanggraphApi(
+      index,
+      rules,
+      framework,
+      entry,
+      language,
+      sink,
+      overrides.graph,
+    );
+    app = detected.app;
+    protocol = detected.protocol;
   } else if (overrides.protocol !== undefined) {
     sink.add("protocol_ignored");
   }
@@ -373,22 +410,23 @@ export function detect(
       ? []
       : alternativesOf(index, rules, language === undefined ? languages : [language], sink);
   const deps = language === undefined ? new Map<string, string>() : index.dependencies(language);
-  const { providers, models } = detectProviders(
+  const { providers, models, modelEnvs } = detectProviders(
     index,
     rules,
     language,
     framework.framework,
     deps,
     sink,
+    overrides,
   );
   return new DetectionReport({
     language,
     framework: framework.framework,
-    kind: kindOf(framework, language),
+    kind: protocol === PROTOCOL_LANGGRAPH_API ? CUSTOM_KIND : kindOf(framework, language),
     entrypoint: entry?.entrypoint,
     entrypointKind: entry === undefined ? undefined : entryKind(entry),
     protocol,
-    options: skillsOptions(framework, index),
+    options: { ...skillsOptions(framework, index), ...graphOption(framework, overrides) },
     app,
     install,
     providers,
@@ -396,6 +434,7 @@ export function detect(
     evidence,
     warnings: sink.items,
     alternatives,
+    modelEnvs,
   });
 }
 

@@ -83,6 +83,10 @@ MAX_MODEL_ID_LEN: Final = 256
 #: como glob; sólo se limita su tamaño y que no lleve controles.
 MAX_TOOL_PATTERN_LEN: Final = 256
 
+#: Las claves opcionales de `AgentModel` con el nombre de una variable de
+#: entorno que lee el código del agente: el id, la URL base y la clave.
+MODEL_ENV_KEYS: Final[tuple[str, ...]] = ("id_env", "base_url_env", "api_key_env")
+
 _NAME_PATTERN: Final = re.compile(rf"[a-z0-9][a-z0-9_-]{{0,{MAX_NAME_LEN - 1}}}")
 _TOOL_NAME_PATTERN: Final = re.compile(rf"[a-z0-9*][a-z0-9_*-]{{0,{MAX_NAME_LEN - 1}}}")
 _MODEL_ID_PATTERN: Final = re.compile(rf"[A-Za-z0-9][A-Za-z0-9._:/@+-]{{0,{MAX_MODEL_ID_LEN - 1}}}")
@@ -164,21 +168,33 @@ class AgentModel:
     `azure_openai_gateway`; esos tres fijan su ruta en el adaptador.
     `prompt_caching=True` deja que el runtime marque puntos de caché
     (Bedrock `cachePoint`, Anthropic `cache_control`): con dos o más pasos
-    abarata la entrada repetida."""
+    abarata la entrada repetida.
+
+    `id=None` es un modelo que elige el código del agente por su
+    configuración (ADR-033 D2): sólo vale con un runtime que no construye el
+    modelo (un `entrypoint` tuyo) y una pasarela que no filtra por modelo.
+    `id_env`, `base_url_env` y `api_key_env` son los **nombres** de las
+    variables de entorno en las que tu código lee el id, la URL base y la
+    clave (`"LLM_MODEL"`, `"LLM_BASE_URL"`, `"LLM_API_KEY"`); nunca valores.
+    En MicroVMs Rayito las apunta a la pasarela y al marcador de la clave."""
 
     provider: ModelProvider
-    id: str
+    id: str | None
     gateway: str
     region: str | None = None
     base_path: str = ""
     prompt_caching: bool = True
+    id_env: str | None = None
+    base_url_env: str | None = None
+    api_key_env: str | None = None
 
     def __post_init__(self) -> None:
         if self.provider not in MODEL_PROVIDERS:
             raise InvalidArgumentException(
                 f"AgentModel.provider debe ser uno de {list(MODEL_PROVIDERS)}"
             )
-        validate_model_id(self.id, "AgentModel.id")
+        if self.id is not None:
+            validate_model_id(self.id, "AgentModel.id")
         validate_route_name(self.gateway)
         if self.provider == "bedrock" and self.region is None:
             raise InvalidArgumentException("AgentModel.region es obligatoria con 'bedrock'")
@@ -191,6 +207,32 @@ class AgentModel:
             )
         if not isinstance(self.prompt_caching, bool):
             raise InvalidArgumentException("AgentModel.prompt_caching debe ser un bool")
+        for key, name in self.env_names().items():
+            validate_env_name(name, f"AgentModel.{key}")
+
+    def env_names(self) -> dict[str, str]:
+        """Las claves `MODEL_ENV_KEYS` que están puestas y el nombre de su
+        variable, en ese orden."""
+        names = {key: getattr(self, key) for key in MODEL_ENV_KEYS}
+        return {key: name for key, name in names.items() if name is not None}
+
+
+def validate_env_name(name: object, label: str) -> str:
+    """Un nombre de variable de entorno (`[A-Za-z_][A-Za-z0-9_]*`)."""
+    if not isinstance(name, str) or not _ENV_NAME_PATTERN.fullmatch(name):
+        raise InvalidArgumentException(f"{label} debe ser un nombre de variable de entorno")
+    return name
+
+
+def required_model_id(model: AgentModel, runtime: str) -> str:
+    """El id de `model` para un runtime que construye él mismo el modelo
+    (`opencode`, `hermes`, `deepagents` o `strands` sin `entrypoint`), o
+    `InvalidArgumentException` antes de cualquier RPC si no lo tiene."""
+    if model.id is None:
+        raise InvalidArgumentException(
+            f"el runtime {runtime!r} construye el modelo: fija AgentModel.id"
+        )
+    return model.id
 
 
 def _validate_action(action: object, label: str) -> PermissionAction:
@@ -383,7 +425,7 @@ class AgentSpec:
             _require_text(self.runtime_version, "AgentSpec.runtime_version")
 
     @property
-    def effective_small_model(self) -> str:
+    def effective_small_model(self) -> str | None:
         return self.small_model if self.small_model is not None else self.model.id
 
     def gateway_names(self) -> frozenset[str]:

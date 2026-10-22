@@ -15,6 +15,7 @@
 import { InvalidArgumentError, UnimplementedError } from "../errors.js";
 import { CustomRuntime } from "./custom.js";
 import { DeepAgents } from "./deepagents.js";
+import { type AgentSpec, requiredModelId } from "./domain.js";
 import { HermesRuntime } from "./hermes.js";
 import { OpenCodeRuntime } from "./opencode.js";
 import type { AgentRuntime } from "./runtime.js";
@@ -182,4 +183,43 @@ export function runtimeToOptions(runtime: string | AgentRuntime): Record<string,
   throw new InvalidArgumentError(
     "este runtime no tiene forma de fichero: sólo los de Rayito se escriben en rayito-agent.toml",
   );
+}
+
+/** Los runtimes que siempre construyen ellos el modelo, y los que lo
+ * construyen sólo cuando no tienen `entrypoint` (sin código tuyo)
+ * (`testdata/agent-model-optional/requirement.json`). */
+export const MODEL_BUILDING_RUNTIMES: readonly string[] = Object.freeze(["opencode", "hermes"]);
+export const DEFAULT_AGENT_RUNTIMES: readonly string[] = Object.freeze([
+  "deepagents",
+  "strands",
+  "strands-harness",
+]);
+
+/** `InvalidArgumentError` si `spec.model.id` falta y `runtime` es de los que
+ * construyen el modelo con ese id (`MODEL_BUILDING_RUNTIMES`, o los de
+ * `DEFAULT_AGENT_RUNTIMES` sin `entrypoint`), antes de cualquier llamada (el
+ * mismo error de `requiredModelId` que da su configuración). Un runtime sin
+ * forma de fichero (uno propio) no se comprueba: elige él. La pasarela no se
+ * mira aquí (`AgentProject` sólo guarda la pasarela construida); el fichero y
+ * la detección ya lo hacen (`requireModelId`). */
+export function requireRuntimeModelId(spec: AgentSpec, runtime: string | AgentRuntime): void {
+  if (spec.model.id !== undefined) {
+    return;
+  }
+  let options: Record<string, unknown>;
+  try {
+    options = runtimeToOptions(runtime);
+  } catch (error) {
+    if (error instanceof InvalidArgumentError) {
+      return;
+    }
+    throw error;
+  }
+  const kind = String(options.kind);
+  const builds =
+    MODEL_BUILDING_RUNTIMES.includes(kind) ||
+    (DEFAULT_AGENT_RUNTIMES.includes(kind) && options.entrypoint === undefined);
+  if (builds) {
+    requiredModelId(spec.model, kind);
+  }
 }

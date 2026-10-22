@@ -2487,3 +2487,89 @@ adicional), `State` (`MicrovmImageState`), `LatestActiveImageVersion`,
   actualizó ninguna imagen, así que no se vio si una actualización borra las
   versiones anteriores (el manejador de `update` pide
   `DeleteMicrovmImageVersion`, pero el esquema no dice cuándo lo usa).
+- **Q189 — Arranque en frío de `langgraph dev` dentro del host (MicroVM y
+  AgentCore).** **Medido 2026-10-21** (us-east-1, aceptación de
+  `agnostic-agent-deploy`, ADR-033 D5, ejemplo
+  `testdata/agent-langgraph-api/sample/` con `langgraph-cli[inmem]` y
+  `langgraph-api` 0.16.2). Primero falló en los dos destinos: `langgraph dev`
+  crea `.langgraph_api/` (el estado de `langgraph_runtime_inmem`) en su
+  directorio de trabajo al importarse, y el host lo arrancaba en el código
+  copiado, que es de `root` y de sólo lectura: `PermissionError` y
+  `warm_failed code=app_exited` en cada sesión. Además resuelve las rutas de
+  `langgraph.json` (`graphs`, `dependencies`, `env`) contra el directorio de
+  trabajo, no contra el del fichero. Arreglo (sólo con `langgraph-api` y un
+  `--config` en el comando): el host escribe en `workdir` una copia de la
+  configuración con esas rutas absolutas contra `app_dir` y arranca la app en
+  `workdir`. Con el arreglo, la primera llamada de una sesión nueva tardó
+  14,2 y 14,5 s en AgentCore en dos despliegues (medida desde la CLI, con el
+  arranque de la microVM, de `langgraph dev` y la retención de Q176; 11,9 s una
+  segunda sesión nueva) y 5,4 y 12,0 s la primera llamada a un MicroVM recién
+  desplegado. Dos llamadas con la misma sesión
+  van al mismo hilo y un `input` estructurado llega tal cual al grafo. Los
+  60 s de `agentLanggraphReadyWaitSeconds` bastan; no se cambian. No hay
+  parámetros de AWS nuevos: el contenedor sigue hablando `/ping` y
+  `/invocations` en el puerto 8080 (`serverProtocol=HTTP`).
+- **Q190 — Un runtime de AgentCore sin permisos de Bedrock llamando a una
+  pasarela externa por la red `PUBLIC` (`--external-model`, ADR-033 D2).**
+  **Medido 2026-10-21** (us-east-1, `openai-compatible-env` de Python y de
+  TypeScript con `external_model` / `externalModel`): la simulación de IAM
+  del rol del runtime deniega `bedrock:InvokeModel` sobre el modelo y el perfil
+  de inferencia de los ejemplos (el plan dice `noBedrockModels`);
+  `environmentVariables` de `GetAgentRuntime` lleva `LLM_BASE_URL` con el
+  `upstream` más `base_path` y ninguna clave; la clave llegó al código sólo por
+  `secret_env` (`LLM_API_KEY`), leída con el rol. No se midió una llamada real
+  a una pasarela externa: el grafo de prueba no llama a ningún modelo (la
+  aceptación no depende de un LLM) y `llm-gateway.example.com` no existe. No
+  introduce ningún parámetro nuevo de la API: usa los de «Despliegue en
+  AgentCore Runtime».
+
+## Secretos como variables de entorno (`agent-secret-env`, ADR-033 D4)
+
+No hay parámetros nuevos de AWS: se usan sólo las operaciones y los parámetros
+de §19 (Secrets Manager).
+
+- **AgentCore, en el host**: `aws_secret_env.py` (el venv de botocore de la
+  imagen, el mismo de las credenciales de AgentCore) llama a `GetSecretValue`
+  con `SecretId` (nombre completo o ARN) y, si la referencia lo pide,
+  `VersionStage`; lee sólo `SecretString` (un secreto sin `SecretString` es
+  `secret_env_invalid`). El cliente sale de la cadena por defecto de botocore
+  (el rol del runtime, por el servicio de metadatos de la microVM) y de la
+  región de `AWS_REGION`. Por código: `AccessDeniedException` y
+  `ResourceNotFoundException` son `secret_env_denied`; cualquier otro error,
+  `secret_env_unavailable`. El mensaje de AWS nunca se lee ni se escribe.
+- **AgentCore, en la pila**: los secretos referenciados se unen a
+  `ReadableSecretArns` (el parámetro de `infra/agentcore-runtime.yaml` que ya
+  existía); la sentencia `ReadSecrets` sigue siendo sólo
+  `secretsmanager:GetSecretValue`, sin `kms:Decrypt`.
+- **MicroVMs**: el SDK lee con `SecretCache` sobre `SecretStore(prefix="")`
+  (`GetSecretValue`, credenciales de quien despliega).
+- **`--create-secrets-from`**: `SecretStore(prefix="").exists`, `create` o
+  `update` del secreto `rayito/agents/<nombre>/env` (`DescribeSecret`,
+  `CreateSecret` o `PutSecretValue`, con los parámetros de §19).
+
+Preguntas abiertas, para la aceptación en AWS real:
+
+- **Q187 — `GetSecretValue` desde el rol del runtime de AgentCore.**
+  **Medido 2026-10-21** (us-east-1, `secret-env-echo` con tres secretos
+  creados por la prueba y cifrados con `aws/secretsmanager`): el rol del
+  runtime, con la sentencia `ReadSecrets` (sólo `GetSecretValue` sobre los
+  ARNs con el sufijo `-??????`), leyó sin `kms:Decrypt` un secreto de texto por
+  nombre con `VersionStage=AWSCURRENT`, la clave `token` de un secreto JSON por
+  ARN y una clave de otro secreto JSON por nombre (`secret_env_from` con
+  `keys`); el agente vio los tres valores (comprobados por su resumen SHA-256)
+  y el log del runtime sólo dice `secret_env_loaded count=3`. Ningún valor
+  apareció en `environmentVariables` de `GetAgentRuntime` (sólo
+  `RAYITO_SECRET_ENV`, con nombres y ARNs), en la configuración ni en las capas
+  de la imagen de ECR, ni en el grupo de logs del runtime. La simulación de IAM
+  permite cada uno de esos ARNs y deniega otro secreto. Tras un
+  `PutSecretValue`, una sesión nueva vio el valor nuevo. Un secreto que no
+  existe en `secret_env` hace fallar el arranque en cerrado: el host deja
+  `secret_env_failed code=secret_env_denied` en el log, `invoke` lanza
+  `AgentException` y ni el mensaje ni el log nombran el secreto. Lo mismo pasó
+  con `--secret-env` y `--secret-env-from` desde la CLI de Python y de
+  TypeScript, y en MicroVMs (leídos con las credenciales de quien despliega).
+- **Q188 — Latencia de arranque de una sesión con `secret_env`.** **Pendiente.**
+  La aceptación del 2026-10-21 no separó lo que añade el ayudante de botocore
+  (arranque del intérprete y una llamada por secreto): ningún arranque con tres
+  secretos agotó `agentSecretEnvHelperTimeoutSeconds` (15 s provisionales,
+  `limits.json`), pero falta medirlo aislado antes de fijar el valor.

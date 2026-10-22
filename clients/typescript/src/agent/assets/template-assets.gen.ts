@@ -6735,7 +6735,10 @@ export const NODE_BRIDGE = `// Puente de Node del host del agente (ADR-028, D2, 
 //     toda llamada de herramienta con un gancho \`BeforeToolCallEvent\`.
 //   - \`langgraph\`: un grafo compilado de LangGraph.js o de deepagents-js
 //     (\`graph\`, \`agent\` o \`createGraph(ctx)\`), que se ejecuta con
-//     \`graph.stream({ messages }, { configurable: { thread_id } })\`.
+//     \`graph.stream({ messages }, { configurable: { thread_id } })\`. Si el grafo
+//     tiene \`getInputJsonSchema\` (LangGraph.js 1.1 o posterior) y su esquema no
+//     es de mensajes, se ejecuta con el objeto \`input\` de la petición y devuelve
+//     su último estado como \`output\` en \`done\` (ADR-033 D3).
 //   - \`vercel-ai\`: un agente del AI SDK (\`ToolLoopAgent\`: \`agent\`, o
 //     \`createAgent(ctx)\`), con \`agent.stream()\` o, si no lo tiene,
 //     \`agent.generate()\`.
@@ -6773,6 +6776,24 @@ export const ENTRYPOINT_SEPARATOR = "#";
 export const HISTORY_MAX_MESSAGES = 200;
 export const SESSION_FILE_MODE = 0o600;
 export const SESSION_DIR_MODE = 0o700;
+// Entrada estructurada (ADR-033 D3): el modo de \`stream\` con el estado completo,
+// la clave de los mensajes de un grafo de mensajes, el tope de \`output\`
+// (\`AGENT_SERVICE_MAX_OUTPUT_BYTES\` de \`limits.json\`) y los \`detail_code\`.
+export const VALUES_STREAM_MODE = "values";
+export const MESSAGES_KEY = "messages";
+export const MAX_SERVICE_OUTPUT_BYTES = 1048576;
+export const INPUT_REQUIRED = "input_required";
+export const INVALID_INPUT = "invalid_input";
+export const OUTPUT_NOT_SERIALIZABLE = "output_not_serializable";
+const JSON_TYPE_CHECKS = {
+  string: (value) => typeof value === "string",
+  integer: (value) => Number.isInteger(value),
+  number: (value) => typeof value === "number",
+  boolean: (value) => typeof value === "boolean",
+  object: (value) => isPlainObject(value),
+  array: (value) => Array.isArray(value),
+  null: (value) => value === null,
+};
 // Clases de error del modelo o de la pasarela: las de Strands, las del AI SDK
 // y las del cliente de Bedrock de AWS (que usan \`@langchain/aws\` y los
 // proveedores de Bedrock). Se reconocen por nombre de clase, nunca por mensaje.
@@ -7042,6 +7063,16 @@ export class BridgeError extends Error {
   }
 }
 
+// Un fallo de la entrada o la salida estructurada de un grafo
+// (\`protocol_error\` con \`input_required\`, \`invalid_input\` u
+// \`output_not_serializable\`), nunca con el valor.
+export class InputError extends Error {
+  constructor(code) {
+    super(code);
+    this.code = code;
+  }
+}
+
 export function sanitizeDetailCode(value) {
   return String(value).toLowerCase().replace(DETAIL_CODE_PATTERN, "_").slice(0, MAX_DETAIL_CODE_LENGTH);
 }
@@ -7049,6 +7080,9 @@ export function sanitizeDetailCode(value) {
 export function classify(error) {
   if (error instanceof BridgeError) {
     return ["runtime_error", sanitizeDetailCode(error.code)];
+  }
+  if (error instanceof InputError) {
+    return ["protocol_error", sanitizeDetailCode(error.code)];
   }
   const detail = sanitizeDetailCode(error?.constructor?.name ?? "error");
   for (let current = error, depth = 0; current && depth < 6; depth += 1) {
@@ -7143,8 +7177,12 @@ export async function loadTarget(config, preferred, importModule = (name) => imp
   return module.default;
 }
 
+// Sin id de modelo (lo elige tu código), \`model\` y \`modelId\` llegan como
+// \`undefined\`, nunca como \`null\`.
+const OPTIONAL_MODEL_KEYS = ["model", "modelId"];
+
 export function factoryContext(config, request, extra = {}) {
-  return {
+  const context = {
     instructions: config.instructions ?? null,
     workdir: config.workdir,
     stateDir: config.state_dir,
@@ -7152,6 +7190,12 @@ export function factoryContext(config, request, extra = {}) {
     sessionsDir: config.sessions_dir,
     ...extra,
   };
+  for (const key of OPTIONAL_MODEL_KEYS) {
+    if (context[key] === null) {
+      context[key] = undefined;
+    }
+  }
+  return context;
 }
 
 export async function loadAgent(config, model, sessionId, importModule = (name) => import(name)) {
@@ -7177,6 +7221,7 @@ function validRequest(request) {
     request &&
     request.v === PROTOCOL_VERSION &&
     typeof request.prompt === "string" &&
+    (request.input === undefined || isPlainObject(request.input)) &&
     typeof request.session_id === "string" &&
     SESSION_ID_PATTERN.test(request.session_id)
   );
@@ -7184,7 +7229,8 @@ function validRequest(request) {
 
 async function runStrands({ config, request, emit, importModule }) {
   const sdk = await importModule("@strands-agents/sdk");
-  const model = await buildModel(config, request.model ?? config.model, importModule);
+  const modelId = request.model ?? config.model;
+  const model = modelId == null ? undefined : await buildModel(config, modelId, importModule);
   const agent = await loadAgent(config, model, request.session_id, importModule);
   registerPermissions(agent, sdk, config.permissions ?? {});
   const translator = new Translator({ reasoning: request.reasoning === true });
@@ -7219,10 +7265,16 @@ export class HistoryStore {
   }
 
   save(history, prompt, answer) {
+    this.saveTurns(history, [{ role: "user", content: prompt }], answer);
+  }
+
+  // Guarda el historial con los turnos nuevos del usuario (el prompt, o los
+  // \`messages\` de un \`input\`) y la respuesta, si la hay.
+  saveTurns(history, userTurns, answer) {
     if (!this.path) {
       return;
     }
-    const turns = [...history, { role: "user", content: prompt }];
+    const turns = [...history, ...userTurns];
     if (answer) {
       turns.push({ role: "assistant", content: answer });
     }
@@ -7430,9 +7482,16 @@ async function loadGraph(config, request, importModule) {
 
 export async function runLanggraph({ config, request, emit, importModule }) {
   const graph = await loadGraph(config, request, importModule);
+  const schema = await structuredInputSchema(graph);
+  if (schema !== undefined && (request.input !== undefined || requiresInput(schema))) {
+    return runStructuredGraph({ graph, schema, request, emit });
+  }
   const store = new HistoryStore(graph.checkpointer ? null : config.sessions_dir, request.session_id);
   const history = store.load();
-  const input = { messages: [...history, { role: "user", content: request.prompt }] };
+  const input =
+    request.input === undefined
+      ? { messages: [...history, { role: "user", content: request.prompt }] }
+      : messagesInput(request.input, history);
   const options = { configurable: { thread_id: request.session_id } };
   const translator = new GraphTranslator();
   for await (const chunk of await graph.stream(input, { ...options, streamMode: GRAPH_STREAM_MODE })) {
@@ -7440,7 +7499,155 @@ export async function runLanggraph({ config, request, emit, importModule }) {
       emit(translated);
     }
   }
-  store.save(history, request.prompt, translator.answer);
+  if (request.input === undefined) {
+    store.save(history, request.prompt, translator.answer);
+  } else {
+    store.saveTurns(history, inputMessages(request.input), translator.answer);
+  }
+  return undefined;
+}
+
+function isPlainObject(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+// El esquema de entrada de un grafo que no es de mensajes, o \`undefined\`: sin
+// \`getInputJsonSchema\`, si falla, si no tiene \`properties\` o si tiene
+// \`messages\`, el grafo se ejecuta como siempre.
+export async function structuredInputSchema(graph) {
+  if (typeof graph?.getInputJsonSchema !== "function") {
+    return undefined;
+  }
+  let schema;
+  try {
+    schema = await graph.getInputJsonSchema();
+  } catch {
+    return undefined;
+  }
+  const properties = schema?.properties;
+  return isPlainObject(properties) && !(MESSAGES_KEY in properties) ? schema : undefined;
+}
+
+// Si un grafo de esquema propio exige \`input\`: sólo si declara claves
+// \`required\`. Sin ellas, un prompt sigue el camino de mensajes de siempre, como
+// antes de ADR-033 D3, en vez de fallar con \`input_required\`.
+export function requiresInput(schema) {
+  return Array.isArray(schema.required) && schema.required.length > 0;
+}
+
+// Los \`messages\` propios de un \`input\`, o ninguno.
+function inputMessages(input) {
+  return Array.isArray(input[MESSAGES_KEY]) ? input[MESSAGES_KEY] : [];
+}
+
+// Un \`input\` para un grafo de mensajes: sus claves tal cual, con sus
+// \`messages\` detrás del historial de la sesión.
+function messagesInput(input, history) {
+  return { ...input, [MESSAGES_KEY]: [...history, ...inputMessages(input)] };
+}
+
+function matchesSchema(value, spec) {
+  if (!isPlainObject(spec)) {
+    return true;
+  }
+  if (spec.type !== undefined) {
+    const checks = (Array.isArray(spec.type) ? spec.type : [spec.type])
+      .filter((name) => Object.hasOwn(JSON_TYPE_CHECKS, name))
+      .map((name) => JSON_TYPE_CHECKS[name]);
+    return checks.length === 0 || checks.some((check) => check(value));
+  }
+  const branches = spec.anyOf ?? spec.oneOf;
+  return Array.isArray(branches) ? branches.some((branch) => matchesSchema(value, branch)) : true;
+}
+
+// Lo básico del esquema, como el driver de Python: un objeto, las claves de
+// \`required\`, ninguna de más con \`additionalProperties: false\` y el tipo de
+// cada clave de primer nivel. Sólo cuentan las claves propias
+// (\`Object.hasOwn\`): \`toString\` o \`hasOwnProperty\` heredados no son claves,
+// como en un \`dict\` (\`testdata/agent-deploy/input-validation.json\`).
+export function validateInput(schema, data) {
+  const known = isPlainObject(schema.properties) ? schema.properties : {};
+  const required = Array.isArray(schema.required) ? schema.required : [];
+  const specOf = (key) => (Object.hasOwn(known, key) ? known[key] : undefined);
+  const valid =
+    isPlainObject(data) &&
+    required.every((key) => Object.hasOwn(data, key)) &&
+    (schema.additionalProperties !== false ||
+      Object.keys(data).every((key) => Object.hasOwn(known, key))) &&
+    Object.entries(data).every(([key, value]) => matchesSchema(value, specOf(key)));
+  if (!valid) {
+    throw new InputError(INVALID_INPUT);
+  }
+}
+
+async function outputKeys(graph) {
+  if (typeof graph.getOutputJsonSchema !== "function") {
+    return undefined;
+  }
+  try {
+    const properties = (await graph.getOutputJsonSchema())?.properties;
+    return isPlainObject(properties) ? new Set(Object.keys(properties)) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function jsonable(value) {
+  if (typeof value?.toDict === "function") {
+    return value.toDict();
+  }
+  if (Array.isArray(value)) {
+    return value.map(jsonable);
+  }
+  if (isPlainObject(value)) {
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, jsonable(item)]));
+  }
+  return value;
+}
+
+// El último estado filtrado al esquema de salida y en JSON (los mensajes, con
+// \`toDict()\`); lo que no se codifica o no cabe es \`output_not_serializable\`.
+export async function structuredOutput(graph, values) {
+  const keys = await outputKeys(graph);
+  const state = isPlainObject(values) ? values : {};
+  const selected = Object.fromEntries(
+    Object.entries(state).filter(([key]) => keys === undefined || keys.has(key)),
+  );
+  let encoded;
+  try {
+    encoded = JSON.stringify(jsonable(selected));
+  } catch {
+    throw new InputError(OUTPUT_NOT_SERIALIZABLE);
+  }
+  if (encoded === undefined || Buffer.byteLength(encoded, "utf8") > MAX_SERVICE_OUTPUT_BYTES) {
+    throw new InputError(OUTPUT_NOT_SERIALIZABLE);
+  }
+  return JSON.parse(encoded);
+}
+
+// Un grafo con esquema de entrada propio: exige \`input\`, lo comprueba y lo
+// pasa con \`thread_id\` igual a la sesión; devuelve la salida estructurada.
+async function runStructuredGraph({ graph, schema, request, emit }) {
+  if (request.input === undefined) {
+    throw new InputError(INPUT_REQUIRED);
+  }
+  validateInput(schema, request.input);
+  const options = {
+    configurable: { thread_id: request.session_id },
+    streamMode: [GRAPH_STREAM_MODE, VALUES_STREAM_MODE],
+  };
+  const translator = new GraphTranslator();
+  let last;
+  for await (const [mode, chunk] of await graph.stream(request.input, options)) {
+    if (mode === VALUES_STREAM_MODE) {
+      last = chunk;
+    } else {
+      for (const translated of translator.feed(chunk)) {
+        emit(translated);
+      }
+    }
+  }
+  return structuredOutput(graph, last);
 }
 
 // ---- adaptador \`vercel-ai\` (AI SDK) ----------------------------------------
@@ -7618,7 +7825,7 @@ export async function run({ config, request, emit, importModule = (name) => impo
   if (!adapter) {
     throw new BridgeError("unknown_adapter");
   }
-  await adapter({ config, request, emit, importModule });
+  return adapter({ config, request, emit, importModule });
 }
 
 function protocolEmitter() {
@@ -7675,14 +7882,15 @@ export async function main(argv) {
   if (process.env[GATEWAY_ENDPOINT_ENV]) {
     forceHttp1ForAwsSdk();
   }
+  let output;
   try {
-    await withAwsEnv(request.aws_env, () => run({ config, request, emit }));
+    output = await withAwsEnv(request.aws_env, () => run({ config, request, emit }));
   } catch (error) {
     const [reason, detail] = classify(error);
     emit(event("agent_failed", { reason, detail_code: detail, session_id: request.session_id }));
     return;
   }
-  emit(event("done", { session_id: request.session_id }));
+  emit(event("done", { session_id: request.session_id, ...(isPlainObject(output) ? { output } : {}) }));
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
@@ -7829,4 +8037,131 @@ def main(argv: list[str]) -> int:
 
 if __name__ == "__main__":
     sys.exit(main(sys.argv[1:]))
+`;
+
+export const AWS_SECRET_ENV_SCRIPT = `"""Valores de Secrets Manager para el host del agente en AgentCore (ADR-033 D4).
+
+El host lo ejecuta una vez al arrancar, con el Python del venv de
+\`requirements-aws-credentials.txt\`, antes de cargar el código del usuario, como
+\`python aws_secret_env.py --values-fd <fd>\`. Lee por stdin
+\`{"secrets": [{"secret", "version_stage"?}, ...]}\` y escribe \`{"values": [...]}\`,
+un \`SecretString\` por petición y en el mismo orden, en el descriptor \`<fd>\`
+(el extremo de escritura de una tubería del host), nunca en stdout: el host
+manda su stdout y su stderr a \`/dev/null\`.
+Sólo llama a \`GetSecretValue\` con \`SecretId\` y, si se pide, \`VersionStage\`
+(\`AWS_API_NOTES.md\` §19), con la cadena de credenciales por defecto de
+botocore (el rol del runtime, por el servicio de metadatos de la microVM) y la
+región de \`AWS_REGION\`.
+
+Nunca escribe un nombre de secreto ni un valor en stderr, ni el mensaje de
+AWS: un fallo es sólo su código de salida (\`EXIT_DENIED\`, \`EXIT_INVALID\` o
+\`EXIT_UNAVAILABLE\`), que el host traduce a su \`detail_code\`.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import sys
+from collections.abc import Sequence
+from typing import IO, Any, Final
+
+import botocore.session
+from botocore.exceptions import BotoCoreError, ClientError
+
+SERVICE: Final = "secretsmanager"
+EXIT_OK: Final = 0
+EXIT_UNAVAILABLE: Final = 1
+EXIT_DENIED: Final = 3
+EXIT_INVALID: Final = 4
+#: Códigos de \`GetSecretValue\` (\`AWS_API_NOTES.md\` §19) que significan que el
+#: rol no puede leer el secreto: sin permiso o inexistente para él.
+DENIED_CODES: Final = frozenset({"AccessDeniedException", "ResourceNotFoundException"})
+#: Argumento con el número del descriptor de los valores (\`VALUES_FD_ARGUMENT\`
+#: del host, \`agent_host/secret_env.py\`).
+VALUES_FD_ARGUMENT: Final = "--values-fd"
+
+
+class _InvalidSecret(Exception):
+    """Un secreto sin \`SecretString\` (binario) o una petición mal formada."""
+
+
+def _requests(text: str) -> list[dict[str, Any]]:
+    try:
+        document = json.loads(text)
+    except ValueError:
+        raise _InvalidSecret from None
+    secrets = document.get("secrets") if isinstance(document, dict) else None
+    if not isinstance(secrets, list) or not all(
+        isinstance(item, dict) and isinstance(item.get("secret"), str) for item in secrets
+    ):
+        raise _InvalidSecret
+    return secrets
+
+
+def _secret_string(client: Any, request: dict[str, Any]) -> str:
+    parameters = {"SecretId": request["secret"]}
+    stage = request.get("version_stage")
+    if isinstance(stage, str):
+        parameters["VersionStage"] = stage
+    value = client.get_secret_value(**parameters).get("SecretString")
+    if not isinstance(value, str):
+        raise _InvalidSecret
+    return value
+
+
+def _exit_code(error: ClientError) -> int:
+    code = error.response.get("Error", {}).get("Code")
+    return EXIT_DENIED if code in DENIED_CODES else EXIT_UNAVAILABLE
+
+
+def _write_all(fd: int, data: bytes) -> None:
+    """Escribe \`data\` entero en \`fd\`: \`os.write\` puede escribir menos bytes
+    de los pedidos en una tubería."""
+    view = memoryview(data)
+    while view:
+        view = view[os.write(fd, view) :]
+
+
+def values_fd(argv: Sequence[str]) -> int | None:
+    """El descriptor de \`VALUES_FD_ARGUMENT <fd>\` en \`argv\`, o \`None\`."""
+    if len(argv) != 2 or argv[0] != VALUES_FD_ARGUMENT or not argv[1].isdigit():
+        return None
+    return int(argv[1])
+
+
+def main(stdin: IO[str], fd: int) -> int:
+    """Lee las peticiones de \`stdin\` y escribe los valores en \`fd\`, que cierra
+    siempre. Devuelve el código de salida."""
+    try:
+        try:
+            requests = _requests(stdin.read())
+            client = botocore.session.get_session().create_client(SERVICE)
+            values = [_secret_string(client, request) for request in requests]
+        except _InvalidSecret:
+            return EXIT_INVALID
+        except ClientError as error:
+            return _exit_code(error)
+        except BotoCoreError:
+            return EXIT_UNAVAILABLE
+        document = json.dumps({"values": values}, separators=(",", ":")).encode("utf-8")
+        try:
+            _write_all(fd, document)
+        except OSError:
+            return EXIT_UNAVAILABLE
+        return EXIT_OK
+    finally:
+        os.close(fd)
+
+
+def run(argv: Sequence[str]) -> int:
+    """\`main\` con el descriptor de \`argv\`; sin él, \`EXIT_UNAVAILABLE\`."""
+    fd = values_fd(argv)
+    if fd is None:
+        return EXIT_UNAVAILABLE
+    return main(sys.stdin, fd)
+
+
+if __name__ == "__main__":
+    sys.exit(run(sys.argv[1:]))
 `;

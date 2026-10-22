@@ -6,8 +6,9 @@ un envoltorio de este módulo con el mismo argv y la misma salida.
 
 - **Entrada**: la configuración estática (modelo, pasarela, instrucciones,
   permisos, subagentes) en el JSON que escribe el SDK, y la petición de cada
-  ejecución `{"v":1,"prompt","session_id","model","reasoning"}`. El prompt
-  nunca va en argv.
+  ejecución `{"v":1,"prompt","session_id","model","reasoning"}` o, para un
+  grafo con esquema de entrada propio, `input` en vez de `prompt` (ADR-033
+  D3). El prompt nunca va en argv.
 - **Salida**: una línea `{"v":1,"type":...}` por evento, con los mismos
   nombres que los eventos de Rayito, más `session`.
 - **Credenciales**: ninguna. El modelo apunta a la pasarela de secretos
@@ -22,17 +23,24 @@ lo ejercitan con módulos de doble en `sys.modules`.
 
 from __future__ import annotations
 
+import contextlib
+import dataclasses
 import fnmatch
 import importlib
 import json
 import os
 import re
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, Final
 
+from ..limits import output_fits
 from ..protocol import (
+    INPUT_REQUIRED,
+    INVALID_INPUT,
+    OUTPUT_NOT_SERIALIZABLE,
     PROTOCOL_VERSION,
     AgentFailure,
     Emit,
@@ -83,6 +91,42 @@ AZURE_OPENAI_V1_API_VERSION: Final = "v1"
 MODEL_NODES: Final = ("model", "agent")
 #: El nodo de herramientas en todos esos grafos.
 TOOLS_NODE: Final = "tools"
+
+#: Cómo se invoca un grafo con `entrypoint` (ADR-033 D3): con mensajes (el
+#: prompt, como siempre) o con un objeto de entrada con esquema propio.
+MESSAGES_INPUT: Final = "messages"
+STRUCTURED_INPUT: Final = "structured"
+#: La clave de los mensajes en el estado de un grafo de mensajes.
+MESSAGES_KEY: Final = "messages"
+#: El modo de `stream` con el estado completo tras cada paso: de su último
+#: valor sale `output` (la documentación de LangGraph avisa de que `stream` no
+#: aplica el `output_schema`, así que se filtra aquí).
+VALUES_MODE: Final = "values"
+#: Comprobación de los tipos de JSON Schema de primer nivel de un `input`
+#: (`testdata/agent-deploy/input-validation.json`). `integer` acepta un
+#: `float` sin parte fraccionaria (`3.0`), como JSON Schema y como el puente
+#: de Node, que no distingue `3` de `3.0`.
+JSON_TYPE_CHECKS: Final[Mapping[str, Callable[[object], bool]]] = MappingProxyType(
+    {
+        "string": lambda value: isinstance(value, str),
+        "integer": lambda value: (
+            (isinstance(value, int) and not isinstance(value, bool))
+            or (isinstance(value, float) and value.is_integer())
+        ),
+        "number": lambda value: isinstance(value, int | float) and not isinstance(value, bool),
+        "boolean": lambda value: isinstance(value, bool),
+        "object": lambda value: isinstance(value, Mapping),
+        "array": lambda value: isinstance(value, list),
+        "null": lambda value: value is None,
+    }
+)
+#: `pydantic.ValidationError` (definida en `pydantic_core`) de un grafo que
+#: valida su entrada: se reconoce por módulo y clase, nunca por el mensaje.
+VALIDATION_ERROR_MODULES: Final = ("pydantic", "pydantic_core")
+VALIDATION_ERROR_CLASS: Final = "ValidationError"
+#: La clase base de un modelo de pydantic en un estado de salida: se
+#: serializa con `model_dump(mode="json")`.
+PYDANTIC_MODEL_CLASS: Final = "BaseModel"
 
 _SESSION_ID_PATTERN: Final = re.compile(r"rda_[0-9a-f]{32}")
 _REASONING_BLOCK_TYPES: Final = ("reasoning", "thinking", "reasoning_content")
@@ -482,19 +526,27 @@ def _classify(exc: BaseException) -> tuple[str, str]:
     return classify_by_module(exc, MODEL_ERROR_MODULES)
 
 
-def build_context(config: Mapping[str, Any], model_id: str) -> RunnerContext:
+def build_context(config: Mapping[str, Any], model_id: str | None) -> RunnerContext:
+    """El `ctx` de tu `entrypoint`. Sin id (ni en la petición ni en la
+    configuración) no se construye ningún modelo y `ctx.model` es `None`: tu
+    grafo elige el suyo."""
     if not config.get("prompt_caching", True):
         disable_prompt_caching(importlib.import_module("deepagents.graph"))
     backends = importlib.import_module("deepagents.backends")
     workdir = str(config["workdir"])
     return RunnerContext(
-        model=build_model(config, model_id),
+        model=optional_model(config, model_id),
         instructions=config.get("instructions"),
         subagents=subagents_of(config, lambda sub_model: build_model(config, sub_model)),
         backend=backends.LocalShellBackend(root_dir=workdir, virtual_mode=False),
         middleware=[permission_middleware(config["permissions"])],
         workdir=workdir,
     )
+
+
+def optional_model(config: Mapping[str, Any], model_id: str | None) -> Any:
+    """`build_model` sólo si hay un id que construir."""
+    return None if model_id is None else build_model(config, model_id)
 
 
 def stream_events(
@@ -519,7 +571,10 @@ def stream_events(
 
 def execute(config: Mapping[str, Any], request: Request, emit: Emit, state: RunState) -> None:
     """Una ejecución: emite los eventos de progreso y deja el id de sesión
-    en `state`; un fallo es una excepción que cierra quien llama."""
+    (y la salida estructurada, si la hay) en `state`; un fallo es una
+    excepción que cierra quien llama. Sólo un grafo con `entrypoint` puede
+    tener un esquema de entrada propio; el agente por defecto es de
+    mensajes."""
     sessions_dir = Path(config["sessions_dir"])
     state.session_id, history = load_history(sessions_dir, request.session_id)
     emit({"v": PROTOCOL_VERSION, "type": "session", "session_id": state.session_id})
@@ -534,12 +589,228 @@ def execute(config: Mapping[str, Any], request: Request, emit: Emit, state: RunS
         if entrypoint
         else default_graph(ctx)
     )
+    kind, schema = input_kind(graph) if entrypoint else (MESSAGES_INPUT, {})
+    structured = kind == STRUCTURED_INPUT and (request.input is not None or requires_input(schema))
+    new_messages = (
+        _structured_run(graph, schema, request, emit, state)
+        if structured
+        else _messages_run(graph, request, emit, history)
+    )
+    save_history(sessions_dir, state.session_id, [*history, *new_messages])
+
+
+def _messages_run(graph: Any, request: Request, emit: Emit, history: list[Any]) -> list[Any]:
+    """Un grafo de mensajes, con los mismos argumentos de `stream` de
+    siempre: el prompt se añade al historial como `HumanMessage`. Un `input`
+    se pasa tal cual, con sus `messages` detrás del historial de la
+    sesión. Devuelve los mensajes nuevos de la ejecución."""
     messages = importlib.import_module("langchain_core.messages")
-    history.append(messages.HumanMessage(content=request.prompt))
+    target = graph
+    if request.input is None:
+        history.append(messages.HumanMessage(content=request.prompt))
+    else:
+        history.extend(_input_messages(messages, request.input))
+        target = _WithInput(graph, request.input)
     translator = Translator(reasoning=request.reasoning)
-    for event in stream_events(graph, history, translator):
+    for event in stream_events(target, history, translator):
         emit({"v": PROTOCOL_VERSION, **event})
-    save_history(sessions_dir, state.session_id, [*history, *translator.new_messages])
+    return translator.new_messages
+
+
+def _structured_run(
+    graph: Any, schema: Mapping[str, Any], request: Request, emit: Emit, state: RunState
+) -> list[Any]:
+    """Un grafo con esquema de entrada propio: exige `input`, lo comprueba
+    contra el esquema y lo pasa con `configurable.thread_id` igual a la
+    sesión. `state.output` es el último estado filtrado al esquema de
+    salida. Devuelve los mensajes nuevos de la ejecución (los del modelo, si
+    el grafo lo llama), que se guardan en la sesión."""
+    if request.input is None:
+        raise AgentFailure("protocol_error", INPUT_REQUIRED)
+    validate_input(schema, request.input)
+    target = _StructuredGraph(graph, request.input, str(state.session_id))
+    translator = Translator(reasoning=request.reasoning)
+    with _validation_failures():
+        for event in stream_events(target, [], translator):
+            emit({"v": PROTOCOL_VERSION, **event})
+    state.output = structured_output(graph, target.last_values)
+    return translator.new_messages
+
+
+def input_kind(graph: Any) -> tuple[str, Mapping[str, Any]]:
+    """`(MESSAGES_INPUT, {})` o `(STRUCTURED_INPUT, esquema)`: un grafo es de
+    mensajes si su `get_input_jsonschema()` tiene `properties.messages`, si
+    no tiene `properties` o si la introspección falla (el comportamiento de
+    siempre). Ocurre dentro del host, que ya ejecuta el código del usuario;
+    la detección nunca lo hace."""
+    try:
+        schema = graph.get_input_jsonschema()
+    except Exception:
+        return MESSAGES_INPUT, {}
+    properties = schema.get("properties") if isinstance(schema, Mapping) else None
+    if not isinstance(properties, Mapping) or MESSAGES_KEY in properties:
+        return MESSAGES_INPUT, {}
+    return STRUCTURED_INPUT, schema
+
+
+def requires_input(schema: Mapping[str, Any]) -> bool:
+    """Si un grafo de esquema propio exige `input`: sólo si declara claves
+    `required`. Sin ellas, un prompt sigue el camino de mensajes de siempre,
+    como antes de ADR-033 D3, en vez de fallar con `input_required`."""
+    required = schema.get("required")
+    return isinstance(required, list) and bool(required)
+
+
+def validate_input(schema: Mapping[str, Any], data: Mapping[str, Any]) -> None:
+    """Comprueba `data` con la biblioteca estándar contra lo básico del
+    esquema: un objeto, las claves de `required`, ninguna clave de más si
+    `additionalProperties` es `false` y el tipo de cada clave de primer nivel.
+    Un fallo es `protocol_error`/`invalid_input`, sin el valor."""
+    properties = schema.get("properties")
+    known = properties if isinstance(properties, Mapping) else {}
+    required = schema.get("required")
+    valid = (
+        isinstance(data, Mapping)
+        and all(key in data for key in (required if isinstance(required, list) else []))
+        and (schema.get("additionalProperties") is not False or all(key in known for key in data))
+        and all(_matches(value, known.get(key)) for key, value in data.items())
+    )
+    if not valid:
+        raise AgentFailure("protocol_error", INVALID_INPUT)
+
+
+def _matches(value: object, spec: object) -> bool:
+    """Si `value` cumple el `type` (o alguna rama de `anyOf`/`oneOf`) de
+    `spec`; lo que el esquema no dice, o un tipo desconocido, no se
+    comprueba."""
+    if not isinstance(spec, Mapping):
+        return True
+    declared = spec.get("type")
+    if declared is not None:
+        names = declared if isinstance(declared, list) else [declared]
+        checks = [JSON_TYPE_CHECKS[name] for name in names if name in JSON_TYPE_CHECKS]
+        return not checks or any(check(value) for check in checks)
+    branches = spec.get("anyOf") or spec.get("oneOf")
+    if isinstance(branches, list):
+        return any(_matches(value, branch) for branch in branches)
+    return True
+
+
+def _input_messages(messages: Any, data: Mapping[str, Any]) -> list[Any]:
+    """Los `messages` de un `input` como mensajes de LangChain; una forma que
+    LangChain no entiende es `invalid_input`."""
+    try:
+        return list(messages.convert_to_messages(data.get(MESSAGES_KEY) or []))
+    except (TypeError, ValueError, NotImplementedError):
+        raise AgentFailure("protocol_error", INVALID_INPUT) from None
+
+
+@contextlib.contextmanager
+def _validation_failures() -> Iterator[None]:
+    """Una `ValidationError` de pydantic que lance el grafo al validar su
+    entrada es `invalid_input` (por módulo y clase, sin el mensaje)."""
+    try:
+        yield
+    except Exception as exc:
+        module = type(exc).__module__.split(".", 1)[0]
+        if module in VALIDATION_ERROR_MODULES and type(exc).__name__ == VALIDATION_ERROR_CLASS:
+            raise AgentFailure("protocol_error", INVALID_INPUT) from None
+        raise
+
+
+class _WithInput:
+    """Un grafo de mensajes llamado con un `input`: `stream_events` le pasa
+    `{"messages": historial}` y aquí se añade el resto de claves del
+    `input`."""
+
+    def __init__(self, graph: Any, data: Mapping[str, Any]) -> None:
+        self._graph = graph
+        self._data = data
+
+    def stream(self, payload: Mapping[str, Any], **kwargs: Any) -> Any:
+        return self._graph.stream({**self._data, **payload}, **kwargs)
+
+
+class _StructuredGraph:
+    """Un grafo con esquema propio que `stream_events` puede recorrer: lo
+    llama con el `input` (no con el `{"messages": ...}` que le pasa
+    `stream_events`, que se descarta), con `thread_id` igual a la sesión y
+    con el modo `values` además de los de siempre, y guarda el último estado
+    (`last_values`)."""
+
+    def __init__(self, graph: Any, data: Mapping[str, Any], session_id: str) -> None:
+        self._graph = graph
+        self._data = data
+        self._session_id = session_id
+        self.last_values: object = None
+
+    def stream(self, payload: object, **kwargs: Any) -> Iterator[Any]:
+        config = {**kwargs.pop("config", {}), "configurable": {"thread_id": self._session_id}}
+        modes = [*kwargs.pop("stream_mode", []), VALUES_MODE]
+        stream = self._graph.stream(dict(self._data), config=config, stream_mode=modes, **kwargs)
+        for item in stream:
+            namespace, mode, data = item
+            if not namespace and mode == VALUES_MODE:
+                self.last_values = data
+            yield item
+
+
+def structured_output(graph: Any, values: object) -> dict[str, Any]:
+    """El último estado, filtrado a las claves de `get_output_jsonschema()`
+    (sin filtro si la introspección falla), en JSON: los mensajes de LangChain
+    con `messages_to_dict`. Lo que no se puede codificar, o no cabe en
+    `MAX_SERVICE_OUTPUT_BYTES`, es `protocol_error`/`output_not_serializable`."""
+    state = values if isinstance(values, Mapping) else {}
+    keys = _output_keys(graph)
+    selected = {key: value for key, value in state.items() if keys is None or key in keys}
+    messages = importlib.import_module("langchain_core.messages")
+    try:
+        output: dict[str, Any] = _jsonable(selected, messages)
+        encoded = json.dumps(output, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
+    except (TypeError, ValueError):
+        raise AgentFailure("protocol_error", OUTPUT_NOT_SERIALIZABLE) from None
+    if not output_fits(encoded):
+        raise AgentFailure("protocol_error", OUTPUT_NOT_SERIALIZABLE)
+    return output
+
+
+def _output_keys(graph: Any) -> frozenset[str] | None:
+    try:
+        properties = graph.get_output_jsonschema().get("properties")
+    except Exception:
+        return None
+    return frozenset(properties) if isinstance(properties, Mapping) else None
+
+
+def _jsonable(value: Any, messages: Any) -> Any:
+    """`value` con cada mensaje de LangChain como su diccionario, cada modelo
+    de pydantic como `model_dump(mode="json")` y cada dataclass como
+    `dataclasses.asdict`; el resto, tal cual (`json.dumps` decide si se puede
+    codificar)."""
+    message_type = getattr(messages, "BaseMessage", None)
+    if message_type is not None and isinstance(value, message_type):
+        return messages.messages_to_dict([value])[0]
+    if _is_pydantic_model(value):
+        return _jsonable(value.model_dump(mode="json"), messages)
+    if dataclasses.is_dataclass(value) and not isinstance(value, type):
+        return _jsonable(dataclasses.asdict(value), messages)
+    if isinstance(value, Mapping):
+        if not all(isinstance(key, str) for key in value):
+            raise TypeError("clave no textual")
+        return {key: _jsonable(item, messages) for key, item in value.items()}
+    if isinstance(value, list | tuple):
+        return [_jsonable(item, messages) for item in value]
+    return value
+
+
+def _is_pydantic_model(value: object) -> bool:
+    """Si `value` es una instancia de un `BaseModel` de pydantic (v2), por su
+    clase y sin importar pydantic: el host no depende de él."""
+    return not isinstance(value, type) and any(
+        klass.__name__ == PYDANTIC_MODEL_CLASS
+        and klass.__module__.split(".", 1)[0] in VALIDATION_ERROR_MODULES
+        for klass in type(value).__mro__
+    )
 
 
 def run(config: Mapping[str, Any], request: Mapping[str, Any], emitter: Emitter) -> int:
@@ -559,7 +830,10 @@ def _forward(emitter: Emitter, event: Mapping[str, Any]) -> None:
 
 class Driver:
     """El driver de deepagents del host. `warm()` importa deepagents para que
-    la primera invocación del servicio no pague el import."""
+    la primera invocación del servicio no pague el import. Entiende
+    `Request.input` (`accepts_input`)."""
+
+    accepts_input = True
 
     def __init__(self, config: Mapping[str, Any]) -> None:
         self._config = config

@@ -1,0 +1,57 @@
+{
+  "schema": "rayito.agent-project/1",
+  "name": "secret-env-echo",
+  "runtime": {
+    "kind": "custom",
+    "requirements": "requirements.txt",
+    "entrypoint": "agent:echo",
+    "package_manager": "pip"
+  },
+  "source": {
+    "path": ".",
+    "exclude": [
+      "expected"
+    ]
+  },
+  "model": {
+    "provider": "bedrock",
+    "id": "amazon.nova-lite-v1:0",
+    "gateway": "bedrock",
+    "region": "us-east-1"
+  },
+  "gateways": {
+    "bedrock": {
+      "preset": "custom",
+      "upstream": "https://bedrock-runtime.us-east-1.amazonaws.com",
+      "headers": {
+        "authorization": "rayito/agents/secret-env-echo/bedrock"
+      },
+      "allow": [
+        [
+          "POST",
+          "/model/amazon.nova-lite-v1%3A0/converse-stream"
+        ],
+        [
+          "POST",
+          "/model/amazon.nova-lite-v1%3A0/converse"
+        ]
+      ]
+    }
+  },
+  "secret_env": {
+    "DATABASE_URL": "rayito-e2e/secret-env/db-url",
+    "TICKETS_TOKEN": {
+      "secret": "rayito-e2e/secret-env/tickets",
+      "key": "token"
+    }
+  },
+  "secret_env_from": [
+    {
+      "secret": "rayito-e2e/secret-env/config",
+      "prefix": "APP_",
+      "keys": [
+        "DB_HOST"
+      ]
+    }
+  ]
+}

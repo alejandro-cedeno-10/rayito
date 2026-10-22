@@ -13,15 +13,25 @@
 
 import { AGENT_PROJECT_SCHEMA, AGENT_SECRET_NAME_TEMPLATE } from "../limits.js";
 import { fillRuntime } from "./detect-domain.js";
-import type { DetectionReport } from "./detect-report.js";
+import type { DetectionReport, DetectOverrides } from "./detect-report.js";
 import { type BridgeRules, DETECTION_RULES, type DetectionRules } from "./detect-rules.js";
-import { AgentProjectError, gatewayPresetKeys } from "./project.js";
+import {
+  AgentProjectError,
+  ENTRYPOINT_KEY,
+  GRAPH_KEY,
+  GRAPH_RUNTIME_KIND,
+  gatewayPresetKeys,
+  gatewayPresetRequiredKeys,
+  requireModelId,
+} from "./project.js";
 
 const MODEL_PATH = "model";
-const MODEL_ID_PATH = "model.id";
 const REGION_PATH = "deploy.region";
 const REGION_KEY = "region";
 const MODELS_KEY = "models";
+const UPSTREAM_KEY = "upstream";
+/** Cómo se da el `upstream` que la detección no puede saber. */
+export const UPSTREAM_HINT = "pásalo con --model-base-url o ";
 const UV_LOCKFILE = "uv.lock";
 const PYTHON_LANGUAGE = "python";
 const TYPESCRIPT_LANGUAGE = "typescript";
@@ -35,8 +45,28 @@ function asTable(value: unknown): Table {
     : {};
 }
 
-function failure(path: string, code: "missing_key" | "not_detected", text: string) {
+function failure(
+  path: string,
+  code: "missing_key" | "not_detected" | "invalid_value",
+  text: string,
+) {
   return new AgentProjectError(`${path}: ${text}`, { path, code });
+}
+
+/** Con un grafo elegido (`--graph` o `[runtime] graph`) y sin un `entrypoint`
+ * del fichero, el runtime `langgraph` guarda el nombre del grafo y no el
+ * `entrypoint` que la detección resolvió; otro runtime (un proyecto de
+ * LangGraph.js se sirve como `custom`) guarda el `entrypoint` resuelto y no el
+ * nombre, salvo que el fichero lo escriba. */
+function keepGraph(runtime: Table, declared: Table, kind: string): void {
+  if (!(GRAPH_KEY in runtime) || ENTRYPOINT_KEY in declared) {
+    return;
+  }
+  if (kind === GRAPH_RUNTIME_KIND) {
+    delete runtime[ENTRYPOINT_KEY];
+  } else if (!(GRAPH_KEY in declared)) {
+    delete runtime[GRAPH_KEY];
+  }
 }
 
 function completeRuntime(
@@ -53,6 +83,7 @@ function completeRuntime(
     runtime.adapter ??= nodeRuntime.adapter;
   }
   const kind = String(runtime.kind ?? report.kind);
+  keepGraph(runtime, declared, kind);
   const entrypoint = runtime.entrypoint;
   const pathKinds =
     report.language === undefined ? [] : (bridge.modulePathKinds[report.language] ?? []);
@@ -92,26 +123,42 @@ function requiredRegion(region: string | undefined): string {
   return region;
 }
 
+/** La tabla `[gateways.<preset>]` del proveedor detectado, con el secreto de
+ * la convención de nombre y lo que el preset exige (región, modelos, la URL de
+ * `--model-base-url` como `upstream`); lo opcional se deja fuera. */
 function gatewayTable(
   preset: string,
   name: string,
   report: DetectionReport,
   region: string | undefined,
+  baseUrl: string | undefined,
 ): Table {
   const table: Table = {
     preset,
     secret: AGENT_SECRET_NAME_TEMPLATE.replace("{project}", name).replace("{provider}", preset),
   };
-  for (const key of gatewayPresetKeys(preset)) {
+  const keys = gatewayPresetKeys(preset);
+  const required = gatewayPresetRequiredKeys(preset);
+  if (baseUrl !== undefined && !keys.includes(UPSTREAM_KEY)) {
+    throw failure(
+      `gateways.${preset}.${UPSTREAM_KEY}`,
+      "invalid_value",
+      `el preset '${preset}' no admite --model-base-url: usa openai-compatible o litellm`,
+    );
+  }
+  for (const key of keys) {
     if (key === REGION_KEY) {
       table[key] = requiredRegion(region);
     } else if (key === MODELS_KEY) {
       table[key] = [...report.models];
-    } else {
+    } else if (key === UPSTREAM_KEY && baseUrl !== undefined) {
+      table[key] = baseUrl;
+    } else if (required.includes(key)) {
+      const hint = key === UPSTREAM_KEY ? UPSTREAM_HINT : "";
       throw failure(
         `gateways.${preset}.${key}`,
         "missing_key",
-        `el preset '${preset}' necesita ${key} y no se puede detectar: escríbelo en ` +
+        `el preset '${preset}' necesita ${key} y no se puede detectar: ${hint}escríbelo en ` +
           "rayito-agent.toml (rayito agent detect --write)",
       );
     }
@@ -119,11 +166,16 @@ function gatewayTable(
   return table;
 }
 
+/** `[model]` y `[gateways.<preset>]` de lo detectado. Sin literal de modelo
+ * el id sólo es obligatorio donde Rayito lo usa (`requireModelId`); si no,
+ * `[model]` lleva los nombres de variable de `modelEnvs`. */
 function modelTables(
   report: DetectionReport,
   name: string,
   region: string | undefined,
   bridge: BridgeRules,
+  runtime: Table,
+  baseUrl: string | undefined,
 ): [Table, Table] {
   const [provider] = report.providers;
   if (provider === undefined) {
@@ -136,27 +188,26 @@ function modelTables(
   }
   const preset = provider.preset;
   const [modelId] = report.models;
-  if (modelId === undefined) {
-    throw failure(
-      MODEL_ID_PATH,
-      "not_detected",
-      "no se encontró el id del modelo en el código: escríbelo como literal o define " +
-        "[model] id en rayito-agent.toml (rayito agent detect --write)",
-    );
+  requireModelId(modelId, {
+    runtime: String(runtime.kind ?? report.kind),
+    entrypoint: runtime.entrypoint !== undefined || "app" in runtime,
+    gatewayPreset: preset,
+    detected: true,
+  });
+  const gateway = gatewayTable(preset, name, report, region, baseUrl);
+  const model: Table = { provider: bridge.modelProviders[preset] };
+  if (modelId !== undefined) {
+    model.id = modelId;
   }
-  const gateway = gatewayTable(preset, name, report, region);
-  const model: Table = {
-    provider: bridge.modelProviders[preset],
-    id: modelId,
-    gateway: preset,
-  };
+  model.gateway = preset;
   if (REGION_KEY in gateway) {
     model[REGION_KEY] = gateway[REGION_KEY];
   }
-  return [model, { [preset]: gateway }];
+  return [{ ...model, ...report.modelEnvs }, { [preset]: gateway }];
 }
 
-/** El documento de proyecto con lo detectado donde el fichero calla. */
+/** El documento de proyecto con lo detectado donde el fichero calla.
+ * `overrides.modelBaseUrl` es el `upstream` de la pasarela detectada. */
 export function detectedDocument(
   document: Readonly<Record<string, unknown>>,
   report: DetectionReport,
@@ -164,6 +215,7 @@ export function detectedDocument(
     readonly name: string;
     readonly region: string | undefined;
     readonly rules?: DetectionRules;
+    readonly overrides?: DetectOverrides | undefined;
   },
 ): Record<string, unknown> {
   const bridge = (options.rules ?? DETECTION_RULES).bridge;
@@ -175,7 +227,14 @@ export function detectedDocument(
   filled.runtime = runtime;
   filled.source ??= { path: bridge.defaultSource };
   if (!("model" in filled)) {
-    const [model, gateways] = modelTables(report, String(filled.name), options.region, bridge);
+    const [model, gateways] = modelTables(
+      report,
+      String(filled.name),
+      options.region,
+      bridge,
+      runtime,
+      options.overrides?.modelBaseUrl,
+    );
     filled.model = model;
     filled.gateways = { ...asTable(filled.gateways), ...gateways };
   }

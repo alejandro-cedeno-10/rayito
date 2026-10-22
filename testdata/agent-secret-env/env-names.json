@@ -1,0 +1,60 @@
+{
+  "schema": "rayito.agent-secret-env-env-names/1",
+  "_comment": "Las variables que un proyecto declara en `.env.example`, `.env.sample` o `.env.template` de su raíz (`envExampleFiles` de agent-detection.json) y las que `--check-env` avisa con `env_missing` (ADR-033 D4). `files` es el árbol del proyecto; sólo se leen nombres, nunca valores. `required` son los nombres en el orden de `envExampleFiles` y de aparición, sin repetir. `covered` son los nombres que reciben valor sin leer un secreto ([env], secret_env, las listas keys de secret_env_from, las variables de las pasarelas); `openPrefixes`, los prefijos de un secret_env_from sin keys (el prefijo vacío lo cubre todo). `missing` son los avisos, en orden.",
+  "cases": [
+    {
+      "name": "one example file, some names covered",
+      "files": {
+        ".env.example": "# configuración del agente\nDATABASE_URL=postgres://localhost/app\nexport LLM_GATEWAY_URL=https://llm-gateway.example.com\nLLM_GATEWAY_KEY=\nLOG_LEVEL=info\n",
+        "agent.py": "import os\n"
+      },
+      "covered": ["DATABASE_URL", "LOG_LEVEL"],
+      "openPrefixes": [],
+      "required": ["DATABASE_URL", "LLM_GATEWAY_URL", "LLM_GATEWAY_KEY", "LOG_LEVEL"],
+      "missing": ["LLM_GATEWAY_URL", "LLM_GATEWAY_KEY"]
+    },
+    {
+      "name": "two example files keep the rule order and drop repeats",
+      "files": {
+        ".env.template": "TICKETS_API_URL=\nDATABASE_URL=\n",
+        ".env.example": "DATABASE_URL=\n",
+        "src/.env.example": "NESTED_ONLY=\n"
+      },
+      "covered": [],
+      "openPrefixes": [],
+      "required": ["DATABASE_URL", "TICKETS_API_URL"],
+      "missing": ["DATABASE_URL", "TICKETS_API_URL"]
+    },
+    {
+      "name": "a secret_env_from without keys covers its prefix",
+      "files": {
+        ".env.example": "APP_DB_HOST=\nAPP_DB_USER=\nTICKETS_API_URL=\n"
+      },
+      "covered": [],
+      "openPrefixes": ["APP_"],
+      "required": ["APP_DB_HOST", "APP_DB_USER", "TICKETS_API_URL"],
+      "missing": ["TICKETS_API_URL"]
+    },
+    {
+      "name": "the empty prefix covers everything",
+      "files": {
+        ".env.example": "TICKETS_API_URL=\n"
+      },
+      "covered": [],
+      "openPrefixes": [""],
+      "required": ["TICKETS_API_URL"],
+      "missing": []
+    },
+    {
+      "name": "no example file",
+      "files": {
+        "agent.py": "import os\n",
+        ".env": "DATABASE_URL=postgres://localhost/app\n"
+      },
+      "covered": [],
+      "openPrefixes": [],
+      "required": [],
+      "missing": []
+    }
+  ]
+}

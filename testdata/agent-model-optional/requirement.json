@@ -1,0 +1,231 @@
+{
+  "schema": "rayito.agent-model-optional/1",
+  "_comment": "Cuándo hace falta `[model] id` (ADR-033 D2). Cada caso describe el proyecto ya resuelto y el destino; `expected` es `ok` o el error (excepción, código y ruta o campos). `source` dice de dónde sale el proyecto: `file` (rayito-agent.toml) o `detection` (sin fichero). Los dos SDK lo evalúan con la misma función de dominio (`require_model_id` / `requireModelId`) y el plan de AgentCore.",
+  "modelIdRequiredPresets": [
+    "bedrock",
+    "gemini"
+  ],
+  "cases": [
+    {
+      "name": "openai-compatible graph without id",
+      "input": {
+        "target": "microvm",
+        "source": "detection",
+        "runtime": "langgraph",
+        "entrypoint": true,
+        "provider": "openai-compatible",
+        "gatewayPreset": "openai-compatible",
+        "modelId": null
+      },
+      "expected": "ok"
+    },
+    {
+      "name": "litellm custom app without id",
+      "input": {
+        "target": "microvm",
+        "source": "file",
+        "runtime": "custom",
+        "entrypoint": true,
+        "provider": "openai-compatible",
+        "gatewayPreset": "litellm",
+        "modelId": null
+      },
+      "expected": "ok"
+    },
+    {
+      "name": "strands with entrypoint and openai without id",
+      "input": {
+        "target": "microvm",
+        "source": "file",
+        "runtime": "strands",
+        "entrypoint": true,
+        "provider": "openai",
+        "gatewayPreset": "openai",
+        "modelId": null
+      },
+      "expected": "ok"
+    },
+    {
+      "name": "bedrock gateway still needs the id when detected",
+      "input": {
+        "target": "microvm",
+        "source": "detection",
+        "runtime": "langgraph",
+        "entrypoint": true,
+        "provider": "bedrock",
+        "gatewayPreset": "bedrock",
+        "modelId": null
+      },
+      "expected": {
+        "error": {
+          "exception": "AgentProjectException",
+          "code": "not_detected",
+          "path": "model.id"
+        }
+      }
+    },
+    {
+      "name": "gemini gateway still needs the id in a file",
+      "input": {
+        "target": "microvm",
+        "source": "file",
+        "runtime": "langgraph",
+        "entrypoint": true,
+        "provider": "google",
+        "gatewayPreset": "gemini",
+        "modelId": null
+      },
+      "expected": {
+        "error": {
+          "exception": "AgentProjectException",
+          "code": "missing_key",
+          "path": "model.id"
+        }
+      }
+    },
+    {
+      "name": "opencode builds the model",
+      "input": {
+        "target": "microvm",
+        "source": "file",
+        "runtime": "opencode",
+        "entrypoint": false,
+        "provider": "openai",
+        "gatewayPreset": "openai",
+        "modelId": null
+      },
+      "expected": {
+        "error": {
+          "exception": "AgentProjectException",
+          "code": "missing_key",
+          "path": "model.id"
+        }
+      }
+    },
+    {
+      "name": "hermes builds the model",
+      "input": {
+        "target": "microvm",
+        "source": "file",
+        "runtime": "hermes",
+        "entrypoint": false,
+        "provider": "openai",
+        "gatewayPreset": "openai",
+        "modelId": null
+      },
+      "expected": {
+        "error": {
+          "exception": "AgentProjectException",
+          "code": "missing_key",
+          "path": "model.id"
+        }
+      }
+    },
+    {
+      "name": "deepagents without entrypoint builds the model",
+      "input": {
+        "target": "microvm",
+        "source": "file",
+        "runtime": "deepagents",
+        "entrypoint": false,
+        "provider": "openai",
+        "gatewayPreset": "openai",
+        "modelId": null
+      },
+      "expected": {
+        "error": {
+          "exception": "AgentProjectException",
+          "code": "missing_key",
+          "path": "model.id"
+        }
+      }
+    },
+    {
+      "name": "agentcore bedrock without id nor --bedrock-model",
+      "input": {
+        "target": "agentcore",
+        "source": "file",
+        "runtime": "langgraph",
+        "entrypoint": true,
+        "provider": "bedrock",
+        "gatewayPreset": null,
+        "modelId": null,
+        "bedrockModels": [],
+        "externalModel": false
+      },
+      "expected": {
+        "error": {
+          "exception": "AgentCoreException",
+          "code": "model_required"
+        }
+      }
+    },
+    {
+      "name": "agentcore bedrock without id but with --bedrock-model",
+      "input": {
+        "target": "agentcore",
+        "source": "file",
+        "runtime": "langgraph",
+        "entrypoint": true,
+        "provider": "bedrock",
+        "gatewayPreset": null,
+        "modelId": null,
+        "bedrockModels": [
+          "amazon.nova-lite-v1:0"
+        ],
+        "externalModel": false
+      },
+      "expected": "ok"
+    },
+    {
+      "name": "agentcore external provider without the opt-in",
+      "input": {
+        "target": "agentcore",
+        "source": "file",
+        "runtime": "langgraph",
+        "entrypoint": true,
+        "provider": "openai-compatible",
+        "gatewayPreset": null,
+        "modelId": null,
+        "bedrockModels": [],
+        "externalModel": false
+      },
+      "expected": {
+        "error": {
+          "exception": "AgentCoreException",
+          "code": "provider_unsupported"
+        }
+      }
+    },
+    {
+      "name": "agentcore external provider with the opt-in",
+      "input": {
+        "target": "agentcore",
+        "source": "file",
+        "runtime": "langgraph",
+        "entrypoint": true,
+        "provider": "openai-compatible",
+        "gatewayPreset": null,
+        "modelId": null,
+        "bedrockModels": [],
+        "externalModel": true
+      },
+      "expected": "ok"
+    },
+    {
+      "name": "agentcore bedrock with id is unchanged",
+      "input": {
+        "target": "agentcore",
+        "source": "file",
+        "runtime": "langgraph",
+        "entrypoint": true,
+        "provider": "bedrock",
+        "gatewayPreset": null,
+        "modelId": "amazon.nova-lite-v1:0",
+        "bedrockModels": [],
+        "externalModel": false
+      },
+      "expected": "ok"
+    }
+  ]
+}

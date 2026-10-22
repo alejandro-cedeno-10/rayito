@@ -320,6 +320,15 @@ microVM propia de AgentCore, aislada de las demás: AgentCore **no asocia
 sesiones a usuarios**, así que quién puede continuar qué sesión lo decide tu
 backend.
 
+Un grafo con esquema de entrada propio se invoca igual que en un MicroVM, con
+`input` en lugar del prompt (`fleet.invoke(input={"ticket_id": "T-1"})`,
+`fleet.invoke({ input: { ticket_id: "T-1" } })` o `rayito agent invoke NOMBRE
+--target agentcore --input '{"ticket_id": "T-1"}'`), y el resultado trae
+`output`: ver
+[Varios grafos y entrada estructurada](despliega-tu-agente.md#varios-grafos-y-entrada-estructurada).
+No hace falta ningún permiso ni recurso nuevo: el grafo se fija al construir la
+imagen.
+
 ## Estado, listar, parar y borrar { #ciclo-de-vida }
 
 === "CLI"
@@ -442,6 +451,33 @@ rayito agent deploy ./mi-agente --target agentcore \
   --readable-secret mi-app/clave-externa
 ```
 
+### Modelos fuera de Bedrock { #modelos-fuera-de-bedrock }
+
+Sin pasarela de secretos, un modelo que no es de Bedrock no se cablea solo: es
+`provider_unsupported`. Si tu código llama a una pasarela de LLM compatible con
+OpenAI y obtiene su clave por su cuenta, `--external-model`
+(`external_model=True` / `externalModel: true`) lo permite:
+
+```bash
+rayito agent deploy ./mi-agente --target agentcore --external-model \
+  --readable-secret rayito/agents/mi-agente/llm
+```
+
+Con la opción:
+
+- El rol no recibe ningún permiso de Bedrock que no pidas: el modelo del
+  proyecto no se añade, y sin `--bedrock-model` el plan dice
+  `noBedrockModels`.
+- Si `[model]` nombra `base_url_env` y su pasarela tiene `upstream`, el entorno
+  del runtime lleva esa variable con el `upstream` más `base_path`. No es un
+  secreto.
+- La clave **nunca** va al entorno del runtime (`GetAgentRuntime` lo devuelve
+  en claro). Tu código la lee con el rol, gracias a `--readable-secret`.
+- El plan añade la línea de seguridad `externalModel`.
+
+Un proyecto con proveedor `bedrock` y sin `[model] id` necesita
+`--bedrock-model`; si no, el plan falla con `model_required`.
+
 ### Etiquetas para organizaciones que las exigen { #etiquetas }
 
 Una SCP que exige etiquetas deniega crear recursos sin ellas. `--tag K=V`
@@ -457,6 +493,25 @@ rayito agent deploy ./mi-agente --target agentcore --tag Owner=plataforma --tag 
 ```
 
 Las etiquetas de un runtime que ya existe no se actualizan en un redespliegue.
+
+### Secretos como variables de entorno { #secretos-como-entorno }
+
+Si tu código lee de variables de entorno valores que viven en Secrets Manager
+(una URL de base de datos, la clave de una pasarela de LLM), `--secret-env` y
+`--secret-env-from` (o `[secret_env]` y `[[secret_env_from]]` en el fichero) se
+los ponen al arrancar cada sesión, leídos con el rol del runtime:
+
+```bash
+rayito agent deploy ./mi-agente --target agentcore \
+  --secret-env DATABASE_URL=app/db-url \
+  --secret-env-from 'app/config,prefix=APP_,keys=DB_HOST|DB_USER'
+```
+
+El runtime sólo recibe `RAYITO_SECRET_ENV`, con nombres y ARNs; los secretos se
+suman a los de `--readable-secret`, así que el rol puede leer exactamente esos.
+`--check-env` avisa de las variables de `.env.example` que se quedan sin valor y
+`--create-secrets-from` crea el secreto desde un `.env`. Todo el detalle, en
+[Secretos como variables de entorno](secretos-como-entorno.md).
 
 ## Qué opciones de MicroVMs no aplican { #opciones-que-no-aplican }
 
@@ -532,6 +587,17 @@ servicio de metadatos de la microVM. Para OpenCode, el contexto de build incluye
 el mismo ayudante y un perfil de AWS con `credential_process` que lo ejecuta
 (`AWS_CONFIG_FILE` y `AWS_PROFILE` en el entorno de la imagen): OpenCode obtiene
 credenciales con fecha de caducidad y las refresca solo.
+
+Con `--external-model` el agente llama a un modelo fuera de Bedrock por
+Internet con una clave que obtiene tu código (`--readable-secret` o
+`--secret-env`): Rayito no la ve ni filtra esa salida, y el plan
+lo dice con la línea `externalModel`.
+
+Con `secret_env` o `secret_env_from`, el host lee esos secretos al arrancar la
+sesión y los pone en el entorno del agente antes de cargar su código. El agente
+y todo lo que lance pueden leer su entorno, igual que cualquier código de la
+sesión puede leer esos secretos con el rol: el plan lo dice en `Seguridad`
+(`secretEnv`). Más en [Secretos como variables de entorno](secretos-como-entorno.md#seguridad).
 
 ## Errores { #errores }
 

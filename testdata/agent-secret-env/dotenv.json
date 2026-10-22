@@ -1,0 +1,44 @@
+{
+  "schema": "rayito.agent-secret-env-dotenv/1",
+  "_comment": "El lector mínimo de `.env` de `--create-secrets-from` y los nombres de `.env.example` de `--check-env` (ADR-033 D4): `NOMBRE=valor`, `export`, comillas simples o dobles (el valor va tal cual, sin escapes), comentarios de línea y, sin comillas, `#` tras un espacio; sin interpolación. Una variable repetida gana la última. `names` son los nombres en orden de aparición, sin repetir; se leen sin interpretar ningún valor. Los valores son de ejemplo.",
+  "cases": [
+    {
+      "name": "plain, export and comments",
+      "text": "# configuración\nDATABASE_URL=postgres://db.internal.example/app\nexport APP_MODE=demo\n\nLOG_LEVEL=info # por defecto\n",
+      "expected": {
+        "APP_MODE": "demo",
+        "DATABASE_URL": "postgres://db.internal.example/app",
+        "LOG_LEVEL": "info"
+      },
+      "names": ["DATABASE_URL", "APP_MODE", "LOG_LEVEL"]
+    },
+    {
+      "name": "quotes keep the value as is",
+      "text": "GREETING=\"hola # mundo\"\nRAW='$HOME/x'\nSPACED =  value with spaces  \n",
+      "expected": {
+        "GREETING": "hola # mundo",
+        "RAW": "$HOME/x",
+        "SPACED": "value with spaces"
+      },
+      "names": ["GREETING", "RAW", "SPACED"]
+    },
+    {
+      "name": "empty values, repeated names and lines that are not assignments",
+      "text": "EMPTY=\nTOKEN_NAME=a\nTOKEN_NAME=b\nnot an assignment\n1BAD=x\n",
+      "expected": {
+        "EMPTY": "",
+        "TOKEN_NAME": "b"
+      },
+      "names": ["EMPTY", "TOKEN_NAME"]
+    },
+    {
+      "name": "a __proto__ line is an ordinary variable",
+      "text": "__proto__=x\nAPP_MODE=demo\n",
+      "expected": {
+        "APP_MODE": "demo",
+        "__proto__": "x"
+      },
+      "names": ["__proto__", "APP_MODE"]
+    }
+  ]
+}

@@ -6,6 +6,152 @@ versionado [SemVer](https://semver.org/lang/es/).
 
 ## [Unreleased]
 
+### Añadido
+
+- **El id del modelo es opcional cuando no es Bedrock** (ADR-033 D2): un grafo
+  que elige su modelo por configuración
+  (`new ChatOpenAI({ model: process.env.LLM_MODEL, configuration: { baseURL } })`) se
+  detecta y se despliega sin escribir el id. `[model]` acepta los nombres de
+  variable `id_env`, `base_url_env` y `api_key_env` (`idEnv`, `baseUrlEnv`,
+  `apiKeyEnv` en `AgentModelOptions`; nunca valores), y en
+  MicroVMs Rayito los apunta a la pasarela con el marcador como clave. La
+  detección ve `base_url=` en el constructor del cliente (`openai` pasa a
+  `openai-compatible`) y los nombres de variable del modelo, y avisa con
+  `model_id_from_code`. El id sigue siendo obligatorio con las pasarelas
+  `bedrock` y `gemini` y con los runtimes que construyen el modelo; con un
+  `entrypoint`, `ctx.model` es `undefined` y la telemetría omite
+  `gen_ai.request.model`.
+- **`--model-id`, `--model-provider` y `--model-base-url`** en
+  `rayito agent detect` y `deploy` (`DetectOverrides.modelId`,
+  `modelProvider`, `modelBaseUrl`).
+- **`--external-model` en AgentCore** (`AgentCoreOptions.externalModel`, prop
+  `externalModel` de `RayitoAgent`): admite un modelo fuera de Bedrock sin dar
+  al rol permisos de Bedrock que no pidas; la URL base va al entorno del
+  runtime y la clave nunca. El plan lo dice con la línea `externalModel`.
+- **Entrada estructurada y selección de grafo** (ADR-033 D3): un grafo de
+  LangGraph cuyo esquema de entrada no es de mensajes (por ejemplo,
+  `InputState` con `ticket_id`) se invoca con `invoke({ input })` y
+  `stream({ input })` en `AgentDeployment`, `AgentFleet` y `AgentCoreFleet`
+  (sobrecargas: el prompt de siempre o `{ input }`; tipos nuevos
+  `AgentInputRequest`, `AgentInvocation` y `JsonObject`), y devuelve
+  `AgentResult.output` y `Done.output`. El host lee el esquema con
+  `get_input_jsonschema()` (`getInputJsonSchema` en LangGraph.js), comprueba el
+  `input` y pasa la sesión como `thread_id`; un grafo de mensajes sigue igual. Fallos
+  `protocol_error` con `input_required`, `invalid_input` u
+  `output_not_serializable`, con su propio mensaje, y `InvalidArgumentError`
+  con una pista de redespliegue si el host desplegado es anterior. Con varios
+  grafos en `langgraph.json`, `--graph`, `[runtime] graph` y
+  `DetectOverrides.graph` eligen uno; sin elegir y sin uno llamado `agent`, el
+  error lista los nombres. `rayito agent invoke` acepta `--input` y
+  `--input-file` (`-` lee stdin) en lugar de `PROMPT`. Límite nuevo
+  `AGENT_SERVICE_MAX_OUTPUT_BYTES`.
+- **Secretos de Secrets Manager como variables de entorno del agente**
+  (ADR-033 D4): `[secret_env]` (`NOMBRE = "<secreto>"` o `{ secret, key,
+  version_stage }`) y `[[secret_env_from]]` (`secret`, `prefix`, `keys`) en el
+  fichero de proyecto, `new AgentProject({ secretEnv, secretEnvFrom })` con
+  `SecretEnvRef` y `SecretEnvSource`, y `--secret-env NOMBRE=<secreto>[#clave]`
+  y `--secret-env-from <secreto>[,prefix=P][,keys=A|B]` en `rayito agent
+  deploy`. En AgentCore el runtime sólo recibe `RAYITO_SECRET_ENV` (nombres y
+  ARNs), el host lee cada secreto con el rol al arrancar la sesión, antes de
+  cargar el código, y falla en cerrado con `secret_env_*`; los secretos se suman
+  a `ReadableSecretArns` (la plantilla no cambia) y el plan lo dice con la
+  línea `secretEnv` y `secretEnvNames`. En MicroVMs el SDK los lee con tus
+  credenciales y los pasa sólo al proceso del host. Sin estas claves, el plan,
+  el export, la imagen y las llamadas no cambian.
+- **`--create-secrets-from FICHERO.env`** (`AgentDeployOptions.createSecretsFrom`)
+  crea o actualiza el secreto JSON `rayito/agents/<nombre>/env` con los valores
+  de un `.env` y lo usa como `secret_env_from`; enseña sólo los nombres y pide
+  `--yes` (cuesta $0,40 al mes). **`--check-env`** (`checkEnv`) avisa
+  (`env_missing`) de las variables de `.env.example` que no reciben valor.
+- **Protocolo `langgraph-api` (experimental) para servir un `langgraph.json`
+  con `langgraph dev`**: `new HttpApp({ protocol: "langgraph-api", assistantId })`
+  (y `[runtime.app] protocol = "langgraph-api"` con `assistant_id`) hace que el
+  host traduzca cada invocación a `POST /threads/{thread_id}/runs/wait` del
+  LangGraph Platform API, con el hilo derivado de la sesión (la misma sesión
+  sigue el mismo hilo), salud en `/ok`, el texto de `response_field` o del
+  último mensaje y el uso de su `usage_metadata`. Un `interrupt` del grafo es
+  `AgentError(protocol_error)` con `detail_code` `graph_interrupted`.
+  `rayito agent detect` y `deploy` con `--protocol langgraph-api` sirven así
+  un proyecto con `langgraph.json` (`kind = "custom"`, el launcher de
+  `langgraph dev` y el grafo elegido como `assistant_id`), y sin la opción la
+  detección no cambia. `langgraph dev` es un servidor de desarrollo en memoria;
+  Rayito no instala `langgraph-cli[inmem]` (el paquete `langgraph-api` usa la
+  licencia Elastic-2.0). Sin streaming ni `langgraph up` en esta versión.
+  `HttpApp.servedHealthPath` y `servedInvokePath` dicen las rutas a las
+  que llama el host. Con `invoke({ input })` el objeto llega tal cual como
+  entrada del grafo y, si el estado final no tiene mensajes, vuelve como
+  `AgentResult.output`; `--graph` elige el `assistantId`.
+
+### Cambiado
+
+- `AgentModel.id` pasa de `string` a `string | undefined` (`AgentModel<Id>`:
+  un modelo construido con id sigue siendo `string`), y con él
+  `AgentSpec.effectiveSmallModel`; sólo cambia el tipo que se lee, ninguna
+  llamada existente. Un proyecto con id se comporta igual, pero con `strict`
+  `tsc` avisa (TS2322/TS18048) donde el código lee `project.spec.model.id`
+  como `string`; estréchalo (`if (id !== undefined)`).
+- `model_required` se lanza por fin: AgentCore con un proveedor `bedrock` sin
+  `[model] id` ni `--bedrock-model` (antes reservado); su texto dice «fija
+  [model] id o pásalo con --bedrock-model».
+- Textos de error (los códigos, las rutas y el código de salida no cambian):
+  `model_required` ya no lleva la pista «(bedrock_models en el SDK)», y un
+  `langgraph.json` con varios grafos y ninguno llamado `agent` da el texto de
+  `ambiguous_graph` (los nombres de los grafos y `--graph`) en vez del de
+  `ambiguous_entrypoint`, con el mismo código `ambiguous` en
+  `runtime.entrypoint`.
+- La detección sólo convierte `openai` en `openai-compatible` por un
+  `baseURL` propio en el constructor del cliente (también dentro de
+  `configuration`; `configuration: { organization }` ya no cuenta); con la URL
+  oficial de OpenAI, o si el código fija el id del modelo con un literal y no
+  pasas `--model-base-url`, el proyecto se detecta como en 0.15 (en el
+  segundo caso, con el aviso `custom_base_url`).
+- Un prompt a un grafo con esquema de entrada propio sin claves `required`
+  sigue el camino de mensajes, como en 0.15; `input_required` queda para los
+  grafos que declaran claves obligatorias.
+
+- Un `400` a una petición con `input` se explica con el cuerpo del host: el
+  `invalid_request` de un host anterior pide volver a desplegar; el de un host
+  con entrada estructurada (que añade `"accepts_input": true`) es una petición
+  que no acepta; cualquier otro cuerpo da un mensaje que sólo sugiere
+  redesplegar. Con `input`, el SDK mide el cuerpo entero de la petición contra
+  `AGENT_SERVICE_MAX_REQUEST_BYTES`, no sólo el `input`, y sólo acepta objetos
+  planos (un `Date`, un `Map` o una instancia de clase son
+  `InvalidArgumentError`, como un `datetime` en Python); con un prompt no
+  cambia nada.
+- `new AgentProject(...)` con un runtime que construye el modelo (`opencode`,
+  `hermes`, `deepagents` o `strands` sin `entrypoint`) y sin `AgentModel.id`
+  falla al construirse, antes de cualquier llamada o de crear el secreto de
+  `--create-secrets-from`.
+- `rayito agent deploy --create-secrets-from` pregunta en una terminal (sin
+  `--json`) en vez de exigir siempre `--yes`, como la CLI de Python.
+- Con `langgraph-api`, `healthPath: "/ok"` (el de la detección) ya no da la
+  pista de rutas ocultas. El puente de Node valida el `input` sólo con claves
+  propias (`toString` o `hasOwnProperty` no cuentan como claves) y guarda en la
+  sesión los `messages` de un `input` a un grafo de mensajes sin checkpointer.
+
+### Seguridad
+
+- Con `--external-model` el agente llama a un modelo fuera de Bedrock por
+  Internet con una clave que obtiene su código; la clave nunca va a las
+  variables de entorno del runtime (`SECURITY.md`, T36).
+- **T38**: los valores de `secret_env` nunca van al proyecto, al plan, a la
+  imagen, a los logs ni a los errores; el rol del runtime sólo lee esos
+  secretos (`GetSecretValue`, sin `kms:Decrypt`), y un test falla si se amplía.
+  El agente y lo que lance pueden leer su entorno: la guía, `security.md` y
+  `SECURITY.md` lo dicen.
+- El fichero de `--create-secrets-from` se excluye del código si está dentro,
+  así que sus valores nunca llegan a la imagen ni a la plantilla; un nombre
+  reservado en él es un error que nombra la variable, nunca su valor. Un
+  `--secret-env` sin `=` o con un nombre que no es de variable da el error en
+  `secret_env`, sin repetir lo escrito. En MicroVMs el host recibe también
+  `RAYITO_SECRET_ENV_NAMES` (sólo nombres) y redacta los valores de
+  `secret_env` en el diagnóstico de arranque igual que en AgentCore.
+- Una clave `__proto__` de un secreto JSON o de `secretEnv` es una variable
+  más, como en Python, en vez de perderse.
+- El host lee los valores de `secret_env` por una tubería propia, nunca por la
+  salida estándar de la herramienta, y el diagnóstico de arranque redacta un
+  valor con CRLF (un PEM) o con caracteres de control.
+
 ## [0.15.0] - 2026-10-21
 
 ### Añadido

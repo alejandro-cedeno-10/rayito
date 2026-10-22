@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Final, Literal
+from typing import Any, Final, Literal
 
 from rayito._agent._events import (
     AGENT_FAILURE_REASONS,
@@ -29,6 +29,8 @@ from rayito._agent._events import (
 )
 from rayito._agent._protocol_v1 import ProtocolV1State, parse_v1_line
 from rayito._agent._sse import SseMessage
+from rayito._agent._stream_base import INPUT_TOO_LARGE_MESSAGE, require_prompt_or_input
+from rayito._limits import AGENT_SERVICE_MAX_REQUEST_BYTES
 from rayito.exceptions import (
     AgentException,
     AuthenticationException,
@@ -60,6 +62,28 @@ HTTP_UNAVAILABLE: Final = 503
 PING_BUSY: Final = "HealthyBusy"
 PING_HEALTHY: Final = "Healthy"
 DeploymentState = Literal["healthy", "busy", "unavailable"]
+#: Un `400` a una petición con `input` cuyo cuerpo es el `invalid_request` de
+#: un host anterior a la entrada estructurada (ADR-033 D3), que no conoce la
+#: clave: sin `INPUT_SUPPORT_FIELD`.
+HOST_TOO_OLD_MESSAGE: Final = (
+    "el agente desplegado no acepta input: vuelve a desplegarlo con esta versión de Rayito"
+)
+#: Un `400` a una petición con `input` cuyo cuerpo no es el de ningún host
+#: conocido (un proxy, un cuerpo cortado): puede ser un host anterior o no.
+HOST_MAYBE_TOO_OLD_MESSAGE: Final = (
+    "el agente desplegado rechazó la petición con input: si su host es anterior a la "
+    "entrada estructurada, vuelve a desplegarlo con esta versión de Rayito"
+)
+#: Un `400` o un `413` del host por un cuerpo que no acepta.
+REQUEST_REJECTED_MESSAGE: Final = (
+    "el agente desplegado rechazó la petición: cuerpo inválido o demasiado grande"
+)
+#: El código del cuerpo `{"error": ...}` de un `400` del host.
+INVALID_REQUEST_ERROR: Final = "invalid_request"
+#: Lo que el host con entrada estructurada añade a ese cuerpo (`true`): los
+#: hosts anteriores no lo mandan (`serve.INPUT_SUPPORT_FIELD`).
+INPUT_SUPPORT_FIELD: Final = "accepts_input"
+OUTPUT_KEY: Final = "output"
 
 
 @dataclass(frozen=True)
@@ -76,17 +100,34 @@ class DeploymentStatus:
 
 
 def invocation_body(
-    prompt: str, *, session_id: str | None, model: str | None, reasoning: bool
+    prompt: str | None,
+    *,
+    session_id: str | None,
+    model: str | None,
+    reasoning: bool,
+    input: Mapping[str, Any] | None = None,
 ) -> bytes:
-    """El cuerpo JSON de `POST /invocations`: sólo lo que se pidió."""
-    payload: dict[str, object] = {"prompt": prompt}
+    """El cuerpo JSON de `POST /invocations`: exactamente uno de `prompt` o
+    `input` (`require_prompt_or_input`) y sólo lo demás que se pidió. Con
+    `input`, el cuerpo entero (no sólo `input`) tiene que caber en
+    `AGENT_SERVICE_MAX_REQUEST_BYTES`, el tope del host; con un prompt no se
+    comprueba aquí, como siempre."""
+    checked_prompt, checked_input = require_prompt_or_input(prompt, input)
+    payload: dict[str, object] = (
+        {"prompt": checked_prompt} if checked_input is None else {"input": dict(checked_input)}
+    )
     if session_id is not None:
         payload["session_id"] = session_id
     if model is not None:
         payload["model"] = model
     if reasoning:
         payload["reasoning"] = True
-    return json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    body = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    if checked_input is not None and len(body) > AGENT_SERVICE_MAX_REQUEST_BYTES:
+        raise InvalidArgumentException(
+            INPUT_TOO_LARGE_MESSAGE.format(maxBytes=AGENT_SERVICE_MAX_REQUEST_BYTES)
+        )
+    return body
 
 
 def invocation_headers(proxy_headers: Mapping[str, str], *, accept: str) -> dict[str, str]:
@@ -95,11 +136,34 @@ def invocation_headers(proxy_headers: Mapping[str, str], *, accept: str) -> dict
     return {**proxy_headers, "Content-Type": JSON_CONTENT_TYPE, "Accept": accept}
 
 
-def http_error(status: int, *, attempt: int = 1) -> Exception:
+def bad_request_after_input_message(body: bytes | None) -> str:
+    """El mensaje de un `400` a una petición con `input`, según el cuerpo del
+    host: el `invalid_request` sin `INPUT_SUPPORT_FIELD` es un host anterior
+    (`HOST_TOO_OLD_MESSAGE`); con él, una petición que el host no acepta
+    (`REQUEST_REJECTED_MESSAGE`); cualquier otro cuerpo, o ninguno, no lo
+    dice (`HOST_MAYBE_TOO_OLD_MESSAGE`). Nunca repite el cuerpo."""
+    try:
+        payload = json.loads(body) if body else None
+    except ValueError:
+        payload = None
+    if not isinstance(payload, Mapping) or payload.get("error") != INVALID_REQUEST_ERROR:
+        return HOST_MAYBE_TOO_OLD_MESSAGE
+    if payload.get(INPUT_SUPPORT_FIELD) is True:
+        return REQUEST_REJECTED_MESSAGE
+    return HOST_TOO_OLD_MESSAGE
+
+
+def http_error(
+    status: int, *, attempt: int = 1, sent_input: bool = False, body: bytes | None = None
+) -> Exception:
     """La excepción de un código HTTP del contrato. `403` es del proxy de
     AWS (JWE ausente o caducado): `proxy_rejected=True`, que el llamante
     reintenta una vez tras reacuñar el token; `401` es el token del
-    contenedor, que no existe en un MicroVM."""
+    contenedor, que no existe en un MicroVM. Un `400` a una petición con
+    `input` (`sent_input`) se explica con el cuerpo del host
+    (`bad_request_after_input_message`)."""
+    if status == HTTP_BAD_REQUEST and sent_input:
+        return InvalidArgumentException(bad_request_after_input_message(body))
     if status == HTTP_TOO_MANY_REQUESTS:
         return AgentException(failure_message("busy"), reason="busy")
     if status in (HTTP_FORBIDDEN, HTTP_UNAUTHORIZED):
@@ -110,9 +174,7 @@ def http_error(status: int, *, attempt: int = 1) -> Exception:
     if status == HTTP_UNAVAILABLE:
         return TimeoutException("el agente desplegado aún no está listo")
     if status in (HTTP_BAD_REQUEST, HTTP_PAYLOAD_TOO_LARGE):
-        return InvalidArgumentException(
-            "el agente desplegado rechazó la petición: cuerpo inválido o demasiado grande"
-        )
+        return InvalidArgumentException(REQUEST_REJECTED_MESSAGE)
     return SandboxException(
         f"el agente desplegado respondió con un estado inesperado ({status})", status_code=status
     )
@@ -163,7 +225,15 @@ def result_from_body(body: bytes) -> AgentResult:
         usage=usage,
         exit_code=0,
         usage_reported=reported,
+        output=output_of(payload),
     )
+
+
+def output_of(payload: Mapping[str, object]) -> Mapping[str, Any] | None:
+    """La salida estructurada (`output`) de un cuerpo o de un evento `done`,
+    si es un objeto; `None` si no la hay."""
+    output = payload.get(OUTPUT_KEY)
+    return output if isinstance(output, Mapping) else None
 
 
 @dataclass
@@ -198,6 +268,7 @@ class EventDecoder:
                     exit_code=0,
                     usage=self.state.usage,
                     usage_reported=self.state.usage_reported,
+                    output=output_of(payload),
                 )
             ]
         if kind == "agent_failed":
@@ -238,6 +309,7 @@ class ResultBuilder:
                 tool_calls=tuple(self.tool_calls),
                 dropped_lines=dropped_lines,
                 usage_reported=final.usage_reported,
+                output=final.output,
             )
         failed = final or AgentFailed(reason="protocol_error")
         raise failed.to_exception()

@@ -21,16 +21,22 @@ const PROVIDER_NAMES: Readonly<Record<ModelProvider, string>> = {
   azure: "azure.ai.openai",
 };
 
+/** El atributo del modelo pedido (condicional en la convención GenAI). */
+export const REQUEST_MODEL_ATTRIBUTE = "gen_ai.request.model";
+
 /** Atributos conocidos antes de ejecutar nada: el modelo pedido, su
- * proveedor y qué runtime lo corre. */
+ * proveedor y qué runtime lo corre. Sin id (lo elige el código del agente)
+ * no hay `gen_ai.request.model`: la convención lo pide sólo si se conoce. */
 export function startAttributes(spec: AgentSpec, runtimeName: string): RayitoSpanAttributes {
-  return {
+  const attributes: RayitoSpanAttributes = {
     "gen_ai.operation.name": "invoke_agent",
     "gen_ai.provider.name": PROVIDER_NAMES[spec.model.provider],
-    "gen_ai.request.model": spec.model.id,
     "gen_ai.agent.name": runtimeName,
     "rayito.agent.runtime": runtimeName,
   };
+  return spec.model.id === undefined
+    ? attributes
+    : { ...attributes, [REQUEST_MODEL_ATTRIBUTE]: spec.model.id };
 }
 
 /** Atributos de una ejecución terminada (con éxito o no): tokens y estado,

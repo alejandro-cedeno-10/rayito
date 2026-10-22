@@ -593,6 +593,14 @@ touched (`name_conflict`).
 organization with SCPs that require tags needs `--tag`, and the tags of an
 already created runtime are not updated.
 
+**Model outside Bedrock (`--external-model`).** It is opt-in: without the
+option, a provider other than `bedrock` is still `provider_unsupported`. With
+it, the agent calls its LLM gateway over the `PUBLIC` network with a key its
+code obtains (`--readable-secret` or `--secret-env`): the role gets no Bedrock
+permission nobody asked for, the key never goes into the runtime environment
+variables (only the base URL, which is not a secret) and Rayito neither sees it
+nor filters that traffic. The plan says so with the `externalModel` line.
+
 ## CDK constructs: custom-resource and image-build roles (T37) { #cdk }
 
 Summary of **T37** in
@@ -639,3 +647,42 @@ creates every version with MMDSv2 on; `Mmds` checks it on every new version
 and would only turn it on outside CloudFormation (where drift detection could
 flag it) if one ever came without it. Assets (the agent code, the image zip) stay in the bootstrap
 bucket until `cdk gc`.
+
+## Secrets as environment variables (T38) { #secretos-como-entorno }
+
+Summary of **T38** from
+[`SECURITY.md`](https://github.com/alejandro-cedeno-10/rayito/blob/main/SECURITY.md)
+(`agent-secret-env`, ADR-033 D4): what changes when an agent receives Secrets
+Manager values as environment variables ([guide](guias/secretos-como-entorno.md)).
+
+**Only names in the project, the plan and the image.** `[secret_env]` and
+`[[secret_env_from]]` hold the variable name and the secret name or ARN, never
+the value. On AgentCore the runtime only receives `RAYITO_SECRET_ENV` (names
+and ARNs) and the host removes it from its environment at startup; on MicroVMs
+the values travel only in the host process environment, never in a file or in
+the image. No log, error, plan or `repr` carries a value or a secret name: the
+host only logs `secret_env_loaded count=N`, fails closed with a code
+(`secret_env_*`) and redacts the injected values, short ones included, from the
+startup diagnostics.
+
+**Least privilege.** On AgentCore the referenced secrets join those of
+`--readable-secret` in the same `ReadSecrets` statement: the role can only
+`secretsmanager:GetSecretValue` on those ARNs (with the six-character Secrets
+Manager suffix), with no `kms:Decrypt`, no `ListSecrets` and no
+`secretsmanager:*`; a test fails if it is widened. An ARN of another account or
+region is `iam_resource_invalid`. On MicroVMs the SDK reads them with your
+credentials.
+
+**Reserved names.** A secret cannot set `PATH`, `HOME`, `PYTHONPATH`,
+`NODE_OPTIONS`, anything starting with `AWS_`, `LD_` or `RAYITO_`, or the
+variables the runtime already sets: it is refused in the plan and again in the
+host.
+
+**Residual risk.** An environment variable can be read by all the agent's
+code: the process and anything it starts (`/proc/self/environ`, a dump). On
+AgentCore, also, any code in the session can ask the metadata service for the
+role credentials and read those secrets. On MicroVMs, whoever holds the sandbox
+access token sees the process environment with `commands.list()`, and a pause
+keeps the values in the memory snapshot. For a model key on MicroVMs, the
+[secret gateway](funciones-opcionales/pasarela-de-secretos.md) is still better:
+the agent uses the key without being able to read it.

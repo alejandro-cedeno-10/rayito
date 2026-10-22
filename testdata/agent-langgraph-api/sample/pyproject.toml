@@ -1,0 +1,9 @@
+[project]
+name = "ticket-echo"
+version = "0.1.0"
+description = "Grafo de LangGraph servido con langgraph dev: eco determinista, sin modelo"
+requires-python = ">=3.11"
+dependencies = [
+    "langgraph>=1.0",
+    "langgraph-cli[inmem]>=0.4",
+]

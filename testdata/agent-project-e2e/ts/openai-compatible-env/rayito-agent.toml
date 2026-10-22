@@ -1,0 +1,25 @@
+schema = "rayito.agent-project/1"
+name = "openai-compatible-env-ts"
+
+[runtime]
+kind = "custom"
+entrypoint = "graph.mjs#graph"
+adapter = "langgraph"
+package_manager = "npm"
+
+[source]
+path = "."
+
+[model]
+provider = "openai-compatible"
+gateway = "llm"
+base_path = "/v1"
+id_env = "LLM_MODEL"
+base_url_env = "LLM_BASE_URL"
+api_key_env = "LLM_API_KEY"
+
+[gateways.llm]
+preset = "openai-compatible"
+secret = "rayito/agents/openai-compatible-env-ts/llm"
+upstream = "https://llm-gateway.example.com"
+base_path = "/v1"

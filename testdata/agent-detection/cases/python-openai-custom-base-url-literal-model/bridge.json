@@ -1,0 +1,17 @@
+{
+  "overrides": {
+    "model_base_url": "https://llm-gateway.example.com"
+  },
+  "model": {
+    "provider": "openai-compatible",
+    "id": "gpt-4o-mini",
+    "gateway": "openai-compatible"
+  },
+  "gateways": {
+    "openai-compatible": {
+      "preset": "openai-compatible",
+      "secret": "rayito/agents/ticket-agent/openai-compatible",
+      "upstream": "https://llm-gateway.example.com"
+    }
+  }
+}

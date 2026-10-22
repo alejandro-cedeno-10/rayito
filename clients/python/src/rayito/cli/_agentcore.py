@@ -13,23 +13,28 @@ Con `--json` un error es un único objeto `{"error": {"code", "message"},
 from __future__ import annotations
 
 import sys
-from collections.abc import Callable, Collection, Iterator, Mapping
+from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Any, Final
 
 import typer
 
 from rayito._agent._deploy_plan import AgentDeployOptions
 from rayito._agent._detect_report import DetectionReport
 from rayito._agent._project_domain import AgentProject
+from rayito._agent._secret_env_project import (
+    parse_secret_env_flags,
+    parse_secret_env_from_flags,
+)
 from rayito._agentcore._deploy import (
     AgentCorePorts,
     PlannedDeploy,
     agentcore_gateways,
     apply_agentcore,
     plan_agentcore,
+    publish_planned_secret,
 )
 from rayito._agentcore._domain import runtime_name_for, stack_name_for
 from rayito._agentcore._errors import AgentCoreErrorCode
@@ -50,6 +55,7 @@ from rayito.cli._agent_deploy import (
     detection_lines,
     parse_pairs,
 )
+from rayito.cli._agent_secret_env import notices_of
 from rayito.cli._console import EXIT_FAILURE, EXIT_USAGE, echo, emit_json, fail
 from rayito.cli._session import Clients, clients_of, json_mode
 from rayito.cli.stack import parse_pairs as parse_tag_pairs
@@ -84,6 +90,10 @@ MAX_SESSION_LIFETIME_HELP: Final = (
     "Segundos de vida máxima de la microVM de una sesión (60-28800; por defecto, 28800). "
     "Sólo con --target agentcore."
 )
+EXTERNAL_MODEL_HELP: Final = (
+    "Sólo con --target agentcore: permite un modelo fuera de Bedrock. Tu código obtiene la "
+    "clave (--secret-env o --readable-secret); Rayito no filtra esa salida."
+)
 STOP_SESSION_ID_HELP: Final = (
     "Con --target agentcore: la sesión cuya microVM se para (StopRuntimeSession)."
 )
@@ -109,6 +119,7 @@ BEDROCK_MODEL_FLAG: Final = "--bedrock-model"
 READABLE_SECRET_FLAG: Final = "--readable-secret"
 IDLE_SESSION_TIMEOUT_FLAG: Final = "--idle-session-timeout"
 MAX_SESSION_LIFETIME_FLAG: Final = "--max-session-lifetime"
+EXTERNAL_MODEL_FLAG: Final = "--external-model"
 SESSION_ID_FLAG: Final = "--session-id"
 TOKEN_FILE_FLAG: Final = "--token-file"
 TOKEN_FILE_REASON: Final = "AgentCore autentica con IAM (SigV4), no con un access token"
@@ -186,6 +197,11 @@ class AgentCoreDeployRequest:
     idle_session_timeout: int | None
     max_session_lifetime: int | None
     microvm_flags: Collection[str]
+    external_model: bool = False
+    secret_env: Sequence[str] = ()
+    secret_env_from: Sequence[str] = ()
+    create_secrets_from: Path | None = None
+    check_env: bool = False
 
 
 def adjust_with(request: AgentCoreDeployRequest) -> Callable[[AgentProject], AgentProject]:
@@ -194,6 +210,8 @@ def adjust_with(request: AgentCoreDeployRequest) -> Callable[[AgentProject], Age
     política de salida. `--memory`, `--port`, `--timeout` y `--idle` no se
     aplican: la llamada los rechaza."""
     env = parse_pairs(request.env, "--env")
+    secret_env = parse_secret_env_flags(request.secret_env)
+    secret_env_from = parse_secret_env_from_flags(request.secret_env_from)
 
     def adjust(project: AgentProject) -> AgentProject:
         served = apply_serve_flags(
@@ -205,9 +223,26 @@ def adjust_with(request: AgentCoreDeployRequest) -> Callable[[AgentProject], Age
             timeout=None,
             port=None,
         )
-        return apply_project_flags(served, memory=None, env=env, allow_out=request.allow_out or [])
+        return apply_project_flags(
+            served,
+            memory=None,
+            env=env,
+            allow_out=request.allow_out or [],
+            secret_env=secret_env,
+            secret_env_from=secret_env_from,
+        )
 
     return adjust
+
+
+def secret_env_options(request: AgentCoreDeployRequest) -> dict[str, Any]:
+    """`create_secrets_from` y `check_env` de las banderas, sólo si se pasaron."""
+    options: dict[str, Any] = {}
+    if request.create_secrets_from is not None:
+        options["create_secrets_from"] = str(request.create_secrets_from)
+    if request.check_env:
+        options["check_env"] = True
+    return options
 
 
 def run_agentcore_deploy(ctx: typer.Context, request: AgentCoreDeployRequest) -> None:
@@ -220,6 +255,7 @@ def run_agentcore_deploy(ctx: typer.Context, request: AgentCoreDeployRequest) ->
             idle_session_timeout_seconds=request.idle_session_timeout,
             max_session_lifetime_seconds=request.max_session_lifetime,
             tags=parse_tag_pairs(request.tags, option="--tag"),
+            external_model=request.external_model,
         )
     except InvalidArgumentException as exc:
         fail(str(exc), code=EXIT_USAGE)
@@ -227,6 +263,7 @@ def run_agentcore_deploy(ctx: typer.Context, request: AgentCoreDeployRequest) ->
         bucket=request.bucket,
         build_image=request.build,
         on_build_logs=(lambda line: echo(line, err=True)) if request.verbose else None,
+        **secret_env_options(request),
     )
     with agentcore_errors(json_output=json_output):
         clients = None if request.dry_run else clients_of(ctx)
@@ -241,11 +278,15 @@ def run_agentcore_deploy(ctx: typer.Context, request: AgentCoreDeployRequest) ->
             adjust=adjust,
         )
         print_plan(planned, json_output=json_output, dry_run=request.dry_run)
+        if not json_output:
+            for line in notices_of(planned.env_warnings, planned.env_file_secret):
+                echo(line, err=True)
         if request.dry_run or clients is None:
             return
         confirm(
             CONFIRM_QUESTION, yes=request.yes, json_output=json_output, refusal="needs_confirmation"
         )
+        publish_planned_secret(planned, clients.agentcore_override, clients.session)
         deployment = apply_agentcore(
             planned,
             agentcore_gateways(planned, clients.agentcore_override, clients.session),

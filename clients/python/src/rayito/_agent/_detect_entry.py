@@ -38,6 +38,12 @@ PYTHON_ATTRIBUTE_SEPARATOR: Final = ":"
 CURRENT_DIRECTORY: Final = "./"
 _IDENTIFIER: Final = re.compile(r"^[A-Za-z_]\w*$", re.ASCII)
 _ENTRY_PATH: Final = "runtime.entrypoint"
+#: La clave del proyecto con el nombre del grafo de `langgraph.json`.
+GRAPH_PATH: Final = "runtime.graph"
+#: Las reglas de `entryFiles` de `langgraph.json` y la regla con la que un
+#: `[runtime] graph` del fichero de proyecto elige su grafo.
+LANGGRAPH_SPEC: Final = "langgraph"
+GRAPH_FILE_RULE: Final = "project:graph"
 
 
 @dataclass(frozen=True)
@@ -190,31 +196,87 @@ def _from_graph_value(value: object, spec: Mapping[str, Any], rule: str) -> Entr
     return EntryChoice(path, attr, False, rule, language, entrypoint)
 
 
+def graph_choices(document: object, spec: Mapping[str, Any], rule: str) -> dict[str, EntryChoice]:
+    """Los grafos utilizables del documento de un fichero de configuración
+    (`graphs` de `langgraph.json`), por nombre. Un valor que no es una cadena
+    `ruta:variable` de un lenguaje conocido (una fábrica en forma de objeto)
+    no es utilizable y se ignora."""
+    graphs = document.get(spec["key"]) if isinstance(document, dict) else None
+    if not isinstance(graphs, dict):
+        return {}
+    choices = {key: _from_graph_value(value, spec, rule) for key, value in sorted(graphs.items())}
+    return {key: choice for key, choice in choices.items() if choice is not None}
+
+
+def _graph_names(graphs: Mapping[str, EntryChoice], rules: Mapping[str, Any]) -> str:
+    return ", ".join(sorted(graphs)[: rules["maxCandidatesListed"]])
+
+
+def graph_not_found(
+    requested: str, graphs: Mapping[str, EntryChoice], rules: Mapping[str, Any]
+) -> AgentProjectException:
+    """`invalid_value` en `runtime.graph`: el grafo pedido no está entre los
+    de `graphs`, que el mensaje nombra."""
+    text = render(
+        rules["messages"]["graph_not_found"],
+        {"value": requested, "candidates": _graph_names(graphs, rules)},
+    )
+    return AgentProjectException(f"{GRAPH_PATH}: {text}", path=GRAPH_PATH, code="invalid_value")
+
+
+def select_graph(
+    graphs: Mapping[str, EntryChoice],
+    requested: str | None,
+    rules: Mapping[str, Any],
+    spec_name: str = LANGGRAPH_SPEC,
+) -> tuple[str, EntryChoice] | None:
+    """El grafo que se sirve, con su nombre: el pedido (`--graph`,
+    `[runtime] graph`), el único, o el preferido por nombre (`agent`). Sin
+    grafos es `None`; un nombre que no está es `invalid_value` en
+    `runtime.graph` y varios sin preferencia, `ambiguous` en
+    `runtime.entrypoint`, con los nombres en el mensaje. Puro y determinista:
+    nunca importa ni ejecuta el código del proyecto."""
+    if requested is not None:
+        chosen = graphs.get(requested)
+        if chosen is None:
+            raise graph_not_found(requested, graphs, rules)
+        return requested, chosen
+    if not graphs:
+        return None
+    if len(graphs) == 1:
+        return next(iter(graphs.items()))
+    for key in rules["entryFiles"][spec_name]["preferKeys"]:
+        if key in graphs:
+            return key, graphs[key]
+    text = render(rules["messages"]["ambiguous_graph"], {"candidates": _graph_names(graphs, rules)})
+    raise AgentProjectException(f"{_ENTRY_PATH}: {text}", path=_ENTRY_PATH, code="ambiguous")
+
+
 def find_entry_in_file(
-    index: ProjectIndex, rules: Mapping[str, Any], spec_name: str, rule: str
+    index: ProjectIndex,
+    rules: Mapping[str, Any],
+    spec_name: str,
+    rule: str,
+    graph: str | None = None,
 ) -> EntryChoice | None:
     """El punto de entrada que declara un fichero de configuración (el
-    `graphs` de `langgraph.json`): uno solo, el preferido por nombre, o
-    `ambiguous`."""
+    `graphs` de `langgraph.json`), elegido con `select_graph`: el de `graph`,
+    uno solo, el preferido por nombre, o `ambiguous`."""
     spec = rules["entryFiles"][spec_name]
-    document = index.read_json(spec["file"])
-    graphs = document.get(spec["key"]) if isinstance(document, dict) else None
-    if not isinstance(graphs, dict) or not graphs:
-        return None
-    choices = {key: _from_graph_value(value, spec, rule) for key, value in sorted(graphs.items())}
-    usable = {key: choice for key, choice in choices.items() if choice is not None}
-    if not usable:
-        return None
-    if len(usable) == 1:
-        return next(iter(usable.values()))
-    for key in spec["preferKeys"]:
-        if key in usable:
-            return usable[key]
-    listing = ", ".join(
-        sorted(choice.entrypoint for choice in usable.values())[: rules["maxCandidatesListed"]]
-    )
-    text = render(rules["messages"]["ambiguous_entrypoint"], {"candidates": listing})
-    raise AgentProjectException(f"{_ENTRY_PATH}: {text}", path=_ENTRY_PATH, code="ambiguous")
+    choices = graph_choices(index.read_json(spec["file"]), spec, rule)
+    selected = select_graph(choices, graph, rules, spec_name)
+    return None if selected is None else selected[1]
+
+
+def graph_entrypoint(document: object, graph: str, rules: Mapping[str, Any]) -> str:
+    """El `entrypoint` del grafo `graph` de un `langgraph.json` ya leído
+    (`None` si no existe o no es JSON): lo que `[runtime] graph` resuelve
+    antes de construir el runtime. Un nombre que no está es `invalid_value`
+    en `runtime.graph`."""
+    spec = rules["entryFiles"][LANGGRAPH_SPEC]
+    selected = select_graph(graph_choices(document, spec, GRAPH_FILE_RULE), graph, rules)
+    assert selected is not None
+    return selected[1].entrypoint
 
 
 def explicit_entry(entrypoint: str, language: str | None) -> EntryChoice:
@@ -233,10 +295,15 @@ def explicit_entry(entrypoint: str, language: str | None) -> EntryChoice:
 
 
 __all__ = [
+    "GRAPH_PATH",
     "EntryChoice",
     "entrypoint_string",
     "explicit_entry",
     "find_entry",
     "find_entry_in_file",
+    "graph_choices",
+    "graph_entrypoint",
+    "graph_not_found",
     "python_module",
+    "select_graph",
 ]

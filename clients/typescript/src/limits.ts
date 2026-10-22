@@ -339,6 +339,7 @@ export const AGENT_SERVICE_INVOKE_PATH = "/invocations" as const;
 export const AGENT_SERVICE_SESSION_HEADER = "X-Amzn-Bedrock-AgentCore-Runtime-Session-Id" as const;
 export const AGENT_SERVICE_MAX_CONCURRENCY = 1 as const;
 export const AGENT_SERVICE_MAX_REQUEST_BYTES = 1048576 as const;
+export const AGENT_SERVICE_MAX_OUTPUT_BYTES = 1048576 as const;
 export const AGENT_SERVICE_READY_TIMEOUT_SECONDS = 120 as const;
 export const DEFAULT_AGENT_DEPLOY_TIMEOUT_SECONDS = 3600 as const;
 export const AGENT_RUN_SANDBOX_MARGIN_SECONDS = 60 as const;
@@ -388,6 +389,10 @@ export const AGENT_APP_RESTART_BACKOFF_SECONDS = 2 as const;
 export const AGENT_APP_RESTART_BACKOFF_MAX_SECONDS = 30 as const;
 export const AGENT_APP_INTERNAL_PORT = 8000 as const;
 export const AGENT_APP_PORT_ENV = "PORT" as const;
+export const AGENT_LANGGRAPH_HEALTH_PATH = "/ok" as const;
+export const AGENT_LANGGRAPH_INVOKE_PATH = "/threads/{thread_id}/runs/wait" as const;
+export const AGENT_LANGGRAPH_THREAD_NAMESPACE = "9f31c836-3dec-4f92-9808-a4a78225e7b9" as const;
+export const AGENT_LANGGRAPH_READY_WAIT_SECONDS = 60 as const;
 export const AGENT_SESSION_HANDLE_PREFIX = "rs1" as const;
 export const AGENT_DETECTION_MAX_FILES = 5000 as const;
 export const AGENT_DETECTION_MAX_DEPTH = 6 as const;
@@ -442,6 +447,20 @@ export const AGENT_YARN_BERRY_VERSION = "4.18.1" as const;
 export const AGENT_YARN_BERRY_INTEGRITY =
   "sha512-EH+A4TxAtBWXKE0DGQxW9Bo9crXHLJ73mfxjTQJuv8XonNWWTpei8BQ5JjczHJNU9GROTycwMFn8iOvRIZXUcA==" as const;
 export const AGENT_SECRET_NAME_TEMPLATE = "rayito/agents/{project}/{provider}" as const;
+export const AGENT_SECRET_ENV_VARIABLE = "RAYITO_SECRET_ENV" as const;
+export const AGENT_SECRET_ENV_SPEC_VERSION = 1 as const;
+export const AGENT_SECRET_ENV_MAX_SECRETS = 20 as const;
+export const AGENT_SECRET_ENV_MAX_TOTAL_BYTES = 262144 as const;
+export const AGENT_SECRET_ENV_HELPER_TIMEOUT_SECONDS = 15 as const;
+export const AGENT_SECRET_ENV_RESERVED_NAMES = [
+  "HOME",
+  "NODE_OPTIONS",
+  "PATH",
+  "PYTHONPATH",
+] as const;
+export const AGENT_SECRET_ENV_RESERVED_PREFIXES = ["AWS_", "LD_", "RAYITO_"] as const;
+export const AGENT_SECRET_ENV_REDACT_MIN_CHARS = 4 as const;
+export const AGENT_SECRET_ENV_NAMES_VARIABLE = "RAYITO_SECRET_ENV_NAMES" as const;
 export const AGENT_TOKEN_FILE_DEFAULT = ".rayito/agent-token" as const;
 
 export const AGENTCORE_SUPPORTED_REGIONS = [

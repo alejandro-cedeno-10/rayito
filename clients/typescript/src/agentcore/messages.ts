@@ -145,7 +145,7 @@ export const ERROR_MESSAGES: Readonly<Record<AgentCoreErrorCode, string>> = {
     "ya existe un runtime {runtimeName} que no es del agente {name} de Rayito: cambia el nombre con [image].template",
 
   model_required:
-    "no se sabe qué modelo de Bedrock usa el agente: pásalo con --bedrock-model (bedrock_models en el SDK)",
+    "no se sabe qué modelo de Bedrock usa el agente: fija [model] id o pásalo con --bedrock-model",
 
   image_missing:
     "--no-build: no hay ninguna imagen {imageTag} en {repositoryName}; despliega sin --no-build",
@@ -238,12 +238,18 @@ export const SECURITY_MESSAGES = {
   bedrockModels: "el rol del runtime puede invocar en Bedrock: {models}",
   noBedrockModels: "el rol del runtime no puede invocar ningún modelo de Bedrock",
   readableSecrets: "el rol del runtime puede leer los secretos: {secrets}",
+  externalModel:
+    "modelo fuera de Bedrock (--external-model): el agente llama a su pasarela de LLM por " +
+    "Internet con una clave que obtiene tu código (--secret-env o --readable-secret); la " +
+    "clave nunca va en la configuración del runtime y Rayito no la ve ni filtra esa salida",
   publicNetwork:
     "red PUBLIC: el agente tiene salida a Internet y la política de salida de Rayito no se aplica",
   sessionIsolation:
     "cada sesión corre en su propia microVM de AgentCore, aislada de las demás; AgentCore no asocia sesiones a usuarios: eso es cosa de tu backend",
   envCredentials:
     "este framework lee las credenciales de variables de entorno: el host se las pone, leídas del rol del runtime, en cada invocación",
+  secretEnv:
+    "el host pone en el entorno del agente, al arrancar cada sesión, los valores de Secrets Manager de {names}: el agente y todo lo que lance pueden leer su entorno, y cualquier código de la sesión puede leer esos secretos con el rol del runtime",
 } as const;
 
 export type SecurityKey = keyof typeof SECURITY_MESSAGES;

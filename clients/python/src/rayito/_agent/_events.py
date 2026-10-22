@@ -12,9 +12,9 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import InitVar, dataclass, field
 from types import MappingProxyType
-from typing import Final, Literal, TypeAlias, get_args
+from typing import TYPE_CHECKING, Any, Final, Literal, TypeAlias, get_args
 
 from rayito._limits import MAX_TOOL_OUTPUT_PREVIEW_BYTES
 from rayito.exceptions import AgentException, InvalidArgumentException
@@ -55,6 +55,18 @@ AGENT_FAILURE_MESSAGES: Final[Mapping[str, str]] = MappingProxyType(
         "busy": "ya hay otra ejecución del agente en curso en este sandbox",
     }
 )
+PROTOCOL_ERROR: Final = "protocol_error"
+#: El mensaje de los `detail_code` de `protocol_error` de una entrada
+#: estructurada (ADR-033 D3; misma tabla en `agent/events.ts`, comprobada
+#: contra `testdata/agent-deploy/invocation-bodies.json`): sustituye al de
+#: `protocol_error`, que no diría qué falló.
+AGENT_DETAIL_MESSAGES: Final[Mapping[str, str]] = MappingProxyType(
+    {
+        "input_required": "este grafo espera input (un objeto JSON), no un prompt",
+        "invalid_input": "input no cumple el esquema de entrada del grafo",
+        "output_not_serializable": "la salida del grafo no se puede convertir a JSON",
+    }
+)
 #: Un `detail_code` es un nombre de clase de error (`APIError`,
 #: `ProviderAuthError`), nunca un mensaje: lo que no case con esto se
 #: descarta en vez de copiarse a un mensaje o a un span.
@@ -92,8 +104,9 @@ def failure_message(reason: str, detail_code: str | None = None) -> str:
         raise InvalidArgumentException(
             f"reason de fallo del agente desconocido; uno de {list(AGENT_FAILURE_REASONS)}"
         )
-    base = AGENT_FAILURE_MESSAGES[reason]
     code = safe_detail_code(detail_code)
+    detail = AGENT_DETAIL_MESSAGES.get(code or "") if reason == PROTOCOL_ERROR else None
+    base = detail or AGENT_FAILURE_MESSAGES[reason]
     return base if code is None else f"{base} ({code})"
 
 
@@ -238,13 +251,24 @@ class Done:
     """Último evento de una ejecución correcta, con los tokens acumulados.
     `usage_reported` es `False` cuando el agente no informó de tokens (una app
     HTTP, un comando o una función propios): `usage` es entonces cero porque
-    se desconoce, no porque no se gastara nada."""
+    se desconoce, no porque no se gastara nada. `output` es la salida
+    estructurada de un grafo llamado con `input` (`None` si no la hay). Es
+    un `InitVar` guardado como atributo y no un campo: `dataclasses.asdict`,
+    `repr` y la igualdad de un `Done` no cambian (los vectores de eventos ya
+    publicados lo comparan así), y `dataclasses.replace` lo conserva."""
 
     session_id: str
     exit_code: int
     usage: TokenUsage
     usage_reported: bool = True
+    if TYPE_CHECKING:
+        output: Mapping[str, Any] | None = None
+    else:
+        output: InitVar[Mapping[str, Any] | None] = None
     type: Literal["done"] = field(default="done", init=False)
+
+    def __post_init__(self, output: Mapping[str, Any] | None = None) -> None:  # noqa: RUF033
+        object.__setattr__(self, "output", output)
 
 
 AgentEvent: TypeAlias = (
@@ -259,7 +283,9 @@ class AgentResult:
     (tipo desconocido o más largas que `MAX_AGENT_EVENT_LINE_BYTES`).
     `usage_reported` es `False` si el agente no informó de tokens (una app
     HTTP, un comando o una función propios que no devuelven `usage`): `usage`
-    vale entonces cero porque se desconoce, no porque no se gastara nada."""
+    vale entonces cero porque se desconoce, no porque no se gastara nada.
+    `output` es la salida estructurada (un objeto JSON) de un grafo invocado
+    con `input`; `None` en cualquier otro caso."""
 
     session_id: str
     text: str
@@ -269,3 +295,4 @@ class AgentResult:
     tool_calls: tuple[ToolCall, ...] = ()
     dropped_lines: int = 0
     usage_reported: bool = True
+    output: Mapping[str, Any] | None = None

@@ -7,7 +7,7 @@ nuevo) sobre `InvokeAgentRuntime` firmado con SigV4, y además `status`,
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from typing import Any, Self, TypeVar
 
 from rayito._agent._deployment import AgentDeploymentStream
@@ -131,14 +131,18 @@ class AgentCoreFleet(AgentCoreFleetView):
 
     def invoke(
         self,
-        prompt: str,
+        prompt: str | None = None,
         session_id: str | None = None,
         model: str | None = None,
         reasoning: bool = False,
+        *,
+        input: Mapping[str, Any] | None = None,
     ) -> AgentResult:
         """Una invocación sin streaming: el `AgentResult`, o `AgentException` si
         el agente falló. `result.session_id` es el id que usó AgentCore."""
-        request = invocation_request(prompt, session_id, model, reasoning, streaming=False)
+        request = invocation_request(
+            prompt, session_id, model, reasoning, streaming=False, input=input
+        )
         response = self._call(
             lambda: self._invoker.invoke(
                 self._status.runtime_arn, request.session_id, request.body, request.accept
@@ -152,14 +156,18 @@ class AgentCoreFleet(AgentCoreFleetView):
 
     def stream(
         self,
-        prompt: str,
+        prompt: str | None = None,
         session_id: str | None = None,
         model: str | None = None,
         reasoning: bool = False,
+        *,
+        input: Mapping[str, Any] | None = None,
     ) -> AgentCoreFleetStream:
         """Como `invoke()`, con los eventos a medida que llegan:
         `with fleet.stream("hola") as events: for event in events`."""
-        request = invocation_request(prompt, session_id, model, reasoning, streaming=True)
+        request = invocation_request(
+            prompt, session_id, model, reasoning, streaming=True, input=input
+        )
         response = self._call(
             lambda: self._invoker.stream(
                 self._status.runtime_arn, request.session_id, request.body, request.accept

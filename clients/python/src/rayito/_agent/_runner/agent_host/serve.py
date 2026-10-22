@@ -2,10 +2,14 @@
 el contrato HTTP de AgentCore, con `http.server.ThreadingHTTPServer`.
 
 - `GET /ping` -> `200 {"status": "Healthy" | "HealthyBusy", "time_of_last_update"}`.
-- `POST /invocations` con `{"prompt", "session_id"?, "model"?, "reasoning"?}`.
-  Con `Accept: text/event-stream`, un mensaje SSE por evento v1 hasta `done`
-  o `agent_failed`; si no, `{"v", "text", "session_id", "usage",
-  "usage_reported", "steps", "failed"}`. `400` cuerpo inválido, `413` demasiado grande, `429` con
+- `POST /invocations` con `{"prompt", "session_id"?, "model"?, "reasoning"?}`
+  o, en lugar de `prompt`, `input` (un objeto JSON para un grafo con esquema
+  propio; exactamente uno de los dos). Con `Accept: text/event-stream`, un
+  mensaje SSE por evento v1 hasta `done` o `agent_failed`; si no, `{"v",
+  "text", "session_id", "usage", "usage_reported", "steps", "failed"}`, más
+  `output` sólo si la ejecución lo produjo (también va en `done`). `400`
+  cuerpo inválido (`{"error": "invalid_request", "accepts_input": true}`: el
+  campo dice al SDK que este host sí entiende `input`), `413` demasiado grande, `429` con
   `Retry-After` por encima de `max_concurrency` (con `queue_max` > 0 la
   petición espera su turno en una cola FIFO acotada hasta
   `queue_timeout_seconds` y sólo entonces recibe el `429`), `503` antes de
@@ -20,7 +24,7 @@ y las siguientes la continúan, y la respuesta lleva siempre el id de la
 cabecera.
 
 El host no loguea contenido: sólo método, ruta sin consulta, estado, bytes y
-duración. Nunca el prompt, una cabecera ni el token.
+duración. Nunca el prompt, el `input`, el `output`, una cabecera ni el token.
 """
 
 from __future__ import annotations
@@ -44,6 +48,7 @@ from typing import Any, Final
 
 from .limits import Limits, LimitTracker
 from .protocol import (
+    INVALID_REQUEST,
     PROTOCOL_VERSION,
     TERMINAL_EVENT_TYPES,
     AgentFailure,
@@ -56,6 +61,7 @@ from .protocol import (
     classify_by_module,
     encode_line,
     parse_request,
+    require_input_support,
     run_to_terminal,
 )
 
@@ -66,6 +72,10 @@ INVOKE_PATH: Final = "/invocations"
 SESSION_HEADER: Final = "X-Amzn-Bedrock-AgentCore-Runtime-Session-Id"
 #: Tope del cuerpo de una petición (`AGENT_SERVICE_MAX_REQUEST_BYTES`).
 MAX_REQUEST_BYTES: Final = 1_048_576
+#: Campo del cuerpo de un `400` `invalid_request`: este host entiende `input`
+#: (ADR-033 D3). Un host anterior no lo manda, y así el SDK sabe si debe pedir
+#: que se vuelva a desplegar (`INPUT_SUPPORT_FIELD` de `_deployment_base`).
+INPUT_SUPPORT_FIELD: Final = "accepts_input"
 MAX_CONCURRENCY: Final = 1
 STATUS_HEALTHY: Final = "Healthy"
 STATUS_BUSY: Final = "HealthyBusy"
@@ -103,6 +113,12 @@ READY_WAIT_SECONDS_DEFAULT: Final = 25.0
 #: no retiene un hilo para siempre.
 IO_TIMEOUT_SECONDS: Final = 60.0
 TOKEN_ENV: Final = "RAYITO_AGENT_SERVICE_TOKEN"
+#: Las claves de un cuerpo de `POST /invocations`: exactamente una de
+#: `PROMPT_KEY` o `INPUT_KEY`, y las opcionales.
+PROMPT_KEY: Final = "prompt"
+INPUT_KEY: Final = "input"
+OUTPUT_KEY: Final = "output"
+INVOCATION_KEYS: Final = frozenset({PROMPT_KEY, INPUT_KEY, "session_id", "model", "reasoning"})
 #: Sufijo del marcador que deja un arranque fallido.
 FAILED_SUFFIX: Final = ".failed"
 EVENT_STREAM: Final = "text/event-stream"
@@ -390,6 +406,7 @@ class Invocation:
 
         def body(state: RunState) -> None:
             request = self._service.with_credentials(self._request)
+            require_input_support(self._service.driver, request)
             self._service.driver.run(request, self._deliver, state)
 
         try:
@@ -464,6 +481,7 @@ def result_body(invocation: Invocation, terminal: Event) -> dict[str, Any]:
     """El cuerpo JSON de una invocación sin streaming."""
     failed = terminal.get("type") == "agent_failed"
     session_id = terminal.get("session_id") or invocation.session_id
+    output = {} if failed or OUTPUT_KEY not in terminal else {OUTPUT_KEY: terminal[OUTPUT_KEY]}
     return {
         "v": PROTOCOL_VERSION,
         "text": "" if failed else invocation.tracker.text,
@@ -476,6 +494,7 @@ def result_body(invocation: Invocation, terminal: Event) -> dict[str, Any]:
             if failed
             else None
         ),
+        **output,
     }
 
 
@@ -486,15 +505,24 @@ def parse_invocation(body: bytes, header_session: str | None) -> tuple[Request, 
     try:
         data = json.loads(body)
     except ValueError:
-        raise AgentFailure("protocol_error", "invalid_request") from None
-    if not isinstance(data, dict) or not isinstance(data.get("prompt"), str) or not data["prompt"]:
-        raise AgentFailure("protocol_error", "invalid_request")
-    unknown = set(data) - {"prompt", "session_id", "model", "reasoning"}
-    if unknown:
-        raise AgentFailure("protocol_error", "invalid_request")
+        raise AgentFailure("protocol_error", INVALID_REQUEST) from None
+    if not _valid_invocation(data):
+        raise AgentFailure("protocol_error", INVALID_REQUEST)
     session_id = data.get("session_id") or header_session
     request = parse_request({**data, "v": PROTOCOL_VERSION, "session_id": session_id})
     return request, None if data.get("session_id") else header_session
+
+
+def _valid_invocation(data: object) -> bool:
+    """Un objeto con sólo `INVOCATION_KEYS` y exactamente uno de `prompt` (una
+    cadena no vacía) o `input` (un objeto JSON)."""
+    if not isinstance(data, dict) or set(data) - INVOCATION_KEYS:
+        return False
+    if (PROMPT_KEY in data) == (INPUT_KEY in data):
+        return False
+    if PROMPT_KEY in data:
+        return isinstance(data[PROMPT_KEY], str) and bool(data[PROMPT_KEY])
+    return isinstance(data[INPUT_KEY], dict)
 
 
 def make_handler(service: Service) -> type[BaseHTTPRequestHandler]:
@@ -533,6 +561,15 @@ def make_handler(service: Service) -> type[BaseHTTPRequestHandler]:
         def _error(self, status: int, code: str, extra: Mapping[str, str] | None = None) -> None:
             self.close_connection = True
             self._send_json(status, {"error": code}, {"Connection": "close", **(extra or {})})
+
+        def _invalid_request(self) -> None:
+            """`400 invalid_request`, con `INPUT_SUPPORT_FIELD`."""
+            self.close_connection = True
+            self._send_json(
+                HTTPStatus.BAD_REQUEST,
+                {"error": "invalid_request", INPUT_SUPPORT_FIELD: True},
+                {"Connection": "close"},
+            )
 
         def _is_raw(self) -> bool:
             return bool(getattr(service.driver, "raw", False))
@@ -663,7 +700,7 @@ def make_handler(service: Service) -> type[BaseHTTPRequestHandler]:
             except ValueError:
                 length = -1
             if length < 0:
-                self._error(HTTPStatus.BAD_REQUEST, "invalid_request")
+                self._invalid_request()
                 return None
             if length > service.config.max_request_bytes:
                 self._error(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, "request_too_large")
@@ -677,7 +714,7 @@ def make_handler(service: Service) -> type[BaseHTTPRequestHandler]:
             try:
                 return parse_invocation(body, self.headers.get(service.config.session_header))
             except AgentFailure:
-                self._error(HTTPStatus.BAD_REQUEST, "invalid_request")
+                self._invalid_request()
                 return None
 
         def _respond(self, invocation: Invocation) -> None:

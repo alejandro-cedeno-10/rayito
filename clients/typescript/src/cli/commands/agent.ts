@@ -43,7 +43,7 @@ import {
   PairFlagError,
   parseFlagPairs,
 } from "../agent-deploy.js";
-import { EventPrinter, printResult } from "../agent-output.js";
+import { EventPrinter, invokeRequestOf, printResult } from "../agent-output.js";
 import {
   DEFAULT_PROVIDER,
   LANGUAGES,
@@ -57,6 +57,11 @@ import {
   writeScaffold,
 } from "../agent-scaffold.js";
 import {
+  CREATE_SECRETS_NEEDS_CONFIRMATION,
+  CREATE_SECRETS_QUESTION,
+  envFileSecretLine,
+} from "../agent-secret-env.js";
+import {
   agentCoreOptionGiven,
   guardedAgentCore,
   reportFailure,
@@ -68,6 +73,7 @@ import {
 } from "../agentcore.js";
 import {
   bedrockModelOption,
+  externalModelOption,
   idleSessionTimeoutOption,
   maxSessionLifetimeOption,
   readableSecretOption,
@@ -89,6 +95,7 @@ import { UsageError } from "../failures.js";
 import type {
   AgentDeployFlags,
   AgentDeployRequest,
+  AgentDeploySettings,
   AgentDetectOverrides,
   DeployedFleetView,
   HiddenAppRoutes,
@@ -386,6 +393,21 @@ export const agentRunCommand = defineCommand({
 });
 
 const DETECT_FLAGS_HELP = "Fija a mano lo que la detección decidiría.";
+const GRAPH_HELP = "Nombre del grafo de langgraph.json que se despliega, si hay varios.";
+const INPUT_HELP = "Objeto JSON de entrada para un grafo con esquema propio; excluye PROMPT.";
+const INPUT_FILE_HELP =
+  "Fichero con el objeto JSON de entrada (- lee stdin); excluye PROMPT y --input.";
+const INVOKE_PROMPT_HELP = "Lo que se le pide al agente (o usa --input / --input-file).";
+const SECRET_ENV_HELP =
+  "NOMBRE=<secreto>[#clave]: variable de entorno con el valor de un secreto de Secrets " +
+  "Manager (nombre completo o ARN); repetible.";
+const SECRET_ENV_FROM_HELP =
+  "<secreto>[,prefix=P][,keys=A|B]: cada clave de un secreto JSON como variable de entorno; " +
+  "repetible.";
+const CREATE_SECRETS_FROM_HELP =
+  "Crea (o actualiza) un secreto JSON con los valores de este .env y lo usa como " +
+  "--secret-env-from (cuesta $0,40/mes; pide --yes).";
+const CHECK_ENV_HELP = "Avisa de las variables de .env.example que no reciben valor.";
 const SESSION_MODE_CHOICES = ["shared", "dedicated"] as const;
 const MICROVM_ID_PREFIX = "microvm-";
 const BASE_NEEDS_CONFIRMATION =
@@ -396,13 +418,26 @@ const STEP_MESSAGES: Readonly<Record<string, string>> = {
     "secreto creado para la pasarela {detail} (cuesta $0,40 al mes hasta que lo borres)",
   image: "imagen lista: versión {detail}",
   fleet: "{detail} VM(s) listos",
+  secret_env_created: "secreto de --create-secrets-from: {detail}",
+  env_missing: "aviso: {detail}",
 };
+
+const MODEL_ID_HELP =
+  "Id del modelo, si la detección no lo encuentra (tu código puede elegirlo por configuración).";
+const MODEL_PROVIDER_HELP =
+  "Pasarela del modelo (bedrock, openai, openai-compatible, litellm…), si la detección se equivoca.";
+const MODEL_BASE_URL_HELP =
+  "URL https de una pasarela compatible con OpenAI (upstream de openai-compatible o litellm).";
 
 const detectOverrideOptions = [
   option(["--framework"], { help: DETECT_FLAGS_HELP }),
   option(["--language"], { help: DETECT_FLAGS_HELP }),
   option(["--entry"], { help: DETECT_FLAGS_HELP }),
   option(["--protocol"], { help: DETECT_FLAGS_HELP }),
+  option(["--model-id"], { help: MODEL_ID_HELP }),
+  option(["--model-provider"], { help: MODEL_PROVIDER_HELP }),
+  option(["--model-base-url"], { help: MODEL_BASE_URL_HELP }),
+  option(["--graph"], { help: GRAPH_HELP }),
 ];
 
 function detectOverridesOf(context: CommandContext): AgentDetectOverrides {
@@ -412,6 +447,10 @@ function detectOverridesOf(context: CommandContext): AgentDetectOverrides {
     language: values.string("language"),
     entry: values.string("entry"),
     protocol: values.string("protocol"),
+    modelId: values.string("model_id"),
+    modelProvider: values.string("model_provider"),
+    modelBaseUrl: values.string("model_base_url"),
+    graph: values.string("graph"),
   };
 }
 
@@ -507,6 +546,30 @@ function deployFlagsOf(context: CommandContext): AgentDeployFlags {
     maxVms: values.optionalNumber("max_vms"),
     warm: values.optionalNumber("warm"),
     sessions: values.string("sessions"),
+    ...secretEnvFlagsOf(context),
+  };
+}
+
+/** `--create-secrets-from` y `--check-env`, sólo si se pasaron. */
+function secretEnvSettingsOf(
+  context: CommandContext,
+): Pick<AgentDeploySettings, "createSecretsFrom" | "checkEnv"> {
+  const createSecretsFrom = context.values.string("create_secrets_from");
+  return {
+    ...(createSecretsFrom === undefined ? {} : { createSecretsFrom }),
+    ...(context.values.flag("check_env") ? { checkEnv: true } : {}),
+  };
+}
+
+/** `--secret-env` y `--secret-env-from` tal cual, sólo si se pasaron. */
+function secretEnvFlagsOf(
+  context: CommandContext,
+): Pick<AgentDeployFlags, "secretEnv" | "secretEnvFrom"> {
+  const secretEnv = context.values.strings("secret_env");
+  const secretEnvFrom = context.values.strings("secret_env_from");
+  return {
+    ...(secretEnv.length === 0 ? {} : { secretEnv }),
+    ...(secretEnvFrom.length === 0 ? {} : { secretEnvFrom }),
   };
 }
 
@@ -623,6 +686,10 @@ export const agentDeployCommand = defineCommand({
     flag(["--create-secret"], {
       help: "Crea el secreto que falte desde la variable del proveedor (cuesta $0,40/mes).",
     }),
+    option(["--secret-env"], { multiple: true, default: [], help: SECRET_ENV_HELP }),
+    option(["--secret-env-from"], { multiple: true, default: [], help: SECRET_ENV_FROM_HELP }),
+    option(["--create-secrets-from"], { type: "path", help: CREATE_SECRETS_FROM_HELP }),
+    flag(["--check-env"], { help: CHECK_ENV_HELP }),
     option(["--base-artifact"], {
       type: "path",
       help: "Zip de la imagen base: se publica si no existe (pide --yes).",
@@ -639,6 +706,7 @@ export const agentDeployCommand = defineCommand({
     readableSecretOption,
     idleSessionTimeoutOption,
     maxSessionLifetimeOption,
+    externalModelOption,
   ],
   run: (context) =>
     guarded(context, async () => {
@@ -690,6 +758,7 @@ export const agentDeployCommand = defineCommand({
           buildImage: values.optionalFlag("build"),
           onBuildLogs: verbose ? (line) => context.console.echo(line, { err: true }) : compact?.log,
           onStep: stepPrinter(context),
+          ...secretEnvSettingsOf(context),
         },
       });
       if (chosen === TARGET_AGENTCORE) {
@@ -756,6 +825,7 @@ async function deployRequest(
     for (const line of detectionLines(detected.report)) {
       context.console.echo(line, { err: true });
     }
+    await confirmEnvFileSecret(context, request, String(detected.document.name));
     return await context.agentProjects.deployFleet(request);
   } catch (error) {
     if (error instanceof SandboxError && !(error instanceof InvalidArgumentError)) {
@@ -764,6 +834,30 @@ async function deployRequest(
     throw error;
   } finally {
     compact?.finish();
+  }
+}
+
+/** Con `--create-secrets-from`, dice qué secreto se creará o actualizará y
+ * con qué variables (nunca los valores) y lo confirma, porque cuesta: con
+ * `--yes`, sí; en una terminal y sin `--json`, lo que se responda; si no, o si
+ * la respuesta es que no, es un error de uso (como `confirmed` de Python). */
+async function confirmEnvFileSecret(
+  context: CommandContext,
+  request: AgentDeployRequest,
+  projectName: string,
+): Promise<void> {
+  const path = request.settings.createSecretsFrom;
+  if (path === undefined) {
+    return;
+  }
+  const { readEnvFileSecret } = await import("../../agent/secret-env-deploy.js");
+  context.console.echo(envFileSecretLine(readEnvFileSecret(projectName, path)), { err: true });
+  if (context.values.flag("yes")) {
+    return;
+  }
+  const canAsk = !context.globals.json && context.console.canPrompt;
+  if (!canAsk || !(await context.console.confirm(CREATE_SECRETS_QUESTION))) {
+    throw new UsageError(CREATE_SECRETS_NEEDS_CONFIRMATION);
   }
 }
 
@@ -860,8 +954,10 @@ export const agentInvokeCommand = defineCommand({
     "sesión es la que devuelve el resultado.",
   parameters: [
     argument("sandbox_id", { required: true, help: TARGET_HELP }),
-    argument("prompt", { required: true, help: "Lo que se le pide al agente." }),
+    argument("prompt", { help: INVOKE_PROMPT_HELP }),
     option(["--session-id"], { help: SESSION_HELP }),
+    option(["--input"], { name: "input_json", help: INPUT_HELP }),
+    option(["--input-file"], { type: "path", help: INPUT_FILE_HELP }),
     flag(["--stream"], { help: STREAM_HELP }),
     tokenFileOption,
     targetOption,
@@ -876,22 +972,22 @@ export const agentInvokeCommand = defineCommand({
       if (chosen === TARGET_AGENTCORE) {
         return guardedAgentCore(context, () => runAgentCoreInvoke(context));
       }
+      const request = invokeRequestOf(context);
       const target = values.string("sandbox_id") ?? "";
       const client = isFleetName(target)
         ? await context.agentProjects.connectFleet(target, fleetTokenOrUsage(context))
         : await context.agentProjects.connect(target, tokenOrUsage(context));
-      const prompt = values.string("prompt") ?? "";
       const options = { sessionId: values.string("session_id") };
       try {
         if (values.flag("stream")) {
           const printer = new EventPrinter(context);
-          const events = await client.stream(prompt, options);
+          const events = await client.stream(request, options);
           for await (const event of events) {
             printer.print(event);
           }
           return printer.finish();
         }
-        printResult(context, await client.invoke(prompt, options));
+        printResult(context, await client.invoke(request, options));
         return undefined;
       } catch (error) {
         if (error instanceof CapacityError) {

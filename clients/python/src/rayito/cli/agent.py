@@ -21,7 +21,7 @@ import dataclasses
 import json
 import os
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -42,11 +42,16 @@ from rayito import (
 )
 from rayito._agent._deploy_plan import project_for, with_excluded_file
 from rayito._agent._detect_report import DetectionReport
-from rayito._agent._events import AgentEvent, AgentFailed, Text, TextDelta, ToolCall
+from rayito._agent._events import AgentEvent, AgentFailed, Done, Text, TextDelta, ToolCall
 from rayito._agent._fleet_base import fleet_settings_of
 from rayito._agent._project_base import app_hiding_own_routes
 from rayito._agent._project_file import project_name_of
 from rayito._agent._scaling_domain import SESSION_MODES
+from rayito._agent._secret_env_deploy import prepare_secret_env
+from rayito._agent._secret_env_project import (
+    parse_secret_env_flags,
+    parse_secret_env_from_flags,
+)
 from rayito._agent._template import (
     AGENT_TEMPLATE_RUNTIMES,
     DEFAULT_AGENT_TEMPLATE_BASE,
@@ -81,6 +86,13 @@ from rayito.cli._agent_scaffold import (
     scaffold_files,
     write_scaffold,
 )
+from rayito.cli._agent_secret_env import (
+    CREATE_SECRETS_NEEDS_CONFIRMATION,
+    confirmed,
+    env_file_secret_line,
+    env_file_secret_of,
+    env_warning_line,
+)
 from rayito.cli._agentcore import (
     BEDROCK_MODEL_FLAG,
     BEDROCK_MODEL_HELP,
@@ -89,6 +101,8 @@ from rayito.cli._agentcore import (
     DELETE_TARGET_HELP,
     DELETE_YES_HELP,
     DEPLOY_TARGET_CHECK,
+    EXTERNAL_MODEL_FLAG,
+    EXTERNAL_MODEL_HELP,
     IDLE_SESSION_TIMEOUT_FLAG,
     IDLE_SESSION_TIMEOUT_HELP,
     LIST_HELP,
@@ -113,7 +127,7 @@ from rayito.cli._agentcore import (
     show_status,
     stop_session,
 )
-from rayito.cli._console import EXIT_USAGE, echo, emit_json, fail, visible_controls
+from rayito.cli._console import EXIT_FAILURE, EXIT_USAGE, echo, emit_json, fail, visible_controls
 from rayito.cli._session import clients_of, json_mode
 from rayito.cli._tokens import TOKEN_ENV_VAR, TokenFileError
 from rayito.cli.sandbox import TokenFileOption, kill_one, token_or_exit
@@ -269,7 +283,10 @@ def usage_document(result: AgentResult) -> dict[str, int]:
 
 
 def result_document(result: AgentResult) -> dict[str, Any]:
-    return {
+    """El resultado en `--json`; `output` (la salida de un grafo invocado con
+    `--input`) va tal cual, sin pasar sus claves a camelCase, y sólo si la
+    hay."""
+    document: dict[str, Any] = {
         "sessionId": result.session_id,
         "text": result.text,
         "steps": result.steps,
@@ -277,13 +294,35 @@ def result_document(result: AgentResult) -> dict[str, Any]:
         "usageReported": result.usage_reported,
         "exitCode": result.exit_code,
     }
+    output = result_output(result)
+    if output is not None:
+        document["output"] = dict(output)
+    return document
+
+
+def result_output(result: AgentResult) -> Mapping[str, Any] | None:
+    """La salida estructurada del resultado; un resultado que no la tiene
+    (el de un cliente anterior o el de un doble) cuenta como sin salida."""
+    output: Mapping[str, Any] | None = getattr(result, "output", None)
+    return output
+
+
+def output_text(output: Mapping[str, Any]) -> str:
+    """La salida estructurada como JSON legible."""
+    return json.dumps(output, ensure_ascii=False, indent=2)
 
 
 def print_result(result: AgentResult, *, as_json: bool) -> None:
     if as_json:
         emit_json(result_document(result))
         return
-    echo(result.text)
+    output = result_output(result)
+    if output is None:
+        echo(result.text)
+    else:
+        if result.text:
+            echo(result.text, err=True)
+        echo(output_text(output))
     echo(f"session_id={result.session_id}", err=True)
     tokens = result.usage.total if result.usage_reported else USAGE_UNKNOWN_LABEL
     echo(f"steps={result.steps} tokens={tokens}", err=True)
@@ -300,14 +339,12 @@ class EventPrinter:
         self._wrote_text = False
 
     def __call__(self, event: AgentEvent) -> None:
+        output = event.output if isinstance(event, Done) else None
         if self._as_json:
-            echo(
-                json.dumps(
-                    camel_keys(dataclasses.asdict(event)),
-                    ensure_ascii=False,
-                    separators=JSON_LINE_SEPARATORS,
-                )
-            )
+            document = camel_keys(dataclasses.asdict(event))
+            if output is not None:
+                document["output"] = dict(output)
+            echo(json.dumps(document, ensure_ascii=False, separators=JSON_LINE_SEPARATORS))
         elif isinstance(event, TextDelta):
             self._saw_delta = True
             self._write(event.text)
@@ -315,12 +352,16 @@ class EventPrinter:
             self._write(event.text)
         elif isinstance(event, ToolCall):
             echo(f"tool={event.name} status={event.status}", err=True)
+        elif output is not None:
+            self.finish()
+            echo(output_text(output))
         if isinstance(event, AgentFailed):
             self.finish()
             fail(event.message)
 
     def finish(self) -> None:
         if self._wrote_text:
+            self._wrote_text = False
             sys.stdout.write("\n")
             sys.stdout.flush()
 
@@ -518,6 +559,38 @@ def run_project_command(
 #: `--sessions`: los modos de `ScalingOptions.sessions`.
 SESSIONS_HELP = "Sesiones compartidas entre VMs (shared) o un MicroVM por sesión (dedicated)."
 DETECT_FLAGS_HELP = "Fija a mano lo que la detección decidiría."
+MODEL_ID_HELP = (
+    "Id del modelo, si la detección no lo encuentra (tu código puede elegirlo por configuración)."
+)
+MODEL_PROVIDER_HELP = (
+    "Pasarela del modelo (bedrock, openai, openai-compatible, litellm…), si la detección se "
+    "equivoca."
+)
+MODEL_BASE_URL_HELP = (
+    "URL https de una pasarela compatible con OpenAI (upstream de openai-compatible o litellm)."
+)
+GRAPH_HELP = "Nombre del grafo de langgraph.json que se despliega, si hay varios."
+INPUT_HELP = "Objeto JSON de entrada para un grafo con esquema propio; excluye PROMPT."
+INPUT_FILE_HELP = "Fichero con el objeto JSON de entrada (- lee stdin); excluye PROMPT y --input."
+INVOKE_PROMPT_HELP = "Lo que se le pide al agente (o usa --input / --input-file)."
+#: `--input-file -` lee el objeto de la entrada estándar.
+STDIN_PATH = "-"
+INVOKE_INPUT_REQUIRED = "pasa PROMPT, --input o --input-file, sólo uno de los tres"
+INVOKE_INPUT_UNREADABLE = "no se pudo leer el fichero de --input-file"
+INVOKE_INPUT_INVALID = "la entrada no es un objeto JSON"
+SECRET_ENV_HELP = (
+    "NOMBRE=<secreto>[#clave]: variable de entorno con el valor de un secreto de Secrets "
+    "Manager (nombre completo o ARN); repetible."
+)
+SECRET_ENV_FROM_HELP = (
+    "<secreto>[,prefix=P][,keys=A|B]: cada clave de un secreto JSON como variable de entorno; "
+    "repetible."
+)
+CREATE_SECRETS_FROM_HELP = (
+    "Crea (o actualiza) un secreto JSON con los valores de este .env y lo usa como "
+    "--secret-env-from (cuesta $0,40/mes; pide --yes)."
+)
+CHECK_ENV_HELP = "Avisa de las variables de .env.example que no reciben valor."
 MICROVM_ID_PREFIX = "microvm-"
 STEP_MESSAGES = {
     "base_image": "imagen base publicada",
@@ -526,6 +599,8 @@ STEP_MESSAGES = {
     ),
     "image": "imagen lista: versión {detail}",
     "fleet": "{detail} VM(s) listos",
+    "secret_env_created": "secreto de --create-secrets-from: {detail}",
+    "env_missing": "aviso: {detail}",
 }
 
 
@@ -540,13 +615,27 @@ def optional_choice_of(allowed: tuple[str, ...], flag: str) -> Callable[[str | N
 
 
 def detect_overrides_of(
-    framework: str | None, language: str | None, entry: str | None, protocol: str | None
+    framework: str | None,
+    language: str | None,
+    entry: str | None,
+    protocol: str | None,
+    model_id: str | None = None,
+    model_provider: str | None = None,
+    model_base_url: str | None = None,
+    graph: str | None = None,
 ) -> DetectOverrides | None:
-    chosen = (framework, language, entry, protocol)
+    chosen = (framework, language, entry, protocol, model_id, model_provider, model_base_url, graph)
     if all(value is None for value in chosen):
         return None
     return DetectOverrides(
-        framework=framework, language=language, entrypoint=entry, protocol=protocol
+        framework=framework,
+        language=language,
+        entrypoint=entry,
+        protocol=protocol,
+        model_id=model_id,
+        model_provider=model_provider,
+        model_base_url=model_base_url,
+        graph=graph,
     )
 
 
@@ -583,6 +672,14 @@ def detect_command(
     language: Annotated[str | None, typer.Option("--language", help=DETECT_FLAGS_HELP)] = None,
     entry: Annotated[str | None, typer.Option("--entry", help=DETECT_FLAGS_HELP)] = None,
     protocol: Annotated[str | None, typer.Option("--protocol", help=DETECT_FLAGS_HELP)] = None,
+    model_id: Annotated[str | None, typer.Option("--model-id", help=MODEL_ID_HELP)] = None,
+    model_provider: Annotated[
+        str | None, typer.Option("--model-provider", help=MODEL_PROVIDER_HELP)
+    ] = None,
+    model_base_url: Annotated[
+        str | None, typer.Option("--model-base-url", help=MODEL_BASE_URL_HELP)
+    ] = None,
+    graph: Annotated[str | None, typer.Option("--graph", help=GRAPH_HELP)] = None,
     write: Annotated[
         bool,
         typer.Option("--write", help="Guarda el proyecto resuelto como rayito-agent.json."),
@@ -595,7 +692,9 @@ def detect_command(
     --protocol. No llama a AWS. Con --write guarda el resultado como
     rayito-agent.json (no sobrescribe un fichero de proyecto existente).
     """
-    overrides = detect_overrides_of(framework, language, entry, protocol)
+    overrides = detect_overrides_of(
+        framework, language, entry, protocol, model_id, model_provider, model_base_url, graph=graph
+    )
     try:
         project, report = project_for(path, None, overrides, ctx.meta.get("region"))
     except InvalidArgumentException as exc:
@@ -659,6 +758,14 @@ def deploy_command(
     language: Annotated[str | None, typer.Option("--language", help=DETECT_FLAGS_HELP)] = None,
     entry: Annotated[str | None, typer.Option("--entry", help=DETECT_FLAGS_HELP)] = None,
     protocol: Annotated[str | None, typer.Option("--protocol", help=DETECT_FLAGS_HELP)] = None,
+    model_id: Annotated[str | None, typer.Option("--model-id", help=MODEL_ID_HELP)] = None,
+    model_provider: Annotated[
+        str | None, typer.Option("--model-provider", help=MODEL_PROVIDER_HELP)
+    ] = None,
+    model_base_url: Annotated[
+        str | None, typer.Option("--model-base-url", help=MODEL_BASE_URL_HELP)
+    ] = None,
+    graph: Annotated[str | None, typer.Option("--graph", help=GRAPH_HELP)] = None,
     memory: Annotated[
         int | None,
         typer.Option(
@@ -720,6 +827,14 @@ def deploy_command(
             help="Crea el secreto que falte desde la variable del proveedor (cuesta $0,40/mes).",
         ),
     ] = False,
+    secret_env: Annotated[list[str], typer.Option("--secret-env", help=SECRET_ENV_HELP)] = [],  # noqa: B006
+    secret_env_from: Annotated[
+        list[str], typer.Option("--secret-env-from", help=SECRET_ENV_FROM_HELP)
+    ] = [],  # noqa: B006
+    create_secrets_from: Annotated[
+        Path | None, typer.Option("--create-secrets-from", help=CREATE_SECRETS_FROM_HELP)
+    ] = None,
+    check_env: Annotated[bool, typer.Option("--check-env", help=CHECK_ENV_HELP)] = False,
     base_artifact: Annotated[
         Path | None,
         typer.Option(
@@ -760,6 +875,9 @@ def deploy_command(
     max_session_lifetime: Annotated[
         int | None, typer.Option("--max-session-lifetime", help=MAX_SESSION_LIFETIME_HELP)
     ] = None,
+    external_model: Annotated[
+        bool, typer.Option("--external-model", help=EXTERNAL_MODEL_HELP)
+    ] = False,
 ) -> None:
     """Despliega el agente de un directorio como una flota de MicroVMs.
 
@@ -792,6 +910,7 @@ def deploy_command(
                 READABLE_SECRET_FLAG: readable_secret,
                 IDLE_SESSION_TIMEOUT_FLAG: idle_session_timeout,
                 MAX_SESSION_LIFETIME_FLAG: max_session_lifetime,
+                EXTERNAL_MODEL_FLAG: external_model or None,
             },
         )
     if target == TARGET_AGENTCORE:
@@ -799,7 +918,16 @@ def deploy_command(
             ctx,
             AgentCoreDeployRequest(
                 project_path=deploy_target(path, file),
-                overrides=detect_overrides_of(framework, language, entry, protocol),
+                overrides=detect_overrides_of(
+                    framework,
+                    language,
+                    entry,
+                    protocol,
+                    model_id,
+                    model_provider,
+                    model_base_url,
+                    graph=graph,
+                ),
                 max_sessions=max_sessions,
                 queue=queue,
                 queue_timeout=queue_timeout,
@@ -815,6 +943,10 @@ def deploy_command(
                 readable_secrets=readable_secret,
                 idle_session_timeout=idle_session_timeout,
                 max_session_lifetime=max_session_lifetime,
+                secret_env=secret_env,
+                secret_env_from=secret_env_from,
+                create_secrets_from=create_secrets_from,
+                check_env=check_env,
                 microvm_flags=frozenset(
                     flag
                     for flag, passed in {
@@ -833,11 +965,14 @@ def deploy_command(
                     }.items()
                     if passed
                 ),
+                external_model=external_model,
             ),
         )
         return
     project_path = deploy_target(path, file)
-    overrides = detect_overrides_of(framework, language, entry, protocol)
+    overrides = detect_overrides_of(
+        framework, language, entry, protocol, model_id, model_provider, model_base_url, graph=graph
+    )
     try:
         project, report = project_for(project_path, None, overrides, ctx.meta.get("region"))
         project = apply_serve_flags(
@@ -854,9 +989,12 @@ def deploy_command(
             memory=memory,
             env=parse_pairs(env, "--env"),
             allow_out=allow_out or [],
+            secret_env=parse_secret_env_flags(secret_env),
+            secret_env_from=parse_secret_env_from_flags(secret_env_from),
         )
         scaling = scaling_of(project, min_vms, max_vms, warm, sessions)
         secret_names = parse_pairs(secret, "--secret")
+        env_file_secret = env_file_secret_of(project, create_secrets_from)
     except InvalidArgumentException as exc:
         fail(str(exc), code=EXIT_USAGE)
     as_json = json_mode(ctx)
@@ -877,6 +1015,8 @@ def deploy_command(
             pool_backend=pool_backend,
             on_build_logs=(lambda line: echo(line, err=True)) if verbose else compact,
             on_step=step_printer(as_json),
+            create_secrets_from=None if create_secrets_from is None else str(create_secrets_from),
+            check_env=check_env,
         )
 
     if dry_run:
@@ -888,8 +1028,13 @@ def deploy_command(
             ),
             report,
             as_json=as_json,
+            notices=dry_run_notices(project, create_secrets_from, check_env=check_env),
         )
         return
+    if env_file_secret is not None:
+        echo(env_file_secret_line(env_file_secret), err=True)
+        if not confirmed(yes=yes, json_output=as_json):
+            fail(CREATE_SECRETS_NEEDS_CONFIRMATION, code=EXIT_USAGE)
     try:
         token, written_to = deploy_token(token_file)
     except TokenFileError as exc:
@@ -969,7 +1114,19 @@ def scaling_of(
     )
 
 
-def print_plan(plan: Any, report: DetectionReport | None, *, as_json: bool) -> None:
+def dry_run_notices(
+    project: AgentProject, create_secrets_from: Path | None, *, check_env: bool
+) -> list[str]:
+    """Los avisos `env_missing` del plan, con el secreto de
+    `--create-secrets-from` ya conectado (sin crearlo)."""
+    path = None if create_secrets_from is None else str(create_secrets_from)
+    prepared = prepare_secret_env(project, path, check_env=check_env)
+    return [env_warning_line(warning) for warning in prepared.warnings]
+
+
+def print_plan(
+    plan: Any, report: DetectionReport | None, *, as_json: bool, notices: Sequence[str] = ()
+) -> None:
     if as_json:
         emit_json(
             {
@@ -979,7 +1136,7 @@ def print_plan(plan: Any, report: DetectionReport | None, *, as_json: bool) -> N
             }
         )
         return
-    for line in [*detection_lines(report), *describe_plan(plan)]:
+    for line in [*detection_lines(report), *notices, *describe_plan(plan)]:
         echo(line)
     echo("no se llamó a AWS (--dry-run)")
 
@@ -1137,10 +1294,12 @@ def invoke_command(
     sandbox_id: Annotated[
         str, typer.Argument(help="Id del sandbox desplegado o nombre de la flota.")
     ],
-    prompt: Annotated[str, typer.Argument(help="Lo que se le pide al agente.")],
+    prompt: Annotated[str | None, typer.Argument(help=INVOKE_PROMPT_HELP)] = None,
     session_id: Annotated[
         str | None, typer.Option("--session-id", help="Continúa una sesión anterior.")
     ] = None,
+    input_json: Annotated[str | None, typer.Option("--input", help=INPUT_HELP)] = None,
+    input_file: Annotated[Path | None, typer.Option("--input-file", help=INPUT_FILE_HELP)] = None,
     stream: Annotated[bool, typer.Option("--stream", help=STREAM_HELP)] = False,
     token_file: TokenFileOption = None,
     target: Annotated[
@@ -1153,8 +1312,11 @@ def invoke_command(
     reparte la sesión entre sus VMs (el `session_id` que devuelve identifica
     el VM: pásalo con --session-id para seguir la conversación). Con --target
     agentcore, `sandbox_id` es el nombre del agente: se invoca con SigV4 y el
-    `session_id` que devuelve continúa la conversación."""
+    `session_id` que devuelve continúa la conversación. Un grafo con esquema
+    de entrada propio se llama con --input (un objeto JSON) o --input-file en
+    lugar de PROMPT, y su salida se imprime como JSON."""
     as_json = json_mode(ctx)
+    data = invoke_input(prompt, input_json, input_file)
     with agentcore_errors(json_output=as_json):
         fleet: AgentDeployment | AgentFleet | AgentCoreFleet
         if target == TARGET_AGENTCORE:
@@ -1169,17 +1331,67 @@ def invoke_command(
         try:
             if stream:
                 printer = EventPrinter(as_json=as_json)
-                with fleet.stream(prompt, session_id=session_id) as events:
+                with fleet.stream(prompt, **invocation_options(session_id, data)) as events:
                     for event in events:
                         printer(event)
                 printer.finish()
                 return
-            result = fleet.invoke(prompt, session_id=session_id)
+            result = fleet.invoke(prompt, **invocation_options(session_id, data))
         except AgentException as exc:
             run_failed(exc)
+        except InvalidArgumentException as exc:
+            fail(str(exc), code=invalid_argument_exit_code(data))
         except (CapacityException, QuotaExceededException, SandboxException) as exc:
             fail(str(exc))
     print_result(result, as_json=as_json)
+
+
+def invalid_argument_exit_code(data: Mapping[str, Any] | None) -> int:
+    """El código de salida de un `InvalidArgumentException` de `invoke()`:
+    el de uso con `--input`/`--input-file` (un `input` que el SDK o el host
+    rechazan) y, con PROMPT, el de siempre (`EXIT_FAILURE`), para no cambiar
+    lo que ve un script que ya existía."""
+    return EXIT_FAILURE if data is None else EXIT_USAGE
+
+
+def invocation_options(session_id: str | None, data: Mapping[str, Any] | None) -> dict[str, Any]:
+    """Los argumentos con nombre de `invoke()`/`stream()`: `input` sólo si la
+    orden lo trae, así que una llamada con PROMPT es la de siempre."""
+    options: dict[str, Any] = {"session_id": session_id}
+    if data is not None:
+        options["input"] = data
+    return options
+
+
+def invoke_input(
+    prompt: str | None, input_json: str | None, input_file: Path | None
+) -> Mapping[str, Any] | None:
+    """El objeto de `--input` o de `--input-file` (`-` lee stdin), o `None`
+    con PROMPT. Exactamente uno de los tres; si no, o si la entrada no es un
+    objeto JSON, sale con el código de uso antes de llamar a nadie. El error
+    nunca lleva el contenido."""
+    if sum(value is not None for value in (prompt, input_json, input_file)) != 1:
+        fail(INVOKE_INPUT_REQUIRED, code=EXIT_USAGE)
+    if input_file is not None:
+        input_json = read_input_file(input_file)
+    if input_json is None:
+        return None
+    try:
+        data = json.loads(input_json)
+    except ValueError:
+        fail(INVOKE_INPUT_INVALID, code=EXIT_USAGE)
+    if not isinstance(data, dict):
+        fail(INVOKE_INPUT_INVALID, code=EXIT_USAGE)
+    return data
+
+
+def read_input_file(path: Path) -> str:
+    if str(path) == STDIN_PATH:
+        return sys.stdin.read()
+    try:
+        return path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        fail(INVOKE_INPUT_UNREADABLE, code=EXIT_USAGE)
 
 
 @agent_app.command("status")

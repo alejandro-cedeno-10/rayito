@@ -1,0 +1,33 @@
+schema = "rayito.agent-project/1"
+name = "secret-env-echo"
+
+[runtime]
+kind = "custom"
+entrypoint = "agent:echo"
+requirements = "requirements.txt"
+package_manager = "pip"
+
+[source]
+path = "."
+exclude = ["expected"]
+
+[model]
+provider = "bedrock"
+id = "amazon.nova-lite-v1:0"
+gateway = "bedrock"
+region = "us-east-1"
+
+[gateways.bedrock]
+preset = "bedrock"
+secret = "rayito/agents/secret-env-echo/bedrock"
+region = "us-east-1"
+models = ["amazon.nova-lite-v1:0"]
+
+[secret_env]
+DATABASE_URL = "rayito-e2e/secret-env/db-url"
+TICKETS_TOKEN = { secret = "rayito-e2e/secret-env/tickets", key = "token" }
+
+[[secret_env_from]]
+secret = "rayito-e2e/secret-env/config"
+prefix = "APP_"
+keys = ["DB_HOST"]

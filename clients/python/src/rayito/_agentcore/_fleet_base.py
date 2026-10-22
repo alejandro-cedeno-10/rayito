@@ -8,8 +8,8 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
-from collections.abc import AsyncIterator, Iterator
-from typing import Final, Self
+from collections.abc import AsyncIterator, Iterator, Mapping
+from typing import Any, Final, Self
 
 from rayito._agent._deployment_base import (
     EVENT_STREAM_CONTENT_TYPE,
@@ -18,7 +18,6 @@ from rayito._agent._deployment_base import (
     invocation_body,
 )
 from rayito._agent._events import AgentEvent, AgentFailed, AgentResult, Done
-from rayito._agent._stream_base import require_prompt
 from rayito._agentcore._domain import agentcore_session_id
 from rayito._agentcore._models import AgentCoreDeployment, AgentCoreStatus
 from rayito._agentcore._ports import AgentCoreGateways, InvokeResponse, RuntimeInvoker
@@ -40,17 +39,20 @@ class InvocationRequest:
 
 
 def invocation_request(
-    prompt: str,
+    prompt: str | None,
     session_id: str | None,
     model: str | None,
     reasoning: bool,
     *,
     streaming: bool,
+    input: Mapping[str, Any] | None = None,
 ) -> InvocationRequest:
+    """La invocación de `prompt` o de `input` (exactamente uno; si no,
+    `InvalidArgumentException` antes de llamar a AWS)."""
     return InvocationRequest(
         session_id=agentcore_session_id(session_id),
         body=invocation_body(
-            require_prompt(prompt), session_id=None, model=model, reasoning=reasoning
+            prompt, session_id=None, model=model, reasoning=reasoning, input=input
         ),
         accept=ACCEPT_EVENT_STREAM if streaming else ACCEPT_JSON,
     )

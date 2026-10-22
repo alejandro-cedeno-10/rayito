@@ -23,7 +23,9 @@ intérprete que pidas (`_install_plan.py`):
 - `app=HttpApp(...)`: tu servidor HTTP; Rayito lo arranca, espera a su ruta de
   salud y traduce `/invocations`. Con `protocol="json"` (una app con su
   propio contrato) también reenvía tus demás rutas; con `protocol="raw"` (un
-  servidor MCP por Streamable HTTP, por ejemplo) sólo se expone, sin traducir.
+  servidor MCP por Streamable HTTP, por ejemplo) sólo se expone, sin traducir;
+  con `protocol="langgraph-api"` (experimental) la app es `langgraph dev` y
+  el host habla su LangGraph Platform API.
 
 Ese es el contrato mínimo de cualquier framework que no tiene su propio
 adaptador (CrewAI, OpenAI Agents SDK, Google ADK, Claude Agent SDK...): una app
@@ -80,6 +82,8 @@ from rayito._agent._recipes import (
 from rayito._agent._runtime import InstallTarget, TemplateStep, copy_step, run_step
 from rayito._limits import (
     AGENT_DEFAULT_NODE_MAJOR,
+    AGENT_LANGGRAPH_HEALTH_PATH,
+    AGENT_LANGGRAPH_INVOKE_PATH,
     AGENT_NODE_BUILD_SHA256,
     AGENT_NODE_BUILD_VERSIONS,
     AGENT_PROTOCOL_VERSION,
@@ -93,8 +97,18 @@ from rayito.exceptions import InvalidArgumentException
 
 CustomProtocol = Literal["rayito-v1", "text"]
 CUSTOM_PROTOCOLS: Final[tuple[str, ...]] = ("rayito-v1", "text")
-HttpAppProtocol = Literal["agentcore", "json", "openai-chat", "raw"]
-HTTP_APP_PROTOCOLS: Final[tuple[str, ...]] = ("agentcore", "json", "openai-chat", "raw")
+HttpAppProtocol = Literal["agentcore", "json", "openai-chat", "raw", "langgraph-api"]
+#: El LangGraph Platform API de `langgraph dev` (experimental, ADR-033 D5).
+LANGGRAPH_API_PROTOCOL: Final = "langgraph-api"
+HTTP_APP_PROTOCOLS: Final[tuple[str, ...]] = (
+    "agentcore",
+    "json",
+    "openai-chat",
+    "raw",
+    LANGGRAPH_API_PROTOCOL,
+)
+#: Los protocolos con los que la respuesta se lee de `response_field`.
+RESPONSE_FIELD_PROTOCOLS: Final = ("json", LANGGRAPH_API_PROTOCOL)
 #: Los adaptadores del puente de Node que un `CustomRuntime` con un gestor
 #: de Node puede elegir (el de Strands lo trae `StrandsRuntime`).
 CustomAdapter = Literal["callable", "langgraph", "vercel-ai"]
@@ -113,8 +127,12 @@ HTTP_APP_KEYS: Final = frozenset(
         "request_field",
         "response_field",
         "port_env",
+        "assistant_id",
     }
 )
+#: Las claves opcionales de `[runtime.app]` que pasan tal cual a la tabla
+#: canónica y a la configuración del host cuando tienen valor.
+APP_OPTIONAL_KEYS: Final = ("request_field", "response_field", "port_env", "assistant_id")
 #: El venv que crea `CustomRuntime(requirements=...)`.
 CUSTOM_VENV_NAME: Final = "custom"
 #: Carpeta de sesiones (bajo el estado del runtime) del historial que guarda
@@ -140,6 +158,8 @@ _NODE_ENTRYPOINT_PATTERN: Final = re.compile(
 _FIELD_PATTERN: Final = re.compile(r"[A-Za-z_][A-Za-z0-9_.]*")
 _ENV_NAME_PATTERN: Final = re.compile(r"[A-Z_][A-Z0-9_]*")
 _URL_PATH_PATTERN: Final = re.compile(r"/[A-Za-z0-9._~!$&'()*+,;=:@%/-]*")
+#: Un grafo de `langgraph.json` o el id de un assistant (un UUID cabe).
+_ASSISTANT_ID_PATTERN: Final = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}")
 
 
 def _argv(value: object, label: str) -> tuple[str, ...]:
@@ -175,7 +195,17 @@ class HttpApp:
     (un servidor MCP) y `invoke()` no existe: usa `deployment.url` y
     `deployment.headers` con tu cliente. `port_env` es la variable de
     entorno con la que se le dice a tu app en qué `port` escuchar (por
-    ejemplo `PORT`). Tu `command` se
+    ejemplo `PORT`).
+
+    Con `"langgraph-api"` (experimental, ADR-033 D5) tu `command` es
+    `langgraph dev` y el host traduce cada invocación a
+    `POST /threads/{thread_id}/runs/wait` del LangGraph Platform API: el
+    hilo sale de la sesión y `assistant_id` (obligatorio, y sólo con este
+    protocolo) es el grafo de `langgraph.json` que se ejecuta. La salud es
+    `/ok` si dejas `health_path` por defecto, la ruta de invocación la fija
+    el API (`invoke_path` no se cambia) y el texto sale de `response_field`
+    o del último mensaje. Sólo `/ping` e `/invocations` se exponen: el
+    resto del Platform API no se alcanza desde fuera. Tu `command` se
     ejecuta con el directorio del código copiado como directorio de trabajo y
     en su `PYTHONPATH`; con `requirements`, `python` y `pip` son los del venv
     (sin él, `python` es el intérprete de la imagen)."""
@@ -188,6 +218,7 @@ class HttpApp:
     request_field: str | None = None
     response_field: str | None = None
     port_env: str | None = None
+    assistant_id: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "command", _argv(self.command, "HttpApp.command"))
@@ -207,36 +238,87 @@ class HttpApp:
                 f"HttpApp.protocol debe ser uno de {list(HTTP_APP_PROTOCOLS)}"
             )
         self._check_json_fields()
+        self._check_langgraph_fields()
         if self.port_env is not None and not _ENV_NAME_PATTERN.fullmatch(str(self.port_env)):
             raise InvalidArgumentException(
                 "HttpApp.port_env debe ser un nombre de variable de entorno (MAYÚSCULAS)"
             )
 
     def _check_json_fields(self) -> None:
-        for label, value in (
-            ("request_field", self.request_field),
-            ("response_field", self.response_field),
+        for label, value, protocols in (
+            ("request_field", self.request_field, ("json",)),
+            ("response_field", self.response_field, RESPONSE_FIELD_PROTOCOLS),
         ):
             if value is None:
                 continue
-            if self.protocol != "json":
-                raise InvalidArgumentException(f"HttpApp.{label} sólo se usa con protocol='json'")
+            if self.protocol not in protocols:
+                allowed = " o ".join(f"'{protocol}'" for protocol in protocols)
+                raise InvalidArgumentException(
+                    f"HttpApp.{label} sólo se usa con protocol={allowed}"
+                )
             if not isinstance(value, str) or not _FIELD_PATTERN.fullmatch(value):
                 raise InvalidArgumentException(
                     f"HttpApp.{label} debe ser un nombre de campo (con puntos para anidar)"
                 )
 
+    def _check_langgraph_fields(self) -> None:
+        """`assistant_id` es obligatorio con `langgraph-api` y no se usa con
+        otro protocolo; la ruta de invocación la fija el Platform API."""
+        if self.protocol != LANGGRAPH_API_PROTOCOL:
+            if self.assistant_id is not None:
+                raise InvalidArgumentException(
+                    f"HttpApp.assistant_id sólo se usa con protocol='{LANGGRAPH_API_PROTOCOL}'"
+                )
+            return
+        if not isinstance(self.assistant_id, str) or not _ASSISTANT_ID_PATTERN.fullmatch(
+            self.assistant_id
+        ):
+            raise InvalidArgumentException(
+                f"HttpApp.assistant_id es obligatorio con protocol='{LANGGRAPH_API_PROTOCOL}' "
+                "y es el nombre de un grafo de langgraph.json"
+            )
+        if self.invoke_path != AGENT_SERVICE_INVOKE_PATH:
+            raise InvalidArgumentException(
+                f"HttpApp.invoke_path no se usa con protocol='{LANGGRAPH_API_PROTOCOL}': "
+                "la ruta la fija el LangGraph Platform API"
+            )
+
+    @property
+    def served_health_path(self) -> str:
+        """La ruta de salud a la que llama el host: `health_path`, o `/ok`
+        con `langgraph-api` si se dejó la de por defecto."""
+        if (
+            self.protocol == LANGGRAPH_API_PROTOCOL
+            and self.health_path == AGENT_SERVICE_HEALTH_PATH
+        ):
+            return AGENT_LANGGRAPH_HEALTH_PATH
+        return self.health_path
+
+    @property
+    def served_invoke_path(self) -> str:
+        """La ruta de invocación a la que llama el host: `invoke_path`, o la
+        de una ejecución de un hilo (`/threads/{thread_id}/runs/wait`) con
+        `langgraph-api`."""
+        if self.protocol == LANGGRAPH_API_PROTOCOL:
+            return AGENT_LANGGRAPH_INVOKE_PATH
+        return self.invoke_path
+
     @property
     def hides_own_routes(self) -> bool:
-        """Con `protocol="agentcore"` o `"openai-chat"` el despliegue sólo
-        expone `/ping` y `/invocations` (el host traduce a tu `invoke_path`):
-        tus rutas propias (`health_path`, `invoke_path` distintas de esas
-        dos) no se alcanzan desde fuera. Con `protocol="json"` o `"raw"` se
-        exponen tal cual."""
-        return self.protocol not in ("raw", "json") and (
-            self.health_path != AGENT_SERVICE_HEALTH_PATH
-            or self.invoke_path != AGENT_SERVICE_INVOKE_PATH
+        """Con `protocol="agentcore"`, `"openai-chat"` o `"langgraph-api"`
+        el despliegue sólo expone `/ping` y `/invocations` (el host traduce
+        a tu `invoke_path`): tus rutas propias (`health_path`, `invoke_path`
+        distintas de esas dos) no se alcanzan desde fuera. Con
+        `protocol="json"` o `"raw"` se exponen tal cual. Con `langgraph-api`,
+        `/ok` (la salud del API, la que escribe la detección) no es una ruta
+        propia."""
+        if self.protocol in ("raw", "json"):
+            return False
+        own_health = self.health_path not in (
+            AGENT_SERVICE_HEALTH_PATH,
+            *((AGENT_LANGGRAPH_HEALTH_PATH,) if self.protocol == LANGGRAPH_API_PROTOCOL else ()),
         )
+        return own_health or self.invoke_path != AGENT_SERVICE_INVOKE_PATH
 
     @classmethod
     def from_mapping(cls, table: Mapping[str, object]) -> HttpApp:
@@ -257,7 +339,7 @@ class HttpApp:
             table["invoke_path"] = self.invoke_path
         if self.protocol != DEFAULT_HTTP_APP_PROTOCOL:
             table["protocol"] = self.protocol
-        for key in ("request_field", "response_field", "port_env"):
+        for key in APP_OPTIONAL_KEYS:
             if getattr(self, key) is not None:
                 table[key] = getattr(self, key)
         return table
@@ -455,11 +537,13 @@ class CustomRuntime(HostBackedRuntime):
         return PYTHON_FLAG_ENVS
 
     def wiring_envs(self, spec: AgentSpec, urls: Mapping[str, str] | None) -> Mapping[str, str]:
-        """Las variables estándar del proveedor más las `RAYITO_MODEL_*`."""
+        """Las variables estándar del proveedor más las `RAYITO_MODEL_*`
+        (`RAYITO_MODEL_ID` sólo si se conoce el id)."""
         envs = standard_model_envs(spec, urls)
         model = spec.model
         envs[MODEL_PROVIDER_ENV] = model.provider
-        envs[MODEL_ID_ENV] = model.id
+        if model.id is not None:
+            envs[MODEL_ID_ENV] = model.id
         if model.region is not None:
             envs[MODEL_REGION_ENV] = model.region
         if urls is not None:
@@ -494,14 +578,14 @@ class CustomRuntime(HostBackedRuntime):
         options: dict[str, object] = {
             "command": list(self.app.command),
             "port": self.app.port,
-            "health_path": self.app.health_path,
-            "invoke_path": self.app.invoke_path,
+            "health_path": self.app.served_health_path,
+            "invoke_path": self.app.served_invoke_path,
             "protocol": self.app.protocol,
             "workdir": workdir,
             "model": spec.model.id,
             **self._environment_options(),
         }
-        for key in ("request_field", "response_field", "port_env"):
+        for key in APP_OPTIONAL_KEYS:
             if getattr(self.app, key) is not None:
                 options[key] = getattr(self.app, key)
         return options

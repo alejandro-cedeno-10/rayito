@@ -1,0 +1,45 @@
+{
+  "schema": "rayito.agent-secret-env-reserved/1",
+  "_comment": "Nombres de variable que `secret_env` / `secret_env_from` no pueden fijar (ADR-033 D4): los de `names`, los que empiezan por un prefijo de `prefixes` y, además, las variables de `host.envs` del runtime. Se comprueba en el plan (sin AWS) y otra vez en el host. Los valores se generan en `limits.json` (`agentSecretEnvReservedNames`, `agentSecretEnvReservedPrefixes`).",
+  "names": [
+    "HOME",
+    "NODE_OPTIONS",
+    "PATH",
+    "PYTHONPATH"
+  ],
+  "prefixes": [
+    "AWS_",
+    "LD_",
+    "RAYITO_"
+  ],
+  "cases": [
+    {
+      "name": "DATABASE_URL",
+      "reserved": false
+    },
+    {
+      "name": "OPENAI_API_KEY",
+      "reserved": false
+    },
+    {
+      "name": "PATH",
+      "reserved": true
+    },
+    {
+      "name": "AWS_SECRET_ACCESS_KEY",
+      "reserved": true
+    },
+    {
+      "name": "LD_PRELOAD",
+      "reserved": true
+    },
+    {
+      "name": "RAYITO_AGENT_SERVICE_TOKEN",
+      "reserved": true
+    },
+    {
+      "name": "PATHS",
+      "reserved": false
+    }
+  ]
+}

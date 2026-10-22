@@ -1,0 +1,972 @@
+{
+  "schema": "rayito.agnostic-deploy-contract/1",
+  "_comment": "Contrato de integración de agnostic-agent-deploy (ADR-033 D1). Fija los nombres, tipos, valores por defecto y el punto de inserción de todo lo que cada función añade a un fichero o una superficie compartidos, para que las cuatro ramas se fusionen sin decisiones. `after` es el elemento existente (o de una función anterior en `mergeOrder`) tras el que va la adición. Los textos de ayuda son los de las dos CLI. Cada rama añade un test en cada SDK que compara su parte de este fichero con la superficie real (`testdata/cli/surface.json`, `__all__`/`index.ts`, `limits.json`).",
+  "baseBranch": "feat/agnostic-deploy",
+  "mergeOrder": [
+    "A",
+    "B",
+    "C",
+    "D"
+  ],
+  "features": {
+    "A": {
+      "change": "agent-model-optional",
+      "branch": "feat/agent-model-optional",
+      "adr": "ADR-033 D2",
+      "vectors": [
+        "testdata/agent-model-optional/requirement.json"
+      ]
+    },
+    "B": {
+      "change": "agent-structured-input",
+      "branch": "feat/agent-structured-input",
+      "adr": "ADR-033 D3",
+      "vectors": [
+        "testdata/agent-deploy/invocation-bodies.json"
+      ]
+    },
+    "C": {
+      "change": "agent-secret-env",
+      "branch": "feat/agent-secret-env",
+      "adr": "ADR-033 D4",
+      "vectors": [
+        "testdata/agent-secret-env/parse.json",
+        "testdata/agent-secret-env/expand.json",
+        "testdata/agent-secret-env/spec.json",
+        "testdata/agent-secret-env/reserved.json"
+      ]
+    },
+    "D": {
+      "change": "agent-langgraph-api",
+      "branch": "feat/agent-langgraph-api",
+      "adr": "ADR-033 D5",
+      "dependsOn": [
+        "B"
+      ],
+      "vectors": [
+        "testdata/agent-langgraph-api/requests.json",
+        "testdata/agent-langgraph-api/responses.json"
+      ]
+    }
+  },
+  "cliFlags": [
+    {
+      "feature": "A",
+      "commands": [
+        [
+          "agent",
+          "detect"
+        ],
+        [
+          "agent",
+          "deploy"
+        ]
+      ],
+      "kind": "option",
+      "flags": [
+        "--model-id"
+      ],
+      "name": "model_id",
+      "typescriptName": "modelId",
+      "type": "str",
+      "multiple": false,
+      "default": null,
+      "isFlag": false,
+      "after": "--protocol",
+      "help": "Id del modelo, si la detección no lo encuentra (tu código puede elegirlo por configuración)."
+    },
+    {
+      "feature": "A",
+      "commands": [
+        [
+          "agent",
+          "detect"
+        ],
+        [
+          "agent",
+          "deploy"
+        ]
+      ],
+      "kind": "option",
+      "flags": [
+        "--model-provider"
+      ],
+      "name": "model_provider",
+      "typescriptName": "modelProvider",
+      "type": "str",
+      "multiple": false,
+      "default": null,
+      "isFlag": false,
+      "after": "--model-id",
+      "help": "Pasarela del modelo (bedrock, openai, openai-compatible, litellm…), si la detección se equivoca."
+    },
+    {
+      "feature": "A",
+      "commands": [
+        [
+          "agent",
+          "detect"
+        ],
+        [
+          "agent",
+          "deploy"
+        ]
+      ],
+      "kind": "option",
+      "flags": [
+        "--model-base-url"
+      ],
+      "name": "model_base_url",
+      "typescriptName": "modelBaseUrl",
+      "type": "str",
+      "multiple": false,
+      "default": null,
+      "isFlag": false,
+      "after": "--model-provider",
+      "help": "URL https de una pasarela compatible con OpenAI (upstream de openai-compatible o litellm)."
+    },
+    {
+      "feature": "A",
+      "commands": [
+        [
+          "agent",
+          "deploy"
+        ]
+      ],
+      "kind": "option",
+      "flags": [
+        "--external-model"
+      ],
+      "name": "external_model",
+      "typescriptName": "externalModel",
+      "type": "boolean",
+      "multiple": false,
+      "default": false,
+      "isFlag": true,
+      "after": "--max-session-lifetime",
+      "help": "Sólo con --target agentcore: permite un modelo fuera de Bedrock. Tu código obtiene la clave (--secret-env o --readable-secret); Rayito no filtra esa salida."
+    },
+    {
+      "feature": "B",
+      "commands": [
+        [
+          "agent",
+          "detect"
+        ],
+        [
+          "agent",
+          "deploy"
+        ]
+      ],
+      "kind": "option",
+      "flags": [
+        "--graph"
+      ],
+      "name": "graph",
+      "typescriptName": "graph",
+      "type": "str",
+      "multiple": false,
+      "default": null,
+      "isFlag": false,
+      "after": "--model-base-url",
+      "help": "Nombre del grafo de langgraph.json que se despliega, si hay varios."
+    },
+    {
+      "feature": "B",
+      "commands": [
+        [
+          "agent",
+          "invoke"
+        ]
+      ],
+      "kind": "argument",
+      "flags": [
+        "prompt"
+      ],
+      "name": "prompt",
+      "typescriptName": "prompt",
+      "type": "str",
+      "multiple": false,
+      "default": null,
+      "isFlag": false,
+      "after": "sandbox_id",
+      "help": "Lo que se le pide al agente (o usa --input / --input-file)."
+    },
+    {
+      "feature": "B",
+      "commands": [
+        [
+          "agent",
+          "invoke"
+        ]
+      ],
+      "kind": "option",
+      "flags": [
+        "--input"
+      ],
+      "name": "input_json",
+      "typescriptName": "input",
+      "type": "str",
+      "multiple": false,
+      "default": null,
+      "isFlag": false,
+      "after": "--session-id",
+      "help": "Objeto JSON de entrada para un grafo con esquema propio; excluye PROMPT."
+    },
+    {
+      "feature": "B",
+      "commands": [
+        [
+          "agent",
+          "invoke"
+        ]
+      ],
+      "kind": "option",
+      "flags": [
+        "--input-file"
+      ],
+      "name": "input_file",
+      "typescriptName": "inputFile",
+      "type": "path",
+      "multiple": false,
+      "default": null,
+      "isFlag": false,
+      "after": "--input",
+      "help": "Fichero con el objeto JSON de entrada (- lee stdin); excluye PROMPT y --input."
+    },
+    {
+      "feature": "C",
+      "commands": [
+        [
+          "agent",
+          "deploy"
+        ]
+      ],
+      "kind": "option",
+      "flags": [
+        "--secret-env"
+      ],
+      "name": "secret_env",
+      "typescriptName": "secretEnv",
+      "type": "str",
+      "multiple": true,
+      "default": [],
+      "isFlag": false,
+      "after": "--create-secret",
+      "help": "NOMBRE=<secreto>[#clave]: variable de entorno con el valor de un secreto de Secrets Manager (nombre completo o ARN); repetible."
+    },
+    {
+      "feature": "C",
+      "commands": [
+        [
+          "agent",
+          "deploy"
+        ]
+      ],
+      "kind": "option",
+      "flags": [
+        "--secret-env-from"
+      ],
+      "name": "secret_env_from",
+      "typescriptName": "secretEnvFrom",
+      "type": "str",
+      "multiple": true,
+      "default": [],
+      "isFlag": false,
+      "after": "--secret-env",
+      "help": "<secreto>[,prefix=P][,keys=A|B]: cada clave de un secreto JSON como variable de entorno; repetible."
+    },
+    {
+      "feature": "C",
+      "commands": [
+        [
+          "agent",
+          "deploy"
+        ]
+      ],
+      "kind": "option",
+      "flags": [
+        "--create-secrets-from"
+      ],
+      "name": "create_secrets_from",
+      "typescriptName": "createSecretsFrom",
+      "type": "path",
+      "multiple": false,
+      "default": null,
+      "isFlag": false,
+      "after": "--secret-env-from",
+      "help": "Crea (o actualiza) un secreto JSON con los valores de este .env y lo usa como --secret-env-from (cuesta $0,40/mes; pide --yes)."
+    },
+    {
+      "feature": "C",
+      "commands": [
+        [
+          "agent",
+          "deploy"
+        ]
+      ],
+      "kind": "option",
+      "flags": [
+        "--check-env"
+      ],
+      "name": "check_env",
+      "typescriptName": "checkEnv",
+      "type": "boolean",
+      "multiple": false,
+      "default": false,
+      "isFlag": true,
+      "after": "--create-secrets-from",
+      "help": "Avisa de las variables de .env.example que no reciben valor."
+    }
+  ],
+  "cliChanges": [
+    {
+      "feature": "B",
+      "command": [
+        "agent",
+        "invoke"
+      ],
+      "parameter": "prompt",
+      "field": "required",
+      "from": true,
+      "to": false
+    },
+    {
+      "feature": "D",
+      "commands": [
+        [
+          "agent",
+          "detect"
+        ],
+        [
+          "agent",
+          "deploy"
+        ],
+        [
+          "agent",
+          "init"
+        ]
+      ],
+      "flag": "--protocol",
+      "addsValue": "langgraph-api"
+    }
+  ],
+  "tomlKeys": [
+    {
+      "feature": "A",
+      "path": "model.id",
+      "change": "required -> optional"
+    },
+    {
+      "feature": "A",
+      "path": "model.id_env",
+      "type": "string",
+      "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+      "after": "model.prompt_caching"
+    },
+    {
+      "feature": "A",
+      "path": "model.base_url_env",
+      "type": "string",
+      "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+      "after": "model.id_env"
+    },
+    {
+      "feature": "A",
+      "path": "model.api_key_env",
+      "type": "string",
+      "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+      "after": "model.base_url_env"
+    },
+    {
+      "feature": "B",
+      "path": "runtime.graph",
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$",
+      "after": "runtime.adapter",
+      "kinds": [
+        "langgraph"
+      ]
+    },
+    {
+      "feature": "C",
+      "path": "secret_env",
+      "type": "table",
+      "values": "string (secret name or ARN) | {secret, key?, version_stage?}",
+      "propertyNames": "^[A-Za-z_][A-Za-z0-9_]*$",
+      "after": "env"
+    },
+    {
+      "feature": "C",
+      "path": "secret_env_from",
+      "type": "array of tables",
+      "items": "{secret, prefix?, keys?}",
+      "after": "secret_env"
+    },
+    {
+      "feature": "D",
+      "path": "runtime.app.protocol",
+      "addsValue": "langgraph-api"
+    },
+    {
+      "feature": "D",
+      "path": "runtime.app.assistant_id",
+      "type": "string",
+      "requiredWhen": "protocol = langgraph-api",
+      "after": "runtime.app.port_env"
+    }
+  ],
+  "publicApi": [
+    {
+      "feature": "A",
+      "python": "AgentModel.id",
+      "typescript": "AgentModelOptions.id",
+      "change": "str -> str | None; string -> string | undefined (optional)"
+    },
+    {
+      "feature": "A",
+      "python": "AgentModel.id_env: str | None = None",
+      "typescript": "AgentModelOptions.idEnv?: string",
+      "after": "prompt_caching"
+    },
+    {
+      "feature": "A",
+      "python": "AgentModel.base_url_env: str | None = None",
+      "typescript": "AgentModelOptions.baseUrlEnv?: string",
+      "after": "id_env"
+    },
+    {
+      "feature": "A",
+      "python": "AgentModel.api_key_env: str | None = None",
+      "typescript": "AgentModelOptions.apiKeyEnv?: string",
+      "after": "base_url_env"
+    },
+    {
+      "feature": "A",
+      "python": "AgentCoreOptions.external_model: bool = False",
+      "typescript": "AgentCoreOptions.externalModel?: boolean (ResolvedAgentCoreOptions.externalModel: boolean)",
+      "after": "tags"
+    },
+    {
+      "feature": "A",
+      "python": "AgentCoreDeployPlan.external_model: bool = False",
+      "typescript": "AgentCoreDeployPlan.externalModel: boolean",
+      "after": "target"
+    },
+    {
+      "feature": "A",
+      "python": "DetectOverrides.model_id / model_provider / model_base_url: str | None = None",
+      "typescript": "DetectOverrides.modelId / modelProvider / modelBaseUrl?: string",
+      "after": "protocol"
+    },
+    {
+      "feature": "A",
+      "python": "RayitoAgent(external_model=False)",
+      "typescript": "RayitoAgentProps.externalModel?: boolean",
+      "after": "export_outputs / exportOutputs"
+    },
+    {
+      "feature": "B",
+      "python": "DetectOverrides.graph: str | None = None",
+      "typescript": "DetectOverrides.graph?: string",
+      "after": "model_base_url"
+    },
+    {
+      "feature": "B",
+      "python": "AgentProject.graph: str | None = None",
+      "typescript": "AgentProjectOptions.graph?: string",
+      "after": "versions"
+    },
+    {
+      "feature": "B",
+      "python": "invoke(prompt: str | None = None, session_id=None, model=None, reasoning=False, *, input: Mapping[str, Any] | None = None) and stream(...) on AgentDeployment, AgentFleet, AgentCoreFleet and their async twins",
+      "typescript": "invoke(prompt: string, options?) | invoke(request: AgentInputRequest, options?) and stream(...) overloads; AgentInputRequest = { readonly input: JsonObject }"
+    },
+    {
+      "feature": "B",
+      "python": "AgentResult.output: Mapping[str, Any] | None = None",
+      "typescript": "AgentResult.output?: JsonObject",
+      "after": "usage_reported"
+    },
+    {
+      "feature": "B",
+      "python": "Done.output: Mapping[str, Any] | None = None",
+      "typescript": "Done.output?: JsonObject",
+      "after": "usage_reported"
+    },
+    {
+      "feature": "C",
+      "python": "SecretEnvRef(secret: str, key: str | None = None, version_stage: str | None = None)",
+      "typescript": "class SecretEnvRef({ secret, key?, versionStage? })",
+      "export": true
+    },
+    {
+      "feature": "C",
+      "python": "SecretEnvSource(secret: str, prefix: str = '', keys: tuple[str, ...] | None = None)",
+      "typescript": "class SecretEnvSource({ secret, prefix?, keys? })",
+      "export": true
+    },
+    {
+      "feature": "C",
+      "python": "AgentProject.secret_env: Mapping[str, str | SecretEnvRef] = {}",
+      "typescript": "AgentProjectOptions.secretEnv?: Readonly<Record<string, string | SecretEnvRef>>",
+      "after": "graph"
+    },
+    {
+      "feature": "C",
+      "python": "AgentProject.secret_env_from: Sequence[SecretEnvSource] = ()",
+      "typescript": "AgentProjectOptions.secretEnvFrom?: readonly SecretEnvSource[]",
+      "after": "secret_env"
+    },
+    {
+      "feature": "C",
+      "python": "AgentDeployOptions.create_secrets_from: str | None = None",
+      "typescript": "AgentDeployOptions.createSecretsFrom: string | undefined",
+      "after": "warm_timeout_seconds / warmTimeoutMs"
+    },
+    {
+      "feature": "C",
+      "python": "AgentDeployOptions.check_env: bool = False",
+      "typescript": "AgentDeployOptions.checkEnv: boolean",
+      "after": "create_secrets_from"
+    },
+    {
+      "feature": "C",
+      "python": "AgentCoreDeployPlan.secret_env_names: tuple[str, ...] = ()",
+      "typescript": "AgentCoreDeployPlan.secretEnvNames: readonly string[]",
+      "after": "external_model"
+    },
+    {
+      "feature": "D",
+      "python": "HttpApp.assistant_id: str | None = None; HttpAppProtocol gains 'langgraph-api'",
+      "typescript": "HttpAppOptions.assistantId?: string; HttpAppProtocol gains 'langgraph-api'",
+      "after": "port_env"
+    },
+    {
+      "feature": "D",
+      "python": "DetectionApp.assistant_id: str | None = None (emitted only when set)",
+      "typescript": "DetectionApp.assistantId?: string",
+      "after": "last field"
+    }
+  ],
+  "errors": {
+    "A": [
+      {
+        "exception": "AgentProjectException",
+        "code": "missing_key",
+        "path": "model.id",
+        "when": "runtime builds the model or preset in modelIdRequiredPresets (file)"
+      },
+      {
+        "exception": "AgentProjectException",
+        "code": "not_detected",
+        "path": "model.id",
+        "when": "unchanged: detection with a preset in modelIdRequiredPresets"
+      },
+      {
+        "exception": "AgentProjectException",
+        "code": "invalid_value",
+        "path": "model.provider",
+        "when": "--model-provider names no preset"
+      },
+      {
+        "exception": "AgentProjectException",
+        "code": "conflict",
+        "path": "model.base_url_env",
+        "when": "the same name is also in [env]"
+      },
+      {
+        "exception": "AgentCoreException",
+        "code": "model_required",
+        "when": "agentcore + bedrock + no model.id + no bedrock_models (now raised; message and exit code unchanged)"
+      }
+    ],
+    "B": [
+      {
+        "exception": "AgentProjectException",
+        "code": "ambiguous",
+        "path": "runtime.entrypoint",
+        "messageKey": "ambiguous_graph"
+      },
+      {
+        "exception": "AgentProjectException",
+        "code": "invalid_value",
+        "path": "runtime.graph",
+        "messageKey": "graph_not_found"
+      },
+      {
+        "exception": "AgentProjectException",
+        "code": "conflict",
+        "path": "runtime.graph",
+        "messageKey": "graph_conflict"
+      },
+      {
+        "exception": "AgentProjectException",
+        "code": "invalid_value",
+        "path": "runtime.graph",
+        "when": "graph on a kind other than langgraph"
+      },
+      {
+        "exception": "AgentException",
+        "reason": "protocol_error",
+        "detailCodes": [
+          "input_required",
+          "invalid_input",
+          "output_not_serializable"
+        ]
+      },
+      {
+        "exception": "InvalidArgumentException",
+        "messageKeys": [
+          "prompt_or_input",
+          "input_not_object",
+          "input_too_large",
+          "host_too_old"
+        ]
+      }
+    ],
+    "C": [
+      {
+        "exception": "AgentProjectException",
+        "codes": [
+          "invalid_value",
+          "conflict",
+          "secret_value",
+          "unknown_key"
+        ],
+        "paths": [
+          "secret_env.<NAME>",
+          "secret_env_from[<i>]"
+        ]
+      },
+      {
+        "exception": "AgentException",
+        "reason": "runtime_error",
+        "detailCodes": [
+          "secret_env_unavailable",
+          "secret_env_denied",
+          "secret_env_invalid",
+          "secret_env_invalid_key",
+          "secret_env_reserved"
+        ],
+        "when": "host startup (fail closed)"
+      },
+      {
+        "exception": "AgentCoreException",
+        "code": "env_invalid",
+        "when": "RAYITO_SECRET_ENV longer than agentcoreEnvironmentValueMaxChars (existing code)"
+      }
+    ],
+    "D": [
+      {
+        "exception": "AgentException",
+        "reason": "protocol_error",
+        "detailCodes": [
+          "graph_interrupted"
+        ]
+      },
+      {
+        "exception": "AgentProjectException",
+        "code": "invalid_value",
+        "path": "runtime.app.protocol",
+        "messageKey": "langgraph_api_without_langgraph_json"
+      },
+      {
+        "exception": "InvalidArgumentException",
+        "when": "assistant_id missing with langgraph-api, or set with another protocol"
+      }
+    ]
+  },
+  "agentDetectionRules": [
+    {
+      "feature": "A",
+      "section": "(top level)",
+      "key": "modelFromCode",
+      "after": "maxModelsListed"
+    },
+    {
+      "feature": "A",
+      "section": "messages",
+      "key": "invalid_model_provider",
+      "after": "invalid_override",
+      "text": "--model-provider {value} no es una pasarela conocida ({candidates})"
+    },
+    {
+      "feature": "A",
+      "section": "warnings",
+      "key": "model_id_from_code",
+      "after": "no_provider",
+      "text": "no se fija el id del modelo: lo elige tu código ({envs})"
+    },
+    {
+      "feature": "A",
+      "section": "warnings",
+      "key": "custom_base_url",
+      "after": "model_id_from_code",
+      "text": "el cliente de {path} pasa su propia URL base y se mantiene {preset} porque el código fija el id del modelo; si apunta a una pasarela compatible con OpenAI, pasa --model-base-url"
+    },
+    {
+      "feature": "B",
+      "section": "messages",
+      "key": "ambiguous_graph",
+      "after": "ambiguous_entrypoint",
+      "text": "langgraph.json tiene varios grafos ({candidates}); elige uno con --graph o [runtime] graph"
+    },
+    {
+      "feature": "B",
+      "section": "messages",
+      "key": "graph_not_found",
+      "after": "not_detected_entrypoint",
+      "text": "langgraph.json no tiene el grafo {value} ({candidates})"
+    },
+    {
+      "feature": "B",
+      "section": "messages",
+      "key": "graph_conflict",
+      "after": "graph_not_found",
+      "text": "usa --graph o --entry, no los dos"
+    },
+    {
+      "feature": "C",
+      "section": "warnings",
+      "key": "env_missing",
+      "after": "file_unreadable",
+      "text": "{name} está en .env.example pero no recibe valor ([env], --secret-env o --secret-env-from)"
+    },
+    {
+      "feature": "D",
+      "section": "app.launchers",
+      "key": "langgraph-dev",
+      "after": "flask",
+      "value": {
+        "command": [
+          "langgraph",
+          "dev",
+          "--no-browser",
+          "--no-reload",
+          "--host",
+          "127.0.0.1",
+          "--port",
+          "{port}",
+          "--config",
+          "langgraph.json"
+        ],
+        "portLiteral": false
+      }
+    },
+    {
+      "feature": "D",
+      "section": "messages",
+      "key": "langgraph_api_without_langgraph_json",
+      "after": "unsupported_port",
+      "text": "--protocol langgraph-api necesita un langgraph.json en el proyecto"
+    },
+    {
+      "feature": "D",
+      "section": "warnings",
+      "key": "langgraph_cli_missing",
+      "after": "protocol_ignored",
+      "text": "langgraph-cli[inmem] no está en tus dependencias: añádelo para usar --protocol langgraph-api"
+    },
+    {
+      "feature": "D",
+      "section": "warnings",
+      "key": "langgraph_dev_server",
+      "after": "langgraph_cli_missing",
+      "text": "langgraph dev es un servidor de desarrollo en memoria (experimental en Rayito)"
+    }
+  ],
+  "limits": [
+    {
+      "feature": "B",
+      "key": "agentServiceMaxOutputBytes",
+      "value": 1048576,
+      "after": "agentServiceMaxRequestBytes",
+      "source": "igual que agentServiceMaxRequestBytes; muy por debajo de los 100 MB de carga de AgentCore"
+    },
+    {
+      "feature": "C",
+      "key": "agentSecretEnvVariable",
+      "value": "RAYITO_SECRET_ENV",
+      "after": "agentSecretNameTemplate"
+    },
+    {
+      "feature": "C",
+      "key": "agentSecretEnvSpecVersion",
+      "value": 1,
+      "after": "agentSecretEnvVariable"
+    },
+    {
+      "feature": "C",
+      "key": "agentSecretEnvMaxSecrets",
+      "value": 20,
+      "after": "agentSecretEnvSpecVersion",
+      "source": "una llamada GetSecretValue por secreto y sesión; tope de diseño"
+    },
+    {
+      "feature": "C",
+      "key": "agentSecretEnvMaxTotalBytes",
+      "value": 262144,
+      "after": "agentSecretEnvMaxSecrets",
+      "source": "cuatro secretos del tamaño máximo de Secrets Manager (65536 bytes)"
+    },
+    {
+      "feature": "C",
+      "key": "agentSecretEnvHelperTimeoutSeconds",
+      "value": 15,
+      "after": "agentSecretEnvMaxTotalBytes",
+      "source": "provisional; se mide en la aceptación (AWS_API_NOTES Q188)"
+    },
+    {
+      "feature": "C",
+      "key": "agentSecretEnvReservedNames",
+      "value": [
+        "HOME",
+        "NODE_OPTIONS",
+        "PATH",
+        "PYTHONPATH"
+      ],
+      "after": "agentSecretEnvHelperTimeoutSeconds"
+    },
+    {
+      "feature": "C",
+      "key": "agentSecretEnvReservedPrefixes",
+      "value": [
+        "AWS_",
+        "LD_",
+        "RAYITO_"
+      ],
+      "after": "agentSecretEnvReservedNames"
+    },
+    {
+      "feature": "C",
+      "key": "agentSecretEnvRedactMinChars",
+      "value": 4,
+      "after": "agentSecretEnvReservedPrefixes",
+      "source": "redacción de valores inyectados más cortos que MIN_REDACTED_VALUE_LENGTH"
+    },
+    {
+      "feature": "C",
+      "key": "agentSecretEnvNamesVariable",
+      "value": "RAYITO_SECRET_ENV_NAMES",
+      "after": "agentSecretEnvRedactMinChars",
+      "source": "en MicroVMs, sólo los nombres de los valores que el SDK ya exportó, para que el host los redacte"
+    },
+    {
+      "feature": "D",
+      "key": "agentLanggraphHealthPath",
+      "value": "/ok",
+      "after": "agentAppPortEnv"
+    },
+    {
+      "feature": "D",
+      "key": "agentLanggraphInvokePath",
+      "value": "/threads/{thread_id}/runs/wait",
+      "after": "agentLanggraphHealthPath"
+    },
+    {
+      "feature": "D",
+      "key": "agentLanggraphThreadNamespace",
+      "value": "9f31c836-3dec-4f92-9808-a4a78225e7b9",
+      "after": "agentLanggraphInvokePath"
+    },
+    {
+      "feature": "D",
+      "key": "agentLanggraphReadyWaitSeconds",
+      "value": 60,
+      "after": "agentLanggraphThreadNamespace",
+      "source": "provisional; se mide en la aceptación (AWS_API_NOTES Q189)"
+    }
+  ],
+  "agentcoreContract": [
+    {
+      "feature": "A",
+      "where": "optionsTable.rows",
+      "option": "model provider",
+      "change": "call/file: 'error provider_unsupported unless bedrock or external_model'"
+    },
+    {
+      "feature": "A",
+      "where": "optionsTable.rows",
+      "option": "agentcore / AgentCoreOptions, ...",
+      "change": "add --external-model to the list after --max-session-lifetime"
+    },
+    {
+      "feature": "A",
+      "where": "constants.cliOptionLabels",
+      "key": "external_model",
+      "value": "--external-model"
+    },
+    {
+      "feature": "A",
+      "where": "messages.security",
+      "key": "externalModel",
+      "after": "readableSecrets"
+    },
+    {
+      "feature": "A",
+      "where": "messages.errors",
+      "key": "model_required",
+      "change": "text only: no se sabe qué modelo de Bedrock usa el agente: fija [model] id o pásalo con --bedrock-model"
+    },
+    {
+      "feature": "C",
+      "where": "optionsTable.rows",
+      "rows": [
+        "secret_env / --secret-env",
+        "secret_env_from / --secret-env-from",
+        "create_secrets_from / --create-secrets-from",
+        "check_env / --check-env"
+      ],
+      "call": "applies",
+      "file": "applies",
+      "after": "env / --env"
+    },
+    {
+      "feature": "C",
+      "where": "messages.security",
+      "key": "secretEnv",
+      "after": "envCredentials"
+    },
+    {
+      "feature": "C",
+      "where": "constants",
+      "key": "secretEnv",
+      "after": "export"
+    }
+  ],
+  "securityKeysOrder": [
+    "noGateway",
+    "bedrockModels|noBedrockModels",
+    "readableSecrets?",
+    "externalModel? (A)",
+    "secretEnv? (C)",
+    "publicNetwork",
+    "sessionIsolation",
+    "envCredentials?"
+  ],
+  "awsApiNotes": {
+    "Q187": {
+      "feature": "C",
+      "topic": "GetSecretValue desde el rol del runtime de AgentCore (SecretId, VersionStage; sin kms:Decrypt con aws/secretsmanager)"
+    },
+    "Q188": {
+      "feature": "C",
+      "topic": "latencia de arranque de una sesión con secret_env (ayudante de botocore)"
+    },
+    "Q189": {
+      "feature": "D",
+      "topic": "arranque en frío de langgraph dev dentro del host (MicroVM y AgentCore)"
+    },
+    "Q190": {
+      "feature": "A",
+      "topic": "runtime de AgentCore sin permisos de Bedrock llamando a una pasarela externa por la red PUBLIC"
+    }
+  },
+  "securityThreats": {
+    "T38": {
+      "feature": "C",
+      "topic": "secretos de Secrets Manager en el entorno del agente"
+    }
+  }
+}

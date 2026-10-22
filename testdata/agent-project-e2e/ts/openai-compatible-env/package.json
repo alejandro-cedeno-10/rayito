@@ -1,0 +1,8 @@
+{
+  "name": "openai-compatible-env",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@langchain/langgraph": "1.0.1"
+  }
+}

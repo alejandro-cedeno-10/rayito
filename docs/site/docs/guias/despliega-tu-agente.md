@@ -153,6 +153,70 @@ adivina: `ambiguous` (hay dos frameworks o dos puntos de entrada posibles: usa
 el id del modelo: escríbelo como literal o en `[model]`) y `unsupported` (una
 combinación que no llega a la pasarela sin cambiar el código).
 
+### Modelo elegido por tu código { #modelo-desde-tu-codigo }
+
+Si tu código elige el modelo por configuración, por ejemplo
+`ChatOpenAI(model=settings.llm_model, base_url=settings.base_url)`, no hace falta
+escribir el id del modelo en ningún sitio. La detección reconoce dos cosas sin
+ejecutar tu código ni leer ningún valor:
+
+- Un `base_url=` propio en el constructor del cliente (en TypeScript,
+  `baseURL`, también dentro de `configuration`). Con él, un proveedor `openai`
+  detectado por dependencia pasa a ser `openai-compatible`. La URL oficial de
+  OpenAI no cuenta, y si tu código fija el id del modelo con un literal (lo
+  que ya se desplegaba antes), el proveedor sigue siendo `openai` salvo que
+  pases `--model-base-url`; la detección lo avisa con `custom_base_url`.
+- Los **nombres** de las variables del modelo, la URL base y la clave
+  (`LLM_MODEL`, `LLM_BASE_URL`, `LLM_API_KEY`). Salen de `.env.example`, de las
+  lecturas `os.getenv` / `process.env`, de los campos de pydantic-settings
+  (`env_prefix` más el campo) y de las claves de `env` en `langgraph.json`. Es
+  una heurística de mejor esfuerzo: si no acierta, escribe los nombres en
+  `[model]`.
+
+El proyecto resuelto lleva `[model]` sin `id` y con esos nombres, y el informe
+avisa con `model_id_from_code`. La URL de tu pasarela de LLM no se puede
+detectar, así que se pasa con una bandera:
+
+```bash
+rayito agent deploy --model-provider openai-compatible \
+  --model-base-url https://llm-gateway.example.com --secret openai-compatible=rayito/llm-key
+```
+
+En el fichero de proyecto queda así:
+
+```toml
+[model]
+provider = "openai-compatible"
+gateway = "llm"
+base_path = "/v1"
+id_env = "LLM_MODEL"
+base_url_env = "LLM_BASE_URL"
+api_key_env = "LLM_API_KEY"
+
+[gateways.llm]
+preset = "openai-compatible"
+secret = "rayito/llm-key"
+upstream = "https://llm-gateway.example.com"
+base_path = "/v1"
+```
+
+En MicroVMs, Rayito apunta `LLM_BASE_URL` a la pasarela de secretos y pone el
+marcador en `LLM_API_KEY`. Tu código lee su propia configuración y pasa por la
+pasarela sin ver nunca la clave real. `LLM_MODEL` sólo se fija si el proyecto
+conoce el id (`--model-id` o `[model] id`).
+
+El id sigue siendo obligatorio donde Rayito lo usa:
+
+- Con las pasarelas `bedrock` y `gemini`, que sólo dejan pasar los modelos de su
+  lista.
+- Con los runtimes que construyen el modelo: `opencode`, `hermes`, y
+  `deepagents` o `strands` sin `entrypoint`.
+
+En los demás casos (un grafo con `entrypoint`, una app HTTP, `CustomRuntime`),
+tu código recibe `ctx.model = None` (`undefined` en Node) y elige el suyo. En
+AgentCore, un modelo fuera de Bedrock necesita
+[`--external-model`](desplegar-en-agentcore.md#modelos-fuera-de-bedrock).
+
 ### Qué se resuelve solo y qué no { #que-se-resuelve-solo }
 
 Cada valor sale, en este orden, del argumento o la bandera, del fichero, de una
@@ -949,6 +1013,122 @@ de `/ping` y `/invocations` sólo los usa el host por dentro: pedir `/health` o
 ese caso, y `rayito agent init --runtime custom` escribe `protocol = "raw"`
 porque su app declara sus propias rutas.
 
+### LangGraph Platform API (experimental) { #langgraph-platform-api }
+
+Si tu proyecto ya se sirve con `langgraph dev` (un `langgraph.json` y el
+LangGraph Platform API: `/ok`, `/threads`, `/runs/wait`), puedes desplegarlo
+tal cual con `--protocol langgraph-api`. Sin la opción nada cambia: Rayito
+sigue sirviendo un `langgraph.json` como siempre, importando el grafo en el
+proceso del host (protocolo `framework`). El protocolo nuevo sólo te aporta
+algo si dependes de la semántica del Platform API (assistants, el estado del
+hilo o una entrada que no son mensajes).
+
+```bash
+rayito agent detect ./ticket-agent --protocol langgraph-api
+rayito agent deploy ./ticket-agent --protocol langgraph-api
+```
+
+Con la opción, la detección sirve el proyecto como una app `custom` que
+arranca `langgraph dev --no-browser --no-reload` en el puerto interno 8000,
+con `protocol = "langgraph-api"` y `assistant_id` igual al grafo elegido de
+`graphs` (el de `--graph`, o el llamado `agent` si hay varios). Sin `langgraph.json` falla con
+`invalid_value` en `runtime.app.protocol`. Avisa siempre de que `langgraph dev`
+es un servidor de desarrollo y, si `langgraph-cli` no está entre tus
+dependencias, de que lo añadas. El fichero de proyecto equivalente es:
+
+```toml
+[runtime]
+kind = "custom"
+requirements = "requirements.txt"
+
+[runtime.app]
+command = ["langgraph", "dev", "--no-browser", "--no-reload", "--host", "127.0.0.1", "--port", "8000", "--config", "langgraph.json"]
+port = 8000
+health_path = "/ok"
+protocol = "langgraph-api"
+assistant_id = "agent"
+```
+
+=== "Python"
+
+    ```python
+    from rayito import CustomRuntime, HttpApp
+
+    runtime = CustomRuntime(
+        requirements="requirements.txt",
+        app=HttpApp(
+            command=["langgraph", "dev", "--no-browser", "--no-reload", "--port", "8000"],
+            port=8000,
+            protocol="langgraph-api",
+            assistant_id="agent",
+        ),
+    )
+    ```
+
+=== "TypeScript"
+
+    ```ts
+    import { CustomRuntime, HttpApp } from "rayito";
+
+    const runtime = new CustomRuntime({
+      requirements: "requirements.txt",
+      app: new HttpApp({
+        command: ["langgraph", "dev", "--no-browser", "--no-reload", "--port", "8000"],
+        port: 8000,
+        protocol: "langgraph-api",
+        assistantId: "agent",
+      }),
+    });
+    console.log(runtime);
+    ```
+
+Qué hace el host con cada invocación:
+
+- La traduce a `POST /threads/{thread_id}/runs/wait` con
+  `{"assistant_id", "input", "if_not_exists": "create", "multitask_strategy": "reject"}`;
+  el prompt llega al grafo como un único mensaje de usuario
+  (`{"messages": [{"role": "user", "content": ...}]}`), y una entrada
+  estructurada (`invoke(input={...})`, ver
+  [Varios grafos y entrada estructurada](#varios-grafos-y-entrada-estructurada))
+  va tal cual como `input`.
+- El hilo sale de la sesión (`uuid5` de su id), así que dos invocaciones con
+  la misma sesión siguen el mismo hilo. Una segunda ejecución sobre un hilo
+  ocupado no se encola: falla con `app_http_409`. Si el cliente deja de
+  esperar (vence su plazo o cancela la invocación), la ejecución sigue en el
+  servidor hasta terminar, y mientras tanto otra invocación con la misma
+  sesión puede recibir `app_http_409`: espera a que termine o usa otra
+  sesión.
+- El texto sale de `response_field` (si lo fijas) o del `content` del último
+  mensaje del estado final; sin mensajes, es el estado entero en JSON
+  estricto (un `NaN` o un infinito es `invalid_response`). Si llamaste con
+  `input` y el estado final no tiene mensajes, ese estado es `output`, como
+  con un grafo de esquema propio, y el texto queda vacío para no repetirlo;
+  si el estado final tiene mensajes, no hay `output` y el texto es el de su
+  último mensaje, como con un grafo de mensajes en deepagents. El uso de
+  tokens sale de su `usage_metadata`, y sin él es desconocido, no cero.
+- Un grafo que se detiene en un `interrupt` (human-in-the-loop) devuelve
+  `AgentException` con `reason="protocol_error"` y `detail_code`
+  `graph_interrupted`; cualquier otro estado HTTP es `app_http_<n>`.
+- La salud es `GET /ok` (si dejas `health_path` por defecto) y el host espera
+  hasta 60 segundos a que `langgraph dev` arranque. `invoke_path` no se
+  cambia: la ruta la fija el API.
+- `langgraph dev` arranca con `LANGGRAPH_CLI_NO_ANALYTICS=1` y
+  `LANGSMITH_TRACING=false`, salvo que tu proyecto fije esas variables.
+
+!!! warning "Experimental: un servidor de desarrollo"
+    `langgraph dev` guarda el estado en memoria: los hilos se pierden cuando
+    el VM o la sesión de AgentCore terminan. Rayito no instala
+    `langgraph-cli[inmem]` (añádelo a tus requisitos) y el paquete
+    `langgraph-api` que trae se distribuye con la licencia Elastic-2.0:
+    revísala antes de usarlo. No se admiten el servidor de producción
+    (`langgraph up` o el Agent Server, que necesitan Postgres, Redis y una
+    licencia), el streaming (`stream()` entrega el texto entero en un evento),
+    reanudar un `interrupt`, ni `langgraphjs dev`. Sólo `/ping` e
+    `/invocations` se exponen: el resto del Platform API no se alcanza desde
+    fuera. Un `rayito-agent.toml` con `protocol = "langgraph-api"` o
+    `assistant_id` falla con `clave desconocida` en un SDK anterior a esta
+    función.
+
 ### El contrato del servicio
 
 El servicio habla el contrato de runtime de AgentCore, así que el mismo agente
@@ -968,6 +1148,93 @@ sirve igual en un MicroVM y en un contenedor exportado:
 - Atiende una petición a la vez. La cabecera
   `X-Amzn-Bedrock-AgentCore-Runtime-Session-Id` hace de `session_id` si el cuerpo
   no lo trae.
+
+### Varios grafos y entrada estructurada { #varios-grafos-y-entrada-estructurada }
+
+**Varios grafos.** Si `langgraph.json` declara más de un grafo, elige el que se
+despliega con `--graph NOMBRE` o con `[runtime] graph` en `rayito-agent.toml`
+(el nombre es la clave de `graphs`). Sin elegir, se usa el único grafo o el que
+se llama `agent`; con varios y ninguno llamado `agent`, el despliegue falla con
+`ambiguous` y el mensaje lista los nombres. Un nombre que no está es
+`invalid_value` en `runtime.graph`, y `graph` junto a `entrypoint` (o `--graph`
+junto a `--entry`) es `conflict`. La elección se hace leyendo `langgraph.json`,
+sin ejecutar tu código, y se convierte en el `entrypoint` del grafo antes de
+construir el runtime.
+
+```toml
+[runtime]
+kind = "langgraph"
+graph = "triage"
+```
+
+**Entrada estructurada.** Un grafo cuyo esquema de entrada no es de mensajes
+(por ejemplo, `StateGraph(State, input_schema=InputState,
+output_schema=OutputState)` con `InputState` = `{"ticket_id": str}`) no se
+llama con un prompt sino con `input`, un objeto JSON, y devuelve `output`, su
+último estado filtrado al esquema de salida:
+
+=== "Python"
+
+    ```python
+    from rayito import AgentDeployment
+
+    deployment = AgentDeployment.connect("microvm-00000000-0000-0000-0000-000000000001")
+    result = deployment.invoke(input={"ticket_id": "T-1"})
+    print(result.output)
+    again = deployment.invoke(input={"ticket_id": "T-2"}, session_id=result.session_id)
+    ```
+
+=== "Python (async)"
+
+    ```python
+    from rayito import AsyncAgentDeployment
+
+
+    async def main() -> None:
+        deployment = await AsyncAgentDeployment.connect("microvm-00000000-0000-0000-0000-000000000001")
+        result = await deployment.invoke(input={"ticket_id": "T-1"})
+        print(result.output)
+    ```
+
+=== "TypeScript"
+
+    ```ts
+    import { AgentDeployment } from "rayito";
+
+    const deployment = await AgentDeployment.connect("microvm-00000000-0000-0000-0000-000000000001");
+    const result = await deployment.invoke({ input: { ticket_id: "T-1" } });
+    console.log(result.output);
+    ```
+
+=== "CLI"
+
+    ```bash
+    rayito agent deploy --graph triage
+    rayito agent invoke microvm-00000000-0000-0000-0000-000000000001 --input '{"ticket_id": "T-1"}'
+    rayito agent invoke microvm-00000000-0000-0000-0000-000000000001 --input-file ticket.json --stream
+    ```
+
+Lo mismo vale para `stream()`, para una flota y para un agente en
+[AgentCore](desplegar-en-agentcore.md#sesiones): el evento `done` lleva
+`output`. Exactamente uno de los dos, `prompt` o `input`: si no, el SDK lanza
+`InvalidArgumentException` / `InvalidArgumentError` antes de llamar a nadie, y
+la CLI sale con 2. Dentro del MicroVM, el host lee el esquema con
+`get_input_jsonschema()` (en LangGraph.js, `getInputJsonSchema`, desde la 1.1):
+un grafo con `messages` en su esquema, o cuyo esquema no se puede leer, se
+llama como siempre. Los fallos llegan como `AgentException` con
+`reason="protocol_error"` y un `detail_code`:
+
+| `detail_code` | Cuándo |
+|---|---|
+| `input_required` | llamaste con un prompt a un grafo cuyo esquema de entrada tiene claves obligatorias (`required`); sin ellas, el prompt va como mensaje, como siempre |
+| `invalid_input` | `input` no cumple el esquema (claves obligatorias, claves de más con `additionalProperties: false`, tipos de primer nivel), o el grafo lanzó un `ValidationError` de pydantic |
+| `output_not_serializable` | la salida no se puede convertir a JSON o pasa de {{agentServiceMaxOutputBytes}} bytes |
+
+El `session_id` es el `thread_id` del grafo: si el grafo tiene su propio
+`checkpointer`, pasar el mismo `session_id` continúa el hilo. Un agente
+desplegado con una versión anterior contesta `400` a `input`: el SDK lo traduce
+a «vuelve a desplegarlo con esta versión de Rayito». Ni `input` ni `output`
+llegan nunca a los logs, sólo tamaños y códigos.
 
 ## 4. Exporta a un contenedor
 
@@ -1050,6 +1317,13 @@ y con una clave de relleno:
 - Las pasarelas de los proveedores al estilo de OpenAI no pueden limitar el
   modelo: fija el tope de gasto en el proveedor
   ([Proveedores del agente](agente-proveedores.md#limites-del-lado-del-proveedor)).
+
+Si tu código lee de variables de entorno otros valores que viven en Secrets
+Manager (una URL de base de datos, la clave de una pasarela que no pasa por
+Rayito), `[secret_env]` y `--secret-env` se los ponen al arrancar: el SDK los
+lee con tus credenciales y el host los recibe sólo en el entorno de su
+proceso. A diferencia de la pasarela, el agente sí puede leerlos. Ver
+[Secretos como variables de entorno](secretos-como-entorno.md).
 
 ## Un despliegue dura 8 horas como mucho
 

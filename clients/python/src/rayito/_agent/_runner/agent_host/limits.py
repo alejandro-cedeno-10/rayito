@@ -26,6 +26,16 @@ DEFAULT_MAX_STEPS: Final = 50
 DEFAULT_TIMEOUT_SECONDS: Final = 600.0
 DEFAULT_MAX_OUTPUT_BYTES: Final = 16_777_216
 DEFAULT_MAX_TOTAL_TOKENS: Final[int | None] = 1_000_000
+#: Tope de la salida estructurada (`output`) de una ejecución, ya en JSON
+#: (`AGENT_SERVICE_MAX_OUTPUT_BYTES` de `limits.json`): una salida mayor es
+#: `protocol_error`/`output_not_serializable`.
+MAX_SERVICE_OUTPUT_BYTES: Final = 1_048_576
+
+
+def output_fits(encoded: str) -> bool:
+    """Si la salida estructurada ya codificada cabe en
+    `MAX_SERVICE_OUTPUT_BYTES` bytes UTF-8."""
+    return len(encoded.encode("utf-8")) <= MAX_SERVICE_OUTPUT_BYTES
 
 
 @dataclass(frozen=True)

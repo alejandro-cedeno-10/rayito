@@ -8,11 +8,13 @@ import { Readable } from "node:stream";
 import { NO_REGION_MESSAGE } from "../agent/aws-resolve.js";
 import {
   AgentDeploymentStream,
+  type AgentInputRequest,
+  type AgentInvocation,
   type AgentInvokeOptions,
   EVENT_STREAM_CONTENT_TYPE,
   invocationBody,
+  invocationOf,
   JSON_CONTENT_TYPE,
-  requirePrompt,
   resultFromBody,
 } from "../agent/deployment.js";
 import type { AgentEvent, AgentResult } from "../agent/events.js";
@@ -180,18 +182,29 @@ export class AgentCoreFleet {
     return connectWith(ports, name, region);
   }
 
-  async invoke(prompt: string, options: AgentInvokeOptions = {}): Promise<AgentResult> {
+  /** Una invocación sin streaming; con `{ input }` en lugar del prompt,
+   * `result.output` trae la salida del grafo. */
+  invoke(prompt: string, options?: AgentInvokeOptions): Promise<AgentResult>;
+  invoke(request: AgentInputRequest, options?: AgentInvokeOptions): Promise<AgentResult>;
+  invoke(request: AgentInvocation, options?: AgentInvokeOptions): Promise<AgentResult>;
+  async invoke(request: AgentInvocation, options: AgentInvokeOptions = {}): Promise<AgentResult> {
     const sessionId = agentcoreSessionId(options.sessionId);
-    const chunks = await this.#open(prompt, options, sessionId, {
+    const chunks = await this.#open(request, options, sessionId, {
       accept: JSON_CONTENT_TYPE,
       requestTimeoutMs: REQUEST_TIMEOUT_MS,
     });
     return withSession(resultFromBody(await textOf(chunks)), sessionId);
   }
 
-  async stream(prompt: string, options: AgentInvokeOptions = {}): Promise<AgentCoreFleetStream> {
+  stream(prompt: string, options?: AgentInvokeOptions): Promise<AgentCoreFleetStream>;
+  stream(request: AgentInputRequest, options?: AgentInvokeOptions): Promise<AgentCoreFleetStream>;
+  stream(request: AgentInvocation, options?: AgentInvokeOptions): Promise<AgentCoreFleetStream>;
+  async stream(
+    request: AgentInvocation,
+    options: AgentInvokeOptions = {},
+  ): Promise<AgentCoreFleetStream> {
     const sessionId = agentcoreSessionId(options.sessionId);
-    const chunks = await this.#open(prompt, options, sessionId, {
+    const chunks = await this.#open(request, options, sessionId, {
       accept: EVENT_STREAM_CONTENT_TYPE,
       requestTimeoutMs: STREAM_TIMEOUT_MS,
     });
@@ -234,14 +247,16 @@ export class AgentCoreFleet {
   }
 
   #open(
-    prompt: string,
+    request: AgentInvocation,
     options: AgentInvokeOptions,
     sessionId: string,
     transport: { readonly accept: string; readonly requestTimeoutMs: number },
   ): Promise<AsyncIterable<Uint8Array>> {
-    const body = invocationBody(requirePrompt(prompt), {
+    const { prompt, input } = invocationOf(request);
+    const body = invocationBody(prompt, {
       model: options.model,
       reasoning: options.reasoning,
+      input,
     });
     return this.#ports.invoker.invoke({
       agentName: this.name,

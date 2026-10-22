@@ -12,9 +12,11 @@ export const AGENT_HOST_FILES: Readonly<Record<string, string>> = {
 \`DRIVERS\`), \`options\` (las opciones del driver de \`HostConfig.options\`, que
 el driver recibe como su configuración) y, opcionalmente, \`limits\`,
 \`max_concurrency\`, \`queue_max\`, \`queue_timeout_seconds\`, \`max_request_bytes\`,
-\`session_header\`, \`ready_marker\` y \`aws_env_credentials\` (\`{python, script}\`: la
+\`session_header\`, \`ready_marker\`, \`aws_env_credentials\` (\`{python, script}\`: la
 herramienta que lee las credenciales del rol de AgentCore, que se ejecuta antes de
-cada invocación).
+cada invocación) y \`secret_env\` (\`{python, script, reserved}\`: la herramienta que
+lee, al arrancar y antes de cargar el código del usuario, los secretos de
+\`RAYITO_SECRET_ENV\`; ver \`secret_env.py\`).
 Las variables de entorno de \`HostConfig.envs\` las pone quien lanza el host
 (el comando del SDK o el \`ENV\` del Dockerfile exportado). En \`task\` la
 petición llega por stdin y las líneas v1 salen por un descriptor privado; en
@@ -151,10 +153,13 @@ def serve(package: str, args: argparse.Namespace) -> int:
         Path(config.ready_marker).unlink(missing_ok=True)
         Path(config.ready_marker + serving.FAILED_SUFFIX).unlink(missing_ok=True)
     diagnostics = importlib.import_module(".diagnostics", package)
+    secrets = load_secret_env(package, host, config, log)
+    if secrets is None:
+        return 1
     try:
         driver = create_driver(package, host["driver"], host["options"])
     except Exception as exc:
-        code, detail = startup_failure(exc, diagnostics)
+        code, detail = startup_failure(exc, diagnostics, secrets)
         log.error("driver_unavailable code=%s", code)
         serving.write_failed_marker(config, code, detail)
         return 1
@@ -165,11 +170,36 @@ def serve(package: str, args: argparse.Namespace) -> int:
     )
     warm_failed = threading.Event()
     threading.Thread(
-        target=_warm, args=(service, server, log, warm_failed, diagnostics), daemon=True
+        target=_warm, args=(service, server, log, warm_failed, diagnostics, secrets), daemon=True
     ).start()
     log.info("listening port=%d driver=%s", args.port, host["driver"])
     server.serve_forever()
     return 1 if warm_failed.is_set() else 0
+
+
+def load_secret_env(
+    package: str, host: dict[str, Any], config: Any, log: logging.Logger
+) -> tuple[str, ...] | None:
+    """Exporta los secretos de \`RAYITO_SECRET_ENV\` antes de crear el driver
+    y devuelve sus valores (para redactarlos en un diagnóstico); sin la
+    variable, los que el SDK ya exportó en MicroVMs y nombra en
+    \`RAYITO_SECRET_ENV_NAMES\`, o nada. Si falla deja el marcador de fallo con
+    el código (nunca un nombre ni un valor) y devuelve \`None\`: el driver no
+    arranca."""
+    module = importlib.import_module(".secret_env", package)
+    if module.SPEC_VARIABLE not in os.environ:
+        return tuple(module.injected_values(os.environ))
+    spec = host.get(module.HOST_KEY)
+    try:
+        loaded = module.load_secret_env(
+            os.environ, module.helper_of(spec), module.reserved_of(spec)
+        )
+    except module.SecretEnvError as exc:
+        log.error("secret_env_failed code=%s", exc.detail_code)
+        importlib.import_module(".serve", package).write_failed_marker(config, exc.detail_code)
+        return None
+    log.info("secret_env_loaded count=%d", len(loaded))
+    return tuple(loaded.values())
 
 
 def _credentials_source(package: str, spec: Any) -> Any:
@@ -192,24 +222,33 @@ def _bounded(value: Any, default: Any, ceiling: Any) -> Any:
     return min(value, ceiling) if valid else default
 
 
-def startup_failure(exc: Exception, diagnostics: Any) -> tuple[str, str | None]:
+def startup_failure(
+    exc: Exception, diagnostics: Any, secrets: Sequence[str] = ()
+) -> tuple[str, str | None]:
     """El código y el diagnóstico saneado de un arranque fallido: el
     \`detail_code\` de un \`AgentFailure\` y la cola de la salida de error de la
-    app, o el nombre de la clase de cualquier otra excepción y su mensaje."""
+    app, o el nombre de la clase de cualquier otra excepción y su mensaje.
+    \`secrets\` son los valores exportados desde Secrets Manager, que se
+    retiran aunque sean cortos."""
     code = getattr(exc, "detail_code", None)
     text = getattr(exc, "diagnostics", None) if code is not None else str(exc)
-    detail = diagnostics.sanitize_diagnostics(text, os.environ) if text else ""
+    detail = diagnostics.sanitize_diagnostics(text, os.environ, secrets) if text else ""
     return str(code if code is not None else type(exc).__name__), detail or None
 
 
 def _warm(
-    service: Any, server: Any, log: logging.Logger, failed: threading.Event, diagnostics: Any
+    service: Any,
+    server: Any,
+    log: logging.Logger,
+    failed: threading.Event,
+    diagnostics: Any,
+    secrets: Sequence[str] = (),
 ) -> None:
     try:
         service.driver.warm()
         service.mark_ready()
     except Exception as exc:
-        code, detail = startup_failure(exc, diagnostics)
+        code, detail = startup_failure(exc, diagnostics, secrets)
         log.error("warm_failed code=%s", code)
         service.mark_failed(code, detail)
         failed.set()
@@ -303,7 +342,7 @@ credencial y se recorta a \`MAX_DIAGNOSTICS_BYTES\`.
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from typing import Final
 
 #: Tope en bytes UTF-8 del diagnóstico (\`AGENT_STARTUP_DIAGNOSTICS_MAX_BYTES\`
@@ -314,6 +353,10 @@ REDACTED: Final = "[redacted]"
 #: Un valor de entorno más corto que esto no se retira: sería ruido (\`1\`,
 #: \`utf-8\`) y no es una credencial.
 MIN_REDACTED_VALUE_LENGTH: Final = 8
+#: Largo mínimo de un valor que el host exportó desde Secrets Manager
+#: (\`extra_values\`, \`agentSecretEnvRedactMinChars\`): se retira aunque sea más
+#: corto que \`MIN_REDACTED_VALUE_LENGTH\`, porque sí es un secreto.
+MIN_EXTRA_REDACTED_VALUE_LENGTH: Final = 4
 #: Variables cuyo valor es estructura del sandbox (rutas, idioma), no un
 #: secreto; sus valores se dejan ver para que una traza se pueda leer.
 STRUCTURAL_ENV_NAMES: Final = frozenset(
@@ -365,17 +408,30 @@ _CREDENTIAL_PATTERNS: Final = (
 )
 
 
-def _without_environment_values(text: str, environ: Mapping[str, str]) -> str:
-    values = sorted(
-        {
-            value
-            for name, value in environ.items()
-            if name not in STRUCTURAL_ENV_NAMES and len(value) >= MIN_REDACTED_VALUE_LENGTH
-        },
-        key=len,
-        reverse=True,
-    )
-    for value in values:
+def _normalized(text: str) -> str:
+    """\`text\` con los saltos de línea unificados a LF y sin caracteres de
+    control, la misma limpieza que recibe el diagnóstico antes de buscar
+    valores en él."""
+    return _CONTROL_CHARACTERS.sub("", text.replace("\\r\\n", "\\n").replace("\\r", "\\n"))
+
+
+def _redaction_forms(value: str, min_length: int) -> set[str]:
+    """El valor tal cual y en su forma normalizada (\`_normalized\`), los que
+    midan al menos \`min_length\`. Sin la forma normalizada, un PEM con CRLF o
+    un valor con un carácter de control no casaría con el texto ya limpio."""
+    return {form for form in (value, _normalized(value)) if len(form) >= min_length}
+
+
+def _without_environment_values(
+    text: str, environ: Mapping[str, str], extra_values: Iterable[str] = ()
+) -> str:
+    candidates: set[str] = set()
+    for name, value in environ.items():
+        if name not in STRUCTURAL_ENV_NAMES:
+            candidates |= _redaction_forms(value, MIN_REDACTED_VALUE_LENGTH)
+    for value in extra_values:
+        candidates |= _redaction_forms(value, MIN_EXTRA_REDACTED_VALUE_LENGTH)
+    for value in sorted(candidates, key=len, reverse=True):
         text = text.replace(value, REDACTED)
     return text
 
@@ -400,13 +456,18 @@ def bounded_tail(text: str, max_bytes: int = MAX_DIAGNOSTICS_BYTES) -> str:
     return tail[newline + 1 :] if 0 <= newline < len(tail) - 1 else tail
 
 
-def sanitize_diagnostics(text: str, environ: Mapping[str, str]) -> str:
+def sanitize_diagnostics(
+    text: str, environ: Mapping[str, str], extra_values: Iterable[str] = ()
+) -> str:
     """\`text\` sin caracteres de control, sin valores de \`environ\` ni
     patrones de credencial, acotado a \`MAX_DIAGNOSTICS_BYTES\`. La
     sustitución va antes del recorte para que un secreto partido por el
-    recorte no sobreviva."""
-    cleaned = _CONTROL_CHARACTERS.sub("", text.replace("\\r\\n", "\\n").replace("\\r", "\\n"))
-    cleaned = _without_credentials(_without_environment_values(cleaned, environ))
+    recorte no sobreviva. \`extra_values\` son valores que se retiran siempre
+    que midan al menos \`MIN_EXTRA_REDACTED_VALUE_LENGTH\` (los que el host
+    exportó desde Secrets Manager); por defecto, ninguno."""
+    cleaned = _without_credentials(
+        _without_environment_values(_normalized(text), environ, extra_values)
+    )
     return bounded_tail(cleaned.strip()).strip()
 `,
   "drivers/__init__.py": `"""Drivers del host del agente: cada módulo expone \`create(options)\`
@@ -735,9 +796,11 @@ def create(options: Mapping[str, Any]) -> Driver:
 stdout a eventos del protocolo v1.
 
 - \`protocol="rayito-v1"\`: el hijo recibe \`{"v":1,"prompt","session_id",
-  "model","reasoning"}\` en una línea y escribe líneas v1 (\`session\`,
+  "model","reasoning"}\` (con \`input\` si la petición lo trae y el driver lo
+  admite, \`accepts_input\`) en una línea y escribe líneas v1 (\`session\`,
   \`text_delta\`, \`text\`, \`tool_call\`, \`step_started\`, \`step_finished\`...,
-  \`agent_failed\` y \`done\`); el driver las reenvía tal cual.
+  \`agent_failed\` y \`done\`, que puede llevar \`output\`); el driver las reenvía
+  tal cual.
 - \`protocol="text"\`: el hijo recibe el prompt tal cual por stdin y la sesión,
   el modelo y el razonamiento por \`RAYITO_SESSION_ID\`, \`RAYITO_MODEL\` y
   \`RAYITO_REASONING\`; cada línea de stdout sale como \`text_delta\`, y el
@@ -786,6 +849,9 @@ SESSION_ID_ENV: Final = "RAYITO_SESSION_ID"
 MODEL_ENV: Final = "RAYITO_MODEL"
 REASONING_ENV: Final = "RAYITO_REASONING"
 FALLBACK_DETAIL_CODE: Final = "child_failed"
+#: La clave de la configuración con la que quien crea el driver declara que
+#: el hijo entiende \`input\` (el adaptador \`langgraph\` del puente de Node).
+ACCEPTS_INPUT_KEY: Final = "accepts_input"
 
 
 def _request_line(request: Request, session_id: str) -> bytes:
@@ -798,6 +864,8 @@ def _request_line(request: Request, session_id: str) -> bytes:
     }
     if request.aws_env is not None:
         payload["aws_env"] = dict(request.aws_env)
+    if request.input is not None:
+        payload["input"] = dict(request.input)
     return (json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\\n").encode("utf-8")
 
 
@@ -843,6 +911,9 @@ class Relay:
             )
         elif kind == "done":
             self.done = True
+            output = payload.get("output")
+            if isinstance(output, Mapping):
+                state.output = dict(output)
         else:
             self.ignored_lines += 1
 
@@ -855,6 +926,9 @@ class Driver:
         self._protocol = str(config.get("protocol", PROTOCOL_V1))
         if self._protocol not in (PROTOCOL_V1, PROTOCOL_TEXT):
             raise AgentFailure("protocol_error", "invalid_protocol")
+        self.accepts_input = self._protocol == PROTOCOL_V1 and bool(
+            config.get(ACCEPTS_INPUT_KEY, False)
+        )
         self._child: ChildProcess | None = None
         self._lock = threading.Lock()
 
@@ -945,8 +1019,9 @@ un envoltorio de este módulo con el mismo argv y la misma salida.
 
 - **Entrada**: la configuración estática (modelo, pasarela, instrucciones,
   permisos, subagentes) en el JSON que escribe el SDK, y la petición de cada
-  ejecución \`{"v":1,"prompt","session_id","model","reasoning"}\`. El prompt
-  nunca va en argv.
+  ejecución \`{"v":1,"prompt","session_id","model","reasoning"}\` o, para un
+  grafo con esquema de entrada propio, \`input\` en vez de \`prompt\` (ADR-033
+  D3). El prompt nunca va en argv.
 - **Salida**: una línea \`{"v":1,"type":...}\` por evento, con los mismos
   nombres que los eventos de Rayito, más \`session\`.
 - **Credenciales**: ninguna. El modelo apunta a la pasarela de secretos
@@ -961,17 +1036,24 @@ lo ejercitan con módulos de doble en \`sys.modules\`.
 
 from __future__ import annotations
 
+import contextlib
+import dataclasses
 import fnmatch
 import importlib
 import json
 import os
 import re
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, Final
 
+from ..limits import output_fits
 from ..protocol import (
+    INPUT_REQUIRED,
+    INVALID_INPUT,
+    OUTPUT_NOT_SERIALIZABLE,
     PROTOCOL_VERSION,
     AgentFailure,
     Emit,
@@ -1022,6 +1104,42 @@ AZURE_OPENAI_V1_API_VERSION: Final = "v1"
 MODEL_NODES: Final = ("model", "agent")
 #: El nodo de herramientas en todos esos grafos.
 TOOLS_NODE: Final = "tools"
+
+#: Cómo se invoca un grafo con \`entrypoint\` (ADR-033 D3): con mensajes (el
+#: prompt, como siempre) o con un objeto de entrada con esquema propio.
+MESSAGES_INPUT: Final = "messages"
+STRUCTURED_INPUT: Final = "structured"
+#: La clave de los mensajes en el estado de un grafo de mensajes.
+MESSAGES_KEY: Final = "messages"
+#: El modo de \`stream\` con el estado completo tras cada paso: de su último
+#: valor sale \`output\` (la documentación de LangGraph avisa de que \`stream\` no
+#: aplica el \`output_schema\`, así que se filtra aquí).
+VALUES_MODE: Final = "values"
+#: Comprobación de los tipos de JSON Schema de primer nivel de un \`input\`
+#: (\`testdata/agent-deploy/input-validation.json\`). \`integer\` acepta un
+#: \`float\` sin parte fraccionaria (\`3.0\`), como JSON Schema y como el puente
+#: de Node, que no distingue \`3\` de \`3.0\`.
+JSON_TYPE_CHECKS: Final[Mapping[str, Callable[[object], bool]]] = MappingProxyType(
+    {
+        "string": lambda value: isinstance(value, str),
+        "integer": lambda value: (
+            (isinstance(value, int) and not isinstance(value, bool))
+            or (isinstance(value, float) and value.is_integer())
+        ),
+        "number": lambda value: isinstance(value, int | float) and not isinstance(value, bool),
+        "boolean": lambda value: isinstance(value, bool),
+        "object": lambda value: isinstance(value, Mapping),
+        "array": lambda value: isinstance(value, list),
+        "null": lambda value: value is None,
+    }
+)
+#: \`pydantic.ValidationError\` (definida en \`pydantic_core\`) de un grafo que
+#: valida su entrada: se reconoce por módulo y clase, nunca por el mensaje.
+VALIDATION_ERROR_MODULES: Final = ("pydantic", "pydantic_core")
+VALIDATION_ERROR_CLASS: Final = "ValidationError"
+#: La clase base de un modelo de pydantic en un estado de salida: se
+#: serializa con \`model_dump(mode="json")\`.
+PYDANTIC_MODEL_CLASS: Final = "BaseModel"
 
 _SESSION_ID_PATTERN: Final = re.compile(r"rda_[0-9a-f]{32}")
 _REASONING_BLOCK_TYPES: Final = ("reasoning", "thinking", "reasoning_content")
@@ -1421,19 +1539,27 @@ def _classify(exc: BaseException) -> tuple[str, str]:
     return classify_by_module(exc, MODEL_ERROR_MODULES)
 
 
-def build_context(config: Mapping[str, Any], model_id: str) -> RunnerContext:
+def build_context(config: Mapping[str, Any], model_id: str | None) -> RunnerContext:
+    """El \`ctx\` de tu \`entrypoint\`. Sin id (ni en la petición ni en la
+    configuración) no se construye ningún modelo y \`ctx.model\` es \`None\`: tu
+    grafo elige el suyo."""
     if not config.get("prompt_caching", True):
         disable_prompt_caching(importlib.import_module("deepagents.graph"))
     backends = importlib.import_module("deepagents.backends")
     workdir = str(config["workdir"])
     return RunnerContext(
-        model=build_model(config, model_id),
+        model=optional_model(config, model_id),
         instructions=config.get("instructions"),
         subagents=subagents_of(config, lambda sub_model: build_model(config, sub_model)),
         backend=backends.LocalShellBackend(root_dir=workdir, virtual_mode=False),
         middleware=[permission_middleware(config["permissions"])],
         workdir=workdir,
     )
+
+
+def optional_model(config: Mapping[str, Any], model_id: str | None) -> Any:
+    """\`build_model\` sólo si hay un id que construir."""
+    return None if model_id is None else build_model(config, model_id)
 
 
 def stream_events(
@@ -1458,7 +1584,10 @@ def stream_events(
 
 def execute(config: Mapping[str, Any], request: Request, emit: Emit, state: RunState) -> None:
     """Una ejecución: emite los eventos de progreso y deja el id de sesión
-    en \`state\`; un fallo es una excepción que cierra quien llama."""
+    (y la salida estructurada, si la hay) en \`state\`; un fallo es una
+    excepción que cierra quien llama. Sólo un grafo con \`entrypoint\` puede
+    tener un esquema de entrada propio; el agente por defecto es de
+    mensajes."""
     sessions_dir = Path(config["sessions_dir"])
     state.session_id, history = load_history(sessions_dir, request.session_id)
     emit({"v": PROTOCOL_VERSION, "type": "session", "session_id": state.session_id})
@@ -1473,12 +1602,228 @@ def execute(config: Mapping[str, Any], request: Request, emit: Emit, state: RunS
         if entrypoint
         else default_graph(ctx)
     )
+    kind, schema = input_kind(graph) if entrypoint else (MESSAGES_INPUT, {})
+    structured = kind == STRUCTURED_INPUT and (request.input is not None or requires_input(schema))
+    new_messages = (
+        _structured_run(graph, schema, request, emit, state)
+        if structured
+        else _messages_run(graph, request, emit, history)
+    )
+    save_history(sessions_dir, state.session_id, [*history, *new_messages])
+
+
+def _messages_run(graph: Any, request: Request, emit: Emit, history: list[Any]) -> list[Any]:
+    """Un grafo de mensajes, con los mismos argumentos de \`stream\` de
+    siempre: el prompt se añade al historial como \`HumanMessage\`. Un \`input\`
+    se pasa tal cual, con sus \`messages\` detrás del historial de la
+    sesión. Devuelve los mensajes nuevos de la ejecución."""
     messages = importlib.import_module("langchain_core.messages")
-    history.append(messages.HumanMessage(content=request.prompt))
+    target = graph
+    if request.input is None:
+        history.append(messages.HumanMessage(content=request.prompt))
+    else:
+        history.extend(_input_messages(messages, request.input))
+        target = _WithInput(graph, request.input)
     translator = Translator(reasoning=request.reasoning)
-    for event in stream_events(graph, history, translator):
+    for event in stream_events(target, history, translator):
         emit({"v": PROTOCOL_VERSION, **event})
-    save_history(sessions_dir, state.session_id, [*history, *translator.new_messages])
+    return translator.new_messages
+
+
+def _structured_run(
+    graph: Any, schema: Mapping[str, Any], request: Request, emit: Emit, state: RunState
+) -> list[Any]:
+    """Un grafo con esquema de entrada propio: exige \`input\`, lo comprueba
+    contra el esquema y lo pasa con \`configurable.thread_id\` igual a la
+    sesión. \`state.output\` es el último estado filtrado al esquema de
+    salida. Devuelve los mensajes nuevos de la ejecución (los del modelo, si
+    el grafo lo llama), que se guardan en la sesión."""
+    if request.input is None:
+        raise AgentFailure("protocol_error", INPUT_REQUIRED)
+    validate_input(schema, request.input)
+    target = _StructuredGraph(graph, request.input, str(state.session_id))
+    translator = Translator(reasoning=request.reasoning)
+    with _validation_failures():
+        for event in stream_events(target, [], translator):
+            emit({"v": PROTOCOL_VERSION, **event})
+    state.output = structured_output(graph, target.last_values)
+    return translator.new_messages
+
+
+def input_kind(graph: Any) -> tuple[str, Mapping[str, Any]]:
+    """\`(MESSAGES_INPUT, {})\` o \`(STRUCTURED_INPUT, esquema)\`: un grafo es de
+    mensajes si su \`get_input_jsonschema()\` tiene \`properties.messages\`, si
+    no tiene \`properties\` o si la introspección falla (el comportamiento de
+    siempre). Ocurre dentro del host, que ya ejecuta el código del usuario;
+    la detección nunca lo hace."""
+    try:
+        schema = graph.get_input_jsonschema()
+    except Exception:
+        return MESSAGES_INPUT, {}
+    properties = schema.get("properties") if isinstance(schema, Mapping) else None
+    if not isinstance(properties, Mapping) or MESSAGES_KEY in properties:
+        return MESSAGES_INPUT, {}
+    return STRUCTURED_INPUT, schema
+
+
+def requires_input(schema: Mapping[str, Any]) -> bool:
+    """Si un grafo de esquema propio exige \`input\`: sólo si declara claves
+    \`required\`. Sin ellas, un prompt sigue el camino de mensajes de siempre,
+    como antes de ADR-033 D3, en vez de fallar con \`input_required\`."""
+    required = schema.get("required")
+    return isinstance(required, list) and bool(required)
+
+
+def validate_input(schema: Mapping[str, Any], data: Mapping[str, Any]) -> None:
+    """Comprueba \`data\` con la biblioteca estándar contra lo básico del
+    esquema: un objeto, las claves de \`required\`, ninguna clave de más si
+    \`additionalProperties\` es \`false\` y el tipo de cada clave de primer nivel.
+    Un fallo es \`protocol_error\`/\`invalid_input\`, sin el valor."""
+    properties = schema.get("properties")
+    known = properties if isinstance(properties, Mapping) else {}
+    required = schema.get("required")
+    valid = (
+        isinstance(data, Mapping)
+        and all(key in data for key in (required if isinstance(required, list) else []))
+        and (schema.get("additionalProperties") is not False or all(key in known for key in data))
+        and all(_matches(value, known.get(key)) for key, value in data.items())
+    )
+    if not valid:
+        raise AgentFailure("protocol_error", INVALID_INPUT)
+
+
+def _matches(value: object, spec: object) -> bool:
+    """Si \`value\` cumple el \`type\` (o alguna rama de \`anyOf\`/\`oneOf\`) de
+    \`spec\`; lo que el esquema no dice, o un tipo desconocido, no se
+    comprueba."""
+    if not isinstance(spec, Mapping):
+        return True
+    declared = spec.get("type")
+    if declared is not None:
+        names = declared if isinstance(declared, list) else [declared]
+        checks = [JSON_TYPE_CHECKS[name] for name in names if name in JSON_TYPE_CHECKS]
+        return not checks or any(check(value) for check in checks)
+    branches = spec.get("anyOf") or spec.get("oneOf")
+    if isinstance(branches, list):
+        return any(_matches(value, branch) for branch in branches)
+    return True
+
+
+def _input_messages(messages: Any, data: Mapping[str, Any]) -> list[Any]:
+    """Los \`messages\` de un \`input\` como mensajes de LangChain; una forma que
+    LangChain no entiende es \`invalid_input\`."""
+    try:
+        return list(messages.convert_to_messages(data.get(MESSAGES_KEY) or []))
+    except (TypeError, ValueError, NotImplementedError):
+        raise AgentFailure("protocol_error", INVALID_INPUT) from None
+
+
+@contextlib.contextmanager
+def _validation_failures() -> Iterator[None]:
+    """Una \`ValidationError\` de pydantic que lance el grafo al validar su
+    entrada es \`invalid_input\` (por módulo y clase, sin el mensaje)."""
+    try:
+        yield
+    except Exception as exc:
+        module = type(exc).__module__.split(".", 1)[0]
+        if module in VALIDATION_ERROR_MODULES and type(exc).__name__ == VALIDATION_ERROR_CLASS:
+            raise AgentFailure("protocol_error", INVALID_INPUT) from None
+        raise
+
+
+class _WithInput:
+    """Un grafo de mensajes llamado con un \`input\`: \`stream_events\` le pasa
+    \`{"messages": historial}\` y aquí se añade el resto de claves del
+    \`input\`."""
+
+    def __init__(self, graph: Any, data: Mapping[str, Any]) -> None:
+        self._graph = graph
+        self._data = data
+
+    def stream(self, payload: Mapping[str, Any], **kwargs: Any) -> Any:
+        return self._graph.stream({**self._data, **payload}, **kwargs)
+
+
+class _StructuredGraph:
+    """Un grafo con esquema propio que \`stream_events\` puede recorrer: lo
+    llama con el \`input\` (no con el \`{"messages": ...}\` que le pasa
+    \`stream_events\`, que se descarta), con \`thread_id\` igual a la sesión y
+    con el modo \`values\` además de los de siempre, y guarda el último estado
+    (\`last_values\`)."""
+
+    def __init__(self, graph: Any, data: Mapping[str, Any], session_id: str) -> None:
+        self._graph = graph
+        self._data = data
+        self._session_id = session_id
+        self.last_values: object = None
+
+    def stream(self, payload: object, **kwargs: Any) -> Iterator[Any]:
+        config = {**kwargs.pop("config", {}), "configurable": {"thread_id": self._session_id}}
+        modes = [*kwargs.pop("stream_mode", []), VALUES_MODE]
+        stream = self._graph.stream(dict(self._data), config=config, stream_mode=modes, **kwargs)
+        for item in stream:
+            namespace, mode, data = item
+            if not namespace and mode == VALUES_MODE:
+                self.last_values = data
+            yield item
+
+
+def structured_output(graph: Any, values: object) -> dict[str, Any]:
+    """El último estado, filtrado a las claves de \`get_output_jsonschema()\`
+    (sin filtro si la introspección falla), en JSON: los mensajes de LangChain
+    con \`messages_to_dict\`. Lo que no se puede codificar, o no cabe en
+    \`MAX_SERVICE_OUTPUT_BYTES\`, es \`protocol_error\`/\`output_not_serializable\`."""
+    state = values if isinstance(values, Mapping) else {}
+    keys = _output_keys(graph)
+    selected = {key: value for key, value in state.items() if keys is None or key in keys}
+    messages = importlib.import_module("langchain_core.messages")
+    try:
+        output: dict[str, Any] = _jsonable(selected, messages)
+        encoded = json.dumps(output, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
+    except (TypeError, ValueError):
+        raise AgentFailure("protocol_error", OUTPUT_NOT_SERIALIZABLE) from None
+    if not output_fits(encoded):
+        raise AgentFailure("protocol_error", OUTPUT_NOT_SERIALIZABLE)
+    return output
+
+
+def _output_keys(graph: Any) -> frozenset[str] | None:
+    try:
+        properties = graph.get_output_jsonschema().get("properties")
+    except Exception:
+        return None
+    return frozenset(properties) if isinstance(properties, Mapping) else None
+
+
+def _jsonable(value: Any, messages: Any) -> Any:
+    """\`value\` con cada mensaje de LangChain como su diccionario, cada modelo
+    de pydantic como \`model_dump(mode="json")\` y cada dataclass como
+    \`dataclasses.asdict\`; el resto, tal cual (\`json.dumps\` decide si se puede
+    codificar)."""
+    message_type = getattr(messages, "BaseMessage", None)
+    if message_type is not None and isinstance(value, message_type):
+        return messages.messages_to_dict([value])[0]
+    if _is_pydantic_model(value):
+        return _jsonable(value.model_dump(mode="json"), messages)
+    if dataclasses.is_dataclass(value) and not isinstance(value, type):
+        return _jsonable(dataclasses.asdict(value), messages)
+    if isinstance(value, Mapping):
+        if not all(isinstance(key, str) for key in value):
+            raise TypeError("clave no textual")
+        return {key: _jsonable(item, messages) for key, item in value.items()}
+    if isinstance(value, list | tuple):
+        return [_jsonable(item, messages) for item in value]
+    return value
+
+
+def _is_pydantic_model(value: object) -> bool:
+    """Si \`value\` es una instancia de un \`BaseModel\` de pydantic (v2), por su
+    clase y sin importar pydantic: el host no depende de él."""
+    return not isinstance(value, type) and any(
+        klass.__name__ == PYDANTIC_MODEL_CLASS
+        and klass.__module__.split(".", 1)[0] in VALIDATION_ERROR_MODULES
+        for klass in type(value).__mro__
+    )
 
 
 def run(config: Mapping[str, Any], request: Mapping[str, Any], emitter: Emitter) -> int:
@@ -1498,7 +1843,10 @@ def _forward(emitter: Emitter, event: Mapping[str, Any]) -> None:
 
 class Driver:
     """El driver de deepagents del host. \`warm()\` importa deepagents para que
-    la primera invocación del servicio no pague el import."""
+    la primera invocación del servicio no pague el import. Entiende
+    \`Request.input\` (\`accepts_input\`)."""
+
+    accepts_input = True
 
     def __init__(self, config: Mapping[str, Any]) -> None:
         self._config = config
@@ -1958,7 +2306,8 @@ Configuración del driver:
   \`json\` (una app con su propio contrato: el prompt va en el campo
   \`request_field\` y el texto sale de \`response_field\`, o del primer campo de
   texto de \`JSON_TEXT_KEYS\`; sus demás rutas siguen alcanzables),
-  \`openai-chat\` (Chat Completions con streaming) o \`raw\`.
+  \`openai-chat\` (Chat Completions con streaming), \`raw\` o \`langgraph-api\`
+  (el LangGraph Platform API de \`langgraph dev\`; ver abajo).
 - \`port_env\`: la variable de entorno con la que se le dice a la app en qué
   \`port\` escuchar (por ejemplo \`PORT\`); sin ella no se toca el entorno.
 - Supervisión: una app que muere después de estar lista se relanza con una
@@ -1982,17 +2331,48 @@ Con \`raw\` no hay traducción: el host reenvía tal cual todo lo que no es
 o cualquier otro protocolo sólo se expone, no se invoca con \`invoke()\`. Con
 \`json\` el host traduce \`/invocations\` y además reenvía tal cual el resto de
 rutas (\`forwards\`).
+
+Con \`langgraph-api\` (ADR-033 D5, experimental) cada invocación es un
+\`POST /threads/{thread_id}/runs/wait\` con \`assistant_id\` (obligatorio en la
+configuración), la entrada del grafo (el prompt como un mensaje de usuario, o
+el \`input\` estructurado de la petición tal cual: \`accepts_input\`),
+\`if_not_exists="create"\` y \`multitask_strategy="reject"\`. El hilo es
+\`uuid5(LANGGRAPH_THREAD_NAMESPACE, session_id)\`, también para la sesión
+\`app_<hex>\` que crea el driver, así que la misma sesión sigue el mismo hilo
+tras un relanzamiento de la app. El texto sale de \`response_field\` o del
+último mensaje del estado final (\`langgraph_text\`), el uso de su
+\`usage_metadata\`; con \`input\`, un estado final sin \`messages\` es la salida
+estructurada (\`langgraph_output\`) y el texto queda vacío para no repetir el
+estado, y un estado final con \`messages\` da sólo el texto de su último
+mensaje, como en el driver de deepagents. Un grafo detenido en un \`interrupt\` es
+\`protocol_error\`/\`graph_interrupted\`. La salud es \`GET /ok\`, la espera de
+arranque es \`LANGGRAPH_READY_WAIT_SECONDS\` y el hijo arranca sin la
+telemetría de la CLI ni las trazas a LangSmith salvo que el entorno las fije
+(\`LANGGRAPH_CHILD_ENV_DEFAULTS\`). \`langgraph dev\` resuelve las rutas de su
+\`langgraph.json\` contra su directorio de trabajo y escribe allí el estado de
+su servidor en memoria (\`.langgraph_api/\`), pero el código copiado
+(\`app_dir\`) es de sólo lectura: si el comando lleva \`--config\`, el host
+escribe en \`workdir\` una copia de la configuración con las rutas absolutas
+(\`langgraph_absolute_config\`) y arranca la app en \`workdir\`
+(\`langgraph_launch\`). Fuentes, consultadas el 2026-10-21:
+https://docs.langchain.com/langsmith/agent-server-api/thread-runs/create-run-wait-for-output.md,
+https://docs.langchain.com/langsmith/agent-server-api/system/health-check.md y
+https://docs.langchain.com/langsmith/data-storage-and-privacy.
 """
 
 from __future__ import annotations
 
 import http.client
 import json
+import os
 import threading
-from collections.abc import Iterator, Mapping
+import uuid
+from collections.abc import Iterator, Mapping, Sequence
 from http import HTTPStatus
+from pathlib import Path
 from typing import Any, Final
 
+from ..limits import output_fits
 from ..process import (
     DEFAULT_START_TIMEOUT_SECONDS,
     STATE_FAILED,
@@ -2003,6 +2383,7 @@ from ..process import (
     Supervisor,
 )
 from ..protocol import (
+    OUTPUT_NOT_SERIALIZABLE,
     AgentFailure,
     Emit,
     Request,
@@ -2021,7 +2402,46 @@ REQUEST_TIMEOUT_SECONDS: Final = 600.0
 #: Claves de una respuesta JSON donde buscar el texto, en este orden.
 TEXT_KEYS: Final = ("text", "response", "result", "output", "message", "content", "answer")
 SESSION_HEADER: Final = "X-Amzn-Bedrock-AgentCore-Runtime-Session-Id"
-PROTOCOLS: Final = ("agentcore", "json", "openai-chat", "raw")
+PROTOCOL_LANGGRAPH_API: Final = "langgraph-api"
+PROTOCOLS: Final = ("agentcore", "json", "openai-chat", "raw", PROTOCOL_LANGGRAPH_API)
+#: Rutas por defecto de la app si la configuración no trae \`health_path\` o
+#: \`invoke_path\` (el contrato de AgentCore).
+DEFAULT_HEALTH_PATH: Final = "/ping"
+DEFAULT_INVOKE_PATH: Final = "/invocations"
+#: Lo que el host usa con \`langgraph-api\`: \`AGENT_LANGGRAPH_HEALTH_PATH\`,
+#: \`AGENT_LANGGRAPH_INVOKE_PATH\`, \`AGENT_LANGGRAPH_THREAD_NAMESPACE\` y
+#: \`AGENT_LANGGRAPH_READY_WAIT_SECONDS\` de \`limits.json\` (el host no importa
+#: \`rayito\`; una prueba comprueba que coinciden). La espera es provisional
+#: hasta medir el arranque de \`langgraph dev\` (\`AWS_API_NOTES.md\` Q189).
+LANGGRAPH_HEALTH_PATH: Final = "/ok"
+LANGGRAPH_INVOKE_PATH: Final = "/threads/{thread_id}/runs/wait"
+LANGGRAPH_THREAD_PLACEHOLDER: Final = "{thread_id}"
+LANGGRAPH_THREAD_NAMESPACE: Final = uuid.UUID("9f31c836-3dec-4f92-9808-a4a78225e7b9")
+LANGGRAPH_READY_WAIT_SECONDS: Final = 60.0
+#: Un hilo que no existe se crea, y una segunda ejecución sobre un hilo
+#: ocupado falla (\`409\`) en vez de encolarse sin plazo (por defecto el
+#: servidor usa \`reject\` y \`enqueue\`).
+LANGGRAPH_IF_NOT_EXISTS: Final = "create"
+LANGGRAPH_MULTITASK_STRATEGY: Final = "reject"
+LANGGRAPH_MESSAGES_KEY: Final = "messages"
+LANGGRAPH_INTERRUPT_KEY: Final = "__interrupt__"
+LANGGRAPH_USAGE_KEY: Final = "usage_metadata"
+LANGGRAPH_TEXT_BLOCK: Final = "text"
+USER_ROLE: Final = "user"
+#: El entorno que el hijo de \`langgraph-api\` recibe si el del host no lo
+#: fija: sin la telemetría de la CLI de LangGraph ni trazas a LangSmith.
+LANGGRAPH_CHILD_ENV_DEFAULTS: Final = (
+    ("LANGGRAPH_CLI_NO_ANALYTICS", "1"),
+    ("LANGSMITH_TRACING", "false"),
+)
+#: La opción de \`langgraph dev\` con su configuración, la copia que el host
+#: escribe en \`workdir\` (con las rutas absolutas) y las extensiones de una
+#: ruta de grafo de \`graphs\` (\`./agent.py:graph\`); una ruta de módulo
+#: (\`paquete.modulo:graph\`) se importa del \`PYTHONPATH\`, que ya empieza por
+#: \`app_dir\`, y no cambia. Q189 de \`AWS_API_NOTES.md\` cuenta por qué.
+LANGGRAPH_CONFIG_FLAG: Final = "--config"
+LANGGRAPH_CONFIG_COPY: Final = ".rayito/langgraph-api/langgraph.json"
+LANGGRAPH_GRAPH_FILE_SUFFIXES: Final = (".py", ".js", ".mjs", ".cjs", ".ts", ".mts", ".cts")
 #: El campo del cuerpo que lleva el prompt con \`json\`, si la
 #: configuración no trae \`request_field\`.
 DEFAULT_REQUEST_FIELD: Final = "prompt"
@@ -2083,6 +2503,201 @@ def field_text(payload: object, path: str) -> str | None:
     return current if isinstance(current, str) else None
 
 
+def langgraph_thread_id(session_id: str) -> str:
+    """El hilo del LangGraph Platform API de una sesión: determinista y sin
+    estado, así que sobrevive a un relanzamiento de la app."""
+    return str(uuid.uuid5(LANGGRAPH_THREAD_NAMESPACE, session_id))
+
+
+def langgraph_invoke_path(template: str, session_id: str) -> str:
+    """La ruta de la ejecución con el hilo de la sesión en \`{thread_id}\`."""
+    return template.replace(LANGGRAPH_THREAD_PLACEHOLDER, langgraph_thread_id(session_id))
+
+
+def langgraph_absolute_config(config: Mapping[str, Any], app_dir: str) -> dict[str, Any]:
+    """\`langgraph.json\` con las rutas relativas hechas absolutas contra
+    \`app_dir\`: cada \`dependencies\`, la ruta de cada grafo de \`graphs\` (una
+    cadena o un objeto con \`path\`) y \`env\` si es la ruta de un \`.env\`. El
+    resto de claves no cambia. Sólo lee la configuración: nunca el código."""
+    absolute = dict(config)
+    dependencies = config.get("dependencies")
+    if isinstance(dependencies, list):
+        absolute["dependencies"] = [
+            _absolute_path(app_dir, item) if isinstance(item, str) else item
+            for item in dependencies
+        ]
+    graphs = config.get("graphs")
+    if isinstance(graphs, Mapping):
+        absolute["graphs"] = {name: _absolute_graph(app_dir, spec) for name, spec in graphs.items()}
+    env = config.get("env")
+    if isinstance(env, str):
+        absolute["env"] = _absolute_path(app_dir, env)
+    return absolute
+
+
+def langgraph_launch(
+    command: Sequence[object], app_dir: str, workdir: str
+) -> tuple[list[str], str] | None:
+    """El argv y el directorio de trabajo de \`langgraph dev\`: su
+    \`--config\` (de \`app_dir\`) copiado a \`workdir\` con las rutas absolutas, y
+    \`workdir\` como directorio de trabajo, que es donde escribe su estado.
+    \`None\` si el comando no lleva \`--config\`, o si la configuración no se lee
+    o su copia no se escribe: la app arranca como siempre y es ella quien
+    informa del error."""
+    argv = [str(part) for part in command]
+    position = _config_position(argv)
+    if position is None:
+        return None
+    index, inline = position
+    value = argv[index].split("=", 1)[1] if inline else argv[index]
+    copy = Path(workdir) / LANGGRAPH_CONFIG_COPY
+    try:
+        loaded = json.loads(Path(_absolute_path(app_dir, value)).read_text("utf-8"))
+        if not isinstance(loaded, Mapping):
+            return None
+        copy.parent.mkdir(parents=True, exist_ok=True)
+        copy.write_text(json.dumps(langgraph_absolute_config(loaded, app_dir)), encoding="utf-8")
+    except (OSError, ValueError):
+        return None
+    argv[index] = f"{LANGGRAPH_CONFIG_FLAG}={copy}" if inline else str(copy)
+    return argv, workdir
+
+
+def _config_position(argv: Sequence[str]) -> tuple[int, bool] | None:
+    """Dónde está el valor de \`--config\`: el índice del argumento que lo
+    lleva y si va pegado (\`--config=x\`)."""
+    for index, part in enumerate(argv):
+        if part == LANGGRAPH_CONFIG_FLAG and index + 1 < len(argv):
+            return index + 1, False
+        if part.startswith(f"{LANGGRAPH_CONFIG_FLAG}="):
+            return index, True
+    return None
+
+
+def _absolute_path(app_dir: str, path: str) -> str:
+    return path if os.path.isabs(path) else os.path.normpath(os.path.join(app_dir, path))
+
+
+def _absolute_graph(app_dir: str, spec: object) -> object:
+    if isinstance(spec, str):
+        return _absolute_graph_path(app_dir, spec)
+    if isinstance(spec, Mapping) and isinstance(spec.get("path"), str):
+        return {**spec, "path": _absolute_graph_path(app_dir, spec["path"])}
+    return spec
+
+
+def _absolute_graph_path(app_dir: str, spec: str) -> str:
+    path, separator, attribute = spec.rpartition(":")
+    if not separator or not (path.endswith(LANGGRAPH_GRAPH_FILE_SUFFIXES) or "/" in path):
+        return spec
+    return f"{_absolute_path(app_dir, path)}:{attribute}"
+
+
+def langgraph_prompt_input(prompt: str) -> dict[str, Any]:
+    """La entrada del grafo para un prompt: un único mensaje de usuario."""
+    return {LANGGRAPH_MESSAGES_KEY: [{"role": USER_ROLE, "content": prompt}]}
+
+
+def langgraph_input(request: Request) -> dict[str, Any]:
+    """La entrada del grafo de una petición: su \`input\` estructurado tal cual
+    (ADR-033 D3) o, si no lo trae, el prompt como un mensaje de usuario."""
+    if request.input is not None:
+        return dict(request.input)
+    return langgraph_prompt_input(request.prompt)
+
+
+def langgraph_body(assistant_id: str, graph_input: Mapping[str, Any]) -> dict[str, Any]:
+    """El cuerpo de \`POST /threads/{thread_id}/runs/wait\`."""
+    return {
+        "assistant_id": assistant_id,
+        "input": dict(graph_input),
+        "if_not_exists": LANGGRAPH_IF_NOT_EXISTS,
+        "multitask_strategy": LANGGRAPH_MULTITASK_STRATEGY,
+    }
+
+
+def langgraph_last_message(state: object) -> Mapping[str, Any] | None:
+    """El último mensaje de \`messages\` del estado final, o \`None\`."""
+    messages = state.get(LANGGRAPH_MESSAGES_KEY) if isinstance(state, Mapping) else None
+    if not isinstance(messages, list) or not messages:
+        return None
+    last = messages[-1]
+    return last if isinstance(last, Mapping) else None
+
+
+def langgraph_message_text(message: Mapping[str, Any]) -> str:
+    """El \`content\` de un mensaje: una cadena tal cual, o la concatenación de
+    sus bloques de texto (los de herramientas se descartan)."""
+    content = message.get("content")
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        return ""
+    return "".join(
+        block["text"]
+        for block in content
+        if isinstance(block, Mapping)
+        and block.get("type") == LANGGRAPH_TEXT_BLOCK
+        and isinstance(block.get("text"), str)
+    )
+
+
+def langgraph_text(state: object) -> str:
+    """El texto del estado final: el del último mensaje o, sin mensajes, el
+    JSON entero (estricto: un \`NaN\` o un infinito es
+    \`protocol_error\`/\`invalid_response\`)."""
+    message = langgraph_last_message(state)
+    if message is None:
+        return _strict_json_text(state)
+    return langgraph_message_text(message)
+
+
+def _strict_json_text(state: object) -> str:
+    try:
+        return json.dumps(state, ensure_ascii=False, allow_nan=False)
+    except ValueError:
+        pass
+    raise AgentFailure("protocol_error", "invalid_response")
+
+
+def is_structured_state(state: object) -> bool:
+    """Si el estado final es de un grafo con esquema propio: un objeto sin
+    \`messages\`."""
+    return isinstance(state, Mapping) and LANGGRAPH_MESSAGES_KEY not in state
+
+
+def langgraph_output(state: object) -> dict[str, Any] | None:
+    """La salida estructurada de un grafo llamado con \`input\`: su estado
+    final si no es de mensajes (sin \`messages\`), como la de un grafo de
+    esquema propio en el driver de deepagents; si no, \`None\` y sólo texto.
+    Lo que no se codifica en JSON estricto o no cabe en
+    \`MAX_SERVICE_OUTPUT_BYTES\` es \`protocol_error\`/\`output_not_serializable\`."""
+    if not isinstance(state, Mapping) or not is_structured_state(state):
+        return None
+    output = dict(state)
+    try:
+        encoded = json.dumps(output, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
+    except ValueError:
+        raise AgentFailure("protocol_error", OUTPUT_NOT_SERIALIZABLE) from None
+    if not output_fits(encoded):
+        raise AgentFailure("protocol_error", OUTPUT_NOT_SERIALIZABLE)
+    return output
+
+
+def langgraph_usage(state: object) -> dict[str, int] | None:
+    """El uso de tokens de \`usage_metadata\` del último mensaje, o \`None\`
+    (desconocido, no cero)."""
+    message = langgraph_last_message(state)
+    return None if message is None else app_usage(message.get(LANGGRAPH_USAGE_KEY))
+
+
+def check_langgraph_interrupt(state: object) -> None:
+    """Un grafo detenido en un \`interrupt\` (human-in-the-loop) no se
+    reanuda desde el host: es \`protocol_error\`/\`graph_interrupted\`."""
+    if isinstance(state, Mapping) and state.get(LANGGRAPH_INTERRUPT_KEY):
+        raise AgentFailure("protocol_error", "graph_interrupted")
+
+
 def iter_sse_data(response: http.client.HTTPResponse) -> Iterator[str]:
     """Los campos \`data\` de un stream SSE, uno por mensaje."""
     data: list[str] = []
@@ -2126,10 +2741,23 @@ class Driver:
         self._protocol = str(config.get("protocol", "agentcore"))
         if self._protocol not in PROTOCOLS:
             raise AgentFailure("protocol_error", "invalid_protocol")
+        if self._langgraph and not config.get("assistant_id"):
+            raise AgentFailure("protocol_error", "invalid_protocol")
         self._supervisor: Supervisor | None = None
         self._listeners: list[FailureListener] = []
         self._lock = threading.Lock()
         self._request_timeout = REQUEST_TIMEOUT_SECONDS
+
+    @property
+    def _langgraph(self) -> bool:
+        return self._protocol == PROTOCOL_LANGGRAPH_API
+
+    @property
+    def accepts_input(self) -> bool:
+        """Sólo \`langgraph-api\` entiende \`Request.input\`: va como la entrada
+        del grafo. Con cualquier otro protocolo un \`input\` es
+        \`protocol_error\`/\`invalid_input\` (\`require_input_support\`)."""
+        return self._langgraph
 
     @property
     def raw(self) -> bool:
@@ -2175,7 +2803,7 @@ class Driver:
                 failure_codes=("app_exited", "app_not_ready"),
                 policy=RestartPolicy.from_config(self._config),
                 start_timeout_seconds=float(
-                    self._config.get("start_timeout_seconds", DEFAULT_START_TIMEOUT_SECONDS)
+                    self._config.get("start_timeout_seconds", self._default_start_timeout())
                 ),
             )
             for listener in self._listeners:
@@ -2188,18 +2816,37 @@ class Driver:
                 self._supervisor = None
             raise
 
+    def _default_start_timeout(self) -> float:
+        """La espera de arranque si la configuración no la trae: la propia de
+        \`langgraph dev\` con \`langgraph-api\` y la general en otro caso."""
+        return LANGGRAPH_READY_WAIT_SECONDS if self._langgraph else DEFAULT_START_TIMEOUT_SECONDS
+
+    def _path(self, key: str, default: str, langgraph_default: str) -> str:
+        """\`health_path\` o \`invoke_path\` de la configuración, o su valor por
+        defecto según el protocolo."""
+        return str(self._config.get(key, langgraph_default if self._langgraph else default))
+
     def _spawn(self) -> ChildProcess:
         env = child_environment(self._config)
+        if self._langgraph:
+            for name, value in LANGGRAPH_CHILD_ENV_DEFAULTS:
+                env.setdefault(name, value)
         port_env = self._config.get("port_env")
         if port_env:
             env[str(port_env)] = str(self._config["port"])
-        return ChildProcess(
-            child_argv(self._config["command"], env),
-            env=env,
-            cwd=self._working_directory(),
-            capture_stdout=False,
-            capture_stderr_tail=True,
-        )
+        argv, cwd = child_argv(self._config["command"], env), self._working_directory()
+        launch = self._langgraph_launch()
+        if launch is not None:
+            argv, cwd = child_argv(launch[0], env), launch[1]
+        return ChildProcess(argv, env=env, cwd=cwd, capture_stdout=False, capture_stderr_tail=True)
+
+    def _langgraph_launch(self) -> tuple[list[str], str] | None:
+        """Con \`langgraph-api\`, \`app_dir\` y \`workdir\`, el arranque de
+        \`langgraph dev\` en \`workdir\` (\`langgraph_launch\`); si no, \`None\`."""
+        app_dir, workdir = self._config.get("app_dir"), self._config.get("workdir")
+        if not (self._langgraph and app_dir and workdir):
+            return None
+        return langgraph_launch(self._config["command"], str(app_dir), str(workdir))
 
     def _working_directory(self) -> str | None:
         """El directorio del código copiado (\`app_dir\`), de modo que
@@ -2211,7 +2858,9 @@ class Driver:
     def _healthy(self) -> bool:
         try:
             connection = self._connection()
-            connection.request("GET", str(self._config.get("health_path", "/ping")))
+            connection.request(
+                "GET", self._path("health_path", DEFAULT_HEALTH_PATH, LANGGRAPH_HEALTH_PATH)
+            )
             status = connection.getresponse().status
             connection.close()
         except OSError:
@@ -2238,11 +2887,17 @@ class Driver:
         emit(build_event("session", session_id=state.session_id))
         emit(build_event("step_started", index=1))
         response = self._post(request, state.session_id)
-        text, usage = self._read(response, emit)
-        emit(build_event("text", text=text))
+        text, usage, final_state = self._read(response, emit, request.input is not None)
+        if request.input is not None:
+            state.output = langgraph_output(final_state)
+        if state.output is None:
+            emit(build_event("text", text=text))
         emit(build_event("step_finished", index=1, usage=usage, finish_reason="stop"))
 
     def _body(self, request: Request, session_id: str) -> dict[str, Any]:
+        if self._langgraph:
+            assistant_id = str(self._config["assistant_id"])
+            return langgraph_body(assistant_id, langgraph_input(request))
         if self._protocol == "openai-chat":
             return {
                 "model": request.model or self._config.get("model", ""),
@@ -2259,12 +2914,12 @@ class Driver:
         return body
 
     def _post(self, request: Request, session_id: str) -> http.client.HTTPResponse:
-        invoke_path = str(self._config.get("invoke_path", "/invocations"))
+        invoke_path = self._invoke_path(session_id)
         headers = {
             "Content-Type": "application/json",
             "Accept": "text/event-stream, application/json",
         }
-        if self._protocol != "openai-chat":
+        if self._protocol not in ("openai-chat", PROTOCOL_LANGGRAPH_API):
             headers[SESSION_HEADER] = session_id
         body = self._body(request, session_id)
         try:
@@ -2277,13 +2932,38 @@ class Driver:
             raise AgentFailure("runtime_error", f"app_http_{count(response.status)}")
         return response
 
+    def _invoke_path(self, session_id: str) -> str:
+        """La ruta de la invocación; con \`langgraph-api\`, la del hilo de la
+        sesión."""
+        path = self._path("invoke_path", DEFAULT_INVOKE_PATH, LANGGRAPH_INVOKE_PATH)
+        return langgraph_invoke_path(path, session_id) if self._langgraph else path
+
     def _json_text(self, payload: object) -> str:
         """El texto de una respuesta \`json\`: \`response_field\` si se
         configuró (y es un error que falte) o el primer candidato."""
         field = self._config.get("response_field")
         if not field:
             return extract_text(payload, JSON_TEXT_KEYS)
-        text = field_text(payload, str(field))
+        return self._field_text(payload, str(field))
+
+    def _langgraph_result(
+        self, state: object, with_input: bool
+    ) -> tuple[str, dict[str, int] | None]:
+        """El texto y el uso del estado final de un grafo: \`response_field\`
+        si se configuró o el último mensaje (\`langgraph_text\`). Con \`input\` y
+        un estado sin \`messages\`, el estado es la salida (\`langgraph_output\`)
+        y no hay texto."""
+        check_langgraph_interrupt(state)
+        if with_input and is_structured_state(state):
+            return "", langgraph_usage(state)
+        field = self._config.get("response_field")
+        text = self._field_text(state, str(field)) if field else langgraph_text(state)
+        return text, langgraph_usage(state)
+
+    @staticmethod
+    def _field_text(payload: object, field: str) -> str:
+        """El texto en \`field\`; que falte es \`invalid_response\`."""
+        text = field_text(payload, field)
         if text is None:
             raise AgentFailure("protocol_error", "invalid_response")
         return text
@@ -2297,17 +2977,22 @@ class Driver:
         return (str(field),) if field else JSON_TEXT_KEYS
 
     def _read(
-        self, response: http.client.HTTPResponse, emit: Emit
-    ) -> tuple[str, dict[str, int] | None]:
+        self, response: http.client.HTTPResponse, emit: Emit, with_input: bool = False
+    ) -> tuple[str, dict[str, int] | None, object]:
+        """El texto, el uso y, con \`langgraph-api\`, el estado final del
+        grafo (\`None\` con cualquier otro protocolo)."""
         content_type = response.getheader("Content-Type", "")
         if "text/event-stream" not in content_type:
             try:
                 payload = json.loads(response.read())
             except ValueError:
                 raise AgentFailure("protocol_error", "invalid_response") from None
+            if self._langgraph:
+                graph_text, graph_usage = self._langgraph_result(payload, with_input)
+                return graph_text, graph_usage, payload
             reported = app_usage(payload.get("usage")) if isinstance(payload, Mapping) else None
             text = self._json_text(payload) if self._protocol == "json" else extract_text(payload)
-            return text, reported
+            return text, reported, None
         parts: list[str] = []
         usage: dict[str, int] | None = None
         for data in iter_sse_data(response):
@@ -2318,7 +3003,7 @@ class Driver:
             if delta:
                 parts.append(delta)
                 emit(build_event("text_delta", text=delta))
-        return "".join(parts), usage
+        return "".join(parts), usage, None
 
     def cancel(self) -> None:
         with self._lock:
@@ -2358,6 +3043,8 @@ from ._common import load_config
 NODE_BINARY: Final = "node"
 #: El adaptador que el puente usa si la configuración no trae \`adapter\`.
 DEFAULT_ADAPTER: Final = "strands"
+#: El único adaptador del puente que entiende \`input\` (ADR-033 D3).
+INPUT_ADAPTER: Final = "langgraph"
 
 
 def create(options: Mapping[str, Any]) -> command.Driver:
@@ -2371,6 +3058,7 @@ def create(options: Mapping[str, Any]) -> command.Driver:
             "command": [NODE_BINARY, bridge, config_path],
             "protocol": command.PROTOCOL_V1,
             "workdir": config.get("workdir"),
+            command.ACCEPTS_INPUT_KEY: config.get("adapter") == INPUT_ADAPTER,
         }
     )
 `,
@@ -2855,6 +3543,13 @@ def build_model(config: Mapping[str, Any], model_id: str) -> Any:
     raise AgentFailure("protocol_error", "unknown_provider")
 
 
+def optional_model(config: Mapping[str, Any], model_id: str | None) -> Any:
+    """\`build_model\` sólo si hay un id (el de la petición o el de la
+    configuración); sin él tu \`entrypoint\` recibe \`ctx.model = None\` y elige
+    su modelo."""
+    return None if model_id is None else build_model(config, model_id)
+
+
 def register_permissions(agent: Any, rules: Mapping[str, Any], aliases: Mapping[str, str]) -> None:
     """Un gancho \`BeforeToolCallEvent\` que cancela con un resultado de error
     toda llamada que \`decide()\` deniega. Se añade una sola vez por agente."""
@@ -3009,7 +3704,7 @@ class Driver:
         state.session_id = session_id
         emit(build_event("session", session_id=session_id))
         try:
-            model = build_model(config, request.model or str(config["model"]))
+            model = optional_model(config, request.model or config.get("model"))
             agent = build_agent(config, model, session_id)
             register_permissions(
                 agent, config.get("permissions", {}), config.get("permission_aliases", {})
@@ -3073,6 +3768,16 @@ DEFAULT_MAX_STEPS: Final = 50
 DEFAULT_TIMEOUT_SECONDS: Final = 600.0
 DEFAULT_MAX_OUTPUT_BYTES: Final = 16_777_216
 DEFAULT_MAX_TOTAL_TOKENS: Final[int | None] = 1_000_000
+#: Tope de la salida estructurada (\`output\`) de una ejecución, ya en JSON
+#: (\`AGENT_SERVICE_MAX_OUTPUT_BYTES\` de \`limits.json\`): una salida mayor es
+#: \`protocol_error\`/\`output_not_serializable\`.
+MAX_SERVICE_OUTPUT_BYTES: Final = 1_048_576
+
+
+def output_fits(encoded: str) -> bool:
+    """Si la salida estructurada ya codificada cabe en
+    \`MAX_SERVICE_OUTPUT_BYTES\` bytes UTF-8."""
+    return len(encoded.encode("utf-8")) <= MAX_SERVICE_OUTPUT_BYTES
 
 
 @dataclass(frozen=True)
@@ -3578,6 +4283,16 @@ TERMINAL_EVENT_TYPES: Final = ("done", "agent_failed")
 DRIVER_FAILURE_REASONS: Final = ("model_error", "runtime_error", "protocol_error")
 #: Claves del uso de tokens de un paso (\`TokenUsage\` del SDK).
 USAGE_KEYS: Final = ("input", "output", "reasoning", "cache_read", "cache_write")
+#: Los \`detail_code\` de \`protocol_error\` de una entrada estructurada
+#: (ADR-033 D3): un grafo con esquema propio llamado con un prompt, un \`input\`
+#: que no cumple ese esquema y una salida que no se puede devolver como JSON.
+INPUT_REQUIRED: Final = "input_required"
+INVALID_INPUT: Final = "invalid_input"
+OUTPUT_NOT_SERIALIZABLE: Final = "output_not_serializable"
+INVALID_REQUEST: Final = "invalid_request"
+#: El atributo con el que un driver declara que entiende \`Request.input\`;
+#: a los demás un \`input\` les llega como \`protocol_error\`/\`invalid_input\`.
+INPUT_CAPABILITY: Final = "accepts_input"
 
 Event = dict[str, Any]
 Emit = Callable[[Event], None]
@@ -3609,46 +4324,72 @@ class LimitExceeded(BaseException):
 @dataclass(frozen=True)
 class Request:
     """La petición de una ejecución, ya validada. \`aws_env\` lleva las
-    credenciales del rol del runtime y no sale en \`repr\`."""
+    credenciales del rol del runtime y no sale en \`repr\`. \`input\` es el objeto
+    JSON de entrada de un grafo con esquema propio (entonces \`prompt\` es
+    \`""\`); tampoco sale en \`repr\`, porque es contenido del usuario."""
 
     prompt: str
     session_id: str | None = None
     model: str | None = None
     reasoning: bool = False
     aws_env: Mapping[str, str] | None = field(default=None, repr=False)
+    input: Mapping[str, Any] | None = field(default=None, repr=False)
 
 
 @dataclass
 class RunState:
     """Lo que un driver comparte con quien cierra la ejecución: el id de
-    sesión, para que \`agent_failed\` lo lleve si ya se conocía."""
+    sesión, para que \`agent_failed\` lo lleve si ya se conocía, y la salida
+    estructurada (\`output\`), que viaja sólo en \`done\`."""
 
     session_id: str | None = None
+    output: Mapping[str, Any] | None = field(default=None, repr=False)
 
 
 def parse_request(raw: object) -> Request:
-    """\`{"v":1,"prompt","session_id","model","reasoning"}\` a \`Request\`; una
-    forma distinta es \`protocol_error\`/\`invalid_request\`."""
+    """\`{"v":1,"prompt","session_id","model","reasoning"}\` a \`Request\`; en vez
+    del prompt puede llegar \`input\` (un objeto JSON, con \`prompt\` ausente o
+    vacío). Una forma distinta es \`protocol_error\`/\`invalid_request\`."""
     if not isinstance(raw, Mapping) or raw.get("v") != PROTOCOL_VERSION:
-        raise AgentFailure("protocol_error", "invalid_request")
-    prompt = raw.get("prompt")
+        raise AgentFailure("protocol_error", INVALID_REQUEST)
+    data_input = raw.get("input")
+    prompt = raw.get("prompt", "" if data_input is not None else None)
     session_id = raw.get("session_id")
     model = raw.get("model")
     reasoning = raw.get("reasoning", False)
     valid = (
         isinstance(prompt, str)
+        and (data_input is None or (isinstance(data_input, Mapping) and not prompt))
         and (session_id is None or isinstance(session_id, str))
         and (model is None or isinstance(model, str))
         and isinstance(reasoning, bool)
     )
     if not valid:
-        raise AgentFailure("protocol_error", "invalid_request")
+        raise AgentFailure("protocol_error", INVALID_REQUEST)
     return Request(
         prompt=str(prompt),
         session_id=session_id or None,
         model=model or None,
         reasoning=reasoning,
+        input=None if data_input is None else dict(data_input),
     )
+
+
+def require_input_support(driver: object, request: Request) -> None:
+    """Un \`input\` sólo llega a un driver que lo entiende (\`accepts_input\`);
+    a cualquier otro es \`protocol_error\`/\`invalid_input\`, antes de ejecutar
+    nada."""
+    if request.input is not None and not getattr(driver, INPUT_CAPABILITY, False):
+        raise AgentFailure("protocol_error", INVALID_INPUT)
+
+
+def terminal_fields(state: RunState) -> dict[str, object]:
+    """Los campos del \`done\` de una ejecución: el id de sesión y, sólo si la
+    hubo, la salida estructurada."""
+    fields: dict[str, object] = {"session_id": state.session_id}
+    if state.output is not None:
+        fields["output"] = state.output
+    return fields
 
 
 def new_id(prefix: str) -> str:
@@ -3736,7 +4477,7 @@ def run_to_terminal(
         reason, detail = classify(exc)
         emitter.emit("agent_failed", reason=reason, detail_code=detail, session_id=state.session_id)
         return
-    emitter.emit("done", session_id=state.session_id)
+    emitter.emit("done", **terminal_fields(state))
 
 
 def classify_by_module(exc: BaseException, model_modules: tuple[str, ...]) -> tuple[str, str]:
@@ -3762,14 +4503,418 @@ class Driver(Protocol):
 
     def cancel(self) -> None: ...
 `,
+  "secret_env.py": `"""Secretos de Secrets Manager como variables de entorno (ADR-033 D4).
+
+En AgentCore el runtime recibe sólo la especificación (\`RAYITO_SECRET_ENV\`:
+nombres de variable, nombres o ARNs de secreto, claves JSON; nunca valores).
+Antes de crear el driver, el host la saca de su entorno, pide los valores a
+la herramienta \`aws_secret_env.py\` (el venv de botocore del export, con el rol
+del runtime), los expande con el algoritmo de
+\`testdata/agent-secret-env/expand.json\`, rechaza los nombres reservados y los
+exporta. Cualquier fallo es cerrado: \`SecretEnvError\` con un \`detail_code\` de
+\`FAILURE_CODES\` y el driver no arranca. Ningún mensaje, log ni código lleva el
+nombre de un secreto, de una clave ni un valor.
+
+El algoritmo de expansión (\`expand_spec\`, \`expand_reference\`,
+\`expand_source\`) es puro: el SDK de Python lo reutiliza para MicroVMs, donde
+lee los valores con las credenciales de quien despliega. Sólo biblioteca
+estándar y nada de \`rayito\`.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+import selectors
+import subprocess
+import time
+from collections.abc import Callable, Collection, Mapping, MutableMapping, Sequence
+from typing import Any, Final
+
+from .protocol import AgentFailure
+
+#: La variable del runtime con la especificación (\`agentSecretEnvVariable\`).
+SPEC_VARIABLE: Final = "RAYITO_SECRET_ENV"
+#: En MicroVMs el SDK ya pone los valores en el entorno del host y aquí sólo
+#: manda sus nombres, separados por \`NAMES_SEPARATOR\`
+#: (\`agentSecretEnvNamesVariable\`), para redactarlos igual que en AgentCore.
+NAMES_VARIABLE: Final = "RAYITO_SECRET_ENV_NAMES"
+NAMES_SEPARATOR: Final = ","
+#: Versión del documento de la especificación (\`agentSecretEnvSpecVersion\`).
+SPEC_VERSION: Final = 1
+#: Tope de secretos por despliegue (\`agentSecretEnvMaxSecrets\`).
+MAX_SECRETS: Final = 20
+#: Tope de bytes UTF-8 de todos los valores exportados (\`agentSecretEnvMaxTotalBytes\`).
+MAX_TOTAL_BYTES: Final = 262144
+#: Plazo de la herramienta (\`agentSecretEnvHelperTimeoutSeconds\`, provisional:
+#: se mide en la aceptación, \`AWS_API_NOTES.md\` Q188).
+HELPER_TIMEOUT_SECONDS: Final = 15
+#: Nombres y prefijos que un secreto no puede fijar
+#: (\`agentSecretEnvReservedNames\`, \`agentSecretEnvReservedPrefixes\`).
+RESERVED_NAMES: Final = frozenset({"HOME", "NODE_OPTIONS", "PATH", "PYTHONPATH"})
+RESERVED_PREFIXES: Final = ("AWS_", "LD_", "RAYITO_")
+#: Clave de \`host.json\` con la herramienta (\`python\`, \`script\`) y los nombres
+#: que el runtime ya fija (\`reserved\`).
+HOST_KEY: Final = "secret_env"
+FAILURE_REASON: Final = "runtime_error"
+UNAVAILABLE: Final = "secret_env_unavailable"
+DENIED: Final = "secret_env_denied"
+INVALID: Final = "secret_env_invalid"
+INVALID_KEY: Final = "secret_env_invalid_key"
+RESERVED: Final = "secret_env_reserved"
+FAILURE_CODES: Final = (UNAVAILABLE, DENIED, INVALID, INVALID_KEY, RESERVED)
+#: Códigos de salida de \`aws_secret_env.py\` que no son \`UNAVAILABLE\`.
+HELPER_EXIT_DENIED: Final = 3
+HELPER_EXIT_INVALID: Final = 4
+HELPER_EXIT_CODES: Final[Mapping[int, str]] = {
+    HELPER_EXIT_DENIED: DENIED,
+    HELPER_EXIT_INVALID: INVALID,
+}
+ENV_NAME_PATTERN: Final = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+#: Argumento con el que la herramienta recibe el número del descriptor por el
+#: que devuelve los valores. Su stdout y su stderr van a \`/dev/null\`: un valor
+#: nunca pasa por la salida estándar de un proceso (\`aws_secret_env.py\`,
+#: \`VALUES_FD_ARGUMENT\`).
+VALUES_FD_ARGUMENT: Final = "--values-fd"
+#: Bytes que se leen de una vez del descriptor de los valores.
+READ_CHUNK_BYTES: Final = 65536
+#: Marca de un documento que no es JSON (\`_json_or_invalid\`).
+_NOT_JSON: Final = object()
+
+#: Un secreto pedido a Secrets Manager: su nombre o ARN y la etiqueta de
+#: versión (\`None\` es \`AWSCURRENT\`).
+SecretRequest = tuple[str, str | None]
+SecretFetcher = Callable[[Sequence[SecretRequest]], Sequence[str]]
+
+
+class SecretEnvError(AgentFailure):
+    """Un fallo al cargar los secretos: \`detail_code\` es uno de
+    \`FAILURE_CODES\` y el mensaje es sólo ese código."""
+
+    def __init__(self, code: str) -> None:
+        super().__init__(FAILURE_REASON, code)
+
+
+def is_reserved(name: str, extra: Collection[str] = ()) -> bool:
+    """Si \`name\` es un nombre que un secreto no puede fijar: los de
+    \`RESERVED_NAMES\`, los que empiezan por un prefijo reservado y los de
+    \`extra\` (las variables que el runtime ya fija)."""
+    return name in RESERVED_NAMES or name.startswith(RESERVED_PREFIXES) or name in extra
+
+
+def _json_or_invalid(text: str | bytes) -> object:
+    """\`text\` decodificado como JSON, o \`_NOT_JSON\`. El error de \`json\` lleva
+    el documento entero (\`JSONDecodeError.doc\`, un valor de secreto); se
+    descarta aquí para que ninguna excepción posterior lo tenga en su
+    \`__context__\`."""
+    try:
+        return json.loads(text)
+    except ValueError:
+        return _NOT_JSON
+
+
+def _json_object(secret_string: str) -> dict[str, Any]:
+    document = _json_or_invalid(secret_string)
+    if not isinstance(document, dict):
+        raise SecretEnvError(INVALID)
+    return document
+
+
+def expand_reference(reference: Mapping[str, Any], secret_string: str) -> str:
+    """El valor de una referencia de \`secret_env\`: la cadena entera o, con
+    \`key\`, esa clave de tipo cadena del objeto JSON."""
+    key = reference.get("key")
+    if key is None:
+        return secret_string
+    document = _json_object(secret_string)
+    if key not in document:
+        raise SecretEnvError(INVALID_KEY)
+    value = document[key]
+    if not isinstance(value, str):
+        raise SecretEnvError(INVALID)
+    return value
+
+
+def _allow_listed(document: Mapping[str, Any], keys: Sequence[str]) -> dict[str, Any]:
+    missing = [key for key in keys if key not in document]
+    if missing:
+        raise SecretEnvError(INVALID_KEY)
+    return {key: document[key] for key in keys}
+
+
+def expand_source(
+    source: Mapping[str, Any], secret_string: str, reserved: Collection[str] = ()
+) -> dict[str, str]:
+    """Las variables de un \`secret_env_from\`: cada clave del objeto JSON (o
+    sólo las de \`keys\`, que deben existir), con el prefijo, como nombre de
+    variable válido y no reservado. Ninguna clave se descarta en silencio."""
+    document = _json_object(secret_string)
+    keys = source.get("keys")
+    chosen = document if keys is None else _allow_listed(document, keys)
+    prefix = source.get("prefix", "")
+    variables: dict[str, str] = {}
+    for key, value in chosen.items():
+        name = f"{prefix}{key}"
+        if not ENV_NAME_PATTERN.fullmatch(name):
+            raise SecretEnvError(INVALID_KEY)
+        if is_reserved(name, reserved):
+            raise SecretEnvError(RESERVED)
+        if not isinstance(value, str):
+            raise SecretEnvError(INVALID)
+        variables[name] = value
+    return variables
+
+
+def _valid_reference(reference: object) -> bool:
+    return (
+        isinstance(reference, dict)
+        and isinstance(reference.get("secret"), str)
+        and all(isinstance(reference.get(key, ""), str) for key in ("key", "version_stage"))
+    )
+
+
+def _valid_source(source: object) -> bool:
+    keys = source.get("keys", []) if isinstance(source, dict) else None
+    return (
+        isinstance(source, dict)
+        and isinstance(source.get("secret"), str)
+        and isinstance(source.get("prefix", ""), str)
+        and isinstance(keys, list)
+        and all(isinstance(key, str) for key in keys)
+    )
+
+
+def parse_spec(text: str) -> dict[str, Any]:
+    """El documento de \`RAYITO_SECRET_ENV\` validado, o \`INVALID\`."""
+    spec = _json_or_invalid(text)
+    valid = (
+        isinstance(spec, dict)
+        and spec.get("v") == SPEC_VERSION
+        and isinstance(spec.get("env"), dict)
+        and isinstance(spec.get("from"), list)
+        and all(_valid_reference(reference) for reference in spec["env"].values())
+        and all(_valid_source(source) for source in spec["from"])
+    )
+    if not valid or not isinstance(spec, dict):
+        raise SecretEnvError(INVALID)
+    return dict(spec)
+
+
+def _request_of(item: Mapping[str, Any]) -> SecretRequest:
+    return (str(item["secret"]), item.get("version_stage"))
+
+
+def secret_requests(spec: Mapping[str, Any]) -> tuple[SecretRequest, ...]:
+    """Los secretos a pedir, sin repetir: los de \`env\` por nombre de variable
+    y luego los de \`from\` en orden. Más de \`MAX_SECRETS\` es \`INVALID\`."""
+    references = [spec["env"][name] for name in sorted(spec["env"])]
+    requests = tuple(dict.fromkeys(_request_of(item) for item in [*references, *spec["from"]]))
+    if len(requests) > MAX_SECRETS:
+        raise SecretEnvError(INVALID)
+    return requests
+
+
+def expand_spec(
+    spec: Mapping[str, Any],
+    values: Mapping[SecretRequest, str],
+    reserved: Collection[str] = (),
+) -> dict[str, str]:
+    """Las variables de toda la especificación a partir de los valores de
+    cada secreto (\`secret_requests\`). Un nombre repetido entre \`env\` y
+    \`from\` es \`INVALID_KEY\`; pasar de \`MAX_TOTAL_BYTES\` es \`INVALID\`."""
+    variables: dict[str, str] = {}
+    for name in sorted(spec["env"]):
+        if not ENV_NAME_PATTERN.fullmatch(name):
+            raise SecretEnvError(INVALID_KEY)
+        if is_reserved(name, reserved):
+            raise SecretEnvError(RESERVED)
+        reference = spec["env"][name]
+        variables[name] = expand_reference(reference, values[_request_of(reference)])
+    for source in spec["from"]:
+        expanded = expand_source(source, values[_request_of(source)], reserved)
+        if set(expanded) & set(variables):
+            raise SecretEnvError(INVALID_KEY)
+        variables.update(expanded)
+    if sum(len(value.encode("utf-8")) for value in variables.values()) > MAX_TOTAL_BYTES:
+        raise SecretEnvError(INVALID)
+    return variables
+
+
+class SecretEnvHelper:
+    """Ejecuta \`python script VALUES_FD_ARGUMENT <fd>\` con las peticiones por
+    stdin y lee los valores, en el mismo orden, del extremo de lectura de un
+    \`os.pipe()\` cuyo extremo de escritura sólo hereda la herramienta. Su
+    stdout y su stderr van a \`/dev/null\`: nunca se leen ni se guardan."""
+
+    def __init__(
+        self,
+        python: str,
+        script: str,
+        *,
+        timeout_seconds: float = HELPER_TIMEOUT_SECONDS,
+    ) -> None:
+        self._argv = [python, script]
+        self._timeout_seconds = timeout_seconds
+
+    def __call__(self, requests: Sequence[SecretRequest]) -> Sequence[str]:
+        payload = json.dumps({"secrets": [_request_document(item) for item in requests]})
+        outcome = _run_helper(self._argv, payload.encode("utf-8"), self._timeout_seconds)
+        if outcome is None:
+            raise SecretEnvError(UNAVAILABLE)
+        returncode, output = outcome
+        if returncode != 0:
+            raise SecretEnvError(HELPER_EXIT_CODES.get(returncode, UNAVAILABLE))
+        return _helper_values(output, len(requests))
+
+
+def _run_helper(
+    argv: Sequence[str], payload: bytes, timeout_seconds: float
+) -> tuple[int, bytes] | None:
+    """El código de salida de la herramienta y lo que escribió en su
+    descriptor, o \`None\` si no arrancó, no terminó en \`timeout_seconds\` (que
+    cubre la lectura y la espera) o falló la tubería. El fallo se devuelve,
+    no se lanza, para que ningún error posterior arrastre estos bytes."""
+    deadline = time.monotonic() + timeout_seconds
+    read_fd, write_fd = os.pipe()
+    try:
+        return _exchange(argv, payload, read_fd, write_fd, deadline)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    finally:
+        os.close(read_fd)
+
+
+def _exchange(
+    argv: Sequence[str], payload: bytes, read_fd: int, write_fd: int, deadline: float
+) -> tuple[int, bytes]:
+    try:
+        process = subprocess.Popen(
+            [*argv, VALUES_FD_ARGUMENT, str(write_fd)],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            pass_fds=(write_fd,),
+        )
+    finally:
+        os.close(write_fd)
+    with process:
+        try:
+            _send(process, payload)
+            output = _read_until_eof(read_fd, deadline)
+            returncode = process.wait(timeout=max(0.0, deadline - time.monotonic()))
+        except BaseException:
+            process.kill()
+            raise
+    return returncode, output
+
+
+def _send(process: subprocess.Popen[bytes], payload: bytes) -> None:
+    """Manda las peticiones y cierra stdin. Una herramienta que ya salió
+    (tubería rota) se juzga por su código de salida, como \`communicate\`."""
+    stdin = process.stdin
+    if stdin is None:
+        return
+    try:
+        stdin.write(payload)
+        stdin.close()
+    except BrokenPipeError:
+        pass
+
+
+def _read_until_eof(fd: int, deadline: float) -> bytes:
+    """Todo lo que llega por \`fd\` hasta que la herramienta cierra su extremo,
+    o \`subprocess.TimeoutExpired\` si vence \`deadline\` antes."""
+    chunks: list[bytes] = []
+    with selectors.DefaultSelector() as selector:
+        selector.register(fd, selectors.EVENT_READ)
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0 or not selector.select(remaining):
+                raise subprocess.TimeoutExpired(VALUES_FD_ARGUMENT, 0)
+            chunk = os.read(fd, READ_CHUNK_BYTES)
+            if not chunk:
+                return b"".join(chunks)
+            chunks.append(chunk)
+
+
+def _request_document(request: SecretRequest) -> dict[str, str]:
+    secret, stage = request
+    return {"secret": secret} if stage is None else {"secret": secret, "version_stage": stage}
+
+
+def _helper_values(output: bytes, expected: int) -> list[str]:
+    document = _json_or_invalid(output)
+    values = document.get("values") if isinstance(document, dict) else None
+    if (
+        not isinstance(values, list)
+        or len(values) != expected
+        or not all(isinstance(value, str) for value in values)
+    ):
+        raise SecretEnvError(UNAVAILABLE)
+    return values
+
+
+def helper_of(config: object) -> SecretEnvHelper | None:
+    """La herramienta de la clave \`secret_env\` de \`host.json\`, o \`None\`."""
+    if not isinstance(config, dict):
+        return None
+    python, script = config.get("python"), config.get("script")
+    if not isinstance(python, str) or not isinstance(script, str):
+        return None
+    return SecretEnvHelper(python, script)
+
+
+def reserved_of(config: object) -> frozenset[str]:
+    """Los nombres que el runtime ya fija (\`reserved\` de esa clave)."""
+    names = config.get("reserved") if isinstance(config, dict) else None
+    if not isinstance(names, list):
+        return frozenset()
+    return frozenset(name for name in names if isinstance(name, str))
+
+
+def injected_values(environ: MutableMapping[str, str]) -> tuple[str, ...]:
+    """Los valores que el SDK ya exportó en MicroVMs: saca \`NAMES_VARIABLE\`
+    de \`environ\` (sólo nombres) y devuelve el valor de cada una de esas
+    variables, para redactarlo en un diagnóstico de arranque. Sin la
+    variable, nada."""
+    names = environ.pop(NAMES_VARIABLE, "")
+    return tuple(environ[name] for name in names.split(NAMES_SEPARATOR) if name in environ)
+
+
+def load_secret_env(
+    environ: MutableMapping[str, str],
+    fetch: SecretFetcher | None,
+    reserved: Collection[str] = (),
+) -> dict[str, str]:
+    """Saca \`SPEC_VARIABLE\` de \`environ\`, lee los secretos con \`fetch\` y
+    exporta sus variables en \`environ\`. Devuelve lo exportado (para redactar
+    los valores en un diagnóstico); sin especificación, nada. Sin \`fetch\`
+    (un \`host.json\` sin herramienta), \`UNAVAILABLE\`."""
+    text = environ.pop(SPEC_VARIABLE, None)
+    if text is None:
+        return {}
+    if fetch is None:
+        raise SecretEnvError(UNAVAILABLE)
+    spec = parse_spec(text)
+    requests = secret_requests(spec)
+    values = fetch(requests)
+    variables = expand_spec(spec, dict(zip(requests, values, strict=True)), reserved)
+    environ.update(variables)
+    return variables
+`,
   "serve.py": `"""Modo \`serve\` del host (ADR-028, D3 y D4): sirve \`rayito.agent-service/1\`,
 el contrato HTTP de AgentCore, con \`http.server.ThreadingHTTPServer\`.
 
 - \`GET /ping\` -> \`200 {"status": "Healthy" | "HealthyBusy", "time_of_last_update"}\`.
-- \`POST /invocations\` con \`{"prompt", "session_id"?, "model"?, "reasoning"?}\`.
-  Con \`Accept: text/event-stream\`, un mensaje SSE por evento v1 hasta \`done\`
-  o \`agent_failed\`; si no, \`{"v", "text", "session_id", "usage",
-  "usage_reported", "steps", "failed"}\`. \`400\` cuerpo inválido, \`413\` demasiado grande, \`429\` con
+- \`POST /invocations\` con \`{"prompt", "session_id"?, "model"?, "reasoning"?}\`
+  o, en lugar de \`prompt\`, \`input\` (un objeto JSON para un grafo con esquema
+  propio; exactamente uno de los dos). Con \`Accept: text/event-stream\`, un
+  mensaje SSE por evento v1 hasta \`done\` o \`agent_failed\`; si no, \`{"v",
+  "text", "session_id", "usage", "usage_reported", "steps", "failed"}\`, más
+  \`output\` sólo si la ejecución lo produjo (también va en \`done\`). \`400\`
+  cuerpo inválido (\`{"error": "invalid_request", "accepts_input": true}\`: el
+  campo dice al SDK que este host sí entiende \`input\`), \`413\` demasiado grande, \`429\` con
   \`Retry-After\` por encima de \`max_concurrency\` (con \`queue_max\` > 0 la
   petición espera su turno en una cola FIFO acotada hasta
   \`queue_timeout_seconds\` y sólo entonces recibe el \`429\`), \`503\` antes de
@@ -3784,7 +4929,7 @@ y las siguientes la continúan, y la respuesta lleva siempre el id de la
 cabecera.
 
 El host no loguea contenido: sólo método, ruta sin consulta, estado, bytes y
-duración. Nunca el prompt, una cabecera ni el token.
+duración. Nunca el prompt, el \`input\`, el \`output\`, una cabecera ni el token.
 """
 
 from __future__ import annotations
@@ -3808,6 +4953,7 @@ from typing import Any, Final
 
 from .limits import Limits, LimitTracker
 from .protocol import (
+    INVALID_REQUEST,
     PROTOCOL_VERSION,
     TERMINAL_EVENT_TYPES,
     AgentFailure,
@@ -3820,6 +4966,7 @@ from .protocol import (
     classify_by_module,
     encode_line,
     parse_request,
+    require_input_support,
     run_to_terminal,
 )
 
@@ -3830,6 +4977,10 @@ INVOKE_PATH: Final = "/invocations"
 SESSION_HEADER: Final = "X-Amzn-Bedrock-AgentCore-Runtime-Session-Id"
 #: Tope del cuerpo de una petición (\`AGENT_SERVICE_MAX_REQUEST_BYTES\`).
 MAX_REQUEST_BYTES: Final = 1_048_576
+#: Campo del cuerpo de un \`400\` \`invalid_request\`: este host entiende \`input\`
+#: (ADR-033 D3). Un host anterior no lo manda, y así el SDK sabe si debe pedir
+#: que se vuelva a desplegar (\`INPUT_SUPPORT_FIELD\` de \`_deployment_base\`).
+INPUT_SUPPORT_FIELD: Final = "accepts_input"
 MAX_CONCURRENCY: Final = 1
 STATUS_HEALTHY: Final = "Healthy"
 STATUS_BUSY: Final = "HealthyBusy"
@@ -3867,6 +5018,12 @@ READY_WAIT_SECONDS_DEFAULT: Final = 25.0
 #: no retiene un hilo para siempre.
 IO_TIMEOUT_SECONDS: Final = 60.0
 TOKEN_ENV: Final = "RAYITO_AGENT_SERVICE_TOKEN"
+#: Las claves de un cuerpo de \`POST /invocations\`: exactamente una de
+#: \`PROMPT_KEY\` o \`INPUT_KEY\`, y las opcionales.
+PROMPT_KEY: Final = "prompt"
+INPUT_KEY: Final = "input"
+OUTPUT_KEY: Final = "output"
+INVOCATION_KEYS: Final = frozenset({PROMPT_KEY, INPUT_KEY, "session_id", "model", "reasoning"})
 #: Sufijo del marcador que deja un arranque fallido.
 FAILED_SUFFIX: Final = ".failed"
 EVENT_STREAM: Final = "text/event-stream"
@@ -4154,6 +5311,7 @@ class Invocation:
 
         def body(state: RunState) -> None:
             request = self._service.with_credentials(self._request)
+            require_input_support(self._service.driver, request)
             self._service.driver.run(request, self._deliver, state)
 
         try:
@@ -4228,6 +5386,7 @@ def result_body(invocation: Invocation, terminal: Event) -> dict[str, Any]:
     """El cuerpo JSON de una invocación sin streaming."""
     failed = terminal.get("type") == "agent_failed"
     session_id = terminal.get("session_id") or invocation.session_id
+    output = {} if failed or OUTPUT_KEY not in terminal else {OUTPUT_KEY: terminal[OUTPUT_KEY]}
     return {
         "v": PROTOCOL_VERSION,
         "text": "" if failed else invocation.tracker.text,
@@ -4240,6 +5399,7 @@ def result_body(invocation: Invocation, terminal: Event) -> dict[str, Any]:
             if failed
             else None
         ),
+        **output,
     }
 
 
@@ -4250,15 +5410,24 @@ def parse_invocation(body: bytes, header_session: str | None) -> tuple[Request, 
     try:
         data = json.loads(body)
     except ValueError:
-        raise AgentFailure("protocol_error", "invalid_request") from None
-    if not isinstance(data, dict) or not isinstance(data.get("prompt"), str) or not data["prompt"]:
-        raise AgentFailure("protocol_error", "invalid_request")
-    unknown = set(data) - {"prompt", "session_id", "model", "reasoning"}
-    if unknown:
-        raise AgentFailure("protocol_error", "invalid_request")
+        raise AgentFailure("protocol_error", INVALID_REQUEST) from None
+    if not _valid_invocation(data):
+        raise AgentFailure("protocol_error", INVALID_REQUEST)
     session_id = data.get("session_id") or header_session
     request = parse_request({**data, "v": PROTOCOL_VERSION, "session_id": session_id})
     return request, None if data.get("session_id") else header_session
+
+
+def _valid_invocation(data: object) -> bool:
+    """Un objeto con sólo \`INVOCATION_KEYS\` y exactamente uno de \`prompt\` (una
+    cadena no vacía) o \`input\` (un objeto JSON)."""
+    if not isinstance(data, dict) or set(data) - INVOCATION_KEYS:
+        return False
+    if (PROMPT_KEY in data) == (INPUT_KEY in data):
+        return False
+    if PROMPT_KEY in data:
+        return isinstance(data[PROMPT_KEY], str) and bool(data[PROMPT_KEY])
+    return isinstance(data[INPUT_KEY], dict)
 
 
 def make_handler(service: Service) -> type[BaseHTTPRequestHandler]:
@@ -4297,6 +5466,15 @@ def make_handler(service: Service) -> type[BaseHTTPRequestHandler]:
         def _error(self, status: int, code: str, extra: Mapping[str, str] | None = None) -> None:
             self.close_connection = True
             self._send_json(status, {"error": code}, {"Connection": "close", **(extra or {})})
+
+        def _invalid_request(self) -> None:
+            """\`400 invalid_request\`, con \`INPUT_SUPPORT_FIELD\`."""
+            self.close_connection = True
+            self._send_json(
+                HTTPStatus.BAD_REQUEST,
+                {"error": "invalid_request", INPUT_SUPPORT_FIELD: True},
+                {"Connection": "close"},
+            )
 
         def _is_raw(self) -> bool:
             return bool(getattr(service.driver, "raw", False))
@@ -4427,7 +5605,7 @@ def make_handler(service: Service) -> type[BaseHTTPRequestHandler]:
             except ValueError:
                 length = -1
             if length < 0:
-                self._error(HTTPStatus.BAD_REQUEST, "invalid_request")
+                self._invalid_request()
                 return None
             if length > service.config.max_request_bytes:
                 self._error(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, "request_too_large")
@@ -4441,7 +5619,7 @@ def make_handler(service: Service) -> type[BaseHTTPRequestHandler]:
             try:
                 return parse_invocation(body, self.headers.get(service.config.session_header))
             except AgentFailure:
-                self._error(HTTPStatus.BAD_REQUEST, "invalid_request")
+                self._invalid_request()
                 return None
 
         def _respond(self, invocation: Invocation) -> None:
@@ -4495,6 +5673,7 @@ from .protocol import (
     RunState,
     classify_by_module,
     parse_request,
+    require_input_support,
     run_to_terminal,
 )
 
@@ -4506,11 +5685,15 @@ def forward(emitter: Emitter, event: Event) -> None:
 
 
 def run_task(create_driver: Callable[[], Driver], raw_request: object, emitter: Emitter) -> int:
-    """Una ejecución completa con el driver que crea \`create_driver\`."""
+    """Una ejecución completa con el driver que crea \`create_driver\`. Un
+    \`input\` sólo llega a un driver que lo entiende, como en el modo servicio
+    (\`require_input_support\`)."""
 
     def body(state: RunState) -> None:
         request = parse_request(raw_request)
-        create_driver().run(request, lambda event: forward(emitter, event), state)
+        driver = create_driver()
+        require_input_support(driver, request)
+        driver.run(request, lambda event: forward(emitter, event), state)
 
     run_to_terminal(emitter, body, lambda exc: classify_by_module(exc, ()))
     return 0

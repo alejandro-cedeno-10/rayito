@@ -507,18 +507,23 @@ rayito agent init [DIR] [--runtime R] [--language python|typescript] [--provider
                   [--region R] [--force]
 rayito agent build --bucket B [--file PATH] [--force] [--timeout 1800]
 rayito agent run PROMPT [--file PATH] [--session-id ID] [--model ID] [--stream]
-rayito agent detect [PATH] [--framework F] [--language L] [--entry E] [--protocol P] [--write]
+rayito agent detect [PATH] [--framework F] [--language L] [--entry E] [--protocol P]
+                    [--model-id ID] [--model-provider P] [--model-base-url URL] [--write]
 rayito agent deploy [PATH] [--file PATH] [--timeout S] [--port N] [--token-file F] [--keep-on-failure]
                     [--framework F] [--language L] [--entry E] [--protocol P]
+                    [--model-id ID] [--model-provider P] [--model-base-url URL]
                     [--memory MIB] [--max-sessions N] [--sessions shared|dedicated]
                     [--min-vms N] [--max-vms N] [--warm N] [--idle S] [--queue N] [--queue-timeout S]
                     [--env K=V]... [--allow-out DEST]... [--bucket B] [--secret PROVIDER=NAME]...
-                    [--create-secret] [--base-artifact ZIP] [--yes] [--dry-run]
+                    [--create-secret] [--secret-env NAME=SECRET]... [--secret-env-from SECRET]...
+                    [--create-secrets-from FILE] [--check-env]
+                    [--base-artifact ZIP] [--yes] [--dry-run]
                     [--target microvm|agentcore] [--tag K=V]... [--bedrock-model ID]...
                     [--readable-secret NAME]... [--idle-session-timeout S] [--max-session-lifetime S]
+                    [--external-model]
 rayito agent export --target docker|agentcore --out DIR [--file PATH] [--overwrite]
-rayito agent invoke SANDBOX_ID PROMPT [--session-id ID] [--stream] [--token-file F]
-                    [--target microvm|agentcore]
+rayito agent invoke SANDBOX_ID [PROMPT] [--session-id ID] [--input JSON | --input-file F]
+                    [--stream] [--token-file F] [--target microvm|agentcore]
 rayito agent status SANDBOX_ID [--token-file F] [--target microvm|agentcore]
 rayito agent stop SANDBOX_ID [--target microvm|agentcore] [--session-id ID]
 rayito agent list --target agentcore
@@ -569,6 +574,29 @@ identifies the VM, and passing it with `--session-id` continues the
 conversation. Messages and help are in Spanish. See
 [Deploy your agent](guias/despliega-tu-agente.md#sin-escribir-nada).
 
+With several graphs in `langgraph.json`, `detect` and `deploy` accept
+`--graph NAME` (exclusive with `--entry`). Instead of `PROMPT`, `invoke`
+accepts `--input JSON` or `--input-file F` (`-` reads standard input): the input
+object of a graph with its own schema; exactly one of the three, or it exits
+with 2 before calling anything. The graph's output (`output`) is printed as
+JSON, and with `--json` it goes in the `output` key. See
+[Several graphs and structured input](guias/despliega-tu-agente.md#varios-grafos-y-entrada-estructurada).
+
+With `--secret-env NAME=<secret>[#key]` and `--secret-env-from
+<secret>[,prefix=P][,keys=A|B]` (repeatable, on both targets) the agent
+receives Secrets Manager values as environment variables, added to the
+`[secret_env]` and `[[secret_env_from]]` of the file; `--create-secrets-from
+FILE.env` creates (or updates) a JSON secret with the values of that `.env`,
+shows only the names and asks for `--yes` (it costs $0.40 per month), and
+`--check-env` warns about the `.env.example` variables that receive no value.
+See [Secrets as environment variables](guias/secretos-como-entorno.md).
+
+`--protocol` accepts `agentcore`, `json`, `raw` and, since this version,
+`langgraph-api` (experimental): on a project with `langgraph.json` it serves
+the graph with `langgraph dev` and its LangGraph Platform API instead of
+importing it; without `langgraph.json` it fails with `invalid_value`. See
+[LangGraph Platform API](guias/despliega-tu-agente.md#langgraph-platform-api).
+
 Builds the `AgentTemplate` image
 ([Agent templates](funciones-opcionales/templates-de-agente.md)): it starts
 from `--base` (an image already published with `rayito image publish`) and
@@ -585,6 +613,14 @@ pool. Prefetch and warm pools are optional:
 [What do I use?](guias/agente-en-el-sandbox.md#que-uso). Each new version
 costs snapshot storage ([Pricing](cost.md#cuanto-cuesta-con-ejemplos)); old
 ones are deleted with `rayito image prune --image-name <name>`.
+
+`--model-id`, `--model-provider` and `--model-base-url` (on `detect` and
+`deploy`) pin the model when your code
+picks it from its configuration: the id, the gateway (`openai-compatible`,
+`litellm`…) and the `https` URL of your LLM gateway, which becomes its
+`upstream`. With a project file they behave like `--entry`: what the file says
+wins. An unknown `--model-provider` gives `invalid_value` on `model.provider`.
+See [Model chosen by your code](guias/despliega-tu-agente.md#modelo-desde-tu-codigo).
 
 ### `agent` with `--target agentcore` { #agent-agentcore }
 
@@ -616,6 +652,7 @@ fleet, and `invoke`, `status`, `stop`, `list` and `delete` operate it. Without
 | `--readable-secret NAME` | `deploy` | Secrets Manager secret the runtime role may read; repeatable. Default: none |
 | `--idle-session-timeout S` | `deploy` | Seconds without use after which AgentCore ends a session's microVM ({{agentcoreLifecycleMinSeconds}}-{{agentcoreLifecycleMaxSeconds}}, default {{agentcoreIdleSessionTimeoutDefaultSeconds}}) |
 | `--max-session-lifetime S` | `deploy` | Maximum lifetime of a session's microVM ({{agentcoreLifecycleMinSeconds}}-{{agentcoreLifecycleMaxSeconds}}, default {{agentcoreLifecycleMaxSeconds}}) |
+| `--external-model` | `deploy` | Allows a model outside Bedrock: the role gets no Bedrock permission you do not ask for and your code obtains the key (`--readable-secret`). Without it, a provider other than `bedrock` gives `provider_unsupported` ([guide](guias/desplegar-en-agentcore.md#modelos-fuera-de-bedrock)) |
 | `--session-id ID` | `stop` | The session whose microVM is stopped (`StopRuntimeSession`); with `--target agentcore` it is required |
 | `--yes` | `deploy`, `delete` | Do not ask for confirmation (required with no terminal or with `--json`) |
 

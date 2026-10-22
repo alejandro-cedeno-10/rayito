@@ -1,0 +1,67 @@
+{
+  "schema": "rayito.agent-detection/1",
+  "language": "python",
+  "framework": "langgraph",
+  "kind": "langgraph",
+  "entrypoint": "agent:build_graph",
+  "entrypoint_kind": "factory",
+  "protocol": "framework",
+  "options": {},
+  "app": null,
+  "install": {
+    "manager": "uv",
+    "lockfile": "uv.lock",
+    "requirements": null,
+    "require_hashes": false,
+    "reproducible": true,
+    "build_script": false,
+    "python_version": "3.12",
+    "node_version": null
+  },
+  "providers": [
+    {
+      "preset": "openai-compatible",
+      "evidence": [
+        {
+          "path": "pyproject.toml",
+          "rule": "dep:langchain-openai"
+        },
+        {
+          "path": "agent.py",
+          "rule": "code:base_url"
+        }
+      ]
+    }
+  ],
+  "models": [],
+  "evidence": [
+    {
+      "path": "pyproject.toml",
+      "rule": "dep:langgraph"
+    },
+    {
+      "path": "agent.py",
+      "rule": "entry:py-factory-noargs"
+    },
+    {
+      "path": "uv.lock",
+      "rule": "install:uv"
+    },
+    {
+      "path": "pyproject.toml",
+      "rule": "version:specifier"
+    }
+  ],
+  "warnings": [
+    {
+      "code": "model_id_from_code",
+      "detail": "no se fija el id del modelo: lo elige tu código (LLM_MODEL, LLM_BASE_URL, LLM_API_KEY)"
+    }
+  ],
+  "alternatives": [],
+  "model_envs": {
+    "id_env": "LLM_MODEL",
+    "base_url_env": "LLM_BASE_URL",
+    "api_key_env": "LLM_API_KEY"
+  }
+}

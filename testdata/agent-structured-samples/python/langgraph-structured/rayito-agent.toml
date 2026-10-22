@@ -1,0 +1,16 @@
+# Sólo el modelo: el runtime lo detecta Rayito y el grafo se elige con
+# --graph (o [runtime] graph). Los grafos no llaman al modelo.
+schema = "rayito.agent-project/1"
+name = "ticket-triage"
+
+[model]
+provider = "bedrock"
+id = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+region = "us-east-1"
+gateway = "bedrock"
+
+[gateways.bedrock]
+preset = "bedrock"
+secret = "rayito/agents/ticket-triage/bedrock"
+region = "us-east-1"
+models = ["us.anthropic.claude-haiku-4-5-20251001-v1:0"]

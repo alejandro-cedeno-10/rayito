@@ -1,0 +1,60 @@
+{
+  "schema": "rayito.agent-detection/1",
+  "language": "python",
+  "framework": "langgraph",
+  "kind": "langgraph",
+  "entrypoint": "agent:build_graph",
+  "entrypoint_kind": "factory",
+  "protocol": "framework",
+  "options": {},
+  "app": null,
+  "install": {
+    "manager": "pip",
+    "lockfile": null,
+    "requirements": "requirements.txt",
+    "require_hashes": false,
+    "reproducible": true,
+    "build_script": false,
+    "python_version": "3.12",
+    "node_version": null
+  },
+  "providers": [
+    {
+      "preset": "openai",
+      "evidence": [
+        {
+          "path": "requirements.txt",
+          "rule": "dep:langchain-openai"
+        },
+        {
+          "path": ".env.example",
+          "rule": "env:OPENAI_API_KEY"
+        }
+      ]
+    }
+  ],
+  "models": [
+    "gpt-4o-mini"
+  ],
+  "evidence": [
+    {
+      "path": "requirements.txt",
+      "rule": "dep:langgraph"
+    },
+    {
+      "path": "agent.py",
+      "rule": "entry:py-factory-noargs"
+    },
+    {
+      "path": "requirements.txt",
+      "rule": "install:pip"
+    }
+  ],
+  "warnings": [
+    {
+      "code": "custom_base_url",
+      "detail": "el cliente de agent.py pasa su propia URL base y se mantiene openai porque el código fija el id del modelo; si apunta a una pasarela compatible con OpenAI, pasa --model-base-url"
+    }
+  ],
+  "alternatives": []
+}

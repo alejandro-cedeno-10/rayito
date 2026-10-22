@@ -1,0 +1,67 @@
+{
+  "schema": "rayito.agent-detection/1",
+  "language": "typescript",
+  "framework": "langgraph",
+  "kind": "langgraph",
+  "entrypoint": "src/agent.ts#graph",
+  "entrypoint_kind": "object",
+  "protocol": "framework",
+  "options": {},
+  "app": null,
+  "install": {
+    "manager": "npm",
+    "lockfile": "package-lock.json",
+    "requirements": null,
+    "require_hashes": false,
+    "reproducible": true,
+    "build_script": false,
+    "python_version": null,
+    "node_version": "22"
+  },
+  "providers": [
+    {
+      "preset": "openai-compatible",
+      "evidence": [
+        {
+          "path": "package.json",
+          "rule": "dep:@langchain/openai"
+        },
+        {
+          "path": "src/agent.ts",
+          "rule": "code:base_url"
+        }
+      ]
+    }
+  ],
+  "models": [],
+  "evidence": [
+    {
+      "path": "langgraph.json",
+      "rule": "file:langgraph.json"
+    },
+    {
+      "path": "src/agent.ts",
+      "rule": "entry:langgraph-json"
+    },
+    {
+      "path": "package-lock.json",
+      "rule": "install:npm"
+    },
+    {
+      "path": "package.json",
+      "rule": "version:semver"
+    }
+  ],
+  "warnings": [
+    {
+      "code": "model_id_from_code",
+      "detail": "no se fija el id del modelo: lo elige tu código (LLM_MODEL, LLM_BASE_URL, LLM_API_KEY)"
+    }
+  ],
+  "alternatives": [],
+  "model_envs": {
+    "id_env": "LLM_MODEL",
+    "base_url_env": "LLM_BASE_URL",
+    "api_key_env": "LLM_API_KEY"
+  }
+}

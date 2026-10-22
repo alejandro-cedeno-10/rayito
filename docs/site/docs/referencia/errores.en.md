@@ -237,6 +237,35 @@ generated content.
 | `aborted` | `stream.abort()` / cancellation / `AbortSignal` |
 | `busy` | an execution is already in progress in that sandbox (one `run`/`stream` at a time per sandbox in this phase) |
 
+With a graph that has its own schema invoked with `input`
+([Several graphs and structured input](../guias/despliega-tu-agente.md#varios-grafos-y-entrada-estructurada)),
+`protocol_error` carries one of these `detail_code`s, each with its own message:
+
+| `detail_code` | When |
+|---|---|
+| `input_required` | the graph's input schema has required keys (`required`) and a prompt arrived |
+| `invalid_input` | `input` does not match the graph's input schema |
+| `output_not_serializable` | the graph's output cannot be converted to JSON or exceeds {{agentServiceMaxOutputBytes}} bytes |
+
+A `400` to a request with `input` is `InvalidArgumentException` /
+`InvalidArgumentError` with "redeploy it with this version of Rayito": the
+deployed agent predates structured input.
+
+With `secret_env` or `secret_env_from` ([Secrets as environment
+variables](../guias/secretos-como-entorno.md)), the deployment fails closed
+with `reason="runtime_error"` and one of these `detail_code`s, which never name
+the secret or the value: `secret_env_unavailable` (they could not be read),
+`secret_env_denied` (the role or your credentials cannot read a secret),
+`secret_env_invalid` (the value is not what the reference asks for, or goes
+over the cap), `secret_env_invalid_key` (a requested key is missing, or a key
+is not a valid variable name) and `secret_env_reserved` (a key would give a
+reserved name). On AgentCore it is the code of the host's failure marker.
+
+With a `protocol = "langgraph-api"` app (experimental), a graph that stops at
+an `interrupt` gives `protocol_error` with `detail_code` `graph_interrupted`:
+the host does not resume a human-in-the-loop
+([LangGraph Platform API](../guias/despliega-tu-agente.md#langgraph-platform-api)).
+
 ## `AgentCoreException` / `AgentCoreError` { #agentcore }
 
 Since 0.15.0. Raised by the AgentCore deploy
@@ -256,11 +285,11 @@ carries an ARN, a URL, a token or AWS's raw text. Guide:
 | `option_not_supported` | a MicroVM option in the call does not apply to AgentCore | remove it; the message says which one to use instead ([table](../guias/desplegar-en-agentcore.md#opciones-que-no-aplican)) |
 | `option_requires_agentcore` | an AgentCore option (`--tag`, `--bedrock-model`…) with the `microvm` target | add `--target agentcore` or remove it |
 | `target_unsupported` | `rayito agent list` or `delete` without `--target agentcore` | use `--target agentcore`; a MicroVM fleet is stopped with `rayito agent stop` |
-| `provider_unsupported` | the project's model is not a Bedrock one | AgentCore only wires `bedrock`, with the runtime role |
+| `provider_unsupported` | the project's model is not a Bedrock one | AgentCore only wires `bedrock`, with the runtime role; for another model, `--external-model` ([guide](../guias/desplegar-en-agentcore.md#modelos-fuera-de-bedrock)) |
 | `network_policy_unsupported` | the project declares `egress` or `network` | remove it: in PUBLIC mode AgentCore does not filter egress |
 | `name_invalid` | the agent name does not fit the derived names | up to 41 characters, lowercase letters and digits with single `-` or `_`; change it with `[image].template` |
 | `name_conflict` | a runtime with that name already exists and is not Rayito's | change the name with `[image].template`; Rayito does not touch other runtimes |
-| `model_required` | reserved: not raised today (the runtime role always includes the project's model) | — |
+| `model_required` | the project uses `bedrock` without `[model] id` and you pass no `--bedrock-model` | set `[model] id` or pass it with `--bedrock-model` (`bedrock_models` / `bedrockModels`) |
 | `image_missing` | `--no-build` and there is no image with that content | deploy without `--no-build` |
 | `lifecycle_invalid` | a lifecycle time out of range, or not an integer (in TypeScript, not a multiple of 1000 ms) | between 60 and 28,800 s |
 | `lifecycle_order` | `idle_session_timeout` greater than `max_session_lifetime` | lower the idle timeout or raise the maximum lifetime |

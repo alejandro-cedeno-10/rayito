@@ -38,6 +38,9 @@ ACTION_KEYS: Final = {
     ("runtime", "wait"): "runtimeWait",
 }
 STACK_RESOURCE: Final = "stack"
+#: Lo que nombra la línea `secretEnv` cuando las variables sólo se conocen al
+#: leer el secreto (un `secret_env_from` sin `keys`).
+SECRET_ENV_UNLISTED: Final = "las claves de sus secretos JSON"
 
 
 def step_text(step: AgentCoreStep, version: str = "") -> str:
@@ -53,7 +56,9 @@ def step_line(step: AgentCoreStep, version: str = "") -> str:
 
 def _security_line(key: str, plan: AgentCoreDeployPlan) -> str:
     sentence = text.SECURITY_TEXTS[key].format(
-        models=", ".join(plan.bedrock_models), secrets=", ".join(plan.readable_secrets)
+        models=", ".join(plan.bedrock_models),
+        secrets=", ".join(plan.readable_secrets),
+        names=", ".join(plan.secret_env_names) or SECRET_ENV_UNLISTED,
     )
     return text.SECURITY_LINE_TEMPLATE.format(text=sentence)
 
@@ -89,8 +94,9 @@ def step_document(step: AgentCoreStep) -> dict[str, object]:
 
 def plan_document(plan: AgentCoreDeployPlan) -> dict[str, Any]:
     """El plan con las claves del contrato (`json.planKeys`); `security` y
-    `warnings` llevan las claves de los textos, estables para un script."""
-    return {
+    `warnings` llevan las claves de los textos, estables para un script.
+    `externalModel` sólo aparece si el modelo está fuera de Bedrock."""
+    document: dict[str, Any] = {
         "target": TARGET,
         "name": plan.name,
         "region": plan.region,
@@ -114,7 +120,17 @@ def plan_document(plan: AgentCoreDeployPlan) -> dict[str, Any]:
         "security": list(plan.security),
         "warnings": list(plan.warnings),
         "cost": list(plan.cost),
+        **_secret_env_document(plan),
     }
+    if plan.external_model:
+        document["externalModel"] = True
+    return document
+
+
+def _secret_env_document(plan: AgentCoreDeployPlan) -> dict[str, Any]:
+    """`secretEnvNames` sólo si el plan pone variables desde Secrets Manager:
+    sin ellas el documento no cambia."""
+    return {"secretEnvNames": list(plan.secret_env_names)} if plan.secret_env_names else {}
 
 
 def dry_run_document(plan: AgentCoreDeployPlan, detection: Any) -> dict[str, Any]:

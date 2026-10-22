@@ -236,6 +236,35 @@ del proveedor, el prompt ni el contenido generado.
 | `aborted` | `stream.abort()` / cancelación / `AbortSignal` |
 | `busy` | ya hay una ejecución en curso en ese sandbox (un `run`/`stream` a la vez por sandbox en esta fase) |
 
+Con un grafo de esquema propio invocado con `input`
+([Varios grafos y entrada estructurada](../guias/despliega-tu-agente.md#varios-grafos-y-entrada-estructurada)),
+`protocol_error` lleva uno de estos `detail_code`, cada uno con su mensaje:
+
+| `detail_code` | Cuándo |
+|---|---|
+| `input_required` | el esquema de entrada del grafo tiene claves obligatorias (`required`) y llegó un prompt |
+| `invalid_input` | `input` no cumple el esquema de entrada del grafo |
+| `output_not_serializable` | la salida del grafo no se puede convertir a JSON o pasa de {{agentServiceMaxOutputBytes}} bytes |
+
+Un `400` a una petición con `input` es `InvalidArgumentException` /
+`InvalidArgumentError` con «vuelve a desplegarlo con esta versión de Rayito»: el
+agente desplegado es anterior a la entrada estructurada.
+
+Con `secret_env` o `secret_env_from` ([Secretos como variables de
+entorno](../guias/secretos-como-entorno.md)), el despliegue falla en cerrado con
+`reason="runtime_error"` y uno de estos `detail_code`, que nunca nombran el
+secreto ni el valor: `secret_env_unavailable` (no se pudieron leer),
+`secret_env_denied` (el rol o tus credenciales no pueden leer un secreto),
+`secret_env_invalid` (el valor no es lo que la referencia pide, o se pasa del
+tope), `secret_env_invalid_key` (falta una clave pedida, o una clave no es un
+nombre de variable válido) y `secret_env_reserved` (una clave daría un nombre
+reservado). En AgentCore es el código del marcador de fallo del host.
+
+Con una app `protocol = "langgraph-api"` (experimental), un grafo que se
+detiene en un `interrupt` da `protocol_error` con `detail_code`
+`graph_interrupted`: el host no reanuda un human-in-the-loop
+([LangGraph Platform API](../guias/despliega-tu-agente.md#langgraph-platform-api)).
+
 ## `AgentCoreException` / `AgentCoreError` { #agentcore }
 
 Desde 0.15.0. Las lanza el despliegue en AgentCore
@@ -255,11 +284,11 @@ un token ni el texto crudo de AWS. Guía:
 | `option_not_supported` | una opción de MicroVMs en la llamada no aplica a AgentCore | quítala; el mensaje dice cuál usar en su lugar ([tabla](../guias/desplegar-en-agentcore.md#opciones-que-no-aplican)) |
 | `option_requires_agentcore` | una opción de AgentCore (`--tag`, `--bedrock-model`…) con el destino `microvm` | añade `--target agentcore` o quítala |
 | `target_unsupported` | `rayito agent list` o `delete` sin `--target agentcore` | usa `--target agentcore`; una flota de MicroVMs se para con `rayito agent stop` |
-| `provider_unsupported` | el modelo del proyecto no es de Bedrock | AgentCore sólo cablea `bedrock`, con el rol del runtime |
+| `provider_unsupported` | el modelo del proyecto no es de Bedrock | AgentCore sólo cablea `bedrock`, con el rol del runtime; para otro modelo, `--external-model` ([guía](../guias/desplegar-en-agentcore.md#modelos-fuera-de-bedrock)) |
 | `network_policy_unsupported` | el proyecto declara `egress` o `network` | quítalo: en modo PUBLIC AgentCore no filtra la salida |
 | `name_invalid` | el nombre del agente no cabe en los nombres derivados | hasta 41 caracteres, minúsculas y dígitos con `-` o `_` sueltos; cámbialo con `[image].template` |
 | `name_conflict` | ya hay un runtime con ese nombre que no es de Rayito | cambia el nombre con `[image].template`; Rayito no toca runtimes ajenos |
-| `model_required` | reservado: hoy no se lanza (el rol del runtime siempre incluye el modelo del proyecto) | — |
+| `model_required` | el proyecto usa `bedrock` sin `[model] id` y no pasas `--bedrock-model` | fija `[model] id` o pásalo con `--bedrock-model` (`bedrock_models` / `bedrockModels`) |
 | `image_missing` | `--no-build` y no hay una imagen con ese contenido | despliega sin `--no-build` |
 | `lifecycle_invalid` | un tiempo de ciclo de vida fuera de rango, o no entero (en TypeScript, no múltiplo de 1000 ms) | entre 60 y 28 800 s |
 | `lifecycle_order` | `idle_session_timeout` mayor que `max_session_lifetime` | baja el tiempo de inactividad o sube la vida máxima |

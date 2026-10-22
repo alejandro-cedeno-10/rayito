@@ -136,7 +136,7 @@ def check_model_reference(
 
 
 def check_iam_inputs(
-    project_model: str,
+    project_model: str | None,
     bedrock_models: Sequence[str],
     readable_secrets: Sequence[str],
     *,
@@ -144,8 +144,10 @@ def check_iam_inputs(
     region: str,
 ) -> None:
     """Valida, sin AWS, el modelo del proyecto, `bedrock_models` y
-    `readable_secrets`, en ese orden."""
-    check_model_reference(project_model, model_region, field=FIELD_MODEL_ID)
+    `readable_secrets`, en ese orden. `project_model=None` es un modelo que no
+    es un recurso de IAM (fuera de Bedrock, o sin id)."""
+    if project_model is not None:
+        check_model_reference(project_model, model_region, field=FIELD_MODEL_ID)
     for model in bedrock_models:
         check_model_reference(model, model_region)
     for secret in readable_secrets:
