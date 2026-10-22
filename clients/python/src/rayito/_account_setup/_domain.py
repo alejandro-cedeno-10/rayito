@@ -1,5 +1,5 @@
-"""Dominio puro de `rayito setup` (ADR-030): el plan de tres pasos (bucket,
-pila de IAM, imagen base), sus reglas, los errores cerrados, las
+"""Dominio puro de `rayito setup` (ADR-030): el plan de cuatro pasos (bucket,
+pila de IAM, imagen base e imagen base con capacidades), sus reglas, los errores cerrados, las
 constantes y los textos del contrato compartido con la CLI de TypeScript
 (`testdata/account-setup/contract.json`).
 
@@ -34,8 +34,8 @@ from rayito._stacks._condition import USABLE_STACK_STATES as USABLE_STACK_STATES
 from rayito._stacks._condition import StackObservation as StackObservation
 from rayito._stacks._condition import classify_stack
 
-ResourceKind = Literal["bucket", "iamStack", "baseImage"]
-SetupAction = Literal["create", "update", "reuse", "wait", "publish"]
+ResourceKind = Literal["bucket", "iamStack", "baseImage", "capsImage"]
+SetupAction = Literal["create", "update", "reuse", "wait", "publish", "skip"]
 BucketSource = Literal[
     "argument", "environment", "iamStack", "cdkBootstrap", "artifactStack", "rayitoDefault"
 ]
@@ -59,18 +59,21 @@ ErrorCode = Literal[
     "image_build_failed",
 ]
 
-#: Los tres pasos del plan, siempre en este orden.
-RESOURCE_ORDER: Final[tuple[ResourceKind, ...]] = ("bucket", "iamStack", "baseImage")
+#: Los cuatro pasos del plan, siempre en este orden.
+RESOURCE_ORDER: Final[tuple[ResourceKind, ...]] = ("bucket", "iamStack", "baseImage", "capsImage")
 #: Acciones que admite cada recurso (diseño D2).
 ALLOWED_ACTIONS: Final[Mapping[ResourceKind, frozenset[SetupAction]]] = MappingProxyType(
     {
         "bucket": frozenset({"create", "reuse", "wait"}),
         "iamStack": frozenset({"create", "update", "reuse", "wait"}),
         "baseImage": frozenset({"publish", "reuse", "wait"}),
+        "capsImage": frozenset({"publish", "reuse", "wait", "skip"}),
     }
 )
 #: Acciones que escriben en la cuenta y por tanto piden confirmación.
 WRITING_ACTIONS: Final = frozenset({"create", "update", "publish"})
+#: Acciones de una cuenta ya preparada: nada que hacer.
+READY_ACTIONS: Final = frozenset({"reuse", "skip"})
 
 IAM_STACK_NAME: Final = DEFAULT_IAM_STACK_NAME
 IAM_COMPONENT_NAME: Final = "iam"
@@ -98,6 +101,14 @@ ARTIFACT_EXPIRATION_DAYS: Final = 7
 EXPLICIT_BUCKET_SOURCES: Final[frozenset[BucketSource]] = frozenset({"argument", "environment"})
 BASE_IMAGE_NAME: Final = DEFAULT_BASE_IMAGE_NAME
 BASE_IMAGE_VARIANT: Final = "full"
+#: La base que el agente en MicroVM usa por defecto (igual a
+#: `DEFAULT_AGENT_TEMPLATE_BASE`, que un test compara): la misma imagen
+#: `full` publicada con `additionalOsCapabilities` (`AWS_API_NOTES.md` §4,
+#: el camino de `rayito image publish --os-capabilities ALL`).
+CAPS_IMAGE_NAME: Final = "rayito-base-caps"
+#: El único valor de `additionalOsCapabilities` (§4; igual a
+#: `ALL_OS_CAPABILITIES` de `rayito image publish`).
+CAPS_IMAGE_OS_CAPABILITIES: Final = "ALL"
 BUCKET_ENV_VAR: Final = "RAYITO_BUCKET"
 #: Calificador por defecto del bootstrap de CDK
 #: (docs.aws.amazon.com/cdk/v2/guide/bootstrapping-env.html, consultado
@@ -141,6 +152,10 @@ COST_TEXTS: Final[Mapping[str, str]] = MappingProxyType(
         "iamStack": "pila de IAM: gratis",
         "image": "imagen: ≈ $0,04 por semana por versión publicada (mínimo una semana)",
         "artifact": "zip de la imagen en el bucket: céntimos",
+        "capsImage": (
+            "imagen con capacidades: ≈ $0,04 por semana por versión publicada ($0,08 por "
+            "GB-mes, mínimo una semana); --no-caps-image la omite"
+        ),
     }
 )
 
@@ -252,11 +267,35 @@ class AccountSetupException(Exception):
 
 @dataclass(frozen=True)
 class SetupRequest:
+    """Lo que pide `rayito setup`. `caps_image` (por defecto `True`) añade el
+    paso `capsImage`: publicar `rayito-base-caps`, la base del agente en
+    MicroVM, desde el mismo zip que `rayito-base`. Con `False`
+    (`--no-caps-image`) el paso es `skip` y no hace ninguna llamada.
+
+    Coste y activación
+    -------------------
+    Activa: `rayito setup` (y `--dry-run`, que sólo lee); `caps_image=False`
+        quita el paso de la imagen con capacidades.
+    Recursos y llamadas AWS: con `caps_image`, `GetMicrovmImage` y
+        `ListMicrovmImageVersions` de `rayito-base-caps` en el plan y, si
+        falta, `CreateMicrovmImage`/`UpdateMicrovmImage` con
+        `additionalOsCapabilities=["ALL"]` desde el zip ya subido (§4).
+    Coste aproximado: otra versión de imagen publicada, ≈ $0,04 por semana
+        ($0,08 por GB-mes de snapshot, mínimo una semana; us-east-1,
+        consultado 2026-10-22, https://aws.amazon.com/lambda/pricing/).
+    IAM: las mismas de publicar `rayito-base` (`infra/iam.yaml`).
+    Cómo apagarla: `caps_image=False` / `rayito setup --no-caps-image`.
+    Ejemplo:
+        SetupRequest(region="us-east-1", bucket=None, environment_bucket=None,
+                     artifact=None, sdk_version="0.17.0", caps_image=False)
+    """
+
     region: str
     bucket: str | None
     environment_bucket: str | None
     artifact: Path | None
     sdk_version: str
+    caps_image: bool = True
 
 
 @dataclass(frozen=True)
@@ -331,6 +370,7 @@ class SetupPlan:
     artifact: Path | None
     image_arn: str
     stack_status: str | None
+    caps_image_arn: str | None = None
 
     def __post_init__(self) -> None:
         if tuple(step.resource for step in self.steps) != RESOURCE_ORDER:
@@ -338,7 +378,7 @@ class SetupPlan:
 
     @property
     def ready(self) -> bool:
-        return all(step.action == "reuse" for step in self.steps)
+        return all(step.action in READY_ACTIONS for step in self.steps)
 
     @property
     def needs_confirmation(self) -> bool:
@@ -356,13 +396,22 @@ class SetupPlan:
     def image_step(self) -> SetupStep:
         return self.steps[2]
 
+    @property
+    def caps_step(self) -> SetupStep:
+        return self.steps[3]
+
 
 @dataclass(frozen=True)
 class SetupResult:
+    """Lo que dejó `apply`. `caps_image_arn`/`caps_image_version` son los de
+    `rayito-base-caps`, o `None` con `--no-caps-image`."""
+
     bucket: str
     image_arn: str
     image_version: str
     artifact_uploaded: bool | None
+    caps_image_arn: str | None = None
+    caps_image_version: str | None = None
 
     def as_json(self) -> dict[str, object]:
         return {
@@ -370,6 +419,8 @@ class SetupResult:
             "imageArn": self.image_arn,
             "imageVersion": self.image_version,
             "artifactUploaded": self.artifact_uploaded,
+            "capsImageArn": self.caps_image_arn,
+            "capsImageVersion": self.caps_image_version,
         }
 
 
@@ -575,36 +626,59 @@ def classify_image(image: ImageObservation) -> ImageCondition:
     return "unlaunchable"
 
 
-def plan_image(image: ImageObservation, request: SetupRequest) -> SetupStep:
+def plan_image(
+    image: ImageObservation,
+    request: SetupRequest,
+    resource: ResourceKind = "baseImage",
+    name: str = BASE_IMAGE_NAME,
+) -> SetupStep:
+    """`wait` si hay un build en curso, `reuse` si hay una versión lanzable
+    y, si no, `publish` desde `--artifact` o desde la release del SDK. Vale
+    para `rayito-base` y para `rayito-base-caps` (`resource`/`name`)."""
     condition = classify_image(image)
     if condition == "building":
         version = newest(building_versions(image)).image_version
-        return SetupStep("baseImage", BASE_IMAGE_NAME, "wait", image_version=version)
+        return SetupStep(resource, name, "wait", image_version=version)
     if condition == "launchable":
         version = newest(launchable_versions(image)).image_version
-        return SetupStep("baseImage", BASE_IMAGE_NAME, "reuse", image_version=version)
+        return SetupStep(resource, name, "reuse", image_version=version)
     if request.artifact is not None:
-        return SetupStep("baseImage", BASE_IMAGE_NAME, "publish", source="artifact")
+        return SetupStep(resource, name, "publish", source="artifact")
     return SetupStep(
-        "baseImage",
-        BASE_IMAGE_NAME,
+        resource,
+        name,
         "publish",
         source="release",
         release=release_tag(request.sdk_version),
     )
 
 
+def plan_caps_image(caps: ImageObservation | None, request: SetupRequest) -> SetupStep:
+    """El paso `capsImage`: `skip` sin `caps_image` (y entonces no se observó
+    nada); si no, la misma decisión que la imagen base."""
+    if not request.caps_image or caps is None:
+        return SetupStep("capsImage", CAPS_IMAGE_NAME, "skip")
+    return plan_image(caps, request, "capsImage", CAPS_IMAGE_NAME)
+
+
 def cost_lines(steps: Sequence[SetupStep]) -> tuple[str, ...]:
     """Sólo el coste de lo que cuesta: el bucket al crearse (primero), la pila
-    de IAM al crear o actualizar; la imagen y el zip al publicar."""
+    de IAM al crear o actualizar; la imagen y el zip al publicar `rayito-base`;
+    la imagen con capacidades al publicar `rayito-base-caps` (y el zip, si
+    sólo se publica ésa)."""
     lines: list[str] = []
     by_resource = {step.resource: step for step in steps}
     if by_resource["bucket"].action == "create":
         lines.append(COST_TEXTS["bucket"].format(days=ARTIFACT_EXPIRATION_DAYS))
     if by_resource["iamStack"].action in {"create", "update"}:
         lines.append(COST_TEXTS["iamStack"])
-    if by_resource["baseImage"].action == "publish":
+    base_publishes = by_resource["baseImage"].action == "publish"
+    if base_publishes:
         lines.extend((COST_TEXTS["image"], COST_TEXTS["artifact"]))
+    if by_resource["capsImage"].action == "publish":
+        lines.append(COST_TEXTS["capsImage"])
+        if not base_publishes:
+            lines.append(COST_TEXTS["artifact"])
     return tuple(lines)
 
 
@@ -614,12 +688,16 @@ def plan_setup(
     stack: StackObservation,
     bucket_step: SetupStep,
     image: ImageObservation,
+    caps: ImageObservation | None = None,
 ) -> SetupPlan:
+    """El plan de los cuatro pasos. `caps` es la observación de
+    `rayito-base-caps`, o `None` si `caps_image` está apagado."""
     require_supported_region(request.region)
     steps = (
         bucket_step,
         plan_stack(stack, bucket_step.name),
         plan_image(image, request),
+        plan_caps_image(caps, request),
     )
     return SetupPlan(
         region=request.region,
@@ -629,6 +707,7 @@ def plan_setup(
         artifact=request.artifact,
         image_arn=image.image_arn,
         stack_status=stack.status,
+        caps_image_arn=None if caps is None or not request.caps_image else caps.image_arn,
     )
 
 

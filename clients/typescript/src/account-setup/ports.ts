@@ -53,10 +53,15 @@ export interface BaseImageGateway {
   wait(imageArn: string, imageVersion: string, onProgress: Progress): Promise<ImageGateResult>;
 }
 
+/** Publica la imagen `name` desde el zip `artifact`; `osCapabilities` es el
+ * valor de `additionalOsCapabilities` (`"ALL"` para `rayito-base-caps`) o
+ * `undefined`. */
 export interface BaseImagePublisher {
   publish(
     artifact: string,
     options: {
+      readonly name: string;
+      readonly osCapabilities: string | undefined;
       readonly bucket: string;
       readonly buildRoleArn: string;
       readonly onProgress: Progress;

@@ -40,6 +40,8 @@ UNSUPPORTED = "región sin Lambda MicroVMs"
 NO_BUCKET = "sin ningún bucket: se crea uno con el nombre por defecto"
 NAMED_MISSING = "--bucket que no existe: se crea con ese nombre"
 BUCKET_STACK_IN_PROGRESS = "pila del bucket en curso: se espera, sin crear otra"
+CAPS_MISSING = "rayito-base lanzable y sin rayito-base-caps: sólo se publica la de capacidades"
+CAPS_BUILDING = "build de rayito-base-caps en curso: se espera"
 
 
 def account_for(name: str) -> FakeAccount:
@@ -54,6 +56,7 @@ def request_for(name: str) -> SetupRequest:
         environment_bucket=vector["environmentBucket"],
         artifact=None if vector["artifact"] is None else Path(vector["artifact"]),
         sdk_version=SDK_VERSION,
+        caps_image=not vector.get("noCapsImage", False),
     )
 
 
@@ -86,8 +89,17 @@ def test_the_plan_of_a_fresh_account_only_reads() -> None:
     account = account_for(FRESH)
     AccountSetup(account.gateways).plan(request_for(FRESH))
     names = [call[0] for call in account.calls]
-    assert names == ["account", "describe", "head_bucket", "get_image"]
+    assert names == ["account", "describe", "head_bucket", "get_image", "get_image:caps"]
     assert "list_versions" not in names
+
+
+def test_without_the_caps_image_the_plan_never_reads_it() -> None:
+    account = account_for(FRESH)
+    plan = AccountSetup(account.gateways).plan(replace(request_for(FRESH), caps_image=False))
+    names = [call[0] for call in account.calls]
+    assert names == ["account", "describe", "head_bucket", "get_image"]
+    assert plan.caps_step.action == "skip"
+    assert plan.caps_image_arn is None
 
 
 def test_an_account_with_a_reusable_bucket_never_reads_the_bucket_stack() -> None:
@@ -106,6 +118,8 @@ def test_the_plan_of_a_prepared_account_lists_the_versions() -> None:
         "head_bucket",
         "get_image",
         "list_versions",
+        "get_image:caps",
+        "list_versions:caps",
     ]
 
 
@@ -117,15 +131,19 @@ def test_an_unsupported_region_stops_before_any_call() -> None:
     assert account.calls == []
 
 
-def test_apply_on_a_fresh_account_creates_downloads_and_publishes(tmp_path: Path) -> None:
+def test_apply_on_a_fresh_account_downloads_once_and_publishes_both_images(
+    tmp_path: Path,
+) -> None:
     planned = Planned(FRESH, tmp_path)
     result = planned.apply()
     bucket = planned.plan.bucket
+    artifact = str(tmp_path / "rayito-image.zip")
     assert planned.writes == [
         ("create", bucket),
         ("download", "SHA256SUMS"),
         ("download", "rayito-image.zip"),
-        ("publish", str(tmp_path / "rayito-image.zip")),
+        ("publish", artifact),
+        ("publish:caps", artifact, "ALL"),
     ]
     assert planned.account.publisher.published_with == (bucket, BUILD_ROLE_ARN)
     assert result == SetupResult(
@@ -133,7 +151,46 @@ def test_apply_on_a_fresh_account_creates_downloads_and_publishes(tmp_path: Path
         image_arn=planned.plan.image_arn,
         image_version=IMAGE_VERSION_PUBLISHED,
         artifact_uploaded=True,
+        caps_image_arn=planned.plan.caps_image_arn,
+        caps_image_version=IMAGE_VERSION_PUBLISHED,
     )
+
+
+def test_without_the_caps_image_apply_publishes_only_the_base(tmp_path: Path) -> None:
+    account = account_for(FRESH)
+    service = AccountSetup(account.gateways)
+    plan = service.plan(replace(request_for(FRESH), caps_image=False))
+    reads = len(account.calls)
+    result = service.apply(plan, workdir=tmp_path, on_progress=lambda _line: None)
+    names = [call[0] for call in account.calls[reads:]]
+    assert names == ["create", "download", "download", "publish"]
+    assert result.caps_image_arn is None
+    assert result.caps_image_version is None
+
+
+def test_a_launchable_base_with_no_caps_image_downloads_once_for_the_caps(
+    tmp_path: Path,
+) -> None:
+    planned = Planned(CAPS_MISSING, tmp_path)
+    result = planned.apply()
+    artifact = str(tmp_path / "rayito-image.zip")
+    assert planned.writes == [
+        ("describe",),
+        ("download", "SHA256SUMS"),
+        ("download", "rayito-image.zip"),
+        ("publish:caps", artifact, "ALL"),
+    ]
+    assert result.image_version == "1.0"
+    assert result.artifact_uploaded is None
+    assert result.caps_image_version == IMAGE_VERSION_PUBLISHED
+
+
+def test_a_caps_build_in_progress_is_waited_for(tmp_path: Path) -> None:
+    planned = Planned(CAPS_BUILDING, tmp_path)
+    result = planned.apply()
+    assert planned.writes == [("gate", "2.0")]
+    assert result.caps_image_version == "2.0"
+    assert planned.progress[0] == "esperando el build en curso de rayito-base-caps (versión 2.0)"
 
 
 def test_apply_reports_progress_in_order(tmp_path: Path) -> None:
@@ -144,6 +201,7 @@ def test_apply_reports_progress_in_order(tmp_path: Path) -> None:
         "pila de IAM rayito-m0-iam lista",
         f"sha256 de rayito-image.zip verificado contra SHA256SUMS: {ARTIFACT_SHA256}",
         f"imagen rayito-base {IMAGE_VERSION_PUBLISHED} lanzable",
+        f"imagen rayito-base-caps {IMAGE_VERSION_PUBLISHED} lanzable",
     ]
 
 
@@ -183,7 +241,7 @@ def test_after_waiting_for_a_stack_in_progress_it_is_updated_if_it_has_another_b
 def test_a_build_in_progress_is_waited_for_and_never_published(tmp_path: Path) -> None:
     planned = Planned(BUILD_IN_PROGRESS, tmp_path)
     result = planned.apply()
-    assert planned.writes == [("gate", "2.0")]
+    assert planned.writes == [("gate", "2.0"), ("gate", "2.0")]
     assert result.image_version == "2.0"
     assert result.artifact_uploaded is None
     assert planned.progress[0] == "esperando el build en curso de rayito-base (versión 2.0)"
@@ -197,6 +255,7 @@ def test_a_waited_build_that_is_not_launchable_fails_the_run(tmp_path: Path) -> 
     assert caught.value.code == "image_build_failed"
     assert "2.0" in str(caught.value)
     assert [call[0] for call in planned.writes] == ["gate"]
+    assert "publish:caps" not in [call[0] for call in planned.account.calls]
 
 
 @pytest.mark.parametrize(
@@ -218,6 +277,7 @@ def test_an_artifact_argument_downloads_nothing(tmp_path: Path) -> None:
     assert planned.writes == [
         ("create", planned.plan.bucket),
         ("publish", "image/rayito-image.zip"),
+        ("publish:caps", "image/rayito-image.zip", "ALL"),
     ]
 
 
@@ -261,6 +321,7 @@ def test_apply_on_an_account_without_a_bucket_creates_it_first(tmp_path: Path) -
         ("download", "SHA256SUMS"),
         ("download", "rayito-image.zip"),
         ("publish", str(tmp_path / "rayito-image.zip")),
+        ("publish:caps", str(tmp_path / "rayito-image.zip"), "ALL"),
     ]
     assert planned.account.publisher.published_with == (bucket, BUILD_ROLE_ARN)
     assert result.bucket == bucket

@@ -222,9 +222,23 @@ five parallel work groups.
 - `AgentProject.gateway_presets` (new, contract §2) is filled when a
   project is read from a file or a detection report.
 - The existence check and creation use the full secret name that the
-  gateway reads at runtime. `_deploy_facade` builds
-  `SecretStore(prefix="")`. TypeScript does the same with `prefix: ""`, the
-  same `FULL_NAME_PREFIX` used by `_secret_env_reader`.
+  gateway reads at runtime. The gateway reads its secret through the shared
+  `SecretCache`, whose prefix is `rayito/`, so gateway secret names are
+  relative to `rayito/` (0.16 behaviour, kept: `--secret model=<name>` and
+  hand-written projects do not change). The doubled prefix came from
+  detection, which wrote `AGENT_SECRET_NAME_TEMPLATE`
+  (`rayito/agents/{project}/{provider}`, a full name meant for
+  `secret_env`) into the gateway. Fix: detection writes
+  `GATEWAY_SECRET_NAME_TEMPLATE` (the same template without `rayito/`), and
+  `_deploy_facade`/`deploy.ts` build the store with
+  `GATEWAY_SECRET_PREFIX` (`rayito/`, explicit, the prefix the gateway reads
+  with). `SecretStore(prefix="")` would have broken the runtime lookup and
+  every relative `--secret` name, so it is not used.
+- 0.16 compatibility: if the conventional name `agents/<project>/<gateway>`
+  is missing but the 0.16 name (`rayito/` + that name, i.e.
+  `rayito/rayito/agents/...` in Secrets Manager) exists, the deploy reuses
+  it (one extra `DescribeSecret`, only when the first is missing) and
+  creates nothing. Any other name is never reinterpreted.
 - Vector: `testdata/agent-deploy/create-secret.json` (new), with project
   gateway name, preset and expected secret name and variable.
 
@@ -243,7 +257,11 @@ five parallel work groups.
   `capsImage: false` drops the step. The step is then shown as `skip`, a new
   action listed in `ALLOWED_ACTIONS["capsImage"]` (`SetupAction` gains `"skip"`).
 - Plan vectors in `testdata/account-setup/plan-vectors.json` gain the step.
-  Existing vectors gain a `capsImage` row and nothing else changes.
+  Existing vectors gain a `capsImage` input (the same observation as
+  `image`), the `capsImage` row and, when it publishes, its cost line
+  (`messages.cost.capsImage`, plus the zip line if only the caps image
+  publishes); nothing else changes. `noCapsImage: true` is `--no-caps-image`.
+  The `--json` result gains `capsImageArn` and `capsImageVersion`.
 
 ### D10. OpenCode zero-config reads `AGENTS.md` and permissions
 

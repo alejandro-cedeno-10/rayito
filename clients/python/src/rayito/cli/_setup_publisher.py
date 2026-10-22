@@ -11,7 +11,6 @@ from pathlib import Path
 from typing import Final
 
 from rayito._account_setup._domain import (
-    BASE_IMAGE_NAME,
     BASE_IMAGE_VARIANT,
     AccountSetupException,
     PublishedImage,
@@ -33,16 +32,24 @@ BASE_VERSION_LINE_TEMPLATE: Final = "base_image_version={version}"
 
 
 class PipelineImagePublisher:
-    """Publica `rayito-base` (variante `full`, sin capacidades extra) sobre
-    la versión más reciente de la base gestionada. Construirlo no llama a
-    AWS."""
+    """Publica `rayito-base` (variante `full`, sin capacidades extra) o
+    `rayito-base-caps` (el mismo zip con `additionalOsCapabilities=["ALL"]`,
+    como `rayito image publish --os-capabilities ALL`) sobre la versión más
+    reciente de la base gestionada. Construirlo no llama a AWS."""
 
     def __init__(self, clients: PublishClients, *, sleep: Sleeper = time.sleep) -> None:
         self._clients = clients
         self._sleep = sleep
 
     def publish(
-        self, artifact: Path, *, bucket: str, build_role_arn: str, on_progress: Progress
+        self,
+        artifact: Path,
+        *,
+        name: str,
+        os_capabilities: str | None,
+        bucket: str,
+        build_role_arn: str,
+        on_progress: Progress,
     ) -> PublishedImage:
         version = resolve_base_image_version(
             self._clients.microvms, self._clients.region, LATEST_BASE_IMAGE_VERSION
@@ -50,7 +57,7 @@ class PipelineImagePublisher:
         on_progress(BASE_VERSION_LINE_TEMPLATE.format(version=version))
         settings = PublishSettings(
             artifact=artifact,
-            image_name=BASE_IMAGE_NAME,
+            image_name=name,
             variant=BASE_IMAGE_VARIANT,
             bucket=bucket,
             stack_name=DEFAULT_STACK_NAME,
@@ -59,12 +66,13 @@ class PipelineImagePublisher:
             memory_mib=DEFAULT_MEMORY_MIB,
             force=False,
             timeout_seconds=DEFAULT_BUILD_TIMEOUT_SECONDS,
+            os_capabilities=os_capabilities,
         )
         summary = build_or_reuse(self._clients, settings, sleep=self._sleep, emit=on_progress)
         if not summary["launchable"]:
             raise AccountSetupException(
                 "image_build_failed",
-                name=BASE_IMAGE_NAME,
+                name=name,
                 imageVersion=str(summary["imageVersion"]),
                 state=str(summary["gate"]["versionState"]),
             )

@@ -58,8 +58,19 @@ class BaseImageGateway(Protocol):
 
 
 class BaseImagePublisher(Protocol):
+    """Publica la imagen `name` desde el zip `artifact`; `os_capabilities`
+    es el valor de `additionalOsCapabilities` (`"ALL"` para
+    `rayito-base-caps`) o `None`."""
+
     def publish(
-        self, artifact: Path, *, bucket: str, build_role_arn: str, on_progress: Progress
+        self,
+        artifact: Path,
+        *,
+        name: str,
+        os_capabilities: str | None,
+        bucket: str,
+        build_role_arn: str,
+        on_progress: Progress,
     ) -> PublishedImage: ...
 
 

@@ -25,6 +25,7 @@ export const RESOURCE_LABELS: Readonly<Record<ResourceKind, string>> = {
   bucket: "bucket",
   iamStack: "pila de IAM",
   baseImage: "imagen",
+  capsImage: "imagen con capacidades",
 };
 /** El texto de cada acción; `bucketReuse` y las de imagen llevan los campos del paso. */
 export const ACTION_TEMPLATES = {
@@ -39,6 +40,7 @@ export const ACTION_TEMPLATES = {
   imagePublishArtifact: "publicar desde {artifact} (≈ 10 min)",
   imageReuse: "ya existe (versión {imageVersion} lanzable)",
   imageWait: "build en curso (versión {imageVersion}): esperar",
+  capsSkip: "omitida (--no-caps-image)",
 } as const;
 export const COST_HEADER = "Coste aproximado:";
 export const COST_LINE_TEMPLATE = "  {text}";
@@ -67,6 +69,11 @@ const ACTION_KEYS: Readonly<Record<string, ActionKey>> = {
   "baseImage:publish:artifact": "imagePublishArtifact",
   "baseImage:reuse": "imageReuse",
   "baseImage:wait": "imageWait",
+  "capsImage:publish:release": "imagePublishRelease",
+  "capsImage:publish:artifact": "imagePublishArtifact",
+  "capsImage:reuse": "imageReuse",
+  "capsImage:wait": "imageWait",
+  "capsImage:skip": "capsSkip",
 };
 
 function actionKey(step: SetupStep): ActionKey {

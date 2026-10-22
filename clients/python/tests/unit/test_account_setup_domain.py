@@ -28,7 +28,9 @@ from rayito._account_setup._domain import (
     with_setup_hint,
 )
 from rayito._account_setup._service import AccountSetup
+from rayito._agent._template import DEFAULT_AGENT_TEMPLATE_BASE
 from rayito._images import BUILD_ROLE_OUTPUT_KEY, BUILDING_VERSION_STATES
+from rayito._images_publish_domain import ALL_OS_CAPABILITIES
 
 from .fake_account_setup import (
     bucket_reads,
@@ -52,6 +54,7 @@ def request_from_vector(vector: dict[str, Any]) -> SetupRequest:
         environment_bucket=vector["environmentBucket"],
         artifact=None if vector["artifact"] is None else Path(vector["artifact"]),
         sdk_version=SDK_VERSION,
+        caps_image=not vector.get("noCapsImage", False),
     )
 
 
@@ -142,6 +145,9 @@ def test_constants_match_the_contract() -> None:
     assert CONSTANTS["buildRoleOutputKey"] == BUILD_ROLE_OUTPUT_KEY
     assert CONSTANTS["baseImageName"] == domain.BASE_IMAGE_NAME
     assert CONSTANTS["baseImageVariant"] == domain.BASE_IMAGE_VARIANT
+    assert CONSTANTS["capsImageName"] == domain.CAPS_IMAGE_NAME == DEFAULT_AGENT_TEMPLATE_BASE
+    assert CONSTANTS["capsImageOsCapabilities"] == domain.CAPS_IMAGE_OS_CAPABILITIES
+    assert domain.CAPS_IMAGE_OS_CAPABILITIES == ALL_OS_CAPABILITIES
     assert CONSTANTS["cdkBootstrapQualifier"] == domain.CDK_BOOTSTRAP_QUALIFIER
     assert CONSTANTS["bucketEnvVar"] == domain.BUCKET_ENV_VAR
     assert CONSTANTS["releaseTagPrefix"] == domain.RELEASE_TAG_PREFIX
@@ -165,6 +171,8 @@ def test_resources_actions_and_sources_match_the_contract() -> None:
     }
     assert sorted(get_args(domain.BucketSource)) == sorted(CONTRACT["bucketSources"])
     assert sorted(get_args(domain.BucketState)) == sorted(CONTRACT["bucketProbeStates"])
+    assert list(get_args(domain.ResourceKind)) == CONTRACT["resources"]
+    assert sorted(get_args(domain.SetupAction)) == sorted(CONTRACT["actions"])
 
 
 def test_messages_match_the_contract() -> None:
@@ -218,14 +226,49 @@ def test_a_step_rejects_an_action_its_resource_does_not_admit() -> None:
         SetupStep("baseImage", "rayito-base", "update")
 
 
-def test_a_plan_needs_the_three_steps_in_order() -> None:
+def test_a_plan_needs_the_four_steps_in_order() -> None:
     steps = (
         SetupStep("iamStack", "rayito-m0-iam", "reuse"),
         SetupStep("bucket", "b", "reuse"),
         SetupStep("baseImage", "rayito-base", "reuse"),
+        SetupStep("capsImage", "rayito-base-caps", "reuse"),
     )
     with pytest.raises(ValueError, match="orden"):
         SetupPlan("us-east-1", "1", steps, (), None, "arn", None)
+    with pytest.raises(ValueError, match="orden"):
+        SetupPlan("us-east-1", "1", (steps[1], steps[0], steps[2]), (), None, "arn", None)
+
+
+def test_only_the_caps_step_can_be_skipped() -> None:
+    assert SetupStep("capsImage", "rayito-base-caps", "skip").action == "skip"
+    with pytest.raises(ValueError, match="baseImage"):
+        SetupStep("baseImage", "rayito-base", "skip")
+
+
+def test_a_skipped_caps_step_still_counts_as_ready() -> None:
+    steps = (
+        SetupStep("bucket", "b", "reuse"),
+        SetupStep("iamStack", "rayito-m0-iam", "reuse"),
+        SetupStep("baseImage", "rayito-base", "reuse"),
+        SetupStep("capsImage", "rayito-base-caps", "skip"),
+    )
+    plan = SetupPlan("us-east-1", "1", steps, (), None, "arn", None)
+    assert plan.ready
+    assert not plan.needs_confirmation
+    assert domain.cost_lines(steps) == ()
+
+
+def test_publishing_only_the_caps_image_also_prices_the_zip() -> None:
+    steps = (
+        SetupStep("bucket", "b", "reuse"),
+        SetupStep("iamStack", "rayito-m0-iam", "reuse"),
+        SetupStep("baseImage", "rayito-base", "reuse"),
+        SetupStep("capsImage", "rayito-base-caps", "publish", source="release"),
+    )
+    assert domain.cost_lines(steps) == (
+        MESSAGES["cost"]["capsImage"],
+        MESSAGES["cost"]["artifact"],
+    )
 
 
 def test_the_default_bucket_name_carries_the_account_and_the_region() -> None:

@@ -12,7 +12,6 @@ import {
   AccountSetupError,
   ARTIFACT_BUCKET_PARAMETER,
   ARTIFACT_STACK_NAME,
-  BASE_IMAGE_NAME,
   BASE_IMAGE_VARIANT,
   BUCKET_NAME_PARAMETER,
   type BucketProbe,
@@ -263,7 +262,10 @@ export class SdkBaseImages implements BaseImageGateway {
   }
 }
 
-/** Publica `rayito-base` con la tubería de `rayito image publish` sobre la última base gestionada. */
+/** Publica `rayito-base` (sin capacidades extra) o `rayito-base-caps` (el mismo
+ * zip con `additionalOsCapabilities: ["ALL"]`, como `rayito image publish
+ * --os-capabilities ALL`) con la tubería de `rayito image publish` sobre la
+ * última base gestionada. */
 export class PipelineImagePublisher implements BaseImagePublisher {
   readonly #ports: PublishPorts;
   readonly #clock: SetupClock;
@@ -276,6 +278,8 @@ export class PipelineImagePublisher implements BaseImagePublisher {
   async publish(
     artifact: string,
     options: {
+      readonly name: string;
+      readonly osCapabilities: string | undefined;
       readonly bucket: string;
       readonly buildRoleArn: string;
       readonly onProgress: Progress;
@@ -286,7 +290,7 @@ export class PipelineImagePublisher implements BaseImagePublisher {
     onProgress(`base_image_version=${baseImageVersion}`);
     const settings: PublishSettings = {
       artifact,
-      imageName: BASE_IMAGE_NAME,
+      imageName: options.name,
       variant: BASE_IMAGE_VARIANT,
       bucket: options.bucket,
       stackName: DEFAULT_STACK_NAME,
@@ -295,7 +299,7 @@ export class PipelineImagePublisher implements BaseImagePublisher {
       memoryMib: DEFAULT_MEMORY_MIB,
       force: false,
       timeoutMs: DEFAULT_BUILD_TIMEOUT_MS,
-      osCapabilities: undefined,
+      osCapabilities: options.osCapabilities,
       environmentVariables: {},
       withEfs: false,
       artifactRunId: undefined,
@@ -314,7 +318,7 @@ export class PipelineImagePublisher implements BaseImagePublisher {
     const gate = summary.gate as { readonly versionState?: string } | undefined;
     if (!summary.launchable) {
       throw new AccountSetupError("image_build_failed", {
-        name: BASE_IMAGE_NAME,
+        name: options.name,
         imageVersion: String(summary.imageVersion),
         state: gate?.versionState ?? "",
       });

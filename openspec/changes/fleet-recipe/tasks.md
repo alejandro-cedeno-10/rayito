@@ -64,22 +64,24 @@ Hard rules:
 
 ## G2. Secret creation and setup (`feat/sdk-017-secrets-setup`, items 2, 3 and 4)
 
-- [ ] G2.1 `AgentProject.gateway_presets` / `gatewayPresets`: filled by the
+- [x] G2.1 `AgentProject.gateway_presets` / `gatewayPresets`: filled by the
       file reader and by detection, excluded from the serialised document,
       with existing project vectors byte-identical.
-- [ ] G2.2 `secret_value_from_env(..., preset=)` and messages by
+- [x] G2.2 `secret_value_from_env(..., preset=)` and messages by
       `preset or gateway`. `ensure_model_secrets` passes the preset.
-- [ ] G2.3 `SecretStore(prefix="")` / `prefix: ""` in the deploy facade.
+- [x] G2.3 Detection writes the gateway secret relative to `rayito/`
+      (`GATEWAY_SECRET_NAME_TEMPLATE`) and the deploy facade builds the store
+      with `GATEWAY_SECRET_PREFIX`; a 0.16 doubled secret is reused.
       Vector `testdata/agent-deploy/create-secret.json` covers a gateway
       `model` with preset `bedrock` and the exact name, with no doubled
       prefix.
-- [ ] G2.4 Setup: the `capsImage` step and `skip` action;
+- [x] G2.4 Setup: the `capsImage` step and `skip` action;
       `SetupRequest.caps_image` / `capsImage`; one download reused;
       `additionalOsCapabilities=["ALL"]`; `--no-caps-image` in both CLIs;
       plan vectors and `cli-cases.json` updated.
-- [ ] G2.5 Tests in both SDKs: preset lookup, name, plan with and without
+- [x] G2.5 Tests in both SDKs: preset lookup, name, plan with and without
       caps, and service publishing both images from one artifact.
-- [ ] G2.6 Docs: `cli.md`/`.en.md` (setup, `--create-secret`),
+- [x] G2.6 Docs: `cli.md`/`.en.md` (setup, `--create-secret`),
       `primeros-pasos/configurar-aws.md`/`.en.md`,
       `guias/despliega-tu-agente.md`/`.en.md`, `cost.md`/`.en.md`.
       CHANGELOG entries.
