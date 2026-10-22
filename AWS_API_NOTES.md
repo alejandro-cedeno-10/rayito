@@ -2585,9 +2585,21 @@ y los únicos parámetros de Parameter Store que los SDKs pueden usar**, y un
 test de cada SDK lo comprueba como en §19. Verificado sin red el
 2026-10-22 contra el modelo `ssm/2014-11-06` de botocore 1.43.103 (miembros de
 entrada y salida, `error_shapes` y los `enum` `ParameterTier` y
-`ParameterType`). Pendiente antes de escribir el adaptador de TypeScript
-(tarea 0.6): los mismos nombres en los `.d.ts` de `@aws-sdk/client-ssm`, con
-su versión anotada aquí.
+`ParameterType`). Verificado también sin red el 2026-10-22 (tarea 0.6)
+contra los `.d.ts` de `@aws-sdk/client-ssm` 3.1142.0
+(`dist-types/models/models_1.d.ts`, `errors.d.ts` y `enums.d.ts`):
+`PutParameterRequest` tiene `Name`, `Value`, `Type`, `Tier`, `Overwrite` y
+`Description` (además de `KeyId`, `AllowedPattern`, `Tags`, `Policies` y
+`DataType`, que no se usan); `GetParameterRequest`, `Name` y
+`WithDecryption`; `DeleteParameterRequest`, `Name`; las clases de error
+`ParameterNotFound`, `AccessDeniedException`, `ParameterLimitExceeded`,
+`ParameterPatternMismatchException`, `HierarchyLevelLimitExceededException`
+y `TooManyUpdates` existen con ese `name`, y los enum valen
+`ParameterTier.STANDARD = "Standard"` y
+`ParameterType.SECURE_STRING = "SecureString"`. En JavaScript,
+`@aws/bedrock-token-generator` 1.1.0 (`dist/getToken.d.ts`) exporta
+`getToken({ credentials, region, expiresInSeconds })`, que devuelve una
+`Promise<string>`.
 
 | Operación (boto3 / AWS SDK v3) | Parámetros de entrada (y sólo estos) | Campos de salida que se leen | IAM | Fuente |
 |---|---|---|---|---|
