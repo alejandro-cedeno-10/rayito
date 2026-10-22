@@ -12,6 +12,7 @@
  */
 
 import { AGENT_PROJECT_SCHEMA, AGENT_SECRET_NAME_TEMPLATE } from "../limits.js";
+import { DEFAULT_SECRET_PREFIX } from "../secrets/names.js";
 import { fillRuntime } from "./detect-domain.js";
 import type { DetectionReport, DetectOverrides } from "./detect-report.js";
 import { type BridgeRules, DETECTION_RULES, type DetectionRules } from "./detect-rules.js";
@@ -36,6 +37,15 @@ const UV_LOCKFILE = "uv.lock";
 const PYTHON_LANGUAGE = "python";
 const TYPESCRIPT_LANGUAGE = "typescript";
 const ENTRY_EXPORT_SEPARATOR = "#";
+/** El secreto de la pasarela detectada, relativo al prefijo `rayito/` con el
+ * que la pasarela lo lee (`SecretCache`) y `--create-secret` lo crea
+ * (`SecretStore`): en Secrets Manager queda en `AGENT_SECRET_NAME_TEMPLATE`
+ * (`rayito/agents/<proyecto>/<proveedor>`), sin el prefijo duplicado de 0.16. */
+export const GATEWAY_SECRET_NAME_TEMPLATE = AGENT_SECRET_NAME_TEMPLATE.startsWith(
+  DEFAULT_SECRET_PREFIX,
+)
+  ? AGENT_SECRET_NAME_TEMPLATE.slice(DEFAULT_SECRET_PREFIX.length)
+  : AGENT_SECRET_NAME_TEMPLATE;
 
 type Table = Record<string, unknown>;
 
@@ -135,7 +145,7 @@ function gatewayTable(
 ): Table {
   const table: Table = {
     preset,
-    secret: AGENT_SECRET_NAME_TEMPLATE.replace("{project}", name).replace("{provider}", preset),
+    secret: GATEWAY_SECRET_NAME_TEMPLATE.replace("{project}", name).replace("{provider}", preset),
   };
   const keys = gatewayPresetKeys(preset);
   const required = gatewayPresetRequiredKeys(preset);

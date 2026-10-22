@@ -29,6 +29,7 @@ from rayito._agent._project_domain import (
     require_model_id,
 )
 from rayito._limits import AGENT_PROJECT_SCHEMA, AGENT_SECRET_NAME_TEMPLATE
+from rayito._secrets import DEFAULT_SECRET_PREFIX
 
 _MODEL_PATH: Final = "model"
 _REGION_PATH: Final = "deploy.region"
@@ -44,6 +45,12 @@ UV_LOCKFILE: Final = "uv.lock"
 PYTHON_LANGUAGE: Final = "python"
 TYPESCRIPT_LANGUAGE: Final = "typescript"
 ENTRY_EXPORT_SEPARATOR: Final = "#"
+#: El secreto de la pasarela detectada, relativo al prefijo `rayito/` con el
+#: que la pasarela lo lee (`SecretCache`) y `--create-secret` lo crea
+#: (`SecretStore`): en Secrets Manager queda en
+#: `AGENT_SECRET_NAME_TEMPLATE` (`rayito/agents/<proyecto>/<proveedor>`), sin
+#: el prefijo duplicado de 0.16.
+GATEWAY_SECRET_NAME_TEMPLATE: Final = AGENT_SECRET_NAME_TEMPLATE.removeprefix(DEFAULT_SECRET_PREFIX)
 
 
 def _error(path: str, code: str, text: str) -> AgentProjectException:
@@ -128,7 +135,7 @@ def _gateway_table(
     URL de `--model-base-url` como `upstream`); lo opcional se deja fuera."""
     table: dict[str, object] = {
         "preset": preset,
-        "secret": AGENT_SECRET_NAME_TEMPLATE.format(project=name, provider=preset),
+        "secret": GATEWAY_SECRET_NAME_TEMPLATE.format(project=name, provider=preset),
     }
     spec = _GATEWAY_PRESETS[preset]
     if base_url is not None and _UPSTREAM_KEY not in spec.keys:

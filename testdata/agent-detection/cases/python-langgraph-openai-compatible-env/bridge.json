@@ -12,7 +12,7 @@
   "gateways": {
     "openai-compatible": {
       "preset": "openai-compatible",
-      "secret": "rayito/agents/ticket-agent/openai-compatible",
+      "secret": "agents/ticket-agent/openai-compatible",
       "upstream": "https://llm-gateway.example.com"
     }
   }

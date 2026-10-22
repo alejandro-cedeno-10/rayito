@@ -34,6 +34,7 @@ import {
   type Environ,
   ensureBaseImage,
   ensureModelSecrets,
+  GATEWAY_SECRET_PREFIX,
   resolveBucket,
   resolveToken,
   type SecretStorePort,
@@ -406,6 +407,7 @@ export async function preflight(
     new SecretStore({
       ...(region === undefined ? {} : { region }),
       ...(args.credentials === undefined ? {} : { credentials: args.credentials }),
+      prefix: GATEWAY_SECRET_PREFIX,
     });
   const secrets = await ensureModelSecrets(project, {
     secretNames: options.secretNames,

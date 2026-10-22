@@ -19,7 +19,7 @@
       "preset": "custom",
       "upstream": "https://bedrock-runtime.us-east-1.amazonaws.com",
       "headers": {
-        "authorization": "rayito/agents/opencode/bedrock"
+        "authorization": "agents/opencode/bedrock"
       },
       "allow": [
         [

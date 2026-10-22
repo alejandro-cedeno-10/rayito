@@ -23,6 +23,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Final, Literal, overload
 
 from rayito._agent._aws_resolve import (
+    GATEWAY_SECRET_PREFIX,
     AwsResolver,
     DeployAws,
     SecretStorePort,
@@ -562,7 +563,9 @@ def preflight(
         aws, project.base, options.base_publisher, ensure=options.ensure_base_image
     ):
         steps.append(AgentDeployStep(STEP_BASE_IMAGE, "published"))
-    store = ports.store or SecretStore(region=effective_region, session=session)
+    store = ports.store or SecretStore(
+        region=effective_region, session=session, prefix=GATEWAY_SECRET_PREFIX
+    )
     secrets = ensure_model_secrets(
         project,
         secret_names=options.secret_names,
