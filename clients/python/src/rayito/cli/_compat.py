@@ -119,6 +119,13 @@ COMPATIBILITY: tuple[CompatibilityRow, ...] = (
         "Amazon Bedrock AgentCore Runtime (--target agentcore) se validan con el rayd del tag "
         "rayd-v0.15.0",
     ),
+    CompatibilityRow(
+        "0.16",
+        "0.16.0",
+        "0.16: el despliegue agnóstico de agentes (modelo externo opcional, entrada "
+        "estructurada y --graph, secretos como variables de entorno y el protocolo "
+        "langgraph-api) se valida con el rayd del tag rayd-v0.16.0",
+    ),
 )
 
 
