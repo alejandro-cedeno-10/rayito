@@ -123,7 +123,7 @@ export class AccountSetup {
       bucket,
       imageArn: base.imageArn ?? plan.imageArn,
       imageVersion: base.imageVersion ?? "",
-      artifactUploaded: base.artifactUploaded,
+      artifactUploaded: uploadedByEither(base.artifactUploaded, caps.artifactUploaded),
       capsImageArn: caps.imageArn,
       capsImageVersion: caps.imageVersion,
     };
@@ -314,6 +314,19 @@ class Publishing {
 }
 
 /** El rol de build de la pila; sin la salida no es la plantilla de Rayito. */
+/** Si la publicación subió el artefacto, para la base o para la imagen con
+ * capacidades (en una cuenta de 0.16 sólo se publica la segunda);
+ * `undefined` si ninguna de las dos publicó. */
+function uploadedByEither(
+  base: boolean | undefined,
+  caps: boolean | undefined,
+): boolean | undefined {
+  if (base === undefined && caps === undefined) {
+    return undefined;
+  }
+  return base === true || caps === true;
+}
+
 function requireBuildRole(stack: StackObservation): string {
   return stackOutput(stack, BUILD_ROLE_OUTPUT_KEY, IAM_TEMPLATE_PATH);
 }

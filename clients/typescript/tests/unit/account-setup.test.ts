@@ -569,7 +569,7 @@ describe("AccountSetup.apply", () => {
     ]);
     expect(result).toMatchObject({
       imageVersion: "1.0",
-      artifactUploaded: undefined,
+      artifactUploaded: true,
       capsImageVersion: "3.0",
     });
   });

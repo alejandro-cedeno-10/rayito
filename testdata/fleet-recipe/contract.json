@@ -171,7 +171,7 @@
       "command": "agent deploy",
       "flag": "--scale-in-after",
       "value": "SECONDS",
-      "help": "Segundos sin uso tras los que se termina un VM por encima de --min-vms (por defecto, 900).",
+      "help": "Segundos sin uso tras los que se termina un VM por encima de --min-vms (por defecto, el de [scaling] del proyecto o 900).",
       "owner": "G5"
     },
     {

@@ -40,6 +40,15 @@ from rayito._images import BUILD_ROLE_OUTPUT_KEY
 from rayito._stacks._condition import StackObservation
 
 
+def uploaded_by_either(base: bool | None, caps: bool | None) -> bool | None:
+    """Si la publicación subió el artefacto, para la base o para la imagen con
+    capacidades (en una cuenta de 0.16 sólo se publica la segunda); `None`
+    si ninguna de las dos publicó."""
+    if base is None and caps is None:
+        return None
+    return bool(base) or bool(caps)
+
+
 class AccountSetup:
     """Prepara una cuenta y región para Rayito: observa, planifica y aplica.
 
@@ -103,7 +112,7 @@ class AccountSetup:
             bucket=bucket,
             image_arn=base.image_arn or plan.image_arn,
             image_version=str(base.image_version),
-            artifact_uploaded=base.artifact_uploaded,
+            artifact_uploaded=uploaded_by_either(base.artifact_uploaded, caps.artifact_uploaded),
             caps_image_arn=caps.image_arn,
             caps_image_version=caps.image_version,
         )

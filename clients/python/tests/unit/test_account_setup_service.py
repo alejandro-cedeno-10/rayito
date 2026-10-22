@@ -181,7 +181,7 @@ def test_a_launchable_base_with_no_caps_image_downloads_once_for_the_caps(
         ("publish:caps", artifact, "ALL"),
     ]
     assert result.image_version == "1.0"
-    assert result.artifact_uploaded is None
+    assert result.artifact_uploaded is True
     assert result.caps_image_version == IMAGE_VERSION_PUBLISHED
 
 

@@ -258,7 +258,9 @@ class FakePublisher:
         self.published_with = (bucket, build_role_arn)
         if name == CAPS_IMAGE_NAME:
             self.recorder.record(f"publish{CAPS_CALL_SUFFIX}", str(artifact), str(os_capabilities))
-            return PublishedImage(self.caps_image_arn, IMAGE_VERSION_PUBLISHED, False)
+            return PublishedImage(
+                self.caps_image_arn, IMAGE_VERSION_PUBLISHED, self.artifact_uploaded
+            )
         assert os_capabilities is None
         self.recorder.record("publish", str(artifact))
         return PublishedImage(self.image_arn, IMAGE_VERSION_PUBLISHED, self.artifact_uploaded)

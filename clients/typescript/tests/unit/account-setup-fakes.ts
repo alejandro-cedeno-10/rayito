@@ -261,7 +261,11 @@ export class FakeAccountSetup implements AccountSetupGateways {
             options.buildRoleArn,
             options.osCapabilities,
           );
-          return { imageArn, imageVersion: PUBLISHED_VERSION, artifactUploaded: false };
+          return {
+            imageArn,
+            imageVersion: PUBLISHED_VERSION,
+            artifactUploaded: behavior.publishedArtifactUploaded ?? true,
+          };
         }
         record("publish", artifact, options.bucket, options.buildRoleArn);
         return {

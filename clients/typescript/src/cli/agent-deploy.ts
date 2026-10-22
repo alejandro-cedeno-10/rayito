@@ -10,7 +10,7 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { AgentDeployPlan } from "../agent/deploy-plan.js";
 import { SECRET_LIKE_KEYS } from "../agent/project.js";
-import { AGENT_TOKEN_FILE_DEFAULT } from "../limits.js";
+import { AGENT_SCALE_IN_AFTER_SECONDS_DEFAULT, AGENT_TOKEN_FILE_DEFAULT } from "../limits.js";
 import { generateAccessToken } from "../payload.js";
 import { readTokenFile, TOKEN_ENV_VAR, TokenFileError, writeTokenFile } from "./tokens.js";
 
@@ -38,7 +38,8 @@ export const ENV_LOOKS_SECRET_MESSAGE =
   "--env no admite secretos ({name} parece uno): usa --secret-env {name}=<secreto> " +
   "o --secret-env-from <secreto>";
 export const SCALE_IN_AFTER_HELP =
-  "Segundos sin uso tras los que se termina un VM por encima de --min-vms (por defecto, 900).";
+  "Segundos sin uso tras los que se termina un VM por encima de --min-vms (por defecto, " +
+  `el de [scaling] del proyecto o ${AGENT_SCALE_IN_AFTER_SECONDS_DEFAULT}).`;
 export const SAVE_RECIPE_HELP =
   "No guarda la receta de la flota en Parameter Store (por defecto se guarda, sin coste en " +
   "el nivel estándar).";

@@ -18,6 +18,7 @@ from rayito._agent._detect_report import DetectionReport
 from rayito._agent._project_domain import SECRET_LIKE_KEYS, AgentProject
 from rayito._agent._secret_env_domain import SecretEnvSource, SecretEnvValue
 from rayito._agent._secret_env_project import with_secret_env
+from rayito._limits import AGENT_SCALE_IN_AFTER_SECONDS_DEFAULT
 from rayito._limits import AGENT_TOKEN_FILE_DEFAULT as AGENT_TOKEN_FILE_NAME
 from rayito._models import IdlePolicy, NetworkPolicy
 from rayito._payload import generate_access_token
@@ -55,7 +56,8 @@ ENV_LOOKS_SECRET_MESSAGE: Final = (
     "o --secret-env-from <secreto>"
 )
 SCALE_IN_AFTER_HELP: Final = (
-    "Segundos sin uso tras los que se termina un VM por encima de --min-vms (por defecto, 900)."
+    "Segundos sin uso tras los que se termina un VM por encima de --min-vms (por defecto, "
+    f"el de [scaling] del proyecto o {AGENT_SCALE_IN_AFTER_SECONDS_DEFAULT})."
 )
 SAVE_RECIPE_HELP: Final = (
     "No guarda la receta de la flota en Parameter Store (por defecto se guarda, sin coste en "
