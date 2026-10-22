@@ -290,6 +290,23 @@ instructions or text of an `sbx.agent` agent (its errors carry a closed
 only `gen_ai.*` and token attributes). Only ids, status codes, counts and
 durations.
 
+### HTTP clients in the agent host logs { #clientes-http-en-los-logs-del-host }
+
+The HTTP client libraries most agents use (`httpx` and its `httpcore` layer)
+log one INFO line per request with the full URL, query string included. Some
+APIs carry the credential in the query (a webhook with `?token=...`, for
+example), so with logging at INFO that credential would end up in the agent
+output and, from there, in CloudWatch or any log collector.
+
+The agent host (`rayito agent deploy`, on MicroVM and on AgentCore) raises
+those two loggers to WARNING at startup, right after it sets up logging at
+INFO: their warnings and errors still come through, but the per-request lines
+do not. There is no option to turn this off. If your agent needs those lines
+while you debug, lower them from its own code with
+`logging.getLogger("httpx").setLevel(logging.INFO)`, and first make sure no
+URL it uses carries credentials in the query. The same applies to any other
+library that logs URLs: if you use one, raise it to WARNING yourself.
+
 <a id="rayito-sandbox-proxy-m12"></a>
 
 ## `rayito sandbox proxy` { #rayito-sandbox-proxy }

@@ -294,6 +294,25 @@ errores llevan un `reason` cerrado y un mensaje de tabla fija, y el span
 opcional `rayito.agent.run` sólo atributos `gen_ai.*` y de tokens). Sólo
 ids, códigos de estado, recuentos y duraciones.
 
+### Clientes HTTP en los logs del host del agente { #clientes-http-en-los-logs-del-host }
+
+Las bibliotecas de cliente HTTP más usadas por los agentes (`httpx` y su capa
+`httpcore`) escriben a nivel INFO una línea por petición con la URL completa,
+consulta incluida. Algunas APIs llevan la credencial en la consulta (un
+webhook con `?token=...`, por ejemplo), así que con el logging en INFO esa
+credencial acabaría en la salida del agente y, desde ahí, en CloudWatch o en
+cualquier colector de logs.
+
+El host del agente (`rayito agent deploy`, en MicroVM y en AgentCore) sube
+esos dos loggers a WARNING al arrancar, justo después de configurar el
+logging en INFO: sus avisos y errores siguen saliendo, pero las líneas de
+cada petición no. No hay opción para desactivarlo. Si tu agente necesita ver
+esas líneas mientras depuras, bájalos desde su propio código con
+`logging.getLogger("httpx").setLevel(logging.INFO)`, y asegúrate antes de que
+ninguna URL que use lleve credenciales en la consulta. Lo mismo vale para
+cualquier otra biblioteca que loguee URLs: si la usas, súbela a WARNING tú
+mismo.
+
 <a id="rayito-sandbox-proxy-m12"></a>
 
 ## `rayito sandbox proxy`

@@ -118,6 +118,7 @@ def serve(package: str, args: argparse.Namespace) -> int:
     logging.basicConfig(
         stream=sys.stderr, level=logging.INFO, format="%(asctime)s %(name)s %(message)s"
     )
+    quiet_http_loggers(serving.QUIET_HTTP_LOGGERS)
     log = logging.getLogger(serving.LOGGER_NAME)
     try:
         host = load_host_config(args.host_config)
@@ -170,6 +171,15 @@ def serve(package: str, args: argparse.Namespace) -> int:
     log.info("listening port=%d driver=%s", args.port, host["driver"])
     server.serve_forever()
     return 1 if warm_failed.is_set() else 0
+
+
+def quiet_http_loggers(names: Sequence[str]) -> None:
+    """Sube a WARNING los loggers de clientes HTTP (`httpx`, `httpcore`), que
+    a nivel INFO escriben la URL de cada petición con su consulta, donde
+    algunas APIs llevan credenciales. Se llama después de `basicConfig`; el
+    código del agente puede bajarlos de nuevo si los necesita."""
+    for name in names:
+        logging.getLogger(name).setLevel(logging.WARNING)
 
 
 def load_secret_env(

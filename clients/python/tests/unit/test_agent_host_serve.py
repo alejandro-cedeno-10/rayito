@@ -417,6 +417,25 @@ def test_a_client_that_announces_a_body_and_never_sends_it_is_dropped() -> None:
         assert request(port, "GET", "/ping")[0] == 200
 
 
+def test_a_malformed_request_line_is_400_and_logs_no_traceback(
+    caplog: pytest.LogCaptureFixture, capfd: pytest.CaptureFixture[str]
+) -> None:
+    import socket
+
+    caplog.set_level(logging.DEBUG, logger=serve.LOGGER_NAME)
+    with running_service(FakeDriver()) as (_, port):
+        with socket.create_connection(("127.0.0.1", port), timeout=5) as client:
+            client.sendall(b"GARBAGE\r\n\r\n")
+            assert client.recv(64).startswith(b"HTTP/1.1 400")
+        assert request(port, "GET", "/ping")[0] == 200
+    logged = "\n".join(record.getMessage() for record in caplog.records)
+    stderr = capfd.readouterr().err
+    assert "-> 400" in logged
+    for text in (logged, stderr):
+        assert "AttributeError" not in text
+        assert "Traceback" not in text
+
+
 class _RawDriver(FakeDriver):
     raw = True
 

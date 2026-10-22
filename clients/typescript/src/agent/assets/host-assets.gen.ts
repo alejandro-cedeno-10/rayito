@@ -123,6 +123,7 @@ def serve(package: str, args: argparse.Namespace) -> int:
     logging.basicConfig(
         stream=sys.stderr, level=logging.INFO, format="%(asctime)s %(name)s %(message)s"
     )
+    quiet_http_loggers(serving.QUIET_HTTP_LOGGERS)
     log = logging.getLogger(serving.LOGGER_NAME)
     try:
         host = load_host_config(args.host_config)
@@ -175,6 +176,15 @@ def serve(package: str, args: argparse.Namespace) -> int:
     log.info("listening port=%d driver=%s", args.port, host["driver"])
     server.serve_forever()
     return 1 if warm_failed.is_set() else 0
+
+
+def quiet_http_loggers(names: Sequence[str]) -> None:
+    """Sube a WARNING los loggers de clientes HTTP (\`httpx\`, \`httpcore\`), que
+    a nivel INFO escriben la URL de cada petición con su consulta, donde
+    algunas APIs llevan credenciales. Se llama después de \`basicConfig\`; el
+    código del agente puede bajarlos de nuevo si los necesita."""
+    for name in names:
+        logging.getLogger(name).setLevel(logging.WARNING)
 
 
 def load_secret_env(
@@ -4930,6 +4940,8 @@ cabecera.
 
 El host no loguea contenido: sólo método, ruta sin consulta, estado, bytes y
 duración. Nunca el prompt, el \`input\`, el \`output\`, una cabecera ni el token.
+Los loggers de \`QUIET_HTTP_LOGGERS\` arrancan en WARNING para que el cliente
+HTTP del agente no escriba URLs con credenciales.
 """
 
 from __future__ import annotations
@@ -5028,6 +5040,11 @@ INVOCATION_KEYS: Final = frozenset({PROMPT_KEY, INPUT_KEY, "session_id", "model"
 FAILED_SUFFIX: Final = ".failed"
 EVENT_STREAM: Final = "text/event-stream"
 LOGGER_NAME: Final = "rayito.agent.host"
+#: Loggers de clientes HTTP que a nivel INFO escriben la URL completa de cada
+#: petición, consulta incluida (donde algunas APIs llevan credenciales). El
+#: host los sube a WARNING al arrancar \`serve\`; el código del agente puede
+#: volver a bajarlos con \`logging.getLogger(nombre).setLevel(...)\`.
+QUIET_HTTP_LOGGERS: Final = ("httpx", "httpcore")
 #: Cada cuánto despierta el consumidor para comprobar el plazo.
 POLL_SECONDS: Final = 0.25
 #: Fragmento que se copia de la respuesta de una app \`raw\` al cliente.
@@ -5438,12 +5455,17 @@ def make_handler(service: Service) -> type[BaseHTTPRequestHandler]:
         timeout = service.config.io_timeout_seconds
 
         def log_request(self, code: object = "-", size: object = "-") -> None:
-            path = self.path.split("?", 1)[0]
+            """Una línea por respuesta, sin consulta ni contenido. \`send_error\`
+            la llama también cuando \`parse_request\` rechaza una línea de
+            petición mal formada, antes de fijar \`command\` y \`path\`: por eso
+            se leen con \`getattr\` y un valor de relleno."""
+            command = getattr(self, "command", None) or "-"
+            path = str(getattr(self, "path", "") or "").split("?", 1)[0]
             elapsed = int(
                 (time.monotonic() - getattr(self, "_started", time.monotonic()))
                 * MILLISECONDS_PER_SECOND
             )
-            logger.info("%s %s -> %s %sB %dms", self.command, path, code, size, elapsed)
+            logger.info("%s %s -> %s %sB %dms", command, path, code, size, elapsed)
 
         def log_error(self, format: str, *args: object) -> None:
             logger.warning("http_error code=%s", args[0] if args else "-")
