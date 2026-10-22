@@ -236,6 +236,19 @@ los constructos `RayitoAgent` y `RayitoMicrovmImage`, al sintetizar o en
 `cdk deploy`, están en la
 [solución de problemas de CDK](../guias/desplegar-con-cdk.md#solucion-de-problemas).
 
+**No veo las líneas `HTTP Request: ...` de `httpx` en los logs del agente.**
+Es a propósito: el host del agente sube los loggers `httpx` y `httpcore` a
+WARNING porque a nivel INFO escriben la URL completa, y una URL puede llevar
+una credencial en la consulta. Si las necesitas para depurar, bájalos desde el
+código del agente
+([Seguridad](../security.md#clientes-http-en-los-logs-del-host)).
+
+**`400` a una petición mal formada.** Una línea de petición que no es HTTP
+(un escáner de puertos, un cliente que habla otro protocolo) recibe `400` y
+el host deja una sola línea `- -> 400` en su log; las invocaciones siguientes
+no se ven afectadas. Antes de 0.17 esa línea iba seguida de un
+`AttributeError` con su traza, que era ruido y no un fallo.
+
 ## Secretos
 
 !!! danger "El log DEBUG de botocore imprime los secretos"

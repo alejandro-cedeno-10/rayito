@@ -6,6 +6,17 @@ versionado [SemVer](https://semver.org/lang/es/).
 
 ## [Unreleased]
 
+### Corregido
+
+- **El host del agente ya no escribe URLs con credenciales en sus logs** (el host viaja en los recursos del paquete, `host-assets.gen.ts`):
+  los loggers `httpx` y `httpcore`, que a nivel INFO escriben la URL de cada
+  petición con su consulta, arrancan en WARNING en `serve`
+  (`QUIET_HTTP_LOGGERS`). El código del agente puede volver a bajarlos.
+  Ver [Seguridad](https://alejandro-cedeno-10.github.io/rayito/security/#clientes-http-en-los-logs-del-host).
+- **El log de peticiones del host del agente ya no lanza `AttributeError`**
+  tras responder `400` a una línea de petición mal formada; las invocaciones
+  siguientes nunca se vieron afectadas.
+
 ## [0.16.0] - 2026-10-22
 
 ### Añadido
