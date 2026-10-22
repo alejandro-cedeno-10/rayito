@@ -173,6 +173,20 @@ follows merge rules M1-M8 of `design.md` and ticks only its own section here.
       full Python and TypeScript suites with no existing test edited.
 - [x] Z.2 Review sweep: leak sweep of the diff and
       `reference/review-checklist.md`.
+- [x] Z.2b Second review follow-ups: secret values read from a dedicated
+      pipe (never the helper's stdout) and no JSON error kept in the
+      exception context; CRLF and control characters normalised in the
+      redacted values; `__proto__` keys kept in the TypeScript secret maps;
+      own-key input validation in the Node bridge and plain objects only in
+      the TypeScript `input`; integer accepts `3.0`; pydantic and dataclass
+      outputs; `langgraph-api` output without repeated text and strict JSON
+      text; the host's `400` says `accepts_input`; the whole body measured
+      with `input`; the model id checked when `AgentProject` is built; the
+      TypeScript `--create-secrets-from` prompt; the old exit code for a
+      prompt in `rayito agent invoke` (shared vectors in
+      `testdata/agent-deploy/input-validation.json`,
+      `invocation-bodies.json`, `agent-langgraph-api/responses.json` and
+      `agent-secret-env/`).
 - [ ] Z.3 Local e2e with Docker (host image), including the
       `langgraph-structured`, `secret-env-echo` and `langgraph-api-echo`
       samples and the regression of `langgraph-fastapi` with a prompt.

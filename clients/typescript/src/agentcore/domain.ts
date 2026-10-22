@@ -35,6 +35,7 @@ import {
   AGENTCORE_SUPPORTED_REGIONS,
 } from "../limits.js";
 import { FIXED_TAG_KEYS } from "../stacks/model.js";
+import { stripTrailing } from "../strings.js";
 import { formatTemplate } from "../template-text.js";
 import { MS_PER_SECOND } from "../units.js";
 import { usesEnvCredentials } from "./env-credentials.js";
@@ -493,7 +494,7 @@ export function externalModelEnvironment(project: AgentProject): Record<string, 
   if (model.baseUrlEnv === undefined || gateway === undefined) {
     return {};
   }
-  return { [model.baseUrlEnv]: gateway.upstream.replace(/\/+$/, "") + model.basePath };
+  return { [model.baseUrlEnv]: stripTrailing(gateway.upstream, "/") + model.basePath };
 }
 
 export const SECURITY_EXTERNAL_MODEL: SecurityKey = "externalModel";

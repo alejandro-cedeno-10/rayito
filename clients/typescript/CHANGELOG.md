@@ -109,6 +109,26 @@ versionado [SemVer](https://semver.org/lang/es/).
   sigue el camino de mensajes, como en 0.15; `input_required` queda para los
   grafos que declaran claves obligatorias.
 
+- Un `400` a una petición con `input` se explica con el cuerpo del host: el
+  `invalid_request` de un host anterior pide volver a desplegar; el de un host
+  con entrada estructurada (que añade `"accepts_input": true`) es una petición
+  que no acepta; cualquier otro cuerpo da un mensaje que sólo sugiere
+  redesplegar. Con `input`, el SDK mide el cuerpo entero de la petición contra
+  `AGENT_SERVICE_MAX_REQUEST_BYTES`, no sólo el `input`, y sólo acepta objetos
+  planos (un `Date`, un `Map` o una instancia de clase son
+  `InvalidArgumentError`, como un `datetime` en Python); con un prompt no
+  cambia nada.
+- `new AgentProject(...)` con un runtime que construye el modelo (`opencode`,
+  `hermes`, `deepagents` o `strands` sin `entrypoint`) y sin `AgentModel.id`
+  falla al construirse, antes de cualquier llamada o de crear el secreto de
+  `--create-secrets-from`.
+- `rayito agent deploy --create-secrets-from` pregunta en una terminal (sin
+  `--json`) en vez de exigir siempre `--yes`, como la CLI de Python.
+- Con `langgraph-api`, `healthPath: "/ok"` (el de la detección) ya no da la
+  pista de rutas ocultas. El puente de Node valida el `input` sólo con claves
+  propias (`toString` o `hasOwnProperty` no cuentan como claves) y guarda en la
+  sesión los `messages` de un `input` a un grafo de mensajes sin checkpointer.
+
 ### Seguridad
 
 - Con `--external-model` el agente llama a un modelo fuera de Bedrock por
@@ -126,6 +146,11 @@ versionado [SemVer](https://semver.org/lang/es/).
   `secret_env`, sin repetir lo escrito. En MicroVMs el host recibe también
   `RAYITO_SECRET_ENV_NAMES` (sólo nombres) y redacta los valores de
   `secret_env` en el diagnóstico de arranque igual que en AgentCore.
+- Una clave `__proto__` de un secreto JSON o de `secretEnv` es una variable
+  más, como en Python, en vez de perderse.
+- El host lee los valores de `secret_env` por una tubería propia, nunca por la
+  salida estándar de la herramienta, y el diagnóstico de arranque redacta un
+  valor con CRLF (un PEM) o con caracteres de control.
 
 ## [0.15.0] - 2026-10-21
 

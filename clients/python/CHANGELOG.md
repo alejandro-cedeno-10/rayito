@@ -105,6 +105,27 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   sigue el camino de mensajes, como en 0.15; `input_required` queda para los
   grafos que declaran claves obligatorias.
 
+- Un `400` a una petición con `input` se explica con el cuerpo del host: el
+  `invalid_request` de un host anterior pide volver a desplegar; el de un host
+  con entrada estructurada (que añade `"accepts_input": true`) es una petición
+  que no acepta; cualquier otro cuerpo da un mensaje que sólo sugiere
+  redesplegar. Con `input`, el SDK mide el cuerpo entero de la petición contra
+  `AGENT_SERVICE_MAX_REQUEST_BYTES`, no sólo el `input`; con un prompt no
+  cambia nada.
+- `rayito agent invoke` sale con el código de uso (2) por un
+  `InvalidArgumentException` sólo con `--input`/`--input-file`; con `PROMPT`
+  sigue saliendo con 1, como en 0.15 (la CLI de TypeScript ya salía con 2).
+- `AgentProject(...)` con un runtime que construye el modelo (`opencode`,
+  `hermes`, `deepagents` o `strands` sin `entrypoint`) y sin `AgentModel.id`
+  falla al construirse, antes de cualquier llamada o de crear el secreto de
+  `--create-secrets-from`.
+- Con `langgraph-api`, un estado final que es `output` ya no se repite como
+  texto, el JSON del estado sin mensajes es estricto (`invalid_response` con
+  un `NaN`) y `health_path = "/ok"` (el de la detección) ya no da la pista de
+  rutas ocultas. Un grafo con esquema propio acepta en `integer` un número sin
+  parte fraccionaria (`3.0`), y su `output` serializa modelos de pydantic
+  (`model_dump(mode="json")`) y dataclasses.
+
 ### Seguridad
 
 - Con `--external-model` el agente llama a un modelo fuera de Bedrock por
@@ -122,6 +143,11 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   `secret_env`, sin repetir lo escrito. En MicroVMs el host recibe también
   `RAYITO_SECRET_ENV_NAMES` (sólo nombres) y redacta los valores de
   `secret_env` en el diagnóstico de arranque igual que en AgentCore.
+- El host lee los valores de `secret_env` por una tubería propia: la
+  herramienta del venv de botocore los escribe en un descriptor que sólo ella
+  hereda, con su stdout y su stderr en `/dev/null`, y ningún error de JSON
+  queda en el `__context__` de la excepción. El diagnóstico de arranque
+  también redacta un valor con CRLF (un PEM) o con caracteres de control.
 
 ## [0.15.0] - 2026-10-21
 

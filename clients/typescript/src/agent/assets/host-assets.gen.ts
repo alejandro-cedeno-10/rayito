@@ -408,20 +408,30 @@ _CREDENTIAL_PATTERNS: Final = (
 )
 
 
+def _normalized(text: str) -> str:
+    """\`text\` con los saltos de línea unificados a LF y sin caracteres de
+    control, la misma limpieza que recibe el diagnóstico antes de buscar
+    valores en él."""
+    return _CONTROL_CHARACTERS.sub("", text.replace("\\r\\n", "\\n").replace("\\r", "\\n"))
+
+
+def _redaction_forms(value: str, min_length: int) -> set[str]:
+    """El valor tal cual y en su forma normalizada (\`_normalized\`), los que
+    midan al menos \`min_length\`. Sin la forma normalizada, un PEM con CRLF o
+    un valor con un carácter de control no casaría con el texto ya limpio."""
+    return {form for form in (value, _normalized(value)) if len(form) >= min_length}
+
+
 def _without_environment_values(
     text: str, environ: Mapping[str, str], extra_values: Iterable[str] = ()
 ) -> str:
-    values = sorted(
-        {
-            value
-            for name, value in environ.items()
-            if name not in STRUCTURAL_ENV_NAMES and len(value) >= MIN_REDACTED_VALUE_LENGTH
-        }
-        | {value for value in extra_values if len(value) >= MIN_EXTRA_REDACTED_VALUE_LENGTH},
-        key=len,
-        reverse=True,
-    )
-    for value in values:
+    candidates: set[str] = set()
+    for name, value in environ.items():
+        if name not in STRUCTURAL_ENV_NAMES:
+            candidates |= _redaction_forms(value, MIN_REDACTED_VALUE_LENGTH)
+    for value in extra_values:
+        candidates |= _redaction_forms(value, MIN_EXTRA_REDACTED_VALUE_LENGTH)
+    for value in sorted(candidates, key=len, reverse=True):
         text = text.replace(value, REDACTED)
     return text
 
@@ -455,8 +465,9 @@ def sanitize_diagnostics(
     recorte no sobreviva. \`extra_values\` son valores que se retiran siempre
     que midan al menos \`MIN_EXTRA_REDACTED_VALUE_LENGTH\` (los que el host
     exportó desde Secrets Manager); por defecto, ninguno."""
-    cleaned = _CONTROL_CHARACTERS.sub("", text.replace("\\r\\n", "\\n").replace("\\r", "\\n"))
-    cleaned = _without_credentials(_without_environment_values(cleaned, environ, extra_values))
+    cleaned = _without_credentials(
+        _without_environment_values(_normalized(text), environ, extra_values)
+    )
     return bounded_tail(cleaned.strip()).strip()
 `,
   "drivers/__init__.py": `"""Drivers del host del agente: cada módulo expone \`create(options)\`
@@ -1026,6 +1037,7 @@ lo ejercitan con módulos de doble en \`sys.modules\`.
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 import fnmatch
 import importlib
 import json
@@ -1103,11 +1115,17 @@ MESSAGES_KEY: Final = "messages"
 #: valor sale \`output\` (la documentación de LangGraph avisa de que \`stream\` no
 #: aplica el \`output_schema\`, así que se filtra aquí).
 VALUES_MODE: Final = "values"
-#: Comprobación de los tipos de JSON Schema de primer nivel de un \`input\`.
+#: Comprobación de los tipos de JSON Schema de primer nivel de un \`input\`
+#: (\`testdata/agent-deploy/input-validation.json\`). \`integer\` acepta un
+#: \`float\` sin parte fraccionaria (\`3.0\`), como JSON Schema y como el puente
+#: de Node, que no distingue \`3\` de \`3.0\`.
 JSON_TYPE_CHECKS: Final[Mapping[str, Callable[[object], bool]]] = MappingProxyType(
     {
         "string": lambda value: isinstance(value, str),
-        "integer": lambda value: isinstance(value, int) and not isinstance(value, bool),
+        "integer": lambda value: (
+            (isinstance(value, int) and not isinstance(value, bool))
+            or (isinstance(value, float) and value.is_integer())
+        ),
         "number": lambda value: isinstance(value, int | float) and not isinstance(value, bool),
         "boolean": lambda value: isinstance(value, bool),
         "object": lambda value: isinstance(value, Mapping),
@@ -1119,6 +1137,9 @@ JSON_TYPE_CHECKS: Final[Mapping[str, Callable[[object], bool]]] = MappingProxyTy
 #: valida su entrada: se reconoce por módulo y clase, nunca por el mensaje.
 VALIDATION_ERROR_MODULES: Final = ("pydantic", "pydantic_core")
 VALIDATION_ERROR_CLASS: Final = "ValidationError"
+#: La clase base de un modelo de pydantic en un estado de salida: se
+#: serializa con \`model_dump(mode="json")\`.
+PYDANTIC_MODEL_CLASS: Final = "BaseModel"
 
 _SESSION_ID_PATTERN: Final = re.compile(r"rda_[0-9a-f]{32}")
 _REASONING_BLOCK_TYPES: Final = ("reasoning", "thinking", "reasoning_content")
@@ -1775,11 +1796,17 @@ def _output_keys(graph: Any) -> frozenset[str] | None:
 
 
 def _jsonable(value: Any, messages: Any) -> Any:
-    """\`value\` con cada mensaje de LangChain como su diccionario; el resto,
-    tal cual (\`json.dumps\` decide si se puede codificar)."""
+    """\`value\` con cada mensaje de LangChain como su diccionario, cada modelo
+    de pydantic como \`model_dump(mode="json")\` y cada dataclass como
+    \`dataclasses.asdict\`; el resto, tal cual (\`json.dumps\` decide si se puede
+    codificar)."""
     message_type = getattr(messages, "BaseMessage", None)
     if message_type is not None and isinstance(value, message_type):
         return messages.messages_to_dict([value])[0]
+    if _is_pydantic_model(value):
+        return _jsonable(value.model_dump(mode="json"), messages)
+    if dataclasses.is_dataclass(value) and not isinstance(value, type):
+        return _jsonable(dataclasses.asdict(value), messages)
     if isinstance(value, Mapping):
         if not all(isinstance(key, str) for key in value):
             raise TypeError("clave no textual")
@@ -1787,6 +1814,16 @@ def _jsonable(value: Any, messages: Any) -> Any:
     if isinstance(value, list | tuple):
         return [_jsonable(item, messages) for item in value]
     return value
+
+
+def _is_pydantic_model(value: object) -> bool:
+    """Si \`value\` es una instancia de un \`BaseModel\` de pydantic (v2), por su
+    clase y sin importar pydantic: el host no depende de él."""
+    return not isinstance(value, type) and any(
+        klass.__name__ == PYDANTIC_MODEL_CLASS
+        and klass.__module__.split(".", 1)[0] in VALIDATION_ERROR_MODULES
+        for klass in type(value).__mro__
+    )
 
 
 def run(config: Mapping[str, Any], request: Mapping[str, Any], emitter: Emitter) -> int:
@@ -2304,9 +2341,10 @@ el \`input\` estructurado de la petición tal cual: \`accepts_input\`),
 \`app_<hex>\` que crea el driver, así que la misma sesión sigue el mismo hilo
 tras un relanzamiento de la app. El texto sale de \`response_field\` o del
 último mensaje del estado final (\`langgraph_text\`), el uso de su
-\`usage_metadata\`; con \`input\`, un estado final sin \`messages\` es además la
-salida estructurada (\`langgraph_output\`), como en el driver de deepagents. Un
-grafo detenido en un \`interrupt\` es
+\`usage_metadata\`; con \`input\`, un estado final sin \`messages\` es la salida
+estructurada (\`langgraph_output\`) y el texto queda vacío para no repetir el
+estado, y un estado final con \`messages\` da sólo el texto de su último
+mensaje, como en el driver de deepagents. Un grafo detenido en un \`interrupt\` es
 \`protocol_error\`/\`graph_interrupted\`. La salud es \`GET /ok\`, la espera de
 arranque es \`LANGGRAPH_READY_WAIT_SECONDS\` y el hijo arranca sin la
 telemetría de la CLI ni las trazas a LangSmith salvo que el entorno las fije
@@ -2606,11 +2644,26 @@ def langgraph_message_text(message: Mapping[str, Any]) -> str:
 
 def langgraph_text(state: object) -> str:
     """El texto del estado final: el del último mensaje o, sin mensajes, el
-    JSON entero."""
+    JSON entero (estricto: un \`NaN\` o un infinito es
+    \`protocol_error\`/\`invalid_response\`)."""
     message = langgraph_last_message(state)
     if message is None:
-        return json.dumps(state, ensure_ascii=False)
+        return _strict_json_text(state)
     return langgraph_message_text(message)
+
+
+def _strict_json_text(state: object) -> str:
+    try:
+        return json.dumps(state, ensure_ascii=False, allow_nan=False)
+    except ValueError:
+        pass
+    raise AgentFailure("protocol_error", "invalid_response")
+
+
+def is_structured_state(state: object) -> bool:
+    """Si el estado final es de un grafo con esquema propio: un objeto sin
+    \`messages\`."""
+    return isinstance(state, Mapping) and LANGGRAPH_MESSAGES_KEY not in state
 
 
 def langgraph_output(state: object) -> dict[str, Any] | None:
@@ -2619,7 +2672,7 @@ def langgraph_output(state: object) -> dict[str, Any] | None:
     esquema propio en el driver de deepagents; si no, \`None\` y sólo texto.
     Lo que no se codifica en JSON estricto o no cabe en
     \`MAX_SERVICE_OUTPUT_BYTES\` es \`protocol_error\`/\`output_not_serializable\`."""
-    if not isinstance(state, Mapping) or LANGGRAPH_MESSAGES_KEY in state:
+    if not isinstance(state, Mapping) or not is_structured_state(state):
         return None
     output = dict(state)
     try:
@@ -2834,10 +2887,11 @@ class Driver:
         emit(build_event("session", session_id=state.session_id))
         emit(build_event("step_started", index=1))
         response = self._post(request, state.session_id)
-        text, usage, final_state = self._read(response, emit)
+        text, usage, final_state = self._read(response, emit, request.input is not None)
         if request.input is not None:
             state.output = langgraph_output(final_state)
-        emit(build_event("text", text=text))
+        if state.output is None:
+            emit(build_event("text", text=text))
         emit(build_event("step_finished", index=1, usage=usage, finish_reason="stop"))
 
     def _body(self, request: Request, session_id: str) -> dict[str, Any]:
@@ -2892,10 +2946,16 @@ class Driver:
             return extract_text(payload, JSON_TEXT_KEYS)
         return self._field_text(payload, str(field))
 
-    def _langgraph_result(self, state: object) -> tuple[str, dict[str, int] | None]:
+    def _langgraph_result(
+        self, state: object, with_input: bool
+    ) -> tuple[str, dict[str, int] | None]:
         """El texto y el uso del estado final de un grafo: \`response_field\`
-        si se configuró o el último mensaje (\`langgraph_text\`)."""
+        si se configuró o el último mensaje (\`langgraph_text\`). Con \`input\` y
+        un estado sin \`messages\`, el estado es la salida (\`langgraph_output\`)
+        y no hay texto."""
         check_langgraph_interrupt(state)
+        if with_input and is_structured_state(state):
+            return "", langgraph_usage(state)
         field = self._config.get("response_field")
         text = self._field_text(state, str(field)) if field else langgraph_text(state)
         return text, langgraph_usage(state)
@@ -2917,7 +2977,7 @@ class Driver:
         return (str(field),) if field else JSON_TEXT_KEYS
 
     def _read(
-        self, response: http.client.HTTPResponse, emit: Emit
+        self, response: http.client.HTTPResponse, emit: Emit, with_input: bool = False
     ) -> tuple[str, dict[str, int] | None, object]:
         """El texto, el uso y, con \`langgraph-api\`, el estado final del
         grafo (\`None\` con cualquier otro protocolo)."""
@@ -2928,7 +2988,7 @@ class Driver:
             except ValueError:
                 raise AgentFailure("protocol_error", "invalid_response") from None
             if self._langgraph:
-                graph_text, graph_usage = self._langgraph_result(payload)
+                graph_text, graph_usage = self._langgraph_result(payload, with_input)
                 return graph_text, graph_usage, payload
             reported = app_usage(payload.get("usage")) if isinstance(payload, Mapping) else None
             text = self._json_text(payload) if self._protocol == "json" else extract_text(payload)
@@ -4464,8 +4524,11 @@ estándar y nada de \`rayito\`.
 from __future__ import annotations
 
 import json
+import os
 import re
+import selectors
 import subprocess
+import time
 from collections.abc import Callable, Collection, Mapping, MutableMapping, Sequence
 from typing import Any, Final
 
@@ -4509,6 +4572,15 @@ HELPER_EXIT_CODES: Final[Mapping[int, str]] = {
     HELPER_EXIT_INVALID: INVALID,
 }
 ENV_NAME_PATTERN: Final = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+#: Argumento con el que la herramienta recibe el número del descriptor por el
+#: que devuelve los valores. Su stdout y su stderr van a \`/dev/null\`: un valor
+#: nunca pasa por la salida estándar de un proceso (\`aws_secret_env.py\`,
+#: \`VALUES_FD_ARGUMENT\`).
+VALUES_FD_ARGUMENT: Final = "--values-fd"
+#: Bytes que se leen de una vez del descriptor de los valores.
+READ_CHUNK_BYTES: Final = 65536
+#: Marca de un documento que no es JSON (\`_json_or_invalid\`).
+_NOT_JSON: Final = object()
 
 #: Un secreto pedido a Secrets Manager: su nombre o ARN y la etiqueta de
 #: versión (\`None\` es \`AWSCURRENT\`).
@@ -4531,11 +4603,19 @@ def is_reserved(name: str, extra: Collection[str] = ()) -> bool:
     return name in RESERVED_NAMES or name.startswith(RESERVED_PREFIXES) or name in extra
 
 
-def _json_object(secret_string: str) -> dict[str, Any]:
+def _json_or_invalid(text: str | bytes) -> object:
+    """\`text\` decodificado como JSON, o \`_NOT_JSON\`. El error de \`json\` lleva
+    el documento entero (\`JSONDecodeError.doc\`, un valor de secreto); se
+    descarta aquí para que ninguna excepción posterior lo tenga en su
+    \`__context__\`."""
     try:
-        document = json.loads(secret_string)
+        return json.loads(text)
     except ValueError:
-        raise SecretEnvError(INVALID) from None
+        return _NOT_JSON
+
+
+def _json_object(secret_string: str) -> dict[str, Any]:
+    document = _json_or_invalid(secret_string)
     if not isinstance(document, dict):
         raise SecretEnvError(INVALID)
     return document
@@ -4607,10 +4687,7 @@ def _valid_source(source: object) -> bool:
 
 def parse_spec(text: str) -> dict[str, Any]:
     """El documento de \`RAYITO_SECRET_ENV\` validado, o \`INVALID\`."""
-    try:
-        spec = json.loads(text)
-    except ValueError:
-        raise SecretEnvError(INVALID) from None
+    spec = _json_or_invalid(text)
     valid = (
         isinstance(spec, dict)
         and spec.get("v") == SPEC_VERSION
@@ -4619,7 +4696,7 @@ def parse_spec(text: str) -> dict[str, Any]:
         and all(_valid_reference(reference) for reference in spec["env"].values())
         and all(_valid_source(source) for source in spec["from"])
     )
-    if not valid:
+    if not valid or not isinstance(spec, dict):
         raise SecretEnvError(INVALID)
     return dict(spec)
 
@@ -4665,8 +4742,10 @@ def expand_spec(
 
 
 class SecretEnvHelper:
-    """Ejecuta \`python script\` con las peticiones por stdin y lee los
-    valores por stdout, en el mismo orden. Nunca lee ni guarda su stderr."""
+    """Ejecuta \`python script VALUES_FD_ARGUMENT <fd>\` con las peticiones por
+    stdin y lee los valores, en el mismo orden, del extremo de lectura de un
+    \`os.pipe()\` cuyo extremo de escritura sólo hereda la herramienta. Su
+    stdout y su stderr van a \`/dev/null\`: nunca se leen ni se guardan."""
 
     def __init__(
         self,
@@ -4674,27 +4753,89 @@ class SecretEnvHelper:
         script: str,
         *,
         timeout_seconds: float = HELPER_TIMEOUT_SECONDS,
-        run: Callable[..., Any] = subprocess.run,
     ) -> None:
         self._argv = [python, script]
         self._timeout_seconds = timeout_seconds
-        self._run = run
 
     def __call__(self, requests: Sequence[SecretRequest]) -> Sequence[str]:
         payload = json.dumps({"secrets": [_request_document(item) for item in requests]})
+        outcome = _run_helper(self._argv, payload.encode("utf-8"), self._timeout_seconds)
+        if outcome is None:
+            raise SecretEnvError(UNAVAILABLE)
+        returncode, output = outcome
+        if returncode != 0:
+            raise SecretEnvError(HELPER_EXIT_CODES.get(returncode, UNAVAILABLE))
+        return _helper_values(output, len(requests))
+
+
+def _run_helper(
+    argv: Sequence[str], payload: bytes, timeout_seconds: float
+) -> tuple[int, bytes] | None:
+    """El código de salida de la herramienta y lo que escribió en su
+    descriptor, o \`None\` si no arrancó, no terminó en \`timeout_seconds\` (que
+    cubre la lectura y la espera) o falló la tubería. El fallo se devuelve,
+    no se lanza, para que ningún error posterior arrastre estos bytes."""
+    deadline = time.monotonic() + timeout_seconds
+    read_fd, write_fd = os.pipe()
+    try:
+        return _exchange(argv, payload, read_fd, write_fd, deadline)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    finally:
+        os.close(read_fd)
+
+
+def _exchange(
+    argv: Sequence[str], payload: bytes, read_fd: int, write_fd: int, deadline: float
+) -> tuple[int, bytes]:
+    try:
+        process = subprocess.Popen(
+            [*argv, VALUES_FD_ARGUMENT, str(write_fd)],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            pass_fds=(write_fd,),
+        )
+    finally:
+        os.close(write_fd)
+    with process:
         try:
-            completed = self._run(
-                self._argv,
-                input=payload.encode("utf-8"),
-                capture_output=True,
-                timeout=self._timeout_seconds,
-                check=False,
-            )
-        except (OSError, subprocess.SubprocessError):
-            raise SecretEnvError(UNAVAILABLE) from None
-        if completed.returncode != 0:
-            raise SecretEnvError(HELPER_EXIT_CODES.get(completed.returncode, UNAVAILABLE))
-        return _helper_values(completed.stdout, len(requests))
+            _send(process, payload)
+            output = _read_until_eof(read_fd, deadline)
+            returncode = process.wait(timeout=max(0.0, deadline - time.monotonic()))
+        except BaseException:
+            process.kill()
+            raise
+    return returncode, output
+
+
+def _send(process: subprocess.Popen[bytes], payload: bytes) -> None:
+    """Manda las peticiones y cierra stdin. Una herramienta que ya salió
+    (tubería rota) se juzga por su código de salida, como \`communicate\`."""
+    stdin = process.stdin
+    if stdin is None:
+        return
+    try:
+        stdin.write(payload)
+        stdin.close()
+    except BrokenPipeError:
+        pass
+
+
+def _read_until_eof(fd: int, deadline: float) -> bytes:
+    """Todo lo que llega por \`fd\` hasta que la herramienta cierra su extremo,
+    o \`subprocess.TimeoutExpired\` si vence \`deadline\` antes."""
+    chunks: list[bytes] = []
+    with selectors.DefaultSelector() as selector:
+        selector.register(fd, selectors.EVENT_READ)
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0 or not selector.select(remaining):
+                raise subprocess.TimeoutExpired(VALUES_FD_ARGUMENT, 0)
+            chunk = os.read(fd, READ_CHUNK_BYTES)
+            if not chunk:
+                return b"".join(chunks)
+            chunks.append(chunk)
 
 
 def _request_document(request: SecretRequest) -> dict[str, str]:
@@ -4703,10 +4844,7 @@ def _request_document(request: SecretRequest) -> dict[str, str]:
 
 
 def _helper_values(output: bytes, expected: int) -> list[str]:
-    try:
-        document = json.loads(output)
-    except ValueError:
-        raise SecretEnvError(UNAVAILABLE) from None
+    document = _json_or_invalid(output)
     values = document.get("values") if isinstance(document, dict) else None
     if (
         not isinstance(values, list)
@@ -4775,7 +4913,8 @@ el contrato HTTP de AgentCore, con \`http.server.ThreadingHTTPServer\`.
   mensaje SSE por evento v1 hasta \`done\` o \`agent_failed\`; si no, \`{"v",
   "text", "session_id", "usage", "usage_reported", "steps", "failed"}\`, más
   \`output\` sólo si la ejecución lo produjo (también va en \`done\`). \`400\`
-  cuerpo inválido, \`413\` demasiado grande, \`429\` con
+  cuerpo inválido (\`{"error": "invalid_request", "accepts_input": true}\`: el
+  campo dice al SDK que este host sí entiende \`input\`), \`413\` demasiado grande, \`429\` con
   \`Retry-After\` por encima de \`max_concurrency\` (con \`queue_max\` > 0 la
   petición espera su turno en una cola FIFO acotada hasta
   \`queue_timeout_seconds\` y sólo entonces recibe el \`429\`), \`503\` antes de
@@ -4838,6 +4977,10 @@ INVOKE_PATH: Final = "/invocations"
 SESSION_HEADER: Final = "X-Amzn-Bedrock-AgentCore-Runtime-Session-Id"
 #: Tope del cuerpo de una petición (\`AGENT_SERVICE_MAX_REQUEST_BYTES\`).
 MAX_REQUEST_BYTES: Final = 1_048_576
+#: Campo del cuerpo de un \`400\` \`invalid_request\`: este host entiende \`input\`
+#: (ADR-033 D3). Un host anterior no lo manda, y así el SDK sabe si debe pedir
+#: que se vuelva a desplegar (\`INPUT_SUPPORT_FIELD\` de \`_deployment_base\`).
+INPUT_SUPPORT_FIELD: Final = "accepts_input"
 MAX_CONCURRENCY: Final = 1
 STATUS_HEALTHY: Final = "Healthy"
 STATUS_BUSY: Final = "HealthyBusy"
@@ -5324,6 +5467,15 @@ def make_handler(service: Service) -> type[BaseHTTPRequestHandler]:
             self.close_connection = True
             self._send_json(status, {"error": code}, {"Connection": "close", **(extra or {})})
 
+        def _invalid_request(self) -> None:
+            """\`400 invalid_request\`, con \`INPUT_SUPPORT_FIELD\`."""
+            self.close_connection = True
+            self._send_json(
+                HTTPStatus.BAD_REQUEST,
+                {"error": "invalid_request", INPUT_SUPPORT_FIELD: True},
+                {"Connection": "close"},
+            )
+
         def _is_raw(self) -> bool:
             return bool(getattr(service.driver, "raw", False))
 
@@ -5453,7 +5605,7 @@ def make_handler(service: Service) -> type[BaseHTTPRequestHandler]:
             except ValueError:
                 length = -1
             if length < 0:
-                self._error(HTTPStatus.BAD_REQUEST, "invalid_request")
+                self._invalid_request()
                 return None
             if length > service.config.max_request_bytes:
                 self._error(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, "request_too_large")
@@ -5467,7 +5619,7 @@ def make_handler(service: Service) -> type[BaseHTTPRequestHandler]:
             try:
                 return parse_invocation(body, self.headers.get(service.config.session_header))
             except AgentFailure:
-                self._error(HTTPStatus.BAD_REQUEST, "invalid_request")
+                self._invalid_request()
                 return None
 
         def _respond(self, invocation: Invocation) -> None:

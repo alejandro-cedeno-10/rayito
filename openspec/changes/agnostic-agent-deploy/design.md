@@ -191,8 +191,10 @@ start after B merges. The acceptance in AWS runs once on the tip of
    images without the feature stay byte-identical.
 3. Host startup (`agent_host/__main__.py::serve`), between
    `load_host_config` and `create_driver`: pop `RAYITO_SECRET_ENV`; run the
-   helper with the spec on stdin and read a JSON map on stdout within
-   `agentSecretEnvHelperTimeoutSeconds`; expand with
+   helper with the spec on stdin and read the JSON values from a dedicated
+   pipe whose write end only the helper inherits (`--values-fd <fd>`; its
+   stdout and stderr go to `/dev/null`, so no value ever crosses a standard
+   stream) within `agentSecretEnvHelperTimeoutSeconds`; expand with
    `testdata/agent-secret-env/expand.json`; check reserved names
    (`reserved.json` plus the runtime's `host.envs`); `os.environ.update`;
    log only `secret_env_loaded count=N`. Failure is closed: `mark_failed`
@@ -238,7 +240,12 @@ start after B merges. The acceptance in AWS runs once on the tip of
    `agentLanggraphInvokePath` with `thread_id = uuid5(agentLanggraphThreadNamespace,
    session_id)`; a request without session gets a new `app_<hex>` id and the
    same derivation, so the thread continues across app restarts. Reading per
-   `testdata/agent-langgraph-api/responses.json`; `__interrupt__` is
+   `testdata/agent-langgraph-api/responses.json` (`inputCases`: with `input`,
+   a final state without `messages` is `output` and there is no text; with
+   `messages`, only the last message's text, like deepagents; the JSON text
+   is strict); a run keeps going server-side after the client times out or
+   cancels, so the same session may get `app_http_409` until it ends;
+   `__interrupt__` is
    `protocol_error/graph_interrupted`; other statuses keep `app_http_<n>`.
    Health `agentLanggraphHealthPath`; its own ready wait
    `agentLanggraphReadyWaitSeconds` (global default unchanged). The copied

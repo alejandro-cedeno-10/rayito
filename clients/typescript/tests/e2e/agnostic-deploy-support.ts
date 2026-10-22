@@ -106,7 +106,7 @@ export function foundIn(texts: Iterable<string>, values: readonly string[]): num
       }
     });
   }
-  return [...found].sort();
+  return [...found].sort((a, b) => a - b);
 }
 
 interface SecretsModule {
