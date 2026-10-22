@@ -9,12 +9,21 @@ const UPSTREAM_HOST = "llm-gateway.example.com";
 // El marcador de la clave que pone Rayito (`modelCredentialPlaceholder`).
 const PLACEHOLDER_PREFIX = "placeholder";
 
+// El host de la URL, comparado entero (no como subcadena); "" si no es una URL.
+function hostOf(url) {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return "";
+  }
+}
+
 function checks() {
   const baseUrl = process.env.LLM_BASE_URL ?? "";
   const apiKey = process.env.LLM_API_KEY ?? "";
   return {
     base_url_set: baseUrl !== "",
-    base_url_is_gateway: baseUrl !== "" && !baseUrl.includes(UPSTREAM_HOST),
+    base_url_is_gateway: baseUrl !== "" && hostOf(baseUrl) !== UPSTREAM_HOST,
     api_key_is_placeholder: apiKey.toLowerCase().startsWith(PLACEHOLDER_PREFIX),
     model_env: "LLM_MODEL",
   };

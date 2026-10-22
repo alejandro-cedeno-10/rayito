@@ -9,6 +9,7 @@ el host toma el texto de la respuesta de los nodos del modelo.
 
 import json
 import os
+from urllib.parse import urlsplit
 
 from langchain_core.messages import AIMessage
 from langgraph.graph import END, START, MessagesState, StateGraph
@@ -27,7 +28,7 @@ def _checks() -> dict[str, object]:
     api_key = os.environ.get("LLM_API_KEY", "")
     return {
         "base_url_set": bool(base_url),
-        "base_url_is_gateway": bool(base_url) and UPSTREAM_HOST not in base_url,
+        "base_url_is_gateway": bool(base_url) and urlsplit(base_url).hostname != UPSTREAM_HOST,
         "api_key_is_placeholder": api_key.lower().startswith(PLACEHOLDER_PREFIX),
         "model_env": "LLM_MODEL",
     }
