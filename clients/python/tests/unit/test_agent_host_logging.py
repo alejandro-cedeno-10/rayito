@@ -22,7 +22,7 @@ from rayito._botocore_logs import BOTOCORE_BODY_LOGGERS
 URL_WITH_TOKEN = "https://hooks.example.com/notify?token=not-a-real-token"
 
 
-SECRET_BODY = '{"SecretString": "not-a-real-secret"}'
+WITNESS_BODY = '{"SecretString": "not-a-real-witness"}'
 
 
 @pytest.fixture(autouse=True)
@@ -70,10 +70,10 @@ def test_botocore_debug_bodies_are_dropped_even_if_the_agent_lowers_the_level(
         logger = logging.getLogger(name)
         logger.setLevel(logging.DEBUG)
         assert any(isinstance(item, host_main.InfoAndAbove) for item in logger.filters)
-        logger.debug("Response body:\n%r", SECRET_BODY)
+        logger.debug("Response body:\n%r", WITNESS_BODY)
     logging.getLogger("botocore.endpoint").warning("retrying")
     logged = [record.getMessage() for record in caplog.records]
-    assert not any("not-a-real-secret" in line for line in logged)
+    assert not any("not-a-real-witness" in line for line in logged)
     assert "retrying" in logged
 
 

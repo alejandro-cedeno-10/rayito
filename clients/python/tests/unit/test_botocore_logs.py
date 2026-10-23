@@ -25,8 +25,8 @@ from rayito._botocore_logs import (
     drop_botocore_body_logs,
 )
 
-SECRET_VALUE: Final = "not-a-real-secret-value"
-SECRET_ID: Final = "rayito/test"
+WITNESS_VALUE: Final = "not-a-real-witness-value"
+WITNESS_ID: Final = "rayito/test"
 #: Los paquetes del SDK de AWS para Python; `urllib3` no es uno de ellos y su
 #: DEBUG sólo lleva la línea de petición.
 AWS_SDK_PREFIXES: Final = ("botocore", "boto3", "s3transfer")
@@ -39,7 +39,7 @@ FAKE_CREDENTIALS: Final = {
 
 class AwsDouble(BaseHTTPRequestHandler):
     """Responde a Secrets Manager con un `GetSecretValue` que lleva
-    `SECRET_VALUE`, a DynamoDB con un `UnprocessedItems` vacío y a S3 con un `200` sin
+    `WITNESS_VALUE`, a DynamoDB con un `UnprocessedItems` vacío y a S3 con un `200` sin
     cuerpo."""
 
     def do_POST(self) -> None:
@@ -47,7 +47,7 @@ class AwsDouble(BaseHTTPRequestHandler):
         if "DynamoDB" in self.headers.get("x-amz-target", ""):
             self._reply(b'{"UnprocessedItems": {}}', "application/x-amz-json-1.0")
             return
-        body = json.dumps({"Name": SECRET_ID, "SecretString": SECRET_VALUE}).encode()
+        body = json.dumps({"Name": WITNESS_ID, "SecretString": WITNESS_VALUE}).encode()
         self._reply(body, "application/x-amz-json-1.1")
 
     def do_PUT(self) -> None:
@@ -103,10 +103,10 @@ def test_a_debug_root_logger_never_sees_a_secret_in_a_botocore_body(
 ) -> None:
     caplog = botocore_at_debug
     client = boto3.client("secretsmanager", endpoint_url=endpoint, **FAKE_CREDENTIALS)
-    client.put_secret_value(SecretId=SECRET_ID, SecretString=SECRET_VALUE)
-    assert client.get_secret_value(SecretId=SECRET_ID)["SecretString"] == SECRET_VALUE
+    client.put_secret_value(SecretId=WITNESS_ID, SecretString=WITNESS_VALUE)
+    assert client.get_secret_value(SecretId=WITNESS_ID)["SecretString"] == WITNESS_VALUE
     assert any(record.name.startswith("botocore") for record in caplog.records)
-    assert not any(SECRET_VALUE in record.getMessage() for record in caplog.records)
+    assert not any(WITNESS_VALUE in record.getMessage() for record in caplog.records)
 
 
 def _aws_sdk_messages(caplog: pytest.LogCaptureFixture) -> list[str]:
@@ -120,21 +120,21 @@ def test_a_debug_root_logger_never_sees_a_value_in_boto3_resource_or_transfer_ca
 ) -> None:
     caplog = botocore_at_debug
     table = boto3.resource("dynamodb", endpoint_url=endpoint, **FAKE_CREDENTIALS).Table("t")
-    table.put_item(Item={"url": SECRET_VALUE, "secret_name": SECRET_ID})
+    table.put_item(Item={"url": WITNESS_VALUE, "secret_name": WITNESS_ID})
     with table.batch_writer(overwrite_by_pkeys=["url"]) as batch:
-        batch.put_item(Item={"url": SECRET_VALUE})
-        batch.put_item(Item={"url": SECRET_VALUE})
+        batch.put_item(Item={"url": WITNESS_VALUE})
+        batch.put_item(Item={"url": WITNESS_VALUE})
     s3 = boto3.client("s3", endpoint_url=endpoint, **FAKE_CREDENTIALS)
     s3.upload_fileobj(
-        io.BytesIO(SECRET_VALUE.encode()),
+        io.BytesIO(WITNESS_VALUE.encode()),
         "amzn-s3-demo-bucket",
         "object",
-        ExtraArgs={"Metadata": {"m": SECRET_VALUE}},
+        ExtraArgs={"Metadata": {"m": WITNESS_VALUE}},
     )
     messages = _aws_sdk_messages(caplog)
     assert any(record.name.startswith("boto3") for record in caplog.records)
-    assert not any(SECRET_VALUE in message for message in messages)
-    assert not any(SECRET_ID in message for message in messages)
+    assert not any(WITNESS_VALUE in message for message in messages)
+    assert not any(WITNESS_ID in message for message in messages)
 
 
 def test_botocore_warnings_still_reach_the_logs(
@@ -142,5 +142,5 @@ def test_botocore_warnings_still_reach_the_logs(
 ) -> None:
     caplog = botocore_at_debug
     logging.getLogger("botocore.endpoint").warning("retrying")
-    logging.getLogger("botocore.parsers").debug("Response body:\n%r", SECRET_VALUE)
+    logging.getLogger("botocore.parsers").debug("Response body:\n%r", WITNESS_VALUE)
     assert [record.getMessage() for record in caplog.records] == ["retrying"]
