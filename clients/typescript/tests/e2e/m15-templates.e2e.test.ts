@@ -27,7 +27,7 @@
 
 import { randomBytes } from "node:crypto";
 import { CloudWatchLogsClient } from "@aws-sdk/client-cloudwatch-logs";
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { SandboxNotFoundError } from "../../src/errors.js";
 import {
   BuildError,
@@ -65,12 +65,12 @@ function regionOption(region: string | undefined): Pick<BuildOptions, "region"> 
   return region === undefined ? {} : { region };
 }
 
+/** Sin bucket no hay build que probar: cada test se salta con el motivo, como
+ * en `test_m15_templates.py`. */
+const MISSING_BUCKET_REASON = `este e2e necesita ${BUCKET_VAR}=<bucket-s3-del-artefacto-de-build>`;
+
 function bucket(): string {
-  const value = process.env[BUCKET_VAR];
-  if (!value) {
-    throw new Error(`este e2e necesita ${BUCKET_VAR}=<bucket-s3-del-artefacto-de-build>`);
-  }
-  return value;
+  return process.env[BUCKET_VAR] ?? "";
 }
 
 function runName(label: string): string {
@@ -91,6 +91,10 @@ describe.runIf(e2eEnabled())("m15-templates (AWS real)", () => {
     });
     return images;
   }
+
+  beforeEach((context) => {
+    context.skip(!bucket(), MISSING_BUCKET_REASON);
+  });
 
   afterEach(async () => {
     const failures = (await images?.deleteAll()) ?? [];
