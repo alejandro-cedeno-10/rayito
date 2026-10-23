@@ -346,6 +346,7 @@ class ListedItem:
     state: str
     started_at: datetime
     metadata: Mapping[str, str] | None = None
+    template_version: str | None = None
 
 
 class FleetSandboxClass:
@@ -366,6 +367,7 @@ class FleetSandboxClass:
         self.probe_states: dict[str, str] = {}
         self.probed: list[str] = []
         self.probe_delays: dict[str, float] = {}
+        self.versions: dict[str, str] = {}
         self.probing = 0
         self.most_probing = 0
         self._probe_lock = threading.Lock()
@@ -421,6 +423,7 @@ class FleetSandboxClass:
                 sbx.state,
                 START + timedelta(seconds=sbx.number),
                 dict(sbx.metadata) if probing else None,
+                self.versions.get(sbx.sandbox_id),
             )
             for sbx in self.sandboxes.values()
             if wanted is None or sbx.state in wanted

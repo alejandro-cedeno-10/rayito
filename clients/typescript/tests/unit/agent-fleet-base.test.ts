@@ -22,6 +22,7 @@ import {
   isLost,
   lifetimeMs,
   listedCap,
+  listedImageVersion,
   mapBounded,
   markExtras,
   memberOf,
@@ -526,5 +527,18 @@ describe("memberOf", () => {
     memberOf(known, { ...listed, proven: false }, undefined);
     expect(known.proven).toBe(true);
     expect(memberOf(undefined, { ...listed, proven: false }, undefined).proven).toBe(false);
+  });
+});
+
+describe("listedImageVersion", () => {
+  test("the newest member with a version decides", () => {
+    expect(
+      listedImageVersion([
+        { sandboxId: "a", state: "RUNNING", startedAt: new Date(1), templateVersion: "1" },
+        { sandboxId: "b", state: "RUNNING", startedAt: new Date(3), templateVersion: "2" },
+        { sandboxId: "c", state: "RUNNING", startedAt: new Date(5) },
+      ]),
+    ).toBe("2");
+    expect(listedImageVersion([])).toBeUndefined();
   });
 });

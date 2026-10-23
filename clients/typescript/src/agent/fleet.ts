@@ -70,6 +70,7 @@ import {
   isLost,
   lifetimeMs,
   listedCap,
+  listedImageVersion,
   type Member,
   type MemberListing,
   type MemberProbe,
@@ -211,7 +212,12 @@ export class SandboxDirectory implements FleetDirectory {
       template,
       states: AGENT_FLEET_LIVE_STATES,
     })) {
-      listed.push({ sandboxId: item.sandboxId, state: item.state, startedAt: item.startedAt });
+      listed.push({
+        sandboxId: item.sandboxId,
+        state: item.state,
+        startedAt: item.startedAt,
+        templateVersion: item.templateVersion,
+      });
     }
     const running = listed.filter((item) => item.state === AGENT_FLEET_PROBE_STATE);
     const probes = await mapBounded(running, AGENT_FLEET_PROBE_CONCURRENCY, (item) =>
@@ -702,6 +708,10 @@ export class AgentFleet {
     const listing = [...(await this.#directory.listMembers(this.#name))].sort(
       (a, b) => a.startedAt.getTime() - b.startedAt.getTime(),
     );
+    const version = listedImageVersion(listing.filter((item) => !parked.has(item.sandboxId)));
+    if (version !== undefined) {
+      this.#service?.adoptImageVersion(version);
+    }
     const known = new Map(this.#members.map((member) => [member.sandboxId, member]));
     const lifetime = this.#lifetime();
     this.#members = listing

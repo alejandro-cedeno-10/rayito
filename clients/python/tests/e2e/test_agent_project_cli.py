@@ -5,7 +5,10 @@ escrito para la imagen ya construida del caso.
 
 Cada runtime hace un `run --stream --json` (los eventos, una línea por evento,
 terminan en `done` con el uso de tokens) y un ciclo `deploy` / `status` /
-`invoke` / `stop`, con el access token en un `--token-file`. `stop` va por el
+`invoke` / `stop`, con el access token en un `--token-file`. `deploy` va con
+`--no-build`: reutiliza la imagen compartida del caso, ya construida con
+todos sus runtimes, en vez de construir encima una versión con uno solo (que
+sería la más reciente para las demás pruebas). `stop` va por el
 nombre de la flota, así que también borra su receta de Parameter Store
 (`/rayito/agents/<nombre>/recipe`), y la prueba comprueba que no queda. Las
 cabeceras de acceso del despliegue no salen por ninguna salida. El espejo en TypeScript está en
@@ -150,7 +153,9 @@ def test_cli_deploy_status_invoke_stop(
 ) -> None:
     token_file = project_dir.parent / TOKEN_FILE_NAME
     token = ("--token-file", str(token_file))
-    deploy = json_of(rayito("--json", "agent", "deploy", "--file", str(project_dir), *token))
+    deploy = json_of(
+        rayito("--json", "agent", "deploy", "--file", str(project_dir), "--no-build", *token)
+    )
     name = str(deploy["name"])
     deployed.append(name)
     sandbox_id = str(deploy["sandboxId"])

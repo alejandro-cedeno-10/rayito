@@ -8,7 +8,9 @@
  * Cada runtime hace un `run --stream --json` (los eventos, una línea por evento,
  * terminan en `done` con el uso de tokens) y un ciclo `deploy` / `status` /
  * `invoke` / `stop`, con el access token en un `--token-file` como lo haría
- * otro proceso. `stop` va por el nombre de la flota, así que también borra su
+ * otro proceso. `deploy` va con `--no-build`: reutiliza la imagen compartida
+ * del caso, ya construida con todos sus runtimes, en vez de construir encima
+ * una versión con uno solo. `stop` va por el nombre de la flota, así que también borra su
  * receta de Parameter Store (`/rayito/agents/<nombre>/recipe`), y la prueba
  * comprueba que no queda. Las cabeceras de acceso del despliegue no salen por
  * ninguna salida.
@@ -137,6 +139,7 @@ describe.runIf(e2eEnabled() && Boolean(BEDROCK_SECRET))(
             "deploy",
             "--file",
             directory,
+            "--no-build",
             "--token-file",
             tokenFile,
           ]),
