@@ -8,10 +8,12 @@ import { SecretStore } from "rayito";
 const NAME = process.env.MODEL_SECRET ?? "bedrock-key"; // queda como rayito/<NAME>
 const REGION = process.env.AWS_REGION ?? "us-east-1";
 const RECOVERY_WINDOW_DAYS = 7;
+// Mensajes fijos: no se imprime nada leído del entorno.
+const SECRETO = "rayito/<MODEL_SECRET> (por defecto rayito/bedrock-key)";
 
 if (process.argv.includes("--forzar")) {
   const borrado = await new SecretStore({ region: REGION }).destroy(NAME); // ForceDeleteWithoutRecovery
-  console.log(`rayito/${NAME}: ${borrado ? "borrado sin recuperación" : "no existía"}`);
+  console.log(borrado ? `${SECRETO}: borrado sin recuperación` : `${SECRETO}: no existía`);
 } else {
   const sm = new SecretsManagerClient({ region: REGION });
   try {
@@ -19,8 +21,8 @@ if (process.argv.includes("--forzar")) {
   } catch (err) {
     const name = err instanceof Error ? err.name : "";
     if (name !== "ResourceNotFoundException" && name !== "InvalidRequestException") throw err;
-    console.log(`rayito/${NAME}: no existía o ya tenía el borrado programado`);
+    console.log(`${SECRETO}: no existía o ya tenía el borrado programado`);
     process.exit(0);
   }
-  console.log(`rayito/${NAME}: borrado programado en ${RECOVERY_WINDOW_DAYS} días (recuperable con restore-secret)`);
+  console.log(`${SECRETO}: borrado programado en 7 días (recuperable con restore-secret)`);
 }

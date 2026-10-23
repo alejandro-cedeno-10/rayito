@@ -11,6 +11,8 @@ from rayito import SecretStore
 
 NAME = os.environ.get("MODEL_SECRET", "bedrock-key")  # queda como rayito/<NAME>
 REGION = os.environ.get("AWS_REGION", "us-east-1")
+# Mensaje fijo: no se imprime nada leído del entorno (ni el nombre ni, por supuesto, el valor).
+SALIDA = "secreto {} en Secrets Manager: rayito/<MODEL_SECRET> (por defecto rayito/bedrock-key)"
 
 
 def clave() -> str:
@@ -32,10 +34,10 @@ def main() -> None:
     store = SecretStore(region=REGION)
     if store.exists(NAME):
         store.update(NAME, secreto)
-        print(f"secreto actualizado: rayito/{NAME}")
+        print(SALIDA.format("actualizado"))
     else:
         store.create(NAME, secreto)
-        print(f"secreto creado: rayito/{NAME}")
+        print(SALIDA.format("creado"))
     del valor, secreto
 
 
