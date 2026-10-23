@@ -836,11 +836,18 @@ rayito setup --tag Owner=platform --tag Project=agents
   `rayito/images/` caducando a los 7 días; borrar la pila lo conserva. Un
   bucket que ya existe con el nombre por defecto y no es de esa pila no se
   adopta (`bucket_taken`): si es tuyo, pásalo con `--bucket`.
-- **Pila de IAM:** si no existe, `create` con `ArtifactBucket=<bucket>`. Si
+- **Pila de IAM:** si no existe, `create` con `ArtifactBucket=<bucket>` y
+  `TemplateFingerprint`, el sha256 del `infra/iam.yaml` que lleva el SDK. Si
   está en `CREATE_COMPLETE`, `UPDATE_COMPLETE` o `UPDATE_ROLLBACK_COMPLETE` y
-  tiene la salida `BuildRoleArn`, `reuse`; si su `ArtifactBucket` es otro,
-  `update` (sólo cambia ese parámetro). En un estado `*_IN_PROGRESS`, `wait`;
-  en `DELETE_IN_PROGRESS`, `ROLLBACK_COMPLETE` o `*_FAILED`, `stack_blocked`.
+  tiene la salida `BuildRoleArn`, `reuse` sólo si su `ArtifactBucket` es el
+  del plan y su `TemplateFingerprint` es el de este SDK; si no, `update` con la
+  plantilla de este SDK (los demás parámetros conservan su valor). Desde
+  0.17.1 una pila de una versión anterior, o desplegada a mano, se actualiza
+  así aunque el bucket no cambie: el plan dice «actualizar a la plantilla
+  infra/iam.yaml de este SDK» y `previousBucket` es `null`. En un estado
+  `*_IN_PROGRESS`, `wait` (y al terminar, `update` si sigue con otro bucket u
+  otra plantilla); en `DELETE_IN_PROGRESS`, `ROLLBACK_COMPLETE` o `*_FAILED`,
+  `stack_blocked`.
 - **Imagen:** si no existe `rayito-base`, `publish`; con una versión
   `PENDING` o `IN_PROGRESS`, `wait`; con una versión `SUCCESSFUL` y `ACTIVE`,
   `reuse` (sea cual sea el `rayd` con que se construyó; `rayito doctor
@@ -907,7 +914,9 @@ Sus claves, en este orden: `rayito` (versión del SDK), `region`, `account`
 (`bucket`, `iamStack`, `baseImage` o `capsImage`), `name`, `action` (`create`,
 `update`, `reuse`, `wait`, `publish` o `skip`), `source` (`argument`, `environment`, `iamStack`,
 `cdkBootstrap`, `artifactStack`, `rayitoDefault`, `release`, `artifact` o `null`), `status`, `imageVersion`,
-`release` y `previousBucket`. `result` (`bucket`, `imageArn`, `imageVersion`,
+`release` y `previousBucket`. El `imageVersion` de un paso `publish` es
+`null` en el plan y, tras aplicarlo, la versión recién publicada (desde
+0.17.1; antes seguía en `null`). `result` (`bucket`, `imageArn`, `imageVersion`,
 `artifactUploaded`, `capsImageArn` y `capsImageVersion`, éstos `null` sin
 `--caps-image`) es `null` mientras no termine la preparación; `doctor` es
 el documento de `rayito --json doctor`, o `null` con `--dry-run` y si la

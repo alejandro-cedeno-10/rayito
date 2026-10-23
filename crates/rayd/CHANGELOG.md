@@ -10,6 +10,22 @@ imagen `rayito-base` y como asset de la GitHub Release del tag `rayd-v*`.
 
 ## [Unreleased]
 
+### Security
+
+- `ctutils` 0.4.4 en `Cargo.lock` (RUSTSEC-2026-0385: máscaras y
+  comparaciones `u128` que no eran de tiempo constante; dependencia
+  transitiva de la criptografía de `rayd`).
+
+### Fixed
+
+- `m5_pty`: los tests ya no escriben en la terminal antes de que bash
+  interactivo la tenga (`ready_bash` teclea un marcador hasta que bash lo
+  ejecuta; en aarch64 una línea tecleada en esa ventana se perdía), y el fin
+  de una shell con un hijo en segundo plano se acota con la gracia de drenaje
+  más 5 s contra un `sleep 60`, en vez de 1,5 s de reloj. El fin de la
+  terminal (`end_of_terminal`) se extrae de `supervise` con tests de tiempo
+  pausado que prueban que la gracia se aplica exactamente.
+
 ## [0.17.0] - 2026-10-23
 
 ## [0.16.0] - 2026-10-22

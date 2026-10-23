@@ -6,6 +6,61 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
 
 ## [Unreleased]
 
+### Corregido
+
+- **`rayito setup` pone al día la pila de IAM de una versión anterior.** Antes
+  reutilizaba `rayito-m0-iam` si su `ArtifactBucket` coincidía, aunque se
+  hubiera desplegado con un `infra/iam.yaml` más antiguo (en 0.17.0 la pila de
+  0.16 se quedaba sin los permisos de la receta de la flota). La plantilla
+  lleva ahora el parámetro `TemplateFingerprint` (el sha256 de la plantilla
+  empaquetada, el mismo en los dos SDK) y su salida; `setup` lo manda al crear
+  o actualizar y planifica `update` si la pila no lo tiene o lleva otro, con el
+  texto «actualizar a la plantilla infra/iam.yaml de este SDK» y
+  `previousBucket: null` en `--json` cuando el bucket no cambia. Una pila
+  desplegada a mano (sin el parámetro) se actualiza una vez; los demás
+  parámetros conservan su valor (`UsePreviousValue`).
+- **Un `--token-file` que dejó un `rayito agent deploy` fallido ya no bloquea
+  el reintento.** El fichero se escribe antes del build; si el despliegue falla
+  antes de que exista la flota (build, arranque del host, una confirmación
+  rechazada o cualquier otro error), se borra el fichero que creó esa misma
+  ejecución. Con `--keep-on-failure` se conserva, porque es el único acceso al
+  sandbox que se queda, y un fichero de una ejecución anterior nunca se toca.
+- **`rayito setup --json` informa la versión de cada imagen publicada en su
+  paso.** Tras `apply`, los pasos `baseImage` y `capsImage` con `publish`
+  llevan en `imageVersion` la versión recién publicada (antes `null`, aunque
+  `result` sí la tenía). En `--dry-run` y si la preparación falla, siguen en
+  `null`.
+- **El DEBUG de botocore ya no escribe cuerpos de AWS.** Con el logger raíz a
+  DEBUG o `boto3.set_stream_logger()`, `botocore.endpoint` y `botocore.parsers`
+  escribían el cuerpo de cada petición y respuesta: el valor de
+  `PutSecretValue`/`GetSecretValue`, el token de `runHookPayload` o el entorno
+  de `CreateMicrovm`. `import rayito` descarta ahora los registros por debajo
+  de INFO de `botocore.endpoint`, `botocore.parsers` y `botocore.auth` (los
+  avisos y errores siguen saliendo, y el resto de botocore no cambia). El host
+  del agente sube además `botocore` y `urllib3` a WARNING, como `httpx` y
+  `httpcore` en 0.17.0, y descarta ese mismo DEBUG aunque el código del agente
+  vuelva a bajar el nivel.
+- **El plazo de los VMs sobrantes de una flota** (las tres limitaciones
+  conocidas de 0.17.0):
+  - Una invocación que se suelta ya no acorta el plazo de otra que empezó
+    entre medias en el mismo VM: los `set_timeout` de cada VM van en orden (un
+    candado por VM) y el acortamiento sólo se manda si el VM sigue libre.
+  - Una invocación que falla (un 429 hasta agotar la cola, un error del host o
+    de transporte) devuelve el VM sobrante a `scale_in_after_seconds`; antes
+    se quedaba con el plazo de invocación hasta `request_timeout`.
+  - Un VM acortado que pasa a ser base recupera toda su vida aunque la flota
+    no conozca su tope: pide el máximo de la plataforma y `rayd`, que lo
+    rechaza informando su tope, recibe ese tope en el reintento. Antes no se
+    mandaba nada y el VM base podía terminar por el plazo corto. Si no queda
+    nada que devolverle, deja de contar como acortado. Vectores nuevos
+    `restoreSeconds` en `testdata/agent-fleet/lifetime.json`.
+
+### Seguridad
+
+- `opentelemetry-api` y `opentelemetry-sdk` 1.45.1 en `uv.lock`
+  (GHSA-xcq7-p3pf-p88h, afectaba a 1.45.0 y anteriores). El rango del extra
+  `otel` no cambia.
+
 ## [0.17.0] - 2026-10-23
 
 ### Añadido

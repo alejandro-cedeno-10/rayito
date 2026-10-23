@@ -856,7 +856,10 @@ Para volver a hablar con el despliegue desde otro proceso hace falta el access
 token de su sandbox. `deploy` lo guarda en `--token-file` (un fichero nuevo, con
 modo `0600`; nunca va por argv ni se imprime) o usa el de `RAYITO_ACCESS_TOKEN`
 si lo tienes definido, y sin ninguno de los dos no empieza, porque no habría
-forma de reconectarse. `invoke` y `status` lo leen con `--token-file` o de
+forma de reconectarse. Si el despliegue falla antes de que exista la flota,
+borra el `--token-file` que acaba de crear, así reintentar con la misma orden
+funciona (desde 0.17.1); con `--keep-on-failure` lo conserva, porque es la
+única forma de entrar en el sandbox que se queda. `invoke` y `status` lo leen con `--token-file` o de
 `RAYITO_ACCESS_TOKEN`. `stop` no lo necesita: termina el sandbox con su id. Desde
 el SDK, `deploy(access_token=...)` (`deploy({ accessToken })` en TypeScript)
 hace lo mismo que la variable; si no pasas ninguno, `deploy()` genera uno y

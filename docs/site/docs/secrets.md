@@ -60,18 +60,23 @@ traer el secreto en cada llamada (`SecretCache`).
 | Coste (us-east-1, [precios](https://aws.amazon.com/secrets-manager/pricing/), consultado 2026-09-30) | **$0,40 por secreto y mes**, prorrateado, **hasta que lo borras**, + $0,05 por 10 000 llamadas | $0,05 por 10 000 llamadas: con el TTL por defecto, ≤ 12 lecturas/hora por secreto y proceso ≈ **$0,04/mes** |
 | IAM (credenciales del **llamante**, no el execution role) | política `RayitoSecretsAdmin` | política `RayitoSecretsReader` |
 
-!!! danger "El log DEBUG de botocore / AWS SDK imprime el valor"
+!!! danger "El log DEBUG del AWS SDK v3 imprime el valor"
     Rayito **nunca** escribe el valor ni el nombre de un secreto en sus logs
     (loggers `rayito.*` en Python, el `logger` de las opciones en
-    TypeScript), en `repr`/`toJSON` ni en errores. Pero si activas el log
-    DEBUG del SDK de AWS que Rayito usa por debajo —`logging.DEBUG` en el
-    logger raíz o en `botocore`/`urllib3`, `boto3.set_stream_logger()`, o
-    un `logger` en el `SecretsManagerClient` del SDK v3—, **ese** log
-    incluye los cuerpos de petición y respuesta de Secrets Manager, con el
-    `SecretString` en claro (`CreateSecret`, `PutSecretValue`,
-    `GetSecretValue`). No lo actives en procesos que manejan secretos, o
-    limita el nivel DEBUG al logger `rayito`
-    (`logging.getLogger("rayito").setLevel(logging.DEBUG)`).
+    TypeScript), en `repr`/`toJSON` ni en errores.
+
+    En Python, desde 0.17.1 `import rayito` descarta el DEBUG de
+    `botocore.endpoint`, `botocore.parsers` y `botocore.auth`, los loggers
+    de botocore que escriben los cuerpos de petición y respuesta: con
+    `logging.DEBUG` en el logger raíz o en `botocore`, o con
+    `boto3.set_stream_logger()`, el `SecretString` ya no sale (antes salía
+    en claro en `CreateSecret`, `PutSecretValue` y `GetSecretValue`). Sus
+    avisos y errores, y el resto del DEBUG de botocore, siguen saliendo. El
+    host del agente hace lo mismo dentro del MicroVM.
+
+    En TypeScript, un `logger` que pases tú al `SecretsManagerClient` del
+    SDK v3 **sí** recibe esos cuerpos: no lo pongas en procesos que manejan
+    secretos.
 
 Contrato exacto de parámetros y errores: `AWS_API_NOTES.md` §19 (en
 [GitHub](https://github.com/alejandro-cedeno-10/rayito/blob/main/AWS_API_NOTES.md)). Una CMK de

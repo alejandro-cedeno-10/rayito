@@ -262,13 +262,14 @@ traceback, which was noise and not a failure.
 
 ## Secrets { #secretos }
 
-!!! danger "botocore's DEBUG log prints the secrets"
-    Rayito never writes a secret's value or name to its logs.
-    But if you enable the AWS SDK's DEBUG log (`logging.DEBUG` on the root
-    logger or on `botocore`, `boto3.set_stream_logger()`, or a `logger` in the
-    AWS SDK v3 client), **that** log includes the Secrets Manager bodies with
-    the `SecretString` in the clear. Limit DEBUG to the `rayito` logger:
-    `logging.getLogger("rayito").setLevel(logging.DEBUG)`.
+!!! danger "An AWS SDK v3 logger prints the secrets"
+    Rayito never writes a secret's value or name to its logs. In Python,
+    since 0.17.1 `import rayito` drops the DEBUG records of
+    `botocore.endpoint`, `botocore.parsers` and `botocore.auth`, which
+    carried the Secrets Manager bodies: the rest of botocore's DEBUG still
+    comes through, without the `SecretString`. In TypeScript, a `logger` on
+    the AWS SDK v3 client **does** include those bodies with the
+    `SecretString` in the clear: do not set one with secrets.
 
 **`SecretNotFoundException` with a secret created from the shim.** The shim
 lowercases names (`Secret.create("OpenAI", …)` stores `rayito/openai`); the

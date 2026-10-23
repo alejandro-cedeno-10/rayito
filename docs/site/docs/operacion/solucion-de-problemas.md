@@ -251,13 +251,14 @@ no se ven afectadas. Antes de 0.17 esa línea iba seguida de un
 
 ## Secretos
 
-!!! danger "El log DEBUG de botocore imprime los secretos"
-    Rayito nunca escribe el valor ni el nombre de un secreto en sus logs.
-    Pero si activas el log DEBUG del SDK de AWS (`logging.DEBUG` en el logger
-    raíz o en `botocore`, `boto3.set_stream_logger()`, o un `logger` en el
-    cliente del AWS SDK v3), **ese** log incluye los cuerpos de Secrets
-    Manager con el `SecretString` en claro. Limita el DEBUG al logger
-    `rayito`: `logging.getLogger("rayito").setLevel(logging.DEBUG)`.
+!!! danger "Un logger del AWS SDK v3 imprime los secretos"
+    Rayito nunca escribe el valor ni el nombre de un secreto en sus logs. En
+    Python, desde 0.17.1 `import rayito` descarta el DEBUG de
+    `botocore.endpoint`, `botocore.parsers` y `botocore.auth`, que llevaban
+    los cuerpos de Secrets Manager: el resto del DEBUG de botocore sigue
+    saliendo, sin el `SecretString`. En TypeScript, un `logger` en el
+    cliente del AWS SDK v3 **sí** incluye esos cuerpos con el `SecretString`
+    en claro: no lo pongas con secretos.
 
 **`SecretNotFoundException` con un secreto creado desde el shim.** El shim
 pasa los nombres a minúsculas (`Secret.create("OpenAI", …)` guarda

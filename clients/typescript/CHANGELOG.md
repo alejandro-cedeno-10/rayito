@@ -6,6 +6,56 @@ versionado [SemVer](https://semver.org/lang/es/).
 
 ## [Unreleased]
 
+### Corregido
+
+- **`rayito setup` pone al día la pila de IAM de una versión anterior.** Antes
+  reutilizaba `rayito-m0-iam` si su `ArtifactBucket` coincidía, aunque se
+  hubiera desplegado con un `infra/iam.yaml` más antiguo (en 0.17.0 la pila de
+  0.16 se quedaba sin los permisos de la receta de la flota). La plantilla
+  lleva ahora el parámetro `TemplateFingerprint` (el sha256 de la plantilla
+  empaquetada, el mismo en los dos SDK) y su salida; `setup` lo manda al crear
+  o actualizar y planifica `update` si la pila no lo tiene o lleva otro, con el
+  texto «actualizar a la plantilla infra/iam.yaml de este SDK» y
+  `previousBucket: null` en `--json` cuando el bucket no cambia. Una pila
+  desplegada a mano (sin el parámetro) se actualiza una vez; los demás
+  parámetros conservan su valor (`UsePreviousValue`).
+- **Un `--token-file` que dejó un `rayito agent deploy` fallido ya no bloquea
+  el reintento.** El fichero se escribe antes del build; si el despliegue falla
+  antes de que exista la flota (build, arranque del host, una confirmación
+  rechazada o cualquier otro error), se borra el fichero que creó esa misma
+  ejecución. Con `--keep-on-failure` se conserva, porque es el único acceso al
+  sandbox que se queda, y un fichero de una ejecución anterior nunca se toca.
+- **`rayito setup --json` informa la versión de cada imagen publicada en su
+  paso.** Tras `apply`, los pasos `baseImage` y `capsImage` con `publish`
+  llevan en `imageVersion` la versión recién publicada (antes `null`, aunque
+  `result` sí la tenía). En `--dry-run` y si la preparación falla, siguen en
+  `null`.
+- **El host del agente ya no deja salir el DEBUG de botocore con cuerpos de
+  AWS** (los assets del host se generan desde el SDK Python): sube `botocore`
+  y `urllib3` a WARNING, como `httpx` y `httpcore` en 0.17.0, y descarta los
+  registros por debajo de INFO de `botocore.endpoint`, `botocore.parsers` y
+  `botocore.auth` aunque el código del agente vuelva a bajar el nivel. El SDK
+  TypeScript no pone ningún `logger` en sus clientes del AWS SDK v3.
+- **El plazo de los VMs sobrantes de una flota** (las tres limitaciones
+  conocidas de 0.17.0):
+  - Una invocación que se suelta ya no acorta el plazo de otra que empezó
+    entre medias en el mismo VM: los `setTimeout` de cada VM van en cola y el
+    acortamiento sólo se manda si el VM sigue libre.
+  - Una invocación que falla (un 429 hasta agotar la cola, un error del host o
+    de transporte) devuelve el VM sobrante a `scaleInAfterMs`; antes se
+    quedaba con el plazo de invocación hasta `requestTimeoutMs`.
+  - Un VM acortado que pasa a ser base recupera toda su vida aunque la flota
+    no conozca su tope: pide el máximo de la plataforma y `rayd`, que lo
+    rechaza informando su tope, recibe ese tope en el reintento. Antes no se
+    mandaba nada y el VM base podía terminar por el plazo corto. Si no queda
+    nada que devolverle, deja de contar como acortado (`restoreMs`, vectores
+    `restoreSeconds` en `testdata/agent-fleet/lifetime.json`).
+
+### Seguridad
+
+- `vitest` 4.1.12 (dependencia de desarrollo; `@vitest/mocker`
+  GHSA-qxg6-89mg-rqv8 y GHSA-xp26-3454-mjgp). No cambia el paquete publicado.
+
 ## [0.17.0] - 2026-10-23
 
 ### Añadido
