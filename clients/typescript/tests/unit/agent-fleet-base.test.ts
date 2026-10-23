@@ -22,7 +22,9 @@ import {
   isLost,
   lifetimeMs,
   listedCap,
+  mapBounded,
   markExtras,
+  memberOf,
   newMember,
   ownedIds,
   planPlacement,
@@ -479,5 +481,49 @@ describe("fleet lifetime", () => {
     );
     expect(config.maxLifetimeMs).toBe(3_660_000);
     expect(config.onTimeout).toBe("kill");
+  });
+});
+
+describe("mapBounded", () => {
+  test("an empty input does no work", async () => {
+    let calls = 0;
+    expect(await mapBounded([], 8, async () => (calls += 1))).toEqual([]);
+    expect(calls).toBe(0);
+  });
+
+  test("a failure starts no more work and rejects with that error", async () => {
+    const started: number[] = [];
+    const failure = new Error("limitado");
+    const items = Array.from({ length: 20 }, (_, index) => index);
+    await expect(
+      mapBounded(items, 2, async (item) => {
+        started.push(item);
+        if (item === 0) {
+          throw failure;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        return item;
+      }),
+    ).rejects.toBe(failure);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(started.length).toBeLessThan(items.length);
+  });
+
+  test("a limit below one still runs one at a time, in order", async () => {
+    expect(await mapBounded([3, 1, 2], 0, async (item) => item * 2)).toEqual([6, 2, 4]);
+  });
+});
+
+describe("memberOf", () => {
+  test("a known member becomes proven when a listing proves it", () => {
+    const listed = { sandboxId: "a", state: "SUSPENDED", startedAt: new Date(0) };
+    const known = { ...newMember("a"), proven: false };
+    expect(memberOf(known, { ...listed, proven: false }, undefined)).toBe(known);
+    expect(known.proven).toBe(false);
+    memberOf(known, listed, undefined);
+    expect(known.proven).toBe(true);
+    memberOf(known, { ...listed, proven: false }, undefined);
+    expect(known.proven).toBe(true);
+    expect(memberOf(undefined, { ...listed, proven: false }, undefined).proven).toBe(false);
   });
 });

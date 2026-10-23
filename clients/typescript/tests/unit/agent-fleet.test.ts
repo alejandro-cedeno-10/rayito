@@ -794,7 +794,7 @@ describe("unproven members", () => {
       directory: h.world,
       logger: { warn: (message, fields) => warnings.push({ message, fields }) },
     });
-    await fleet.stop();
+    expect(await fleet.stop()).toBe(1);
     expect(mine.state).toBe("TERMINATED");
     expect(parked.kills).toBe(0);
     expect(parked.state).toBe("SUSPENDED");

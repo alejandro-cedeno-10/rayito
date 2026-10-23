@@ -11,10 +11,10 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine, Mapping, Sequence
 from datetime import UTC, datetime
 from types import TracebackType
-from typing import TYPE_CHECKING, Any, Self
+from typing import TYPE_CHECKING, Any, Self, TypeVar
 
 from rayito._agent import _fleet_recipe_aws as recipe_aws
 from rayito._agent._deployment_async import AsyncAgentDeployment, default_async_transport
@@ -115,6 +115,23 @@ if TYPE_CHECKING:
 logger = logging.getLogger("rayito.agent")
 
 
+T = TypeVar("T")
+
+
+async def gather_or_cancel(calls: Sequence[Coroutine[Any, Any, T]]) -> list[T]:
+    """`asyncio.gather` en orden que, si una llamada falla, cancela las demás
+    (las que esperan turno y las que van por la mitad) y relanza ese error
+    tal cual, sin envolverlo como haría un `TaskGroup`."""
+    tasks = [asyncio.ensure_future(call) for call in calls]
+    try:
+        return list(await asyncio.gather(*tasks))
+    except BaseException:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        raise
+
+
 class AsyncSandboxDirectory:
     """El adaptador de producción de la flota asíncrona: lista los VMs de la
     imagen (`list-microvms` con el filtro de imagen) sin contar los que no son
@@ -147,7 +164,7 @@ class AsyncSandboxDirectory:
             async with turns:
                 return await self._probe(sandbox_class, sandbox_id)
 
-        probes = await asyncio.gather(*(probe(sandbox_id) for sandbox_id in running))
+        probes = await gather_or_cancel([probe(sandbox_id) for sandbox_id in running])
         for item in probes:
             if item.error is not None:
                 logger.warning(UNREADABLE_MEMBER_MESSAGE, item.sandbox_id, item.error)
@@ -525,17 +542,19 @@ class AsyncAgentFleet:
         pool persistente (`pool_backend`)."""
         await self._close_pool(drain=self._pool_backend is None)
 
-    async def stop(self, *, keep_recipe: bool = False) -> None:
+    async def stop(self, *, keep_recipe: bool = False) -> int:
         """Termina todos los VMs de la flota y las plazas del pool y, si este
         proceso guardó o leyó su receta, la borra (`keep_recipe=True` la
         conserva). Sigue aunque uno falle y, al final, lanza el primer
-        error."""
+        error. Devuelve cuántos VMs terminó: uno sin probar
+        (`Member.proven`) no se termina y no cuenta."""
         errors: list[Exception] = []
         await self._close_pool(drain=True, errors=errors)
         members, self._members = list(self._members), []
+        stopped = 0
         for member in members:
             try:
-                await self._terminate(member)
+                stopped += int(await self._terminate(member))
             except Exception as exc:
                 logger.warning("no se pudo terminar un VM de la flota", exc_info=True)
                 errors.append(exc)
@@ -547,6 +566,7 @@ class AsyncAgentFleet:
                 errors.append(exc)
         if errors:
             raise errors[0]
+        return stopped
 
     async def status(self) -> FleetStatus:
         """Estado de la flota: pregunta a los VMs que este proceso ya abrió
@@ -1092,18 +1112,20 @@ class AsyncAgentFleet:
             except Exception:
                 logger.warning("no se pudo terminar un VM sobrante", exc_info=True)
 
-    async def _terminate(self, member: Member) -> None:
+    async def _terminate(self, member: Member) -> bool:
         """Termina el VM sin abrirlo: abrir uno suspendido lo reanudaría sólo
         para matarlo. Un miembro sin probar (`Member.proven`) no se termina:
         podría ser un sandbox ajeno de la misma imagen, y se deja a su
-        propio plazo y a su política de idle con un aviso."""
+        propio plazo y a su política de idle con un aviso. Devuelve si lo
+        terminó."""
         if not member.proven:
             logger.warning(UNPROVEN_MEMBER_MESSAGE, member.sandbox_id)
-            return
+            return False
         if member.deployment is not None:
             await member.deployment.stop()
         else:
             await self._directory.kill(member.sandbox_id)
+        return True
 
     async def _discard(self, members: Sequence[Member]) -> None:
         for member in members:
