@@ -616,6 +616,39 @@ def test_a_missing_base_image_stops_before_anything_is_created(harness: Harness)
     assert harness.store.checked == []
 
 
+def test_reusing_the_built_image_without_a_bucket_never_needs_the_base_image(
+    harness: Harness,
+) -> None:
+    harness.aws.images = {"support-bot"}
+    harness.environ.clear()
+
+    fleet = harness.deploy()
+
+    assert harness.builds == []
+    assert "image:rayito-base-caps" not in harness.aws.calls
+    assert len(fleet.sandbox_ids) == 1
+
+
+def test_a_missing_base_image_says_how_to_reuse_the_built_image(harness: Harness) -> None:
+    harness.aws.images = {"support-bot"}
+
+    with pytest.raises(InvalidArgumentException) as raised:
+        harness.deploy()
+
+    assert "--no-build" in str(raised.value)
+    assert "'support-bot'" in str(raised.value)
+    assert harness.builds == []
+
+
+def test_a_missing_base_image_without_a_built_image_has_no_reuse_hint(harness: Harness) -> None:
+    harness.aws.images.clear()
+
+    with pytest.raises(InvalidArgumentException) as raised:
+        harness.deploy()
+
+    assert "--no-build" not in str(raised.value)
+
+
 def test_a_missing_base_image_is_published_only_with_a_publisher(harness: Harness) -> None:
     harness.aws.images.clear()
     published: list[bool] = []

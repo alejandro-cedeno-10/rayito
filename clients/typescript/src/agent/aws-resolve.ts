@@ -464,26 +464,39 @@ export async function discoverBucket(aws: DeployAws, region: string): Promise<st
   return aws.artifactStackBucket();
 }
 
+/** Lo que se añade al error de una imagen base que falta cuando la imagen del
+ * proyecto ya existe: reutilizarla no necesita la base. */
+export function reuseTemplateHint(template: string): string {
+  return `; o reutiliza la imagen '${template}' ya construida sin build: --no-build (buildImage: false)`;
+}
+
 /** Si la imagen base existe. Si no, la publica con `publisher` (que el
  * llamante dio y que costó una confirmación suya) y vuelve a comprobar; sin
  * `publisher` o con `ensure: false` es `InvalidArgumentError` con el comando
- * que la publica. Devuelve si hubo que publicarla. */
+ * que la publica. Si `template` (la imagen del proyecto) ya existe, el mensaje
+ * dice además cómo reutilizarla sin construir. Devuelve si hubo que
+ * publicarla. */
 export async function ensureBaseImage(
   aws: DeployAws,
   base: string,
   publisher: (() => Promise<void>) | undefined,
-  options: { readonly ensure: boolean },
+  options: { readonly ensure: boolean; readonly template?: string | undefined },
 ): Promise<boolean> {
   if (await aws.imageExists(base)) {
     return false;
   }
   if (!options.ensure || publisher === undefined) {
+    const reuse =
+      options.template !== undefined && (await aws.imageExists(options.template))
+        ? reuseTemplateHint(options.template)
+        : "";
     throw new InvalidArgumentError(
       withBaseImageHint(
-        `la imagen base '${base}' no existe en esta cuenta y región: publícala con ` +
+        `la imagen base '${base}' no existe en esta cuenta y región y el build ` +
+          "la necesita: publícala con " +
           "`rayito image publish --os-capabilities ALL --artifact <zip> " +
-          "--base-image-version latest` (ver la guía de instalación) o pasa " +
-          "basePublisher a deployAgent()",
+          "--base-image-version latest` (ver la guía de instalación), pasa " +
+          `basePublisher a deployAgent() o elige otra con [image] base${reuse}`,
         base,
       ),
     );

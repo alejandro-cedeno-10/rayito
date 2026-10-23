@@ -611,6 +611,32 @@ describe("deployAgent", () => {
     expect(h.store.checked).toEqual([]);
   });
 
+  test("reusing the built image without a bucket never needs the base image", async () => {
+    const h = new Harness();
+    h.aws.images = new Set(["support-bot"]);
+    delete h.environ[BUCKET_ENV_VAR];
+    await h.deploy();
+    expect(h.builds).toEqual([]);
+    expect(h.aws.calls).not.toContain("image:rayito-base-caps");
+    expect(h.createdVms).toBe(1);
+  });
+
+  test("a missing base image says how to reuse the built image", async () => {
+    const h = new Harness();
+    h.aws.images = new Set(["support-bot"]);
+    const error = await failureOf(h.deploy());
+    expect(error.message).toContain("--no-build");
+    expect(error.message).toContain("'support-bot'");
+    expect(h.builds).toEqual([]);
+  });
+
+  test("a missing base image without a built image has no reuse hint", async () => {
+    const h = new Harness();
+    h.aws.images.clear();
+    const error = await failureOf(h.deploy());
+    expect(error.message).not.toContain("--no-build");
+  });
+
   test("a missing base image is published only with a publisher", async () => {
     const h = new Harness();
     h.aws.images.clear();

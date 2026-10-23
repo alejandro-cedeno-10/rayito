@@ -56,6 +56,12 @@ AGENT_SECRET_NAME_TEMPLATE: Final = "agents/{project}/{gateway}"
 #: se leerá.
 GATEWAY_SECRET_PREFIX: Final = DEFAULT_SECRET_PREFIX
 BEARER_PREFIX: Final = "Bearer "
+#: Lo que se añade al error de una imagen base que falta cuando la imagen del
+#: proyecto ya existe: reutilizarla no necesita la base.
+REUSE_TEMPLATE_HINT: Final = (
+    "; o reutiliza la imagen '{template}' ya construida sin build: "
+    "--no-build (build_image=False)"
+)
 AUTHORIZATION_HEADER: Final = "authorization"
 #: Códigos de `HeadBucket` que dan el bucket por inexistente o ajeno: sin
 #: `s3:ListBucket` S3 contesta 403 a un HEAD, y un bucket que no se puede
@@ -413,23 +419,35 @@ class _MicrovmClients:
 
 
 def ensure_base_image(
-    aws: DeployAws, base: str, publisher: Callable[[], None] | None, *, ensure: bool
+    aws: DeployAws,
+    base: str,
+    publisher: Callable[[], None] | None,
+    *,
+    ensure: bool,
+    template: str | None = None,
 ) -> bool:
     """Si la imagen base existe. Si no, la publica con `publisher` (que el
     llamante dio y que costó una confirmación suya) y vuelve a comprobar;
     sin `publisher` o con `ensure=False` es `InvalidArgumentException` con el
     comando que la publica (para `rayito-base-caps`, `rayito setup
-    --caps-image`, que `rayito setup` no publica por defecto). Devuelve si
-    hubo que publicarla."""
+    --caps-image`, que `rayito setup` no publica por defecto). Si `template`
+    (la imagen del proyecto) ya existe, el mensaje dice además cómo
+    reutilizarla sin construir. Devuelve si hubo que publicarla."""
     if aws.image_exists(base):
         return False
     if not ensure or publisher is None:
+        reuse = (
+            REUSE_TEMPLATE_HINT.format(template=template)
+            if template is not None and aws.image_exists(template)
+            else ""
+        )
         raise InvalidArgumentException(
             with_base_image_hint(
-                f"la imagen base {base!r} no existe en esta cuenta y región: publícala con "
+                f"la imagen base {base!r} no existe en esta cuenta y región y el build "
+                "la necesita: publícala con "
                 "`rayito image publish --os-capabilities ALL --artifact <zip> "
-                "--base-image-version latest` (ver la guía de instalación) o pasa "
-                "base_publisher= a deploy_agent()",
+                "--base-image-version latest` (ver la guía de instalación), pasa "
+                f"base_publisher= a deploy_agent() o elige otra con [image] base{reuse}",
                 base,
             )
         )

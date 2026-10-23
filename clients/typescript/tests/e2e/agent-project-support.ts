@@ -258,7 +258,10 @@ export function agentImage(kind: ImageKind, region: string): Promise<string> {
  * la imagen ya construida, para las pruebas de la CLI. Sólo Bedrock.
  * `[source]` apunta al propio directorio, que lleva el código del caso
  * (`appFixture`): `deploy` reconstruye la imagen desde ahí y, sin código, el
- * punto de entrada no existiría. */
+ * punto de entrada no existiría. Con `RAYITO_E2E_AGENT_PROJECT_BASE`,
+ * `[image]` lleva también esa `base`, la misma con la que `projectFor`
+ * construyó la imagen: sin ella, el build de `deploy` pediría
+ * `rayito-base-caps`. */
 export function projectFileText(item: RuntimeCase, template: string): string {
   const { model, secret } = providerFor(item);
   return [
@@ -279,7 +282,7 @@ export function projectFileText(item: RuntimeCase, template: string): string {
     "",
     `[serve]\ntimeout_seconds = ${DEPLOY_TIMEOUT_MS / MS_PER_SECOND}\nidle_seconds = 0`,
     "",
-    `[image]\ntemplate = "${template}"`,
+    `[image]\ntemplate = "${template}"${BASE ? `\nbase = "${BASE}"` : ""}`,
     "",
   ].join("\n");
 }
