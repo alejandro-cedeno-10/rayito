@@ -266,6 +266,8 @@ def test_a_vm_is_a_member_only_when_the_image_is_not_shared(case: dict[str, Any]
     selected = select_members(listing, set(case["owned"]), set(case.get("unreadable", [])))
 
     assert [item.sandbox_id for item in selected] == case["expected"]
+    if "unproven" in case:
+        assert [item.sandbox_id for item in selected if not item.proven] == case["unproven"]
 
 
 # ---------------------------------------------------------------- lifetime

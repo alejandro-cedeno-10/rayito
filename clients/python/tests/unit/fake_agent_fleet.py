@@ -11,6 +11,8 @@ from __future__ import annotations
 import asyncio
 import builtins
 import json
+import threading
+import time
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -363,6 +365,10 @@ class FleetSandboxClass:
         self.probe_errors: dict[str, Exception] = {}
         self.probe_states: dict[str, str] = {}
         self.probed: list[str] = []
+        self.probe_delays: dict[str, float] = {}
+        self.probing = 0
+        self.most_probing = 0
+        self._probe_lock = threading.Lock()
         self._next = 1
 
     def add(
@@ -460,9 +466,35 @@ class FleetSandboxClass:
         return self._connect(sandbox_id)
 
     def get_info(self, sandbox_id: str, **kwargs: Any) -> Any:
+        """`probe_delays` alarga una sonda (en un hilo o en el bucle) para
+        medir cuántas van a la vez (`most_probing`) y que el orden del
+        resultado no dependa de cuál acaba antes."""
+        delay = self.probe_delays.get(sandbox_id, 0.0)
         if self.asynchronous:
-            return FleetSandbox._async_call(lambda: self._get_info(sandbox_id))
-        return self._get_info(sandbox_id)
+            return self._async_probe(sandbox_id, delay)
+        self._enter_probe()
+        try:
+            time.sleep(delay)
+            return self._get_info(sandbox_id)
+        finally:
+            self._leave_probe()
+
+    async def _async_probe(self, sandbox_id: str, delay: float) -> ListedItem:
+        self._enter_probe()
+        try:
+            await asyncio.sleep(delay)
+            return self._get_info(sandbox_id)
+        finally:
+            self._leave_probe()
+
+    def _enter_probe(self) -> None:
+        with self._probe_lock:
+            self.probing += 1
+            self.most_probing = max(self.most_probing, self.probing)
+
+    def _leave_probe(self) -> None:
+        with self._probe_lock:
+            self.probing -= 1
 
     def list(self, **kwargs: Any) -> Any:
         if self.asynchronous:

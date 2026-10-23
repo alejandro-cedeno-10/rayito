@@ -236,6 +236,8 @@ export class FleetWorld implements SandboxFactory, FleetDirectory {
   readonly connected: string[] = [];
   readonly sessionHits = new Map<string, string>();
   readonly foundSessions: string[] = [];
+  /** Los VMs que el listado no puede probar que sean de la flota. */
+  readonly unproven = new Set<string>();
   createError: Error | undefined;
   #next = 1;
 
@@ -278,6 +280,7 @@ export class FleetWorld implements SandboxFactory, FleetDirectory {
         sandboxId: sandbox.sandboxId,
         state: sandbox.state,
         startedAt: new Date(START.getTime() + sandbox.number * MS_PER_SECOND),
+        proven: !this.unproven.has(sandbox.sandboxId),
       }));
   }
 

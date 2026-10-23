@@ -46,6 +46,10 @@ export const AGENT_FLEET_PING_TTL_MS = AGENT_FLEET_PING_TTL_SECONDS * MS_PER_SEC
 export const AGENT_FLEET_BUSY_RETRY_MS = 1000;
 /** Cuántos VMs crea a la vez `start()` (y `scale()`). */
 export const AGENT_FLEET_START_CONCURRENCY = 4;
+/** Cuántos VMs `RUNNING` sondea a la vez el listado de la flota (un
+ * `get-microvm` más un `Health` sin token cada uno). Los resultados y los
+ * avisos salen en el orden de `list-microvms`. */
+export const AGENT_FLEET_PROBE_CONCURRENCY = 8;
 /** Plazo para que las plazas calientes de un `deployAgent` queden aparcadas:
  * un `create()` más su `pause()` son decenas de segundos (`AWS_API_NOTES.md`,
  * Q155), con holgura para varias a la vez. */
@@ -128,6 +132,10 @@ export interface Member<D = unknown> {
   limited: boolean;
   /** Su `setTimeout` se rechazó por un argumento (un VM sin plazo lógico): no se reintenta. */
   lifetimeRejected: boolean;
+  /** Si se sabe que el VM es de la flota (lo creó este proceso, sus etiquetas
+   * lo prueban o la imagen sólo tiene agentes); uno sin probar nunca se
+   * termina. */
+  proven: boolean;
 }
 
 export function newMember<D>(
@@ -149,6 +157,7 @@ export function newMember<D>(
     cap,
     limited: false,
     lifetimeRejected: false,
+    proven: true,
   };
 }
 
@@ -301,6 +310,8 @@ export interface MemberListing {
   readonly sandboxId: string;
   readonly state: string;
   readonly startedAt: Date;
+  /** `false` si el listado no puede probar que el VM es de la flota. */
+  readonly proven?: boolean | undefined;
 }
 
 /** Los ids de los VMs sondeados cuyas etiquetas son las de un despliegue de
@@ -337,7 +348,9 @@ export function ownedIds(
  * `RUNNING` al sondearlos: la plataforma aún los lista, pero su `rayd` ya no
  * responde (un VM que se está terminando al reducir la flota). No cuentan como
  * miembros ni prueban que la imagen sea compartida: se tratan como VMs que
- * terminan. */
+ * terminan. Como tampoco prueban lo contrario (uno podría ser un sandbox
+ * ajeno), con alguno los miembros que no están `RUNNING` salen con
+ * `proven: false`: cuentan para el cupo, pero la flota nunca los termina. */
 export function selectMembers(
   items: readonly MemberListing[],
   owned: ReadonlySet<string>,
@@ -349,9 +362,84 @@ export function selectMembers(
       !owned.has(item.sandboxId) &&
       !unreadable.has(item.sandboxId),
   );
-  return items.filter((item) =>
-    item.state === AGENT_FLEET_PROBE_STATE ? owned.has(item.sandboxId) : !sharedImage,
+  const proven = unreadable.size === 0;
+  const selected: MemberListing[] = [];
+  for (const item of items) {
+    if (item.state === AGENT_FLEET_PROBE_STATE) {
+      if (owned.has(item.sandboxId)) {
+        selected.push(item);
+      }
+    } else if (!sharedImage) {
+      selected.push({ ...item, proven });
+    }
+  }
+  return selected;
+}
+
+/** La sonda de un VM `RUNNING` del listado: su información si sigue `RUNNING`
+ * (`undefined` si no) y, si la sonda falló, la clase del error. */
+export interface MemberProbe {
+  readonly sandboxId: string;
+  readonly info:
+    | {
+        readonly sandboxId: string;
+        readonly metadata?: Readonly<Record<string, string>> | undefined;
+      }
+    | undefined;
+  readonly error?: string | undefined;
+}
+
+/** `selectMembers` con las sondas de los VMs `RUNNING`: las que trajeron
+ * información prueban (o no) las etiquetas; las demás son `unreadable`. */
+export function selectProbed(
+  items: readonly MemberListing[],
+  probes: readonly MemberProbe[],
+): MemberListing[] {
+  const readable = probes.flatMap((probe) => (probe.info === undefined ? [] : [probe.info]));
+  const unreadable = new Set(
+    probes.filter((probe) => probe.info === undefined).map((probe) => probe.sandboxId),
   );
+  return selectMembers(items, ownedIds(readable), unreadable);
+}
+
+/** El miembro de un VM listado: el que este proceso ya conocía (que pasa a
+ * probado si el listado lo prueba) o uno nuevo con la prueba del listado. */
+export function memberOf<D>(
+  known: Member<D> | undefined,
+  item: MemberListing,
+  cap: Date | undefined,
+): Member<D> {
+  const proven = item.proven !== false;
+  if (known === undefined) {
+    return { ...newMember<D>(item.sandboxId, undefined, false, cap), proven };
+  }
+  known.proven = known.proven || proven;
+  return known;
+}
+
+/** Lo que se loguea (sólo el id) cuando la flota no termina un VM porque no
+ * pudo probar que es suyo: lo deja a su propio plazo y a su política de idle. */
+export const UNPROVEN_MEMBER_MESSAGE =
+  "no se termina un VM: no se pudo probar que sea de la flota; se deja a su propio plazo";
+
+/** Ejecuta `work` sobre cada elemento con como mucho `limit` a la vez y
+ * devuelve los resultados en el orden de `items`. */
+export async function mapBounded<T, R>(
+  items: readonly T[],
+  limit: number,
+  work: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let next = 0;
+  const lane = async (): Promise<void> => {
+    while (next < items.length) {
+      const position = next;
+      next += 1;
+      results[position] = await work(items[position] as T);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, lane));
+  return results;
 }
 
 /** Lo que se loguea (sólo el id y la clase del error) cuando la sonda de un VM

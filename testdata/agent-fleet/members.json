@@ -79,7 +79,19 @@
       ],
       "owned": ["a"],
       "unreadable": ["b"],
-      "expected": ["a", "c"]
+      "expected": ["a", "c"],
+      "unproven": ["c"]
+    },
+    {
+      "name": "without an unreadable vm every selected member is proven",
+      "items": [
+        {"id": "a", "state": "RUNNING"},
+        {"id": "b", "state": "SUSPENDED"}
+      ],
+      "owned": ["a"],
+      "unreadable": [],
+      "expected": ["a", "b"],
+      "unproven": []
     },
     {
       "name": "nothing listed",
