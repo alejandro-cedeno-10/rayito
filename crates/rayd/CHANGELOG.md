@@ -37,8 +37,11 @@ imagen `rayito-base` y como asset de la GitHub Release del tag `rayd-v*`.
   cada stream, el estado y la señal, la petición al sidecar, el contenido
   leído) y deja el reloj sólo como red de seguridad lejos de los dos
   desenlaces: la mitad del plazo que la separa del fallo (`SUSPEND_GATE_TIMEOUT`,
-  un comando o una celda de 30 s, `KILL_GRACE`, `RESUME_PROBE_BUDGET` con una
-  sonda de 30 s), y las esperas por sondeo tienen 10 s.
+  un comando o una celda de 30 s, `KILL_GRACE`, una sonda de 20 s frente a
+  `RESUME_PROBE_BUDGET`); donde las aserciones ya deciden (la ráfaga de
+  `/suspend` y el par falsificado de `m6_hooks`), el límite de reloj se
+  quita. Las esperas por sondeo tienen 5 o 10 s y los keepalives de una PTY
+  callada se esperan durante diez intervalos.
 - `m5_pty`: los tests ya no escriben en la terminal antes de que bash
   interactivo la tenga (`ready_bash` teclea un marcador hasta que bash lo
   ejecuta; en aarch64 una línea tecleada en esa ventana se perdía), y el fin

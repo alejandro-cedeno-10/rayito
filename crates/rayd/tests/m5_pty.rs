@@ -1024,13 +1024,17 @@ async fn create_is_refused_while_suspending() {
     collect_until_exit(&mut stream).await;
 }
 
+/// How long the shell stays silent: ten keepalive intervals, so two
+/// keepalives arrive even when the runner is slow to schedule the timer.
+const SILENT_SPAN: Duration = Duration::from_secs(2);
+
 #[tokio::test]
 async fn keepalives_flow_on_a_silent_shell() {
     let harness = harness().await;
     let (pid, mut stream, _) = harness.ready_bash().await;
     harness.send(pid, &say("ready")).await.unwrap();
     read_until(&mut stream, b"ready\r\n").await;
-    tokio::time::sleep(Duration::from_millis(700)).await;
+    tokio::time::sleep(SILENT_SPAN).await;
     harness.send(pid, &say("later")).await.unwrap();
     let (_, keepalives, _) = read_until_with(&mut stream, b"later\r\n", READ_TIMEOUT).await;
     assert!(keepalives >= 2, "{keepalives}");
@@ -1133,7 +1137,7 @@ async fn kill_takes_the_foreground_job_down_with_the_shell() {
     harness.kill(pid).await.unwrap();
     let (_, exited, _) = collect_until_exit(&mut stream).await;
     assert_eq!(exited.exit_code, 137);
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + TIMEOUT_SAFETY_NET;
     while !process_is_gone(job) {
         if Instant::now() > deadline {
             let _ = nix::sys::signal::kill(
