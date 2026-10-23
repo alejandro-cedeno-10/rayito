@@ -446,10 +446,11 @@ def _read_until_closed(client: Any) -> bytes:
 
 
 def test_a_client_that_hangs_up_mid_response_logs_no_traceback(
-    capfd: pytest.CaptureFixture[str],
+    caplog: pytest.LogCaptureFixture, capfd: pytest.CaptureFixture[str]
 ) -> None:
     import socket
 
+    caplog.set_level(logging.WARNING, logger=serve.LOGGER_NAME)
     with running_service(FakeDriver()) as (service, _):
         server = serve.build_server(service, 0, "127.0.0.1")
         with socket.socket() as hung_up:
@@ -461,6 +462,7 @@ def test_a_client_that_hangs_up_mid_response_logs_no_traceback(
                 server.server_close()
 
     assert "Traceback" not in capfd.readouterr().err
+    assert "http_error code=connection_closed" in [r.getMessage() for r in caplog.records]
 
 
 class _RawDriver(FakeDriver):
