@@ -34,6 +34,7 @@ from rayito._agent._fleet_base import (
     pool_config_for,
     record_busy,
     record_ping,
+    restore_seconds,
     sandbox_cap,
     select_members,
     session_label,
@@ -293,6 +294,15 @@ def test_lifetime_seconds_matches_the_shared_vectors(case: dict[str, Any]) -> No
     cap = None if cap_in is None else now + timedelta(seconds=cap_in)
 
     assert lifetime_seconds(case["desiredSeconds"], cap, now) == case["expected"]
+
+
+@pytest.mark.parametrize("case", LIFETIME["restoreSeconds"], ids=lambda case: case["name"])
+def test_restore_seconds_matches_the_shared_vectors(case: dict[str, Any]) -> None:
+    now = datetime(2026, 10, 22, tzinfo=UTC)
+    cap_in = case["capInSeconds"]
+    cap = None if cap_in is None else now + timedelta(seconds=cap_in)
+
+    assert restore_seconds(cap, now) == case["expected"]
 
 
 @pytest.mark.parametrize("case", LIFETIME["holdSeconds"], ids=lambda case: case["name"])

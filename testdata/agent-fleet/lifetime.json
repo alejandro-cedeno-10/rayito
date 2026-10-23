@@ -1,5 +1,5 @@
 {
-  "description": "Lifetime of fleet VMs (fleet-recipe D12): the create arguments, rayd's cap (max_lifetime - 60 s from start, the instant after which rayd rejects any deadline), the seconds sent in set_timeout (bounded by rayd's cap minus 5 s), the cap rayd reports when it rejects a deadline beyond it, and the deadline held while an extra VM serves a request. Seconds in both SDKs; TypeScript multiplies by 1000.",
+  "description": "Lifetime of fleet VMs (fleet-recipe D12): the create arguments, rayd's cap (max_lifetime - 60 s from start, the instant after which rayd rejects any deadline), the seconds sent in set_timeout (bounded by rayd's cap minus 5 s), the cap rayd reports when it rejects a deadline beyond it,, the deadline held while an extra VM serves a request, and what restores a VM this process shortened once it is a base VM again (restoreSeconds: with an unknown cap, the platform maximum, which rayd rejects with its cap). Seconds in both SDKs; TypeScript multiplies by 1000.",
   "createArgs": [
     {
       "name": "a single-VM fleet launches as in 0.16",
@@ -226,6 +226,23 @@
       "scaleInSeconds": 900,
       "requestTimeoutSeconds": null,
       "expected": 900
+    }
+  ],
+  "restoreSeconds": [
+    {
+      "name": "an unknown cap asks for the platform maximum, which rayd answers with its cap",
+      "capInSeconds": null,
+      "expected": 28800
+    },
+    {
+      "name": "a known cap asks for everything up to it minus 5 s",
+      "capInSeconds": 3600,
+      "expected": 3595
+    },
+    {
+      "name": "a cap closer than the margin restores nothing",
+      "capInSeconds": 5,
+      "expected": null
     }
   ]
 }

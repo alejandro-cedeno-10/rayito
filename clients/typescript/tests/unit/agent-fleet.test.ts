@@ -28,6 +28,23 @@ const SHARED_TWO = new ScalingOptions({ minVms: 1, maxVms: 2 });
 const DEDICATED_TWO = new ScalingOptions({ minVms: 1, maxVms: 2, sessions: "dedicated" });
 const MS_PER_SECOND = 1000;
 
+/** Una flota de 1 a 2 VMs cuyo VM sobrante ya atendió una invocación
+ * (`[120, hold, 120]`) y cuyo VM base queda ocupado por un stream: la
+ * siguiente invocación va al sobrante. */
+async function fleetWithAUsedExtraVm() {
+  const h = new FleetHarness();
+  const fleet = await h.started(
+    new ScalingOptions({ minVms: 1, maxVms: 2, scaleInAfterMs: 120_000 }),
+  );
+  const held = await fleet.stream("primera");
+  await fleet.invoke("segunda");
+  const extra = h.world.sandboxes.get(fleet.sandboxIds[1] ?? "");
+  if (extra === undefined) {
+    throw new Error("falta el VM sobrante");
+  }
+  return { h, fleet, extra, held };
+}
+
 async function failureOf(promise: Promise<unknown>): Promise<Error> {
   try {
     await promise;
@@ -244,6 +261,42 @@ describe("shared mode", () => {
     expect(warn.mock.calls.filter(([message]) => message === UNMANAGED_LIFETIME_MESSAGE)).toEqual(
       [],
     );
+  });
+
+  test.each([
+    ["a 500", 500, 0],
+    ["a 429 until the queue gives up", 200, 1_000],
+  ])("%s gives the extra VM its scale-in deadline back", async (_label, status, busy) => {
+    const { h, fleet, extra, held } = await fleetWithAUsedExtraVm();
+    const hold = Math.ceil(requestTimeoutMs(project()) / MS_PER_SECOND);
+    const host = h.backend.host(extra.sandboxId);
+    host.invokeStatus = status;
+    host.busyAnswers = busy;
+    await failureOf(fleet.invoke("tercera"));
+    await held.close();
+    expect(extra.timeouts.slice(0, 4)).toEqual([120, hold, 120, hold]);
+    expect(extra.timeouts.at(-1)).toBe(120);
+  });
+
+  test("a release never cuts the hold of an invocation that started meanwhile", async () => {
+    const { fleet, extra, held } = await fleetWithAUsedExtraVm();
+    const hold = Math.ceil(requestTimeoutMs(project()) / MS_PER_SECOND);
+    const original = extra.setTimeout.bind(extra);
+    let racing: Promise<unknown> | undefined;
+    extra.setTimeout = async (timeoutMs: number) => {
+      if (timeoutMs === 120_000 && racing === undefined) {
+        racing = fleet.invoke("tercera");
+        for (let tick = 0; tick < 50; tick += 1) {
+          await Promise.resolve();
+        }
+      }
+      await original(timeoutMs);
+    };
+    await fleet.invoke("cuarta");
+    await racing;
+    await held.close();
+    expect(extra.timeouts.slice(-3, -1)).toEqual([120, hold]);
+    expect(extra.timeouts.at(-1)).toBe(120);
   });
 
   test("sessions share a VM up to its concurrency", async () => {

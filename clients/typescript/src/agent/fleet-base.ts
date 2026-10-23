@@ -9,7 +9,11 @@
 
 import { createHash } from "node:crypto";
 import { InvalidArgumentError } from "../errors.js";
-import { AGENT_FLEET_PING_TTL_SECONDS, LIFECYCLE_MIN_TIMEOUT_SECONDS } from "../limits.js";
+import {
+  AGENT_FLEET_PING_TTL_SECONDS,
+  LIFECYCLE_MIN_TIMEOUT_SECONDS,
+  MAX_DURATION_SECONDS,
+} from "../limits.js";
 import type { PoolConfig } from "../pool/config.js";
 import {
   CAP_MARGIN_MS,
@@ -225,6 +229,18 @@ export function lifetimeMs(
   }
   const seconds = desiredSeconds === undefined ? remaining : Math.min(desiredSeconds, remaining);
   return seconds * MS_PER_SECOND;
+}
+
+/** Los milisegundos que devuelven toda su vida a un VM que este proceso
+ * acortó y ahora es base: todo lo que queda hasta el tope de `rayd` si se
+ * conoce y, si no, `MAX_DURATION_SECONDS` (el máximo de la plataforma), que
+ * `rayd` rechaza informando su tope (`LifetimeBeyondCapError`) para
+ * reintentar con él (`correctedCap`). `undefined` si el tope está demasiado
+ * cerca: el VM termina antes de todos modos. Espejo de `restore_seconds`. */
+export function restoreMs(cap: Date | undefined, nowMs: number): number | undefined {
+  return cap === undefined
+    ? MAX_DURATION_SECONDS * MS_PER_SECOND
+    : lifetimeMs(undefined, cap, nowMs);
 }
 
 /** El plazo de un VM sobrante mientras atiende una invocación: nunca menos
