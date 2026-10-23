@@ -280,7 +280,9 @@ pasado el plazo, lanza `CapacityException` (`code = "agent_capacity"`;
   (`AgentFleet.connect()`, `status()`, `refresh_members()`), un VM cuyo
   `Health` falla o que deja de estar `RUNNING` al sondearlo se trata como un
   VM que termina (no es miembro ni cuenta para el cupo, y se avisa con su id)
-  en vez de hacer fallar la llamada; desde 0.17.1.
+  en vez de hacer fallar la llamada; desde 0.17.1. Los VMs `RUNNING` se
+  sondean hasta 8 a la vez (`AGENT_FLEET_PROBE_CONCURRENCY`), con los
+  resultados y los avisos en el orden del listado.
 - **Suspender:** `idle` suspende un VM sin uso y lo reanuda al llamarlo; un VM
   suspendido no cobra cómputo, sólo el almacenamiento de su snapshot.
 - **Reiniciar:** si la app del usuario se cae, el host la relanza con espera
@@ -310,6 +312,11 @@ pasado el plazo, lanza `CapacityException` (`code = "agent_capacity"`;
       terminan VMs que son de un agente: un `Health` sin token lee las etiquetas
       de los `RUNNING`, y si la imagen tiene alguno que no las lleva, no se
       termina ninguno de los suspendidos (no se pueden sondear sin reanudarlos).
+      Si la sonda de algún `RUNNING` falla, tampoco: ese VM podría ser ajeno,
+      así que los suspendidos cuentan para el cupo pero ni `stop()` ni la
+      reducción los terminan; se avisa con su id y se dejan a su propio plazo
+      y a su política de `idle`. Los VMs que creó el propio proceso siempre se
+      terminan.
     - **Ejemplo:** `deploy_agent("./mi-agente", options=AgentDeployOptions(scaling=ScalingOptions(max_vms=3)))`.
 
 !!! info "Medido en AWS real"

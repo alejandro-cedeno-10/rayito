@@ -10,9 +10,11 @@ import { describe, expect, test, vi } from "vitest";
 import { AgentFleet, SandboxDirectory } from "../../src/agent/fleet.js";
 import {
   AGENT_FLEET_BUSY_RETRY_MS,
+  AGENT_FLEET_PROBE_CONCURRENCY,
   AGENT_FLEET_SESSION_LABEL,
   sessionLabel,
   UNMANAGED_LIFETIME_MESSAGE,
+  UNPROVEN_MEMBER_MESSAGE,
   UNREADABLE_MEMBER_MESSAGE,
 } from "../../src/agent/fleet-base.js";
 import { DEFAULT_QUEUE_TIMEOUT_MS, ServeOptions } from "../../src/agent/project.js";
@@ -726,6 +728,129 @@ describe("SandboxDirectory", () => {
     );
     spy.mockRestore();
     expect(failure).toBeInstanceOf(TypeError);
+  });
+});
+
+describe("SandboxDirectory concurrency", () => {
+  test("probes at most AGENT_FLEET_PROBE_CONCURRENCY VMs at a time, in listing order", async () => {
+    const ids = Array.from(
+      { length: AGENT_FLEET_PROBE_CONCURRENCY + 2 },
+      (_, index) => `vm-${index}`,
+    );
+    const spy = vi.spyOn(Sandbox, "list").mockImplementation(async function* () {
+      for (const sandboxId of ids) {
+        yield {
+          sandboxId,
+          state: "RUNNING",
+          template: "arn:aws:lambda:us-east-1:123456789012:microvm-image:support-bot",
+          templateVersion: "1",
+          startedAt: new Date(0),
+          templateName: "support-bot",
+        } satisfies SandboxListItem;
+      }
+    });
+    let probing = 0;
+    let mostProbing = 0;
+    const probe = async (sandboxId: string) => {
+      probing += 1;
+      mostProbing = Math.max(mostProbing, probing);
+      await new Promise((resolve) =>
+        setTimeout(resolve, 5 * (ids.length - ids.indexOf(sandboxId))),
+      );
+      probing -= 1;
+      if (sandboxId !== "vm-0") {
+        throw new SandboxError("Health no respondió");
+      }
+      return {
+        sandboxId,
+        state: "RUNNING",
+        metadata: { "rayito.agent.deployment": "support-bot", "rayito.agent.port": "8088" },
+      };
+    };
+    const warned: unknown[] = [];
+    const logger = {
+      warn: (_: string, fields?: Readonly<Record<string, unknown>>) =>
+        warned.push(fields?.sandboxId),
+    };
+    const members = await new SandboxDirectory({}, { probeInfo: probe, logger }).listMembers(
+      "support-bot",
+    );
+    spy.mockRestore();
+    expect(members.map((member) => member.sandboxId)).toEqual(["vm-0"]);
+    expect(mostProbing).toBe(AGENT_FLEET_PROBE_CONCURRENCY);
+    expect(warned).toEqual(ids.slice(1));
+  });
+});
+
+describe("unproven members", () => {
+  test("stop never terminates a VM it could not prove is a member", async () => {
+    const h = new FleetHarness();
+    const mine = h.world.add();
+    const parked = h.world.add({ state: "SUSPENDED" });
+    h.world.unproven.add(parked.sandboxId);
+    const warnings: unknown[] = [];
+    const fleet = await AgentFleet.connect("support-bot", {
+      accessToken: FLEET_TOKEN,
+      directory: h.world,
+      logger: { warn: (message, fields) => warnings.push({ message, fields }) },
+    });
+    await fleet.stop();
+    expect(mine.state).toBe("TERMINATED");
+    expect(parked.kills).toBe(0);
+    expect(parked.state).toBe("SUSPENDED");
+    expect(warnings).toContainEqual({
+      message: UNPROVEN_MEMBER_MESSAGE,
+      fields: { sandboxId: parked.sandboxId },
+    });
+  });
+
+  test("reconcile never trims a VM it could not prove is a member", async () => {
+    const h = new FleetHarness();
+    h.world.add();
+    const parked = h.world.add({ state: "SUSPENDED" });
+    h.world.unproven.add(parked.sandboxId);
+    const fleet = await AgentFleet.connect("support-bot", {
+      accessToken: FLEET_TOKEN,
+      directory: h.world,
+      scaling: new ScalingOptions({ minVms: 1, maxVms: 1 }),
+    });
+    await fleet.reconcile();
+    expect(parked.kills).toBe(0);
+  });
+
+  test("an unreadable VM leaves the suspended ones unproven", async () => {
+    const spy = vi.spyOn(Sandbox, "list").mockImplementation(async function* () {
+      for (const [sandboxId, state] of [
+        ["mine", "RUNNING"],
+        ["dying", "RUNNING"],
+        ["parked", "SUSPENDED"],
+      ] as const) {
+        yield {
+          sandboxId,
+          state,
+          template: "arn:aws:lambda:us-east-1:123456789012:microvm-image:support-bot",
+          templateVersion: "1",
+          startedAt: new Date(0),
+          templateName: "support-bot",
+        } satisfies SandboxListItem;
+      }
+    });
+    const probe = async (sandboxId: string) => {
+      if (sandboxId === "dying") {
+        throw new SandboxError("Health no respondió");
+      }
+      return {
+        sandboxId,
+        state: "RUNNING",
+        metadata: { "rayito.agent.deployment": "support-bot", "rayito.agent.port": "8088" },
+      };
+    };
+    const members = await new SandboxDirectory({}, { probeInfo: probe }).listMembers("support-bot");
+    spy.mockRestore();
+    expect(members.map(({ sandboxId, proven }) => [sandboxId, proven !== false])).toEqual([
+      ["mine", true],
+      ["parked", false],
+    ]);
   });
 });
 

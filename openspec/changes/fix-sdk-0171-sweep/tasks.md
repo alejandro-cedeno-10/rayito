@@ -3,6 +3,8 @@
 - [x] 1.1 `select_members` / `selectMembers` with `unreadable`; shared vector
 - [x] 1.2 Per-VM probe in the sync, async and TypeScript directories, with the warning
 - [x] 1.3 Tests in both SDKs (sync and async in Python), docs and changelogs
+- [x] 1.4 Probe with bounded concurrency (`AGENT_FLEET_PROBE_CONCURRENCY`), results and warnings in listing order
+- [x] 1.5 Unproven members (`proven`) are never terminated by `stop()` or trimming; shared vector, tests, docs and changelogs
 
 ## 2. Template environment (ADR-035)
 

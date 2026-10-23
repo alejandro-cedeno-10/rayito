@@ -281,7 +281,9 @@ after the deadline, raises `CapacityException` (`code = "agent_capacity"`;
   (`AgentFleet.connect()`, `status()`, `refresh_members()`), a VM whose
   `Health` fails or that stops being `RUNNING` when probed is treated as a
   terminating VM (not a member, not counted for capacity, and a warning names
-  its id) instead of failing the call; since 0.17.1.
+  its id) instead of failing the call; since 0.17.1. `RUNNING` VMs are probed
+  up to 8 at a time (`AGENT_FLEET_PROBE_CONCURRENCY`), with results and
+  warnings in listing order.
 - **Suspending:** `idle` suspends an unused VM and resumes it when called; a
   suspended VM bills no compute, only its snapshot storage.
 - **Restarting:** if the user's app dies, the host relaunches it with growing
@@ -310,7 +312,11 @@ after the deadline, raises `CapacityException` (`code = "agent_capacity"`;
       that belong to an agent are terminated: a tokenless `Health` reads the
       labels of the `RUNNING` ones, and if the image has one without them, none
       of the suspended ones is terminated (they cannot be probed without
-      resuming them).
+      resuming them). Neither are they when the probe of a `RUNNING` one fails:
+      that VM might not be an agent, so the suspended ones count for capacity
+      but neither `stop()` nor scale-in terminates them; a warning names each
+      id and they are left to their own deadline and `idle` policy. The VMs
+      this process created are always terminated.
     - **Example:** `deploy_agent("./mi-agente", options=AgentDeployOptions(scaling=ScalingOptions(max_vms=3)))`.
 
 !!! info "Measured on real AWS"

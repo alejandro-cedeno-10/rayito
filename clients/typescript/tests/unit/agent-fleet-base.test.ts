@@ -315,6 +315,7 @@ describe("settings", () => {
       items: { id: string; state: string }[];
       owned: string[];
       unreadable?: string[];
+      unproven?: string[];
       expected: string[];
     }[],
   )("a vm is a member only when the image is not shared: $name", (item) => {
@@ -325,6 +326,11 @@ describe("settings", () => {
     }));
     const selected = selectMembers(listing, new Set(item.owned), new Set(item.unreadable ?? []));
     expect(selected.map((entry) => entry.sandboxId)).toEqual(item.expected);
+    if (item.unproven !== undefined) {
+      expect(
+        selected.filter((entry) => entry.proven === false).map((entry) => entry.sandboxId),
+      ).toEqual(item.unproven);
+    }
   });
 });
 

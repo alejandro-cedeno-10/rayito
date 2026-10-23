@@ -14,9 +14,22 @@ The outcome has three classes:
 
 `select_members(items, owned, unreadable)` / `selectMembers` drops
 unreadable VMs and does not let them mark the image as shared. Errors
-outside the root (authentication, quota) still fail the listing. An
-unreadable VM is not stopped by `stop()`: its ownership is unknown and it is
-already going away.
+outside the root (authentication, quota) and a rate limit or a timeout of
+`get-microvm` still fail the listing: they say nothing about the VM, and
+dropping a healthy member would make the fleet grow. An unreadable VM is not
+stopped by `stop()`: its ownership is unknown and it is already going away.
+
+Because an unreadable VM might be a foreign sandbox, it does not prove the
+image is agent-only either: the non-`RUNNING` VMs of that listing are
+selected with `proven=False`. They count for capacity (the fleet does not
+grow because one member is dying), but terminating refuses an unproven
+member with a warning and trimming skips it, leaving it to its own deadline
+and idle policy. Membership by data that needs no probe was rejected: a
+MicroVM cannot be tagged, the recipe does not list member ids and the
+session index is optional. A member this process created, or that a later
+listing proves, is proven. The probes run with at most
+`AGENT_FLEET_PROBE_CONCURRENCY` (8) at a time, and the results and warnings
+keep the listing order.
 
 ## D2. Template environment file (ADR-035)
 
