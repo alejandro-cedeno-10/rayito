@@ -5,12 +5,14 @@
  * toca `process`, y `index` nunca la importa: `sideEffects: false` se
  * mantiene. Ctrl-C cancela la invocación (los bucles como `metrics --follow`
  * paran limpiamente) y, si el comando no acaba en `INTERRUPT_GRACE_MS`, sale
- * con 130.
+ * con 130. Una salida cerrada por el lector (`| head`) termina en silencio
+ * (`closed-pipe.ts`).
  */
 
 import { createInterface } from "node:readline";
 import { userArguments } from "../process-arguments.js";
 import { createAwsServices } from "./aws-services.js";
+import { exitOnClosedPipe } from "./closed-pipe.js";
 import type { Terminal } from "./console.js";
 import { EXIT_INTERRUPTED } from "./exit-codes.js";
 import { openUrl } from "./open-url.js";
@@ -51,6 +53,9 @@ function flush(stream: NodeJS.WriteStream): Promise<void> {
 }
 
 async function main(): Promise<void> {
+  for (const stream of [process.stdout, process.stderr]) {
+    exitOnClosedPipe(stream, (code) => process.exit(code));
+  }
   const interrupt = new AbortController();
   process.once(SIGINT, () => {
     interrupt.abort();
