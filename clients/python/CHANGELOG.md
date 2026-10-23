@@ -79,6 +79,51 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
     mandaba nada y el VM base podía terminar por el plazo corto. Si no queda
     nada que devolverle, deja de contar como acortado. Vectores nuevos
     `restoreSeconds` en `testdata/agent-fleet/lifetime.json`.
+- **Un VM que se está terminando ya no hace fallar el listado de la flota.**
+  Al reducir una flota, la plataforma sigue listando un VM como `RUNNING`
+  mientras su `rayd` ya salió, y `AgentFleet.connect()`, `status()` y
+  `refresh_members()` (también en `AsyncAgentFleet`) fallaban con
+  `SandboxException` («Health no respondió»). Ahora cada VM `RUNNING` se
+  sondea por separado (`Sandbox.get_info(sandbox_id)`) y uno cuya sonda falla,
+  o que dejó de estar `RUNNING` al sondearlo, se trata como un VM que termina:
+  no es miembro, no cuenta para el cupo y no prueba que la imagen sea
+  compartida. Se loguea un aviso con su id. Vector nuevo en
+  `testdata/agent-fleet/members.json`.
+- **Las variables de `Template.set_envs()` se ven en los comandos.** `rayd`
+  arranca cada proceso con un entorno limpio, así que el `ENV` del template
+  sólo llegaba al propio `rayd`: `commands.run`, las PTY y `run_code` no las
+  veían. `Template.build()` hornea además `/etc/rayito/template-env.json`
+  (`rayito.template-env/1`) cuando el template tiene `set_envs()`, y un `rayd`
+  de esta versión las pone debajo de las `envs` de `Sandbox.create()`, el
+  orden de E2B (template, sandbox, comando). ADR-035. Un template que ya usaba
+  `set_envs()` (y los proyectos de agente, que fijan las variables de
+  OpenCode) crea una versión nueva en su próximo `build()`; una imagen
+  anterior o un `rayd` anterior se comportan como antes.
+- **Un despliegue que reutiliza la imagen del proyecto ya no exige la imagen
+  base.** Con `build_image=False`, o sin bucket y con la imagen del proyecto ya
+  construida (`[image] template`), `deploy_agent()` ya no comprueba
+  `rayito-base-caps`: sólo la pide si va a construir. Si la base falta y la
+  imagen del proyecto existe, el error dice cómo reutilizarla
+  (`--no-build`).
+- **`rayito agent deploy --entry` con un punto de entrada que no existe falla
+  al desplegar.** Antes el despliegue terminaba bien y el error
+  (`entrypoint_not_found`) salía en la primera invocación. Los drivers de
+  deepagents y Strands importan ahora el punto de entrada al arrancar el host,
+  y el de Node lo comprueba con el puente (`--check-entry`): el host deja su
+  marcador de arranque fallido y el despliegue falla con
+  «el host del agente no pudo arrancar (entrypoint_not_found)».
+- **La CLI sale en silencio si el lector cierra la salida** (`rayito ... |
+  head`): código 1 y sin traza, también fuera de un comando de Click.
+- **e2e.** `test_fleet_recipe.py` (`RAYITO_E2E_RENEWAL=1`) corre la
+  renovación con su reloj adelantado la ventana de
+  `gatewayKeyRenewAfterSeconds` en vez de desplegar sobre un secreto recién
+  creado, que la renovación no reescribe; `test_account_setup.py` espera el
+  paso `capsImage` (`skip`) de 0.17.0; `test_agent_project_cli.py` escribe
+  `[image] base` de `RAYITO_E2E_AGENT_PROJECT_BASE` y para la flota por su
+  nombre (lo que borra su receta); `test_m15_templates.py` se salta sin
+  `RAYITO_E2E_TEMPLATE_BUCKET`; `test_m15_custom_domain.py` y
+  `test_dashboard_readonly_e2e.py` ya no dependen del orden de la propagación
+  del edge ni de los sandboxes de otras corridas en paralelo.
 
 ### Seguridad
 
