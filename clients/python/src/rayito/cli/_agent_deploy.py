@@ -51,6 +51,19 @@ SECRET_FLAG_SEPARATOR: Final = "="
 #: más `secret` (`*_SECRET`). Sólo la bandera los rechaza: `AgentProject.env`
 #: conserva la regla de 0.16 (`testdata/fleet-recipe/env-rejection.json`).
 ENV_FLAG_SECRET_LIKE_KEYS: Final[tuple[str, ...]] = (*SECRET_LIKE_KEYS, "secret")
+#: Palabras que, como segmento del nombre de una `--env` (partes separadas
+#: por `_`, sin distinguir mayúsculas), también lo marcan como secreto:
+#: `DB_PASS`, `GITHUB_PAT`, `AUTH_HEADER`.
+ENV_FLAG_SECRET_SEGMENTS: Final[tuple[str, ...]] = (
+    "pass",
+    "passwd",
+    "pat",
+    "credential",
+    "credentials",
+    "auth",
+    "bearer",
+)
+ENV_NAME_SEGMENT_SEPARATOR: Final = "_"
 ENV_LOOKS_SECRET_MESSAGE: Final = (
     "--env no admite secretos ({name} parece uno): usa --secret-env {name}=<secreto> "
     "o --secret-env-from <secreto>"
@@ -97,12 +110,14 @@ class CompactBuildLog:
 
 
 def env_flag_looks_secret(name: str) -> bool:
-    """Si el nombre de una `--env` parece un secreto (`ENV_FLAG_SECRET_LIKE_KEYS`
-    entero o como sufijo `_<palabra>`, sin distinguir mayúsculas)."""
+    """Si el nombre de una `--env` parece un secreto, sin distinguir
+    mayúsculas: una de `ENV_FLAG_SECRET_LIKE_KEYS` entera o como sufijo
+    `_<palabra>`, o una de `ENV_FLAG_SECRET_SEGMENTS` como segmento."""
     lowered = name.lower()
-    return any(
-        lowered == word or lowered.endswith(f"_{word}") for word in ENV_FLAG_SECRET_LIKE_KEYS
-    )
+    if any(lowered == word or lowered.endswith(f"_{word}") for word in ENV_FLAG_SECRET_LIKE_KEYS):
+        return True
+    segments = lowered.split(ENV_NAME_SEGMENT_SEPARATOR)
+    return any(word in segments for word in ENV_FLAG_SECRET_SEGMENTS)
 
 
 def reject_secret_env_flags(env: Mapping[str, str]) -> None:

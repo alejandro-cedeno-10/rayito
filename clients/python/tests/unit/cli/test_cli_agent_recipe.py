@@ -18,6 +18,7 @@ from rayito._agent._fleet_base import FleetMemberStatus, FleetStatus
 from rayito._payload import generate_access_token
 from rayito.cli import agent as agent_cli
 from rayito.cli._agent_deploy import (
+    ENV_FLAG_SECRET_SEGMENTS,
     ENV_LOOKS_SECRET_MESSAGE,
     KEEP_RECIPE_HELP,
     RENEW_GATEWAY_KEYS_HELP,
@@ -123,6 +124,10 @@ def test_the_help_texts_are_the_contract_ones() -> None:
     assert helps[("agent stop", "--keep-recipe")] == KEEP_RECIPE_HELP
     assert CONTRACT["messages"]["envLooksSecret"] == ENV_LOOKS_SECRET_MESSAGE
     assert CONTRACT["messages"]["statusUnknownScaling"] == STATUS_UNKNOWN_SCALING
+
+
+def test_the_secret_segments_are_the_shared_ones() -> None:
+    assert list(ENV_FLAG_SECRET_SEGMENTS) == ENV_VECTORS["segments"]
 
 
 @pytest.mark.parametrize("name", ENV_VECTORS["rejected"])
