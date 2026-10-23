@@ -154,7 +154,7 @@ describe("nada toca AWS antes de que un comando lo pida", () => {
         received.push({
           ...(settings.profile === undefined ? {} : { profile: settings.profile }),
           ...(settings.region === undefined ? {} : { region: settings.region }),
-          verbose: settings.logger !== undefined,
+          verbose: settings.logger?.info !== undefined,
         });
         return world.services;
       },
