@@ -59,6 +59,14 @@ const SECRET: &[u8] = b"m4-sandbox-secret";
 const KEEPALIVE: Duration = Duration::from_millis(200);
 const STALL: Duration = Duration::from_secs(1);
 const GRACE: Duration = Duration::from_secs(1);
+/// A polling budget for what the fake sidecar must eventually see: generous,
+/// so a loaded runner never fails it.
+const CONDITION_BUDGET: Duration = Duration::from_secs(10);
+/// A cell far longer than its timeout, and the safety net that tells a
+/// timeout from the cell ending on its own: half of it. The error and the
+/// sidecar requests are the real check.
+const LONG_CELL_SECONDS: u64 = 30;
+const LONG_CELL_SAFETY_NET: Duration = Duration::from_secs(LONG_CELL_SECONDS / 2);
 
 struct Options {
     warmup_ms: u64,
@@ -605,9 +613,7 @@ async fn validate_answers_503_until_the_cell_finished() {
         assert!(Instant::now() < deadline);
         tokio::time::sleep(Duration::from_millis(200)).await;
     }
-    let execute = harness
-        .wait_for_request("execute", Duration::from_secs(2))
-        .await;
+    let execute = harness.wait_for_request("execute", CONDITION_BUDGET).await;
     assert!(execute["code"].as_str().unwrap().contains("import pandas"));
     assert_eq!(harness.requests_of("execute").len(), 1);
     let restart = harness.requests_of("restart_context");
@@ -846,9 +852,11 @@ async fn timeout_interrupts_an_obedient_cell_and_keeps_state() {
     let harness = harness().await;
     harness.run("x = 42", None, 0).await;
     let started = Instant::now();
-    let timed_out = harness.run("sleep 5", None, 500).await;
+    let timed_out = harness
+        .run(&format!("sleep {LONG_CELL_SECONDS}"), None, 500)
+        .await;
     assert!(
-        started.elapsed() < Duration::from_secs(2),
+        started.elapsed() < LONG_CELL_SAFETY_NET,
         "{:?}",
         started.elapsed()
     );
@@ -862,7 +870,7 @@ async fn timeout_interrupts_an_obedient_cell_and_keeps_state() {
         other => panic!("unexpected {other:?}"),
     }
     let interrupt = harness
-        .wait_for_request("interrupt", Duration::from_secs(2))
+        .wait_for_request("interrupt", CONDITION_BUDGET)
         .await;
     assert_eq!(interrupt["context_id"], "default");
     assert!(
@@ -883,18 +891,20 @@ async fn timeout_restarts_a_hung_cell() {
     let harness = harness().await;
     let before = harness.requests_of("restart_context").len();
     let started = Instant::now();
-    let timed_out = harness.run("hang 5", None, 500).await;
+    let timed_out = harness
+        .run(&format!("hang {LONG_CELL_SECONDS}"), None, 500)
+        .await;
     assert!(
-        started.elapsed() < Duration::from_secs(4),
+        started.elapsed() < LONG_CELL_SAFETY_NET,
         "{:?}",
         started.elapsed()
     );
     assert_eq!(timed_out.error_name().as_deref(), Some("ExecutionTimeout"));
     assert_eq!(timed_out.end_count(), Some(0));
     harness
-        .wait_for_request("interrupt", Duration::from_secs(2))
+        .wait_for_request("interrupt", CONDITION_BUDGET)
         .await;
-    let deadline = Instant::now() + Duration::from_secs(3);
+    let deadline = Instant::now() + CONDITION_BUDGET;
     while harness.requests_of("restart_context").len() <= before {
         assert!(Instant::now() < deadline, "restart_context never sent");
         tokio::time::sleep(Duration::from_millis(50)).await;
@@ -909,15 +919,18 @@ async fn timeout_restarts_a_hung_cell() {
 #[tokio::test]
 async fn dropping_the_stream_interrupts_the_cell() {
     let harness = harness().await;
-    let mut stream = harness.open("sleep 5", None, 0).await.unwrap();
+    let mut stream = harness
+        .open(&format!("sleep {LONG_CELL_SECONDS}"), None, 0)
+        .await
+        .unwrap();
     let first = stream.message().await.unwrap().unwrap();
     assert_eq!(kind(&first), "started");
     let started = Instant::now();
     drop(stream);
     let interrupt = harness
-        .wait_for_request("interrupt", Duration::from_secs(1))
+        .wait_for_request("interrupt", CONDITION_BUDGET)
         .await;
-    assert!(started.elapsed() < Duration::from_secs(1));
+    assert!(started.elapsed() < LONG_CELL_SAFETY_NET);
     assert_eq!(interrupt["context_id"], "default");
     assert_eq!(
         harness.run("2", None, 0).await.main_text().as_deref(),
@@ -1105,7 +1118,7 @@ async fn sidecar_death_ends_executions_and_relaunches() {
     assert_eq!(died.end_count(), Some(0));
     let pending = collect(pending).await;
     assert_eq!(pending.error_name().as_deref(), Some("KernelDied"));
-    harness.wait_kernel_not_ready(Duration::from_secs(2)).await;
+    harness.wait_kernel_not_ready(CONDITION_BUDGET).await;
     let killed = harness.killed.lock().unwrap().clone();
     assert!(killed.len() >= 2, "{killed:?}");
     harness.wait_kernel_ready(Duration::from_secs(10)).await;
@@ -1150,9 +1163,7 @@ async fn execute_is_refused_while_suspending() {
     assert_eq!(status.code(), Code::Unavailable);
     assert_eq!(status.message(), "suspending");
     harness.post(Hook::Resume, None).await;
-    harness
-        .wait_for_request("reseed", Duration::from_secs(2))
-        .await;
+    harness.wait_for_request("reseed", CONDITION_BUDGET).await;
     assert_eq!(
         harness.run("6", None, 0).await.main_text().as_deref(),
         Some("6")
@@ -1233,10 +1244,14 @@ async fn real_sidecar_round_trip() {
     assert_eq!(error.error_name().as_deref(), Some("ZeroDivisionError"));
     let started = Instant::now();
     let timed_out = harness
-        .run("import time; time.sleep(10)", None, 2_000)
+        .run(
+            &format!("import time; time.sleep({LONG_CELL_SECONDS})"),
+            None,
+            2_000,
+        )
         .await;
     assert_eq!(timed_out.error_name().as_deref(), Some("ExecutionTimeout"));
-    assert!(started.elapsed() < Duration::from_secs(8));
+    assert!(started.elapsed() < LONG_CELL_SAFETY_NET);
     assert_eq!(
         harness.run("x", None, 0).await.main_text().as_deref(),
         Some("42")

@@ -29,6 +29,16 @@ imagen `rayito-base` y como asset de la GitHub Release del tag `rayd-v*`.
   (`SandboxSession::spawn_defaults`), el orden de E2B: template, sandbox y
   comando. Un fichero ausente, ilegible, mal formado o de otra versión es un
   entorno vacío, con un aviso que sólo nombra la ruta y la clase del error.
+- Tests con plazos de reloj demasiado justos: `m5_suspend_resume`
+  (`suspend_closes_every_stream_kills_nothing_and_resume_replays` pedía que
+  `/suspend` respondiera en menos de 2 s y en aarch64 tardó 2,03 s), `m2_process`,
+  `m4_code`, `m5_pty`, `m6_hooks`, `m6_limits`, `m9_transfer`, `m1_hello`,
+  `m3_filesystem` y `bounded_sync`. Cada uno comprueba el evento (el fin de
+  cada stream, el estado y la señal, la petición al sidecar, el contenido
+  leído) y deja el reloj sólo como red de seguridad lejos de los dos
+  desenlaces: la mitad del plazo que la separa del fallo (`SUSPEND_GATE_TIMEOUT`,
+  un comando o una celda de 30 s, `KILL_GRACE`, `RESUME_PROBE_BUDGET` con una
+  sonda de 30 s), y las esperas por sondeo tienen 10 s.
 - `m5_pty`: los tests ya no escriben en la terminal antes de que bash
   interactivo la tenga (`ready_bash` teclea un marcador hasta que bash lo
   ejecuta; en aarch64 una línea tecleada en esa ventana se perdía), y el fin

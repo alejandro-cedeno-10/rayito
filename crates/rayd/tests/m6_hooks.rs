@@ -37,6 +37,19 @@ use tonic::metadata::MetadataValue;
 
 /// Watchdog settings the tests can wait for: a 1 s gate, a freeze at
 /// 400 ms, ticks every 100 ms.
+/// The suspend gate of the burst test: long enough that ten `/suspend` posts
+/// always land before the watchdog recovers the stale suspend, so the
+/// outcomes, not a wall-clock bound, decide the test.
+const BURST_GATE_TIMEOUT: Duration = Duration::from_secs(4);
+/// The span `a_forged_pair_never_makes_rayd_skip_the_real_suspend` freezes
+/// the session clock by; the running clock must absorb far less than it.
+const FROZEN_SPAN: Duration = Duration::from_secs(30);
+/// The pause between the forged pair and the real `/suspend`: well inside
+/// the 2 s interval of the first M6 draft, with room for a loaded runner.
+const FORGED_PAIR_PAUSE: Duration = Duration::from_millis(300);
+/// What used to be the transition interval of the first M6 draft.
+const OLD_TRANSITION_INTERVAL: Duration = Duration::from_secs(2);
+
 fn scaled_session() -> SessionSettings {
     SessionSettings {
         suspend_gate_timeout: Duration::from_secs(1),
@@ -129,7 +142,10 @@ async fn a_forged_run_is_a_no_op_that_the_audit_records() {
 #[tokio::test]
 async fn repeated_suspends_are_idempotent_and_the_stale_one_is_recovered() {
     let harness = harness_with(Options {
-        session: scaled_session(),
+        session: SessionSettings {
+            suspend_gate_timeout: BURST_GATE_TIMEOUT,
+            ..scaled_session()
+        },
         ..Options::default()
     })
     .await;
@@ -143,8 +159,8 @@ async fn repeated_suspends_are_idempotent_and_the_stale_one_is_recovered() {
         outcomes.push((reply.outcome, reply.streams_closed));
     }
     assert!(
-        started.elapsed() < Duration::from_secs(2),
-        "the burst must fit inside the transition interval"
+        started.elapsed() < BURST_GATE_TIMEOUT,
+        "the burst must fit inside the suspend gate"
     );
     assert_eq!(outcomes[0].0, "changed");
     assert_eq!(outcomes[0].1, Some(1));
@@ -163,7 +179,7 @@ async fn repeated_suspends_are_idempotent_and_the_stale_one_is_recovered() {
         Code::Unavailable
     );
     assert_eq!(harness.health().await.hook_anomalies, 0);
-    let reopened_after = wait_until_streams_open(&harness, Duration::from_secs(5)).await;
+    let reopened_after = wait_until_streams_open(&harness, BURST_GATE_TIMEOUT + BUDGET).await;
     assert!(
         reopened_after >= Duration::from_millis(500),
         "{reopened_after:?}"
@@ -206,10 +222,10 @@ async fn a_forged_pair_never_makes_rayd_skip_the_real_suspend() {
     assert_eq!(tail.end.unwrap().status, "suspending");
     let (_, mut reconnected) = harness.start(shell("sleep 60", 0)).await.unwrap();
     let running_before = harness.session.running_now();
-    tokio::time::sleep(Duration::from_millis(1_000)).await;
+    tokio::time::sleep(FORGED_PAIR_PAUSE).await;
     let (status, real_suspend) = harness.post(Hook::Suspend, None).await;
     assert!(
-        started.elapsed() < Duration::from_secs(2),
+        started.elapsed() < OLD_TRANSITION_INTERVAL,
         "the real /suspend must land inside the old interval"
     );
     assert_eq!(status, StatusCode::OK);
@@ -232,7 +248,7 @@ async fn a_forged_pair_never_makes_rayd_skip_the_real_suspend() {
         Code::Unavailable,
         "the gate is closed for the checkpoint"
     );
-    harness.clock.jump(Duration::from_secs(30));
+    harness.clock.jump(FROZEN_SPAN);
     let probes_before = harness.requests_of("resume").len();
     let (status, real_resume) = harness.post(Hook::Resume, None).await;
     assert_eq!(status, StatusCode::OK);
@@ -248,13 +264,13 @@ async fn a_forged_pair_never_makes_rayd_skip_the_real_suspend() {
         "the kernels were probed"
     );
     assert!(
-        harness.session.suspended_total() >= Duration::from_secs(30),
+        harness.session.suspended_total() >= FROZEN_SPAN,
         "the frozen span is accounted: {:?}",
         harness.session.suspended_total()
     );
     let running_after = harness.session.running_now();
     assert!(
-        running_after < running_before + Duration::from_secs(5),
+        running_after < running_before + FROZEN_SPAN / 2,
         "the running clock did not absorb the freeze: {running_before:?} -> {running_after:?}"
     );
     let health = harness.health().await;

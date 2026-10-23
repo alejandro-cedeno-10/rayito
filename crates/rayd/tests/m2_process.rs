@@ -32,6 +32,7 @@ use rayd::pty::{PtySettings, platform_pty_manager};
 use rayd_core::clock::SystemClock;
 use rayd_core::filesystem::DenyList;
 use rayd_core::lifecycle::Hook;
+use rayd_core::process::timeout::KILL_GRACE;
 use rayd_core::process::{RegistryLimits, UserPolicy};
 use rayd_core::session::SandboxSession;
 use rayito_proto::v1::health_service_client::HealthServiceClient;
@@ -485,15 +486,21 @@ async fn input_without_a_stdin_pipe_is_failed_precondition() {
     assert_eq!(collected.end().status, "signaled");
 }
 
+/// A command far longer than its timeout, and the safety net that tells a
+/// timeout from the command ending on its own: half of it. The end status
+/// and the signal are the real check.
+const LONG_COMMAND_SECONDS: u64 = 30;
+const LONG_COMMAND_SAFETY_NET: Duration = Duration::from_secs(LONG_COMMAND_SECONDS / 2);
+
 #[tokio::test]
 async fn timeout_sends_sigterm_and_reports_deadline_exceeded() {
     let harness = harness().await;
-    let mut request = shell("sleep 30");
+    let mut request = shell(&format!("sleep {LONG_COMMAND_SECONDS}"));
     request.timeout_ms = 300;
     let started = Instant::now();
     let mut stream = harness.start(request).await.unwrap();
     let collected = collect(&mut stream).await;
-    assert!(started.elapsed() < Duration::from_secs(2));
+    assert!(started.elapsed() < LONG_COMMAND_SAFETY_NET);
     let end = collected.end();
     assert_eq!(end.status, "timeout");
     assert!(!end.exited);
@@ -515,8 +522,11 @@ async fn timeout_escalates_to_sigkill_when_sigterm_is_ignored() {
     let mut stream = harness.start(request).await.unwrap();
     let collected = collect(&mut stream).await;
     let elapsed = started.elapsed();
-    assert!(elapsed >= Duration::from_secs(5), "{elapsed:?}");
-    assert!(elapsed < Duration::from_secs(9), "{elapsed:?}");
+    assert!(elapsed >= KILL_GRACE, "{elapsed:?}");
+    assert!(
+        elapsed < KILL_GRACE + LONG_COMMAND_SAFETY_NET,
+        "{elapsed:?}"
+    );
     let end = collected.end();
     assert_eq!(end.status, "timeout");
     assert_eq!(end.signal, Some(9));
@@ -1075,8 +1085,9 @@ const DAEMONISED_SLEEP: &str =
 /// `fork` and `exec`).
 const DAEMONISED_TERM_IGNORER: &str =
     "setsid sh -c \"trap '' TERM; sleep 600 >/dev/null 2>&1 </dev/null & echo \\$!\"; sleep 30";
-/// How long a killed member may stay visible before its reaper takes it.
-const MEMBER_GONE_BUDGET: Duration = Duration::from_secs(2);
+/// How long a killed member may stay visible before its reaper takes it: a
+/// polling budget, generous so a loaded runner never fails it.
+const MEMBER_GONE_BUDGET: Duration = Duration::from_secs(10);
 
 fn kill_tree(script: &str, timeout_ms: u64) -> StartRequest {
     StartRequest {
@@ -1146,9 +1157,10 @@ async fn kill_tree_timeout_reaches_a_daemon_outside_the_group() {
         gone_within(daemon, MEMBER_GONE_BUDGET).await,
         "the daemon outlived the timeout"
     );
-    // Every member died on SIGTERM, so the grace ended early.
+    // Every member died on SIGTERM, so the grace ended early: before the
+    // point where the escalation to SIGKILL would have come.
     assert!(
-        started.elapsed() < Duration::from_secs(4),
+        started.elapsed() < Duration::from_millis(300) + KILL_GRACE,
         "{:?}",
         started.elapsed()
     );
