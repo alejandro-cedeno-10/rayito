@@ -17,6 +17,7 @@ import {
   PoolClosedError,
   QuotaExceededError,
   Sandbox,
+  SandboxLifetimeError,
   SandboxPool,
   UnimplementedError,
   validatePoolConfig,
@@ -1129,5 +1130,34 @@ describe("PoolConfig.warmup", () => {
     expect("allowInternetAccess" in plain).toBe(false);
     const closed = launchOptions(validatePoolConfig({ size: 1, allowInternetAccess: false }));
     expect(closed.allowInternetAccess).toBe(false);
+  });
+
+  test("the logical lifetime is only forwarded when set", () => {
+    const plain = launchOptions(validatePoolConfig({ size: 1, timeoutMs: 7_200_000 }));
+    expect("maxLifetimeMs" in plain).toBe(false);
+    expect("onTimeout" in plain).toBe(false);
+    const timed = launchOptions(
+      validatePoolConfig({
+        size: 1,
+        timeoutMs: 7_200_000,
+        maxLifetimeMs: 7_260_000,
+        onTimeout: "kill",
+      }),
+    );
+    expect(timed.timeoutMs).toBe(7_200_000);
+    expect(timed.maxLifetimeMs).toBe(7_260_000);
+    expect(timed.onTimeout).toBe("kill");
+  });
+
+  test("a pool only accepts kill on timeout and the create rules for the cap", () => {
+    expect(() =>
+      validatePoolConfig({ size: 1, timeoutMs: 7_200_000, onTimeout: "pause" as "kill" }),
+    ).toThrow(/onTimeout/);
+    expect(() =>
+      validatePoolConfig({ size: 1, timeoutMs: 7_200_000, maxLifetimeMs: 7_000_000 }),
+    ).toThrow(/maxLifetimeMs/);
+    expect(() =>
+      validatePoolConfig({ size: 1, timeoutMs: 7_200_000, maxLifetimeMs: 28_801_000 }),
+    ).toThrow(SandboxLifetimeError);
   });
 });

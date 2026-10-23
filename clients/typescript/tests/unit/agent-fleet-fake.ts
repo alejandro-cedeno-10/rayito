@@ -12,6 +12,7 @@ import type { MemberListing } from "../../src/agent/fleet-base.js";
 import type { SandboxFactory, ServiceSandbox } from "../../src/agent/project-service.js";
 import { AGENT_SERVE_TAG, ProjectService } from "../../src/agent/project-service.js";
 import type { ScalingOptions } from "../../src/agent/scaling-domain.js";
+import { InvalidArgumentError } from "../../src/errors.js";
 import { AGENT_SERVICE_READY_MARKER_PATH } from "../../src/limits.js";
 import { HostAccess } from "../../src/models.js";
 import { generateAccessToken } from "../../src/payload.js";
@@ -28,7 +29,8 @@ import {
 } from "./agent-project-fake.js";
 
 export const FLEET_TOKEN = generateAccessToken();
-export const START = new Date("2026-10-16T00:00:00Z");
+/** Ahora: el tope de un VM listado (`listedCap`) se compara con el reloj real. */
+export const START = new Date(Math.floor(Date.now() / 1000) * 1000);
 const MS_PER_SECOND = 1000;
 
 export function sandboxIdOf(number: number): string {
@@ -115,12 +117,15 @@ export class FleetBackend {
 }
 
 /** Un sandbox de doble con su propio id y su host. `served` dice si el host del
- * agente arrancó (una plaza aparcada aún no). */
+ * agente arrancó (una plaza aparcada aún no). `managed` dice si se creó con
+ * plazo lógico (`maxLifetimeMs`/`onTimeout`): sin él, `setTimeout` falla como
+ * en `rayd` (`lifecycle_unmanaged`). */
 export class FleetFakeSandbox extends FakeSandbox {
   override readonly sandboxId: string;
   readonly number: number;
   served: boolean;
   state: string;
+  managed: boolean;
   readonly timeouts: number[] = [];
   killError: Error | undefined;
   /** Las pasarelas que la flota abrió en esta plaza (`openGateways`). */
@@ -129,10 +134,16 @@ export class FleetFakeSandbox extends FakeSandbox {
 
   constructor(
     number: number,
-    options: { metadata?: Record<string, string>; served?: boolean; state?: string } = {},
+    options: {
+      metadata?: Record<string, string>;
+      served?: boolean;
+      state?: string;
+      managed?: boolean;
+    } = {},
   ) {
     super({ metadata: options.metadata ?? {}, accessToken: FLEET_TOKEN });
     this.number = number;
+    this.managed = options.managed ?? true;
     this.sandboxId = sandboxIdOf(number);
     this.served = options.served ?? true;
     this.state = options.state ?? "RUNNING";
@@ -168,6 +179,9 @@ export class FleetFakeSandbox extends FakeSandbox {
   }
 
   override async setTimeout(timeoutMs: number): Promise<void> {
+    if (!this.managed) {
+      throw new InvalidArgumentError("setTimeout no aplica: el sandbox no tiene plazo");
+    }
     this.timeouts.push(timeoutMs / MS_PER_SECOND);
   }
 
@@ -197,10 +211,11 @@ export class FleetWorld implements SandboxFactory, FleetDirectory {
   #next = 1;
 
   /** Un VM que ya existía antes de la flota (reconexión, plaza aparcada). */
-  add(options: { served?: boolean; state?: string } = {}): FleetFakeSandbox {
+  add(options: { served?: boolean; state?: string; managed?: boolean } = {}): FleetFakeSandbox {
     const sandbox = new FleetFakeSandbox(this.#next, {
       served: options.served ?? true,
       state: options.state ?? "RUNNING",
+      managed: options.managed ?? true,
       metadata: { "rayito.agent.deployment": "support-bot", "rayito.agent.port": "8088" },
     });
     this.#next += 1;
@@ -213,7 +228,8 @@ export class FleetWorld implements SandboxFactory, FleetDirectory {
     if (this.createError !== undefined) {
       throw this.createError;
     }
-    const sandbox = this.add({ served: false });
+    const managed = options.maxLifetimeMs !== undefined || options.onTimeout !== undefined;
+    const sandbox = this.add({ served: false, managed });
     Object.assign(sandbox.metadata, options.metadata ?? {});
     return sandbox.asService();
   }
@@ -289,12 +305,14 @@ export class FakePool implements FleetPool {
   readonly taken: Record<string, unknown>[] = [];
   readonly parked: FleetFakeSandbox[];
   readonly #world: FleetWorld;
+  readonly #managed: boolean;
 
   constructor(config: PoolConfig, world: FleetWorld) {
     this.config = config;
     this.#world = world;
+    this.#managed = config.onTimeout !== undefined;
     this.parked = Array.from({ length: config.size }, () =>
-      world.add({ served: false, state: "SUSPENDED" }),
+      world.add({ served: false, state: "SUSPENDED", managed: this.#managed }),
     );
   }
 
@@ -305,7 +323,8 @@ export class FakePool implements FleetPool {
 
   async take(options: Record<string, unknown>): Promise<FleetSandbox> {
     this.taken.push(options);
-    const sandbox = this.parked.shift() ?? this.#world.add({ served: false });
+    const sandbox =
+      this.parked.shift() ?? this.#world.add({ served: false, managed: this.#managed });
     sandbox.state = "RUNNING";
     return sandbox.asFleet();
   }

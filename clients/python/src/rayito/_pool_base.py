@@ -13,8 +13,9 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, Final, Literal
 
 from rayito._index import DynamoDbIndex, validate_index
+from rayito._lifecycle_base import validate_max_lifetime
 from rayito._limits import MAX_DURATION_SECONDS, POOL_SIZE_MAX
-from rayito._models import REDACTED, IdlePolicy, SandboxInfo
+from rayito._models import REDACTED, IdlePolicy, SandboxInfo, TimeoutActionName
 from rayito._network_base import NetworkInput, checked_policy, resolve_network
 from rayito._payload import (
     generate_access_token,
@@ -74,6 +75,15 @@ class PoolConfig:
     (`AgentFleet`), que tiene un único dueño y se reconecta con un solo
     token.
 
+    `max_lifetime` y `on_timeout` (`None` por defecto) dan a cada plaza el
+    plazo lógico de `Sandbox.create()` (ADR-011): `timeout` pasa a ser ese
+    plazo y `max_lifetime` el tope de la plataforma (por defecto
+    `timeout + 60`). Sólo se admite `on_timeout='kill'`, porque el pool ya
+    aparca sus plazas. Con el plazo lógico, quien toma la plaza puede
+    acortarlo o alargarlo con `set_timeout()` (una flota de agentes lo usa
+    para terminar sus VMs sobrantes). Sin ninguno de los dos, las plazas se
+    lanzan exactamente como antes.
+
     `index=DynamoDbIndex(...)` (`None` por defecto) escribe la fila del
     índice de metadatos de cada plaza al lanzarla, con la `metadata` del
     pool: así `Sandbox.list(metadata=..., states=["SUSPENDED"], index=...)`
@@ -130,12 +140,15 @@ class PoolConfig:
     allow_internet_access: bool = True
     network: NetworkInput = None
     access_token: str | None = field(default=None, repr=False)
+    max_lifetime: int | None = None
+    on_timeout: TimeoutActionName | None = None
 
     def __post_init__(self) -> None:
         validate_pool_size(self.size)
         if self.access_token is not None:
             validate_access_token(self.access_token)
         validate_timeout(self.timeout)
+        validate_pool_lifetime(self.max_lifetime, self.on_timeout, self.timeout)
         validate_pool_idle(self.idle, self.timeout)
         validate_min_remaining(self.min_remaining_seconds, self.timeout)
         validate_fill_concurrency(self.fill_concurrency)
@@ -154,6 +167,24 @@ class PoolConfig:
         checked_policy(
             resolve_network(self.network, allow_internet_access=self.allow_internet_access)
         )
+
+
+POOL_ON_TIMEOUT: Final[TimeoutActionName] = "kill"
+"""La única acción al vencer que admite un pool: `pause` choca con el pool,
+que ya suspende sus plazas él mismo."""
+
+
+def validate_pool_lifetime(max_lifetime: object, on_timeout: object, timeout: int) -> None:
+    """`on_timeout` sólo puede ser `None` o `'kill'`, y `max_lifetime` sigue
+    las reglas de `Sandbox.create()` (entre 120 y 28 800 s, nunca por debajo
+    de `timeout`)."""
+    if on_timeout is not None and on_timeout != POOL_ON_TIMEOUT:
+        raise InvalidArgumentException(
+            f"on_timeout de un pool sólo admite 'kill' (el pool ya aparca sus plazas), "
+            f"recibido {on_timeout!r}"
+        )
+    if max_lifetime is not None:
+        validate_max_lifetime(max_lifetime, timeout)
 
 
 def validate_warmup(warmup: object) -> tuple[WarmupStep, ...]:
@@ -255,9 +286,9 @@ def validate_ready_timeout(ready_timeout: object) -> float:
 
 def launch_kwargs(config: PoolConfig) -> dict[str, Any]:
     """Los kwargs de `Sandbox.create()` de cada plaza; el pool añade el token,
-    `keep_on_failure=False`, el plano de control y el transporte. `index`
-    sólo aparece si el pool lo configuró: sin él, las plazas se lanzan
-    exactamente como en 0.4.0."""
+    `keep_on_failure=False`, el plano de control y el transporte. `index`,
+    `max_lifetime` y `on_timeout` sólo aparecen si el pool los configuró: sin
+    ellos, las plazas se lanzan exactamente como en 0.4.0."""
     kwargs: dict[str, Any] = {
         "template": config.template,
         "template_version": config.template_version,
@@ -274,6 +305,10 @@ def launch_kwargs(config: PoolConfig) -> dict[str, Any]:
     }
     if config.index is not None:
         kwargs["index"] = config.index
+    if config.max_lifetime is not None:
+        kwargs["max_lifetime"] = config.max_lifetime
+    if config.on_timeout is not None:
+        kwargs["on_timeout"] = config.on_timeout
     if config.network is not None:
         kwargs["network"] = config.network
     if not config.allow_internet_access:

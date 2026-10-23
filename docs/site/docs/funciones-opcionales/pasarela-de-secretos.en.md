@@ -165,8 +165,9 @@ The key and the secret name never appear in logs, errors or the
 [fleet recipe](../guias/flota-de-agentes.md#la-receta-de-la-flota). Without a
 `bedrock` gateway, the option is `InvalidArgumentException`
 (`renew_gateway_keys necesita una pasarela con preset bedrock`). VMs opened by
-another process keep the previous key until they are refreshed; bound their
-life with `scale_in_after_seconds`.
+another process keep the previous key until they are refreshed; in a fleet
+that can grow, VMs above `min_vms` end after `scale_in_after_seconds` without
+use, and the others live `serve.timeout_seconds`.
 
 - **Fixed-size fleet.** Renewal only runs when a VM is created or a slot is
   opened. A fleet that never grows (for example `--min-vms 1 --max-vms 1`)

@@ -133,13 +133,17 @@ def deploy_create_args(
     access_token: str | None = None,
     metadata: Mapping[str, str] | None = None,
     index: Any = None,
+    lifetime: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Los de `deploy()`: la vida y la política de `idle` de
     `project.serve`, las etiquetas con las que `connect()` reconoce el
     despliegue y, si el llamador lo da, el access token con el que otro
     proceso puede reconectarse. `metadata` añade etiquetas (una flota marca
-    así la sesión de un VM dedicado) e `index` es el `DynamoDbIndex` que las
-    escribe para poder encontrarlo después."""
+    así la sesión de un VM dedicado), `index` es el `DynamoDbIndex` que las
+    escribe para poder encontrarlo después y `lifetime` son los
+    `max_lifetime`/`on_timeout` de una flota que puede crecer
+    (`FleetLifetime.create_args()`); sin él, la vida es la de la
+    plataforma, como siempre."""
     serve = project.serve
     labels = {**serve.metadata, **(metadata or {}), **labels_for(project.name, serve.port, raw=raw)}
     args: dict[str, Any] = {
@@ -152,6 +156,8 @@ def deploy_create_args(
         args["access_token"] = access_token
     if index is not None:
         args["index"] = index
+    if lifetime:
+        args.update(lifetime)
     return args
 
 

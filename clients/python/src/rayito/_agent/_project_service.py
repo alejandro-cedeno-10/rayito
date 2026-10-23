@@ -158,10 +158,11 @@ class ProjectService:
         keep_on_failure: bool = False,
         metadata: Mapping[str, str] | None = None,
         index: Any = None,
+        lifetime: Mapping[str, Any] | None = None,
     ) -> AgentDeployment:
         """Sirve el agente desde un MicroVM y devuelve su
         `AgentDeployment`. Si cualquier paso falla, mata el sandbox antes de
-        propagar. `metadata` e `index` son para una flota (ver
+        propagar. `metadata`, `index` y `lifetime` son para una flota (ver
         `deploy_create_args`)."""
         project = self._project
         if keep_on_failure:
@@ -173,6 +174,7 @@ class ProjectService:
                 access_token=access_token,
                 metadata=metadata,
                 index=index,
+                lifetime=lifetime,
             ),
             region,
             session,

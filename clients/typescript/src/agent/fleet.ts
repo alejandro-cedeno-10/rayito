@@ -53,12 +53,17 @@ import {
   AGENT_VM_LOST_CODE,
   capacityMessage,
   eventWithHandle,
+  type FleetLifetime,
   type FleetMemberStatus,
   type FleetSettings,
   type FleetStatus,
+  fleetLifetime,
   fleetSettingsOf,
   fleetStatusOf,
+  holdMs,
   isLost,
+  lifetimeMs,
+  listedCap,
   type Member,
   type MemberListing,
   markExtras,
@@ -71,9 +76,11 @@ import {
   recordBusy,
   recordPing,
   routeOf,
+  sandboxCap,
   selectMembers,
   sessionLabel,
   surplus,
+  UNMANAGED_LIFETIME_MESSAGE,
   vmLostMessage,
   withHandle,
 } from "./fleet-base.js";
@@ -627,9 +634,19 @@ export class AgentFleet {
       (a, b) => a.startedAt.getTime() - b.startedAt.getTime(),
     );
     const known = new Map(this.#members.map((member) => [member.sandboxId, member]));
+    const lifetime = this.#lifetime();
     this.#members = listing
       .filter((item) => !parked.has(item.sandboxId))
-      .map((item) => known.get(item.sandboxId) ?? newMember<AgentDeployment>(item.sandboxId));
+      .map(
+        (item) =>
+          known.get(item.sandboxId) ??
+          newMember<AgentDeployment>(
+            item.sandboxId,
+            undefined,
+            false,
+            listedCap(item.startedAt, lifetime),
+          ),
+      );
     markExtras(this.#members, this.scaling);
   }
 
@@ -842,6 +859,7 @@ export class AgentFleet {
       const lease = await this.#lease(sessionId, deadline);
       try {
         const deployment = await this.#openOrConnect(lease.member);
+        await this.#holdLifetime(lease.member);
         return [lease, await operation(deployment, lease.inner)];
       } catch (error) {
         this.#unlease(lease);
@@ -1031,9 +1049,12 @@ export class AgentFleet {
     }
     await this.#renewGatewayKeys();
     const label = this.#indexLabel(sessionId);
+    const lifetime = this.#lifetime();
     let deployment: AgentDeployment;
+    let cap: Date | undefined;
     if (extra && this.#pool !== undefined && label === undefined) {
       const sandbox = await this.#pool.take({ gateways: { ...project.gateways } });
+      cap = sandboxCap(sandbox);
       try {
         deployment = await service.serve(sandbox as unknown as ServiceSandbox);
       } catch (error) {
@@ -1041,17 +1062,26 @@ export class AgentFleet {
         throw error;
       }
     } else {
+      cap = lifetime === undefined ? undefined : new Date(Date.now() + lifetime.maxLifetimeMs);
       deployment = await service.deploy({
         ...this.#connection,
         accessToken: this.#requireToken(),
         keepOnFailure: this.#keepOnFailure,
         ...(label === undefined ? {} : { metadata: { [AGENT_FLEET_SESSION_LABEL]: label } }),
         ...(label === undefined || this.#index === undefined ? {} : { index: this.#index }),
+        ...(lifetime === undefined ? {} : { lifetime }),
       });
     }
-    const member = newMember(deployment.sandboxId, deployment, extra);
+    const member = newMember(deployment.sandboxId, deployment, extra, cap);
     await this.#limitLifetime(member);
     return member;
+  }
+
+  /** Con qué vida se crean los VMs de la flota (`fleetLifetime`): ninguna
+   * propia si la flota no puede crecer o no tiene proyecto. */
+  #lifetime(): FleetLifetime | undefined {
+    const project = this.#project;
+    return project === undefined ? undefined : fleetLifetime(project, this.scaling);
   }
 
   #indexLabel(sessionId: string | undefined): string | undefined {
@@ -1070,18 +1100,58 @@ export class AgentFleet {
   }
 
   /** A un VM por encima de `minVms` se le acota la vida: `rayd` lo termina
-   * solo tras `scaleInAfterMs`, y cada uso la renueva. */
+   * solo tras `scaleInAfterMs` sin uso. Se llama al crearlo, al abrirlo y al
+   * soltar cada invocación. */
   async #limitLifetime(member: Member<AgentDeployment>): Promise<void> {
-    if (!member.extra || member.deployment === undefined) {
+    if (member.extra) {
+      await this.#setLifetime(member, this.scaling.scaleInAfterMs);
+    }
+  }
+
+  /** Antes de una invocación: a un VM sobrante se le da al menos lo que puede
+   * durar la petición (`holdMs`), y a uno que este proceso acortó y ahora es
+   * base (`markExtras` lo ascendió) se le devuelve toda la vida hasta su
+   * tope. */
+  async #holdLifetime(member: Member<AgentDeployment>): Promise<void> {
+    if (member.extra) {
+      const timeout = this.#project === undefined ? undefined : requestTimeoutMs(this.#project);
+      await this.#setLifetime(member, holdMs(this.scaling, timeout));
+    } else if (member.limited) {
+      await this.#setLifetime(member, undefined);
+    }
+  }
+
+  /** Un `setTimeout` acotado al tope del VM (`lifetimeMs`). Sin `desiredMs`
+   * pide todo lo que queda hasta el tope y deja el VM sin acortar. Un rechazo
+   * por argumento (un VM creado sin plazo lógico, antes de 0.17 o con
+   * `maxVms === minVms`) no se reintenta. */
+  async #setLifetime(
+    member: Member<AgentDeployment>,
+    desiredMs: number | undefined,
+  ): Promise<void> {
+    const deployment = member.deployment;
+    if (deployment === undefined || member.lifetimeRejected) {
+      return;
+    }
+    const timeoutMs = lifetimeMs(desiredMs, member.cap, Date.now());
+    if (timeoutMs === undefined) {
       return;
     }
     try {
-      await member.deployment.setTimeout(this.scaling.scaleInAfterMs);
+      await deployment.setTimeout(timeoutMs);
     } catch (error) {
-      if (!(error instanceof SandboxError)) {
-        throw error;
+      if (error instanceof InvalidArgumentError) {
+        member.lifetimeRejected = true;
+        this.#logger?.warn?.(UNMANAGED_LIFETIME_MESSAGE);
+        return;
       }
+      if (error instanceof SandboxError) {
+        this.#logger?.warn?.("no se pudo acotar la vida de un VM sobrante");
+        return;
+      }
+      throw error;
     }
+    member.limited = desiredMs !== undefined;
   }
 
   /** El cliente del VM: el que ya hay o, la primera vez, conecta con el token
@@ -1094,6 +1164,7 @@ export class AgentFleet {
     const sandbox = await this.#directory.connect(member.sandboxId, this.#requireToken());
     const deployment = await this.#serving(member, sandbox);
     member.deployment = deployment;
+    member.cap = sandboxCap(sandbox) ?? member.cap;
     await this.#limitLifetime(member);
     return deployment;
   }

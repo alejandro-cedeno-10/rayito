@@ -261,7 +261,16 @@ pasado el plazo, lanza `CapacityException` (`code = "agent_capacity"`;
 - **Reducir:** los VMs por encima de `min_vms` llevan un plazo de
   `scale_in_after_seconds` que la flota renueva cada vez que los usa; un VM
   ocioso se termina solo (el `rayd` del VM ya sabe terminarse), sin ninguna
-  llamada del plano de control.
+  llamada del plano de control. Mientras atiende una invocación, el plazo
+  nunca es menor que el de la petición. Para que `rayd` acepte ese plazo, una
+  flota que puede crecer (`max_vms > min_vms`) crea todos sus VMs y plazas
+  con plazo lógico (`on_timeout="kill"` y `max_lifetime` =
+  `serve.timeout_seconds + 60`); un VM base sigue viviendo
+  `serve.timeout_seconds`. Una flota de tamaño fijo crea sus VMs como
+  siempre. Hasta 0.16 la reducción no ocurría: los VMs se creaban sin plazo
+  lógico y `rayd` rechazaba el `set_timeout`. Un VM creado así (por 0.16)
+  no se reduce: la flota avisa una vez; termínalo con `stop()` o vuelve a
+  desplegar.
 - **Suspender:** `idle` suspende un VM sin uso y lo reanuda al llamarlo; un VM
   suspendido no cobra cómputo, sólo el almacenamiento de su snapshot.
 - **Reiniciar:** si la app del usuario se cae, el host la relanza con espera

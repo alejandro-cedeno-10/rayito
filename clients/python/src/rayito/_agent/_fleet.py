@@ -16,6 +16,7 @@ import time
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, Self
 
 from rayito._agent import _fleet_recipe_aws as recipe_aws
@@ -30,6 +31,8 @@ from rayito._agent._fleet_base import (
     AGENT_FLEET_SESSION_LABEL,
     AGENT_FLEET_START_CONCURRENCY,
     AGENT_VM_LOST_CODE,
+    UNMANAGED_LIFETIME_MESSAGE,
+    FleetLifetime,
     FleetMemberStatus,
     FleetSettings,
     FleetStatus,
@@ -38,8 +41,12 @@ from rayito._agent._fleet_base import (
     ParkedSlotException,
     capacity_message,
     event_with_handle,
+    fleet_lifetime,
     fleet_settings_of,
+    hold_seconds,
     is_lost,
+    lifetime_seconds,
+    listed_cap,
     mark_extras,
     new_reservation,
     owned_ids,
@@ -49,6 +56,7 @@ from rayito._agent._fleet_base import (
     record_busy,
     record_ping,
     route_of,
+    sandbox_cap,
     select_members,
     session_label,
     surplus,
@@ -531,7 +539,12 @@ class AgentFleet:
         live = [item for item in listing if item.sandbox_id not in parked]
         with self._lock:
             known = {member.sandbox_id: member for member in self._members}
-            self._members = [known.get(item.sandbox_id) or Member(item.sandbox_id) for item in live]
+            lifetime = self._lifetime()
+            self._members = [
+                known.get(item.sandbox_id)
+                or Member(item.sandbox_id, cap=listed_cap(item.started_at, lifetime))
+                for item in live
+            ]
             mark_extras(self._members, self.scaling)
 
     def reconcile(self) -> None:
@@ -716,7 +729,9 @@ class AgentFleet:
         while True:
             lease = self._lease(session_id, deadline)
             try:
-                return lease, operation(self._open_or_connect(lease.member), lease.inner)
+                deployment = self._open_or_connect(lease.member)
+                self._hold_lifetime(lease.member)
+                return lease, operation(deployment, lease.inner)
             except AgentException as exc:
                 self._unlease(lease)
                 if exc.reason != "busy":
@@ -876,14 +891,21 @@ class AgentFleet:
             if session_id is not None and self._index is not None
             else None
         )
+        lifetime = self._lifetime()
         if extra and self._pool is not None and label is None:
             sandbox = self._pool.take(gateways=dict(project.gateways))
+            cap = sandbox_cap(sandbox)
             try:
                 deployment = service.serve(sandbox)
             except BaseException:
                 self._kill_quietly(sandbox)
                 raise
         else:
+            cap = (
+                None
+                if lifetime is None
+                else datetime.now(UTC) + timedelta(seconds=lifetime.max_lifetime)
+            )
             deployment = service.deploy(
                 region=self._region,
                 session=self._session,
@@ -891,10 +913,17 @@ class AgentFleet:
                 keep_on_failure=self._keep_on_failure,
                 metadata=None if label is None else {AGENT_FLEET_SESSION_LABEL: label},
                 index=None if label is None else self._index,
+                lifetime=None if lifetime is None else lifetime.create_args(),
             )
-        member = Member(deployment.sandbox_id, deployment=deployment, extra=extra)
+        member = Member(deployment.sandbox_id, deployment=deployment, extra=extra, cap=cap)
         self._limit_lifetime(member)
         return member
+
+    def _lifetime(self) -> FleetLifetime | None:
+        """Con qué vida se crean los VMs de la flota (`fleet_lifetime`):
+        ninguna propia si la flota no puede crecer o no tiene proyecto."""
+        project = self._project
+        return None if project is None else fleet_lifetime(project, self.scaling)
 
     def _index_label(self, session_id: str | None) -> str | None:
         """La etiqueta de sesión de un VM dedicado, sólo con índice."""
@@ -911,13 +940,43 @@ class AgentFleet:
 
     def _limit_lifetime(self, member: Member) -> None:
         """A un VM por encima de `min_vms` se le acota la vida: `rayd` lo
-        termina solo tras `scale_in_after_seconds`, y cada uso la renueva."""
-        if not member.extra or member.deployment is None:
+        termina solo tras `scale_in_after_seconds` sin uso. Se llama al
+        crearlo, al abrirlo y al soltar cada invocación."""
+        if member.extra:
+            self._set_lifetime(member, self.scaling.scale_in_after_seconds)
+
+    def _hold_lifetime(self, member: Member) -> None:
+        """Antes de una invocación: a un VM sobrante se le da al menos lo que
+        puede durar la petición (`hold_seconds`), y a uno que este proceso
+        acortó y ahora es base (`mark_extras` lo ascendió) se le devuelve
+        toda la vida hasta su tope."""
+        if member.extra:
+            timeout = request_timeout(self._project) if self._project else None
+            self._set_lifetime(member, hold_seconds(self.scaling, timeout))
+        elif member.limited:
+            self._set_lifetime(member, None)
+
+    def _set_lifetime(self, member: Member, desired: float | None) -> None:
+        """Un `set_timeout` acotado al tope del VM (`lifetime_seconds`).
+        `desired=None` pide todo lo que queda hasta el tope y deja el VM sin
+        acortar. Un rechazo por argumento (un VM creado sin plazo lógico,
+        antes de 0.17 o con `max_vms == min_vms`) no se reintenta."""
+        deployment = member.deployment
+        if deployment is None or member.lifetime_rejected:
+            return
+        seconds = lifetime_seconds(desired, member.cap, datetime.now(UTC))
+        if seconds is None:
             return
         try:
-            member.deployment.set_timeout(self.scaling.scale_in_after_seconds)
+            deployment.set_timeout(seconds)
+        except InvalidArgumentException:
+            member.lifetime_rejected = True
+            logger.warning(UNMANAGED_LIFETIME_MESSAGE)
+            return
         except SandboxException:
             logger.warning("no se pudo acotar la vida de un VM sobrante", exc_info=True)
+            return
+        member.limited = desired is not None
 
     def _open_or_connect(self, member: Member) -> AgentDeployment:
         """El cliente del VM: el que ya hay o, la primera vez, conecta con el
@@ -931,6 +990,7 @@ class AgentFleet:
         deployment = self._serving(member, sandbox)
         with self._lock:
             member.deployment = deployment
+            member.cap = sandbox_cap(sandbox) or member.cap
         self._limit_lifetime(member)
         return deployment
 

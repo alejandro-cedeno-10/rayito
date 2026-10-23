@@ -60,6 +60,13 @@ within the free tier).
 - **Scale-in flag.** `--scale-in-after SECONDS` on `rayito agent deploy` in
   both CLIs. The SDK option is `AgentDeployOptions.scale_in_after_seconds` /
   `scaleInAfterMs`.
+- **Scale-in is enforced** (ADR-034 D10). Scale-in was a no-op since 0.14:
+  fleet VMs were created without `max_lifetime`/`on_timeout`, so `rayd`
+  rejected the `set_timeout` that ends an idle extra VM. A fleet that can
+  grow (`max_vms > min_vms`) now creates every VM and warm slot with a
+  logical deadline in `kill` mode. `PoolConfig` gains optional
+  `max_lifetime`/`on_timeout`. A fleet that cannot grow launches exactly as
+  in 0.16.
 - **Opt-in gateway key renewal** (ADR-034 D7). `renew_gateway_keys` /
   `renewGatewayKeys` / `--renew-gateway-keys` is off by default. Before a VM
   is created or a slot is opened, it generates a short-term Bedrock key with
@@ -92,7 +99,8 @@ None: each change extends an existing capability.
 ### Modified Capabilities
 
 - `ai-agent-fleet`: recipe save, read and delete; warm slots with gateways;
-  scaling source; scale-in option; key renewal hook.
+  scaling source; scale-in option and its enforcement; key renewal hook.
+- `sandbox-pool`: optional `max_lifetime`/`on_timeout` on `PoolConfig`.
 - `secret-gateway`: opt-in short-term key renewal for the `bedrock` preset.
 - `cli`: `--scale-in-after`, `--no-save-recipe`, `--renew-gateway-keys`,
   `agent stop --keep-recipe`, `setup --caps-image`, the secret-looking

@@ -28,6 +28,7 @@ import {
   MAX_DURATION_MS,
   validateTimeoutMs,
 } from "../sandbox/launch.js";
+import { type OnTimeout, validateMaxLifetimeMs } from "../sandbox/lifecycle.js";
 import { resolveNetwork, validatePolicyShape } from "../sandbox/network.js";
 
 export const FILL_CONCURRENCY_MAX = 8;
@@ -108,7 +109,23 @@ export interface PoolConfig {
    * reconecta con un solo token.
    */
   readonly accessToken?: string | undefined;
+  /**
+   * `maxLifetimeMs` y `onTimeout` (sin definir por defecto) dan a cada plaza
+   * el plazo lógico de `Sandbox.create()` (ADR-011): `timeoutMs` pasa a ser
+   * ese plazo y `maxLifetimeMs` el tope de la plataforma (por defecto
+   * `timeoutMs + 60 000`). Sólo se admite `onTimeout: "kill"`, porque el
+   * pool ya aparca sus plazas. Con el plazo lógico, quien toma la plaza puede
+   * acortarlo o alargarlo con `setTimeout()` (una flota de agentes lo usa
+   * para terminar sus VMs sobrantes). Sin ninguno de los dos, las plazas se
+   * lanzan exactamente como antes.
+   */
+  readonly maxLifetimeMs?: number | undefined;
+  readonly onTimeout?: "kill" | undefined;
 }
+
+/** La única acción al vencer que admite un pool: `pause` choca con el pool,
+ * que ya suspende sus plazas él mismo. */
+export const POOL_ON_TIMEOUT = "kill" satisfies OnTimeout;
 
 /** `PoolConfig` con todos los valores por defecto aplicados y validados. */
 export interface ResolvedPoolConfig {
@@ -133,6 +150,31 @@ export interface ResolvedPoolConfig {
   readonly allowInternetAccess: boolean;
   readonly network: NetworkPolicyInput | undefined;
   readonly accessToken: string | undefined;
+  readonly maxLifetimeMs: number | undefined;
+  readonly onTimeout: "kill" | undefined;
+}
+
+/** `onTimeout` sólo puede faltar o ser `"kill"`, y `maxLifetimeMs` sigue las
+ * reglas de `Sandbox.create()` (entre 120 000 y 28 800 000, múltiplo de
+ * 1000, nunca por debajo de `timeoutMs`). */
+export function validatePoolLifetime(
+  maxLifetimeMs: unknown,
+  onTimeout: unknown,
+  timeoutMs: number,
+): void {
+  if (onTimeout !== undefined && onTimeout !== POOL_ON_TIMEOUT) {
+    throw new InvalidArgumentError(
+      `onTimeout de un pool sólo admite 'kill' (el pool ya aparca sus plazas), recibido ${String(onTimeout)}`,
+    );
+  }
+  if (maxLifetimeMs !== undefined) {
+    const validated = validateMaxLifetimeMs(maxLifetimeMs);
+    if (timeoutMs > validated) {
+      throw new InvalidArgumentError(
+        `timeoutMs (${timeoutMs}) no puede superar maxLifetimeMs (${validated})`,
+      );
+    }
+  }
 }
 
 /** `warmup` es una lista de `WarmupStep` (vacía por defecto). */
@@ -187,6 +229,7 @@ export function validatePoolConfig(config: PoolConfig): ResolvedPoolConfig {
   const size = requireInteger("size", config.size, 1, POOL_SIZE_MAX);
   const timeoutMs = config.timeoutMs ?? DEFAULT_POOL_TIMEOUT_MS;
   validateTimeoutMs(timeoutMs);
+  validatePoolLifetime(config.maxLifetimeMs, config.onTimeout, timeoutMs);
   const idle = validatePoolIdle(config.idle, timeoutMs);
   const minRemainingMs = requireInteger(
     "minRemainingMs",
@@ -253,6 +296,8 @@ export function validatePoolConfig(config: PoolConfig): ResolvedPoolConfig {
     allowInternetAccess,
     network: config.network,
     accessToken: config.accessToken,
+    maxLifetimeMs: config.maxLifetimeMs,
+    onTimeout: config.onTimeout,
   });
 }
 
@@ -261,20 +306,31 @@ export function slotAccessToken(config: ResolvedPoolConfig): string {
   return config.accessToken ?? generateAccessToken();
 }
 
-/** `index`, `network` y `allowInternetAccess: false` sólo aparecen si el pool
- * los configuró: sin ellos, las plazas se lanzan exactamente como en 0.4.0. */
+/** `index`, `maxLifetimeMs`, `onTimeout`, `network` y
+ * `allowInternetAccess: false` sólo aparecen si el pool los configuró: sin
+ * ellos, las plazas se lanzan exactamente como en 0.4.0. */
 function optionalLaunchOptions(config: ResolvedPoolConfig): {
   index?: DynamoDbIndex;
+  maxLifetimeMs?: number;
+  onTimeout?: "kill";
   network?: NetworkPolicyInput;
   allowInternetAccess?: boolean;
 } {
   const extra: {
     index?: DynamoDbIndex;
+    maxLifetimeMs?: number;
+    onTimeout?: "kill";
     network?: NetworkPolicyInput;
     allowInternetAccess?: boolean;
   } = {};
   if (config.index !== undefined) {
     extra.index = config.index;
+  }
+  if (config.maxLifetimeMs !== undefined) {
+    extra.maxLifetimeMs = config.maxLifetimeMs;
+  }
+  if (config.onTimeout !== undefined) {
+    extra.onTimeout = config.onTimeout;
   }
   if (config.network !== undefined) {
     extra.network = config.network;
@@ -300,6 +356,8 @@ export function launchOptions(config: ResolvedPoolConfig): {
   readonly logging: LoggingOption;
   readonly readyTimeoutMs: number;
   readonly index?: DynamoDbIndex;
+  readonly maxLifetimeMs?: number;
+  readonly onTimeout?: "kill";
   readonly network?: NetworkPolicyInput;
   readonly allowInternetAccess?: boolean;
 } {

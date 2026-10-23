@@ -26,6 +26,7 @@ from rayito._limits import AGENT_SERVICE_READY_MARKER_PATH
 from rayito._models import HostAccess
 from rayito._payload import generate_access_token
 from rayito._secret_gateway._domain import GatewayStatus
+from rayito.exceptions import InvalidArgumentException
 from tests.unit.fake_agent_project import (
     ENDPOINT,
     GATEWAY_PORT,
@@ -46,7 +47,8 @@ from tests.unit.fake_agent_project import (
     sse,
 )
 
-START = datetime(2026, 10, 16, tzinfo=UTC)
+#: Ahora: el tope de un VM listado (`listed_cap`) se compara con el reloj real.
+START = datetime.now(UTC).replace(microsecond=0)
 ACCESS_TOKEN = "fake-fleet-token"
 FLEET_TOKEN = generate_access_token()
 
@@ -196,7 +198,9 @@ class AsyncFleetCommands(AsyncFakeCommands):
 
 class FleetSandbox:
     """Un sandbox de doble con su propio id y su host. `served` dice si el
-    host del agente arrancó (una plaza aparcada aún no)."""
+    host del agente arrancó (una plaza aparcada aún no). `managed` dice si
+    se creó con plazo lógico (`max_lifetime`/`on_timeout`): sin él,
+    `set_timeout` falla como en `rayd` (`lifecycle_unmanaged`)."""
 
     def __init__(
         self,
@@ -206,8 +210,10 @@ class FleetSandbox:
         metadata: Mapping[str, str] | None = None,
         served: bool = True,
         state: str = "RUNNING",
+        managed: bool = True,
     ) -> None:
         self.number = number
+        self.managed = managed
         self.asynchronous = asynchronous
         self.sandbox_id = sandbox_id_of(number)
         self.access_token = ACCESS_TOKEN
@@ -265,8 +271,17 @@ class FleetSandbox:
         return self._async_call(self._kill) if self.asynchronous else self._kill()
 
     def set_timeout(self, timeout: int) -> Any:
+        if not self.managed:
+            error = InvalidArgumentException("set_timeout no aplica: el sandbox no tiene plazo")
+            if self.asynchronous:
+                return self._async_raise(error)
+            raise error
         self.timeouts.append(timeout)
         return self._async_value(None) if self.asynchronous else None
+
+    @staticmethod
+    async def _async_raise(error: Exception) -> Any:
+        raise error
 
     def pause(self, **kwargs: Any) -> Any:
         self.state = "SUSPENDED"
@@ -306,7 +321,12 @@ class FleetSandboxClass:
         self._next = 1
 
     def add(
-        self, *, served: bool = True, state: str = "RUNNING", foreign: bool = False
+        self,
+        *,
+        served: bool = True,
+        state: str = "RUNNING",
+        foreign: bool = False,
+        managed: bool = True,
     ) -> FleetSandbox:
         """Un VM que ya existía antes de la flota (reconexión, plaza aparcada);
         `foreign` es uno de la misma imagen que no es de un agente (sin las
@@ -316,6 +336,7 @@ class FleetSandboxClass:
             asynchronous=self.asynchronous,
             served=served,
             state=state,
+            managed=managed,
             metadata={}
             if foreign
             else {"rayito.agent.deployment": "support-bot", "rayito.agent.port": "8088"},
@@ -328,7 +349,8 @@ class FleetSandboxClass:
         self.created.append((template, kwargs))
         if self.create_error is not None:
             raise self.create_error
-        sandbox = self.add(served=False)
+        managed = kwargs.get("max_lifetime") is not None or kwargs.get("on_timeout") is not None
+        sandbox = self.add(served=False, managed=managed)
         sandbox.metadata = dict(kwargs.get("metadata") or {})
         return sandbox
 
@@ -432,7 +454,11 @@ class FakePool:
         self.started = False
         self.closed: list[bool] = []
         self.taken: list[dict[str, Any]] = []
-        self.parked = [classes.add(served=False, state="SUSPENDED") for _ in range(config.size)]
+        self.managed = config.on_timeout is not None
+        self.parked = [
+            classes.add(served=False, state="SUSPENDED", managed=self.managed)
+            for _ in range(config.size)
+        ]
 
     def start(self) -> FakePool:
         self.started = True
@@ -440,7 +466,11 @@ class FakePool:
 
     def take(self, **kwargs: Any) -> Any:
         self.taken.append(kwargs)
-        sandbox = self.parked.pop(0) if self.parked else self.classes.add(served=False)
+        sandbox = (
+            self.parked.pop(0)
+            if self.parked
+            else self.classes.add(served=False, managed=self.managed)
+        )
         sandbox.state = "RUNNING"
         return sandbox
 

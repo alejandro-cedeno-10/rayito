@@ -9,8 +9,9 @@
 
 import { createHash } from "node:crypto";
 import { InvalidArgumentError } from "../errors.js";
-import { AGENT_FLEET_PING_TTL_SECONDS } from "../limits.js";
+import { AGENT_FLEET_PING_TTL_SECONDS, LIFECYCLE_MIN_TIMEOUT_SECONDS } from "../limits.js";
 import type { PoolConfig } from "../pool/config.js";
+import { defaultMaxLifetimeMs, type OnTimeout, REOPEN_CAP_SLACK_MS } from "../sandbox/lifecycle.js";
 import { MS_PER_SECOND } from "../units.js";
 import { type DeploymentState, parseLabels } from "./deployment.js";
 import type { AgentEvent, AgentResult } from "./events.js";
@@ -111,9 +112,20 @@ export interface Member<D = unknown> {
   pingedAt: number | undefined;
   busyUntil: number;
   failedPings: number;
+  /** El tope de la plataforma del VM (`undefined` si no se conoce). */
+  cap: Date | undefined;
+  /** Si este proceso le acortó el plazo (`setTimeout` de reducción). */
+  limited: boolean;
+  /** Su `setTimeout` se rechazó por un argumento (un VM sin plazo lógico): no se reintenta. */
+  lifetimeRejected: boolean;
 }
 
-export function newMember<D>(sandboxId: string, deployment?: D, extra = false): Member<D> {
+export function newMember<D>(
+  sandboxId: string,
+  deployment?: D,
+  extra = false,
+  cap?: Date,
+): Member<D> {
   return {
     sandboxId,
     deployment,
@@ -124,7 +136,99 @@ export function newMember<D>(sandboxId: string, deployment?: D, extra = false): 
     pingedAt: undefined,
     busyUntil: 0,
     failedPings: 0,
+    cap,
+    limited: false,
+    lifetimeRejected: false,
   };
+}
+
+/** La acción al vencer de los VMs de una flota que puede crecer: `rayd`
+ * termina el VM (ADR-011, `AWS_API_NOTES.md` Q63). Es lo que hace que un
+ * `setTimeout` de reducción se acepte. */
+export const AGENT_FLEET_ON_TIMEOUT = "kill" satisfies OnTimeout;
+/** Margen bajo el tope de la plataforma al acotar la vida de un VM: el mismo
+ * que deja `connect()` al reabrir un sandbox (`REOPEN_CAP_SLACK_MS`). */
+export const AGENT_FLEET_CAP_SAFETY_MS = REOPEN_CAP_SLACK_MS;
+/** Lo que se loguea una vez por VM cuando `rayd` rechaza acotar su vida. */
+export const UNMANAGED_LIFETIME_MESSAGE =
+  "un VM de la flota no tiene plazo lógico (se creó antes de 0.17 o con maxVms igual a " +
+  "minVms): no se reducirá solo; termínalo con stop() o vuelve a desplegar";
+
+/** Las opciones de vida con las que se crea cada VM de una flota que puede
+ * crecer (y cada plaza caliente): el plazo lógico en modo `kill` y su tope.
+ * Sin ellas `rayd` rechaza el `setTimeout` que termina un VM sobrante. */
+export interface FleetLifetime {
+  readonly maxLifetimeMs: number;
+  readonly onTimeout: typeof AGENT_FLEET_ON_TIMEOUT;
+}
+
+/** Si la flota puede tener VMs por encima de `minVms`. */
+export function scalesIn(scaling: ScalingOptions): boolean {
+  return scaling.maxVms > scaling.minVms;
+}
+
+/** La vida de los VMs de la flota: `undefined` si nunca puede haber un VM
+ * sobrante (`maxVms === minVms`), y así se crean byte a byte como en 0.16.
+ * Si puede, `serve.timeoutMs` sigue siendo la vida de un VM base (ahora como
+ * plazo lógico) y el tope es el de `Sandbox.create()` por defecto,
+ * `timeout + 60 s` (como mucho 28 800 s). */
+export function fleetLifetime(
+  project: AgentProject,
+  scaling: ScalingOptions,
+): FleetLifetime | undefined {
+  if (!scalesIn(scaling)) {
+    return undefined;
+  }
+  const timeoutSeconds = Math.ceil(project.serve.timeoutMs / MS_PER_SECOND);
+  return Object.freeze({
+    maxLifetimeMs: defaultMaxLifetimeMs(timeoutSeconds),
+    onTimeout: AGENT_FLEET_ON_TIMEOUT,
+  });
+}
+
+/** Los milisegundos (segundos enteros) que se piden en `setTimeout`:
+ * `desiredMs` redondeado hacia arriba al segundo (o, con `undefined`, todo
+ * lo que queda) y nunca más allá del tope menos `AGENT_FLEET_CAP_SAFETY_MS`,
+ * porque `rayd` rechaza un plazo más allá del tope. `undefined` si no hay
+ * nada que pedir: el tope está demasiado cerca o, sin `desiredMs`, no se
+ * conoce. */
+export function lifetimeMs(
+  desiredMs: number | undefined,
+  cap: Date | undefined,
+  nowMs: number,
+): number | undefined {
+  const desiredSeconds = desiredMs === undefined ? undefined : Math.ceil(desiredMs / MS_PER_SECOND);
+  if (cap === undefined) {
+    return desiredSeconds === undefined ? undefined : desiredSeconds * MS_PER_SECOND;
+  }
+  const remaining =
+    Math.floor((cap.getTime() - nowMs) / MS_PER_SECOND) - AGENT_FLEET_CAP_SAFETY_MS / MS_PER_SECOND;
+  if (remaining < LIFECYCLE_MIN_TIMEOUT_SECONDS) {
+    return undefined;
+  }
+  const seconds = desiredSeconds === undefined ? remaining : Math.min(desiredSeconds, remaining);
+  return seconds * MS_PER_SECOND;
+}
+
+/** El plazo de un VM sobrante mientras atiende una invocación: nunca menos
+ * que lo que puede durar la petición, para que la reducción no lo termine a
+ * media llamada. */
+export function holdMs(scaling: ScalingOptions, requestTimeoutMs: number | undefined): number {
+  return Math.max(scaling.scaleInAfterMs, requestTimeoutMs ?? 0);
+}
+
+/** El tope de un VM listado, si la flota sabe con qué vida se crean sus VMs. */
+export function listedCap(startedAt: Date, lifetime: FleetLifetime | undefined): Date | undefined {
+  return lifetime === undefined
+    ? undefined
+    : new Date(startedAt.getTime() + lifetime.maxLifetimeMs);
+}
+
+/** El tope de la plataforma de un sandbox abierto (`info.platformExpiresAt`,
+ * sin llamar a AWS); `undefined` si el objeto no lo trae. */
+export function sandboxCap(sandbox: unknown): Date | undefined {
+  const info = (sandbox as { readonly info?: { readonly platformExpiresAt?: unknown } }).info;
+  return info?.platformExpiresAt instanceof Date ? info.platformExpiresAt : undefined;
 }
 
 /** Un VM de la imagen de la flota según `list-microvms`. */
@@ -347,8 +451,8 @@ export function vmLostMessage(): string {
 }
 
 /** La configuración del pool de plazas calientes de una flota: las mismas
- * opciones de lanzamiento que un VM servido (imagen, vida, idle, red) y el
- * token único de la flota. Una plaza se recicla cuando le queda menos vida de
+ * opciones de lanzamiento que un VM servido (imagen, vida, idle, red, y el
+ * plazo lógico de `fleetLifetime`) y el token único de la flota. Una plaza se recicla cuando le queda menos vida de
  * la que `minRemainingMs` exige: por defecto una hora, o lo que deje el plazo
  * del servicio. `templateVersion` fija la versión de la imagen (la que eligió
  * el build del despliegue); `undefined` usa la más reciente activa. */
@@ -360,6 +464,7 @@ export function poolConfigFor(
   templateVersion?: string | undefined,
 ): PoolConfig {
   const timeoutMs = Math.ceil(project.serve.timeoutMs / MS_PER_SECOND) * MS_PER_SECOND;
+  const lifetime = fleetLifetime(project, scaling);
   return {
     size: scaling.warmVms,
     template: project.template ?? project.name,
@@ -378,6 +483,9 @@ export function poolConfigFor(
     ...(project.network === undefined ? {} : { network: project.network }),
     allowInternetAccess: project.allowInternetAccess,
     accessToken,
+    ...(lifetime === undefined
+      ? {}
+      : { maxLifetimeMs: lifetime.maxLifetimeMs, onTimeout: lifetime.onTimeout }),
   };
 }
 

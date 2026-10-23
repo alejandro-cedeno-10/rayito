@@ -4006,6 +4006,25 @@ opción existente cambia de valor por defecto.
    `rayito agent invoke <flota> --renew-gateway-keys` es la forma de pedir
    la renovación desde la CLI al reconectar por nombre; con el id de un
    sandbox (que no crea VMs) es un error de uso.
+10. **La reducción se cumple (D10).** Desde 0.14 la flota pedía
+   `set_timeout(scale_in_after_seconds)` a los VMs por encima de `min_vms`,
+   pero los creaba sólo con `timeout`: sin `max_lifetime` ni `on_timeout` no
+   hay plazo lógico, `rayd` rechaza el `SetTimeout`
+   (`lifecycle_unmanaged`) y la flota se tragaba el error con un aviso. Ningún
+   VM sobrante se terminaba. Ahora una flota que puede crecer
+   (`max_vms > min_vms`) crea todos sus VMs y sus plazas calientes con
+   `on_timeout="kill"` y el `max_lifetime` por defecto de `create()` para
+   `serve.timeout_seconds` (`timeout + 60`, como mucho 28 800 s): un VM base
+   vive lo mismo que en 0.16, ahora como plazo lógico, y uno sobrante se
+   termina tras `scale_in_after_seconds` sin uso. Antes de cada invocación el
+   plazo de un VM sobrante sube al menos al de la petición, para no cortarla,
+   y al soltarla vuelve a `scale_in_after_seconds`; todo plazo queda por
+   debajo del tope de la plataforma menos 5 s. Una flota que no puede crecer
+   crea sus VMs byte a byte como en 0.16. Un VM sin plazo lógico (creado por
+   0.16) avisa una vez y no se reduce. `PoolConfig` gana `max_lifetime` y
+   `on_timeout` opcionales (sólo `kill`). La receta no cambia: la vida sale
+   del escalado y del proyecto guardados. Ningún parámetro nuevo de AWS
+   (`maximumDurationInSeconds` y el bloque `lifecycle` de ADR-011).
 
 **Consecuencias.** Un agente desplegado se puede invocar, escalar y parar
 desde cualquier proceso con sólo su nombre y su access token. `agent status`

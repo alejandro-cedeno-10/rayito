@@ -73,6 +73,19 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
 
 ### Corregido
 
+- **La reducción de la flota (`scale_in_after_seconds`) por fin ocurre**:
+  desde 0.14 los VMs se creaban sin `max_lifetime`/`on_timeout`, así que
+  `rayd` rechazaba el `set_timeout` que termina un VM sobrante y la flota
+  sólo avisaba («no se pudo acotar la vida de un VM sobrante»). Una flota que
+  puede crecer (`max_vms > min_vms`) crea ahora todos sus VMs y plazas
+  calientes con `on_timeout="kill"` y `max_lifetime = serve.timeout_seconds
+  + 60`; antes de cada invocación el plazo de un VM sobrante sube al de la
+  petición y al soltarla vuelve a `scale_in_after_seconds`, siempre por
+  debajo del tope. Una flota de tamaño fijo se crea byte a byte como en
+  0.16; un VM creado sin plazo lógico avisa una vez y no se reintenta.
+  `PoolConfig` gana `max_lifetime` y `on_timeout` opcionales (sólo `kill`).
+  Vectores en `testdata/agent-fleet/lifetime.json`.
+
 - **El host del agente ya no escribe URLs con credenciales en sus logs**:
   los loggers `httpx` y `httpcore`, que a nivel INFO escriben la URL de cada
   petición con su consulta, arrancan en WARNING en `serve`

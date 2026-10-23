@@ -167,8 +167,9 @@ La clave y el nombre del secreto nunca salen en logs, errores ni en la
 [receta de la flota](../guias/flota-de-agentes.md#la-receta-de-la-flota).
 Sin una pasarela `bedrock`, la opción es `InvalidArgumentException`
 (`renew_gateway_keys necesita una pasarela con preset bedrock`). Los VMs que
-abrió otro proceso conservan la clave anterior hasta que se refresquen; acota
-su vida con `scale_in_after_seconds`.
+abrió otro proceso conservan la clave anterior hasta que se refresquen; en
+una flota que puede crecer, los VMs por encima de `min_vms` se terminan tras
+`scale_in_after_seconds` sin uso, y los demás viven `serve.timeout_seconds`.
 
 - **Flota de tamaño fijo.** La renovación sólo corre al crear un VM o abrir
   una plaza. Una flota que no crece (por ejemplo `--min-vms 1 --max-vms 1`)

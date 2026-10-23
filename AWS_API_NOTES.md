@@ -2149,7 +2149,14 @@ dice dónde. Consultado el 2026-10-16.
   `CreateBucket` (siguiente sección).
 - Un MicroVM no se puede etiquetar (§1): la pertenencia a una flota es la
   imagen. `rayd` fija la vida de un VM sobrante con `set_timeout`, sin llamada
-  al plano de control.
+  al plano de control. Eso sólo funciona si el VM nació con plazo lógico
+  (`max_lifetime`/`on_timeout` de `create()`, ADR-011): sin el bloque
+  `lifecycle` del `runHookPayload`, `SetTimeout` es `FAILED_PRECONDITION
+  lifecycle_unmanaged` (Q58, Q63). Desde 0.17 una flota que puede crecer
+  (`max_vms > min_vms`) crea todos sus VMs y plazas con `on_timeout="kill"` y
+  `maximumDurationInSeconds` = `max_lifetime` = `timeout + 60` (como mucho
+  28 800); no añade ningún parámetro de `run-microvm` que no estuviera ya en
+  §5 (fleet-recipe D12).
 - Pendiente de medir en AWS real (nueva fila Q al aceptar 0.14): el tope de
   conexiones simultáneas por MicroVM por debajo de 2 GB (se asume el de 2 GB,
   conservador) y la latencia de reanudar una plaza aparcada y arrancar el host.

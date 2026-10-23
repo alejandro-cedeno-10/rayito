@@ -74,6 +74,18 @@ versionado [SemVer](https://semver.org/lang/es/).
 
 ### Corregido
 
+- **La reducción de la flota (`scaleInAfterMs`) por fin ocurre**: desde
+  0.14 los VMs se creaban sin `maxLifetimeMs`/`onTimeout`, así que `rayd`
+  rechazaba el `setTimeout` que termina un VM sobrante y la flota se tragaba
+  el error. Una flota que puede crecer (`maxVms > minVms`) crea ahora todos
+  sus VMs y plazas calientes con `onTimeout: "kill"` y `maxLifetimeMs =
+  serve.timeoutMs + 60 000`; antes de cada invocación el plazo de un VM
+  sobrante sube al de la petición y al soltarla vuelve a `scaleInAfterMs`,
+  siempre por debajo del tope. Una flota de tamaño fijo se crea byte a byte
+  como en 0.16; un VM creado sin plazo lógico avisa una vez por el `logger`
+  y no se reintenta. `PoolConfig` gana `maxLifetimeMs` y `onTimeout`
+  opcionales (sólo `"kill"`). Vectores en `testdata/agent-fleet/lifetime.json`.
+
 - **El host del agente ya no escribe URLs con credenciales en sus logs** (el host viaja en los recursos del paquete, `host-assets.gen.ts`):
   los loggers `httpx` y `httpcore`, que a nivel INFO escriben la URL de cada
   petición con su consulta, arrancan en WARNING en `serve`

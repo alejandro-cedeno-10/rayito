@@ -368,3 +368,27 @@ def test_reject_launch_kwargs_names_the_first_offender_in_signature_order() -> N
     assert "transport" in POOL_REJECTED_KWARGS
     for name in ("mounts", "volumes", "size", "events", "telemetry", "gateways", "domain"):
         assert name in POOL_REJECTED_KWARGS
+
+
+def test_the_logical_lifetime_is_only_forwarded_when_set() -> None:
+    plain = launch_kwargs(PoolConfig(size=1, timeout=7200))
+    assert "max_lifetime" not in plain
+    assert "on_timeout" not in plain
+
+    timed = launch_kwargs(PoolConfig(size=1, timeout=7200, max_lifetime=7260, on_timeout="kill"))
+
+    assert timed["timeout"] == 7200
+    assert timed["max_lifetime"] == 7260
+    assert timed["on_timeout"] == "kill"
+
+
+def test_a_pool_only_accepts_kill_on_timeout() -> None:
+    with pytest.raises(InvalidArgumentException, match="on_timeout"):
+        PoolConfig(size=1, timeout=7200, on_timeout="pause")
+
+
+def test_the_pool_max_lifetime_follows_the_create_rules() -> None:
+    with pytest.raises(InvalidArgumentException, match="max_lifetime"):
+        PoolConfig(size=1, timeout=7200, max_lifetime=7000)
+    with pytest.raises(SandboxLifetimeException):
+        PoolConfig(size=1, timeout=7200, max_lifetime=28801)

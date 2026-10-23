@@ -1,0 +1,70 @@
+{
+  "description": "Lifetime of fleet VMs (fleet-recipe D12): the create arguments, the seconds sent in set_timeout (bounded by the platform cap) and the deadline held while an extra VM serves a request. Seconds in both SDKs; TypeScript multiplies by 1000.",
+  "createArgs": [
+    {
+      "name": "a single-VM fleet launches as in 0.16",
+      "serveTimeoutSeconds": 3600,
+      "minVms": 1,
+      "maxVms": 1,
+      "expected": null
+    },
+    {
+      "name": "min equal to max never has an extra VM",
+      "serveTimeoutSeconds": 3600,
+      "minVms": 3,
+      "maxVms": 3,
+      "expected": null
+    },
+    {
+      "name": "a fleet that can grow gets a logical deadline and a cap 60 s later",
+      "serveTimeoutSeconds": 3600,
+      "minVms": 1,
+      "maxVms": 3,
+      "expected": {"maxLifetimeSeconds": 3660, "onTimeout": "kill"}
+    },
+    {
+      "name": "zero base VMs also scale in",
+      "serveTimeoutSeconds": 900,
+      "minVms": 0,
+      "maxVms": 2,
+      "expected": {"maxLifetimeSeconds": 960, "onTimeout": "kill"}
+    },
+    {
+      "name": "a short serve timeout keeps the 120 s minimum cap",
+      "serveTimeoutSeconds": 30,
+      "minVms": 1,
+      "maxVms": 2,
+      "expected": {"maxLifetimeSeconds": 120, "onTimeout": "kill"}
+    },
+    {
+      "name": "the cap never passes the 8 hour platform limit",
+      "serveTimeoutSeconds": 28800,
+      "minVms": 1,
+      "maxVms": 2,
+      "expected": {"maxLifetimeSeconds": 28800, "onTimeout": "kill"}
+    },
+    {
+      "name": "a fractional serve timeout is rounded up first",
+      "serveTimeoutSeconds": 1799.5,
+      "minVms": 1,
+      "maxVms": 2,
+      "expected": {"maxLifetimeSeconds": 1860, "onTimeout": "kill"}
+    }
+  ],
+  "lifetimeSeconds": [
+    {"name": "unknown cap sends the desired value", "desiredSeconds": 900, "capInSeconds": null, "expected": 900},
+    {"name": "fractional desired is rounded up", "desiredSeconds": 90.5, "capInSeconds": null, "expected": 91},
+    {"name": "unknown cap and no desired value sends nothing", "desiredSeconds": null, "capInSeconds": null, "expected": null},
+    {"name": "far cap does not bound", "desiredSeconds": 900, "capInSeconds": 3600, "expected": 900},
+    {"name": "near cap bounds to the cap minus 5 s", "desiredSeconds": 900, "capInSeconds": 300, "expected": 295},
+    {"name": "no desired value asks for everything up to the cap", "desiredSeconds": null, "capInSeconds": 3000, "expected": 2995},
+    {"name": "a cap closer than the margin sends nothing", "desiredSeconds": 900, "capInSeconds": 5, "expected": null},
+    {"name": "a passed cap sends nothing", "desiredSeconds": 900, "capInSeconds": -10, "expected": null},
+    {"name": "one second left is still sent", "desiredSeconds": 900, "capInSeconds": 6, "expected": 1}
+  ],
+  "holdSeconds": [
+    {"name": "a request longer than scale-in holds for the request", "scaleInSeconds": 120, "requestTimeoutSeconds": 660, "expected": 660},
+    {"name": "scale-in longer than the request holds for scale-in", "scaleInSeconds": 900, "requestTimeoutSeconds": 660, "expected": 900},
+    {"name": "no request timeout holds for scale-in", "scaleInSeconds": 900, "requestTimeoutSeconds": null, "expected": 900}
+  ]
+}

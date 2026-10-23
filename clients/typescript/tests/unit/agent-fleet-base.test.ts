@@ -13,8 +13,12 @@ import {
   AGENT_FLEET_BUSY_RETRY_MS,
   AGENT_FLEET_PING_TTL_MS,
   eventWithHandle,
+  fleetLifetime,
   fleetSettingsOf,
+  holdMs,
   isLost,
+  lifetimeMs,
+  listedCap,
   markExtras,
   newMember,
   ownedIds,
@@ -38,6 +42,7 @@ const VECTORS = join(import.meta.dirname, "..", "..", "..", "..", "testdata", "a
 const SESSION_LABELS = JSON.parse(readFileSync(join(VECTORS, "session-labels.json"), "utf8"));
 const PLACEMENT = JSON.parse(readFileSync(join(VECTORS, "placement.json"), "utf8"));
 const MEMBERS = JSON.parse(readFileSync(join(VECTORS, "members.json"), "utf8"));
+const LIFETIME = JSON.parse(readFileSync(join(VECTORS, "lifetime.json"), "utf8"));
 const NOW = 1_000_000;
 const MS_PER_SECOND = 1000;
 
@@ -314,5 +319,78 @@ describe("settings", () => {
     expect(selectMembers(listing, new Set(item.owned)).map((entry) => entry.sandboxId)).toEqual(
       item.expected,
     );
+  });
+});
+
+interface CreateArgsCase {
+  readonly name: string;
+  readonly serveTimeoutSeconds: number;
+  readonly minVms: number;
+  readonly maxVms: number;
+  readonly expected: { readonly maxLifetimeSeconds: number; readonly onTimeout: string } | null;
+}
+
+interface LifetimeSecondsCase {
+  readonly name: string;
+  readonly desiredSeconds: number | null;
+  readonly capInSeconds: number | null;
+  readonly expected: number | null;
+}
+
+interface HoldSecondsCase {
+  readonly name: string;
+  readonly scaleInSeconds: number;
+  readonly requestTimeoutSeconds: number | null;
+  readonly expected: number;
+}
+
+describe("fleet lifetime", () => {
+  test.each(LIFETIME.createArgs as CreateArgsCase[])("$name", (entry) => {
+    const the = project({
+      serve: new ServeOptions({ timeoutMs: entry.serveTimeoutSeconds * 1000 }),
+    });
+    const scaling = new ScalingOptions({ minVms: entry.minVms, maxVms: entry.maxVms });
+    const lifetime = fleetLifetime(the, scaling);
+    if (entry.expected === null) {
+      expect(lifetime).toBeUndefined();
+      return;
+    }
+    expect(lifetime).toEqual({
+      maxLifetimeMs: entry.expected.maxLifetimeSeconds * 1000,
+      onTimeout: entry.expected.onTimeout,
+    });
+  });
+
+  test.each(LIFETIME.lifetimeSeconds as LifetimeSecondsCase[])("$name", (entry) => {
+    const now = Date.UTC(2026, 9, 22);
+    const cap = entry.capInSeconds === null ? undefined : new Date(now + entry.capInSeconds * 1000);
+    const desired = entry.desiredSeconds === null ? undefined : entry.desiredSeconds * 1000;
+    const expected = entry.expected === null ? undefined : entry.expected * 1000;
+    expect(lifetimeMs(desired, cap, now)).toBe(expected);
+  });
+
+  test.each(LIFETIME.holdSeconds as HoldSecondsCase[])("$name", (entry) => {
+    const scaling = new ScalingOptions({ maxVms: 2, scaleInAfterMs: entry.scaleInSeconds * 1000 });
+    const request =
+      entry.requestTimeoutSeconds === null ? undefined : entry.requestTimeoutSeconds * 1000;
+    expect(holdMs(scaling, request)).toBe(entry.expected * 1000);
+  });
+
+  test("a listed VM cap is its start plus the fleet lifetime", () => {
+    const started = new Date(Date.UTC(2026, 9, 22));
+    const lifetime = fleetLifetime(project(), new ScalingOptions({ maxVms: 2 }));
+    expect(listedCap(started, lifetime)?.getTime()).toBe(started.getTime() + 3_660_000);
+    expect(listedCap(started, undefined)).toBeUndefined();
+  });
+
+  test("the warm pool of a fleet that can grow carries the lifetime", () => {
+    const config = poolConfigFor(
+      project(),
+      new ScalingOptions({ maxVms: 3, warmVms: 1 }),
+      generateAccessToken(),
+      {},
+    );
+    expect(config.maxLifetimeMs).toBe(3_660_000);
+    expect(config.onTimeout).toBe("kill");
   });
 });

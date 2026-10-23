@@ -133,6 +133,7 @@ with the same fields in camelCase and times in milliseconds.
 | `ready_timeout` / `readyTimeoutMs` | 90 s | readiness deadline of each warm-up |
 | `index` | none | `DynamoDbIndex(...)`: writes the [metadata index](optional-features.md) row of each slot when it is launched (its own cost, off by default) |
 | `warmup` | `()` / `[]` | steps each slot runs before being parked; see [Warm-up](#calentamiento-warmup) |
+| `max_lifetime` / `maxLifetimeMs`, `on_timeout` / `onTimeout` (since 0.17) | none | the `create()` logical deadline on every slot: `timeout` becomes the deadline and `max_lifetime` the cap (by default `timeout + 60`); only `on_timeout="kill"`. Whoever takes the slot can shorten it with `set_timeout()`; without them, slots launch as before |
 
 There is no `access_token` (one per slot, see custody) or `allowed_ports`
 (`get_host(port)` mints per port after the take, as after `create()`).

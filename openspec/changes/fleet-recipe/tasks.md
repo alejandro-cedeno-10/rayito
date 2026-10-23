@@ -153,6 +153,11 @@ Hard rules:
       `TOKEN`/`KEY`/`HEADER` in the `--env` rule (no false positives on
       `AUTH_MODE`, `AUTH_URL`), and `rayito agent invoke
       --renew-gateway-keys` in both CLIs.
+- [x] G5.18 Scale-in enforced (design D12): `max_lifetime`/`on_timeout` on
+      every VM and warm slot of a fleet that can grow, `PoolConfig` fields,
+      hold during an invocation, bound by the cap, warn once on a VM without
+      a deadline; vectors `testdata/agent-fleet/lifetime.json`; docs and
+      changelogs.
 
 ## Z. Integration on `feat/sdk-017`
 

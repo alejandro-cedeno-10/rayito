@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -19,8 +19,12 @@ from rayito._agent._fleet_base import (
     Member,
     MemberListing,
     event_with_handle,
+    fleet_lifetime,
     fleet_settings_of,
+    hold_seconds,
     is_lost,
+    lifetime_seconds,
+    listed_cap,
     mark_extras,
     owned_ids,
     plan_placement,
@@ -47,6 +51,7 @@ VECTORS = Path(__file__).parents[4] / "testdata" / "agent-fleet"
 SESSION_LABELS = json.loads((VECTORS / "session-labels.json").read_text(encoding="utf-8"))
 PLACEMENT = json.loads((VECTORS / "placement.json").read_text(encoding="utf-8"))
 MEMBERS = json.loads((VECTORS / "members.json").read_text(encoding="utf-8"))
+LIFETIME = json.loads((VECTORS / "lifetime.json").read_text(encoding="utf-8"))
 NOW = 1000.0
 
 
@@ -255,3 +260,57 @@ def test_a_vm_is_a_member_only_when_the_image_is_not_shared(case: dict[str, Any]
     selected = select_members(listing, set(case["owned"]))
 
     assert [item.sandbox_id for item in selected] == case["expected"]
+
+
+# ---------------------------------------------------------------- lifetime
+
+
+@pytest.mark.parametrize("case", LIFETIME["createArgs"], ids=lambda case: case["name"])
+def test_fleet_lifetime_matches_the_shared_vectors(case: dict[str, Any]) -> None:
+    the_project = project(serve=ServeOptions(timeout_seconds=case["serveTimeoutSeconds"]))
+    scaling = ScalingOptions(min_vms=case["minVms"], max_vms=case["maxVms"])
+
+    lifetime = fleet_lifetime(the_project, scaling)
+
+    expected = case["expected"]
+    if expected is None:
+        assert lifetime is None
+        return
+    assert lifetime is not None
+    assert lifetime.create_args() == {
+        "max_lifetime": expected["maxLifetimeSeconds"],
+        "on_timeout": expected["onTimeout"],
+    }
+
+
+@pytest.mark.parametrize("case", LIFETIME["lifetimeSeconds"], ids=lambda case: case["name"])
+def test_lifetime_seconds_matches_the_shared_vectors(case: dict[str, Any]) -> None:
+    now = datetime(2026, 10, 22, tzinfo=UTC)
+    cap_in = case["capInSeconds"]
+    cap = None if cap_in is None else now + timedelta(seconds=cap_in)
+
+    assert lifetime_seconds(case["desiredSeconds"], cap, now) == case["expected"]
+
+
+@pytest.mark.parametrize("case", LIFETIME["holdSeconds"], ids=lambda case: case["name"])
+def test_hold_seconds_matches_the_shared_vectors(case: dict[str, Any]) -> None:
+    scaling = ScalingOptions(max_vms=2, scale_in_after_seconds=case["scaleInSeconds"])
+
+    assert hold_seconds(scaling, case["requestTimeoutSeconds"]) == case["expected"]
+
+
+def test_a_listed_vm_cap_is_its_start_plus_the_fleet_lifetime() -> None:
+    started = datetime(2026, 10, 22, tzinfo=UTC)
+    lifetime = fleet_lifetime(project(), ScalingOptions(max_vms=2))
+
+    assert listed_cap(started, lifetime) == started + timedelta(seconds=3660)
+    assert listed_cap(started, None) is None
+
+
+def test_the_warm_pool_of_a_fleet_that_can_grow_carries_the_lifetime() -> None:
+    config = pool_config_for(
+        project(), ScalingOptions(max_vms=3, warm_vms=1), generate_access_token(), {}
+    )
+
+    assert config.max_lifetime == 3660
+    assert config.on_timeout == "kill"

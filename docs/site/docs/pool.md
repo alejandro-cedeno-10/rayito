@@ -132,6 +132,7 @@ con los mismos campos en camelCase y los tiempos en milisegundos.
 | `ready_timeout` / `readyTimeoutMs` | 90 s | plazo de readiness de cada calentamiento |
 | `index` | ninguno | `DynamoDbIndex(...)`: escribe la fila del [índice de metadatos](optional-features.md) de cada plaza al lanzarla (coste propio, apagado por defecto) |
 | `warmup` | `()` / `[]` | pasos que cada plaza corre antes de aparcarse; ver [Calentamiento](#calentamiento-warmup) |
+| `max_lifetime` / `maxLifetimeMs`, `on_timeout` / `onTimeout` (desde 0.17) | ninguno | el plazo lógico de `create()` en cada plaza: `timeout` pasa a ser el plazo y `max_lifetime` el tope (por defecto `timeout + 60`); sólo `on_timeout="kill"`. Quien toma la plaza puede acortarlo con `set_timeout()`; sin ellos, las plazas se lanzan como antes |
 
 No hay `access_token` (uno por plaza, ver custodia) ni `allowed_ports`
 (`get_host(port)` acuña por puerto tras la toma, como después de `create()`).

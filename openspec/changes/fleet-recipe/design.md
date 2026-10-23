@@ -312,6 +312,76 @@ five parallel work groups.
   secrets in `afterAll`/`finally`.
 - `e2e-${RUN_ID}/ts-llm` follows the same rule.
 
+### D12. Scale-in is enforced (ADR-034 D10)
+
+Since 0.14 the fleet calls `set_timeout(scale_in_after_seconds)` on VMs
+above `min_vms`, but it created every VM with `Sandbox.create(timeout=...)`
+only. Without `max_lifetime` or `on_timeout` the VM has no logical deadline,
+`rayd` answers `SetTimeout` with `FAILED_PRECONDITION lifecycle_unmanaged`,
+and the fleet swallowed the error with the warning «no se pudo acotar la
+vida de un VM sobrante». Scale-in never happened, in 0.14 to 0.16 and in the
+0.17 flag. Decisions:
+
+- **Which VMs get a logical deadline.** `fleet_lifetime(project, scaling)` /
+  `fleetLifetime()` returns `None`/`undefined` when `max_vms == min_vms`: no
+  extra VM can exist, and the create arguments stay byte for byte those of
+  0.16 (the default single VM included). When `max_vms > min_vms` every VM
+  the fleet creates (base, extra, replacement, `scale()`) and every warm slot
+  carries `on_timeout="kill"` and `max_lifetime = default_max_lifetime_for(T)`
+  (`defaultMaxLifetimeMs`), with `T = ceil(serve.timeout_seconds)`: `T + 60`,
+  at least 120 and at most 28 800 s. A VM can move between base and extra
+  (`mark_extras` relabels by position), so base VMs need the deadline too.
+  Warm slots only exist when `max_vms > min_vms` (`warm_vms <= max_vms -
+  min_vms`), so the pool always gets it.
+- **No new AWS parameter.** `max_lifetime` is `maximumDurationInSeconds` and
+  `on_timeout` travels in the `lifecycle` block of the `runHookPayload`
+  (ADR-011, `AWS_API_NOTES.md` §5, Q58, Q63). The SDK already sends both for
+  `Sandbox.create(max_lifetime=..., on_timeout=...)`.
+- **Base VMs.** The logical deadline is `T` from creation, the same life
+  0.16 gave them through `maximumDurationInSeconds = T`. `rayd` exits with
+  124 at the deadline (Q63, about 15 s to `TERMINATED`). The platform cap is
+  60 s later and only bounds a resume-grace reopen.
+- **Extra VMs.** At creation and when first opened:
+  `set_timeout(scale_in_after_seconds)`. Before each invocation:
+  `set_timeout(max(scale_in_after_seconds, request_timeout))` (`hold_seconds`
+  / `holdMs`), so a VM whose idle deadline is close is not killed in the
+  middle of a request. When the invocation is released:
+  `set_timeout(scale_in_after_seconds)` again. A VM promoted to base
+  (`limited` and no longer `extra`) gets everything up to its cap back on its
+  next invocation. While it stays idle it keeps its idle deadline, and if it
+  ends, `reconcile()` refills `min_vms`.
+- **Bounded by the cap.** `rayd` rejects a deadline past the cap
+  (`timeout beyond cap`). The fleet asks for `min(desired, cap - now - 5 s)`
+  (`lifetime_seconds` / `lifetimeMs`, whole seconds rounded up, margin
+  `CONNECT_CAP_SAFETY_MS` / `REOPEN_CAP_SLACK_MS`) and sends nothing when less
+  than 1 s is left. The cap is `SandboxInfo.platform_expires_at` for a VM the
+  fleet opened or took from the pool, `started_at + max_lifetime` for a VM it
+  listed, and `now + max_lifetime` taken before `create()` for one it
+  created, which is never later than the real cap.
+- **VMs without a deadline.** A VM created by 0.16, or by a 0.17 fleet that
+  could not grow, rejects `set_timeout` with `InvalidArgumentException` /
+  `InvalidArgumentError`. The fleet logs `UNMANAGED_LIFETIME_MESSAGE` once
+  for that VM and never retries it. Such a VM is not scaled in. `stop()`
+  or a redeploy replaces it.
+- **Recipe.** The recipe schema does not change. The lifetime is derived
+  from the stored scaling and the stored project (`serve.timeout_seconds`),
+  so a fleet reconnected from its recipe creates VMs with the same arguments
+  as the deploy. A 0.16 SDK reading a 0.17 fleet ignores the deadline and
+  behaves as before.
+- **`PoolConfig`.** It gains `max_lifetime: int | None = None` and
+  `on_timeout: "kill" | None = None` (`maxLifetimeMs`, `onTimeout`), added
+  at the end so positional construction keeps working. They are validated
+  like `create()` (`on_timeout="pause"` is rejected: the pool already parks
+  its slots) and forwarded in the launch arguments only when set, so a pool
+  that does not set them launches exactly as before.
+- **Tests.** Shared vectors in `testdata/agent-fleet/lifetime.json`
+  (`createArgs`, `lifetimeSeconds`, `holdSeconds`). The fleet fakes in both
+  SDKs reject `set_timeout` on a VM created without `max_lifetime`/
+  `on_timeout`, as `rayd` does, so the extra-VM test fails on 0.16 code.
+  Fleet tests assert the create arguments, the accepted `set_timeout` calls
+  (create, hold, release), the single-VM fleet without them, the warned-once
+  rejection and the promotion.
+
 ## Integration contract
 
 ### 1. Groups, branches and merge order
