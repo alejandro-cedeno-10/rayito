@@ -18,7 +18,7 @@ REGION = "us-east-1"
 
 SPEC = AgentSpec(
     model=AgentModel(provider="bedrock", id=MODEL_ID, gateway="bedrock", region=REGION),
-    # La instrucción pide; los permisos bloquean la edición y limitan bash a `python3 *`.
+    # La instrucción pide; los permisos deniegan todo salvo bash con `python3 *`.
     # No es solo lectura: python3 todavía puede escribir ficheros accesibles al proceso.
     instructions="Responde en español, en dos frases como máximo. No modifiques ficheros.",
     permissions=AgentPermissions(default="deny", tools={"bash": {"python3 *": "allow", "*": "deny"}}),

@@ -93,7 +93,7 @@ sólo lee `08_crear_secreto` y que no debes escribir en ningún fichero.
 | 05 | `uv run python/05_shim_e2b.py` | `pnpm exec tsx typescript/05_shim_e2b.ts` | el shim de E2B devuelve `42` |
 | 06 | `uv run python/06_template.py` | `pnpm exec tsx typescript/06_template.ts` | imagen propia: `tabulate` 0.9.0, servidor en el puerto 8000 y `app/resumen.py` |
 | 07 | `uv run python/07_pool.py` | `pnpm exec tsx typescript/07_pool.ts` | `create()` frente a toma de una plaza preparada, con acierto o fallback |
-| 08 | `uv run python/08_crear_secreto.py [--generar]` | `pnpm exec tsx typescript/08_crear_secreto.ts` | guarda `Bearer <clave>` en `rayito/$MODEL_SECRET` sin imprimirla |
+| 08 | `uv run python/08_crear_secreto.py [--generar]` | `pnpm exec tsx typescript/08_crear_secreto.ts` (sin `--generar`) | guarda `Bearer <clave>` en `rayito/$MODEL_SECRET` sin imprimirla |
 | 09 | `uv run python/09_agente.py` | `pnpm exec tsx typescript/09_agente.ts` | el agente usa `python3` (según la traza) y sus recuentos cumplen el contrato |
 | 10 | `uv run python/10_agente_negativo.py` | `pnpm exec tsx typescript/10_agente_negativo.ts` | prueba negativa opcional: con todo denegado, el fichero pedido no aparece aunque el modelo diga que lo creó |
 | 99 | `uv run python/99_limpieza_secreto.py [--forzar]` | `pnpm exec tsx typescript/99_limpieza_secreto.ts [--forzar]` | borra el secreto (con ventana de recuperación por defecto) |

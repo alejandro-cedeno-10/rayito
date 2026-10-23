@@ -50,7 +50,7 @@ uv run python/08_crear_secreto.py
 # --- 5. Forma B: el agente descrito en un fichero ---------------------------------
 uv run rayito agent build --file ./agente-triaje --bucket "$RAYITO_BUCKET"
 uv run rayito agent run "La factura de octubre me cobra dos veces el mismo plan" --file ./agente-triaje --stream
-uv run rayito agent run "Ejecuta ls -la /home/user y dime qué hay" --file ./agente-triaje --stream   # debe negarse
+uv run rayito agent run "Ejecuta ls -la /home/user y dime qué hay" --file ./agente-triaje --stream   # no debería ejecutarlo; compruébalo en los eventos, no en la respuesta
 uv run rayito agent deploy ./agente-triaje --dry-run    # el plan y el coste, sin llamar a AWS
 uv run rayito agent deploy ./agente-triaje --yes        # flota de 1 VM
 uv run rayito agent invoke triaje "No puedo entrar a mi cuenta desde ayer"

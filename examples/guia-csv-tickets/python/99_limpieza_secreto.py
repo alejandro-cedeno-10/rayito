@@ -8,6 +8,7 @@ import os
 import sys
 
 import boto3
+from botocore.exceptions import ClientError
 from rayito import SecretStore
 
 NAME = os.environ.get("MODEL_SECRET", "bedrock-key")
@@ -20,7 +21,13 @@ def main() -> None:
         print(f"rayito/{NAME}: {'borrado sin recuperación' if borrado else 'no existía'}")
         return
     sm = boto3.client("secretsmanager", region_name=REGION)
-    sm.delete_secret(SecretId=f"rayito/{NAME}", RecoveryWindowInDays=7)
+    try:
+        sm.delete_secret(SecretId=f"rayito/{NAME}", RecoveryWindowInDays=7)
+    except ClientError as exc:
+        if exc.response["Error"]["Code"] not in ("ResourceNotFoundException", "InvalidRequestException"):
+            raise
+        print(f"rayito/{NAME}: no existía o ya tenía el borrado programado")
+        return
     print(f"rayito/{NAME}: borrado programado en 7 días (recuperable con restore-secret)")
 
 

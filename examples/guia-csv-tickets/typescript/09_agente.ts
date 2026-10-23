@@ -9,7 +9,7 @@ const REGION = "us-east-1";
 
 const spec = new AgentSpec({
   model: new AgentModel({ provider: "bedrock", id: MODEL_ID, gateway: "bedrock", region: REGION }),
-  // La instrucción pide; los permisos bloquean la edición y limitan bash a `python3 *`.
+  // La instrucción pide; los permisos deniegan todo salvo bash con `python3 *`.
   // No es solo lectura: python3 todavía puede escribir ficheros accesibles al proceso.
   instructions: "Responde en español, en dos frases como máximo. No modifiques ficheros.",
   permissions: new AgentPermissions({ default: "deny", tools: { bash: { "python3 *": "allow", "*": "deny" } } }),
@@ -55,6 +55,7 @@ const want = Object.fromEntries(Object.entries(esperado().categorias).map(([k, v
 const got = recuentos(result.text);
 console.log("¿usó python3 según la traza?:", usoPython ? "sí" : "no");
 console.log("recuentos en la respuesta:", got, "| contrato:", want);
-const ok = usoPython && JSON.stringify(got) === JSON.stringify(want);
+const mismasClaves = Object.keys(got).length === Object.keys(want).length;
+const ok = usoPython && mismasClaves && Object.entries(want).every(([cat, n]) => got[cat] === n);
 console.log(ok ? "verificación: superada (traza + contrato)" : "verificación: NO superada");
 process.exitCode = ok ? 0 : 1;
