@@ -28,3 +28,10 @@ With `renew_gateway_keys=True` / `renewGatewayKeys: true` / `--renew-gateway-key
 #### Scenario: a secret created just before the deploy
 - **WHEN** a secret changed 10 seconds ago and a deploy with renewal starts
 - **THEN** one `PutSecretValue` writes the key before any VM is created and the renewals of the VMs that follow write nothing
+
+### Requirement: A reconnected fleet creates VMs with its members' image version
+When a fleet has no pinned image version (no build in this process and no recipe), it SHALL adopt the image version of its newest listed member, in both SDKs, sync and async, and SHALL create new VMs and warm slots with it instead of the image's newest version. A version already pinned SHALL NOT change.
+
+#### Scenario: the newest version of the image is another build
+- **WHEN** a fleet reconnected with `project=` and no recipe has members on versions 1 and 2 and the image's newest version is 3, and it grows by one VM
+- **THEN** the new VM is created with version 2

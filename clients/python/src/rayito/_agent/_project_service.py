@@ -91,6 +91,14 @@ class ProjectService:
         `None` para la más reciente activa."""
         return self._image_version
 
+    def adopt_image_version(self, version: str) -> None:
+        """Fija `version` si el servicio no tenía ninguna: una flota
+        reconectada sin receta crea sus VMs nuevos con la versión de los que
+        ya tiene, nunca con la más reciente de la imagen (que puede ser otro
+        build). Una versión ya fijada no cambia."""
+        if self._image_version is None:
+            self._image_version = version
+
     def build(
         self,
         *,

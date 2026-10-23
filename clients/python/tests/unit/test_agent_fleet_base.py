@@ -28,6 +28,7 @@ from rayito._agent._fleet_base import (
     is_lost,
     lifetime_seconds,
     listed_cap,
+    listed_image_version,
     mark_extras,
     member_of,
     owned_ids,
@@ -389,3 +390,14 @@ def test_a_known_member_becomes_proven_when_a_listing_proves_it() -> None:
     assert (
         member_of(None, MemberListing("b", "SUSPENDED", listed, proven=False), None).proven is False
     )
+
+
+def test_the_newest_member_with_a_version_decides_the_listed_version() -> None:
+    listed = [
+        MemberListing("a", "RUNNING", datetime(2026, 10, 16, 1, tzinfo=UTC), template_version="1"),
+        MemberListing("b", "RUNNING", datetime(2026, 10, 16, 3, tzinfo=UTC), template_version="2"),
+        MemberListing("c", "RUNNING", datetime(2026, 10, 16, 5, tzinfo=UTC)),
+    ]
+
+    assert listed_image_version(listed) == "2"
+    assert listed_image_version([]) is None

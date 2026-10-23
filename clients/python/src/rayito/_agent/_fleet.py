@@ -54,6 +54,7 @@ from rayito._agent._fleet_base import (
     is_lost,
     lifetime_seconds,
     listed_cap,
+    listed_image_version,
     mark_extras,
     member_of,
     new_reservation,
@@ -196,7 +197,12 @@ class SandboxDirectory:
         los avisos salen en el orden de `list-microvms`."""
         sandbox_class = self._sandbox()
         listed = [
-            MemberListing(item.sandbox_id, item.state, item.started_at)
+            MemberListing(
+                item.sandbox_id,
+                item.state,
+                item.started_at,
+                template_version=item.template_version,
+            )
             for item in sandbox_class.list(
                 template=template, states=AGENT_FLEET_LIVE_STATES, **self._options()
             )
@@ -570,6 +576,7 @@ class AgentFleet:
             key=lambda item: item.started_at,
         )
         live = [item for item in listing if item.sandbox_id not in parked]
+        self._adopt_image_version(live)
         with self._lock:
             known = {member.sandbox_id: member for member in self._members}
             lifetime = self._lifetime()
@@ -578,6 +585,15 @@ class AgentFleet:
                 for item in live
             ]
             mark_extras(self._members, self.scaling)
+
+    def _adopt_image_version(self, live: Sequence[MemberListing]) -> None:
+        """Sin versión fijada (ni build en este proceso ni receta), los VMs
+        nuevos se crean con la de los miembros que ya hay
+        (`listed_image_version`)."""
+        version = listed_image_version(live)
+        adopt = getattr(self._service, "adopt_image_version", None)
+        if version is not None and adopt is not None:
+            adopt(version)
 
     def reconcile(self) -> None:
         """Deja la flota dentro de `ScalingOptions`: olvida los VMs perdidos,

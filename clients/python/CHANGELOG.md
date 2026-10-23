@@ -109,6 +109,14 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   clave nueva una vez, antes del primer VM; la ventana sólo limita las
   renovaciones de cada VM nuevo (ADR-034 D9 g). El e2e de Q193 vuelve a
   desplegar sobre un secreto recién creado, sin trucos de reloj.
+- **Una flota reconectada sin receta crea VMs con la versión de sus
+  miembros.** El despliegue ya fijaba la versión que el build creó o
+  reutilizó, pero una flota reconectada con `project=` y sin receta creaba los
+  VMs nuevos con la versión más reciente de la imagen, que puede ser otro
+  build (por ejemplo, uno con otros runtimes). Ahora adopta la versión del
+  miembro más reciente; una versión ya fijada (build, receta) no cambia. El
+  e2e de la CLI de agente despliega con `--no-build` para no construir una
+  versión nueva sobre la imagen compartida de las demás pruebas.
 - **Las variables de `Template.set_envs()` se ven en los comandos.** `rayd`
   arranca cada proceso con un entorno limpio, así que el `ENV` del template
   sólo llegaba al propio `rayd`: `commands.run`, las PTY y `run_code` no las

@@ -312,6 +312,21 @@ export interface MemberListing {
   readonly startedAt: Date;
   /** `false` si el listado no puede probar que el VM es de la flota. */
   readonly proven?: boolean | undefined;
+  /** La versión de la imagen con la que arrancó el VM. */
+  readonly templateVersion?: string | undefined;
+}
+
+/** La versión de imagen del miembro más reciente que la lleva: con la que una
+ * flota reconectada sin receta crea sus VMs nuevos, en vez de la más reciente
+ * de la imagen. */
+export function listedImageVersion(items: readonly MemberListing[]): string | undefined {
+  let newest: MemberListing | undefined;
+  for (const item of items) {
+    if (item.templateVersion && (newest === undefined || item.startedAt > newest.startedAt)) {
+      newest = item;
+    }
+  }
+  return newest?.templateVersion;
 }
 
 /** Los ids de los VMs sondeados cuyas etiquetas son las de un despliegue de

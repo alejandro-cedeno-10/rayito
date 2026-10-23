@@ -283,6 +283,11 @@ pasado el plazo, lanza `CapacityException` (`code = "agent_capacity"`;
   en vez de hacer fallar la llamada; desde 0.17.1. Los VMs `RUNNING` se
   sondean hasta 8 a la vez (`AGENT_FLEET_PROBE_CONCURRENCY`), con los
   resultados y los avisos en el orden del listado.
+- **Versión de la imagen:** los VMs que crea una flota usan la versión que
+  construyó o reutilizó el despliegue, o la de la receta. Una flota
+  reconectada sin receta (`AgentFleet.connect(nombre, project=...)`) usa la
+  del miembro más reciente, nunca la más reciente de la imagen, que puede
+  ser otro build; desde 0.17.1.
 - **Suspender:** `idle` suspende un VM sin uso y lo reanuda al llamarlo; un VM
   suspendido no cobra cómputo, sólo el almacenamiento de su snapshot.
 - **Reiniciar:** si la app del usuario se cae, el host la relanza con espera
