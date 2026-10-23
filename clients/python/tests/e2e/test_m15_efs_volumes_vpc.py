@@ -38,6 +38,11 @@ VPC_ID_VAR = "RAYITO_E2E_VPC_ID"
 SUBNET_IDS_VAR = "RAYITO_E2E_SUBNET_IDS"
 NFS_PORT = 2049
 E2E_TAG_KEY = "rayito:e2e"
+STACK_NAME_PREFIX = "rayito-efs-e2e-"
+#: La etiqueta que CloudFormation pone a cada recurso que crea una pila con el
+#: nombre de la pila: así se reconocen los grupos de otras corridas de este
+#: e2e en la misma VPC, que nacen y se borran mientras corre ésta.
+STACK_NAME_TAG_KEY = "aws:cloudformation:stack-name"
 #: `DeleteFileSystem` es asíncrono: el sistema de ficheros sigue en
 #: `DescribeFileSystems` con `LifeCycleState=deleting` unos segundos antes de
 #: dar `FileSystemNotFound` (medido 2026-10-04, AWS_API_NOTES.md §16 Q126).
@@ -69,12 +74,21 @@ def _canonical(items: Any) -> tuple[str, ...]:
     return tuple(sorted(json.dumps(item, sort_keys=True, default=str) for item in items or []))
 
 
+def e2e_run_group(group: dict[str, Any]) -> bool:
+    """Un grupo de una pila de este e2e (de esta corrida o de otra en
+    paralelo): lleva `E2E_TAG_KEY` o el nombre de pila con
+    `STACK_NAME_PREFIX`. Sus altas y bajas no son cambios de la VPC del
+    llamante."""
+    tags = {tag["Key"]: tag["Value"] for tag in group.get("Tags", [])}
+    return E2E_TAG_KEY in tags or tags.get(STACK_NAME_TAG_KEY, "").startswith(STACK_NAME_PREFIX)
+
+
 def network_snapshot(ec2: Any, vpc_id: str, *, groups_in: set[str] | None = None) -> dict[str, Any]:
     """Lo que la pila no debe tocar nunca: las tablas de rutas, las NACLs
-    y los grupos de seguridad de la VPC. Con `groups_in`, sólo esos grupos
-    (los que ya existían antes del despliegue): un grupo creado entretanto
-    por la pila, o por otro despliegue en la misma VPC, no cuenta como
-    cambio."""
+    y los grupos de seguridad de la VPC, sin los grupos de las pilas de este
+    e2e (`e2e_run_group`), que otra corrida puede crear o borrar mientras
+    tanto. Con `groups_in`, sólo esos grupos (los que ya existían antes del
+    despliegue): un grupo creado entretanto no cuenta como cambio."""
     vpc_filter = [{"Name": "vpc-id", "Values": [vpc_id]}]
     tables = ec2.describe_route_tables(Filters=vpc_filter)["RouteTables"]
     acls = ec2.describe_network_acls(Filters=vpc_filter)["NetworkAcls"]
@@ -95,7 +109,7 @@ def network_snapshot(ec2: Any, vpc_id: str, *, groups_in: set[str] | None = None
                 _canonical(g.get("IpPermissionsEgress")),
             )
             for g in groups
-            if groups_in is None or g["GroupId"] in groups_in
+            if not e2e_run_group(g) and (groups_in is None or g["GroupId"] in groups_in)
         ),
     }
 
@@ -104,7 +118,7 @@ def network_snapshot(ec2: Any, vpc_id: str, *, groups_in: set[str] | None = None
 def efs_volumes(e2e_settings: E2ESettings) -> Iterator[EfsVolumes]:
     """Una pila con nombre (y conector) propio de esta ejecución, borrada
     con su sistema de ficheros al final pase lo que pase."""
-    name = f"rayito-efs-e2e-{uuid.uuid4().hex[:8]}"
+    name = f"{STACK_NAME_PREFIX}{uuid.uuid4().hex[:8]}"
     volumes = EfsVolumes(stack_name=name, region=e2e_settings.region)
     yield volumes
     volumes.destroy(delete_file_system=True)
