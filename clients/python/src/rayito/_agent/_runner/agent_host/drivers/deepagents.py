@@ -830,7 +830,10 @@ def _forward(emitter: Emitter, event: Mapping[str, Any]) -> None:
 
 class Driver:
     """El driver de deepagents del host. `warm()` importa deepagents para que
-    la primera invocación del servicio no pague el import. Entiende
+    la primera invocación del servicio no pague el import y, con
+    `entrypoint`, importa tu módulo y busca el atributo: un `--entry` que no
+    existe falla al arrancar el servicio (`entrypoint_not_found`, y el
+    despliegue con él) y no en la primera invocación. Entiende
     `Request.input` (`accepts_input`)."""
 
     accepts_input = True
@@ -840,6 +843,11 @@ class Driver:
 
     def warm(self) -> None:
         importlib.import_module("deepagents")
+        entrypoint = self._config.get("entrypoint")
+        if entrypoint:
+            load_entrypoint(
+                str(entrypoint), str(self._config.get("workdir") or ""), self._config.get("app_dir")
+            )
 
     def run(self, request: Request, emit: Emit, state: RunState) -> None:
         execute(self._config, request, emit, state)

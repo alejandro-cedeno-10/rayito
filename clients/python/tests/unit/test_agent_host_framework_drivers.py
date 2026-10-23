@@ -383,6 +383,22 @@ def test_strands_entrypoint_instance_and_factory(
         _collect(strands.create(missing), _request())
 
 
+def test_strands_warm_fails_on_an_entrypoint_that_does_not_exist(
+    fake_strands: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = fake_strands["tmp"] / "app"
+    app.mkdir()
+    (app / "agente_warm.py").write_text("def build(ctx):\n    return None\n")
+    config = _strands_config(fake_strands["tmp"], entrypoint="agente_warm:build")
+
+    strands.create(config).warm()
+    with pytest.raises(AgentFailure, match="entrypoint_not_found"):
+        strands.create(config | {"entrypoint": "agente_warm:no_existe"}).warm()
+    with pytest.raises(AgentFailure, match="entrypoint_not_found"):
+        strands.create(config | {"entrypoint": "modulo_que_no_existe:build"}).warm()
+    monkeypatch.delitem(sys.modules, "agente_warm")
+
+
 def test_strands_serves_concurrent_sessions_of_a_shared_agent_one_at_a_time(
     fake_strands: dict[str, Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -859,6 +875,84 @@ def test_node_callable_driver_is_the_command_driver_over_the_node_bridge(
     assert driver._config["workdir"] == "/home/user"
     with pytest.raises(AgentFailure, match="invalid_input"):
         module.create({"bridge": "x"})
+
+
+def _bridge_driver(tmp_path: Path, entrypoint: str | None) -> Any:
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "bridge": str(tmp_path / "bridge.py"),
+                "adapter": "strands",
+                "workdir": str(tmp_path),
+                "entrypoint": entrypoint,
+            }
+        )
+    )
+    return node_callable.create({"config_path": str(config_path)})
+
+
+def test_node_callable_warm_checks_the_entrypoint_with_the_bridge(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`warm()` lanza el puente con `--check-entry`; un `agent_failed` suyo es
+    el fallo del arranque (aquí el puente es un doble en Python)."""
+    calls: list[list[str]] = []
+
+    def run(argv: list[str], **_: Any) -> subprocess.CompletedProcess[bytes]:
+        calls.append(argv)
+        failed = b'{"v":1,"type":"agent_failed","detail_code":"entrypoint_not_found"}\n'
+        missing = "falta.mjs" in json.loads(Path(argv[2]).read_text())["entrypoint"]
+        return subprocess.CompletedProcess(argv, 1 if missing else 0, failed if missing else b"")
+
+    monkeypatch.setattr(subprocess, "run", run)
+    _bridge_driver(tmp_path, "agent.mjs#agent").warm()
+    assert calls[-1][-1] == node_callable.CHECK_ENTRY_FLAG
+    with pytest.raises(AgentFailure, match="entrypoint_not_found"):
+        _bridge_driver(tmp_path, "falta.mjs#agent").warm()
+    calls.clear()
+    _bridge_driver(tmp_path, None).warm()
+    assert calls == []
+
+
+def test_node_callable_warm_has_a_code_without_an_agent_failed_line(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def run(argv: list[str], **_: Any) -> subprocess.CompletedProcess[bytes]:
+        return subprocess.CompletedProcess(argv, 1, b"no json\n")
+
+    monkeypatch.setattr(subprocess, "run", run)
+    with pytest.raises(AgentFailure, match=node_callable.CHECK_ENTRY_FAILED):
+        _bridge_driver(tmp_path, "agent.mjs").warm()
+
+    def slow(argv: list[str], **_: Any) -> subprocess.CompletedProcess[bytes]:
+        raise subprocess.TimeoutExpired(argv, node_callable.CHECK_ENTRY_TIMEOUT_SECONDS)
+
+    monkeypatch.setattr(subprocess, "run", slow)
+    with pytest.raises(AgentFailure, match=node_callable.CHECK_ENTRY_TIMEOUT):
+        _bridge_driver(tmp_path, "agent.mjs").warm()
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="sin node en el PATH")
+def test_the_real_bridge_check_entry_finds_a_missing_export(tmp_path: Path) -> None:
+    bridge = Path(strands.__file__).parents[3] / "_assets" / "node_bridge.mjs"
+    (tmp_path / "agent.mjs").write_text("export const agent = {};\n")
+    for entrypoint, ok in (
+        ("agent.mjs#agent", True),
+        ("agent.mjs#otro", False),
+        ("no-existe.mjs", False),
+    ):
+        config = tmp_path / "config.json"
+        config.write_text(json.dumps({"entrypoint": entrypoint, "app_dir": str(tmp_path)}))
+        outcome = subprocess.run(
+            ["node", str(bridge), str(config), node_callable.CHECK_ENTRY_FLAG],
+            capture_output=True,
+            timeout=60,
+            check=False,
+        )
+        assert (outcome.returncode == 0) is ok, entrypoint
+        if not ok:
+            assert node_callable.failed_detail(outcome.stdout) == "entrypoint_not_found"
 
 
 def test_the_default_adapter_is_the_one_the_bridge_uses() -> None:

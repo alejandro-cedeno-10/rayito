@@ -32,7 +32,7 @@
 // permisos de herramienta sólo los aplica `strands`. Sólo usa la biblioteca
 // estándar de Node y el SDK que instala el gestor de paquetes de tu proyecto.
 
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import Module from "node:module";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -51,6 +51,9 @@ export const DEFAULT_ADAPTER = "strands";
 export const GATEWAY_ENDPOINT_ENV = "AWS_ENDPOINT_URL_BEDROCK_RUNTIME";
 export const GRAPH_STREAM_MODE = "updates";
 export const ENTRYPOINT_SEPARATOR = "#";
+// `node node_bridge.mjs <config> --check-entry`: sólo importa el punto de
+// entrada y sale (0 si existe), para que el host lo compruebe al arrancar.
+export const CHECK_ENTRY_FLAG = "--check-entry";
 export const HISTORY_MAX_MESSAGES = 200;
 export const SESSION_FILE_MODE = 0o600;
 export const SESSION_DIR_MODE = 0o700;
@@ -453,6 +456,37 @@ export async function loadTarget(config, preferred, importModule = (name) => imp
     }
   }
   return module.default;
+}
+
+// Comprueba `config.entrypoint` sin ejecutar ninguna petición: el fichero
+// existe y se importa y, con `#nombre`, esa exportación existe. Un fichero que
+// no existe o una exportación que falta es `entrypoint_not_found`; cualquier
+// otro fallo del import sale tal cual (lo clasifica `classify`).
+export async function checkEntry(config, importModule = (name) => import(name)) {
+  if (!config.entrypoint) {
+    return;
+  }
+  const { path, exportName } = parseEntrypoint(config.entrypoint);
+  const file = resolve(String(config.app_dir), path);
+  if (!existsSync(file)) {
+    throw new BridgeError("entrypoint_not_found");
+  }
+  const module = await importModule(pathToFileURL(file).href);
+  if (exportName && module[exportName] === undefined) {
+    throw new BridgeError("entrypoint_not_found");
+  }
+}
+
+// El modo `--check-entry`: escribe `agent_failed` con el motivo si el punto de
+// entrada no sirve y deja el código de salida del proceso en 1.
+export async function checkEntryMain(config, emit) {
+  try {
+    await checkEntry(config);
+  } catch (error) {
+    const [reason, detail] = classify(error);
+    emit(event("agent_failed", { reason, detail_code: detail }));
+    process.exitCode = 1;
+  }
 }
 
 // Sin id de modelo (lo elige tu código), `model` y `modelId` llegan como
@@ -1148,6 +1182,10 @@ export async function main(argv) {
   let request;
   try {
     config = JSON.parse(readFileSync(argv[2], "utf8"));
+    if (argv[3] === CHECK_ENTRY_FLAG) {
+      await checkEntryMain(config, emit);
+      return;
+    }
     request = JSON.parse(readStdin());
   } catch {
     emit(event("agent_failed", { reason: "protocol_error", detail_code: "invalid_input" }));
