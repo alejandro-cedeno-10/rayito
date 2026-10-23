@@ -45,6 +45,7 @@ import {
   isReconnectable,
   isSandboxTimeout,
   isStreamReset,
+  retryUnestablished,
   translateRpcError,
 } from "../transport/errors.js";
 import { type CallMetadataProvider, proxyAuthInterceptor } from "../transport/headers.js";
@@ -400,7 +401,7 @@ export class SandboxCore {
 
   async callUnaryOnce<T>(call: () => Promise<T>): Promise<T> {
     try {
-      return await call();
+      return await retryUnestablished(call);
     } catch (error) {
       if (!isProxyForbidden(error)) {
         throw error;
@@ -605,7 +606,7 @@ export class SandboxCore {
     signal: AbortSignal | undefined,
   ): Promise<OpenedStream<T>> {
     try {
-      return await this.#firstMessage(start, client, allowEmpty, signal);
+      return await retryUnestablished(() => this.#firstMessage(start, client, allowEmpty, signal));
     } catch (error) {
       if (!isProxyForbidden(error)) {
         throw error;

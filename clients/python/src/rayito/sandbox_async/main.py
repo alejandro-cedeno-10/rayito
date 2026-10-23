@@ -227,6 +227,7 @@ from rayito._transport import (
     is_reconnectable,
     is_sandbox_timeout,
     is_stream_reset,
+    retry_unestablished_async,
     rpc_status,
     translate_rpc_error,
 )
@@ -2164,7 +2165,7 @@ class AsyncSandbox:
 
     async def _call_unary_once(self, call: Callable[[], Awaitable[T]]) -> T:
         try:
-            return await call()
+            return await retry_unestablished_async(call)
         except grpc.RpcError as exc:
             if not is_proxy_forbidden(exc):
                 raise
@@ -2291,7 +2292,9 @@ class AsyncSandbox:
         self, start: StreamStarter, stub: Any, allow_empty: bool
     ) -> tuple[Any, Any]:
         try:
-            return await first_stream_message_async(start(stub), allow_empty=allow_empty)
+            return await retry_unestablished_async(
+                lambda: first_stream_message_async(start(stub), allow_empty=allow_empty)
+            )
         except grpc.RpcError as exc:
             if not is_proxy_forbidden(exc):
                 raise

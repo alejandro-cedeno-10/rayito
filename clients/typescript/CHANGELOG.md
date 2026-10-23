@@ -111,6 +111,13 @@ versionado [SemVer](https://semver.org/lang/es/).
   miembro más reciente; una versión ya fijada (build, receta) no cambia. El
   e2e de la CLI de agente despliega con `--no-build` para no construir una
   versión nueva sobre la imagen compartida de las demás pruebas.
+- **Un RPC cuya conexión no llegó a abrirse se repite.** Justo tras
+  `create()` o `resume()`, el primer RPC por una conexión nueva fallaba a
+  veces con `UNAVAILABLE` porque el proxy no llegó a mandar su `SETTINGS`
+  (o, en TypeScript, el `connect` falló). Como la petición nunca salió del
+  cliente, los unarios y la apertura de cada stream (también `run_code`, que
+  tras otros cortes no se repite) se reintentan hasta tres veces con 0,25,
+  0,5 y 1 s de espera; cualquier otro error sale al primer intento.
 - **Las variables de `Template.setEnvs()` se ven en los comandos.** `rayd`
   arranca cada proceso con un entorno limpio, así que el `ENV` del template
   sólo llegaba al propio `rayd`: `commands.run`, las PTY y `runCode` no las
