@@ -73,8 +73,9 @@ const ROUTE_PORT = 8000;
 // Suficiente para que la suite entera corra sin que la ruta caduque sola
 // (T25); muy por debajo de MAX_TEST_SANDBOX_TIMEOUT_MS.
 const ROUTE_TTL_SECONDS = 1800;
-// TTL corto del test de caducidad: lo justo para verla servir antes.
-const SHORT_ROUTE_TTL_SECONDS = 30;
+// TTL corto del test de caducidad: deja ver la ruta (STABLE_OBSERVATIONS
+// respuestas seguidas más la propagación) y servir antes de que venza.
+const SHORT_ROUTE_TTL_SECONDS = 90;
 const HTTPS_PORT = 443;
 const HTTP_REQUEST_TIMEOUT_MS = 20_000;
 const WEBSOCKET_HANDSHAKE_TIMEOUT_MS = 20_000;

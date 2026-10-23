@@ -35,6 +35,7 @@ from rayito._agent._fleet_base import (
     AGENT_FLEET_SESSION_LABEL,
     AGENT_FLEET_START_CONCURRENCY,
     AGENT_VM_LOST_CODE,
+    LISTING_CONTROL_PLANE_ERRORS,
     UNMANAGED_LIFETIME_MESSAGE,
     UNREADABLE_MEMBER_MESSAGE,
     FleetLifetime,
@@ -148,11 +149,15 @@ class AsyncSandboxDirectory:
     async def _probe(self, sandbox_class: Any, sandbox_id: str) -> Any | None:
         """La `SandboxInfo` con metadatos de un VM `RUNNING`
         (`get_info(sandbox_id)`: `get-microvm` más un `Health` sin token), o
-        `None` si su sonda falla o ya no está `RUNNING`: un VM que la
+        `None` si su `Health` falla, ya no existe o ya no está `RUNNING`
+        (una limitación o un plazo de `get-microvm` sí hacen fallar el
+        listado): un VM que la
         plataforma aún lista pero cuyo `rayd` ya salió no tumba el listado
         de toda la flota."""
         try:
             info = await sandbox_class.get_info(sandbox_id, **self._options())
+        except LISTING_CONTROL_PLANE_ERRORS:
+            raise
         except SandboxException as exc:
             logger.warning(UNREADABLE_MEMBER_MESSAGE, sandbox_id, type(exc).__name__)
             return None

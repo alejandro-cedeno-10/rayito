@@ -52,7 +52,9 @@ export const GATEWAY_ENDPOINT_ENV = "AWS_ENDPOINT_URL_BEDROCK_RUNTIME";
 export const GRAPH_STREAM_MODE = "updates";
 export const ENTRYPOINT_SEPARATOR = "#";
 // `node node_bridge.mjs <config> --check-entry`: sólo importa el punto de
-// entrada y sale (0 si existe), para que el host lo compruebe al arrancar.
+// entrada y sale (0 si existe, 1 si no o si la configuración no se lee), aunque
+// el módulo deje temporizadores o servidores abiertos, para que el host lo
+// compruebe al arrancar.
 export const CHECK_ENTRY_FLAG = "--check-entry";
 export const HISTORY_MAX_MESSAGES = 200;
 export const SESSION_FILE_MODE = 0o600;
@@ -1184,11 +1186,14 @@ export async function main(argv) {
     config = JSON.parse(readFileSync(argv[2], "utf8"));
     if (argv[3] === CHECK_ENTRY_FLAG) {
       await checkEntryMain(config, emit);
-      return;
+      process.exit(process.exitCode ?? 0);
     }
     request = JSON.parse(readStdin());
   } catch {
     emit(event("agent_failed", { reason: "protocol_error", detail_code: "invalid_input" }));
+    if (argv[3] === CHECK_ENTRY_FLAG) {
+      process.exitCode = 1;
+    }
     return;
   }
   if (!validRequest(request)) {
