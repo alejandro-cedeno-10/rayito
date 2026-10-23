@@ -126,6 +126,13 @@ COMPATIBILITY: tuple[CompatibilityRow, ...] = (
         "estructurada y --graph, secretos como variables de entorno y el protocolo "
         "langgraph-api) se valida con el rayd del tag rayd-v0.16.0",
     ),
+    CompatibilityRow(
+        "0.17",
+        "0.17.0",
+        "0.17: la receta de flota (connect por nombre), el scale-in real de las VMs extra "
+        "y la renovación de claves sólo a petición explícita se validan con el rayd del tag "
+        "rayd-v0.17.0",
+    ),
 )
 
 
