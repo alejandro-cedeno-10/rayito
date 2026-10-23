@@ -34,6 +34,21 @@ update now goes through it. So on an update `setup` sends the stack's
 current tags (without the fixed `rayito:` ones and the reserved `aws:` ones)
 with the `--tag` ones on top; the fixed tags still win.
 
+Updating a stack created with the template of 0.6.1 or earlier rolled back
+in the AWS regression: 0.7.0 changed the `Description` of `CallerPolicy`,
+IAM cannot change a policy's description, so CloudFormation replaces it,
+and the replacement collides with its own fixed `ManagedPolicyName`
+(`AWS_API_NOTES.md` §21, measured with a change set). The template keeps
+both descriptions byte for byte behind a new `LegacyCallerPolicy`
+parameter (`"false"` by default). `setup` sends the value the stack already
+has; a stack without it gets `"true"` when it also lacks the
+`SandboxLauncherPolicyArn` output (added together with the new description
+in 0.7.0, and already in `DescribeStacks`), `"false"` otherwise, and a new
+stack `"false"`. Rejected: renaming the policy (a replacement detaches it
+from every user, group and role that has it) and reading the description
+with `iam:GetPolicy` (a new call and a new permission for a value the
+outputs already tell).
+
 ### D2. Only the token file this run created is removed
 
 `deploy_token` already refuses an existing `--token-file`, so a file that

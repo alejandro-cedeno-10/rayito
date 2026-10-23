@@ -47,6 +47,7 @@ const OTHER_PARAMETERS = [
   "TransferPrefix",
 ];
 const BUILD_STEP_MS = 10;
+const LAUNCHER_POLICY = "arn:aws:iam::123456789012:policy/rayito-m0-launcher-us-east-1";
 
 const clock: SetupClock = (() => {
   let now = 0;
@@ -92,10 +93,12 @@ describe("sdkIamStack", () => {
     expect(provisioner.sentParameters).toEqual({
       ArtifactBucket: BUCKET,
       TemplateFingerprint: fingerprint,
+      LegacyCallerPolicy: "false",
     });
     expect(observed.parameters).toEqual({
       ArtifactBucket: BUCKET,
       TemplateFingerprint: fingerprint,
+      LegacyCallerPolicy: "false",
     });
   });
 
@@ -104,7 +107,7 @@ describe("sdkIamStack", () => {
     provisioner.stacks.set(IAM_STACK_NAME, {
       name: IAM_STACK_NAME,
       state: "CREATE_COMPLETE",
-      outputs: {},
+      outputs: { SandboxLauncherPolicyArn: LAUNCHER_POLICY },
       parameters: Object.fromEntries(
         ["ArtifactBucket", ...OTHER_PARAMETERS].map((name) => [name, "x"]),
       ),
@@ -113,10 +116,41 @@ describe("sdkIamStack", () => {
     expect(provisioner.sentParameters).toEqual({
       ArtifactBucket: BUCKET_B,
       TemplateFingerprint: await templateFingerprint(IAM_STACK_COMPONENT),
+      LegacyCallerPolicy: "false",
     });
     expect(provisioner.sentKeepPrevious).toEqual(OTHER_PARAMETERS);
     expect(provisioner.calls.map(([name]) => name)).not.toContain("create");
   });
+
+  // Medido en AWS real (AWS_API_NOTES.md §21): con otra descripción,
+  // CloudFormation sustituye CallerPolicy, la nueva choca con su nombre fijo
+  // y la actualización se revierte.
+  it("an update of a stack of the 0.6 template keeps the CallerPolicy description", async () => {
+    const provisioner = new FakeStackProvisioner();
+    provisioner.stacks.set(IAM_STACK_NAME, {
+      name: IAM_STACK_NAME,
+      state: "UPDATE_COMPLETE",
+      outputs: { BuildRoleArn: BUILD_ROLE },
+      parameters: { ArtifactBucket: BUCKET },
+    });
+    await sdkIamStack(provisioner).updateBucket(BUCKET, {});
+    expect(provisioner.sentParameters).toMatchObject({ LegacyCallerPolicy: "true" });
+  });
+
+  it.each(["true", "false"])(
+    "an update keeps the LegacyCallerPolicy value %s the stack already has",
+    async (value) => {
+      const provisioner = new FakeStackProvisioner();
+      provisioner.stacks.set(IAM_STACK_NAME, {
+        name: IAM_STACK_NAME,
+        state: "UPDATE_COMPLETE",
+        outputs: { BuildRoleArn: BUILD_ROLE },
+        parameters: { ArtifactBucket: BUCKET, LegacyCallerPolicy: value },
+      });
+      await sdkIamStack(provisioner).updateBucket(BUCKET, {});
+      expect(provisioner.sentParameters).toMatchObject({ LegacyCallerPolicy: value });
+    },
+  );
 
   it("sends the caller's tags on create and on update", async () => {
     const provisioner = new FakeStackProvisioner();

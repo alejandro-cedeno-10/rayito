@@ -858,7 +858,11 @@ rayito setup --tag Owner=platform --tag Project=agents
   this SDK's template (the other parameters keep their value). Since 0.17.1 a
   stack from an earlier version, or deployed by hand, is updated this way even
   if the bucket does not change: the plan says «actualizar a la plantilla
-  infra/iam.yaml de este SDK» and `previousBucket` is `null`. A stack that a
+  infra/iam.yaml de este SDK» and `previousBucket` is `null`. A stack created
+  with the template of 0.6.1 or earlier gets `LegacyCallerPolicy=true`, which
+  keeps the description `CallerPolicy` was created with: IAM cannot change it
+  and CloudFormation would replace the policy, whose fixed name collides with
+  itself (the update would roll back). A stack that a
   **newer** Rayito deployed (its `rayito:sdk-version` tag) never goes back to
   this SDK's template: with the same bucket it is `reuse` («ya existe (…) con
   la plantilla de Rayito X, más nuevo que este SDK: se conserva»,

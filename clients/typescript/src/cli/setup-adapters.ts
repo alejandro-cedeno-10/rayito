@@ -18,6 +18,8 @@ import {
   IAM_STACK_NAME,
   type ImageGateResult,
   type ImageObservation,
+  LEGACY_CALLER_POLICY_PARAMETER,
+  legacyCallerPolicy,
   type PublishedImage,
   preservedStackTags,
   type StackObservation,
@@ -107,6 +109,7 @@ export class SdkSetupStack implements IamStackGateway, ArtifactStackGateway {
   readonly #stackName: string;
   readonly #bucketParameter: string;
   readonly #fingerprintParameter: string | undefined;
+  readonly #legacyParameter: string | undefined;
   readonly #waitTimeoutMs: number;
 
   constructor(
@@ -118,6 +121,8 @@ export class SdkSetupStack implements IamStackGateway, ArtifactStackGateway {
       readonly bucketParameter: string;
       /** Si la plantilla lo declara, el parámetro con su sha256. */
       readonly fingerprintParameter?: string;
+      /** Si la plantilla lo declara, el parámetro con `legacyCallerPolicy` de la pila actual. */
+      readonly legacyParameter?: string;
       readonly waitTimeoutMs?: number;
     },
   ) {
@@ -127,6 +132,7 @@ export class SdkSetupStack implements IamStackGateway, ArtifactStackGateway {
     this.#stackName = options.stackName;
     this.#bucketParameter = options.bucketParameter;
     this.#fingerprintParameter = options.fingerprintParameter;
+    this.#legacyParameter = options.legacyParameter;
     this.#waitTimeoutMs = options.waitTimeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS;
   }
 
@@ -142,13 +148,13 @@ export class SdkSetupStack implements IamStackGateway, ArtifactStackGateway {
   }
 
   create(bucket: string, tags: StackTags): Promise<StackObservation> {
-    return this.#deployBucket(bucket, tags);
+    return this.#deployBucket(bucket, tags, undefined);
   }
 
   /** Vuelve a mandar las etiquetas que la pila ya tenía, con `tags` por encima: `UpdateStack` sustituye la lista entera. */
   async updateBucket(bucket: string, tags: StackTags): Promise<StackObservation> {
     const current = await this.observe();
-    return this.#deployBucket(bucket, preservedStackTags(current.tags ?? {}, tags));
+    return this.#deployBucket(bucket, preservedStackTags(current.tags ?? {}, tags), current);
   }
 
   /** Una pila que desaparece durante la espera es un fallo, como en Python. */
@@ -164,11 +170,18 @@ export class SdkSetupStack implements IamStackGateway, ArtifactStackGateway {
     return observed;
   }
 
-  /** `deploy` crea o actualiza según exista la pila; manda el bucket y, si la pila lo declara, el sha256 de la plantilla. */
-  async #deployBucket(bucket: string, tags: StackTags): Promise<StackObservation> {
+  /** `deploy` crea o actualiza según exista la pila; manda el bucket y, si la pila los declara, el sha256 de la plantilla y `LegacyCallerPolicy`. */
+  async #deployBucket(
+    bucket: string,
+    tags: StackTags,
+    current: StackObservation | undefined,
+  ): Promise<StackObservation> {
     const parameters: Record<string, string> = { [this.#bucketParameter]: bucket };
     if (this.#fingerprintParameter !== undefined) {
       parameters[this.#fingerprintParameter] = await this.templateFingerprint();
+    }
+    if (this.#legacyParameter !== undefined) {
+      parameters[this.#legacyParameter] = legacyCallerPolicy(current);
     }
     const status = await this.#stacks.deploy(this.#component, {
       stackName: this.#stackName,
@@ -180,13 +193,14 @@ export class SdkSetupStack implements IamStackGateway, ArtifactStackGateway {
   }
 }
 
-/** La pila de IAM `rayito-m0-iam`, que recibe `ArtifactBucket` y el sha256 de su plantilla como `TemplateFingerprint`. */
+/** La pila de IAM `rayito-m0-iam`, que recibe `ArtifactBucket`, el sha256 de su plantilla como `TemplateFingerprint` y `LegacyCallerPolicy` según la plantilla con la que se creó. */
 export function sdkIamStack(provisioner: StackProvisioner): SdkSetupStack {
   return new SdkSetupStack(provisioner, {
     component: IAM_STACK_COMPONENT,
     stackName: IAM_STACK_NAME,
     bucketParameter: ARTIFACT_BUCKET_PARAMETER,
     fingerprintParameter: TEMPLATE_FINGERPRINT_PARAMETER,
+    legacyParameter: LEGACY_CALLER_POLICY_PARAMETER,
   });
 }
 

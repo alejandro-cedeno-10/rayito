@@ -26,7 +26,13 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   el error nuevo `stack_newer` (salida 2). Al actualizar la pila, `setup`
   vuelve a mandar las etiquetas que ya tenía, con las de `--tag` por encima,
   porque `UpdateStack` sustituye la lista entera. `StackStatus` gana `tags`
-  (las de `DescribeStacks`).
+  (las de `DescribeStacks`). Una pila creada con la plantilla de 0.6.1 o
+  anterior se actualiza sin revertirse: la plantilla gana el parámetro
+  `LegacyCallerPolicy`, que conserva la descripción original de
+  `CallerPolicy` (IAM no la cambia y CloudFormation sustituía la política,
+  que chocaba con su propio nombre fijo y dejaba la pila en
+  `UPDATE_ROLLBACK_COMPLETE`), y `setup` lo pone a `true` en una pila sin la
+  salida `SandboxLauncherPolicyArn`.
 - **Un `--token-file` que dejó un `rayito agent deploy` fallido ya no bloquea
   el reintento.** El fichero se escribe antes del build; si el despliegue falla
   antes de que exista la flota (build, arranque del host, una confirmación

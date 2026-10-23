@@ -1023,6 +1023,25 @@ desplegó por última vez. `UpdateStack` con `Tags` sustituye la lista entera:
 que la pila ya tenía (salvo las `rayito:` fijas y las `aws:` reservadas),
 con las de `--tag` por encima.
 
+**Cambiar la descripción de una `AWS::IAM::ManagedPolicy` la sustituye, y
+con `ManagedPolicyName` fijo la actualización se revierte** (medido el
+2026-10-23 en us-east-1 sobre una pila `rayito-m0-iam` creada con la
+plantilla de 0.6.1 o anterior). IAM no tiene llamada para cambiar la
+descripción de una política, así que `Description` es «Update requires:
+Replacement» (<https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-iam-managedpolicy.html>,
+consultado el 2026-10-23). CloudFormation crea la nueva antes de borrar la
+vieja y la crea con el mismo nombre: IAM contesta 409 («A policy called
+rayito-m0-caller-<región> already exists», `HandlerErrorCode: AlreadyExists`
+en el evento de la pila): la pila termina en
+`UPDATE_ROLLBACK_COMPLETE` sin cambios. Un `CreateChangeSet` sobre esa pila
+lo confirma: con la descripción de 0.6.1, `CallerPolicy` sale como `Modify`
+con `Replacement: False`; con la de 0.7.0 en adelante, `Replacement: True`.
+Por eso `infra/iam.yaml` conserva las dos descripciones byte a byte
+(parámetro `LegacyCallerPolicy`) y `rayito setup` manda `"true"` a una pila
+sin ese parámetro ni la salida `SandboxLauncherPolicyArn` (la plantilla
+anterior a 0.7.0), el valor que ya tenga a cualquier otra, y `"false"` al
+crearla.
+
 `Parameters`/`Tags` siempre se mandan ordenados por clave (determinismo de
 los tests, nunca un requisito de la API). `Tags` siempre incluye las tres
 etiquetas fijas de `stackTags` (`rayito:component`, `rayito:managed-by`,
@@ -2181,7 +2200,7 @@ parámetros. Consultado el 2026-10-19.
 |---|---|---|
 | Cuenta | `GetCallerIdentity` (`Account`) | §21, tabla de `GetCallerIdentity` |
 | Pila de IAM, lectura | `DescribeStacks` (`Stacks[0].{StackStatus, Outputs, Parameters, Tags}`; ausencia = `ValidationError` con «does not exist») | §21 |
-| Pila de IAM, escritura | `CreateStack` / `UpdateStack` con `Capabilities=["CAPABILITY_NAMED_IAM"]`; sólo `ArtifactBucket` como parámetro propio, el resto con el valor por defecto o `UsePreviousValue`; la espera sondea `DescribeStacks` | §21 |
+| Pila de IAM, escritura | `CreateStack` / `UpdateStack` con `Capabilities=["CAPABILITY_NAMED_IAM"]`; como parámetros propios sólo `ArtifactBucket`, `TemplateFingerprint` y `LegacyCallerPolicy`, el resto con el valor por defecto o `UsePreviousValue`; la espera sondea `DescribeStacks` | §21 |
 | Bucket, lectura | `HeadBucket` hasta tres veces, una por candidato (`--bucket`/`RAYITO_BUCKET`; el `ArtifactBucket` de la pila de IAM; el de `cdk bootstrap`; o, sin ninguno, el nombre por defecto). La región sale de `x-amz-bucket-region`, como en la comprobación `bucket` de `rayito doctor`. 200 = existe y es accesible; 404 (`NoSuchBucket`, `NotFound`) = no existe; 403 = existe sin acceso (S3 no distingue ausente de ajeno); cualquier otro error se propaga | «Despliegue de agentes de cero configuración» y `docs/site/docs/cli.md` |
 | Bucket, creación | `DescribeStacks` y `CreateStack` sobre `rayito-m0-artifacts` con la plantilla `infra/artifact-bucket.yaml` y **sólo** `BucketName` como parámetro (`ArtifactExpirationDays` queda en su valor por defecto); **sin `Capabilities`** (la plantilla no crea recursos IAM); la espera sondea `DescribeStacks` y la salida `BucketName` es el bucket. El SDK no llama a `CreateBucket`: lo hace CloudFormation con las credenciales del llamante | §21 |
 | Imagen, lectura | `GetMicrovmImage` y `ListMicrovmImageVersions` (`items[].{imageVersion, state, status, createdAt}`) | §4 y §30 |

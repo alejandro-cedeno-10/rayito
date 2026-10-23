@@ -7,6 +7,7 @@
 - [x] 1.5 Docs (es/en) and changelogs
 - [x] 1.6 Keep a stack of a newer SDK (`rayito:sdk-version` tag, `stackSdkVersion`, `stack_newer`) with shared vectors and a CLI case
 - [x] 1.7 An update sends the stack's own tags under `--tag`; `DescribeStacks` `Tags` in `AWS_API_NOTES.md` §21
+- [x] 1.8 `LegacyCallerPolicy` keeps the 0.6.1 `CallerPolicy` description so an old stack updates without a replacement; measured in `AWS_API_NOTES.md` §21, tests in both SDKs, docs and changelogs
 
 ## 2. Token file of a failed deploy
 

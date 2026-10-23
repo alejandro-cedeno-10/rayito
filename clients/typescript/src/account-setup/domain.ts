@@ -51,6 +51,21 @@ export const ARTIFACT_BUCKET_PARAMETER = "ArtifactBucket";
  */
 export const TEMPLATE_FINGERPRINT_PARAMETER = "TemplateFingerprint";
 /**
+ * Parámetro de `infra/iam.yaml` que conserva la descripción original de
+ * `CallerPolicy` (`"true"`) en una pila creada con la plantilla de 0.6.1 o
+ * anterior. IAM no cambia la descripción de una política gestionada:
+ * CloudFormation la sustituye y la nueva choca con su propio nombre fijo
+ * (`AWS_API_NOTES.md` §21), así que la actualización se revierte. Espejo de
+ * `LEGACY_CALLER_POLICY_PARAMETER`.
+ */
+export const LEGACY_CALLER_POLICY_PARAMETER = "LegacyCallerPolicy";
+/**
+ * Salida que sólo tiene una pila de la plantilla de 0.7.0 o posterior (la que
+ * añadió `SandboxLauncherPolicy` y la descripción actual de `CallerPolicy`).
+ * Espejo de `LAUNCHER_POLICY_OUTPUT_KEY`.
+ */
+export const LAUNCHER_POLICY_OUTPUT_KEY = "SandboxLauncherPolicyArn";
+/**
  * Los tres números de una versión del SDK (`0.17.1`, `0.18.0-rc.1` -> 0, 18,
  * 0): lo que se compara con la etiqueta `rayito:sdk-version` de la pila.
  * Espejo de `RELEASE_NUMBERS_PATTERN`.
@@ -779,6 +794,24 @@ export function preservedStackTags(
     ([key]) => !FIXED_TAG_KEYS.includes(key) && !key.startsWith(AWS_RESERVED_TAG_PREFIX),
   );
   return { ...Object.fromEntries(kept), ...requested };
+}
+
+/**
+ * El valor de `LegacyCallerPolicy` que `rayito setup` manda al crear o
+ * actualizar la pila de IAM: el que ya lleva, si lo tiene; `"true"` para una
+ * pila sin él ni la salida `SandboxLauncherPolicyArn` (la plantilla de 0.6.1 o
+ * anterior, cuya `CallerPolicy` conserva así su descripción), y `"false"` para
+ * una pila nueva o de 0.7.0 en adelante. Espejo de `legacy_caller_policy`.
+ */
+export function legacyCallerPolicy(stack: StackObservation | undefined): string {
+  if (stack === undefined || stack.status === undefined) {
+    return "false";
+  }
+  const current = stack.parameters[LEGACY_CALLER_POLICY_PARAMETER];
+  if (current !== undefined) {
+    return current;
+  }
+  return LAUNCHER_POLICY_OUTPUT_KEY in stack.outputs ? "false" : "true";
 }
 
 function createdAtMs(item: ImageVersionItem): number {

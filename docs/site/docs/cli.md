@@ -844,7 +844,11 @@ rayito setup --tag Owner=platform --tag Project=agents
   plantilla de este SDK (los demás parámetros conservan su valor). Desde
   0.17.1 una pila de una versión anterior, o desplegada a mano, se actualiza
   así aunque el bucket no cambie: el plan dice «actualizar a la plantilla
-  infra/iam.yaml de este SDK» y `previousBucket` es `null`. Una pila que
+  infra/iam.yaml de este SDK» y `previousBucket` es `null`. Una pila creada
+  con la plantilla de 0.6.1 o anterior recibe `LegacyCallerPolicy=true`, que
+  deja a `CallerPolicy` la descripción con la que se creó: IAM no la puede
+  cambiar y CloudFormation sustituiría la política, cuyo nombre fijo choca
+  consigo mismo (la actualización se revertiría). Una pila que
   desplegó un Rayito **más nuevo** (su etiqueta `rayito:sdk-version`) nunca
   vuelve a la plantilla de este SDK: con el mismo bucket es `reuse` («ya
   existe (…) con la plantilla de Rayito X, más nuevo que este SDK: se

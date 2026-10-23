@@ -87,6 +87,16 @@ ARTIFACT_BUCKET_PARAMETER: Final = "ArtifactBucket"
 #: tiene y una desplegada a mano lo deja vacío: en los dos casos la plantilla
 #: del SDK es otra y `rayito setup` la actualiza.
 TEMPLATE_FINGERPRINT_PARAMETER: Final = "TemplateFingerprint"
+#: Parámetro de `infra/iam.yaml` que conserva la descripción original de
+#: `CallerPolicy` (`"true"`) en una pila creada con la plantilla de 0.6.1 o
+#: anterior. IAM no cambia la descripción de una política gestionada:
+#: CloudFormation la sustituye y la nueva choca con su propio nombre fijo
+#: (`AWS_API_NOTES.md` §21), así que la actualización se revierte.
+LEGACY_CALLER_POLICY_PARAMETER: Final = "LegacyCallerPolicy"
+#: Salida que sólo tiene una pila de la plantilla de 0.7.0 o posterior (la
+#: que añadió `SandboxLauncherPolicy` y la descripción actual de
+#: `CallerPolicy`).
+LAUNCHER_POLICY_OUTPUT_KEY: Final = "SandboxLauncherPolicyArn"
 #: Los tres números de una versión del SDK (`0.17.1`, `0.18.0rc1` -> 0, 18,
 #: 0): lo que se compara con la etiqueta `rayito:sdk-version` de la pila.
 RELEASE_NUMBERS_PATTERN: Final = re.compile(r"^([0-9]+)\.([0-9]+)\.([0-9]+)")
@@ -699,6 +709,20 @@ def preserved_stack_tags(
         if key not in FIXED_TAG_KEYS and not key.startswith(AWS_RESERVED_TAG_PREFIX)
     }
     return {**kept, **requested}
+
+
+def legacy_caller_policy(stack: StackObservation | None) -> str:
+    """El valor de `LegacyCallerPolicy` que `rayito setup` manda al crear o
+    actualizar la pila de IAM: el que ya lleva, si lo tiene; `"true"` para
+    una pila sin él ni la salida `SandboxLauncherPolicyArn` (la plantilla de
+    0.6.1 o anterior, cuya `CallerPolicy` conserva así su descripción), y
+    `"false"` para una pila nueva o de 0.7.0 en adelante."""
+    if stack is None or stack.status is None:
+        return "false"
+    current = stack.parameters.get(LEGACY_CALLER_POLICY_PARAMETER)
+    if current is not None:
+        return current
+    return "false" if LAUNCHER_POLICY_OUTPUT_KEY in stack.outputs else "true"
 
 
 def newest(versions: Sequence[ImageVersionItem]) -> ImageVersionItem:

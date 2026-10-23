@@ -14,6 +14,7 @@ from rayito._account_setup._domain import (
     ARTIFACT_BUCKET_PARAMETER,
     IAM_CAPABILITIES,
     IAM_COMPONENT_NAME,
+    LEGACY_CALLER_POLICY_PARAMETER,
     TEMPLATE_FINGERPRINT_PARAMETER,
 )
 from rayito._stacks._model import CostStatement, StackComponent, StackParameter
@@ -39,6 +40,10 @@ IAM_STACK_COMPONENT: Final = StackComponent(
         StackParameter(
             TEMPLATE_FINGERPRINT_PARAMETER,
             "sha256 de la plantilla que desplegó la pila (lo pone rayito setup).",
+        ),
+        StackParameter(
+            LEGACY_CALLER_POLICY_PARAMETER,
+            "true si la pila se creó con la plantilla de 0.6.1 o anterior (lo pone rayito setup).",
         ),
     ),
     capabilities=IAM_CAPABILITIES,
