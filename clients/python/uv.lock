@@ -1777,7 +1777,7 @@ requires-dist = [
     { name = "constructs", marker = "extra == 'cdk'", specifier = ">=10.5.0,<11" },
     { name = "grpcio", specifier = ">=1.84,<2" },
     { name = "mcp", marker = "extra == 'mcp'", specifier = ">=2.2,<3" },
-    { name = "opentelemetry-api", marker = "extra == 'otel'", specifier = ">=1.27,<2" },
+    { name = "opentelemetry-api", marker = "extra == 'otel'", specifier = ">=1.45.1,<2" },
     { name = "protobuf", specifier = ">=7.36.1,<8" },
     { name = "typer", marker = "extra == 'cli'", specifier = ">=0.15,<1" },
 ]
@@ -1788,7 +1788,7 @@ dev = [
     { name = "grpc-stubs", specifier = ">=1.53" },
     { name = "jsonschema", specifier = ">=4.23" },
     { name = "mypy", specifier = ">=1.14" },
-    { name = "opentelemetry-sdk", specifier = ">=1.27,<2" },
+    { name = "opentelemetry-sdk", specifier = ">=1.45.1,<2" },
     { name = "pytest", specifier = ">=8.3" },
     { name = "pytest-asyncio", specifier = ">=0.25" },
     { name = "pyyaml", specifier = ">=6.0" },

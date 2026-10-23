@@ -13,7 +13,7 @@ en `entry_points.txt`; y la CLI (`m7-cli`): el subpaquete `rayito/cli`
 (`__init__.py`), el extra `cli` (`Provides-Extra: cli` y `Requires-Dist:
 typer>=0.15,<1 ; extra == 'cli'`, misma grafía de `uv_build`) y el console
 script `rayito`. Desde M13b comprueba también el extra opcional `otel`
-(`Provides-Extra: otel` y `Requires-Dist: opentelemetry-api>=1.27,<2 ;
+(`Provides-Extra: otel` y `Requires-Dist: opentelemetry-api>=1.45.1,<2 ;
 extra == 'otel'`): no añade ningún fichero ni entry point, sólo metadatos,
 porque `rayito._otel` ya está en el paquete base. Desde 0.15 comprueba los
 constructos CDK (`agentcore-cdk`, ADR-032): `rayito/cdk/__init__.py`, el zip
@@ -66,7 +66,7 @@ CLI_METADATA_LINES = (
 CLI_ENTRY_POINT = "rayito = rayito.cli.__main__:main"
 OTEL_METADATA_LINES = (
     "Provides-Extra: otel",
-    "Requires-Dist: opentelemetry-api>=1.27,<2 ; extra == 'otel'",
+    "Requires-Dist: opentelemetry-api>=1.45.1,<2 ; extra == 'otel'",
 )
 CDK_METADATA_LINES = (
     "Provides-Extra: cdk",
