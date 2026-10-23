@@ -8,7 +8,7 @@
  */
 
 import { BuildError, InvalidArgumentError } from "../errors.js";
-import type { TemplateSpec, WireStep } from "./instructions.js";
+import { type TemplateSpec, templateEnvs, type WireStep } from "./instructions.js";
 
 export const LAYER_BEGIN_MARKER = "# >>> rayito template layer (m15-templates), no editar a mano";
 export const LAYER_END_MARKER = "# <<< rayito template layer";
@@ -17,6 +17,12 @@ export const LAYER_END_MARKER = "# <<< rayito template layer";
  * la que esa `COPY` lo deja en la imagen (`rayito.template/1`). */
 export const TEMPLATE_JSON_CONTEXT_PATH = "__rayito_template.json";
 export const TEMPLATE_JSON_IMAGE_PATH = "/etc/rayito/template.json";
+
+/** Lo mismo para las variables de `setEnvs()` (`rayito.template-env/1`): el
+ * `ENV` sólo llega al entorno de `rayd`, que arranca a sus hijos con un
+ * entorno limpio, así que `rayd` las lee de aquí (ADR-035). */
+export const TEMPLATE_ENV_CONTEXT_PATH = "__rayito_template_env.json";
+export const TEMPLATE_ENV_IMAGE_PATH = "/etc/rayito/template-env.json";
 
 /** Directorio reservado del zip para los ficheros de contexto del usuario
  * (`artifact.ts`), al que apunta cada `COPY` renderizada (amenaza T26). */
@@ -84,9 +90,14 @@ function renderStep(step: WireStep): string {
 }
 
 /** La capa que este `Template` añade, en orden, como texto Dockerfile. No
- * incluye `FROM`: eso depende de la imagen base, resuelta sólo al construir. */
+ * incluye `FROM`: eso depende de la imagen base, resuelta sólo al construir.
+ * Cierra con la `COPY` de `/etc/rayito/template-env.json` si hay `setEnvs()`
+ * y con la de `/etc/rayito/template.json` si hay `setStartCmd()`. */
 export function renderAppendedLayer(spec: TemplateSpec): string {
   const lines = [LAYER_BEGIN_MARKER, ...spec.steps.map(renderStep)];
+  if (Object.keys(templateEnvs(spec)).length > 0) {
+    lines.push(renderCopy(TEMPLATE_ENV_CONTEXT_PATH, TEMPLATE_ENV_IMAGE_PATH));
+  }
   if (spec.start !== undefined) {
     lines.push(renderCopy(TEMPLATE_JSON_CONTEXT_PATH, TEMPLATE_JSON_IMAGE_PATH));
   }

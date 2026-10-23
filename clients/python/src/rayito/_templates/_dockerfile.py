@@ -48,6 +48,11 @@ _TERMINAL_KEYWORDS: Final = ("CMD", "ENTRYPOINT")
 #: (`rayito.template/1`, investigación §3.5).
 TEMPLATE_JSON_CONTEXT_PATH: Final = "__rayito_template.json"
 TEMPLATE_JSON_IMAGE_PATH: Final = "/etc/rayito/template.json"
+#: Lo mismo para las variables de `set_envs()` (`rayito.template-env/1`):
+#: el `ENV` sólo llega al entorno de `rayd`, que arranca a sus hijos con un
+#: entorno limpio, así que `rayd` las lee de aquí (ADR-035).
+TEMPLATE_ENV_CONTEXT_PATH: Final = "__rayito_template_env.json"
+TEMPLATE_ENV_IMAGE_PATH: Final = "/etc/rayito/template-env.json"
 
 #: Directorio reservado del zip bajo el que van los ficheros de contexto
 #: del usuario (`_artifact.py`), y al que apunta cada `COPY` renderizada:
@@ -124,8 +129,11 @@ def render_appended_layer(spec: TemplateSpec) -> str:
     No incluye `FROM`: eso depende de la imagen base, resuelta sólo al
     construir (`Template.build()`). Si `spec.start` está puesto, añade al
     final la `COPY` que deja `/etc/rayito/template.json` en la imagen
-    (`_artifact.py` escribe ese fichero en el contexto)."""
+    (`_artifact.py` escribe ese fichero en el contexto), y antes, si hay
+    `set_envs()`, la que deja `/etc/rayito/template-env.json`."""
     lines = [LAYER_BEGIN_MARKER, *(_render_step(step) for step in spec.steps)]
+    if spec.template_envs():
+        lines.append(_render_copy(TEMPLATE_ENV_CONTEXT_PATH, TEMPLATE_ENV_IMAGE_PATH))
     if spec.start is not None:
         lines.append(_render_copy(TEMPLATE_JSON_CONTEXT_PATH, TEMPLATE_JSON_IMAGE_PATH))
     lines.append(LAYER_END_MARKER)

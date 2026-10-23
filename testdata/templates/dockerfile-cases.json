@@ -14,7 +14,10 @@
     {
       "name": "env escapa barra invertida, comillas y dólar",
       "steps": [{"kind": "env", "key": "GREETING", "value": "di \"hola\" a $USER\\n"}],
-      "lines": ["ENV GREETING=\"di \\\"hola\\\" a \\$USER\\\\n\""]
+      "lines": [
+        "ENV GREETING=\"di \\\"hola\\\" a \\$USER\\\\n\"",
+        "COPY [\"__rayito_template_env.json\", \"/etc/rayito/template-env.json\"]"
+      ]
     },
     {
       "name": "run, workdir y user se copian tal cual",
