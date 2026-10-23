@@ -643,9 +643,7 @@ describe("SandboxDirectory", () => {
         iterate([item("mine", "RUNNING"), item("other", "RUNNING"), item("parked", "SUSPENDED")]),
       );
     const { probe } = probeFrom({ mine: AgentLabels, other: {} });
-    const members = await new SandboxDirectory({}, { probeInfo: probe }).listMembers(
-      "support-bot",
-    );
+    const members = await new SandboxDirectory({}, { probeInfo: probe }).listMembers("support-bot");
     spy.mockRestore();
     expect(members.map((member) => member.sandboxId)).toEqual(["mine"]);
   });
@@ -655,9 +653,7 @@ describe("SandboxDirectory", () => {
       .spyOn(Sandbox, "list")
       .mockImplementation(() => iterate([item("mine", "RUNNING"), item("parked", "SUSPENDED")]));
     const { probe, probed } = probeFrom({ mine: AgentLabels });
-    const members = await new SandboxDirectory({}, { probeInfo: probe }).listMembers(
-      "support-bot",
-    );
+    const members = await new SandboxDirectory({}, { probeInfo: probe }).listMembers("support-bot");
     spy.mockRestore();
     expect(members.map((member) => member.sandboxId)).toEqual(["mine", "parked"]);
     expect(probed).toEqual(["mine"]);
@@ -692,9 +688,7 @@ describe("SandboxDirectory", () => {
     const { probe } = probeFrom({ alive: AgentLabels, leaving: AgentLabels }, [], {
       leaving: "TERMINATING",
     });
-    const members = await new SandboxDirectory({}, { probeInfo: probe }).listMembers(
-      "support-bot",
-    );
+    const members = await new SandboxDirectory({}, { probeInfo: probe }).listMembers("support-bot");
     spy.mockRestore();
     expect(members.map((member) => member.sandboxId)).toEqual(["alive"]);
   });
