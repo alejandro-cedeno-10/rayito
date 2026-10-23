@@ -4005,7 +4005,16 @@ opción existente cambia de valor por defecto.
    para no rechazar nombres corrientes como `AUTH_MODE` o `AUTH_URL`. (f)
    `rayito agent invoke <flota> --renew-gateway-keys` es la forma de pedir
    la renovación desde la CLI al reconectar por nombre; con el id de un
-   sandbox (que no crea VMs) es un error de uso.
+   sandbox (que no crea VMs) es un error de uso. (g) Desde 0.17.1, el
+   despliegue que pide la renovación (`deploy_agent(renew_gateway_keys=True)`,
+   `--renew-gateway-keys`) escribe siempre una clave nueva una vez, antes del
+   primer VM, sin mirar `gatewayKeyRenewAfterSeconds`: un secreto recién
+   creado con un valor marcador es más nuevo que la ventana, la renovación lo
+   saltaba y la primera invocación recibía 403 de Bedrock. El despliegue es
+   raro y quien lo lanza pidió la renovación, así que esa escritura no
+   contradice la recomendación de `PutSecretValue`. La ventana sigue
+   limitando las renovaciones de cada VM nuevo y las de
+   `AgentFleet.connect(nombre, renew_gateway_keys=True)`.
 10. **La reducción se cumple (D10).** Desde 0.14 la flota pedía
    `set_timeout(scale_in_after_seconds)` a los VMs por encima de `min_vms`,
    pero los creaba sólo con `timeout`: sin `max_lifetime` ni `on_timeout` no

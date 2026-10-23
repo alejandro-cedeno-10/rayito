@@ -385,6 +385,7 @@ export async function deployWith(
     service,
     ...ports.fleetOptions,
   });
+  await fleet.renewGatewayKeysForDeploy();
   await fleet.start();
   emit(options, [{ kind: STEP_FLEET, detail: String(fleet.sandboxIds.length) }]);
   if (options.saveRecipe) {

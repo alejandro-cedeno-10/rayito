@@ -169,6 +169,31 @@ def test_three_creations_in_five_minutes_write_once_and_ask_once() -> None:
     assert secrets.names == ["DescribeSecret", "PutSecretValue"]
 
 
+def test_the_deploy_renewal_writes_even_a_secret_that_just_changed() -> None:
+    """El despliegue que pidió la renovación escribe siempre: un secreto
+    recién creado con un marcador recibe la clave antes del primer VM. Las
+    renovaciones de cada VM nuevo siguen respetando la ventana."""
+    secrets, clock = FakeSecrets(changed=NOW - timedelta(seconds=10)), Clock()
+    tokens: list[str] = []
+    renew = renewer(secrets, clock, tokens)
+
+    assert renew.renew(force=True)
+    clock.now += 100
+    assert not renew.renew()
+
+    assert secrets.names == ["PutSecretValue"]
+    assert tokens == ["us-east-1"]
+
+
+def test_without_force_a_young_secret_is_not_rewritten() -> None:
+    secrets, clock = FakeSecrets(changed=NOW - timedelta(seconds=10)), Clock()
+    renew = renewer(secrets, clock, [])
+
+    assert not renew.renew()
+
+    assert secrets.names == ["DescribeSecret"]
+
+
 def test_nothing_about_the_key_or_the_secret_is_logged_or_repr(
     caplog: pytest.LogCaptureFixture,
 ) -> None:

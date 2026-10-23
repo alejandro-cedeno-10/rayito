@@ -58,6 +58,7 @@ from rayito._templates._models import BuildInfo
 from rayito.exceptions import InvalidArgumentException, StackException
 from tests.unit.fake_agent_fleet import FleetFlavor
 from tests.unit.fake_agent_project import project
+from tests.unit.test_gateway_key_renewal import bedrock_project
 
 from .fake_stacks import FakeStackProvisioner
 
@@ -682,6 +683,36 @@ def test_ensure_base_image_false_never_publishes(harness: Harness) -> None:
         )
 
     assert called == []
+
+
+class ForcedRenewer:
+    """Un renovador de doble que anota si cada renovación fue forzada y
+    cuántos VMs había entonces."""
+
+    def __init__(self, harness: Harness) -> None:
+        self.harness = harness
+        self.calls: list[tuple[bool, int]] = []
+
+    def renew(self, *, force: bool = False) -> bool:
+        self.calls.append((force, self.harness.created_vms))
+        return force
+
+
+def test_a_deploy_with_renewal_writes_a_fresh_key_before_the_first_vm(harness: Harness) -> None:
+    keys = ForcedRenewer(harness)
+    the_project = bedrock_project()
+    harness.store.existing.add("agents/support-bot/bedrock")
+    ports = harness.ports(the_project)
+    ports = dataclasses.replace(ports, fleet_kwargs={**ports.fleet_kwargs, "key_renewer": keys})
+    options = AgentDeployOptions(renew_gateway_keys=True, on_step=harness.steps.append)
+
+    if harness.flav.asynchronous:
+        asyncio.run(deploy_with_async(ports, project=the_project, options=options))
+    else:
+        deploy_with(ports, project=the_project, options=options)
+
+    assert keys.calls[0] == (True, 0)
+    assert all(not forced for forced, _ in keys.calls[1:])
 
 
 def test_a_missing_secret_stops_before_the_build_and_names_the_options(harness: Harness) -> None:
