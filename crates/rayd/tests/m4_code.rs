@@ -938,10 +938,14 @@ async fn dropping_the_stream_interrupts_the_cell() {
     );
 }
 
+/// A cell silent for ten keepalive intervals, so two keepalives arrive even
+/// when the runner is slow to schedule the timer.
+const SILENT_CELL: &str = "sleep 2";
+
 #[tokio::test]
 async fn keepalives_flow_on_a_silent_cell() {
     let harness = harness().await;
-    let collected = harness.run("sleep 1", None, 0).await;
+    let collected = harness.run(SILENT_CELL, None, 0).await;
     assert!(collected.keepalives >= 2, "{collected:?}");
     assert_eq!(collected.kinds(), vec!["started", "end"]);
 }
