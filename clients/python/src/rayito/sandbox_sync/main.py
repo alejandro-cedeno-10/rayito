@@ -232,6 +232,7 @@ from rayito._transport import (
     is_reconnectable,
     is_sandbox_timeout,
     is_stream_reset,
+    retry_unestablished,
     rpc_status,
     translate_rpc_error,
 )
@@ -2614,7 +2615,7 @@ class Sandbox:
         """Reintenta una vez tras un 403 del proxy (JWE caducado). Es lo que
         usa la propia sonda de `Health`, que nunca debe reconectar."""
         try:
-            return call()
+            return retry_unestablished(call)
         except grpc.RpcError as exc:
             if not is_proxy_forbidden(exc):
                 raise
@@ -2757,7 +2758,9 @@ class Sandbox:
         self, start: StreamStarter, stub: Any, allow_empty: bool
     ) -> tuple[Any, Any]:
         try:
-            return first_stream_message(start(stub), allow_empty=allow_empty)
+            return retry_unestablished(
+                lambda: first_stream_message(start(stub), allow_empty=allow_empty)
+            )
         except grpc.RpcError as exc:
             if not is_proxy_forbidden(exc):
                 raise
