@@ -33,6 +33,11 @@
  * espera hasta que escucha y el eco de WebSocket atiende varias conexiones,
  * así que un upgrade que cae en un servidor sin la ruta se reintenta.
  *
+ * **Sin permiso para crear la distribución.** Si una política de la cuenta
+ * deniega `cloudfront:CreateDistribution`, la pila falla en el recurso
+ * `Distribution` con un `AccessDenied` (`DescribeStackEvents`): cada test se
+ * salta con «CreateDistribution denied by policy» en vez de fallar.
+ *
  * **Limpieza.** `afterAll` desregistra cada ruta, borra la pila (aunque el
  * `deploy()` fallara a medias) y comprueba que `status()` ya no la ve.
  *
@@ -44,14 +49,15 @@
 import { createHash, randomBytes } from "node:crypto";
 import * as https from "node:https";
 import type { TLSSocket } from "node:tls";
-import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { CloudFormationClient, DescribeStackEventsCommand } from "@aws-sdk/client-cloudformation";
+import { afterAll, beforeAll, beforeEach, describe, expect, test } from "vitest";
 import {
   CUSTOM_DOMAIN_WAIT_TIMEOUT_MS,
   CustomDomain,
   type CustomDomainRoute,
   DISTRIBUTION_DOMAIN_NAME_OUTPUT_KEY,
 } from "../../src/custom-domain/service.js";
-import { CustomDomainError } from "../../src/errors.js";
+import { CustomDomainError, StackError } from "../../src/errors.js";
 import type { Sandbox } from "../../src/sandbox/sandbox.js";
 import { createTestSandbox, e2eEnabled, useE2E } from "./helpers.js";
 
@@ -102,6 +108,35 @@ const TRAFFIC_TOKEN_HEADER = "e2b-traffic-access-token";
 const HTTP_OK = 200;
 const HTTP_FORBIDDEN = 403;
 const HTTP_NOT_FOUND = 404;
+
+/** El recurso de `infra/custom-domain.yaml` que crea la distribución, y lo que
+ * deja CloudFormation en `ResourceStatusReason` cuando una política deniega
+ * `cloudfront:CreateDistribution`. */
+const DISTRIBUTION_LOGICAL_ID = "Distribution";
+const CREATE_FAILED = "CREATE_FAILED";
+const ACCESS_DENIED_MARKERS = ["AccessDenied", "not authorized"];
+const DISTRIBUTION_DENIED_REASON = "CreateDistribution denied by policy";
+
+/** Si la pila falló porque una política deniega crear la distribución
+ * (`DescribeStackEvents`, `AWS_API_NOTES.md` §21). */
+async function distributionDenied(region: string | undefined, stackName: string): Promise<boolean> {
+  const client = new CloudFormationClient(region === undefined ? {} : { region });
+  try {
+    const { StackEvents } = await client.send(
+      new DescribeStackEventsCommand({ StackName: stackName }),
+    );
+    return (StackEvents ?? []).some(
+      (event) =>
+        event.LogicalResourceId === DISTRIBUTION_LOGICAL_ID &&
+        event.ResourceStatus === CREATE_FAILED &&
+        ACCESS_DENIED_MARKERS.some((marker) => (event.ResourceStatusReason ?? "").includes(marker)),
+    );
+  } catch {
+    return false;
+  } finally {
+    client.destroy();
+  }
+}
 
 function customDomainEnvReady(): boolean {
   return Boolean(process.env[DOMAIN_VAR] && process.env[CERT_ARN_VAR]);
@@ -403,6 +438,11 @@ describe.runIf(e2eEnabled() && customDomainEnvReady())("dominio propio (AWS real
   ) as Record<RoutePurpose, string>;
   let domain: CustomDomain;
   let target: DomainUnderTest;
+  let denied = false;
+
+  beforeEach((context) => {
+    context.skip(denied, DISTRIBUTION_DENIED_REASON);
+  });
 
   /** Registra la ruta de `purpose` con un token nuevo; devuelve la ruta y
    * las cabeceras que la autorizan. */
@@ -428,13 +468,25 @@ describe.runIf(e2eEnabled() && customDomainEnvReady())("dominio propio (AWS real
       region: e2e.settings.region,
     });
     const started = performance.now();
-    const status = await domain.deploy({
-      certificateArn: process.env[CERT_ARN_VAR] as string,
-      alternateDomainNames: Object.values(aliases).map((alias) =>
-        domain.hostFor(alias, ROUTE_PORT),
-      ),
-      tags: { [ACCEPTANCE_RUN_TAG_KEY]: process.env[ACCEPTANCE_RUN_TAG_VAR] || runId },
-    });
+    let status: Awaited<ReturnType<CustomDomain["deploy"]>>;
+    try {
+      status = await domain.deploy({
+        certificateArn: process.env[CERT_ARN_VAR] as string,
+        alternateDomainNames: Object.values(aliases).map((alias) =>
+          domain.hostFor(alias, ROUTE_PORT),
+        ),
+        tags: { [ACCEPTANCE_RUN_TAG_KEY]: process.env[ACCEPTANCE_RUN_TAG_VAR] || runId },
+      });
+    } catch (error) {
+      if (
+        error instanceof StackError &&
+        (await distributionDenied(e2e.settings.region, `${STACK_NAME_PREFIX}${runId}`))
+      ) {
+        denied = true;
+        return;
+      }
+      throw error;
+    }
     reportDomain("deploy() (s)", ((performance.now() - started) / 1000).toFixed(0));
     target = {
       domain,
