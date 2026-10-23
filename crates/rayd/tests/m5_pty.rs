@@ -37,7 +37,7 @@ use rayd_core::clock::SystemClock;
 use rayd_core::filesystem::DenyList;
 use rayd_core::lifecycle::Hook;
 use rayd_core::process::{RegistryLimits, UserPolicy};
-use rayd_core::pty::PTY_CHUNK_BYTES;
+use rayd_core::pty::{PTY_CHUNK_BYTES, PTY_DRAIN_GRACE};
 use rayd_core::session::SandboxSession;
 use rayito_proto::v1::process_service_client::ProcessServiceClient;
 use rayito_proto::v1::pty_service_client::PtyServiceClient;
@@ -61,6 +61,12 @@ const BASH: &str = "/bin/bash";
 const WORKDIR: &str = "/tmp";
 const SIGKILL: i32 = 9;
 const READ_TIMEOUT: Duration = Duration::from_secs(5);
+/// How long `ready_bash` waits for each typed marker, and how many it types.
+const READY_ATTEMPT_WAIT: Duration = Duration::from_secs(1);
+const READY_ATTEMPTS: usize = 10;
+/// What the end of a shell may take on top of the drain grace: scheduling
+/// and the `exited` message, never the 60 s of the background child.
+const END_SLACK: Duration = Duration::from_secs(5);
 
 struct Options {
     keepalive: Duration,
@@ -308,6 +314,39 @@ async fn read_until(stream: &mut Streaming<PtyServerMessage>, needle: &[u8]) -> 
     read_until_with(stream, needle, READ_TIMEOUT).await.0
 }
 
+/// Like `read_until`, without failing: what was read and whether `needle`
+/// showed up within `timeout`. Dropping `stream.message()` on the timeout
+/// loses nothing: the next call reads the same message.
+async fn read_until_or_timeout(
+    stream: &mut Streaming<PtyServerMessage>,
+    needle: &[u8],
+    timeout: Duration,
+) -> (Vec<u8>, bool) {
+    let deadline = Instant::now() + timeout;
+    let mut buffer = Vec::new();
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        let Ok(message) = tokio::time::timeout(remaining, stream.message()).await else {
+            return (buffer, false);
+        };
+        let message = message.unwrap().expect("stream ended before the needle");
+        match message.message {
+            Some(pty_server_message::Message::Data(bytes)) => {
+                let from = buffer.len().saturating_sub(needle.len() - 1);
+                buffer.extend(bytes);
+                if buffer[from..]
+                    .windows(needle.len())
+                    .any(|window| window == needle)
+                {
+                    return (buffer, true);
+                }
+            }
+            Some(pty_server_message::Message::Keepalive(_)) => {}
+            other => panic!("unexpected {other:?} before {needle:?}"),
+        }
+    }
+}
+
 async fn read_until_with(
     stream: &mut Streaming<PtyServerMessage>,
     needle: &[u8],
@@ -528,6 +567,30 @@ impl Harness {
         (pid, stream)
     }
 
+    /// A shell that already runs what it is typed: `Started` comes before
+    /// interactive bash owns the terminal, and a line typed in that window
+    /// can be echoed by the kernel and then lost (run 38828123101 on
+    /// aarch64: `sleep 30 &` and the marker were echoed, never run). A
+    /// marker is typed until bash echoes it back, each attempt with its own
+    /// marker so a late answer to an earlier one never counts. Returns what
+    /// was read, from the first fragment on, for tests that compare it.
+    async fn ready_bash(&self) -> (u32, Streaming<PtyServerMessage>, Vec<u8>) {
+        let (pid, mut stream) = self.bash().await;
+        let mut read = Vec::new();
+        for attempt in 0..READY_ATTEMPTS {
+            let marker = format!("ready{attempt}");
+            self.send(pid, &say(&marker)).await.unwrap();
+            let needle = format!("{marker}\r\n");
+            let (bytes, found) =
+                read_until_or_timeout(&mut stream, needle.as_bytes(), READY_ATTEMPT_WAIT).await;
+            read.extend(bytes);
+            if found {
+                return (pid, stream, read);
+            }
+        }
+        panic!("bash never ran a typed line; got {}", shown(&read));
+    }
+
     async fn connect(
         &self,
         pid: u32,
@@ -601,7 +664,7 @@ impl Harness {
 async fn echo_round_trip_size_tty_uid_and_env() {
     let harness = harness().await;
     let started = Instant::now();
-    let (pid, mut stream) = harness.bash().await;
+    let (pid, mut stream, _) = harness.ready_bash().await;
     assert!(pid > 0);
     harness.send(pid, "echo hola\n").await.unwrap();
     let (buffer, _, last_seq) = read_until_with(&mut stream, b"\rhola\r\n", READ_TIMEOUT).await;
@@ -665,7 +728,7 @@ async fn default_shell_is_the_login_shell_and_request_envs_win() {
 #[tokio::test]
 async fn kinds_are_enforced_across_both_services_and_signal_works_on_a_pty() {
     let harness = harness().await;
-    let (pty, mut pty_stream) = harness.bash().await;
+    let (pty, mut pty_stream, _) = harness.ready_bash().await;
     let (process, mut process_stream) = harness.start_process(shell_process("sleep 30")).await;
     let on_pty = harness
         .processes
@@ -739,15 +802,13 @@ async fn kinds_are_enforced_across_both_services_and_signal_works_on_a_pty() {
 #[tokio::test]
 async fn output_is_chunked_at_16_kib_and_replayable_from_the_ring() {
     let harness = harness().await;
-    let (pid, mut stream) = harness.bash().await;
-    harness.send(pid, &say("ready")).await.unwrap();
     // Se guarda todo lo leído en vivo desde el primer fragmento (seq 1): el
-    // fragmento que trae `ready` puede traer también el prompt siguiente, y
-    // ese prompt lleva el nombre de máquina, que en algunos runners tiene `x`.
-    // Contar en vivo sólo desde el fragmento siguiente y en la repetición
-    // desde `ready` daba una `x` de diferencia según cómo bash partiera sus
-    // escrituras.
-    let mut live = read_until(&mut stream, b"ready\r\n").await;
+    // fragmento que trae el marcador de `ready_bash` puede traer también el
+    // prompt siguiente, y ese prompt lleva el nombre de máquina, que en
+    // algunos runners tiene `x`. Contar en vivo sólo desde el fragmento
+    // siguiente y en la repetición desde el marcador daba una `x` de
+    // diferencia según cómo bash partiera sus escrituras.
+    let (pid, mut stream, mut live) = harness.ready_bash().await;
     harness
         .send(pid, "head -c 100000 /dev/zero | tr '\\0' x; echo d''one\n")
         .await
@@ -783,7 +844,7 @@ async fn output_is_chunked_at_16_kib_and_replayable_from_the_ring() {
 #[tokio::test]
 async fn a_stalled_second_subscriber_is_truncated_alone() {
     let harness = harness().await;
-    let (pid, mut stream) = harness.bash().await;
+    let (pid, mut stream, _) = harness.ready_bash().await;
     harness.send(pid, &say("ready")).await.unwrap();
     read_until(&mut stream, b"ready\r\n").await;
     let mut stalled = harness.connect(pid, 0).await.unwrap();
@@ -808,7 +869,7 @@ async fn a_stalled_second_subscriber_is_truncated_alone() {
 #[tokio::test]
 async fn kill_ends_with_137_and_a_second_kill_is_not_found() {
     let harness = harness().await;
-    let (pid, mut stream) = harness.bash().await;
+    let (pid, mut stream, _) = harness.ready_bash().await;
     harness.send(pid, &say("ready")).await.unwrap();
     read_until(&mut stream, b"ready\r\n").await;
     harness.kill(pid).await.unwrap();
@@ -831,7 +892,7 @@ async fn kill_ends_with_137_and_a_second_kill_is_not_found() {
 #[tokio::test]
 async fn a_typed_exit_is_retained_and_replayable() {
     let harness = harness().await;
-    let (pid, mut stream) = harness.bash().await;
+    let (pid, mut stream, _) = harness.ready_bash().await;
     harness.send(pid, &say("bye")).await.unwrap();
     read_until(&mut stream, b"bye\r\n").await;
     harness.send(pid, "exit 3\n").await.unwrap();
@@ -926,7 +987,7 @@ async fn the_live_cap_is_shared_with_processes() {
     })
     .await;
     let (process, _process_stream) = harness.start_process(shell_process("sleep 30")).await;
-    let (pty, mut pty_stream) = harness.bash().await;
+    let (pty, mut pty_stream, _) = harness.ready_bash().await;
     let refused = harness.create(bash_start()).await.err().unwrap();
     assert_eq!(refused.code(), Code::ResourceExhausted);
     let refused_process = harness
@@ -939,7 +1000,7 @@ async fn the_live_cap_is_shared_with_processes() {
     assert_eq!(refused_process.code(), Code::ResourceExhausted);
     harness.kill(pty).await.unwrap();
     collect_until_exit(&mut pty_stream).await;
-    let (second, mut second_stream) = harness.bash().await;
+    let (second, mut second_stream, _) = harness.ready_bash().await;
     assert_ne!(second, process);
     harness.kill(second).await.unwrap();
     collect_until_exit(&mut second_stream).await;
@@ -953,7 +1014,7 @@ async fn create_is_refused_while_suspending() {
     assert_eq!(status.code(), Code::Unavailable);
     assert_eq!(status.message(), "suspending");
     harness.post(Hook::Resume, None).await;
-    let (pid, mut stream) = harness.bash().await;
+    let (pid, mut stream, _) = harness.ready_bash().await;
     harness.kill(pid).await.unwrap();
     collect_until_exit(&mut stream).await;
 }
@@ -961,7 +1022,7 @@ async fn create_is_refused_while_suspending() {
 #[tokio::test]
 async fn keepalives_flow_on_a_silent_shell() {
     let harness = harness().await;
-    let (pid, mut stream) = harness.bash().await;
+    let (pid, mut stream, _) = harness.ready_bash().await;
     harness.send(pid, &say("ready")).await.unwrap();
     read_until(&mut stream, b"ready\r\n").await;
     tokio::time::sleep(Duration::from_millis(700)).await;
@@ -975,15 +1036,15 @@ async fn keepalives_flow_on_a_silent_shell() {
 #[tokio::test]
 async fn a_background_child_holding_the_slave_does_not_delay_the_end() {
     let harness = harness().await;
-    let (pid, mut stream) = harness.bash().await;
-    harness.send(pid, "sleep 30 &\n").await.unwrap();
+    let (pid, mut stream, _) = harness.ready_bash().await;
+    harness.send(pid, "sleep 60 &\n").await.unwrap();
     harness.send(pid, &say("spawned")).await.unwrap();
     read_until(&mut stream, b"spawned\r\n").await;
     let started = Instant::now();
     harness.send(pid, "exit\n").await.unwrap();
     let (_, exited, _) = collect_until_exit(&mut stream).await;
     assert!(
-        started.elapsed() < Duration::from_millis(1_500),
+        started.elapsed() < PTY_DRAIN_GRACE + END_SLACK,
         "{:?}",
         started.elapsed()
     );
@@ -999,7 +1060,7 @@ async fn a_background_child_holding_the_slave_does_not_delay_the_end() {
 #[tokio::test]
 async fn jobs_and_processes_inherit_neither_end_of_the_terminal() {
     let harness = harness().await;
-    let (pid, mut stream) = harness.bash().await;
+    let (pid, mut stream, _) = harness.ready_bash().await;
     assert_only_the_terminal(&parked_shell_descriptors(&harness, pid, &mut stream).await);
     harness
         .send(pid, "echo fd''s=$(ls /proc/self/fd | tr '\\n' ' ')\n")
@@ -1025,7 +1086,7 @@ async fn jobs_and_processes_inherit_neither_end_of_the_terminal() {
 async fn a_descriptor_without_close_on_exec_reaches_neither_shell_nor_process() {
     let harness = harness().await;
     let leaked = InheritableDescriptor::open();
-    let (pid, mut stream) = harness.bash().await;
+    let (pid, mut stream, _) = harness.ready_bash().await;
     let shell_fds = parked_shell_descriptors(&harness, pid, &mut stream).await;
     assert!(
         !shell_fds.iter().any(|(fd, _)| *fd == leaked.number()),
@@ -1053,7 +1114,7 @@ async fn a_descriptor_without_close_on_exec_reaches_neither_shell_nor_process() 
 #[tokio::test]
 async fn kill_takes_the_foreground_job_down_with_the_shell() {
     let harness = harness().await;
-    let (pid, mut stream) = harness.bash().await;
+    let (pid, mut stream, _) = harness.ready_bash().await;
     harness
         .send(pid, "(echo jo''b=$BASHPID; exec sleep 100)\n")
         .await

@@ -35,6 +35,7 @@ from rayito.exceptions import (
     TransferException,
     UnimplementedError,
 )
+from rayito.sandbox_sync import transfer as sandbox_transfer
 from rayito.v1 import filesystem_pb2, filesystem_pb2_grpc
 
 from .conftest import (
@@ -47,7 +48,7 @@ from .conftest import (
 )
 from .fake_s3 import BUCKET, FAKE_ACCESS_KEY, REGION
 from .fake_transfer import FakeTransferFilesystemService
-from .stalled_s3 import StalledS3
+from .stalled_s3 import StalledS3, freeze_operation_clock
 from .stalled_s3 import stalled_s3 as stalled_s3
 from .transfer_support import (
     MIB,
@@ -585,7 +586,10 @@ def test_request_timeout_bounds_a_stalled_s3_upload(
 
 
 def test_request_timeout_bounds_a_stalled_s3_download(
-    sandbox: Sandbox, fake: FakeTransferFilesystemService, stalled_s3: StalledS3
+    sandbox: Sandbox,
+    fake: FakeTransferFilesystemService,
+    stalled_s3: StalledS3,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Repro permanente de la causa raíz (M9.4): `open_chunks` retrasado más
     allá del plazo, así `cancel()` ya se vio para cuando el gate se abre y
@@ -595,9 +599,12 @@ def test_request_timeout_bounds_a_stalled_s3_download(
     casos, a diferencia de "el cuerpo se llegó a abrir", que depende del
     reloj. La comprobación previa a `open_chunks` que evita un `get_object`
     de más tras una cancelación ya vista la pin `test_s3.py::
-    test_cancel_before_run_never_calls_get_object`, sin depender del reloj."""
+    test_cancel_before_run_never_calls_get_object`, sin depender del reloj.
+    El reloj de la operación se congela (`freeze_operation_clock`) para que
+    el plazo venza siempre en la pata S3, nunca en la exportación previa."""
     fake.add_file("big.bin", b"d" * MIB)
     stalled_s3.open_gate.clear()
+    freeze_operation_clock(monkeypatch, sandbox_transfer)
     started = time.monotonic()
     with pytest.raises(TimeoutException, match="plazo"):
         sandbox.files.read("big.bin", format="bytes", request_timeout=1.0)

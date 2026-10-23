@@ -254,17 +254,12 @@ impl<B: PtySpawner> PtyManager<B> {
         started_at: Duration,
     ) {
         let registry = self.registry.clone();
-        let outcome = {
-            let mut pump = std::pin::pin!(pump_master(&registry, pid, reader));
-            let mut wait = std::pin::pin!(pty.wait());
-            tokio::select! {
-                () = &mut pump => wait.await,
-                outcome = &mut wait => {
-                    let _ = tokio::time::timeout(self.settings.drain_grace, &mut pump).await;
-                    outcome
-                }
-            }
-        };
+        let outcome = end_of_terminal(
+            pump_master(&registry, pid, reader),
+            pty.wait(),
+            self.settings.drain_grace,
+        )
+        .await;
         control.mark_reaped();
         drop(writer.lock().await.take());
         let end = match outcome {
@@ -376,9 +371,60 @@ fn io_failure(pid: Pid, operation: &'static str, error: &std::io::Error) -> PtyE
     }
 }
 
+/// The shell's wait outcome once the terminal is over: when every slave
+/// closed (`pump` ended) it is simply the shell's end, and when the shell
+/// ended first, `pump` (a background child may still hold the slave) gets at
+/// most `grace` more before the outcome is returned.
+async fn end_of_terminal<T>(
+    pump: impl Future<Output = ()>,
+    wait: impl Future<Output = T>,
+    grace: Duration,
+) -> T {
+    let mut pump = std::pin::pin!(pump);
+    let mut wait = std::pin::pin!(wait);
+    tokio::select! {
+        () = &mut pump => wait.await,
+        outcome = &mut wait => {
+            let _ = tokio::time::timeout(grace, &mut pump).await;
+            outcome
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const GRACE: Duration = Duration::from_millis(500);
+
+    #[tokio::test(start_paused = true)]
+    async fn a_slave_held_after_the_shell_ended_gets_exactly_the_drain_grace() {
+        let started = tokio::time::Instant::now();
+        let outcome = end_of_terminal(std::future::pending::<()>(), async { 7 }, GRACE).await;
+        assert_eq!(outcome, 7);
+        assert_eq!(started.elapsed(), GRACE);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn output_that_ends_within_the_grace_ends_the_terminal_then() {
+        let started = tokio::time::Instant::now();
+        let pump = tokio::time::sleep(Duration::from_millis(100));
+        let outcome = end_of_terminal(pump, async { 7 }, GRACE).await;
+        assert_eq!(outcome, 7);
+        assert_eq!(started.elapsed(), Duration::from_millis(100));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn closed_slaves_wait_for_the_shell_without_any_grace() {
+        let started = tokio::time::Instant::now();
+        let wait = async {
+            tokio::time::sleep(Duration::from_secs(3)).await;
+            7
+        };
+        let outcome = end_of_terminal(async {}, wait, GRACE).await;
+        assert_eq!(outcome, 7);
+        assert_eq!(started.elapsed(), Duration::from_secs(3));
+    }
 
     #[test]
     fn settings_default_to_the_contract_values() {
