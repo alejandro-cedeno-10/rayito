@@ -25,13 +25,16 @@ const SANDBOX_TIMEOUT_MS = 600_000;
 const CHECK_TIMEOUT_MS = 30_000;
 const GATEWAY_RATE_PER_MINUTE = 60;
 const ABSENT = "ausente";
+const PRESENT = "existe";
 
 const spec = new AgentSpec({
   model: new AgentModel({ provider: "bedrock", id: MODEL_ID, gateway: "bedrock", region: REGION }),
   instructions: "Responde en español, en una frase.",
   permissions: new AgentPermissions({ default: "deny" }),
 });
-const limits = new AgentLimits({ maxSteps: 5, timeoutMs: 120_000 });
+const AGENT_MAX_STEPS = 5;
+const AGENT_TIMEOUT_MS = 120_000;
+const limits = new AgentLimits({ maxSteps: AGENT_MAX_STEPS, timeoutMs: AGENT_TIMEOUT_MS });
 
 /** Pide el fichero y lo busca con el SDK antes de cerrar el sandbox. */
 async function askAndCheck(): Promise<{ result: AgentResult; state: string }> {
@@ -49,7 +52,7 @@ async function askAndCheck(): Promise<{ result: AgentResult; state: string }> {
     },
   });
   const result = await sbx.agent.run(`Crea el fichero ${TARGET} con el texto hola.`, { spec, limits });
-  const check = await sbx.commands.run(`test -e ${TARGET} && echo existe || echo ${ABSENT}`, {
+  const check = await sbx.commands.run(`test -e ${TARGET} && echo ${PRESENT} || echo ${ABSENT}`, {
     timeoutMs: CHECK_TIMEOUT_MS,
   });
   return { result, state: check.stdout.trim() };

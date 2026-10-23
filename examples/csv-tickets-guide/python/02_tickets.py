@@ -41,7 +41,8 @@ def summarize(sbx: Sandbox) -> int:
     if errors:
         print("el resumen NO cumple el contrato:", *errors, sep="\n  ", file=sys.stderr)
         return 1
-    print("contrato: OK (3 categorías, 7 tickets)")
+    contract = verify.expected()
+    print(f"contrato: OK ({len(contract['categories'])} categorías, {contract['total']} tickets)")
 
     chart = run_cell(sbx, CHART, "dibujar el gráfico")
     png = next((result.png for result in chart.results if result.png), None)

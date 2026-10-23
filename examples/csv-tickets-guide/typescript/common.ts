@@ -13,11 +13,13 @@ export const SANDBOX_CSV = "/home/user/tickets.csv";
 /** Plazo de cada celda del camino feliz; el CSV del caso tiene siete filas. */
 export const CELL_TIMEOUT_MS = 60_000;
 
+/** Sigue la forma de `contract/expected.json` y del JSON que imprime la celda, de ahí `snake_case`. */
 export interface CategorySummary {
   tickets: number;
   mean_hours: number;
 }
 export type Summary = Record<string, CategorySummary>;
+/** El resultado esperado, con los mismos campos que `contract/expected.json`. */
 export interface Contract {
   total: number;
   categories: Summary;

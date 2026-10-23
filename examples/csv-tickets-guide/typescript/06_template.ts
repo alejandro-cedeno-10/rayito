@@ -14,10 +14,11 @@ const SANDBOX_TIMEOUT_MS = 300_000;
 const COMMAND_TIMEOUT_MS = 30_000;
 const APP_TIMEOUT_MS = 60_000;
 const SERVER_PORT = 8000;
+const BASE_IMAGE = "rayito-base";
 const APP_FILE = "summary.py";
 
 const template = new Template()
-  .fromBaseImage("rayito-base")
+  .fromBaseImage(BASE_IMAGE)
   .pipInstall(["tabulate==0.9.0"])
   .copy("app/", "/srv/app/")
   .setEnvs({ MODE: "prod" })

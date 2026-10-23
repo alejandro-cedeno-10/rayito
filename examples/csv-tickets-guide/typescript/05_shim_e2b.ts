@@ -3,11 +3,12 @@
  * Antes: `import { Sandbox } from "@e2b/code-interpreter"`.
  */
 import { Sandbox } from "rayito/e2b";
+import { METADATA } from "./common.ts";
 
 const SANDBOX_TIMEOUT_MS = 300_000;
 
 async function main(): Promise<void> {
-  await using sbx = await Sandbox.create({ timeoutMs: SANDBOX_TIMEOUT_MS, metadata: { app: "tickets-demo" } });
+  await using sbx = await Sandbox.create({ timeoutMs: SANDBOX_TIMEOUT_MS, metadata: METADATA });
   const execution = await sbx.runCode("x = 40; x + 2");
   if (execution.error) throw new Error(`${execution.error.name}: ${execution.error.value}`);
   console.log(execution.text);

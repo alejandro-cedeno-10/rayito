@@ -5,7 +5,16 @@
  */
 import { writeFile } from "node:fs/promises";
 import { Sandbox } from "rayito";
-import { CellFailedError, compare, localCsv, METADATA, runCell, SANDBOX_CSV, TEMPLATE } from "./common.ts";
+import {
+  CellFailedError,
+  compare,
+  expectedContract,
+  localCsv,
+  METADATA,
+  runCell,
+  SANDBOX_CSV,
+  TEMPLATE,
+} from "./common.ts";
 
 const SANDBOX_TIMEOUT_MS = 600_000;
 const LOAD = `import pandas as pd\ndf = pd.read_csv('${SANDBOX_CSV}')\nlen(df)`;
@@ -33,7 +42,8 @@ async function summarize(sbx: Sandbox): Promise<number> {
     console.error(`el resumen NO cumple el contrato:\n  ${errors.join("\n  ")}`);
     return 1;
   }
-  console.log("contrato: OK (3 categorías, 7 tickets)");
+  const contract = expectedContract();
+  console.log(`contrato: OK (${Object.keys(contract.categories).length} categorías, ${contract.total} tickets)`);
 
   const chart = await runCell(sbx, CHART, "dibujar el gráfico");
   const png = chart.results.find((result) => result.png)?.png;

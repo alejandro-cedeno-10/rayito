@@ -30,7 +30,9 @@ SPEC = AgentSpec(
     instructions="Responde en español, en dos frases como máximo. No modifiques ficheros.",
     permissions=AgentPermissions(default="deny", tools={"bash": {"python3 *": "allow", "*": "deny"}}),
 )
-LIMITS = AgentLimits(max_steps=10, timeout_seconds=180)
+AGENT_MAX_STEPS = 10
+AGENT_TIMEOUT_SECONDS = 180
+LIMITS = AgentLimits(max_steps=AGENT_MAX_STEPS, timeout_seconds=AGENT_TIMEOUT_SECONDS)
 PROMPT = f"Cuenta con python3 los tickets de {SANDBOX_CSV} por categoría y dame el resultado."
 PATTERNS = {"acceso": r"acceso", "facturacion": r"factur[aá]ci[oó]n", "rendimiento": r"rendimiento"}
 

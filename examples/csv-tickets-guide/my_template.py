@@ -10,10 +10,11 @@ Construye cada imagen desde un solo sitio: dos SDK no reutilizan la misma versi√
 from rayito import Template, wait_for_port
 
 SERVER_PORT = 8000
+BASE_IMAGE = "rayito-base"
 
 template = (
     Template()
-    .from_base_image("rayito-base")
+    .from_base_image(BASE_IMAGE)
     .pip_install(["tabulate==0.9.0"])
     .copy("app/", "/srv/app/")
     .set_envs({"MODE": "prod"})

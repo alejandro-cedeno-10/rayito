@@ -162,6 +162,7 @@ version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
     { name = "aws-bedrock-token-generator" },
+    { name = "boto3" },
     { name = "rayito", extra = ["cli"] },
 ]
 
@@ -174,6 +175,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "aws-bedrock-token-generator", specifier = "==1.1.0" },
+    { name = "boto3", specifier = "==1.43.118" },
     { name = "rayito", extras = ["cli"], specifier = "==0.15.0" },
 ]
 

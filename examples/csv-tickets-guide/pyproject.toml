@@ -5,6 +5,8 @@ description = "Lab for the tickets CSV guide: sandbox, template, pool and agent 
 requires-python = ">=3.11"
 dependencies = [
     "rayito[cli]==0.15.0",
+    # 99_cleanup_secret.py uses it directly; rayito already depends on it
+    "boto3==1.43.118",
     # only for 08_create_secret.py --generate: signs a short-lived Bedrock key
     "aws-bedrock-token-generator==1.1.0",
 ]

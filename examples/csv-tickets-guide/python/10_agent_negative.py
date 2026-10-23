@@ -23,13 +23,16 @@ SANDBOX_TIMEOUT_SECONDS = 600
 CHECK_TIMEOUT_SECONDS = 30
 GATEWAY_RATE_PER_MINUTE = 60
 ABSENT = "ausente"
+PRESENT = "existe"
 
 SPEC = AgentSpec(
     model=AgentModel(provider="bedrock", id=MODEL_ID, gateway="bedrock", region=REGION),
     instructions="Responde en español, en una frase.",
     permissions=AgentPermissions(default="deny"),
 )
-LIMITS = AgentLimits(max_steps=5, timeout_seconds=120)
+AGENT_MAX_STEPS = 5
+AGENT_TIMEOUT_SECONDS = 120
+LIMITS = AgentLimits(max_steps=AGENT_MAX_STEPS, timeout_seconds=AGENT_TIMEOUT_SECONDS)
 
 
 def main() -> int:
@@ -43,7 +46,7 @@ def main() -> int:
         gateways={"bedrock": gateway},
     ) as sbx:
         result = sbx.agent.run(f"Crea el fichero {TARGET} con el texto hola.", spec=SPEC, limits=LIMITS)
-        check = sbx.commands.run(f"test -e {TARGET} && echo existe || echo {ABSENT}", timeout=CHECK_TIMEOUT_SECONDS)
+        check = sbx.commands.run(f"test -e {TARGET} && echo {PRESENT} || echo {ABSENT}", timeout=CHECK_TIMEOUT_SECONDS)
         state = check.stdout.strip()
 
     print("respuesta:", result.text)

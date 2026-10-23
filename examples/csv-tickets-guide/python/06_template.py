@@ -17,11 +17,12 @@ SANDBOX_TIMEOUT_SECONDS = 300
 COMMAND_TIMEOUT_SECONDS = 30
 APP_TIMEOUT_SECONDS = 60
 SERVER_PORT = 8000
+BASE_IMAGE = "rayito-base"
 APP_FILE = "summary.py"
 
 template = (
     Template()
-    .from_base_image("rayito-base")
+    .from_base_image(BASE_IMAGE)
     .pip_install(["tabulate==0.9.0"])
     .copy("app/", "/srv/app/")
     .set_envs({"MODE": "prod"})

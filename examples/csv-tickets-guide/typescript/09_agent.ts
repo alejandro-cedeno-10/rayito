@@ -37,7 +37,9 @@ const spec = new AgentSpec({
   instructions: "Responde en español, en dos frases como máximo. No modifiques ficheros.",
   permissions: new AgentPermissions({ default: "deny", tools: { bash: { "python3 *": "allow", "*": "deny" } } }),
 });
-const limits = new AgentLimits({ maxSteps: 10, timeoutMs: 180_000 });
+const AGENT_MAX_STEPS = 10;
+const AGENT_TIMEOUT_MS = 180_000;
+const limits = new AgentLimits({ maxSteps: AGENT_MAX_STEPS, timeoutMs: AGENT_TIMEOUT_MS });
 
 /** «categoría: N» o «N de categoría». Heurística: si el modelo redacta de otra forma, falla y lo dice. */
 function counts(text: string): Record<string, number> {
