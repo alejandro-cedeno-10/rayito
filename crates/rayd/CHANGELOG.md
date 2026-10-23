@@ -15,6 +15,10 @@ imagen `rayito-base` y como asset de la GitHub Release del tag `rayd-v*`.
 - `ctutils` 0.4.4 en `Cargo.lock` (RUSTSEC-2026-0385: máscaras y
   comparaciones `u128` que no eran de tiempo constante; dependencia
   transitiva de la criptografía de `rayd`).
+- `tokio` 1.53.3 (RUSTSEC-2026-0386: los constructores seguros de
+  `AsyncFd` aceptaban cualquier `AsRawFd` sin garantizar la seguridad de
+  E/S). La PTY registra su `OwnedFd` con `AsyncFd::register`, que deja esa
+  garantía explícita.
 
 ### Fixed
 

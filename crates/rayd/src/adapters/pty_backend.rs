@@ -192,9 +192,12 @@ mod unix {
             let flags = fcntl(&master, FcntlArg::F_GETFL).map_err(io_error)?;
             let flags = OFlag::from_bits_truncate(flags) | OFlag::O_NONBLOCK;
             fcntl(&master, FcntlArg::F_SETFL(flags)).map_err(io_error)?;
-            Ok(Self {
-                fd: Arc::new(AsyncFd::new(master)?),
-            })
+            // SAFETY: `master` is an `OwnedFd`: its descriptor is open, and
+            // it stays open and refers to the same file description until
+            // the `AsyncFd` that takes ownership of it is dropped, and
+            // `as_raw_fd` always returns that same descriptor.
+            let fd = unsafe { AsyncFd::register(master) }?;
+            Ok(Self { fd: Arc::new(fd) })
         }
     }
 

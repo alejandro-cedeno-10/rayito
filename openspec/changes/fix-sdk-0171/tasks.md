@@ -36,6 +36,7 @@
 
 - [x] 6.1 `opentelemetry-*` 1.45.1 (`uv lock`), `vitest` 4.1.12 (pnpm), `ctutils` 0.4.4
 - [x] 6.2 `otel` extra floor `>=1.45.1` and `check_wheel.py`
+- [x] 6.3 `tokio` 1.53.3 (RUSTSEC-2026-0386) and `AsyncFd::register` in the PTY backend
 
 ## 7. Flaky tests
 

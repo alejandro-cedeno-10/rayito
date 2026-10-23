@@ -19,7 +19,8 @@ with it:
   a failed invocation leaves the hold on the VM; a shortened VM promoted to
   base with an unknown cap keeps its short deadline.
 - Dependency alerts: `opentelemetry-api` 1.45.0, `@vitest/mocker` 4.1.11
-  and `ctutils` 0.4.2 (RUSTSEC-2026-0385).
+  and `ctutils` 0.4.2 (RUSTSEC-2026-0385), and `tokio` 1.53.1
+  (RUSTSEC-2026-0386).
 - Two flaky tests: `m5_pty` types into the terminal before interactive bash
   owns it, and the stalled S3 download test lets the export spend the whole
   `request_timeout`.
@@ -43,7 +44,8 @@ with it:
 - Fleet deadline changes are serialised per VM, failed invocations restore
   the scale-in deadline, and restoring a promoted VM with an unknown cap
   asks for the platform maximum and retries with the cap `rayd` reports.
-- Lock files: `opentelemetry-*` 1.45.1, `vitest` 4.1.12, `ctutils` 0.4.4.
+- Lock files: `opentelemetry-*` 1.45.1, `vitest` 4.1.12, `ctutils` 0.4.4, `tokio` 1.53.3
+  (the PTY registers its `OwnedFd` with `AsyncFd::register`).
 - Tests: `ready_bash` in `m5_pty`, a bounded end for the background-child
   test, paused-time tests of the PTY drain grace, and a frozen operation
   clock in the stalled S3 download tests.
