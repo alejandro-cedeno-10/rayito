@@ -173,14 +173,21 @@ life with `scale_in_after_seconds`.
   renews nothing after its first VM, and its key expires after 12 h at most
   (sooner if the signing session is shorter). Renew it yourself periodically
   (for example, a `scale` or a new `deploy`) or use a long-term key.
-- **Inherited from the recipe.** `AgentFleet.connect(name)` without `project`
-  inherits the option from the recipe, and the signer is the connecting
-  process, with its own credentials. The renewer loads on the first renewal:
-  listing, querying or stopping the fleet never needs the extra. If that
-  process lacks the `bedrock-keys` extra or permission to write the secret
-  (`permission_denied`), renewal turns off with a warning and the fleet keeps
-  whatever key is there; with an explicit `renew_gateway_keys=True`, the error
-  propagates.
+- **Never from the recipe.** The recipe records whether the deploy renewed,
+  but `AgentFleet.connect(name)` only renews when the caller asks for it
+  (`renew_gateway_keys=True` / `renewGatewayKeys: true`), because the key is
+  signed with the caller's credentials. If the recipe asked for it and you do
+  not pass it, the fleet does not renew and warns `recipe_renewal_ignored`
+  (only the code, no path or values); an explicit `False` does not warn. With
+  the option, an error (the missing `bedrock-keys` extra, `permission_denied`
+  when writing the secret) propagates.
+- **A Bedrock-only secret.** If the `bedrock` gateway's secret is also read by
+  a gateway whose upstream is not Bedrock, the option is
+  `InvalidArgumentException` and nothing is renewed: the new key would end up
+  sent to that other upstream. Only an
+  `https://bedrock-runtime.<region>.amazonaws.com` upstream with a valid AWS
+  region (`us-east-1`) counts as Bedrock; a host like
+  `bedrock-runtime.evil.s3.amazonaws.com` does not.
 
 === "Python"
 

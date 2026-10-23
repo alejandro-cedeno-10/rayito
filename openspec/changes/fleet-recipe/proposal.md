@@ -76,7 +76,7 @@ within the free tier).
   without a doubled prefix.
 - **`rayito setup` publishes `rayito-base-caps`.** It uses the same release
   artifact with `--os-capabilities ALL` and is listed in the plan with its
-  cost. `--no-caps-image` / `caps_image=False` skips it.
+  cost. Off by default: `--caps-image` / `caps_image=True` adds it.
 - **OpenCode zero-config.** `AGENTS.md` becomes `spec.instructions` and the
   `permission` block of `opencode.json` becomes `spec.permissions` when the
   project has no `rayito-agent.toml` values for them.
@@ -95,7 +95,7 @@ None: each change extends an existing capability.
   scaling source; scale-in option; key renewal hook.
 - `secret-gateway`: opt-in short-term key renewal for the `bedrock` preset.
 - `cli`: `--scale-in-after`, `--no-save-recipe`, `--renew-gateway-keys`,
-  `agent stop --keep-recipe`, `setup --no-caps-image`, the secret-looking
+  `agent stop --keep-recipe`, `setup --caps-image`, the secret-looking
   `--env` message, `agent status` without project, and `--create-secret` by
   preset without a doubled prefix.
 - `account-setup`: the `capsImage` step.

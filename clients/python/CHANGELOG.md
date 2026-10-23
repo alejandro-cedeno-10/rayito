@@ -8,13 +8,16 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
 
 ### Añadido
 
-- **`rayito setup` publica también `rayito-base-caps`**, la base que usa
-  `rayito agent deploy` en MicroVM y que antes había que publicar a mano. Es un
-  cuarto paso del plan (`capsImage`) que sale del mismo `rayito-image.zip` (una
-  sola descarga) con `additionalOsCapabilities=["ALL"]`; el plan y `--dry-run`
-  muestran el paso y su coste (otra versión de imagen, ≈ $0,04 por semana,
-  $0,08 por GB-mes). `rayito setup --no-caps-image` (`SetupRequest.caps_image` a falso) lo
-  omite: el paso sale como `skip` y no se lee ni se publica esa imagen. El
+- **`rayito setup --caps-image` publica también `rayito-base-caps`**, la base
+  que usa `rayito agent deploy` en MicroVM y que antes había que publicar a
+  mano. Es un cuarto paso del plan (`capsImage`) que sale del mismo
+  `rayito-image.zip` (una sola descarga) con `additionalOsCapabilities=["ALL"]`;
+  el plan y `--dry-run` muestran el paso y su coste (otra versión de imagen,
+  ≈ $0,04 por semana, $0,08 por GB-mes). Va apagado por defecto porque cuesta:
+  sólo `--caps-image` (`SetupRequest.caps_image=True`) lo añade; sin la opción el paso sale
+  como `skip` y no se lee ni se publica esa imagen. Si `rayito agent deploy`
+  en MicroVM no encuentra `rayito-base-caps`, el error pide
+  `rayito setup --caps-image`. El
   documento de `--json` gana `capsImageArn` y `capsImageVersion` en `result`.
 - `AgentProject.gateway_presets`: pasarela -> preset, tal como lo declara
   `[gateways.<nombre>] preset`. Lo rellenan la lectura del fichero y la
@@ -49,15 +52,17 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
 ### Cambiado
 
 - **Incompatible con 0.16: `rayito agent deploy --env` rechaza un nombre que
-  parece un secreto**, también `*_SECRET` y `SECRET` (antes pasaba), antes de
+  parece un secreto**, también `*_SECRET` y `SECRET` y los que tienen un
+  segmento `PASS`, `PASSWD`, `PAT`, `CREDENTIAL`, `CREDENTIALS`, `AUTH` o
+  `BEARER` (sin distinguir mayúsculas; antes pasaban), antes de
   cualquier llamada a AWS y con los dos destinos. Migración: pasa el valor por
   `--secret-env NOMBRE=<secreto>` o `--secret-env-from <secreto>`. La regla es
   sólo de la bandera: los valores de `env` del proyecto (`[env]` de
   `rayito-agent.toml` o la biblioteca) se guardan tal cual en la receta, así
   que no pongas en `env` nada secreto.
-- **`rayito setup` publica `rayito-base-caps` por defecto**: una versión de
-  imagen más que factura almacenamiento de snapshot (≈ $0,04 por semana)
-  aunque no despliegues en MicroVM. `--no-caps-image` la omite (ADR-034 D9).
+- **`rayito setup --caps-image` publica `rayito-base-caps`**: una versión de
+  imagen más que factura almacenamiento de snapshot (≈ $0,04 por semana).
+  Apagado por defecto (ADR-034 D9).
 
 ### Corregido
 
@@ -101,12 +106,22 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   endpoint de VPC para SSM, limitación de tasa, un error de KMS): es el aviso
   `recipe_unreadable` y la flota de 0.16, y `rayito agent stop <nombre>`
   termina sus VMs.
-- Con `renew_gateway_keys` heredado de la receta, `AgentFleet.connect(nombre)` ya no necesita el extra `bedrock-keys` para
-  listar, consultar o terminar la flota: el renovador se carga en la primera
-  renovación. Si al proceso que conecta le falta el extra o el permiso de
-  escribir el secreto, la renovación se apaga con un aviso y la flota sigue
-  creando VMs. Las renovaciones simultáneas se serializan con un candado: los VMs
-  que arrancan en paralelo escriben una sola clave.
+- **La receta ya no activa la renovación de claves de Bedrock**: la clave se
+  firma con las credenciales de quien conecta, así que `AgentFleet.connect(nombre)`
+  sólo renueva con `renew_gateway_keys=True` explícito. Si la receta lo pedía y no lo
+  pasas, la flota no renueva y avisa `recipe_renewal_ignored` (sólo el
+  código). Listar, consultar o terminar la flota nunca necesita el extra `bedrock-keys`:
+  el renovador se carga en la primera renovación, y las renovaciones
+  simultáneas se serializan con un candado (los VMs que arrancan en paralelo
+  escriben una sola clave).
+- **`renew_gateway_keys` no renueva un secreto compartido**: si el secreto de la pasarela
+  `bedrock` lo lee también una pasarela cuyo upstream no es Bedrock, la
+  opción es `InvalidArgumentException` (nombra las pasarelas, nunca el
+  secreto). Sólo cuenta como Bedrock un host
+  `bedrock-runtime.<región>.amazonaws.com` con una región de AWS válida; un
+  host como `bedrock-runtime.evil.s3.amazonaws.com` ya no se toma por Bedrock.
+- Un nombre de flota `.`, `..` o vacío ya no da una ruta de receta
+  (`recipe_not_saved`).
 - `rayito setup` informa `artifactUploaded` también cuando sólo publica
   `rayito-base-caps` (una cuenta que viene de 0.16).
 - La ayuda de `--scale-in-after` sale de la constante del SDK y dice que,

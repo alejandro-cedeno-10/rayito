@@ -20,7 +20,7 @@ actualizar. El detalle completo, cambio a cambio, está en el
     `AgentFleet.connect(nombre)` reconecta sin proyecto, con las mismas VMs,
     las plazas calientes con sus pasarelas y el escalado real en `status`.
     Además, `--scale-in-after`, renovación opcional de la clave de Bedrock,
-    `rayito setup` publica `rayito-base-caps`, y correcciones en los logs del
+    `rayito setup --caps-image` publica `rayito-base-caps`, y correcciones en los logs del
     host, `--create-secret` y OpenCode. Sin cambios que rompan la API.
 
     [:octicons-arrow-right-24: Novedades de 0.17.0](0.17.0.md)

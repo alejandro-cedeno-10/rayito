@@ -3947,7 +3947,8 @@ opción existente cambia de valor por defecto.
    permite volver a `--warm N`.
 7. **Renovación opcional de la clave de la pasarela (D7).**
    `renew_gateway_keys=True` / `renewGatewayKeys: true` /
-   `--renew-gateway-keys` (apagado por defecto; se guarda en la receta) hace
+   `--renew-gateway-keys` (apagado por defecto; la receta lo anota, pero
+   sólo lo activa la opción explícita de quien llama) hace
    que, antes de crear un VM o abrir una plaza, el SDK genere una clave de
    corta duración de Bedrock con las credenciales de quien llama, con la
    biblioteca oficial `aws-bedrock-token-generator` (Python, extra
@@ -3961,7 +3962,10 @@ opción existente cambia de valor por defecto.
    VMs que tiene abiertos en el proceso (`gateways.refresh()`). La clave
    nunca se loguea, ni se guarda en la receta, ni aparece en un error. Una
    pasarela que no es `bedrock` con la opción activada es
-   `InvalidArgumentException`. El IAM necesario (`bedrock:CallWithBearerToken`
+   `InvalidArgumentException`, y también un secreto de una pasarela
+   `bedrock` que lee además una pasarela con upstream que no es Bedrock (la
+   clave nueva se enviaría allí). Sólo es Bedrock un upstream
+   `bedrock-runtime.<región>.amazonaws.com` con una región de AWS válida. El IAM necesario (`bedrock:CallWithBearerToken`
    en quien genera, `secretsmanager:DescribeSecret` y `PutSecretValue` sobre
    el secreto) se documenta.
 8. **Arreglos sin decisión de arquitectura (D8).** Se entregan en la misma
@@ -3969,28 +3973,32 @@ opción existente cambia de valor por defecto.
    los loggers de clientes HTTP (`httpx`, `httpcore`) que imprimen URLs con
    credenciales y no lanza `AttributeError` tras una petición mal formada;
    `--create-secret` busca la variable por el *preset* de la pasarela y no
-   duplica el prefijo `rayito/`; `rayito setup` publica también
-   `rayito-base-caps` (la base de las plantillas de agente); el modo sin
+   duplica el prefijo `rayito/`; `rayito setup --caps-image` publica
+   también `rayito-base-caps` (la base de las plantillas de agente); el modo sin
    configuración de OpenCode respeta `AGENTS.md` y los permisos de
    `opencode.json`; `--scale-in-after` llega a las dos CLI; y los e2e de
    TypeScript usan un secreto distinto por test.
 9. **Ajustes de la revisión (D9).** (a) El renovador de claves se carga en
    la primera renovación, no al construir la flota: listar, consultar o
-   terminar nunca necesita el extra `bedrock-keys`. Heredada de la receta
-   (sin `renew_gateway_keys` explícito), una renovación sin el extra o sin
-   permiso de escribir el secreto se apaga con un aviso y la flota sigue;
-   explícita, el error se propaga. Un candado (Python) o una promesa en
+   terminar nunca necesita el extra `bedrock-keys`. La receta nunca activa
+   la renovación: `AgentFleet.connect(nombre)` sólo renueva con
+   `renew_gateway_keys=True` explícito (la clave se firma con las
+   credenciales de quien conecta); si la receta lo pedía y el llamante no
+   dijo nada, la flota no renueva y avisa `recipe_renewal_ignored`. Con la
+   opción, el error se propaga. Un candado (Python) o una promesa en
    curso (TypeScript) serializa las renovaciones de los VMs que arrancan en
    paralelo. (b) Leer la receta nunca falla: cualquier error de Parameter
    Store es el aviso `recipe_unreadable` y la flota de 0.16. (c)
    `SandboxLauncherPolicy` sólo lee y borra la receta; `ssm:PutParameter`
    queda en `ImagePublisherPolicy` y `CallerPolicy` (la unión de las dos),
    porque escribirla equivale a poder desplegar.
-   (d) `rayito setup` publica `rayito-base-caps` por defecto (lo pide D8):
-   no es una función del SDK encendida por defecto sino un paso más de una
-   orden explícita que ya publica `rayito-base`, con coste recurrente
-   (≈ $0,04 por semana por versión); el plan y `--dry-run` lo muestran,
-   `--no-caps-image` lo omite y `optional-features.md` tiene su fila. (e) Los
+   (d) `rayito setup` publica `rayito-base-caps` sólo con `--caps-image`
+   (`SetupRequest.caps_image`/`capsImage`, por defecto falso): es otra
+   versión de imagen que cuesta (≈ $0,04 por semana) y la regla del SDK es
+   que todo lo que factura va apagado. Sin la opción el paso `capsImage` es
+   `skip` y no hace ninguna llamada; `ensure_base_image` pide
+   `rayito setup --caps-image` cuando falta `rayito-base-caps`.
+   `optional-features.md` tiene su fila. (e) Los
    valores de `env` del proyecto se guardan en la receta: sólo la bandera
    `--env` rechaza nombres de secreto, y la guía lo dice.
 

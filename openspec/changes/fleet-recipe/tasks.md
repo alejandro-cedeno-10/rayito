@@ -77,7 +77,7 @@ Hard rules:
       prefix.
 - [x] G2.4 Setup: the `capsImage` step and `skip` action;
       `SetupRequest.caps_image` / `capsImage`; one download reused;
-      `additionalOsCapabilities=["ALL"]`; `--no-caps-image` in both CLIs;
+      `additionalOsCapabilities=["ALL"]`; `--caps-image` (opt-in) in both CLIs;
       plan vectors and `cli-cases.json` updated.
 - [x] G2.5 Tests in both SDKs: preset lookup, name, plan with and without
       caps, and service publishing both images from one artifact.
@@ -144,6 +144,11 @@ Hard rules:
       `optional-features.md`/`.en.md`, `cost.md`/`.en.md`,
       `operacion/iam.md`/`.en.md`, `cli.md`/`.en.md`,
       `concepts.md`/`.en.md`. CHANGELOG.
+- [x] G5.16 Security review: renewal only on the caller's explicit option
+      (`recipe_renewal_ignored`), no renewal of a secret shared with a
+      non-Bedrock gateway, strict region in `gateway_region`, more
+      secret-looking `--env` segments, no recipe for `.`/`..`, and
+      `rayito setup --caps-image` opt-in with an actionable deploy error.
 
 ## Z. Integration on `feat/sdk-017`
 

@@ -6,7 +6,7 @@ Both CLIs SHALL add the following, with the names, defaults and help texts of `t
 - on `rayito agent deploy`: `--scale-in-after SECONDS`, `--no-save-recipe`, and `--renew-gateway-keys` (with `--target agentcore`, both `--no-save-recipe` and `--renew-gateway-keys` fail with `option_requires_microvm`);
 - on `rayito agent stop`: `--keep-recipe`.
 
-`rayito agent deploy` SHALL reject an `--env` whose name looks like a secret (`testdata/fleet-recipe/env-rejection.json`, including `*_SECRET`) before any AWS call, with a message that names `--secret-env` and `--secret-env-from`. `testdata/cli/surface.json` SHALL only gain entries, and `scripts/check_sdk_parity.py --cli` SHALL pass.
+`rayito agent deploy` SHALL reject an `--env` whose name looks like a secret (`testdata/fleet-recipe/env-rejection.json`, including `*_SECRET` and the name segments `pass`, `passwd`, `pat`, `credential`, `credentials`, `auth`, `bearer`, case-insensitive) before any AWS call, with a message that names `--secret-env` and `--secret-env-from`. `testdata/cli/surface.json` SHALL only gain entries, and `scripts/check_sdk_parity.py --cli` SHALL pass.
 
 #### Scenario: secret-looking env
 - **WHEN** a user runs `rayito agent deploy . --env API_TOKEN=x`
@@ -27,9 +27,9 @@ Both CLIs SHALL add the following, with the names, defaults and help texts of `t
 - **WHEN** detection fills the gateway of project `my-agent` with provider `bedrock`
 - **THEN** the gateway secret is `agents/my-agent/bedrock`, read by the gateway as `rayito/agents/my-agent/bedrock`, and a deploy that finds only the 0.16 secret `rayito/rayito/agents/my-agent/bedrock` reuses it instead of creating another
 
-### Requirement: rayito setup can skip the caps image
-`rayito setup` in both CLIs SHALL accept `--no-caps-image`, which removes the publishing of `rayito-base-caps` from the plan.
+### Requirement: rayito setup publishes the caps image only on request
+`rayito setup` in both CLIs SHALL accept `--caps-image`, which adds publishing `rayito-base-caps` to the plan; without it the step is `skip`.
 
 #### Scenario: setup without caps image
-- **WHEN** a user runs `rayito setup --no-caps-image --dry-run`
+- **WHEN** a user runs `rayito setup --dry-run`
 - **THEN** the plan shows the `capsImage` step as `skip`

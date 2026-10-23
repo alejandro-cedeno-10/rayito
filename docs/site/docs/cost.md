@@ -25,7 +25,7 @@ página lleva una de dos etiquetas:
 | Un agente con 100 sesiones al día de 5 minutos | sólo la VM: 100 × (300 s × $0,126/h + $0,0014) ≈ **$1,19/día**; el modelo se paga aparte ([coste de un agente](#coste-de-un-agente-vm-frente-a-modelo)) |
 | El mismo sandbox pausado 8 horas | almacenamiento del snapshot (≈ 0,92 GB × $0,08/GB-mes durante 8 h) ≈ **$0,0008** + un ciclo suspend/resume ($0,0049) |
 | Mantener publicada una versión de imagen | ≈ **$0,04 por semana** (mínimo una semana por versión) |
-| Preparar la cuenta (`rayito setup`) | la pila de IAM es gratis; cada imagen (`rayito-base` y, desde 0.17, `rayito-base-caps`, la base del agente en MicroVM), ≈ **$0,04 por semana** por versión publicada ($0,08 por GB-mes, mínimo una semana; `--no-caps-image` publica sólo la primera); el zip en el bucket, uno para las dos, céntimos; si no hay bucket, crea uno cuyos zips caducan a los 7 días (sin cifra propia: es el mismo «céntimos» del zip); `--dry-run` no cuesta nada |
+| Preparar la cuenta (`rayito setup`) | la pila de IAM es gratis; cada imagen (`rayito-base` y, desde 0.17 y sólo con `--caps-image`, `rayito-base-caps`, la base del agente en MicroVM), ≈ **$0,04 por semana** por versión publicada ($0,08 por GB-mes, mínimo una semana); el zip en el bucket, uno para las dos, céntimos; si no hay bucket, crea uno cuyos zips caducan a los 7 días (sin cifra propia: es el mismo «céntimos» del zip); `--dry-run` no cuesta nada |
 | `rayito doctor --launch` | ≈ **$0,002** |
 | Un pool de 3 plazas ociosas | ≈ 3 × $0,60 = **$1,80/mes** (ver abajo) |
 
