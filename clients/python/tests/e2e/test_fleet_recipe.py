@@ -5,8 +5,9 @@ openspec `fleet-recipe`) contra AWS real, para Q191, Q194 y Q193 de
 - **Q191 y Q194**: `deploy_agent()` de un ejemplo con `warm_vms=1`, sesiones
   dedicadas y plazas persistentes; otro proceso se reconecta sólo con el nombre
   y el token (`AgentFleet.connect(nombre)`, que lee la receta), invoca dos
-  sesiones (la segunda cae en la plaza aparcada y necesita la pasarela del
-  modelo), `status()` da el escalado de la receta y `stop()` borra la receta.
+  sesiones nuevas, sin id propio porque el host sólo acepta los suyos (la
+  segunda cae en la plaza aparcada y necesita la pasarela del modelo),
+  `status()` da el escalado de la receta y `stop()` borra la receta.
 - **Q193** (sólo con `RAYITO_E2E_RENEWAL=1`): un despliegue con
   `renew_gateway_keys=True` sobre un secreto propio de la prueba, que empieza
   con un valor marcador: la renovación escribe una clave de corta duración y la
@@ -66,8 +67,8 @@ SECOND_PROCESS: Final = textwrap.dedent(
 
     fleet = AgentFleet.connect(sys.argv[1], access_token=os.environ["RAYITO_ACCESS_TOKEN"],
                                region=sys.argv[2])
-    first = fleet.invoke("Responde sólo: uno", session_id="recipe-e2e-1")
-    second = fleet.invoke("Responde sólo: dos", session_id="recipe-e2e-2")
+    first = fleet.invoke("Responde sólo: uno")
+    second = fleet.invoke("Responde sólo: dos")
     status = fleet.status()
     fleet.stop()
     print(json.dumps({

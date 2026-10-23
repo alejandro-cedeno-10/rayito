@@ -4,7 +4,8 @@
  * `AWS_API_NOTES.md`. Espejo de `test_fleet_recipe.py`: `deployAgent()` de un
  * ejemplo con `warmVms: 1`, sesiones dedicadas y plazas persistentes; otra
  * flota se reconecta sólo con el nombre y el token (`AgentFleet.connect`, que
- * lee la receta), invoca dos sesiones (la segunda cae en la plaza aparcada y
+ * lee la receta), invoca dos sesiones nuevas, sin id propio porque el host
+ * sólo acepta los suyos (la segunda cae en la plaza aparcada y
  * necesita la pasarela del modelo), `status()` da el escalado de la receta y
  * `stop()` borra la receta. Q193 (la renovación de claves) se prueba una vez,
  * en Python.
@@ -68,8 +69,8 @@ describe.skipIf(!READY)("fleet recipe (Q191, Q194)", () => {
           accessToken,
           connection: { region: BEDROCK_REGION },
         });
-        const first = await reconnected.invoke("Responde sólo: uno", { sessionId: "recipe-1" });
-        const second = await reconnected.invoke("Responde sólo: dos", { sessionId: "recipe-2" });
+        const first = await reconnected.invoke("Responde sólo: uno");
+        const second = await reconnected.invoke("Responde sólo: dos");
         expect(first.text).not.toBe("");
         expect(second.text).not.toBe("");
         const status = await reconnected.status();
