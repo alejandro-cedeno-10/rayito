@@ -37,6 +37,8 @@ export const ACTION_TEMPLATES = {
   stackUpdate: "actualizar ArtifactBucket {previousBucket} -> {bucket}",
   stackTemplate: "actualizar a la plantilla infra/iam.yaml de este SDK",
   stackReuse: "ya existe ({status})",
+  stackNewer:
+    "ya existe ({status}) con la plantilla de Rayito {stackSdkVersion}, más nuevo que este SDK: se conserva",
   stackWait: "en curso ({status}): esperar",
   imagePublishRelease: "publicar desde {release} (≈ 10 min)",
   imagePublishArtifact: "publicar desde {artifact} (≈ 10 min)",
@@ -78,11 +80,18 @@ const ACTION_KEYS: Readonly<Record<string, ActionKey>> = {
   "capsImage:skip": "capsSkip",
 };
 
-/** Un `update` de la pila de IAM sin `previousBucket` conserva el bucket: sólo pone al día la plantilla. */
+/**
+ * Un `update` de la pila de IAM sin `previousBucket` conserva el bucket: sólo
+ * pone al día la plantilla. Un `reuse` con `stackSdkVersion` conserva la
+ * plantilla de un Rayito más nuevo.
+ */
 function actionKey(step: SetupStep): ActionKey {
   const pair = `${step.resource}:${step.action}`;
   if (pair === "iamStack:update" && step.previousBucket === undefined) {
     return "stackTemplate";
+  }
+  if (pair === "iamStack:reuse" && step.stackSdkVersion !== undefined) {
+    return "stackNewer";
   }
   const key = ACTION_KEYS[step.action === "publish" ? `${pair}:${step.source}` : pair];
   if (key === undefined) {
@@ -102,6 +111,7 @@ function actionText(plan: SetupPlan, step: SetupStep): string {
     release: step.release ?? "",
     artifact: plan.artifact ?? "",
     imageVersion: step.imageVersion ?? "",
+    stackSdkVersion: step.stackSdkVersion ?? "",
   });
 }
 

@@ -858,10 +858,19 @@ rayito setup --tag Owner=platform --tag Project=agents
   this SDK's template (the other parameters keep their value). Since 0.17.1 a
   stack from an earlier version, or deployed by hand, is updated this way even
   if the bucket does not change: the plan says «actualizar a la plantilla
-  infra/iam.yaml de este SDK» and `previousBucket` is `null`. In a
-  `*_IN_PROGRESS` state, `wait` (and, once it ends, `update` if it still has
-  another bucket or another template); in `DELETE_IN_PROGRESS`,
-  `ROLLBACK_COMPLETE` or `*_FAILED`, `stack_blocked`.
+  infra/iam.yaml de este SDK» and `previousBucket` is `null`. A stack that a
+  **newer** Rayito deployed (its `rayito:sdk-version` tag) never goes back to
+  this SDK's template: with the same bucket it is `reuse` («ya existe (…) con
+  la plantilla de Rayito X, más nuevo que este SDK: se conserva»,
+  `stackSdkVersion` in `--json`) and, if the plan changes its bucket,
+  `stack_newer` (exit 2). That way a CI job on an earlier version does not
+  undo a later version's permissions. When it updates the stack, `setup`
+  sends again the tags it already had, with the `--tag` ones on top: a tag
+  from an earlier run is kept even if you do not repeat `--tag` (to remove
+  it, use `rayito stack deploy` or the console). In a `*_IN_PROGRESS` state,
+  `wait` (and, once it ends, `update` if it still has another bucket or
+  another template); in `DELETE_IN_PROGRESS`, `ROLLBACK_COMPLETE` or
+  `*_FAILED`, `stack_blocked`.
 - **Image:** if `rayito-base` does not exist, `publish`; with a `PENDING` or
   `IN_PROGRESS` version, `wait`; with a `SUCCESSFUL` and `ACTIVE` version,
   `reuse` (whatever `rayd` it was built from; `rayito doctor --launch` warns
@@ -915,7 +924,7 @@ without `FAIL`. `1`: the operation fails (`stack_blocked`, `stack_incomplete`,
 untranslated AWS error). `2`: usage or environment (`unsupported_region`,
 `bucket_unavailable`, `bucket_region`, `bucket_taken`,
 `artifact_stack_conflict`, `artifact_missing`, `artifact_variant`,
-`needs_confirmation`, and the usual ones: no region, no
+`needs_confirmation`, `stack_newer`, and the usual ones: no region, no
 profile or no credentials). What to do with each:
 [Troubleshooting](operacion/solucion-de-problemas.md#rayito-setup).
 
@@ -926,7 +935,9 @@ and `exitCode`. Each element of `steps` carries `resource` (`bucket`,
 `iamStack`, `baseImage` or `capsImage`), `name`, `action` (`create`, `update`,
 `reuse`, `wait`, `publish` or `skip`), `source` (`argument`, `environment`, `iamStack`,
 `cdkBootstrap`, `artifactStack`, `rayitoDefault`, `release`, `artifact` or `null`), `status`, `imageVersion`,
-`release` and `previousBucket`. The `imageVersion` of a `publish` step is
+`release`, `previousBucket` and `stackSdkVersion` (the Rayito version that
+deployed the IAM stack, only if it is newer than this SDK and is kept;
+otherwise `null`). The `imageVersion` of a `publish` step is
 `null` in the plan and, once applied, the version just published (since
 0.17.1; before, it stayed `null`). `result` (`bucket`, `imageArn`,
 `imageVersion`, `artifactUploaded`, `capsImageArn` and `capsImageVersion`, the
@@ -945,16 +956,20 @@ and if the preparation stopped earlier; `error` is `{"code", "message"}` or
   "steps": [
     {"resource": "bucket", "name": "amzn-s3-demo-bucket", "action": "reuse",
      "source": "argument", "status": null, "imageVersion": null,
-     "release": null, "previousBucket": null},
+     "release": null, "previousBucket": null,
+     "stackSdkVersion": null},
     {"resource": "iamStack", "name": "rayito-m0-iam", "action": "create",
      "source": null, "status": null, "imageVersion": null,
-     "release": null, "previousBucket": null},
+     "release": null, "previousBucket": null,
+     "stackSdkVersion": null},
     {"resource": "baseImage", "name": "rayito-base", "action": "publish",
      "source": "release", "status": null, "imageVersion": null,
-     "release": "rayd-v0.17.0", "previousBucket": null},
+     "release": "rayd-v0.17.0", "previousBucket": null,
+     "stackSdkVersion": null},
     {"resource": "capsImage", "name": "rayito-base-caps", "action": "skip",
      "source": null, "status": null, "imageVersion": null,
-     "release": null, "previousBucket": null}
+     "release": null, "previousBucket": null,
+     "stackSdkVersion": null}
   ],
   "cost": [
     "pila de IAM: gratis",

@@ -50,6 +50,8 @@ export interface VectorStack {
   readonly status: string;
   readonly outputs: Record<string, string>;
   readonly parameters: Record<string, string>;
+  /** Las etiquetas de la pila; sin ellas, ninguna. */
+  readonly tags?: Record<string, string>;
 }
 
 /** El `input` de `plan-vectors.json` y de `cli-cases.json`. */
@@ -147,6 +149,7 @@ export class FakeAccountSetup implements AccountSetupGateways {
       status: input.stack?.status,
       outputs: input.stack?.outputs ?? {},
       parameters: input.stack?.parameters ?? {},
+      tags: input.stack?.tags ?? {},
     };
     const record = (...call: Call): void => {
       this.calls.push(call);
@@ -157,6 +160,7 @@ export class FakeAccountSetup implements AccountSetupGateways {
         status: "CREATE_COMPLETE",
         outputs: behavior.omitBuildRole === true ? {} : { BuildRoleArn: BUILD_ROLE_ARN },
         parameters,
+        tags: stack.tags ?? {},
       };
       return stack;
     };

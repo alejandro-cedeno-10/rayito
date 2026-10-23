@@ -98,7 +98,11 @@ def stack_from_vector(stack: Mapping[str, Any] | None, name: str) -> StackObserv
     if stack is None:
         return StackObservation(name, None, {}, {})
     return StackObservation(
-        name, stack["status"], dict(stack["outputs"]), dict(stack["parameters"])
+        name,
+        stack["status"],
+        dict(stack["outputs"]),
+        dict(stack["parameters"]),
+        dict(stack.get("tags", {})),
     )
 
 
@@ -156,7 +160,11 @@ class FakeIamStack:
         queda con la plantilla con la que se desplegaba."""
         self.recorder.record("wait")
         self.stack = StackObservation(
-            self.stack.name, "CREATE_COMPLETE", dict(self.created_outputs), self.stack.parameters
+            self.stack.name,
+            "CREATE_COMPLETE",
+            dict(self.created_outputs),
+            self.stack.parameters,
+            self.stack.tags,
         )
         return self.stack
 

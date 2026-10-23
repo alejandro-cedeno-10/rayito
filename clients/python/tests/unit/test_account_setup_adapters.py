@@ -5,7 +5,7 @@ sobre clientes boto3 con `Stubber`. Construirlos no llama a AWS."""
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -17,6 +17,7 @@ from botocore.config import Config
 from botocore.exceptions import ClientError
 from botocore.stub import Stubber
 
+from rayito import __version__
 from rayito._account_setup._artifact_stack import ARTIFACT_STACK_COMPONENT
 from rayito._account_setup._aws import (
     MicrovmBaseImages,
@@ -199,6 +200,23 @@ def test_the_tags_reach_the_update_of_the_iam_stack() -> None:
     iam_stack_gateway(provisioner, tags=ORG_TAGS).update_bucket(OTHER_BUCKET)
     assert ("update", STACK) in provisioner.calls
     assert ORG_TAGS.items() <= provisioner.sent_tags.items()
+
+
+def test_an_update_keeps_the_stack_tags_under_the_callers_without_fixed_or_aws_ones() -> None:
+    stack = replace(
+        deployed_stack(),
+        tags={
+            "team": "x",
+            "owner": "platform",
+            "rayito:sdk-version": "0.16.0",
+            "aws:reserved": "y",
+        },
+    )
+    provisioner = FakeStackProvisioner(stacks={STACK: stack})
+    iam_stack_gateway(provisioner, tags={"team": "y"}).update_bucket(BUCKET)
+    assert {"team": "y", "owner": "platform"}.items() <= provisioner.sent_tags.items()
+    assert provisioner.sent_tags["rayito:sdk-version"] == __version__
+    assert "aws:reserved" not in provisioner.sent_tags
 
 
 def test_without_tags_only_the_fixed_rayito_tags_are_sent() -> None:

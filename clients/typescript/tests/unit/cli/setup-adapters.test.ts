@@ -28,8 +28,10 @@ import {
   sdkIamStack,
 } from "../../../src/cli/setup-adapters.js";
 import { StackError } from "../../../src/errors.js";
+import { SDK_VERSION_TAG_KEY } from "../../../src/stacks/model.js";
 import { loadTemplate, templateFingerprint } from "../../../src/stacks/packaging.js";
 import { COMPONENTS } from "../../../src/stacks/registry.js";
+import { VERSION } from "../../../src/version.js";
 import { FakeStackProvisioner } from "../m15-fake-stacks.js";
 import { componentParameterNames, templateParameterNames } from "../m15-template-parameters.js";
 import { FakeDoctorAws } from "./doctor-fakes.js";
@@ -124,6 +126,29 @@ describe("sdkIamStack", () => {
     expect(provisioner.sentTags).toMatchObject({ Env: "test" });
   });
 
+  it("an update keeps the stack's own tags under the caller's, without the fixed or aws: ones", async () => {
+    const provisioner = new FakeStackProvisioner();
+    provisioner.stacks.set(IAM_STACK_NAME, {
+      name: IAM_STACK_NAME,
+      state: "CREATE_COMPLETE",
+      outputs: {},
+      parameters: { ArtifactBucket: BUCKET },
+      tags: {
+        team: "x",
+        owner: "platform",
+        [SDK_VERSION_TAG_KEY]: "0.16.0",
+        "aws:reserved": "y",
+      },
+    });
+    await sdkIamStack(provisioner).updateBucket(BUCKET, { team: "y" });
+    expect(provisioner.sentTags).toMatchObject({
+      team: "y",
+      owner: "platform",
+      [SDK_VERSION_TAG_KEY]: VERSION,
+    });
+    expect(provisioner.sentTags).not.toHaveProperty("aws:reserved");
+  });
+
   it("observes a missing stack and an existing one", async () => {
     const provisioner = new FakeStackProvisioner();
     const gateway = sdkIamStack(provisioner);
@@ -132,6 +157,7 @@ describe("sdkIamStack", () => {
       status: undefined,
       outputs: {},
       parameters: {},
+      tags: {},
     });
     provisioner.stacks.set(IAM_STACK_NAME, {
       name: IAM_STACK_NAME,
@@ -197,6 +223,7 @@ describe("sdkArtifactStack", () => {
       status: undefined,
       outputs: {},
       parameters: {},
+      tags: {},
     });
   });
 

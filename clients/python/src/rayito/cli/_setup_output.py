@@ -58,6 +58,10 @@ ACTION_TEMPLATES: Final[Mapping[str, str]] = MappingProxyType(
         "stackUpdate": "actualizar ArtifactBucket {previousBucket} -> {bucket}",
         "stackTemplate": "actualizar a la plantilla infra/iam.yaml de este SDK",
         "stackReuse": "ya existe ({status})",
+        "stackNewer": (
+            "ya existe ({status}) con la plantilla de Rayito {stackSdkVersion}, más nuevo que "
+            "este SDK: se conserva"
+        ),
         "stackWait": "en curso ({status}): esperar",
         "imagePublishRelease": "publicar desde {release} (≈ 10 min)",
         "imagePublishArtifact": "publicar desde {artifact} (≈ 10 min)",
@@ -101,6 +105,8 @@ def action_text(plan: SetupPlan, step: SetupStep) -> str:
         key = "imagePublishArtifact" if step.source == "artifact" else "imagePublishRelease"
     elif step.resource == "iamStack" and step.action == "update" and step.previous_bucket is None:
         key = "stackTemplate"
+    elif step.resource == "iamStack" and step.action == "reuse" and step.stack_sdk_version:
+        key = "stackNewer"
     else:
         key = ACTION_KEYS[(step.resource, step.action)]
     return ACTION_TEMPLATES[key].format(
@@ -112,6 +118,7 @@ def action_text(plan: SetupPlan, step: SetupStep) -> str:
         release=step.release,
         artifact=plan.artifact,
         imageVersion=step.image_version,
+        stackSdkVersion=step.stack_sdk_version,
     )
 
 

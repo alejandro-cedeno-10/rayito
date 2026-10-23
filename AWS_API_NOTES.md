@@ -984,7 +984,7 @@ forma. Referencia de la API:
 |---|---|---|---|---|
 | `CreateStack` (`create_stack` / `CreateStackCommand`) | `StackName`, `TemplateBody`, `Parameters=[{ParameterKey, ParameterValue}]`, `Tags=[{Key, Value}]`, `Capabilities=["CAPABILITY_IAM"]` sólo si la plantilla crea roles/políticas con nombre implícito; `Capabilities=["CAPABILITY_NAMED_IAM"]` para `infra/iam.yaml` (roles con nombre fijo `rayito-m0-*`) | `StackId` (no se usa: el nombre ya es la clave) | `cloudformation:CreateStack` sobre la pila, más `iam:CreatePolicy` etc. si la plantilla crea IAM (`CAPABILITY_IAM`) | <https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_CreateStack.html> |
 | `UpdateStack` (`update_stack` / `UpdateStackCommand`) | igual que `CreateStack`, y además `Parameters=[{ParameterKey, UsePreviousValue: true}]` (sin `ParameterValue`) para cada parámetro que se conserva | — | `cloudformation:UpdateStack` | <https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_UpdateStack.html>, <https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_Parameter.html> |
-| `DescribeStacks` (`describe_stacks` / `DescribeStacksCommand`) | `StackName` | `Stacks[0].{StackStatus, StackStatusReason, Outputs[].{OutputKey, OutputValue}, Parameters[].{ParameterKey, ParameterValue}}` | `cloudformation:DescribeStacks` | <https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_DescribeStacks.html> |
+| `DescribeStacks` (`describe_stacks` / `DescribeStacksCommand`) | `StackName` | `Stacks[0].{StackStatus, StackStatusReason, Outputs[].{OutputKey, OutputValue}, Parameters[].{ParameterKey, ParameterValue}, Tags[].{Key, Value}}` | `cloudformation:DescribeStacks` | <https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_DescribeStacks.html> |
 | `DeleteStack` (`delete_stack` / `DeleteStackCommand`) | `StackName` | — (idempotente: no falla sobre una pila que no existe) | `cloudformation:DeleteStack` | <https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_DeleteStack.html> |
 
 `DescribeStackEvents` queda documentada (`StackName` → `StackEvents[].{
@@ -1012,6 +1012,16 @@ repetir `Prefixes` volvía a `'*'` (todo el bucket), `metadata-index` sin
 `UpdateReplacePolicy: Delete`) y `secrets-access` sin `KmsKeyArn` quitaba
 `kms:Decrypt`. CloudFormation ya enmascara en `DescribeStacks` el valor de
 un parámetro `NoEcho`.
+
+**`DescribeStacks` devuelve las etiquetas de la pila** (verificado sin red
+el 2026-10-23 contra el modelo de botocore 1.43.103: el shape `Stack` tiene
+`Tags`, una lista de `Tag` con `Key` y `Value`, y la referencia de la API
+lista `Tags` en `Stack`). Son las que mandó el último `CreateStack` o
+`UpdateStack`, así que `rayito:sdk-version` es la versión del SDK que la
+desplegó por última vez. `UpdateStack` con `Tags` sustituye la lista entera:
+`rayito setup`, al actualizar la pila de IAM, vuelve a mandar las etiquetas
+que la pila ya tenía (salvo las `rayito:` fijas y las `aws:` reservadas),
+con las de `--tag` por encima.
 
 `Parameters`/`Tags` siempre se mandan ordenados por clave (determinismo de
 los tests, nunca un requisito de la API). `Tags` siempre incluye las tres
@@ -2170,7 +2180,7 @@ parámetros. Consultado el 2026-10-19.
 | Paso | Llamada | Dónde está documentada |
 |---|---|---|
 | Cuenta | `GetCallerIdentity` (`Account`) | §21, tabla de `GetCallerIdentity` |
-| Pila de IAM, lectura | `DescribeStacks` (`Stacks[0].{StackStatus, Outputs, Parameters}`; ausencia = `ValidationError` con «does not exist») | §21 |
+| Pila de IAM, lectura | `DescribeStacks` (`Stacks[0].{StackStatus, Outputs, Parameters, Tags}`; ausencia = `ValidationError` con «does not exist») | §21 |
 | Pila de IAM, escritura | `CreateStack` / `UpdateStack` con `Capabilities=["CAPABILITY_NAMED_IAM"]`; sólo `ArtifactBucket` como parámetro propio, el resto con el valor por defecto o `UsePreviousValue`; la espera sondea `DescribeStacks` | §21 |
 | Bucket, lectura | `HeadBucket` hasta tres veces, una por candidato (`--bucket`/`RAYITO_BUCKET`; el `ArtifactBucket` de la pila de IAM; el de `cdk bootstrap`; o, sin ninguno, el nombre por defecto). La región sale de `x-amz-bucket-region`, como en la comprobación `bucket` de `rayito doctor`. 200 = existe y es accesible; 404 (`NoSuchBucket`, `NotFound`) = no existe; 403 = existe sin acceso (S3 no distingue ausente de ajeno); cualquier otro error se propaga | «Despliegue de agentes de cero configuración» y `docs/site/docs/cli.md` |
 | Bucket, creación | `DescribeStacks` y `CreateStack` sobre `rayito-m0-artifacts` con la plantilla `infra/artifact-bucket.yaml` y **sólo** `BucketName` como parámetro (`ArtifactExpirationDays` queda en su valor por defecto); **sin `Capabilities`** (la plantilla no crea recursos IAM); la espera sondea `DescribeStacks` y la salida `BucketName` es el bucket. El SDK no llama a `CreateBucket`: lo hace CloudFormation con las credenciales del llamante | §21 |

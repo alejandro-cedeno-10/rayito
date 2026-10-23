@@ -19,6 +19,7 @@ import {
   type ImageGateResult,
   type ImageObservation,
   type PublishedImage,
+  preservedStackTags,
   type StackObservation,
   TEMPLATE_FINGERPRINT_PARAMETER,
 } from "../account-setup/domain.js";
@@ -94,6 +95,7 @@ function observationOf(status: StackStatus | undefined, stackName: string): Stac
     status: status?.state,
     outputs: status?.outputs ?? {},
     parameters: status?.parameters ?? {},
+    tags: status?.tags ?? {},
   };
 }
 
@@ -143,8 +145,10 @@ export class SdkSetupStack implements IamStackGateway, ArtifactStackGateway {
     return this.#deployBucket(bucket, tags);
   }
 
-  updateBucket(bucket: string, tags: StackTags): Promise<StackObservation> {
-    return this.#deployBucket(bucket, tags);
+  /** Vuelve a mandar las etiquetas que la pila ya tenía, con `tags` por encima: `UpdateStack` sustituye la lista entera. */
+  async updateBucket(bucket: string, tags: StackTags): Promise<StackObservation> {
+    const current = await this.observe();
+    return this.#deployBucket(bucket, preservedStackTags(current.tags ?? {}, tags));
   }
 
   /** Una pila que desaparece durante la espera es un fallo, como en Python. */

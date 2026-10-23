@@ -844,7 +844,16 @@ rayito setup --tag Owner=platform --tag Project=agents
   plantilla de este SDK (los demás parámetros conservan su valor). Desde
   0.17.1 una pila de una versión anterior, o desplegada a mano, se actualiza
   así aunque el bucket no cambie: el plan dice «actualizar a la plantilla
-  infra/iam.yaml de este SDK» y `previousBucket` es `null`. En un estado
+  infra/iam.yaml de este SDK» y `previousBucket` es `null`. Una pila que
+  desplegó un Rayito **más nuevo** (su etiqueta `rayito:sdk-version`) nunca
+  vuelve a la plantilla de este SDK: con el mismo bucket es `reuse` («ya
+  existe (…) con la plantilla de Rayito X, más nuevo que este SDK: se
+  conserva», `stackSdkVersion` en `--json`) y, si el plan le cambia el
+  bucket, `stack_newer` (salida 2). Así un CI con una versión anterior no
+  deshace los permisos de una posterior. Al actualizar la pila, `setup` manda
+  de nuevo las etiquetas que ya tenía, con las de `--tag` por encima: una
+  etiqueta de una ejecución anterior se conserva aunque no repitas `--tag`
+  (para quitarla, `rayito stack deploy` o la consola). En un estado
   `*_IN_PROGRESS`, `wait` (y al terminar, `update` si sigue con otro bucket u
   otra plantilla); en `DELETE_IN_PROGRESS`, `ROLLBACK_COMPLETE` o `*_FAILED`,
   `stack_blocked`.
@@ -903,7 +912,7 @@ sin `FAIL`. `1`: falla la operación (`stack_blocked`, `stack_incomplete`,
 error de AWS sin traducir). `2`: uso o entorno (`unsupported_region`,
 `bucket_unavailable`, `bucket_region`, `bucket_taken`,
 `artifact_stack_conflict`, `artifact_missing`, `artifact_variant`,
-`needs_confirmation`, y los de siempre: sin región, sin
+`needs_confirmation`, `stack_newer`, y los de siempre: sin región, sin
 perfil o sin credenciales). Qué hacer con cada uno:
 [Solución de problemas](operacion/solucion-de-problemas.md#rayito-setup).
 
@@ -914,7 +923,9 @@ Sus claves, en este orden: `rayito` (versión del SDK), `region`, `account`
 (`bucket`, `iamStack`, `baseImage` o `capsImage`), `name`, `action` (`create`,
 `update`, `reuse`, `wait`, `publish` o `skip`), `source` (`argument`, `environment`, `iamStack`,
 `cdkBootstrap`, `artifactStack`, `rayitoDefault`, `release`, `artifact` o `null`), `status`, `imageVersion`,
-`release` y `previousBucket`. El `imageVersion` de un paso `publish` es
+`release`, `previousBucket` y `stackSdkVersion` (la versión de Rayito que
+desplegó la pila de IAM, sólo si es más nueva que este SDK y se conserva; si
+no, `null`). El `imageVersion` de un paso `publish` es
 `null` en el plan y, tras aplicarlo, la versión recién publicada (desde
 0.17.1; antes seguía en `null`). `result` (`bucket`, `imageArn`, `imageVersion`,
 `artifactUploaded`, `capsImageArn` y `capsImageVersion`, éstos `null` sin
@@ -933,16 +944,20 @@ error el mensaje sale además por stderr como `rayito: <mensaje>`.
   "steps": [
     {"resource": "bucket", "name": "amzn-s3-demo-bucket", "action": "reuse",
      "source": "argument", "status": null, "imageVersion": null,
-     "release": null, "previousBucket": null},
+     "release": null, "previousBucket": null,
+     "stackSdkVersion": null},
     {"resource": "iamStack", "name": "rayito-m0-iam", "action": "create",
      "source": null, "status": null, "imageVersion": null,
-     "release": null, "previousBucket": null},
+     "release": null, "previousBucket": null,
+     "stackSdkVersion": null},
     {"resource": "baseImage", "name": "rayito-base", "action": "publish",
      "source": "release", "status": null, "imageVersion": null,
-     "release": "rayd-v0.17.0", "previousBucket": null},
+     "release": "rayd-v0.17.0", "previousBucket": null,
+     "stackSdkVersion": null},
     {"resource": "capsImage", "name": "rayito-base-caps", "action": "skip",
      "source": null, "status": null, "imageVersion": null,
-     "release": null, "previousBucket": null}
+     "release": null, "previousBucket": null,
+     "stackSdkVersion": null}
   ],
   "cost": [
     "pila de IAM: gratis",

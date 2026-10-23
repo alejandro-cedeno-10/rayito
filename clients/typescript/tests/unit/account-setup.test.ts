@@ -254,6 +254,8 @@ describe("account setup: contract", () => {
       existing: "amzn-s3-demo-bucket2",
       output: "BuildRoleArn",
       template: "infra/iam.yaml",
+      stackSdkVersion: "999.0.0",
+      sdkVersion: "0.17.1",
     };
     for (const code of Object.keys(contract.errorExitCodes) as ErrorCode[]) {
       const error = new AccountSetupError(code, fields);
@@ -299,7 +301,48 @@ describe("account setup: contract", () => {
       "imageVersion",
       "release",
       "previousBucket",
+      "stackSdkVersion",
     ]);
+  });
+});
+
+describe("account setup: newer stacks and tags", () => {
+  it.each([
+    ["0.18.0", "0.17.1", "0.18.0"],
+    ["0.10.0", "0.9.9", "0.10.0"],
+    ["0.18.0-rc.1", "0.17.1", "0.18.0-rc.1"],
+    ["0.17.1", "0.17.1", undefined],
+    ["0.16.0", "0.17.1", undefined],
+    ["manual", "0.17.1", undefined],
+    [undefined, "0.17.1", undefined],
+  ])(
+    "a stack tagged %s is newer than %s only by its release numbers",
+    (deployed, current, newer) => {
+      const tags: Record<string, string> =
+        deployed === undefined ? {} : { "rayito:sdk-version": deployed };
+      const stack = {
+        name: "rayito-m0-iam",
+        status: "CREATE_COMPLETE",
+        outputs: {},
+        parameters: {},
+        tags,
+      };
+      expect(domain.deployedByNewerSdk(stack, current)).toBe(newer);
+    },
+  );
+
+  it("preserved tags keep the stack ones under the requested ones", () => {
+    const current = {
+      team: "x",
+      owner: "platform",
+      "rayito:component": "iam",
+      "rayito:sdk-version": "0.16.0",
+      "aws:cloudformation:stack-name": "rayito-m0-iam",
+    };
+    expect(domain.preservedStackTags(current, { team: "y" })).toEqual({
+      team: "y",
+      owner: "platform",
+    });
   });
 });
 

@@ -28,6 +28,7 @@ from rayito._account_setup._domain import (
     ImageGateResult,
     ImageObservation,
     ImageVersionItem,
+    preserved_stack_tags,
 )
 from rayito._account_setup._iam_stack import IAM_STACK_COMPONENT
 from rayito._account_setup._ports import Progress
@@ -64,8 +65,10 @@ class CloudFormationSetupStack:
     `UsePreviousValue` todo parámetro que no se manda (sólo se manda el del
     bucket: `ArtifactBucket` o `BucketName`, y, si la pila lo declara,
     `fingerprint_parameter` con el sha256 de la plantilla empaquetada). `tags`
-    (`--tag`) se manda como etiquetas de la pila al crearla o actualizarla;
-    CloudFormation las propaga a sus recursos."""
+    (`--tag`) se manda como etiquetas de la pila al crearla; al actualizarla
+    van además las que la pila ya tenía (`preserved_stack_tags`), porque
+    `UpdateStack` sustituye la lista entera. CloudFormation las propaga a sus
+    recursos."""
 
     def __init__(
         self,
@@ -96,10 +99,10 @@ class CloudFormationSetupStack:
         return template_fingerprint(self._component)
 
     def create(self, bucket: str) -> StackObservation:
-        return self._deploy(bucket)
+        return self._deploy(bucket, self._tags)
 
     def update_bucket(self, bucket: str) -> StackObservation:
-        return self._deploy(bucket)
+        return self._deploy(bucket, preserved_stack_tags(self.observe().tags, self._tags))
 
     def wait(self) -> StackObservation:
         self._provisioner.wait(self._stack_name, "deployed", self._wait_timeout)
@@ -110,7 +113,7 @@ class CloudFormationSetupStack:
             )
         return observed
 
-    def _deploy(self, bucket: str) -> StackObservation:
+    def _deploy(self, bucket: str, tags: Mapping[str, str]) -> StackObservation:
         parameters = {self._bucket_parameter: bucket}
         if self._fingerprint_parameter is not None:
             parameters[self._fingerprint_parameter] = self.template_fingerprint()
@@ -119,7 +122,7 @@ class CloudFormationSetupStack:
                 self._component,
                 stack_name=self._stack_name,
                 parameters=parameters,
-                tags=self._tags,
+                tags=dict(tags),
                 wait_timeout=self._wait_timeout,
             ),
             self._stack_name,

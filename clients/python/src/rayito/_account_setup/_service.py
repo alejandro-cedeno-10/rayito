@@ -38,6 +38,7 @@ from rayito._account_setup._domain import (
 from rayito._account_setup._ports import AccountSetupGateways, Progress
 from rayito._images import BUILD_ROLE_OUTPUT_KEY
 from rayito._stacks._condition import StackObservation
+from rayito._version import __version__
 
 
 def uploaded_by_either(base: bool | None, caps: bool | None) -> bool | None:
@@ -108,6 +109,7 @@ class AccountSetup:
             image,
             caps,
             iam_template_fingerprint=self._gateways.iam_stack.template_fingerprint(),
+            sdk_version=__version__,
         )
 
     def apply(self, plan: SetupPlan, *, workdir: Path, on_progress: Progress) -> SetupResult:
@@ -190,7 +192,7 @@ class AccountSetup:
         """Si la pila que se esperaba trabajaba con otro bucket o con otra
         plantilla: entonces se actualiza al terminar la espera."""
         fingerprint = self._gateways.iam_stack.template_fingerprint()
-        return plan_stack(observation, bucket, fingerprint).action == "update"
+        return plan_stack(observation, bucket, fingerprint, __version__).action == "update"
 
 
 @dataclass(frozen=True)

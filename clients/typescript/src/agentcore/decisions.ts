@@ -53,6 +53,7 @@ export function stackObservation(
     status: status?.state,
     outputs: status?.outputs ?? {},
     parameters: status?.parameters ?? {},
+    tags: status?.tags ?? {},
   };
 }
 

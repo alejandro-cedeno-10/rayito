@@ -45,6 +45,7 @@ export class FakeStackProvisioner implements StackProvisioner {
       state: "CREATE_COMPLETE",
       outputs: { StackName: options.stackName },
       parameters: { ...options.parameters },
+      tags: { ...options.tags },
     });
   }
 
@@ -77,6 +78,7 @@ export class FakeStackProvisioner implements StackProvisioner {
         state: "UPDATE_COMPLETE",
         outputs: existing?.outputs ?? {},
         parameters: { ...merged, ...options.parameters },
+        tags: { ...options.tags },
       });
     }
     return this.nextUpdateOutcome;
