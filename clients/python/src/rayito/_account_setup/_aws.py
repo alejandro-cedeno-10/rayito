@@ -23,10 +23,14 @@ from rayito._account_setup._domain import (
     ARTIFACT_STACK_NAME,
     BUCKET_NAME_PARAMETER,
     IAM_STACK_NAME,
+    LEGACY_CALLER_POLICY_PARAMETER,
+    TEMPLATE_FINGERPRINT_PARAMETER,
     BucketProbe,
     ImageGateResult,
     ImageObservation,
     ImageVersionItem,
+    legacy_caller_policy,
+    preserved_stack_tags,
 )
 from rayito._account_setup._iam_stack import IAM_STACK_COMPONENT
 from rayito._account_setup._ports import Progress
@@ -42,6 +46,7 @@ from rayito._images import (
 )
 from rayito._stacks._condition import StackObservation, stack_observation
 from rayito._stacks._model import StackComponent
+from rayito._stacks._packaging import template_fingerprint
 from rayito._stacks._port import StackProvisioner
 from rayito._stacks._service import DEFAULT_WAIT_TIMEOUT_SECONDS, OptionalStacks
 from rayito.exceptions import StackException
@@ -60,9 +65,13 @@ class CloudFormationSetupStack:
     `OptionalStacks.status/deploy`: crear y actualizar son el mismo `deploy`,
     que decide por el estado actual y, al actualizar, conserva con
     `UsePreviousValue` todo parámetro que no se manda (sólo se manda el del
-    bucket: `ArtifactBucket` o `BucketName`). `tags` (`--tag`) se manda como
-    etiquetas de la pila al crearla o actualizarla; CloudFormation las propaga
-    a sus recursos."""
+    bucket: `ArtifactBucket` o `BucketName`, y, si la pila lo declara,
+    `fingerprint_parameter` con el sha256 de la plantilla empaquetada y
+    `legacy_parameter` con `legacy_caller_policy` de la pila actual). `tags`
+    (`--tag`) se manda como etiquetas de la pila al crearla; al actualizarla
+    van además las que la pila ya tenía (`preserved_stack_tags`), porque
+    `UpdateStack` sustituye la lista entera. CloudFormation las propaga a sus
+    recursos."""
 
     def __init__(
         self,
@@ -71,6 +80,8 @@ class CloudFormationSetupStack:
         component: StackComponent,
         stack_name: str,
         bucket_parameter: str,
+        fingerprint_parameter: str | None = None,
+        legacy_parameter: str | None = None,
         tags: Mapping[str, str] | None = None,
         wait_timeout_seconds: float = DEFAULT_WAIT_TIMEOUT_SECONDS,
     ) -> None:
@@ -79,6 +90,8 @@ class CloudFormationSetupStack:
         self._component = component
         self._stack_name = stack_name
         self._bucket_parameter = bucket_parameter
+        self._fingerprint_parameter = fingerprint_parameter
+        self._legacy_parameter = legacy_parameter
         self._tags = dict(tags or {})
         self._wait_timeout = wait_timeout_seconds
 
@@ -87,11 +100,15 @@ class CloudFormationSetupStack:
             self._stacks.status(self._component, stack_name=self._stack_name), self._stack_name
         )
 
+    def template_fingerprint(self) -> str:
+        return template_fingerprint(self._component)
+
     def create(self, bucket: str) -> StackObservation:
-        return self._deploy(bucket)
+        return self._deploy(bucket, self._tags, None)
 
     def update_bucket(self, bucket: str) -> StackObservation:
-        return self._deploy(bucket)
+        current = self.observe()
+        return self._deploy(bucket, preserved_stack_tags(current.tags, self._tags), current)
 
     def wait(self) -> StackObservation:
         self._provisioner.wait(self._stack_name, "deployed", self._wait_timeout)
@@ -102,13 +119,20 @@ class CloudFormationSetupStack:
             )
         return observed
 
-    def _deploy(self, bucket: str) -> StackObservation:
+    def _deploy(
+        self, bucket: str, tags: Mapping[str, str], current: StackObservation | None
+    ) -> StackObservation:
+        parameters = {self._bucket_parameter: bucket}
+        if self._fingerprint_parameter is not None:
+            parameters[self._fingerprint_parameter] = self.template_fingerprint()
+        if self._legacy_parameter is not None:
+            parameters[self._legacy_parameter] = legacy_caller_policy(current)
         return stack_observation(
             self._stacks.deploy(
                 self._component,
                 stack_name=self._stack_name,
-                parameters={self._bucket_parameter: bucket},
-                tags=self._tags,
+                parameters=parameters,
+                tags=dict(tags),
                 wait_timeout=self._wait_timeout,
             ),
             self._stack_name,
@@ -121,12 +145,16 @@ def iam_stack_gateway(
     tags: Mapping[str, str] | None = None,
     wait_timeout_seconds: float = DEFAULT_WAIT_TIMEOUT_SECONDS,
 ) -> CloudFormationSetupStack:
-    """La pila `rayito-m0-iam`, que recibe el bucket como `ArtifactBucket`."""
+    """La pila `rayito-m0-iam`, que recibe el bucket como `ArtifactBucket`,
+    el sha256 de su plantilla como `TemplateFingerprint` y
+    `LegacyCallerPolicy` según la plantilla con la que se creó."""
     return CloudFormationSetupStack(
         provisioner,
         component=IAM_STACK_COMPONENT,
         stack_name=IAM_STACK_NAME,
         bucket_parameter=ARTIFACT_BUCKET_PARAMETER,
+        fingerprint_parameter=TEMPLATE_FINGERPRINT_PARAMETER,
+        legacy_parameter=LEGACY_CALLER_POLICY_PARAMETER,
         tags=tags,
         wait_timeout_seconds=wait_timeout_seconds,
     )

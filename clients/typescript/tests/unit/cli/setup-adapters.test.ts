@@ -5,6 +5,10 @@
  * `rayito image publish`. Espejo de `test_account_setup_adapters.py`.
  */
 
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { ARTIFACT_STACK_COMPONENT } from "../../../src/account-setup/artifact-stack.js";
 import {
@@ -24,8 +28,10 @@ import {
   sdkIamStack,
 } from "../../../src/cli/setup-adapters.js";
 import { StackError } from "../../../src/errors.js";
-import { loadTemplate } from "../../../src/stacks/packaging.js";
+import { SDK_VERSION_TAG_KEY } from "../../../src/stacks/model.js";
+import { loadTemplate, templateFingerprint } from "../../../src/stacks/packaging.js";
 import { COMPONENTS } from "../../../src/stacks/registry.js";
+import { VERSION } from "../../../src/version.js";
 import { FakeStackProvisioner } from "../m15-fake-stacks.js";
 import { componentParameterNames, templateParameterNames } from "../m15-template-parameters.js";
 import { FakeDoctorAws } from "./doctor-fakes.js";
@@ -41,6 +47,7 @@ const OTHER_PARAMETERS = [
   "TransferPrefix",
 ];
 const BUILD_STEP_MS = 10;
+const LAUNCHER_POLICY = "arn:aws:iam::123456789012:policy/rayito-m0-launcher-us-east-1";
 
 const clock: SetupClock = (() => {
   let now = 0;
@@ -61,8 +68,18 @@ afterEach(() => {
   }
 });
 
+const REPO_ROOT = fileURLToPath(new URL("../../../../../", import.meta.url));
+
 describe("sdkIamStack", () => {
-  it("creates the stack with CAPABILITY_NAMED_IAM's single parameter and waits for it", async () => {
+  it("fingerprints the template with the sha256 of the repository's infra/iam.yaml, as Python", async () => {
+    const expected = createHash("sha256")
+      .update(readFileSync(join(REPO_ROOT, "infra", "iam.yaml")))
+      .digest("hex");
+    expect(await templateFingerprint(IAM_STACK_COMPONENT)).toBe(expected);
+    expect(await sdkIamStack(new FakeStackProvisioner()).templateFingerprint()).toBe(expected);
+  });
+
+  it("creates the stack with CAPABILITY_NAMED_IAM, the bucket and the fingerprint and waits for it", async () => {
     const provisioner = new FakeStackProvisioner();
     const observed = await sdkIamStack(provisioner).create(BUCKET, {});
     expect(provisioner.calls.map(([name]) => name)).toEqual([
@@ -72,25 +89,68 @@ describe("sdkIamStack", () => {
       "describe",
     ]);
     expect(provisioner.calls).toContainEqual(["wait", IAM_STACK_NAME, "deployed"]);
-    expect(provisioner.sentParameters).toEqual({ ArtifactBucket: BUCKET });
-    expect(observed.parameters).toEqual({ ArtifactBucket: BUCKET });
+    const fingerprint = await templateFingerprint(IAM_STACK_COMPONENT);
+    expect(provisioner.sentParameters).toEqual({
+      ArtifactBucket: BUCKET,
+      TemplateFingerprint: fingerprint,
+      LegacyCallerPolicy: "false",
+    });
+    expect(observed.parameters).toEqual({
+      ArtifactBucket: BUCKET,
+      TemplateFingerprint: fingerprint,
+      LegacyCallerPolicy: "false",
+    });
   });
 
-  it("an update sends only ArtifactBucket and keeps the six other parameters", async () => {
+  it("an update sends ArtifactBucket and the fingerprint and keeps the six other parameters", async () => {
     const provisioner = new FakeStackProvisioner();
     provisioner.stacks.set(IAM_STACK_NAME, {
       name: IAM_STACK_NAME,
       state: "CREATE_COMPLETE",
-      outputs: {},
+      outputs: { SandboxLauncherPolicyArn: LAUNCHER_POLICY },
       parameters: Object.fromEntries(
         ["ArtifactBucket", ...OTHER_PARAMETERS].map((name) => [name, "x"]),
       ),
     });
     await sdkIamStack(provisioner).updateBucket(BUCKET_B, {});
-    expect(provisioner.sentParameters).toEqual({ ArtifactBucket: BUCKET_B });
+    expect(provisioner.sentParameters).toEqual({
+      ArtifactBucket: BUCKET_B,
+      TemplateFingerprint: await templateFingerprint(IAM_STACK_COMPONENT),
+      LegacyCallerPolicy: "false",
+    });
     expect(provisioner.sentKeepPrevious).toEqual(OTHER_PARAMETERS);
     expect(provisioner.calls.map(([name]) => name)).not.toContain("create");
   });
+
+  // Medido en AWS real (AWS_API_NOTES.md §21): con otra descripción,
+  // CloudFormation sustituye CallerPolicy, la nueva choca con su nombre fijo
+  // y la actualización se revierte.
+  it("an update of a stack of the 0.6 template keeps the CallerPolicy description", async () => {
+    const provisioner = new FakeStackProvisioner();
+    provisioner.stacks.set(IAM_STACK_NAME, {
+      name: IAM_STACK_NAME,
+      state: "UPDATE_COMPLETE",
+      outputs: { BuildRoleArn: BUILD_ROLE },
+      parameters: { ArtifactBucket: BUCKET },
+    });
+    await sdkIamStack(provisioner).updateBucket(BUCKET, {});
+    expect(provisioner.sentParameters).toMatchObject({ LegacyCallerPolicy: "true" });
+  });
+
+  it.each(["true", "false"])(
+    "an update keeps the LegacyCallerPolicy value %s the stack already has",
+    async (value) => {
+      const provisioner = new FakeStackProvisioner();
+      provisioner.stacks.set(IAM_STACK_NAME, {
+        name: IAM_STACK_NAME,
+        state: "UPDATE_COMPLETE",
+        outputs: { BuildRoleArn: BUILD_ROLE },
+        parameters: { ArtifactBucket: BUCKET, LegacyCallerPolicy: value },
+      });
+      await sdkIamStack(provisioner).updateBucket(BUCKET, {});
+      expect(provisioner.sentParameters).toMatchObject({ LegacyCallerPolicy: value });
+    },
+  );
 
   it("sends the caller's tags on create and on update", async () => {
     const provisioner = new FakeStackProvisioner();
@@ -98,6 +158,29 @@ describe("sdkIamStack", () => {
     expect(provisioner.sentTags).toMatchObject({ Owner: "team" });
     await sdkIamStack(provisioner).updateBucket(BUCKET_B, { Env: "test" });
     expect(provisioner.sentTags).toMatchObject({ Env: "test" });
+  });
+
+  it("an update keeps the stack's own tags under the caller's, without the fixed or aws: ones", async () => {
+    const provisioner = new FakeStackProvisioner();
+    provisioner.stacks.set(IAM_STACK_NAME, {
+      name: IAM_STACK_NAME,
+      state: "CREATE_COMPLETE",
+      outputs: {},
+      parameters: { ArtifactBucket: BUCKET },
+      tags: {
+        team: "x",
+        owner: "platform",
+        [SDK_VERSION_TAG_KEY]: "0.16.0",
+        "aws:reserved": "y",
+      },
+    });
+    await sdkIamStack(provisioner).updateBucket(BUCKET, { team: "y" });
+    expect(provisioner.sentTags).toMatchObject({
+      team: "y",
+      owner: "platform",
+      [SDK_VERSION_TAG_KEY]: VERSION,
+    });
+    expect(provisioner.sentTags).not.toHaveProperty("aws:reserved");
   });
 
   it("observes a missing stack and an existing one", async () => {
@@ -108,6 +191,7 @@ describe("sdkIamStack", () => {
       status: undefined,
       outputs: {},
       parameters: {},
+      tags: {},
     });
     provisioner.stacks.set(IAM_STACK_NAME, {
       name: IAM_STACK_NAME,
@@ -173,6 +257,7 @@ describe("sdkArtifactStack", () => {
       status: undefined,
       outputs: {},
       parameters: {},
+      tags: {},
     });
   });
 

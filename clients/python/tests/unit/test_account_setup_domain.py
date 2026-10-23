@@ -324,3 +324,37 @@ def test_a_usable_bucket_stack_without_its_output_is_incomplete() -> None:
     assert caught.value.code == "stack_incomplete"
     assert "BucketName" in str(caught.value)
     assert domain.ARTIFACT_TEMPLATE_PATH in str(caught.value)
+
+
+@pytest.mark.parametrize(
+    ("deployed", "current", "newer"),
+    [
+        ("0.18.0", "0.17.1", "0.18.0"),
+        ("0.10.0", "0.9.9", "0.10.0"),
+        ("0.18.0rc1", "0.17.1", "0.18.0rc1"),
+        ("0.17.1", "0.17.1", None),
+        ("0.16.0", "0.17.1", None),
+        ("manual", "0.17.1", None),
+        (None, "0.17.1", None),
+    ],
+)
+def test_a_stack_is_newer_only_by_its_release_numbers(
+    deployed: str | None, current: str, newer: str | None
+) -> None:
+    tags = {} if deployed is None else {"rayito:sdk-version": deployed}
+    stack = domain.StackObservation("rayito-m0-iam", "CREATE_COMPLETE", {}, {}, tags)
+    assert domain.deployed_by_newer_sdk(stack, current) == newer
+
+
+def test_preserved_tags_keep_the_stack_ones_under_the_requested_ones() -> None:
+    current = {
+        "team": "x",
+        "owner": "platform",
+        "rayito:component": "iam",
+        "rayito:sdk-version": "0.16.0",
+        "aws:cloudformation:stack-name": "rayito-m0-iam",
+    }
+    assert domain.preserved_stack_tags(current, {"team": "y"}) == {
+        "team": "y",
+        "owner": "platform",
+    }

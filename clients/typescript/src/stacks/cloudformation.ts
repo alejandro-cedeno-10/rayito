@@ -3,7 +3,7 @@
  * Espejo de `rayito._stacks._cloudformation`. Parámetros y formas
  * verificados contra `AWS_API_NOTES.md` §21: `CreateStack`, `UpdateStack`
  * (con `UsePreviousValue` para los parámetros que se conservan),
- * `DescribeStacks` (incluidos sus `Parameters`), `DeleteStack`. `putArtifact` nunca se fía de que
+ * `DescribeStacks` (incluidos sus `Parameters` y `Tags`), `DeleteStack`. `putArtifact` nunca se fía de que
  * exista un objeto con la clave esperada: con `ExpectedBucketOwner` (la cuenta de
  * `sts:GetCallerIdentity`) hace `GetObject` y compara el sha256 del contenido; sólo si coincide no
  * lo vuelve a subir, y si falta o no coincide, `PutObject` con `ChecksumSHA256`.
@@ -61,6 +61,7 @@ interface CloudFormationApi {
       StackStatusReason?: string;
       Outputs?: Array<{ OutputKey?: string; OutputValue?: string }>;
       Parameters?: Array<{ ParameterKey?: string; ParameterValue?: string }>;
+      Tags?: Array<{ Key?: string; Value?: string }>;
     }>;
   }>;
   createStack(input: {
@@ -277,12 +278,19 @@ export class CloudFormationProvisioner implements StackProvisioner {
         parameters[parameter.ParameterKey] = parameter.ParameterValue ?? "";
       }
     }
+    const tags: Record<string, string> = {};
+    for (const tag of stack.Tags ?? []) {
+      if (tag.Key !== undefined) {
+        tags[tag.Key] = tag.Value ?? "";
+      }
+    }
     return {
       name: stackName,
       state: stack.StackStatus,
       outputs,
       reasonCode: stack.StackStatusReason,
       parameters,
+      tags,
     };
   }
 

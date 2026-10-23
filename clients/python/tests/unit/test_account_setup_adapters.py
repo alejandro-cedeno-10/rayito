@@ -4,7 +4,8 @@ sobre clientes boto3 con `Stubber`. Construirlos no llama a AWS."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import hashlib
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -16,6 +17,7 @@ from botocore.config import Config
 from botocore.exceptions import ClientError
 from botocore.stub import Stubber
 
+from rayito import __version__
 from rayito._account_setup._artifact_stack import ARTIFACT_STACK_COMPONENT
 from rayito._account_setup._aws import (
     MicrovmBaseImages,
@@ -27,7 +29,7 @@ from rayito._account_setup._domain import StackObservation
 from rayito._account_setup._iam_stack import IAM_STACK_COMPONENT
 from rayito._account_setup._service import AccountSetup
 from rayito._stacks._model import StackComponent, StackStatus
-from rayito._stacks._packaging import load_template
+from rayito._stacks._packaging import load_template, template_fingerprint
 from rayito._stacks._registry import COMPONENTS
 from rayito.cli._publish import PublishSettings
 from rayito.cli._session import Clients
@@ -42,10 +44,12 @@ from .test_m15_stacks_template_parameters import (
     template_parameter_names,
 )
 
+REPO_ROOT = Path(__file__).resolve().parents[4]
 STACK = "rayito-m0-iam"
 BUCKET = "amzn-s3-demo-bucket"
 OTHER_BUCKET = "amzn-s3-demo-bucket1"
 BUILD_ROLE = f"arn:aws:iam::{ACCOUNT_ID}:role/rayito-m0-build-{REGION}"
+LAUNCHER_POLICY = f"arn:aws:iam::{ACCOUNT_ID}:policy/rayito-m0-launcher-{REGION}"
 OTHER_PARAMETERS = (
     "LogGroupPrefix",
     "NetworkConnectorArns",
@@ -67,10 +71,22 @@ class RecordingProvisioner(FakeStackProvisioner):
 
 
 def deployed_stack(bucket: str = BUCKET) -> StackStatus:
+    """Una pila de la plantilla de 0.7.0 a 0.17.0: con la salida de
+    `SandboxLauncherPolicy` y sin `TemplateFingerprint` ni `LegacyCallerPolicy`."""
     parameters = {"ArtifactBucket": bucket, **{name: "" for name in OTHER_PARAMETERS}}
     return StackStatus(
-        STACK, "CREATE_COMPLETE", outputs={"BuildRoleArn": BUILD_ROLE}, parameters=parameters
+        STACK,
+        "CREATE_COMPLETE",
+        outputs={"BuildRoleArn": BUILD_ROLE, "SandboxLauncherPolicyArn": LAUNCHER_POLICY},
+        parameters=parameters,
     )
+
+
+def legacy_stack() -> StackStatus:
+    """Una pila de la plantilla de 0.6.1 o anterior: sin la salida de
+    `SandboxLauncherPolicy`, que llegó con la descripción actual de
+    `CallerPolicy`."""
+    return replace(deployed_stack(), outputs={"BuildRoleArn": BUILD_ROLE})
 
 
 def test_the_iam_component_declares_the_parameters_of_the_packaged_template() -> None:
@@ -97,27 +113,66 @@ def test_observing_an_existing_stack_maps_status_outputs_and_parameters() -> Non
     gateway = iam_stack_gateway(FakeStackProvisioner(stacks={STACK: deployed_stack()}))
     observed = gateway.observe()
     assert observed.status == "CREATE_COMPLETE"
-    assert observed.outputs == {"BuildRoleArn": BUILD_ROLE}
+    assert observed.outputs == {
+        "BuildRoleArn": BUILD_ROLE,
+        "SandboxLauncherPolicyArn": LAUNCHER_POLICY,
+    }
     assert observed.parameters["ArtifactBucket"] == BUCKET
 
 
-def test_create_sends_named_iam_and_only_the_bucket_then_waits() -> None:
+def test_the_template_fingerprint_is_the_sha256_of_the_repository_template() -> None:
+    """El mismo valor que calcula TypeScript: los dos SDK empaquetan
+    `infra/iam.yaml` byte a byte."""
+    template = REPO_ROOT / "infra" / "iam.yaml"
+    expected = hashlib.sha256(template.read_bytes()).hexdigest()
+    assert template_fingerprint(IAM_STACK_COMPONENT) == expected
+    assert iam_stack_gateway(FakeStackProvisioner()).template_fingerprint() == expected
+
+
+def test_create_sends_named_iam_the_bucket_and_the_template_fingerprint_then_waits() -> None:
     provisioner = RecordingProvisioner()
     observed = iam_stack_gateway(provisioner).create(BUCKET)
     assert provisioner.created_component is not None
     assert provisioner.created_component.capabilities == ("CAPABILITY_NAMED_IAM",)
-    assert provisioner.sent_parameters == {"ArtifactBucket": BUCKET}
+    assert provisioner.sent_parameters == {
+        "ArtifactBucket": BUCKET,
+        "TemplateFingerprint": template_fingerprint(IAM_STACK_COMPONENT),
+        "LegacyCallerPolicy": "false",
+    }
     assert [call[0] for call in provisioner.calls] == ["describe", "create", "wait", "describe"]
     assert observed.status == "CREATE_COMPLETE"
 
 
-def test_update_sends_only_the_bucket_and_keeps_the_six_others() -> None:
+def test_update_sends_the_bucket_and_the_fingerprint_and_keeps_the_six_others() -> None:
     provisioner = FakeStackProvisioner(stacks={STACK: deployed_stack()})
     iam_stack_gateway(provisioner).update_bucket(OTHER_BUCKET)
-    assert provisioner.sent_parameters == {"ArtifactBucket": OTHER_BUCKET}
+    assert provisioner.sent_parameters == {
+        "ArtifactBucket": OTHER_BUCKET,
+        "TemplateFingerprint": template_fingerprint(IAM_STACK_COMPONENT),
+        "LegacyCallerPolicy": "false",
+    }
     assert provisioner.sent_keep_previous == tuple(sorted(OTHER_PARAMETERS))
     assert ("update", STACK) in provisioner.calls
     assert not any(call[0] == "create" for call in provisioner.calls)
+
+
+def test_updating_a_stack_of_the_0_6_template_keeps_the_caller_policy_description() -> None:
+    """Medido en AWS real (`AWS_API_NOTES.md` §21): con otra descripción,
+    CloudFormation sustituye `CallerPolicy`, la nueva choca con su nombre
+    fijo y la actualización se revierte."""
+    provisioner = FakeStackProvisioner(stacks={STACK: legacy_stack()})
+    iam_stack_gateway(provisioner).update_bucket(BUCKET)
+    assert provisioner.sent_parameters["LegacyCallerPolicy"] == "true"
+
+
+@pytest.mark.parametrize("value", ["true", "false"])
+def test_an_update_keeps_the_legacy_caller_policy_value_the_stack_already_has(value: str) -> None:
+    stack = replace(
+        legacy_stack(), parameters={**legacy_stack().parameters, "LegacyCallerPolicy": value}
+    )
+    provisioner = FakeStackProvisioner(stacks={STACK: stack})
+    iam_stack_gateway(provisioner).update_bucket(BUCKET)
+    assert provisioner.sent_parameters["LegacyCallerPolicy"] == value
 
 
 def test_wait_polls_the_stack_and_observes_it_again() -> None:
@@ -182,6 +237,23 @@ def test_the_tags_reach_the_update_of_the_iam_stack() -> None:
     iam_stack_gateway(provisioner, tags=ORG_TAGS).update_bucket(OTHER_BUCKET)
     assert ("update", STACK) in provisioner.calls
     assert ORG_TAGS.items() <= provisioner.sent_tags.items()
+
+
+def test_an_update_keeps_the_stack_tags_under_the_callers_without_fixed_or_aws_ones() -> None:
+    stack = replace(
+        deployed_stack(),
+        tags={
+            "team": "x",
+            "owner": "platform",
+            "rayito:sdk-version": "0.16.0",
+            "aws:reserved": "y",
+        },
+    )
+    provisioner = FakeStackProvisioner(stacks={STACK: stack})
+    iam_stack_gateway(provisioner, tags={"team": "y"}).update_bucket(BUCKET)
+    assert {"team": "y", "owner": "platform"}.items() <= provisioner.sent_tags.items()
+    assert provisioner.sent_tags["rayito:sdk-version"] == __version__
+    assert "aws:reserved" not in provisioner.sent_tags
 
 
 def test_without_tags_only_the_fixed_rayito_tags_are_sent() -> None:

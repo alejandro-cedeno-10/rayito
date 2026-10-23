@@ -7,9 +7,10 @@ ficheros locales.
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import os
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from pathlib import Path
 from typing import Any, Final
 
@@ -241,6 +242,34 @@ def deploy_token(
     if from_environment is not None:
         return from_environment, None
     return default_token(AGENT_TOKEN_FILE_DEFAULT), AGENT_TOKEN_FILE_DEFAULT
+
+
+def token_file_to_discard(
+    token_file: Path | None, written_to: Path | None, *, keep_on_failure: bool
+) -> Path | None:
+    """El `--token-file` que este despliegue acaba de crear y que hay que
+    borrar si falla antes de que exista la flota: si se queda, el reintento
+    choca con «el fichero de token ya existe». `None` sin `--token-file` (el
+    fichero por defecto se reutiliza, no bloquea) o con `keep_on_failure`,
+    porque al sandbox conservado sólo se llega con ese token. Un fichero de
+    una ejecución anterior nunca llega aquí: `deploy_token` falla antes sin
+    tocarlo."""
+    if token_file is None or keep_on_failure:
+        return None
+    return written_to
+
+
+@contextlib.contextmanager
+def discarded_on_failure(path: Path | None) -> Iterator[None]:
+    """Borra `path` (el de `token_file_to_discard`) si el bloque termina con
+    cualquier excepción, `SystemExit` de `fail()` incluida, y la propaga; uno
+    que ya no exista no es un error."""
+    try:
+        yield
+    except BaseException:
+        if path is not None:
+            path.unlink(missing_ok=True)
+        raise
 
 
 def pool_backend_for(

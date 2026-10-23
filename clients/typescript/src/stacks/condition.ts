@@ -23,6 +23,8 @@ export interface StackObservation {
   readonly status: string | undefined;
   readonly outputs: Readonly<Record<string, string>>;
   readonly parameters: Readonly<Record<string, string>>;
+  /** Las etiquetas de la pila (`StackStatus.tags`); sin ellas, ninguna. */
+  readonly tags?: Readonly<Record<string, string>>;
 }
 
 export function classifyStack(stack: StackObservation): StackCondition {

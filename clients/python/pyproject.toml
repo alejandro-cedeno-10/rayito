@@ -28,7 +28,7 @@ classifiers = [
 [project.optional-dependencies]
 cli = ["typer>=0.15,<1"]
 mcp = ["mcp>=2.2,<3"]
-otel = ["opentelemetry-api>=1.27,<2"]
+otel = ["opentelemetry-api>=1.45.1,<2"]
 # SigV4A para el plano de datos de `cloudfront-keyvaluestore`
 # (`CustomDomain.register`/`unregister`/`refresh`, m15-custom-domain):
 # endpoint-rule-set-1.json de ese servicio exige ese firmante, que boto3
@@ -69,7 +69,7 @@ dev = [
     "rayito[custom-domain]",
     "rayito[cdk]",
     "rayito[bedrock-keys]",
-    "opentelemetry-sdk>=1.27,<2",
+    "opentelemetry-sdk>=1.45.1,<2",
     # scripts/tests/test_iam_template.py parsea infra/iam.yaml (CI corre
     # scripts/tests con este entorno).
     "pyyaml>=6.0",

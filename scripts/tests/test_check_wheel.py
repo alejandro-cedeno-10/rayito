@@ -1,7 +1,7 @@
 """``check_wheel.py`` sobre una wheel sintética: con todas las líneas
 requeridas (ficheros, licencia, extras `mcp`/`cli`/`otel`) no hay problemas;
 quitando cualquiera de las dos líneas de `METADATA` del extra `otel`
-(`Provides-Extra: otel`, `Requires-Dist: opentelemetry-api>=1.27,<2 ; extra
+(`Provides-Extra: otel`, `Requires-Dist: opentelemetry-api>=1.45.1,<2 ; extra
 == 'otel'`) aparece exactamente ese problema y ningún otro extra se ve
 afectado. `otel_problems` se prueba también de forma aislada."""
 
@@ -38,7 +38,7 @@ BASE_METADATA_LINES = [
     "Provides-Extra: cli",
     "Requires-Dist: typer>=0.15,<1 ; extra == 'cli'",
     "Provides-Extra: otel",
-    "Requires-Dist: opentelemetry-api>=1.27,<2 ; extra == 'otel'",
+    "Requires-Dist: opentelemetry-api>=1.45.1,<2 ; extra == 'otel'",
     "Provides-Extra: cdk",
     "Requires-Dist: aws-cdk-lib>=2.261.0,<3 ; extra == 'cdk'",
     "Requires-Dist: constructs>=10.5.0,<11 ; extra == 'cdk'",
@@ -80,11 +80,11 @@ def test_missing_otel_requires_dist_is_the_only_problem(tmp_path: Path) -> None:
     lines = [
         line
         for line in BASE_METADATA_LINES
-        if line != "Requires-Dist: opentelemetry-api>=1.27,<2 ; extra == 'otel'"
+        if line != "Requires-Dist: opentelemetry-api>=1.45.1,<2 ; extra == 'otel'"
     ]
     wheel = build_wheel(tmp_path, metadata_lines=lines)
     assert check_wheel.problems_for(wheel) == [
-        "METADATA sin `Requires-Dist: opentelemetry-api>=1.27,<2 ; extra == 'otel'`"
+        "METADATA sin `Requires-Dist: opentelemetry-api>=1.45.1,<2 ; extra == 'otel'`"
     ]
 
 
@@ -92,7 +92,7 @@ def test_otel_problems_in_isolation() -> None:
     assert check_wheel.otel_problems("\n".join(BASE_METADATA_LINES)) == []
     assert check_wheel.otel_problems("Metadata-Version: 2.4") == [
         "METADATA sin `Provides-Extra: otel`",
-        "METADATA sin `Requires-Dist: opentelemetry-api>=1.27,<2 ; extra == 'otel'`",
+        "METADATA sin `Requires-Dist: opentelemetry-api>=1.45.1,<2 ; extra == 'otel'`",
     ]
 
 

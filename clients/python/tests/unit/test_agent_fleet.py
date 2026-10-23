@@ -6,8 +6,12 @@ reconexión y el cierre. Ninguna prueba llama a AWS."""
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import math
+import threading
+import time
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -23,7 +27,11 @@ from rayito._agent._fleet_base import (
 )
 from rayito._agent._project_base import request_timeout
 from rayito._agent._scaling_domain import ScalingOptions, decode_handle, encode_handle
-from rayito._limits import AGENT_FLEET_UNHEALTHY_PINGS, AGENT_SERVICE_QUEUE_TIMEOUT_SECONDS_DEFAULT
+from rayito._limits import (
+    AGENT_FLEET_UNHEALTHY_PINGS,
+    AGENT_SERVICE_QUEUE_TIMEOUT_SECONDS_DEFAULT,
+    MAX_DURATION_SECONDS,
+)
 from rayito.exceptions import (
     CapacityException,
     InvalidArgumentException,
@@ -270,6 +278,139 @@ def test_a_late_cap_estimate_is_corrected_from_rayd_and_never_marks_the_vm(
     assert UNMANAGED_LIFETIME_MESSAGE not in [r.getMessage() for r in caplog.records]
 
 
+def _fleet_with_a_used_extra_vm(flavor: FleetFlavor) -> tuple[Any, Any, Any]:
+    """Una flota de 1 a 2 VMs cuyo VM sobrante ya atendió una invocación
+    (`[120, hold, 120]`) y cuyo VM base queda ocupado por un stream: la
+    siguiente invocación va al sobrante. Devuelve la flota, el sobrante y el
+    stream que ocupa la base."""
+    scaling = ScalingOptions(min_vms=1, max_vms=2, scale_in_after_seconds=120)
+    fleet = flavor.started(scaling)
+    held = flavor.open_stream(fleet, "primera")
+    flavor.call(fleet.invoke("segunda"))
+    return fleet, flavor.classes.sandboxes[fleet.sandbox_ids[1]], held
+
+
+@pytest.mark.parametrize("status", [500, 429])
+def test_a_failed_invocation_gives_the_extra_vm_its_scale_in_deadline_back(
+    flavor: FleetFlavor, status: int
+) -> None:
+    fleet, extra, held = _fleet_with_a_used_extra_vm(flavor)
+    hold = math.ceil(request_timeout(project()))
+    host = flavor.backend.host(extra.sandbox_id)
+    host.invoke_status = status if status != 429 else 200
+    host.busy_answers = 1_000 if status == 429 else 0
+
+    with pytest.raises((SandboxException, CapacityException)):
+        flavor.call(fleet.invoke("tercera"))
+    flavor.close_stream(held)
+
+    assert extra.timeouts[:3] == [120, hold, 120]
+    assert extra.timeouts[3] == hold
+    assert extra.timeouts[-1] == 120
+    assert [m.inflight for m in fleet._members] == [0, 0]
+
+
+def test_a_release_never_cuts_the_hold_of_an_invocation_that_started_meanwhile() -> None:
+    """La carrera de 0.17.0: la invocación que se suelta ya decidió acortar
+    el VM y, antes de que su `set_timeout` llegue a `rayd`, otra invocación
+    toma el VM y manda su plazo. Su plazo debe llegar el último."""
+    flavor = FleetFlavor("sync")
+    fleet, extra, held = _fleet_with_a_used_extra_vm(flavor)
+    hold = math.ceil(request_timeout(project()))
+    member = next(m for m in fleet._members if m.sandbox_id == extra.sandbox_id)
+    original = extra.set_timeout
+    started: list[threading.Thread] = []
+
+    def racing_set_timeout(timeout: int) -> Any:
+        if timeout == 120 and not started:
+            thread = threading.Thread(target=lambda: fleet.invoke("tercera"))
+            started.append(thread)
+            thread.start()
+            limit = time.monotonic() + 5
+            while member.inflight == 0 and time.monotonic() < limit:
+                time.sleep(0.001)
+            time.sleep(0.05)
+        return original(timeout)
+
+    extra.set_timeout = racing_set_timeout
+    fleet.invoke("cuarta")
+    started[0].join(timeout=5)
+    flavor.close_stream(held)
+
+    assert extra.timeouts[-3:-1] == [120, hold]
+    assert extra.timeouts[-1] == 120
+
+
+def test_an_async_release_never_cuts_the_hold_of_an_invocation_that_started_meanwhile() -> None:
+    flavor = FleetFlavor("async")
+    fleet, extra, held = _fleet_with_a_used_extra_vm(flavor)
+    hold = math.ceil(request_timeout(project()))
+    original = extra.set_timeout
+    racing: list[asyncio.Task[Any]] = []
+
+    async def racing_set_timeout(timeout: int) -> Any:
+        if timeout == 120 and not racing:
+            racing.append(asyncio.ensure_future(fleet.invoke("tercera")))
+            for _ in range(50):
+                await asyncio.sleep(0)
+        return await original(timeout)
+
+    async def scenario() -> None:
+        extra.set_timeout = racing_set_timeout
+        await fleet.invoke("cuarta")
+        await racing[0]
+        await held.close()
+
+    asyncio.run(scenario())
+
+    assert extra.timeouts[-3:-1] == [120, hold]
+    assert extra.timeouts[-1] == 120
+
+
+def test_a_promoted_vm_whose_cap_is_unknown_still_gets_its_whole_lifetime_back(
+    flavor: FleetFlavor,
+) -> None:
+    """Sin tope conocido, la flota pide el máximo de la plataforma, `rayd` lo
+    rechaza informando su tope y se reintenta con él: el VM ascendido deja
+    de tener el plazo corto y deja de contar como acortado."""
+    fleet = flavor.started(SHARED_TWO)
+    held = flavor.open_stream(fleet, "primera")
+    flavor.call(fleet.invoke("segunda"))
+    flavor.close_stream(held)
+    base, extra_id = fleet.sandbox_ids
+    extra = flavor.classes.sandboxes[extra_id]
+    member = next(m for m in fleet._members if m.sandbox_id == extra_id)
+    member.cap = None
+    flavor.classes.sandboxes[base]._kill()
+    flavor.call(fleet.refresh_members())
+
+    flavor.call(fleet.invoke("tercera"))
+
+    assert extra.beyond_cap == [MAX_DURATION_SECONDS]
+    assert 3590 <= extra.timeouts[-1] <= 3660 - 60 - 5
+    assert member.limited is False
+
+
+def test_a_promoted_vm_too_close_to_its_cap_stops_counting_as_limited(
+    flavor: FleetFlavor,
+) -> None:
+    fleet = flavor.started(SHARED_TWO)
+    held = flavor.open_stream(fleet, "primera")
+    flavor.call(fleet.invoke("segunda"))
+    flavor.close_stream(held)
+    base, extra_id = fleet.sandbox_ids
+    member = next(m for m in fleet._members if m.sandbox_id == extra_id)
+    member.cap = datetime.now(UTC)
+    flavor.classes.sandboxes[base]._kill()
+    flavor.call(fleet.refresh_members())
+    sent = len(flavor.classes.sandboxes[extra_id].timeouts)
+
+    flavor.call(fleet.invoke("tercera"))
+
+    assert len(flavor.classes.sandboxes[extra_id].timeouts) == sent
+    assert member.limited is False
+
+
 def test_sessions_share_a_vm_up_to_its_concurrency(flavor: FleetFlavor) -> None:
     the_project = project(serve=_serve(max_concurrency=2))
     fleet = flavor.started(SHARED_TWO, the_project=the_project)
@@ -385,6 +526,22 @@ def test_dedicated_keeps_a_caller_chosen_session_on_its_vm_within_the_process(
 
     assert first.session_id == again.session_id
     assert len(fleet.sandbox_ids) == 1
+
+
+def test_dedicated_with_one_vm_brings_the_host_session_back_to_its_vm(
+    flavor: FleetFlavor,
+) -> None:
+    """Con `max_vms == 1` el id de sesión no lleva asa: la flota recuerda la
+    sesión que asignó el host para volver a su VM, que ya está reservado."""
+    fleet = flavor.started(ScalingOptions(min_vms=1, max_vms=1, sessions="dedicated"))
+
+    first = flavor.call(fleet.invoke("uno"))
+    again = flavor.call(fleet.invoke("dos", session_id=first.session_id))
+
+    assert decode_handle(first.session_id) is None
+    assert again.session_id == first.session_id
+    assert len(fleet.sandbox_ids) == 1
+    assert len(host_of(flavor, 1).invocations) == 2
 
 
 def test_dedicated_with_an_index_labels_the_vm_and_finds_it_again(flavor: FleetFlavor) -> None:

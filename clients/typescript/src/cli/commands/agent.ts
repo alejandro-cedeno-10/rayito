@@ -39,6 +39,7 @@ import {
   CompactBuildLog,
   deployToken,
   detectionLines,
+  discardTokenFile,
   fleetToken,
   INVOKE_RENEW_GATEWAY_KEYS_HELP,
   KEEP_RECIPE_HELP,
@@ -50,6 +51,7 @@ import {
   SCALE_IN_AFTER_HELP,
   STATUS_UNKNOWN_SCALING,
   secretEnvFlagMessage,
+  tokenFileToDiscard,
 } from "../agent-deploy.js";
 import { EventPrinter, invokeRequestOf, printResult } from "../agent-output.js";
 import {
@@ -853,8 +855,9 @@ export const agentDeployCommand = defineCommand({
         return undefined;
       }
       let token: { token: string | undefined; file: string | undefined };
+      const tokenFile = values.string("token_file");
       try {
-        token = deployToken(values.string("token_file"), context.env);
+        token = deployToken(tokenFile, context.env);
       } catch (error) {
         if (error instanceof TokenFileError) {
           return usageFailure(context, error.message);
@@ -864,8 +867,16 @@ export const agentDeployCommand = defineCommand({
       // El fichero del token se escribe antes del build: si queda dentro del
       // código del agente, se excluye para que no acabe en la imagen ni cambie
       // su hash (que un nuevo despliegue la reutilice).
-      const deployed = await deployRequest(context, request(token.token, token.file), compact);
+      const created = tokenFileToDiscard(tokenFile, token, values.flag("keep_on_failure"));
+      let deployed: DeployedFleetView | number;
+      try {
+        deployed = await deployRequest(context, request(token.token, token.file), compact);
+      } catch (error) {
+        discardTokenFile(created);
+        throw error;
+      }
       if (typeof deployed === "number") {
+        discardTokenFile(created);
         return deployed;
       }
       printDeployed(context, deployed, token.file, recipeWarnings);

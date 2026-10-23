@@ -6,7 +6,7 @@ comparten `rayito setup` (ADR-030) y `rayito agent deploy --target agentcore`
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Final, Literal
 
 if TYPE_CHECKING:
@@ -33,6 +33,8 @@ class StackObservation:
     status: str | None
     outputs: Mapping[str, str]
     parameters: Mapping[str, str]
+    #: Las etiquetas de la pila (`StackStatus.tags`); vacío si no existe.
+    tags: Mapping[str, str] = field(default_factory=dict)
 
 
 def classify_stack(stack: StackObservation) -> StackCondition:
@@ -57,4 +59,5 @@ def stack_observation(status: StackStatus | None, stack_name: str) -> StackObser
         status=status.state,
         outputs=dict(status.outputs),
         parameters=dict(status.parameters),
+        tags=dict(status.tags),
     )

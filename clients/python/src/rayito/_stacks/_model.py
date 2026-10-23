@@ -23,7 +23,9 @@ from rayito.exceptions import InvalidArgumentException
 #: Las tres etiquetas fijas de toda pila `OptionalStack`; nunca las
 #: sobreescriben las del llamante (`stack_tags`).
 MANAGED_BY_TAG: Final = "rayito-sdk"
-FIXED_TAG_KEYS: Final = ("rayito:component", "rayito:managed-by", "rayito:sdk-version")
+#: La etiqueta fija con la versión del SDK que desplegó la pila por última vez.
+SDK_VERSION_TAG_KEY: Final = "rayito:sdk-version"
+FIXED_TAG_KEYS: Final = ("rayito:component", "rayito:managed-by", SDK_VERSION_TAG_KEY)
 
 #: Estado de una pila en `ROLLBACK_COMPLETE`: CloudFormation no permite
 #: `UpdateStack` sobre ella, hay que borrarla primero.
@@ -110,6 +112,10 @@ class StackStatus:
     #: valores con los que la pila está desplegada ahora (CloudFormation ya
     #: enmascara los `NoEcho`). `plan_parameters` lo usa para no pisarlos.
     parameters: dict[str, str] = field(default_factory=dict)
+    #: `Tags[].{Key: Value}` de `DescribeStacks`: las etiquetas de la pila,
+    #: las fijas de `stack_tags` incluidas (`rayito:sdk-version` es la versión
+    #: del SDK que la desplegó por última vez).
+    tags: dict[str, str] = field(default_factory=dict)
 
     @property
     def exists(self) -> bool:
@@ -220,7 +226,7 @@ def stack_tags(component: StackComponent, user_tags: dict[str, str]) -> dict[str
     fixed = {
         "rayito:component": component.name,
         "rayito:managed-by": MANAGED_BY_TAG,
-        "rayito:sdk-version": __version__,
+        SDK_VERSION_TAG_KEY: __version__,
     }
     merged = dict(user_tags)
     merged.update(fixed)

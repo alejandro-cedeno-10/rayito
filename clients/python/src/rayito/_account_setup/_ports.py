@@ -23,7 +23,13 @@ Progress = Callable[[str], None]
 
 
 class IamStackGateway(Protocol):
+    """La pila `rayito-m0-iam`. `create` y `update_bucket` despliegan la
+    plantilla de este SDK con su `template_fingerprint()` (el sha256 de su
+    `infra/iam.yaml`), que `rayito setup` compara con el de la pila."""
+
     def observe(self) -> StackObservation: ...
+
+    def template_fingerprint(self) -> str: ...
 
     def create(self, bucket: str) -> StackObservation: ...
 

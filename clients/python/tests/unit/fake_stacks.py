@@ -54,6 +54,7 @@ class FakeStackProvisioner:
             state="CREATE_COMPLETE",
             outputs={"StackName": stack_name},
             parameters=dict(parameters),
+            tags=dict(tags),
         )
 
     def update(
@@ -77,7 +78,11 @@ class FakeStackProvisioner:
             merged = {key: previous[key] for key in keep_previous if key in previous}
             merged.update(parameters)
             self.stacks[stack_name] = StackStatus(
-                name=stack_name, state="UPDATE_COMPLETE", outputs=outputs, parameters=merged
+                name=stack_name,
+                state="UPDATE_COMPLETE",
+                outputs=outputs,
+                parameters=merged,
+                tags=dict(tags),
             )
         return self.next_update_outcome
 

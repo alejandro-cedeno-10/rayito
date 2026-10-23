@@ -47,6 +47,7 @@
  * escribir nada.
  */
 
+import { VERSION } from "../version.js";
 import {
   AccountSetupError,
   ARTIFACT_STACK_NAME,
@@ -104,7 +105,17 @@ export class AccountSetup {
     const bucketStep = await this.#resolveBucket(request, stack, account);
     const image = await images.observe(BASE_IMAGE_NAME);
     const caps = request.capsImage === true ? await images.observe(CAPS_IMAGE_NAME) : undefined;
-    return planSetup({ request, account, stack, bucketStep, image, caps });
+    const iamTemplateFingerprint = await iamStack.templateFingerprint();
+    return planSetup({
+      request,
+      account,
+      stack,
+      bucketStep,
+      image,
+      caps,
+      iamTemplateFingerprint,
+      sdkVersion: VERSION,
+    });
   }
 
   /** Aplica el plan: el bucket (si falta), luego la pila de IAM y por último las dos imágenes. */
@@ -196,8 +207,7 @@ export class AccountSetup {
         formatTemplate(PROGRESS_MESSAGES.stackWait, { ...name, status: step.status ?? "" }),
       );
       observed = await iamStack.wait();
-      if (planStack(observed, bucket).action === "update") {
-        // la pila que se esperaba trabajaba con otro bucket: se actualiza
+      if (await this.#stackOutdated(observed, bucket)) {
         onProgress(formatTemplate(PROGRESS_MESSAGES.stackUpdate, name));
         observed = await iamStack.updateBucket(bucket, tags);
       }
@@ -207,6 +217,12 @@ export class AccountSetup {
     requireBuildRole(observed);
     onProgress(formatTemplate(PROGRESS_MESSAGES.stackReady, name));
     return observed;
+  }
+
+  /** Si la pila que se esperaba trabajaba con otro bucket o con otra plantilla: entonces se actualiza. */
+  async #stackOutdated(observed: StackObservation, bucket: string): Promise<boolean> {
+    const fingerprint = await this.#gateways.iamStack.templateFingerprint();
+    return planStack(observed, bucket, fingerprint, VERSION).action === "update";
   }
 }
 

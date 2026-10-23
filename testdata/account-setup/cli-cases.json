@@ -1,5 +1,5 @@
 {
-  "description": "Casos de `rayito setup` que no llegan a crear nada (plan, --dry-run y errores tempranos), con la salida exacta. Los dos SDK los ejecutan con dobles construidos desde `input` (el mismo formato que plan-vectors.json); stdin nunca es una terminal. `stdout`/`stderr` son texto exacto; `json` se compara ya parseado. Los marcadores `{sdkVersion}`, `{cdkBucket}` y `{defaultBucket}` se sustituyen como en plan-vectors.json.",
+  "description": "Casos de `rayito setup` que no llegan a crear nada (plan, --dry-run y errores tempranos), con la salida exacta. Los dos SDK los ejecutan con dobles construidos desde `input` (el mismo formato que plan-vectors.json); stdin nunca es una terminal. `stdout`/`stderr` son texto exacto; `json` se compara ya parseado. Los marcadores `{sdkVersion}`, `{cdkBucket}`, `{defaultBucket}` y `{iamTemplateFingerprint}` se sustituyen como en plan-vectors.json.",
   "cases": [
     {
       "name": "dry-run en una cuenta nueva",
@@ -96,7 +96,8 @@
               "status": null,
               "imageVersion": null,
               "release": null,
-              "previousBucket": null
+              "previousBucket": null,
+              "stackSdkVersion": null
             },
             {
               "resource": "iamStack",
@@ -106,7 +107,8 @@
               "status": null,
               "imageVersion": null,
               "release": null,
-              "previousBucket": null
+              "previousBucket": null,
+              "stackSdkVersion": null
             },
             {
               "resource": "baseImage",
@@ -116,7 +118,8 @@
               "status": null,
               "imageVersion": null,
               "release": "rayd-v{sdkVersion}",
-              "previousBucket": null
+              "previousBucket": null,
+              "stackSdkVersion": null
             },
             {
               "resource": "capsImage",
@@ -126,7 +129,8 @@
               "status": null,
               "imageVersion": null,
               "release": "rayd-v{sdkVersion}",
-              "previousBucket": null
+              "previousBucket": null,
+              "stackSdkVersion": null
             }
           ],
           "cost": [
@@ -145,6 +149,63 @@
     },
     {
       "name": "dry-run en una cuenta preparada a mano",
+      "args": [
+        "setup",
+        "--caps-image",
+        "--dry-run"
+      ],
+      "input": {
+        "region": "us-east-1",
+        "account": "123456789012",
+        "bucket": null,
+        "environmentBucket": null,
+        "artifact": null,
+        "stack": {
+          "status": "CREATE_COMPLETE",
+          "outputs": {
+            "BuildRoleArn": "arn:aws:iam::123456789012:role/rayito-m0-build-us-east-1"
+          },
+          "parameters": {
+            "ArtifactBucket": "amzn-s3-demo-bucket",
+            "TemplateFingerprint": "{iamTemplateFingerprint}"
+          }
+        },
+        "buckets": {
+          "amzn-s3-demo-bucket": "us-east-1"
+        },
+        "forbiddenBuckets": [],
+        "artifactStack": null,
+        "image": {
+          "state": "UPDATED",
+          "versions": [
+            {
+              "imageVersion": "1.0",
+              "state": "SUCCESSFUL",
+              "status": "ACTIVE",
+              "createdAt": "2026-10-01T00:00:00Z"
+            }
+          ]
+        },
+        "capsImage": {
+          "state": "UPDATED",
+          "versions": [
+            {
+              "imageVersion": "1.0",
+              "state": "SUCCESSFUL",
+              "status": "ACTIVE",
+              "createdAt": "2026-10-01T00:00:00Z"
+            }
+          ]
+        }
+      },
+      "expected": {
+        "exitCode": 0,
+        "stdout": "rayito setup: cuenta 123456789012, región us-east-1\n  bucket amzn-s3-demo-bucket: reutilizar (el de la pila de IAM)\n  pila de IAM rayito-m0-iam: ya existe (CREATE_COMPLETE)\n  imagen rayito-base: ya existe (versión 1.0 lanzable)\n  imagen con capacidades rayito-base-caps: ya existe (versión 1.0 lanzable)\nLa cuenta ya está preparada: no hay nada que crear.\nno se creó ni cambió nada (--dry-run)\n",
+        "stderr": ""
+      }
+    },
+    {
+      "name": "dry-run con la pila de IAM de una versión anterior",
       "args": [
         "setup",
         "--caps-image",
@@ -195,7 +256,66 @@
       },
       "expected": {
         "exitCode": 0,
-        "stdout": "rayito setup: cuenta 123456789012, región us-east-1\n  bucket amzn-s3-demo-bucket: reutilizar (el de la pila de IAM)\n  pila de IAM rayito-m0-iam: ya existe (CREATE_COMPLETE)\n  imagen rayito-base: ya existe (versión 1.0 lanzable)\n  imagen con capacidades rayito-base-caps: ya existe (versión 1.0 lanzable)\nLa cuenta ya está preparada: no hay nada que crear.\nno se creó ni cambió nada (--dry-run)\n",
+        "stdout": "rayito setup: cuenta 123456789012, región us-east-1\n  bucket amzn-s3-demo-bucket: reutilizar (el de la pila de IAM)\n  pila de IAM rayito-m0-iam: actualizar a la plantilla infra/iam.yaml de este SDK\n  imagen rayito-base: ya existe (versión 1.0 lanzable)\n  imagen con capacidades rayito-base-caps: ya existe (versión 1.0 lanzable)\nCoste aproximado:\n  pila de IAM: gratis\nno se creó ni cambió nada (--dry-run)\n",
+        "stderr": ""
+      }
+    },
+    {
+      "name": "dry-run con la pila de IAM de un Rayito más nuevo",
+      "args": [
+        "setup",
+        "--caps-image",
+        "--dry-run"
+      ],
+      "input": {
+        "region": "us-east-1",
+        "account": "123456789012",
+        "bucket": null,
+        "environmentBucket": null,
+        "artifact": null,
+        "stack": {
+          "status": "CREATE_COMPLETE",
+          "outputs": {
+            "BuildRoleArn": "arn:aws:iam::123456789012:role/rayito-m0-build-us-east-1"
+          },
+          "parameters": {
+            "ArtifactBucket": "amzn-s3-demo-bucket"
+          },
+          "tags": {
+            "rayito:sdk-version": "999.0.0"
+          }
+        },
+        "buckets": {
+          "amzn-s3-demo-bucket": "us-east-1"
+        },
+        "forbiddenBuckets": [],
+        "artifactStack": null,
+        "image": {
+          "state": "UPDATED",
+          "versions": [
+            {
+              "imageVersion": "1.0",
+              "state": "SUCCESSFUL",
+              "status": "ACTIVE",
+              "createdAt": "2026-10-01T00:00:00Z"
+            }
+          ]
+        },
+        "capsImage": {
+          "state": "UPDATED",
+          "versions": [
+            {
+              "imageVersion": "1.0",
+              "state": "SUCCESSFUL",
+              "status": "ACTIVE",
+              "createdAt": "2026-10-01T00:00:00Z"
+            }
+          ]
+        }
+      },
+      "expected": {
+        "exitCode": 0,
+        "stdout": "rayito setup: cuenta 123456789012, región us-east-1\n  bucket amzn-s3-demo-bucket: reutilizar (el de la pila de IAM)\n  pila de IAM rayito-m0-iam: ya existe (CREATE_COMPLETE) con la plantilla de Rayito 999.0.0, más nuevo que este SDK: se conserva\n  imagen rayito-base: ya existe (versión 1.0 lanzable)\n  imagen con capacidades rayito-base-caps: ya existe (versión 1.0 lanzable)\nLa cuenta ya está preparada: no hay nada que crear.\nno se creó ni cambió nada (--dry-run)\n",
         "stderr": ""
       }
     },
@@ -265,7 +385,8 @@
               "status": null,
               "imageVersion": null,
               "release": null,
-              "previousBucket": null
+              "previousBucket": null,
+              "stackSdkVersion": null
             },
             {
               "resource": "iamStack",
@@ -275,7 +396,8 @@
               "status": null,
               "imageVersion": null,
               "release": null,
-              "previousBucket": null
+              "previousBucket": null,
+              "stackSdkVersion": null
             },
             {
               "resource": "baseImage",
@@ -285,7 +407,8 @@
               "status": null,
               "imageVersion": null,
               "release": "rayd-v{sdkVersion}",
-              "previousBucket": null
+              "previousBucket": null,
+              "stackSdkVersion": null
             },
             {
               "resource": "capsImage",
@@ -295,7 +418,8 @@
               "status": null,
               "imageVersion": null,
               "release": "rayd-v{sdkVersion}",
-              "previousBucket": null
+              "previousBucket": null,
+              "stackSdkVersion": null
             }
           ],
           "cost": [
@@ -379,7 +503,8 @@
               "status": null,
               "imageVersion": null,
               "release": null,
-              "previousBucket": null
+              "previousBucket": null,
+              "stackSdkVersion": null
             },
             {
               "resource": "iamStack",
@@ -389,7 +514,8 @@
               "status": null,
               "imageVersion": null,
               "release": null,
-              "previousBucket": null
+              "previousBucket": null,
+              "stackSdkVersion": null
             },
             {
               "resource": "baseImage",
@@ -399,7 +525,8 @@
               "status": null,
               "imageVersion": null,
               "release": "rayd-v{sdkVersion}",
-              "previousBucket": null
+              "previousBucket": null,
+              "stackSdkVersion": null
             },
             {
               "resource": "capsImage",
@@ -409,7 +536,8 @@
               "status": null,
               "imageVersion": null,
               "release": "rayd-v{sdkVersion}",
-              "previousBucket": null
+              "previousBucket": null,
+              "stackSdkVersion": null
             }
           ],
           "cost": [
@@ -468,7 +596,8 @@
           "status": "ROLLBACK_COMPLETE",
           "outputs": {},
           "parameters": {
-            "ArtifactBucket": "amzn-s3-demo-bucket"
+            "ArtifactBucket": "amzn-s3-demo-bucket",
+            "TemplateFingerprint": "{iamTemplateFingerprint}"
           }
         },
         "buckets": {

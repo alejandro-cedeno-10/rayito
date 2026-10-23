@@ -413,3 +413,28 @@ def test_describe_maps_the_deployed_parameters() -> None:
         status = adapter.describe("rayito-s3-mounts")
     assert status is not None
     assert status.parameters == {"Prefixes": "team7/*"}
+
+
+def test_describe_maps_the_stack_tags() -> None:
+    adapter, cfn_stub, _s3_stub = provisioner()
+    with cfn_stub:
+        cfn_stub.add_response(
+            "describe_stacks",
+            {
+                "Stacks": [
+                    {
+                        "StackName": "rayito-m0-iam",
+                        "CreationTime": FIXED_TIME,
+                        "StackStatus": "UPDATE_COMPLETE",
+                        "Tags": [
+                            {"Key": "rayito:sdk-version", "Value": "0.17.1"},
+                            {"Key": "team", "Value": "platform"},
+                        ],
+                    }
+                ]
+            },
+            expected_params={"StackName": "rayito-m0-iam"},
+        )
+        status = adapter.describe("rayito-m0-iam")
+    assert status is not None
+    assert status.tags == {"rayito:sdk-version": "0.17.1", "team": "platform"}

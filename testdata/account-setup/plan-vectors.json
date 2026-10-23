@@ -1,5 +1,5 @@
 {
-  "description": "Vectores del plan de `rayito setup` (ADR-030): lo observado en la cuenta y lo que el plan decide, o el código de error. Cada SDK los evalúa con `AccountSetup.plan` sobre los dobles en memoria construidos desde `input`, así que `bucketReads` (las lecturas para resolver el bucket, en orden: `head:<bucket>` es un `HeadBucket` y `artifactStack` un `DescribeStacks` de rayito-m0-artifacts) se comprueba también en los casos de error. Marcadores que el test sustituye antes de comparar: `{sdkVersion}`, la versión del SDK que corre el test; `{cdkBucket}`, `cdk_bucket_name(account, region)`/`cdkBucketName(account, region)`; y `{defaultBucket}`, `default_artifact_bucket_name(account, region)`/`defaultArtifactBucketName(account, region)` (los nombres reales llevan cuenta y región, y check_hygiene.py no los admite en el repositorio). `buckets` lista los buckets que `HeadBucket` encuentra, con su región; `forbiddenBuckets`, los que responden 403; cualquier otro no existe (404). `stack` es rayito-m0-iam y `artifactStack` rayito-m0-artifacts (null: no existe). `capsImage` es rayito-base-caps con la misma forma que `image`; `capsImageRequested: true` es `--caps-image` (`caps_image=True`/`capsImage: true`); sin él, el paso `capsImage` es `skip` y no se lee rayito-base-caps.",
+  "description": "Vectores del plan de `rayito setup` (ADR-030): lo observado en la cuenta y lo que el plan decide, o el código de error. Cada SDK los evalúa con `AccountSetup.plan` sobre los dobles en memoria construidos desde `input`, así que `bucketReads` (las lecturas para resolver el bucket, en orden: `head:<bucket>` es un `HeadBucket` y `artifactStack` un `DescribeStacks` de rayito-m0-artifacts) se comprueba también en los casos de error. Marcadores que el test sustituye antes de comparar: `{sdkVersion}`, la versión del SDK que corre el test; `{cdkBucket}`, `cdk_bucket_name(account, region)`/`cdkBucketName(account, region)`; `{defaultBucket}`, `default_artifact_bucket_name(account, region)`/`defaultArtifactBucketName(account, region)`; y `{iamTemplateFingerprint}`, el sha256 del `infra/iam.yaml` empaquetado en el SDK (`template_fingerprint`/`templateFingerprint`): una pila con otro valor, o sin el parámetro `TemplateFingerprint` (0.17.0 o anterior), se actualiza, salvo que su etiqueta `rayito:sdk-version` (`tags`, opcional) sea de un Rayito más nuevo: entonces se conserva (`stackSdkVersion`) o, si el plan le cambia el bucket, falla con `stack_newer` (los nombres reales llevan cuenta y región, y check_hygiene.py no los admite en el repositorio). `buckets` lista los buckets que `HeadBucket` encuentra, con su región; `forbiddenBuckets`, los que responden 403; cualquier otro no existe (404). `stack` es rayito-m0-iam y `artifactStack` rayito-m0-artifacts (null: no existe). `capsImage` es rayito-base-caps con la misma forma que `image`; `capsImageRequested: true` es `--caps-image` (`caps_image=True`/`capsImage: true`); sin él, el paso `capsImage` es `skip` y no se lee rayito-base-caps.",
   "cases": [
     {
       "name": "cuenta nueva con el bucket del bootstrap de CDK",
@@ -29,7 +29,8 @@
             "status": null,
             "imageVersion": null,
             "release": null,
-            "previousBucket": null
+            "previousBucket": null,
+            "stackSdkVersion": null
           },
           {
             "resource": "iamStack",
@@ -39,7 +40,8 @@
             "status": null,
             "imageVersion": null,
             "release": null,
-            "previousBucket": null
+            "previousBucket": null,
+            "stackSdkVersion": null
           },
           {
             "resource": "baseImage",
@@ -49,7 +51,8 @@
             "status": null,
             "imageVersion": null,
             "release": "rayd-v{sdkVersion}",
-            "previousBucket": null
+            "previousBucket": null,
+            "stackSdkVersion": null
           },
           {
             "resource": "capsImage",
@@ -59,7 +62,8 @@
             "status": null,
             "imageVersion": null,
             "release": "rayd-v{sdkVersion}",
-            "previousBucket": null
+            "previousBucket": null,
+            "stackSdkVersion": null
           }
         ],
         "ready": false,
@@ -77,6 +81,108 @@
     },
     {
       "name": "cuenta preparada a mano: todo se reutiliza",
+      "input": {
+        "region": "us-east-1",
+        "account": "123456789012",
+        "bucket": null,
+        "environmentBucket": null,
+        "artifact": null,
+        "stack": {
+          "status": "CREATE_COMPLETE",
+          "outputs": {
+            "BuildRoleArn": "arn:aws:iam::123456789012:role/rayito-m0-build-us-east-1"
+          },
+          "parameters": {
+            "ArtifactBucket": "amzn-s3-demo-bucket",
+            "TemplateFingerprint": "{iamTemplateFingerprint}"
+          }
+        },
+        "buckets": {
+          "amzn-s3-demo-bucket": "us-east-1"
+        },
+        "forbiddenBuckets": [],
+        "artifactStack": null,
+        "image": {
+          "state": "UPDATED",
+          "versions": [
+            {
+              "imageVersion": "1.0",
+              "state": "SUCCESSFUL",
+              "status": "ACTIVE",
+              "createdAt": "2026-10-01T00:00:00Z"
+            }
+          ]
+        },
+        "capsImage": {
+          "state": "UPDATED",
+          "versions": [
+            {
+              "imageVersion": "1.0",
+              "state": "SUCCESSFUL",
+              "status": "ACTIVE",
+              "createdAt": "2026-10-01T00:00:00Z"
+            }
+          ]
+        },
+        "capsImageRequested": true
+      },
+      "expected": {
+        "steps": [
+          {
+            "resource": "bucket",
+            "name": "amzn-s3-demo-bucket",
+            "action": "reuse",
+            "source": "iamStack",
+            "status": null,
+            "imageVersion": null,
+            "release": null,
+            "previousBucket": null,
+            "stackSdkVersion": null
+          },
+          {
+            "resource": "iamStack",
+            "name": "rayito-m0-iam",
+            "action": "reuse",
+            "source": null,
+            "status": "CREATE_COMPLETE",
+            "imageVersion": null,
+            "release": null,
+            "previousBucket": null,
+            "stackSdkVersion": null
+          },
+          {
+            "resource": "baseImage",
+            "name": "rayito-base",
+            "action": "reuse",
+            "source": null,
+            "status": null,
+            "imageVersion": "1.0",
+            "release": null,
+            "previousBucket": null,
+            "stackSdkVersion": null
+          },
+          {
+            "resource": "capsImage",
+            "name": "rayito-base-caps",
+            "action": "reuse",
+            "source": null,
+            "status": null,
+            "imageVersion": "1.0",
+            "release": null,
+            "previousBucket": null,
+            "stackSdkVersion": null
+          }
+        ],
+        "ready": true,
+        "needsConfirmation": false,
+        "cost": [],
+        "bucketReads": [
+          "head:amzn-s3-demo-bucket"
+        ]
+      }
+    },
+    {
+      "name": "pila de una versión anterior (sin TemplateFingerprint): se actualiza la plantilla",
       "input": {
         "region": "us-east-1",
         "account": "123456789012",
@@ -131,17 +237,19 @@
             "status": null,
             "imageVersion": null,
             "release": null,
-            "previousBucket": null
+            "previousBucket": null,
+            "stackSdkVersion": null
           },
           {
             "resource": "iamStack",
             "name": "rayito-m0-iam",
-            "action": "reuse",
+            "action": "update",
             "source": null,
             "status": "CREATE_COMPLETE",
             "imageVersion": null,
             "release": null,
-            "previousBucket": null
+            "previousBucket": null,
+            "stackSdkVersion": null
           },
           {
             "resource": "baseImage",
@@ -151,7 +259,8 @@
             "status": null,
             "imageVersion": "1.0",
             "release": null,
-            "previousBucket": null
+            "previousBucket": null,
+            "stackSdkVersion": null
           },
           {
             "resource": "capsImage",
@@ -161,7 +270,327 @@
             "status": null,
             "imageVersion": "1.0",
             "release": null,
-            "previousBucket": null
+            "previousBucket": null,
+            "stackSdkVersion": null
+          }
+        ],
+        "ready": false,
+        "needsConfirmation": true,
+        "cost": [
+          "pila de IAM: gratis"
+        ],
+        "bucketReads": [
+          "head:amzn-s3-demo-bucket"
+        ]
+      }
+    },
+    {
+      "name": "pila con otra plantilla: se actualiza aunque el bucket sea el mismo",
+      "input": {
+        "region": "us-east-1",
+        "account": "123456789012",
+        "bucket": null,
+        "environmentBucket": null,
+        "artifact": null,
+        "stack": {
+          "status": "CREATE_COMPLETE",
+          "outputs": {
+            "BuildRoleArn": "arn:aws:iam::123456789012:role/rayito-m0-build-us-east-1"
+          },
+          "parameters": {
+            "ArtifactBucket": "amzn-s3-demo-bucket",
+            "TemplateFingerprint": "0000000000000000000000000000000000000000000000000000000000000000"
+          }
+        },
+        "buckets": {
+          "amzn-s3-demo-bucket": "us-east-1"
+        },
+        "forbiddenBuckets": [],
+        "artifactStack": null,
+        "image": {
+          "state": "UPDATED",
+          "versions": [
+            {
+              "imageVersion": "1.0",
+              "state": "SUCCESSFUL",
+              "status": "ACTIVE",
+              "createdAt": "2026-10-01T00:00:00Z"
+            }
+          ]
+        },
+        "capsImage": {
+          "state": "UPDATED",
+          "versions": [
+            {
+              "imageVersion": "1.0",
+              "state": "SUCCESSFUL",
+              "status": "ACTIVE",
+              "createdAt": "2026-10-01T00:00:00Z"
+            }
+          ]
+        },
+        "capsImageRequested": true
+      },
+      "expected": {
+        "steps": [
+          {
+            "resource": "bucket",
+            "name": "amzn-s3-demo-bucket",
+            "action": "reuse",
+            "source": "iamStack",
+            "status": null,
+            "imageVersion": null,
+            "release": null,
+            "previousBucket": null,
+            "stackSdkVersion": null
+          },
+          {
+            "resource": "iamStack",
+            "name": "rayito-m0-iam",
+            "action": "update",
+            "source": null,
+            "status": "CREATE_COMPLETE",
+            "imageVersion": null,
+            "release": null,
+            "previousBucket": null,
+            "stackSdkVersion": null
+          },
+          {
+            "resource": "baseImage",
+            "name": "rayito-base",
+            "action": "reuse",
+            "source": null,
+            "status": null,
+            "imageVersion": "1.0",
+            "release": null,
+            "previousBucket": null,
+            "stackSdkVersion": null
+          },
+          {
+            "resource": "capsImage",
+            "name": "rayito-base-caps",
+            "action": "reuse",
+            "source": null,
+            "status": null,
+            "imageVersion": "1.0",
+            "release": null,
+            "previousBucket": null,
+            "stackSdkVersion": null
+          }
+        ],
+        "ready": false,
+        "needsConfirmation": true,
+        "cost": [
+          "pila de IAM: gratis"
+        ],
+        "bucketReads": [
+          "head:amzn-s3-demo-bucket"
+        ]
+      }
+    },
+    {
+      "name": "pila de un Rayito anterior con otra plantilla: se actualiza",
+      "input": {
+        "region": "us-east-1",
+        "account": "123456789012",
+        "bucket": null,
+        "environmentBucket": null,
+        "artifact": null,
+        "stack": {
+          "status": "CREATE_COMPLETE",
+          "outputs": {
+            "BuildRoleArn": "arn:aws:iam::123456789012:role/rayito-m0-build-us-east-1"
+          },
+          "parameters": {
+            "ArtifactBucket": "amzn-s3-demo-bucket",
+            "TemplateFingerprint": "0000000000000000000000000000000000000000000000000000000000000000"
+          },
+          "tags": {
+            "rayito:sdk-version": "0.16.0"
+          }
+        },
+        "buckets": {
+          "amzn-s3-demo-bucket": "us-east-1"
+        },
+        "forbiddenBuckets": [],
+        "artifactStack": null,
+        "image": {
+          "state": "UPDATED",
+          "versions": [
+            {
+              "imageVersion": "1.0",
+              "state": "SUCCESSFUL",
+              "status": "ACTIVE",
+              "createdAt": "2026-10-01T00:00:00Z"
+            }
+          ]
+        },
+        "capsImage": {
+          "state": "UPDATED",
+          "versions": [
+            {
+              "imageVersion": "1.0",
+              "state": "SUCCESSFUL",
+              "status": "ACTIVE",
+              "createdAt": "2026-10-01T00:00:00Z"
+            }
+          ]
+        },
+        "capsImageRequested": true
+      },
+      "expected": {
+        "steps": [
+          {
+            "resource": "bucket",
+            "name": "amzn-s3-demo-bucket",
+            "action": "reuse",
+            "source": "iamStack",
+            "status": null,
+            "imageVersion": null,
+            "release": null,
+            "previousBucket": null,
+            "stackSdkVersion": null
+          },
+          {
+            "resource": "iamStack",
+            "name": "rayito-m0-iam",
+            "action": "update",
+            "source": null,
+            "status": "CREATE_COMPLETE",
+            "imageVersion": null,
+            "release": null,
+            "previousBucket": null,
+            "stackSdkVersion": null
+          },
+          {
+            "resource": "baseImage",
+            "name": "rayito-base",
+            "action": "reuse",
+            "source": null,
+            "status": null,
+            "imageVersion": "1.0",
+            "release": null,
+            "previousBucket": null,
+            "stackSdkVersion": null
+          },
+          {
+            "resource": "capsImage",
+            "name": "rayito-base-caps",
+            "action": "reuse",
+            "source": null,
+            "status": null,
+            "imageVersion": "1.0",
+            "release": null,
+            "previousBucket": null,
+            "stackSdkVersion": null
+          }
+        ],
+        "ready": false,
+        "needsConfirmation": true,
+        "cost": [
+          "pila de IAM: gratis"
+        ],
+        "bucketReads": [
+          "head:amzn-s3-demo-bucket"
+        ]
+      }
+    },
+    {
+      "name": "pila desplegada por un Rayito más nuevo: se conserva sin volver a la plantilla de este SDK",
+      "input": {
+        "region": "us-east-1",
+        "account": "123456789012",
+        "bucket": null,
+        "environmentBucket": null,
+        "artifact": null,
+        "stack": {
+          "status": "CREATE_COMPLETE",
+          "outputs": {
+            "BuildRoleArn": "arn:aws:iam::123456789012:role/rayito-m0-build-us-east-1"
+          },
+          "parameters": {
+            "ArtifactBucket": "amzn-s3-demo-bucket",
+            "TemplateFingerprint": "0000000000000000000000000000000000000000000000000000000000000000"
+          },
+          "tags": {
+            "rayito:sdk-version": "999.0.0",
+            "team": "platform"
+          }
+        },
+        "buckets": {
+          "amzn-s3-demo-bucket": "us-east-1"
+        },
+        "forbiddenBuckets": [],
+        "artifactStack": null,
+        "image": {
+          "state": "UPDATED",
+          "versions": [
+            {
+              "imageVersion": "1.0",
+              "state": "SUCCESSFUL",
+              "status": "ACTIVE",
+              "createdAt": "2026-10-01T00:00:00Z"
+            }
+          ]
+        },
+        "capsImage": {
+          "state": "UPDATED",
+          "versions": [
+            {
+              "imageVersion": "1.0",
+              "state": "SUCCESSFUL",
+              "status": "ACTIVE",
+              "createdAt": "2026-10-01T00:00:00Z"
+            }
+          ]
+        },
+        "capsImageRequested": true
+      },
+      "expected": {
+        "steps": [
+          {
+            "resource": "bucket",
+            "name": "amzn-s3-demo-bucket",
+            "action": "reuse",
+            "source": "iamStack",
+            "status": null,
+            "imageVersion": null,
+            "release": null,
+            "previousBucket": null,
+            "stackSdkVersion": null
+          },
+          {
+            "resource": "iamStack",
+            "name": "rayito-m0-iam",
+            "action": "reuse",
+            "source": null,
+            "status": "CREATE_COMPLETE",
+            "imageVersion": null,
+            "release": null,
+            "previousBucket": null,
+            "stackSdkVersion": "999.0.0"
+          },
+          {
+            "resource": "baseImage",
+            "name": "rayito-base",
+            "action": "reuse",
+            "source": null,
+            "status": null,
+            "imageVersion": "1.0",
+            "release": null,
+            "previousBucket": null,
+            "stackSdkVersion": null
+          },
+          {
+            "resource": "capsImage",
+            "name": "rayito-base-caps",
+            "action": "reuse",
+            "source": null,
+            "status": null,
+            "imageVersion": "1.0",
+            "release": null,
+            "previousBucket": null,
+            "stackSdkVersion": null
           }
         ],
         "ready": true,
@@ -201,7 +630,8 @@
             "status": null,
             "imageVersion": null,
             "release": null,
-            "previousBucket": null
+            "previousBucket": null,
+            "stackSdkVersion": null
           },
           {
             "resource": "iamStack",
@@ -211,7 +641,8 @@
             "status": null,
             "imageVersion": null,
             "release": null,
-            "previousBucket": null
+            "previousBucket": null,
+            "stackSdkVersion": null
           },
           {
             "resource": "baseImage",
@@ -221,7 +652,8 @@
             "status": null,
             "imageVersion": null,
             "release": "rayd-v{sdkVersion}",
-            "previousBucket": null
+            "previousBucket": null,
+            "stackSdkVersion": null
           },
           {
             "resource": "capsImage",
@@ -231,7 +663,8 @@
             "status": null,
             "imageVersion": null,
             "release": "rayd-v{sdkVersion}",
-            "previousBucket": null
+            "previousBucket": null,
+            "stackSdkVersion": null
           }
         ],
         "ready": false,
@@ -261,7 +694,8 @@
             "BuildRoleArn": "arn:aws:iam::123456789012:role/rayito-m0-build-us-east-1"
           },
           "parameters": {
-            "ArtifactBucket": "amzn-s3-demo-bucket"
+            "ArtifactBucket": "amzn-s3-demo-bucket",
+            "TemplateFingerprint": "{iamTemplateFingerprint}"
           }
         },
         "buckets": {
@@ -304,7 +738,8 @@
             "status": null,
             "imageVersion": null,
             "release": null,
-            "previousBucket": null
+            "previousBucket": null,
+            "stackSdkVersion": null
           },
           {
             "resource": "iamStack",
@@ -314,7 +749,8 @@
             "status": "CREATE_COMPLETE",
             "imageVersion": null,
             "release": null,
-            "previousBucket": "amzn-s3-demo-bucket"
+            "previousBucket": "amzn-s3-demo-bucket",
+            "stackSdkVersion": null
           },
           {
             "resource": "baseImage",
@@ -324,7 +760,8 @@
             "status": null,
             "imageVersion": "1.0",
             "release": null,
-            "previousBucket": null
+            "previousBucket": null,
+            "stackSdkVersion": null
           },
           {
             "resource": "capsImage",
@@ -334,7 +771,8 @@
             "status": null,
             "imageVersion": "1.0",
             "release": null,
-            "previousBucket": null
+            "previousBucket": null,
+            "stackSdkVersion": null
           }
         ],
         "ready": false,
@@ -342,6 +780,64 @@
         "cost": [
           "pila de IAM: gratis"
         ],
+        "bucketReads": [
+          "head:amzn-s3-demo-bucket1"
+        ]
+      }
+    },
+    {
+      "name": "--bucket distinto en una pila de un Rayito más nuevo: stack_newer",
+      "input": {
+        "region": "us-east-1",
+        "account": "123456789012",
+        "bucket": "amzn-s3-demo-bucket1",
+        "environmentBucket": "amzn-s3-demo-bucket",
+        "artifact": null,
+        "stack": {
+          "status": "CREATE_COMPLETE",
+          "outputs": {
+            "BuildRoleArn": "arn:aws:iam::123456789012:role/rayito-m0-build-us-east-1"
+          },
+          "parameters": {
+            "ArtifactBucket": "amzn-s3-demo-bucket",
+            "TemplateFingerprint": "{iamTemplateFingerprint}"
+          },
+          "tags": {
+            "rayito:sdk-version": "999.0.0"
+          }
+        },
+        "buckets": {
+          "amzn-s3-demo-bucket": "us-east-1",
+          "amzn-s3-demo-bucket1": "us-east-1"
+        },
+        "forbiddenBuckets": [],
+        "artifactStack": null,
+        "image": {
+          "state": "UPDATED",
+          "versions": [
+            {
+              "imageVersion": "1.0",
+              "state": "SUCCESSFUL",
+              "status": "ACTIVE",
+              "createdAt": "2026-10-01T00:00:00Z"
+            }
+          ]
+        },
+        "capsImage": {
+          "state": "UPDATED",
+          "versions": [
+            {
+              "imageVersion": "1.0",
+              "state": "SUCCESSFUL",
+              "status": "ACTIVE",
+              "createdAt": "2026-10-01T00:00:00Z"
+            }
+          ]
+        },
+        "capsImageRequested": true
+      },
+      "expected": {
+        "error": "stack_newer",
         "bucketReads": [
           "head:amzn-s3-demo-bucket1"
         ]
@@ -361,7 +857,8 @@
             "BuildRoleArn": "arn:aws:iam::123456789012:role/rayito-m0-build-us-east-1"
           },
           "parameters": {
-            "ArtifactBucket": "amzn-s3-demo-bucket"
+            "ArtifactBucket": "amzn-s3-demo-bucket",
+            "TemplateFingerprint": "{iamTemplateFingerprint}"
           }
         },
         "buckets": {
@@ -403,7 +900,8 @@
             "status": null,
             "imageVersion": null,
             "release": null,
-            "previousBucket": null
+            "previousBucket": null,
+            "stackSdkVersion": null
           },
           {
             "resource": "iamStack",
@@ -413,7 +911,8 @@
             "status": "UPDATE_ROLLBACK_COMPLETE",
             "imageVersion": null,
             "release": null,
-            "previousBucket": null
+            "previousBucket": null,
+            "stackSdkVersion": null
           },
           {
             "resource": "baseImage",
@@ -423,7 +922,8 @@
             "status": null,
             "imageVersion": "1.0",
             "release": null,
-            "previousBucket": null
+            "previousBucket": null,
+            "stackSdkVersion": null
           },
           {
             "resource": "capsImage",
@@ -433,7 +933,8 @@
             "status": null,
             "imageVersion": "1.0",
             "release": null,
-            "previousBucket": null
+            "previousBucket": null,
+            "stackSdkVersion": null
           }
         ],
         "ready": true,
@@ -456,7 +957,8 @@
           "status": "CREATE_IN_PROGRESS",
           "outputs": {},
           "parameters": {
-            "ArtifactBucket": "amzn-s3-demo-bucket"
+            "ArtifactBucket": "amzn-s3-demo-bucket",
+            "TemplateFingerprint": "{iamTemplateFingerprint}"
           }
         },
         "buckets": {
@@ -478,7 +980,8 @@
             "status": null,
             "imageVersion": null,
             "release": null,
-            "previousBucket": null
+            "previousBucket": null,
+            "stackSdkVersion": null
           },
           {
             "resource": "iamStack",
@@ -488,7 +991,8 @@
             "status": "CREATE_IN_PROGRESS",
             "imageVersion": null,
             "release": null,
-            "previousBucket": null
+            "previousBucket": null,
+            "stackSdkVersion": null
           },
           {
             "resource": "baseImage",
@@ -498,7 +1002,8 @@
             "status": null,
             "imageVersion": null,
             "release": "rayd-v{sdkVersion}",
-            "previousBucket": null
+            "previousBucket": null,
+            "stackSdkVersion": null
           },
           {
             "resource": "capsImage",
@@ -508,7 +1013,8 @@
             "status": null,
             "imageVersion": null,
             "release": "rayd-v{sdkVersion}",
-            "previousBucket": null
+            "previousBucket": null,
+            "stackSdkVersion": null
           }
         ],
         "ready": false,
@@ -535,7 +1041,8 @@
           "status": "ROLLBACK_COMPLETE",
           "outputs": {},
           "parameters": {
-            "ArtifactBucket": "amzn-s3-demo-bucket"
+            "ArtifactBucket": "amzn-s3-demo-bucket",
+            "TemplateFingerprint": "{iamTemplateFingerprint}"
           }
         },
         "buckets": {
@@ -566,7 +1073,8 @@
           "status": "DELETE_IN_PROGRESS",
           "outputs": {},
           "parameters": {
-            "ArtifactBucket": "amzn-s3-demo-bucket"
+            "ArtifactBucket": "amzn-s3-demo-bucket",
+            "TemplateFingerprint": "{iamTemplateFingerprint}"
           }
         },
         "buckets": {
@@ -597,7 +1105,8 @@
           "status": "CREATE_COMPLETE",
           "outputs": {},
           "parameters": {
-            "ArtifactBucket": "amzn-s3-demo-bucket"
+            "ArtifactBucket": "amzn-s3-demo-bucket",
+            "TemplateFingerprint": "{iamTemplateFingerprint}"
           }
         },
         "buckets": {
@@ -630,7 +1139,8 @@
             "BuildRoleArn": "arn:aws:iam::123456789012:role/rayito-m0-build-us-east-1"
           },
           "parameters": {
-            "ArtifactBucket": "amzn-s3-demo-bucket"
+            "ArtifactBucket": "amzn-s3-demo-bucket",
+            "TemplateFingerprint": "{iamTemplateFingerprint}"
           }
         },
         "buckets": {
@@ -684,7 +1194,8 @@
             "status": null,
             "imageVersion": null,
             "release": null,
-            "previousBucket": null
+            "previousBucket": null,
+            "stackSdkVersion": null
           },
           {
             "resource": "iamStack",
@@ -694,7 +1205,8 @@
             "status": "CREATE_COMPLETE",
             "imageVersion": null,
             "release": null,
-            "previousBucket": null
+            "previousBucket": null,
+            "stackSdkVersion": null
           },
           {
             "resource": "baseImage",
@@ -704,7 +1216,8 @@
             "status": null,
             "imageVersion": "2.0",
             "release": null,
-            "previousBucket": null
+            "previousBucket": null,
+            "stackSdkVersion": null
           },
           {
             "resource": "capsImage",
@@ -714,7 +1227,8 @@
             "status": null,
             "imageVersion": "2.0",
             "release": null,
-            "previousBucket": null
+            "previousBucket": null,
+            "stackSdkVersion": null
           }
         ],
         "ready": false,
@@ -739,7 +1253,8 @@
             "BuildRoleArn": "arn:aws:iam::123456789012:role/rayito-m0-build-us-east-1"
           },
           "parameters": {
-            "ArtifactBucket": "amzn-s3-demo-bucket"
+            "ArtifactBucket": "amzn-s3-demo-bucket",
+            "TemplateFingerprint": "{iamTemplateFingerprint}"
           }
         },
         "buckets": {
@@ -781,7 +1296,8 @@
             "status": null,
             "imageVersion": null,
             "release": null,
-            "previousBucket": null
+            "previousBucket": null,
+            "stackSdkVersion": null
           },
           {
             "resource": "iamStack",
@@ -791,7 +1307,8 @@
             "status": "CREATE_COMPLETE",
             "imageVersion": null,
             "release": null,
-            "previousBucket": null
+            "previousBucket": null,
+            "stackSdkVersion": null
           },
           {
             "resource": "baseImage",
@@ -801,7 +1318,8 @@
             "status": null,
             "imageVersion": null,
             "release": "rayd-v{sdkVersion}",
-            "previousBucket": null
+            "previousBucket": null,
+            "stackSdkVersion": null
           },
           {
             "resource": "capsImage",
@@ -811,7 +1329,8 @@
             "status": null,
             "imageVersion": null,
             "release": "rayd-v{sdkVersion}",
-            "previousBucket": null
+            "previousBucket": null,
+            "stackSdkVersion": null
           }
         ],
         "ready": false,
@@ -854,7 +1373,8 @@
             "status": null,
             "imageVersion": null,
             "release": null,
-            "previousBucket": null
+            "previousBucket": null,
+            "stackSdkVersion": null
           },
           {
             "resource": "iamStack",
@@ -864,7 +1384,8 @@
             "status": null,
             "imageVersion": null,
             "release": null,
-            "previousBucket": null
+            "previousBucket": null,
+            "stackSdkVersion": null
           },
           {
             "resource": "baseImage",
@@ -874,7 +1395,8 @@
             "status": null,
             "imageVersion": null,
             "release": null,
-            "previousBucket": null
+            "previousBucket": null,
+            "stackSdkVersion": null
           },
           {
             "resource": "capsImage",
@@ -884,7 +1406,8 @@
             "status": null,
             "imageVersion": null,
             "release": null,
-            "previousBucket": null
+            "previousBucket": null,
+            "stackSdkVersion": null
           }
         ],
         "ready": false,
@@ -926,7 +1449,8 @@
             "status": null,
             "imageVersion": null,
             "release": null,
-            "previousBucket": null
+            "previousBucket": null,
+            "stackSdkVersion": null
           },
           {
             "resource": "iamStack",
@@ -936,7 +1460,8 @@
             "status": null,
             "imageVersion": null,
             "release": null,
-            "previousBucket": null
+            "previousBucket": null,
+            "stackSdkVersion": null
           },
           {
             "resource": "baseImage",
@@ -946,7 +1471,8 @@
             "status": null,
             "imageVersion": null,
             "release": "rayd-v{sdkVersion}",
-            "previousBucket": null
+            "previousBucket": null,
+            "stackSdkVersion": null
           },
           {
             "resource": "capsImage",
@@ -956,7 +1482,8 @@
             "status": null,
             "imageVersion": null,
             "release": "rayd-v{sdkVersion}",
-            "previousBucket": null
+            "previousBucket": null,
+            "stackSdkVersion": null
           }
         ],
         "ready": false,
@@ -1003,7 +1530,8 @@
             "status": null,
             "imageVersion": null,
             "release": null,
-            "previousBucket": null
+            "previousBucket": null,
+            "stackSdkVersion": null
           },
           {
             "resource": "iamStack",
@@ -1013,7 +1541,8 @@
             "status": null,
             "imageVersion": null,
             "release": null,
-            "previousBucket": null
+            "previousBucket": null,
+            "stackSdkVersion": null
           },
           {
             "resource": "baseImage",
@@ -1023,7 +1552,8 @@
             "status": null,
             "imageVersion": null,
             "release": "rayd-v{sdkVersion}",
-            "previousBucket": null
+            "previousBucket": null,
+            "stackSdkVersion": null
           },
           {
             "resource": "capsImage",
@@ -1033,7 +1563,8 @@
             "status": null,
             "imageVersion": null,
             "release": "rayd-v{sdkVersion}",
-            "previousBucket": null
+            "previousBucket": null,
+            "stackSdkVersion": null
           }
         ],
         "ready": false,
@@ -1123,7 +1654,8 @@
             "status": null,
             "imageVersion": null,
             "release": null,
-            "previousBucket": null
+            "previousBucket": null,
+            "stackSdkVersion": null
           },
           {
             "resource": "iamStack",
@@ -1133,7 +1665,8 @@
             "status": null,
             "imageVersion": null,
             "release": null,
-            "previousBucket": null
+            "previousBucket": null,
+            "stackSdkVersion": null
           },
           {
             "resource": "baseImage",
@@ -1143,7 +1676,8 @@
             "status": null,
             "imageVersion": null,
             "release": "rayd-v{sdkVersion}",
-            "previousBucket": null
+            "previousBucket": null,
+            "stackSdkVersion": null
           },
           {
             "resource": "capsImage",
@@ -1153,7 +1687,8 @@
             "status": null,
             "imageVersion": null,
             "release": "rayd-v{sdkVersion}",
-            "previousBucket": null
+            "previousBucket": null,
+            "stackSdkVersion": null
           }
         ],
         "ready": false,
@@ -1207,7 +1742,8 @@
             "status": "CREATE_COMPLETE",
             "imageVersion": null,
             "release": null,
-            "previousBucket": null
+            "previousBucket": null,
+            "stackSdkVersion": null
           },
           {
             "resource": "iamStack",
@@ -1217,7 +1753,8 @@
             "status": null,
             "imageVersion": null,
             "release": null,
-            "previousBucket": null
+            "previousBucket": null,
+            "stackSdkVersion": null
           },
           {
             "resource": "baseImage",
@@ -1227,7 +1764,8 @@
             "status": null,
             "imageVersion": null,
             "release": "rayd-v{sdkVersion}",
-            "previousBucket": null
+            "previousBucket": null,
+            "stackSdkVersion": null
           },
           {
             "resource": "capsImage",
@@ -1237,7 +1775,8 @@
             "status": null,
             "imageVersion": null,
             "release": "rayd-v{sdkVersion}",
-            "previousBucket": null
+            "previousBucket": null,
+            "stackSdkVersion": null
           }
         ],
         "ready": false,
@@ -1286,7 +1825,8 @@
             "status": "CREATE_IN_PROGRESS",
             "imageVersion": null,
             "release": null,
-            "previousBucket": null
+            "previousBucket": null,
+            "stackSdkVersion": null
           },
           {
             "resource": "iamStack",
@@ -1296,7 +1836,8 @@
             "status": null,
             "imageVersion": null,
             "release": null,
-            "previousBucket": null
+            "previousBucket": null,
+            "stackSdkVersion": null
           },
           {
             "resource": "baseImage",
@@ -1306,7 +1847,8 @@
             "status": null,
             "imageVersion": null,
             "release": "rayd-v{sdkVersion}",
-            "previousBucket": null
+            "previousBucket": null,
+            "stackSdkVersion": null
           },
           {
             "resource": "capsImage",
@@ -1316,7 +1858,8 @@
             "status": null,
             "imageVersion": null,
             "release": "rayd-v{sdkVersion}",
-            "previousBucket": null
+            "previousBucket": null,
+            "stackSdkVersion": null
           }
         ],
         "ready": false,
@@ -1522,7 +2065,8 @@
             "BuildRoleArn": "arn:aws:iam::123456789012:role/rayito-m0-build-us-east-1"
           },
           "parameters": {
-            "ArtifactBucket": "amzn-s3-demo-bucket"
+            "ArtifactBucket": "amzn-s3-demo-bucket",
+            "TemplateFingerprint": "{iamTemplateFingerprint}"
           }
         },
         "buckets": {
@@ -1564,7 +2108,8 @@
             "status": null,
             "imageVersion": null,
             "release": null,
-            "previousBucket": null
+            "previousBucket": null,
+            "stackSdkVersion": null
           },
           {
             "resource": "iamStack",
@@ -1574,7 +2119,8 @@
             "status": "CREATE_COMPLETE",
             "imageVersion": null,
             "release": null,
-            "previousBucket": "amzn-s3-demo-bucket"
+            "previousBucket": "amzn-s3-demo-bucket",
+            "stackSdkVersion": null
           },
           {
             "resource": "baseImage",
@@ -1584,7 +2130,8 @@
             "status": null,
             "imageVersion": "1.0",
             "release": null,
-            "previousBucket": null
+            "previousBucket": null,
+            "stackSdkVersion": null
           },
           {
             "resource": "capsImage",
@@ -1594,7 +2141,8 @@
             "status": null,
             "imageVersion": "1.0",
             "release": null,
-            "previousBucket": null
+            "previousBucket": null,
+            "stackSdkVersion": null
           }
         ],
         "ready": false,
@@ -1622,7 +2170,8 @@
             "BuildRoleArn": "arn:aws:iam::123456789012:role/rayito-m0-build-us-east-1"
           },
           "parameters": {
-            "ArtifactBucket": "amzn-s3-demo-bucket"
+            "ArtifactBucket": "amzn-s3-demo-bucket",
+            "TemplateFingerprint": "{iamTemplateFingerprint}"
           }
         },
         "buckets": {},
@@ -1689,7 +2238,8 @@
             "status": null,
             "imageVersion": null,
             "release": null,
-            "previousBucket": null
+            "previousBucket": null,
+            "stackSdkVersion": null
           },
           {
             "resource": "iamStack",
@@ -1699,7 +2249,8 @@
             "status": null,
             "imageVersion": null,
             "release": null,
-            "previousBucket": null
+            "previousBucket": null,
+            "stackSdkVersion": null
           },
           {
             "resource": "baseImage",
@@ -1709,7 +2260,8 @@
             "status": null,
             "imageVersion": null,
             "release": "rayd-v{sdkVersion}",
-            "previousBucket": null
+            "previousBucket": null,
+            "stackSdkVersion": null
           },
           {
             "resource": "capsImage",
@@ -1719,7 +2271,8 @@
             "status": null,
             "imageVersion": null,
             "release": "rayd-v{sdkVersion}",
-            "previousBucket": null
+            "previousBucket": null,
+            "stackSdkVersion": null
           }
         ],
         "ready": false,
@@ -1752,7 +2305,8 @@
             "BuildRoleArn": "arn:aws:iam::123456789012:role/rayito-m0-build-us-east-1"
           },
           "parameters": {
-            "ArtifactBucket": "{defaultBucket}"
+            "ArtifactBucket": "{defaultBucket}",
+            "TemplateFingerprint": "{iamTemplateFingerprint}"
           }
         },
         "buckets": {
@@ -1802,7 +2356,8 @@
             "status": null,
             "imageVersion": null,
             "release": null,
-            "previousBucket": null
+            "previousBucket": null,
+            "stackSdkVersion": null
           },
           {
             "resource": "iamStack",
@@ -1812,7 +2367,8 @@
             "status": "CREATE_COMPLETE",
             "imageVersion": null,
             "release": null,
-            "previousBucket": null
+            "previousBucket": null,
+            "stackSdkVersion": null
           },
           {
             "resource": "baseImage",
@@ -1822,7 +2378,8 @@
             "status": null,
             "imageVersion": "1.0",
             "release": null,
-            "previousBucket": null
+            "previousBucket": null,
+            "stackSdkVersion": null
           },
           {
             "resource": "capsImage",
@@ -1832,7 +2389,8 @@
             "status": null,
             "imageVersion": "1.0",
             "release": null,
-            "previousBucket": null
+            "previousBucket": null,
+            "stackSdkVersion": null
           }
         ],
         "ready": true,
@@ -1870,7 +2428,8 @@
             "status": null,
             "imageVersion": null,
             "release": null,
-            "previousBucket": null
+            "previousBucket": null,
+            "stackSdkVersion": null
           },
           {
             "resource": "iamStack",
@@ -1880,7 +2439,8 @@
             "status": null,
             "imageVersion": null,
             "release": null,
-            "previousBucket": null
+            "previousBucket": null,
+            "stackSdkVersion": null
           },
           {
             "resource": "baseImage",
@@ -1890,7 +2450,8 @@
             "status": null,
             "imageVersion": null,
             "release": "rayd-v{sdkVersion}",
-            "previousBucket": null
+            "previousBucket": null,
+            "stackSdkVersion": null
           },
           {
             "resource": "capsImage",
@@ -1900,7 +2461,8 @@
             "status": null,
             "imageVersion": null,
             "release": null,
-            "previousBucket": null
+            "previousBucket": null,
+            "stackSdkVersion": null
           }
         ],
         "ready": false,
@@ -1929,7 +2491,8 @@
             "BuildRoleArn": "arn:aws:iam::123456789012:role/rayito-m0-build-us-east-1"
           },
           "parameters": {
-            "ArtifactBucket": "amzn-s3-demo-bucket"
+            "ArtifactBucket": "amzn-s3-demo-bucket",
+            "TemplateFingerprint": "{iamTemplateFingerprint}"
           }
         },
         "buckets": {
@@ -1961,7 +2524,8 @@
             "status": null,
             "imageVersion": null,
             "release": null,
-            "previousBucket": null
+            "previousBucket": null,
+            "stackSdkVersion": null
           },
           {
             "resource": "iamStack",
@@ -1971,7 +2535,8 @@
             "status": "CREATE_COMPLETE",
             "imageVersion": null,
             "release": null,
-            "previousBucket": null
+            "previousBucket": null,
+            "stackSdkVersion": null
           },
           {
             "resource": "baseImage",
@@ -1981,7 +2546,8 @@
             "status": null,
             "imageVersion": "1.0",
             "release": null,
-            "previousBucket": null
+            "previousBucket": null,
+            "stackSdkVersion": null
           },
           {
             "resource": "capsImage",
@@ -1991,7 +2557,8 @@
             "status": null,
             "imageVersion": null,
             "release": "rayd-v{sdkVersion}",
-            "previousBucket": null
+            "previousBucket": null,
+            "stackSdkVersion": null
           }
         ],
         "ready": false,
@@ -2019,7 +2586,8 @@
             "BuildRoleArn": "arn:aws:iam::123456789012:role/rayito-m0-build-us-east-1"
           },
           "parameters": {
-            "ArtifactBucket": "amzn-s3-demo-bucket"
+            "ArtifactBucket": "amzn-s3-demo-bucket",
+            "TemplateFingerprint": "{iamTemplateFingerprint}"
           }
         },
         "buckets": {
@@ -2067,7 +2635,8 @@
             "status": null,
             "imageVersion": null,
             "release": null,
-            "previousBucket": null
+            "previousBucket": null,
+            "stackSdkVersion": null
           },
           {
             "resource": "iamStack",
@@ -2077,7 +2646,8 @@
             "status": "CREATE_COMPLETE",
             "imageVersion": null,
             "release": null,
-            "previousBucket": null
+            "previousBucket": null,
+            "stackSdkVersion": null
           },
           {
             "resource": "baseImage",
@@ -2087,7 +2657,8 @@
             "status": null,
             "imageVersion": "1.0",
             "release": null,
-            "previousBucket": null
+            "previousBucket": null,
+            "stackSdkVersion": null
           },
           {
             "resource": "capsImage",
@@ -2097,7 +2668,8 @@
             "status": null,
             "imageVersion": "2.0",
             "release": null,
-            "previousBucket": null
+            "previousBucket": null,
+            "stackSdkVersion": null
           }
         ],
         "ready": false,

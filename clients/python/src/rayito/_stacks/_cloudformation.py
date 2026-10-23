@@ -6,7 +6,7 @@ Parámetros y formas verificados offline contra botocore 1.43.103
 `UpdateStack`, [{ParameterKey, UsePreviousValue}], `Tags` [{Key, Value}],
 `Capabilities`), `UpdateStack` (igual, más el `ValidationError` "No updates
 are to be performed" cuando no hay cambios), `DescribeStacks` (`StackName`
--> `Stacks[0].{StackStatus, StackStatusReason, Outputs, Parameters}`, o `ValidationError`
+-> `Stacks[0].{StackStatus, StackStatusReason, Outputs, Parameters, Tags}`, o `ValidationError`
 "does not exist" si no hay pila), `DeleteStack` (idempotente: no falla sobre
 una pila que no existe) y `DescribeStackEvents` (no usado todavía: `wait`
 sondea `DescribeStacks`, más simple y suficiente para pilas sin recursos
@@ -132,12 +132,14 @@ class CloudFormationProvisioner:
             parameter["ParameterKey"]: parameter.get("ParameterValue", "")
             for parameter in stack.get("Parameters") or []
         }
+        tags = {tag["Key"]: tag.get("Value", "") for tag in stack.get("Tags") or []}
         return StackStatus(
             name=stack_name,
             state=stack.get("StackStatus"),
             outputs=outputs,
             reason_code=stack.get("StackStatusReason"),
             parameters=parameters,
+            tags=tags,
         )
 
     def create(

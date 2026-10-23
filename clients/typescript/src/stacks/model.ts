@@ -11,6 +11,7 @@ import { VERSION } from "../version.js";
 export const MANAGED_BY_TAG = "rayito-sdk";
 export const COMPONENT_TAG_KEY = "rayito:component";
 export const MANAGED_BY_TAG_KEY = "rayito:managed-by";
+/** La etiqueta fija con la versión del SDK que desplegó la pila por última vez. */
 export const SDK_VERSION_TAG_KEY = "rayito:sdk-version";
 /** Las tres etiquetas que `stackTags` pone siempre y que ganan a las del llamante. */
 export const FIXED_TAG_KEYS: readonly string[] = [
@@ -80,6 +81,10 @@ export interface StackStatus {
    * valores con los que la pila está desplegada ahora (CloudFormation ya
    * enmascara los `NoEcho`). `planParameters` lo usa para no pisarlos. */
   readonly parameters?: Readonly<Record<string, string>>;
+  /** `Tags[].{Key: Value}` de `DescribeStacks`: las etiquetas de la pila, las
+   * fijas de `stackTags` incluidas (`rayito:sdk-version` es la versión del SDK
+   * que la desplegó por última vez). */
+  readonly tags?: Readonly<Record<string, string>>;
 }
 
 export function stackExists(status: StackStatus | undefined): boolean {

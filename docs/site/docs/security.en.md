@@ -162,11 +162,15 @@ itself turns it on. When it is used:
   (`infra/secrets-access.yaml`), never the execution role. **Phase 1: the
   sandbox code can read an injected secret.** With untrusted code, inject
   only short-lived, least-privilege tokens, never long-lived credentials.
-- **Logs**: Rayito never writes the value or the name to its logs. The DEBUG
-  log of the AWS SDK it uses underneath (botocore/urllib3 in Python, a
-  `SecretsManagerClient` `logger` in TypeScript) **does** print the Secrets
-  Manager bodies with the value in clear: do not enable it in processes that
-  handle secrets ([Secrets](secrets.md#que-activa-y-que-cuesta)).
+- **Logs**: Rayito never writes the value or the name to its logs. In
+  Python, `import rayito` drops the DEBUG records of the botocore, boto3
+  and s3transfer loggers that write parameters and bodies (the measured
+  list is in [Secrets](secrets.md#que-activa-y-que-cuesta)), and the agent
+  host does the same inside the MicroVM. In
+  TypeScript, a `logger` you set on the `SecretsManagerClient` **does**
+  print the Secrets Manager bodies with the value in clear: do not set one
+  in processes that handle secrets
+  ([Secrets](secrets.md#que-activa-y-que-cuesta)).
 - The E2B shim's `Secret.fill()` returns the placeholder, but Rayito does
   not resolve it anywhere.
 

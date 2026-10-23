@@ -852,7 +852,10 @@ Talking to the deployment again from another process takes the access token of
 its sandbox. `deploy` saves it to `--token-file` (a new file, mode `0600`; it
 never goes through argv and is never printed) or uses the one in
 `RAYITO_ACCESS_TOKEN` if you have it set, and it does not start with neither,
-because there would be no way to reconnect. `invoke` and `status` read it from
+because there would be no way to reconnect. If the deploy fails before the
+fleet exists, it deletes the `--token-file` it has just created, so retrying
+the same command works (since 0.17.1); with `--keep-on-failure` it keeps it,
+because it is the only way into the sandbox that stays. `invoke` and `status` read it from
 `--token-file` or `RAYITO_ACCESS_TOKEN`. `stop` does not need it: it terminates
 the sandbox by its id. From the SDK, `deploy(access_token=...)` (`deploy({
 accessToken })` in TypeScript) does the same as the variable; if you pass none,

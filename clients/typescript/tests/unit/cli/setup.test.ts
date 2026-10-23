@@ -18,6 +18,7 @@ import {
   BUILD_ROLE_ARN,
   FakeAccountSetup,
   type FakeBehavior,
+  IAM_TEMPLATE_FINGERPRINT,
   type VectorInput,
   withPlaceholders,
 } from "../account-setup-fakes.js";
@@ -248,7 +249,10 @@ describe("rayito setup: apply", () => {
       stack: {
         status: "CREATE_COMPLETE",
         outputs: { BuildRoleArn: BUILD_ROLE_ARN },
-        parameters: { ArtifactBucket: "amzn-s3-demo-bucket" },
+        parameters: {
+          ArtifactBucket: "amzn-s3-demo-bucket",
+          TemplateFingerprint: IAM_TEMPLATE_FINGERPRINT,
+        },
       },
       image: {
         state: "UPDATED",
@@ -360,7 +364,10 @@ describe("rayito setup: confirmation", () => {
       stack: {
         status: "CREATE_COMPLETE",
         outputs: { BuildRoleArn: BUILD_ROLE_ARN },
-        parameters: { ArtifactBucket: "amzn-s3-demo-bucket" },
+        parameters: {
+          ArtifactBucket: "amzn-s3-demo-bucket",
+          TemplateFingerprint: IAM_TEMPLATE_FINGERPRINT,
+        },
       },
       image: {
         state: "UPDATED",
@@ -380,6 +387,35 @@ describe("rayito setup: confirmation", () => {
 });
 
 describe("rayito setup: --json", () => {
+  it("reports the version of each published image in its step", async () => {
+    const outcome = await invoke({ args: ["--json", "setup", "--caps-image", "--yes"] });
+    const document = JSON.parse(outcome.stdout) as {
+      steps: { resource: string; action: string; imageVersion: string | null }[];
+      result: { imageVersion: string; capsImageVersion: string | null };
+    };
+    const steps = Object.fromEntries(document.steps.map((step) => [step.resource, step]));
+    expect(steps.baseImage).toMatchObject({
+      action: "publish",
+      imageVersion: document.result.imageVersion,
+    });
+    expect(steps.capsImage).toMatchObject({
+      action: "publish",
+      imageVersion: document.result.capsImageVersion,
+    });
+    expect(document.result.capsImageVersion).not.toBeNull();
+  });
+
+  it("leaves the version of an image to publish empty in a dry run", async () => {
+    const outcome = await invoke({ args: ["--json", "setup", "--caps-image", "--dry-run"] });
+    const document = JSON.parse(outcome.stdout) as {
+      steps: { resource: string; imageVersion: string | null }[];
+    };
+    const versions = document.steps
+      .filter((step) => step.resource.endsWith("Image"))
+      .map((step) => step.imageVersion);
+    expect(versions).toEqual([null, null]);
+  });
+
   it("emits one document with the contract keys and the doctor document", async () => {
     const outcome = await invoke({ args: ["--json", "setup", "--yes"] });
     const document = JSON.parse(outcome.stdout) as Record<string, unknown>;

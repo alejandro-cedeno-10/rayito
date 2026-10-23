@@ -405,6 +405,31 @@ describe("OptionalStacks redeploy keeps deployed parameters (UsePreviousValue)",
 });
 
 describe("CloudFormationProvisioner parameters", () => {
+  test("describe maps the stack tags", async () => {
+    const api = {
+      describeStacks: async () => ({
+        Stacks: [
+          {
+            StackStatus: "UPDATE_COMPLETE",
+            Tags: [
+              { Key: "rayito:sdk-version", Value: "0.17.1" },
+              { Key: "team", Value: "platform" },
+            ],
+          },
+        ],
+      }),
+      createStack: async () => ({}),
+      updateStack: async () => ({}),
+      deleteStack: async () => ({}),
+    };
+    const adapter = new CloudFormationProvisioner({
+      region: "us-east-1",
+      cloudformationClient: api,
+    });
+    const status = await adapter.describe("rayito-m0-iam");
+    expect(status?.tags).toEqual({ "rayito:sdk-version": "0.17.1", team: "platform" });
+  });
+
   test("update sends kept parameters with UsePreviousValue", async () => {
     const sent: unknown[] = [];
     const api = {

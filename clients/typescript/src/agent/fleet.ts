@@ -77,6 +77,7 @@ import {
   poolConfigFor,
   recordBusy,
   recordPing,
+  restoreMs,
   routeOf,
   sandboxCap,
   selectMembers,
@@ -474,6 +475,8 @@ export class AgentFleet {
   #recipeKnown: boolean;
   #members: Member<AgentDeployment>[] = [];
   #growing = 0;
+  /** La cola de `setTimeout` de cada VM (`#lifetimeTurn`), por id. */
+  readonly #lifetimeTurns = new Map<string, Promise<void>>();
   readonly #sessions = new Map<string, string>();
   #pool: FleetPool | undefined;
 
@@ -864,14 +867,15 @@ export class AgentFleet {
         await this.#holdLifetime(lease.member);
         return [lease, await operation(deployment, lease.inner)];
       } catch (error) {
-        this.#unlease(lease);
+        if (error instanceof SandboxNotFoundError) {
+          this.#unlease(lease);
+          await this.#replace(lease.member);
+          throw new SandboxError(vmLostMessage(), { code: AGENT_VM_LOST_CODE });
+        }
+        await this.#release(lease, undefined);
         if (error instanceof AgentError && error.reason === "busy") {
           await this.#waitForCapacity(lease.member, deadline, routed);
           continue;
-        }
-        if (error instanceof SandboxNotFoundError) {
-          await this.#replace(lease.member);
-          throw new SandboxError(vmLostMessage(), { code: AGENT_VM_LOST_CODE });
         }
         if (error instanceof SandboxError) {
           await this.#noteTransportFailure(lease.member);
@@ -1101,30 +1105,62 @@ export class AgentFleet {
     }
   }
 
-  /** A un VM por encima de `minVms` se le acota la vida: `rayd` lo termina
-   * solo tras `scaleInAfterMs` sin uso. Se llama al crearlo, al abrirlo y al
-   * soltar cada invocación. */
+  /** A un VM por encima de `minVms` sin ninguna invocación en curso se le
+   * acota la vida: `rayd` lo termina solo tras `scaleInAfterMs` sin uso. Se
+   * llama al crearlo, al abrirlo y al soltar cada invocación (también la que
+   * falla). Se comprueba que siga libre dentro del turno del VM
+   * (`#lifetimeTurn`): si otra invocación lo tomó entre medias, su plazo de
+   * invocación manda y no se acorta. */
   async #limitLifetime(member: Member<AgentDeployment>): Promise<void> {
-    if (member.extra) {
-      await this.#setLifetime(member, this.scaling.scaleInAfterMs);
+    if (!member.extra) {
+      return;
     }
+    await this.#lifetimeTurn(member, async () => {
+      if (member.inflight === 0) {
+        await this.#setLifetime(member, this.scaling.scaleInAfterMs);
+      }
+    });
   }
 
   /** Antes de una invocación: a un VM sobrante se le da al menos lo que puede
    * durar la petición (`holdMs`), y a uno que este proceso acortó y ahora es
    * base (`markExtras` lo ascendió) se le devuelve toda la vida hasta su
-   * tope. */
+   * tope. Va en el turno del VM, después del arrendamiento: un acortamiento
+   * de otra invocación que se suelta ya no puede llegar detrás. */
   async #holdLifetime(member: Member<AgentDeployment>): Promise<void> {
-    if (member.extra) {
-      const timeout = this.#project === undefined ? undefined : requestTimeoutMs(this.#project);
-      await this.#setLifetime(member, holdMs(this.scaling, timeout));
-    } else if (member.limited) {
-      await this.#setLifetime(member, undefined);
+    await this.#lifetimeTurn(member, async () => {
+      if (member.extra) {
+        const timeout = this.#project === undefined ? undefined : requestTimeoutMs(this.#project);
+        await this.#setLifetime(member, holdMs(this.scaling, timeout));
+      } else if (member.limited) {
+        await this.#setLifetime(member, undefined);
+      }
+    });
+  }
+
+  /** Ordena los `setTimeout` de un VM en una cola: el de soltar una
+   * invocación y el de empezar otra nunca se cruzan en vuelo, así que el
+   * último que llega a `rayd` es siempre el de la última decisión. */
+  async #lifetimeTurn(member: Member, change: () => Promise<void>): Promise<void> {
+    const id = member.sandboxId;
+    const turn = (this.#lifetimeTurns.get(id) ?? Promise.resolve()).then(change);
+    const settled = turn.catch(() => undefined);
+    this.#lifetimeTurns.set(id, settled);
+    try {
+      await turn;
+    } finally {
+      if (this.#lifetimeTurns.get(id) === settled) {
+        this.#lifetimeTurns.delete(id);
+      }
     }
   }
 
   /** Un `setTimeout` acotado al tope de `rayd` del VM (`lifetimeMs`). Sin
-   * `desiredMs` pide todo lo que queda hasta el tope y deja el VM sin acortar.
+   * `desiredMs` pide todo lo que queda hasta el tope (`restoreMs`: sin tope
+   * conocido, el máximo de la plataforma, que `rayd` rechaza informando el
+   * suyo) y deja el VM sin acortar; si no hay nada que pedir o `rayd` no
+   * informa su tope, el VM deja de contar como acortado, porque no queda nada
+   * que devolverle.
    * Si `rayd` responde que el plazo pasa de su tope (la estimación de la flota
    * era tardía), se corrige `member.cap` con el tope que informa y se
    * reintenta una vez; nunca se marca el VM. Cualquier otro rechazo por
@@ -1139,8 +1175,14 @@ export class AgentFleet {
     if (deployment === undefined || member.lifetimeRejected) {
       return;
     }
-    const timeoutMs = lifetimeMs(desiredMs, member.cap, Date.now());
+    const timeoutMs =
+      desiredMs === undefined
+        ? restoreMs(member.cap, Date.now())
+        : lifetimeMs(desiredMs, member.cap, Date.now());
     if (timeoutMs === undefined) {
+      if (desiredMs === undefined) {
+        member.limited = false;
+      }
       return;
     }
     try {
@@ -1150,6 +1192,9 @@ export class AgentFleet {
         const cap = retry ? correctedCap(error, member.cap) : undefined;
         if (cap === undefined) {
           this.#logger?.debug?.("el plazo de un VM de la flota pasaba de su tope; no se reintenta");
+          if (desiredMs === undefined) {
+            member.limited = false;
+          }
           return;
         }
         member.cap = cap;
@@ -1284,7 +1329,10 @@ export class AgentFleet {
   }
 
   /** Quita la invocación en curso del VM; devuelve si el VM se quedó sin
-   * ninguna. */
+   * ninguna. La sesión real de una reserva dedicada (`keep`) se recuerda para
+   * su VM: con `maxVms === 1` el id de sesión no lleva asa, y sin recordarlo
+   * la siguiente llamada de esa sesión no encontraría su VM y esperaría a uno
+   * libre hasta `CapacityError`. */
   #unlease(lease: Lease, keep?: string): boolean {
     const member = lease.member;
     member.inflight = Math.max(0, member.inflight - 1);
@@ -1292,6 +1340,7 @@ export class AgentFleet {
       member.bound.delete(lease.reservation);
       if (keep !== undefined) {
         member.bound.add(keep);
+        this.#remember(keep, member);
       }
     }
     return member.inflight === 0;

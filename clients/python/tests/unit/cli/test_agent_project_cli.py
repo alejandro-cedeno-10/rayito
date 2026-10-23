@@ -788,6 +788,58 @@ def test_deploy_refuses_an_existing_token_file(
     assert calls.deployed == []
 
 
+@pytest.mark.usefixtures("no_access_token")
+@pytest.mark.parametrize(
+    "failure",
+    [SandboxException("el host no arrancó"), InvalidArgumentException("x"), RuntimeError("boom")],
+)
+def test_a_failed_deploy_removes_the_token_file_it_created_so_a_retry_works(
+    monkeypatch: pytest.MonkeyPatch,
+    runner: CliRunner,
+    clients: Clients,
+    tmp_path: Path,
+    failure: Exception,
+) -> None:
+    install_deploy(monkeypatch, error=failure)
+    token_file = tmp_path / "token"
+    failed = runner.invoke(app, ["agent", "deploy", "--token-file", str(token_file)], obj=clients)
+    assert failed.exit_code != 0
+    assert not token_file.exists()
+    calls = install_deploy(monkeypatch)
+    retry = runner.invoke(app, ["agent", "deploy", "--token-file", str(token_file)], obj=clients)
+    assert retry.exit_code == 0, retry.output
+    assert calls.deployed[0]["options"].access_token == token_file.read_text()
+
+
+@pytest.mark.usefixtures("no_access_token")
+def test_a_failed_deploy_with_keep_on_failure_keeps_the_token_of_the_kept_sandbox(
+    monkeypatch: pytest.MonkeyPatch, runner: CliRunner, clients: Clients, tmp_path: Path
+) -> None:
+    install_deploy(monkeypatch, error=SandboxException("el host no arrancó"))
+    token_file = tmp_path / "token"
+    result = runner.invoke(
+        app,
+        ["agent", "deploy", "--token-file", str(token_file), "--keep-on-failure"],
+        obj=clients,
+    )
+    assert result.exit_code == 1
+    assert token_file.read_text()
+
+
+@pytest.mark.usefixtures("no_access_token")
+def test_a_failed_deploy_never_removes_a_token_file_of_an_earlier_run(
+    monkeypatch: pytest.MonkeyPatch, runner: CliRunner, clients: Clients, tmp_path: Path
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    install_deploy(monkeypatch, error=SandboxException("el host no arrancó"))
+    default = tmp_path / ".rayito" / "agent-token"
+    default.parent.mkdir()
+    default.write_text(ACCESS_TOKEN)
+    result = runner.invoke(app, ["agent", "deploy"], obj=clients)
+    assert result.exit_code == 1, result.output
+    assert default.read_text() == ACCESS_TOKEN
+
+
 @pytest.mark.usefixtures("access_token")
 def test_deploy_keeps_the_sandbox_on_failure_only_when_asked(
     monkeypatch: pytest.MonkeyPatch, runner: CliRunner, clients: Clients

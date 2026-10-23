@@ -29,6 +29,7 @@ import {
   poolConfigFor,
   recordBusy,
   recordPing,
+  restoreMs,
   sandboxCap,
   selectMembers,
   sessionLabel,
@@ -380,6 +381,12 @@ function fleetLifetimeOf(maxLifetimeSeconds: number): FleetLifetime {
   return { maxLifetimeMs: maxLifetimeSeconds * 1000, onTimeout: AGENT_FLEET_ON_TIMEOUT };
 }
 
+interface RestoreSecondsCase {
+  readonly name: string;
+  readonly capInSeconds: number | null;
+  readonly expected: number | null;
+}
+
 interface HoldSecondsCase {
   readonly name: string;
   readonly scaleInSeconds: number;
@@ -410,6 +417,13 @@ describe("fleet lifetime", () => {
     const desired = entry.desiredSeconds === null ? undefined : entry.desiredSeconds * 1000;
     const expected = entry.expected === null ? undefined : entry.expected * 1000;
     expect(lifetimeMs(desired, cap, now)).toBe(expected);
+  });
+
+  test.each(LIFETIME.restoreSeconds as RestoreSecondsCase[])("$name", (entry) => {
+    const now = Date.UTC(2026, 9, 22);
+    const cap = entry.capInSeconds === null ? undefined : new Date(now + entry.capInSeconds * 1000);
+    const expected = entry.expected === null ? undefined : entry.expected * 1000;
+    expect(restoreMs(cap, now)).toBe(expected);
   });
 
   test.each(LIFETIME.holdSeconds as HoldSecondsCase[])("$name", (entry) => {

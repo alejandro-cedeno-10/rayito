@@ -26,7 +26,9 @@ cabecera.
 El host no loguea contenido: sólo método, ruta sin consulta, estado, bytes y
 duración. Nunca el prompt, el `input`, el `output`, una cabecera ni el token.
 Los loggers de `QUIET_HTTP_LOGGERS` arrancan en WARNING para que el cliente
-HTTP del agente no escriba URLs con credenciales.
+HTTP del agente no escriba URLs con credenciales, y los de
+`BOTOCORE_BODY_LOGGERS` descartan su DEBUG aunque el agente los baje: llevan
+los cuerpos de AWS, con secretos y tokens.
 """
 
 from __future__ import annotations
@@ -127,10 +129,27 @@ FAILED_SUFFIX: Final = ".failed"
 EVENT_STREAM: Final = "text/event-stream"
 LOGGER_NAME: Final = "rayito.agent.host"
 #: Loggers de clientes HTTP que a nivel INFO escriben la URL completa de cada
-#: petición, consulta incluida (donde algunas APIs llevan credenciales). El
-#: host los sube a WARNING al arrancar `serve`; el código del agente puede
-#: volver a bajarlos con `logging.getLogger(nombre).setLevel(...)`.
-QUIET_HTTP_LOGGERS: Final = ("httpx", "httpcore")
+#: petición, consulta incluida (donde algunas APIs llevan credenciales), y a
+#: nivel DEBUG los parámetros y cuerpos (botocore, boto3 y s3transfer: el
+#: valor de `GetSecretValue`, el `Item` de un `put_item`). El host los sube a
+#: WARNING al arrancar `serve`; el código del agente puede volver a bajarlos
+#: con `logging.getLogger(nombre).setLevel(...)`.
+QUIET_HTTP_LOGGERS: Final = ("httpx", "httpcore", "botocore", "boto3", "s3transfer", "urllib3")
+#: Loggers del SDK de AWS para Python cuyo DEBUG lleva parámetros, cuerpos o
+#: cabeceras firmadas (los mismos que `BOTOCORE_BODY_LOGGERS` del SDK,
+#: `rayito/_botocore_logs.py`, donde está la medición). El host descarta sus
+#: registros por debajo de INFO aunque el agente baje su nivel.
+BOTOCORE_BODY_LOGGERS: Final = (
+    "botocore.endpoint",
+    "botocore.parsers",
+    "botocore.auth",
+    "botocore.regions",
+    "boto3.resources.action",
+    "boto3.resources.collection",
+    "boto3.dynamodb.table",
+    "s3transfer.tasks",
+    "s3transfer.futures",
+)
 #: Cada cuánto despierta el consumidor para comprobar el plazo.
 POLL_SECONDS: Final = 0.25
 #: Fragmento que se copia de la respuesta de una app `raw` al cliente.

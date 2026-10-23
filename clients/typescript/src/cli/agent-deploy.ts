@@ -6,7 +6,7 @@
  * agente: cada función es pura o toca sólo ficheros locales.
  */
 
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { AgentDeployPlan } from "../agent/deploy-plan.js";
 import { SECRET_LIKE_KEYS } from "../agent/project.js";
@@ -190,6 +190,27 @@ export function deployToken(
     return { token: fromEnvironment, file: undefined };
   }
   return { token: defaultToken(AGENT_TOKEN_FILE_DEFAULT), file: AGENT_TOKEN_FILE_DEFAULT };
+}
+
+/** El `--token-file` que este despliegue acaba de crear y que hay que borrar
+ * si falla antes de que exista la flota: si se queda, el reintento choca con
+ * «el fichero de token ya existe». `undefined` sin `--token-file` (el fichero
+ * por defecto se reutiliza, no bloquea) o con `keepOnFailure`, porque al
+ * sandbox conservado sólo se llega con ese token. Un fichero de una ejecución
+ * anterior nunca llega aquí: `deployToken` falla antes sin tocarlo. */
+export function tokenFileToDiscard(
+  tokenFile: string | undefined,
+  token: DeployToken,
+  keepOnFailure: boolean,
+): string | undefined {
+  return tokenFile === undefined || keepOnFailure ? undefined : token.file;
+}
+
+/** Borra el fichero de `tokenFileToDiscard`; uno que ya no exista no es un error. */
+export function discardTokenFile(path: string | undefined): void {
+  if (path !== undefined) {
+    rmSync(path, { force: true });
+  }
 }
 
 /** La ruta del respaldo en fichero de las plazas calientes si hay que dejar

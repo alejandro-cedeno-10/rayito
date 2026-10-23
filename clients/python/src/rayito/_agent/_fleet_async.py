@@ -60,6 +60,7 @@ from rayito._agent._fleet_base import (
     pool_config_for,
     record_busy,
     record_ping,
+    restore_seconds,
     route_of,
     sandbox_cap,
     select_members,
@@ -324,6 +325,7 @@ class AsyncAgentFleet:
         self._growing = 0
         self._sessions: dict[str, str] = {}
         self._pool: AsyncSandboxPool | None = None
+        self._lifetime_locks: dict[str, asyncio.Lock] = {}
 
     @classmethod
     async def connect(
@@ -637,7 +639,7 @@ class AsyncAgentFleet:
                 await self._hold_lifetime(lease.member)
                 return lease, await operation(deployment, lease.inner)
             except AgentException as exc:
-                self._unlease(lease)
+                await self._release(lease, None)
                 if exc.reason != "busy":
                     raise
                 await self._wait_for_capacity(lease.member, deadline, routed=routed)
@@ -646,8 +648,11 @@ class AsyncAgentFleet:
                 await self._replace(lease.member)
                 raise SandboxException(vm_lost_message(), code=AGENT_VM_LOST_CODE) from None
             except SandboxException:
-                self._unlease(lease)
+                await self._release(lease, None)
                 await self._note_transport_failure(lease.member)
+                raise
+            except Exception:
+                await self._release(lease, None)
                 raise
             except BaseException:
                 self._unlease(lease)
@@ -827,29 +832,48 @@ class AsyncAgentFleet:
             logger.warning("no se pudo terminar el sandbox de la flota", exc_info=True)
 
     async def _limit_lifetime(self, member: Member) -> None:
-        """A un VM por encima de `min_vms` se le acota la vida: `rayd` lo
-        termina solo tras `scale_in_after_seconds` sin uso. Se llama al
-        crearlo, al abrirlo y al soltar cada invocación."""
-        if member.extra:
-            await self._set_lifetime(member, self.scaling.scale_in_after_seconds)
+        """A un VM por encima de `min_vms` sin ninguna invocación en curso se
+        le acota la vida: `rayd` lo termina solo tras `scale_in_after_seconds`
+        sin uso. Se llama al crearlo, al abrirlo y al soltar cada invocación
+        (también la que falla). Se comprueba que siga libre dentro del turno
+        del VM (`_lifetime_turn`): si otra invocación lo tomó entre medias,
+        su plazo de invocación manda y no se acorta."""
+        if not member.extra:
+            return
+        async with self._lifetime_turn(member):
+            if member.inflight == 0:
+                await self._set_lifetime(member, self.scaling.scale_in_after_seconds)
 
     async def _hold_lifetime(self, member: Member) -> None:
         """Antes de una invocación: a un VM sobrante se le da al menos lo que
         puede durar la petición (`hold_seconds`), y a uno que este proceso
         acortó y ahora es base (`mark_extras` lo ascendió) se le devuelve
-        toda la vida hasta su tope."""
-        if member.extra:
-            timeout = request_timeout(self._project) if self._project else None
-            await self._set_lifetime(member, hold_seconds(self.scaling, timeout))
-        elif member.limited:
-            await self._set_lifetime(member, None)
+        toda la vida hasta su tope. Va en el turno del VM, después del
+        arrendamiento: un acortamiento de otra invocación que se suelta ya
+        no puede llegar detrás."""
+        async with self._lifetime_turn(member):
+            if member.extra:
+                timeout = request_timeout(self._project) if self._project else None
+                await self._set_lifetime(member, hold_seconds(self.scaling, timeout))
+            elif member.limited:
+                await self._set_lifetime(member, None)
+
+    def _lifetime_turn(self, member: Member) -> asyncio.Lock:
+        """El candado que ordena los `set_timeout` de un VM: el de soltar una
+        invocación y el de empezar otra nunca se cruzan en vuelo, así que el
+        último que llega a `rayd` es siempre el de la última decisión."""
+        return self._lifetime_locks.setdefault(member.sandbox_id, asyncio.Lock())
 
     async def _set_lifetime(
         self, member: Member, desired: float | None, *, retry: bool = True
     ) -> None:
         """Un `set_timeout` acotado al tope de `rayd` del VM
         (`lifetime_seconds`). `desired=None` pide todo lo que queda hasta el
-        tope y deja el VM sin acortar. Si `rayd` responde que el plazo pasa
+        tope (`restore_seconds`: sin tope conocido, el máximo de la
+        plataforma, que `rayd` rechaza informando el suyo) y deja el VM sin
+        acortar; si no hay nada que pedir o `rayd` no informa su tope, el VM
+        deja de contar como acortado, porque no queda nada que devolverle.
+        Si `rayd` responde que el plazo pasa
         de su tope (la estimación de la flota era tardía), se corrige
         `member.cap` con el tope que informa y se reintenta una vez; nunca
         se marca el VM. Cualquier otro rechazo por argumento es un VM creado
@@ -858,8 +882,15 @@ class AsyncAgentFleet:
         deployment = member.deployment
         if deployment is None or member.lifetime_rejected:
             return
-        seconds = lifetime_seconds(desired, member.cap, datetime.now(UTC))
+        now = datetime.now(UTC)
+        seconds = (
+            restore_seconds(member.cap, now)
+            if desired is None
+            else lifetime_seconds(desired, member.cap, now)
+        )
         if seconds is None:
+            if desired is None:
+                member.limited = False
             return
         try:
             await deployment.set_timeout(seconds)
@@ -867,6 +898,8 @@ class AsyncAgentFleet:
             cap = corrected_cap(exc, member.cap) if retry else None
             if cap is None:
                 logger.debug("el plazo de un VM de la flota pasaba de su tope; no se reintenta")
+                if desired is None:
+                    member.limited = False
                 return
             member.cap = cap
             await self._set_lifetime(member, desired, retry=False)
@@ -975,21 +1008,26 @@ class AsyncAgentFleet:
         if self._unlease(lease, keep=inner_session):
             await self._limit_lifetime(lease.member)
 
-    @staticmethod
-    def _unlease(lease: Lease, *, keep: str | None = None) -> bool:
+    def _unlease(self, lease: Lease, *, keep: str | None = None) -> bool:
         """Quita la invocación en curso del VM; devuelve si el VM se quedó
-        sin ninguna."""
+        sin ninguna. La sesión real de una reserva dedicada (`keep`) se
+        recuerda para su VM: con `max_vms == 1` el id de sesión no lleva asa,
+        y sin recordarlo la siguiente llamada de esa sesión no encontraría su
+        VM y esperaría a un VM libre hasta `CapacityException`."""
         member = lease.member
         member.inflight = max(0, member.inflight - 1)
         if lease.reservation is not None:
             member.bound.discard(lease.reservation)
             if keep is not None:
                 member.bound.add(keep)
+                if self.scaling.sessions == SESSIONS_DEDICATED:
+                    self._sessions[keep] = member.sandbox_id
         return member.inflight == 0
 
     def _drop(self, member: Member) -> None:
         if member in self._members:
             self._members.remove(member)
+        self._lifetime_locks.pop(member.sandbox_id, None)
         mark_extras(self._members, self.scaling)
 
     async def _replace(self, member: Member) -> None:

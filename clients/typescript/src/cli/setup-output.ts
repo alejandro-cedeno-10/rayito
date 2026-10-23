@@ -7,6 +7,7 @@
 
 import {
   ARTIFACT_STACK_NAME,
+  appliedSteps,
   BUCKET_SOURCE_LABELS,
   type BucketSource,
   formatTemplate,
@@ -34,7 +35,10 @@ export const ACTION_TEMPLATES = {
   bucketWait: "pila {stack} en curso ({status}): esperar",
   stackCreate: "crear",
   stackUpdate: "actualizar ArtifactBucket {previousBucket} -> {bucket}",
+  stackTemplate: "actualizar a la plantilla infra/iam.yaml de este SDK",
   stackReuse: "ya existe ({status})",
+  stackNewer:
+    "ya existe ({status}) con la plantilla de Rayito {stackSdkVersion}, más nuevo que este SDK: se conserva",
   stackWait: "en curso ({status}): esperar",
   imagePublishRelease: "publicar desde {release} (≈ 10 min)",
   imagePublishArtifact: "publicar desde {artifact} (≈ 10 min)",
@@ -76,8 +80,19 @@ const ACTION_KEYS: Readonly<Record<string, ActionKey>> = {
   "capsImage:skip": "capsSkip",
 };
 
+/**
+ * Un `update` de la pila de IAM sin `previousBucket` conserva el bucket: sólo
+ * pone al día la plantilla. Un `reuse` con `stackSdkVersion` conserva la
+ * plantilla de un Rayito más nuevo.
+ */
 function actionKey(step: SetupStep): ActionKey {
   const pair = `${step.resource}:${step.action}`;
+  if (pair === "iamStack:update" && step.previousBucket === undefined) {
+    return "stackTemplate";
+  }
+  if (pair === "iamStack:reuse" && step.stackSdkVersion !== undefined) {
+    return "stackNewer";
+  }
   const key = ACTION_KEYS[step.action === "publish" ? `${pair}:${step.source}` : pair];
   if (key === undefined) {
     throw new Error(`acción sin texto: ${pair}`);
@@ -96,6 +111,7 @@ function actionText(plan: SetupPlan, step: SetupStep): string {
     release: step.release ?? "",
     artifact: plan.artifact ?? "",
     imageVersion: step.imageVersion ?? "",
+    stackSdkVersion: step.stackSdkVersion ?? "",
   });
 }
 
@@ -150,7 +166,7 @@ export interface SetupDocumentInput {
   readonly exitCode: number;
 }
 
-/** El documento único de `--json`, con las claves en el orden del contrato. */
+/** El documento único de `--json`, con las claves en el orden del contrato; tras `apply`, el paso de cada imagen publicada lleva su `imageVersion` (`appliedSteps`). */
 export function setupDocument(input: SetupDocumentInput): Record<string, unknown> {
   const { plan, error } = input;
   return {
@@ -159,7 +175,7 @@ export function setupDocument(input: SetupDocumentInput): Record<string, unknown
     account: plan?.account ?? null,
     dryRun: input.dryRun,
     ready: input.ready,
-    steps: plan === undefined ? [] : plan.steps.map(stepJson),
+    steps: plan === undefined ? [] : appliedSteps(plan, input.result).map(stepJson),
     cost: plan === undefined ? [] : [...plan.cost],
     result: input.result === undefined ? null : resultJson(input.result),
     doctor: input.doctor ?? null,

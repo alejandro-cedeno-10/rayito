@@ -5,7 +5,7 @@
  * salida y los códigos de salida, igual que `test_agent_project_cli.py`.
  */
 
-import { mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -507,6 +507,55 @@ describe("agent deploy", () => {
     expect(outcome.exitCode).toBe(2);
     expect(readFileSync(tokenFile, "utf8")).toBe("old");
     expect(projects.deployRequests).toEqual([]);
+  });
+
+  it.each([
+    ["un SandboxError", () => new SandboxError("el host no arrancó")],
+    ["un InvalidArgumentError", () => new InvalidArgumentError("x")],
+    ["cualquier otro error", () => new Error("boom")],
+  ])(
+    "%s borra el --token-file que creó el despliegue y el reintento funciona",
+    async (_label, failure) => {
+      const projects = new FakeAgentProjects();
+      projects.deployFailure = failure();
+      const tokenFile = join(tempDirectory(), "token");
+      const failed = await invoke(projects, ["agent", "deploy", "--token-file", tokenFile]);
+      expect(failed.exitCode).not.toBe(0);
+      expect(existsSync(tokenFile)).toBe(false);
+      projects.deployFailure = undefined;
+      const retry = await invoke(projects, ["agent", "deploy", "--token-file", tokenFile]);
+      expect(retry.exitCode).toBe(0);
+      expect(projects.deployRequests.at(-1)?.settings.accessToken).toBe(
+        readFileSync(tokenFile, "utf8"),
+      );
+    },
+  );
+
+  it("con --keep-on-failure conserva el token del sandbox que se queda", async () => {
+    const projects = new FakeAgentProjects();
+    projects.deployFailure = new SandboxError("el host no arrancó");
+    const tokenFile = join(tempDirectory(), "token");
+    const outcome = await invoke(projects, [
+      "agent",
+      "deploy",
+      "--token-file",
+      tokenFile,
+      "--keep-on-failure",
+    ]);
+    expect(outcome.exitCode).toBe(1);
+    expect(readFileSync(tokenFile, "utf8")).not.toBe("");
+  });
+
+  it("un fallo nunca borra el token de una ejecución anterior", async () => {
+    await inTemporaryDirectory(async () => {
+      const projects = new FakeAgentProjects();
+      await invoke(projects, ["agent", "deploy"]);
+      const earlier = readFileSync(".rayito/agent-token", "utf8");
+      projects.deployFailure = new SandboxError("el host no arrancó");
+      const outcome = await invoke(projects, ["agent", "deploy"]);
+      expect(outcome.exitCode).toBe(1);
+      expect(readFileSync(".rayito/agent-token", "utf8")).toBe(earlier);
+    });
   });
 
   it("un fallo de despliegue imprime su causa y sale con 1", async () => {

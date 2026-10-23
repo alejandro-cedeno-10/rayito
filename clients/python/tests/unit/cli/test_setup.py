@@ -279,6 +279,27 @@ def test_json_apply_embeds_the_doctor_and_sends_progress_to_stderr(
     assert "creando la pila" not in result.stdout
 
 
+def test_json_apply_reports_the_version_of_each_published_image_in_its_step(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("rayito.cli.setup.run_doctor", doctor_returning("OK"))
+    result, _account = run(FRESH, "--json", "setup", "--caps-image", "--yes")
+    document = json.loads(result.stdout)
+    assert result.exit_code == 0, result.stderr
+    steps = {step["resource"]: step for step in document["steps"]}
+    assert steps["baseImage"]["action"] == steps["capsImage"]["action"] == "publish"
+    assert steps["baseImage"]["imageVersion"] == document["result"]["imageVersion"]
+    assert steps["capsImage"]["imageVersion"] == document["result"]["capsImageVersion"]
+    assert document["result"]["capsImageVersion"] is not None
+
+
+def test_json_dry_run_leaves_the_version_of_an_image_to_publish_empty() -> None:
+    result, _account = run(FRESH, "--json", "setup", "--caps-image", "--dry-run")
+    steps = {step["resource"]: step for step in json.loads(result.stdout)["steps"]}
+    assert steps["baseImage"]["imageVersion"] is None
+    assert steps["capsImage"]["imageVersion"] is None
+
+
 def test_json_apply_with_a_doctor_failure_is_not_ready(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("rayito.cli.setup.run_doctor", doctor_returning("FAIL"))
     result, _account = run(FRESH, "--json", "setup", "--yes")

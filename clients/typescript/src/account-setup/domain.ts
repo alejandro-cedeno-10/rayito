@@ -28,6 +28,7 @@ import {
   type StackObservation,
   USABLE_STACK_STATES,
 } from "../stacks/condition.js";
+import { FIXED_TAG_KEYS, SDK_VERSION_TAG_KEY } from "../stacks/model.js";
 import {
   formatTemplate,
   type MessageFields,
@@ -41,6 +42,37 @@ export const IAM_STACK_COMPONENT_NAME = "iam";
 /** `Capability` del modelo `cloudformation` 2010-05-15 (`AWS_API_NOTES.md` §21). */
 export const IAM_STACK_CAPABILITIES: readonly string[] = ["CAPABILITY_NAMED_IAM"];
 export const ARTIFACT_BUCKET_PARAMETER = "ArtifactBucket";
+/**
+ * Parámetro de `infra/iam.yaml` con el sha256 de la plantilla que la
+ * desplegó (`templateFingerprint`). Una pila de 0.17.0 o anterior no lo tiene
+ * y una desplegada a mano lo deja vacío: en los dos casos la plantilla del SDK
+ * es otra y `rayito setup` la actualiza. Espejo de
+ * `TEMPLATE_FINGERPRINT_PARAMETER`.
+ */
+export const TEMPLATE_FINGERPRINT_PARAMETER = "TemplateFingerprint";
+/**
+ * Parámetro de `infra/iam.yaml` que conserva la descripción original de
+ * `CallerPolicy` (`"true"`) en una pila creada con la plantilla de 0.6.1 o
+ * anterior. IAM no cambia la descripción de una política gestionada:
+ * CloudFormation la sustituye y la nueva choca con su propio nombre fijo
+ * (`AWS_API_NOTES.md` §21), así que la actualización se revierte. Espejo de
+ * `LEGACY_CALLER_POLICY_PARAMETER`.
+ */
+export const LEGACY_CALLER_POLICY_PARAMETER = "LegacyCallerPolicy";
+/**
+ * Salida que sólo tiene una pila de la plantilla de 0.7.0 o posterior (la que
+ * añadió `SandboxLauncherPolicy` y la descripción actual de `CallerPolicy`).
+ * Espejo de `LAUNCHER_POLICY_OUTPUT_KEY`.
+ */
+export const LAUNCHER_POLICY_OUTPUT_KEY = "SandboxLauncherPolicyArn";
+/**
+ * Los tres números de una versión del SDK (`0.17.1`, `0.18.0-rc.1` -> 0, 18,
+ * 0): lo que se compara con la etiqueta `rayito:sdk-version` de la pila.
+ * Espejo de `RELEASE_NUMBERS_PATTERN`.
+ */
+export const RELEASE_NUMBERS_PATTERN = /^([0-9]+)\.([0-9]+)\.([0-9]+)/;
+/** Prefijo de las etiquetas que reserva AWS: `UpdateStack` no las acepta. */
+export const AWS_RESERVED_TAG_PREFIX = "aws:";
 export { BUILD_ROLE_OUTPUT_KEY };
 /** La plantilla de la pila de IAM, para el mensaje de `stack_incomplete`. */
 export const IAM_TEMPLATE_PATH = "infra/iam.yaml";
@@ -123,6 +155,7 @@ export type ErrorCode =
   | "artifact_missing"
   | "artifact_variant"
   | "needs_confirmation"
+  | "stack_newer"
   | "stack_blocked"
   | "stack_incomplete"
   | "release_download"
@@ -144,6 +177,7 @@ export const ERROR_EXIT_CODES: Readonly<Record<ErrorCode, number>> = {
   artifact_missing: EXIT_USAGE,
   artifact_variant: EXIT_USAGE,
   needs_confirmation: EXIT_USAGE,
+  stack_newer: EXIT_USAGE,
   stack_blocked: EXIT_FAILURE,
   stack_incomplete: EXIT_FAILURE,
   release_download: EXIT_FAILURE,
@@ -168,6 +202,8 @@ export const ERROR_MESSAGES: Readonly<Record<ErrorCode, string>> = {
     "{artifact} no es un zip de la variante full sin EFS: publica las otras variantes con `rayito image publish`",
   needs_confirmation:
     "preparar la cuenta crea recursos con coste: confírmalo con --yes (o desde una terminal)",
+  stack_newer:
+    "la pila {name} lleva la plantilla de Rayito {stackSdkVersion}, más nuevo que este SDK ({sdkVersion}), y el plan le cambia el bucket: ejecuta `rayito setup` con Rayito {stackSdkVersion} o posterior para no volver a una plantilla anterior",
   stack_blocked:
     "la pila {name} está en {status}: bórrala (aws cloudformation delete-stack --stack-name {name}), espera a que desaparezca y vuelve a ejecutar `rayito setup`",
   stack_incomplete:
@@ -334,6 +370,8 @@ export interface SetupStep {
   readonly imageVersion: string | undefined;
   readonly release: string | undefined;
   readonly previousBucket: string | undefined;
+  /** La versión de Rayito que desplegó la pila de IAM, sólo si es más nueva que este SDK y el plan la conserva (`reuse`). */
+  readonly stackSdkVersion: string | undefined;
 }
 
 export interface SetupPlan {
@@ -384,6 +422,7 @@ const NULLABLE_STEP_KEYS = [
   "imageVersion",
   "release",
   "previousBucket",
+  "stackSdkVersion",
 ] as const;
 
 /** Un paso con los campos opcionales ausentes (`undefined`). */
@@ -398,6 +437,7 @@ export function newStep(
     imageVersion: extra.imageVersion,
     release: extra.release,
     previousBucket: extra.previousBucket,
+    stackSdkVersion: extra.stackSdkVersion,
   };
 }
 
@@ -412,6 +452,30 @@ export function stepJson(step: SetupStep): Record<string, unknown> {
     document[key] = step[key] ?? null;
   }
   return document;
+}
+
+/**
+ * Los pasos del plan tras `apply`: un `publish` de imagen lleva la versión que
+ * acaba de publicar (`result`), que el plan aún no conocía. Sin `result`
+ * (dry-run o un fallo), los pasos del plan tal cual. Espejo de `applied_steps`.
+ */
+export function appliedSteps(
+  plan: SetupPlan,
+  result: SetupResult | undefined,
+): readonly SetupStep[] {
+  if (result === undefined) {
+    return plan.steps;
+  }
+  const published: Partial<Record<ResourceKind, string | undefined>> = {
+    baseImage: result.imageVersion,
+    capsImage: result.capsImageVersion,
+  };
+  return plan.steps.map((step) => {
+    const version = published[step.resource];
+    return step.action === "publish" && version !== undefined
+      ? { ...step, imageVersion: version }
+      : step;
+  });
 }
 
 /** El resultado como lo escribe el documento JSON. */
@@ -625,8 +689,60 @@ export function planBucketCreation(
   return newStep({ ...base, name: target.name, action: "create" }, { source: target.source });
 }
 
-/** Crear, actualizar sólo `ArtifactBucket`, reutilizar o esperar la pila de IAM. */
-export function planStack(stack: StackObservation, bucket: string): SetupStep {
+/** Los tres números de `version`, o `undefined` si no empieza por ellos. Espejo de `release_numbers`. */
+export function releaseNumbers(version: string | undefined): readonly number[] | undefined {
+  const match = RELEASE_NUMBERS_PATTERN.exec(version ?? "");
+  if (match === null) {
+    return undefined;
+  }
+  return match.slice(1, 4).map(Number);
+}
+
+function isNewerRelease(left: readonly number[], right: readonly number[]): boolean {
+  for (const [index, value] of left.entries()) {
+    const other = right[index] ?? 0;
+    if (value !== other) {
+      return value > other;
+    }
+  }
+  return false;
+}
+
+/**
+ * La versión de la etiqueta `rayito:sdk-version` de la pila si es más nueva
+ * que `sdkVersion`; `undefined` si no lo es o si falta o no se entiende (una
+ * pila desplegada a mano). Espejo de `deployed_by_newer_sdk`.
+ */
+export function deployedByNewerSdk(
+  stack: StackObservation,
+  sdkVersion: string,
+): string | undefined {
+  const deployed = stack.tags?.[SDK_VERSION_TAG_KEY];
+  const deployedNumbers = releaseNumbers(deployed);
+  const currentNumbers = releaseNumbers(sdkVersion);
+  if (deployedNumbers === undefined || currentNumbers === undefined) {
+    return undefined;
+  }
+  return isNewerRelease(deployedNumbers, currentNumbers) ? deployed : undefined;
+}
+
+/**
+ * Crear, esperar, reutilizar o actualizar la pila de IAM: `reuse` si lleva
+ * el bucket del plan y la plantilla de este SDK (`templateFingerprint`, el
+ * sha256 de su `infra/iam.yaml`). `previousBucket` sólo se rellena si cambia
+ * el bucket: con el mismo bucket, el `update` sólo pone al día la plantilla.
+ *
+ * Una pila que desplegó un Rayito más nuevo que `sdkVersion` (su etiqueta
+ * `rayito:sdk-version`) nunca se actualiza, porque volvería a la plantilla
+ * anterior de este SDK: con el mismo bucket es `reuse` con `stackSdkVersion`,
+ * y si el plan le cambia el bucket, `stack_newer`.
+ */
+export function planStack(
+  stack: StackObservation,
+  bucket: string,
+  templateFingerprint: string,
+  sdkVersion: string,
+): SetupStep {
   const base = { resource: "iamStack", name: IAM_STACK_NAME } as const;
   const condition = classifyStack(stack);
   if (condition === "missing") {
@@ -643,10 +759,59 @@ export function planStack(stack: StackObservation, bucket: string): SetupStep {
   }
   stackOutput(stack, BUILD_ROLE_OUTPUT_KEY, IAM_TEMPLATE_PATH);
   const previous = stack.parameters[ARTIFACT_BUCKET_PARAMETER];
-  if (previous === bucket) {
+  const currentTemplate = stack.parameters[TEMPLATE_FINGERPRINT_PARAMETER] === templateFingerprint;
+  if (previous === bucket && currentTemplate) {
     return newStep({ ...base, action: "reuse" }, { status: stack.status });
   }
-  return newStep({ ...base, action: "update" }, { status: stack.status, previousBucket: previous });
+  const newer = deployedByNewerSdk(stack, sdkVersion);
+  if (newer !== undefined && previous === bucket) {
+    return newStep({ ...base, action: "reuse" }, { status: stack.status, stackSdkVersion: newer });
+  }
+  if (newer !== undefined) {
+    throw new AccountSetupError("stack_newer", {
+      name: stack.name,
+      stackSdkVersion: newer,
+      sdkVersion,
+    });
+  }
+  return newStep(
+    { ...base, action: "update" },
+    { status: stack.status, previousBucket: previous === bucket ? undefined : previous },
+  );
+}
+
+/**
+ * Las etiquetas que `rayito setup` manda al actualizar una pila: `UpdateStack`
+ * con `Tags` sustituye la lista entera, así que van las que la pila ya tenía
+ * (sin las fijas de Rayito, que `stackTags` vuelve a poner, ni las `aws:`
+ * reservadas) y, por encima, las de `--tag`. Espejo de `preserved_stack_tags`.
+ */
+export function preservedStackTags(
+  current: Readonly<Record<string, string>>,
+  requested: Readonly<Record<string, string>>,
+): Record<string, string> {
+  const kept = Object.entries(current).filter(
+    ([key]) => !FIXED_TAG_KEYS.includes(key) && !key.startsWith(AWS_RESERVED_TAG_PREFIX),
+  );
+  return { ...Object.fromEntries(kept), ...requested };
+}
+
+/**
+ * El valor de `LegacyCallerPolicy` que `rayito setup` manda al crear o
+ * actualizar la pila de IAM: el que ya lleva, si lo tiene; `"true"` para una
+ * pila sin él ni la salida `SandboxLauncherPolicyArn` (la plantilla de 0.6.1 o
+ * anterior, cuya `CallerPolicy` conserva así su descripción), y `"false"` para
+ * una pila nueva o de 0.7.0 en adelante. Espejo de `legacy_caller_policy`.
+ */
+export function legacyCallerPolicy(stack: StackObservation | undefined): string {
+  if (stack === undefined || stack.status === undefined) {
+    return "false";
+  }
+  const current = stack.parameters[LEGACY_CALLER_POLICY_PARAMETER];
+  if (current !== undefined) {
+    return current;
+  }
+  return LAUNCHER_POLICY_OUTPUT_KEY in stack.outputs ? "false" : "true";
 }
 
 function createdAtMs(item: ImageVersionItem): number {
@@ -765,11 +930,15 @@ export function planSetup(input: {
   readonly image: ImageObservation;
   /** `rayito-base-caps`, o `undefined` con `capsImage: false`. */
   readonly caps?: ImageObservation | undefined;
+  /** El sha256 del `infra/iam.yaml` de este SDK. */
+  readonly iamTemplateFingerprint: string;
+  /** La versión de este SDK (`VERSION`). */
+  readonly sdkVersion: string;
 }): SetupPlan {
   const { request, stack, bucketStep, image, caps } = input;
   const steps = [
     bucketStep,
-    planStack(stack, bucketStep.name),
+    planStack(stack, bucketStep.name, input.iamTemplateFingerprint, input.sdkVersion),
     planImage(image, request),
     planCapsImage(caps, request),
   ];

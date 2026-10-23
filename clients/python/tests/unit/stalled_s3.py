@@ -11,12 +11,20 @@ cerrar (una sola vez cada uno, aunque `close()` real es idempotente y tanto
 la guardia de inactividad como el `finally` de `run()` pueden llamarla) —el
 invariante que debe sostenerse para cualquier interleaving es
 `opened == closed`—, y `fetch_finished` se activa cuando `ObjectFetch.run`
-termina, así los tests esperan con un `Event`, nunca con un sleep."""
+termina, así los tests esperan con un `Event`, nunca con un sleep.
+
+`freeze_operation_clock` congela el reloj con el que una operación enrutada
+reparte su plazo (`OperationDeadline`): la exportación previa no gasta nada
+y la pata S3 recibe el `request_timeout` entero, medido con el reloj real de
+`run_bounded`. Sin él, en un runner cargado la exportación agotaba el plazo
+antes de que existiera la descarga y `fetch_finished` no llegaba nunca."""
 
 from __future__ import annotations
 
 import threading
+import time
 from collections.abc import Iterator
+from types import ModuleType, SimpleNamespace
 from typing import Any
 
 import pytest
@@ -40,6 +48,15 @@ class StalledS3:
     def upload(self, *args: Any, **kwargs: Any) -> None:
         """La subida nunca vuelve dentro del plazo del test."""
         self.released.wait(10)
+
+
+def freeze_operation_clock(monkeypatch: pytest.MonkeyPatch, module: ModuleType) -> None:
+    """Sustituye el `time` de `module` (`sandbox_sync.transfer` o
+    `sandbox_async.transfer`) por uno cuyo `monotonic` no avanza; `sleep`
+    sigue siendo el real."""
+    frozen = time.monotonic()
+    clock = SimpleNamespace(monotonic=lambda: frozen, sleep=time.sleep, time=time.time)
+    monkeypatch.setattr(module, "time", clock)
 
 
 @pytest.fixture

@@ -86,6 +86,7 @@
     "artifact_missing": 2,
     "artifact_variant": 2,
     "needs_confirmation": 2,
+    "stack_newer": 2,
     "stack_blocked": 1,
     "stack_incomplete": 1,
     "release_download": 1,
@@ -215,7 +216,8 @@
       "status",
       "imageVersion",
       "release",
-      "previousBucket"
+      "previousBucket",
+      "stackSdkVersion"
     ],
     "resultKeys": [
       "bucket",
@@ -246,7 +248,9 @@
       "bucketWait": "pila {stack} en curso ({status}): esperar",
       "stackCreate": "crear",
       "stackUpdate": "actualizar ArtifactBucket {previousBucket} -> {bucket}",
+      "stackTemplate": "actualizar a la plantilla infra/iam.yaml de este SDK",
       "stackReuse": "ya existe ({status})",
+      "stackNewer": "ya existe ({status}) con la plantilla de Rayito {stackSdkVersion}, más nuevo que este SDK: se conserva",
       "stackWait": "en curso ({status}): esperar",
       "imagePublishRelease": "publicar desde {release} (≈ 10 min)",
       "imagePublishArtifact": "publicar desde {artifact} (≈ 10 min)",
@@ -301,6 +305,7 @@
       "artifact_missing": "{artifact} no existe",
       "artifact_variant": "{artifact} no es un zip de la variante full sin EFS: publica las otras variantes con `rayito image publish`",
       "needs_confirmation": "preparar la cuenta crea recursos con coste: confírmalo con --yes (o desde una terminal)",
+      "stack_newer": "la pila {name} lleva la plantilla de Rayito {stackSdkVersion}, más nuevo que este SDK ({sdkVersion}), y el plan le cambia el bucket: ejecuta `rayito setup` con Rayito {stackSdkVersion} o posterior para no volver a una plantilla anterior",
       "stack_blocked": "la pila {name} está en {status}: bórrala (aws cloudformation delete-stack --stack-name {name}), espera a que desaparezca y vuelve a ejecutar `rayito setup`",
       "stack_incomplete": "la pila {name} no tiene la salida {output}: no es la plantilla {template} de Rayito",
       "release_download": "no se pudo descargar {asset} de la release {release}: {reason}",

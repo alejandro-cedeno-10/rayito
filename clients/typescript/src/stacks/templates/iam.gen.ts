@@ -53,6 +53,22 @@ Parameters:
       Key prefix under TransferBucket (S3Staging(prefix=)). Never \`rayito\`,
       a prefix of it, or PersistencePrefix: the 1-day lifecycle rule of the
       transfer prefix would expire image artifacts or checkpoints.
+  TemplateFingerprint:
+    Type: String
+    Default: ""
+    Description: >-
+      sha256 of this template as shipped by the SDK whose \`rayito setup\`
+      deployed the stack; empty when deployed by hand. \`rayito setup\` updates
+      the stack when it differs from the template of the running SDK.
+  LegacyCallerPolicy:
+    Type: String
+    Default: "false"
+    AllowedValues: ["false", "true"]
+    Description: >-
+      "true" only for a stack first deployed with the template of Rayito 0.6.1
+      or earlier: CallerPolicy keeps the description it was created with,
+      because a new description replaces a managed policy and its fixed name
+      would collide with itself. \`rayito setup\` sets it.
 
 Rules:
   TransferPrefixIsDisjoint:
@@ -67,6 +83,7 @@ Conditions:
   HasOwnConnectors: !Not [!Equals [!Join ["", !Ref NetworkConnectorArns], ""]]
   HasPersistenceBucket: !Not [!Equals [!Ref PersistenceBucket, ""]]
   HasTransferBucket: !Not [!Equals [!Ref TransferBucket, ""]]
+  IsLegacyCallerPolicy: !Equals [!Ref LegacyCallerPolicy, "true"]
 
 Resources:
   BuildRole:
@@ -347,10 +364,16 @@ Resources:
     Type: AWS::IAM::ManagedPolicy
     Properties:
       ManagedPolicyName: !Sub rayito-m0-caller-\${AWS::Region}
-      Description: >-
-        Rayito caller (publisher and launcher together, kept for existing
-        setups): prefer SandboxLauncherPolicy for a service that only
-        creates sandboxes, ImagePublisherPolicy for image publishing.
+      # Description is immutable in IAM: changing it replaces the policy,
+      # and the replacement collides with the fixed name. Each text below
+      # stays byte for byte what its stacks were created with.
+      Description: !If
+        - IsLegacyCallerPolicy
+        - Least privilege for the machine that runs run_m0.sh / the Rayito SDK.
+        - >-
+          Rayito caller (publisher and launcher together, kept for existing
+          setups): prefer SandboxLauncherPolicy for a service that only
+          creates sandboxes, ImagePublisherPolicy for image publishing.
       PolicyDocument:
         Version: "2012-10-17"
         Statement:
@@ -466,6 +489,9 @@ Outputs:
   ImagePublisherPolicyArn:
     Description: Attach to whoever publishes or prunes images (rayito image publish / prune).
     Value: !Ref ImagePublisherPolicy
+  TemplateFingerprint:
+    Description: sha256 of the template the stack was deployed with (empty when deployed by hand).
+    Value: !Ref TemplateFingerprint
 `;
 // Base64 of the component's Lambda source zip, or undefined when it has none.
 export const ARTIFACT_BASE64: string | undefined = undefined;

@@ -41,6 +41,7 @@ from rayito._limits import (
     AGENT_SERVICE_QUEUE_TIMEOUT_SECONDS_DEFAULT,
     LIFECYCLE_CAP_MARGIN_SECONDS,
     LIFECYCLE_MIN_TIMEOUT_SECONDS,
+    MAX_DURATION_SECONDS,
 )
 from rayito._models import TimeoutActionName
 from rayito._pool_base import (
@@ -402,6 +403,18 @@ def corrected_cap(error: LifetimeBeyondCapException, current: datetime | None) -
     if reported is None or (current is not None and reported >= current):
         return None
     return reported
+
+
+def restore_seconds(cap: datetime | None, now: datetime) -> int | None:
+    """Los segundos que devuelven toda su vida a un VM que este proceso
+    acortó y ahora es base: todo lo que queda hasta el tope de `rayd` si se
+    conoce y, si no, `MAX_DURATION_SECONDS` (el máximo de la plataforma), que
+    `rayd` rechaza informando su tope (`LifetimeBeyondCapException`) para
+    reintentar con él (`corrected_cap`). `None` si el tope está demasiado
+    cerca: el VM termina antes de todos modos."""
+    if cap is None:
+        return MAX_DURATION_SECONDS
+    return lifetime_seconds(None, cap, now)
 
 
 def hold_seconds(scaling: ScalingOptions, request_timeout: float | None) -> float:

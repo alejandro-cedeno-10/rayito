@@ -263,7 +263,12 @@ after the deadline, raises `CapacityException` (`code = "agent_capacity"`;
   idle VM ends by itself (the VM's `rayd` already knows how to terminate
   itself), with no control-plane call. While it serves any invocation, the
   deadline is never shorter than the request's, and it goes back to
-  `scale_in_after_seconds` only when the last one ends. For `rayd` to accept that
+  `scale_in_after_seconds` only when the last one ends, also if it fails.
+  Each VM's deadline changes go in order: releasing an invocation never
+  shortens the deadline of another one that started meanwhile. A shortened
+  VM that becomes a base VM gets its whole life back up to `rayd`'s cap, even
+  when the fleet does not know it (it asks for the maximum and `rayd` answers
+  with its cap); since 0.17.1. For `rayd` to accept that
   deadline, a fleet that can grow (`max_vms > min_vms`) creates all its VMs
   and slots with a logical deadline (`on_timeout="kill"` and `max_lifetime` =
   `serve.timeout_seconds + 60`); a base VM still lives

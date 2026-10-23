@@ -42,6 +42,7 @@ NAMED_MISSING = "--bucket que no existe: se crea con ese nombre"
 BUCKET_STACK_IN_PROGRESS = "pila del bucket en curso: se espera, sin crear otra"
 CAPS_MISSING = "rayito-base lanzable y sin rayito-base-caps: sólo se publica la de capacidades"
 CAPS_BUILDING = "build de rayito-base-caps en curso: se espera"
+OLDER_TEMPLATE = "pila de una versión anterior (sin TemplateFingerprint): se actualiza la plantilla"
 
 
 def account_for(name: str) -> FakeAccount:
@@ -236,6 +237,30 @@ def test_after_waiting_for_a_stack_in_progress_it_is_updated_if_it_has_another_b
     planned.apply()
     assert [call[0] for call in planned.writes][:2] == ["wait", "update"]
     assert planned.writes[1] == ("update", plan.bucket)
+
+
+def test_after_waiting_for_a_stack_in_progress_an_older_template_is_updated(
+    tmp_path: Path,
+) -> None:
+    planned = Planned(STACK_IN_PROGRESS, tmp_path)
+    stack = planned.account.iam_stack.stack
+    planned.account.iam_stack.stack = replace(
+        stack, parameters={"ArtifactBucket": stack.parameters["ArtifactBucket"]}
+    )
+    planned.apply()
+    assert [call[0] for call in planned.writes][:2] == ["wait", "update"]
+
+
+def test_a_stack_of_an_older_sdk_is_updated_with_the_same_bucket(tmp_path: Path) -> None:
+    planned = Planned(OLDER_TEMPLATE, tmp_path)
+    assert planned.plan.stack_step.action == "update"
+    assert planned.plan.stack_step.previous_bucket is None
+    planned.apply()
+    assert planned.writes == [("update", "amzn-s3-demo-bucket")]
+    assert planned.progress[0] == "actualizando la pila de IAM rayito-m0-iam"
+    assert planned.account.iam_stack.stack.parameters["TemplateFingerprint"] == (
+        planned.account.iam_stack.template_fingerprint()
+    )
 
 
 def test_a_build_in_progress_is_waited_for_and_never_published(tmp_path: Path) -> None:

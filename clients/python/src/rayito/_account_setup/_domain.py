@@ -3,8 +3,9 @@ pila de IAM, imagen base e imagen base con capacidades), sus reglas, los errores
 constantes y los textos del contrato compartido con la CLI de TypeScript
 (`testdata/account-setup/contract.json`).
 
-Sólo importa la biblioteca estándar, `rayito._limits` y las constantes de
-`rayito._images`: nada de red, ficheros ni AWS. Cada decisión es una
+Sólo importa la biblioteca estándar, `rayito._limits`, las constantes de
+`rayito._images` y el dominio puro de `rayito._stacks`: nada de red,
+ficheros ni AWS. Cada decisión es una
 función pura sobre lo observado en la cuenta.
 """
 
@@ -12,7 +13,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 from types import MappingProxyType
@@ -33,6 +34,7 @@ from rayito._stacks._condition import IN_PROGRESS_STACK_SUFFIX as IN_PROGRESS_ST
 from rayito._stacks._condition import USABLE_STACK_STATES as USABLE_STACK_STATES
 from rayito._stacks._condition import StackObservation as StackObservation
 from rayito._stacks._condition import classify_stack
+from rayito._stacks._model import FIXED_TAG_KEYS, SDK_VERSION_TAG_KEY
 
 ResourceKind = Literal["bucket", "iamStack", "baseImage", "capsImage"]
 SetupAction = Literal["create", "update", "reuse", "wait", "publish", "skip"]
@@ -51,6 +53,7 @@ ErrorCode = Literal[
     "artifact_missing",
     "artifact_variant",
     "needs_confirmation",
+    "stack_newer",
     "stack_blocked",
     "stack_incomplete",
     "release_download",
@@ -79,6 +82,26 @@ IAM_STACK_NAME: Final = DEFAULT_IAM_STACK_NAME
 IAM_COMPONENT_NAME: Final = "iam"
 IAM_CAPABILITIES: Final = ("CAPABILITY_NAMED_IAM",)
 ARTIFACT_BUCKET_PARAMETER: Final = "ArtifactBucket"
+#: Parámetro de `infra/iam.yaml` con el sha256 de la plantilla que la
+#: desplegó (`template_fingerprint`). Una pila de 0.17.0 o anterior no lo
+#: tiene y una desplegada a mano lo deja vacío: en los dos casos la plantilla
+#: del SDK es otra y `rayito setup` la actualiza.
+TEMPLATE_FINGERPRINT_PARAMETER: Final = "TemplateFingerprint"
+#: Parámetro de `infra/iam.yaml` que conserva la descripción original de
+#: `CallerPolicy` (`"true"`) en una pila creada con la plantilla de 0.6.1 o
+#: anterior. IAM no cambia la descripción de una política gestionada:
+#: CloudFormation la sustituye y la nueva choca con su propio nombre fijo
+#: (`AWS_API_NOTES.md` §21), así que la actualización se revierte.
+LEGACY_CALLER_POLICY_PARAMETER: Final = "LegacyCallerPolicy"
+#: Salida que sólo tiene una pila de la plantilla de 0.7.0 o posterior (la
+#: que añadió `SandboxLauncherPolicy` y la descripción actual de
+#: `CallerPolicy`).
+LAUNCHER_POLICY_OUTPUT_KEY: Final = "SandboxLauncherPolicyArn"
+#: Los tres números de una versión del SDK (`0.17.1`, `0.18.0rc1` -> 0, 18,
+#: 0): lo que se compara con la etiqueta `rayito:sdk-version` de la pila.
+RELEASE_NUMBERS_PATTERN: Final = re.compile(r"^([0-9]+)\.([0-9]+)\.([0-9]+)")
+#: Prefijo de las etiquetas que reserva AWS: `UpdateStack` no las acepta.
+AWS_RESERVED_TAG_PREFIX: Final = "aws:"
 #: Plantilla de la pila de IAM; el mensaje `stack_incomplete` la nombra.
 IAM_TEMPLATE_PATH: Final = "infra/iam.yaml"
 #: La pila que crea el bucket de artefactos cuando no hay ninguno que
@@ -187,6 +210,11 @@ ERROR_MESSAGES: Final[Mapping[ErrorCode, str]] = MappingProxyType(
             "preparar la cuenta crea recursos con coste: confírmalo con --yes (o desde una "
             "terminal)"
         ),
+        "stack_newer": (
+            "la pila {name} lleva la plantilla de Rayito {stackSdkVersion}, más nuevo que este "
+            "SDK ({sdkVersion}), y el plan le cambia el bucket: ejecuta `rayito setup` con Rayito "
+            "{stackSdkVersion} o posterior para no volver a una plantilla anterior"
+        ),
         "stack_blocked": (
             "la pila {name} está en {status}: bórrala (aws cloudformation delete-stack "
             "--stack-name {name}), espera a que desaparezca y vuelve a ejecutar `rayito setup`"
@@ -216,6 +244,7 @@ ERROR_EXIT_CODES: Final[Mapping[ErrorCode, int]] = MappingProxyType(
         "artifact_missing": 2,
         "artifact_variant": 2,
         "needs_confirmation": 2,
+        "stack_newer": 2,
         "stack_blocked": 1,
         "stack_incomplete": 1,
         "release_download": 1,
@@ -351,6 +380,9 @@ class SetupStep:
     image_version: str | None = None
     release: str | None = None
     previous_bucket: str | None = None
+    #: La versión de Rayito que desplegó la pila de IAM, sólo si es más nueva
+    #: que este SDK y el plan la conserva (`reuse`).
+    stack_sdk_version: str | None = None
 
     def __post_init__(self) -> None:
         if self.action not in ALLOWED_ACTIONS[self.resource]:
@@ -366,6 +398,7 @@ class SetupStep:
             "imageVersion": self.image_version,
             "release": self.release,
             "previousBucket": self.previous_bucket,
+            "stackSdkVersion": self.stack_sdk_version,
         }
 
 
@@ -599,7 +632,40 @@ def stack_output(observation: StackObservation, key: str, template: str) -> str:
     return value
 
 
-def plan_stack(stack: StackObservation, bucket: str) -> SetupStep:
+def release_numbers(version: str | None) -> tuple[int, int, int] | None:
+    """Los tres números de `version`, o `None` si no empieza por ellos."""
+    match = RELEASE_NUMBERS_PATTERN.match(version or "")
+    if match is None:
+        return None
+    major, minor, patch = (int(group) for group in match.groups())
+    return major, minor, patch
+
+
+def deployed_by_newer_sdk(stack: StackObservation, sdk_version: str) -> str | None:
+    """La versión de la etiqueta `rayito:sdk-version` de la pila si es más
+    nueva que `sdk_version`; `None` si no lo es o si falta o no se entiende
+    (una pila desplegada a mano)."""
+    deployed = stack.tags.get(SDK_VERSION_TAG_KEY)
+    deployed_numbers = release_numbers(deployed)
+    current_numbers = release_numbers(sdk_version)
+    if deployed_numbers is None or current_numbers is None:
+        return None
+    return deployed if deployed_numbers > current_numbers else None
+
+
+def plan_stack(
+    stack: StackObservation, bucket: str, template_fingerprint: str, sdk_version: str
+) -> SetupStep:
+    """`create` sin pila, `wait` si está en curso y, con la pila lista,
+    `reuse` si lleva el bucket del plan y la plantilla de este SDK
+    (`template_fingerprint`, el sha256 de su `infra/iam.yaml`); si no,
+    `update`. `previous_bucket` sólo se rellena si cambia el bucket: con el
+    mismo bucket, el `update` sólo pone al día la plantilla.
+
+    Una pila que desplegó un Rayito más nuevo que `sdk_version` (su etiqueta
+    `rayito:sdk-version`) nunca se actualiza, porque volvería a la plantilla
+    anterior de este SDK: con el mismo bucket es `reuse` con
+    `stack_sdk_version`, y si el plan le cambia el bucket, `stack_newer`."""
     condition = classify_stack(stack)
     if condition == "missing":
         return SetupStep("iamStack", IAM_STACK_NAME, "create")
@@ -609,11 +675,54 @@ def plan_stack(stack: StackObservation, bucket: str) -> SetupStep:
         return SetupStep("iamStack", IAM_STACK_NAME, "wait", status=stack.status)
     stack_output(stack, BUILD_ROLE_OUTPUT_KEY, IAM_TEMPLATE_PATH)
     previous = stack.parameters.get(ARTIFACT_BUCKET_PARAMETER)
-    if previous == bucket:
+    current_template = stack.parameters.get(TEMPLATE_FINGERPRINT_PARAMETER) == template_fingerprint
+    if previous == bucket and current_template:
         return SetupStep("iamStack", IAM_STACK_NAME, "reuse", status=stack.status)
+    newer = deployed_by_newer_sdk(stack, sdk_version)
+    if newer is not None and previous == bucket:
+        return SetupStep(
+            "iamStack", IAM_STACK_NAME, "reuse", status=stack.status, stack_sdk_version=newer
+        )
+    if newer is not None:
+        raise AccountSetupException(
+            "stack_newer", name=stack.name, stackSdkVersion=newer, sdkVersion=sdk_version
+        )
     return SetupStep(
-        "iamStack", IAM_STACK_NAME, "update", status=stack.status, previous_bucket=previous
+        "iamStack",
+        IAM_STACK_NAME,
+        "update",
+        status=stack.status,
+        previous_bucket=None if previous == bucket else previous,
     )
+
+
+def preserved_stack_tags(
+    current: Mapping[str, str], requested: Mapping[str, str]
+) -> dict[str, str]:
+    """Las etiquetas que `rayito setup` manda al actualizar una pila:
+    `UpdateStack` con `Tags` sustituye la lista entera, así que van las que
+    la pila ya tenía (sin las fijas de Rayito, que `stack_tags` vuelve a
+    poner, ni las `aws:` reservadas) y, por encima, las de `--tag`."""
+    kept = {
+        key: value
+        for key, value in current.items()
+        if key not in FIXED_TAG_KEYS and not key.startswith(AWS_RESERVED_TAG_PREFIX)
+    }
+    return {**kept, **requested}
+
+
+def legacy_caller_policy(stack: StackObservation | None) -> str:
+    """El valor de `LegacyCallerPolicy` que `rayito setup` manda al crear o
+    actualizar la pila de IAM: el que ya lleva, si lo tiene; `"true"` para
+    una pila sin él ni la salida `SandboxLauncherPolicyArn` (la plantilla de
+    0.6.1 o anterior, cuya `CallerPolicy` conserva así su descripción), y
+    `"false"` para una pila nueva o de 0.7.0 en adelante."""
+    if stack is None or stack.status is None:
+        return "false"
+    current = stack.parameters.get(LEGACY_CALLER_POLICY_PARAMETER)
+    if current is not None:
+        return current
+    return "false" if LAUNCHER_POLICY_OUTPUT_KEY in stack.outputs else "true"
 
 
 def newest(versions: Sequence[ImageVersionItem]) -> ImageVersionItem:
@@ -705,13 +814,18 @@ def plan_setup(
     bucket_step: SetupStep,
     image: ImageObservation,
     caps: ImageObservation | None = None,
+    *,
+    iam_template_fingerprint: str,
+    sdk_version: str,
 ) -> SetupPlan:
     """El plan de los cuatro pasos. `caps` es la observación de
-    `rayito-base-caps`, o `None` si `caps_image` está apagado."""
+    `rayito-base-caps`, o `None` si `caps_image` está apagado;
+    `iam_template_fingerprint`, el sha256 del `infra/iam.yaml` de este SDK, y
+    `sdk_version`, su versión."""
     require_supported_region(request.region)
     steps = (
         bucket_step,
-        plan_stack(stack, bucket_step.name),
+        plan_stack(stack, bucket_step.name, iam_template_fingerprint, sdk_version),
         plan_image(image, request),
         plan_caps_image(caps, request),
     )
@@ -724,6 +838,24 @@ def plan_setup(
         image_arn=image.image_arn,
         stack_status=stack.status,
         caps_image_arn=None if caps is None or not request.caps_image else caps.image_arn,
+    )
+
+
+def applied_steps(plan: SetupPlan, result: SetupResult | None) -> tuple[SetupStep, ...]:
+    """Los pasos del plan tras `apply`: un `publish` de imagen lleva la
+    versión que acaba de publicar (`result`), que el plan aún no conocía.
+    Sin `result` (dry-run o un fallo), los pasos del plan tal cual."""
+    if result is None:
+        return plan.steps
+    published: Mapping[ResourceKind, str | None] = {
+        "baseImage": result.image_version,
+        "capsImage": result.caps_image_version,
+    }
+    return tuple(
+        replace(step, image_version=published[step.resource])
+        if step.action == "publish" and published.get(step.resource) is not None
+        else step
+        for step in plan.steps
     )
 
 
