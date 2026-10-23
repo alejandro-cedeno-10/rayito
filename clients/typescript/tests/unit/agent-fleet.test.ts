@@ -13,6 +13,7 @@ import {
   AGENT_FLEET_SESSION_LABEL,
   sessionLabel,
   UNMANAGED_LIFETIME_MESSAGE,
+  UNREADABLE_MEMBER_MESSAGE,
 } from "../../src/agent/fleet-base.js";
 import { DEFAULT_QUEUE_TIMEOUT_MS, ServeOptions } from "../../src/agent/project.js";
 import { requestTimeoutMs } from "../../src/agent/project-service.js";
@@ -619,19 +620,32 @@ describe("SandboxDirectory", () => {
     yield* items;
   }
 
+  function probeFrom(
+    metadata: Record<string, Record<string, string> | undefined>,
+    failing: readonly string[] = [],
+    states: Record<string, string> = {},
+  ) {
+    const probed: string[] = [];
+    const probe = async (sandboxId: string) => {
+      probed.push(sandboxId);
+      if (failing.includes(sandboxId)) {
+        throw new SandboxError("Health no respondió");
+      }
+      return { sandboxId, state: states[sandboxId] ?? "RUNNING", metadata: metadata[sandboxId] };
+    };
+    return { probe, probed };
+  }
+
   test("never counts a running VM that is not an agent", async () => {
     const spy = vi
       .spyOn(Sandbox, "list")
-      .mockImplementation((options) =>
-        options?.metadata === undefined
-          ? iterate([
-              item("mine", "RUNNING"),
-              item("other", "RUNNING"),
-              item("parked", "SUSPENDED"),
-            ])
-          : iterate([item("mine", "RUNNING", AgentLabels), item("other", "RUNNING", {})]),
+      .mockImplementation(() =>
+        iterate([item("mine", "RUNNING"), item("other", "RUNNING"), item("parked", "SUSPENDED")]),
       );
-    const members = await new SandboxDirectory().listMembers("support-bot");
+    const { probe } = probeFrom({ mine: AgentLabels, other: {} });
+    const members = await new SandboxDirectory({}, { probeInfo: probe }).listMembers(
+      "support-bot",
+    );
     spy.mockRestore();
     expect(members.map((member) => member.sandboxId)).toEqual(["mine"]);
   });
@@ -639,14 +653,62 @@ describe("SandboxDirectory", () => {
   test("keeps a suspended VM while the image only has agents", async () => {
     const spy = vi
       .spyOn(Sandbox, "list")
-      .mockImplementation((options) =>
-        options?.metadata === undefined
-          ? iterate([item("mine", "RUNNING"), item("parked", "SUSPENDED")])
-          : iterate([item("mine", "RUNNING", AgentLabels)]),
-      );
-    const members = await new SandboxDirectory().listMembers("support-bot");
+      .mockImplementation(() => iterate([item("mine", "RUNNING"), item("parked", "SUSPENDED")]));
+    const { probe, probed } = probeFrom({ mine: AgentLabels });
+    const members = await new SandboxDirectory({}, { probeInfo: probe }).listMembers(
+      "support-bot",
+    );
     spy.mockRestore();
     expect(members.map((member) => member.sandboxId)).toEqual(["mine", "parked"]);
+    expect(probed).toEqual(["mine"]);
+  });
+
+  test("leaves out a VM whose Health fails while listing, as terminating", async () => {
+    const spy = vi
+      .spyOn(Sandbox, "list")
+      .mockImplementation(() =>
+        iterate([item("alive", "RUNNING"), item("dying", "RUNNING"), item("parked", "SUSPENDED")]),
+      );
+    const { probe } = probeFrom({ alive: AgentLabels, dying: AgentLabels }, ["dying"]);
+    const warnings: { message: string; fields?: Readonly<Record<string, unknown>> }[] = [];
+    const logger = {
+      warn: (message: string, fields?: Readonly<Record<string, unknown>>) =>
+        warnings.push({ message, ...(fields === undefined ? {} : { fields }) }),
+    };
+    const members = await new SandboxDirectory({}, { probeInfo: probe, logger }).listMembers(
+      "support-bot",
+    );
+    spy.mockRestore();
+    expect(members.map((member) => member.sandboxId)).toEqual(["alive", "parked"]);
+    expect(warnings).toEqual([
+      { message: UNREADABLE_MEMBER_MESSAGE, fields: { sandboxId: "dying", error: "SandboxError" } },
+    ]);
+  });
+
+  test("a VM that left RUNNING before its probe is not a member", async () => {
+    const spy = vi
+      .spyOn(Sandbox, "list")
+      .mockImplementation(() => iterate([item("alive", "RUNNING"), item("leaving", "RUNNING")]));
+    const { probe } = probeFrom({ alive: AgentLabels, leaving: AgentLabels }, [], {
+      leaving: "TERMINATING",
+    });
+    const members = await new SandboxDirectory({}, { probeInfo: probe }).listMembers(
+      "support-bot",
+    );
+    spy.mockRestore();
+    expect(members.map((member) => member.sandboxId)).toEqual(["alive"]);
+  });
+
+  test("an error that is not a sandbox error still fails the listing", async () => {
+    const spy = vi.spyOn(Sandbox, "list").mockImplementation(() => iterate([item("a", "RUNNING")]));
+    const probe = async () => {
+      throw new TypeError("sin credenciales");
+    };
+    const failure = await failureOf(
+      new SandboxDirectory({}, { probeInfo: probe }).listMembers("support-bot"),
+    );
+    spy.mockRestore();
+    expect(failure).toBeInstanceOf(TypeError);
   });
 });
 
