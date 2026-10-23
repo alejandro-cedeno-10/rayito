@@ -96,7 +96,10 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   Ver [Seguridad](https://alejandro-cedeno-10.github.io/rayito/security/#clientes-http-en-los-logs-del-host).
 - **El log de peticiones del host del agente ya no lanza `AttributeError`**
   tras responder `400` a una línea de petición mal formada; las invocaciones
-  siguientes nunca se vieron afectadas.
+  siguientes nunca se vieron afectadas. Ese `400` lleva ahora su línea de
+  estado también en Python < 3.14, y un cliente que cuelga a media respuesta
+  deja una línea `http_error code=connection_closed` en vez de una traza en
+  stderr.
 - **`--create-secret` busca la clave por el preset de la pasarela**: una
   pasarela `[gateways.model] preset = "bedrock"` lee `AWS_BEARER_TOKEN_BEDROCK`
   en vez de buscar una variable por el nombre `model`. Con `preset = "custom"`

@@ -426,7 +426,7 @@ def test_a_malformed_request_line_is_400_and_logs_no_traceback(
     with running_service(FakeDriver()) as (_, port):
         with socket.create_connection(("127.0.0.1", port), timeout=5) as client:
             client.sendall(b"GARBAGE\r\n\r\n")
-            assert client.recv(64).startswith(b"HTTP/1.1 400")
+            assert _read_until_closed(client).startswith(b"HTTP/1.1 400")
         assert request(port, "GET", "/ping")[0] == 200
     logged = "\n".join(record.getMessage() for record in caplog.records)
     stderr = capfd.readouterr().err
@@ -434,6 +434,33 @@ def test_a_malformed_request_line_is_400_and_logs_no_traceback(
     for text in (logged, stderr):
         assert "AttributeError" not in text
         assert "Traceback" not in text
+
+
+def _read_until_closed(client: Any) -> bytes:
+    """Toda la respuesta hasta que el servidor cierra: cerrar antes con datos
+    sin leer haría que el kernel mande un RST a media escritura."""
+    received = b""
+    while chunk := client.recv(4096):
+        received += chunk
+    return received
+
+
+def test_a_client_that_hangs_up_mid_response_logs_no_traceback(
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    import socket
+
+    with running_service(FakeDriver()) as (service, _):
+        server = serve.build_server(service, 0, "127.0.0.1")
+        with socket.socket() as hung_up:
+            try:
+                raise ConnectionResetError
+            except ConnectionResetError:
+                server.handle_error(hung_up, ("127.0.0.1", 1))
+            finally:
+                server.server_close()
+
+    assert "Traceback" not in capfd.readouterr().err
 
 
 class _RawDriver(FakeDriver):

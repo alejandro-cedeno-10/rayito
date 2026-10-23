@@ -39,6 +39,7 @@ import logging
 import os
 import queue
 import re
+import sys
 import threading
 import time
 from collections import deque
@@ -537,6 +538,10 @@ def make_handler(service: Service) -> type[BaseHTTPRequestHandler]:
         server_version = "rayito-agent-host"
         sys_version = ""
         protocol_version = "HTTP/1.1"
+        #: La versión que se supone antes de leer una línea de petición
+        #: válida. Con la de `http.server` (`HTTP/0.9`), el `400` de una línea
+        #: mal formada sale sin línea de estado ni cabeceras en Python < 3.14.
+        default_request_version = "HTTP/1.1"
         timeout = service.config.io_timeout_seconds
 
         def log_request(self, code: object = "-", size: object = "-") -> None:
@@ -755,7 +760,21 @@ def make_handler(service: Service) -> type[BaseHTTPRequestHandler]:
     return Handler
 
 
+class AgentHostServer(ThreadingHTTPServer):
+    """`ThreadingHTTPServer` que no vuelca una traza a stderr cuando el
+    cliente cuelga a media respuesta (`ConnectionError`): es una línea de
+    log con el código, como el resto de errores HTTP. Cualquier otro error
+    sigue el camino de `socketserver`."""
+
+    daemon_threads = True
+
+    def handle_error(self, request: Any, client_address: Any) -> None:
+        error = sys.exc_info()[1]
+        if isinstance(error, ConnectionError):
+            logger.warning("http_error code=connection_closed")
+            return
+        super().handle_error(request, client_address)
+
+
 def build_server(service: Service, port: int, host: str = "0.0.0.0") -> ThreadingHTTPServer:
-    server = ThreadingHTTPServer((host, port), make_handler(service))
-    server.daemon_threads = True
-    return server
+    return AgentHostServer((host, port), make_handler(service))
