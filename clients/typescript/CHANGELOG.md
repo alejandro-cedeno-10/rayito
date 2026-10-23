@@ -6,6 +6,8 @@ versionado [SemVer](https://semver.org/lang/es/).
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-10-23
+
 ### Añadido
 
 - **`rayito setup --caps-image` publica también `rayito-base-caps`**, la base
@@ -2154,7 +2156,8 @@ AWS real en M6 (`MILESTONES.md`), en camelCase y milisegundos, sólo async.
 
 Builds internos de los hitos M1-M5, nunca publicados.
 
-[Unreleased]: https://github.com/alejandro-cedeno-10/rayito/compare/typescript-v0.16.0...HEAD
+[Unreleased]: https://github.com/alejandro-cedeno-10/rayito/compare/typescript-v0.17.0...HEAD
+[0.17.0]: https://github.com/alejandro-cedeno-10/rayito/compare/typescript-v0.16.0...typescript-v0.17.0
 [0.16.0]: https://github.com/alejandro-cedeno-10/rayito/compare/typescript-v0.15.0...typescript-v0.16.0
 [0.15.0]: https://github.com/alejandro-cedeno-10/rayito/compare/typescript-v0.14.0...typescript-v0.15.0
 [0.14.0]: https://github.com/alejandro-cedeno-10/rayito/compare/typescript-v0.13.0...typescript-v0.14.0
