@@ -1,0 +1,30 @@
+schema = "rayito.agent-project/1"
+name = "triaje"
+
+[runtime]
+kind = "opencode"
+
+[source]
+path = "."
+exclude = [".venv", "node_modules", "__pycache__", ".git"]
+
+[model]
+provider = "bedrock"
+id = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+region = "us-east-1"
+gateway = "model"
+
+[gateways.model]
+preset = "bedrock"
+secret = "bedrock-key"           # el nombre del secreto (rayito/bedrock-key), nunca su valor
+region = "us-east-1"
+models = ["us.anthropic.claude-haiku-4-5-20251001-v1:0"]
+
+[agent]
+instructions_file = "AGENTS.md"
+
+[agent.permissions]
+default = "deny"                 # un clasificador no necesita editar, ejecutar ni navegar
+
+# [image]
+# base = "rayito-base-caps"      # la base por defecto; cámbiala si publicaste la caps con otro nombre

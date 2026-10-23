@@ -1,0 +1,9 @@
+{
+  "total": 7,
+  "categorias": {
+    "acceso": {"tickets": 2, "media_horas": 1.5},
+    "facturacion": {"tickets": 3, "media_horas": 4.3333},
+    "rendimiento": {"tickets": 2, "media_horas": 8.0}
+  },
+  "tolerancia_media": 0.001
+}
