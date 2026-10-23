@@ -29,6 +29,8 @@ from rayito._agent._opencode import (
     OPENCODE_NATIVE_NPM,
     OpenCodeRuntime,
     OpenCodeState,
+    build_opencode_config,
+    permissions_from_opencode,
 )
 from rayito._agent._runtime import RunRequest
 from rayito._agent._runtimes import resolve_runtime
@@ -281,3 +283,50 @@ def test_dev_dockerfile_env_matches_flag_envs() -> None:
     dockerfile = (TESTDATA.parents[1] / "dev" / "local" / "agent" / "Dockerfile").read_text()
     for name, value in OPENCODE_FLAG_ENVS.items():
         assert f"{name}={value}" in dockerfile
+
+
+def test_opencode_permissions_are_the_inverse_of_the_runtime_config() -> None:
+    permissions = AgentPermissions(
+        default="deny", tools={"edit": "allow", "bash": {"git *": "allow", "*": "deny"}}
+    )
+    config = build_opencode_config(
+        dataclasses.replace(_bedrock_spec(), permissions=permissions),
+        gateway_urls=GATEWAY_URLS,
+    )
+    block = config["agent"]["build"]["permission"]  # type: ignore[index]
+    found = permissions_from_opencode(block, ask_action="deny")
+    assert found.notes == ()
+    assert AgentPermissions(**found.table).effective_tools() == permissions.effective_tools()  # type: ignore[arg-type]
+    assert found.table["default"] == "deny"
+
+
+def test_ask_in_opencode_permissions_becomes_the_unattended_action() -> None:
+    found = permissions_from_opencode(
+        {"edit": "ask", "bash": {"*": "ask", "git status": "allow"}}, ask_action="deny"
+    )
+    assert found.table == {"tools": {"edit": "deny", "bash": {"*": "deny", "git status": "allow"}}}
+    assert found.notes == (("edit", "ask"), ("bash", "ask"))
+
+
+@pytest.mark.parametrize(
+    ("block", "notes"),
+    [
+        ({"Remote Tool": "allow"}, (("Remote Tool", "unknown"),)),
+        ({"edit": "maybe"}, (("edit", "unknown"),)),
+        ({"bash": {}}, (("bash", "unknown"),)),
+        ({"*": {"x": "allow"}}, (("*", "unknown"),)),
+        ({"*": None}, (("*", "unknown"),)),
+        (["allow"], (("*", "unknown"),)),
+    ],
+    ids=["bad-name", "bad-action", "empty-patterns", "default-patterns", "null-default", "list"],
+)
+def test_opencode_permissions_that_cannot_apply_are_ignored(
+    block: object, notes: tuple[tuple[str, str], ...]
+) -> None:
+    found = permissions_from_opencode(block, ask_action="deny")
+    assert found.table == {}
+    assert found.notes == notes
+
+
+def test_a_single_opencode_permission_string_is_the_default() -> None:
+    assert permissions_from_opencode("deny", ask_action="deny").table == {"default": "deny"}

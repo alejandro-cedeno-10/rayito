@@ -166,6 +166,9 @@ export interface AgentDeployFlags {
   readonly secretEnv?: readonly string[] | undefined;
   /** `--secret-env-from <id>[,prefix=P][,keys=A|B]`, tal cual. */
   readonly secretEnvFrom?: readonly string[] | undefined;
+  /** `--scale-in-after`: segundos sin uso tras los que se termina un VM por
+   * encima de `--min-vms`. */
+  readonly scaleInAfter?: number | undefined;
 }
 
 /** Dónde y cómo despliega `rayito agent deploy`: lo de `DeployOptions` que
@@ -188,6 +191,10 @@ export interface AgentDeploySettings {
   readonly createSecretsFrom?: string | undefined;
   /** `--check-env`: avisa de las variables de `.env.example` sin valor. */
   readonly checkEnv?: boolean | undefined;
+  /** `--no-save-recipe` la apaga: por defecto se guarda la receta. */
+  readonly saveRecipe?: boolean | undefined;
+  /** `--renew-gateway-keys`. */
+  readonly renewGatewayKeys?: boolean | undefined;
 }
 
 export interface AgentDeployRequest {
@@ -227,6 +234,9 @@ export interface FleetStatusView {
   readonly name: string;
   readonly minVms: number;
   readonly maxVms: number;
+  /** De dónde salen `minVms` y `maxVms` (`explicit`, `project`, `recipe` o
+   * `default`); con `default` no describen la flota real. */
+  readonly scalingSource?: string | undefined;
   readonly members: readonly { readonly sandboxId: string; readonly state: string }[];
 }
 
@@ -241,11 +251,17 @@ export interface FleetClient {
     options: { readonly sessionId: string | undefined },
   ): Promise<AsyncIterable<AgentEvent>>;
   status(): Promise<FleetStatusView>;
-  /** Termina todos los VMs de la flota; devuelve cuántos eran. */
-  stop(): Promise<number>;
+  /** Termina todos los VMs de la flota (y borra su receta salvo con
+   * `keepRecipe`); devuelve cuántos eran. */
+  stop(options?: { readonly keepRecipe?: boolean | undefined }): Promise<number>;
 }
 
 /** `rayito agent ...` sobre `AgentProject` y `AgentDeployment`; `init` no los usa. */
+/** Lo que `rayito agent invoke` pide al reconectar una flota. */
+export interface FleetConnectFlags {
+  readonly renewGatewayKeys?: boolean;
+}
+
 export interface AgentProjectTools {
   /** Lee el fichero de proyecto de `file` (un fichero o un directorio); no llama a AWS. */
   load(file: string): Promise<AgentProjectTool>;
@@ -258,8 +274,13 @@ export interface AgentProjectTools {
   planDeploy(request: AgentDeployRequest): Promise<DeployPlanView>;
   /** Detecta, resuelve y despliega la flota (`deployAgent`); la deja viva al volver. */
   deployFleet(request: AgentDeployRequest): Promise<DeployedFleetView>;
-  /** Reconecta la flota de la imagen `name`; sin token sólo puede listarse o terminarse. */
-  connectFleet(name: string, accessToken: string | undefined): Promise<FleetClient>;
+  /** Reconecta la flota de la imagen `name`; sin token sólo puede listarse o terminarse.
+   * `renewGatewayKeys` sólo se pasa con `--renew-gateway-keys`. */
+  connectFleet(
+    name: string,
+    accessToken: string | undefined,
+    options?: FleetConnectFlags,
+  ): Promise<FleetClient>;
   /** `terminate-microvm`: no necesita el access token. `false` si el sandbox ya no existe. */
   stop(sandboxId: string): Promise<boolean>;
 }

@@ -38,6 +38,11 @@ custom-domain = ["awscrt>=0.23,<1"]
 # agentcore-cdk, ADR-032): `CfnMicrovmImage` aparece en aws-cdk-lib 2.261.0
 # (AWS_API_NOTES.md Q184). La síntesis en Python necesita Node (jsii).
 cdk = ["aws-cdk-lib>=2.261.0,<3", "constructs>=10.5.0,<11"]
+# Renovación opcional de la clave de corta duración de Bedrock de las
+# pasarelas (`renew_gateway_keys`, ADR-034 D7): el generador oficial de AWS,
+# exacto, leído su código el 2026-10-22 (AWS_API_NOTES.md, «Receta de la flota
+# y claves de corta duración de Bedrock»).
+bedrock-keys = ["aws-bedrock-token-generator==1.1.0"]
 
 [project.scripts]
 rayito = "rayito.cli.__main__:main"
@@ -63,6 +68,7 @@ dev = [
     "rayito[otel]",
     "rayito[custom-domain]",
     "rayito[cdk]",
+    "rayito[bedrock-keys]",
     "opentelemetry-sdk>=1.27,<2",
     # scripts/tests/test_iam_template.py parsea infra/iam.yaml (CI corre
     # scripts/tests con este entorno).

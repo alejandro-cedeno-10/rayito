@@ -19,7 +19,7 @@
       "preset": "custom",
       "upstream": "https://bedrock-runtime.us-east-1.amazonaws.com",
       "headers": {
-        "authorization": "rayito/agents/opencode/bedrock"
+        "authorization": "agents/opencode/bedrock"
       },
       "allow": [
         [
@@ -31,6 +31,16 @@
           "/model/us.anthropic.claude-haiku-4-5-20251001-v1%3A0/converse"
         ]
       ]
+    }
+  },
+  "agent": {
+    "instructions": "# Project rules\n\nYou are a calculator and glossary assistant. Answer every question in one\nshort sentence. When asked to add numbers, add them yourself and state the\nresult. The glossary: a MicroVM is a lightweight virtual machine, and a\nsnapshot is a saved machine state.\n",
+    "permissions": {
+      "tools": {
+        "bash": "deny",
+        "edit": "deny",
+        "webfetch": "deny"
+      }
     }
   }
 }

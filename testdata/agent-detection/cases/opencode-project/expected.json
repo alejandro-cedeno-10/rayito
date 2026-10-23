@@ -27,6 +27,10 @@
     {
       "path": "opencode.json",
       "rule": "file:opencode.json"
+    },
+    {
+      "path": "AGENTS.md",
+      "rule": "file:AGENTS.md"
     }
   ],
   "warnings": [],

@@ -2149,7 +2149,14 @@ dice dónde. Consultado el 2026-10-16.
   `CreateBucket` (siguiente sección).
 - Un MicroVM no se puede etiquetar (§1): la pertenencia a una flota es la
   imagen. `rayd` fija la vida de un VM sobrante con `set_timeout`, sin llamada
-  al plano de control.
+  al plano de control. Eso sólo funciona si el VM nació con plazo lógico
+  (`max_lifetime`/`on_timeout` de `create()`, ADR-011): sin el bloque
+  `lifecycle` del `runHookPayload`, `SetTimeout` es `FAILED_PRECONDITION
+  lifecycle_unmanaged` (Q58, Q63). Desde 0.17 una flota que puede crecer
+  (`max_vms > min_vms`) crea todos sus VMs y plazas con `on_timeout="kill"` y
+  `maximumDurationInSeconds` = `max_lifetime` = `timeout + 60` (como mucho
+  28 800); no añade ningún parámetro de `run-microvm` que no estuviera ya en
+  §5 (fleet-recipe D12).
 - Pendiente de medir en AWS real (nueva fila Q al aceptar 0.14): el tope de
   conexiones simultáneas por MicroVM por debajo de 2 GB (se asume el de 2 GB,
   conservador) y la latencia de reanudar una plaza aparcada y arrancar el host.
@@ -2169,6 +2176,7 @@ parámetros. Consultado el 2026-10-19.
 | Bucket, creación | `DescribeStacks` y `CreateStack` sobre `rayito-m0-artifacts` con la plantilla `infra/artifact-bucket.yaml` y **sólo** `BucketName` como parámetro (`ArtifactExpirationDays` queda en su valor por defecto); **sin `Capabilities`** (la plantilla no crea recursos IAM); la espera sondea `DescribeStacks` y la salida `BucketName` es el bucket. El SDK no llama a `CreateBucket`: lo hace CloudFormation con las credenciales del llamante | §21 |
 | Imagen, lectura | `GetMicrovmImage` y `ListMicrovmImageVersions` (`items[].{imageVersion, state, status, createdAt}`) | §4 y §30 |
 | Imagen, publicación | `PutObject` del zip (clave por contenido `rayito/images/rayd-<sha12>.zip`), `CreateMicrovmImage` o `UpdateMicrovmImage`, la compuerta de tres estados, y la versión `latest` de la base gestionada | §4 y §27 (el mismo camino que `rayito image publish`) |
+| Imagen con capacidades (0.17, paso `capsImage`) | `GetMicrovmImage` y `ListMicrovmImageVersions` de `rayito-base-caps`; si falta, `CreateMicrovmImage` o `UpdateMicrovmImage` desde **el mismo** objeto del zip (ni otra descarga ni otro `PutObject`: la clave es por contenido) con `additionalOsCapabilities=["ALL"]`, el único valor, y la misma compuerta. Sólo con `--caps-image`: sin la opción (por defecto) no hay ninguna de estas llamadas | §4 (`additionalOsCapabilities`; el camino de `rayito image publish --os-capabilities ALL`) y §27 |
 | Doctor | las comprobaciones de `rayito doctor`, sin `--launch` | `docs/site/docs/cli.md` |
 
 ### Plantilla `infra/artifact-bucket.yaml`
@@ -2573,3 +2581,116 @@ Preguntas abiertas, para la aceptación en AWS real:
   (arranque del intérprete y una llamada por secreto): ningún arranque con tres
   secretos agotó `agentSecretEnvHelperTimeoutSeconds` (15 s provisionales,
   `limits.json`), pero falta medirlo aislado antes de fijar el valor.
+
+## Receta de la flota y claves de corta duración de Bedrock (`fleet-recipe`, ADR-034, **contrato de parámetros**)
+
+Consultado el 2026-10-22, antes de escribir código. Python con
+`session.client("ssm", region_name=…, config=client_config())` (el mismo
+`Config` que el plano de control) cargado de forma perezosa; TypeScript con
+`new SSMClient({ region, credentials })` de `@aws-sdk/client-ssm`, peer
+opcional cargado con `loadOptionalPeer`. **Estas son las únicas operaciones
+y los únicos parámetros de Parameter Store que los SDKs pueden usar**, y un
+test de cada SDK lo comprueba como en §19. Verificado sin red el
+2026-10-22 contra el modelo `ssm/2014-11-06` de botocore 1.43.103 (miembros de
+entrada y salida, `error_shapes` y los `enum` `ParameterTier` y
+`ParameterType`). Verificado también sin red el 2026-10-22 (tarea 0.6)
+contra los `.d.ts` de `@aws-sdk/client-ssm` 3.1142.0
+(`dist-types/models/models_1.d.ts`, `errors.d.ts` y `enums.d.ts`):
+`PutParameterRequest` tiene `Name`, `Value`, `Type`, `Tier`, `Overwrite` y
+`Description` (además de `KeyId`, `AllowedPattern`, `Tags`, `Policies` y
+`DataType`, que no se usan); `GetParameterRequest`, `Name` y
+`WithDecryption`; `DeleteParameterRequest`, `Name`; las clases de error
+`ParameterNotFound`, `AccessDeniedException`, `ParameterLimitExceeded`,
+`ParameterPatternMismatchException`, `HierarchyLevelLimitExceededException`
+y `TooManyUpdates` existen con ese `name`, y los enum valen
+`ParameterTier.STANDARD = "Standard"` y
+`ParameterType.SECURE_STRING = "SecureString"`. En JavaScript,
+`@aws/bedrock-token-generator` 1.1.0 (`dist/getToken.d.ts`) exporta
+`getToken({ credentials, region, expiresInSeconds })`, que devuelve una
+`Promise<string>`.
+
+| Operación (boto3 / AWS SDK v3) | Parámetros de entrada (y sólo estos) | Campos de salida que se leen | IAM | Fuente |
+|---|---|---|---|---|
+| `PutParameter` (`put_parameter` / `PutParameterCommand`) | `Name` (`/rayito/agents/<nombre>/recipe`), `Value` (≤ 4 096 bytes en `Standard`), `Type="SecureString"`, `Tier="Standard"`, `Overwrite=true`, `Description` (texto fijo, sin datos del proyecto). Nunca `KeyId` (clave gestionada `aws/ssm`), `Policies`, `Tags` ni `AllowedPattern` | `Version`, `Tier` | `ssm:PutParameter` sobre `arn:aws:ssm:<región>:<cuenta>:parameter/rayito/agents/*` | <https://docs.aws.amazon.com/systems-manager/latest/APIReference/API_PutParameter.html> |
+| `GetParameter` (`get_parameter` / `GetParameterCommand`) | `Name`, `WithDecryption=true` | `Parameter.{Value, Version, LastModifiedDate, Type}` | `ssm:GetParameter` sobre la misma ruta | <https://docs.aws.amazon.com/systems-manager/latest/APIReference/API_GetParameter.html> |
+| `DeleteParameter` (`delete_parameter` / `DeleteParameterCommand`) | `Name` | — (cuerpo vacío) | `ssm:DeleteParameter` sobre la misma ruta | <https://docs.aws.amazon.com/systems-manager/latest/APIReference/API_DeleteParameter.html> |
+
+Errores que se mapean (por código, nunca por mensaje):
+
+| Código | Operaciones | Qué hace el SDK |
+|---|---|---|
+| `ParameterNotFound` | `GetParameter`, `DeleteParameter` | Sin receta: la flota se reconecta como en 0.16; borrar una que no existe no es un error. No queda en CloudTrail (API_GetParameter.html) |
+| `AccessDeniedException` | las tres | Un aviso en el log (`recipe_access_denied`, sin la ruta); el despliegue y la reconexión siguen como en 0.16 |
+| `ParameterLimitExceeded` | `PutParameter` | Aviso `recipe_not_saved`; el despliegue no falla (límite de 10 000 parámetros estándar por región) |
+| `ParameterPatternMismatchException`, `HierarchyLevelLimitExceededException` | `PutParameter` | No debería ocurrir: el nombre se valida antes con la regla de nombres de abajo; si ocurre, aviso `recipe_not_saved` |
+| `TooManyUpdates`, `ThrottlingException` | `PutParameter` | Reintentos `standard` del cliente; si se agotan, aviso `recipe_not_saved` |
+| Cualquier otro: `InternalServerError`, `InvalidKeyId` (los `error_shapes` de `GetParameter` en botocore 1.43.103), `ThrottlingException` tras los reintentos o un endpoint inalcanzable (sin endpoint de VPC para SSM) | `GetParameter` | Aviso `recipe_unreadable` y la flota de 0.16: leer la receta nunca impide conectar ni listar; en `DeleteParameter`, `stop()` termina igual los VMs y después lanza el error del borrado (`testdata/fleet-recipe/recipes.json`, `loadFailures`) |
+
+Restricciones (API_PutParameter.html): nombres sensibles a mayúsculas,
+únicos por región, sólo `a-zA-Z0-9_.-` y `/` como separador, hasta 15 niveles,
+sin prefijo `aws` ni `ssm`, y con la ruta completa empezando por `/`. Tras
+`DeleteParameter` hay que esperar al menos 30 s para crear otro parámetro con
+el mismo nombre (API_DeleteParameter.html): un `agent stop` seguido de un
+`agent deploy` inmediato puede fallar al guardar la receta, y ese fallo es el
+aviso `recipe_not_saved`, nunca un error del despliegue.
+
+Cifrado y coste (consultados el 2026-10-22): un `SecureString` estándar se
+cifra con una llamada `Encrypt` de KMS al guardarlo y se descifra con
+`Decrypt` al leerlo con `WithDecryption`
+(<https://docs.aws.amazon.com/systems-manager/latest/userguide/secure-string-parameter-kms-encryption.html>).
+Con la clave gestionada `aws/ssm` no hace falta ningún permiso de KMS en la
+política del llamante (no admite políticas de control de acceso propias). Los
+parámetros estándar y sus llamadas a la API no tienen cargo
+(<https://aws.amazon.com/systems-manager/pricing/>). KMS no cobra por crear o
+guardar claves gestionadas, pero sí cada petición: capa gratuita de 20 000
+peticiones al mes y después $0,03 por cada 10 000
+(<https://aws.amazon.com/kms/pricing/>).
+
+### Claves de corta duración de Bedrock (`renew_gateway_keys`, ADR-034 D7)
+
+- **Generación, sin llamada a AWS.** `aws-bedrock-token-generator` 1.1.0
+  (PyPI, Apache-2.0, depende de `botocore>=1.33.0`; leído el código de la
+  rueda el 2026-10-22): `BedrockTokenGenerator().get_token(credentials,
+  region)` o `provide_token(region=…, aws_credentials_provider=…,
+  expiry=timedelta(...))`. Firma en local con `SigV4QueryAuth` una petición
+  `POST https://bedrock.amazonaws.com/?Action=CallWithBearerToken` y
+  devuelve `bedrock-api-key-` + base64 de la URL prefirmada + `&Version=1`.
+  `expiry` debe estar entre 0 y 43 200 s (12 h). En JavaScript,
+  `@aws/bedrock-token-generator` 1.1.0 (npm, Apache-2.0):
+  `getTokenProvider({ region, credentials, expiresInSeconds })` o
+  `getToken({ credentials, region, expiresInSeconds })`.
+- **Validez.** La menor de 12 h y la duración de la sesión de las
+  credenciales que la firman; sólo vale en la región en que se generó; hereda
+  los permisos del principal
+  (<https://docs.aws.amazon.com/bedrock/latest/userguide/api-keys-generate.html>).
+- **IAM.** Usar la clave exige `bedrock:CallWithBearerToken` en el principal
+  que la generó (condición `bedrock:bearerTokenType` = `SHORT_TERM`), además
+  de los permisos de invocación del modelo. No se puede impedir que alguien
+  genere una clave de corta duración, sólo que la use
+  (<https://docs.aws.amazon.com/bedrock/latest/userguide/api-keys-permissions.html>).
+- **Escritura en el secreto de la pasarela.** Sólo `DescribeSecret`
+  (`SecretId` → `LastChangedDate`) y `PutSecretValue` (`SecretId`,
+  `SecretString`, `ClientRequestToken`), con los parámetros de §19. El valor
+  es `Bearer <clave>`, como espera `bedrock_gateway`. Se escribe sólo si
+  `LastChangedDate` tiene más de `gatewayKeyRenewAfterSeconds` (900 s
+  provisionales, `limits.json`), por encima de los 10 minutos que recomienda
+  `PutSecretValue` (§19).
+
+Preguntas abiertas, para la aceptación en AWS real:
+
+- **Q191 — Guardar y leer la receta.** Medir `PutParameter` (`SecureString`,
+  `Standard`) y `GetParameter` con `WithDecryption` sobre
+  `/rayito/agents/<nombre>/recipe` con las credenciales de quien despliega:
+  que no hace falta ningún permiso de KMS con `aws/ssm`, que el valor no
+  aparece en CloudTrail y la latencia de cada llamada.
+- **Q192 — Tamaño de una receta real.** Bytes del JSON y del sobre
+  comprimido para un proyecto con instrucciones largas; si una receta típica
+  supera 4 096 bytes comprimida, revisar D4 antes de publicar.
+- **Q193 — Clave de corta duración en la pasarela.** Con un rol que no puede
+  crear usuarios de IAM: generar la clave, escribirla con `PutSecretValue`,
+  invocar a través de la pasarela `bedrock` de un VM nuevo y de uno abierto
+  tras `gateways.refresh()`, y anotar la validez real frente a la sesión del
+  llamante.
+- **Q194 — Plaza caliente reconectada.** Desplegar con `--warm 1`, reconectar
+  desde otro proceso con `AgentFleet.connect(name)` (receta) y con
+  `project=`, y comprobar que la plaza abierta tiene la pasarela del modelo.

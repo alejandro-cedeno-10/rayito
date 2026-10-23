@@ -142,6 +142,102 @@ Una ruta que deja de estar en la configuración se cierra de verdad: deja de
 aceptar conexiones, cierra en el acto las keep-alive inactivas y deja
 terminar como mucho la petición en curso.
 
+## Renovar la clave de corta duración de Bedrock { #renovar-la-clave-de-bedrock }
+
+<small>Desde 0.17.0. Apagado por defecto.</small>
+
+La pasarela `bedrock` inyecta `Bearer <clave de API de Bedrock>`. Una clave de
+larga duración sale de un usuario de IAM; una de **corta duración** se firma
+en local con las credenciales del proceso que la renueva, vale como mucho 12 h
+(y nunca más que esa sesión) y sólo en su región. Con `renew_gateway_keys=True`
+(`renewGatewayKeys: true`, `--renew-gateway-keys`), la flota la renueva sola:
+antes de crear cada VM o abrir cada plaza, por cada pasarela con preset
+`bedrock`:
+
+1. Si este proceso ya la renovó hace menos de 900 s, nada.
+2. Si no, lee `LastChangedDate` del secreto (`DescribeSecret`) y, si cambió
+   hace menos de 900 s (otro proceso la renovó), nada.
+3. Si no, genera la clave con el generador oficial de AWS
+   (`aws-bedrock-token-generator` / `@aws/bedrock-token-generator`, firma
+   local, sin llamada a AWS), la escribe como `Bearer <clave>`
+   (`PutSecretValue`) y refresca las pasarelas de los VMs que este proceso
+   tiene abiertos.
+
+La clave y el nombre del secreto nunca salen en logs, errores ni en la
+[receta de la flota](../guias/flota-de-agentes.md#la-receta-de-la-flota).
+Sin una pasarela `bedrock`, la opción es `InvalidArgumentException`
+(`renew_gateway_keys necesita una pasarela con preset bedrock`). Los VMs que
+abrió otro proceso conservan la clave anterior hasta que se refresquen; en
+una flota que puede crecer, los VMs por encima de `min_vms` se terminan tras
+`scale_in_after_seconds` sin uso, y los demás viven `serve.timeout_seconds`.
+
+- **Flota de tamaño fijo.** La renovación sólo corre al crear un VM o abrir
+  una plaza. Una flota que no crece (por ejemplo `--min-vms 1 --max-vms 1`)
+  no renueva nada tras el primer VM, y su clave caduca a las 12 h como
+  mucho (antes si la sesión que la firmó dura menos). Renuévala por tu
+  cuenta de forma periódica (por ejemplo, un `scale` o un nuevo `deploy`)
+  o usa una clave de larga duración.
+- **Nunca desde la receta.** La receta guarda si el despliegue renovaba,
+  pero `AgentFleet.connect(nombre)` sólo renueva si quien conecta lo pide
+  (`renew_gateway_keys=True` / `renewGatewayKeys: true`), porque la clave
+  se firma con sus credenciales. Si la receta lo pedía y no lo pasas, la
+  flota no renueva y avisa `recipe_renewal_ignored` (sólo el código, sin la
+  ruta ni valores); un `False` explícito no avisa. Desde la CLI, la pide
+  `rayito agent invoke <flota> --renew-gateway-keys`. Con la opción, un
+  error (el extra `bedrock-keys` que falta, `permission_denied` al escribir
+  el secreto) se propaga.
+- **Un secreto sólo de Bedrock.** Si el secreto de la pasarela `bedrock` lo
+  lee también una pasarela cuyo upstream no es Bedrock, la opción es
+  `InvalidArgumentException` y no se renueva nada: la clave nueva acabaría
+  enviada a ese otro upstream. Sólo cuenta como Bedrock un upstream
+  `https://bedrock-runtime.<región>.amazonaws.com` con una región de AWS
+  válida (`us-east-1`); un host como
+  `bedrock-runtime.evil.s3.amazonaws.com` no lo es.
+
+=== "Python"
+
+    ```python
+    from rayito import AgentDeployOptions, deploy_agent
+
+    # pip install "rayito[bedrock-keys]"
+    fleet = deploy_agent(
+        "./mi-agente",
+        options=AgentDeployOptions(bucket="amzn-s3-demo-bucket", renew_gateway_keys=True),
+    )
+    ```
+
+=== "TypeScript"
+
+    ```ts
+    import { deployAgent } from "rayito";
+
+    // pnpm add @aws/bedrock-token-generator @aws-sdk/client-secrets-manager
+    const fleet = await deployAgent("./mi-agente", {
+      options: { bucket: "amzn-s3-demo-bucket", renewGatewayKeys: true },
+    });
+    ```
+
+!!! info "Coste y activación"
+    - **Activa:** `renew_gateway_keys=True` en `AgentFleet`,
+      `AgentFleet.connect()`, `AsyncAgentFleet` o `AgentDeployOptions`
+      (`renewGatewayKeys`, `--renew-gateway-keys`, sólo MicroVMs). Sin ella no
+      se importa el generador ni se llama a Secrets Manager.
+    - **Recursos y llamadas AWS:** ninguno nuevo; `DescribeSecret` antes de
+      crear un VM o abrir una plaza (salvo dentro de la ventana) y, como mucho
+      una vez cada 900 s por pasarela, `PutSecretValue` sobre el secreto que ya
+      usa la pasarela. La firma de la clave es local.
+    - **Coste aproximado:** $0,05 por 10 000 llamadas a Secrets Manager
+      (us-east-1, consultado el 2026-10-22,
+      [precios](https://aws.amazon.com/secrets-manager/pricing/)); la clave no
+      cuesta.
+    - **IAM:** `secretsmanager:DescribeSecret` y
+      `secretsmanager:PutSecretValue` sobre el secreto de la pasarela, y
+      `bedrock:CallWithBearerToken` en el principal que firma (condición
+      `bedrock:bearerTokenType` = `SHORT_TERM`), además de los permisos de
+      invocación del modelo.
+    - **Cómo apagarla:** no pases la opción (por defecto `False`).
+    - **Ejemplo:** `rayito agent deploy ./mi-agente --renew-gateway-keys`.
+
 ## Límites
 
 | | Valor | Por qué |

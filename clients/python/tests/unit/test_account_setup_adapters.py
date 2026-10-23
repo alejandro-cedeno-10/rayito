@@ -6,7 +6,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any, cast
 
 import boto3
 import pytest
@@ -27,7 +29,9 @@ from rayito._account_setup._service import AccountSetup
 from rayito._stacks._model import StackComponent, StackStatus
 from rayito._stacks._packaging import load_template
 from rayito._stacks._registry import COMPONENTS
+from rayito.cli._publish import PublishSettings
 from rayito.cli._session import Clients
+from rayito.cli._setup_publisher import PipelineImagePublisher
 from rayito.cli.setup import gateways_for
 from rayito.exceptions import StackException
 
@@ -387,3 +391,43 @@ def test_the_default_gateways_and_the_service_make_no_aws_call(
     )
     AccountSetup(gateways_for(Clients(session=session, region=REGION)))
     assert calls == []
+
+
+@pytest.mark.parametrize(
+    ("name", "os_capabilities"), [("rayito-base", None), ("rayito-base-caps", "ALL")]
+)
+def test_the_pipeline_publisher_publishes_the_named_image_with_its_capabilities(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, name: str, os_capabilities: str | None
+) -> None:
+    from rayito.cli import _setup_publisher as publisher_module
+
+    captured: list[PublishSettings] = []
+
+    def fake_build(_clients: Any, settings: PublishSettings, **_kwargs: Any) -> dict[str, Any]:
+        captured.append(settings)
+        return {
+            "launchable": True,
+            "imageArn": f"arn:aws:lambda:{REGION}:{ACCOUNT_ID}:microvm-image:{name}",
+            "imageVersion": "1.0",
+            "artifactUploaded": False,
+            "gate": {"versionState": "SUCCESSFUL"},
+        }
+
+    monkeypatch.setattr(publisher_module, "build_or_reuse", fake_build)
+    monkeypatch.setattr(publisher_module, "resolve_base_image_version", lambda *_args: "1.0")
+    lines: list[str] = []
+    published = PipelineImagePublisher(
+        cast(Any, SimpleNamespace(microvms=None, region=REGION))
+    ).publish(
+        tmp_path / "rayito-image.zip",
+        name=name,
+        os_capabilities=os_capabilities,
+        bucket=BUCKET,
+        build_role_arn=BUILD_ROLE,
+        on_progress=lines.append,
+    )
+    (settings,) = captured
+    assert (settings.image_name, settings.os_capabilities) == (name, os_capabilities)
+    assert settings.variant == "full"
+    assert published.image_version == "1.0"
+    assert lines == ["base_image_version=1.0"]

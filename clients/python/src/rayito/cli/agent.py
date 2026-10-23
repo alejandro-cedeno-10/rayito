@@ -40,6 +40,7 @@ from rayito import (
     deploy_agent,
     plan_deploy,
 )
+from rayito._agent._deploy_facade import MICROVM_ONLY_OPTIONS, STEP_RECIPE
 from rayito._agent._deploy_plan import project_for, with_excluded_file
 from rayito._agent._detect_report import DetectionReport
 from rayito._agent._events import AgentEvent, AgentFailed, Done, Text, TextDelta, ToolCall
@@ -64,6 +65,13 @@ from rayito._images import DEFAULT_BUILD_TIMEOUT_SECONDS
 from rayito._limits import AGENT_MIN_MEMORY_MIB
 from rayito.cli._agent_deploy import (
     AGENT_TOKEN_FILE_DEFAULT,
+    INVOKE_RENEW_GATEWAY_KEYS_HELP,
+    KEEP_RECIPE_HELP,
+    RENEW_GATEWAY_KEYS_HELP,
+    RENEW_NEEDS_FLEET_MESSAGE,
+    SAVE_RECIPE_HELP,
+    SCALE_IN_AFTER_HELP,
+    STATUS_UNKNOWN_SCALING,
     CompactBuildLog,
     apply_project_flags,
     apply_serve_flags,
@@ -72,6 +80,7 @@ from rayito.cli._agent_deploy import (
     detection_lines,
     parse_pairs,
     pool_backend_for,
+    reject_secret_env_flags,
 )
 from rayito.cli._agent_scaffold import (
     DEFAULT_PROVIDER,
@@ -127,11 +136,20 @@ from rayito.cli._agentcore import (
     show_status,
     stop_session,
 )
-from rayito.cli._console import EXIT_FAILURE, EXIT_USAGE, echo, emit_json, fail, visible_controls
+from rayito.cli._console import (
+    EXIT_FAILURE,
+    EXIT_USAGE,
+    echo,
+    emit_json,
+    fail,
+    literal_help,
+    visible_controls,
+)
 from rayito.cli._session import clients_of, json_mode
 from rayito.cli._tokens import TOKEN_ENV_VAR, TokenFileError
 from rayito.cli.sandbox import TokenFileOption, kill_one, token_or_exit
 from rayito.exceptions import (
+    AgentCoreException,
     AgentException,
     BuildException,
     CapacityException,
@@ -601,6 +619,7 @@ STEP_MESSAGES = {
     "fleet": "{detail} VM(s) listos",
     "secret_env_created": "secreto de --create-secrets-from: {detail}",
     "env_missing": "aviso: {detail}",
+    "recipe": "aviso: la receta de la flota no se guardó ({detail})",
 }
 
 
@@ -639,12 +658,17 @@ def detect_overrides_of(
     )
 
 
-def step_printer(deploy_json: bool) -> Callable[[AgentDeployStep], None]:
+def step_printer(
+    deploy_json: bool, warnings: list[str] | None = None
+) -> Callable[[AgentDeployStep], None]:
     """Un paso de `deploy_agent()` por línea en stderr (stdout queda para el
     resultado). El bucket se nombra porque quien despliega tiene que saber
-    dónde fue el artefacto; nunca se nombra un secreto."""
+    dónde fue el artefacto; nunca se nombra un secreto. Los avisos de la
+    receta se acumulan en `warnings` para la salida `--json`."""
 
     def show(step: AgentDeployStep) -> None:
+        if step.kind == STEP_RECIPE and warnings is not None:
+            warnings.append(step.detail)
         if step.kind == "bucket":
             origin, _, bucket = step.detail.partition(":")
             echo(f"bucket del artefacto: {bucket} ({origin})", err=True)
@@ -827,7 +851,9 @@ def deploy_command(
             help="Crea el secreto que falte desde la variable del proveedor (cuesta $0,40/mes).",
         ),
     ] = False,
-    secret_env: Annotated[list[str], typer.Option("--secret-env", help=SECRET_ENV_HELP)] = [],  # noqa: B006
+    secret_env: Annotated[
+        list[str], typer.Option("--secret-env", help=literal_help(SECRET_ENV_HELP))
+    ] = [],  # noqa: B006
     secret_env_from: Annotated[
         list[str], typer.Option("--secret-env-from", help=SECRET_ENV_FROM_HELP)
     ] = [],  # noqa: B006
@@ -878,6 +904,15 @@ def deploy_command(
     external_model: Annotated[
         bool, typer.Option("--external-model", help=EXTERNAL_MODEL_HELP)
     ] = False,
+    scale_in_after: Annotated[
+        int | None, typer.Option("--scale-in-after", help=literal_help(SCALE_IN_AFTER_HELP))
+    ] = None,
+    save_recipe: Annotated[
+        bool, typer.Option("--save-recipe/--no-save-recipe", help=SAVE_RECIPE_HELP)
+    ] = True,
+    renew_gateway_keys: Annotated[
+        bool, typer.Option("--renew-gateway-keys", help=RENEW_GATEWAY_KEYS_HELP)
+    ] = False,
 ) -> None:
     """Despliega el agente de un directorio como una flota de MicroVMs.
 
@@ -888,6 +923,12 @@ def deploy_command(
     valor sale de la bandera, del fichero, del entorno o del descubrimiento,
     en ese orden; nada se crea en silencio (ni buckets, ni secretos sin
     --create-secret, ni la imagen base sin --base-artifact y --yes).
+
+    Guarda la receta de la flota (lo que el despliegue usó, sin secretos) en
+    Parameter Store para que `rayito agent invoke|status|stop <nombre>` y
+    `AgentFleet.connect(nombre)` la reconstruyan desde cualquier sitio;
+    --no-save-recipe no la guarda. Un --env que parece un secreto se rechaza:
+    usa --secret-env o --secret-env-from.
 
     Imprime el nombre de la flota, el sandbox y la URL; las cabeceras de
     acceso no se imprimen nunca. El access token se guarda en --token-file (o
@@ -913,6 +954,16 @@ def deploy_command(
                 EXTERNAL_MODEL_FLAG: external_model or None,
             },
         )
+        check_microvm_only_flags(
+            target,
+            scale_in_after=scale_in_after,
+            save_recipe=save_recipe,
+            renew_gateway_keys=renew_gateway_keys,
+        )
+    try:
+        reject_secret_env_flags(parse_pairs(env, "--env"))
+    except InvalidArgumentException as exc:
+        fail(str(exc), code=EXIT_USAGE)
     if target == TARGET_AGENTCORE:
         run_agentcore_deploy(
             ctx,
@@ -992,13 +1043,14 @@ def deploy_command(
             secret_env=parse_secret_env_flags(secret_env),
             secret_env_from=parse_secret_env_from_flags(secret_env_from),
         )
-        scaling = scaling_of(project, min_vms, max_vms, warm, sessions)
+        scaling = scaling_of(project, min_vms, max_vms, warm, sessions, scale_in_after)
         secret_names = parse_pairs(secret, "--secret")
         env_file_secret = env_file_secret_of(project, create_secrets_from)
     except InvalidArgumentException as exc:
         fail(str(exc), code=EXIT_USAGE)
     as_json = json_mode(ctx)
     compact = None if verbose else CompactBuildLog(lambda line: echo(line, err=True))
+    recipe_warnings: list[str] = []
 
     def options_with(
         token: str | None, publisher: Callable[[], None] | None, pool_backend: Any = None
@@ -1014,9 +1066,11 @@ def deploy_command(
             scaling=scaling,
             pool_backend=pool_backend,
             on_build_logs=(lambda line: echo(line, err=True)) if verbose else compact,
-            on_step=step_printer(as_json),
+            on_step=step_printer(as_json, recipe_warnings),
             create_secrets_from=None if create_secrets_from is None else str(create_secrets_from),
             check_env=check_env,
+            save_recipe=save_recipe,
+            renew_gateway_keys=renew_gateway_keys,
         )
 
     if dry_run:
@@ -1080,7 +1134,25 @@ def deploy_command(
             ),
             err=True,
         )
-    print_deployed(fleet, project.serve.port, written_to, as_json=as_json)
+    print_deployed(fleet, project.serve.port, written_to, as_json=as_json, warnings=recipe_warnings)
+
+
+def check_microvm_only_flags(
+    target: str, *, scale_in_after: int | None, save_recipe: bool, renew_gateway_keys: bool
+) -> None:
+    """Con --target agentcore, `--scale-in-after`, `--no-save-recipe` y
+    `--renew-gateway-keys` son `option_not_supported` (por su bandera), antes
+    de cualquier llamada a AWS."""
+    if target != TARGET_AGENTCORE:
+        return
+    passed = {
+        "--scale-in-after": scale_in_after is not None,
+        "--no-save-recipe": not save_recipe,
+        "--renew-gateway-keys": renew_gateway_keys,
+    }
+    for _name, flag, reason, _check in MICROVM_ONLY_OPTIONS:
+        if passed[flag]:
+            raise AgentCoreException("option_not_supported", option=flag, reason=reason)
 
 
 def deploy_target(path: Path | None, file: str) -> Path:
@@ -1099,10 +1171,11 @@ def scaling_of(
     max_vms: int | None,
     warm: int | None,
     sessions: str | None,
+    scale_in_after: int | None = None,
 ) -> ScalingOptions | None:
     """El `ScalingOptions` de las banderas sobre el del proyecto; `None` si
     no se pasó ninguna (el proyecto decide)."""
-    if all(value is None for value in (min_vms, max_vms, warm, sessions)):
+    if all(value is None for value in (min_vms, max_vms, warm, sessions, scale_in_after)):
         return None
     current = fleet_settings_of(project, None).scaling
     return ScalingOptions(
@@ -1110,7 +1183,9 @@ def scaling_of(
         max_vms=current.max_vms if max_vms is None else max_vms,
         warm_vms=current.warm_vms if warm is None else warm,
         sessions=current.sessions if sessions is None else sessions,  # type: ignore[arg-type]
-        scale_in_after_seconds=current.scale_in_after_seconds,
+        scale_in_after_seconds=(
+            current.scale_in_after_seconds if scale_in_after is None else scale_in_after
+        ),
     )
 
 
@@ -1141,27 +1216,39 @@ def print_plan(
     echo("no se llamó a AWS (--dry-run)")
 
 
-def print_deployed(fleet: AgentFleet, port: int, token_file: Path | None, *, as_json: bool) -> None:
+def print_deployed(
+    fleet: AgentFleet,
+    port: int,
+    token_file: Path | None,
+    *,
+    as_json: bool,
+    warnings: Sequence[str] = (),
+) -> None:
     """El resultado de un despliegue: la flota, el primer VM con las claves de
     0.13 (`sandbox_id`, `url`, `port`) y dónde quedó el token. Nunca las
-    cabeceras ni el token."""
-    first = fleet.deployments[0]
+    cabeceras ni el token. Con avisos de la receta, `--json` añade
+    `warnings` (sólo los códigos). Una flota con `--min-vms 0` no deja ningún
+    VM con servicio: `sandboxId` y `url` son `null` y el texto no los
+    imprime."""
+    first = fleet.deployments[0] if fleet.deployments else None
     ids = list(fleet.sandbox_ids)
     if as_json:
-        emit_json(
-            {
-                "name": fleet.name,
-                "sandboxId": first.sandbox_id,
-                "sandboxIds": ids,
-                "url": first.url,
-                "port": port,
-                "tokenFile": None if token_file is None else str(token_file),
-            }
-        )
+        document: dict[str, Any] = {
+            "name": fleet.name,
+            "sandboxId": None if first is None else first.sandbox_id,
+            "sandboxIds": ids,
+            "url": None if first is None else first.url,
+            "port": port,
+            "tokenFile": None if token_file is None else str(token_file),
+        }
+        if warnings:
+            document["warnings"] = list(warnings)
+        emit_json(document)
         return
     echo(f"name={fleet.name}")
-    echo(f"sandbox_id={first.sandbox_id}")
-    echo(f"url={first.url}")
+    if first is not None:
+        echo(f"sandbox_id={first.sandbox_id}")
+        echo(f"url={first.url}")
     echo(f"port={port}")
     echo(f"members={len(ids)}")
     if token_file is not None:
@@ -1278,13 +1365,19 @@ def fleet_token(token_file: Path | None) -> str:
     return token_or_exit(token_file)
 
 
-def connect_fleet(ctx: typer.Context, name: str, token_file: Path | None) -> AgentFleet:
+def connect_fleet(
+    ctx: typer.Context, name: str, token_file: Path | None, *, renew_gateway_keys: bool = False
+) -> AgentFleet:
+    """`AgentFleet.connect(nombre)`. La renovación de claves sólo se pide con
+    `--renew-gateway-keys`; sin ella se deja como en 0.16 (`None`: la receta
+    no la activa y, si la pedía, avisa `recipe_renewal_ignored`)."""
     clients = clients_of(ctx)
     return AgentFleet.connect(
         name,
         access_token=fleet_token(token_file),
         region=clients.region,
         session=clients.session,
+        renew_gateway_keys=True if renew_gateway_keys else None,
     )
 
 
@@ -1305,6 +1398,9 @@ def invoke_command(
     target: Annotated[
         str, typer.Option("--target", help=TARGET_HELP, callback=DEPLOY_TARGET_CHECK)
     ] = TARGET_MICROVM,
+    renew_gateway_keys: Annotated[
+        bool, typer.Option("--renew-gateway-keys", help=INVOKE_RENEW_GATEWAY_KEYS_HELP)
+    ] = False,
 ) -> None:
     """Llama a un agente desplegado con `rayito agent deploy`.
 
@@ -1314,17 +1410,24 @@ def invoke_command(
     agentcore, `sandbox_id` es el nombre del agente: se invoca con SigV4 y el
     `session_id` que devuelve continúa la conversación. Un grafo con esquema
     de entrada propio se llama con --input (un objeto JSON) o --input-file en
-    lugar de PROMPT, y su salida se imprime como JSON."""
+    lugar de PROMPT, y su salida se imprime como JSON. Con el nombre de una
+    flota, --renew-gateway-keys renueva la clave de Bedrock de las pasarelas
+    antes de cada VM nuevo (la receta no la activa por su cuenta)."""
     as_json = json_mode(ctx)
     data = invoke_input(prompt, input_json, input_file)
+    if renew_gateway_keys and target != TARGET_AGENTCORE and not is_fleet_name(sandbox_id):
+        fail(RENEW_NEEDS_FLEET_MESSAGE, code=EXIT_USAGE)
     with agentcore_errors(json_output=as_json):
+        check_microvm_only_flags(
+            target, scale_in_after=None, save_recipe=True, renew_gateway_keys=renew_gateway_keys
+        )
         fleet: AgentDeployment | AgentFleet | AgentCoreFleet
         if target == TARGET_AGENTCORE:
             reject_token_file(token_file)
             fleet = connect_agentcore_fleet(ctx, sandbox_id)
         else:
             fleet = (
-                connect_fleet(ctx, sandbox_id, token_file)
+                connect_fleet(ctx, sandbox_id, token_file, renew_gateway_keys=renew_gateway_keys)
                 if is_fleet_name(sandbox_id)
                 else connect_deployment(ctx, sandbox_id, token_file)
             )
@@ -1437,7 +1540,10 @@ def print_fleet_status(fleet: AgentFleet, *, as_json: bool) -> None:
         emit_json(camel_keys(dataclasses.asdict(status)))
         return
     echo(f"name: {status.name}")
-    echo(f"members: {len(status.members)} (min {status.min_vms}, max {status.max_vms})")
+    if getattr(status, "scaling_source", None) == "default":
+        echo(STATUS_UNKNOWN_SCALING.format(count=len(status.members)))
+    else:
+        echo(f"members: {len(status.members)} (min {status.min_vms}, max {status.max_vms})")
     for member in status.members:
         echo(f"sandbox_id={member.sandbox_id} state={member.state}")
 
@@ -1454,9 +1560,11 @@ def stop_command(
     session_id: Annotated[
         str | None, typer.Option("--session-id", help=STOP_SESSION_ID_HELP)
     ] = None,
+    keep_recipe: Annotated[bool, typer.Option("--keep-recipe", help=KEEP_RECIPE_HELP)] = False,
 ) -> None:
     """Para un agente desplegado: destruye su sandbox, o todos los de la flota
-    si le pasas su nombre. No necesita el access token: `terminate-microvm`
+    si le pasas su nombre, y borra la receta de la flota (--keep-recipe la
+    conserva). No necesita el access token: `terminate-microvm`
     basta. Con --target agentcore para la microVM de una sesión (--session-id,
     obligatorio): AgentCore no cobra sin sesiones; para borrar el agente usa
     `rayito agent delete`."""
@@ -1469,7 +1577,10 @@ def stop_command(
     if is_fleet_name(sandbox_id):
         fleet = AgentFleet.connect(sandbox_id, region=clients.region, session=clients.session)
         count = len(fleet.sandbox_ids)
-        fleet.stop()
+        if keep_recipe:
+            fleet.stop(keep_recipe=True)
+        else:
+            fleet.stop()
         if json_mode(ctx):
             emit_json({"name": sandbox_id, "stopped": count})
         else:

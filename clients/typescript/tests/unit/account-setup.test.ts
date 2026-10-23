@@ -12,6 +12,7 @@ import {
   type SetupRequest,
 } from "../../src/account-setup/domain.js";
 import { AccountSetup } from "../../src/account-setup/service.js";
+import { DEFAULT_AGENT_TEMPLATE_BASE } from "../../src/agent/template.js";
 import { BUILDING_VERSION_STATES } from "../../src/images/gateway.js";
 import { LATEST_BASE_IMAGE_VERSION } from "../../src/images/publish-service.js";
 import { VERSION } from "../../src/version.js";
@@ -57,7 +58,13 @@ interface Contract {
     inProgressStackSuffix: string;
     deletingStackState: string;
     buildingVersionStates: string[];
+    capsImageName: string;
+    capsImageOsCapabilities: string;
   };
+  resources: string[];
+  actions: string[];
+  resourceActions: Record<string, string[]>;
+  json: { resultKeys: string[] };
   bucketSources: string[];
   bucketProbeStates: string[];
   messages: {
@@ -67,6 +74,7 @@ interface Contract {
     downloadReasons: Record<string, string>;
     bucketSources: Record<string, string>;
     accountSetupHint: string;
+    capsImageSetupHint: string;
     hintFormat: string;
   };
 }
@@ -103,6 +111,7 @@ function requestOf(input: VectorInput): SetupRequest {
     environmentBucket: input.environmentBucket ?? undefined,
     artifact: input.artifact ?? undefined,
     sdkVersion: VERSION,
+    capsImage: input.capsImageRequested === true,
   };
 }
 
@@ -166,6 +175,50 @@ describe("account setup: contract", () => {
     expect(domain.IN_PROGRESS_STACK_SUFFIX).toBe(constants.inProgressStackSuffix);
     expect(domain.DELETING_STACK_STATE).toBe(constants.deletingStackState);
     expect([...BUILDING_VERSION_STATES]).toEqual(constants.buildingVersionStates);
+    expect(domain.CAPS_IMAGE_NAME).toBe(constants.capsImageName);
+    expect(domain.CAPS_IMAGE_NAME).toBe(DEFAULT_AGENT_TEMPLATE_BASE);
+    expect(domain.CAPS_IMAGE_OS_CAPABILITIES).toBe(constants.capsImageOsCapabilities);
+  });
+
+  it("the four steps, their actions and the result keys equal the contract", () => {
+    expect([...domain.RESOURCE_ORDER]).toEqual(contract.resources);
+    const actions = new Set(Object.values(domain.ALLOWED_ACTIONS).flat());
+    expect([...actions].sort()).toEqual([...contract.actions].sort());
+    expect(
+      Object.fromEntries(
+        Object.entries(domain.ALLOWED_ACTIONS).map(([key, value]) => [key, [...value].sort()]),
+      ),
+    ).toEqual(
+      Object.fromEntries(
+        Object.entries(contract.resourceActions).map(([key, value]) => [key, [...value].sort()]),
+      ),
+    );
+    const result = domain.resultJson({
+      bucket: "b",
+      imageArn: "arn",
+      imageVersion: "1.0",
+      artifactUploaded: undefined,
+      capsImageArn: undefined,
+      capsImageVersion: undefined,
+    });
+    expect(Object.keys(result)).toEqual(contract.json.resultKeys);
+  });
+
+  it("a skipped caps step still counts as ready and only the caps publish prices the zip", () => {
+    const step = (resource: domain.ResourceKind, action: domain.SetupAction, name = "n") =>
+      domain.newStep({ resource, name, action });
+    const steps = [
+      step("bucket", "reuse"),
+      step("iamStack", "reuse"),
+      step("baseImage", "reuse"),
+      step("capsImage", "skip"),
+    ];
+    expect(domain.costLines(steps)).toEqual([]);
+    const publishing = [...steps.slice(0, 3), step("capsImage", "publish")];
+    expect(domain.costLines(publishing)).toEqual([
+      contract.messages.cost.capsImage,
+      contract.messages.cost.artifact,
+    ]);
   });
 
   it("messages, cost texts and exit codes equal the contract", () => {
@@ -177,6 +230,7 @@ describe("account setup: contract", () => {
     expect({ ...domain.BUCKET_SOURCE_LABELS }).toEqual(contract.messages.bucketSources);
     expect(Object.keys(domain.BUCKET_SOURCE_LABELS)).toEqual(contract.bucketSources);
     expect(domain.ACCOUNT_SETUP_HINT).toBe(contract.messages.accountSetupHint);
+    expect(domain.CAPS_IMAGE_SETUP_HINT).toBe(contract.messages.capsImageSetupHint);
     expect(domain.HINT_TEMPLATE).toBe(contract.messages.hintFormat);
   });
 
@@ -259,6 +313,7 @@ const FRESH: VectorInput = {
   forbiddenBuckets: [],
   artifactStack: null,
   image: null,
+  capsImageRequested: true,
 };
 
 const DEFAULT_BUCKET = domain.defaultArtifactBucketName("123456789012", "us-east-1");
@@ -303,8 +358,22 @@ describe("AccountSetup.plan", () => {
   it("only reads: a fresh account describes, probes one bucket and gets the image", async () => {
     const fake = new FakeAccountSetup(FRESH);
     await new AccountSetup(fake).plan(requestOf(FRESH));
-    expect(names(fake.calls)).toEqual(["accountId", "describe", "head_bucket", "get_image"]);
+    expect(names(fake.calls)).toEqual([
+      "accountId",
+      "describe",
+      "head_bucket",
+      "get_image",
+      "get_image:caps",
+    ]);
     expect(fake.writes).toEqual([]);
+  });
+
+  it("by default the plan never reads the caps image and skips the step", async () => {
+    const fake = new FakeAccountSetup(FRESH);
+    const plan = await new AccountSetup(fake).plan({ ...requestOf(FRESH), capsImage: undefined });
+    expect(names(fake.calls)).toEqual(["accountId", "describe", "head_bucket", "get_image"]);
+    expect(domain.stepOf(plan, "capsImage").action).toBe("skip");
+    expect(plan.capsImageArn).toBeUndefined();
   });
 
   it("rejects an unsupported region before any call", async () => {
@@ -332,13 +401,16 @@ describe("AccountSetup.apply", () => {
       ["wait"],
     ]);
     expect(fake.calls.filter(([name]) => name === "download")).toHaveLength(2);
-    expect(fake.calls.at(-1)).toEqual([
-      "publish",
-      "/work/rayito-image.zip",
-      bucket,
-      BUILD_ROLE_ARN,
+    expect(fake.calls.slice(-2)).toEqual([
+      ["publish", "/work/rayito-image.zip", bucket, BUILD_ROLE_ARN],
+      ["publish:caps", "/work/rayito-image.zip", bucket, BUILD_ROLE_ARN, "ALL"],
     ]);
-    expect(result).toMatchObject({ bucket, imageVersion: "3.0", artifactUploaded: true });
+    expect(result).toMatchObject({
+      bucket,
+      imageVersion: "3.0",
+      artifactUploaded: true,
+      capsImageVersion: "3.0",
+    });
     expect(lines).toContain(
       `sha256 de rayito-image.zip verificado contra SHA256SUMS: ${FAKE_IMAGE_SHA256}`,
     );
@@ -398,7 +470,10 @@ describe("AccountSetup.apply", () => {
     });
     const { fake, plan, result } = await applied(input);
     expect(plan.needsConfirmation).toBe(false);
-    expect(fake.calls.filter(([name]) => name === "gate")).toEqual([["gate", "2.0"]]);
+    expect(fake.calls.filter(([name]) => name === "gate")).toEqual([
+      ["gate", "2.0"],
+      ["gate", "2.0"],
+    ]);
     expect(fake.writes).toEqual([]);
     expect(result.imageVersion).toBe("2.0");
   });
@@ -445,6 +520,7 @@ describe("AccountSetup.apply", () => {
   it("--artifact downloads nothing", async () => {
     const { fake } = await applied(FRESH, undefined, "image/rayito-image.zip");
     expect(names(fake.calls)).not.toContain("download");
+    expect(fake.calls.at(-2)?.[1]).toBe("image/rayito-image.zip");
     expect(fake.calls.at(-1)?.[1]).toBe("image/rayito-image.zip");
   });
 
@@ -473,12 +549,42 @@ describe("AccountSetup.apply", () => {
       image: { state: "UPDATE_FAILED", versions: [] },
     });
     const { fake } = await applied(input);
-    expect(fake.calls.at(-1)).toEqual([
+    expect(fake.calls.at(-2)).toEqual([
       "publish",
       "/work/rayito-image.zip",
       "amzn-s3-demo-bucket",
       BUILD_ROLE_ARN,
     ]);
+  });
+
+  it("a launchable base without the caps image downloads once and publishes only the caps", async () => {
+    const input = inputWith({
+      stack: PREPARED_STACK,
+      buckets: { "amzn-s3-demo-bucket": "us-east-1" },
+      image: LAUNCHABLE_IMAGE,
+      capsImage: null,
+    });
+    const { fake, result } = await applied(input);
+    expect(fake.writes).toEqual([
+      ["download", "SHA256SUMS"],
+      ["download", "rayito-image.zip"],
+      ["publish:caps", "/work/rayito-image.zip", "amzn-s3-demo-bucket", BUILD_ROLE_ARN, "ALL"],
+    ]);
+    expect(result).toMatchObject({
+      imageVersion: "1.0",
+      artifactUploaded: true,
+      capsImageVersion: "3.0",
+    });
+  });
+
+  it("by default apply publishes only the base", async () => {
+    const fake = new FakeAccountSetup(FRESH);
+    const service = new AccountSetup(fake);
+    const plan = await service.plan({ ...requestOf(FRESH), capsImage: undefined });
+    const result = await service.apply(plan, { workdir: "/work", onProgress: () => undefined });
+    expect(names(fake.writes)).toEqual(["create", "download", "download", "publish"]);
+    expect(result.capsImageArn).toBeUndefined();
+    expect(result.capsImageVersion).toBeUndefined();
   });
 });
 
@@ -496,9 +602,10 @@ describe("AccountSetup with no reusable bucket", () => {
       "download",
       "publish",
     ]);
+    expect(names(fake.calls).at(-1)).toBe("publish:caps");
     expect(writes[0]).toEqual(["create_artifact_stack", DEFAULT_BUCKET]);
     expect(writes[1]).toEqual(["create", DEFAULT_BUCKET]);
-    expect(fake.calls.at(-1)).toEqual([
+    expect(fake.calls.at(-2)).toEqual([
       "publish",
       "/work/rayito-image.zip",
       DEFAULT_BUCKET,

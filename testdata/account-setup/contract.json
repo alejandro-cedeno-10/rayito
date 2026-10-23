@@ -1,9 +1,9 @@
 {
-  "description": "Contrato de `rayito setup` compartido por Python y TypeScript (ADR-030, cambio OpenSpec account-setup): opciones, códigos de salida y de error, constantes, textos de la salida humana y forma del documento JSON. Incluye la creación del bucket de artefactos con la pila rayito-m0-artifacts (infra/artifact-bucket.yaml) cuando no hay ninguno que reutilizar. Los tests de los dos SDK comparan sus constantes y mensajes con este fichero; la CLI escribe en español en los dos.",
+  "description": "Contrato de `rayito setup` compartido por Python y TypeScript (ADR-030, cambio OpenSpec account-setup): opciones, códigos de salida y de error, constantes, textos de la salida humana y forma del documento JSON. Incluye la publicación de rayito-base-caps (paso capsImage, sólo con --caps-image) y la creación del bucket de artefactos con la pila rayito-m0-artifacts (infra/artifact-bucket.yaml) cuando no hay ninguno que reutilizar. Los tests de los dos SDK comparan sus constantes y mensajes con este fichero; la CLI escribe en español en los dos.",
   "command": [
     "setup"
   ],
-  "help": "Prepara la cuenta y la región para Rayito en una orden idempotente, como `cdk bootstrap`: el bucket de artefactos (el tuyo, el de la pila de IAM o el del bootstrap de CDK; si no hay ninguno, lo crea con la pila rayito-m0-artifacts: cifrado, privado, sólo TLS y con los zips caducando a los 7 días), la pila de IAM rayito-m0-iam y la imagen rayito-base desde el rayito-image.zip de la release de tu versión, comprobado contra su SHA256SUMS. Muestra el plan y el coste, pide confirmación y termina con rayito doctor. Coste: cada versión publicada de la imagen ≈ $0,04 por semana de almacenamiento (mínimo una semana); la pila de IAM es gratis; el zip en el bucket, céntimos; con --dry-run sólo lee.",
+  "help": "Prepara la cuenta y la región para Rayito en una orden idempotente, como `cdk bootstrap`: el bucket de artefactos (el tuyo, el de la pila de IAM o el del bootstrap de CDK; si no hay ninguno, lo crea con la pila rayito-m0-artifacts: cifrado, privado, sólo TLS y con los zips caducando a los 7 días), la pila de IAM rayito-m0-iam y las imágenes rayito-base y rayito-base-caps (la base del agente en MicroVM, sólo con --caps-image) desde el rayito-image.zip de la release de tu versión, descargado una vez y comprobado contra su SHA256SUMS. Muestra el plan y el coste, pide confirmación y termina con rayito doctor. Coste: cada versión publicada de cada imagen ≈ $0,04 por semana de almacenamiento ($0,08 por GB-mes, mínimo una semana); la pila de IAM es gratis; el zip en el bucket, céntimos; con --dry-run sólo lee.",
   "options": [
     {
       "name": "bucket",
@@ -54,6 +54,16 @@
       "default": false,
       "isFlag": true,
       "help": "Sólo lee la cuenta y muestra el plan; no crea ni cambia nada."
+    },
+    {
+      "name": "caps_image",
+      "flags": [
+        "--caps-image"
+      ],
+      "type": "boolean",
+      "default": false,
+      "isFlag": true,
+      "help": "Publica también rayito-base-caps, la base del agente en MicroVM (la misma imagen con additionalOsCapabilities ALL, desde el mismo zip); es otra versión de imagen que cuesta. Sin esta opción no se publica."
     }
   ],
   "globalOptions": [
@@ -107,6 +117,8 @@
     "baseImageName": "rayito-base",
     "baseImageVariant": "full",
     "baseImageVersion": "latest",
+    "capsImageName": "rayito-base-caps",
+    "capsImageOsCapabilities": "ALL",
     "cdkBootstrapQualifier": "hnb659fds",
     "bucketEnvVar": "RAYITO_BUCKET",
     "releaseTagPrefix": "rayd-v",
@@ -129,14 +141,16 @@
   "resources": [
     "bucket",
     "iamStack",
-    "baseImage"
+    "baseImage",
+    "capsImage"
   ],
   "actions": [
     "create",
     "update",
     "reuse",
     "wait",
-    "publish"
+    "publish",
+    "skip"
   ],
   "resourceActions": {
     "bucket": [
@@ -154,6 +168,12 @@
       "publish",
       "reuse",
       "wait"
+    ],
+    "capsImage": [
+      "publish",
+      "reuse",
+      "wait",
+      "skip"
     ]
   },
   "bucketSources": [
@@ -201,7 +221,9 @@
       "bucket",
       "imageArn",
       "imageVersion",
-      "artifactUploaded"
+      "artifactUploaded",
+      "capsImageArn",
+      "capsImageVersion"
     ],
     "errorKeys": [
       "code",
@@ -215,7 +237,8 @@
     "labels": {
       "bucket": "bucket",
       "iamStack": "pila de IAM",
-      "baseImage": "imagen"
+      "baseImage": "imagen",
+      "capsImage": "imagen con capacidades"
     },
     "actions": {
       "bucketReuse": "reutilizar ({source})",
@@ -228,7 +251,8 @@
       "imagePublishRelease": "publicar desde {release} (≈ 10 min)",
       "imagePublishArtifact": "publicar desde {artifact} (≈ 10 min)",
       "imageReuse": "ya existe (versión {imageVersion} lanzable)",
-      "imageWait": "build en curso (versión {imageVersion}): esperar"
+      "imageWait": "build en curso (versión {imageVersion}): esperar",
+      "capsSkip": "omitida (sin --caps-image)"
     },
     "bucketSources": {
       "argument": "--bucket",
@@ -243,7 +267,8 @@
       "bucket": "bucket de artefactos: los zips de la imagen caducan a los {days} días (regla de ciclo de vida)",
       "iamStack": "pila de IAM: gratis",
       "image": "imagen: ≈ $0,04 por semana por versión publicada (mínimo una semana)",
-      "artifact": "zip de la imagen en el bucket: céntimos"
+      "artifact": "zip de la imagen en el bucket: céntimos",
+      "capsImage": "imagen con capacidades: ≈ $0,04 por semana por versión publicada ($0,08 por GB-mes, mínimo una semana); sólo con --caps-image"
     },
     "costLine": "  {text}",
     "nothingToDo": "La cuenta ya está preparada: no hay nada que crear.",
@@ -289,6 +314,7 @@
       "network": "error de red"
     },
     "accountSetupHint": "si la cuenta o la región aún no están preparadas, ejecuta `rayito setup`",
+    "capsImageSetupHint": "rayito setup no publica rayito-base-caps por defecto porque cuesta: ejecuta `rayito setup --caps-image`",
     "hintFormat": "{message} ({hint})"
   }
 }

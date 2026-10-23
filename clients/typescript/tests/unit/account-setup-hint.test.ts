@@ -6,7 +6,7 @@
  */
 
 import { describe, expect, test } from "vitest";
-import { ACCOUNT_SETUP_HINT } from "../../src/account-setup/domain.js";
+import { ACCOUNT_SETUP_HINT, CAPS_IMAGE_SETUP_HINT } from "../../src/account-setup/domain.js";
 import { ensureBaseImage, resolveBucket } from "../../src/agent/aws-resolve.js";
 import { type CommandSender, LambdaMicrovmsControlPlane } from "../../src/aws/control-plane.js";
 import { InvalidArgumentError, SandboxNotFoundError } from "../../src/errors.js";
@@ -71,7 +71,24 @@ describe("deployAgent errors", () => {
     expect((failure as Error).message).toContain("rayito setup");
   });
 
-  test("a missing base image names rayito setup", async () => {
+  const noImageAws = {
+    resolvedRegion: () => REGION,
+    accountId: async () => "123456789012",
+    bucketExists: async () => true,
+    artifactStackBucket: async () => undefined,
+    imageExists: async () => false,
+  };
+
+  test("a missing caps base image points to rayito setup --caps-image", async () => {
+    const failure = await ensureBaseImage(noImageAws, "rayito-base-caps", undefined, {
+      ensure: true,
+    }).catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(InvalidArgumentError);
+    expect((failure as Error).message).toContain("no existe en esta cuenta y región");
+    expect((failure as Error).message).toContain(CAPS_IMAGE_SETUP_HINT);
+  });
+
+  test("any other missing base image names rayito setup", async () => {
     const aws = {
       resolvedRegion: () => REGION,
       accountId: async () => "123456789012",
@@ -79,7 +96,7 @@ describe("deployAgent errors", () => {
       artifactStackBucket: async () => undefined,
       imageExists: async () => false,
     };
-    const failure = await ensureBaseImage(aws, "rayito-base-caps", undefined, {
+    const failure = await ensureBaseImage(aws, "my-base", undefined, {
       ensure: true,
     }).catch((error: unknown) => error);
     expect(failure).toBeInstanceOf(InvalidArgumentError);

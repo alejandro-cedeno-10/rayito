@@ -90,7 +90,9 @@ MODEL_ENV_KEYS: Final[tuple[str, ...]] = ("id_env", "base_url_env", "api_key_env
 _NAME_PATTERN: Final = re.compile(rf"[a-z0-9][a-z0-9_-]{{0,{MAX_NAME_LEN - 1}}}")
 _TOOL_NAME_PATTERN: Final = re.compile(rf"[a-z0-9*][a-z0-9_*-]{{0,{MAX_NAME_LEN - 1}}}")
 _MODEL_ID_PATTERN: Final = re.compile(rf"[A-Za-z0-9][A-Za-z0-9._:/@+-]{{0,{MAX_MODEL_ID_LEN - 1}}}")
-_REGION_PATTERN: Final = re.compile(r"[a-z]{2}(-[a-z]+)+-[0-9]+")
+#: Una región de AWS (`us-east-1`, `us-gov-west-1`): también valida la región
+#: que sale del host de un upstream de Bedrock (`gateway_region`).
+AWS_REGION_PATTERN: Final = re.compile(r"[a-z]{2}(-[a-z]+)+-[0-9]+")
 _ENV_NAME_PATTERN: Final = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 _FIRST_PRINTABLE_ASCII: Final = 0x20
 _ASCII_DELETE: Final = 0x7F
@@ -147,7 +149,7 @@ def validate_base_path(base_path: object, label: str) -> str:
 
 
 def validate_region(region: object, label: str) -> str:
-    if not isinstance(region, str) or not _REGION_PATTERN.fullmatch(region):
+    if not isinstance(region, str) or not AWS_REGION_PATTERN.fullmatch(region):
         raise InvalidArgumentException(f"{label} debe ser una región de AWS ('us-east-1')")
     return region
 

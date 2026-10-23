@@ -2189,6 +2189,39 @@ comprobación se lanzó sin `RAYITO_BUCKET`), con `rayd` 0.15.0 `agent_ready` y
 la comprobación de compatibilidad en verde; los sandboxes de la prueba se
 terminaron. La 38.0 se queda como estaba.
 
+## 0.17.0 — Receta de la flota y correcciones del despliegue del agente (en desarrollo)
+
+Cambio OpenSpec `fleet-recipe` (ADR-034), integrado en `feat/sdk-017`. Toca
+`infra/iam.yaml`, así que la aceptación es la regresión completa en AWS, con
+Q191–Q194 de `AWS_API_NOTES.md` por medir; hasta entonces el cambio no se
+archiva.
+
+- **Receta de la flota** (items 8, 9 y 12): `deploy_agent` / `deployAgent`
+  guardan tras arrancar la flota de MicroVMs un `SecureString` estándar en
+  `/rayito/agents/<nombre>/recipe` (sólo nombres de secretos);
+  `AgentFleet.connect(nombre)` sin proyecto la lee con un `GetParameter`, y
+  con `project=` no hay llamada nueva. `FleetStatus.scaling_source`,
+  `stop(keep_recipe=)` / `--keep-recipe` y `--no-save-recipe`. Única función
+  encendida por defecto (ADR-034). Sentencia `AgentRecipe` en las políticas
+  del lanzador y de quien llama.
+- **Plazas calientes con sus pasarelas** (item 8): `apply_gateways` /
+  `applyGateways`, compartido por `SandboxPool.take` y la flota.
+- **`--scale-in-after`** (item 10) y **renovación opcional de la clave de
+  corta duración de Bedrock** (item 11: `renew_gateway_keys`, extra
+  `bedrock-keys`, peer `@aws/bedrock-token-generator`), apagada por defecto.
+- **`rayito setup --caps-image` publica `rayito-base-caps`** (item 4),
+  apagada por defecto porque cuesta.
+- **`--create-secret`** (items 2 y 3): la clave por preset y sin el prefijo
+  `rayito/` duplicado; reutiliza el secreto de 0.16 si es el único.
+- **Host del agente** (items 1 y 7): `httpx`/`httpcore` en WARNING y sin
+  `AttributeError` tras una petición mal formada.
+- **OpenCode sin fichero de proyecto** (item 5): `AGENTS.md` y los permisos
+  de `opencode.json`.
+- **e2e de TypeScript** (item 6): un nombre de secreto único por test.
+
+Pendiente: aceptación en AWS (Z.4), PR único a `main` (Z.5) y archivo del
+cambio (Z.6).
+
 ---
 
 ## Orden de trabajo dentro de cada hito

@@ -46,7 +46,7 @@ export const DEFAULT_AGENT_RUNTIME = "opencode";
 export const DEFAULT_AGENT_TIMEOUT_MS = DEFAULT_AGENT_TIMEOUT_SECONDS * 1000;
 /** La ejecución es desatendida: una acción `"ask"` la colgaría hasta el
  * timeout. */
-const ASK_ACTION = "ask";
+export const ASK_ACTION = "ask";
 /**
  * Denegadas por defecto, por debajo de las entradas del llamante:
  * `question` espera una respuesta humana que nunca llega, y
@@ -85,7 +85,9 @@ export const MAX_TOOL_PATTERN_LEN = 256;
 const NAME_PATTERN = new RegExp(`^[a-z0-9][a-z0-9_-]{0,${MAX_NAME_LEN - 1}}$`);
 const TOOL_NAME_PATTERN = new RegExp(`^[a-z0-9*][a-z0-9_*-]{0,${MAX_NAME_LEN - 1}}$`);
 const MODEL_ID_PATTERN = new RegExp(`^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,${MAX_MODEL_ID_LEN - 1}}$`);
-const REGION_PATTERN = /^[a-z]{2}(-[a-z]+)+-[0-9]+$/;
+/** Una región de AWS (`us-east-1`, `us-gov-west-1`): también valida la región
+ * que sale del host de un upstream de Bedrock (`gatewayRegion`). */
+export const AWS_REGION_PATTERN = /^[a-z]{2}(-[a-z]+)+-[0-9]+$/;
 const ENV_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 /** Las claves opcionales de `[model]` con el nombre de una variable de
  * entorno que lee el código del agente (el id, la URL base y la clave) y su
@@ -177,7 +179,7 @@ export function validateEnvName(name: unknown, label: string): string {
 }
 
 export function validateRegion(region: unknown, label: string): string {
-  if (typeof region !== "string" || !REGION_PATTERN.test(region)) {
+  if (typeof region !== "string" || !AWS_REGION_PATTERN.test(region)) {
     throw new InvalidArgumentError(`${label} debe ser una región de AWS ('us-east-1')`);
   }
   return region;

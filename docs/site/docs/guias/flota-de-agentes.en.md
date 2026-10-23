@@ -27,7 +27,7 @@ and `ScalingOptions`, and its flag in `rayito agent deploy`.
 | `max_vms` (`--max-vms`) | VMs at most | 1 | 64 |
 | `warm_vms` (`--warm`) | parked (suspended) slots that absorb a spike | 0 | `max_vms - min_vms` |
 | `sessions` (`--sessions`) | `shared` (several sessions per VM) or `dedicated` (one VM per session) | `shared` | |
-| `scale_in_after_seconds` | idle time after which a VM above `min_vms` ends by itself | 900 s | 60 s |
+| `scale_in_after_seconds` (`--scale-in-after`, since 0.17) | idle time after which a VM above `min_vms` ends by itself | 900 s | 60 s |
 | `idle` (`--idle`) | idle time after which a VM is suspended and resumed when called | no suspension | see [Pause and resume](pausar-reanudar.md) |
 
 The `max_concurrency` limit comes from the connections a MicroVM admits (8 per
@@ -119,12 +119,13 @@ from the non-terminated MicroVMs of its image without resuming any, and a
 session id from the first call still leads to its VM. For the reconnected fleet's
 replies to return the handle too, pass the same `scaling` you deployed it with.
 
-A fleet reconnected without `project=` routes and queries, but it cannot start
-a warm slot or create a VM: the first session that needs one raises
-`InvalidArgumentException`. For it to scale too, pass the project
-(`AgentProject.detect(folder)` or `AgentProject.load(...)`) to
-`AgentFleet.connect()`. Measured on real AWS with a CLI deploy using
-`--warm 1`.
+Since 0.17, a fleet reconnected with only its name and token can also create
+VMs and start warm slots: it reads the [recipe](#la-receta-de-la-flota) that
+`deploy_agent()` saved. Without a recipe (a 0.16 fleet, or one deployed with
+`--no-save-recipe`) and without `project=`, the fleet routes and queries but
+cannot create a VM: the first session that needs one raises
+`InvalidArgumentException`; pass the project then
+(`AgentProject.detect(folder)` or `AgentProject.load(...)`).
 
 A session id you choose yourself (a chat thread) is only remembered inside the
 process that deployed the fleet. To find it from another process in `dedicated`
@@ -132,6 +133,120 @@ mode, turn on the optional metadata index
 ([Metadata index](../funciones-opcionales/indice-de-metadatos.md), with its
 cost); without it, an unknown id starts a new VM and the response carries the
 routable identifier you must keep.
+
+## The fleet recipe { #la-receta-de-la-flota }
+
+<small>Since 0.17.0.</small>
+
+After starting the fleet, `deploy_agent()` (and `rayito agent deploy`) saves its
+**recipe** in Parameter Store, at `/rayito/agents/<name>/recipe`: the project as
+it ended up after the flags (`--env`, `--secret-env-from`, `--allow-out`, the
+gateways), the image version, the gateway presets, the scaling and whether keys
+are renewed. It only holds secret **names**, never their values or the access
+token.
+
+With it, `AgentFleet.connect(name, access_token=...)` from any process (or
+`rayito agent invoke|status|stop <name>`) creates VMs like the deployed ones,
+opens the warm slots with their gateways and `status()` gives the real scaling.
+An explicit `scaling=` or `project=` wins over the recipe, and
+`use_recipe=False` (`useRecipe: false`) ignores it: the fleet is the 0.16 one.
+
+=== "Python"
+
+    ```python
+    from rayito import AgentFleet
+
+    fleet = AgentFleet.connect("mi-agente", access_token="<token-de-la-flota>")
+    status = fleet.status()
+    print(status.scaling_source, status.min_vms, status.max_vms)
+    fleet.invoke("Hola")
+    ```
+
+=== "TypeScript"
+
+    ```ts
+    import { AgentFleet } from "rayito";
+
+    const fleet = await AgentFleet.connect("mi-agente", { accessToken: "<token-de-la-flota>" });
+    const status = await fleet.status();
+    console.log(status.scalingSource, status.minVms, status.maxVms);
+    await fleet.invoke("Hola");
+    ```
+
+- **Status.** `FleetStatus.scaling_source` (`scalingSource`) tells where the
+  scaling comes from: `explicit`, `project`, `recipe` or `default`. With
+  `default` (no project and no recipe) `rayito agent status` prints
+  `members: N (escalado desconocido: sin proyecto ni receta)` instead of a
+  `min 1, max 1` that does not describe the fleet.
+- **Deletion.** `fleet.stop()` and `rayito agent stop <name>` delete the recipe
+  if this process saved or read it; `stop(keep_recipe=True)` (`--keep-recipe`)
+  keeps it.
+- **Warnings.** A failure to save it never fails the deploy: it leaves a
+  warning with a code (`recipe_access_denied`, `recipe_not_saved`,
+  `recipe_too_large`) in the log and in `warnings` of `--json`. When reading,
+  no permission is `recipe_access_denied`, and an unreadable recipe or a
+  Parameter Store that does not answer (no SSM VPC endpoint, throttling) is
+  `recipe_unreadable`. A recipe that asked to renew the Bedrock key does not
+  turn it on for the connecting process: without `renew_gateway_keys=True`
+  the warning is `recipe_renewal_ignored` and nothing is renewed. A fleet
+  named `.` or `..` has no recipe (`recipe_not_saved`); in every case the fleet behaves as in 0.16, and
+  `rayito agent stop <name>` still terminates its VMs (if it cannot delete
+  the recipe either, it reports that error at the end). After
+  `stop`, Parameter Store takes about 30 s before it lets another parameter use
+  the same name: an immediate `deploy` warns `recipe_not_saved`.
+- **Size.** A recipe is stored as JSON if it fits in 4,096 bytes (a standard
+  parameter) and compressed otherwise; if it still does not fit (very long
+  instructions), the warning is `recipe_too_large` and the previous one is
+  deleted.
+- **`--env` and secrets.** `rayito agent deploy` rejects an `--env` whose name
+  looks like a secret (`*_TOKEN`, `*_KEY`, `*_SECRET`, `*_PASSWORD`..., or
+  with a `PASS`, `PASSWD`, `PAT`, `CREDENTIAL` or `CREDENTIALS` segment, such
+  as `DB_PASS` or `GITHUB_PAT`, or with `AUTH` or `BEARER` as the last segment
+  or next to `TOKEN`, `KEY` or `HEADER`, such as `X_AUTH` or `AUTH_HEADER`;
+  `AUTH_MODE` or `AUTHOR_NAME` are accepted): use
+  `--secret-env NAME=<secret>` or `--secret-env-from <secret>`, so the recipe
+  only keeps the name. This breaks 0.16 command lines for `*_SECRET`. Note:
+  the rule belongs to the `--env` flag; the project's `env` values
+  (`[env]` in `rayito-agent.toml` or `env=` in the library) are stored as is
+  in the recipe, readable by anyone with `ssm:GetParameter` on
+  `parameter/rayito/agents/*`. Nothing secret in `env`, not even a URL with
+  credentials: it belongs in `secret_env`.
+- **Who can write it.** The recipe decides the image, egress, `env` and each
+  gateway's upstream and secrets for every process that connects by name:
+  write access to `parameter/rayito/agents/*` amounts to deploy rights. That
+  is why `SandboxLauncherPolicy` only reads and deletes it, and
+  `ssm:PutParameter` is in `ImagePublisherPolicy` and `CallerPolicy`.
+
+!!! info "Cost and activation"
+    - **Turns on:** `deploy_agent()` / `rayito agent deploy` to MicroVMs, by
+      default. It is the only Rayito feature on by default (ADR-034): the
+      standard parameter is free and its KMS request falls in the free tier.
+    - **AWS resources and calls:** one standard `SecureString` parameter per
+      fleet (`PutParameter` on deploy, `GetParameter` when reconnecting without
+      a project, `DeleteParameter` on stop), encrypted with the AWS managed key
+      `aws/ssm`.
+    - **Approximate cost:** standard parameters have no charge; each write and
+      each read is one KMS request (20,000 free per month, then $0.03 per
+      10,000). Checked on 2026-10-22:
+      [Systems Manager](https://aws.amazon.com/systems-manager/pricing/) and
+      [KMS](https://aws.amazon.com/kms/pricing/).
+    - **IAM:** `ssm:PutParameter` (the deployer: `CallerPolicy` or
+      `ImagePublisherPolicy`),
+      `ssm:GetParameter` and `ssm:DeleteParameter` on
+      `parameter/rayito/agents/*` (the `AgentRecipe` statement of
+      [IAM](../operacion/iam.md)); no KMS permission.
+    - **How to turn it off:** `AgentDeployOptions(save_recipe=False)`
+      (`saveRecipe: false`, `--no-save-recipe`).
+    - **Example:** `rayito agent deploy ./mi-agente --no-save-recipe`.
+
+## Warm slots and gateways { #plazas-calientes-y-pasarelas }
+
+A parked slot is born without the project's gateways. Since 0.17, the fleet
+opens them when it takes the slot, also when another process parked it (a fleet
+reconnected with the recipe or with `project=`), through the same path as
+`SandboxPool.take(gateways=)`; if it cannot open them, it terminates the slot
+and uses another VM. Before, a reconnected fleet could start the agent without
+the model gateway, and deploys had to use `--warm 0`.
 
 ## The queue and the 429 { #la-cola-y-el-429 }
 
@@ -146,7 +261,17 @@ after the deadline, raises `CapacityException` (`code = "agent_capacity"`;
 - **Scaling in:** VMs above `min_vms` carry a deadline of
   `scale_in_after_seconds` that the fleet renews every time it uses them; an
   idle VM ends by itself (the VM's `rayd` already knows how to terminate
-  itself), with no control-plane call.
+  itself), with no control-plane call. While it serves any invocation, the
+  deadline is never shorter than the request's, and it goes back to
+  `scale_in_after_seconds` only when the last one ends. For `rayd` to accept that
+  deadline, a fleet that can grow (`max_vms > min_vms`) creates all its VMs
+  and slots with a logical deadline (`on_timeout="kill"` and `max_lifetime` =
+  `serve.timeout_seconds + 60`); a base VM still lives
+  `serve.timeout_seconds`. A fixed-size fleet creates its VMs as before. Up
+  to 0.16 scale-in did not happen: VMs were created without a logical
+  deadline and `rayd` rejected the `set_timeout`. A VM created that way (by
+  0.16) is not scaled in: the fleet warns once; end it with `stop()` or
+  redeploy.
 - **Suspending:** `idle` suspends an unused VM and resumes it when called; a
   suspended VM bills no compute, only its snapshot storage.
 - **Restarting:** if the user's app dies, the host relaunches it with growing
@@ -170,7 +295,7 @@ after the deadline, raises `CapacityException` (`code = "agent_capacity"`;
       and `Sandbox.kill()`; with a session index, those of the
       [metadata index](../funciones-opcionales/indice-de-metadatos.md).
     - **How to turn it off:** `fleet.stop()` or `rayito agent stop <name>`
-      terminate every VM of the fleet; without calling `deploy_agent()` nothing
+      terminate every VM of the fleet (and delete its recipe); without calling `deploy_agent()` nothing
       is created, and the defaults leave no slots or extra VMs. By name only VMs
       that belong to an agent are terminated: a tokenless `Health` reads the
       labels of the `RUNNING` ones, and if the image has one without them, none

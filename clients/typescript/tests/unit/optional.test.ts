@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { InvalidArgumentError } from "../../src/errors.js";
-import { loadOptionalPeer } from "../../src/optional.js";
+import { isMissingOptionalPeer, loadOptionalPeer } from "../../src/optional.js";
 
 const MISSING_SPECIFIER = "rayito-test-definitely-not-installed";
 
@@ -171,5 +171,20 @@ describe("@opentelemetry/api sólo se importa como tipo", () => {
       }
     }
     expect(offenders).toEqual([]);
+  });
+});
+
+describe("isMissingOptionalPeer", () => {
+  test("reconoce el error de loadOptionalPeer para ese mismo peer", async () => {
+    const error = await loadOptionalPeer(MISSING_SPECIFIER, "una función").catch((e: unknown) => e);
+    expect(isMissingOptionalPeer(error, MISSING_SPECIFIER)).toBe(true);
+    expect(isMissingOptionalPeer(error, "@aws-sdk/client-ssm")).toBe(false);
+  });
+
+  test("no confunde otro InvalidArgumentError ni otro error", () => {
+    expect(isMissingOptionalPeer(new InvalidArgumentError("otra cosa"), MISSING_SPECIFIER)).toBe(
+      false,
+    );
+    expect(isMissingOptionalPeer(new Error("boom"), MISSING_SPECIFIER)).toBe(false);
   });
 });

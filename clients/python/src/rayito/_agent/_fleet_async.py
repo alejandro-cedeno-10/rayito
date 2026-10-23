@@ -12,13 +12,21 @@ import asyncio
 import logging
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
+from datetime import UTC, datetime
 from types import TracebackType
 from typing import TYPE_CHECKING, Any, Self
 
+from rayito._agent import _fleet_recipe_aws as recipe_aws
 from rayito._agent._deployment_async import AsyncAgentDeployment, default_async_transport
 from rayito._agent._deployment_base import labels_for, parse_labels
 from rayito._agent._events import AgentEvent, AgentResult
-from rayito._agent._fleet import NO_PROJECT_MESSAGE, NO_TOKEN_MESSAGE, Lease
+from rayito._agent._fleet import (
+    NO_PROJECT_MESSAGE,
+    NO_TOKEN_MESSAGE,
+    PARKED_SLOT_MESSAGE,
+    FleetKeyRenewal,
+    Lease,
+)
 from rayito._agent._fleet_base import (
     AGENT_CAPACITY_CODE,
     AGENT_FLEET_BUSY_RETRY_SECONDS,
@@ -27,15 +35,23 @@ from rayito._agent._fleet_base import (
     AGENT_FLEET_SESSION_LABEL,
     AGENT_FLEET_START_CONCURRENCY,
     AGENT_VM_LOST_CODE,
+    UNMANAGED_LIFETIME_MESSAGE,
+    FleetLifetime,
     FleetMemberStatus,
     FleetSettings,
     FleetStatus,
     Member,
     MemberListing,
+    ParkedSlotException,
     capacity_message,
+    corrected_cap,
     event_with_handle,
+    fleet_lifetime,
     fleet_settings_of,
+    hold_seconds,
     is_lost,
+    lifetime_seconds,
+    listed_cap,
     mark_extras,
     new_reservation,
     owned_ids,
@@ -45,12 +61,22 @@ from rayito._agent._fleet_base import (
     record_busy,
     record_ping,
     route_of,
+    sandbox_cap,
     select_members,
     session_label,
     surplus,
     vm_lost_message,
     with_handle,
 )
+from rayito._agent._fleet_recipe import FleetRecipe, recipe_of, renewal_on_connect
+from rayito._agent._fleet_recipe_aws import (
+    RECIPE_SAVED,
+    FleetRecipeStore,
+    forget_recipe,
+    load_recipe,
+    store_recipe,
+)
+from rayito._agent._gateway_keys import GatewayKeyRenewer
 from rayito._agent._project_base import request_timeout
 from rayito._agent._project_service_async import AsyncProjectService
 from rayito._agent._scaling_domain import (
@@ -61,7 +87,9 @@ from rayito._agent._scaling_domain import (
     validate_caller_session_id,
 )
 from rayito._agent._stream_base import require_prompt_or_input
+from rayito._lifecycle_base import LifetimeBeyondCapException
 from rayito._limits import AGENT_SERVICE_READY_MARKER_PATH
+from rayito._sandbox_base import DEFAULT_REQUEST_TIMEOUT_SECONDS
 from rayito.exceptions import (
     AgentException,
     CapacityException,
@@ -251,16 +279,37 @@ class AsyncAgentFleet:
         transport_factory: Any = default_async_transport,
         clock: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+        renew_gateway_keys: bool = False,
+        recipe: FleetRecipe | None = None,
+        recipe_store: FleetRecipeStore | None = None,
+        key_renewer: GatewayKeyRenewer | None = None,
     ) -> None:
         if project is None and name is None:
             raise InvalidArgumentException("AsyncAgentFleet necesita project o name")
         self._project = project
         self._name = name or (project.template or project.name if project else "")
         self._token = access_token
-        self._settings: FleetSettings = fleet_settings_of(project, scaling)
-        self._service = service or (
-            AsyncProjectService(project, transport_factory=transport_factory) if project else None
+        self._settings: FleetSettings = fleet_settings_of(
+            project, scaling, recipe.scaling if recipe else None
         )
+        self._service = service or (
+            AsyncProjectService(
+                project,
+                transport_factory=transport_factory,
+                image_version=recipe.image_version if recipe else None,
+            )
+            if project
+            else None
+        )
+        self._key_renewal = FleetKeyRenewal(
+            project,
+            enabled=renew_gateway_keys,
+            key_renewer=key_renewer,
+            region=region,
+            session=session,
+        )
+        self._recipe_store = recipe_store
+        self._recipe_known = recipe is not None
         self._directory = directory or AsyncSandboxDirectory(region=region, session=session)
         self._pool_factory = pool_factory
         self._pool_backend = pool_backend
@@ -286,12 +335,27 @@ class AsyncAgentFleet:
         scaling: ScalingOptions | None = None,
         region: str | None = None,
         session: Any = None,
+        use_recipe: bool = True,
+        renew_gateway_keys: bool | None = None,
         **dependencies: Any,
     ) -> Self:
-        """Reconstruye la flota de la imagen `name` en cualquier proceso: todos
-        sus MicroVMs no terminados, sin reanudar ninguno (un VM se abre al
-        usarlo). Sin `project` la flota enruta y consulta pero no puede crear
-        VMs."""
+        """Como `AgentFleet.connect()`: sin `project` y con `use_recipe` lee
+        la receta de la flota (un `GetParameter`, en un hilo) y con ella crea
+        VMs iguales a los del despliegue; `scaling=` explícito gana a la
+        receta y las claves sólo se renuevan con `renew_gateway_keys=True`
+        (la receta nunca lo activa: `recipe_renewal_ignored`)."""
+        recipe: FleetRecipe | None = None
+        if project is None and use_recipe:
+            store = dependencies.pop("recipe_store", None) or recipe_aws.default_recipe_store(
+                region, session
+            )
+            loaded = await asyncio.to_thread(load_recipe, store, name)
+            if loaded is not None:
+                recipe, project = loaded
+            dependencies["recipe_store"] = store
+        renew, warning = renewal_on_connect(recipe, renew_gateway_keys)
+        if warning is not None:
+            recipe_aws.warn_recipe(warning)
         fleet = cls(
             project,
             name=name,
@@ -299,6 +363,8 @@ class AsyncAgentFleet:
             scaling=scaling,
             region=region,
             session=session,
+            renew_gateway_keys=renew,
+            recipe=recipe,
             **dependencies,
         )
         await fleet.refresh_members()
@@ -375,7 +441,12 @@ class AsyncAgentFleet:
         )
         live = [item for item in listing if item.sandbox_id not in parked]
         known = {member.sandbox_id: member for member in self._members}
-        self._members = [known.get(item.sandbox_id) or Member(item.sandbox_id) for item in live]
+        lifetime = self._lifetime()
+        self._members = [
+            known.get(item.sandbox_id)
+            or Member(item.sandbox_id, cap=listed_cap(item.started_at, lifetime))
+            for item in live
+        ]
         mark_extras(self._members, self.scaling)
 
     async def reconcile(self) -> None:
@@ -410,6 +481,7 @@ class AsyncAgentFleet:
             ),
             queue_timeout_seconds=self._settings.queue_timeout_seconds,
             max_concurrency=self._settings.max_concurrency,
+            scaling_source="explicit",
         )
         await self.reconcile()
 
@@ -420,9 +492,11 @@ class AsyncAgentFleet:
         pool persistente (`pool_backend`)."""
         await self._close_pool(drain=self._pool_backend is None)
 
-    async def stop(self) -> None:
-        """Termina todos los VMs de la flota y las plazas del pool. Sigue
-        aunque uno falle y, al final, lanza el primer error."""
+    async def stop(self, *, keep_recipe: bool = False) -> None:
+        """Termina todos los VMs de la flota y las plazas del pool y, si este
+        proceso guardó o leyó su receta, la borra (`keep_recipe=True` la
+        conserva). Sigue aunque uno falle y, al final, lanza el primer
+        error."""
         errors: list[Exception] = []
         await self._close_pool(drain=True, errors=errors)
         members, self._members = list(self._members), []
@@ -431,6 +505,12 @@ class AsyncAgentFleet:
                 await self._terminate(member)
             except Exception as exc:
                 logger.warning("no se pudo terminar un VM de la flota", exc_info=True)
+                errors.append(exc)
+        if self._recipe_known and not keep_recipe:
+            try:
+                await asyncio.to_thread(forget_recipe, self._recipes(), self._name)
+                self._recipe_known = False
+            except SandboxException as exc:
                 errors.append(exc)
         if errors:
             raise errors[0]
@@ -454,6 +534,7 @@ class AsyncAgentFleet:
             max_vms=scaling.max_vms,
             warm_vms=scaling.warm_vms,
             warm_ready=warm_ready,
+            scaling_source=self._settings.scaling_source,
         )
 
     async def wait_warm(self, timeout: float, poll: float) -> bool:
@@ -553,6 +634,7 @@ class AsyncAgentFleet:
             lease = await self._lease(session_id, deadline)
             try:
                 deployment = await self._open_or_connect(lease.member)
+                await self._hold_lifetime(lease.member)
                 return lease, await operation(deployment, lease.inner)
             except AgentException as exc:
                 self._unlease(lease)
@@ -699,15 +781,19 @@ class AsyncAgentFleet:
         project = self._require_project()
         service = self._service
         assert service is not None
+        await self._renew_keys()
         label = self._index_label(session_id)
+        lifetime = self._lifetime()
         if extra and self._pool is not None and label is None:
             sandbox = await self._pool.take(gateways=dict(project.gateways))
+            cap = sandbox_cap(sandbox)
             try:
                 deployment = await service.serve(sandbox)
             except BaseException:
                 await self._kill_quietly(sandbox)
                 raise
         else:
+            cap = listed_cap(datetime.now(UTC), lifetime)
             deployment = await service.deploy(
                 region=self._region,
                 session=self._session,
@@ -715,10 +801,17 @@ class AsyncAgentFleet:
                 keep_on_failure=self._keep_on_failure,
                 metadata=None if label is None else {AGENT_FLEET_SESSION_LABEL: label},
                 index=None if label is None else self._index,
+                lifetime=lifetime,
             )
-        member = Member(deployment.sandbox_id, deployment=deployment, extra=extra)
+        member = Member(deployment.sandbox_id, deployment=deployment, extra=extra, cap=cap)
         await self._limit_lifetime(member)
         return member
+
+    def _lifetime(self) -> FleetLifetime | None:
+        """Con qué vida se crean los VMs de la flota (`fleet_lifetime`):
+        ninguna propia si la flota no puede crecer o no tiene proyecto."""
+        project = self._project
+        return None if project is None else fleet_lifetime(project, self.scaling)
 
     def _index_label(self, session_id: str | None) -> str | None:
         """La etiqueta de sesión de un VM dedicado, sólo con índice."""
@@ -735,13 +828,57 @@ class AsyncAgentFleet:
 
     async def _limit_lifetime(self, member: Member) -> None:
         """A un VM por encima de `min_vms` se le acota la vida: `rayd` lo
-        termina solo tras `scale_in_after_seconds`, y cada uso la renueva."""
-        if not member.extra or member.deployment is None:
+        termina solo tras `scale_in_after_seconds` sin uso. Se llama al
+        crearlo, al abrirlo y al soltar cada invocación."""
+        if member.extra:
+            await self._set_lifetime(member, self.scaling.scale_in_after_seconds)
+
+    async def _hold_lifetime(self, member: Member) -> None:
+        """Antes de una invocación: a un VM sobrante se le da al menos lo que
+        puede durar la petición (`hold_seconds`), y a uno que este proceso
+        acortó y ahora es base (`mark_extras` lo ascendió) se le devuelve
+        toda la vida hasta su tope."""
+        if member.extra:
+            timeout = request_timeout(self._project) if self._project else None
+            await self._set_lifetime(member, hold_seconds(self.scaling, timeout))
+        elif member.limited:
+            await self._set_lifetime(member, None)
+
+    async def _set_lifetime(
+        self, member: Member, desired: float | None, *, retry: bool = True
+    ) -> None:
+        """Un `set_timeout` acotado al tope de `rayd` del VM
+        (`lifetime_seconds`). `desired=None` pide todo lo que queda hasta el
+        tope y deja el VM sin acortar. Si `rayd` responde que el plazo pasa
+        de su tope (la estimación de la flota era tardía), se corrige
+        `member.cap` con el tope que informa y se reintenta una vez; nunca
+        se marca el VM. Cualquier otro rechazo por argumento es un VM creado
+        sin plazo lógico (antes de 0.17 o con `max_vms == min_vms`): se avisa
+        una vez y no se reintenta."""
+        deployment = member.deployment
+        if deployment is None or member.lifetime_rejected:
+            return
+        seconds = lifetime_seconds(desired, member.cap, datetime.now(UTC))
+        if seconds is None:
             return
         try:
-            await member.deployment.set_timeout(self.scaling.scale_in_after_seconds)
+            await deployment.set_timeout(seconds)
+        except LifetimeBeyondCapException as exc:
+            cap = corrected_cap(exc, member.cap) if retry else None
+            if cap is None:
+                logger.debug("el plazo de un VM de la flota pasaba de su tope; no se reintenta")
+                return
+            member.cap = cap
+            await self._set_lifetime(member, desired, retry=False)
+            return
+        except InvalidArgumentException:
+            member.lifetime_rejected = True
+            logger.warning(UNMANAGED_LIFETIME_MESSAGE)
+            return
         except SandboxException:
             logger.warning("no se pudo acotar la vida de un VM sobrante", exc_info=True)
+            return
+        member.limited = desired is not None
 
     async def _open_or_connect(self, member: Member) -> AsyncAgentDeployment:
         """El cliente del VM: el que ya hay o, la primera vez, conecta con el
@@ -750,18 +887,38 @@ class AsyncAgentFleet:
         if member.deployment is not None:
             return member.deployment  # type: ignore[no-any-return]
         sandbox = await self._directory.connect(member.sandbox_id, self._require_token())
-        deployment = await self._serving(sandbox)
+        deployment = await self._serving(member, sandbox)
         member.deployment = deployment
+        member.cap = sandbox_cap(sandbox) or member.cap
         await self._limit_lifetime(member)
         return deployment
 
-    async def _serving(self, sandbox: Any) -> AsyncAgentDeployment:
+    async def _serving(self, member: Member, sandbox: Any) -> AsyncAgentDeployment:
         if await sandbox.files.exists(AGENT_SERVICE_READY_MARKER_PATH):
             return await self._deployment_of(sandbox)
         service = self._service
         if service is None:
             raise InvalidArgumentException(NO_PROJECT_MESSAGE)
+        await self._open_parked(member, sandbox)
         return await service.serve(sandbox)
+
+    async def _open_parked(self, member: Member, sandbox: Any) -> None:
+        """Como `AgentFleet._open_parked`: abre las pasarelas del proyecto en
+        una plaza aparcada antes de arrancar el host, o la sustituye."""
+        project = self._project
+        if project is None or not project.gateways:
+            return
+        from rayito.sandbox_async.pool import apply_gateways
+
+        await self._renew_keys()
+        try:
+            await apply_gateways(
+                sandbox, dict(project.gateways), timeout=DEFAULT_REQUEST_TIMEOUT_SECONDS
+            )
+        except Exception as exc:
+            logger.warning("una plaza aparcada no pudo abrir sus pasarelas: se sustituye")
+            await self._replace(member)
+            raise ParkedSlotException(PARKED_SLOT_MESSAGE) from exc
 
     async def _deployment_of(self, sandbox: Any) -> AsyncAgentDeployment:
         labels = parse_labels(sandbox.metadata)
@@ -786,6 +943,8 @@ class AsyncAgentFleet:
         except SandboxNotFoundException:
             self._drop(member)
             return False
+        except ParkedSlotException:
+            return False
         if not force and ping_is_fresh(member, self._clock()):
             return member.health != "unavailable"
         status: DeploymentStatus = await deployment.status()
@@ -809,19 +968,24 @@ class AsyncAgentFleet:
 
     async def _release(self, lease: Lease, inner_session: str | None) -> None:
         """Suelta la invocación en curso: la reserva de un VM dedicado pasa a
-        ser la sesión real y a un VM sobrante se le renueva la vida."""
-        self._unlease(lease, keep=inner_session)
-        if inner_session is not None:
+        ser la sesión real y, si era la última invocación en curso de un VM
+        sobrante, su plazo vuelve a `scale_in_after_seconds`. Mientras quede
+        otra en curso, sigue el plazo de invocación (`hold_seconds`): acortarlo
+        la cortaría a media llamada."""
+        if self._unlease(lease, keep=inner_session):
             await self._limit_lifetime(lease.member)
 
     @staticmethod
-    def _unlease(lease: Lease, *, keep: str | None = None) -> None:
+    def _unlease(lease: Lease, *, keep: str | None = None) -> bool:
+        """Quita la invocación en curso del VM; devuelve si el VM se quedó
+        sin ninguna."""
         member = lease.member
         member.inflight = max(0, member.inflight - 1)
         if lease.reservation is not None:
             member.bound.discard(lease.reservation)
             if keep is not None:
                 member.bound.add(keep)
+        return member.inflight == 0
 
     def _drop(self, member: Member) -> None:
         if member in self._members:
@@ -873,6 +1037,39 @@ class AsyncAgentFleet:
                 await self._terminate(member)
             except Exception:
                 logger.warning("no se pudo terminar un VM de un arranque fallido", exc_info=True)
+
+    # ------------------------------------------------------- recipe and keys
+
+    def _recipes(self) -> FleetRecipeStore:
+        if self._recipe_store is None:
+            self._recipe_store = recipe_aws.default_recipe_store(self._region, self._session)
+        return self._recipe_store
+
+    async def _save_recipe(self) -> str:
+        """Como `AgentFleet._save_recipe`, con Parameter Store en un hilo."""
+        project = self._require_project()
+        recipe = recipe_of(
+            project,
+            name=self._name,
+            image_version=getattr(self._service, "image_version", None),
+            scaling=self.scaling,
+            renew_gateway_keys=self._key_renewal.enabled,
+        )
+        outcome = await asyncio.to_thread(store_recipe, self._recipes(), recipe)
+        if outcome == RECIPE_SAVED:
+            self._recipe_known = True
+        return outcome
+
+    async def _renew_keys(self) -> None:
+        """Como `AgentFleet._renew_keys`: la renovación (síncrona) corre en
+        un hilo y los VMs abiertos refrescan su pasarela."""
+        if not self._key_renewal.enabled or not await asyncio.to_thread(self._key_renewal.renew):
+            return
+        for deployment in self.deployments:
+            try:
+                await deployment.refresh_gateways()
+            except SandboxException:
+                logger.warning("no se pudo refrescar la pasarela de un VM de la flota")
 
     # -------------------------------------------------------------- warm pool
 

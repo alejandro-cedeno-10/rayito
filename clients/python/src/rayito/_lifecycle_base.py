@@ -52,6 +52,7 @@ __all__ = [
     "SANDBOX_TIMEOUT_DETAIL",
     "LifecycleBlock",
     "LifecyclePlan",
+    "LifetimeBeyondCapException",
     "TimeoutRequest",
     "auto_resume_reopen",
     "beyond_cap_error",
@@ -458,13 +459,28 @@ def cap_text(cap_unix_ms: int) -> str:
     return datetime.fromtimestamp(cap_unix_ms / 1000, tz=UTC).isoformat(timespec="seconds")
 
 
-def beyond_cap_error(request: TimeoutRequest, cap_unix_ms: int | None) -> InvalidArgumentException:
+class LifetimeBeyondCapException(InvalidArgumentException):
+    """`set_timeout` más allá del tope: un `InvalidArgumentException` que
+    además lleva el tope que informó `rayd` (`cap_unix_ms`, `None` si el
+    rechazo es local o no lo trae), para que quien acota la vida de un VM
+    (la flota) distinga este rechazo de un sandbox sin plazo lógico y corrija
+    su estimación del tope."""
+
+    def __init__(self, message: str, cap_unix_ms: int | None) -> None:
+        super().__init__(message)
+        self.cap_unix_ms = cap_unix_ms
+
+
+def beyond_cap_error(
+    request: TimeoutRequest, cap_unix_ms: int | None
+) -> LifetimeBeyondCapException:
     cap = "" if cap_unix_ms is None else f"tope a las {cap_text(cap_unix_ms)}; "
-    return InvalidArgumentException(
+    return LifetimeBeyondCapException(
         f"{request.call} supera el max_lifetime del sandbox ({cap}max_lifetime se fija en "
         f"create() y como mucho vale {MAX_DURATION_SECONDS} s): la vida de la plataforma no se "
         "puede extender (no existe UpdateMicrovm); usa reincarnate() para seguir con los "
-        "ficheros en un sandbox nuevo"
+        "ficheros en un sandbox nuevo",
+        cap_unix_ms,
     )
 
 

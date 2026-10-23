@@ -18,7 +18,7 @@
 import { randomBytes } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import {
   type AgentCoreFleet,
   AgentError,
@@ -26,6 +26,7 @@ import {
   type AgentResult,
   deployAgent,
 } from "../../src/index.js";
+import { DEFAULT_SECRET_PREFIX } from "../../src/secrets/names.js";
 import {
   BASE,
   GATEWAY_NAME as BEDROCK_GATEWAY,
@@ -51,7 +52,7 @@ import {
   OPENAI_COMPATIBLE_SAMPLE,
   REGION,
   RUN_ID,
-  RunSecrets,
+  type RunSecrets,
   randomValue,
   runtimeEnvironment,
   SECRET_ENV_NAMES,
@@ -61,6 +62,7 @@ import {
   stagedProject,
   TRIAGE_GRAPH,
   URGENT_TICKET,
+  withRunSecrets,
 } from "./agnostic-deploy-support.js";
 import { e2eEnabled } from "./helpers.js";
 
@@ -131,43 +133,47 @@ async function checkStructuredGraph(fleet: AgentFleet | AgentCoreFleet): Promise
   await expectInputError(() => fleet.invoke(PROMPT), "input_required");
 }
 
+/** Los nombres de los tres secretos de `secret-env-echo` que crea una prueba. */
+interface SecretEnvNames {
+  readonly dbUrl: string;
+  readonly tickets: string;
+  readonly config: string;
+}
+
+/** Crea los secretos de `secret-env-echo` con nombres propios de `scope` (destino y prueba). */
 async function createdSecretEnv(
   secrets: RunSecrets,
-): Promise<{ values: Record<string, string>; ticketsArn: string }> {
+  scope: string,
+): Promise<{ values: Record<string, string>; names: SecretEnvNames }> {
   const values = Object.fromEntries(SECRET_ENV_NAMES.map((name) => [name, randomValue()]));
-  await secrets.create(secretName("ts-db-url"), values.DATABASE_URL as string);
-  const ticketsArn = await secrets.create(secretName("ts-tickets"), {
-    token: values.TICKETS_TOKEN as string,
-  });
-  await secrets.create(secretName("ts-config"), {
+  const names: SecretEnvNames = {
+    dbUrl: secretName(scope, "ts-db-url"),
+    tickets: secretName(scope, "ts-tickets"),
+    config: secretName(scope, "ts-config"),
+  };
+  await secrets.create(names.dbUrl, values.DATABASE_URL as string);
+  await secrets.create(names.tickets, { token: values.TICKETS_TOKEN as string });
+  await secrets.create(names.config, {
     DB_HOST: values.APP_DB_HOST as string,
     DB_USER: randomValue(),
   });
-  return { values, ticketsArn };
+  return { values, names };
 }
 
-function secretEnvFlags(): string[] {
+function secretEnvFlags(names: SecretEnvNames): string[] {
   return [
     "--secret-env",
-    `DATABASE_URL=${secretName("ts-db-url")}`,
+    `DATABASE_URL=${names.dbUrl}`,
     "--secret-env",
-    `TICKETS_TOKEN=${secretName("ts-tickets")}#token`,
+    `TICKETS_TOKEN=${names.tickets}#token`,
     "--secret-env-from",
-    `${secretName("ts-config")},prefix=APP_,keys=DB_HOST`,
+    `${names.config},prefix=APP_,keys=DB_HOST`,
   ];
 }
 
 function expectedDigests(values: Record<string, string>): Record<string, string> {
   return Object.fromEntries(Object.entries(values).map(([name, value]) => [name, digest(value)]));
 }
-
-const secrets = new RunSecrets(tagsFromEnvironment());
-
-afterAll(async () => {
-  if (AGNOSTIC_ENABLED) {
-    await secrets.deleteAll();
-  }
-});
 
 describe.runIf(AGENTCORE_READY)("ADR-033 en AgentCore (SDK y CLI de TypeScript)", () => {
   const fleets: AgentCoreFleet[] = [];
@@ -226,80 +232,83 @@ describe.runIf(AGENTCORE_READY)("ADR-033 en AgentCore (SDK y CLI de TypeScript)"
 
   it(
     "externalModel: sin permisos de Bedrock, la URL de la pasarela en el entorno y la clave por secret_env",
-    async () => {
-      const key = randomValue();
-      await secrets.create(secretName("ts-llm-key"), key);
-      const name = nameOf("extm");
-      const directory = stagedProject(OPENAI_COMPATIBLE_SAMPLE, join(tmpdir(), `agn-${RUN_ID}`), {
-        name,
-        extra: ["", SECRET_ENV_TABLE, `LLM_API_KEY = "${secretName("ts-llm-key")}"`],
-      });
-      const fleet = await deployedAgentCore(directory, name, { externalModel: true });
-      expect(echoed(await fleet.invoke(PROMPT))).toEqual({
-        base_url_set: true,
-        base_url_is_gateway: false,
-        api_key_is_placeholder: false,
-        model_env: "LLM_MODEL",
-      });
-      const environment = await runtimeEnvironment(fleet.runtimeId);
-      expect(environment.LLM_BASE_URL).toBe(OPENAI_COMPATIBLE_BASE_URL);
-      expect(foundIn(Object.values(environment), [key])).toEqual([]);
-      const role = await runtimeRoleOf(fleet.name);
-      const model = EXAMPLE_MODEL_ARN_TEMPLATE.replace("{region}", REGION);
-      expect(await simulatedDecision(role, "bedrock:InvokeModel", model)).not.toBe(ALLOWED);
-    },
+    () =>
+      withRunSecrets(tagsFromEnvironment(), async (secrets) => {
+        const key = randomValue();
+        const keySecret = secretName("agentcore-extm", "ts-llm-key");
+        await secrets.create(keySecret, key);
+        const name = nameOf("extm");
+        const directory = stagedProject(OPENAI_COMPATIBLE_SAMPLE, join(tmpdir(), `agn-${RUN_ID}`), {
+          name,
+          extra: ["", SECRET_ENV_TABLE, `LLM_API_KEY = "${keySecret}"`],
+        });
+        const fleet = await deployedAgentCore(directory, name, { externalModel: true });
+        expect(echoed(await fleet.invoke(PROMPT))).toEqual({
+          base_url_set: true,
+          base_url_is_gateway: false,
+          api_key_is_placeholder: false,
+          model_env: "LLM_MODEL",
+        });
+        const environment = await runtimeEnvironment(fleet.runtimeId);
+        expect(environment.LLM_BASE_URL).toBe(OPENAI_COMPATIBLE_BASE_URL);
+        expect(foundIn(Object.values(environment), [key])).toEqual([]);
+        const role = await runtimeRoleOf(fleet.name);
+        const model = EXAMPLE_MODEL_ARN_TEMPLATE.replace("{region}", REGION);
+        expect(await simulatedDecision(role, "bedrock:InvokeModel", model)).not.toBe(ALLOWED);
+      }),
     TEST_TIMEOUT_MS,
   );
 
   it(
     "la CLI despliega con --secret-env y --secret-env-from: el agente ve los valores y el runtime no",
-    async () => {
-      const { values } = await createdSecretEnv(secrets);
-      const name = nameOf("senv");
-      const directory = stagedProject(SECRET_ENV_SAMPLE, join(tmpdir(), `agn-${RUN_ID}`), {
-        name,
-        dropFrom: SECRET_ENV_TABLE,
-      });
-      const tags = Object.entries(tagsFromEnvironment()).flatMap(([key, value]) => [
-        "--tag",
-        `${key}=${value}`,
-      ]);
-      try {
-        const deployed = await cli(
-          [
-            "agent",
-            "deploy",
-            directory,
-            ...secretEnvFlags(),
-            "--target",
-            "agentcore",
-            "--yes",
-            "--bucket",
-            BUCKET,
-            ...tags,
-          ],
-          CLI_DEPLOY_BUDGET_MS,
-        );
-        expect(deployed.status).toBe("READY");
-        const answer = await cli(
-          ["agent", "invoke", name, PROMPT, "--target", "agentcore"],
-          CLI_READ_BUDGET_MS,
-        );
-        expect(echoed(answer)).toEqual({
-          present: [...SECRET_ENV_NAMES],
-          sha256_8: expectedDigests(values),
+    () =>
+      withRunSecrets(tagsFromEnvironment(), async (secrets) => {
+        const { values, names } = await createdSecretEnv(secrets, "agentcore-senv");
+        const name = nameOf("senv");
+        const directory = stagedProject(SECRET_ENV_SAMPLE, join(tmpdir(), `agn-${RUN_ID}`), {
+          name,
+          dropFrom: SECRET_ENV_TABLE,
         });
-        const environment = await runtimeEnvironment(String(deployed.runtimeId));
-        expect(environment.RAYITO_SECRET_ENV).toBeDefined();
-        expect(foundIn(Object.values(environment), Object.values(values))).toEqual([]);
-      } finally {
-        const removed = await cli(
-          ["agent", "delete", name, "--target", "agentcore", "--yes"],
-          CLI_DEPLOY_BUDGET_MS,
-        );
-        expect(removed.runtimeDeleted).toBe(true);
-      }
-    },
+        const tags = Object.entries(tagsFromEnvironment()).flatMap(([key, value]) => [
+          "--tag",
+          `${key}=${value}`,
+        ]);
+        try {
+          const deployed = await cli(
+            [
+              "agent",
+              "deploy",
+              directory,
+              ...secretEnvFlags(names),
+              "--target",
+              "agentcore",
+              "--yes",
+              "--bucket",
+              BUCKET,
+              ...tags,
+            ],
+            CLI_DEPLOY_BUDGET_MS,
+          );
+          expect(deployed.status).toBe("READY");
+          const answer = await cli(
+            ["agent", "invoke", name, PROMPT, "--target", "agentcore"],
+            CLI_READ_BUDGET_MS,
+          );
+          expect(echoed(answer)).toEqual({
+            present: [...SECRET_ENV_NAMES],
+            sha256_8: expectedDigests(values),
+          });
+          const environment = await runtimeEnvironment(String(deployed.runtimeId));
+          expect(environment.RAYITO_SECRET_ENV).toBeDefined();
+          expect(foundIn(Object.values(environment), Object.values(values))).toEqual([]);
+        } finally {
+          const removed = await cli(
+            ["agent", "delete", name, "--target", "agentcore", "--yes"],
+            CLI_DEPLOY_BUDGET_MS,
+          );
+          expect(removed.runtimeDeleted).toBe(true);
+        }
+      }),
     TEST_TIMEOUT_MS,
   );
 });
@@ -346,67 +355,69 @@ describe.runIf(MICROVM_READY)("ADR-033 en MicroVMs (SDK y CLI de TypeScript)", (
 
   it(
     "el modelo elegido por el código pasa por la pasarela con una clave marcador",
-    async () => {
-      const gatewaySecret = `e2e-${RUN_ID}/ts-llm`;
-      await secrets.create(`rayito/${gatewaySecret}`, PLACEHOLDER_GATEWAY_KEY);
-      const directory = stagedProject(
-        OPENAI_COMPATIBLE_SAMPLE,
-        join(tmpdir(), `agn-vm-${RUN_ID}`),
-        { name: imageNameOf("model"), base: BASE },
-      );
-      const fleet = await deployedMicrovm(directory, { [LLM_GATEWAY]: gatewaySecret });
-      expect(echoed(await fleet.invoke(PROMPT))).toEqual({
-        base_url_set: true,
-        base_url_is_gateway: true,
-        api_key_is_placeholder: true,
-        model_env: "LLM_MODEL",
-      });
-    },
+    () =>
+      withRunSecrets(tagsFromEnvironment(), async (secrets) => {
+        const gatewaySecret = secretName("microvm-model", "ts-llm");
+        await secrets.create(`${DEFAULT_SECRET_PREFIX}${gatewaySecret}`, PLACEHOLDER_GATEWAY_KEY);
+        const directory = stagedProject(
+          OPENAI_COMPATIBLE_SAMPLE,
+          join(tmpdir(), `agn-vm-${RUN_ID}`),
+          { name: imageNameOf("model"), base: BASE },
+        );
+        const fleet = await deployedMicrovm(directory, { [LLM_GATEWAY]: gatewaySecret });
+        expect(echoed(await fleet.invoke(PROMPT))).toEqual({
+          base_url_set: true,
+          base_url_is_gateway: true,
+          api_key_is_placeholder: true,
+          model_env: "LLM_MODEL",
+        });
+      }),
     TEST_TIMEOUT_MS,
   );
 
   it(
     "la CLI despliega con --secret-env y --secret-env-from y el agente ve los valores",
-    async () => {
-      const { values } = await createdSecretEnv(secrets);
-      const root = join(tmpdir(), `agn-vm-cli-${RUN_ID}`);
-      const name = imageNameOf("senv");
-      const directory = stagedProject(SECRET_ENV_SAMPLE, join(root, "src"), {
-        name,
-        dropFrom: SECRET_ENV_TABLE,
-        base: BASE,
-      });
-      const tokenFile = join(root, TOKEN_FILE_NAME);
-      try {
-        const deployed = await cli(
-          [
-            "agent",
-            "deploy",
-            directory,
-            ...secretEnvFlags(),
-            "--secret",
-            `${BEDROCK_GATEWAY}=${BEDROCK_SECRET}`,
-            "--bucket",
-            MICROVM_BUCKET,
-            "--yes",
-            "--token-file",
-            tokenFile,
-          ],
-          CLI_DEPLOY_BUDGET_MS,
-        );
-        expect(deployed.name).toBe(name);
-        const answer = await cli(
-          ["agent", "invoke", name, PROMPT, "--token-file", tokenFile],
-          CLI_READ_BUDGET_MS,
-        );
-        expect(echoed(answer)).toEqual({
-          present: [...SECRET_ENV_NAMES],
-          sha256_8: expectedDigests(values),
+    () =>
+      withRunSecrets(tagsFromEnvironment(), async (secrets) => {
+        const { values, names } = await createdSecretEnv(secrets, "microvm-senv");
+        const root = join(tmpdir(), `agn-vm-cli-${RUN_ID}`);
+        const name = imageNameOf("senv");
+        const directory = stagedProject(SECRET_ENV_SAMPLE, join(root, "src"), {
+          name,
+          dropFrom: SECRET_ENV_TABLE,
+          base: BASE,
         });
-      } finally {
-        await cli(["agent", "stop", name], CLI_READ_BUDGET_MS);
-      }
-    },
+        const tokenFile = join(root, TOKEN_FILE_NAME);
+        try {
+          const deployed = await cli(
+            [
+              "agent",
+              "deploy",
+              directory,
+              ...secretEnvFlags(names),
+              "--secret",
+              `${BEDROCK_GATEWAY}=${BEDROCK_SECRET}`,
+              "--bucket",
+              MICROVM_BUCKET,
+              "--yes",
+              "--token-file",
+              tokenFile,
+            ],
+            CLI_DEPLOY_BUDGET_MS,
+          );
+          expect(deployed.name).toBe(name);
+          const answer = await cli(
+            ["agent", "invoke", name, PROMPT, "--token-file", tokenFile],
+            CLI_READ_BUDGET_MS,
+          );
+          expect(echoed(answer)).toEqual({
+            present: [...SECRET_ENV_NAMES],
+            sha256_8: expectedDigests(values),
+          });
+        } finally {
+          await cli(["agent", "stop", name], CLI_READ_BUDGET_MS);
+        }
+      }),
     TEST_TIMEOUT_MS,
   );
 });

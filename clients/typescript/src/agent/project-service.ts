@@ -19,6 +19,7 @@ import {
   DEFAULT_AGENT_WORKDIR,
 } from "../limits.js";
 import { ACCESS_TOKEN_ENV_VAR } from "../sandbox/launch.js";
+import type { OnTimeout } from "../sandbox/lifecycle.js";
 import type { SandboxConnectOptions, SandboxCreateOptions } from "../sandbox/sandbox.js";
 import type { BuildInfo } from "../templates/build.js";
 import { AgentDeployment, type DeploymentSandbox, labelsFor } from "./deployment.js";
@@ -94,6 +95,15 @@ export interface AgentProjectDeployOptions extends AgentProjectSandboxOptions {
 export interface ServiceDeployOptions extends AgentProjectDeployOptions {
   readonly metadata?: Readonly<Record<string, string>> | undefined;
   readonly index?: DynamoDbIndex | undefined;
+  /** El plazo lógico de una flota que puede crecer (`fleetLifetime`). */
+  readonly lifetime?: DeployLifetime | undefined;
+}
+
+/** Los `maxLifetimeMs`/`onTimeout` con los que una flota que puede crecer
+ * crea sus VMs. */
+export interface DeployLifetime {
+  readonly maxLifetimeMs: number;
+  readonly onTimeout: OnTimeout;
 }
 
 export interface AgentProjectRunOptions extends AgentProjectSandboxOptions {
@@ -227,14 +237,17 @@ export function runCreateOptions(project: AgentProject): SandboxCreateOptions {
 
 /** Los de `deploy()`: la vida y la política de `idle` de `project.serve` y
  * las etiquetas con las que `connect()` reconoce el despliegue. `metadata`
- * añade etiquetas (una flota marca así la sesión de un VM dedicado) e `index`
- * es el `DynamoDbIndex` que las escribe para poder encontrarlo después. */
+ * añade etiquetas (una flota marca así la sesión de un VM dedicado), `index`
+ * es el `DynamoDbIndex` que las escribe para poder encontrarlo después y
+ * `lifetime` son los `maxLifetimeMs`/`onTimeout` de una flota que puede
+ * crecer; sin él, la vida es la de la plataforma, como siempre. */
 export function deployCreateOptions(
   project: AgentProject,
   options: {
     readonly raw: boolean;
     readonly metadata?: Readonly<Record<string, string>> | undefined;
     readonly index?: DynamoDbIndex | undefined;
+    readonly lifetime?: DeployLifetime | undefined;
   },
 ): SandboxCreateOptions {
   const serve = project.serve;
@@ -247,6 +260,9 @@ export function deployCreateOptions(
       ...labelsFor(project.name, serve.port, options),
     },
     ...(options.index === undefined ? {} : { index: options.index }),
+    ...(options.lifetime === undefined
+      ? {}
+      : { maxLifetimeMs: options.lifetime.maxLifetimeMs, onTimeout: options.lifetime.onTimeout }),
     ...commonCreateOptions(project),
   };
 }
@@ -450,15 +466,16 @@ export class ProjectService {
   /** Sirve el agente desde un MicroVM y devuelve su `AgentDeployment`. Si
    * cualquier paso falla, mata el sandbox antes de propagar (salvo con
    * `keepOnFailure`, que lo deja vivo y lo anota en el mensaje del error).
-   * `metadata` e `index` son para una flota (ver `deployCreateOptions`). */
+   * `metadata`, `index` y `lifetime` son para una flota (ver
+   * `deployCreateOptions`). */
   async deploy(options: ServiceDeployOptions = {}): Promise<AgentDeployment> {
     const project = this.#project;
-    const { keepOnFailure = false, metadata, index, ...sandboxOptions } = options;
+    const { keepOnFailure = false, metadata, index, lifetime, ...sandboxOptions } = options;
     if (keepOnFailure) {
       requireReconnectableToken(options.accessToken);
     }
     const sandbox = await this.#create(
-      deployCreateOptions(project, { raw: isRawProject(project), metadata, index }),
+      deployCreateOptions(project, { raw: isRawProject(project), metadata, index, lifetime }),
       sandboxOptions,
     );
     try {

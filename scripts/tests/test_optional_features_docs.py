@@ -69,6 +69,10 @@ FEATURE_LINKS_AGENTS = (
     "guias/desplegar-en-agentcore.md",
     "guias/desplegar-con-cdk.md#rayitoagent",
     "guias/desplegar-con-cdk.md#rayitomicrovmimage",
+    # Fleet recipe (on by default, ADR-034) and the opt-in renewal of the
+    # short-term Bedrock key of the gateways (0.17.0).
+    "guias/flota-de-agentes.md#la-receta-de-la-flota",
+    "funciones-opcionales/pasarela-de-secretos.md#renovar-la-clave-de-bedrock",
 )
 #: Opciones de `AgentDeployOptions` sin guía propia (secreto del modelo e
 #: imagen base al desplegar).

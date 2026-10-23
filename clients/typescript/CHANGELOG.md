@@ -6,6 +6,173 @@ versionado [SemVer](https://semver.org/lang/es/).
 
 ## [Unreleased]
 
+### Añadido
+
+- **`rayito setup --caps-image` publica también `rayito-base-caps`**, la base
+  que usa `rayito agent deploy` en MicroVM y que antes había que publicar a
+  mano. Es un cuarto paso del plan (`capsImage`) que sale del mismo
+  `rayito-image.zip` (una sola descarga) con `additionalOsCapabilities=["ALL"]`;
+  el plan y `--dry-run` muestran el paso y su coste (otra versión de imagen,
+  ≈ $0,04 por semana, $0,08 por GB-mes). Va apagado por defecto porque cuesta:
+  sólo `--caps-image` (`SetupRequest.capsImage: true`) lo añade; sin la opción el paso sale
+  como `skip` y no se lee ni se publica esa imagen. Si `rayito agent deploy`
+  en MicroVM no encuentra `rayito-base-caps`, el error pide
+  `rayito setup --caps-image`. El
+  documento de `--json` gana `capsImageArn` y `capsImageVersion` en `result`.
+- `AgentProject.gatewayPresets`: pasarela -> preset, tal como lo declara
+  `[gateways.<nombre>] preset`. Lo rellenan la lectura del fichero y la
+  detección; no entra en el documento canónico del proyecto.
+- **Receta de la flota** (ADR-034): `deploy_agent()` y `rayito agent deploy`
+  guardan, tras arrancar la flota de MicroVMs, lo que usaron (el proyecto tras
+  las banderas, la versión de la imagen, los presets de las pasarelas, el
+  escalado) en un parámetro `SecureString` estándar de Parameter Store
+  (`/rayito/agents/<nombre>/recipe`), con nombres de secretos y nunca valores.
+  `AgentFleet.connect(nombre)` sin `project` la lee y puede crear VMs iguales;
+  `useRecipe: false` la ignora; `@aws-sdk/client-ssm` es un peer opcional y,
+  sin él, conectar por nombre sigue como en 0.16. Es
+  la única función encendida por defecto (no cuesta en el nivel estándar):
+  `saveRecipe: false` / `--no-save-recipe` la apagan. Un fallo al guardarla es un aviso
+  (`recipe_access_denied`, `recipe_not_saved`, `recipe_too_large`), nunca un
+  despliegue fallido. Nueva sentencia `AgentRecipe`: `CallerPolicy` la
+  guarda, la lee y la borra; `SandboxLauncherPolicy` sólo la lee y la borra
+  (escribirla equivale a poder desplegar) e `ImagePublisherPolicy` sólo la
+  guarda (`AgentRecipeWrite`).
+- **`FleetStatus.scalingSource`** (`explicit`, `project`, `recipe` o
+  `default`).
+- **`AgentFleet.stop({ keepRecipe })`** y `rayito agent stop --keep-recipe`:
+  por defecto `stop()` borra la receta que leyó o guardó.
+- **`AgentDeployOptions.scaleInAfterMs`** y
+  `rayito agent deploy --scale-in-after SECONDS`.
+- **Renovación opcional de la clave de corta duración de Bedrock**
+  (`renewGatewayKeys` en `AgentFleet`, `AgentFleet.connect` y
+  `AgentDeployOptions`; `--renew-gateway-keys`), apagada por defecto, con los
+  peers opcionales `@aws/bedrock-token-generator` 1.1.0 y
+  `@aws-sdk/client-secrets-manager`.
+- **`rayito agent invoke <flota> --renew-gateway-keys`**: la CLI pide la
+  renovación al reconectar la flota por su nombre (la receta no la activa).
+  Con el id de un sandbox sale con 2, y con `--target agentcore`,
+  `option_not_supported`.
+- **`AgentDeployment.refreshGateways()`** y `applyGateways` en el pool.
+
+### Cambiado
+
+- **Incompatible con 0.16: `rayito agent deploy --env` rechaza un nombre que
+  parece un secreto**, también `*_SECRET` y `SECRET`, los que tienen un
+  segmento `PASS`, `PASSWD`, `PAT`, `CREDENTIAL` o `CREDENTIALS`, y los que
+  llevan `AUTH` o `BEARER` como último segmento o junto a `TOKEN`, `KEY` o
+  `HEADER` (`AUTH`, `X_AUTH`, `AUTH_HEADER`; sin distinguir mayúsculas; antes
+  pasaban). `AUTH_MODE`, `AUTH_URL` o `AUTHOR_NAME` siguen pasando. Se
+  rechaza antes de
+  cualquier llamada a AWS y con los dos destinos. Migración: pasa el valor por
+  `--secret-env NOMBRE=<secreto>` o `--secret-env-from <secreto>`. La regla es
+  sólo de la bandera: los valores de `env` del proyecto (`[env]` de
+  `rayito-agent.toml` o la biblioteca) se guardan tal cual en la receta, así
+  que no pongas en `env` nada secreto.
+- **`rayito setup --caps-image` publica `rayito-base-caps`**: una versión de
+  imagen más que factura almacenamiento de snapshot (≈ $0,04 por semana).
+  Apagado por defecto (ADR-034 D9).
+
+### Corregido
+
+- **Un pool sólo recupera las plazas de su imagen**: `SandboxPool` adoptaba al
+  arrancar todas las plazas del backend. Con el fichero de estado por defecto
+  de `rayito agent deploy --warm` (`.rayito/agent-pool.json`), desplegar una
+  segunda flota desde el mismo directorio reciclaba (terminaba) las plazas
+  aparcadas de la primera, o las contaba como suyas. Ahora una plaza de otra
+  imagen no se adopta, recicla, termina ni entrega, y se queda en el backend
+  para el pool de su imagen. Visto en la regresión en AWS real.
+- **La reducción de la flota (`scaleInAfterMs`) por fin ocurre**: desde
+  0.14 los VMs se creaban sin `maxLifetimeMs`/`onTimeout`, así que `rayd`
+  rechazaba el `setTimeout` que termina un VM sobrante y la flota se tragaba
+  el error. Una flota que puede crecer (`maxVms > minVms`) crea ahora todos
+  sus VMs y plazas calientes con `onTimeout: "kill"` y `maxLifetimeMs =
+  serve.timeoutMs + 60 000`; antes de cada invocación el plazo de un VM
+  sobrante sube al de la petición y, al soltar la última invocación en
+  curso, vuelve a `scaleInAfterMs` (mientras quede otra no se acorta),
+  siempre por debajo del tope que impone `rayd` (`maxLifetimeMs - 60 s`
+  desde el arranque) menos 5 s. Si `rayd` rechaza un plazo por pasar de su
+  tope, la flota adopta el tope que informa y reintenta una vez, sin marcar
+  el VM. Una flota de tamaño fijo se crea byte a byte
+  como en 0.16; un VM creado sin plazo lógico avisa una vez por el `logger`
+  y no se reintenta. `PoolConfig` gana `maxLifetimeMs` y `onTimeout`
+  opcionales (sólo `"kill"`). Vectores en `testdata/agent-fleet/lifetime.json`.
+
+- **El host del agente ya no escribe URLs con credenciales en sus logs** (el host viaja en los recursos del paquete, `host-assets.gen.ts`):
+  los loggers `httpx` y `httpcore`, que a nivel INFO escriben la URL de cada
+  petición con su consulta, arrancan en WARNING en `serve`
+  (`QUIET_HTTP_LOGGERS`). El código del agente puede volver a bajarlos.
+  Ver [Seguridad](https://alejandro-cedeno-10.github.io/rayito/security/#clientes-http-en-los-logs-del-host).
+- **El log de peticiones del host del agente ya no lanza `AttributeError`**
+  tras responder `400` a una línea de petición mal formada; las invocaciones
+  siguientes nunca se vieron afectadas.
+- **`--create-secret` busca la clave por el preset de la pasarela**: una
+  pasarela `[gateways.model] preset = "bedrock"` lee `AWS_BEARER_TOKEN_BEDROCK`
+  en vez de buscar una variable por el nombre `model`. Con `preset = "custom"`
+  sigue mirando el nombre de la pasarela, como en 0.16.
+- **`--create-secret` ya no duplica el prefijo `rayito/`**: la detección
+  escribía el secreto de la pasarela como `rayito/agents/<proyecto>/<proveedor>`
+  y, como la pasarela lo lee bajo `rayito/`, el secreto acababa en
+  `rayito/rayito/agents/...`. Ahora escribe `agents/<proyecto>/<proveedor>` y el
+  secreto queda en `rayito/agents/<proyecto>/<proveedor>`, el nombre que lee la
+  pasarela. Si sólo existe el secreto de 0.16, el despliegue lo reutiliza y no
+  crea otro; un `rayito-agent.toml` con un nombre propio no cambia.
+- **OpenCode sin fichero de proyecto usa `AGENTS.md` y los permisos de
+  `opencode.json`** (ADR-034 D8). Antes sólo `rayito-agent.toml` los aplicaba.
+  Ahora la detección lleva el `AGENTS.md` de la raíz a
+  `agent.instructions_file`, y el bloque `permission` de `opencode.json` u
+  `opencode.jsonc` (sin comentarios ni comas finales) a `agent.permissions`.
+  `ask` se aplica como `deny`, porque la ejecución es desatendida, y una clave
+  que no se puede aplicar se ignora. Los dos casos avisan con
+  `opencode_permission_ignored`. Lo que dice `rayito-agent.toml` gana, y el
+  informe sólo lleva la evidencia (`file:AGENTS.md`, `config:permission`),
+  nunca el texto de los ficheros.
+- Una flota reconectada en otro proceso abría una plaza caliente sin las
+  pasarelas del proyecto (el agente arrancaba sin la pasarela del modelo): la
+  flota las abre ahora con el mismo camino que `SandboxPool.take({ gateways })` y
+  sustituye la plaza si no puede.
+- `rayito agent status <flota>` sin proyecto mostraba un escalado inventado
+  (`min 1, max 1`); ahora imprime el de la receta o
+  `escalado desconocido: sin proyecto ni receta`.
+- `AgentFleet.connect(nombre)` sin `project` ya no falla si Parameter Store no responde (sin
+  endpoint de VPC para SSM, limitación de tasa, un error de KMS): es el aviso
+  `recipe_unreadable` y la flota de 0.16, y `rayito agent stop <nombre>`
+  termina sus VMs.
+- **La receta ya no activa la renovación de claves de Bedrock**: la clave se
+  firma con las credenciales de quien conecta, así que `AgentFleet.connect(nombre)`
+  sólo renueva con `renewGatewayKeys: true` explícito. Si la receta lo pedía y no lo
+  pasas, la flota no renueva y avisa `recipe_renewal_ignored` (sólo el
+  código). Listar, consultar o terminar la flota nunca necesita el peer `@aws/bedrock-token-generator`:
+  el renovador se carga en la primera renovación, y las renovaciones
+  simultáneas se serializan con una promesa en curso (los VMs que arrancan en paralelo
+  escriben una sola clave).
+- **`renewGatewayKeys` no renueva un secreto compartido**: si el secreto de la pasarela
+  `bedrock` lo lee también una pasarela cuyo upstream no es Bedrock, la
+  opción es `InvalidArgumentError` (nombra las pasarelas, nunca el
+  secreto). Sólo cuenta como Bedrock un host
+  `bedrock-runtime.<región>.amazonaws.com` con una región de AWS válida; un
+  host como `bedrock-runtime.evil.s3.amazonaws.com` ya no se toma por Bedrock.
+- Un nombre de flota `.`, `..` o vacío ya no da una ruta de receta
+  (`recipe_not_saved`).
+- `rayito setup` informa `artifactUploaded` también cuando sólo publica
+  `rayito-base-caps` (una cuenta que viene de 0.16).
+- La ayuda de `--scale-in-after` sale de la constante del SDK y dice que,
+  sin la bandera, manda el `[scaling]` del proyecto.
+- `rayito agent deploy` con `--min-vms 0` imprimía `sandbox_id=undefined`
+  (y `--json` perdía la clave `sandboxId`): una flota sin VMs con servicio no
+  imprime `sandbox_id` ni `url` y `--json` los da como `null`, como en
+  Python.
+
+### Pruebas
+
+- Los e2e de despliegue agnóstico ya no repiten nombre de secreto entre
+  AgentCore y MicroVM en una misma ejecución (antes chocaban con
+  `ResourceExistsException` mientras el anterior seguía pendiente de borrado):
+  `secretName(scope, kind)` devuelve
+  `rayito-e2e/<run>/<scope>-<kind>-<sufijo aleatorio>`, y cada prueba borra
+  al terminar sólo los secretos que creó.
+- Los e2e de la receta ya no inventan ids de sesión: el host sólo acepta los
+  suyos y respondía `invalid_session_id`.
+
 ## [0.16.0] - 2026-10-22
 
 ### Añadido

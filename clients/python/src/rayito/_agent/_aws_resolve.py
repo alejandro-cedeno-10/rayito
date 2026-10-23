@@ -26,6 +26,7 @@ from rayito._account_setup._aws import artifact_stack_gateway
 from rayito._account_setup._domain import BUCKET_ENV_VAR as BUCKET_ENV_VAR
 from rayito._account_setup._domain import (
     BUCKET_NAME_OUTPUT_KEY,
+    with_base_image_hint,
     with_setup_hint,
 )
 from rayito._account_setup._domain import cdk_bucket_name as cdk_bucket_name
@@ -36,7 +37,7 @@ from rayito._images import account_image_arn, client_error_code, image_exists
 from rayito._payload import generate_access_token
 from rayito._sandbox_base import ACCESS_TOKEN_ENV_VAR
 from rayito._secret_gateway._domain import SecretGateway
-from rayito._secrets import SecretRef
+from rayito._secrets import DEFAULT_SECRET_PREFIX, SecretRef
 from rayito._stacks._cloudformation import CloudFormationProvisioner
 from rayito._stacks._condition import classify_stack
 from rayito.exceptions import InvalidArgumentException, StackException
@@ -45,8 +46,15 @@ if TYPE_CHECKING:
     import boto3
 
 #: El nombre convencional del secreto de una pasarela, bajo el prefijo
-#: `rayito/` de `SecretStore` (el secreto queda en `rayito/agents/<proyecto>/<pasarela>`).
+#: `rayito/` con el que la pasarela lo lee (`SecretCache`) y `SecretStore` lo
+#: crea: el secreto queda en `rayito/agents/<proyecto>/<pasarela>`. Es el
+#: mismo que escribe la detección (`_detect_project.GATEWAY_SECRET_NAME_TEMPLATE`).
 AGENT_SECRET_NAME_TEMPLATE: Final = "agents/{project}/{gateway}"
+#: El prefijo con el que la pasarela lee su secreto en tiempo de ejecución
+#: (la `SecretCache` compartida de `secrets=`/`gateways=`): `--create-secret`
+#: comprueba y crea con el mismo, para que el nombre sea exactamente el que
+#: se leerá.
+GATEWAY_SECRET_PREFIX: Final = DEFAULT_SECRET_PREFIX
 BEARER_PREFIX: Final = "Bearer "
 AUTHORIZATION_HEADER: Final = "authorization"
 #: Códigos de `HeadBucket` que dan el bucket por inexistente o ajeno: sin
@@ -176,12 +184,23 @@ def resolve_token(explicit: str | None, environ: Mapping[str, str]) -> str:
     return explicit or environ.get(ACCESS_TOKEN_ENV_VAR) or generate_access_token()
 
 
-def secret_value_from_env(gateway: str, header: str, environ: Mapping[str, str]) -> str | None:
+def gateway_env_var(gateway: str, preset: str | None = None) -> str | None:
+    """La variable de entorno estándar de la pasarela `gateway`: la de su
+    `preset` (`[gateways.<nombre>] preset`, p. ej. `bedrock` para una pasarela
+    llamada `model`) y, si el preset no tiene una (`custom`) o no se conoce,
+    la del nombre de la pasarela, como en 0.16."""
+    by_preset = GATEWAY_SECRET_ENV_VARS.get(preset) if preset else None
+    return by_preset or GATEWAY_SECRET_ENV_VARS.get(gateway)
+
+
+def secret_value_from_env(
+    gateway: str, header: str, environ: Mapping[str, str], *, preset: str | None = None
+) -> str | None:
     """El valor que se guardaría en el secreto de `gateway` a partir de su
-    variable de entorno estándar: `Bearer <clave>` para la cabecera
-    `authorization` (salvo que ya lo traiga) y la clave tal cual para las
-    demás. `None` si la variable no está o está vacía."""
-    variable = GATEWAY_SECRET_ENV_VARS.get(gateway)
+    variable de entorno estándar (`gateway_env_var`): `Bearer <clave>` para
+    la cabecera `authorization` (salvo que ya lo traiga) y la clave tal cual
+    para las demás. `None` si la variable no está o está vacía."""
+    variable = gateway_env_var(gateway, preset)
     value = environ.get(variable, "") if variable else ""
     if not value:
         return None
@@ -198,8 +217,8 @@ def _renamed(value: str | SecretRef, name: str) -> str | SecretRef:
     return dataclasses.replace(value, name=name) if isinstance(value, SecretRef) else name
 
 
-def _missing_secret_message(gateway: str) -> str:
-    variable = GATEWAY_SECRET_ENV_VARS.get(gateway)
+def _missing_secret_message(gateway: str, preset: str | None = None) -> str:
+    variable = gateway_env_var(gateway, preset)
     creation = (
         f"--create-secret (create_secret_from_env=True) lo crea desde {variable}"
         if variable
@@ -211,8 +230,8 @@ def _missing_secret_message(gateway: str) -> str:
     )
 
 
-def _missing_value_message(gateway: str) -> str:
-    variable = GATEWAY_SECRET_ENV_VARS.get(gateway)
+def _missing_value_message(gateway: str, preset: str | None = None) -> str:
+    variable = gateway_env_var(gateway, preset)
     return (
         f"no se puede crear el secreto de la pasarela {gateway!r}: "
         f"la variable {variable} no está definida"
@@ -252,6 +271,30 @@ def apply_secret_names(
 # ------------------------------------------------------------- con E/S
 
 
+def legacy_secret_name(project: str, gateway: str, name: str) -> str | None:
+    """El nombre con el prefijo `rayito/` duplicado que 0.16 escribía en la
+    pasarela detectada (`rayito/agents/<proyecto>/<proveedor>` relativo a
+    `rayito/`) si `name` es el nombre convencional de esa pasarela; `None`
+    para cualquier otro nombre, que nunca se reinterpreta."""
+    if name != secret_name_for(project, gateway):
+        return None
+    return GATEWAY_SECRET_PREFIX + name
+
+
+def _existing_name(
+    project: AgentProject, gateway: str, name: str, store: SecretStorePort
+) -> str | None:
+    """`name` si el secreto existe (`DescribeSecret`); si no, el nombre de
+    0.16 (`legacy_secret_name`) si ése existe, para que un despliegue de 0.16
+    hecho con `--create-secret` siga usando su secreto sin crear otro."""
+    if store.exists(name):
+        return name
+    legacy = legacy_secret_name(project.name, gateway, name)
+    if legacy is not None and store.exists(legacy):
+        return legacy
+    return None
+
+
 def ensure_model_secrets(
     project: AgentProject,
     *,
@@ -262,23 +305,32 @@ def ensure_model_secrets(
 ) -> ResolvedSecrets:
     """Comprueba que existe el secreto de cada pasarela del proyecto
     (`DescribeSecret`) y, sólo con `create_from_env`, crea el que falte con el
-    valor de la variable estándar de su proveedor (`CreateSecret`). El valor
-    sale de `environ` a Secrets Manager y no se escribe en disco ni en logs; los
+    valor de la variable estándar del preset de la pasarela (o de su nombre:
+    `gateway_env_var`) (`CreateSecret`). `store` usa el mismo prefijo con el
+    que la pasarela lee el secreto (`rayito/`), así que el nombre que se
+    comprueba y se crea es exactamente el que se leerá. El valor sale de
+    `environ` a Secrets Manager y no se escribe en disco ni en logs; los
     errores nombran la pasarela, nunca el secreto."""
     gateways = apply_secret_names(project.gateways, secret_names)
     created: list[str] = []
-    for gateway, definition in gateways.items():
+    for gateway, definition in list(gateways.items()):
+        preset = project.gateway_presets.get(gateway)
+        headers = dict(definition.headers)
         for header, reference in definition.headers.items():
             name = _secret_name_of(reference)
-            if store.exists(name):
+            existing = _existing_name(project, gateway, name, store)
+            if existing is not None:
+                headers[header] = _renamed(reference, existing)
                 continue
             if not create_from_env:
-                raise InvalidArgumentException(_missing_secret_message(gateway))
-            value = secret_value_from_env(gateway, header, environ)
+                raise InvalidArgumentException(_missing_secret_message(gateway, preset))
+            value = secret_value_from_env(gateway, header, environ, preset=preset)
             if value is None:
-                raise InvalidArgumentException(_missing_value_message(gateway))
+                raise InvalidArgumentException(_missing_value_message(gateway, preset))
             store.create(name, value)
             created.append(gateway)
+        if headers != dict(definition.headers):
+            gateways[gateway] = dataclasses.replace(definition, headers=headers)
     return ResolvedSecrets(gateways=MappingProxyType(gateways), created=tuple(created))
 
 
@@ -366,16 +418,19 @@ def ensure_base_image(
     """Si la imagen base existe. Si no, la publica con `publisher` (que el
     llamante dio y que costó una confirmación suya) y vuelve a comprobar;
     sin `publisher` o con `ensure=False` es `InvalidArgumentException` con el
-    comando que la publica. Devuelve si hubo que publicarla."""
+    comando que la publica (para `rayito-base-caps`, `rayito setup
+    --caps-image`, que `rayito setup` no publica por defecto). Devuelve si
+    hubo que publicarla."""
     if aws.image_exists(base):
         return False
     if not ensure or publisher is None:
         raise InvalidArgumentException(
-            with_setup_hint(
+            with_base_image_hint(
                 f"la imagen base {base!r} no existe en esta cuenta y región: publícala con "
                 "`rayito image publish --os-capabilities ALL --artifact <zip> "
                 "--base-image-version latest` (ver la guía de instalación) o pasa "
-                "base_publisher= a deploy_agent()"
+                "base_publisher= a deploy_agent()",
+                base,
             )
         )
     publisher()

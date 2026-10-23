@@ -1198,15 +1198,17 @@ export class Sandbox implements AsyncDisposable {
   /**
    * Acceso interno para el pool (aplica a la plaza ya tomada las secciones
    * 0.6 de `take({ gateways })`, terminándola si alguna falla: una plaza
-   * se lanza siempre sin `keepOnFailure`); no forma parte de la API
-   * pública.
+   * se lanza siempre sin `keepOnFailure`) y para la flota, que abre las
+   * pasarelas de una plaza aparcada sin terminarla
+   * (`terminateOnFailure: false`); no forma parte de la API pública.
    */
   static applyConfigureSections(
     sandbox: Sandbox,
     planned: readonly PlannedSection[],
     timeoutMs: number,
+    terminateOnFailure = true,
   ): Promise<void> {
-    return sandbox.#applyConfigureSections(planned, timeoutMs, true);
+    return sandbox.#applyConfigureSections(planned, timeoutMs, terminateOnFailure);
   }
 
   /** Acceso interno para el pool (abre una plaza con su token y el calendario de toma); no forma parte de la API pública. */

@@ -18,6 +18,7 @@ from collections.abc import Mapping
 from typing import Any, Final
 
 from rayito._agent._detect_domain import fill_runtime
+from rayito._agent._detect_opencode import INSTRUCTIONS_FILE_KEY
 from rayito._agent._detect_report import DetectionReport, DetectOverrides
 from rayito._agent._detection_rules import DETECTION_RULES
 from rayito._agent._project_domain import (
@@ -29,6 +30,7 @@ from rayito._agent._project_domain import (
     require_model_id,
 )
 from rayito._limits import AGENT_PROJECT_SCHEMA, AGENT_SECRET_NAME_TEMPLATE
+from rayito._secrets import DEFAULT_SECRET_PREFIX
 
 _MODEL_PATH: Final = "model"
 _REGION_PATH: Final = "deploy.region"
@@ -44,6 +46,17 @@ UV_LOCKFILE: Final = "uv.lock"
 PYTHON_LANGUAGE: Final = "python"
 TYPESCRIPT_LANGUAGE: Final = "typescript"
 ENTRY_EXPORT_SEPARATOR: Final = "#"
+#: El secreto de la pasarela detectada, relativo al prefijo `rayito/` con el
+#: que la pasarela lo lee (`SecretCache`) y `--create-secret` lo crea
+#: (`SecretStore`): en Secrets Manager queda en
+#: `AGENT_SECRET_NAME_TEMPLATE` (`rayito/agents/<proyecto>/<proveedor>`), sin
+#: el prefijo duplicado de 0.16.
+GATEWAY_SECRET_NAME_TEMPLATE: Final = AGENT_SECRET_NAME_TEMPLATE.removeprefix(DEFAULT_SECRET_PREFIX)
+_AGENT_KEY: Final = "agent"
+#: Las claves de `[agent]` que ya dan instrucciones: con cualquiera, el
+#: `instructions_file` detectado no se usa.
+_INSTRUCTION_KEYS: Final = ("instructions", "instructions_file")
+_PERMISSIONS_KEY: Final = "permissions"
 
 
 def _error(path: str, code: str, text: str) -> AgentProjectException:
@@ -128,7 +141,7 @@ def _gateway_table(
     URL de `--model-base-url` como `upstream`); lo opcional se deja fuera."""
     table: dict[str, object] = {
         "preset": preset,
-        "secret": AGENT_SECRET_NAME_TEMPLATE.format(project=name, provider=preset),
+        "secret": GATEWAY_SECRET_NAME_TEMPLATE.format(project=name, provider=preset),
     }
     spec = _GATEWAY_PRESETS[preset]
     if base_url is not None and _UPSTREAM_KEY not in spec.keys:
@@ -195,6 +208,26 @@ def _model_tables(
     return model, {preset: gateway}
 
 
+def _agent_table(current: object, runtime: Mapping[str, object], report: DetectionReport) -> object:
+    """`[agent]` con lo que aporta la configuración del framework
+    (`report.agent_table`: el `AGENTS.md` y los permisos de OpenCode) donde
+    el fichero calla: unas instrucciones del fichero (en línea o en otro
+    fichero) ganan al `AGENTS.md`, y sus permisos, a los de la
+    configuración. Sólo si el runtime es el detectado; un `[agent]` que no
+    es una tabla se deja para que lo valide el proyecto."""
+    detected = report.agent_table
+    if not detected or runtime.get(_KIND_KEY) != report.kind:
+        return current
+    if current is not None and not isinstance(current, Mapping):
+        return current
+    agent = dict(current or {})
+    if INSTRUCTIONS_FILE_KEY in detected and not any(key in agent for key in _INSTRUCTION_KEYS):
+        agent[INSTRUCTIONS_FILE_KEY] = detected[INSTRUCTIONS_FILE_KEY]
+    if _PERMISSIONS_KEY in detected and _PERMISSIONS_KEY not in agent:
+        agent[_PERMISSIONS_KEY] = detected[_PERMISSIONS_KEY]
+    return agent
+
+
 def detected_document(
     document: Mapping[str, object],
     report: DetectionReport,
@@ -214,6 +247,9 @@ def detected_document(
     _complete_runtime(runtime, _as_table(document.get("runtime")), report, bridge)
     filled["runtime"] = runtime
     filled.setdefault("source", {"path": bridge["defaultSource"]})
+    agent = _agent_table(filled.get(_AGENT_KEY), runtime, report)
+    if agent is not None:
+        filled[_AGENT_KEY] = agent
     if "model" not in filled:
         project_name = str(filled["name"])
         base_url = None if overrides is None else overrides.model_base_url

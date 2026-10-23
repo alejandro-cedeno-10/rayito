@@ -11,7 +11,7 @@ import math
 import os
 import posixpath
 from collections.abc import Mapping
-from typing import Any, Final
+from typing import TYPE_CHECKING, Any, Final
 
 from rayito._agent._custom import CustomRuntime, HttpApp
 from rayito._agent._deployment_base import labels_for
@@ -39,6 +39,9 @@ from rayito._limits import (
 from rayito._models import WriteEntry
 from rayito._sandbox_base import ACCESS_TOKEN_ENV_VAR
 from rayito.exceptions import InvalidArgumentException
+
+if TYPE_CHECKING:
+    from rayito._agent._fleet_base import FleetLifetime
 
 #: Esquema del `host.json` que lee `agent_host` (`rayito.agent-host/1`).
 AGENT_HOST_SCHEMA: Final = "rayito.agent-host/1"
@@ -133,13 +136,17 @@ def deploy_create_args(
     access_token: str | None = None,
     metadata: Mapping[str, str] | None = None,
     index: Any = None,
+    lifetime: FleetLifetime | None = None,
 ) -> dict[str, Any]:
     """Los de `deploy()`: la vida y la política de `idle` de
     `project.serve`, las etiquetas con las que `connect()` reconoce el
     despliegue y, si el llamador lo da, el access token con el que otro
     proceso puede reconectarse. `metadata` añade etiquetas (una flota marca
-    así la sesión de un VM dedicado) e `index` es el `DynamoDbIndex` que las
-    escribe para poder encontrarlo después."""
+    así la sesión de un VM dedicado), `index` es el `DynamoDbIndex` que las
+    escribe para poder encontrarlo después y `lifetime` son los
+    `max_lifetime`/`on_timeout` de una flota que puede crecer
+    (`FleetLifetime`); sin él, la vida es la de la
+    plataforma, como siempre."""
     serve = project.serve
     labels = {**serve.metadata, **(metadata or {}), **labels_for(project.name, serve.port, raw=raw)}
     args: dict[str, Any] = {
@@ -152,6 +159,9 @@ def deploy_create_args(
         args["access_token"] = access_token
     if index is not None:
         args["index"] = index
+    if lifetime is not None:
+        args["max_lifetime"] = lifetime.max_lifetime
+        args["on_timeout"] = lifetime.on_timeout
     return args
 
 

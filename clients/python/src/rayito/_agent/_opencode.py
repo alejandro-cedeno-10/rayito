@@ -22,9 +22,10 @@ import json
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Final
+from typing import Final, Literal
 
 from rayito._agent._domain import (
+    ASK_ACTION,
     AgentPermissions,
     AgentSpec,
     McpLocal,
@@ -205,6 +206,83 @@ def _permission(permissions: AgentPermissions) -> dict[str, object]:
 
 def _permission_rule(rule: ToolPermission) -> object:
     return rule if isinstance(rule, str) else dict(rule)
+
+
+#: La clave de `permission` que OpenCode aplica a toda herramienta sin
+#: entrada propia: `AgentPermissions.default`.
+OPENCODE_DEFAULT_PERMISSION_KEY: Final = "*"
+#: Por qué una entrada de `permission` no se aplica tal cual: `ask` pasa a
+#: ser la acción desatendida y `unknown` se ignora.
+PermissionNoteReason = Literal["ask", "unknown"]
+
+
+@dataclass(frozen=True)
+class OpenCodePermissions:
+    """El bloque `permission` de un `opencode.json` traducido a la tabla
+    `[agent.permissions]` de un proyecto (`default` y `tools`; vacía si no
+    queda nada) y, en el orden del fichero, las claves que no se aplicaron
+    tal cual con su motivo."""
+
+    table: Mapping[str, object]
+    notes: tuple[tuple[str, PermissionNoteReason], ...] = ()
+
+
+def permissions_from_opencode(block: object, *, ask_action: str) -> OpenCodePermissions:
+    """El inverso de `_permission`: `"*"` es `default` y cada herramienta,
+    una acción o un objeto de patrones (`"bash": {"git *": "allow"}`). Una
+    cadena sola es el `default`. `ask` se aplica como `ask_action` (nadie
+    contesta en una ejecución desatendida); una entrada que
+    `AgentPermissions` no admite se ignora. Nunca lanza."""
+    entries = {OPENCODE_DEFAULT_PERMISSION_KEY: block} if isinstance(block, str) else block
+    if not isinstance(entries, Mapping):
+        return OpenCodePermissions({}, ((OPENCODE_DEFAULT_PERMISSION_KEY, "unknown"),))
+    default: object | None = None
+    tools: dict[str, object] = {}
+    notes: list[tuple[str, PermissionNoteReason]] = []
+    for key, value in entries.items():
+        rule, asked = _without_ask(value, ask_action)
+        if not _applicable(key, rule):
+            notes.append((str(key), "unknown"))
+            continue
+        if asked:
+            notes.append((key, "ask"))
+        if key == OPENCODE_DEFAULT_PERMISSION_KEY:
+            default = rule
+        else:
+            tools[key] = rule
+    table: dict[str, object] = {}
+    if default is not None:
+        table["default"] = default
+    if tools:
+        table["tools"] = tools
+    return OpenCodePermissions(table, tuple(notes))
+
+
+def _without_ask(rule: object, ask_action: str) -> tuple[object, bool]:
+    if rule == ASK_ACTION:
+        return ask_action, True
+    if isinstance(rule, Mapping):
+        asked = any(action == ASK_ACTION for action in rule.values())
+        return {
+            pattern: ask_action if action == ASK_ACTION else action
+            for pattern, action in rule.items()
+        }, asked
+    return rule, False
+
+
+def _applicable(key: object, rule: object) -> bool:
+    """Si `AgentPermissions` admite la entrada: `"*"` sólo con una acción,
+    el resto como herramienta con una acción o patrones."""
+    try:
+        if key == OPENCODE_DEFAULT_PERMISSION_KEY:
+            AgentPermissions(default=rule)  # type: ignore[arg-type]
+        elif isinstance(key, str):
+            AgentPermissions(tools={key: rule})  # type: ignore[dict-item]
+        else:
+            return False
+    except InvalidArgumentException:
+        return False
+    return True
 
 
 def _endpoint_options(base_url: str | None) -> dict[str, object]:
@@ -630,10 +708,12 @@ def _run_script(command: str) -> str:
 __all__ = [
     "OPENCODE_CONFIG_PATH",
     "OPENCODE_INSTRUCTIONS_PATH",
+    "OpenCodePermissions",
     "OpenCodeRuntime",
     "OpenCodeState",
     "build_opencode_config",
     "canonical_json",
     "files_sha256",
+    "permissions_from_opencode",
     "shell_quote",
 ]

@@ -16,6 +16,7 @@ from rayito._lifecycle_base import (
     DEFAULT_IDLE_POLICY,
     PAUSE_DEFAULT_IDLE_FALLBACK_SECONDS,
     LifecycleBlock,
+    LifetimeBeyondCapException,
     TimeoutRequest,
     auto_resume_reopen,
     beyond_cap_error,
@@ -25,6 +26,7 @@ from rayito._lifecycle_base import (
     pause_trigger_delay,
     resolve_lifecycle,
     translate_set_timeout_error,
+    unmanaged_error,
     validate_set_timeout_seconds,
 )
 from rayito._payload import build_run_hook_payload
@@ -383,7 +385,12 @@ def test_auto_resume_reopen_applies_the_e2b_rule_after_a_resumed_deadline_pause(
 
 
 def test_beyond_cap_message_names_max_lifetime_and_28800() -> None:
-    message = str(beyond_cap_error(TimeoutRequest("exact", 2_000_000), NOW_MS))
+    error = beyond_cap_error(TimeoutRequest("exact", 2_000_000), NOW_MS)
+    message = str(error)
+    assert isinstance(error, LifetimeBeyondCapException)
+    assert isinstance(error, InvalidArgumentException)
+    assert error.cap_unix_ms == NOW_MS
+    assert not isinstance(unmanaged_error("set_timeout"), LifetimeBeyondCapException)
     assert message.startswith("set_timeout(2000) supera el max_lifetime")
     assert "28800" in message
     assert "reincarnate()" in message

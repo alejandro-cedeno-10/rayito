@@ -133,6 +133,7 @@ with the same fields in camelCase and times in milliseconds.
 | `ready_timeout` / `readyTimeoutMs` | 90 s | readiness deadline of each warm-up |
 | `index` | none | `DynamoDbIndex(...)`: writes the [metadata index](optional-features.md) row of each slot when it is launched (its own cost, off by default) |
 | `warmup` | `()` / `[]` | steps each slot runs before being parked; see [Warm-up](#calentamiento-warmup) |
+| `max_lifetime` / `maxLifetimeMs`, `on_timeout` / `onTimeout` (since 0.17) | none | the `create()` logical deadline on every slot: `timeout` becomes the deadline and `max_lifetime` the cap (by default `timeout + 60`); only `on_timeout="kill"`. Whoever takes the slot can shorten it with `set_timeout()`; without them, slots launch as before |
 
 There is no `access_token` (one per slot, see custody) or `allowed_ports`
 (`get_host(port)` mints per port after the take, as after `create()`).
@@ -240,7 +241,9 @@ thread-safe.
 
 `close(drain=False)` leaves the slots parked and their records for another
 pool and is **only supported with a persistent backend**. In `start()` the
-pool loads the backend: a `warming` record is an orphan of an interrupted
+pool loads the backend and adopts only the slots of its own image (those of
+another image, such as another fleet deployed from the same directory, stay
+in the backend untouched): a `warming` record is an orphan of an interrupted
 warm-up (it is terminated, `lost += 1`) and every `ready` one goes through
 a sweep before it can be taken (`launched` does not change). `stats()`
 returns `PoolStats` (`size, ready, warming, takes, hits, misses, launched,

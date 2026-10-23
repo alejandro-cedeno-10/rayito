@@ -15,9 +15,10 @@ from typing import Any, Final
 
 from rayito._agent._deploy_plan import AgentDeployPlan
 from rayito._agent._detect_report import DetectionReport
-from rayito._agent._project_domain import AgentProject
+from rayito._agent._project_domain import SECRET_LIKE_KEYS, AgentProject
 from rayito._agent._secret_env_domain import SecretEnvSource, SecretEnvValue
 from rayito._agent._secret_env_project import with_secret_env
+from rayito._limits import AGENT_SCALE_IN_AFTER_SECONDS_DEFAULT
 from rayito._limits import AGENT_TOKEN_FILE_DEFAULT as AGENT_TOKEN_FILE_NAME
 from rayito._models import IdlePolicy, NetworkPolicy
 from rayito._payload import generate_access_token
@@ -46,6 +47,56 @@ COMPACT_LOG_PROGRESS_LINES: Final = 200
 #: Una línea de log con alguno de estos textos siempre se imprime.
 COMPACT_LOG_ALERT_MARKERS: Final[tuple[str, ...]] = ("error", "failed", "fatal")
 SECRET_FLAG_SEPARATOR: Final = "="
+#: Los nombres de `--env` que parecen un secreto: los de `AgentProject.env`
+#: más `secret` (`*_SECRET`). Sólo la bandera los rechaza: `AgentProject.env`
+#: conserva la regla de 0.16 (`testdata/fleet-recipe/env-rejection.json`).
+ENV_FLAG_SECRET_LIKE_KEYS: Final[tuple[str, ...]] = (*SECRET_LIKE_KEYS, "secret")
+#: Palabras que, como segmento del nombre de una `--env` (partes separadas
+#: por `_`, sin distinguir mayúsculas), también lo marcan como secreto:
+#: `DB_PASS`, `GITHUB_PAT`, `SERVICE_CREDENTIAL`.
+ENV_FLAG_SECRET_SEGMENTS: Final[tuple[str, ...]] = (
+    "pass",
+    "passwd",
+    "pat",
+    "credential",
+    "credentials",
+)
+#: Palabras que marcan un secreto sólo como último segmento (`AUTH`,
+#: `X_AUTH`, `BEARER`) o junto a un segmento de `ENV_FLAG_AUTH_COMPANIONS`
+#: (`AUTH_HEADER`): `AUTH_MODE`, `AUTH_URL` o `AUTHOR_NAME` son nombres
+#: corrientes que no llevan un secreto.
+ENV_FLAG_AUTH_SEGMENTS: Final[tuple[str, ...]] = ("auth", "bearer")
+#: Los segmentos que, junto a uno de `ENV_FLAG_AUTH_SEGMENTS`, marcan un
+#: secreto: `AUTH_TOKEN`, `BEARER_KEY`, `PROXY_AUTH_HEADER`.
+ENV_FLAG_AUTH_COMPANIONS: Final[tuple[str, ...]] = ("token", "key", "header")
+ENV_NAME_SEGMENT_SEPARATOR: Final = "_"
+ENV_LOOKS_SECRET_MESSAGE: Final = (
+    "--env no admite secretos ({name} parece uno): usa --secret-env {name}=<secreto> "
+    "o --secret-env-from <secreto>"
+)
+SCALE_IN_AFTER_HELP: Final = (
+    "Segundos sin uso tras los que se termina un VM por encima de --min-vms (por defecto, "
+    f"el de [scaling] del proyecto o {AGENT_SCALE_IN_AFTER_SECONDS_DEFAULT})."
+)
+SAVE_RECIPE_HELP: Final = (
+    "No guarda la receta de la flota en Parameter Store (por defecto se guarda, sin coste en "
+    "el nivel estándar)."
+)
+RENEW_GATEWAY_KEYS_HELP: Final = (
+    "Renueva la clave de corta duración de Bedrock de las pasarelas antes de crear cada VM "
+    "(apagado por defecto)."
+)
+INVOKE_RENEW_GATEWAY_KEYS_HELP: Final = (
+    "Con el nombre de una flota, renueva la clave de corta duración de Bedrock de las "
+    "pasarelas antes de crear cada VM nuevo, firmada con tus credenciales (apagado por defecto)."
+)
+RENEW_NEEDS_FLEET_MESSAGE: Final = (
+    "--renew-gateway-keys sólo vale con el nombre de una flota: un sandbox suelto no crea VMs"
+)
+KEEP_RECIPE_HELP: Final = "Conserva la receta de la flota al pararla."
+#: La línea de `rayito agent status` de una flota sin proyecto ni receta: su
+#: escalado real no se conoce, así que no se imprime `min`/`max`.
+STATUS_UNKNOWN_SCALING: Final = "members: {count} (escalado desconocido: sin proyecto ni receta)"
 
 
 class CompactBuildLog:
@@ -69,6 +120,39 @@ class CompactBuildLog:
     def finish(self) -> None:
         if self._lines:
             self._emit(f"build: {self._lines} líneas de log (--verbose las imprime todas)")
+
+
+def env_flag_looks_secret(name: str) -> bool:
+    """Si el nombre de una `--env` parece un secreto, sin distinguir
+    mayúsculas: una de `ENV_FLAG_SECRET_LIKE_KEYS` entera o como sufijo
+    `_<palabra>`, una de `ENV_FLAG_SECRET_SEGMENTS` como segmento, o una de
+    `ENV_FLAG_AUTH_SEGMENTS` como último segmento o junto a una de
+    `ENV_FLAG_AUTH_COMPANIONS`."""
+    lowered = name.lower()
+    if any(lowered == word or lowered.endswith(f"_{word}") for word in ENV_FLAG_SECRET_LIKE_KEYS):
+        return True
+    segments = lowered.split(ENV_NAME_SEGMENT_SEPARATOR)
+    if any(word in segments for word in ENV_FLAG_SECRET_SEGMENTS):
+        return True
+    return _has_auth_segment(segments)
+
+
+def _has_auth_segment(segments: list[str]) -> bool:
+    """Si una de `ENV_FLAG_AUTH_SEGMENTS` es el último segmento, o está junto
+    a un segmento de `ENV_FLAG_AUTH_COMPANIONS`."""
+    if segments[-1] in ENV_FLAG_AUTH_SEGMENTS:
+        return True
+    if not any(word in segments for word in ENV_FLAG_AUTH_SEGMENTS):
+        return False
+    return any(word in segments for word in ENV_FLAG_AUTH_COMPANIONS)
+
+
+def reject_secret_env_flags(env: Mapping[str, str]) -> None:
+    """`InvalidArgumentException` con la primera `--env` que parece un
+    secreto, antes de cualquier llamada a AWS. Nunca repite el valor."""
+    for name in env:
+        if env_flag_looks_secret(name):
+            raise InvalidArgumentException(ENV_LOOKS_SECRET_MESSAGE.format(name=name))
 
 
 def parse_pairs(values: Sequence[str] | None, flag: str) -> dict[str, str]:
@@ -208,6 +292,7 @@ def describe_plan(plan: AgentDeployPlan) -> list[str]:
         ),
         f"bucket del artefacto: {_source_label(plan.bucket_source)}",
         f"access token: {_source_label(plan.token_source)}",
+        f"recipe: {plan.recipe}",
     ]
     lines.extend(
         f"secreto de la pasarela {item.gateway}: {_source_label(item.source)}"

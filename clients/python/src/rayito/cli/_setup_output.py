@@ -41,7 +41,12 @@ __all__ = [
 HEADER_TEMPLATE: Final = "rayito setup: cuenta {account}, región {region}"
 STEP_TEMPLATE: Final = "  {label} {name}: {action}"
 RESOURCE_LABELS: Final[Mapping[ResourceKind, str]] = MappingProxyType(
-    {"bucket": "bucket", "iamStack": "pila de IAM", "baseImage": "imagen"}
+    {
+        "bucket": "bucket",
+        "iamStack": "pila de IAM",
+        "baseImage": "imagen",
+        "capsImage": "imagen con capacidades",
+    }
 )
 ACTION_TEMPLATES: Final[Mapping[str, str]] = MappingProxyType(
     {
@@ -56,6 +61,7 @@ ACTION_TEMPLATES: Final[Mapping[str, str]] = MappingProxyType(
         "imagePublishArtifact": "publicar desde {artifact} (≈ 10 min)",
         "imageReuse": "ya existe (versión {imageVersion} lanzable)",
         "imageWait": "build en curso (versión {imageVersion}): esperar",
+        "capsSkip": "omitida (sin --caps-image)",
     }
 )
 COST_HEADER: Final = "Coste aproximado:"
@@ -81,6 +87,9 @@ ACTION_KEYS: Final[Mapping[tuple[str, str], str]] = MappingProxyType(
         ("iamStack", "wait"): "stackWait",
         ("baseImage", "reuse"): "imageReuse",
         ("baseImage", "wait"): "imageWait",
+        ("capsImage", "reuse"): "imageReuse",
+        ("capsImage", "wait"): "imageWait",
+        ("capsImage", "skip"): "capsSkip",
     }
 )
 

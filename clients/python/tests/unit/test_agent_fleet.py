@@ -6,6 +6,8 @@ reconexión y el cierre. Ninguna prueba llama a AWS."""
 
 from __future__ import annotations
 
+import logging
+import math
 from typing import Any
 
 import pytest
@@ -16,8 +18,10 @@ from rayito._agent._fleet_async import AsyncAgentFleet
 from rayito._agent._fleet_base import (
     AGENT_FLEET_BUSY_RETRY_SECONDS,
     AGENT_FLEET_SESSION_LABEL,
+    UNMANAGED_LIFETIME_MESSAGE,
     session_label,
 )
+from rayito._agent._project_base import request_timeout
 from rayito._agent._scaling_domain import ScalingOptions, decode_handle, encode_handle
 from rayito._limits import AGENT_FLEET_UNHEALTHY_PINGS, AGENT_SERVICE_QUEUE_TIMEOUT_SECONDS_DEFAULT
 from rayito.exceptions import (
@@ -160,8 +164,110 @@ def test_a_second_concurrent_session_grows_the_fleet_and_limits_the_extra_vm(
     assert decode_handle(second.session_id).sandbox_id == fleet.sandbox_ids[1]  # type: ignore[union-attr]
     extra = flavor.classes.sandboxes[fleet.sandbox_ids[1]]
     baseline = flavor.classes.sandboxes[fleet.sandbox_ids[0]]
-    assert extra.timeouts == [120, 120]
+    hold = math.ceil(request_timeout(project()))
+    assert extra.timeouts == [120, hold, 120]
     assert baseline.timeouts == []
+
+
+def test_a_fleet_that_can_grow_creates_every_vm_with_a_logical_lifetime(
+    flavor: FleetFlavor,
+) -> None:
+    fleet = flavor.started(SHARED_TWO)
+    held = flavor.open_stream(fleet, "primera")
+    flavor.call(fleet.invoke("segunda"))
+    flavor.close_stream(held)
+
+    assert len(flavor.classes.created) == 2
+    for _template, arguments in flavor.classes.created:
+        assert arguments["timeout"] == 3600
+        assert arguments["max_lifetime"] == 3660
+        assert arguments["on_timeout"] == "kill"
+    assert all(sbx.managed for sbx in flavor.classes.live)
+
+
+def test_a_single_vm_fleet_creates_its_vm_as_in_0_16(flavor: FleetFlavor) -> None:
+    flavor.started()
+
+    [(_template, arguments)] = flavor.classes.created
+    assert "max_lifetime" not in arguments
+    assert "on_timeout" not in arguments
+
+
+def test_a_vm_without_a_logical_lifetime_warns_once_and_is_not_retried(
+    flavor: FleetFlavor, caplog: pytest.LogCaptureFixture
+) -> None:
+    fleet = flavor.started(SHARED_TWO)
+    old = flavor.classes.add(managed=False)
+    flavor.call(fleet.refresh_members())
+    held = flavor.open_stream(fleet, "primera")
+
+    with caplog.at_level(logging.WARNING, logger="rayito"):
+        flavor.call(fleet.invoke("segunda"))
+        flavor.call(fleet.invoke("tercera"))
+    flavor.close_stream(held)
+
+    assert old.timeouts == []
+    assert [r.getMessage() for r in caplog.records].count(UNMANAGED_LIFETIME_MESSAGE) == 1
+
+
+def test_a_vm_promoted_to_base_gets_its_whole_lifetime_back(flavor: FleetFlavor) -> None:
+    fleet = flavor.started(SHARED_TWO)
+    held = flavor.open_stream(fleet, "primera")
+    flavor.call(fleet.invoke("segunda"))
+    flavor.close_stream(held)
+    base, extra_id = fleet.sandbox_ids
+    extra = flavor.classes.sandboxes[extra_id]
+    flavor.classes.sandboxes[base]._kill()
+    flavor.call(fleet.refresh_members())
+
+    flavor.call(fleet.invoke("tercera"))
+
+    restored = extra.timeouts[-1]
+    assert 3590 <= restored <= 3660 - 60 - 5
+    assert extra.beyond_cap == []
+
+
+def test_an_extra_vm_keeps_its_hold_while_another_invocation_is_in_flight(
+    flavor: FleetFlavor,
+) -> None:
+    the_project = project(serve=_serve(max_concurrency=2))
+    scaling = ScalingOptions(min_vms=1, max_vms=2, scale_in_after_seconds=120)
+    fleet = flavor.started(scaling, the_project=the_project)
+    base_streams = [flavor.open_stream(fleet, "a"), flavor.open_stream(fleet, "b")]
+    long_running = flavor.open_stream(fleet, "larga")
+    extra = flavor.classes.sandboxes[fleet.sandbox_ids[1]]
+    hold = math.ceil(request_timeout(the_project))
+
+    flavor.call(fleet.invoke("corta"))
+
+    assert extra.timeouts == [120, hold, hold]
+    flavor.close_stream(long_running)
+    assert extra.timeouts == [120, hold, hold, 120]
+    for stream in base_streams:
+        flavor.close_stream(stream)
+
+
+def test_a_late_cap_estimate_is_corrected_from_rayd_and_never_marks_the_vm(
+    flavor: FleetFlavor, caplog: pytest.LogCaptureFixture
+) -> None:
+    scaling = ScalingOptions(min_vms=1, max_vms=2, scale_in_after_seconds=120)
+    fleet = flavor.started(scaling)
+    held = flavor.open_stream(fleet, "primera")
+    flavor.call(fleet.invoke("segunda"))
+    extra = flavor.classes.sandboxes[fleet.sandbox_ids[1]]
+    extra.max_lifetime = 200
+    flavor.close_stream(held)
+    held = flavor.open_stream(fleet, "primera")
+
+    with caplog.at_level(logging.WARNING, logger="rayito"):
+        flavor.call(fleet.invoke("tercera"))
+    flavor.close_stream(held)
+
+    hold = math.ceil(request_timeout(project()))
+    assert extra.beyond_cap == [hold]
+    assert 120 < extra.timeouts[-2] <= 200 - 60 - 5
+    assert extra.timeouts[-1] == 120
+    assert UNMANAGED_LIFETIME_MESSAGE not in [r.getMessage() for r in caplog.records]
 
 
 def test_sessions_share_a_vm_up_to_its_concurrency(flavor: FleetFlavor) -> None:
@@ -390,6 +496,10 @@ def test_warm_slots_come_from_a_pool_with_the_fleet_token(flavor: FleetFlavor) -
     assert len(pool.taken) == 1
     assert "bedrock" in pool.taken[0]["gateways"]
     assert len(fleet.sandbox_ids) == 2
+    assert pool.config.max_lifetime == 3660
+    assert pool.config.on_timeout == "kill"
+    taken = flavor.classes.sandboxes[fleet.sandbox_ids[1]]
+    assert taken.timeouts[0] == scaling.scale_in_after_seconds
 
 
 def test_the_parked_slots_are_not_members_until_claimed(flavor: FleetFlavor) -> None:

@@ -37,6 +37,7 @@ import {
   type ListMicrovmsPageOptions,
   PortSpec,
 } from "../aws/control-plane.js";
+import type { PlannedSection } from "../configure/base.js";
 import {
   errorMessage,
   InvalidArgumentError,
@@ -70,6 +71,7 @@ import {
 import {
   FillBackoff,
   newCounters,
+  ownsSlot,
   type PoolCounters,
   type PoolStats,
   pickReadySlot,
@@ -366,7 +368,7 @@ export class SandboxPool implements AsyncDisposable {
     this.#requireOpen();
     // Pura (ninguna llamada a AWS): una forma inválida falla antes de
     // reclamar ninguna plaza.
-    const featurePlan = planFeatures({ gateways: options.gateways });
+    const sections = gatewaySections(options.gateways);
     const secrets = await warm(bindSecrets(options.secrets, options.secretCache), () =>
       sharedSecretCache(this.#plane.region, awsClientSettingsOf(this.#plane).credentials),
     );
@@ -374,11 +376,10 @@ export class SandboxPool implements AsyncDisposable {
     const opened = record === undefined ? undefined : await this.#openSlot(record, options);
     const sandbox = opened ?? (await this.#fallback(options));
     Sandbox.attachSecrets(sandbox, secrets);
-    await Sandbox.applyConfigureSections(
-      sandbox,
-      featurePlan.configureSections,
-      options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS,
-    );
+    await applyGatewaySections(sandbox, sections, {
+      timeoutMs: options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS,
+      terminateOnFailure: true,
+    });
     return sandbox;
   }
 
@@ -974,6 +975,9 @@ export class SandboxPool implements AsyncDisposable {
 
   async #recover(): Promise<void> {
     for (const record of await this.#backendCall(() => this.#backend.load())) {
+      if (!ownsSlot(record, this.#imageArn)) {
+        continue;
+      }
       if (record.state === "warming") {
         await this.#backendCall(() => this.#backend.delete(record.sandboxId));
         this.#counters.lost += 1;
@@ -1043,4 +1047,44 @@ function poolNotStartedError(): PoolClosedError {
 
 function poolClosedError(): PoolClosedError {
   return new PoolClosedError("el pool está cerrado: take() ya no entrega sandboxes");
+}
+
+/** Las secciones de `ConfigureSandbox` que abren `gateways` en un sandbox ya
+ * arrancado (`planFeatures`, puro: una forma inválida falla aquí, antes de
+ * tocar ningún VM). Sin pasarelas, ninguna. Es el plan que comparten
+ * `SandboxPool.take({ gateways })` y la flota al abrir una plaza aparcada
+ * (`applyGateways`). */
+export function gatewaySections(
+  gateways: Readonly<Record<string, SecretGateway>> | undefined,
+): readonly PlannedSection[] {
+  return planFeatures({ gateways }).configureSections;
+}
+
+/** Aplica en `sandbox` las secciones de pasarela ya planificadas; sin
+ * ninguna, no llama a nada nuevo. */
+export async function applyGatewaySections(
+  sandbox: Sandbox,
+  sections: readonly PlannedSection[],
+  options: { readonly timeoutMs: number; readonly terminateOnFailure: boolean },
+): Promise<void> {
+  await Sandbox.applyConfigureSections(
+    sandbox,
+    sections,
+    options.timeoutMs,
+    options.terminateOnFailure,
+  );
+}
+
+/** Abre `gateways` en un sandbox ya arrancado (una plaza aparcada que la flota
+ * abre): el mismo camino que `SandboxPool.take({ gateways })`. Un fallo no
+ * termina el sandbox: quien llama lo descarta y lo sustituye. */
+export async function applyGateways(
+  sandbox: Sandbox,
+  gateways: Readonly<Record<string, SecretGateway>>,
+  options: { readonly timeoutMs: number },
+): Promise<void> {
+  await applyGatewaySections(sandbox, gatewaySections(gateways), {
+    timeoutMs: options.timeoutMs,
+    terminateOnFailure: false,
+  });
 }

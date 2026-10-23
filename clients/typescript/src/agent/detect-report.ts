@@ -111,6 +111,7 @@ export interface DetectionReportInit {
   readonly warnings?: readonly DetectionWarning[] | undefined;
   readonly alternatives?: readonly DetectionAlternative[] | undefined;
   readonly modelEnvs?: Readonly<Record<string, string>> | undefined;
+  readonly agentTable?: Readonly<Record<string, unknown>> | undefined;
 }
 
 function nullable<T>(value: T | undefined): T | null {
@@ -203,6 +204,10 @@ export class DetectionReport {
   readonly warnings: readonly DetectionWarning[];
   readonly alternatives: readonly DetectionAlternative[];
   readonly modelEnvs: Readonly<Record<string, string>>;
+  /** La tabla `[agent]` que aporta la configuración de un framework que se
+   * configura (OpenCode: `instructions_file` y `permissions`, ADR-034 D8).
+   * No sale en `toObject()`: el informe sólo lleva su evidencia. */
+  readonly agentTable: Readonly<Record<string, unknown>>;
 
   constructor(init: DetectionReportInit) {
     this.language = init.language;
@@ -220,6 +225,7 @@ export class DetectionReport {
     this.warnings = Object.freeze([...(init.warnings ?? [])]);
     this.alternatives = Object.freeze([...(init.alternatives ?? [])]);
     this.modelEnvs = Object.freeze({ ...(init.modelEnvs ?? {}) });
+    this.agentTable = Object.freeze({ ...(init.agentTable ?? {}) });
   }
 
   /** La forma JSON compartida con Python; `model_envs` sólo si hay. */

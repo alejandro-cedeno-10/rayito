@@ -17,6 +17,7 @@ import {
   PoolClosedError,
   QuotaExceededError,
   Sandbox,
+  SandboxLifetimeError,
   SandboxPool,
   UnimplementedError,
   validatePoolConfig,
@@ -49,6 +50,8 @@ const POOL_TIMEOUT_MS = 7_200_000;
 const POOL_MIN_REMAINING_MS = 3_600_000;
 const TRANSPORT = { scheme: "http" as const, pingIdleConnection: false };
 const NOW = new Date(Date.UTC(2026, 8, 16, 12, 0, 0));
+/** Otra imagen de la misma cuenta: la de otra flota con el mismo fichero de estado. */
+const OTHER_IMAGE_ARN = `${IMAGE_ARN.slice(0, IMAGE_ARN.lastIndexOf(":"))}:other-fleet`;
 
 class TickingNow {
   current = new Date(NOW);
@@ -882,6 +885,46 @@ describe("SandboxPool", () => {
     }
   });
 
+  test("recovery leaves the slots of another image alone", async () => {
+    // Dos flotas desplegadas desde el mismo directorio comparten el fichero de
+    // estado: el pool de una imagen no adopta, recicla, termina ni entrega las
+    // plazas de otra, y su close() las deja en el fichero.
+    const { plane, pool: make } = rig();
+    const path = tempFile("foreign.json");
+    const first = await make(2, { backend: new JsonFilePoolBackend(path) }).start();
+    await waitIdle(first, 2);
+    await first.close({ drain: false });
+    const [parkedId, warmingId] = [...readyIds(first)].sort() as [string, string];
+    const document = JSON.parse(await readFile(path, "utf8")) as {
+      slots: Array<Record<string, unknown>>;
+    };
+    for (const slot of document.slots) {
+      slot.template = OTHER_IMAGE_ARN;
+      if (slot.sandbox_id === warmingId) {
+        slot.state = "warming";
+        slot.parked_at = null;
+      }
+    }
+    await writeFile(path, JSON.stringify(document));
+    const terminates = plane.callsTo("TerminateMicrovm").length;
+
+    const second = await make(1, { backend: new JsonFilePoolBackend(path) }).start();
+    await waitIdle(second, 1);
+
+    const [ownId] = readyIds(second);
+    expect([parkedId, warmingId]).not.toContain(ownId);
+    expect(second.stats()).toMatchObject({ lost: 0, recycled: 0, launched: 1 });
+    await second.close();
+    expect(
+      plane
+        .callsTo("TerminateMicrovm")
+        .slice(terminates)
+        .map((c) => c.sandboxId),
+    ).toEqual([ownId]);
+    const left = (await new JsonFilePoolBackend(path).load()).map((r) => r.sandboxId).sort();
+    expect(left).toEqual([parkedId, warmingId].sort());
+  });
+
   // ---------------------------------------------------------- create({pool})
 
   test("Sandbox.create({ pool }) is sugar for take() and rejects launch options", async () => {
@@ -1129,5 +1172,34 @@ describe("PoolConfig.warmup", () => {
     expect("allowInternetAccess" in plain).toBe(false);
     const closed = launchOptions(validatePoolConfig({ size: 1, allowInternetAccess: false }));
     expect(closed.allowInternetAccess).toBe(false);
+  });
+
+  test("the logical lifetime is only forwarded when set", () => {
+    const plain = launchOptions(validatePoolConfig({ size: 1, timeoutMs: 7_200_000 }));
+    expect("maxLifetimeMs" in plain).toBe(false);
+    expect("onTimeout" in plain).toBe(false);
+    const timed = launchOptions(
+      validatePoolConfig({
+        size: 1,
+        timeoutMs: 7_200_000,
+        maxLifetimeMs: 7_260_000,
+        onTimeout: "kill",
+      }),
+    );
+    expect(timed.timeoutMs).toBe(7_200_000);
+    expect(timed.maxLifetimeMs).toBe(7_260_000);
+    expect(timed.onTimeout).toBe("kill");
+  });
+
+  test("a pool only accepts kill on timeout and the create rules for the cap", () => {
+    expect(() =>
+      validatePoolConfig({ size: 1, timeoutMs: 7_200_000, onTimeout: "pause" as "kill" }),
+    ).toThrow(/onTimeout/);
+    expect(() =>
+      validatePoolConfig({ size: 1, timeoutMs: 7_200_000, maxLifetimeMs: 7_000_000 }),
+    ).toThrow(/maxLifetimeMs/);
+    expect(() =>
+      validatePoolConfig({ size: 1, timeoutMs: 7_200_000, maxLifetimeMs: 28_801_000 }),
+    ).toThrow(SandboxLifetimeError);
   });
 });

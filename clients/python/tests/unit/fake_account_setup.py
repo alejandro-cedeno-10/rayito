@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Final
 
 from rayito._account_setup._domain import (
+    CAPS_IMAGE_NAME,
     CHECKSUMS_ASSET_NAME,
     IMAGE_ASSET_NAME,
     BucketProbe,
@@ -36,6 +37,8 @@ BUILD_ROLE_ARN: Final = f"arn:aws:iam::{ACCOUNT}:role/rayito-m0-build-{REGION}"
 IMAGE_VERSION_PUBLISHED: Final = "3.0"
 ARTIFACT_BYTES: Final = b"image zip"
 ARTIFACT_SHA256: Final = hashlib.sha256(ARTIFACT_BYTES).hexdigest()
+#: Sufijo de las llamadas que tocan `rayito-base-caps` en el registro.
+CAPS_CALL_SUFFIX: Final = ":caps"
 
 Call = tuple[str, ...]
 
@@ -207,15 +210,24 @@ class FakeBuckets:
 
 @dataclass
 class FakeImages:
+    """`rayito-base` (`image`) y `rayito-base-caps` (`caps`) en memoria. Las
+    llamadas de la base se registran como `get_image`/`list_versions`, igual
+    que antes de `capsImage`; las de la imagen con capacidades, con el
+    sufijo `:caps`."""
+
     recorder: Recorder
     image: ImageObservation
+    caps: ImageObservation | None = None
     gate: ImageGateResult = field(default_factory=lambda: ImageGateResult(True, "SUCCESSFUL"))
 
     def observe(self, name: str) -> ImageObservation:
-        self.recorder.record("get_image")
-        if self.image.state is not None:
-            self.recorder.record("list_versions")
-        return self.image
+        observed = self.caps if name == CAPS_IMAGE_NAME else self.image
+        suffix = CAPS_CALL_SUFFIX if name == CAPS_IMAGE_NAME else ""
+        assert observed is not None
+        self.recorder.record(f"get_image{suffix}")
+        if observed.state is not None:
+            self.recorder.record(f"list_versions{suffix}")
+        return observed
 
     def wait(self, image_arn: str, image_version: str, on_progress: Progress) -> ImageGateResult:
         self.recorder.record("gate", image_version)
@@ -224,16 +236,33 @@ class FakeImages:
 
 @dataclass
 class FakePublisher:
+    """Registra `("publish", <zip>)` para `rayito-base` y
+    `("publish:caps", <zip>, <os_capabilities>)` para `rayito-base-caps`."""
+
     recorder: Recorder
     image_arn: str
+    caps_image_arn: str = ""
     artifact_uploaded: bool = True
     published_with: tuple[str, str] = ("", "")
 
     def publish(
-        self, artifact: Path, *, bucket: str, build_role_arn: str, on_progress: Progress
+        self,
+        artifact: Path,
+        *,
+        name: str,
+        os_capabilities: str | None,
+        bucket: str,
+        build_role_arn: str,
+        on_progress: Progress,
     ) -> PublishedImage:
-        self.recorder.record("publish", str(artifact))
         self.published_with = (bucket, build_role_arn)
+        if name == CAPS_IMAGE_NAME:
+            self.recorder.record(f"publish{CAPS_CALL_SUFFIX}", str(artifact), str(os_capabilities))
+            return PublishedImage(
+                self.caps_image_arn, IMAGE_VERSION_PUBLISHED, self.artifact_uploaded
+            )
+        assert os_capabilities is None
+        self.recorder.record("publish", str(artifact))
         return PublishedImage(self.image_arn, IMAGE_VERSION_PUBLISHED, self.artifact_uploaded)
 
 
@@ -287,6 +316,7 @@ def from_vector_input(vector: Mapping[str, Any], sdk_version: str) -> FakeAccoun
     data = fill_placeholders(vector, account=account, region=region, sdk_version=sdk_version)
     recorder = Recorder()
     arn = account_image_arn(region, account, "rayito-base")
+    caps_arn = account_image_arn(region, account, CAPS_IMAGE_NAME)
     return FakeAccount(
         recorder=recorder,
         iam_stack=FakeIamStack(recorder, stack_from_vector(data["stack"], "rayito-m0-iam")),
@@ -294,7 +324,11 @@ def from_vector_input(vector: Mapping[str, Any], sdk_version: str) -> FakeAccoun
             recorder, stack_from_vector(data["artifactStack"], "rayito-m0-artifacts")
         ),
         buckets=FakeBuckets(recorder, data["buckets"], data["forbiddenBuckets"], account),
-        images=FakeImages(recorder, image_from_vector(data["image"], "rayito-base", arn)),
-        publisher=FakePublisher(recorder, arn),
+        images=FakeImages(
+            recorder,
+            image_from_vector(data["image"], "rayito-base", arn),
+            image_from_vector(data.get("capsImage"), CAPS_IMAGE_NAME, caps_arn),
+        ),
+        publisher=FakePublisher(recorder, arn, caps_arn),
         releases=FakeReleases(recorder),
     )

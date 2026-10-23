@@ -1,0 +1,10 @@
+[
+  {
+    "name": "opción renewGatewayKeys",
+    "pattern": "^\\s*readonly renewGatewayKeys\\?: boolean\\b"
+  },
+  {
+    "name": "class GatewayKeyRenewer",
+    "pattern": "^(export )?declare class GatewayKeyRenewer\\b"
+  }
+]

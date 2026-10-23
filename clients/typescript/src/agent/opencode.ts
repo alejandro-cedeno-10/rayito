@@ -26,8 +26,9 @@ import {
   OPENCODE_SESSION_TITLE,
 } from "../limits.js";
 import {
-  type AgentPermissions,
+  AgentPermissions,
   type AgentSpec,
+  ASK_ACTION,
   McpLocal,
   McpRemote,
   requiredModelId,
@@ -207,6 +208,103 @@ function permission(permissions: AgentPermissions): Record<string, unknown> {
     rules[tool] = typeof rule === "string" ? rule : { ...rule };
   }
   return rules;
+}
+
+/** La clave de `permission` que OpenCode aplica a toda herramienta sin
+ * entrada propia: `AgentPermissions.default`. */
+export const OPENCODE_DEFAULT_PERMISSION_KEY = "*";
+
+/** Por qué una entrada de `permission` no se aplica tal cual: `ask` pasa a
+ * ser la acción desatendida y `unknown` se ignora. */
+export type PermissionNoteReason = "ask" | "unknown";
+
+/** El bloque `permission` de un `opencode.json` traducido a la tabla
+ * `[agent.permissions]` de un proyecto (`default` y `tools`; vacía si no queda
+ * nada) y, en el orden del fichero, las claves que no se aplicaron tal cual con
+ * su motivo. */
+export interface OpenCodePermissions {
+  readonly table: Readonly<Record<string, unknown>>;
+  readonly notes: ReadonlyArray<readonly [string, PermissionNoteReason]>;
+}
+
+/**
+ * El inverso de `permission()`: `"*"` es `default` y cada herramienta, una
+ * acción o un objeto de patrones (`"bash": {"git *": "allow"}`). Una cadena
+ * sola es el `default`. `ask` se aplica como `askAction` (nadie contesta en una
+ * ejecución desatendida); una entrada que `AgentPermissions` no admite se
+ * ignora. Nunca lanza. Espejo de `permissions_from_opencode`.
+ */
+export function permissionsFromOpenCode(
+  block: unknown,
+  options: { readonly askAction: string },
+): OpenCodePermissions {
+  const entries = typeof block === "string" ? { [OPENCODE_DEFAULT_PERMISSION_KEY]: block } : block;
+  if (!isPlainObject(entries)) {
+    return { table: {}, notes: [[OPENCODE_DEFAULT_PERMISSION_KEY, "unknown"]] };
+  }
+  let defaultAction: unknown;
+  const tools: Record<string, unknown> = {};
+  const notes: Array<readonly [string, PermissionNoteReason]> = [];
+  for (const [key, value] of Object.entries(entries)) {
+    const { rule, asked } = withoutAsk(value, options.askAction);
+    if (!applicable(key, rule)) {
+      notes.push([key, "unknown"]);
+      continue;
+    }
+    if (asked) {
+      notes.push([key, "ask"]);
+    }
+    if (key === OPENCODE_DEFAULT_PERMISSION_KEY) {
+      defaultAction = rule;
+    } else {
+      tools[key] = rule;
+    }
+  }
+  const table: Record<string, unknown> = {};
+  if (defaultAction !== undefined) {
+    table.default = defaultAction;
+  }
+  if (Object.keys(tools).length > 0) {
+    table.tools = tools;
+  }
+  return { table, notes };
+}
+
+function withoutAsk(rule: unknown, askAction: string): { rule: unknown; asked: boolean } {
+  if (rule === ASK_ACTION) {
+    return { rule: askAction, asked: true };
+  }
+  if (isPlainObject(rule)) {
+    const patterns: Record<string, unknown> = {};
+    let asked = false;
+    for (const [pattern, action] of Object.entries(rule)) {
+      asked ||= action === ASK_ACTION;
+      patterns[pattern] = action === ASK_ACTION ? askAction : action;
+    }
+    return { rule: patterns, asked };
+  }
+  return { rule, asked: false };
+}
+
+/** Si `AgentPermissions` admite la entrada: `"*"` sólo con una acción, el
+ * resto como herramienta con una acción o patrones. */
+function applicable(key: string, rule: unknown): boolean {
+  try {
+    if (key === OPENCODE_DEFAULT_PERMISSION_KEY) {
+      if (typeof rule !== "string") {
+        return false;
+      }
+      new AgentPermissions({ default: rule as never });
+    } else {
+      new AgentPermissions({ tools: { [key]: rule as never } });
+    }
+  } catch (error) {
+    if (error instanceof InvalidArgumentError) {
+      return false;
+    }
+    throw error;
+  }
+  return true;
 }
 
 /** `baseURL` y la clave de marcador sólo con pasarela; sin ella (`baseUrl`

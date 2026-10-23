@@ -234,6 +234,12 @@ imagen más grande: usa una imagen por runtime y mide el tamaño de la tuya con
 `rayito image sizes`, porque cada versión paga almacenamiento al menos una
 semana.
 
+Un proyecto de OpenCode sin `rayito-agent.toml` lleva a la imagen su
+`AGENTS.md` y los permisos de su `opencode.json`. El `AGENTS.md` se copia como
+fichero de instrucciones del runtime, bajo `~/.rayito/agent/opencode/`, y los
+permisos van en el `opencode.json` que genera Rayito. Detalle en
+[Proveedores del agente](../guias/agente-proveedores.md#opencode-sin-fichero-de-proyecto).
+
 ## Ver también
 
 - [Agente en el sandbox](../guias/agente-en-el-sandbox.md).

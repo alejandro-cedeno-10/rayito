@@ -234,6 +234,12 @@ at a fixed commit and checked with `git rev-parse`. Heavy frameworks make the
 image larger: use one image per runtime and measure yours with
 `rayito image sizes`, because each version pays storage for at least a week.
 
+An OpenCode project without `rayito-agent.toml` takes its `AGENTS.md` and
+the permissions of its `opencode.json` into the image. `AGENTS.md` is copied as
+the runtime's instructions file, under `~/.rayito/agent/opencode/`, and the
+permissions go in the `opencode.json` that Rayito generates. Details in
+[Agent providers](../guias/agente-proveedores.md#opencode-sin-fichero-de-proyecto).
+
 ## See also { #ver-tambien }
 
 - [Agent in the sandbox](../guias/agente-en-el-sandbox.md).

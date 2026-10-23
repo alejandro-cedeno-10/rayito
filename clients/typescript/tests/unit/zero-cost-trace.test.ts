@@ -88,3 +88,39 @@ describe("traza dorada de coste cero", () => {
     }).toEqual(GOLDEN);
   });
 });
+
+describe("fleet recipe and key renewal outside deployAgent", () => {
+  test("building, starting, reconnecting and stopping a fleet reach no recipe or key", async () => {
+    const { AgentFleet } = await import("../../src/agent/fleet.js");
+    const { planDeploy } = await import("../../src/agent/deploy.js");
+    const { FLEET_TOKEN, FleetHarness } = await import("./agent-fleet-fake.js");
+    const { project } = await import("./agent-project-fake.js");
+    const { MemoryRecipeStore } = await import("./fleet-recipe-fake.js");
+    const h = new FleetHarness();
+    const store = new MemoryRecipeStore();
+    const renewals: string[] = [];
+    const keyRenewer = {
+      renew: async () => {
+        renewals.push("renew");
+        return false;
+      },
+    };
+    const fleet = h.fleet(undefined, { recipeStore: store, keyRenewer });
+    await fleet.start();
+    await fleet.status();
+    await fleet.stop();
+    for (const options of [{ project: project() }, { useRecipe: false }]) {
+      const reconnected = await AgentFleet.connect("support-bot", {
+        accessToken: FLEET_TOKEN,
+        directory: h.world,
+        recipeStore: store,
+        keyRenewer,
+        ...options,
+      });
+      await reconnected.stop();
+    }
+    await planDeploy(".", { project: project() });
+    expect(store.calls).toEqual([]);
+    expect(renewals).toEqual([]);
+  });
+});

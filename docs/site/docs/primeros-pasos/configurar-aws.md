@@ -1,11 +1,12 @@
 ---
-description: "Prepara tu cuenta de AWS para Rayito una vez con rayito setup: la pila de IAM, la imagen rayito-base y el bucket (lo reutiliza o lo crea), y rayito doctor."
+description: "Prepara tu cuenta de AWS una vez con rayito setup: pila de IAM, imágenes rayito-base y rayito-base-caps, el bucket (reutilizado o creado) y rayito doctor."
 ---
 
 # Configurar AWS
 
 Antes del primer sandbox, tu cuenta necesita permisos (una pila de IAM), un
-bucket para los artefactos de la imagen y la imagen `rayito-base` publicada.
+bucket para los artefactos de la imagen y la imagen `rayito-base` publicada (y,
+para desplegar agentes en MicroVM, `rayito-base-caps`).
 `rayito setup` lo prepara en una sola orden, idempotente, como `cdk bootstrap`:
 **una vez por cuenta y región**. La primera ejecución tarda unos 10–12 minutos,
 casi todo esperando a que AWS construya el snapshot de la imagen; las
@@ -14,7 +15,7 @@ siguientes, que no tienen nada que crear, terminan en segundos.
 | Paso | Una vez por | Tiempo | Coste |
 |---|---|---|---|
 | 1. Credenciales y región | máquina | 1 min | — |
-| 2. `rayito setup` | cuenta y región | 10–12 min la primera vez; segundos después | pila de IAM gratis; ≈ $0,04/semana por versión de imagen; zip en el bucket, céntimos |
+| 2. `rayito setup` | cuenta y región | 10–12 min la primera vez; segundos después | pila de IAM gratis; ≈ $0,04/semana por versión de cada imagen (una; dos con `--caps-image`); zip en el bucket, céntimos |
 | 3. Asignar las políticas de IAM | cuenta y región | 2 min | gratis |
 | 4. `RAYITO_TEMPLATE` | entorno de tu app | — | — |
 | 5. `rayito doctor --launch` | cuando quieras | 1 min | ≈ $0,002 |
@@ -66,7 +67,7 @@ CloudFormation las propaga a sus recursos.
 ## 2. Prepara la cuenta con `rayito setup` { #2-prepara-la-cuenta-con-rayito-setup }
 
 `rayito setup` mira tu cuenta y tu región, enseña el plan y el coste, pide
-confirmación y crea sólo lo que falta. Son tres recursos, siempre en este
+confirmación y crea sólo lo que falta. Son cuatro pasos, siempre en este
 orden:
 
 - **El bucket de artefactos.** Reutiliza el primero que exista de:
@@ -86,6 +87,14 @@ orden:
   release `rayd-v<versión de tu SDK>`, comprueba el sha256 y la publica. Si ya
   hay una versión lanzable, no construye otra; si hay un build en curso, lo
   espera.
+- **La imagen `rayito-base-caps`**, la base que usa `rayito agent deploy` para
+  los agentes en MicroVM: la misma imagen con todas las capacidades del sistema
+  (`additionalOsCapabilities=["ALL"]`), publicada desde **el mismo zip**, sin
+  descargarlo dos veces. Se decide igual que `rayito-base`. Cuesta otra
+  versión de imagen, así que sólo se publica con `rayito setup --caps-image`;
+  sin la opción el paso sale como `omitida (sin --caps-image)`. Si vas a
+  desplegar agentes en MicroVM, añádela (o vuelve a ejecutar
+  `rayito setup --caps-image` más tarde: lo demás ya está y no se repite).
 
 Empieza con `--dry-run`: sólo lee tu cuenta y no crea ni cambia nada.
 
@@ -110,7 +119,8 @@ aparece):
 rayito setup: cuenta 123456789012, región us-east-1
   bucket rayito-artifacts-<cuenta>-<región>: crear con la pila rayito-m0-artifacts (nombre por defecto de Rayito)
   pila de IAM rayito-m0-iam: crear
-  imagen rayito-base: publicar desde rayd-v0.15.0 (≈ 10 min)
+  imagen rayito-base: publicar desde rayd-v0.17.0 (≈ 10 min)
+  imagen con capacidades rayito-base-caps: omitida (sin --caps-image)
 Coste aproximado:
   bucket de artefactos: los zips de la imagen caducan a los 7 días (regla de ciclo de vida)
   pila de IAM: gratis
@@ -144,7 +154,8 @@ necesita tu aplicación. En la cuenta sin bucket de arriba:
 rayito setup: cuenta 123456789012, región us-east-1
   bucket rayito-artifacts-<cuenta>-<región>: crear con la pila rayito-m0-artifacts (nombre por defecto de Rayito)
   pila de IAM rayito-m0-iam: crear
-  imagen rayito-base: publicar desde rayd-v0.15.0 (≈ 10 min)
+  imagen rayito-base: publicar desde rayd-v0.17.0 (≈ 10 min)
+  imagen con capacidades rayito-base-caps: omitida (sin --caps-image)
 Coste aproximado:
   bucket de artefactos: los zips de la imagen caducan a los 7 días (regla de ciclo de vida)
   pila de IAM: gratis
@@ -155,8 +166,8 @@ creando el bucket rayito-artifacts-<cuenta>-<región> con la pila rayito-m0-arti
 bucket rayito-artifacts-<cuenta>-<región> listo (pila rayito-m0-artifacts)
 creando la pila de IAM rayito-m0-iam
 pila de IAM rayito-m0-iam lista
-descargando SHA256SUMS de rayd-v0.15.0
-descargando rayito-image.zip de rayd-v0.15.0
+descargando SHA256SUMS de rayd-v0.17.0
+descargando rayito-image.zip de rayd-v0.17.0
 sha256 de rayito-image.zip verificado contra SHA256SUMS: <sha256>
 base_image_version=<versión>
 uploaded s3://rayito-artifacts-<cuenta>-<región>/rayito/images/rayd-<sha12>.zip (<bytes> bytes)
@@ -164,6 +175,7 @@ create-microvm-image accepted: version <versión>
   image=<estado> version=<versión> state=<estado> status=<estado> (<s>s)
   ...                                (una línea por sondeo hasta que la versión es lanzable)
 imagen rayito-base <versión> lanzable
+base_image_version=<versión>
 ...                                  (la salida de rayito doctor)
 rayito setup: cuenta preparada en us-east-1
 RAYITO_TEMPLATE=arn:aws:lambda:us-east-1:123456789012:microvm-image:rayito-base
@@ -178,7 +190,7 @@ una cuenta que ya tiene la imagen, no hay descarga ni build.
 Si `rayito doctor` encuentra algún `FAIL`, en lugar de las tres últimas líneas
 verás `rayito setup: rayito doctor encontró algún FAIL; la cuenta no está lista`
 y la orden sale con código 1. Puedes repetir `rayito setup` las veces que
-quieras: en una cuenta ya preparada observa tres recursos reutilizables
+quieras: en una cuenta ya preparada observa cuatro pasos reutilizables
 (`La cuenta ya está preparada: no hay nada que crear.`), no escribe nada y
 termina en segundos. Si
 una ejecución se corta, la siguiente retoma lo que quedó en curso (la pila o el
@@ -200,16 +212,19 @@ build) sin lanzar un segundo build.
       CloudFormation `rayito-m0-artifacts` (`CreateStack` sin capacidades; un
       bucket de S3 y su política); la pila `rayito-m0-iam` (`CreateStack` o
       `UpdateStack` con `CAPABILITY_NAMED_IAM`; roles y tres políticas
-      gestionadas); la imagen `rayito-base` (un objeto en el bucket del
-      artefacto, `CreateMicrovmImage` o `UpdateMicrovmImage` y su build);
+      gestionadas); las imágenes `rayito-base` y `rayito-base-caps` (un objeto
+      en el bucket del artefacto, compartido, y `CreateMicrovmImage` o
+      `UpdateMicrovmImage` y su build por imagen; la segunda con
+      `additionalOsCapabilities=["ALL"]`);
       lecturas de `GetCallerIdentity`, `DescribeStacks`, `HeadBucket`,
       `GetMicrovmImage` y `ListMicrovmImageVersions`; la descarga HTTPS de dos
       ficheros de la release de GitHub. El SDK no llama a `CreateBucket`: el
       bucket lo crea CloudFormation con tus credenciales.
     - **Coste aproximado:** la pila de IAM es gratis; el bucket no cuesta nada
-      por existir y sus zips caducan a los 7 días; cada versión publicada de la
-      imagen ≈ $0,04 por semana de almacenamiento (mínimo una semana); el zip
-      en el bucket, céntimos. Ver [Precios](../cost.md).
+      por existir y sus zips caducan a los 7 días; cada versión publicada de
+      cada imagen ≈ $0,04 por semana de almacenamiento ($0,08 por GB-mes,
+      mínimo una semana); el zip en el bucket, céntimos. Ver
+      [Precios](../cost.md).
     - **IAM:** credenciales de administración o de *bootstrap*, una sola vez:
       `cloudformation:CreateStack` y lecturas de pila, crear roles y políticas
       de IAM (`iam:CreateRole`, `iam:CreatePolicy`), publicar imágenes y, sólo
@@ -219,7 +234,8 @@ build) sin lanzar un segundo build.
       `s3:PutLifecycleConfiguration`, `s3:PutBucketTagging`,
       `s3:GetBucketPolicy` y `s3:PutBucketPolicy`) y `s3:ListBucket`. Para usar
       el SDK después basta la política mínima del paso 3.
-    - **Cómo apagarla:** no ejecutar `rayito setup`. Para deshacer lo creado,
+    - **Cómo apagarla:** no ejecutar `rayito setup`; sin `--caps-image` (por
+      defecto) no publica `rayito-base-caps`. Para deshacer lo creado,
       borra las pilas `rayito-m0-iam` y, si existe, `rayito-m0-artifacts`, y las
       versiones de la imagen que publicaste. El bucket creado se conserva al
       borrar su pila: vacíalo y bórralo a mano si ya no lo quieres.

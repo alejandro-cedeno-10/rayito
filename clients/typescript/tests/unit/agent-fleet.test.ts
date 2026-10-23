@@ -12,8 +12,10 @@ import {
   AGENT_FLEET_BUSY_RETRY_MS,
   AGENT_FLEET_SESSION_LABEL,
   sessionLabel,
+  UNMANAGED_LIFETIME_MESSAGE,
 } from "../../src/agent/fleet-base.js";
 import { DEFAULT_QUEUE_TIMEOUT_MS, ServeOptions } from "../../src/agent/project.js";
+import { requestTimeoutMs } from "../../src/agent/project-service.js";
 import { decodeHandle, encodeHandle, ScalingOptions } from "../../src/agent/scaling-domain.js";
 import { CapacityError, InvalidArgumentError, SandboxError } from "../../src/errors.js";
 import { AGENT_FLEET_UNHEALTHY_PINGS } from "../../src/limits.js";
@@ -133,8 +135,115 @@ describe("shared mode", () => {
     expect(decodeHandle(second.sessionId)?.sandboxId).toBe(fleet.sandboxIds[1]);
     const extra = h.world.sandboxes.get(fleet.sandboxIds[1] ?? "");
     const baseline = h.world.sandboxes.get(fleet.sandboxIds[0] ?? "");
-    expect(extra?.timeouts).toEqual([120, 120]);
+    const hold = Math.ceil(requestTimeoutMs(project()) / 1000);
+    expect(extra?.timeouts).toEqual([120, hold, 120]);
     expect(baseline?.timeouts).toEqual([]);
+  });
+
+  test("a fleet that can grow creates every VM with a logical lifetime", async () => {
+    const h = new FleetHarness();
+    const fleet = await h.started(SHARED_TWO);
+    const held = await fleet.stream("primera");
+    await fleet.invoke("segunda");
+    await held.close();
+    expect(h.world.created).toHaveLength(2);
+    for (const { options } of h.world.created) {
+      expect(options.timeoutMs).toBe(3_600_000);
+      expect(options.maxLifetimeMs).toBe(3_660_000);
+      expect(options.onTimeout).toBe("kill");
+    }
+    expect([...h.world.sandboxes.values()].every((sandbox) => sandbox.managed)).toBe(true);
+  });
+
+  test("a single-VM fleet creates its VM as in 0.16", async () => {
+    const h = new FleetHarness();
+    await h.started();
+    expect(h.world.created).toHaveLength(1);
+    const options = h.world.created[0]?.options ?? {};
+    expect("maxLifetimeMs" in options).toBe(false);
+    expect("onTimeout" in options).toBe(false);
+  });
+
+  test("a VM without a logical lifetime warns once and is not retried", async () => {
+    const h = new FleetHarness();
+    const warn = vi.fn();
+    const fleet = await h.started(SHARED_TWO, { logger: { warn } });
+    const old = h.world.add({ managed: false });
+    await fleet.refreshMembers();
+    const held = await fleet.stream("primera");
+    await fleet.invoke("segunda");
+    await fleet.invoke("tercera");
+    await held.close();
+    expect(old.timeouts).toEqual([]);
+    expect(
+      warn.mock.calls.filter(([message]) => message === UNMANAGED_LIFETIME_MESSAGE),
+    ).toHaveLength(1);
+  });
+
+  test("a VM promoted to base gets its whole lifetime back", async () => {
+    const h = new FleetHarness();
+    const fleet = await h.started(SHARED_TWO);
+    const held = await fleet.stream("primera");
+    await fleet.invoke("segunda");
+    await held.close();
+    const [base, extraId] = fleet.sandboxIds;
+    const extra = h.world.sandboxes.get(extraId ?? "");
+    await h.world.sandboxes.get(base ?? "")?.kill();
+    await fleet.refreshMembers();
+    await fleet.invoke("tercera");
+    const restored = extra?.timeouts.at(-1) ?? 0;
+    expect(restored).toBeGreaterThanOrEqual(3590);
+    expect(restored).toBeLessThanOrEqual(3660 - 60 - 5);
+    expect(extra?.beyondCap).toEqual([]);
+  });
+
+  test("an extra VM keeps its hold while another invocation is in flight", async () => {
+    const h = new FleetHarness();
+    const the = project({ serve: new ServeOptions({ maxConcurrency: 2 }) });
+    const fleet = h.fleet(new ScalingOptions({ minVms: 1, maxVms: 2, scaleInAfterMs: 120_000 }), {
+      project: the,
+      service: h.service(the),
+    });
+    await fleet.start();
+    const baseStreams = [await fleet.stream("a"), await fleet.stream("b")];
+    const longRunning = await fleet.stream("larga");
+    const extra = h.world.sandboxes.get(fleet.sandboxIds[1] ?? "");
+    const hold = Math.ceil(requestTimeoutMs(the) / 1000);
+    await fleet.invoke("corta");
+    expect(extra?.timeouts).toEqual([120, hold, hold]);
+    await longRunning.close();
+    expect(extra?.timeouts).toEqual([120, hold, hold, 120]);
+    for (const stream of baseStreams) {
+      await stream.close();
+    }
+  });
+
+  test("a late cap estimate is corrected from rayd and never marks the VM", async () => {
+    const h = new FleetHarness();
+    const warn = vi.fn();
+    const fleet = await h.started(
+      new ScalingOptions({ minVms: 1, maxVms: 2, scaleInAfterMs: 120_000 }),
+      { logger: { warn } },
+    );
+    let held = await fleet.stream("primera");
+    await fleet.invoke("segunda");
+    const extra = h.world.sandboxes.get(fleet.sandboxIds[1] ?? "");
+    if (extra === undefined) {
+      throw new Error("falta el VM sobrante");
+    }
+    extra.maxLifetimeMs = 200_000;
+    await held.close();
+    held = await fleet.stream("primera");
+    await fleet.invoke("tercera");
+    await held.close();
+    const hold = Math.ceil(requestTimeoutMs(project()) / 1000);
+    expect(extra.beyondCap).toEqual([hold]);
+    expect(extra.timeouts.at(-2)).toBeGreaterThan(120);
+    expect(extra.timeouts.at(-2)).toBeLessThanOrEqual(200 - 60 - 5);
+    expect(extra.timeouts.at(-1)).toBe(120);
+    expect(warn.mock.calls.filter(([message]) => message === UNMANAGED_LIFETIME_MESSAGE)).toEqual(
+      [],
+    );
   });
 
   test("sessions share a VM up to its concurrency", async () => {
@@ -330,6 +439,10 @@ describe("warm pool", () => {
     expect(pool?.taken).toHaveLength(1);
     expect(Object.keys((pool?.taken[0]?.gateways ?? {}) as object)).toContain("bedrock");
     expect(fleet.sandboxIds).toHaveLength(2);
+    expect(pool?.config.maxLifetimeMs).toBe(3_660_000);
+    expect(pool?.config.onTimeout).toBe("kill");
+    const taken = h.world.sandboxes.get(fleet.sandboxIds[1] ?? "");
+    expect(taken?.timeouts[0]).toBe(900);
   });
 
   test("the parked slots are not members until claimed", async () => {

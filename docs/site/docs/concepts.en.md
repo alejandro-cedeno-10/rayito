@@ -69,6 +69,15 @@ and `sbx.agent.run(...)`; a warmed pool only shortens the start
 ([Which one do I use?](guias/agente-en-el-sandbox.md#que-uso)), and
 `persist=` keeps the files if the conversation stops for more than 8 h.
 
+An agent deployed with `deploy_agent()` is a
+[fleet](guias/flota-de-agentes.md) with no server of its own: the client
+spreads the sessions, and the fleet lives in the process that uses it. So that
+another process can create matching VMs with only the name and the token, the
+deploy saves a [recipe](guias/flota-de-agentes.md#la-receta-de-la-flota) (what
+it used, with secret names and never their values) in a Parameter Store
+parameter in your account; `AgentFleet.connect(name)` reads it and `stop()`
+deletes it.
+
 <a id="desde-que-lenguajes-se-usa-rayito"></a>
 
 ## From other languages { #desde-otros-lenguajes }

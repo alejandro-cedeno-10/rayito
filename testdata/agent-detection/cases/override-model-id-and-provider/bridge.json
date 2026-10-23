@@ -12,7 +12,7 @@
   "gateways": {
     "litellm": {
       "preset": "litellm",
-      "secret": "rayito/agents/ticket-agent/litellm",
+      "secret": "agents/ticket-agent/litellm",
       "upstream": "https://llm-gateway.example.com"
     }
   }

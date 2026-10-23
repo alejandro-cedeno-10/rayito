@@ -33,6 +33,7 @@ from rayito._agent._detect_entry import (
     graph_not_found,
 )
 from rayito._agent._detect_install import detect_install
+from rayito._agent._detect_opencode import zero_config
 from rayito._agent._detect_providers import detect_providers
 from rayito._agent._detect_report import (
     PROTOCOL_FRAMEWORK,
@@ -329,6 +330,8 @@ def detect(
     )
     deps = index.dependencies(language) if language is not None else {}
     found = detect_providers(index, rules, language, framework["framework"], deps, sink, overrides)
+    configured = zero_config(index, rules, framework["framework"], sink)
+    evidence.extend(configured.evidence)
     return DetectionReport(
         language=language,
         framework=framework["framework"],
@@ -345,6 +348,7 @@ def detect(
         warnings=tuple(sink.items),
         alternatives=alternatives,
         model_envs=found.model_envs,
+        agent_table=configured.agent,
     )
 
 

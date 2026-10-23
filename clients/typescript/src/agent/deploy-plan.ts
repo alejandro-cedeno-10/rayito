@@ -57,9 +57,10 @@ export const IMAGE_MEMORY_NOTE =
   "de snapshot de una semana como mínimo)";
 
 /** Un paso de `deployAgent()` que ya ocurrió: `kind` es de una lista cerrada
- * (`base_image`, `secret_created`, `bucket`, `image`, `fleet`, `warm`) y
- * `detail` un dato corto para mostrar (la pasarela, el origen y el bucket, la
- * versión de la imagen); nunca el valor ni el nombre de un secreto. */
+ * (`base_image`, `secret_created`, `bucket`, `image`, `fleet`, `warm`,
+ * `recipe`) y `detail` un dato corto para mostrar (la pasarela, el origen y
+ * el bucket, la versión de la imagen, el código del aviso de una receta que no
+ * se guardó); nunca el valor ni el nombre de un secreto. */
 export interface AgentDeployStep {
   readonly kind: string;
   readonly detail: string;
@@ -84,7 +85,58 @@ export interface AgentDeployOptionsInput {
   readonly warmTimeoutMs?: number | undefined;
   readonly createSecretsFrom?: string | undefined;
   readonly checkEnv?: boolean | undefined;
+  /**
+   * Guarda la receta de la flota en Parameter Store tras arrancarla (por
+   * defecto `true`): `AgentFleet.connect(nombre)` crea entonces VMs iguales
+   * desde otro proceso y `status()` da su escalado real.
+   *
+   * Coste y activación
+   * -------------------
+   * Activa: `deployAgent()` con `saveRecipe` (por defecto `true`, la única
+   *     excepción de ADR-034 a "apagado por defecto").
+   * Recursos y llamadas AWS: un parámetro `SecureString` estándar por flota
+   *     (`PutParameter`) y una petición de KMS con la clave `aws/ssm`.
+   * Coste aproximado: el parámetro estándar no tiene cargo; la petición de
+   *     KMS entra en las 20 000 gratuitas al mes y después $0,03 por 10 000
+   *     (https://aws.amazon.com/kms/pricing/, consultado 2026-10-22).
+   * IAM: `ssm:PutParameter` sobre `parameter/rayito/agents/*` (sentencia
+   *     `AgentRecipe`); sin él, un aviso `recipe_access_denied`.
+   * Cómo apagarla: `saveRecipe: false` (`--no-save-recipe`).
+   * Ejemplo:
+   *   await deployAgent("./mi-agente", { options: { saveRecipe: false } });
+   */
+  readonly saveRecipe?: boolean | undefined;
+  /** Tras cuánto tiempo sin uso se termina un VM por encima de `minVms`
+   * (gana al de `scaling` y al del proyecto). */
+  readonly scaleInAfterMs?: number | undefined;
+  /**
+   * Renueva la clave de corta duración de Bedrock de las pasarelas `bedrock`
+   * antes de crear cada VM o abrir cada plaza (por defecto `false`).
+   *
+   * Coste y activación
+   * -------------------
+   * Activa: `renewGatewayKeys: true` (`--renew-gateway-keys`); necesita los
+   *     peers opcionales `@aws/bedrock-token-generator` y
+   *     `@aws-sdk/client-secrets-manager`.
+   * Recursos y llamadas AWS: la firma es local; `DescribeSecret` y, como
+   *     mucho una vez cada `gatewayKeyRenewAfterSeconds`, `PutSecretValue`
+   *     sobre el secreto de la pasarela.
+   * Coste aproximado: $0,05 por 10 000 llamadas a Secrets Manager (us-east-1,
+   *     consultado 2026-10-22 en https://aws.amazon.com/secrets-manager/pricing/).
+   * IAM: `secretsmanager:DescribeSecret`, `secretsmanager:PutSecretValue` y
+   *     `bedrock:CallWithBearerToken` en el principal que firma.
+   * Cómo apagarla: no la pases (por defecto `false`).
+   * Ejemplo:
+   *   await AgentFleet.connect("my-agent", { accessToken, renewGatewayKeys: true });
+   */
+  readonly renewGatewayKeys?: boolean | undefined;
 }
+
+/** La línea `recipe` del plan: si `deployAgent()` guardará la receta de la
+ * flota en Parameter Store (ADR-034 D1). */
+export const RECIPE_PLAN_SAVE = "save";
+export const RECIPE_PLAN_OFF = "off";
+export type RecipePlan = typeof RECIPE_PLAN_SAVE | typeof RECIPE_PLAN_OFF;
 
 function optionalText(value: unknown, label: string): void {
   if (value !== undefined && (typeof value !== "string" || value === "")) {
@@ -118,18 +170,35 @@ function positiveNumber(value: unknown, label: string): number {
  * agente recibe como `secretEnvFrom`) y `checkEnv` (avisa de las variables de
  * `.env.example` que no reciben valor).
  *
+ * `saveRecipe` (por defecto `true`) guarda la receta de la flota en Parameter
+ * Store tras arrancarla, para que `AgentFleet.connect(nombre)` cree VMs iguales
+ * desde otro proceso; `scaleInAfterMs` fija tras cuánto tiempo sin uso se
+ * termina un VM por encima de `minVms`, y `renewGatewayKeys` (por defecto
+ * `false`) renueva la clave de corta duración de Bedrock de las pasarelas
+ * `bedrock` antes de crear cada VM.
+ *
  * Coste y activación
  * -------------------
  * Activa: nada por sí mismo; el valor es puro. `deployAgent()` es lo que
  *     cuesta: `createSecretFromEnv: true` crea un secreto, `createSecretsFrom`
  *     crea o actualiza el secreto de un `.env` (`CreateSecret` o
  *     `PutSecretValue`, $0,40 al mes por secreto), `basePublisher` una imagen
- *     base, `sessionIndex` filas de DynamoDB.
- * Recursos y llamadas AWS: ninguno aquí.
- * Coste aproximado: ninguno aquí; ver `deployAgent()`.
- * IAM: ninguna para este valor.
+ *     base, `sessionIndex` filas de DynamoDB. `saveRecipe: true` (por
+ *     defecto, la única excepción de ADR-034) guarda un parámetro
+ *     `SecureString` estándar; `renewGatewayKeys` escribe la clave en el
+ *     secreto de la pasarela.
+ * Recursos y llamadas AWS: ninguno aquí. Con `saveRecipe`, un `PutParameter`
+ *     tras arrancar la flota (ver `SsmRecipeStore`); con `renewGatewayKeys`,
+ *     `DescribeSecret` y `PutSecretValue` (ver `GatewayKeyRenewer`).
+ * Coste aproximado: ninguno aquí; ver `deployAgent()`. La receta: el parámetro
+ *     estándar no tiene cargo y su petición de KMS entra en las 20 000
+ *     gratuitas al mes (después $0,03 por 10 000;
+ *     https://aws.amazon.com/kms/pricing/, consultado 2026-10-22).
+ * IAM: ninguna para este valor. Guardar la receta: `ssm:PutParameter` sobre
+ *     `parameter/rayito/agents/*`.
  * Cómo apagarla: los valores por defecto no crean ningún secreto, imagen base
- *     ni índice; `checkEnv` sólo lee ficheros locales.
+ *     ni índice; `checkEnv` sólo lee ficheros locales; `saveRecipe: false`
+ *     (`--no-save-recipe`) no guarda la receta.
  * Ejemplo:
  *   new AgentDeployOptions({ bucket: "amzn-s3-demo-bucket", secretNames: { bedrock: "mi-clave" } });
  */
@@ -154,6 +223,9 @@ export class AgentDeployOptions {
   readonly warmTimeoutMs: number;
   readonly createSecretsFrom: string | undefined;
   readonly checkEnv: boolean;
+  readonly saveRecipe: boolean;
+  readonly scaleInAfterMs: number | undefined;
+  readonly renewGatewayKeys: boolean;
 
   constructor(options: AgentDeployOptionsInput = {}) {
     if (options.bucket !== undefined) {
@@ -182,6 +254,8 @@ export class AgentDeployOptions {
       ["createSecretFromEnv", options.createSecretFromEnv],
       ["ensureBaseImage", options.ensureBaseImage],
       ["keepOnFailure", options.keepOnFailure],
+      ["saveRecipe", options.saveRecipe],
+      ["renewGatewayKeys", options.renewGatewayKeys],
     ] as const) {
       if (value !== undefined && typeof value !== "boolean") {
         throw new InvalidArgumentError(`AgentDeployOptions.${label} debe ser un bool`);
@@ -221,6 +295,12 @@ export class AgentDeployOptions {
     }
     this.createSecretsFrom = options.createSecretsFrom;
     this.checkEnv = options.checkEnv ?? false;
+    this.saveRecipe = options.saveRecipe ?? true;
+    this.renewGatewayKeys = options.renewGatewayKeys ?? false;
+    if (options.scaleInAfterMs !== undefined) {
+      new ScalingOptions({ scaleInAfterMs: options.scaleInAfterMs });
+    }
+    this.scaleInAfterMs = options.scaleInAfterMs;
   }
 }
 
@@ -268,6 +348,7 @@ export interface AgentDeployPlan {
   readonly cost: AgentDeployCostEstimate;
   readonly notes: readonly string[];
   readonly detection: unknown;
+  readonly recipe: RecipePlan;
 }
 
 /** El coste de lista de `scaling` con VMs de `memoryMib`. */
@@ -390,6 +471,26 @@ export function plannedSecrets(
     .map((gateway) => ({ gateway, source: overridden.has(gateway) ? "override" : "project" }));
 }
 
+/** El escalado que `deployAgent()` pasa a la flota: `options.scaling` (o el
+ * del proyecto) con `scaleInAfterMs` si la opción lo fija; `undefined` si
+ * ninguna de las dos lo fija (decide el proyecto). */
+export function deployScaling(
+  project: AgentProject,
+  options: AgentDeployOptions,
+): ScalingOptions | undefined {
+  if (options.scaleInAfterMs === undefined) {
+    return options.scaling;
+  }
+  const base = fleetSettingsOf(project, options.scaling).scaling;
+  return new ScalingOptions({
+    minVms: base.minVms,
+    maxVms: base.maxVms,
+    warmVms: base.warmVms,
+    sessions: base.sessions,
+    scaleInAfterMs: options.scaleInAfterMs,
+  });
+}
+
 /** El plan de desplegar `project` con `options` (puro). */
 export function buildPlan(
   project: AgentProject,
@@ -401,7 +502,7 @@ export function buildPlan(
   },
 ): AgentDeployPlan {
   const environ = context.environ ?? process.env;
-  const scaling = fleetSettingsOf(project, options.scaling).scaling;
+  const scaling = fleetSettingsOf(project, deployScaling(project, options)).scaling;
   const notes: string[] = options.buildImage === false ? [] : [IMAGE_MEMORY_NOTE];
   if (scaling.warmVms > 0) {
     notes.push(PARKED_SLOTS_NOTE);
@@ -420,6 +521,7 @@ export function buildPlan(
     cost: estimateCost(project.memoryMib, scaling),
     notes,
     detection: context.detection,
+    recipe: options.saveRecipe ? RECIPE_PLAN_SAVE : RECIPE_PLAN_OFF,
   };
 }
 

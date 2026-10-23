@@ -23,7 +23,7 @@ import {
   type AgentTarget,
   TARGET_AGENTCORE,
 } from "../agentcore/models.js";
-import { InvalidArgumentError } from "../errors.js";
+import { AgentCoreError, InvalidArgumentError } from "../errors.js";
 import type { ControlPlaneOptions } from "../sandbox/sandbox.js";
 import type { SecretGateway } from "../secret-gateway/domain.js";
 import { SecretStore } from "../secrets/store.js";
@@ -34,6 +34,7 @@ import {
   type Environ,
   ensureBaseImage,
   ensureModelSecrets,
+  GATEWAY_SECRET_PREFIX,
   resolveBucket,
   resolveToken,
   type SecretStorePort,
@@ -46,6 +47,7 @@ import {
   baseVersionOf,
   buildPlan,
   deployOptionsOf,
+  deployScaling,
   projectBucket,
   projectFor,
   resolvedRegion,
@@ -54,6 +56,8 @@ import {
 import type { DetectOverrides } from "./detect-report.js";
 import { AgentFleet, type AgentFleetOptions } from "./fleet.js";
 import { AGENT_FLEET_WARM_POLL_MS } from "./fleet-base.js";
+import { RECIPE_SAVED } from "./fleet-recipe-aws.js";
+import { renewableGateways } from "./gateway-keys.js";
 import type { AgentProject } from "./project.js";
 import { copyProject } from "./project-copy.js";
 import {
@@ -80,6 +84,58 @@ export const STEP_BUCKET = "bucket";
 export const STEP_IMAGE = "image";
 export const STEP_FLEET = "fleet";
 export const STEP_WARM = "warm";
+/** El paso de la receta de la flota que no se guardó: su detalle es el código
+ * del aviso (`recipe_access_denied`, `recipe_not_saved`, `recipe_too_large`). */
+export const STEP_RECIPE = "recipe";
+
+/** Las opciones de la receta y de la renovación de claves que sólo tienen
+ * sentido en MicroVMs: con `target: "agentcore"`, `option_not_supported`
+ * (nombre, bandera de la CLI, motivo y si la llamada la trae). */
+export const MICROVM_ONLY_OPTIONS: readonly {
+  readonly name: string;
+  readonly flag: string;
+  readonly reason: string;
+  readonly passed: (options: AgentDeployOptions) => boolean;
+}[] = [
+  {
+    name: "scaleInAfterMs",
+    flag: "--scale-in-after",
+    reason: "usa idleSessionTimeoutMs / --idle-session-timeout",
+    passed: (options) => options.scaleInAfterMs !== undefined,
+  },
+  {
+    name: "saveRecipe",
+    flag: "--no-save-recipe",
+    reason: "AgentCore guarda su configuración en el runtime: no hay receta",
+    passed: (options) => !options.saveRecipe,
+  },
+  {
+    name: "renewGatewayKeys",
+    flag: "--renew-gateway-keys",
+    reason: "no hay pasarela de secretos",
+    passed: (options) => options.renewGatewayKeys,
+  },
+];
+
+/** Con `target: "agentcore"`, `AgentCoreError` `option_not_supported` con la
+ * primera opción de la receta o de la renovación de claves que la llamada
+ * trae, antes de cualquier llamada a AWS. */
+export function checkMicrovmOnlyOptions(
+  options: AgentDeployOptions | AgentDeployOptionsInput | undefined,
+  target: string | undefined,
+): void {
+  if (target !== TARGET_AGENTCORE || options === undefined) {
+    return;
+  }
+  const chosen = deployOptionsOf(options);
+  const found = MICROVM_ONLY_OPTIONS.find((option) => option.passed(chosen));
+  if (found !== undefined) {
+    throw new AgentCoreError("option_not_supported", {
+      option: found.name,
+      reason: found.reason,
+    });
+  }
+}
 
 /** Las credenciales de AWS de las llamadas del despliegue, las mismas de
  * `Sandbox.create()`. */
@@ -170,6 +226,7 @@ export async function planDeploy<T extends AgentTarget = "microvm">(
   args: DeployAgentOptions<T> = {},
 ): Promise<DeployPlanOf<T>> {
   requireKnownTarget(args.target);
+  checkMicrovmOnlyOptions(args.options, args.target);
   if (args.target === TARGET_AGENTCORE) {
     const { planAgentCoreWith } = await import("../agentcore/facade.js");
     const planned = await planAgentCoreWith({}, path, args as DeployAgentOptions<"agentcore">);
@@ -226,7 +283,11 @@ export async function planDeploy<T extends AgentTarget = "microvm">(
  *     (`create`/`update-microvm-image`, un objeto en S3); `GetCallerIdentity`,
  *     `HeadBucket`, `GetMicrovmImage` y `DescribeSecret` de lectura; con
  *     `createSecretFromEnv: true`, `CreateSecret`; con `basePublisher`, una
- *     imagen base; con `sessionIndex`, DynamoDB. Con `target: "agentcore"`: la
+ *     imagen base; con `sessionIndex`, DynamoDB; tras arrancar la flota, la
+ *     receta en Parameter Store (`PutParameter` de un `SecureString` estándar,
+ *     salvo con `saveRecipe: false`); con `renewGatewayKeys`, `DescribeSecret`
+ *     y `PutSecretValue` sobre el secreto de cada pasarela `bedrock`. Con
+ *     `target: "agentcore"`: la
  *     pila `rayito-agentcore-<nombre>` (repositorio ECR, proyecto de CodeBuild
  *     y dos roles), un zip del contexto en el bucket (se borra al terminar el
  *     build), un build de CodeBuild, una imagen en ECR y el runtime.
@@ -246,13 +307,17 @@ export async function planDeploy<T extends AgentTarget = "microvm">(
  *     (`RayitoSandboxRunner`, `RayitoTemplateBuilder`),
  *     `secretsmanager:DescribeSecret` y, con `createSecretFromEnv`,
  *     `secretsmanager:CreateSecret`, `sts:GetCallerIdentity` y `s3:ListBucket`
- *     sobre el bucket del artefacto. Con `target: "agentcore"`: los de
+ *     sobre el bucket del artefacto; `ssm:PutParameter` sobre
+ *     `parameter/rayito/agents/*` para la receta (sin él, un aviso
+ *     `recipe_access_denied` y el despliegue sigue); con `renewGatewayKeys`,
+ *     `secretsmanager:PutSecretValue` y `bedrock:CallWithBearerToken`. Con
+ *     `target: "agentcore"`: los de
  *     `AgentCoreDeployer` (CloudFormation con `CAPABILITY_IAM`, CodeBuild, ECR,
  *     S3 sobre el prefijo del zip, `bedrock-agentcore` y `iam:PassRole`).
- * Cómo apagarla: `AgentFleet.stop()` termina los VMs y
+ * Cómo apagarla: `AgentFleet.stop()` termina los VMs (y borra la receta) y
  *     `AgentCoreFleet.delete()` borra lo que creó en AgentCore; los valores por
  *     defecto de `AgentDeployOptions` no crean ningún secreto, imagen base ni
- *     índice; sin llamar a `deployAgent()` (o con el destino por defecto) no se
+ *     índice; `saveRecipe: false` no guarda la receta; sin llamar a `deployAgent()` (o con el destino por defecto) no se
  *     crea nada de AgentCore.
  * Ejemplo:
  *   const fleet = await deployAgent("./mi-agente", {
@@ -266,6 +331,7 @@ export async function deployAgent<T extends AgentTarget = "microvm">(
   args: DeployAgentOptions<T> = {},
 ): Promise<DeployedAgent<T>> {
   requireKnownTarget(args.target);
+  checkMicrovmOnlyOptions(args.options, args.target);
   if (args.target === TARGET_AGENTCORE) {
     const { deployAgentCoreWith } = await import("../agentcore/facade.js");
     return (await deployAgentCoreWith(
@@ -309,21 +375,33 @@ export async function deployWith(
   const fleet = new AgentFleet({
     project: flight.project,
     accessToken: flight.token,
-    scaling: options.scaling,
+    scaling: deployScaling(flight.project, options),
     sessionIndex: options.sessionIndex,
     poolBackend: options.poolBackend,
     keepOnFailure: options.keepOnFailure,
     connection: connectionOf(args, flight.region),
+    credentials: args.credentials,
+    renewGatewayKeys: options.renewGatewayKeys,
     service,
     ...ports.fleetOptions,
   });
   await fleet.start();
   emit(options, [{ kind: STEP_FLEET, detail: String(fleet.sandboxIds.length) }]);
+  if (options.saveRecipe) {
+    emit(options, recipeSteps(await fleet.saveRecipeForDeploy()));
+  }
   if (fleet.scaling.warmVms > 0) {
     const ready = await fleet.waitWarm(options.warmTimeoutMs, AGENT_FLEET_WARM_POLL_MS);
     emit(options, [{ kind: STEP_WARM, detail: ready ? "ready" : "timeout" }]);
   }
   return fleet;
+}
+
+/** El paso `recipe` sólo si la receta no se guardó: su detalle es el código
+ * del aviso. Guardada, ningún paso: un despliegue sin incidencias informa de
+ * los mismos pasos que en 0.16. */
+function recipeSteps(outcome: string): AgentDeployStep[] {
+  return outcome === RECIPE_SAVED ? [] : [{ kind: STEP_RECIPE, detail: outcome }];
 }
 
 function envMissingSteps(warnings: readonly string[]): AgentDeployStep[] {
@@ -383,6 +461,9 @@ export async function preflight(
   ports: DeployPorts,
   args: DeployConnection,
 ): Promise<Preflight> {
+  if (options.renewGatewayKeys) {
+    renewableGateways(project);
+  }
   const environ = ports.environ ?? process.env;
   const region = resolvedRegion(args.region, project, environ);
   const aws =
@@ -406,6 +487,7 @@ export async function preflight(
     new SecretStore({
       ...(region === undefined ? {} : { region }),
       ...(args.credentials === undefined ? {} : { credentials: args.credentials }),
+      prefix: GATEWAY_SECRET_PREFIX,
     });
   const secrets = await ensureModelSecrets(project, {
     secretNames: options.secretNames,

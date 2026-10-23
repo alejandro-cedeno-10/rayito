@@ -23,7 +23,7 @@ page carries one of two labels:
 | An agent with 100 five-minute sessions a day | VM only: 100 × (300 s × $0.126/h + $0.0014) ≈ **$1.19/day**; the model is paid separately ([cost of an agent](#coste-de-un-agente-vm-frente-a-modelo)) |
 | The same sandbox paused for 8 hours | snapshot storage (≈ 0.92 GB × $0.08/GB-month for 8 h) ≈ **$0.0008** + one suspend/resume cycle ($0.0049) |
 | Keeping an image version published | ≈ **$0.04 per week** (one-week minimum per version) |
-| Prepare the account (`rayito setup`) | the IAM stack is free; the image, ≈ **$0.04 per week** per published version (minimum one week); the zip in the bucket, cents; if there is no bucket, it creates one whose zips expire after 7 days (no figure of its own: it is the same "cents" of the zip); `--dry-run` costs nothing |
+| Prepare the account (`rayito setup`) | the IAM stack is free; each image (`rayito-base` and, since 0.17 and only with `--caps-image`, `rayito-base-caps`, the base of the MicroVM agent), ≈ **$0.04 per week** per published version ($0.08 per GB-month, minimum one week); the zip in the bucket, one for both, cents; if there is no bucket, it creates one whose zips expire after 7 days (no figure of its own: it is the same "cents" of the zip); `--dry-run` costs nothing |
 | `rayito doctor --launch` | ≈ **$0.002** |
 | A pool of 3 idle slots | ≈ 3 × $0.60 = **$1.80/month** (see below) |
 
@@ -319,6 +319,8 @@ deployment yet.
 | A deployment active for the 8 h maximum | 8 × $0.126 + $0.0014 ≈ **$1.01** |
 | A deployment with `idle`: 1 h active and 7 h suspended | $0.126 + 7 h × $0.0001 + one suspend/resume cycle ($0.0049) + $0.0014 ≈ **$0.133** |
 | An `AgentProject` image version | the `rayito-agent` one is ≈ **$0.056/week**; with Hermes or Node the snapshot weighs more (measure it with `rayito image sizes`) |
+| The [fleet recipe](guias/flota-de-agentes.md#la-receta-de-la-flota) (since 0.17, by default) | **$0**: the standard Parameter Store parameter has no charge; each deploy, reconnect without a project and stop makes one KMS request, inside the 20,000 free per month (then $0.03 per 10,000) |
+| [Renewing the Bedrock key](funciones-opcionales/pasarela-de-secretos.md#renovar-la-clave-de-bedrock) (optional) | $0.05 per 10,000 Secrets Manager calls: one `DescribeSecret` per VM created outside the 900 s window and at most one `PutSecretValue` per window |
 
 A deployment nobody calls keeps costing until it suspends: leave `idle` on
 (the default), or stop it with `rayito agent stop`.

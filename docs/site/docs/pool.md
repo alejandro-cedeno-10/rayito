@@ -132,6 +132,7 @@ con los mismos campos en camelCase y los tiempos en milisegundos.
 | `ready_timeout` / `readyTimeoutMs` | 90 s | plazo de readiness de cada calentamiento |
 | `index` | ninguno | `DynamoDbIndex(...)`: escribe la fila del [índice de metadatos](optional-features.md) de cada plaza al lanzarla (coste propio, apagado por defecto) |
 | `warmup` | `()` / `[]` | pasos que cada plaza corre antes de aparcarse; ver [Calentamiento](#calentamiento-warmup) |
+| `max_lifetime` / `maxLifetimeMs`, `on_timeout` / `onTimeout` (desde 0.17) | ninguno | el plazo lógico de `create()` en cada plaza: `timeout` pasa a ser el plazo y `max_lifetime` el tope (por defecto `timeout + 60`); sólo `on_timeout="kill"`. Quien toma la plaza puede acortarlo con `set_timeout()`; sin ellos, las plazas se lanzan como antes |
 
 No hay `access_token` (uno por plaza, ver custodia) ni `allowed_ports`
 (`get_host(port)` acuña por puerto tras la toma, como después de `create()`).
@@ -235,7 +236,9 @@ thread-safe.
 
 `close(drain=False)` deja las plazas aparcadas y sus registros para otro pool
 y **sólo se admite con un backend persistente**. En `start()` el pool carga el
-backend: un registro `warming` es un huérfano de un calentamiento
+backend y sólo adopta las plazas de su imagen (las de otra imagen, como las de
+otra flota desplegada desde el mismo directorio, se quedan en el backend sin
+tocar): un registro `warming` es un huérfano de un calentamiento
 interrumpido (se termina, `lost += 1`) y cada `ready` pasa por un barrido
 antes de poder tomarse (`launched` no cambia). `stats()` devuelve `PoolStats`
 (`size, ready, warming, takes, hits, misses, launched, recycled, lost,

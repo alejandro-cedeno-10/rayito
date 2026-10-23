@@ -822,6 +822,16 @@ export class AgentDeployment {
     await this.#sandbox.setTimeout(timeoutMs);
   }
 
+  /** Vuelve a mandar las pasarelas del sandbox (`sbx.gateways.refresh()`):
+   * releen de Secrets Manager el valor actual de cada secreto. Una flota lo
+   * usa tras renovar una clave (`renewGatewayKeys`). */
+  async refreshGateways(): Promise<void> {
+    const sandbox = this.#sandbox as {
+      readonly gateways?: { readonly refresh?: () => Promise<void> } | undefined;
+    };
+    await sandbox.gateways?.refresh?.();
+  }
+
   /** Termina el sandbox del despliegue. Idempotente. */
   async stop(): Promise<void> {
     await this.#sandbox.kill();

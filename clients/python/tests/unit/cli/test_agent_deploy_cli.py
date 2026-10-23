@@ -20,6 +20,7 @@ from rayito.cli import agent as agent_cli
 from rayito.cli._agent_deploy import (
     AGENT_TOKEN_FILE_DEFAULT,
     COMPACT_LOG_PROGRESS_LINES,
+    RENEW_NEEDS_FLEET_MESSAGE,
     CompactBuildLog,
     apply_project_flags,
     apply_serve_flags,
@@ -31,6 +32,7 @@ from rayito.cli._agent_deploy import (
     parse_pairs,
     pool_backend_for,
 )
+from rayito.cli._console import EXIT_USAGE
 from rayito.cli._session import Clients
 from rayito.cli._tokens import TOKEN_ENV_VAR, TokenFileError
 from rayito.cli.app import app
@@ -326,6 +328,62 @@ def test_invoke_with_a_fleet_name_connects_the_fleet_with_the_token(
     assert connected[0]["access_token"] == token
     assert fleet.calls == [("invoke", ("hola", "s"))]
     assert f"session_id=rs1.{SANDBOX_ID}.ses_1" in result.output
+
+
+def test_invoke_without_the_renewal_flag_keeps_the_0_16_connect(
+    monkeypatch: pytest.MonkeyPatch, runner: CliRunner, clients: Clients
+) -> None:
+    monkeypatch.setenv(TOKEN_ENV_VAR, generate_access_token())
+    connected = install_fleet(monkeypatch, FakeFleetClient())
+
+    runner.invoke(app, ["agent", "invoke", FLEET_NAME, "hola"], obj=clients)
+
+    assert connected[0]["renew_gateway_keys"] is None
+
+
+def test_invoke_renew_gateway_keys_asks_for_the_renewal_on_connect(
+    monkeypatch: pytest.MonkeyPatch, runner: CliRunner, clients: Clients
+) -> None:
+    monkeypatch.setenv(TOKEN_ENV_VAR, generate_access_token())
+    connected = install_fleet(monkeypatch, FakeFleetClient())
+
+    result = runner.invoke(
+        app, ["agent", "invoke", FLEET_NAME, "hola", "--renew-gateway-keys"], obj=clients
+    )
+
+    assert result.exit_code == 0, result.output
+    assert connected[0]["renew_gateway_keys"] is True
+
+
+def test_invoke_renew_gateway_keys_with_a_sandbox_id_exits_two_without_connecting(
+    monkeypatch: pytest.MonkeyPatch, runner: CliRunner, clients: Clients
+) -> None:
+    monkeypatch.setenv(TOKEN_ENV_VAR, generate_access_token())
+    connected = install_fleet(monkeypatch, FakeFleetClient())
+
+    result = runner.invoke(
+        app, ["agent", "invoke", SANDBOX_ID, "hola", "--renew-gateway-keys"], obj=clients
+    )
+
+    assert result.exit_code == EXIT_USAGE
+    assert RENEW_NEEDS_FLEET_MESSAGE in result.output
+    assert connected == []
+
+
+def test_invoke_renew_gateway_keys_with_agentcore_is_option_not_supported(
+    monkeypatch: pytest.MonkeyPatch, runner: CliRunner, clients: Clients
+) -> None:
+    connected = install_fleet(monkeypatch, FakeFleetClient())
+
+    result = runner.invoke(
+        app,
+        ["agent", "invoke", FLEET_NAME, "hola", "--target", "agentcore", "--renew-gateway-keys"],
+        obj=clients,
+    )
+
+    assert result.exit_code == EXIT_USAGE
+    assert "--renew-gateway-keys" in result.output
+    assert connected == []
 
 
 def test_invoke_with_a_sandbox_id_still_connects_one_vm(

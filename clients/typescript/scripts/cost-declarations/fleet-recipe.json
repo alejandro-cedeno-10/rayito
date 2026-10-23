@@ -1,0 +1,1 @@
+[{ "name": "opción saveRecipe", "pattern": "^\\s*readonly saveRecipe\\?: boolean\\b" }]

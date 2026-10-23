@@ -27,7 +27,7 @@ Cada opción tiene su clave en `rayito-agent.toml`, su argumento en
 | `max_vms` (`--max-vms`) | VMs como máximo | 1 | 64 |
 | `warm_vms` (`--warm`) | plazas aparcadas (suspendidas) que absorben un pico | 0 | `max_vms - min_vms` |
 | `sessions` (`--sessions`) | `shared` (varias sesiones por VM) o `dedicated` (un VM por sesión) | `shared` | |
-| `scale_in_after_seconds` | inactividad tras la que un VM por encima de `min_vms` se termina solo | 900 s | 60 s |
+| `scale_in_after_seconds` (`--scale-in-after`, desde 0.17) | inactividad tras la que un VM por encima de `min_vms` se termina solo | 900 s | 60 s |
 | `idle` (`--idle`) | inactividad tras la que un VM se suspende y se reanuda al llamarlo | sin suspensión | ver [Pausar y reanudar](pausar-reanudar.md) |
 
 El límite de `max_concurrency` sale de las conexiones que admite el MicroVM
@@ -119,12 +119,13 @@ de la primera llamada sigue llevando a su VM. Para que las respuestas de la
 flota reconectada también devuelvan el asa, pasa el mismo `scaling` con el que
 la desplegaste.
 
-Una flota reconectada sin `project=` enruta y consulta, pero no puede arrancar
-una plaza caliente ni crear un VM: la primera sesión que necesite uno lanza
-`InvalidArgumentException`. Para que también escale, pasa el proyecto
-(`AgentProject.detect(carpeta)` o `AgentProject.load(...)`) a
-`AgentFleet.connect()`. Medido en AWS real con un despliegue de la CLI con
-`--warm 1`.
+Desde 0.17, una flota reconectada sólo con su nombre y el token también puede
+crear VMs y arrancar plazas calientes: lee la [receta](#la-receta-de-la-flota)
+que guardó `deploy_agent()`. Sin receta (una flota de 0.16, o desplegada con
+`--no-save-recipe`) y sin `project=`, la flota enruta y consulta pero no puede
+crear un VM: la primera sesión que necesite uno lanza
+`InvalidArgumentException`; pasa entonces el proyecto
+(`AgentProject.detect(carpeta)` o `AgentProject.load(...)`).
 
 Un id de sesión que elijas tú (el hilo de un chat) sólo se recuerda dentro del
 proceso que desplegó la flota. Para encontrarlo desde otro proceso en modo
@@ -132,6 +133,120 @@ proceso que desplegó la flota. Para encontrarlo desde otro proceso en modo
 ([Índice de metadatos](../funciones-opcionales/indice-de-metadatos.md), con su
 coste); sin él, un id desconocido empieza un VM nuevo y la respuesta trae el
 identificador enrutable que debes guardar.
+
+## La receta de la flota { #la-receta-de-la-flota }
+
+<small>Desde 0.17.0.</small>
+
+Tras arrancar la flota, `deploy_agent()` (y `rayito agent deploy`) guarda su
+**receta** en Parameter Store, en `/rayito/agents/<nombre>/recipe`: el proyecto
+tal como quedó tras las banderas (`--env`, `--secret-env-from`, `--allow-out`,
+las pasarelas), la versión de la imagen, los presets de las pasarelas, el
+escalado y si se renuevan las claves. Sólo lleva **nombres** de secretos, nunca
+sus valores ni el access token.
+
+Con ella, `AgentFleet.connect(nombre, access_token=...)` desde cualquier
+proceso (o `rayito agent invoke|status|stop <nombre>`) crea VMs iguales a los
+del despliegue, abre las plazas calientes con sus pasarelas y `status()` da el
+escalado real. Un `scaling=` o `project=` explícitos ganan a la receta, y
+`use_recipe=False` (`useRecipe: false`) la ignora: la flota es la de 0.16.
+
+=== "Python"
+
+    ```python
+    from rayito import AgentFleet
+
+    fleet = AgentFleet.connect("mi-agente", access_token="<token-de-la-flota>")
+    status = fleet.status()
+    print(status.scaling_source, status.min_vms, status.max_vms)
+    fleet.invoke("Hola")
+    ```
+
+=== "TypeScript"
+
+    ```ts
+    import { AgentFleet } from "rayito";
+
+    const fleet = await AgentFleet.connect("mi-agente", { accessToken: "<token-de-la-flota>" });
+    const status = await fleet.status();
+    console.log(status.scalingSource, status.minVms, status.maxVms);
+    await fleet.invoke("Hola");
+    ```
+
+- **Estado.** `FleetStatus.scaling_source` (`scalingSource`) dice de dónde
+  sale el escalado: `explicit`, `project`, `recipe` o `default`. Con `default`
+  (sin proyecto ni receta) `rayito agent status` imprime
+  `members: N (escalado desconocido: sin proyecto ni receta)` en vez de un
+  `min 1, max 1` que no describe la flota.
+- **Borrado.** `fleet.stop()` y `rayito agent stop <nombre>` borran la receta
+  si este proceso la guardó o la leyó; `stop(keep_recipe=True)`
+  (`--keep-recipe`) la conserva.
+- **Avisos.** Un fallo al guardarla nunca hace fallar el despliegue: deja un
+  aviso con un código (`recipe_access_denied`, `recipe_not_saved`,
+  `recipe_too_large`) en el log y en `warnings` de `--json`. Al leerla, sin
+  permiso es `recipe_access_denied`, y una receta ilegible o un Parameter
+  Store que no responde (sin endpoint de VPC para SSM, limitación de tasa) es
+  `recipe_unreadable`. Una receta que pedía renovar la clave de Bedrock no
+  la activa en quien conecta: sin `renew_gateway_keys=True` el aviso es
+  `recipe_renewal_ignored` y no se renueva nada. Un nombre de flota `.` o
+  `..` no tiene receta (`recipe_not_saved`); en todos los casos la flota sigue como en 0.16, y
+  `rayito agent stop <nombre>` termina sus VMs (si tampoco puede borrar la
+  receta, lo dice al final con un error). Tras
+  `stop`, Parameter Store tarda unos 30 s en dejar crear otro parámetro con el
+  mismo nombre: un `deploy` inmediato avisa `recipe_not_saved`.
+- **Tamaño.** Una receta va en JSON si cabe en 4 096 bytes (un parámetro
+  estándar) y, si no, comprimida; si ni así cabe (instrucciones muy largas), el
+  aviso es `recipe_too_large` y se borra la anterior.
+- **`--env` y los secretos.** `rayito agent deploy` rechaza un `--env` cuyo
+  nombre parece un secreto (`*_TOKEN`, `*_KEY`, `*_SECRET`, `*_PASSWORD`...,
+  con un segmento `PASS`, `PASSWD`, `PAT`, `CREDENTIAL` o `CREDENTIALS`, como
+  `DB_PASS` o `GITHUB_PAT`, o con `AUTH` o `BEARER` como último segmento o
+  junto a `TOKEN`, `KEY` o `HEADER`, como `X_AUTH` o `AUTH_HEADER`; `AUTH_MODE`
+  o `AUTHOR_NAME` pasan):
+  usa `--secret-env NOMBRE=<secreto>` o `--secret-env-from <secreto>`, así la
+  receta sólo guarda el nombre. Es un cambio incompatible con 0.16 para
+  `*_SECRET`. Ojo: la regla es de la bandera `--env`; los valores de `env`
+  del proyecto (`[env]` de `rayito-agent.toml` o `env=` de la biblioteca) se
+  guardan tal cual en la receta, legibles por quien tenga
+  `ssm:GetParameter` sobre `parameter/rayito/agents/*`. Nada secreto en
+  `env`, tampoco una URL con credenciales: va en `secret_env`.
+- **Quién puede escribirla.** La receta decide la imagen, la salida a red,
+  `env` y el upstream y los secretos de cada pasarela de todo proceso que
+  conecta por nombre: escribir en `parameter/rayito/agents/*` equivale a
+  poder desplegar. Por eso `SandboxLauncherPolicy` sólo la lee y la borra, y
+  `ssm:PutParameter` está en `ImagePublisherPolicy` y `CallerPolicy`.
+
+!!! info "Coste y activación"
+    - **Activa:** `deploy_agent()` / `rayito agent deploy` contra MicroVMs, por
+      defecto. Es la única función de Rayito encendida por defecto (ADR-034):
+      el parámetro estándar no cuesta y su petición de KMS entra en la capa
+      gratuita.
+    - **Recursos y llamadas AWS:** un parámetro `SecureString` estándar por
+      flota (`PutParameter` al desplegar, `GetParameter` al reconectar sin
+      proyecto, `DeleteParameter` al parar), cifrado con la clave gestionada
+      `aws/ssm`.
+    - **Coste aproximado:** los parámetros estándar no tienen cargo; cada
+      escritura y cada lectura es una petición de KMS (20 000 gratis al mes,
+      después $0,03 por 10 000). Consultado el 2026-10-22:
+      [Systems Manager](https://aws.amazon.com/systems-manager/pricing/) y
+      [KMS](https://aws.amazon.com/kms/pricing/).
+    - **IAM:** `ssm:PutParameter` (quien despliega: `CallerPolicy` o
+      `ImagePublisherPolicy`),
+      `ssm:GetParameter` y `ssm:DeleteParameter` sobre
+      `parameter/rayito/agents/*` (la sentencia `AgentRecipe` de
+      [IAM](../operacion/iam.md)); ningún permiso de KMS.
+    - **Cómo apagarla:** `AgentDeployOptions(save_recipe=False)`
+      (`saveRecipe: false`, `--no-save-recipe`).
+    - **Ejemplo:** `rayito agent deploy ./mi-agente --no-save-recipe`.
+
+## Plazas calientes y pasarelas { #plazas-calientes-y-pasarelas }
+
+Una plaza aparcada nace sin las pasarelas del proyecto. Desde 0.17, la flota
+las abre al tomarla, también cuando la plaza la aparcó otro proceso (una flota
+reconectada con la receta o con `project=`), con el mismo camino que
+`SandboxPool.take(gateways=)`; si no puede abrirlas, termina la plaza y usa
+otro VM. Antes, una flota reconectada podía arrancar el agente sin la pasarela
+del modelo y había que desplegar con `--warm 0`.
 
 ## La cola y el 429 { #la-cola-y-el-429 }
 
@@ -146,7 +261,17 @@ pasado el plazo, lanza `CapacityException` (`code = "agent_capacity"`;
 - **Reducir:** los VMs por encima de `min_vms` llevan un plazo de
   `scale_in_after_seconds` que la flota renueva cada vez que los usa; un VM
   ocioso se termina solo (el `rayd` del VM ya sabe terminarse), sin ninguna
-  llamada del plano de control.
+  llamada del plano de control. Mientras atiende alguna invocación, el plazo
+  nunca es menor que el de la petición, y sólo vuelve a
+  `scale_in_after_seconds` cuando termina la última. Para que `rayd` acepte ese plazo, una
+  flota que puede crecer (`max_vms > min_vms`) crea todos sus VMs y plazas
+  con plazo lógico (`on_timeout="kill"` y `max_lifetime` =
+  `serve.timeout_seconds + 60`); un VM base sigue viviendo
+  `serve.timeout_seconds`. Una flota de tamaño fijo crea sus VMs como
+  siempre. Hasta 0.16 la reducción no ocurría: los VMs se creaban sin plazo
+  lógico y `rayd` rechazaba el `set_timeout`. Un VM creado así (por 0.16)
+  no se reduce: la flota avisa una vez; termínalo con `stop()` o vuelve a
+  desplegar.
 - **Suspender:** `idle` suspende un VM sin uso y lo reanuda al llamarlo; un VM
   suspendido no cobra cómputo, sólo el almacenamiento de su snapshot.
 - **Reiniciar:** si la app del usuario se cae, el host la relanza con espera
@@ -171,7 +296,7 @@ pasado el plazo, lanza `CapacityException` (`code = "agent_capacity"`;
       `Sandbox.kill()`; con índice de sesiones, los del
       [índice de metadatos](../funciones-opcionales/indice-de-metadatos.md).
     - **Cómo apagarla:** `fleet.stop()` o `rayito agent stop <nombre>` terminan
-      todos los VMs de la flota; sin llamar a `deploy_agent()` no se crea nada,
+      todos los VMs de la flota (y borran su receta); sin llamar a `deploy_agent()` no se crea nada,
       y los valores por defecto no dejan plazas ni VMs extra. Por nombre sólo se
       terminan VMs que son de un agente: un `Health` sin token lee las etiquetas
       de los `RUNNING`, y si la imagen tiene alguno que no las lleva, no se

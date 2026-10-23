@@ -55,6 +55,7 @@ WRITING_CALLS = {
     "wait_artifact_stack",
     "download",
     "publish",
+    "publish:caps",
     "gate",
 }
 
@@ -138,13 +139,21 @@ def test_a_tag_without_a_value_separator_is_a_usage_error_before_any_call() -> N
 
 
 def test_a_dry_run_only_reads() -> None:
-    _result, account = run(FRESH, "setup", "--dry-run")
+    _result, account = run(FRESH, "setup", "--dry-run", "--caps-image")
     assert {call[0] for call in account.calls} == {
         "account",
         "describe",
         "head_bucket",
         "get_image",
+        "get_image:caps",
     }
+
+
+def test_without_caps_image_the_dry_run_never_reads_rayito_base_caps() -> None:
+    result, account = run(FRESH, "setup", "--dry-run")
+    assert result.exit_code == 0, result.stderr
+    assert "get_image:caps" not in {call[0] for call in account.calls}
+    assert "omitida (sin --caps-image)" in result.stdout
 
 
 def test_a_dry_run_that_would_create_the_bucket_only_reads() -> None:
@@ -176,6 +185,24 @@ def test_apply_prints_the_progress_the_doctor_and_the_next_step_variables(
         f"RAYITO_BUCKET={account.iam_stack.stack.parameters['ArtifactBucket']}",
     ]
     assert account.publisher.published_with[1] == BUILD_ROLE_ARN
+
+
+def test_without_caps_image_apply_never_publishes_rayito_base_caps(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("rayito.cli.setup.run_doctor", doctor_returning("OK"))
+    result, account = run(FRESH, "setup", "--yes")
+    assert result.exit_code == 0, result.stderr
+    calls = [call[0] for call in account.calls]
+    assert "publish" in calls
+    assert "publish:caps" not in calls
+
+
+def test_caps_image_apply_publishes_rayito_base_caps(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("rayito.cli.setup.run_doctor", doctor_returning("OK"))
+    result, account = run(FRESH, "setup", "--yes", "--caps-image")
+    assert result.exit_code == 0, result.stderr
+    assert "publish:caps" in [call[0] for call in account.calls]
 
 
 def test_apply_without_a_bucket_creates_it_and_prints_it_for_the_next_step(
@@ -267,7 +294,7 @@ def test_an_apply_error_keeps_the_plan_in_the_json_document() -> None:
     document = json.loads(result.stdout)
     assert result.exit_code == 1
     assert document["error"]["code"] == "checksum_mismatch"
-    assert len(document["steps"]) == 3
+    assert len(document["steps"]) == 4
     assert document["result"] is None
     assert document["ready"] is False
     assert result.stderr.splitlines()[-1] == f"rayito: {document['error']['message']}"

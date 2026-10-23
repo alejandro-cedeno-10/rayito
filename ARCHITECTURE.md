@@ -3868,3 +3868,209 @@ llamadas que 0.15. Detalle, contrato de integración y tareas en
 [`langgraph-api` en PyPI](https://pypi.org/project/langgraph-api/),
 [privacidad de la CLI de LangGraph](https://docs.langchain.com/langsmith/data-storage-and-privacy),
 [convenciones GenAI de OpenTelemetry](https://github.com/open-telemetry/semantic-conventions-genai).
+
+## ADR-034 — fleet-recipe: receta de la flota, plazas calientes con pasarelas y renovación opcional de la clave de Bedrock
+
+**Contexto.** En 0.16 una flota de MicroVMs sólo puede crear VMs en el
+proceso que tiene el `AgentProject` cargado. Tres consecuencias aparecieron al
+usar `agent deploy` en cuentas reales. (1) Lo que `agent deploy` recibe por
+banderas (`--env`, `--secret-env`, `--secret-env-from`, `--allow-out`,
+`--deny-out`, el escalado) no se guarda en ningún sitio, así que
+`AgentFleet.connect(name, project=AgentProject.load(...))` en otro proceso
+crea VMs sin ellas, y `AgentFleet.connect(name)` sin proyecto no puede crear
+ninguno y enseña un escalado inventado (`min 1, max 1`, los valores por
+defecto de `ScalingOptions`). (2) Una flota reconectada que abre una plaza
+caliente aparcada por otro proceso (`--warm N`) arranca el host sin las
+pasarelas del proyecto: `_open_or_connect` llama a `ProjectService.serve()`
+sobre un sandbox que nunca recibió `gateways=` (sólo `SandboxPool.take()`
+las abre), y la invocación falla con «el sandbox no tiene la pasarela
+'model'». (3) La pasarela `bedrock` sólo acepta una clave fija en Secrets
+Manager. Una organización que deniega usuarios de IAM no puede emitir claves
+de larga duración de Bedrock, y las de corta duración caducan en, como mucho,
+12 horas o lo que dure la sesión de quien la genera.
+
+**Decisión.** Todo es aditivo y compatible con 0.16: conectar con un
+`project=` explícito hace exactamente las mismas llamadas que hoy, y ninguna
+opción existente cambia de valor por defecto.
+
+1. **Receta de la flota (D1).** `deploy_agent()` / `deployAgent()` (y por
+   tanto `rayito agent deploy --target microvm` en las dos CLI) guarda, al
+   terminar un despliegue correcto, la *receta* de la flota: el documento
+   del proyecto ya con las banderas aplicadas (el mismo que serializa
+   `AgentProject`), la imagen y su versión, el escalado completo y
+   `renewGatewayKeys`. Sólo lleva lo que ya es público dentro del proyecto:
+   variables no secretas, *nombres* de secretos (`secret_env`,
+   `secret_env_from`, pasarelas), reglas de red y modelo. Nunca el access
+   token de la flota ni un valor de secreto. Se guarda en AWS Systems Manager
+   Parameter Store como un parámetro `SecureString` de nivel `Standard`
+   (`/rayito/agents/<nombre>/recipe`, plantilla en `limits.json`), cifrado
+   con la clave gestionada `aws/ssm`. Está activada por defecto
+   (`save_recipe=True`, `saveRecipe: true`, `--no-save-recipe` para
+   apagarla) porque el nivel estándar no tiene coste en Parameter Store y
+   cada guardado o lectura es una sola petición a KMS, dentro de la capa
+   gratuita de 20 000 al mes (`AWS_API_NOTES.md`, sección «Receta de la
+   flota»). Es la única excepción explícita a «apagado por defecto», y la
+   página de la función lo dice en su caja «Coste y activación».
+   `AgentFleet(project).start()` llamado directamente no guarda nada (cero
+   llamadas nuevas).
+2. **Reconectar desde la receta (D2).** `AgentFleet.connect(name)` sin
+   `project` lee la receta (`GetParameter` con `WithDecryption`, una vez) y,
+   si existe, reconstruye el `AgentProject`, la versión de imagen y el
+   escalado: la flota puede crear VMs y `status()` da el escalado real. Con
+   `project=` explícito no se lee nada (0.16 sin cambios). Sin receta
+   (`ParameterNotFound`) o sin permiso (`AccessDeniedException`, que avisa
+   una vez en el log), la flota se comporta como en 0.16. `use_recipe=False`
+   / `useRecipe: false` evita la lectura. `FleetStatus` gana
+   `scaling_source` (`explicit`, `project`, `recipe`, `default`) y la CLI
+   dice «escalado desconocido» en lugar de inventar `min 1, max 1`.
+3. **Limpieza (D3).** `AgentFleet.stop()` borra la receta
+   (`DeleteParameter`) sólo si la flota sabe que existe (la guardó o la
+   leyó); `keep_recipe=True` / `keepRecipe: true` / `rayito agent stop
+   --keep-recipe` la conserva. `ParameterNotFound` no es un error.
+4. **Tamaño (D4).** Un parámetro estándar admite 4 KB. La receta se guarda
+   como JSON; si no cabe, comprimida (`gzip`, base64) dentro de un sobre
+   JSON. Si tampoco cabe, el despliegue termina igual, avisa
+   `recipe_too_large`, borra una receta anterior del mismo nombre (para no
+   dejar una obsoleta) y la flota se reconecta como en 0.16. Nunca se pasa al
+   nivel avanzado, que cuesta dinero.
+5. **Variables que parecen secretos (D5).** La receta vuelve a validar el
+   entorno con la misma regla que `AgentProject.env` (nombres terminados en
+   `_TOKEN`, `_KEY`, `_SECRET`, `_PASSWORD`… y valores con prefijo de
+   secreto). La CLI rechaza `--env` con esos nombres y el mensaje apunta a
+   `--secret-env` / `--secret-env-from`.
+6. **Plazas calientes con pasarelas (D6).** Abrir una plaza aparcada (por
+   este proceso o por otro) pasa siempre por el mismo camino que
+   `SandboxPool.take(gateways=...)`: antes de arrancar el host se abren las
+   pasarelas del proyecto (o de la receta) en el sandbox con la sección
+   `gateways` de `ConfigureSandbox`. Sin proyecto ni receta, una plaza sin
+   host sigue siendo `NO_PROJECT_MESSAGE`, como en 0.16. Corrige el error y
+   permite volver a `--warm N`.
+7. **Renovación opcional de la clave de la pasarela (D7).**
+   `renew_gateway_keys=True` / `renewGatewayKeys: true` /
+   `--renew-gateway-keys` (apagado por defecto; la receta lo anota, pero
+   sólo lo activa la opción explícita de quien llama) hace
+   que, antes de crear un VM o abrir una plaza, el SDK genere una clave de
+   corta duración de Bedrock con las credenciales de quien llama, con la
+   biblioteca oficial `aws-bedrock-token-generator` (Python, extra
+   `bedrock-keys`) / `@aws/bedrock-token-generator` (peer opcional de
+   TypeScript), y la escriba con el prefijo `Bearer ` en el secreto de cada
+   pasarela de preset `bedrock` (`PutSecretValue`). La generación es una
+   firma SigV4 local, sin llamada a AWS. Sólo se escribe si el secreto
+   cambió hace más de `gatewayKeyRenewAfterSeconds` (`DescribeSecret`,
+   `LastChangedDate`; nunca más de una vez cada 10 minutos, como recomienda
+   `PutSecretValue`). Tras escribir, la flota refresca las pasarelas de los
+   VMs que tiene abiertos en el proceso (`gateways.refresh()`). La clave
+   nunca se loguea, ni se guarda en la receta, ni aparece en un error. Una
+   pasarela que no es `bedrock` con la opción activada es
+   `InvalidArgumentException`, y también un secreto de una pasarela
+   `bedrock` que lee además una pasarela con upstream que no es Bedrock (la
+   clave nueva se enviaría allí). Sólo es Bedrock un upstream
+   `bedrock-runtime.<región>.amazonaws.com` con una región de AWS válida. El IAM necesario (`bedrock:CallWithBearerToken`
+   en quien genera, `secretsmanager:DescribeSecret` y `PutSecretValue` sobre
+   el secreto) se documenta.
+8. **Arreglos sin decisión de arquitectura (D8).** Se entregan en la misma
+   versión, cada uno con su requisito: el host del agente sube a `WARNING`
+   los loggers de clientes HTTP (`httpx`, `httpcore`) que imprimen URLs con
+   credenciales y no lanza `AttributeError` tras una petición mal formada;
+   `--create-secret` busca la variable por el *preset* de la pasarela y no
+   duplica el prefijo `rayito/`; `rayito setup --caps-image` publica
+   también `rayito-base-caps` (la base de las plantillas de agente); el modo sin
+   configuración de OpenCode respeta `AGENTS.md` y los permisos de
+   `opencode.json`; `--scale-in-after` llega a las dos CLI; y los e2e de
+   TypeScript usan un secreto distinto por test.
+9. **Ajustes de la revisión (D9).** (a) El renovador de claves se carga en
+   la primera renovación, no al construir la flota: listar, consultar o
+   terminar nunca necesita el extra `bedrock-keys`. La receta nunca activa
+   la renovación: `AgentFleet.connect(nombre)` sólo renueva con
+   `renew_gateway_keys=True` explícito (la clave se firma con las
+   credenciales de quien conecta); si la receta lo pedía y el llamante no
+   dijo nada, la flota no renueva y avisa `recipe_renewal_ignored`. Con la
+   opción, el error se propaga. Un candado (Python) o una promesa en
+   curso (TypeScript) serializa las renovaciones de los VMs que arrancan en
+   paralelo. (b) Leer la receta nunca falla: cualquier error de Parameter
+   Store es el aviso `recipe_unreadable` y la flota de 0.16. (c)
+   `SandboxLauncherPolicy` sólo lee y borra la receta; `ssm:PutParameter`
+   queda en `ImagePublisherPolicy` y `CallerPolicy` (la unión de las dos),
+   porque escribirla equivale a poder desplegar.
+   (d) `rayito setup` publica `rayito-base-caps` sólo con `--caps-image`
+   (`SetupRequest.caps_image`/`capsImage`, por defecto falso): es otra
+   versión de imagen que cuesta (≈ $0,04 por semana) y la regla del SDK es
+   que todo lo que factura va apagado. Sin la opción el paso `capsImage` es
+   `skip` y no hace ninguna llamada; `ensure_base_image` pide
+   `rayito setup --caps-image` cuando falta `rayito-base-caps`.
+   `optional-features.md` tiene su fila. (e) Los
+   valores de `env` del proyecto se guardan en la receta: sólo la bandera
+   `--env` rechaza nombres de secreto, y la guía lo dice. `AUTH` y `BEARER`
+   sólo cuentan como último segmento o junto a `TOKEN`, `KEY` o `HEADER`,
+   para no rechazar nombres corrientes como `AUTH_MODE` o `AUTH_URL`. (f)
+   `rayito agent invoke <flota> --renew-gateway-keys` es la forma de pedir
+   la renovación desde la CLI al reconectar por nombre; con el id de un
+   sandbox (que no crea VMs) es un error de uso.
+10. **La reducción se cumple (D10).** Desde 0.14 la flota pedía
+   `set_timeout(scale_in_after_seconds)` a los VMs por encima de `min_vms`,
+   pero los creaba sólo con `timeout`: sin `max_lifetime` ni `on_timeout` no
+   hay plazo lógico, `rayd` rechaza el `SetTimeout`
+   (`lifecycle_unmanaged`) y la flota se tragaba el error con un aviso. Ningún
+   VM sobrante se terminaba. Ahora una flota que puede crecer
+   (`max_vms > min_vms`) crea todos sus VMs y sus plazas calientes con
+   `on_timeout="kill"` y el `max_lifetime` por defecto de `create()` para
+   `serve.timeout_seconds` (`timeout + 60`, como mucho 28 800 s): un VM base
+   vive lo mismo que en 0.16, ahora como plazo lógico, y uno sobrante se
+   termina tras `scale_in_after_seconds` sin uso. Antes de cada invocación el
+   plazo de un VM sobrante sube al menos al de la petición, para no cortarla,
+   y al soltar la última invocación en curso vuelve a
+   `scale_in_after_seconds` (mientras quede otra, sigue el plazo de la
+   petición); todo plazo queda por debajo del tope de `rayd`
+   (`max_lifetime − 60 s` desde el arranque) menos 5 s, y si `rayd` rechaza
+   un plazo por pasar de su tope la flota adopta el tope que informa y
+   reintenta una vez, sin marcar el VM. Una flota que no puede crecer
+   crea sus VMs byte a byte como en 0.16. Un VM sin plazo lógico (creado por
+   0.16) avisa una vez y no se reduce. `PoolConfig` gana `max_lifetime` y
+   `on_timeout` opcionales (sólo `kill`). La receta no cambia: la vida sale
+   del escalado y del proyecto guardados. Ningún parámetro nuevo de AWS
+   (`maximumDurationInSeconds` y el bloque `lifecycle` de ADR-011).
+
+**Consecuencias.** Un agente desplegado se puede invocar, escalar y parar
+desde cualquier proceso con sólo su nombre y su access token. `agent status`
+dice la verdad. Las cuentas sin usuarios de IAM pueden usar la pasarela de
+Bedrock sin una clave de larga duración. Lo nuevo cuesta: una petición a
+KMS por despliegue y por reconexión; con la renovación, una `DescribeSecret`
+por VM creado y, como mucho, una `PutSecretValue` cada
+`gatewayKeyRenewAfterSeconds`. Riesgos: la receta es un documento de
+configuración en la cuenta, legible por quien tenga `ssm:GetParameter` sobre
+la ruta (no lleva secretos, pero sí nombres); una clave de corta duración no
+dura más que la sesión de quien la generó, así que un VM abierto en otro
+proceso conserva la clave antigua hasta que ese proceso la refresque o el VM
+se recicle (se documenta junto a `scale_in_after_seconds`); un SDK 0.16 no
+lee recetas y se reconecta como siempre.
+
+**Alternativas descartadas.** Escribir las banderas de vuelta en
+`rayito-agent.toml` (sólo sirve en la máquina que despliega). Etiquetas o
+metadatos del MicroVM (límite de tamaño y visibles en `ListMicrovms`). Un
+objeto en el bucket de artefactos (el bucket es opcional para leer, y su
+ciclo de vida expira objetos). DynamoDB (`metadata-index` es opcional y
+cuesta). El nivel avanzado de Parameter Store (cuesta). Secrets Manager para
+la receta ($0,40 al mes por flota y no contiene secretos). Un modo SigV4 en
+`rayd` para Bedrock (cambio de agente y de proto; la clave de corta duración
+lo resuelve en el SDK). Renovar en cada creación sin umbral (contradice la
+recomendación de `PutSecretValue`).
+
+**Reversible.** `--no-save-recipe` / `save_recipe=False` y
+`use_recipe=False` devuelven el comportamiento de 0.16 en todo; la
+renovación está apagada por defecto; borrar
+`/rayito/agents/<nombre>/recipe` borra la receta. Detalle, contrato de
+integración y tareas en `openspec/changes/fleet-recipe/`; vectores en
+`testdata/fleet-recipe/`.
+
+**Fuentes (consultadas el 2026-10-22).**
+[`PutParameter`](https://docs.aws.amazon.com/systems-manager/latest/APIReference/API_PutParameter.html),
+[`GetParameter`](https://docs.aws.amazon.com/systems-manager/latest/APIReference/API_GetParameter.html),
+[`DeleteParameter`](https://docs.aws.amazon.com/systems-manager/latest/APIReference/API_DeleteParameter.html),
+[cifrado de `SecureString` con KMS](https://docs.aws.amazon.com/systems-manager/latest/userguide/secure-string-parameter-kms-encryption.html),
+[precios de Systems Manager](https://aws.amazon.com/systems-manager/pricing/),
+[precios de KMS](https://aws.amazon.com/kms/pricing/),
+[generar claves de API de Bedrock](https://docs.aws.amazon.com/bedrock/latest/userguide/api-keys-generate.html),
+[permisos de las claves de API de Bedrock](https://docs.aws.amazon.com/bedrock/latest/userguide/api-keys-permissions.html),
+[`aws-bedrock-token-generator` (Python)](https://github.com/aws/aws-bedrock-token-generator-python),
+[`@aws/bedrock-token-generator` (JavaScript)](https://github.com/aws/aws-bedrock-token-generator-js),
+[`PutSecretValue`](https://docs.aws.amazon.com/secretsmanager/latest/apireference/API_PutSecretValue.html).

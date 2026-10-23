@@ -1,0 +1,138 @@
+{
+  "schema": "rayito.gateway-key-renewal-vectors/1",
+  "_comment": "Decisión de renovar la clave de una pasarela bedrock (design.md D6), pura: `processRenewedAgoSeconds` es lo que recuerda este proceso (null: nunca), `secretChangedAgoSeconds` sale de DescribeSecret.LastChangedDate (null: no se pregunta). `calls` son las llamadas esperadas, en orden. Ventana: gatewayKeyRenewAfterSeconds = 900. `regions`: sólo una región de AWS (patrón [a-z]{2}(-[a-z]+)+-[0-9]+) entre `bedrock-runtime.` y `.amazonaws.com` es Bedrock; cualquier otro host (por ejemplo `bedrock-runtime.evil.s3.amazonaws.com`) da null. `connect`: si AgentFleet.connect(nombre) renueva: `recipe` es renewGatewayKeys de la receta (null: sin receta) y `requested` la opción del llamante (null: no la pasó). Sólo renueva un `requested` true; si la receta la pedía y `requested` es null, el aviso es `recipe_renewal_ignored`.",
+  "cases": [
+    {
+      "id": "fresh-in-process",
+      "processRenewedAgoSeconds": 60,
+      "secretChangedAgoSeconds": null,
+      "calls": [],
+      "renew": false
+    },
+    {
+      "id": "secret-recent",
+      "processRenewedAgoSeconds": null,
+      "secretChangedAgoSeconds": 300,
+      "calls": [
+        "DescribeSecret"
+      ],
+      "renew": false
+    },
+    {
+      "id": "secret-old",
+      "processRenewedAgoSeconds": null,
+      "secretChangedAgoSeconds": 3600,
+      "calls": [
+        "DescribeSecret",
+        "PutSecretValue"
+      ],
+      "renew": true
+    },
+    {
+      "id": "process-old-secret-old",
+      "processRenewedAgoSeconds": 1200,
+      "secretChangedAgoSeconds": 1200,
+      "calls": [
+        "DescribeSecret",
+        "PutSecretValue"
+      ],
+      "renew": true
+    },
+    {
+      "id": "boundary",
+      "processRenewedAgoSeconds": null,
+      "secretChangedAgoSeconds": 900,
+      "calls": [
+        "DescribeSecret",
+        "PutSecretValue"
+      ],
+      "renew": true
+    }
+  ],
+  "regions": [
+    {
+      "upstream": "https://bedrock-runtime.us-east-1.amazonaws.com",
+      "region": "us-east-1"
+    },
+    {
+      "upstream": "https://bedrock-runtime.eu-west-1.amazonaws.com",
+      "region": "eu-west-1"
+    },
+    {
+      "upstream": "https://llm-gateway.example.com",
+      "region": null
+    },
+    {
+      "upstream": "https://bedrock-runtime.us-gov-west-1.amazonaws.com",
+      "region": "us-gov-west-1"
+    },
+    {
+      "upstream": "https://bedrock-runtime.evil.s3.amazonaws.com",
+      "region": null
+    },
+    {
+      "upstream": "https://bedrock-runtime.attacker.example.amazonaws.com",
+      "region": null
+    },
+    {
+      "upstream": "https://bedrock-runtime..amazonaws.com",
+      "region": null
+    },
+    {
+      "upstream": "https://bedrock-runtime.US-EAST-1x.amazonaws.com",
+      "region": null
+    },
+    {
+      "upstream": "https://bedrock-runtime.us-east.amazonaws.com",
+      "region": null
+    }
+  ],
+  "secretValue": {
+    "token": "bedrock-api-key-EXAMPLE",
+    "value": "Bearer bedrock-api-key-EXAMPLE"
+  },
+  "connect": [
+    {
+      "id": "recipe-on-caller-silent",
+      "recipe": true,
+      "requested": null,
+      "renew": false,
+      "warning": "recipe_renewal_ignored"
+    },
+    {
+      "id": "recipe-on-caller-off",
+      "recipe": true,
+      "requested": false,
+      "renew": false,
+      "warning": null
+    },
+    {
+      "id": "recipe-on-caller-on",
+      "recipe": true,
+      "requested": true,
+      "renew": true,
+      "warning": null
+    },
+    {
+      "id": "recipe-off-caller-silent",
+      "recipe": false,
+      "requested": null,
+      "renew": false,
+      "warning": null
+    },
+    {
+      "id": "recipe-off-caller-on",
+      "recipe": false,
+      "requested": true,
+      "renew": true,
+      "warning": null
+    },
+    {
+      "id": "no-recipe-caller-silent",
+      "recipe": null,
+      "requested": null,
+      "renew": false,
+      "warning": null
+    }
+  ]
+}

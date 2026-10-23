@@ -51,6 +51,18 @@ export async function loadOptionalPeer<T>(specifier: string, feature: string): P
 }
 
 /**
+ * `true` si `error` es el `InvalidArgumentError` de `loadOptionalPeer` porque
+ * `specifier` no está instalado. Sirve a una función que, sin el peer, debe
+ * seguir como antes de existir en vez de fallar (p. ej. leer la receta de la
+ * flota en `AgentFleet.connect(nombre)`).
+ */
+export function isMissingOptionalPeer(error: unknown, specifier: string): boolean {
+  return (
+    error instanceof InvalidArgumentError && isMissingRequestedSpecifier(error.cause, specifier)
+  );
+}
+
+/**
  * `true` sólo cuando la resolución falló para `specifier` mismo (o para su
  * paquete, en un especificador con subruta), nunca para una dependencia
  * anidada de un paquete que sí está instalado. Se compara sólo el nombre

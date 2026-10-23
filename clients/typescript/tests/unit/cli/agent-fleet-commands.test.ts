@@ -9,7 +9,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { defaultToken } from "../../../src/cli/agent-deploy.js";
+import { defaultToken, RENEW_NEEDS_FLEET_MESSAGE } from "../../../src/cli/agent-deploy.js";
 import { CapacityError } from "../../../src/errors.js";
 import { AGENT_TOKEN_FILE_DEFAULT } from "../../../src/limits.js";
 import { generateAccessToken } from "../../../src/payload.js";
@@ -39,6 +39,48 @@ describe("agent con una flota", () => {
     expect(projects.calls).toEqual([["connectFleet", FLEET_NAME, token]]);
     expect(projects.fleet.calls).toEqual([["invoke", "hola", "s"]]);
     expect(outcome.stderr).toContain(`session_id=rs1.${SANDBOX_ID}.ses_1`);
+  });
+
+  it("invoke --renew-gateway-keys pide la renovación al reconectar la flota", async () => {
+    const projects = new FakeAgentProjects();
+    const token = generateAccessToken();
+    const outcome = await invoke(
+      projects,
+      ["agent", "invoke", FLEET_NAME, "hola", "--renew-gateway-keys"],
+      { RAYITO_ACCESS_TOKEN: token },
+    );
+    expect(outcome.exitCode).toBe(0);
+    expect(projects.calls).toEqual([
+      ["connectFleet", FLEET_NAME, token, { renewGatewayKeys: true }],
+    ]);
+  });
+
+  it("invoke --renew-gateway-keys con un id de sandbox sale con 2 sin conectar", async () => {
+    const projects = new FakeAgentProjects();
+    const outcome = await invoke(
+      projects,
+      ["agent", "invoke", SANDBOX_ID, "hola", "--renew-gateway-keys"],
+      { RAYITO_ACCESS_TOKEN: generateAccessToken() },
+    );
+    expect(outcome.exitCode).toBe(2);
+    expect(outcome.stderr).toContain(RENEW_NEEDS_FLEET_MESSAGE);
+    expect(projects.calls).toEqual([]);
+  });
+
+  it("invoke --renew-gateway-keys con --target agentcore es option_not_supported", async () => {
+    const projects = new FakeAgentProjects();
+    const outcome = await invoke(projects, [
+      "agent",
+      "invoke",
+      FLEET_NAME,
+      "hola",
+      "--target",
+      "agentcore",
+      "--renew-gateway-keys",
+    ]);
+    expect(outcome.exitCode).toBe(2);
+    expect(outcome.stderr).toContain("--renew-gateway-keys");
+    expect(projects.calls).toEqual([]);
   });
 
   it("invoke con un id de sandbox sigue hablando con un solo VM", async () => {

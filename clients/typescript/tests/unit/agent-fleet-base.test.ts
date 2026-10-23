@@ -11,10 +11,17 @@ import { describe, expect, test } from "vitest";
 import { TokenUsage } from "../../src/agent/events.js";
 import {
   AGENT_FLEET_BUSY_RETRY_MS,
+  AGENT_FLEET_ON_TIMEOUT,
   AGENT_FLEET_PING_TTL_MS,
+  correctedCap,
   eventWithHandle,
+  type FleetLifetime,
+  fleetLifetime,
   fleetSettingsOf,
+  holdMs,
   isLost,
+  lifetimeMs,
+  listedCap,
   markExtras,
   newMember,
   ownedIds,
@@ -22,6 +29,7 @@ import {
   poolConfigFor,
   recordBusy,
   recordPing,
+  sandboxCap,
   selectMembers,
   sessionLabel,
   surplus,
@@ -32,12 +40,14 @@ import { replacementsNeeded, ScalingOptions } from "../../src/agent/scaling-doma
 import { InvalidArgumentError } from "../../src/errors.js";
 import { generateAccessToken } from "../../src/payload.js";
 import { slotAccessToken, validatePoolConfig } from "../../src/pool/config.js";
+import { beyondCapError } from "../../src/sandbox/lifecycle.js";
 import { project, SANDBOX_ID } from "./agent-project-fake.js";
 
 const VECTORS = join(import.meta.dirname, "..", "..", "..", "..", "testdata", "agent-fleet");
 const SESSION_LABELS = JSON.parse(readFileSync(join(VECTORS, "session-labels.json"), "utf8"));
 const PLACEMENT = JSON.parse(readFileSync(join(VECTORS, "placement.json"), "utf8"));
 const MEMBERS = JSON.parse(readFileSync(join(VECTORS, "members.json"), "utf8"));
+const LIFETIME = JSON.parse(readFileSync(join(VECTORS, "lifetime.json"), "utf8"));
 const NOW = 1_000_000;
 const MS_PER_SECOND = 1000;
 
@@ -314,5 +324,140 @@ describe("settings", () => {
     expect(selectMembers(listing, new Set(item.owned)).map((entry) => entry.sandboxId)).toEqual(
       item.expected,
     );
+  });
+});
+
+interface CreateArgsCase {
+  readonly name: string;
+  readonly serveTimeoutSeconds: number;
+  readonly minVms: number;
+  readonly maxVms: number;
+  readonly expected: { readonly maxLifetimeSeconds: number; readonly onTimeout: string } | null;
+}
+
+interface LifetimeSecondsCase {
+  readonly name: string;
+  readonly desiredSeconds: number | null;
+  readonly capInSeconds: number | null;
+  readonly expected: number | null;
+}
+
+interface ListedCapCase {
+  readonly name: string;
+  readonly maxLifetimeSeconds: number | null;
+  readonly expectedCapAfterStartSeconds: number | null;
+}
+
+interface SandboxCapCase {
+  readonly name: string;
+  readonly platformCapInSeconds: number | null;
+  readonly reportedCapInSeconds: number | null;
+  readonly expected: number | null;
+}
+
+interface PromotedRestoreCase {
+  readonly name: string;
+  readonly maxLifetimeSeconds: number;
+  readonly startedSecondsAgo: number;
+  readonly desiredSeconds: number | null;
+  readonly expected: number | null;
+}
+
+interface CorrectedCapCase {
+  readonly name: string;
+  readonly currentCapInSeconds: number | null;
+  readonly reportedCapInSeconds: number | null;
+  readonly expected: number | null;
+}
+
+const LIFETIME_NOW = Date.UTC(2026, 9, 22);
+
+function inSeconds(seconds: number | null): Date | undefined {
+  return seconds === null ? undefined : new Date(LIFETIME_NOW + seconds * 1000);
+}
+
+function fleetLifetimeOf(maxLifetimeSeconds: number): FleetLifetime {
+  return { maxLifetimeMs: maxLifetimeSeconds * 1000, onTimeout: AGENT_FLEET_ON_TIMEOUT };
+}
+
+interface HoldSecondsCase {
+  readonly name: string;
+  readonly scaleInSeconds: number;
+  readonly requestTimeoutSeconds: number | null;
+  readonly expected: number;
+}
+
+describe("fleet lifetime", () => {
+  test.each(LIFETIME.createArgs as CreateArgsCase[])("$name", (entry) => {
+    const the = project({
+      serve: new ServeOptions({ timeoutMs: entry.serveTimeoutSeconds * 1000 }),
+    });
+    const scaling = new ScalingOptions({ minVms: entry.minVms, maxVms: entry.maxVms });
+    const lifetime = fleetLifetime(the, scaling);
+    if (entry.expected === null) {
+      expect(lifetime).toBeUndefined();
+      return;
+    }
+    expect(lifetime).toEqual({
+      maxLifetimeMs: entry.expected.maxLifetimeSeconds * 1000,
+      onTimeout: entry.expected.onTimeout,
+    });
+  });
+
+  test.each(LIFETIME.lifetimeSeconds as LifetimeSecondsCase[])("$name", (entry) => {
+    const now = Date.UTC(2026, 9, 22);
+    const cap = entry.capInSeconds === null ? undefined : new Date(now + entry.capInSeconds * 1000);
+    const desired = entry.desiredSeconds === null ? undefined : entry.desiredSeconds * 1000;
+    const expected = entry.expected === null ? undefined : entry.expected * 1000;
+    expect(lifetimeMs(desired, cap, now)).toBe(expected);
+  });
+
+  test.each(LIFETIME.holdSeconds as HoldSecondsCase[])("$name", (entry) => {
+    const scaling = new ScalingOptions({ maxVms: 2, scaleInAfterMs: entry.scaleInSeconds * 1000 });
+    const request =
+      entry.requestTimeoutSeconds === null ? undefined : entry.requestTimeoutSeconds * 1000;
+    expect(holdMs(scaling, request)).toBe(entry.expected * 1000);
+  });
+
+  test.each(LIFETIME.listedCap as ListedCapCase[])("$name", (entry) => {
+    const started = new Date(LIFETIME_NOW);
+    const lifetime =
+      entry.maxLifetimeSeconds === null ? undefined : fleetLifetimeOf(entry.maxLifetimeSeconds);
+    expect(listedCap(started, lifetime)).toEqual(inSeconds(entry.expectedCapAfterStartSeconds));
+  });
+
+  test.each(LIFETIME.sandboxCap as SandboxCapCase[])("$name", (entry) => {
+    const info = {
+      platformExpiresAt: inSeconds(entry.platformCapInSeconds),
+      lifecycle: { cap: inSeconds(entry.reportedCapInSeconds) },
+    };
+    expect(sandboxCap({ info })).toEqual(inSeconds(entry.expected));
+  });
+
+  test.each(LIFETIME.promotedRestore as PromotedRestoreCase[])("$name", (entry) => {
+    const started = new Date(LIFETIME_NOW - entry.startedSecondsAgo * 1000);
+    const cap = listedCap(started, fleetLifetimeOf(entry.maxLifetimeSeconds));
+    const desired = entry.desiredSeconds === null ? undefined : entry.desiredSeconds * 1000;
+    const expected = entry.expected === null ? undefined : entry.expected * 1000;
+    expect(lifetimeMs(desired, cap, LIFETIME_NOW)).toBe(expected);
+  });
+
+  test.each(LIFETIME.correctedCap as CorrectedCapCase[])("$name", (entry) => {
+    const reported = inSeconds(entry.reportedCapInSeconds);
+    const error = beyondCapError(1000, reported?.getTime());
+    expect(correctedCap(error, inSeconds(entry.currentCapInSeconds))).toEqual(
+      inSeconds(entry.expected),
+    );
+  });
+
+  test("the warm pool of a fleet that can grow carries the lifetime", () => {
+    const config = poolConfigFor(
+      project(),
+      new ScalingOptions({ maxVms: 3, warmVms: 1 }),
+      generateAccessToken(),
+      {},
+    );
+    expect(config.maxLifetimeMs).toBe(3_660_000);
+    expect(config.onTimeout).toBe("kill");
   });
 });

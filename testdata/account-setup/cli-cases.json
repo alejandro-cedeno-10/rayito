@@ -5,6 +5,7 @@
       "name": "dry-run en una cuenta nueva",
       "args": [
         "setup",
+        "--caps-image",
         "--dry-run"
       ],
       "input": {
@@ -19,18 +20,18 @@
         },
         "forbiddenBuckets": [],
         "artifactStack": null,
-        "image": null
+        "image": null,
+        "capsImage": null
       },
       "expected": {
         "exitCode": 0,
-        "stdout": "rayito setup: cuenta 123456789012, región us-east-1\n  bucket {cdkBucket}: reutilizar (bootstrap de CDK)\n  pila de IAM rayito-m0-iam: crear\n  imagen rayito-base: publicar desde rayd-v{sdkVersion} (≈ 10 min)\nCoste aproximado:\n  pila de IAM: gratis\n  imagen: ≈ $0,04 por semana por versión publicada (mínimo una semana)\n  zip de la imagen en el bucket: céntimos\nno se creó ni cambió nada (--dry-run)\n",
+        "stdout": "rayito setup: cuenta 123456789012, región us-east-1\n  bucket {cdkBucket}: reutilizar (bootstrap de CDK)\n  pila de IAM rayito-m0-iam: crear\n  imagen rayito-base: publicar desde rayd-v{sdkVersion} (≈ 10 min)\n  imagen con capacidades rayito-base-caps: publicar desde rayd-v{sdkVersion} (≈ 10 min)\nCoste aproximado:\n  pila de IAM: gratis\n  imagen: ≈ $0,04 por semana por versión publicada (mínimo una semana)\n  zip de la imagen en el bucket: céntimos\n  imagen con capacidades: ≈ $0,04 por semana por versión publicada ($0,08 por GB-mes, mínimo una semana); sólo con --caps-image\nno se creó ni cambió nada (--dry-run)\n",
         "stderr": ""
       }
     },
     {
-      "name": "dry-run en una cuenta nueva con --json",
+      "name": "dry-run sin --caps-image",
       "args": [
-        "--json",
         "setup",
         "--dry-run"
       ],
@@ -46,7 +47,37 @@
         },
         "forbiddenBuckets": [],
         "artifactStack": null,
-        "image": null
+        "image": null,
+        "capsImage": null
+      },
+      "expected": {
+        "exitCode": 0,
+        "stdout": "rayito setup: cuenta 123456789012, región us-east-1\n  bucket {cdkBucket}: reutilizar (bootstrap de CDK)\n  pila de IAM rayito-m0-iam: crear\n  imagen rayito-base: publicar desde rayd-v{sdkVersion} (≈ 10 min)\n  imagen con capacidades rayito-base-caps: omitida (sin --caps-image)\nCoste aproximado:\n  pila de IAM: gratis\n  imagen: ≈ $0,04 por semana por versión publicada (mínimo una semana)\n  zip de la imagen en el bucket: céntimos\nno se creó ni cambió nada (--dry-run)\n",
+        "stderr": ""
+      }
+    },
+    {
+      "name": "dry-run en una cuenta nueva con --json",
+      "args": [
+        "--json",
+        "setup",
+        "--caps-image",
+        "--dry-run"
+      ],
+      "input": {
+        "region": "us-east-1",
+        "account": "123456789012",
+        "bucket": null,
+        "environmentBucket": null,
+        "artifact": null,
+        "stack": null,
+        "buckets": {
+          "{cdkBucket}": "us-east-1"
+        },
+        "forbiddenBuckets": [],
+        "artifactStack": null,
+        "image": null,
+        "capsImage": null
       },
       "expected": {
         "exitCode": 0,
@@ -86,12 +117,23 @@
               "imageVersion": null,
               "release": "rayd-v{sdkVersion}",
               "previousBucket": null
+            },
+            {
+              "resource": "capsImage",
+              "name": "rayito-base-caps",
+              "action": "publish",
+              "source": "release",
+              "status": null,
+              "imageVersion": null,
+              "release": "rayd-v{sdkVersion}",
+              "previousBucket": null
             }
           ],
           "cost": [
             "pila de IAM: gratis",
             "imagen: ≈ $0,04 por semana por versión publicada (mínimo una semana)",
-            "zip de la imagen en el bucket: céntimos"
+            "zip de la imagen en el bucket: céntimos",
+            "imagen con capacidades: ≈ $0,04 por semana por versión publicada ($0,08 por GB-mes, mínimo una semana); sólo con --caps-image"
           ],
           "result": null,
           "doctor": null,
@@ -105,6 +147,7 @@
       "name": "dry-run en una cuenta preparada a mano",
       "args": [
         "setup",
+        "--caps-image",
         "--dry-run"
       ],
       "input": {
@@ -137,18 +180,30 @@
               "createdAt": "2026-10-01T00:00:00Z"
             }
           ]
+        },
+        "capsImage": {
+          "state": "UPDATED",
+          "versions": [
+            {
+              "imageVersion": "1.0",
+              "state": "SUCCESSFUL",
+              "status": "ACTIVE",
+              "createdAt": "2026-10-01T00:00:00Z"
+            }
+          ]
         }
       },
       "expected": {
         "exitCode": 0,
-        "stdout": "rayito setup: cuenta 123456789012, región us-east-1\n  bucket amzn-s3-demo-bucket: reutilizar (el de la pila de IAM)\n  pila de IAM rayito-m0-iam: ya existe (CREATE_COMPLETE)\n  imagen rayito-base: ya existe (versión 1.0 lanzable)\nLa cuenta ya está preparada: no hay nada que crear.\nno se creó ni cambió nada (--dry-run)\n",
+        "stdout": "rayito setup: cuenta 123456789012, región us-east-1\n  bucket amzn-s3-demo-bucket: reutilizar (el de la pila de IAM)\n  pila de IAM rayito-m0-iam: ya existe (CREATE_COMPLETE)\n  imagen rayito-base: ya existe (versión 1.0 lanzable)\n  imagen con capacidades rayito-base-caps: ya existe (versión 1.0 lanzable)\nLa cuenta ya está preparada: no hay nada que crear.\nno se creó ni cambió nada (--dry-run)\n",
         "stderr": ""
       }
     },
     {
       "name": "sin --yes y sin terminal",
       "args": [
-        "setup"
+        "setup",
+        "--caps-image"
       ],
       "input": {
         "region": "us-east-1",
@@ -162,11 +217,12 @@
         },
         "forbiddenBuckets": [],
         "artifactStack": null,
-        "image": null
+        "image": null,
+        "capsImage": null
       },
       "expected": {
         "exitCode": 2,
-        "stdout": "rayito setup: cuenta 123456789012, región us-east-1\n  bucket {cdkBucket}: reutilizar (bootstrap de CDK)\n  pila de IAM rayito-m0-iam: crear\n  imagen rayito-base: publicar desde rayd-v{sdkVersion} (≈ 10 min)\nCoste aproximado:\n  pila de IAM: gratis\n  imagen: ≈ $0,04 por semana por versión publicada (mínimo una semana)\n  zip de la imagen en el bucket: céntimos\n",
+        "stdout": "rayito setup: cuenta 123456789012, región us-east-1\n  bucket {cdkBucket}: reutilizar (bootstrap de CDK)\n  pila de IAM rayito-m0-iam: crear\n  imagen rayito-base: publicar desde rayd-v{sdkVersion} (≈ 10 min)\n  imagen con capacidades rayito-base-caps: publicar desde rayd-v{sdkVersion} (≈ 10 min)\nCoste aproximado:\n  pila de IAM: gratis\n  imagen: ≈ $0,04 por semana por versión publicada (mínimo una semana)\n  zip de la imagen en el bucket: céntimos\n  imagen con capacidades: ≈ $0,04 por semana por versión publicada ($0,08 por GB-mes, mínimo una semana); sólo con --caps-image\n",
         "stderr": "rayito: preparar la cuenta crea recursos con coste: confírmalo con --yes (o desde una terminal)\n"
       }
     },
@@ -174,7 +230,8 @@
       "name": "sin --yes con --json",
       "args": [
         "--json",
-        "setup"
+        "setup",
+        "--caps-image"
       ],
       "input": {
         "region": "us-east-1",
@@ -188,7 +245,8 @@
         },
         "forbiddenBuckets": [],
         "artifactStack": null,
-        "image": null
+        "image": null,
+        "capsImage": null
       },
       "expected": {
         "exitCode": 2,
@@ -228,12 +286,23 @@
               "imageVersion": null,
               "release": "rayd-v{sdkVersion}",
               "previousBucket": null
+            },
+            {
+              "resource": "capsImage",
+              "name": "rayito-base-caps",
+              "action": "publish",
+              "source": "release",
+              "status": null,
+              "imageVersion": null,
+              "release": "rayd-v{sdkVersion}",
+              "previousBucket": null
             }
           ],
           "cost": [
             "pila de IAM: gratis",
             "imagen: ≈ $0,04 por semana por versión publicada (mínimo una semana)",
-            "zip de la imagen en el bucket: céntimos"
+            "zip de la imagen en el bucket: céntimos",
+            "imagen con capacidades: ≈ $0,04 por semana por versión publicada ($0,08 por GB-mes, mínimo una semana); sólo con --caps-image"
           ],
           "result": null,
           "doctor": null,
@@ -250,6 +319,7 @@
       "name": "dry-run sin ningún bucket: se crea uno",
       "args": [
         "setup",
+        "--caps-image",
         "--dry-run"
       ],
       "input": {
@@ -262,11 +332,12 @@
         "buckets": {},
         "forbiddenBuckets": [],
         "artifactStack": null,
-        "image": null
+        "image": null,
+        "capsImage": null
       },
       "expected": {
         "exitCode": 0,
-        "stdout": "rayito setup: cuenta 123456789012, región us-east-1\n  bucket {defaultBucket}: crear con la pila rayito-m0-artifacts (nombre por defecto de Rayito)\n  pila de IAM rayito-m0-iam: crear\n  imagen rayito-base: publicar desde rayd-v{sdkVersion} (≈ 10 min)\nCoste aproximado:\n  bucket de artefactos: los zips de la imagen caducan a los 7 días (regla de ciclo de vida)\n  pila de IAM: gratis\n  imagen: ≈ $0,04 por semana por versión publicada (mínimo una semana)\n  zip de la imagen en el bucket: céntimos\nno se creó ni cambió nada (--dry-run)\n",
+        "stdout": "rayito setup: cuenta 123456789012, región us-east-1\n  bucket {defaultBucket}: crear con la pila rayito-m0-artifacts (nombre por defecto de Rayito)\n  pila de IAM rayito-m0-iam: crear\n  imagen rayito-base: publicar desde rayd-v{sdkVersion} (≈ 10 min)\n  imagen con capacidades rayito-base-caps: publicar desde rayd-v{sdkVersion} (≈ 10 min)\nCoste aproximado:\n  bucket de artefactos: los zips de la imagen caducan a los 7 días (regla de ciclo de vida)\n  pila de IAM: gratis\n  imagen: ≈ $0,04 por semana por versión publicada (mínimo una semana)\n  zip de la imagen en el bucket: céntimos\n  imagen con capacidades: ≈ $0,04 por semana por versión publicada ($0,08 por GB-mes, mínimo una semana); sólo con --caps-image\nno se creó ni cambió nada (--dry-run)\n",
         "stderr": ""
       }
     },
@@ -275,6 +346,7 @@
       "args": [
         "--json",
         "setup",
+        "--caps-image",
         "--dry-run"
       ],
       "input": {
@@ -287,7 +359,8 @@
         "buckets": {},
         "forbiddenBuckets": [],
         "artifactStack": null,
-        "image": null
+        "image": null,
+        "capsImage": null
       },
       "expected": {
         "exitCode": 0,
@@ -327,13 +400,24 @@
               "imageVersion": null,
               "release": "rayd-v{sdkVersion}",
               "previousBucket": null
+            },
+            {
+              "resource": "capsImage",
+              "name": "rayito-base-caps",
+              "action": "publish",
+              "source": "release",
+              "status": null,
+              "imageVersion": null,
+              "release": "rayd-v{sdkVersion}",
+              "previousBucket": null
             }
           ],
           "cost": [
             "bucket de artefactos: los zips de la imagen caducan a los 7 días (regla de ciclo de vida)",
             "pila de IAM: gratis",
             "imagen: ≈ $0,04 por semana por versión publicada (mínimo una semana)",
-            "zip de la imagen en el bucket: céntimos"
+            "zip de la imagen en el bucket: céntimos",
+            "imagen con capacidades: ≈ $0,04 por semana por versión publicada ($0,08 por GB-mes, mínimo una semana); sólo con --caps-image"
           ],
           "result": null,
           "doctor": null,
@@ -359,7 +443,8 @@
         "buckets": {},
         "forbiddenBuckets": [],
         "artifactStack": null,
-        "image": null
+        "image": null,
+        "capsImage": null
       },
       "expected": {
         "exitCode": 2,
@@ -391,7 +476,8 @@
         },
         "forbiddenBuckets": [],
         "artifactStack": null,
-        "image": null
+        "image": null,
+        "capsImage": null
       },
       "expected": {
         "exitCode": 1,
@@ -419,7 +505,8 @@
         },
         "forbiddenBuckets": [],
         "artifactStack": null,
-        "image": null
+        "image": null,
+        "capsImage": null
       },
       "expected": {
         "exitCode": 2,
@@ -447,7 +534,8 @@
           "amzn-s3-demo-bucket1"
         ],
         "artifactStack": null,
-        "image": null
+        "image": null,
+        "capsImage": null
       },
       "expected": {
         "exitCode": 2,
@@ -473,7 +561,8 @@
         },
         "forbiddenBuckets": [],
         "artifactStack": null,
-        "image": null
+        "image": null,
+        "capsImage": null
       },
       "expected": {
         "exitCode": 2,

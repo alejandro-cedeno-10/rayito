@@ -19,7 +19,7 @@ import logging
 import random
 import threading
 import time
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from datetime import datetime
 from types import TracebackType
 from typing import TYPE_CHECKING, Any, Final, Self
@@ -27,7 +27,6 @@ from typing import TYPE_CHECKING, Any, Final, Self
 import boto3
 
 from rayito._aws import ControlPlane, PortSpec, control_plane_session
-from rayito._feature_options import FeatureOptions, plan_features
 from rayito._limits import DEFAULT_PORT, TERMINAL_STATES
 from rayito._models import SandboxInfo
 from rayito._pool_backends import InMemoryPoolBackend, PoolBackend
@@ -39,7 +38,9 @@ from rayito._pool_base import (
     SlotRecord,
     TakePoll,
     drain_requires_persistence_error,
+    gateway_sections,
     launch_kwargs,
+    owns_slot,
     pick_ready_slot,
     pool_closed_error,
     pool_not_started_error,
@@ -75,6 +76,7 @@ from rayito.sandbox_sync.pool import (
 )
 
 if TYPE_CHECKING:
+    from rayito._configure_base import PlannedSection
     from rayito._secret_gateway import SecretGateway
 
 logger = logging.getLogger("rayito.pool")
@@ -230,7 +232,7 @@ class AsyncSandboxPool:
         tomado; mismo coste, IAM y forma de apagarla (`gateways=None`, por
         defecto) que en `SandboxPool.take`.
         """
-        feature_plan = plan_features(FeatureOptions(gateways=gateways))
+        sections = gateway_sections(gateways)
         binding = await awarm(bind_secrets(secrets, secret_cache), self._default_secret_cache)
         record = await self._claim_ready_slot(wait)
         sandbox = (
@@ -242,8 +244,8 @@ class AsyncSandboxPool:
             sandbox = await self._fallback(ready_timeout, request_timeout, reconnect_timeout)
         if binding is not None:
             sandbox._secrets = binding
-        await sandbox._apply_configure_sections(
-            feature_plan.configure_sections, timeout=request_timeout, terminate_on_failure=True
+        await apply_gateway_sections(
+            sandbox, sections, timeout=request_timeout, terminate_on_failure=True
         )
         return sandbox
 
@@ -695,6 +697,8 @@ class AsyncSandboxPool:
 
     async def _recover(self) -> None:
         for record in await self._backend_call(self._backend.load):
+            if not owns_slot(record, self._image_arn):
+                continue
             if record.state == "warming":
                 await self._backend_call(self._backend.delete, record.sandbox_id)
                 self._count(lost=1)
@@ -757,4 +761,30 @@ async def wait_notified(cond: asyncio.Condition, timeout: float) -> bool:
     return True
 
 
-__all__ = ["AsyncSandboxPool"]
+async def apply_gateway_sections(
+    sandbox: AsyncSandbox,
+    sections: Sequence[PlannedSection],
+    *,
+    timeout: float,
+    terminate_on_failure: bool,
+) -> None:
+    """Aplica en `sandbox` las secciones de pasarela ya planificadas
+    (`gateway_sections`); sin ninguna, no llama a nada nuevo."""
+    await sandbox._apply_configure_sections(
+        sections, timeout=timeout, terminate_on_failure=terminate_on_failure
+    )
+
+
+async def apply_gateways(
+    sandbox: AsyncSandbox, gateways: Mapping[str, SecretGateway], *, timeout: float
+) -> None:
+    """Abre `gateways` en un sandbox ya arrancado (una plaza aparcada que la
+    flota abre): el mismo camino que `SandboxPool.take(gateways=)`. Un fallo
+    no termina el sandbox (`terminate_on_failure=False`): quien llama lo
+    descarta y lo sustituye."""
+    await apply_gateway_sections(
+        sandbox, gateway_sections(gateways), timeout=timeout, terminate_on_failure=False
+    )
+
+
+__all__ = ["AsyncSandboxPool", "apply_gateway_sections", "apply_gateways"]

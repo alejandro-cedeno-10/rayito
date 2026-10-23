@@ -461,6 +461,12 @@ class AgentProject:
     el runtime `langgraph`); `to_dict()` lo escribe en lugar del
     `entrypoint`.
 
+    `gateway_presets` (pasarela -> preset, p. ej. `{"model": "bedrock"}`) es
+    lo que el fichero declara en `[gateways.<nombre>] preset`: lo rellenan
+    `load()`, `from_dict()` y `detect()`, sirve para elegir la variable
+    estándar de `--create-secret` y `to_dict()` no lo escribe (cada pasarela
+    ya va en su forma `custom`), así que el documento canónico no cambia.
+
     `secret_env` (nombre de variable -> nombre o ARN de un secreto, o un
     `SecretEnvRef`) y `secret_env_from` (`SecretEnvSource`) ponen valores de
     Secrets Manager en el entorno del agente al arrancar (ADR-033 D4): el
@@ -510,6 +516,7 @@ class AgentProject:
     graph: str | None = None
     secret_env: Mapping[str, SecretEnvValue] = field(default_factory=dict)
     secret_env_from: Sequence[SecretEnvSource] = ()
+    gateway_presets: Mapping[str, str] = field(default_factory=dict, compare=False)
 
     def __post_init__(self) -> None:
         validate_name(self.name, "AgentProject.name")
@@ -545,6 +552,7 @@ class AgentProject:
         self._validate_fleet_options()
         _validate_graph(self.graph, self.runtime)
         self._validate_secret_env()
+        object.__setattr__(self, "gateway_presets", _validated_presets(self.gateway_presets))
 
     def _validate_fleet_options(self) -> None:
         if not isinstance(self.scaling, ScalingOptions):
@@ -1098,7 +1106,9 @@ def _project_kwargs(
     root.finish()
     _check_gateways(kwargs["spec"], gateways)
     _check_concurrency(kwargs)
-    _check_model(kwargs, _gateway_presets(data))
+    presets = _gateway_presets(data)
+    _check_model(kwargs, presets)
+    kwargs["gateway_presets"] = presets
     return kwargs
 
 
@@ -1113,6 +1123,17 @@ def _gateway_presets(data: Mapping[str, object]) -> dict[str, str]:
         for name, entry in gateways.items()
         if isinstance(entry, Mapping) and isinstance(entry.get("preset"), str)
     }
+
+
+def _validated_presets(presets: Mapping[str, str]) -> Mapping[str, str]:
+    """`AgentProject.gateway_presets` de sólo lectura: un mapeo de cadenas."""
+    if not isinstance(presets, Mapping) or not all(
+        isinstance(key, str) and isinstance(value, str) for key, value in presets.items()
+    ):
+        raise InvalidArgumentException(
+            "AgentProject.gateway_presets debe ser un mapeo pasarela -> preset (cadenas)"
+        )
+    return MappingProxyType(dict(presets))
 
 
 def _check_model(kwargs: Mapping[str, Any], presets: Mapping[str, str]) -> None:
