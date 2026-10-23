@@ -19,6 +19,7 @@ import {
   DEFAULT_AGENT_WORKDIR,
 } from "../limits.js";
 import { ACCESS_TOKEN_ENV_VAR } from "../sandbox/launch.js";
+import type { OnTimeout } from "../sandbox/lifecycle.js";
 import type { SandboxConnectOptions, SandboxCreateOptions } from "../sandbox/sandbox.js";
 import type { BuildInfo } from "../templates/build.js";
 import { AgentDeployment, type DeploymentSandbox, labelsFor } from "./deployment.js";
@@ -102,7 +103,7 @@ export interface ServiceDeployOptions extends AgentProjectDeployOptions {
  * crea sus VMs. */
 export interface DeployLifetime {
   readonly maxLifetimeMs: number;
-  readonly onTimeout: "kill" | "pause";
+  readonly onTimeout: OnTimeout;
 }
 
 export interface AgentProjectRunOptions extends AgentProjectSandboxOptions {

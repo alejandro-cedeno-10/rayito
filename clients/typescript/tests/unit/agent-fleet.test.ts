@@ -192,8 +192,58 @@ describe("shared mode", () => {
     await fleet.refreshMembers();
     await fleet.invoke("tercera");
     const restored = extra?.timeouts.at(-1) ?? 0;
-    expect(restored).toBeGreaterThan(3600);
-    expect(restored).toBeLessThanOrEqual(3655);
+    expect(restored).toBeGreaterThanOrEqual(3590);
+    expect(restored).toBeLessThanOrEqual(3660 - 60 - 5);
+    expect(extra?.beyondCap).toEqual([]);
+  });
+
+  test("an extra VM keeps its hold while another invocation is in flight", async () => {
+    const h = new FleetHarness();
+    const the = project({ serve: new ServeOptions({ maxConcurrency: 2 }) });
+    const fleet = h.fleet(new ScalingOptions({ minVms: 1, maxVms: 2, scaleInAfterMs: 120_000 }), {
+      project: the,
+      service: h.service(the),
+    });
+    await fleet.start();
+    const baseStreams = [await fleet.stream("a"), await fleet.stream("b")];
+    const longRunning = await fleet.stream("larga");
+    const extra = h.world.sandboxes.get(fleet.sandboxIds[1] ?? "");
+    const hold = Math.ceil(requestTimeoutMs(the) / 1000);
+    await fleet.invoke("corta");
+    expect(extra?.timeouts).toEqual([120, hold, hold]);
+    await longRunning.close();
+    expect(extra?.timeouts).toEqual([120, hold, hold, 120]);
+    for (const stream of baseStreams) {
+      await stream.close();
+    }
+  });
+
+  test("a late cap estimate is corrected from rayd and never marks the VM", async () => {
+    const h = new FleetHarness();
+    const warn = vi.fn();
+    const fleet = await h.started(
+      new ScalingOptions({ minVms: 1, maxVms: 2, scaleInAfterMs: 120_000 }),
+      { logger: { warn } },
+    );
+    let held = await fleet.stream("primera");
+    await fleet.invoke("segunda");
+    const extra = h.world.sandboxes.get(fleet.sandboxIds[1] ?? "");
+    if (extra === undefined) {
+      throw new Error("falta el VM sobrante");
+    }
+    extra.maxLifetimeMs = 200_000;
+    await held.close();
+    held = await fleet.stream("primera");
+    await fleet.invoke("tercera");
+    await held.close();
+    const hold = Math.ceil(requestTimeoutMs(project()) / 1000);
+    expect(extra.beyondCap).toEqual([hold]);
+    expect(extra.timeouts.at(-2)).toBeGreaterThan(120);
+    expect(extra.timeouts.at(-2)).toBeLessThanOrEqual(200 - 60 - 5);
+    expect(extra.timeouts.at(-1)).toBe(120);
+    expect(warn.mock.calls.filter(([message]) => message === UNMANAGED_LIFETIME_MESSAGE)).toEqual(
+      [],
+    );
   });
 
   test("sessions share a VM up to its concurrency", async () => {

@@ -9,6 +9,7 @@ import json
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -16,8 +17,10 @@ import pytest
 from rayito._agent._events import AgentFailed, AgentResult, Done, TokenUsage
 from rayito._agent._fleet_base import (
     AGENT_FLEET_BUSY_RETRY_SECONDS,
+    FleetLifetime,
     Member,
     MemberListing,
+    corrected_cap,
     event_with_handle,
     fleet_lifetime,
     fleet_settings_of,
@@ -31,6 +34,7 @@ from rayito._agent._fleet_base import (
     pool_config_for,
     record_busy,
     record_ping,
+    sandbox_cap,
     select_members,
     session_label,
     surplus,
@@ -38,6 +42,7 @@ from rayito._agent._fleet_base import (
 )
 from rayito._agent._project_domain import ServeOptions
 from rayito._agent._scaling_domain import ScalingOptions, replacements_needed
+from rayito._lifecycle_base import TimeoutRequest, beyond_cap_error
 from rayito._limits import (
     AGENT_FLEET_PING_TTL_SECONDS,
     AGENT_SERVICE_QUEUE_TIMEOUT_SECONDS_DEFAULT,
@@ -277,10 +282,8 @@ def test_fleet_lifetime_matches_the_shared_vectors(case: dict[str, Any]) -> None
         assert lifetime is None
         return
     assert lifetime is not None
-    assert lifetime.create_args() == {
-        "max_lifetime": expected["maxLifetimeSeconds"],
-        "on_timeout": expected["onTimeout"],
-    }
+    assert lifetime.max_lifetime == expected["maxLifetimeSeconds"]
+    assert lifetime.on_timeout == expected["onTimeout"]
 
 
 @pytest.mark.parametrize("case", LIFETIME["lifetimeSeconds"], ids=lambda case: case["name"])
@@ -299,12 +302,56 @@ def test_hold_seconds_matches_the_shared_vectors(case: dict[str, Any]) -> None:
     assert hold_seconds(scaling, case["requestTimeoutSeconds"]) == case["expected"]
 
 
-def test_a_listed_vm_cap_is_its_start_plus_the_fleet_lifetime() -> None:
+@pytest.mark.parametrize("case", LIFETIME["listedCap"], ids=lambda case: case["name"])
+def test_listed_cap_is_rayd_cap_from_the_shared_vectors(case: dict[str, Any]) -> None:
     started = datetime(2026, 10, 22, tzinfo=UTC)
-    lifetime = fleet_lifetime(project(), ScalingOptions(max_vms=2))
+    max_lifetime = case["maxLifetimeSeconds"]
+    lifetime = None if max_lifetime is None else FleetLifetime(max_lifetime=max_lifetime)
 
-    assert listed_cap(started, lifetime) == started + timedelta(seconds=3660)
-    assert listed_cap(started, None) is None
+    cap = listed_cap(started, lifetime)
+
+    expected = case["expectedCapAfterStartSeconds"]
+    assert cap == (None if expected is None else started + timedelta(seconds=expected))
+
+
+@pytest.mark.parametrize("case", LIFETIME["sandboxCap"], ids=lambda case: case["name"])
+def test_sandbox_cap_matches_the_shared_vectors(case: dict[str, Any]) -> None:
+    now = datetime(2026, 10, 22, tzinfo=UTC)
+
+    def at(seconds: float | None) -> datetime | None:
+        return None if seconds is None else now + timedelta(seconds=seconds)
+
+    lifecycle = SimpleNamespace(cap=at(case["reportedCapInSeconds"]))
+    info = SimpleNamespace(
+        platform_expires_at=at(case["platformCapInSeconds"]), lifecycle=lifecycle
+    )
+
+    assert sandbox_cap(SimpleNamespace(info=info)) == at(case["expected"])
+
+
+@pytest.mark.parametrize("case", LIFETIME["promotedRestore"], ids=lambda case: case["name"])
+def test_a_restore_is_bounded_by_rayd_cap_from_the_shared_vectors(case: dict[str, Any]) -> None:
+    now = datetime(2026, 10, 22, tzinfo=UTC)
+    started = now - timedelta(seconds=case["startedSecondsAgo"])
+    cap = listed_cap(started, FleetLifetime(max_lifetime=case["maxLifetimeSeconds"]))
+
+    assert lifetime_seconds(case["desiredSeconds"], cap, now) == case["expected"]
+
+
+@pytest.mark.parametrize("case", LIFETIME["correctedCap"], ids=lambda case: case["name"])
+def test_corrected_cap_matches_the_shared_vectors(case: dict[str, Any]) -> None:
+    now = datetime(2026, 10, 22, tzinfo=UTC)
+
+    def at(seconds: float | None) -> datetime | None:
+        return None if seconds is None else now + timedelta(seconds=seconds)
+
+    reported = at(case["reportedCapInSeconds"])
+    error = beyond_cap_error(
+        TimeoutRequest("exact", 1000),
+        None if reported is None else int(reported.timestamp() * 1000),
+    )
+
+    assert corrected_cap(error, at(case["currentCapInSeconds"])) == at(case["expected"])
 
 
 def test_the_warm_pool_of_a_fleet_that_can_grow_carries_the_lifetime() -> None:

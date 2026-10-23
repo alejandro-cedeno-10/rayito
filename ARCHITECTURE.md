@@ -4018,8 +4018,12 @@ opción existente cambia de valor por defecto.
    vive lo mismo que en 0.16, ahora como plazo lógico, y uno sobrante se
    termina tras `scale_in_after_seconds` sin uso. Antes de cada invocación el
    plazo de un VM sobrante sube al menos al de la petición, para no cortarla,
-   y al soltarla vuelve a `scale_in_after_seconds`; todo plazo queda por
-   debajo del tope de la plataforma menos 5 s. Una flota que no puede crecer
+   y al soltar la última invocación en curso vuelve a
+   `scale_in_after_seconds` (mientras quede otra, sigue el plazo de la
+   petición); todo plazo queda por debajo del tope de `rayd`
+   (`max_lifetime − 60 s` desde el arranque) menos 5 s, y si `rayd` rechaza
+   un plazo por pasar de su tope la flota adopta el tope que informa y
+   reintenta una vez, sin marcar el VM. Una flota que no puede crecer
    crea sus VMs byte a byte como en 0.16. Un VM sin plazo lógico (creado por
    0.16) avisa una vez y no se reduce. `PoolConfig` gana `max_lifetime` y
    `on_timeout` opcionales (sólo `kill`). La receta no cambia: la vida sale

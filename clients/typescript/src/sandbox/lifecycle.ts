@@ -436,6 +436,22 @@ function reopenTimeoutMs(lifecycle: SandboxLifecycle, nowUnixMs: number): number
 }
 
 /**
+ * `setTimeout` más allá del tope: un `InvalidArgumentError` que además lleva
+ * el tope que informó `rayd` (`capUnixMs`, `undefined` si el rechazo es local
+ * o no lo trae), para que quien acota la vida de un VM (la flota) distinga
+ * este rechazo de un sandbox sin plazo lógico y corrija su estimación del
+ * tope. Espejo de `LifetimeBeyondCapException` en Python.
+ */
+export class LifetimeBeyondCapError extends InvalidArgumentError {
+  readonly capUnixMs: number | undefined;
+
+  constructor(message: string, capUnixMs: number | undefined, options: SandboxErrorOptions = {}) {
+    super(message, options);
+    this.capUnixMs = capUnixMs;
+  }
+}
+
+/**
  * `setTimeout` más allá del tope: el mensaje nombra `maxLifetimeMs`, las
  * 28 800 s y `reincarnate()`, que es lo único que llega más lejos.
  */
@@ -443,13 +459,14 @@ export function beyondCapError(
   timeoutMs: number,
   capUnixMs: number | undefined,
   options: SandboxErrorOptions = {},
-): InvalidArgumentError {
+): LifetimeBeyondCapError {
   const cap = capUnixMs === undefined ? undefined : new Date(capUnixMs);
-  return new InvalidArgumentError(
+  return new LifetimeBeyondCapError(
     `setTimeout(${timeoutMs} ms) supera el maxLifetimeMs del sandbox (tope a las ` +
       `${isoOrUnknown(cap)}; maxLifetimeMs se fija en create() y como mucho vale ` +
       `${MAX_DURATION_SECONDS} s): la vida de la plataforma no se puede extender (no existe ` +
       "UpdateMicrovm); usa reincarnate() para seguir con los ficheros en un sandbox nuevo",
+    capUnixMs,
     options,
   );
 }

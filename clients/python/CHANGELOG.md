@@ -80,8 +80,11 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   puede crecer (`max_vms > min_vms`) crea ahora todos sus VMs y plazas
   calientes con `on_timeout="kill"` y `max_lifetime = serve.timeout_seconds
   + 60`; antes de cada invocación el plazo de un VM sobrante sube al de la
-  petición y al soltarla vuelve a `scale_in_after_seconds`, siempre por
-  debajo del tope. Una flota de tamaño fijo se crea byte a byte como en
+  petición y, al soltar la última invocación en curso, vuelve a
+  `scale_in_after_seconds` (mientras quede otra no se acorta), siempre por
+  debajo del tope que impone `rayd` (`max_lifetime - 60 s` desde el
+  arranque) menos 5 s. Si `rayd` rechaza un plazo por pasar de su tope, la
+  flota adopta el tope que informa y reintenta una vez, sin marcar el VM. Una flota de tamaño fijo se crea byte a byte como en
   0.16; un VM creado sin plazo lógico avisa una vez y no se reintenta.
   `PoolConfig` gana `max_lifetime` y `on_timeout` opcionales (sólo `kill`).
   Vectores en `testdata/agent-fleet/lifetime.json`.

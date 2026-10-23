@@ -22,7 +22,8 @@ from rayito._agent._project_base import AGENT_SERVE_TAG
 from rayito._agent._project_service import ProjectService
 from rayito._agent._project_service_async import AsyncProjectService
 from rayito._agent._scaling_domain import ScalingOptions
-from rayito._limits import AGENT_SERVICE_READY_MARKER_PATH
+from rayito._lifecycle_base import TimeoutRequest, beyond_cap_error
+from rayito._limits import AGENT_SERVICE_READY_MARKER_PATH, LIFECYCLE_CAP_MARGIN_SECONDS
 from rayito._models import HostAccess
 from rayito._payload import generate_access_token
 from rayito._secret_gateway._domain import GatewayStatus
@@ -200,7 +201,11 @@ class FleetSandbox:
     """Un sandbox de doble con su propio id y su host. `served` dice si el
     host del agente arrancó (una plaza aparcada aún no). `managed` dice si
     se creó con plazo lógico (`max_lifetime`/`on_timeout`): sin él,
-    `set_timeout` falla como en `rayd` (`lifecycle_unmanaged`)."""
+    `set_timeout` falla como en `rayd` (`lifecycle_unmanaged`).
+    `max_lifetime` fija, como en `rayd`, un tope en `arranque + max_lifetime
+    - 60 s`: un `set_timeout` que pase de él se rechaza con el tope
+    (`timeout beyond cap`). `info` expone el tope de la plataforma como
+    `SandboxInfo.platform_expires_at`."""
 
     def __init__(
         self,
@@ -211,9 +216,12 @@ class FleetSandbox:
         served: bool = True,
         state: str = "RUNNING",
         managed: bool = True,
+        max_lifetime: int | None = None,
     ) -> None:
         self.number = number
         self.managed = managed
+        self.started_at = datetime.now(UTC)
+        self.max_lifetime = max_lifetime
         self.asynchronous = asynchronous
         self.sandbox_id = sandbox_id_of(number)
         self.access_token = ACCESS_TOKEN
@@ -228,6 +236,7 @@ class FleetSandbox:
         self.agent = AsyncFakeAgent() if asynchronous else FakeAgent()
         self.kills = 0
         self.timeouts: list[int] = []
+        self.beyond_cap: list[int] = []
         self.closed = False
         self.kill_error: Exception | None = None
         self.configured: list[tuple[Any, ...]] = []
@@ -270,14 +279,42 @@ class FleetSandbox:
     def kill(self) -> Any:
         return self._async_call(self._kill) if self.asynchronous else self._kill()
 
+    @property
+    def info(self) -> FakeInfo:
+        platform = (
+            None
+            if self.max_lifetime is None
+            else self.started_at + timedelta(seconds=self.max_lifetime)
+        )
+        return FakeInfo(platform_expires_at=platform)
+
+    @property
+    def cap(self) -> datetime | None:
+        """El tope de `rayd`: el de la plataforma menos 60 s."""
+        platform = self.info.platform_expires_at
+        if platform is None:
+            return None
+        return platform - timedelta(seconds=LIFECYCLE_CAP_MARGIN_SECONDS)
+
     def set_timeout(self, timeout: int) -> Any:
-        if not self.managed:
-            error = InvalidArgumentException("set_timeout no aplica: el sandbox no tiene plazo")
+        error = self._timeout_error(timeout)
+        if error is not None:
             if self.asynchronous:
                 return self._async_raise(error)
             raise error
         self.timeouts.append(timeout)
         return self._async_value(None) if self.asynchronous else None
+
+    def _timeout_error(self, timeout: int) -> Exception | None:
+        if not self.managed:
+            return InvalidArgumentException("set_timeout no aplica: el sandbox no tiene plazo")
+        cap = self.cap
+        if cap is not None and datetime.now(UTC) + timedelta(seconds=timeout) > cap:
+            self.beyond_cap.append(timeout)
+            return beyond_cap_error(
+                TimeoutRequest("exact", timeout * 1000), int(cap.timestamp() * 1000)
+            )
+        return None
 
     @staticmethod
     async def _async_raise(error: Exception) -> Any:
@@ -294,6 +331,11 @@ class FleetSandbox:
     @staticmethod
     async def _async_call(call: Any) -> Any:
         return call()
+
+
+@dataclass(frozen=True)
+class FakeInfo:
+    platform_expires_at: datetime | None
 
 
 @dataclass(frozen=True)
@@ -327,6 +369,7 @@ class FleetSandboxClass:
         state: str = "RUNNING",
         foreign: bool = False,
         managed: bool = True,
+        max_lifetime: int | None = None,
     ) -> FleetSandbox:
         """Un VM que ya existía antes de la flota (reconexión, plaza aparcada);
         `foreign` es uno de la misma imagen que no es de un agente (sin las
@@ -337,6 +380,7 @@ class FleetSandboxClass:
             served=served,
             state=state,
             managed=managed,
+            max_lifetime=max_lifetime,
             metadata={}
             if foreign
             else {"rayito.agent.deployment": "support-bot", "rayito.agent.port": "8088"},
@@ -350,7 +394,7 @@ class FleetSandboxClass:
         if self.create_error is not None:
             raise self.create_error
         managed = kwargs.get("max_lifetime") is not None or kwargs.get("on_timeout") is not None
-        sandbox = self.add(served=False, managed=managed)
+        sandbox = self.add(served=False, managed=managed, max_lifetime=kwargs.get("max_lifetime"))
         sandbox.metadata = dict(kwargs.get("metadata") or {})
         return sandbox
 
@@ -455,8 +499,14 @@ class FakePool:
         self.closed: list[bool] = []
         self.taken: list[dict[str, Any]] = []
         self.managed = config.on_timeout is not None
+        self.max_lifetime = config.max_lifetime
         self.parked = [
-            classes.add(served=False, state="SUSPENDED", managed=self.managed)
+            classes.add(
+                served=False,
+                state="SUSPENDED",
+                managed=self.managed,
+                max_lifetime=self.max_lifetime,
+            )
             for _ in range(config.size)
         ]
 
@@ -469,7 +519,9 @@ class FakePool:
         sandbox = (
             self.parked.pop(0)
             if self.parked
-            else self.classes.add(served=False, managed=self.managed)
+            else self.classes.add(
+                served=False, managed=self.managed, max_lifetime=self.max_lifetime
+            )
         )
         sandbox.state = "RUNNING"
         return sandbox

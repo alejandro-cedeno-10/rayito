@@ -32,11 +32,14 @@ from rayito._agent._scaling_domain import (
 from rayito._lifecycle_base import (
     CONNECT_CAP_SAFETY_MS,
     DEFAULT_IDLE_POLICY,
+    LifetimeBeyondCapException,
     default_max_lifetime_for,
+    instant_from_unix_ms,
 )
 from rayito._limits import (
     AGENT_FLEET_PING_TTL_SECONDS,
     AGENT_SERVICE_QUEUE_TIMEOUT_SECONDS_DEFAULT,
+    LIFECYCLE_CAP_MARGIN_SECONDS,
     LIFECYCLE_MIN_TIMEOUT_SECONDS,
 )
 from rayito._models import TimeoutActionName
@@ -83,8 +86,9 @@ AGENT_VM_LOST_CODE: Final = "agent_vm_lost"
 #: termina el VM (ADR-011, `AWS_API_NOTES.md` Q63). Es lo que hace que un
 #: `set_timeout` de reducción se acepte.
 AGENT_FLEET_ON_TIMEOUT: Final[TimeoutActionName] = "kill"
-#: Margen bajo el tope de la plataforma al acotar la vida de un VM: el mismo
-#: que deja `connect()` al reabrir un sandbox (`CONNECT_CAP_SAFETY_MS`).
+#: Margen bajo el tope de `rayd` al acotar la vida de un VM (desfase de
+#: relojes): el mismo que deja `connect()` al reabrir un sandbox
+#: (`CONNECT_CAP_SAFETY_MS`).
 AGENT_FLEET_CAP_SAFETY_SECONDS: Final = CONNECT_CAP_SAFETY_MS // 1000
 
 #: Lo que se loguea una vez por VM cuando `rayd` rechaza acotar su vida.
@@ -168,7 +172,7 @@ class Member:
     sesiones (o reservas) de un VM dedicado; `busy_until` hasta cuándo se da
     por ocupado tras un 429 o un `HealthyBusy`; `extra` marca un VM por
     encima de `min_vms`, que se termina solo tras `scale_in_after_seconds`
-    sin uso. `cap` es el tope de la plataforma del VM (`None` si no se
+    sin uso. `cap` es el tope de `rayd` del VM (`rayd_cap`; `None` si no se
     conoce), `limited` dice si este proceso le acortó el plazo y
     `lifetime_rejected` que su `set_timeout` se rechazó por un argumento (un
     VM sin plazo lógico: no se reintenta)."""
@@ -343,9 +347,6 @@ class FleetLifetime:
     max_lifetime: int
     on_timeout: TimeoutActionName = AGENT_FLEET_ON_TIMEOUT
 
-    def create_args(self) -> dict[str, Any]:
-        return {"max_lifetime": self.max_lifetime, "on_timeout": self.on_timeout}
-
 
 def scales_in(scaling: ScalingOptions) -> bool:
     """Si la flota puede tener VMs por encima de `min_vms`."""
@@ -364,11 +365,22 @@ def fleet_lifetime(project: AgentProject, scaling: ScalingOptions) -> FleetLifet
     return FleetLifetime(max_lifetime=default_max_lifetime_for(timeout))
 
 
+def rayd_cap(platform_cap: datetime) -> datetime:
+    """El tope que impone `rayd` a partir del de la plataforma: `rayd` lo
+    fija en `/run + max_lifetime - 60 s` (`LIFECYCLE_CAP_MARGIN_SECONDS`,
+    `CAP_MARGIN` de `rayd-core`) y rechaza cualquier plazo posterior. `/run`
+    llega unos segundos después del `startedAt` de la plataforma, así que
+    contar desde `startedAt` (o desde antes de `create()`) se queda del lado
+    seguro."""
+    return platform_cap - timedelta(seconds=LIFECYCLE_CAP_MARGIN_SECONDS)
+
+
 def lifetime_seconds(desired: float | None, cap: datetime | None, now: datetime) -> int | None:
     """Los segundos que se piden en `set_timeout`: `desired` redondeado
     hacia arriba (o, con `None`, todo lo que queda) y nunca más allá del
-    tope menos `AGENT_FLEET_CAP_SAFETY_SECONDS`, porque `rayd` rechaza un
-    plazo más allá del tope. `None` si no hay nada que pedir: el tope está
+    tope de `rayd` (`cap`, ver `rayd_cap`) menos
+    `AGENT_FLEET_CAP_SAFETY_SECONDS`, porque `rayd` rechaza un plazo más
+    allá de su tope. `None` si no hay nada que pedir: el tope está
     demasiado cerca (el VM termina antes de todos modos) o, sin `desired`,
     no se conoce."""
     if cap is None:
@@ -379,6 +391,19 @@ def lifetime_seconds(desired: float | None, cap: datetime | None, now: datetime)
     return remaining if desired is None else min(seconds_ceiling(desired), remaining)
 
 
+def corrected_cap(error: LifetimeBeyondCapException, current: datetime | None) -> datetime | None:
+    """El tope que `rayd` informó al rechazar un plazo más allá de él, si
+    adelanta el que la flota estimaba (`current`): con él se reintenta una
+    vez. `None` si el rechazo no trae tope o no corrige nada (no hay nada que
+    reintentar)."""
+    if error.cap_unix_ms is None:
+        return None
+    reported = instant_from_unix_ms(error.cap_unix_ms)
+    if reported is None or (current is not None and reported >= current):
+        return None
+    return reported
+
+
 def hold_seconds(scaling: ScalingOptions, request_timeout: float | None) -> float:
     """El plazo de un VM sobrante mientras atiende una invocación: nunca
     menos que lo que puede durar la petición, para que la reducción no lo
@@ -387,16 +412,25 @@ def hold_seconds(scaling: ScalingOptions, request_timeout: float | None) -> floa
 
 
 def sandbox_cap(sandbox: Any) -> datetime | None:
-    """El tope de la plataforma de un sandbox abierto
-    (`SandboxInfo.platform_expires_at`, sin llamar a AWS); `None` si el
-    objeto no lo trae."""
-    return getattr(getattr(sandbox, "info", None), "platform_expires_at", None)
+    """El tope de `rayd` de un sandbox abierto, sin llamar a AWS: el que
+    informó el propio agente (`SandboxInfo.lifecycle.cap`) o, si no se leyó,
+    el de la plataforma (`platform_expires_at`) pasado por `rayd_cap`.
+    `None` si el objeto no trae ninguno."""
+    info = getattr(sandbox, "info", None)
+    reported = getattr(getattr(info, "lifecycle", None), "cap", None)
+    if isinstance(reported, datetime):
+        return reported
+    platform = getattr(info, "platform_expires_at", None)
+    return rayd_cap(platform) if isinstance(platform, datetime) else None
 
 
 def listed_cap(started_at: datetime, lifetime: FleetLifetime | None) -> datetime | None:
-    """El tope de un VM listado, si la flota sabe con qué vida se crean sus
-    VMs."""
-    return None if lifetime is None else started_at + timedelta(seconds=lifetime.max_lifetime)
+    """El tope de `rayd` de un VM que arrancó en `started_at` (el listado,
+    o el instante previo a `create()` para uno que la flota crea), si la
+    flota sabe con qué vida se crean sus VMs."""
+    if lifetime is None:
+        return None
+    return rayd_cap(started_at + timedelta(seconds=lifetime.max_lifetime))
 
 
 def pool_config_for(

@@ -223,7 +223,51 @@ def test_a_vm_promoted_to_base_gets_its_whole_lifetime_back(flavor: FleetFlavor)
     flavor.call(fleet.invoke("tercera"))
 
     restored = extra.timeouts[-1]
-    assert 3600 < restored <= 3655
+    assert 3590 <= restored <= 3660 - 60 - 5
+    assert extra.beyond_cap == []
+
+
+def test_an_extra_vm_keeps_its_hold_while_another_invocation_is_in_flight(
+    flavor: FleetFlavor,
+) -> None:
+    the_project = project(serve=_serve(max_concurrency=2))
+    scaling = ScalingOptions(min_vms=1, max_vms=2, scale_in_after_seconds=120)
+    fleet = flavor.started(scaling, the_project=the_project)
+    base_streams = [flavor.open_stream(fleet, "a"), flavor.open_stream(fleet, "b")]
+    long_running = flavor.open_stream(fleet, "larga")
+    extra = flavor.classes.sandboxes[fleet.sandbox_ids[1]]
+    hold = math.ceil(request_timeout(the_project))
+
+    flavor.call(fleet.invoke("corta"))
+
+    assert extra.timeouts == [120, hold, hold]
+    flavor.close_stream(long_running)
+    assert extra.timeouts == [120, hold, hold, 120]
+    for stream in base_streams:
+        flavor.close_stream(stream)
+
+
+def test_a_late_cap_estimate_is_corrected_from_rayd_and_never_marks_the_vm(
+    flavor: FleetFlavor, caplog: pytest.LogCaptureFixture
+) -> None:
+    scaling = ScalingOptions(min_vms=1, max_vms=2, scale_in_after_seconds=120)
+    fleet = flavor.started(scaling)
+    held = flavor.open_stream(fleet, "primera")
+    flavor.call(fleet.invoke("segunda"))
+    extra = flavor.classes.sandboxes[fleet.sandbox_ids[1]]
+    extra.max_lifetime = 200
+    flavor.close_stream(held)
+    held = flavor.open_stream(fleet, "primera")
+
+    with caplog.at_level(logging.WARNING, logger="rayito"):
+        flavor.call(fleet.invoke("tercera"))
+    flavor.close_stream(held)
+
+    hold = math.ceil(request_timeout(project()))
+    assert extra.beyond_cap == [hold]
+    assert 120 < extra.timeouts[-2] <= 200 - 60 - 5
+    assert extra.timeouts[-1] == 120
+    assert UNMANAGED_LIFETIME_MESSAGE not in [r.getMessage() for r in caplog.records]
 
 
 def test_sessions_share_a_vm_up_to_its_concurrency(flavor: FleetFlavor) -> None:

@@ -16,7 +16,7 @@ import time
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Self
 
 from rayito._agent import _fleet_recipe_aws as recipe_aws
@@ -40,6 +40,7 @@ from rayito._agent._fleet_base import (
     MemberListing,
     ParkedSlotException,
     capacity_message,
+    corrected_cap,
     event_with_handle,
     fleet_lifetime,
     fleet_settings_of,
@@ -87,6 +88,7 @@ from rayito._agent._scaling_domain import (
     validate_caller_session_id,
 )
 from rayito._agent._stream_base import require_prompt_or_input
+from rayito._lifecycle_base import LifetimeBeyondCapException
 from rayito._limits import AGENT_SERVICE_READY_MARKER_PATH
 from rayito._sandbox_base import DEFAULT_REQUEST_TIMEOUT_SECONDS
 from rayito.exceptions import (
@@ -901,11 +903,7 @@ class AgentFleet:
                 self._kill_quietly(sandbox)
                 raise
         else:
-            cap = (
-                None
-                if lifetime is None
-                else datetime.now(UTC) + timedelta(seconds=lifetime.max_lifetime)
-            )
+            cap = listed_cap(datetime.now(UTC), lifetime)
             deployment = service.deploy(
                 region=self._region,
                 session=self._session,
@@ -913,7 +911,7 @@ class AgentFleet:
                 keep_on_failure=self._keep_on_failure,
                 metadata=None if label is None else {AGENT_FLEET_SESSION_LABEL: label},
                 index=None if label is None else self._index,
-                lifetime=None if lifetime is None else lifetime.create_args(),
+                lifetime=lifetime,
             )
         member = Member(deployment.sandbox_id, deployment=deployment, extra=extra, cap=cap)
         self._limit_lifetime(member)
@@ -956,11 +954,15 @@ class AgentFleet:
         elif member.limited:
             self._set_lifetime(member, None)
 
-    def _set_lifetime(self, member: Member, desired: float | None) -> None:
-        """Un `set_timeout` acotado al tope del VM (`lifetime_seconds`).
-        `desired=None` pide todo lo que queda hasta el tope y deja el VM sin
-        acortar. Un rechazo por argumento (un VM creado sin plazo lógico,
-        antes de 0.17 o con `max_vms == min_vms`) no se reintenta."""
+    def _set_lifetime(self, member: Member, desired: float | None, *, retry: bool = True) -> None:
+        """Un `set_timeout` acotado al tope de `rayd` del VM
+        (`lifetime_seconds`). `desired=None` pide todo lo que queda hasta el
+        tope y deja el VM sin acortar. Si `rayd` responde que el plazo pasa
+        de su tope (la estimación de la flota era tardía), se corrige
+        `member.cap` con el tope que informa y se reintenta una vez; nunca
+        se marca el VM. Cualquier otro rechazo por argumento es un VM creado
+        sin plazo lógico (antes de 0.17 o con `max_vms == min_vms`): se avisa
+        una vez y no se reintenta."""
         deployment = member.deployment
         if deployment is None or member.lifetime_rejected:
             return
@@ -969,6 +971,14 @@ class AgentFleet:
             return
         try:
             deployment.set_timeout(seconds)
+        except LifetimeBeyondCapException as exc:
+            cap = corrected_cap(exc, member.cap) if retry else None
+            if cap is None:
+                logger.debug("el plazo de un VM de la flota pasaba de su tope; no se reintenta")
+                return
+            member.cap = cap
+            self._set_lifetime(member, desired, retry=False)
+            return
         except InvalidArgumentException:
             member.lifetime_rejected = True
             logger.warning(UNMANAGED_LIFETIME_MESSAGE)
@@ -1071,12 +1081,16 @@ class AgentFleet:
 
     def _release(self, lease: Lease, inner_session: str | None) -> None:
         """Suelta la invocación en curso: la reserva de un VM dedicado pasa a
-        ser la sesión real y a un VM sobrante se le renueva la vida."""
-        self._unlease(lease, keep=inner_session)
-        if inner_session is not None:
+        ser la sesión real y, si era la última invocación en curso de un VM
+        sobrante, su plazo vuelve a `scale_in_after_seconds`. Mientras quede
+        otra en curso, sigue el plazo de invocación (`hold_seconds`): acortarlo
+        la cortaría a media llamada."""
+        if self._unlease(lease, keep=inner_session):
             self._limit_lifetime(lease.member)
 
-    def _unlease(self, lease: Lease, *, keep: str | None = None) -> None:
+    def _unlease(self, lease: Lease, *, keep: str | None = None) -> bool:
+        """Quita la invocación en curso del VM; devuelve si el VM se quedó
+        sin ninguna."""
         with self._lock:
             member = lease.member
             member.inflight = max(0, member.inflight - 1)
@@ -1084,6 +1098,7 @@ class AgentFleet:
                 member.bound.discard(lease.reservation)
                 if keep is not None:
                     member.bound.add(keep)
+            return member.inflight == 0
 
     def _drop(self, member: Member) -> None:
         with self._lock:

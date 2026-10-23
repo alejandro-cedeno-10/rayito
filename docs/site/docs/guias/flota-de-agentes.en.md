@@ -261,8 +261,9 @@ after the deadline, raises `CapacityException` (`code = "agent_capacity"`;
 - **Scaling in:** VMs above `min_vms` carry a deadline of
   `scale_in_after_seconds` that the fleet renews every time it uses them; an
   idle VM ends by itself (the VM's `rayd` already knows how to terminate
-  itself), with no control-plane call. While it serves an invocation, the
-  deadline is never shorter than the request's. For `rayd` to accept that
+  itself), with no control-plane call. While it serves any invocation, the
+  deadline is never shorter than the request's, and it goes back to
+  `scale_in_after_seconds` only when the last one ends. For `rayd` to accept that
   deadline, a fleet that can grow (`max_vms > min_vms`) creates all its VMs
   and slots with a logical deadline (`on_timeout="kill"` and `max_lifetime` =
   `serve.timeout_seconds + 60`); a base VM still lives

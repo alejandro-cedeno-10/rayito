@@ -11,7 +11,13 @@ import { createHash } from "node:crypto";
 import { InvalidArgumentError } from "../errors.js";
 import { AGENT_FLEET_PING_TTL_SECONDS, LIFECYCLE_MIN_TIMEOUT_SECONDS } from "../limits.js";
 import type { PoolConfig } from "../pool/config.js";
-import { defaultMaxLifetimeMs, type OnTimeout, REOPEN_CAP_SLACK_MS } from "../sandbox/lifecycle.js";
+import {
+  CAP_MARGIN_MS,
+  defaultMaxLifetimeMs,
+  type LifetimeBeyondCapError,
+  type OnTimeout,
+  REOPEN_CAP_SLACK_MS,
+} from "../sandbox/lifecycle.js";
 import { MS_PER_SECOND } from "../units.js";
 import { type DeploymentState, parseLabels } from "./deployment.js";
 import type { AgentEvent, AgentResult } from "./events.js";
@@ -112,7 +118,7 @@ export interface Member<D = unknown> {
   pingedAt: number | undefined;
   busyUntil: number;
   failedPings: number;
-  /** El tope de la plataforma del VM (`undefined` si no se conoce). */
+  /** El tope de `rayd` del VM (`raydCap`; `undefined` si no se conoce). */
   cap: Date | undefined;
   /** Si este proceso le acortó el plazo (`setTimeout` de reducción). */
   limited: boolean;
@@ -146,8 +152,9 @@ export function newMember<D>(
  * termina el VM (ADR-011, `AWS_API_NOTES.md` Q63). Es lo que hace que un
  * `setTimeout` de reducción se acepte. */
 export const AGENT_FLEET_ON_TIMEOUT = "kill" satisfies OnTimeout;
-/** Margen bajo el tope de la plataforma al acotar la vida de un VM: el mismo
- * que deja `connect()` al reabrir un sandbox (`REOPEN_CAP_SLACK_MS`). */
+/** Margen bajo el tope de `rayd` al acotar la vida de un VM (desfase de
+ * relojes): el mismo que deja `connect()` al reabrir un sandbox
+ * (`REOPEN_CAP_SLACK_MS`). */
 export const AGENT_FLEET_CAP_SAFETY_MS = REOPEN_CAP_SLACK_MS;
 /** Lo que se loguea una vez por VM cuando `rayd` rechaza acotar su vida. */
 export const UNMANAGED_LIFETIME_MESSAGE =
@@ -186,10 +193,20 @@ export function fleetLifetime(
   });
 }
 
+/** El tope que impone `rayd` a partir del de la plataforma: `rayd` lo fija en
+ * `/run + maxLifetime - 60 s` (`CAP_MARGIN_MS`, `CAP_MARGIN` de `rayd-core`)
+ * y rechaza cualquier plazo posterior. `/run` llega unos segundos después
+ * del `startedAt` de la plataforma, así que contar desde `startedAt` (o desde
+ * antes de `create()`) se queda del lado seguro. */
+export function raydCap(platformCap: Date): Date {
+  return new Date(platformCap.getTime() - CAP_MARGIN_MS);
+}
+
 /** Los milisegundos (segundos enteros) que se piden en `setTimeout`:
  * `desiredMs` redondeado hacia arriba al segundo (o, con `undefined`, todo
- * lo que queda) y nunca más allá del tope menos `AGENT_FLEET_CAP_SAFETY_MS`,
- * porque `rayd` rechaza un plazo más allá del tope. `undefined` si no hay
+ * lo que queda) y nunca más allá del tope de `rayd` (`cap`, ver `raydCap`)
+ * menos `AGENT_FLEET_CAP_SAFETY_MS`, porque `rayd` rechaza un plazo más allá
+ * de su tope. `undefined` si no hay
  * nada que pedir: el tope está demasiado cerca o, sin `desiredMs`, no se
  * conoce. */
 export function lifetimeMs(
@@ -217,18 +234,50 @@ export function holdMs(scaling: ScalingOptions, requestTimeoutMs: number | undef
   return Math.max(scaling.scaleInAfterMs, requestTimeoutMs ?? 0);
 }
 
-/** El tope de un VM listado, si la flota sabe con qué vida se crean sus VMs. */
+/** El tope de `rayd` que informó al rechazar un plazo más allá de él, si
+ * adelanta el que la flota estimaba (`current`): con él se reintenta una vez.
+ * `undefined` si el rechazo no trae tope o no corrige nada (no hay nada que
+ * reintentar). */
+export function correctedCap(
+  error: LifetimeBeyondCapError,
+  current: Date | undefined,
+): Date | undefined {
+  if (error.capUnixMs === undefined) {
+    return undefined;
+  }
+  if (current !== undefined && error.capUnixMs >= current.getTime()) {
+    return undefined;
+  }
+  return new Date(error.capUnixMs);
+}
+
+/** El tope de `rayd` de un VM que arrancó en `startedAt` (el listado, o el
+ * instante previo a `create()` para uno que la flota crea), si la flota sabe
+ * con qué vida se crean sus VMs. */
 export function listedCap(startedAt: Date, lifetime: FleetLifetime | undefined): Date | undefined {
   return lifetime === undefined
     ? undefined
-    : new Date(startedAt.getTime() + lifetime.maxLifetimeMs);
+    : raydCap(new Date(startedAt.getTime() + lifetime.maxLifetimeMs));
 }
 
-/** El tope de la plataforma de un sandbox abierto (`info.platformExpiresAt`,
- * sin llamar a AWS); `undefined` si el objeto no lo trae. */
+/** El tope de `rayd` de un sandbox abierto, sin llamar a AWS: el que informó
+ * el propio agente (`info.lifecycle.cap`) o, si no se leyó, el de la
+ * plataforma (`info.platformExpiresAt`) pasado por `raydCap`. `undefined` si
+ * el objeto no trae ninguno. */
 export function sandboxCap(sandbox: unknown): Date | undefined {
-  const info = (sandbox as { readonly info?: { readonly platformExpiresAt?: unknown } }).info;
-  return info?.platformExpiresAt instanceof Date ? info.platformExpiresAt : undefined;
+  const info = (
+    sandbox as {
+      readonly info?: {
+        readonly platformExpiresAt?: unknown;
+        readonly lifecycle?: { readonly cap?: unknown } | undefined;
+      };
+    }
+  ).info;
+  const reported = info?.lifecycle?.cap;
+  if (reported instanceof Date) {
+    return reported;
+  }
+  return info?.platformExpiresAt instanceof Date ? raydCap(info.platformExpiresAt) : undefined;
 }
 
 /** Un VM de la imagen de la flota según `list-microvms`. */

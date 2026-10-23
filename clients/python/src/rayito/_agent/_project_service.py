@@ -50,6 +50,7 @@ from rayito.exceptions import SandboxException, TimeoutException
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
 
+    from rayito._agent._fleet_base import FleetLifetime
     from rayito._agent._project_domain import AgentProject
     from rayito._templates._models import BuildInfo
 
@@ -158,7 +159,7 @@ class ProjectService:
         keep_on_failure: bool = False,
         metadata: Mapping[str, str] | None = None,
         index: Any = None,
-        lifetime: Mapping[str, Any] | None = None,
+        lifetime: FleetLifetime | None = None,
     ) -> AgentDeployment:
         """Sirve el agente desde un MicroVM y devuelve su
         `AgentDeployment`. Si cualquier paso falla, mata el sandbox antes de

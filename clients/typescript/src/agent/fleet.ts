@@ -28,6 +28,7 @@ import type { PoolConfig } from "../pool/config.js";
 import type { PoolStats } from "../pool/core.js";
 import type { SandboxPoolOptions, TakeOptions } from "../pool/pool.js";
 import { DEFAULT_REQUEST_TIMEOUT_MS } from "../sandbox/launch.js";
+import { LifetimeBeyondCapError } from "../sandbox/lifecycle.js";
 import type { ControlPlaneOptions, Sandbox } from "../sandbox/sandbox.js";
 import type { SecretGateway } from "../secret-gateway/domain.js";
 import {
@@ -52,6 +53,7 @@ import {
   AGENT_FLEET_START_CONCURRENCY,
   AGENT_VM_LOST_CODE,
   capacityMessage,
+  correctedCap,
   eventWithHandle,
   type FleetLifetime,
   type FleetMemberStatus,
@@ -1062,7 +1064,7 @@ export class AgentFleet {
         throw error;
       }
     } else {
-      cap = lifetime === undefined ? undefined : new Date(Date.now() + lifetime.maxLifetimeMs);
+      cap = listedCap(new Date(), lifetime);
       deployment = await service.deploy({
         ...this.#connection,
         accessToken: this.#requireToken(),
@@ -1121,13 +1123,17 @@ export class AgentFleet {
     }
   }
 
-  /** Un `setTimeout` acotado al tope del VM (`lifetimeMs`). Sin `desiredMs`
-   * pide todo lo que queda hasta el tope y deja el VM sin acortar. Un rechazo
-   * por argumento (un VM creado sin plazo lógico, antes de 0.17 o con
-   * `maxVms === minVms`) no se reintenta. */
+  /** Un `setTimeout` acotado al tope de `rayd` del VM (`lifetimeMs`). Sin
+   * `desiredMs` pide todo lo que queda hasta el tope y deja el VM sin acortar.
+   * Si `rayd` responde que el plazo pasa de su tope (la estimación de la flota
+   * era tardía), se corrige `member.cap` con el tope que informa y se
+   * reintenta una vez; nunca se marca el VM. Cualquier otro rechazo por
+   * argumento es un VM creado sin plazo lógico (antes de 0.17 o con
+   * `maxVms === minVms`): se avisa una vez y no se reintenta. */
   async #setLifetime(
     member: Member<AgentDeployment>,
     desiredMs: number | undefined,
+    retry = true,
   ): Promise<void> {
     const deployment = member.deployment;
     if (deployment === undefined || member.lifetimeRejected) {
@@ -1140,6 +1146,16 @@ export class AgentFleet {
     try {
       await deployment.setTimeout(timeoutMs);
     } catch (error) {
+      if (error instanceof LifetimeBeyondCapError) {
+        const cap = retry ? correctedCap(error, member.cap) : undefined;
+        if (cap === undefined) {
+          this.#logger?.debug?.("el plazo de un VM de la flota pasaba de su tope; no se reintenta");
+          return;
+        }
+        member.cap = cap;
+        await this.#setLifetime(member, desiredMs, false);
+        return;
+      }
       if (error instanceof InvalidArgumentError) {
         member.lifetimeRejected = true;
         this.#logger?.warn?.(UNMANAGED_LIFETIME_MESSAGE);
@@ -1258,15 +1274,18 @@ export class AgentFleet {
   }
 
   /** Suelta la invocación en curso: la reserva de un VM dedicado pasa a ser la
-   * sesión real y a un VM sobrante se le renueva la vida. */
+   * sesión real y, si era la última invocación en curso de un VM sobrante, su
+   * plazo vuelve a `scaleInAfterMs`. Mientras quede otra en curso, sigue el
+   * plazo de invocación (`holdMs`): acortarlo la cortaría a media llamada. */
   async #release(lease: Lease, innerSession: string | undefined): Promise<void> {
-    this.#unlease(lease, innerSession);
-    if (innerSession !== undefined) {
+    if (this.#unlease(lease, innerSession)) {
       await this.#limitLifetime(lease.member);
     }
   }
 
-  #unlease(lease: Lease, keep?: string): void {
+  /** Quita la invocación en curso del VM; devuelve si el VM se quedó sin
+   * ninguna. */
+  #unlease(lease: Lease, keep?: string): boolean {
     const member = lease.member;
     member.inflight = Math.max(0, member.inflight - 1);
     if (lease.reservation !== undefined) {
@@ -1275,6 +1294,7 @@ export class AgentFleet {
         member.bound.add(keep);
       }
     }
+    return member.inflight === 0;
   }
 
   #drop(member: Member): void {

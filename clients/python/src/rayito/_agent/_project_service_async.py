@@ -52,6 +52,7 @@ from rayito.exceptions import SandboxException, TimeoutException
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Mapping
 
+    from rayito._agent._fleet_base import FleetLifetime
     from rayito._agent._project_domain import AgentProject
     from rayito._templates._models import BuildInfo
 
@@ -161,7 +162,7 @@ class AsyncProjectService:
         keep_on_failure: bool = False,
         metadata: Mapping[str, str] | None = None,
         index: Any = None,
-        lifetime: Mapping[str, Any] | None = None,
+        lifetime: FleetLifetime | None = None,
     ) -> AsyncAgentDeployment:
         """Sirve el agente desde un MicroVM y devuelve su
         `AsyncAgentDeployment`. Si cualquier paso falla, mata el sandbox

@@ -261,8 +261,9 @@ pasado el plazo, lanza `CapacityException` (`code = "agent_capacity"`;
 - **Reducir:** los VMs por encima de `min_vms` llevan un plazo de
   `scale_in_after_seconds` que la flota renueva cada vez que los usa; un VM
   ocioso se termina solo (el `rayd` del VM ya sabe terminarse), sin ninguna
-  llamada del plano de control. Mientras atiende una invocación, el plazo
-  nunca es menor que el de la petición. Para que `rayd` acepte ese plazo, una
+  llamada del plano de control. Mientras atiende alguna invocación, el plazo
+  nunca es menor que el de la petición, y sólo vuelve a
+  `scale_in_after_seconds` cuando termina la última. Para que `rayd` acepte ese plazo, una
   flota que puede crecer (`max_vms > min_vms`) crea todos sus VMs y plazas
   con plazo lógico (`on_timeout="kill"` y `max_lifetime` =
   `serve.timeout_seconds + 60`); un VM base sigue viviendo

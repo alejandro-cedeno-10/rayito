@@ -72,7 +72,7 @@ Opening a parked warm slot (from this process or another) SHALL open the gateway
 ## MODIFIED Requirements
 
 ### Requirement: Warm VMs and scale-in reuse existing features
-Warm VMs SHALL be slots of the existing pool, started with the agent host running, and `PoolConfig` SHALL gain an optional `access_token` whose absence keeps one token per slot. VMs above `min_vms` SHALL carry a sandbox timeout of `scale_in_after_seconds` that the fleet extends with `set_timeout` on use, so an idle extra VM ends by self-termination. To make that `set_timeout` valid, a fleet whose `max_vms` is greater than `min_vms` SHALL create every VM (base, extra and replacement) and every warm slot with `on_timeout="kill"` and `max_lifetime` equal to the `create()` default for `ceil(serve.timeout_seconds)` (`timeout + 60`, at least 120 and at most 28 800 s), and a fleet whose `max_vms` equals `min_vms` SHALL create its VMs without either option, exactly as in 0.16. Before each invocation on an extra VM the fleet SHALL set its deadline to at least the request timeout, and after it SHALL set it back to `scale_in_after_seconds`. Every deadline the fleet asks for SHALL be bounded by the VM's platform cap minus 5 s. A VM that rejects `set_timeout` with `InvalidArgumentException` (created without a logical deadline) SHALL be logged once and never retried. The recipe SHALL NOT store the lifetime: it is derived from the stored scaling and project.
+Warm VMs SHALL be slots of the existing pool, started with the agent host running, and `PoolConfig` SHALL gain an optional `access_token` whose absence keeps one token per slot. VMs above `min_vms` SHALL carry a sandbox timeout of `scale_in_after_seconds` that the fleet extends with `set_timeout` on use, so an idle extra VM ends by self-termination. To make that `set_timeout` valid, a fleet whose `max_vms` is greater than `min_vms` SHALL create every VM (base, extra and replacement) and every warm slot with `on_timeout="kill"` and `max_lifetime` equal to the `create()` default for `ceil(serve.timeout_seconds)` (`timeout + 60`, at least 120 and at most 28 800 s), and a fleet whose `max_vms` equals `min_vms` SHALL create its VMs without either option, exactly as in 0.16. Before each invocation on an extra VM the fleet SHALL set its deadline to at least the request timeout, and when the last invocation in flight on that VM is released it SHALL set it back to `scale_in_after_seconds`; while another invocation is still in flight on the VM the fleet SHALL NOT shorten its deadline. Every deadline the fleet asks for SHALL be bounded by `rayd`'s cap (`max_lifetime` minus 60 s from the VM's start, or the cap the agent reported) minus 5 s. A `set_timeout` rejected because it passes that cap SHALL NOT mark the VM: the fleet SHALL adopt the cap `rayd` reports when it is earlier than its estimate and retry once. A VM that rejects `set_timeout` with any other `InvalidArgumentException` (created without a logical deadline) SHALL be logged once and never retried. The recipe SHALL NOT store the lifetime: it is derived from the stored scaling and project.
 
 #### Scenario: claim a warm slot
 - **WHEN** every running VM is busy and a warm slot exists
@@ -89,6 +89,18 @@ Warm VMs SHALL be slots of the existing pool, started with the agent host runnin
 #### Scenario: the extra VM accepts scale-in
 - **WHEN** a unit test whose fake rejects `set_timeout` on a VM created without `max_lifetime`/`on_timeout` grows the fleet with `scale_in_after_seconds=120` and invokes once on the extra VM
 - **THEN** the extra VM receives `set_timeout(120)`, `set_timeout(max(120, request timeout))` and `set_timeout(120)`, and the base VM receives none
+
+#### Scenario: overlapping invocations keep the hold
+- **WHEN** an extra VM with `serve.max_concurrency=2` and `scale_in_after_seconds=120` runs a long invocation and a short one finishes while the long one is still in flight
+- **THEN** the release of the short one sends no `set_timeout(120)`, and the release of the long one does
+
+#### Scenario: a promoted VM is bounded by rayd's cap
+- **WHEN** an extra VM created with `max_lifetime=3660` is promoted to base and serves its next invocation
+- **THEN** the fleet asks for at most `3660 - 60 - 5` seconds from the VM's start, which `rayd` accepts
+
+#### Scenario: a late cap estimate is corrected
+- **WHEN** `rayd` rejects a hold with `timeout beyond cap` and reports a cap earlier than the fleet's estimate
+- **THEN** the fleet retries once bounded by the reported cap, logs no unmanaged warning and keeps sending `set_timeout` to that VM
 
 #### Scenario: a single-VM fleet is unchanged
 - **WHEN** a fleet with the default `ScalingOptions()` starts

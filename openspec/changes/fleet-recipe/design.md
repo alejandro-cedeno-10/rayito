@@ -345,22 +345,42 @@ vida de un VM sobrante». Scale-in never happened, in 0.14 to 0.16 and in the
   `set_timeout(scale_in_after_seconds)`. Before each invocation:
   `set_timeout(max(scale_in_after_seconds, request_timeout))` (`hold_seconds`
   / `holdMs`), so a VM whose idle deadline is close is not killed in the
-  middle of a request. When the invocation is released:
-  `set_timeout(scale_in_after_seconds)` again. A VM promoted to base
+  middle of a request. When the last invocation in flight on the VM is
+  released (`inflight == 0` after the release, checked under the fleet
+  lock): `set_timeout(scale_in_after_seconds)` again. While another
+  invocation is still running on it (`max_concurrency > 1`, or a routed call
+  waiting in the host queue) the hold stays, because an `EXACT` shortening
+  would cut that request off. The release shortens the deadline whether or
+  not the invocation returned an inner session. A VM promoted to base
   (`limited` and no longer `extra`) gets everything up to its cap back on its
   next invocation. While it stays idle it keeps its idle deadline, and if it
   ends, `reconcile()` refills `min_vms`.
-- **Bounded by the cap.** `rayd` rejects a deadline past the cap
-  (`timeout beyond cap`). The fleet asks for `min(desired, cap - now - 5 s)`
-  (`lifetime_seconds` / `lifetimeMs`, whole seconds rounded up, margin
-  `CONNECT_CAP_SAFETY_MS` / `REOPEN_CAP_SLACK_MS`) and sends nothing when less
-  than 1 s is left. The cap is `SandboxInfo.platform_expires_at` for a VM the
-  fleet opened or took from the pool, `started_at + max_lifetime` for a VM it
-  listed, and `now + max_lifetime` taken before `create()` for one it
-  created, which is never later than the real cap.
+- **Bounded by `rayd`'s cap.** `rayd` sets its cap at
+  `/run + max_lifetime - 60 s` (`CAP_MARGIN` in `rayd-core`,
+  `LIFECYCLE_CAP_MARGIN_SECONDS`) and rejects any deadline past it
+  (`INVALID_ARGUMENT timeout beyond cap`), so the platform cap is not the
+  bound. The fleet's `cap` is `rayd`'s: `SandboxInfo.lifecycle.cap` when the
+  agent reported it, otherwise `rayd_cap(platform_expires_at)` /
+  `raydCap(platformExpiresAt)` (the platform cap minus 60 s) for a VM it
+  opened or took from the pool, `started_at + max_lifetime - 60 s` for a VM
+  it listed, and `now + max_lifetime - 60 s` taken before `create()` for one
+  it created. `/run` lands a few seconds after `startedAt`, so these are
+  never later than the real cap. The fleet asks for
+  `min(desired, cap - now - 5 s)` (`lifetime_seconds` / `lifetimeMs`, whole
+  seconds rounded up, clock-skew margin `CONNECT_CAP_SAFETY_MS` /
+  `REOPEN_CAP_SLACK_MS`) and sends nothing when less than 1 s is left.
+- **A late estimate is corrected, not flagged.** The estimate can still be
+  late (a listed VM created with a smaller `serve.timeout_seconds`, or a
+  local clock behind AWS). The SDKs raise the beyond-cap rejection as
+  `LifetimeBeyondCapException` / `LifetimeBeyondCapError`, a private
+  subclass of `InvalidArgumentException` / `InvalidArgumentError` that
+  carries the `cap_unix_ms` `rayd` reported. The fleet then adopts that cap
+  when it is earlier than its estimate and retries once; otherwise it sends
+  nothing. A beyond-cap rejection never marks the VM.
 - **VMs without a deadline.** A VM created by 0.16, or by a 0.17 fleet that
   could not grow, rejects `set_timeout` with `InvalidArgumentException` /
-  `InvalidArgumentError`. The fleet logs `UNMANAGED_LIFETIME_MESSAGE` once
+  `InvalidArgumentError` (`lifecycle_unmanaged`), not the beyond-cap
+  subclass. The fleet logs `UNMANAGED_LIFETIME_MESSAGE` once
   for that VM and never retries it. Such a VM is not scaled in. `stop()`
   or a redeploy replaces it.
 - **Recipe.** The recipe schema does not change. The lifetime is derived
@@ -375,12 +395,16 @@ vida de un VM sobrante». Scale-in never happened, in 0.14 to 0.16 and in the
   its slots) and forwarded in the launch arguments only when set, so a pool
   that does not set them launches exactly as before.
 - **Tests.** Shared vectors in `testdata/agent-fleet/lifetime.json`
-  (`createArgs`, `lifetimeSeconds`, `holdSeconds`). The fleet fakes in both
+  (`createArgs`, `listedCap`, `sandboxCap`, `lifetimeSeconds`,
+  `promotedRestore`, `correctedCap`, `holdSeconds`). The fleet fakes in both
   SDKs reject `set_timeout` on a VM created without `max_lifetime`/
-  `on_timeout`, as `rayd` does, so the extra-VM test fails on 0.16 code.
-  Fleet tests assert the create arguments, the accepted `set_timeout` calls
-  (create, hold, release), the single-VM fleet without them, the warned-once
-  rejection and the promotion.
+  `on_timeout`, and a deadline past `start + max_lifetime - 60 s` with the
+  cap, as `rayd` does, so the extra-VM test fails on 0.16 code and the
+  promotion test fails with a platform-cap bound. Fleet tests assert the
+  create arguments, the accepted `set_timeout` calls (create, hold,
+  release), the single-VM fleet without them, the warned-once rejection,
+  the promotion, two overlapping invocations on one extra VM (no shortening
+  while one is in flight) and the correction of a late cap estimate.
 
 ## Integration contract
 

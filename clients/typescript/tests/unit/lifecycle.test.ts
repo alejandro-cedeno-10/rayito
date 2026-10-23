@@ -21,12 +21,14 @@ import {
   defaultMaxLifetimeMs,
   LIFECYCLE_FEATURE_CONNECT,
   LIFECYCLE_FEATURE_CREATE,
+  LifetimeBeyondCapError,
   lifecycleBlockToWire,
   lifecycleFromProto,
   olderAgentError,
   PAUSE_DEFAULT_IDLE_FALLBACK_SECONDS,
   pauseTriggerDelayMs,
   resolveLifecycle,
+  unmanagedLifecycleError,
   validateSetTimeoutMs,
 } from "../../src/sandbox/lifecycle.js";
 
@@ -389,6 +391,9 @@ describe("moving the deadline", () => {
   test("the beyond-cap message names maxLifetimeMs, 28800 and reincarnate()", () => {
     const error = beyondCapError(2_000_000, NOW + 840_000);
     expect(error).toBeInstanceOf(InvalidArgumentError);
+    expect(error).toBeInstanceOf(LifetimeBeyondCapError);
+    expect(error.capUnixMs).toBe(NOW + 840_000);
+    expect(unmanagedLifecycleError()).not.toBeInstanceOf(LifetimeBeyondCapError);
     expect(error.message).toContain("maxLifetimeMs");
     expect(error.message).toContain("28800");
     expect(error.message).toContain("reincarnate()");

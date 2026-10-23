@@ -80,8 +80,12 @@ versionado [SemVer](https://semver.org/lang/es/).
   el error. Una flota que puede crecer (`maxVms > minVms`) crea ahora todos
   sus VMs y plazas calientes con `onTimeout: "kill"` y `maxLifetimeMs =
   serve.timeoutMs + 60 000`; antes de cada invocación el plazo de un VM
-  sobrante sube al de la petición y al soltarla vuelve a `scaleInAfterMs`,
-  siempre por debajo del tope. Una flota de tamaño fijo se crea byte a byte
+  sobrante sube al de la petición y, al soltar la última invocación en
+  curso, vuelve a `scaleInAfterMs` (mientras quede otra no se acorta),
+  siempre por debajo del tope que impone `rayd` (`maxLifetimeMs - 60 s`
+  desde el arranque) menos 5 s. Si `rayd` rechaza un plazo por pasar de su
+  tope, la flota adopta el tope que informa y reintenta una vez, sin marcar
+  el VM. Una flota de tamaño fijo se crea byte a byte
   como en 0.16; un VM creado sin plazo lógico avisa una vez por el `logger`
   y no se reintenta. `PoolConfig` gana `maxLifetimeMs` y `onTimeout`
   opcionales (sólo `"kill"`). Vectores en `testdata/agent-fleet/lifetime.json`.
