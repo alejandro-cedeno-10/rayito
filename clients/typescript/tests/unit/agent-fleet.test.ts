@@ -18,7 +18,13 @@ import {
 import { DEFAULT_QUEUE_TIMEOUT_MS, ServeOptions } from "../../src/agent/project.js";
 import { requestTimeoutMs } from "../../src/agent/project-service.js";
 import { decodeHandle, encodeHandle, ScalingOptions } from "../../src/agent/scaling-domain.js";
-import { CapacityError, InvalidArgumentError, SandboxError } from "../../src/errors.js";
+import {
+  CapacityError,
+  InvalidArgumentError,
+  RateLimitError,
+  SandboxError,
+  TimeoutError,
+} from "../../src/errors.js";
 import { AGENT_FLEET_UNHEALTHY_PINGS } from "../../src/limits.js";
 import type { SandboxListItem } from "../../src/models.js";
 import { Sandbox } from "../../src/sandbox/sandbox.js";
@@ -692,6 +698,23 @@ describe("SandboxDirectory", () => {
     spy.mockRestore();
     expect(members.map((member) => member.sandboxId)).toEqual(["alive"]);
   });
+
+  test.each([new RateLimitError("limitado"), new TimeoutError("plazo")])(
+    "a control-plane error while probing still fails the listing: %s",
+    async (error) => {
+      const spy = vi
+        .spyOn(Sandbox, "list")
+        .mockImplementation(() => iterate([item("a", "RUNNING")]));
+      const probe = async () => {
+        throw error;
+      };
+      const failure = await failureOf(
+        new SandboxDirectory({}, { probeInfo: probe }).listMembers("support-bot"),
+      );
+      spy.mockRestore();
+      expect(failure).toBe(error);
+    },
+  );
 
   test("an error that is not a sandbox error still fails the listing", async () => {
     const spy = vi.spyOn(Sandbox, "list").mockImplementation(() => iterate([item("a", "RUNNING")]));

@@ -47,7 +47,6 @@ pub fn read_template_envs(path: &Path) -> BTreeMap<String, String> {
     if parsed.version != TEMPLATE_ENV_VERSION {
         tracing::warn!(
             path = %path.display(),
-            version = %parsed.version,
             expected = TEMPLATE_ENV_VERSION,
             "template env file version is not one this rayd understands; starting without template envs"
         );

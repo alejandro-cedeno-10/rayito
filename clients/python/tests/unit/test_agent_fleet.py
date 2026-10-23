@@ -35,7 +35,9 @@ from rayito._limits import (
 from rayito.exceptions import (
     CapacityException,
     InvalidArgumentException,
+    RateLimitException,
     SandboxException,
+    TimeoutException,
 )
 from tests.unit.fake_agent_fleet import FLEET_TOKEN as TOKEN
 from tests.unit.fake_agent_fleet import FleetFlavor, sandbox_id_of
@@ -846,6 +848,21 @@ def test_a_vm_whose_health_fails_while_listing_is_left_out_as_terminating(
     assert "Health no respondió" not in caplog.text
     flavor.call(fleet.refresh_members())
     assert fleet.sandbox_ids == (alive.sandbox_id, parked.sandbox_id)
+
+
+@pytest.mark.parametrize("error", [RateLimitException("limitado"), TimeoutException("plazo")])
+def test_a_control_plane_error_while_probing_still_fails_the_listing(
+    flavor: FleetFlavor, error: SandboxException
+) -> None:
+    sick = flavor.classes.add()
+    flavor.classes.probe_errors[sick.sandbox_id] = error
+
+    with pytest.raises(type(error)):
+        flavor.call(
+            (AsyncAgentFleet if flavor.asynchronous else AgentFleet).connect(
+                "support-bot", access_token=TOKEN, directory=flavor.classes_directory()
+            )
+        )
 
 
 def test_a_vm_that_left_running_before_its_probe_is_not_a_member(flavor: FleetFlavor) -> None:
