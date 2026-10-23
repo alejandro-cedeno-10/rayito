@@ -34,6 +34,19 @@ const PAIR_SEPARATOR = "=";
  * más `secret` (`*_SECRET`). Sólo la bandera los rechaza: `AgentProject.env`
  * conserva la regla de 0.16 (`testdata/fleet-recipe/env-rejection.json`). */
 export const ENV_FLAG_SECRET_LIKE_KEYS: readonly string[] = [...SECRET_LIKE_KEYS, "secret"];
+/** Palabras que, como segmento del nombre de una `--env` (partes separadas
+ * por `_`, sin distinguir mayúsculas), también lo marcan como secreto:
+ * `DB_PASS`, `GITHUB_PAT`, `AUTH_HEADER`. */
+export const ENV_FLAG_SECRET_SEGMENTS: readonly string[] = [
+  "pass",
+  "passwd",
+  "pat",
+  "credential",
+  "credentials",
+  "auth",
+  "bearer",
+];
+const ENV_NAME_SEGMENT_SEPARATOR = "_";
 export const ENV_LOOKS_SECRET_MESSAGE =
   "--env no admite secretos ({name} parece uno): usa --secret-env {name}=<secreto> " +
   "o --secret-env-from <secreto>";
@@ -52,11 +65,16 @@ export const KEEP_RECIPE_HELP = "Conserva la receta de la flota al pararla.";
 export const STATUS_UNKNOWN_SCALING =
   "members: {count} (escalado desconocido: sin proyecto ni receta)";
 
-/** Si el nombre de una `--env` parece un secreto (`ENV_FLAG_SECRET_LIKE_KEYS`
- * entero o como sufijo `_<palabra>`, sin distinguir mayúsculas). */
+/** Si el nombre de una `--env` parece un secreto, sin distinguir mayúsculas:
+ * una de `ENV_FLAG_SECRET_LIKE_KEYS` entera o como sufijo `_<palabra>`, o una
+ * de `ENV_FLAG_SECRET_SEGMENTS` como segmento. */
 export function envFlagLooksSecret(name: string): boolean {
   const lowered = name.toLowerCase();
-  return ENV_FLAG_SECRET_LIKE_KEYS.some((word) => lowered === word || lowered.endsWith(`_${word}`));
+  if (ENV_FLAG_SECRET_LIKE_KEYS.some((word) => lowered === word || lowered.endsWith(`_${word}`))) {
+    return true;
+  }
+  const segments = lowered.split(ENV_NAME_SEGMENT_SEPARATOR);
+  return ENV_FLAG_SECRET_SEGMENTS.some((word) => segments.includes(word));
 }
 
 /** El mensaje de la primera `--env` que parece un secreto, o `undefined`.

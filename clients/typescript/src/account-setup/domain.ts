@@ -223,11 +223,16 @@ export const COST_TEXTS = {
   image: "imagen: ≈ $0,04 por semana por versión publicada (mínimo una semana)",
   artifact: "zip de la imagen en el bucket: céntimos",
   capsImage:
-    "imagen con capacidades: ≈ $0,04 por semana por versión publicada ($0,08 por GB-mes, mínimo una semana); --no-caps-image la omite",
+    "imagen con capacidades: ≈ $0,04 por semana por versión publicada ($0,08 por GB-mes, mínimo una semana); sólo con --caps-image",
 } as const;
 
 export const ACCOUNT_SETUP_HINT =
   "si la cuenta o la región aún no están preparadas, ejecuta `rayito setup`";
+/** La pista cuando falta `rayito-base-caps`: `rayito setup` sólo la publica
+ * con `--caps-image` (otra versión de imagen que cuesta, ADR-034 D9). */
+export const CAPS_IMAGE_SETUP_HINT =
+  "rayito setup no publica rayito-base-caps por defecto porque cuesta: ejecuta " +
+  "`rayito setup --caps-image`";
 export const HINT_TEMPLATE = "{message} ({hint})";
 
 /** Los estados, la clasificación y la observación de una pila viven en `stacks/condition.ts`; `rayito setup` y `--target agentcore` comparten una sola definición. */
@@ -266,13 +271,15 @@ export interface SetupRequest {
   readonly sdkVersion: string;
   /**
    * El paso `capsImage`: publicar `rayito-base-caps`, la base del agente en
-   * MicroVM, desde el mismo zip que `rayito-base`. Por defecto `true`; con
-   * `false` (`--no-caps-image`) el paso es `skip` y no hace ninguna llamada.
+   * MicroVM, desde el mismo zip que `rayito-base`. Por defecto `false` (sin
+   * `--caps-image`): el paso es `skip` y no hace ninguna llamada, porque
+   * publicar otra imagen cuesta.
    *
    * Coste y activación
    *
-   * Activa: `rayito setup` (y `--dry-run`, que sólo lee); `capsImage: false`
-   * quita el paso.
+   * Activa: `capsImage: true` / `rayito setup --caps-image` (con `--dry-run`
+   * sólo lee). Apagada por defecto: sin ella no se lee ni se publica
+   * `rayito-base-caps`.
    *
    * Recursos y llamadas AWS: `GetMicrovmImage` y `ListMicrovmImageVersions` de
    * `rayito-base-caps` en el plan y, si falta, `CreateMicrovmImage` o
@@ -285,9 +292,9 @@ export interface SetupRequest {
    *
    * IAM: las mismas de publicar `rayito-base` (`infra/iam.yaml`).
    *
-   * Cómo apagarla: `capsImage: false` / `rayito setup --no-caps-image`.
+   * Cómo apagarla: no pases `capsImage` (por defecto `false`) ni `--caps-image`.
    *
-   * Ejemplo: `{ region: "us-east-1", ..., capsImage: false }`.
+   * Ejemplo: `{ region: "us-east-1", ..., capsImage: true }`.
    */
   readonly capsImage?: boolean | undefined;
 }
@@ -337,7 +344,7 @@ export interface SetupPlan {
   readonly cost: readonly string[];
   readonly artifact: string | undefined;
   readonly imageArn: string;
-  /** El ARN de `rayito-base-caps`; `undefined` con `capsImage: false`. */
+  /** El ARN de `rayito-base-caps`; `undefined` sin `capsImage`. */
   readonly capsImageArn: string | undefined;
   readonly ready: boolean;
   readonly needsConfirmation: boolean;
@@ -349,7 +356,7 @@ export interface SetupResult {
   readonly imageVersion: string;
   /** `undefined` si no hubo publicación. */
   readonly artifactUploaded: boolean | undefined;
-  /** Los de `rayito-base-caps`; `undefined` con `--no-caps-image`. */
+  /** Los de `rayito-base-caps`; `undefined` sin `--caps-image`. */
   readonly capsImageArn: string | undefined;
   readonly capsImageVersion: string | undefined;
 }
@@ -715,7 +722,7 @@ export function planCapsImage(
   caps: ImageObservation | undefined,
   request: SetupRequest,
 ): SetupStep {
-  if (request.capsImage === false || caps === undefined) {
+  if (request.capsImage !== true || caps === undefined) {
     return newStep({ resource: "capsImage", name: CAPS_IMAGE_NAME, action: "skip" });
   }
   return planImage(caps, request, { resource: "capsImage", name: CAPS_IMAGE_NAME });
@@ -773,7 +780,7 @@ export function planSetup(input: {
     cost: costLines(steps),
     artifact: request.artifact,
     imageArn: image.imageArn,
-    capsImageArn: request.capsImage === false ? undefined : caps?.imageArn,
+    capsImageArn: request.capsImage === true ? caps?.imageArn : undefined,
     ready: steps.every((step) => READY_ACTIONS.has(step.action)),
     needsConfirmation: steps.some((step) => WRITE_ACTIONS.has(step.action)),
   };
@@ -814,4 +821,11 @@ export function verifyChecksum(release: DownloadedRelease, tag: string): void {
 /** Añade la pista de `rayito setup` al mensaje de una cuenta sin preparar. */
 export function withSetupHint(message: string): string {
   return formatTemplate(HINT_TEMPLATE, { message, hint: ACCOUNT_SETUP_HINT });
+}
+
+/** `message` con la pista de la imagen base que falta: para `rayito-base-caps`,
+ * `rayito setup --caps-image`; para cualquier otra, la de `rayito setup`. */
+export function withBaseImageHint(message: string, base: string): string {
+  const hint = base === CAPS_IMAGE_NAME ? CAPS_IMAGE_SETUP_HINT : ACCOUNT_SETUP_HINT;
+  return formatTemplate(HINT_TEMPLATE, { message, hint });
 }

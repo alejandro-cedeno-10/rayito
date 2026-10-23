@@ -31,6 +31,9 @@ export const RECIPE_ENCODING_GZIP = "gzip+base64";
 /** La regla de nombres de Parameter Store para cada nivel de la ruta
  * (API_PutParameter.html, consultado 2026-10-22). */
 export const RECIPE_NAME_PATTERN = /^[A-Za-z0-9_.-]+$/;
+/** Los nombres que cumplen el patrón pero son un nivel relativo de la ruta
+ * (`/rayito/agents/../recipe`): nunca nombran una receta. */
+export const RECIPE_RESERVED_NAMES: ReadonlySet<string> = new Set([".", ".."]);
 /** Nivel de compresión del gzip del sobre (el mismo que Python). */
 export const RECIPE_GZIP_LEVEL = 9;
 /** `savedBy` de las recetas que guarda este SDK. */
@@ -41,9 +44,13 @@ export const RECIPE_ACCESS_DENIED = "recipe_access_denied";
 export const RECIPE_NOT_SAVED = "recipe_not_saved";
 export const RECIPE_TOO_LARGE = "recipe_too_large";
 export const RECIPE_UNREADABLE = "recipe_unreadable";
+/** La receta pide renovar las claves de Bedrock pero quien conecta no lo
+ * pidió (`renewGatewayKeys: true`): la flota no renueva ninguna. */
+export const RECIPE_RENEWAL_IGNORED = "recipe_renewal_ignored";
 export const RECIPE_WARNING_CODES = [
   RECIPE_ACCESS_DENIED,
   RECIPE_NOT_SAVED,
+  RECIPE_RENEWAL_IGNORED,
   RECIPE_TOO_LARGE,
   RECIPE_UNREADABLE,
 ] as const;
@@ -84,10 +91,27 @@ export interface FleetRecipe {
  * o `undefined` si el nombre no cumple la regla de Parameter Store: esa flota
  * no tiene receta (`recipe_not_saved`). */
 export function recipeParameterName(fleetName: string): string | undefined {
-  if (!RECIPE_NAME_PATTERN.test(fleetName)) {
+  if (RECIPE_RESERVED_NAMES.has(fleetName) || !RECIPE_NAME_PATTERN.test(fleetName)) {
     return undefined;
   }
   return AGENT_RECIPE_PARAMETER_TEMPLATE.replace("{name}", fleetName);
+}
+
+/** Si una flota reconectada renueva las claves de Bedrock y el aviso que toca
+ * (`testdata/fleet-recipe/renewal.json`, `connect`).
+ *
+ * Sólo renueva quien lo pide (`requested: true`): la receta nunca la activa,
+ * porque la clave se firma con las credenciales de quien conecta. Si la
+ * receta la pedía y el llamante no dijo nada (`undefined`), el aviso es
+ * `recipe_renewal_ignored`; un `false` explícito no avisa. */
+export function renewalOnConnect(
+  recipe: FleetRecipe | undefined,
+  requested: boolean | undefined,
+): { readonly renew: boolean; readonly warning: RecipeWarningCode | undefined } {
+  if (requested === undefined && recipe?.renewGatewayKeys === true) {
+    return { renew: false, warning: RECIPE_RENEWAL_IGNORED };
+  }
+  return { renew: requested === true, warning: undefined };
 }
 
 /** La receta de una flota recién arrancada con `project`. */

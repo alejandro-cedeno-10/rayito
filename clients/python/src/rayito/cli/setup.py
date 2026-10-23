@@ -282,13 +282,14 @@ def setup(
             "--dry-run", help="Sólo lee la cuenta y muestra el plan; no crea ni cambia nada."
         ),
     ] = False,
-    no_caps_image: Annotated[
+    caps_image: Annotated[
         bool,
         typer.Option(
-            "--no-caps-image",
+            "--caps-image",
             help=(
-                "No publicar rayito-base-caps, la base del agente en MicroVM (la misma imagen "
-                "con additionalOsCapabilities ALL); por defecto se publica desde el mismo zip."
+                "Publica también rayito-base-caps, la base del agente en MicroVM (la misma imagen "
+                "con additionalOsCapabilities ALL, desde el mismo zip); es otra versión de imagen "
+                "que cuesta. Sin esta opción no se publica."
             ),
         ),
     ] = False,
@@ -297,7 +298,7 @@ def setup(
     bucket de artefactos (el tuyo, el de la pila de IAM o el del bootstrap de CDK; si no hay
     ninguno, lo crea con la pila rayito-m0-artifacts: cifrado, privado, sólo TLS y con los zips
     caducando a los 7 días), la pila de IAM rayito-m0-iam y las imágenes rayito-base y
-    rayito-base-caps (la base del agente en MicroVM; --no-caps-image la omite) desde el
+    rayito-base-caps (la base del agente en MicroVM, sólo con --caps-image) desde el
     rayito-image.zip de la release de tu versión, descargado una vez y comprobado contra su
     SHA256SUMS. Muestra el plan y el coste, pide confirmación y termina con rayito doctor.
     Coste: cada versión publicada de cada imagen ≈ $0,04 por semana de almacenamiento ($0,08
@@ -317,7 +318,7 @@ def setup(
                 environment_bucket=os.environ.get(BUCKET_ENV_VAR) or None,
                 artifact=artifact,
                 sdk_version=__version__,
-                caps_image=not no_caps_image,
+                caps_image=caps_image,
             )
         )
         if not json_output:

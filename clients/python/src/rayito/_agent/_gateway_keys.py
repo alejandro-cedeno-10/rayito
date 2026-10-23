@@ -25,6 +25,7 @@ from urllib.parse import urlsplit
 from botocore.credentials import CredentialProvider
 from botocore.exceptions import BotoCoreError, ClientError
 
+from rayito._agent._domain import AWS_REGION_PATTERN
 from rayito._aws import LazyClient, aws_code
 from rayito._aws_region import aws_session
 from rayito._aws_sanitize import sanitize_aws_error
@@ -39,6 +40,12 @@ if TYPE_CHECKING:
 #: El preset de las pasarelas cuya clave se puede renovar.
 BEDROCK_PRESET: Final = "bedrock"
 RENEW_NEEDS_BEDROCK: Final = "renew_gateway_keys necesita una pasarela con preset bedrock"
+#: Escribir la clave de Bedrock en un secreto que también lee una pasarela
+#: hacia otro upstream la enviaría allí: no se renueva.
+RENEW_SHARED_SECRET: Final = (
+    "renew_gateway_keys no renueva la pasarela '{gateway}': su secreto lo usa también "
+    "la pasarela '{other}', que no es de Bedrock"
+)
 #: El valor que espera `bedrock_gateway`: `Bearer <clave>`.
 BEARER_PREFIX: Final = "Bearer "
 #: El host de Bedrock Runtime de una región (`bedrock_gateway`).
@@ -70,12 +77,14 @@ class RenewableGateway:
 
 def gateway_region(upstream: str) -> str | None:
     """La región de un upstream `https://bedrock-runtime.<región>.amazonaws.com`;
-    `None` para cualquier otro."""
+    `None` para cualquier otro. La región tiene que ser una región de AWS
+    (`AWS_REGION_PATTERN`): un host como `bedrock-runtime.x.s3.amazonaws.com`
+    no es Bedrock y no se renueva."""
     host = urlsplit(upstream).hostname or ""
     if not host.startswith(BEDROCK_RUNTIME_HOST_PREFIX) or not host.endswith(AMAZONAWS_HOST_SUFFIX):
         return None
     region = host[len(BEDROCK_RUNTIME_HOST_PREFIX) : -len(AMAZONAWS_HOST_SUFFIX)]
-    return region or None
+    return region if AWS_REGION_PATTERN.fullmatch(region) else None
 
 
 def should_describe(process_renewed_ago: float | None) -> bool:
@@ -97,7 +106,10 @@ def bearer_value(token: str) -> str:
 
 def renewable_gateways(project: AgentProject) -> tuple[RenewableGateway, ...]:
     """Las pasarelas `bedrock` del proyecto (`gateway_presets`). Sin ninguna,
-    `InvalidArgumentException`: la opción no tiene nada que renovar."""
+    `InvalidArgumentException`: la opción no tiene nada que renovar. Si el
+    secreto de una lo lee también una pasarela cuyo upstream no es Bedrock,
+    `InvalidArgumentException` (`RENEW_SHARED_SECRET`): la clave nueva se
+    enviaría a ese otro upstream."""
     found: list[RenewableGateway] = []
     for name, preset in sorted(project.gateway_presets.items()):
         gateway = project.gateways.get(name)
@@ -110,7 +122,23 @@ def renewable_gateways(project: AgentProject) -> tuple[RenewableGateway, ...]:
         found.append(RenewableGateway(name, _secret_id(secret), region))
     if not found:
         raise InvalidArgumentException(RENEW_NEEDS_BEDROCK)
+    _refuse_shared_secrets(project, found)
     return tuple(found)
+
+
+def _refuse_shared_secrets(project: AgentProject, renewable: list[RenewableGateway]) -> None:
+    """Falla si una pasarela con upstream que no es Bedrock lee el secreto de
+    una pasarela que se renovaría. El mensaje nombra las pasarelas, nunca el
+    secreto."""
+    for other, gateway in sorted(project.gateways.items()):
+        if gateway_region(gateway.upstream) is not None:
+            continue
+        secrets = {_secret_id(secret) for secret in gateway.headers.values()}
+        for candidate in renewable:
+            if candidate.secret_id in secrets:
+                raise InvalidArgumentException(
+                    RENEW_SHARED_SECRET.format(gateway=candidate.name, other=other)
+                )
 
 
 def _secret_id(secret: str | SecretRef) -> str:
@@ -299,6 +327,7 @@ __all__ = [
     "BEDROCK_PRESET",
     "PERMISSION_DENIED_CODE",
     "RENEW_NEEDS_BEDROCK",
+    "RENEW_SHARED_SECRET",
     "GatewayKeyRenewer",
     "RenewableGateway",
     "bearer_value",

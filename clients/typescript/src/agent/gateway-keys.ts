@@ -22,11 +22,17 @@ import { GATEWAY_KEY_EXPIRY_SECONDS, GATEWAY_KEY_RENEW_AFTER_SECONDS } from "../
 import { loadOptionalPeer } from "../optional.js";
 import { DEFAULT_SECRET_PREFIX, resolveSecretId, type SecretLike } from "../secrets/names.js";
 import { MS_PER_SECOND } from "../units.js";
+import { AWS_REGION_PATTERN } from "./domain.js";
 import type { AgentProject } from "./project.js";
 
 /** El preset de las pasarelas cuya clave se puede renovar. */
 export const BEDROCK_PRESET = "bedrock";
 export const RENEW_NEEDS_BEDROCK = "renew_gateway_keys necesita una pasarela con preset bedrock";
+/** Escribir la clave de Bedrock en un secreto que también lee una pasarela
+ * hacia otro upstream la enviaría allí: no se renueva. */
+export const RENEW_SHARED_SECRET =
+  "renew_gateway_keys no renueva la pasarela '{gateway}': su secreto lo usa también " +
+  "la pasarela '{other}', que no es de Bedrock";
 /** El valor que espera la pasarela `bedrock`: `Bearer <clave>`. */
 export const BEARER_PREFIX = "Bearer ";
 /** El peer opcional del generador oficial de AWS. */
@@ -63,7 +69,9 @@ export interface SecretsWriter {
 }
 
 /** La región de un upstream `https://bedrock-runtime.<región>.amazonaws.com`;
- * `undefined` para cualquier otro. */
+ * `undefined` para cualquier otro. La región tiene que ser una región de AWS
+ * (`AWS_REGION_PATTERN`): un host como `bedrock-runtime.x.s3.amazonaws.com`
+ * no es Bedrock y no se renueva. */
 export function gatewayRegion(upstream: string): string | undefined {
   let host: string;
   try {
@@ -75,7 +83,7 @@ export function gatewayRegion(upstream: string): string | undefined {
     return undefined;
   }
   const region = host.slice(BEDROCK_RUNTIME_HOST_PREFIX.length, -AMAZONAWS_HOST_SUFFIX.length);
-  return region === "" ? undefined : region;
+  return AWS_REGION_PATTERN.test(region) ? region : undefined;
 }
 
 /** Si hay que preguntar a AWS: este proceso no la renovó nunca, o hace al
@@ -98,7 +106,10 @@ export function bearerValue(token: string): string {
 }
 
 /** Las pasarelas `bedrock` del proyecto (`gatewayPresets`). Sin ninguna,
- * `InvalidArgumentError`: la opción no tiene nada que renovar. */
+ * `InvalidArgumentError`: la opción no tiene nada que renovar. Si el secreto
+ * de una lo lee también una pasarela cuyo upstream no es Bedrock,
+ * `InvalidArgumentError` (`RENEW_SHARED_SECRET`): la clave nueva se enviaría
+ * a ese otro upstream. */
 export function renewableGateways(project: AgentProject): readonly RenewableGateway[] {
   const found: RenewableGateway[] = [];
   for (const [name, preset] of Object.entries(project.gatewayPresets).sort(([a], [b]) =>
@@ -118,7 +129,28 @@ export function renewableGateways(project: AgentProject): readonly RenewableGate
   if (found.length === 0) {
     throw new InvalidArgumentError(RENEW_NEEDS_BEDROCK);
   }
+  refuseSharedSecrets(project, found);
   return found;
+}
+
+/** Falla si una pasarela con upstream que no es Bedrock lee el secreto de una
+ * pasarela que se renovaría. El mensaje nombra las pasarelas, nunca el
+ * secreto. */
+function refuseSharedSecrets(project: AgentProject, renewable: readonly RenewableGateway[]): void {
+  for (const [other, gateway] of Object.entries(project.gateways).sort(([a], [b]) =>
+    a < b ? -1 : a > b ? 1 : 0,
+  )) {
+    if (gatewayRegion(gateway.upstream) !== undefined) {
+      continue;
+    }
+    const secrets = new Set(Object.values(gateway.headers).map(secretIdOf));
+    const shared = renewable.find((candidate) => secrets.has(candidate.secretId));
+    if (shared !== undefined) {
+      throw new InvalidArgumentError(
+        RENEW_SHARED_SECRET.replace("{gateway}", shared.name).replace("{other}", other),
+      );
+    }
+  }
 }
 
 function secretIdOf(secret: SecretLike): string {

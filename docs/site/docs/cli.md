@@ -574,7 +574,7 @@ desplegó, y `status` imprime el escalado real o, sin proyecto ni receta,
 `members: N (escalado desconocido: sin proyecto ni receta)` (con `--json`, la
 clave `scalingSource`). `stop <nombre>` borra la receta (`--keep-recipe` la
 conserva). Un aviso de la receta (`recipe_access_denied`, `recipe_not_saved`,
-`recipe_too_large`) va a stderr y, con `--json`, en `warnings`; nunca hace
+`recipe_renewal_ignored`, `recipe_too_large`) va a stderr y, con `--json`, en `warnings`; nunca hace
 fallar el despliegue. `--scale-in-after S` fija los segundos sin uso tras los
 que se termina un VM por encima de `--min-vms` (por defecto 900, mínimo 60).
 `--renew-gateway-keys` renueva la clave de corta duración de Bedrock de las
@@ -582,7 +582,9 @@ pasarelas `bedrock` antes de crear cada VM
 ([Pasarela de secretos](funciones-opcionales/pasarela-de-secretos.md#renovar-la-clave-de-bedrock)).
 Con `--target agentcore`, esas tres banderas salen con 2
 (`option_not_supported`). `--env` rechaza, antes de llamar a nadie, un nombre
-que parece un secreto (`*_TOKEN`, `*_KEY`, `*_SECRET`, `*_PASSWORD`...): usa
+que parece un secreto (`*_TOKEN`, `*_KEY`, `*_SECRET`, `*_PASSWORD`..., o
+con un segmento `PASS`, `PASSWD`, `PAT`, `CREDENTIAL`, `CREDENTIALS`, `AUTH` o
+`BEARER`, como `DB_PASS` o `AUTH_HEADER`, sin distinguir mayúsculas): usa
 `--secret-env` o `--secret-env-from`.
 
 Con varios grafos en `langgraph.json`, `detect` y `deploy` aceptan
@@ -772,7 +774,7 @@ siempre disponible dentro de tu cuenta, con inicio de sesión y auditoría:
 ```bash
 rayito [--profile P] [--region R] [--json] [--verbose] setup
        [--bucket BUCKET] [--artifact PATH] [--tag K=V ...] [--yes] [--dry-run]
-       [--no-caps-image]
+       [--caps-image]
 ```
 
 Prepara la cuenta y la región para Rayito en una orden idempotente, como
@@ -785,7 +787,7 @@ Prepara la cuenta y la región para Rayito en una orden idempotente, como
 | `--tag K=V` | Etiqueta K=V; repetible. Se aplica a las pilas que crea setup (rayito-m0-artifacts y rayito-m0-iam) y CloudFormation la propaga a sus recursos; útil si la organización exige etiquetas. Una pila reutilizada no se reetiqueta y la imagen no recibe etiquetas. |
 | `--yes` | No pedir confirmación (hace falta sin terminal o con `--json` si hay algo que crear). |
 | `--dry-run` | Sólo lee la cuenta y muestra el plan; no crea ni cambia nada. |
-| `--no-caps-image` | No publicar `rayito-base-caps`, la base del agente en MicroVM (la misma imagen con `additionalOsCapabilities` `ALL`); por defecto se publica desde el mismo zip. El paso sale como `skip` y no lee ni escribe esa imagen. |
+| `--caps-image` | Publica también `rayito-base-caps`, la base del agente en MicroVM (la misma imagen con `additionalOsCapabilities` `ALL`, desde el mismo zip). Es otra versión de imagen que cuesta, así que va apagada: sin la opción el paso sale como `skip` y no lee ni escribe esa imagen. Hace falta para `rayito agent deploy` en MicroVM. |
 
 `RAYITO_BUCKET` lo lee la orden, no el parser, igual que `rayito doctor`.
 
@@ -840,8 +842,10 @@ rayito setup --tag Owner=platform --tag Project=agents
   `rayito agent deploy` en MicroVM. Se decide igual que la imagen y se publica
   desde **el mismo zip** (una sola descarga) con
   `additionalOsCapabilities=["ALL"]`, como
-  `rayito image publish --os-capabilities ALL`. Con `--no-caps-image` el paso
-  es `skip`: no se lee ni se publica.
+  `rayito image publish --os-capabilities ALL`. Sólo con `--caps-image`: sin
+  la opción el paso es `skip` y no se lee ni se publica. Si después
+  `rayito agent deploy` (MicroVM) no la encuentra, falla con un mensaje que
+  pide `rayito setup --caps-image`.
 
 El plan está `ready` cuando todos los pasos son `reuse` (o `skip`). Pide confirmación si
 algún paso es `create`, `update` o `publish`: en una terminal, con
@@ -866,13 +870,12 @@ rayito setup: cuenta 123456789012, región us-east-1
   bucket rayito-artifacts-<cuenta>-<región>: crear con la pila rayito-m0-artifacts (nombre por defecto de Rayito)
   pila de IAM rayito-m0-iam: crear
   imagen rayito-base: publicar desde rayd-v0.17.0 (≈ 10 min)
-  imagen con capacidades rayito-base-caps: publicar desde rayd-v0.17.0 (≈ 10 min)
+  imagen con capacidades rayito-base-caps: omitida (sin --caps-image)
 Coste aproximado:
   bucket de artefactos: los zips de la imagen caducan a los 7 días (regla de ciclo de vida)
   pila de IAM: gratis
   imagen: ≈ $0,04 por semana por versión publicada (mínimo una semana)
   zip de la imagen en el bucket: céntimos
-  imagen con capacidades: ≈ $0,04 por semana por versión publicada ($0,08 por GB-mes, mínimo una semana); --no-caps-image la omite
 no se creó ni cambió nada (--dry-run)
 ```
 
@@ -895,8 +898,8 @@ Sus claves, en este orden: `rayito` (versión del SDK), `region`, `account`
 `update`, `reuse`, `wait`, `publish` o `skip`), `source` (`argument`, `environment`, `iamStack`,
 `cdkBootstrap`, `artifactStack`, `rayitoDefault`, `release`, `artifact` o `null`), `status`, `imageVersion`,
 `release` y `previousBucket`. `result` (`bucket`, `imageArn`, `imageVersion`,
-`artifactUploaded`, `capsImageArn` y `capsImageVersion`, éstos `null` con
-`--no-caps-image`) es `null` mientras no termine la preparación; `doctor` es
+`artifactUploaded`, `capsImageArn` y `capsImageVersion`, éstos `null` sin
+`--caps-image`) es `null` mientras no termine la preparación; `doctor` es
 el documento de `rayito --json doctor`, o `null` con `--dry-run` y si la
 preparación se detuvo antes; `error` es `{"code", "message"}` o `null`. En un
 error el mensaje sale además por stderr como `rayito: <mensaje>`.
@@ -918,15 +921,14 @@ error el mensaje sale además por stderr como `rayito: <mensaje>`.
     {"resource": "baseImage", "name": "rayito-base", "action": "publish",
      "source": "release", "status": null, "imageVersion": null,
      "release": "rayd-v0.17.0", "previousBucket": null},
-    {"resource": "capsImage", "name": "rayito-base-caps", "action": "publish",
-     "source": "release", "status": null, "imageVersion": null,
-     "release": "rayd-v0.17.0", "previousBucket": null}
+    {"resource": "capsImage", "name": "rayito-base-caps", "action": "skip",
+     "source": null, "status": null, "imageVersion": null,
+     "release": null, "previousBucket": null}
   ],
   "cost": [
     "pila de IAM: gratis",
     "imagen: ≈ $0,04 por semana por versión publicada (mínimo una semana)",
-    "zip de la imagen en el bucket: céntimos",
-    "imagen con capacidades: ≈ $0,04 por semana por versión publicada ($0,08 por GB-mes, mínimo una semana); --no-caps-image la omite"
+    "zip de la imagen en el bucket: céntimos"
   ],
   "result": null,
   "doctor": null,
@@ -942,9 +944,9 @@ error el mensaje sale además por stderr como `rayito: <mensaje>`.
       `rayito-m0-artifacts` (`CreateStack` sin capacidades: un bucket y su
       política); la pila `rayito-m0-iam`
       (`CreateStack`/`UpdateStack` con `CAPABILITY_NAMED_IAM`); las imágenes
-      `rayito-base` y `rayito-base-caps` (un objeto en el bucket, compartido, y
-      `CreateMicrovmImage` o `UpdateMicrovmImage` por imagen; la segunda con
-      `additionalOsCapabilities=["ALL"]`); lecturas de `GetCallerIdentity`,
+      `rayito-base` y, con `--caps-image`, `rayito-base-caps` (un objeto en el
+      bucket, compartido, y `CreateMicrovmImage` o `UpdateMicrovmImage` por
+      imagen; la segunda con `additionalOsCapabilities=["ALL"]`); lecturas de `GetCallerIdentity`,
       `DescribeStacks`, `HeadBucket`, `GetMicrovmImage` y
       `ListMicrovmImageVersions`; la descarga HTTPS de `rayito-image.zip` y
       `SHA256SUMS`. El SDK no llama a `CreateBucket`: el bucket lo crea
@@ -952,7 +954,7 @@ error el mensaje sale además por stderr como `rayito: <mensaje>`.
     - **Coste aproximado:** pila de IAM, gratis; el bucket no cuesta por existir
       y sus zips caducan a los 7 días; cada versión publicada de cada
       imagen ≈ $0,04 por semana ($0,08 por GB-mes, mínimo una semana; con
-      `--no-caps-image`, una imagen menos); el zip en el bucket, céntimos. Ver
+      `--caps-image`, una imagen más); el zip en el bucket, céntimos. Ver
       [Precios](cost.md).
     - **IAM:** credenciales de administración o de *bootstrap*, una vez, como
       `cdk bootstrap`: CloudFormation, IAM (roles y políticas), publicar la
@@ -962,8 +964,8 @@ error el mensaje sale además por stderr como `rayito: <mensaje>`.
       `s3:PutBucketTagging`, `s3:GetBucketPolicy`, `s3:PutBucketPolicy`). Para
       usar el SDK después, la política mínima de
       [Configurar AWS](primeros-pasos/configurar-aws.md#3-la-pila-de-iam).
-    - **Cómo apagarla:** no ejecutarla; `--no-caps-image` no publica
-      `rayito-base-caps`; para deshacerla, borra las pilas
+    - **Cómo apagarla:** no ejecutarla; sin `--caps-image` (por defecto) no
+      publica `rayito-base-caps`; para deshacerla, borra las pilas
       (`rayito-m0-iam` y, si existe, `rayito-m0-artifacts`) y las versiones de la
       imagen. El bucket creado se conserva: vacíalo y bórralo a mano.
     - **Ejemplo:** `rayito setup --dry-run`.

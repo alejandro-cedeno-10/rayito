@@ -23,11 +23,15 @@ The recipe value SHALL be compact JSON with sorted keys when it is at most `agen
 - **THEN** both produce the exact value of the vector
 
 ### Requirement: Reconnecting by name reads the recipe
-`AgentFleet.connect(name)` without `project` and with `use_recipe` true (the default) SHALL call `GetParameter` with `WithDecryption=true` once. When the recipe exists, the fleet SHALL rebuild the project, image version, scaling and renewal option from it and SHALL be able to create VMs. An explicit `scaling=` or `renew_gateway_keys=` SHALL win over the recipe. With `project=` or `use_recipe=False`, the fleet SHALL make no SSM call. `ParameterNotFound` SHALL give the 0.16 behaviour. `AccessDeniedException` SHALL give the 0.16 behaviour plus warning `recipe_access_denied`. Any other error SHALL propagate as the SDK's mapped exception.
+`AgentFleet.connect(name)` without `project` and with `use_recipe` true (the default) SHALL call `GetParameter` with `WithDecryption=true` once. When the recipe exists, the fleet SHALL rebuild the project, image version and scaling from it and SHALL be able to create VMs. An explicit `scaling=` SHALL win over the recipe. The recipe SHALL NOT turn key renewal on: the fleet SHALL renew only when the caller passes `renew_gateway_keys=True` (`renewGatewayKeys: true`); when the recipe has `renewGatewayKeys` true and the caller passed nothing, the fleet SHALL NOT renew and SHALL emit warning `recipe_renewal_ignored` (code only) (`testdata/fleet-recipe/renewal.json`, `connect`). A fleet name `.`, `..` or empty SHALL have no recipe parameter (`recipe_not_saved`). With `project=` or `use_recipe=False`, the fleet SHALL make no SSM call. `ParameterNotFound` SHALL give the 0.16 behaviour. `AccessDeniedException` SHALL give the 0.16 behaviour plus warning `recipe_access_denied`. Any other error SHALL propagate as the SDK's mapped exception.
 
 #### Scenario: connect without project creates VMs
 - **WHEN** a second process calls `AgentFleet.connect("my-agent", access_token=token)` and the fleet must grow
 - **THEN** the new VM is created from the recipe's image version with the recipe's env, secret env and network
+
+#### Scenario: a renewing recipe never renews by itself
+- **WHEN** the recipe has `renewGatewayKeys` true and `AgentFleet.connect("my-agent", access_token=token)` creates a VM
+- **THEN** no key is renewed and the warning `recipe_renewal_ignored` is logged without the parameter path
 
 #### Scenario: explicit project unchanged
 - **WHEN** `AgentFleet.connect("my-agent", project=project)` is called

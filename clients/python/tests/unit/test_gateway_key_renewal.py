@@ -6,6 +6,7 @@ que sin la opción no se importe el generador. Sin AWS."""
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import sys
 import time
@@ -21,7 +22,9 @@ from botocore.exceptions import ClientError
 from rayito._agent import _gateway_keys
 from rayito._agent._fleet import AgentFleet, FleetKeyRenewal
 from rayito._agent._gateway_keys import (
+    BEDROCK_PRESET,
     RENEW_NEEDS_BEDROCK,
+    RENEW_SHARED_SECRET,
     GatewayKeyRenewer,
     RenewableGateway,
     bearer_value,
@@ -196,13 +199,72 @@ def test_a_project_without_a_bedrock_gateway_cannot_renew() -> None:
         AgentFleet(bedrock_project("openai"), access_token=FLEET_TOKEN, renew_gateway_keys=True)
 
 
-def test_the_message_is_the_contract_one() -> None:
+def test_the_messages_are_the_contract_ones() -> None:
     contract = json.loads(
         (
             Path(__file__).resolve().parents[4] / "testdata" / "fleet-recipe" / "contract.json"
         ).read_text(encoding="utf-8")
     )
     assert contract["messages"]["renewNeedsBedrock"] == RENEW_NEEDS_BEDROCK
+    assert contract["messages"]["renewSharedSecret"] == RENEW_SHARED_SECRET
+
+
+def project_with_gateways(gateways: dict[str, Any]) -> AgentProject:
+    """`bedrock_project()` con más pasarelas."""
+    document: dict[str, Any] = bedrock_project().to_dict()
+    document["gateways"] = {**document["gateways"], **gateways}
+    return with_bedrock_preset(document)
+
+
+def with_bedrock_preset(document: dict[str, Any]) -> AgentProject:
+    """El proyecto de `document` con la pasarela `bedrock` marcada con su
+    preset, como lo rehace la receta."""
+    project = AgentProject.from_dict(document, base_dir=".")
+    return dataclasses.replace(project, gateway_presets={"bedrock": BEDROCK_PRESET})
+
+
+def custom_gateway(upstream: str, secret: str) -> dict[str, Any]:
+    return {
+        "preset": "custom",
+        "upstream": upstream,
+        "headers": {"authorization": secret},
+        "allow": [["POST", "/v1/chat/completions"]],
+    }
+
+
+def test_a_secret_shared_with_a_non_bedrock_gateway_is_never_renewed() -> None:
+    project = project_with_gateways(
+        {"other": custom_gateway("https://llm.example.com", "agents/support-bot/bedrock")}
+    )
+
+    with pytest.raises(InvalidArgumentException) as caught:
+        renewable_gateways(project)
+
+    assert str(caught.value) == RENEW_SHARED_SECRET.format(gateway="bedrock", other="other")
+    assert SECRET_ID not in str(caught.value)
+    assert "agents/support-bot/bedrock" not in str(caught.value)
+
+
+def test_a_secret_shared_with_another_bedrock_upstream_still_renews() -> None:
+    project = project_with_gateways(
+        {
+            "other": custom_gateway(
+                "https://bedrock-runtime.eu-west-1.amazonaws.com", "agents/support-bot/bedrock"
+            ),
+            "search": custom_gateway("https://search.example.com", "agents/support-bot/search"),
+        }
+    )
+
+    assert [gateway.name for gateway in renewable_gateways(project)] == ["bedrock"]
+
+
+def test_a_bedrock_preset_with_a_lookalike_host_has_nothing_to_renew() -> None:
+    document: dict[str, Any] = bedrock_project().to_dict()
+    document["gateways"]["bedrock"]["upstream"] = "https://bedrock-runtime.evil.s3.amazonaws.com"
+    project = with_bedrock_preset(document)
+
+    with pytest.raises(InvalidArgumentException, match=RENEW_NEEDS_BEDROCK):
+        renewable_gateways(project)
 
 
 def test_without_the_extra_the_first_renewal_names_the_install(

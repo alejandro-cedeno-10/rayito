@@ -16,11 +16,13 @@ import {
   GatewayKeyRenewer,
   gatewayRegion,
   RENEW_NEEDS_BEDROCK,
+  RENEW_SHARED_SECRET,
   type RenewableGateway,
   renewableGateways,
   type SecretsWriter,
 } from "../../src/agent/gateway-keys.js";
 import { AgentProject } from "../../src/agent/project.js";
+import { copyProject } from "../../src/agent/project-copy.js";
 import { InvalidArgumentError, SecretError } from "../../src/errors.js";
 import { FLEET_TOKEN, FleetHarness } from "./agent-fleet-fake.js";
 import { MODEL_ID } from "./agent-project-fake.js";
@@ -32,6 +34,33 @@ const NOW = Date.parse("2026-10-22T12:00:00Z");
 const SECRET_ID = "rayito/agents/support-bot/bedrock";
 const TOKEN = VECTORS.secretValue.token as string;
 const MS = 1000;
+
+type ProjectDocument = Record<string, unknown> & {
+  gateways: Record<string, Record<string, unknown>>;
+};
+
+/** `bedrockProject()` serializado con más pasarelas (o cambiado por
+ * `edit`), con la pasarela `bedrock` marcada con su preset como lo rehace la
+ * receta. */
+function withBedrockPreset(
+  gateways: Record<string, Record<string, unknown>>,
+  edit: (document: ProjectDocument) => void = () => {},
+): AgentProject {
+  const document = bedrockProject().toObject() as ProjectDocument;
+  document.gateways = { ...document.gateways, ...gateways };
+  edit(document);
+  const project = AgentProject.fromObject(document, { baseDir: "." });
+  return copyProject(project, { gatewayPresets: { bedrock: "bedrock" } });
+}
+
+function customGateway(upstream: string, secret: string): Record<string, unknown> {
+  return {
+    preset: "custom",
+    upstream,
+    headers: { authorization: secret },
+    allow: [["POST", "/v1/chat/completions"]],
+  };
+}
 
 function bedrockProject(preset = "bedrock"): AgentProject {
   const bedrock = preset === "bedrock";
@@ -186,6 +215,45 @@ describe("gateway key renewal", () => {
         }),
     ).toThrow(new InvalidArgumentError(RENEW_NEEDS_BEDROCK));
     expect(CONTRACT.messages.renewNeedsBedrock).toBe(RENEW_NEEDS_BEDROCK);
+  });
+
+  test("a secret shared with a non-Bedrock gateway is never renewed", () => {
+    const project = withBedrockPreset({
+      other: customGateway("https://llm.example.com", "agents/support-bot/bedrock"),
+    });
+    let message = "";
+    try {
+      renewableGateways(project);
+    } catch (error) {
+      expect(error).toBeInstanceOf(InvalidArgumentError);
+      message = (error as Error).message;
+    }
+    expect(message).toBe(
+      RENEW_SHARED_SECRET.replace("{gateway}", "bedrock").replace("{other}", "other"),
+    );
+    expect(message).not.toContain("agents/support-bot/bedrock");
+    expect(CONTRACT.messages.renewSharedSecret).toBe(RENEW_SHARED_SECRET);
+  });
+
+  test("a secret shared with another Bedrock upstream still renews", () => {
+    const project = withBedrockPreset({
+      other: customGateway(
+        "https://bedrock-runtime.eu-west-1.amazonaws.com",
+        "agents/support-bot/bedrock",
+      ),
+      search: customGateway("https://search.example.com", "agents/support-bot/search"),
+    });
+    expect(renewableGateways(project).map((gateway) => gateway.name)).toEqual(["bedrock"]);
+  });
+
+  test("a bedrock preset with a lookalike host has nothing to renew", () => {
+    const project = withBedrockPreset({}, (document) => {
+      document.gateways.bedrock = {
+        ...document.gateways.bedrock,
+        upstream: "https://bedrock-runtime.evil.s3.amazonaws.com",
+      };
+    });
+    expect(() => renewableGateways(project)).toThrow(new InvalidArgumentError(RENEW_NEEDS_BEDROCK));
   });
 
   test("the gateway repr never holds the secret in a message", () => {

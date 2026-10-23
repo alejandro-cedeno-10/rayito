@@ -186,7 +186,10 @@ An explicit `scaling=` or `project=` wins over the recipe, and
   `recipe_too_large`) in the log and in `warnings` of `--json`. When reading,
   no permission is `recipe_access_denied`, and an unreadable recipe or a
   Parameter Store that does not answer (no SSM VPC endpoint, throttling) is
-  `recipe_unreadable`; in every case the fleet behaves as in 0.16, and
+  `recipe_unreadable`. A recipe that asked to renew the Bedrock key does not
+  turn it on for the connecting process: without `renew_gateway_keys=True`
+  the warning is `recipe_renewal_ignored` and nothing is renewed. A fleet
+  named `.` or `..` has no recipe (`recipe_not_saved`); in every case the fleet behaves as in 0.16, and
   `rayito agent stop <name>` still terminates its VMs (if it cannot delete
   the recipe either, it reports that error at the end). After
   `stop`, Parameter Store takes about 30 s before it lets another parameter use
@@ -196,7 +199,9 @@ An explicit `scaling=` or `project=` wins over the recipe, and
   instructions), the warning is `recipe_too_large` and the previous one is
   deleted.
 - **`--env` and secrets.** `rayito agent deploy` rejects an `--env` whose name
-  looks like a secret (`*_TOKEN`, `*_KEY`, `*_SECRET`, `*_PASSWORD`...): use
+  looks like a secret (`*_TOKEN`, `*_KEY`, `*_SECRET`, `*_PASSWORD`..., or
+  with a `PASS`, `PASSWD`, `PAT`, `CREDENTIAL`, `CREDENTIALS`, `AUTH` or
+  `BEARER` segment, such as `DB_PASS` or `GITHUB_PAT`): use
   `--secret-env NAME=<secret>` or `--secret-env-from <secret>`, so the recipe
   only keeps the name. This breaks 0.16 command lines for `*_SECRET`. Note:
   the rule belongs to the `--env` flag; the project's `env` values

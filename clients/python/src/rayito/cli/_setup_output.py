@@ -61,7 +61,7 @@ ACTION_TEMPLATES: Final[Mapping[str, str]] = MappingProxyType(
         "imagePublishArtifact": "publicar desde {artifact} (≈ 10 min)",
         "imageReuse": "ya existe (versión {imageVersion} lanzable)",
         "imageWait": "build en curso (versión {imageVersion}): esperar",
-        "capsSkip": "omitida (--no-caps-image)",
+        "capsSkip": "omitida (sin --caps-image)",
     }
 )
 COST_HEADER: Final = "Coste aproximado:"

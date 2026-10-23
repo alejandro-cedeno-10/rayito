@@ -12,7 +12,7 @@ detalles de cada paso están en [Despliega tu agente](../guias/despliega-tu-agen
 ## Qué necesitas
 
 - [Rayito configurado en tu cuenta](configurar-aws.md), con la imagen
-  `rayito-base-caps` publicada.
+  `rayito-base-caps` publicada (`rayito setup --caps-image`).
 - Una clave de API de Bedrock en la variable `AWS_BEARER_TOKEN_BEDROCK`
   (o la de tu proveedor: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`…).
 - Un proyecto de agente con su fichero de bloqueo (`uv.lock`, `requirements.txt`

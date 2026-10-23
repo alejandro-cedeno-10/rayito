@@ -95,7 +95,9 @@ five parallel work groups.
   - the image version (`ProjectService(image_version=recipe.image.version)`);
   - `ScalingOptions` from `recipe.scaling`, unless the caller passed
     `scaling=`, which wins;
-  - `renew_gateway_keys` from the recipe, unless the caller passed it;
+  - never `renew_gateway_keys`: only the caller's explicit option turns
+    renewal on; a recipe with it and a silent caller gives the warning
+    `recipe_renewal_ignored`;
   - the project's `gateway_presets` from `recipe.gatewayPresets`.
 - Outcomes: `ParameterNotFound` means there is no recipe, and the fleet
   behaves exactly as in 0.16. `AccessDeniedException` gives one warning
@@ -165,7 +167,9 @@ five parallel work groups.
 - Eligible gateways are those whose preset is `bedrock` (from
   `AgentProject.gateway_presets`, see contract §2). With the option on and
   no `bedrock` gateway, construction raises `InvalidArgumentException`
-  ("renew_gateway_keys necesita una pasarela con preset bedrock").
+  ("renew_gateway_keys necesita una pasarela con preset bedrock"). A
+  `bedrock` gateway whose secret is also read by a gateway with a
+  non-Bedrock upstream also raises `InvalidArgumentException`.
 - Algorithm per eligible gateway, before `_create_member` and before
   opening a parked slot:
   1. Skip the gateway if this process renewed it less than
@@ -183,7 +187,9 @@ five parallel work groups.
 - The region is the region of the gateway's upstream (the bedrock preset
   stores it as `[gateways.<n>] region`). The renewal domain computes it in
   `gateway_region(gateway)` from the upstream host
-  `bedrock-runtime.<region>.amazonaws.com`.
+  `bedrock-runtime.<region>.amazonaws.com`, where the region must match an
+  AWS region pattern (`[a-z]{2}(-[a-z]+)+-[0-9]+`); any other host is not
+  Bedrock.
 - Never logged and never included in `repr`, errors or the recipe: the
   token and the secret name. Errors are mapped by code: `AccessDenied*`
   becomes `SecretException` code `permission_denied` naming the gateway,
@@ -251,16 +257,16 @@ five parallel work groups.
 - It reuses the release zip already downloaded for `baseImage` (one
   download) and publishes with `additionalOsCapabilities=["ALL"]`, the
   existing `--os-capabilities ALL` path documented in §4.
-- Default on, because `rayito setup` is itself the cost-activating command
-  and its plan and `--dry-run` print the step and its storage cost
-  ($0.08/GB-month, §12). `--no-caps-image` / `SetupRequest.caps_image=False` /
-  `capsImage: false` drops the step. The step is then shown as `skip`, a new
+- Off by default, because it is one more billed image version
+  ($0.08/GB-month, §12) and everything that costs money is opt-in.
+  `--caps-image` / `SetupRequest.caps_image=True` / `capsImage: true` adds
+  the step; by default it is shown as `skip`, a new
   action listed in `ALLOWED_ACTIONS["capsImage"]` (`SetupAction` gains `"skip"`).
 - Plan vectors in `testdata/account-setup/plan-vectors.json` gain the step.
   Existing vectors gain a `capsImage` input (the same observation as
   `image`), the `capsImage` row and, when it publishes, its cost line
   (`messages.cost.capsImage`, plus the zip line if only the caps image
-  publishes); nothing else changes. `noCapsImage: true` is `--no-caps-image`.
+  publishes); nothing else changes. `capsImageRequested: true` is `--caps-image`.
   The `--json` result gains `capsImageArn` and `capsImageVersion`.
 
 ### D10. OpenCode zero-config reads `AGENTS.md` and permissions
@@ -344,7 +350,7 @@ Merge rules:
 | Scale-in | `AgentDeployOptions.scale_in_after_seconds: float \| None` | `scaleInAfterMs?: number` | `--scale-in-after SECONDS` | G5 |
 | Renew keys | `renew_gateway_keys: bool = False` | `renewGatewayKeys?: boolean` | `--renew-gateway-keys` | G5 |
 | Python extra | `bedrock-keys` = `aws-bedrock-token-generator==1.1.0` | peer `@aws/bedrock-token-generator` `1.1.0`, peer `@aws-sdk/client-ssm` | — | G5 |
-| Setup caps | `SetupRequest.caps_image: bool = True` | `SetupRequest.capsImage?: boolean` | `rayito setup --no-caps-image` | G2 |
+| Setup caps | `SetupRequest.caps_image: bool = False` | `SetupRequest.capsImage?: boolean` (false) | `rayito setup --caps-image` | G2 |
 | Quiet loggers | `QUIET_HTTP_LOGGERS` in `agent_host/serve.py` | (embedded asset) | — | G1 |
 | Gateway helper | `apply_gateways(sandbox, gateways, *, timeout)` | `applyGateways(sandbox, gateways, { timeoutMs })` | — | G5 |
 
@@ -356,7 +362,8 @@ Rayito"`), `gatewayKeyRenewAfterSeconds` (900), and
 `gatewayKeyExpirySeconds` (43200).
 
 Warning codes (closed list, both SDKs): `recipe_access_denied`,
-`recipe_not_saved`, `recipe_too_large`, `recipe_unreadable`.
+`recipe_not_saved`, `recipe_renewal_ignored`, `recipe_too_large`,
+`recipe_unreadable`.
 
 ### 3. Recipe document (`rayito.agent-recipe/1`)
 
@@ -569,7 +576,7 @@ No `npm`/`npx`.
   other processes keep an older key until refreshed. This is documented
   with `scale_in_after_seconds` and measured in Q193.
 - `capsImage` adds one image (≈ $0.08/GB-month) to `setup`. It is listed in
-  the plan, and `--no-caps-image` drops it.
+  the plan, and only `--caps-image` adds it.
 
 ## Migration Plan
 

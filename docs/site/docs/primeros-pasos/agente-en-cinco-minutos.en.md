@@ -12,7 +12,7 @@ details of each step are in [Deploy your agent](../guias/despliega-tu-agente.md)
 ## What you need { #que-necesitas }
 
 - [Rayito set up in your account](configurar-aws.md), with the
-  `rayito-base-caps` image published.
+  `rayito-base-caps` image published (`rayito setup --caps-image`).
 - A Bedrock API key in the `AWS_BEARER_TOKEN_BEDROCK` variable (or your
   provider's: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`…).
 - An agent project with its lockfile (`uv.lock`, `requirements.txt` or

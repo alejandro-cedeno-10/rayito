@@ -24,6 +24,7 @@ import {
   type FleetRecipe,
   recipeDocument,
   recipeOf,
+  renewalOnConnect,
 } from "../../src/agent/fleet-recipe.js";
 import { AgentProject } from "../../src/agent/project.js";
 import { ScalingOptions } from "../../src/agent/scaling-domain.js";
@@ -46,6 +47,18 @@ interface LoadFailure {
 const RECIPE_VECTORS = JSON.parse(
   readFileSync(join(import.meta.dirname, "../../../../testdata/fleet-recipe/recipes.json"), "utf8"),
 ) as { readonly loadFailures: readonly LoadFailure[] };
+
+interface ConnectRenewal {
+  readonly id: string;
+  readonly recipe: boolean | null;
+  readonly requested: boolean | null;
+  readonly renew: boolean;
+  readonly warning: string | null;
+}
+
+const RENEWAL_VECTORS = JSON.parse(
+  readFileSync(join(import.meta.dirname, "../../../../testdata/fleet-recipe/renewal.json"), "utf8"),
+) as { readonly connect: readonly ConnectRenewal[] };
 
 const NAME = "support-bot";
 const PARAMETER = `/rayito/agents/${NAME}/recipe`;
@@ -243,11 +256,17 @@ describe("connect by name", () => {
     expect(kept.values.has(PARAMETER)).toBe(true);
   });
 
-  test("a renewing recipe without the generator peer still lists, stops and creates", async () => {
+  test.each(RENEWAL_VECTORS.connect)("only the caller turns renewal on ($id)", (item) => {
+    const recipe = item.recipe === null ? undefined : savedRecipe(item.recipe);
+    expect(renewalOnConnect(recipe, item.requested ?? undefined)).toEqual({
+      renew: item.renew,
+      warning: item.warning ?? undefined,
+    });
+  });
+
+  test("a renewing recipe never renews by itself", async () => {
     const h = new FleetHarness();
-    const keys = failingRenewer(
-      new InvalidArgumentError("renewGatewayKeys necesita el paquete opcional"),
-    );
+    const keys = failingRenewer(new SecretError("sin permiso", { code: "permission_denied" }));
     const warnings: unknown[] = [];
     const fleet = await connect(h, {
       recipeStore: storeWith(savedRecipe(true)),
@@ -258,23 +277,11 @@ describe("connect by name", () => {
     expect((await fleet.invoke("hola")).text).toBe("respuesta a hola");
     await fleet.scale({ minVms: 2, maxVms: 2 });
     await fleet.stop();
-    expect(keys.calls).toBe(1);
-    expect(warnings).toContainEqual({
-      message: "la flota no renovó la clave de su pasarela (receta)",
-      fields: { code: "missing_extra" },
-    });
-  });
-
-  test("an inherited renewal without permission only warns", async () => {
-    const h = new FleetHarness();
-    const keys = failingRenewer(new SecretError("sin permiso", { code: "permission_denied" }));
-    const fleet = await connect(h, {
-      recipeStore: storeWith(savedRecipe(true)),
-      keyRenewer: keys,
-    });
-    await fleet.invoke("hola");
-    await fleet.scale({ minVms: 2, maxVms: 2 });
-    expect(keys.calls).toBe(1);
+    expect(keys.calls).toBe(0);
+    expect(warnings).toEqual([
+      { message: "receta de la flota", fields: { code: "recipe_renewal_ignored" } },
+    ]);
+    expect(JSON.stringify(warnings)).not.toContain(PARAMETER);
   });
 
   test("an explicit renewal without permission fails", async () => {
@@ -292,6 +299,7 @@ describe("connect by name", () => {
     let calls = 0;
     const fleet = await connect(h, {
       recipeStore: storeWith(savedRecipe(true)),
+      renewGatewayKeys: true,
       scaling: new ScalingOptions({ minVms: 3, maxVms: 3 }),
       keyRenewer: {
         renew: async () => {

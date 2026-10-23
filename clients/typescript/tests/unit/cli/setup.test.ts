@@ -150,7 +150,7 @@ describe("rayito setup: shared CLI cases", () => {
   });
 
   it("a dry run only reads and downloads nothing", async () => {
-    const outcome = await invoke({ args: ["setup", "--dry-run"] });
+    const outcome = await invoke({ args: ["setup", "--dry-run", "--caps-image"] });
     expect(outcome.fake.calls.map(([name]) => name)).toEqual([
       "accountId",
       "describe",
@@ -160,10 +160,10 @@ describe("rayito setup: shared CLI cases", () => {
     ]);
   });
 
-  it("a dry run with --no-caps-image never reads rayito-base-caps", async () => {
-    const outcome = await invoke({ args: ["setup", "--dry-run", "--no-caps-image"] });
+  it("a dry run without --caps-image never reads rayito-base-caps", async () => {
+    const outcome = await invoke({ args: ["setup", "--dry-run"] });
     expect(outcome.fake.calls.map(([name]) => name)).not.toContain("get_image:caps");
-    expect(outcome.stdout).toContain("omitida (--no-caps-image)");
+    expect(outcome.stdout).toContain("omitida (sin --caps-image)");
   });
 
   it("a dry run that would create the bucket only reads", async () => {
@@ -203,7 +203,7 @@ function lastLines(text: string, count: number): string[] {
 
 describe("rayito setup: apply", () => {
   it("prepares a fresh account and prints the next-step variables", async () => {
-    const outcome = await invoke({ args: ["setup", "--yes"] });
+    const outcome = await invoke({ args: ["setup", "--yes", "--caps-image"] });
     expect(outcome.exitCode).toBe(0);
     expect(lastLines(outcome.stdout, 3)).toEqual([
       `rayito setup: cuenta preparada en ${REGION}`,
@@ -219,6 +219,12 @@ describe("rayito setup: apply", () => {
       "publish",
       "publish:caps",
     ]);
+  });
+
+  it("without --caps-image apply never publishes rayito-base-caps", async () => {
+    const outcome = await invoke({ args: ["setup", "--yes"] });
+    expect(outcome.exitCode).toBe(0);
+    expect(outcome.fake.writes.map(([name]) => name)).not.toContain("publish:caps");
   });
 
   it("a doctor FAIL exits 1 with the doctorFailed line last", async () => {
@@ -286,7 +292,10 @@ describe("rayito setup: apply", () => {
 
 describe("rayito setup: an account without a bucket", () => {
   it("prints the bucket progress and ends with the created bucket", async () => {
-    const outcome = await invoke({ args: ["setup", "--yes"], input: { ...FRESH, buckets: {} } });
+    const outcome = await invoke({
+      args: ["setup", "--yes", "--caps-image"],
+      input: { ...FRESH, buckets: {} },
+    });
     expect(outcome.exitCode).toBe(0);
     expect(outcome.stdout).toContain(
       `creando el bucket ${DEFAULT_BUCKET} con la pila rayito-m0-artifacts`,

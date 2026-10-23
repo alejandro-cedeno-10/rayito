@@ -131,7 +131,7 @@
     "capsImage": {
       "python": "SetupRequest.caps_image",
       "typescript": "SetupRequest.capsImage",
-      "default": true,
+      "default": false,
       "owner": "G2"
     },
     "applyGateways": {
@@ -162,6 +162,7 @@
   "warningCodes": [
     "recipe_access_denied",
     "recipe_not_saved",
+    "recipe_renewal_ignored",
     "recipe_too_large",
     "recipe_unreadable",
     "opencode_permission_ignored"
@@ -197,15 +198,16 @@
     },
     {
       "command": "setup",
-      "flag": "--no-caps-image",
-      "help": "No publica rayito-base-caps (la base de las plantillas de agente).",
+      "flag": "--caps-image",
+      "help": "Publica también rayito-base-caps (la base de las plantillas de agente); sin ella no se publica.",
       "owner": "G2"
     }
   ],
   "messages": {
     "envLooksSecret": "--env no admite secretos ({name} parece uno): usa --secret-env {name}=<secreto> o --secret-env-from <secreto>",
     "statusUnknownScaling": "members: {count} (escalado desconocido: sin proyecto ni receta)",
-    "renewNeedsBedrock": "renew_gateway_keys necesita una pasarela con preset bedrock"
+    "renewNeedsBedrock": "renew_gateway_keys necesita una pasarela con preset bedrock",
+    "renewSharedSecret": "renew_gateway_keys no renueva la pasarela '{gateway}': su secreto lo usa también la pasarela '{other}', que no es de Bedrock"
   },
   "awsOperations": {
     "ssm": {

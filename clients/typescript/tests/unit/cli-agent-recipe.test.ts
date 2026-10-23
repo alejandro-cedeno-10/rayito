@@ -11,6 +11,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 import {
+  ENV_FLAG_SECRET_SEGMENTS,
   ENV_LOOKS_SECRET_MESSAGE,
   envFlagLooksSecret,
   KEEP_RECIPE_HELP,
@@ -93,6 +94,10 @@ describe("rayito agent with the fleet recipe", () => {
     expect(helps.get("agent stop --keep-recipe")).toBe(KEEP_RECIPE_HELP);
     expect(CONTRACT.messages.envLooksSecret).toBe(ENV_LOOKS_SECRET_MESSAGE);
     expect(CONTRACT.messages.statusUnknownScaling).toBe(STATUS_UNKNOWN_SCALING);
+  });
+
+  test("the secret segments are the shared ones", () => {
+    expect([...ENV_FLAG_SECRET_SEGMENTS]).toEqual(ENV_VECTORS.segments);
   });
 
   test.each(ENV_VECTORS.rejected as string[])("--env %s looks like a secret", (name) => {

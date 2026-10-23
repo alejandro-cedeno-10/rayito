@@ -186,7 +186,10 @@ escalado real. Un `scaling=` o `project=` explícitos ganan a la receta, y
   `recipe_too_large`) en el log y en `warnings` de `--json`. Al leerla, sin
   permiso es `recipe_access_denied`, y una receta ilegible o un Parameter
   Store que no responde (sin endpoint de VPC para SSM, limitación de tasa) es
-  `recipe_unreadable`; en todos los casos la flota sigue como en 0.16, y
+  `recipe_unreadable`. Una receta que pedía renovar la clave de Bedrock no
+  la activa en quien conecta: sin `renew_gateway_keys=True` el aviso es
+  `recipe_renewal_ignored` y no se renueva nada. Un nombre de flota `.` o
+  `..` no tiene receta (`recipe_not_saved`); en todos los casos la flota sigue como en 0.16, y
   `rayito agent stop <nombre>` termina sus VMs (si tampoco puede borrar la
   receta, lo dice al final con un error). Tras
   `stop`, Parameter Store tarda unos 30 s en dejar crear otro parámetro con el
@@ -195,7 +198,9 @@ escalado real. Un `scaling=` o `project=` explícitos ganan a la receta, y
   estándar) y, si no, comprimida; si ni así cabe (instrucciones muy largas), el
   aviso es `recipe_too_large` y se borra la anterior.
 - **`--env` y los secretos.** `rayito agent deploy` rechaza un `--env` cuyo
-  nombre parece un secreto (`*_TOKEN`, `*_KEY`, `*_SECRET`, `*_PASSWORD`...):
+  nombre parece un secreto (`*_TOKEN`, `*_KEY`, `*_SECRET`, `*_PASSWORD`...,
+  o con un segmento `PASS`, `PASSWD`, `PAT`, `CREDENTIAL`, `CREDENTIALS`,
+  `AUTH` o `BEARER`, como `DB_PASS` o `GITHUB_PAT`):
   usa `--secret-env NOMBRE=<secreto>` o `--secret-env-from <secreto>`, así la
   receta sólo guarda el nombre. Es un cambio incompatible con 0.16 para
   `*_SECRET`. Ojo: la regla es de la bandera `--env`; los valores de `env`

@@ -176,14 +176,21 @@ su vida con `scale_in_after_seconds`.
   mucho (antes si la sesión que la firmó dura menos). Renuévala por tu
   cuenta de forma periódica (por ejemplo, un `scale` o un nuevo `deploy`)
   o usa una clave de larga duración.
-- **Heredada de la receta.** `AgentFleet.connect(nombre)` sin `project`
-  hereda la opción de la receta, y quien firma es el proceso que conecta,
-  con sus credenciales. El renovador se carga en la primera renovación:
-  listar, consultar o terminar la flota nunca necesita el extra. Si a ese
-  proceso le falta el extra `bedrock-keys` o el permiso de escribir el
-  secreto (`permission_denied`), la renovación se apaga con un aviso y la
-  flota sigue con la clave que haya; con `renew_gateway_keys=True`
-  explícito, el error se propaga.
+- **Nunca desde la receta.** La receta guarda si el despliegue renovaba,
+  pero `AgentFleet.connect(nombre)` sólo renueva si quien conecta lo pide
+  (`renew_gateway_keys=True` / `renewGatewayKeys: true`), porque la clave
+  se firma con sus credenciales. Si la receta lo pedía y no lo pasas, la
+  flota no renueva y avisa `recipe_renewal_ignored` (sólo el código, sin la
+  ruta ni valores); un `False` explícito no avisa. Con la opción, un
+  error (el extra `bedrock-keys` que falta, `permission_denied` al escribir
+  el secreto) se propaga.
+- **Un secreto sólo de Bedrock.** Si el secreto de la pasarela `bedrock` lo
+  lee también una pasarela cuyo upstream no es Bedrock, la opción es
+  `InvalidArgumentException` y no se renueva nada: la clave nueva acabaría
+  enviada a ese otro upstream. Sólo cuenta como Bedrock un upstream
+  `https://bedrock-runtime.<región>.amazonaws.com` con una región de AWS
+  válida (`us-east-1`); un host como
+  `bedrock-runtime.evil.s3.amazonaws.com` no lo es.
 
 === "Python"
 

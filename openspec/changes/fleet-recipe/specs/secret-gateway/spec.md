@@ -9,7 +9,7 @@
 4. Write `Bearer <key>` with `PutSecretValue` (`SecretId`, `SecretString`, `ClientRequestToken`).
 5. Refresh the gateways of the VMs this process holds open.
 
-The key and the secret name SHALL NOT appear in logs, errors, `repr` or the recipe. With the option on and no `bedrock` gateway, construction SHALL raise `InvalidArgumentException`. Without the option, no generator SHALL be imported and no `DescribeSecret`/`PutSecretValue` SHALL be made. The generator SHALL be an optional dependency: Python extra `bedrock-keys`, TypeScript optional peer. A missing generator SHALL raise `InvalidArgumentException` with the install hint.
+The key and the secret name SHALL NOT appear in logs, errors, `repr` or the recipe. With the option on and no `bedrock` gateway, construction SHALL raise `InvalidArgumentException`. Only an upstream `https://bedrock-runtime.<region>.amazonaws.com` whose region matches an AWS region pattern SHALL count as Bedrock. When the secret of a `bedrock` gateway is also read by a gateway whose upstream is not Bedrock, construction SHALL raise `InvalidArgumentException` naming both gateways and never the secret. Without the option, no generator SHALL be imported and no `DescribeSecret`/`PutSecretValue` SHALL be made. The generator SHALL be an optional dependency: Python extra `bedrock-keys`, TypeScript optional peer. A missing generator SHALL raise `InvalidArgumentException` with the install hint.
 
 #### Scenario: renewal writes once per window
 - **WHEN** the fleet creates three VMs within five minutes with renewal on and the secret last changed an hour ago
@@ -18,6 +18,10 @@ The key and the secret name SHALL NOT appear in logs, errors, `repr` or the reci
 #### Scenario: renewal off by default
 - **WHEN** a fleet is created without the option
 - **THEN** the zero-cost trace shows no `DescribeSecret`, no `PutSecretValue` and no generator import
+
+#### Scenario: secret shared with a non-Bedrock gateway
+- **WHEN** `renew_gateway_keys=True` and a `custom` gateway to another upstream uses the same secret as the `bedrock` gateway
+- **THEN** construction raises `InvalidArgumentException` and no key is written
 
 #### Scenario: non-bedrock gateway
 - **WHEN** `renew_gateway_keys=True` and the only gateway uses preset `openai`

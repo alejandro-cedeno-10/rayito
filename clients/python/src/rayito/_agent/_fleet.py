@@ -16,7 +16,7 @@ import time
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Final, Self
+from typing import TYPE_CHECKING, Any, Self
 
 from rayito._agent import _fleet_recipe_aws as recipe_aws
 from rayito._agent._deployment import AgentDeployment, default_transport
@@ -55,7 +55,7 @@ from rayito._agent._fleet_base import (
     vm_lost_message,
     with_handle,
 )
-from rayito._agent._fleet_recipe import FleetRecipe, recipe_of
+from rayito._agent._fleet_recipe import FleetRecipe, recipe_of, renewal_on_connect
 from rayito._agent._fleet_recipe_aws import (
     RECIPE_SAVED,
     FleetRecipeStore,
@@ -64,7 +64,6 @@ from rayito._agent._fleet_recipe_aws import (
     store_recipe,
 )
 from rayito._agent._gateway_keys import (
-    PERMISSION_DENIED_CODE,
     RENEW_NEEDS_BEDROCK,
     GatewayKeyRenewer,
     gateway_key_renewer,
@@ -88,7 +87,6 @@ from rayito.exceptions import (
     InvalidArgumentException,
     SandboxException,
     SandboxNotFoundException,
-    SecretException,
 )
 
 if TYPE_CHECKING:
@@ -111,28 +109,17 @@ NO_PROJECT_MESSAGE = (
 PARKED_SLOT_MESSAGE = "una plaza aparcada no pudo abrir las pasarelas del proyecto"
 
 
-#: El código del aviso cuando falta el extra `bedrock-keys`.
-RENEWAL_MISSING_EXTRA: Final = "missing_extra"
-#: Los códigos que apagan una renovación heredada de la receta: el extra
-#: `bedrock-keys` no está instalado o el llamante no puede escribir el secreto.
-RENEWAL_DISABLING_CODES: Final = frozenset({RENEWAL_MISSING_EXTRA, PERMISSION_DENIED_CODE})
-
-
 class FleetKeyRenewal:
     """La renovación de claves de una flota (`renew_gateway_keys`).
 
-    Al construirla sólo se valida que haya una pasarela `bedrock`: el
-    renovador (y el generador opcional de `bedrock-keys`) se carga en la
-    primera renovación, como en TypeScript, para que listar, consultar o
-    terminar la flota nunca lo necesite. Un candado serializa las
-    renovaciones: los VMs que arrancan en paralelo escriben como mucho una
-    clave por ventana.
-
-    Con la opción heredada de la receta (`inherited`), quien conecta por
-    nombre no la pidió: si le falta el extra o el permiso de escribir el
-    secreto, la renovación se apaga con un aviso y la flota sigue con la
-    clave que haya; cualquier otro fallo sólo avisa y se reintenta en la
-    siguiente. Pedida de forma explícita, el error se propaga."""
+    Al construirla sólo se valida que haya una pasarela `bedrock` (y que su
+    secreto no lo lea otra pasarela): el renovador (y el generador opcional
+    de `bedrock-keys`) se carga en la primera renovación, como en
+    TypeScript, para que listar, consultar o terminar la flota nunca lo
+    necesite. Un candado serializa las renovaciones: los VMs que arrancan en
+    paralelo escriben como mucho una clave por ventana. Sólo se activa con
+    la opción explícita de quien llama (nunca desde la receta), así que un
+    error de la renovación se propaga."""
 
     def __init__(
         self,
@@ -152,7 +139,6 @@ class FleetKeyRenewal:
         self._renewer = key_renewer if enabled else None
         self._region = region
         self._session = session
-        self.inherited = False
         self._lock = threading.Lock()
 
     @property
@@ -164,28 +150,11 @@ class FleetKeyRenewal:
         with self._lock:
             if not self._enabled or self._project is None:
                 return False
-            try:
-                if self._renewer is None:
-                    self._renewer = gateway_key_renewer(
-                        self._project, region=self._region, session=self._session
-                    )
-                return self._renewer.renew()
-            except (InvalidArgumentException, SecretException) as exc:
-                if not self.inherited:
-                    raise
-                self._skip(exc)
-                return False
-
-    def _skip(self, exc: SandboxException) -> None:
-        fallback = (
-            RENEWAL_MISSING_EXTRA
-            if isinstance(exc, InvalidArgumentException)
-            else type(exc).__name__
-        )
-        code = exc.code or fallback
-        if code in RENEWAL_DISABLING_CODES:
-            self._enabled = False
-        logger.warning("la flota no renovó la clave de su pasarela (receta): %s", code)
+            if self._renewer is None:
+                self._renewer = gateway_key_renewer(
+                    self._project, region=self._region, session=self._session
+                )
+            return self._renewer.renew()
 
 
 class SandboxDirectory:
@@ -451,11 +420,12 @@ class AgentFleet:
         Sin `project` y con `use_recipe` (por defecto) lee la receta que
         guardó `deploy_agent()` (un `GetParameter`): con ella la flota crea
         VMs iguales a los del despliegue (proyecto tras las banderas, versión
-        de la imagen, escalado y renovación de claves) y `status()` da su
-        escalado real. Un `scaling=` o un `renew_gateway_keys=` explícitos
-        ganan a la receta. Sin receta (o con `project=`, o
-        `use_recipe=False`), la flota es la de 0.16: sin `project` enruta y
-        consulta pero no puede crear VMs."""
+        de la imagen y escalado) y `status()` da su escalado real. Un
+        `scaling=` explícito gana a la receta. Las claves de Bedrock sólo se
+        renuevan con `renew_gateway_keys=True`: si la receta lo pedía y no
+        lo pasas, la flota no renueva y avisa `recipe_renewal_ignored`. Sin
+        receta (o con `project=`, o `use_recipe=False`), la flota es la de
+        0.16: sin `project` enruta y consulta pero no puede crear VMs."""
         recipe: FleetRecipe | None = None
         if project is None and use_recipe:
             store = dependencies.pop("recipe_store", None) or recipe_aws.default_recipe_store(
@@ -465,7 +435,9 @@ class AgentFleet:
             if loaded is not None:
                 recipe, project = loaded
             dependencies["recipe_store"] = store
-        renew = recipe.renew_gateway_keys if recipe is not None else False
+        renew, warning = renewal_on_connect(recipe, renew_gateway_keys)
+        if warning is not None:
+            recipe_aws.warn_recipe(warning)
         fleet = cls(
             project,
             name=name,
@@ -473,11 +445,10 @@ class AgentFleet:
             scaling=scaling,
             region=region,
             session=session,
-            renew_gateway_keys=renew if renew_gateway_keys is None else renew_gateway_keys,
+            renew_gateway_keys=renew,
             recipe=recipe,
             **dependencies,
         )
-        fleet._key_renewal.inherited = renew_gateway_keys is None
         fleet.refresh_members()
         return fleet
 

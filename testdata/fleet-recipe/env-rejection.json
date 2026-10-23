@@ -1,18 +1,43 @@
 {
   "schema": "rayito.fleet-recipe-env-vectors/1",
-  "_comment": "Nombres de --env que la CLI rechaza (SECRET_LIKE_KEYS de AgentProject.env más `secret`, constante ENV_FLAG_SECRET_LIKE_KEYS; AgentProject.env no cambia) y los que acepta. Sin valores.",
+  "_comment": "Nombres de --env que la CLI rechaza y los que acepta, sin valores. Se rechaza un nombre que es, o termina en `_<palabra>`, una de SECRET_LIKE_KEYS de AgentProject.env más `secret` (constante ENV_FLAG_SECRET_LIKE_KEYS), o que tiene como segmento (partes separadas por `_`, sin distinguir mayúsculas) una de `segments` (constante ENV_FLAG_SECRET_SEGMENTS). AgentProject.env no cambia.",
   "rejected": [
     "API_TOKEN",
     "OPENAI_API_KEY",
     "CLIENT_SECRET",
     "DB_PASSWORD",
     "TOKEN",
-    "KEY"
+    "KEY",
+    "DB_PASS",
+    "DB_PASSWD",
+    "GITHUB_PAT",
+    "pat",
+    "SERVICE_CREDENTIAL",
+    "GOOGLE_CREDENTIALS_JSON",
+    "AUTH_HEADER",
+    "Proxy_Auth",
+    "BEARER",
+    "BEARER_VALUE"
   ],
   "accepted": [
     "LOG_LEVEL",
     "APP_ENV",
     "MAX_TOKENS_PER_CALL",
-    "KEYBOARD_LAYOUT"
+    "KEYBOARD_LAYOUT",
+    "PATH_PREFIX",
+    "AUTHOR_NAME",
+    "PASSAGE_COUNT",
+    "COMPASS_MODE",
+    "PATTERN",
+    "OAUTH_SCOPE_LIST"
+  ],
+  "segments": [
+    "pass",
+    "passwd",
+    "pat",
+    "credential",
+    "credentials",
+    "auth",
+    "bearer"
   ]
 }

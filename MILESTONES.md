@@ -2209,8 +2209,8 @@ archiva.
 - **`--scale-in-after`** (item 10) y **renovación opcional de la clave de
   corta duración de Bedrock** (item 11: `renew_gateway_keys`, extra
   `bedrock-keys`, peer `@aws/bedrock-token-generator`), apagada por defecto.
-- **`rayito setup` publica `rayito-base-caps`** (item 4), con
-  `--no-caps-image`.
+- **`rayito setup --caps-image` publica `rayito-base-caps`** (item 4),
+  apagada por defecto porque cuesta.
 - **`--create-secret`** (items 2 y 3): la clave por preset y sin el prefijo
   `rayito/` duplicado; reutiliza el secreto de 0.16 si es el único.
 - **Host del agente** (items 1 y 7): `httpx`/`httpcore` en WARNING y sin

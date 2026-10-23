@@ -585,14 +585,16 @@ deployed, and `status` prints the real scaling or, without project or recipe,
 `members: N (escalado desconocido: sin proyecto ni receta)` (with `--json`, the
 `scalingSource` key). `stop <name>` deletes the recipe (`--keep-recipe` keeps
 it). A recipe warning (`recipe_access_denied`, `recipe_not_saved`,
-`recipe_too_large`) goes to stderr and, with `--json`, to `warnings`; it never
+`recipe_renewal_ignored`, `recipe_too_large`) goes to stderr and, with `--json`, to `warnings`; it never
 fails the deploy. `--scale-in-after S` sets the idle seconds after which a VM
 above `--min-vms` ends (default 900, minimum 60). `--renew-gateway-keys` renews
 the short-term Bedrock key of the `bedrock` gateways before creating each VM
 ([Secret gateway](funciones-opcionales/pasarela-de-secretos.md#renovar-la-clave-de-bedrock)).
 With `--target agentcore`, those three flags exit with 2
 (`option_not_supported`). `--env` rejects, before calling anyone, a name that
-looks like a secret (`*_TOKEN`, `*_KEY`, `*_SECRET`, `*_PASSWORD`...): use
+looks like a secret (`*_TOKEN`, `*_KEY`, `*_SECRET`, `*_PASSWORD`..., or with a
+`PASS`, `PASSWD`, `PAT`, `CREDENTIAL`, `CREDENTIALS`, `AUTH` or `BEARER`
+segment, such as `DB_PASS` or `AUTH_HEADER`, case-insensitive): use
 `--secret-env` or `--secret-env-from`.
 
 With several graphs in `langgraph.json`, `detect` and `deploy` accept
@@ -785,7 +787,7 @@ available inside your account, with sign-in and audit:
 ```bash
 rayito [--profile P] [--region R] [--json] [--verbose] setup
        [--bucket BUCKET] [--artifact PATH] [--tag K=V ...] [--yes] [--dry-run]
-       [--no-caps-image]
+       [--caps-image]
 ```
 
 Prepares the account and region for Rayito in one idempotent command, like
@@ -798,7 +800,7 @@ Prepares the account and region for Rayito in one idempotent command, like
 | `--tag K=V` | Etiqueta K=V; repetible. Se aplica a las pilas que crea setup (rayito-m0-artifacts y rayito-m0-iam) y CloudFormation la propaga a sus recursos; útil si la organización exige etiquetas. (Help text, in Spanish like the rest of the CLI: K=V tag, repeatable; applied to the stacks setup creates and propagated by CloudFormation to their resources; useful if your organization requires tags. Reused stacks are not retagged and the image gets none.) |
 | `--yes` | Do not ask for confirmation (required without a terminal or with `--json` if there is anything to create). |
 | `--dry-run` | Only reads the account and shows the plan; creates or changes nothing. |
-| `--no-caps-image` | Do not publish `rayito-base-caps`, the base of the MicroVM agent (the same image with `additionalOsCapabilities` `ALL`); by default it is published from the same zip. The step shows as `skip` and neither reads nor writes that image. |
+| `--caps-image` | Also publish `rayito-base-caps`, the base of the MicroVM agent (the same image with `additionalOsCapabilities` `ALL`, from the same zip). It is one more image version that costs money, so it is off: without the option the step shows as `skip` and neither reads nor writes that image. `rayito agent deploy` on MicroVM needs it. |
 
 `RAYITO_BUCKET` is read by the command, not by the parser, like `rayito doctor`.
 
@@ -854,8 +856,10 @@ rayito setup --tag Owner=platform --tag Project=agents
   `rayito agent deploy` uses on MicroVM. It is decided like the image and
   published from **the same zip** (one download) with
   `additionalOsCapabilities=["ALL"]`, like
-  `rayito image publish --os-capabilities ALL`. With `--no-caps-image` the step
-  is `skip`: it is neither read nor published.
+  `rayito image publish --os-capabilities ALL`. Only with `--caps-image`:
+  without it the step is `skip` and the image is neither read nor published.
+  If `rayito agent deploy` (MicroVM) later does not find it, it fails with a
+  message that asks for `rayito setup --caps-image`.
 
 The plan is `ready` when every step is `reuse` (or `skip`). It asks for confirmation
 if any step is `create`, `update` or `publish`: on a terminal, with
@@ -879,13 +883,12 @@ rayito setup: cuenta 123456789012, región us-east-1
   bucket rayito-artifacts-<account>-<region>: crear con la pila rayito-m0-artifacts (nombre por defecto de Rayito)
   pila de IAM rayito-m0-iam: crear
   imagen rayito-base: publicar desde rayd-v0.17.0 (≈ 10 min)
-  imagen con capacidades rayito-base-caps: publicar desde rayd-v0.17.0 (≈ 10 min)
+  imagen con capacidades rayito-base-caps: omitida (sin --caps-image)
 Coste aproximado:
   bucket de artefactos: los zips de la imagen caducan a los 7 días (regla de ciclo de vida)
   pila de IAM: gratis
   imagen: ≈ $0,04 por semana por versión publicada (mínimo una semana)
   zip de la imagen en el bucket: céntimos
-  imagen con capacidades: ≈ $0,04 por semana por versión publicada ($0,08 por GB-mes, mínimo una semana); --no-caps-image la omite
 no se creó ni cambió nada (--dry-run)
 ```
 
@@ -909,7 +912,7 @@ and `exitCode`. Each element of `steps` carries `resource` (`bucket`,
 `cdkBootstrap`, `artifactStack`, `rayitoDefault`, `release`, `artifact` or `null`), `status`, `imageVersion`,
 `release` and `previousBucket`. `result` (`bucket`, `imageArn`,
 `imageVersion`, `artifactUploaded`, `capsImageArn` and `capsImageVersion`, the
-last two `null` with `--no-caps-image`) is `null` until the preparation finishes;
+last two `null` without `--caps-image`) is `null` until the preparation finishes;
 `doctor` is the document of `rayito --json doctor`, or `null` with `--dry-run`
 and if the preparation stopped earlier; `error` is `{"code", "message"}` or
 `null`. On an error the message also goes to stderr as `rayito: <message>`.
@@ -931,15 +934,14 @@ and if the preparation stopped earlier; `error` is `{"code", "message"}` or
     {"resource": "baseImage", "name": "rayito-base", "action": "publish",
      "source": "release", "status": null, "imageVersion": null,
      "release": "rayd-v0.17.0", "previousBucket": null},
-    {"resource": "capsImage", "name": "rayito-base-caps", "action": "publish",
-     "source": "release", "status": null, "imageVersion": null,
-     "release": "rayd-v0.17.0", "previousBucket": null}
+    {"resource": "capsImage", "name": "rayito-base-caps", "action": "skip",
+     "source": null, "status": null, "imageVersion": null,
+     "release": null, "previousBucket": null}
   ],
   "cost": [
     "pila de IAM: gratis",
     "imagen: ≈ $0,04 por semana por versión publicada (mínimo una semana)",
-    "zip de la imagen en el bucket: céntimos",
-    "imagen con capacidades: ≈ $0,04 por semana por versión publicada ($0,08 por GB-mes, mínimo una semana); --no-caps-image la omite"
+    "zip de la imagen en el bucket: céntimos"
   ],
   "result": null,
   "doctor": null,
@@ -958,14 +960,14 @@ and if the preparation stopped earlier; `error` is `{"code", "message"}` or
       (`CreateStack`/`UpdateStack` with `CAPABILITY_NAMED_IAM`); the
       `rayito-base` and `rayito-base-caps` images (one shared object in the
       bucket, and `CreateMicrovmImage` or `UpdateMicrovmImage` per image; the
-      second with `additionalOsCapabilities=["ALL"]`); reads of `GetCallerIdentity`, `DescribeStacks`,
+      second, only with `--caps-image`, with `additionalOsCapabilities=["ALL"]`); reads of `GetCallerIdentity`, `DescribeStacks`,
       `HeadBucket`, `GetMicrovmImage` and `ListMicrovmImageVersions`; the HTTPS
       download of `rayito-image.zip` and `SHA256SUMS`. The SDK does not call
       `CreateBucket`: CloudFormation creates the bucket with your credentials.
     - **Approximate cost:** IAM stack, free; the bucket costs nothing to exist
       and its zips expire after 7 days; each published version of each image
       ≈ $0.04 per week ($0.08 per GB-month, minimum one week; with
-      `--no-caps-image`, one image less); the zip in the bucket, cents. See
+      `--caps-image`, one image more); the zip in the bucket, cents. See
       [Pricing](cost.md).
     - **IAM:** administrator or *bootstrap* credentials, once, like
       `cdk bootstrap`: CloudFormation, IAM (roles and policies), publishing the
@@ -975,8 +977,8 @@ and if the preparation stopped earlier; `error` is `{"code", "message"}` or
       `s3:PutBucketTagging`, `s3:GetBucketPolicy`, `s3:PutBucketPolicy`). To use
       the SDK afterwards, the minimal policy of
       [Set up AWS](primeros-pasos/configurar-aws.md#3-la-pila-de-iam).
-    - **How to turn it off:** do not run it; `--no-caps-image` does not publish
-      `rayito-base-caps`; to undo it, delete the stacks
+    - **How to turn it off:** do not run it; without `--caps-image` (the
+      default) it does not publish `rayito-base-caps`; to undo it, delete the stacks
       (`rayito-m0-iam` and, if it exists, `rayito-m0-artifacts`) and the image
       versions. The created bucket is kept: empty and delete it by hand.
     - **Example:** `rayito setup --dry-run`.

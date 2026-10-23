@@ -19,7 +19,6 @@ import {
   InvalidArgumentError,
   SandboxError,
   SandboxNotFoundError,
-  SecretError,
 } from "../errors.js";
 import type { DynamoDbIndex } from "../index/dynamodb.js";
 import { AGENT_SERVICE_READY_MARKER_PATH } from "../limits.js";
@@ -78,7 +77,7 @@ import {
   vmLostMessage,
   withHandle,
 } from "./fleet-base.js";
-import { type FleetRecipe, recipeOf } from "./fleet-recipe.js";
+import { type FleetRecipe, recipeOf, renewalOnConnect } from "./fleet-recipe.js";
 import {
   defaultRecipeStore,
   type FleetRecipeStore,
@@ -86,11 +85,11 @@ import {
   loadRecipe,
   RECIPE_SAVED,
   storeRecipe,
+  warnRecipe,
 } from "./fleet-recipe-aws.js";
 import {
   type GatewayKeyRenewer,
   gatewayKeyRenewer,
-  PERMISSION_DENIED_CODE,
   RENEW_NEEDS_BEDROCK,
   renewableGateways,
 } from "./gateway-keys.js";
@@ -115,18 +114,6 @@ const NO_PROJECT_MESSAGE =
   "esta flota se reconectó sin proyecto ni receta: no puede crear ni arrancar VMs; " +
   "pasa project a AgentFleet.connect() o despliégala con rayito agent deploy";
 const PARKED_SLOT_MESSAGE = "una plaza aparcada no pudo abrir las pasarelas del proyecto";
-/** El código del aviso cuando falta el peer `@aws/bedrock-token-generator`. */
-const RENEWAL_MISSING_PEER = "missing_extra";
-/** Los códigos que apagan una renovación heredada de la receta: falta el peer
- * del generador o el llamante no puede escribir el secreto. */
-const RENEWAL_DISABLING_CODES: ReadonlySet<string> = new Set([
-  RENEWAL_MISSING_PEER,
-  PERMISSION_DENIED_CODE,
-]);
-
-function isRenewalError(error: unknown): error is InvalidArgumentError | SecretError {
-  return error instanceof InvalidArgumentError || error instanceof SecretError;
-}
 
 /** Una plaza aparcada que no pudo abrir las pasarelas del proyecto: la flota
  * ya la sacó y la sustituyó, y quien la eligió busca otra. */
@@ -472,7 +459,6 @@ export class AgentFleet {
   readonly #credentials: AwsClientSettings["credentials"] | undefined;
   readonly #logger: Logger | undefined;
   #renewKeys: boolean;
-  #renewInherited = false;
   #renewer: Pick<GatewayKeyRenewer, "renew"> | undefined;
   #renewing: Promise<void> | undefined;
   #recipeStore: FleetRecipeStore | undefined;
@@ -528,9 +514,11 @@ export class AgentFleet {
    *
    * Sin `project` y con `useRecipe` (por defecto) lee la receta que guardó
    * `deployAgent()` (un `GetParameter`): con ella la flota crea VMs iguales a
-   * los del despliegue (proyecto tras las banderas, versión de la imagen,
-   * escalado y renovación de claves) y `status()` da su escalado real. Un
-   * `scaling` o un `renewGatewayKeys` explícitos ganan a la receta. Sin
+   * los del despliegue (proyecto tras las banderas, versión de la imagen y
+   * escalado) y `status()` da su escalado real. Un `scaling` explícito gana a
+   * la receta. Las claves de Bedrock sólo se renuevan con
+   * `renewGatewayKeys: true`: si la receta lo pedía y no lo pasas, la flota
+   * no renueva y avisa `recipe_renewal_ignored`. Sin
    * receta (o con `project`, o `useRecipe: false`), la flota es la de 0.16:
    * sin `project` enruta y consulta pero no puede crear VMs; sin
    * `accessToken`, sólo puede listarse o terminarse. */
@@ -548,15 +536,18 @@ export class AgentFleet {
       project = loaded?.project;
       recipe = loaded?.recipe;
     }
+    const renewal = renewalOnConnect(recipe, options.renewGatewayKeys);
+    if (renewal.warning !== undefined) {
+      warnRecipe(options.logger, renewal.warning);
+    }
     const fleet = new AgentFleet({
       ...rest,
       name,
       project,
       recipe,
       recipeStore,
-      renewGatewayKeys: options.renewGatewayKeys ?? recipe?.renewGatewayKeys ?? false,
+      renewGatewayKeys: renewal.renew,
     });
-    fleet.#renewInherited = options.renewGatewayKeys === undefined;
     await fleet.refreshMembers();
     return fleet;
   }
@@ -1322,25 +1313,14 @@ export class AgentFleet {
     await this.#renewing;
   }
 
-  /** Heredada de la receta (sin `renewGatewayKeys` explícito), una
-   * renovación sin el peer o sin permiso de escribir el secreto se apaga
-   * con un aviso y la flota sigue con la clave que haya; cualquier otro
-   * fallo sólo avisa. Pedida de forma explícita, el error se propaga. */
+  /** Sólo se activa con la opción explícita de quien llama (nunca desde la
+   * receta), así que un error de la renovación se propaga. */
   async #renewOnce(): Promise<void> {
-    let renewed: boolean;
-    try {
-      this.#renewer ??= await gatewayKeyRenewer(this.#requireProject(), {
-        region: this.#connection.region,
-        credentials: this.#credentials,
-      });
-      renewed = await this.#renewer.renew();
-    } catch (error) {
-      if (!this.#renewInherited || !isRenewalError(error)) {
-        throw error;
-      }
-      this.#skipRenewal(error);
-      return;
-    }
+    this.#renewer ??= await gatewayKeyRenewer(this.#requireProject(), {
+      region: this.#connection.region,
+      credentials: this.#credentials,
+    });
+    const renewed = await this.#renewer.renew();
     if (!renewed) {
       return;
     }
@@ -1354,15 +1334,6 @@ export class AgentFleet {
         this.#logger?.warn?.("no se pudo refrescar la pasarela de un VM de la flota");
       }
     }
-  }
-
-  #skipRenewal(error: InvalidArgumentError | SecretError): void {
-    const code =
-      error.code ?? (error instanceof InvalidArgumentError ? RENEWAL_MISSING_PEER : error.name);
-    if (RENEWAL_DISABLING_CODES.has(code)) {
-      this.#renewKeys = false;
-    }
-    this.#logger?.warn?.("la flota no renovó la clave de su pasarela (receta)", { code });
   }
 
   // -------------------------------------------------------------- warm pool

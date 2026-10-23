@@ -56,7 +56,7 @@ def request_for(name: str) -> SetupRequest:
         environment_bucket=vector["environmentBucket"],
         artifact=None if vector["artifact"] is None else Path(vector["artifact"]),
         sdk_version=SDK_VERSION,
-        caps_image=not vector.get("noCapsImage", False),
+        caps_image=vector.get("capsImageRequested", False),
     )
 
 
