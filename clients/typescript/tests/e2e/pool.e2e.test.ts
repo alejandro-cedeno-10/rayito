@@ -23,7 +23,7 @@ import { createTestSandbox, e2eEnabled, seconds, useE2E, waitUntil } from "./hel
 
 const TAKES = 5;
 /** Los `create()` de referencia, medidos en la misma corrida y con la misma red. */
-const CREATES = 2;
+const CREATES = 3;
 /** Q56: 0,77 s frente a 5-6 s, un factor de ≈ 7; la regla deja margen. */
 const TAKE_TO_CREATE_RATIO = 3;
 /** El doble del presupuesto de D17 (1,5 s): una regresión real lo cruza. */

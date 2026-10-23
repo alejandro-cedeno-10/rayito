@@ -291,10 +291,10 @@ class MemberListing:
 
 
 def listed_image_version(items: Sequence[MemberListing]) -> str | None:
-    """La versión de imagen del miembro más reciente que la lleva: con la
+    """La versión de imagen del miembro probado más reciente que la lleva: con la
     que una flota reconectada sin receta crea sus VMs nuevos, en vez de la
     más reciente de la imagen."""
-    versioned = [item for item in items if item.template_version]
+    versioned = [item for item in items if item.template_version and item.proven]
     if not versioned:
         return None
     return max(versioned, key=lambda item: item.started_at).template_version
