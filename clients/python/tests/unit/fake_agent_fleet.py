@@ -360,6 +360,9 @@ class FleetSandboxClass:
         self.listed: list[dict[str, Any]] = []
         self.session_hits: dict[str, str] = {}
         self.create_error: Exception | None = None
+        self.probe_errors: dict[str, Exception] = {}
+        self.probe_states: dict[str, str] = {}
+        self.probed: list[str] = []
         self._next = 1
 
     def add(
@@ -417,6 +420,22 @@ class FleetSandboxClass:
             if wanted is None or sbx.state in wanted
         ]
 
+    def _get_info(self, sandbox_id: str) -> ListedItem:
+        """`Sandbox.get_info(sandbox_id)` de doble: `probe_errors` simula un
+        `Health` que falla y `probe_states` un VM que cambió de estado entre
+        el listado y la sonda."""
+        self.probed.append(sandbox_id)
+        error = self.probe_errors.get(sandbox_id)
+        if error is not None:
+            raise error
+        sbx = self.sandboxes[sandbox_id]
+        return ListedItem(
+            sbx.sandbox_id,
+            self.probe_states.get(sandbox_id, sbx.state),
+            START + timedelta(seconds=sbx.number),
+            dict(sbx.metadata),
+        )
+
     def _connect(self, sandbox_id: str) -> FleetSandbox:
         self.connected.append(sandbox_id)
         sandbox = self.sandboxes[sandbox_id]
@@ -439,6 +458,11 @@ class FleetSandboxClass:
         if self.asynchronous:
             return FleetSandbox._async_call(lambda: self._connect(sandbox_id))
         return self._connect(sandbox_id)
+
+    def get_info(self, sandbox_id: str, **kwargs: Any) -> Any:
+        if self.asynchronous:
+            return FleetSandbox._async_call(lambda: self._get_info(sandbox_id))
+        return self._get_info(sandbox_id)
 
     def list(self, **kwargs: Any) -> Any:
         if self.asynchronous:

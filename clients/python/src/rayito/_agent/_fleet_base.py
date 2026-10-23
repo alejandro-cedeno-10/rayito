@@ -98,6 +98,12 @@ UNMANAGED_LIFETIME_MESSAGE: Final = (
     "min_vms): no se reducirá solo; termínalo con stop() o vuelve a desplegar"
 )
 
+#: Lo que se loguea (sólo el id y la clase del error) cuando la sonda de un
+#: VM `RUNNING` falla al listar la flota: se trata como un VM que termina.
+UNREADABLE_MEMBER_MESSAGE: Final = (
+    "el VM %s de la flota no respondió a Health al listarla (%s): se trata como un VM que termina"
+)
+
 MemberHealth = Literal["healthy", "busy", "unavailable", "unknown"]
 #: De dónde sale el escalado de una flota: `scaling=` explícito, el
 #: proyecto, la receta guardada por `deploy_agent()` o, sin ninguno, los
@@ -122,14 +128,34 @@ def owned_ids(items: Iterable[Any]) -> set[str]:
     return owned
 
 
-def select_members(items: Sequence[MemberListing], owned: Collection[str]) -> list[MemberListing]:
+def probed_running(info: Any) -> Any | None:
+    """La `SandboxInfo` sondeada de un VM si sigue `RUNNING`; `None` si dejó
+    de estarlo entre `list-microvms` y la sonda (lo que pasa con un VM que se
+    termina al reducir la flota)."""
+    return info if info.state == AGENT_FLEET_PROBE_STATE else None
+
+
+def select_members(
+    items: Sequence[MemberListing],
+    owned: Collection[str],
+    unreadable: Collection[str] = frozenset(),
+) -> list[MemberListing]:
     """Los VMs de una imagen que cuentan como miembros de la flota. Un VM
     `RUNNING` lo es sólo si sus etiquetas lo prueban (`owned`); los que no
     están `RUNNING` no se pueden sondear sin despertarlos, así que cuentan
     salvo que la imagen ya haya demostrado tener VMs que no son de un agente:
-    entonces ninguno se da por miembro, para no terminar sandboxes ajenos."""
+    entonces ninguno se da por miembro, para no terminar sandboxes ajenos.
+
+    `unreadable` son los VMs `RUNNING` cuya sonda falló o que dejaron de
+    estar `RUNNING` al sondearlos: la plataforma aún los lista, pero su
+    `rayd` ya no responde (un VM que se está terminando al reducir la
+    flota). No cuentan como miembros ni prueban que la imagen sea
+    compartida: se tratan como VMs que terminan."""
     shared_image = any(
-        item.state == AGENT_FLEET_PROBE_STATE and item.sandbox_id not in owned for item in items
+        item.state == AGENT_FLEET_PROBE_STATE
+        and item.sandbox_id not in owned
+        and item.sandbox_id not in unreadable
+        for item in items
     )
     return [
         item

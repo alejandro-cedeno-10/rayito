@@ -331,18 +331,33 @@ export function ownedIds(
  * `RUNNING` lo es sólo si sus etiquetas lo prueban (`owned`); los que no están
  * `RUNNING` no se pueden sondear sin despertarlos, así que cuentan salvo que
  * la imagen ya haya demostrado tener VMs que no son de un agente: entonces
- * ninguno se da por miembro, para no terminar sandboxes ajenos. */
+ * ninguno se da por miembro, para no terminar sandboxes ajenos.
+ *
+ * `unreadable` son los VMs `RUNNING` cuya sonda falló o que dejaron de estar
+ * `RUNNING` al sondearlos: la plataforma aún los lista, pero su `rayd` ya no
+ * responde (un VM que se está terminando al reducir la flota). No cuentan como
+ * miembros ni prueban que la imagen sea compartida: se tratan como VMs que
+ * terminan. */
 export function selectMembers(
   items: readonly MemberListing[],
   owned: ReadonlySet<string>,
+  unreadable: ReadonlySet<string> = new Set(),
 ): MemberListing[] {
   const sharedImage = items.some(
-    (item) => item.state === AGENT_FLEET_PROBE_STATE && !owned.has(item.sandboxId),
+    (item) =>
+      item.state === AGENT_FLEET_PROBE_STATE &&
+      !owned.has(item.sandboxId) &&
+      !unreadable.has(item.sandboxId),
   );
   return items.filter((item) =>
     item.state === AGENT_FLEET_PROBE_STATE ? owned.has(item.sandboxId) : !sharedImage,
   );
 }
+
+/** Lo que se loguea (sólo el id y la clase del error) cuando la sonda de un VM
+ * `RUNNING` falla al listar la flota: se trata como un VM que termina. */
+export const UNREADABLE_MEMBER_MESSAGE =
+  "un VM de la flota no respondió a Health al listarla: se trata como un VM que termina";
 
 export interface FleetMemberStatus {
   readonly sandboxId: string;

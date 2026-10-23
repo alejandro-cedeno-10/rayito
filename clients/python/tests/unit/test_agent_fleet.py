@@ -826,6 +826,52 @@ def test_a_suspended_vm_counts_while_the_image_only_has_agents(flavor: FleetFlav
     assert flavor.classes.connected == []
 
 
+def test_a_vm_whose_health_fails_while_listing_is_left_out_as_terminating(
+    flavor: FleetFlavor, caplog: pytest.LogCaptureFixture
+) -> None:
+    alive = flavor.classes.add()
+    dying = flavor.classes.add()
+    parked = flavor.classes.add(state="SUSPENDED")
+    flavor.classes.probe_errors[dying.sandbox_id] = SandboxException("Health no respondió")
+    fleet = flavor.call(
+        (AsyncAgentFleet if flavor.asynchronous else AgentFleet).connect(
+            "support-bot", access_token=TOKEN, directory=flavor.classes_directory()
+        )
+    )
+
+    assert fleet.sandbox_ids == (alive.sandbox_id, parked.sandbox_id)
+    assert all(member.sandbox_id != dying.sandbox_id for member in flavor.call(fleet.status()).members)
+    assert dying.sandbox_id in caplog.text
+    assert "Health no respondió" not in caplog.text
+    flavor.call(fleet.refresh_members())
+    assert fleet.sandbox_ids == (alive.sandbox_id, parked.sandbox_id)
+
+
+def test_a_vm_that_left_running_before_its_probe_is_not_a_member(flavor: FleetFlavor) -> None:
+    alive = flavor.classes.add()
+    leaving = flavor.classes.add()
+    flavor.classes.probe_states[leaving.sandbox_id] = "TERMINATING"
+    fleet = flavor.call(
+        (AsyncAgentFleet if flavor.asynchronous else AgentFleet).connect(
+            "support-bot", access_token=TOKEN, directory=flavor.classes_directory()
+        )
+    )
+
+    assert fleet.sandbox_ids == (alive.sandbox_id,)
+
+
+def test_listing_never_probes_a_vm_that_is_not_running(flavor: FleetFlavor) -> None:
+    running = flavor.classes.add()
+    flavor.classes.add(state="SUSPENDED")
+    flavor.call(
+        (AsyncAgentFleet if flavor.asynchronous else AgentFleet).connect(
+            "support-bot", access_token=TOKEN, directory=flavor.classes_directory()
+        )
+    )
+
+    assert flavor.classes.probed == [running.sandbox_id]
+
+
 # --------------------------------------------------------------------- stream
 
 

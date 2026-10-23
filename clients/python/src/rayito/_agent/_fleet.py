@@ -32,6 +32,7 @@ from rayito._agent._fleet_base import (
     AGENT_FLEET_START_CONCURRENCY,
     AGENT_VM_LOST_CODE,
     UNMANAGED_LIFETIME_MESSAGE,
+    UNREADABLE_MEMBER_MESSAGE,
     FleetLifetime,
     FleetMemberStatus,
     FleetSettings,
@@ -54,6 +55,7 @@ from rayito._agent._fleet_base import (
     ping_is_fresh,
     plan_placement,
     pool_config_for,
+    probed_running,
     record_busy,
     record_ping,
     restore_seconds,
@@ -190,10 +192,30 @@ class SandboxDirectory:
                 template=template, states=AGENT_FLEET_LIVE_STATES, **self._options()
             )
         ]
-        probed = sandbox_class.list(
-            template=template, states=(AGENT_FLEET_PROBE_STATE,), metadata={}, **self._options()
-        )
-        return select_members(listed, owned_ids(probed))
+        probed: list[Any] = []
+        unreadable: set[str] = set()
+        for item in listed:
+            if item.state != AGENT_FLEET_PROBE_STATE:
+                continue
+            info = self._probe(sandbox_class, item.sandbox_id)
+            if info is None:
+                unreadable.add(item.sandbox_id)
+            else:
+                probed.append(info)
+        return select_members(listed, owned_ids(probed), unreadable)
+
+    def _probe(self, sandbox_class: Any, sandbox_id: str) -> Any | None:
+        """La `SandboxInfo` con metadatos de un VM `RUNNING`
+        (`get_info(sandbox_id)`: `get-microvm` más un `Health` sin token), o
+        `None` si su sonda falla o ya no está `RUNNING`: un VM que la
+        plataforma aún lista pero cuyo `rayd` ya salió no tumba el listado
+        de toda la flota."""
+        try:
+            info = sandbox_class.get_info(sandbox_id, **self._options())
+        except SandboxException as exc:
+            logger.warning(UNREADABLE_MEMBER_MESSAGE, sandbox_id, type(exc).__name__)
+            return None
+        return probed_running(info)
 
     def connect(self, sandbox_id: str, access_token: str) -> Any:
         return self._sandbox().connect(sandbox_id, access_token=access_token, **self._options())
