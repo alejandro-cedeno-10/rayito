@@ -101,6 +101,14 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   (`AGENT_FLEET_PROBE_CONCURRENCY`), con los resultados y los avisos en el
   orden del listado; si un error del plano de control hace fallar el
   listado, no empieza ninguna sonda más.
+- **`--renew-gateway-keys` escribe la clave al desplegar aunque el secreto
+  sea nuevo.** La renovación sólo escribía sobre un secreto que cambió hace
+  más de 900 s, así que un secreto creado justo antes del despliegue se
+  quedaba con su valor marcador y la primera invocación recibía 403 de
+  Bedrock. El despliegue que pide la renovación escribe ahora siempre una
+  clave nueva una vez, antes del primer VM; la ventana sólo limita las
+  renovaciones de cada VM nuevo (ADR-034 D9 g). El e2e de Q193 vuelve a
+  desplegar sobre un secreto recién creado, sin trucos de reloj.
 - **Las variables de `Template.set_envs()` se ven en los comandos.** `rayd`
   arranca cada proceso con un entorno limpio, así que el `ENV` del template
   sólo llegaba al propio `rayd`: `commands.run`, las PTY y `run_code` no las
@@ -126,10 +134,7 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   «el host del agente no pudo arrancar (entrypoint_not_found)».
 - **La CLI sale en silencio si el lector cierra la salida** (`rayito ... |
   head`): código 1 y sin traza, también fuera de un comando de Click.
-- **e2e.** `test_fleet_recipe.py` (`RAYITO_E2E_RENEWAL=1`) corre la
-  renovación con su reloj adelantado la ventana de
-  `gatewayKeyRenewAfterSeconds` en vez de desplegar sobre un secreto recién
-  creado, que la renovación no reescribe; `test_account_setup.py` espera el
+- **e2e.** `test_account_setup.py` espera el
   paso `capsImage` (`skip`) de 0.17.0; `test_agent_project_cli.py` escribe
   `[image] base` de `RAYITO_E2E_AGENT_PROJECT_BASE` y para la flota por su
   nombre (lo que borra su receta); `test_m15_templates.py` se salta sin

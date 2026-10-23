@@ -537,6 +537,7 @@ def deploy_with(
         renew_gateway_keys=chosen.renew_gateway_keys,
         **{"service": service, **dict(ports.fleet_kwargs)},
     )
+    fleet._renew_keys(force=True)
     fleet.start()
     _emit(chosen, (AgentDeployStep(STEP_FLEET, str(len(fleet.sandbox_ids))),))
     _emit(chosen, _recipe_steps(fleet._save_recipe() if chosen.save_recipe else None))
@@ -593,6 +594,7 @@ async def deploy_with_async(
         renew_gateway_keys=chosen.renew_gateway_keys,
         **{"service": service, **dict(ports.fleet_kwargs)},
     )
+    await fleet._renew_keys(force=True)
     await fleet.start()
     _emit(chosen, (AgentDeployStep(STEP_FLEET, str(len(fleet.sandbox_ids))),))
     _emit(chosen, _recipe_steps(await fleet._save_recipe() if chosen.save_recipe else None))

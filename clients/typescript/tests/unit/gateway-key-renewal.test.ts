@@ -178,6 +178,26 @@ describe("gateway key renewal", () => {
     expect(regions).toEqual(["us-east-1"]);
   });
 
+  test("the deploy renewal writes even a secret that just changed", async () => {
+    const secrets = new FakeSecrets();
+    secrets.changed = new Date(NOW - 10 * MS);
+    const clock = { now: NOW };
+    const regions: string[] = [];
+    const renewer = renewerOf(secrets, clock, regions);
+    expect(await renewer.renew({ force: true })).toBe(true);
+    clock.now += 100 * MS;
+    expect(await renewer.renew()).toBe(false);
+    expect(secrets.names).toEqual(["PutSecretValue"]);
+    expect(regions).toEqual(["us-east-1"]);
+  });
+
+  test("without force a young secret is not rewritten", async () => {
+    const secrets = new FakeSecrets();
+    secrets.changed = new Date(NOW - 10 * MS);
+    expect(await renewerOf(secrets, { now: NOW }).renew()).toBe(false);
+    expect(secrets.names).toEqual(["DescribeSecret"]);
+  });
+
   test("three creations in five minutes write once and ask once", async () => {
     const secrets = new FakeSecrets();
     secrets.changed = new Date(NOW - 3_600 * MS);

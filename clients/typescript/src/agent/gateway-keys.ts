@@ -202,16 +202,24 @@ export class GatewayKeyRenewer {
   }
 
   /** Renueva las pasarelas que lo necesitan; `true` si escribió alguna clave
-   * (quien llama refresca las pasarelas de los VMs abiertos). */
-  async renew(): Promise<boolean> {
+   * (quien llama refresca las pasarelas de los VMs abiertos). Con `force` (el
+   * despliegue que pidió la renovación) escribe una clave nueva en cada
+   * pasarela sin mirar cuándo cambió el secreto: un secreto recién creado con
+   * un valor marcador también la recibe. Sin `force` (las renovaciones de
+   * cada VM nuevo) se respeta la ventana de `gatewayKeyRenewAfterSeconds`. */
+  async renew(options: { readonly force?: boolean | undefined } = {}): Promise<boolean> {
     let renewed = false;
     for (const gateway of this.#gateways) {
-      renewed = (await this.#renewOne(gateway)) || renewed;
+      renewed = (await this.#renewOne(gateway, options.force === true)) || renewed;
     }
     return renewed;
   }
 
-  async #renewOne(gateway: RenewableGateway): Promise<boolean> {
+  async #renewOne(gateway: RenewableGateway, force: boolean): Promise<boolean> {
+    if (force) {
+      await this.#write(gateway);
+      return true;
+    }
     const last = this.#renewedAt.get(gateway.name);
     if (!shouldDescribe(last === undefined ? undefined : this.#now() - last)) {
       return false;
@@ -224,6 +232,11 @@ export class GatewayKeyRenewer {
       this.#renewedAt.set(gateway.name, this.#now());
       return false;
     }
+    await this.#write(gateway);
+    return true;
+  }
+
+  async #write(gateway: RenewableGateway): Promise<void> {
     const token = await this.#tokenProvider(gateway.region);
     await this.#call(gateway, "putSecretValue", () =>
       this.#secrets.putSecretValue({
@@ -233,7 +246,6 @@ export class GatewayKeyRenewer {
       }),
     );
     this.#renewedAt.set(gateway.name, this.#now());
-    return true;
   }
 
   async #call<T>(

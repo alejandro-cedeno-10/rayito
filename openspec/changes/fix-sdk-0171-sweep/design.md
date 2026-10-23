@@ -76,5 +76,15 @@ for visibility, polls every expected status, waits for the sandbox server
 to listen, and its WebSocket echo serves several connections so a rejected
 upgrade is retried. The dashboard read-only e2e compares the estimate with
 a listing that keeps terminated sandboxes and checks the image filter on
-its own views. The renewal e2e runs the production renewer once with its
-injectable clock moved forward by `gatewayKeyRenewAfterSeconds`.
+its own views. The renewal e2e deploys over a secret created just before, with no clock
+trick: the deploy itself writes the fresh key (D7).
+
+## D7. The deploy that asks for renewal always writes a key
+
+`GatewayKeyRenewer.renew(force=True)` / `renew({ force: true })` writes a
+fresh key on every `bedrock` gateway without `DescribeSecret` and records
+the write, so the renewals before each VM that follow inside the window
+write nothing. `deploy_agent()` / `deployAgent()` calls it once, before
+`start()`. A secret created just before the deploy (a placeholder value) is
+younger than `gatewayKeyRenewAfterSeconds`, and without this the first
+invocation got 403 from Bedrock. ADR-034 D9 (g).

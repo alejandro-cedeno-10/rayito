@@ -163,8 +163,9 @@ class FleetKeyRenewal:
     def enabled(self) -> bool:
         return self._enabled
 
-    def renew(self) -> bool:
-        """Renueva las claves que lo necesitan; `True` si escribió alguna."""
+    def renew(self, *, force: bool = False) -> bool:
+        """Renueva las claves que lo necesitan; `True` si escribió alguna.
+        `force` es la renovación del despliegue (`GatewayKeyRenewer.renew`)."""
         with self._lock:
             if not self._enabled or self._project is None:
                 return False
@@ -172,7 +173,7 @@ class FleetKeyRenewal:
                 self._renewer = gateway_key_renewer(
                     self._project, region=self._region, session=self._session
                 )
-            return self._renewer.renew()
+            return self._renewer.renew(force=True) if force else self._renewer.renew()
 
 
 class SandboxDirectory:
@@ -1256,10 +1257,13 @@ class AgentFleet:
             self._recipe_known = True
         return outcome
 
-    def _renew_keys(self) -> None:
+    def _renew_keys(self, *, force: bool = False) -> None:
         """Con `renew_gateway_keys`, renueva las claves que lo necesiten y,
-        si escribió alguna, refresca las pasarelas de los VMs abiertos."""
-        if not self._key_renewal.renew():
+        si escribió alguna, refresca las pasarelas de los VMs abiertos.
+        `deploy_agent()` la llama una vez con `force` antes de `start()`: el
+        despliegue que pidió la renovación siempre escribe una clave
+        nueva."""
+        if not self._key_renewal.renew(force=force):
             return
         for deployment in self.deployments:
             try:

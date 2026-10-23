@@ -13,6 +13,7 @@ import logging
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine, Mapping, Sequence
 from datetime import UTC, datetime
+from functools import partial
 from types import TracebackType
 from typing import TYPE_CHECKING, Any, Self, TypeVar
 
@@ -1156,10 +1157,12 @@ class AsyncAgentFleet:
             self._recipe_known = True
         return outcome
 
-    async def _renew_keys(self) -> None:
+    async def _renew_keys(self, *, force: bool = False) -> None:
         """Como `AgentFleet._renew_keys`: la renovación (síncrona) corre en
         un hilo y los VMs abiertos refrescan su pasarela."""
-        if not self._key_renewal.enabled or not await asyncio.to_thread(self._key_renewal.renew):
+        if not self._key_renewal.enabled or not await asyncio.to_thread(
+            partial(self._key_renewal.renew, force=force)
+        ):
             return
         for deployment in self.deployments:
             try:
