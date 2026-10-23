@@ -382,9 +382,16 @@ class Driver:
         self._shared = threading.Lock()
 
     def warm(self) -> None:
+        """Importa Strands (y el harness si se usa) y, con `entrypoint`, tu
+        módulo y su atributo: un `--entry` que no existe falla al arrancar el
+        servicio (`entrypoint_not_found`) y no en la primera invocación."""
         importlib.import_module("strands")
         if self._config.get("harness"):
             importlib.import_module("strands_harness")
+        entrypoint = self._config.get("entrypoint")
+        if entrypoint:
+            add_import_roots(self._config.get("app_dir"), self._config.get("workdir"))
+            load_attribute(str(entrypoint))
 
     def run(self, request: Request, emit: Emit, state: RunState) -> None:
         config = self._config
