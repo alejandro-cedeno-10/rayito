@@ -89,7 +89,7 @@ ARTIFACT_BUCKET_PARAMETER: Final = "ArtifactBucket"
 TEMPLATE_FINGERPRINT_PARAMETER: Final = "TemplateFingerprint"
 #: Los tres números de una versión del SDK (`0.17.1`, `0.18.0rc1` -> 0, 18,
 #: 0): lo que se compara con la etiqueta `rayito:sdk-version` de la pila.
-RELEASE_NUMBERS_PATTERN: Final = re.compile(r"^(\d+)\.(\d+)\.(\d+)")
+RELEASE_NUMBERS_PATTERN: Final = re.compile(r"^([0-9]+)\.([0-9]+)\.([0-9]+)")
 #: Prefijo de las etiquetas que reserva AWS: `UpdateStack` no las acepta.
 AWS_RESERVED_TAG_PREFIX: Final = "aws:"
 #: Plantilla de la pila de IAM; el mensaje `stack_incomplete` la nombra.

@@ -55,7 +55,7 @@ export const TEMPLATE_FINGERPRINT_PARAMETER = "TemplateFingerprint";
  * 0): lo que se compara con la etiqueta `rayito:sdk-version` de la pila.
  * Espejo de `RELEASE_NUMBERS_PATTERN`.
  */
-export const RELEASE_NUMBERS_PATTERN = /^(\d+)\.(\d+)\.(\d+)/;
+export const RELEASE_NUMBERS_PATTERN = /^([0-9]+)\.([0-9]+)\.([0-9]+)/;
 /** Prefijo de las etiquetas que reserva AWS: `UpdateStack` no las acepta. */
 export const AWS_RESERVED_TAG_PREFIX = "aws:";
 export { BUILD_ROLE_OUTPUT_KEY };
