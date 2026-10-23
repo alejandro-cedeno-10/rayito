@@ -141,6 +141,20 @@ describe("rayito agent with the fleet recipe", () => {
     expect(JSON.parse(outcome.stdout).warnings).toEqual(["recipe_access_denied"]);
   });
 
+  test("a fleet without members prints without a first VM", async () => {
+    const projects = new RecipeProjects();
+    projects.sandboxIds = [];
+    const json = await run(projects, ["--json", "agent", "deploy", "--min-vms", "0"]);
+    expect(json.exitCode).toBe(0);
+    const document = JSON.parse(json.stdout);
+    expect([document.sandboxId, document.url, document.sandboxIds]).toEqual([null, null, []]);
+    const text = await run(projects, ["agent", "deploy", "--min-vms", "0"]);
+    expect(text.exitCode).toBe(0);
+    expect(text.stdout).not.toContain("sandbox_id=");
+    expect(text.stdout).not.toContain("url=");
+    expect(text.stdout).toContain("members=0");
+  });
+
   test.each([["--scale-in-after", "300"], ["--no-save-recipe"], ["--renew-gateway-keys"]])(
     "%s is microvm only",
     async (...flags) => {

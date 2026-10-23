@@ -134,7 +134,15 @@ from rayito.cli._agentcore import (
     show_status,
     stop_session,
 )
-from rayito.cli._console import EXIT_FAILURE, EXIT_USAGE, echo, emit_json, fail, visible_controls
+from rayito.cli._console import (
+    EXIT_FAILURE,
+    EXIT_USAGE,
+    echo,
+    emit_json,
+    fail,
+    literal_help,
+    visible_controls,
+)
 from rayito.cli._session import clients_of, json_mode
 from rayito.cli._tokens import TOKEN_ENV_VAR, TokenFileError
 from rayito.cli.sandbox import TokenFileOption, kill_one, token_or_exit
@@ -841,7 +849,9 @@ def deploy_command(
             help="Crea el secreto que falte desde la variable del proveedor (cuesta $0,40/mes).",
         ),
     ] = False,
-    secret_env: Annotated[list[str], typer.Option("--secret-env", help=SECRET_ENV_HELP)] = [],  # noqa: B006
+    secret_env: Annotated[
+        list[str], typer.Option("--secret-env", help=literal_help(SECRET_ENV_HELP))
+    ] = [],  # noqa: B006
     secret_env_from: Annotated[
         list[str], typer.Option("--secret-env-from", help=SECRET_ENV_FROM_HELP)
     ] = [],  # noqa: B006
@@ -893,7 +903,7 @@ def deploy_command(
         bool, typer.Option("--external-model", help=EXTERNAL_MODEL_HELP)
     ] = False,
     scale_in_after: Annotated[
-        int | None, typer.Option("--scale-in-after", help=SCALE_IN_AFTER_HELP)
+        int | None, typer.Option("--scale-in-after", help=literal_help(SCALE_IN_AFTER_HELP))
     ] = None,
     save_recipe: Annotated[
         bool, typer.Option("--save-recipe/--no-save-recipe", help=SAVE_RECIPE_HELP)
@@ -1215,15 +1225,17 @@ def print_deployed(
     """El resultado de un despliegue: la flota, el primer VM con las claves de
     0.13 (`sandbox_id`, `url`, `port`) y dónde quedó el token. Nunca las
     cabeceras ni el token. Con avisos de la receta, `--json` añade
-    `warnings` (sólo los códigos)."""
-    first = fleet.deployments[0]
+    `warnings` (sólo los códigos). Una flota con `--min-vms 0` no deja ningún
+    VM con servicio: `sandboxId` y `url` son `null` y el texto no los
+    imprime."""
+    first = fleet.deployments[0] if fleet.deployments else None
     ids = list(fleet.sandbox_ids)
     if as_json:
         document: dict[str, Any] = {
             "name": fleet.name,
-            "sandboxId": first.sandbox_id,
+            "sandboxId": None if first is None else first.sandbox_id,
             "sandboxIds": ids,
-            "url": first.url,
+            "url": None if first is None else first.url,
             "port": port,
             "tokenFile": None if token_file is None else str(token_file),
         }
@@ -1232,8 +1244,9 @@ def print_deployed(
         emit_json(document)
         return
     echo(f"name={fleet.name}")
-    echo(f"sandbox_id={first.sandbox_id}")
-    echo(f"url={first.url}")
+    if first is not None:
+        echo(f"sandbox_id={first.sandbox_id}")
+        echo(f"url={first.url}")
     echo(f"port={port}")
     echo(f"members={len(ids)}")
     if token_file is not None:

@@ -115,6 +115,16 @@ def connected_fleet(monkeypatch: pytest.MonkeyPatch, fleet: FakeFleet) -> list[d
     return connected
 
 
+def test_the_rendered_help_keeps_the_square_brackets() -> None:
+    """Typer pinta la ayuda con el marcado de rich, que se comía `[scaling]`
+    y `[#clave]` como si fueran estilos."""
+    wide = {"TERMINAL_WIDTH": "400", "COLUMNS": "400"}
+    result = CliRunner().invoke(app, ["agent", "deploy", "--help"], env=wide)
+    assert result.exit_code == 0
+    assert "el de [scaling] del proyecto" in result.output
+    assert "NOMBRE=<secreto>[#clave]" in result.output
+
+
 def test_the_help_texts_are_the_contract_ones() -> None:
     helps = {(flag["command"], flag["flag"]): flag["help"] for flag in CONTRACT["cliFlags"]}
     assert helps[("agent deploy", "--scale-in-after")] == SCALE_IN_AFTER_HELP
@@ -253,3 +263,18 @@ def test_stop_keeps_the_recipe_only_on_request(
 
     assert result.exit_code == 0, result.output
     assert fleet.stops == [expected]
+
+
+def test_a_fleet_without_members_prints_without_a_first_vm(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`--min-vms 0` no deja ningún VM con servicio: el resultado no tiene
+    primer VM (antes, `IndexError` tras desplegar)."""
+    empty = FakeFleet(deployments=())
+    agent_cli.print_deployed(empty, 8080, None, as_json=True)  # type: ignore[arg-type]
+    document = json.loads(capsys.readouterr().out)
+    assert (document["sandboxId"], document["url"], document["sandboxIds"]) == (None, None, [])
+    agent_cli.print_deployed(empty, 8080, None, as_json=False)  # type: ignore[arg-type]
+    text = capsys.readouterr().out
+    assert "sandbox_id=" not in text and "url=" not in text
+    assert "members=0" in text

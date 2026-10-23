@@ -112,6 +112,10 @@ versionado [SemVer](https://semver.org/lang/es/).
   `rayito-base-caps` (una cuenta que viene de 0.16).
 - La ayuda de `--scale-in-after` sale de la constante del SDK y dice que,
   sin la bandera, manda el `[scaling]` del proyecto.
+- `rayito agent deploy` con `--min-vms 0` imprimía `sandbox_id=undefined`
+  (y `--json` perdía la clave `sandboxId`): una flota sin VMs con servicio no
+  imprime `sandbox_id` ni `url` y `--json` los da como `null`, como en
+  Python.
 
 ### Pruebas
 
@@ -121,6 +125,8 @@ versionado [SemVer](https://semver.org/lang/es/).
   `secretName(scope, kind)` devuelve
   `rayito-e2e/<run>/<scope>-<kind>-<sufijo aleatorio>`, y cada prueba borra
   al terminar sólo los secretos que creó.
+- Los e2e de la receta ya no inventan ids de sesión: el host sólo acepta los
+  suyos y respondía `invalid_session_id`.
 
 ## [0.16.0] - 2026-10-22
 

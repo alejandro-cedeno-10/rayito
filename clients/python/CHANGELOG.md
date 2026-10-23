@@ -111,6 +111,18 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   `rayito-base-caps` (una cuenta que viene de 0.16).
 - La ayuda de `--scale-in-after` sale de la constante del SDK y dice que,
   sin la bandera, manda el `[scaling]` del proyecto.
+- La ayuda de `rayito agent deploy` ya no pierde los corchetes: Typer la pinta
+  con el marcado de rich, que se comía `[scaling]` en `--scale-in-after` y
+  `[#clave]` en `--secret-env` (éste, desde 0.16) como si fueran estilos.
+- `rayito agent deploy` con `--min-vms 0` desplegaba, guardaba la receta y
+  terminaba con `IndexError` al imprimir el resultado: una flota sin VMs con
+  servicio no imprime `sandbox_id` ni `url` y `--json` los da como `null`.
+
+### Pruebas
+
+- Los e2e de la receta (`test_fleet_recipe.py`, `fleet-recipe.e2e.test.ts`)
+  ya no inventan ids de sesión: el host sólo acepta los suyos y respondía
+  `invalid_session_id`.
 
 ## [0.16.0] - 2026-10-22
 

@@ -39,6 +39,15 @@ def visible_controls(text: str) -> str:
     return _TERMINAL_CONTROLS.sub(lambda match: f"\\x{ord(match.group()):02x}", text)
 
 
+def literal_help(text: str) -> str:
+    """`text` tal cual en la ayuda de Typer, que la pinta con el marcado de
+    rich: sin escapar, rich se come `[scaling]` o `[#clave]` como si fueran
+    estilos y la ayuda pierde ese trozo."""
+    from rich.markup import escape
+
+    return escape(text)
+
+
 def echo(message: str = "", *, err: bool = False) -> None:
     """Los build logs y los `stateReason` traen UTF-8 arbitrario y una consola
     de Windows por defecto es cp1252: lo no codificable se sustituye en vez

@@ -917,6 +917,9 @@ async function confirmEnvFileSecret(
   }
 }
 
+/** El resultado de un despliegue (como `print_deployed` de Python). Una flota
+ * con `--min-vms 0` no deja ningún VM con servicio: `sandboxId` y `url` son
+ * `null` y el texto no los imprime. */
 function printDeployed(
   context: CommandContext,
   fleet: DeployedFleetView,
@@ -930,9 +933,9 @@ function printDeployed(
   if (context.globals.json) {
     context.console.emitJson({
       name: fleet.name,
-      sandboxId: first,
+      sandboxId: first ?? null,
       sandboxIds: [...fleet.sandboxIds],
-      url: fleet.url,
+      url: first === undefined ? null : fleet.url,
       port: fleet.port,
       tokenFile: tokenFile ?? null,
       ...(warnings.length === 0 ? {} : { warnings: [...warnings] }),
@@ -940,8 +943,10 @@ function printDeployed(
     return;
   }
   context.console.echo(`name=${fleet.name}`);
-  context.console.echo(`sandbox_id=${first}`);
-  context.console.echo(`url=${fleet.url}`);
+  if (first !== undefined) {
+    context.console.echo(`sandbox_id=${first}`);
+    context.console.echo(`url=${fleet.url}`);
+  }
   context.console.echo(`port=${fleet.port}`);
   context.console.echo(`members=${fleet.sandboxIds.length}`);
   if (tokenFile !== undefined) {
