@@ -15,6 +15,10 @@ from typing import Final
 #: Marca de versión del `/etc/rayito/template.json` que lee `rayd`
 #: (investigación §3.5); cambia sólo si el esquema deja de ser compatible.
 TEMPLATE_SPEC_VERSION: Final = "rayito.template/1"
+#: Marca de versión de `/etc/rayito/template-env.json`: las variables de
+#: `set_envs()` que `rayd` da a los comandos, las PTY y los kernels
+#: (`rayd_core::template::TEMPLATE_ENV_VERSION`, ADR-035).
+TEMPLATE_ENV_VERSION: Final = "rayito.template-env/1"
 
 #: Usuario por defecto del start/ready cmd (investigación §3.5: "user, def. 1000"),
 #: el mismo uid que usa el resto de Rayito para el código del sandbox.
@@ -56,8 +60,9 @@ class CopyStep:
 @dataclass(frozen=True, slots=True)
 class EnvStep:
     """`ENV <key>=<value>`: horneado en la imagen y en todos sus
-    snapshots. Nunca un secreto (investigación §3.7): `set_envs` no acepta
-    nada que deba rotar."""
+    snapshots, y en `/etc/rayito/template-env.json` para que `rayd` lo dé
+    a los comandos (ADR-035). Nunca un secreto (investigación §3.7):
+    `set_envs` no acepta nada que deba rotar."""
 
     key: str
     value: str
@@ -129,6 +134,15 @@ class TemplateSpec:
     steps: tuple[WireStep, ...] = field(default_factory=tuple)
     start: StartSpec | None = None
     skip_cache: bool = False
+
+    def template_envs(self) -> dict[str, str]:
+        """Las variables de `set_envs()` en el orden del DSL: la última
+        gana en una clave repetida, como el `ENV` del Dockerfile."""
+        envs: dict[str, str] = {}
+        for step in self.steps:
+            if isinstance(step, EnvStep):
+                envs[step.key] = step.value
+        return envs
 
     def with_base(self, base: BaseImageRef) -> TemplateSpec:
         return TemplateSpec(

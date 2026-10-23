@@ -19,6 +19,7 @@ use std::sync::Arc;
 
 use anyhow::Context;
 use aws_sdk_s3::config::SharedCredentialsProvider;
+use rayd::adapters::fs_template_env::read_image_template_envs;
 use rayd::adapters::{
     CappedListener, ChildRegistry, CredentialsSource, HyperSignedHttp, IdentitySwitch, ImdsBlock,
     ImdsCredentialBroker, ImdsState, OrphanReaper, OsRandomSource, PlatformMetricsProbe,
@@ -172,6 +173,7 @@ async fn main() -> anyhow::Result<ExitCode> {
         Arc::new(SystemClock::new()),
         rayd::AGENT_VERSION,
     ));
+    session.set_template_envs(read_image_template_envs());
     let shutdown = CancellationToken::new();
     spawn_stop_signal_handler(shutdown.clone());
     let imds = Arc::new(ImdsState::default());

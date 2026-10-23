@@ -5,13 +5,51 @@ ficheros), con el Dockerfile sustituido por la composición y
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+from typing import Any
+
+import pytest
+
 from rayito import Template
-from rayito._templates._artifact import assemble_artifact, read_zip_entries, start_spec_to_json
-from rayito._templates._dockerfile import TEMPLATE_JSON_CONTEXT_PATH
+from rayito._templates._artifact import (
+    assemble_artifact,
+    read_zip_entries,
+    start_spec_to_json,
+    template_env_to_json,
+)
+from rayito._templates._dockerfile import TEMPLATE_ENV_CONTEXT_PATH, TEMPLATE_JSON_CONTEXT_PATH
 
 from .fake_templates import make_base_zip
 
 BASE_DOCKERFILE = 'FROM scratch\nCOPY rayd /usr/local/bin/rayd\nCMD ["/usr/local/bin/rayd"]\n'
+TEMPLATE_ENV = json.loads(
+    (Path(__file__).parents[4] / "testdata" / "templates" / "template-env.json").read_text(
+        encoding="utf-8"
+    )
+)
+
+
+@pytest.mark.parametrize("case", TEMPLATE_ENV["cases"], ids=lambda case: case["name"])
+def test_set_envs_bake_the_template_env_file_of_the_shared_vectors(case: dict[str, Any]) -> None:
+    template = Template()
+    for key, value in case["steps"]:
+        template = template.set_envs({key: value})
+    artifact = assemble_artifact(make_base_zip(BASE_DOCKERFILE), template.spec, ())
+    entries = read_zip_entries(artifact)
+
+    assert template.spec.template_envs() == case["envs"]
+    assert template_env_to_json(template.spec.template_envs()).decode("utf-8") == case["file"]
+    assert entries[TEMPLATE_ENV_CONTEXT_PATH].decode("utf-8") == case["file"]
+    assert '"/etc/rayito/template-env.json"' in entries["Dockerfile"].decode()
+
+
+def test_a_template_without_set_envs_bakes_no_template_env_file() -> None:
+    spec = Template().pip_install("pandas").set_start_cmd("run.sh").spec
+    entries = read_zip_entries(assemble_artifact(make_base_zip(BASE_DOCKERFILE), spec, ()))
+
+    assert TEMPLATE_ENV_CONTEXT_PATH not in entries
+    assert "template-env.json" not in entries["Dockerfile"].decode()
 
 
 def test_assemble_artifact_keeps_every_base_entry_and_replaces_the_dockerfile() -> None:
@@ -43,7 +81,6 @@ def test_assemble_artifact_is_deterministic_for_the_same_inputs() -> None:
 
 def test_start_spec_to_json_round_trips_the_essential_fields() -> None:
     spec = Template().set_start_cmd("run.sh", "test -e /tmp/ready", envs={"A": "1"}).spec
-    import json
 
     assert spec.start is not None
     payload = json.loads(start_spec_to_json(spec.start))

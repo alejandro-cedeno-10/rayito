@@ -7,7 +7,8 @@
 //! the tar/gzip home archiver, the S3 object store (ADR-009) and the
 //! credential-free HTTPS client of presigned transfers (ADR-010), the
 //! bounded per-filesystem `syncfs` of `/suspend`, the boot-time reader of
-//! `/etc/rayito/template.json`, the shell runner behind a template's
+//! `/etc/rayito/template.json` and of `/etc/rayito/template-env.json`
+//! (ADR-035), the shell runner behind a template's
 //! `ready_cmd` (ADR-022, `features::template_start`), the process-wide
 //! child registry with the `/proc` table PID 1's orphan reaper sweeps
 //! (`rayd-orphan-reaper`), the symlink-proof mountpoint walk both mount
@@ -29,6 +30,7 @@ pub mod efs_mount;
 pub mod egress_routes;
 pub mod exec_posture;
 pub mod fs_identity;
+pub mod fs_template_env;
 pub mod fs_template_spec;
 pub mod fuse_device;
 pub mod imds_block;
