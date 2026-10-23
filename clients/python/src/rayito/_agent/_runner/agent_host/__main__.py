@@ -119,6 +119,7 @@ def serve(package: str, args: argparse.Namespace) -> int:
         stream=sys.stderr, level=logging.INFO, format="%(asctime)s %(name)s %(message)s"
     )
     quiet_http_loggers(serving.QUIET_HTTP_LOGGERS)
+    drop_debug_records(serving.BOTOCORE_BODY_LOGGERS)
     log = logging.getLogger(serving.LOGGER_NAME)
     try:
         host = load_host_config(args.host_config)
@@ -180,6 +181,24 @@ def quiet_http_loggers(names: Sequence[str]) -> None:
     código del agente puede bajarlos de nuevo si los necesita."""
     for name in names:
         logging.getLogger(name).setLevel(logging.WARNING)
+
+
+class InfoAndAbove(logging.Filter):
+    """Deja pasar sólo los registros de INFO en adelante."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return record.levelno >= logging.INFO
+
+
+def drop_debug_records(names: Sequence[str]) -> None:
+    """Instala `InfoAndAbove` en cada logger de `names` (los de botocore que
+    escriben cuerpos de AWS a nivel DEBUG): aunque el código del agente baje
+    su nivel, sus cuerpos con secretos no salen. Llamarla otra vez no añade
+    otro filtro."""
+    for name in names:
+        logger = logging.getLogger(name)
+        if not any(isinstance(item, InfoAndAbove) for item in logger.filters):
+            logger.addFilter(InfoAndAbove())
 
 
 def load_secret_env(

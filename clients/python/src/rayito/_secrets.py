@@ -41,9 +41,11 @@ IAM: lector (`secrets=`): `secretsmanager:GetSecretValue` y
     `infra/secrets-access.yaml`. Son permisos de las credenciales del
     LLAMANTE, no del execution role del MicroVM.
 Logs: Rayito nunca escribe el valor ni el nombre de un secreto en sus
-    logs (`rayito.*`), `repr` ni errores. El DEBUG de botocore/urllib3 (logger
-    raíz a DEBUG, `boto3.set_stream_logger()`) SÍ imprime los cuerpos de
-    Secrets Manager con el valor en claro: no lo actives con secretos.
+    logs (`rayito.*`), `repr` ni errores. Desde 0.17.1, `import rayito`
+    descarta además el DEBUG de `botocore.endpoint`, `botocore.parsers` y
+    `botocore.auth` (`rayito._botocore_logs`), que con el logger raíz a DEBUG
+    o `boto3.set_stream_logger()` imprimía los cuerpos de Secrets Manager con
+    el valor en claro.
 Cómo apagarla: no pases `secrets=` ni `secret_cache=` (o pásalos a `None`) y
     no instancies `SecretStore`. Para dejar de pagar, `SecretStore().destroy(
     nombre)` de cada secreto: la facturación sigue hasta que se borran.

@@ -6,6 +6,7 @@ import importlib
 from typing import TYPE_CHECKING, Any, Final
 
 from rayito._aws import ClientSettings
+from rayito._botocore_logs import drop_botocore_body_logs
 from rayito._charts import (
     BarChart,
     BarData,
@@ -290,6 +291,8 @@ if TYPE_CHECKING:
     from rayito._lifecycle_events._service_async import AsyncLifecycleEvents
     from rayito.sandbox_async.agent import AsyncAgentStream
     from rayito.sandbox_sync.agent import AgentStream
+
+drop_botocore_body_logs()
 
 #: Nombres públicos que se importan en el primer acceso (PEP 562) y no al
 #: hacer `import rayito`: el agente de IA (`rayito._agent`) y
