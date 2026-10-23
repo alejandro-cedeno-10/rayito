@@ -169,9 +169,17 @@ cabo de uno o dos días.
 - 08: un secreto, 0,40 USD al mes prorrateado por horas, más 0,05 USD por
   10 000 llamadas.
 - 09 y 10: los tokens del modelo, que se facturan en Bedrock aparte.
+- `rayito agent deploy ./agente-triaje`: ≈ 0,126 USD/h por VM hasta
+  `rayito agent stop triaje` (o hasta que vence su plazo de 8 horas), más
+  la versión de imagen del agente `triaje`.
 
-Limpieza: `rayito sandbox list`, `rayito image prune` y los comandos del
-final de `cli/comandos.sh`. `99_limpieza_secreto.py` programa el borrado con
+Limpieza: `rayito sandbox list`, `rayito agent stop triaje`,
+`rayito image prune` y los comandos del final de `cli/comandos.sh`. Las
+imágenes que crea el laboratorio son `tickets-demo` (06), `rayito-base-caps`,
+`rayito-agent` y la del agente `triaje`; `rayito image prune` sólo borra
+versiones antiguas, así que para retirar una imagen entera usa
+`delete-microvm-image` de la API de Lambda MicroVMs y borra después su grupo
+de logs `/rayito/<nombre>`, si existe. `99_limpieza_secreto.py` programa el borrado con
 7 días de recuperación; `--forzar` borra sin recuperación y sólo tiene sentido
 con un secreto creado para esta prueba. Terminar un sandbox no deshace lo que
 su código haya hecho fuera de él (llamadas a APIs, escrituras en otros

@@ -41,11 +41,13 @@ uv run python/08_crear_secreto.py
 # ...o firmando una clave de corta duración con tus credenciales:
 # uv run python/08_crear_secreto.py --generar
 
-# Si prefieres la AWS CLI: un fichero temporal 0600 que se borra al salir.
-# umask 077; tmp=$(mktemp); trap 'rm -f "$tmp"' EXIT
-# printf 'Bearer %s' "$AWS_BEARER_TOKEN_BEDROCK" > "$tmp"
-# aws secretsmanager create-secret --name rayito/bedrock-key --secret-string "file://$tmp"
-# rm -f "$tmp"; trap - EXIT
+# Si prefieres la AWS CLI: un fichero temporal 0600 que se borra al salir. El subshell
+# evita dejar umask 077 en tu shell o pisar un trap EXIT que ya tuvieras.
+# (
+#   umask 077; tmp=$(mktemp); trap 'rm -f "$tmp"' EXIT
+#   printf 'Bearer %s' "$AWS_BEARER_TOKEN_BEDROCK" > "$tmp"
+#   aws secretsmanager create-secret --name rayito/bedrock-key --secret-string "file://$tmp"
+# )
 
 # --- 5. Forma B: el agente descrito en un fichero ---------------------------------
 uv run rayito agent build --file ./agente-triaje --bucket "$RAYITO_BUCKET"

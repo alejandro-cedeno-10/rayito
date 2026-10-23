@@ -168,9 +168,17 @@ later.
 - 08: one secret, 0.40 USD per month prorated by the hour, plus 0.05 USD per
   10,000 calls.
 - 09 and 10: model tokens, billed separately by Bedrock.
+- `rayito agent deploy ./agente-triaje`: ≈ 0.126 USD/h per VM until
+  `rayito agent stop triaje` (or until its 8-hour limit), plus the image
+  version of the `triaje` agent.
 
-Cleanup: `rayito sandbox list`, `rayito image prune` and the commands at the
-end of `cli/comandos.sh`. `99_limpieza_secreto` schedules deletion with a
+Cleanup: `rayito sandbox list`, `rayito agent stop triaje`,
+`rayito image prune` and the commands at the end of `cli/comandos.sh`. The
+images the lab creates are `tickets-demo` (06), `rayito-base-caps`,
+`rayito-agent` and the one for the `triaje` agent; `rayito image prune` only
+deletes old versions, so to retire a whole image use `delete-microvm-image`
+from the Lambda MicroVMs API and then delete its `/rayito/<name>` log group,
+if it exists. `99_limpieza_secreto` schedules deletion with a
 7-day recovery window; `--forzar` deletes without recovery and only makes
 sense for a secret created for this test. Terminating a sandbox does not undo
 what its code did outside it (API calls, writes to other services).
