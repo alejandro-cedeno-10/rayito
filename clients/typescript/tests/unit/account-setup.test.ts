@@ -22,6 +22,7 @@ import {
   FAKE_IMAGE_SHA256,
   FakeAccountSetup,
   type FakeBehavior,
+  IAM_TEMPLATE_FINGERPRINT,
   type VectorInput,
   withPlaceholders,
 } from "./account-setup-fakes.js";
@@ -322,7 +323,10 @@ const NO_BUCKET: Partial<VectorInput> = { buckets: {} };
 const PREPARED_STACK = {
   status: "CREATE_COMPLETE",
   outputs: { BuildRoleArn: BUILD_ROLE_ARN },
-  parameters: { ArtifactBucket: "amzn-s3-demo-bucket" },
+  parameters: {
+    ArtifactBucket: "amzn-s3-demo-bucket",
+    TemplateFingerprint: IAM_TEMPLATE_FINGERPRINT,
+  },
 };
 
 const LAUNCHABLE_IMAGE = {
@@ -448,6 +452,36 @@ describe("AccountSetup.apply", () => {
     });
     const { fake } = await applied(input);
     expect(fake.writes).toEqual([["update", "amzn-s3-demo-bucket1"]]);
+    expect(names(fake.calls).indexOf("wait")).toBeLessThan(names(fake.calls).indexOf("update"));
+  });
+
+  it("updates a stack deployed by an older SDK even with the same bucket", async () => {
+    const input = inputWith({
+      stack: { ...PREPARED_STACK, parameters: { ArtifactBucket: "amzn-s3-demo-bucket" } },
+      buckets: { "amzn-s3-demo-bucket": "us-east-1" },
+      image: LAUNCHABLE_IMAGE,
+    });
+    const { fake, plan, lines } = await applied(input);
+    expect(domain.stepOf(plan, "iamStack")).toMatchObject({
+      action: "update",
+      previousBucket: undefined,
+    });
+    expect(fake.writes).toEqual([["update", "amzn-s3-demo-bucket"]]);
+    expect(lines[0]).toBe("actualizando la pila de IAM rayito-m0-iam");
+  });
+
+  it("after waiting for a stack in progress, updates it when its template is older", async () => {
+    const input = inputWith({
+      stack: {
+        status: "CREATE_IN_PROGRESS",
+        outputs: {},
+        parameters: { ArtifactBucket: "amzn-s3-demo-bucket" },
+      },
+      buckets: { "amzn-s3-demo-bucket": "us-east-1" },
+      image: LAUNCHABLE_IMAGE,
+    });
+    const { fake } = await applied(input);
+    expect(fake.writes).toEqual([["update", "amzn-s3-demo-bucket"]]);
     expect(names(fake.calls).indexOf("wait")).toBeLessThan(names(fake.calls).indexOf("update"));
   });
 

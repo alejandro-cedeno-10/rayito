@@ -15,6 +15,7 @@ from rayito._account_setup._domain import (
     SetupPlan,
     SetupResult,
     SetupStep,
+    applied_steps,
 )
 
 __all__ = [
@@ -55,6 +56,7 @@ ACTION_TEMPLATES: Final[Mapping[str, str]] = MappingProxyType(
         "bucketWait": "pila {stack} en curso ({status}): esperar",
         "stackCreate": "crear",
         "stackUpdate": "actualizar ArtifactBucket {previousBucket} -> {bucket}",
+        "stackTemplate": "actualizar a la plantilla infra/iam.yaml de este SDK",
         "stackReuse": "ya existe ({status})",
         "stackWait": "en curso ({status}): esperar",
         "imagePublishRelease": "publicar desde {release} (≈ 10 min)",
@@ -97,6 +99,8 @@ ACTION_KEYS: Final[Mapping[tuple[str, str], str]] = MappingProxyType(
 def action_text(plan: SetupPlan, step: SetupStep) -> str:
     if step.action == "publish":
         key = "imagePublishArtifact" if step.source == "artifact" else "imagePublishRelease"
+    elif step.resource == "iamStack" and step.action == "update" and step.previous_bucket is None:
+        key = "stackTemplate"
     else:
         key = ACTION_KEYS[(step.resource, step.action)]
     return ACTION_TEMPLATES[key].format(
@@ -151,14 +155,15 @@ def setup_document(
     exit_code: int,
 ) -> dict[str, Any]:
     """El documento único de `--json`, con las claves del contrato en su
-    orden; `steps` y `cost` vacíos si el plan mismo falló."""
+    orden; `steps` y `cost` vacíos si el plan mismo falló. Tras `apply`, el
+    paso de cada imagen publicada lleva su `imageVersion` (`applied_steps`)."""
     return {
         "rayito": sdk_version,
         "region": region,
         "account": account,
         "dryRun": dry_run,
         "ready": ready,
-        "steps": [] if plan is None else [step.as_json() for step in plan.steps],
+        "steps": [] if plan is None else [step.as_json() for step in applied_steps(plan, result)],
         "cost": [] if plan is None else list(plan.cost),
         "result": None if result is None else result.as_json(),
         "doctor": doctor,

@@ -53,6 +53,13 @@ Parameters:
       Key prefix under TransferBucket (S3Staging(prefix=)). Never \`rayito\`,
       a prefix of it, or PersistencePrefix: the 1-day lifecycle rule of the
       transfer prefix would expire image artifacts or checkpoints.
+  TemplateFingerprint:
+    Type: String
+    Default: ""
+    Description: >-
+      sha256 of this template as shipped by the SDK whose \`rayito setup\`
+      deployed the stack; empty when deployed by hand. \`rayito setup\` updates
+      the stack when it differs from the template of the running SDK.
 
 Rules:
   TransferPrefixIsDisjoint:
@@ -466,6 +473,9 @@ Outputs:
   ImagePublisherPolicyArn:
     Description: Attach to whoever publishes or prunes images (rayito image publish / prune).
     Value: !Ref ImagePublisherPolicy
+  TemplateFingerprint:
+    Description: sha256 of the template the stack was deployed with (empty when deployed by hand).
+    Value: !Ref TemplateFingerprint
 `;
 // Base64 of the component's Lambda source zip, or undefined when it has none.
 export const ARTIFACT_BASE64: string | undefined = undefined;

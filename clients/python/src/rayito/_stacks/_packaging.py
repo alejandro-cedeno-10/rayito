@@ -29,6 +29,14 @@ def load_template(component: StackComponent) -> str:
     )
 
 
+def template_fingerprint(component: StackComponent) -> str:
+    """El sha256 (hex) del YAML empaquetado, en UTF-8: el mismo valor en los
+    dos SDK, que llevan el mismo `infra/<component>.yaml` byte a byte
+    (`scripts/gen_stack_assets.py`). `rayito setup` lo guarda en la pila de
+    IAM para saber si se desplegó con otra plantilla."""
+    return hashlib.sha256(load_template(component).encode("utf-8")).hexdigest()
+
+
 def load_artifact(component: StackComponent) -> bytes:
     """El zip determinista del código Lambda del componente; sólo se llama
     para un componente con `artifacts` no vacío."""

@@ -100,7 +100,15 @@ class AccountSetup:
         bucket_step = self._resolve_bucket(request, account, stack)
         image = self._gateways.images.observe(BASE_IMAGE_NAME)
         caps = self._gateways.images.observe(CAPS_IMAGE_NAME) if request.caps_image else None
-        return plan_setup(request, account, stack, bucket_step, image, caps)
+        return plan_setup(
+            request,
+            account,
+            stack,
+            bucket_step,
+            image,
+            caps,
+            iam_template_fingerprint=self._gateways.iam_stack.template_fingerprint(),
+        )
 
     def apply(self, plan: SetupPlan, *, workdir: Path, on_progress: Progress) -> SetupResult:
         bucket = self._apply_bucket(plan, on_progress)
@@ -169,8 +177,7 @@ class AccountSetup:
         elif step.action == "wait":
             on_progress(progress_message("stackWait", name=IAM_STACK_NAME, status=str(step.status)))
             observation = gateway.wait()
-            if plan_stack(observation, bucket).action == "update":
-                # la pila que se esperaba trabajaba con otro bucket: se actualiza
+            if self._stack_outdated(observation, bucket):
                 on_progress(progress_message("stackUpdate", name=IAM_STACK_NAME))
                 observation = gateway.update_bucket(bucket)
         else:
@@ -178,6 +185,12 @@ class AccountSetup:
         stack_output(observation, BUILD_ROLE_OUTPUT_KEY, IAM_TEMPLATE_PATH)
         on_progress(progress_message("stackReady", name=IAM_STACK_NAME))
         return observation
+
+    def _stack_outdated(self, observation: StackObservation, bucket: str) -> bool:
+        """Si la pila que se esperaba trabajaba con otro bucket o con otra
+        plantilla: entonces se actualiza al terminar la espera."""
+        fingerprint = self._gateways.iam_stack.template_fingerprint()
+        return plan_stack(observation, bucket, fingerprint).action == "update"
 
 
 @dataclass(frozen=True)

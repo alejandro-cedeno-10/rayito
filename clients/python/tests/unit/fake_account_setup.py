@@ -27,8 +27,10 @@ from rayito._account_setup._domain import (
     cdk_bucket_name,
     default_artifact_bucket_name,
 )
+from rayito._account_setup._iam_stack import IAM_STACK_COMPONENT
 from rayito._account_setup._ports import AccountSetupGateways, Progress
 from rayito._images import account_image_arn
+from rayito._stacks._packaging import template_fingerprint
 
 TESTDATA: Final = Path(__file__).resolve().parents[4] / "testdata" / "account-setup"
 ACCOUNT: Final = "123456789012"
@@ -39,6 +41,9 @@ ARTIFACT_BYTES: Final = b"image zip"
 ARTIFACT_SHA256: Final = hashlib.sha256(ARTIFACT_BYTES).hexdigest()
 #: Sufijo de las llamadas que tocan `rayito-base-caps` en el registro.
 CAPS_CALL_SUFFIX: Final = ":caps"
+#: El sha256 del `infra/iam.yaml` empaquetado: `{iamTemplateFingerprint}` en
+#: los vectores.
+IAM_TEMPLATE_FINGERPRINT: Final = template_fingerprint(IAM_STACK_COMPONENT)
 
 Call = tuple[str, ...]
 
@@ -53,11 +58,12 @@ def load_cases(name: str) -> list[dict[str, Any]]:
 
 
 def fill_placeholders(value: Any, *, account: str, region: str, sdk_version: str) -> Any:
-    """Sustituye `{sdkVersion}`, `{cdkBucket}` y `{defaultBucket}` en cadenas,
-    claves y listas."""
+    """Sustituye `{sdkVersion}`, `{cdkBucket}`, `{defaultBucket}` e
+    `{iamTemplateFingerprint}` en cadenas, claves y listas."""
     if isinstance(value, str):
         return (
             value.replace("{sdkVersion}", sdk_version)
+            .replace("{iamTemplateFingerprint}", IAM_TEMPLATE_FINGERPRINT)
             .replace("{cdkBucket}", cdk_bucket_name(account, region))
             .replace("{defaultBucket}", default_artifact_bucket_name(account, region))
         )
@@ -134,6 +140,9 @@ class FakeIamStack:
         self.recorder.record("describe")
         return self.stack
 
+    def template_fingerprint(self) -> str:
+        return IAM_TEMPLATE_FINGERPRINT
+
     def create(self, bucket: str) -> StackObservation:
         self.recorder.record("create", bucket)
         return self._complete(bucket, "CREATE_COMPLETE")
@@ -143,16 +152,24 @@ class FakeIamStack:
         return self._complete(bucket, "UPDATE_COMPLETE")
 
     def wait(self) -> StackObservation:
+        """Termina la operación en curso sin tocar los parámetros: la pila
+        queda con la plantilla con la que se desplegaba."""
         self.recorder.record("wait")
-        bucket = self.stack.parameters.get("ArtifactBucket", "")
-        return self._complete(bucket, "CREATE_COMPLETE")
+        self.stack = StackObservation(
+            self.stack.name, "CREATE_COMPLETE", dict(self.created_outputs), self.stack.parameters
+        )
+        return self.stack
 
     def _complete(self, bucket: str, status: str) -> StackObservation:
         self.stack = StackObservation(
             self.stack.name,
             status,
             dict(self.created_outputs),
-            {**self.stack.parameters, "ArtifactBucket": bucket},
+            {
+                **self.stack.parameters,
+                "ArtifactBucket": bucket,
+                "TemplateFingerprint": IAM_TEMPLATE_FINGERPRINT,
+            },
         )
         return self.stack
 

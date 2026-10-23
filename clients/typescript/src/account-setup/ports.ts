@@ -21,11 +21,17 @@ export type StackTags = Readonly<Record<string, string>>;
 /** Una línea de progreso. */
 export type Progress = (message: string) => void;
 
+/**
+ * La pila `rayito-m0-iam`. `create` y `updateBucket` despliegan la plantilla
+ * de este SDK con su `templateFingerprint()` (el sha256 de su
+ * `infra/iam.yaml`), que `rayito setup` compara con el de la pila.
+ */
 export interface IamStackGateway {
   observe(): Promise<StackObservation>;
+  templateFingerprint(): Promise<string>;
   /** Crea la pila con `ArtifactBucket` y espera a que quede desplegada. */
   create(bucket: string, tags: StackTags): Promise<StackObservation>;
-  /** Cambia sólo `ArtifactBucket` (el resto conserva su valor) y espera. */
+  /** Cambia `ArtifactBucket` y la plantilla (el resto conserva su valor) y espera. */
   updateBucket(bucket: string, tags: StackTags): Promise<StackObservation>;
   /** Espera a que termine la operación en curso. */
   wait(): Promise<StackObservation>;

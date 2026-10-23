@@ -64,6 +64,19 @@ export async function loadTemplate(component: StackComponent): Promise<string> {
 }
 
 /**
+ * El sha256 (hex) de la plantilla empaquetada, en UTF-8: el mismo valor que
+ * `template_fingerprint` de `_packaging.py`, porque los dos SDK llevan el
+ * mismo `infra/<component>.yaml` (`scripts/gen_stack_assets.py`). `rayito
+ * setup` lo guarda en la pila de IAM para saber si se desplegó con otra
+ * plantilla.
+ */
+export async function templateFingerprint(component: StackComponent): Promise<string> {
+  const body = new TextEncoder().encode(await loadTemplate(component));
+  const digest = await crypto.subtle.digest("SHA-256", body);
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+/**
  * Dentro de `rayito/`, el espacio de nombres que las plantillas de IAM ya
  * protegen (sólo el publicador escribe ahí, el execution role tiene un
  * `Deny` explícito y el builder de templates sólo lee); nunca la raíz del

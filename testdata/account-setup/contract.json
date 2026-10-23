@@ -246,6 +246,7 @@
       "bucketWait": "pila {stack} en curso ({status}): esperar",
       "stackCreate": "crear",
       "stackUpdate": "actualizar ArtifactBucket {previousBucket} -> {bucket}",
+      "stackTemplate": "actualizar a la plantilla infra/iam.yaml de este SDK",
       "stackReuse": "ya existe ({status})",
       "stackWait": "en curso ({status}): esperar",
       "imagePublishRelease": "publicar desde {release} (≈ 10 min)",

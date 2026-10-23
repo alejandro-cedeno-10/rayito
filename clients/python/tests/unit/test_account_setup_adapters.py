@@ -4,6 +4,7 @@ sobre clientes boto3 con `Stubber`. Construirlos no llama a AWS."""
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -27,7 +28,7 @@ from rayito._account_setup._domain import StackObservation
 from rayito._account_setup._iam_stack import IAM_STACK_COMPONENT
 from rayito._account_setup._service import AccountSetup
 from rayito._stacks._model import StackComponent, StackStatus
-from rayito._stacks._packaging import load_template
+from rayito._stacks._packaging import load_template, template_fingerprint
 from rayito._stacks._registry import COMPONENTS
 from rayito.cli._publish import PublishSettings
 from rayito.cli._session import Clients
@@ -42,6 +43,7 @@ from .test_m15_stacks_template_parameters import (
     template_parameter_names,
 )
 
+REPO_ROOT = Path(__file__).resolve().parents[4]
 STACK = "rayito-m0-iam"
 BUCKET = "amzn-s3-demo-bucket"
 OTHER_BUCKET = "amzn-s3-demo-bucket1"
@@ -101,20 +103,35 @@ def test_observing_an_existing_stack_maps_status_outputs_and_parameters() -> Non
     assert observed.parameters["ArtifactBucket"] == BUCKET
 
 
-def test_create_sends_named_iam_and_only_the_bucket_then_waits() -> None:
+def test_the_template_fingerprint_is_the_sha256_of_the_repository_template() -> None:
+    """El mismo valor que calcula TypeScript: los dos SDK empaquetan
+    `infra/iam.yaml` byte a byte."""
+    template = REPO_ROOT / "infra" / "iam.yaml"
+    expected = hashlib.sha256(template.read_bytes()).hexdigest()
+    assert template_fingerprint(IAM_STACK_COMPONENT) == expected
+    assert iam_stack_gateway(FakeStackProvisioner()).template_fingerprint() == expected
+
+
+def test_create_sends_named_iam_the_bucket_and_the_template_fingerprint_then_waits() -> None:
     provisioner = RecordingProvisioner()
     observed = iam_stack_gateway(provisioner).create(BUCKET)
     assert provisioner.created_component is not None
     assert provisioner.created_component.capabilities == ("CAPABILITY_NAMED_IAM",)
-    assert provisioner.sent_parameters == {"ArtifactBucket": BUCKET}
+    assert provisioner.sent_parameters == {
+        "ArtifactBucket": BUCKET,
+        "TemplateFingerprint": template_fingerprint(IAM_STACK_COMPONENT),
+    }
     assert [call[0] for call in provisioner.calls] == ["describe", "create", "wait", "describe"]
     assert observed.status == "CREATE_COMPLETE"
 
 
-def test_update_sends_only_the_bucket_and_keeps_the_six_others() -> None:
+def test_update_sends_the_bucket_and_the_fingerprint_and_keeps_the_six_others() -> None:
     provisioner = FakeStackProvisioner(stacks={STACK: deployed_stack()})
     iam_stack_gateway(provisioner).update_bucket(OTHER_BUCKET)
-    assert provisioner.sent_parameters == {"ArtifactBucket": OTHER_BUCKET}
+    assert provisioner.sent_parameters == {
+        "ArtifactBucket": OTHER_BUCKET,
+        "TemplateFingerprint": template_fingerprint(IAM_STACK_COMPONENT),
+    }
     assert provisioner.sent_keep_previous == tuple(sorted(OTHER_PARAMETERS))
     assert ("update", STACK) in provisioner.calls
     assert not any(call[0] == "create" for call in provisioner.calls)

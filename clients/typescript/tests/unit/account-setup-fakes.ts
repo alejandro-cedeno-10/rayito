@@ -5,6 +5,7 @@
  * Python: una lectura o una escritura que no debía ocurrir se ve en la lista.
  */
 
+import { createHash } from "node:crypto";
 import {
   ARTIFACT_STACK_NAME,
   BUCKET_NAME_OUTPUT_KEY,
@@ -19,6 +20,7 @@ import {
   type ImageObservation,
   type PublishedImage,
   type StackObservation,
+  TEMPLATE_FINGERPRINT_PARAMETER,
 } from "../../src/account-setup/domain.js";
 import type {
   AccountSetupGateways,
@@ -30,6 +32,7 @@ import type {
   Progress,
   ReleaseArtifactSource,
 } from "../../src/account-setup/ports.js";
+import { TEMPLATE_BODY as IAM_TEMPLATE_BODY } from "../../src/stacks/templates/iam.gen.js";
 
 export const BUILD_ROLE_ARN = "arn:aws:iam::123456789012:role/rayito-m0-build-us-east-1";
 export const FAKE_IMAGE_SHA256 = "a".repeat(64);
@@ -80,10 +83,16 @@ function capsObservation(input: VectorInput): VectorImage | null {
   return input.capsImage === undefined ? input.image : input.capsImage;
 }
 
-/** Sustituye `{sdkVersion}`, `{cdkBucket}` y `{defaultBucket}` del texto de un caso compartido. */
+/** El sha256 del `infra/iam.yaml` empaquetado: `{iamTemplateFingerprint}` en los vectores. */
+export const IAM_TEMPLATE_FINGERPRINT = createHash("sha256")
+  .update(IAM_TEMPLATE_BODY, "utf8")
+  .digest("hex");
+
+/** Sustituye `{sdkVersion}`, `{cdkBucket}`, `{defaultBucket}` e `{iamTemplateFingerprint}` del texto de un caso compartido. */
 export function withPlaceholders<T>(value: T, input: VectorInput, sdkVersion: string): T {
   const text = JSON.stringify(value)
     .replaceAll("{sdkVersion}", sdkVersion)
+    .replaceAll("{iamTemplateFingerprint}", IAM_TEMPLATE_FINGERPRINT)
     .replaceAll("{cdkBucket}", cdkBucketName(input.account, input.region))
     .replaceAll("{defaultBucket}", defaultArtifactBucketName(input.account, input.region));
   return JSON.parse(text) as T;
@@ -142,20 +151,27 @@ export class FakeAccountSetup implements AccountSetupGateways {
     const record = (...call: Call): void => {
       this.calls.push(call);
     };
-    const deployed = (bucket: string): StackObservation => {
+    const settled = (parameters: Readonly<Record<string, string>>): StackObservation => {
       stack = {
         name: IAM_STACK_NAME,
         status: "CREATE_COMPLETE",
         outputs: behavior.omitBuildRole === true ? {} : { BuildRoleArn: BUILD_ROLE_ARN },
-        parameters: { ...stack.parameters, ArtifactBucket: bucket },
+        parameters,
       };
       return stack;
     };
+    const deployed = (bucket: string): StackObservation =>
+      settled({
+        ...stack.parameters,
+        ArtifactBucket: bucket,
+        [TEMPLATE_FINGERPRINT_PARAMETER]: IAM_TEMPLATE_FINGERPRINT,
+      });
     this.iamStack = {
       observe: async () => {
         record("describe");
         return stack;
       },
+      templateFingerprint: async () => IAM_TEMPLATE_FINGERPRINT,
       create: async (bucket, tags) => {
         record("create", bucket);
         this.tagsByCall.set("create", tags);
@@ -170,7 +186,7 @@ export class FakeAccountSetup implements AccountSetupGateways {
       },
       wait: async () => {
         record("wait");
-        return deployed(stack.parameters.ArtifactBucket ?? "");
+        return settled(stack.parameters);
       },
     };
     let bucketStack: StackObservation = {

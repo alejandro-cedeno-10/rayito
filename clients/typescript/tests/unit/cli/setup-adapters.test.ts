@@ -5,6 +5,10 @@
  * `rayito image publish`. Espejo de `test_account_setup_adapters.py`.
  */
 
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { ARTIFACT_STACK_COMPONENT } from "../../../src/account-setup/artifact-stack.js";
 import {
@@ -24,7 +28,7 @@ import {
   sdkIamStack,
 } from "../../../src/cli/setup-adapters.js";
 import { StackError } from "../../../src/errors.js";
-import { loadTemplate } from "../../../src/stacks/packaging.js";
+import { loadTemplate, templateFingerprint } from "../../../src/stacks/packaging.js";
 import { COMPONENTS } from "../../../src/stacks/registry.js";
 import { FakeStackProvisioner } from "../m15-fake-stacks.js";
 import { componentParameterNames, templateParameterNames } from "../m15-template-parameters.js";
@@ -61,8 +65,18 @@ afterEach(() => {
   }
 });
 
+const REPO_ROOT = fileURLToPath(new URL("../../../../../", import.meta.url));
+
 describe("sdkIamStack", () => {
-  it("creates the stack with CAPABILITY_NAMED_IAM's single parameter and waits for it", async () => {
+  it("fingerprints the template with the sha256 of the repository's infra/iam.yaml, as Python", async () => {
+    const expected = createHash("sha256")
+      .update(readFileSync(join(REPO_ROOT, "infra", "iam.yaml")))
+      .digest("hex");
+    expect(await templateFingerprint(IAM_STACK_COMPONENT)).toBe(expected);
+    expect(await sdkIamStack(new FakeStackProvisioner()).templateFingerprint()).toBe(expected);
+  });
+
+  it("creates the stack with CAPABILITY_NAMED_IAM, the bucket and the fingerprint and waits for it", async () => {
     const provisioner = new FakeStackProvisioner();
     const observed = await sdkIamStack(provisioner).create(BUCKET, {});
     expect(provisioner.calls.map(([name]) => name)).toEqual([
@@ -72,11 +86,18 @@ describe("sdkIamStack", () => {
       "describe",
     ]);
     expect(provisioner.calls).toContainEqual(["wait", IAM_STACK_NAME, "deployed"]);
-    expect(provisioner.sentParameters).toEqual({ ArtifactBucket: BUCKET });
-    expect(observed.parameters).toEqual({ ArtifactBucket: BUCKET });
+    const fingerprint = await templateFingerprint(IAM_STACK_COMPONENT);
+    expect(provisioner.sentParameters).toEqual({
+      ArtifactBucket: BUCKET,
+      TemplateFingerprint: fingerprint,
+    });
+    expect(observed.parameters).toEqual({
+      ArtifactBucket: BUCKET,
+      TemplateFingerprint: fingerprint,
+    });
   });
 
-  it("an update sends only ArtifactBucket and keeps the six other parameters", async () => {
+  it("an update sends ArtifactBucket and the fingerprint and keeps the six other parameters", async () => {
     const provisioner = new FakeStackProvisioner();
     provisioner.stacks.set(IAM_STACK_NAME, {
       name: IAM_STACK_NAME,
@@ -87,7 +108,10 @@ describe("sdkIamStack", () => {
       ),
     });
     await sdkIamStack(provisioner).updateBucket(BUCKET_B, {});
-    expect(provisioner.sentParameters).toEqual({ ArtifactBucket: BUCKET_B });
+    expect(provisioner.sentParameters).toEqual({
+      ArtifactBucket: BUCKET_B,
+      TemplateFingerprint: await templateFingerprint(IAM_STACK_COMPONENT),
+    });
     expect(provisioner.sentKeepPrevious).toEqual(OTHER_PARAMETERS);
     expect(provisioner.calls.map(([name]) => name)).not.toContain("create");
   });

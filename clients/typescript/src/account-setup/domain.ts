@@ -41,6 +41,14 @@ export const IAM_STACK_COMPONENT_NAME = "iam";
 /** `Capability` del modelo `cloudformation` 2010-05-15 (`AWS_API_NOTES.md` §21). */
 export const IAM_STACK_CAPABILITIES: readonly string[] = ["CAPABILITY_NAMED_IAM"];
 export const ARTIFACT_BUCKET_PARAMETER = "ArtifactBucket";
+/**
+ * Parámetro de `infra/iam.yaml` con el sha256 de la plantilla que la
+ * desplegó (`templateFingerprint`). Una pila de 0.17.0 o anterior no lo tiene
+ * y una desplegada a mano lo deja vacío: en los dos casos la plantilla del SDK
+ * es otra y `rayito setup` la actualiza. Espejo de
+ * `TEMPLATE_FINGERPRINT_PARAMETER`.
+ */
+export const TEMPLATE_FINGERPRINT_PARAMETER = "TemplateFingerprint";
 export { BUILD_ROLE_OUTPUT_KEY };
 /** La plantilla de la pila de IAM, para el mensaje de `stack_incomplete`. */
 export const IAM_TEMPLATE_PATH = "infra/iam.yaml";
@@ -414,6 +422,30 @@ export function stepJson(step: SetupStep): Record<string, unknown> {
   return document;
 }
 
+/**
+ * Los pasos del plan tras `apply`: un `publish` de imagen lleva la versión que
+ * acaba de publicar (`result`), que el plan aún no conocía. Sin `result`
+ * (dry-run o un fallo), los pasos del plan tal cual. Espejo de `applied_steps`.
+ */
+export function appliedSteps(
+  plan: SetupPlan,
+  result: SetupResult | undefined,
+): readonly SetupStep[] {
+  if (result === undefined) {
+    return plan.steps;
+  }
+  const published: Partial<Record<ResourceKind, string | undefined>> = {
+    baseImage: result.imageVersion,
+    capsImage: result.capsImageVersion,
+  };
+  return plan.steps.map((step) => {
+    const version = published[step.resource];
+    return step.action === "publish" && version !== undefined
+      ? { ...step, imageVersion: version }
+      : step;
+  });
+}
+
 /** El resultado como lo escribe el documento JSON. */
 export function resultJson(result: SetupResult): Record<string, unknown> {
   return {
@@ -625,8 +657,18 @@ export function planBucketCreation(
   return newStep({ ...base, name: target.name, action: "create" }, { source: target.source });
 }
 
-/** Crear, actualizar sólo `ArtifactBucket`, reutilizar o esperar la pila de IAM. */
-export function planStack(stack: StackObservation, bucket: string): SetupStep {
+/**
+ * Crear, esperar, reutilizar o actualizar la pila de IAM: `reuse` sólo si
+ * lleva el bucket del plan y la plantilla de este SDK (`templateFingerprint`,
+ * el sha256 de su `infra/iam.yaml`). `previousBucket` sólo se rellena si
+ * cambia el bucket: con el mismo bucket, el `update` sólo pone al día la
+ * plantilla.
+ */
+export function planStack(
+  stack: StackObservation,
+  bucket: string,
+  templateFingerprint: string,
+): SetupStep {
   const base = { resource: "iamStack", name: IAM_STACK_NAME } as const;
   const condition = classifyStack(stack);
   if (condition === "missing") {
@@ -643,10 +685,14 @@ export function planStack(stack: StackObservation, bucket: string): SetupStep {
   }
   stackOutput(stack, BUILD_ROLE_OUTPUT_KEY, IAM_TEMPLATE_PATH);
   const previous = stack.parameters[ARTIFACT_BUCKET_PARAMETER];
-  if (previous === bucket) {
+  const currentTemplate = stack.parameters[TEMPLATE_FINGERPRINT_PARAMETER] === templateFingerprint;
+  if (previous === bucket && currentTemplate) {
     return newStep({ ...base, action: "reuse" }, { status: stack.status });
   }
-  return newStep({ ...base, action: "update" }, { status: stack.status, previousBucket: previous });
+  return newStep(
+    { ...base, action: "update" },
+    { status: stack.status, previousBucket: previous === bucket ? undefined : previous },
+  );
 }
 
 function createdAtMs(item: ImageVersionItem): number {
@@ -765,11 +811,13 @@ export function planSetup(input: {
   readonly image: ImageObservation;
   /** `rayito-base-caps`, o `undefined` con `capsImage: false`. */
   readonly caps?: ImageObservation | undefined;
+  /** El sha256 del `infra/iam.yaml` de este SDK. */
+  readonly iamTemplateFingerprint: string;
 }): SetupPlan {
   const { request, stack, bucketStep, image, caps } = input;
   const steps = [
     bucketStep,
-    planStack(stack, bucketStep.name),
+    planStack(stack, bucketStep.name, input.iamTemplateFingerprint),
     planImage(image, request),
     planCapsImage(caps, request),
   ];

@@ -14,6 +14,7 @@ from rayito._account_setup._domain import (
     ARTIFACT_BUCKET_PARAMETER,
     IAM_CAPABILITIES,
     IAM_COMPONENT_NAME,
+    TEMPLATE_FINGERPRINT_PARAMETER,
 )
 from rayito._stacks._model import CostStatement, StackComponent, StackParameter
 
@@ -35,6 +36,10 @@ IAM_STACK_COMPONENT: Final = StackComponent(
         StackParameter("PersistencePrefix", "Prefijo de las claves bajo PersistenceBucket."),
         StackParameter("TransferBucket", "Bucket de upload_url/download_url (vacío: ninguno)."),
         StackParameter("TransferPrefix", "Prefijo de las claves bajo TransferBucket."),
+        StackParameter(
+            TEMPLATE_FINGERPRINT_PARAMETER,
+            "sha256 de la plantilla que desplegó la pila (lo pone rayito setup).",
+        ),
     ),
     capabilities=IAM_CAPABILITIES,
     cost=CostStatement(

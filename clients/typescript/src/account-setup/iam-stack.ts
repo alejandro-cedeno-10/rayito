@@ -13,6 +13,7 @@ import {
   ARTIFACT_BUCKET_PARAMETER,
   IAM_STACK_CAPABILITIES,
   IAM_STACK_COMPONENT_NAME,
+  TEMPLATE_FINGERPRINT_PARAMETER,
 } from "./domain.js";
 
 export const IAM_STACK_COMPONENT: StackComponent = {
@@ -44,6 +45,10 @@ export const IAM_STACK_COMPONENT: StackComponent = {
       description: "Bucket de upload_url/download_url y ficheros grandes (transfer=S3Staging).",
     },
     { name: "TransferPrefix", description: "Prefijo de clave bajo TransferBucket." },
+    {
+      name: TEMPLATE_FINGERPRINT_PARAMETER,
+      description: "sha256 de la plantilla que desplegó la pila (lo pone rayito setup).",
+    },
   ],
   cost: {
     creates: ["AWS::IAM::Role (build y ejecución)", "AWS::IAM::ManagedPolicy (tres políticas)"],

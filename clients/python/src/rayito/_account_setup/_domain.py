@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 from types import MappingProxyType
@@ -79,6 +79,11 @@ IAM_STACK_NAME: Final = DEFAULT_IAM_STACK_NAME
 IAM_COMPONENT_NAME: Final = "iam"
 IAM_CAPABILITIES: Final = ("CAPABILITY_NAMED_IAM",)
 ARTIFACT_BUCKET_PARAMETER: Final = "ArtifactBucket"
+#: Parámetro de `infra/iam.yaml` con el sha256 de la plantilla que la
+#: desplegó (`template_fingerprint`). Una pila de 0.17.0 o anterior no lo
+#: tiene y una desplegada a mano lo deja vacío: en los dos casos la plantilla
+#: del SDK es otra y `rayito setup` la actualiza.
+TEMPLATE_FINGERPRINT_PARAMETER: Final = "TemplateFingerprint"
 #: Plantilla de la pila de IAM; el mensaje `stack_incomplete` la nombra.
 IAM_TEMPLATE_PATH: Final = "infra/iam.yaml"
 #: La pila que crea el bucket de artefactos cuando no hay ninguno que
@@ -599,7 +604,12 @@ def stack_output(observation: StackObservation, key: str, template: str) -> str:
     return value
 
 
-def plan_stack(stack: StackObservation, bucket: str) -> SetupStep:
+def plan_stack(stack: StackObservation, bucket: str, template_fingerprint: str) -> SetupStep:
+    """`create` sin pila, `wait` si está en curso y, con la pila lista,
+    `reuse` sólo si lleva el bucket del plan y la plantilla de este SDK
+    (`template_fingerprint`, el sha256 de su `infra/iam.yaml`); si no,
+    `update`. `previous_bucket` sólo se rellena si cambia el bucket: con el
+    mismo bucket, el `update` sólo pone al día la plantilla."""
     condition = classify_stack(stack)
     if condition == "missing":
         return SetupStep("iamStack", IAM_STACK_NAME, "create")
@@ -609,10 +619,15 @@ def plan_stack(stack: StackObservation, bucket: str) -> SetupStep:
         return SetupStep("iamStack", IAM_STACK_NAME, "wait", status=stack.status)
     stack_output(stack, BUILD_ROLE_OUTPUT_KEY, IAM_TEMPLATE_PATH)
     previous = stack.parameters.get(ARTIFACT_BUCKET_PARAMETER)
-    if previous == bucket:
+    current_template = stack.parameters.get(TEMPLATE_FINGERPRINT_PARAMETER) == template_fingerprint
+    if previous == bucket and current_template:
         return SetupStep("iamStack", IAM_STACK_NAME, "reuse", status=stack.status)
     return SetupStep(
-        "iamStack", IAM_STACK_NAME, "update", status=stack.status, previous_bucket=previous
+        "iamStack",
+        IAM_STACK_NAME,
+        "update",
+        status=stack.status,
+        previous_bucket=None if previous == bucket else previous,
     )
 
 
@@ -705,13 +720,16 @@ def plan_setup(
     bucket_step: SetupStep,
     image: ImageObservation,
     caps: ImageObservation | None = None,
+    *,
+    iam_template_fingerprint: str,
 ) -> SetupPlan:
     """El plan de los cuatro pasos. `caps` es la observación de
-    `rayito-base-caps`, o `None` si `caps_image` está apagado."""
+    `rayito-base-caps`, o `None` si `caps_image` está apagado;
+    `iam_template_fingerprint`, el sha256 del `infra/iam.yaml` de este SDK."""
     require_supported_region(request.region)
     steps = (
         bucket_step,
-        plan_stack(stack, bucket_step.name),
+        plan_stack(stack, bucket_step.name, iam_template_fingerprint),
         plan_image(image, request),
         plan_caps_image(caps, request),
     )
@@ -724,6 +742,24 @@ def plan_setup(
         image_arn=image.image_arn,
         stack_status=stack.status,
         caps_image_arn=None if caps is None or not request.caps_image else caps.image_arn,
+    )
+
+
+def applied_steps(plan: SetupPlan, result: SetupResult | None) -> tuple[SetupStep, ...]:
+    """Los pasos del plan tras `apply`: un `publish` de imagen lleva la
+    versión que acaba de publicar (`result`), que el plan aún no conocía.
+    Sin `result` (dry-run o un fallo), los pasos del plan tal cual."""
+    if result is None:
+        return plan.steps
+    published: Mapping[ResourceKind, str | None] = {
+        "baseImage": result.image_version,
+        "capsImage": result.caps_image_version,
+    }
+    return tuple(
+        replace(step, image_version=published[step.resource])
+        if step.action == "publish" and published.get(step.resource) is not None
+        else step
+        for step in plan.steps
     )
 
 
