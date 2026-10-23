@@ -451,10 +451,12 @@ function connectionOf(args: DeployAgentOptions, region: string | undefined): Con
   return { ...connection, ...(region === undefined ? {} : { region }) };
 }
 
-/** Lo que se resuelve antes de crear nada: la imagen base, el secreto del
- * modelo, el bucket y el token. Todo lo que lee AWS ocurre aquí, y lo único
+/** Lo que se resuelve antes de crear nada: el bucket, la imagen base, el
+ * secreto del modelo y el token. Todo lo que lee AWS ocurre aquí, y lo único
  * que puede crear es un secreto (con `createSecretFromEnv`) o la imagen base
- * (con `basePublisher`). */
+ * (con `basePublisher`). La imagen base sólo se exige si el despliegue va a
+ * construir (hay bucket): reutilizar la imagen del proyecto
+ * (`buildImage: false`, o sin bucket y con la imagen ya creada) no la lee. */
 export async function preflight(
   project: AgentProject,
   options: AgentDeployOptions,
@@ -473,11 +475,13 @@ export async function preflight(
       ...(args.credentials === undefined ? {} : { credentials: args.credentials }),
     });
   const steps: { kind: string; detail: string }[] = [];
-  const building = options.buildImage !== false;
+  const bucketSteps: { kind: string; detail: string }[] = [];
+  const bucket = await bucketFor(project, options, aws, environ, bucketSteps);
   if (
-    building &&
+    bucket !== undefined &&
     (await ensureBaseImage(aws, project.base, options.basePublisher, {
       ensure: options.ensureBaseImage,
+      template: templateName(project),
     }))
   ) {
     steps.push({ kind: STEP_BASE_IMAGE, detail: "published" });
@@ -501,7 +505,7 @@ export async function preflight(
   const resolved = withDefaultExcludes(
     copyProject(project, { gateways: secrets.gateways as Record<string, SecretGateway> }),
   );
-  const bucket = await bucketFor(resolved, options, aws, environ, steps);
+  steps.push(...bucketSteps);
   return {
     project: resolved,
     bucket,
