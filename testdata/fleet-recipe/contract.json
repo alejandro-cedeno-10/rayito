@@ -131,7 +131,7 @@
     "capsImage": {
       "python": "SetupRequest.caps_image",
       "typescript": "SetupRequest.capsImage",
-      "default": true,
+      "default": false,
       "owner": "G2"
     },
     "applyGateways": {
@@ -198,8 +198,8 @@
     },
     {
       "command": "setup",
-      "flag": "--no-caps-image",
-      "help": "No publica rayito-base-caps (la base de las plantillas de agente).",
+      "flag": "--caps-image",
+      "help": "Publica también rayito-base-caps (la base de las plantillas de agente); sin ella no se publica.",
       "owner": "G2"
     }
   ],

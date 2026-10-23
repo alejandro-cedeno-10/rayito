@@ -54,7 +54,7 @@ def request_from_vector(vector: dict[str, Any]) -> SetupRequest:
         environment_bucket=vector["environmentBucket"],
         artifact=None if vector["artifact"] is None else Path(vector["artifact"]),
         sdk_version=SDK_VERSION,
-        caps_image=not vector.get("noCapsImage", False),
+        caps_image=vector.get("capsImageRequested", False),
     )
 
 
@@ -182,6 +182,7 @@ def test_messages_match_the_contract() -> None:
     assert dict(domain.COST_TEXTS) == MESSAGES["cost"]
     assert dict(domain.BUCKET_SOURCE_LABELS) == MESSAGES["bucketSources"]
     assert MESSAGES["accountSetupHint"] == domain.ACCOUNT_SETUP_HINT
+    assert MESSAGES["capsImageSetupHint"] == domain.CAPS_IMAGE_SETUP_HINT
     assert MESSAGES["hintFormat"] == domain.HINT_TEMPLATE
 
 

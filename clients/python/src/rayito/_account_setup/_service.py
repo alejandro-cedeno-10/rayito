@@ -59,15 +59,15 @@ class AccountSetup:
         llama a AWS ni carga ningún cliente opcional.
     Recursos y llamadas AWS: `plan` sólo lee (`GetCallerIdentity`,
         `DescribeStacks`, un `HeadBucket`, `GetMicrovmImage` y
-        `ListMicrovmImageVersions`, de `rayito-base` y, salvo con
-        `caps_image=False`, de `rayito-base-caps`); sólo en una cuenta sin
+        `ListMicrovmImageVersions`, de `rayito-base` y, sólo con
+        `caps_image=True`, de `rayito-base-caps`); sólo en una cuenta sin
         bucket reutilizable
         lee además `DescribeStacks` de `rayito-m0-artifacts` y hasta tres
         `HeadBucket`. `apply` puede crear el bucket con la pila
         `rayito-m0-artifacts` (CloudFormation crea el bucket; el SDK no llama
         a `CreateBucket` ni a ninguna API de configuración de S3), crear o
         actualizar la pila `rayito-m0-iam`, subir el zip de la imagen y
-        publicar `rayito-base` y `rayito-base-caps` (ésta con
+        publicar `rayito-base` y, con `caps_image`, `rayito-base-caps` (ésta con
         `additionalOsCapabilities=["ALL"]`) desde ese mismo zip, descargado
         una sola vez.
     Coste aproximado: la pila de IAM es gratis; cada versión publicada de
@@ -82,8 +82,8 @@ class AccountSetup:
         (`s3:CreateBucket`, `s3:PutBucketPolicy` y las de configuración),
         propios de un rol de bootstrap y no del rol mínimo del SDK.
     Cómo apagarla: no ejecutes `rayito setup`; con `--dry-run` sólo lee;
-        `--no-caps-image` (`SetupRequest.caps_image=False`) no publica
-        `rayito-base-caps`.
+        sin `--caps-image` (`SetupRequest.caps_image`, por defecto `False`) no
+        publica `rayito-base-caps`.
     Ejemplo:
         setup = AccountSetup(gateways)
         plan = setup.plan(request)

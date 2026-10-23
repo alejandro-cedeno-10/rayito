@@ -64,8 +64,8 @@ export interface VectorInput {
   readonly image: VectorImage | null;
   /** `rayito-base-caps`, con la misma forma que `image`; sin la clave, el mismo estado que `image`. */
   readonly capsImage?: VectorImage | null;
-  /** `--no-caps-image` (`capsImage: false` en la petición). */
-  readonly noCapsImage?: boolean;
+  /** `--caps-image` (`capsImage: true` en la petición); sin la clave, el paso es `skip`. */
+  readonly capsImageRequested?: boolean;
 }
 
 export interface VectorImage {

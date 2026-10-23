@@ -5,6 +5,7 @@
       "name": "dry-run en una cuenta nueva",
       "args": [
         "setup",
+        "--caps-image",
         "--dry-run"
       ],
       "input": {
@@ -24,16 +25,15 @@
       },
       "expected": {
         "exitCode": 0,
-        "stdout": "rayito setup: cuenta 123456789012, región us-east-1\n  bucket {cdkBucket}: reutilizar (bootstrap de CDK)\n  pila de IAM rayito-m0-iam: crear\n  imagen rayito-base: publicar desde rayd-v{sdkVersion} (≈ 10 min)\n  imagen con capacidades rayito-base-caps: publicar desde rayd-v{sdkVersion} (≈ 10 min)\nCoste aproximado:\n  pila de IAM: gratis\n  imagen: ≈ $0,04 por semana por versión publicada (mínimo una semana)\n  zip de la imagen en el bucket: céntimos\n  imagen con capacidades: ≈ $0,04 por semana por versión publicada ($0,08 por GB-mes, mínimo una semana); --no-caps-image la omite\nno se creó ni cambió nada (--dry-run)\n",
+        "stdout": "rayito setup: cuenta 123456789012, región us-east-1\n  bucket {cdkBucket}: reutilizar (bootstrap de CDK)\n  pila de IAM rayito-m0-iam: crear\n  imagen rayito-base: publicar desde rayd-v{sdkVersion} (≈ 10 min)\n  imagen con capacidades rayito-base-caps: publicar desde rayd-v{sdkVersion} (≈ 10 min)\nCoste aproximado:\n  pila de IAM: gratis\n  imagen: ≈ $0,04 por semana por versión publicada (mínimo una semana)\n  zip de la imagen en el bucket: céntimos\n  imagen con capacidades: ≈ $0,04 por semana por versión publicada ($0,08 por GB-mes, mínimo una semana); sólo con --caps-image\nno se creó ni cambió nada (--dry-run)\n",
         "stderr": ""
       }
     },
     {
-      "name": "dry-run con --no-caps-image",
+      "name": "dry-run sin --caps-image",
       "args": [
         "setup",
-        "--dry-run",
-        "--no-caps-image"
+        "--dry-run"
       ],
       "input": {
         "region": "us-east-1",
@@ -52,7 +52,7 @@
       },
       "expected": {
         "exitCode": 0,
-        "stdout": "rayito setup: cuenta 123456789012, región us-east-1\n  bucket {cdkBucket}: reutilizar (bootstrap de CDK)\n  pila de IAM rayito-m0-iam: crear\n  imagen rayito-base: publicar desde rayd-v{sdkVersion} (≈ 10 min)\n  imagen con capacidades rayito-base-caps: omitida (--no-caps-image)\nCoste aproximado:\n  pila de IAM: gratis\n  imagen: ≈ $0,04 por semana por versión publicada (mínimo una semana)\n  zip de la imagen en el bucket: céntimos\nno se creó ni cambió nada (--dry-run)\n",
+        "stdout": "rayito setup: cuenta 123456789012, región us-east-1\n  bucket {cdkBucket}: reutilizar (bootstrap de CDK)\n  pila de IAM rayito-m0-iam: crear\n  imagen rayito-base: publicar desde rayd-v{sdkVersion} (≈ 10 min)\n  imagen con capacidades rayito-base-caps: omitida (sin --caps-image)\nCoste aproximado:\n  pila de IAM: gratis\n  imagen: ≈ $0,04 por semana por versión publicada (mínimo una semana)\n  zip de la imagen en el bucket: céntimos\nno se creó ni cambió nada (--dry-run)\n",
         "stderr": ""
       }
     },
@@ -61,6 +61,7 @@
       "args": [
         "--json",
         "setup",
+        "--caps-image",
         "--dry-run"
       ],
       "input": {
@@ -132,7 +133,7 @@
             "pila de IAM: gratis",
             "imagen: ≈ $0,04 por semana por versión publicada (mínimo una semana)",
             "zip de la imagen en el bucket: céntimos",
-            "imagen con capacidades: ≈ $0,04 por semana por versión publicada ($0,08 por GB-mes, mínimo una semana); --no-caps-image la omite"
+            "imagen con capacidades: ≈ $0,04 por semana por versión publicada ($0,08 por GB-mes, mínimo una semana); sólo con --caps-image"
           ],
           "result": null,
           "doctor": null,
@@ -146,6 +147,7 @@
       "name": "dry-run en una cuenta preparada a mano",
       "args": [
         "setup",
+        "--caps-image",
         "--dry-run"
       ],
       "input": {
@@ -200,7 +202,8 @@
     {
       "name": "sin --yes y sin terminal",
       "args": [
-        "setup"
+        "setup",
+        "--caps-image"
       ],
       "input": {
         "region": "us-east-1",
@@ -219,7 +222,7 @@
       },
       "expected": {
         "exitCode": 2,
-        "stdout": "rayito setup: cuenta 123456789012, región us-east-1\n  bucket {cdkBucket}: reutilizar (bootstrap de CDK)\n  pila de IAM rayito-m0-iam: crear\n  imagen rayito-base: publicar desde rayd-v{sdkVersion} (≈ 10 min)\n  imagen con capacidades rayito-base-caps: publicar desde rayd-v{sdkVersion} (≈ 10 min)\nCoste aproximado:\n  pila de IAM: gratis\n  imagen: ≈ $0,04 por semana por versión publicada (mínimo una semana)\n  zip de la imagen en el bucket: céntimos\n  imagen con capacidades: ≈ $0,04 por semana por versión publicada ($0,08 por GB-mes, mínimo una semana); --no-caps-image la omite\n",
+        "stdout": "rayito setup: cuenta 123456789012, región us-east-1\n  bucket {cdkBucket}: reutilizar (bootstrap de CDK)\n  pila de IAM rayito-m0-iam: crear\n  imagen rayito-base: publicar desde rayd-v{sdkVersion} (≈ 10 min)\n  imagen con capacidades rayito-base-caps: publicar desde rayd-v{sdkVersion} (≈ 10 min)\nCoste aproximado:\n  pila de IAM: gratis\n  imagen: ≈ $0,04 por semana por versión publicada (mínimo una semana)\n  zip de la imagen en el bucket: céntimos\n  imagen con capacidades: ≈ $0,04 por semana por versión publicada ($0,08 por GB-mes, mínimo una semana); sólo con --caps-image\n",
         "stderr": "rayito: preparar la cuenta crea recursos con coste: confírmalo con --yes (o desde una terminal)\n"
       }
     },
@@ -227,7 +230,8 @@
       "name": "sin --yes con --json",
       "args": [
         "--json",
-        "setup"
+        "setup",
+        "--caps-image"
       ],
       "input": {
         "region": "us-east-1",
@@ -298,7 +302,7 @@
             "pila de IAM: gratis",
             "imagen: ≈ $0,04 por semana por versión publicada (mínimo una semana)",
             "zip de la imagen en el bucket: céntimos",
-            "imagen con capacidades: ≈ $0,04 por semana por versión publicada ($0,08 por GB-mes, mínimo una semana); --no-caps-image la omite"
+            "imagen con capacidades: ≈ $0,04 por semana por versión publicada ($0,08 por GB-mes, mínimo una semana); sólo con --caps-image"
           ],
           "result": null,
           "doctor": null,
@@ -315,6 +319,7 @@
       "name": "dry-run sin ningún bucket: se crea uno",
       "args": [
         "setup",
+        "--caps-image",
         "--dry-run"
       ],
       "input": {
@@ -332,7 +337,7 @@
       },
       "expected": {
         "exitCode": 0,
-        "stdout": "rayito setup: cuenta 123456789012, región us-east-1\n  bucket {defaultBucket}: crear con la pila rayito-m0-artifacts (nombre por defecto de Rayito)\n  pila de IAM rayito-m0-iam: crear\n  imagen rayito-base: publicar desde rayd-v{sdkVersion} (≈ 10 min)\n  imagen con capacidades rayito-base-caps: publicar desde rayd-v{sdkVersion} (≈ 10 min)\nCoste aproximado:\n  bucket de artefactos: los zips de la imagen caducan a los 7 días (regla de ciclo de vida)\n  pila de IAM: gratis\n  imagen: ≈ $0,04 por semana por versión publicada (mínimo una semana)\n  zip de la imagen en el bucket: céntimos\n  imagen con capacidades: ≈ $0,04 por semana por versión publicada ($0,08 por GB-mes, mínimo una semana); --no-caps-image la omite\nno se creó ni cambió nada (--dry-run)\n",
+        "stdout": "rayito setup: cuenta 123456789012, región us-east-1\n  bucket {defaultBucket}: crear con la pila rayito-m0-artifacts (nombre por defecto de Rayito)\n  pila de IAM rayito-m0-iam: crear\n  imagen rayito-base: publicar desde rayd-v{sdkVersion} (≈ 10 min)\n  imagen con capacidades rayito-base-caps: publicar desde rayd-v{sdkVersion} (≈ 10 min)\nCoste aproximado:\n  bucket de artefactos: los zips de la imagen caducan a los 7 días (regla de ciclo de vida)\n  pila de IAM: gratis\n  imagen: ≈ $0,04 por semana por versión publicada (mínimo una semana)\n  zip de la imagen en el bucket: céntimos\n  imagen con capacidades: ≈ $0,04 por semana por versión publicada ($0,08 por GB-mes, mínimo una semana); sólo con --caps-image\nno se creó ni cambió nada (--dry-run)\n",
         "stderr": ""
       }
     },
@@ -341,6 +346,7 @@
       "args": [
         "--json",
         "setup",
+        "--caps-image",
         "--dry-run"
       ],
       "input": {
@@ -411,7 +417,7 @@
             "pila de IAM: gratis",
             "imagen: ≈ $0,04 por semana por versión publicada (mínimo una semana)",
             "zip de la imagen en el bucket: céntimos",
-            "imagen con capacidades: ≈ $0,04 por semana por versión publicada ($0,08 por GB-mes, mínimo una semana); --no-caps-image la omite"
+            "imagen con capacidades: ≈ $0,04 por semana por versión publicada ($0,08 por GB-mes, mínimo una semana); sólo con --caps-image"
           ],
           "result": null,
           "doctor": null,

@@ -40,7 +40,7 @@ export const ACTION_TEMPLATES = {
   imagePublishArtifact: "publicar desde {artifact} (≈ 10 min)",
   imageReuse: "ya existe (versión {imageVersion} lanzable)",
   imageWait: "build en curso (versión {imageVersion}): esperar",
-  capsSkip: "omitida (--no-caps-image)",
+  capsSkip: "omitida (sin --caps-image)",
 } as const;
 export const COST_HEADER = "Coste aproximado:";
 export const COST_LINE_TEMPLATE = "  {text}";

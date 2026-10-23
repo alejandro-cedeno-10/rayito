@@ -74,6 +74,7 @@ interface Contract {
     downloadReasons: Record<string, string>;
     bucketSources: Record<string, string>;
     accountSetupHint: string;
+    capsImageSetupHint: string;
     hintFormat: string;
   };
 }
@@ -110,7 +111,7 @@ function requestOf(input: VectorInput): SetupRequest {
     environmentBucket: input.environmentBucket ?? undefined,
     artifact: input.artifact ?? undefined,
     sdkVersion: VERSION,
-    capsImage: input.noCapsImage !== true,
+    capsImage: input.capsImageRequested === true,
   };
 }
 
@@ -229,6 +230,7 @@ describe("account setup: contract", () => {
     expect({ ...domain.BUCKET_SOURCE_LABELS }).toEqual(contract.messages.bucketSources);
     expect(Object.keys(domain.BUCKET_SOURCE_LABELS)).toEqual(contract.bucketSources);
     expect(domain.ACCOUNT_SETUP_HINT).toBe(contract.messages.accountSetupHint);
+    expect(domain.CAPS_IMAGE_SETUP_HINT).toBe(contract.messages.capsImageSetupHint);
     expect(domain.HINT_TEMPLATE).toBe(contract.messages.hintFormat);
   });
 
@@ -311,6 +313,7 @@ const FRESH: VectorInput = {
   forbiddenBuckets: [],
   artifactStack: null,
   image: null,
+  capsImageRequested: true,
 };
 
 const DEFAULT_BUCKET = domain.defaultArtifactBucketName("123456789012", "us-east-1");
@@ -365,9 +368,9 @@ describe("AccountSetup.plan", () => {
     expect(fake.writes).toEqual([]);
   });
 
-  it("without the caps image the plan never reads it and skips the step", async () => {
+  it("by default the plan never reads the caps image and skips the step", async () => {
     const fake = new FakeAccountSetup(FRESH);
-    const plan = await new AccountSetup(fake).plan({ ...requestOf(FRESH), capsImage: false });
+    const plan = await new AccountSetup(fake).plan({ ...requestOf(FRESH), capsImage: undefined });
     expect(names(fake.calls)).toEqual(["accountId", "describe", "head_bucket", "get_image"]);
     expect(domain.stepOf(plan, "capsImage").action).toBe("skip");
     expect(plan.capsImageArn).toBeUndefined();
@@ -574,10 +577,10 @@ describe("AccountSetup.apply", () => {
     });
   });
 
-  it("without the caps image apply publishes only the base", async () => {
+  it("by default apply publishes only the base", async () => {
     const fake = new FakeAccountSetup(FRESH);
     const service = new AccountSetup(fake);
-    const plan = await service.plan({ ...requestOf(FRESH), capsImage: false });
+    const plan = await service.plan({ ...requestOf(FRESH), capsImage: undefined });
     const result = await service.apply(plan, { workdir: "/work", onProgress: () => undefined });
     expect(names(fake.writes)).toEqual(["create", "download", "download", "publish"]);
     expect(result.capsImageArn).toBeUndefined();

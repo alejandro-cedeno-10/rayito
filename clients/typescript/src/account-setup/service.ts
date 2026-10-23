@@ -21,7 +21,7 @@
  * `GetCallerIdentity`, `DescribeStacks`, `HeadBucket` (hasta tres, y un
  * `DescribeStacks` más de `rayito-m0-artifacts`, sólo en una cuenta sin bucket
  * utilizable), `GetMicrovmImage` y `ListMicrovmImageVersions` (de las dos
- * imágenes; de `rayito-base-caps` no con `capsImage: false`).
+ * imágenes; de `rayito-base-caps` sólo con `capsImage: true`).
  *
  * Coste aproximado: el bucket creado y su pila son gratis salvo los zips, que
  * caducan a los 7 días (céntimos); la pila de IAM es gratis; cada versión publicada de
@@ -38,8 +38,8 @@
  * otros): `CallerPolicy` no los da, así que ese paso pide credenciales de
  * administrador o de bootstrap.
  *
- * Cómo apagarla: no ejecutes `rayito setup` (o usa `--dry-run`); `--no-caps-image`
- * (`capsImage: false`) no publica `rayito-base-caps`; para borrar lo
+ * Cómo apagarla: no ejecutes `rayito setup` (o usa `--dry-run`); sin `--caps-image`
+ * (`capsImage`, por defecto `false`) no publica `rayito-base-caps`; para borrar lo
  * creado, `aws cloudformation delete-stack` (el bucket de
  * `rayito-m0-artifacts` se conserva) y `rayito image prune`.
  *
@@ -103,7 +103,7 @@ export class AccountSetup {
     const stack = await iamStack.observe();
     const bucketStep = await this.#resolveBucket(request, stack, account);
     const image = await images.observe(BASE_IMAGE_NAME);
-    const caps = request.capsImage === false ? undefined : await images.observe(CAPS_IMAGE_NAME);
+    const caps = request.capsImage === true ? await images.observe(CAPS_IMAGE_NAME) : undefined;
     return planSetup({ request, account, stack, bucketStep, image, caps });
   }
 

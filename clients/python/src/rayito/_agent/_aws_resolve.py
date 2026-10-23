@@ -26,6 +26,7 @@ from rayito._account_setup._aws import artifact_stack_gateway
 from rayito._account_setup._domain import BUCKET_ENV_VAR as BUCKET_ENV_VAR
 from rayito._account_setup._domain import (
     BUCKET_NAME_OUTPUT_KEY,
+    with_base_image_hint,
     with_setup_hint,
 )
 from rayito._account_setup._domain import cdk_bucket_name as cdk_bucket_name
@@ -417,16 +418,19 @@ def ensure_base_image(
     """Si la imagen base existe. Si no, la publica con `publisher` (que el
     llamante dio y que costó una confirmación suya) y vuelve a comprobar;
     sin `publisher` o con `ensure=False` es `InvalidArgumentException` con el
-    comando que la publica. Devuelve si hubo que publicarla."""
+    comando que la publica (para `rayito-base-caps`, `rayito setup
+    --caps-image`, que `rayito setup` no publica por defecto). Devuelve si
+    hubo que publicarla."""
     if aws.image_exists(base):
         return False
     if not ensure or publisher is None:
         raise InvalidArgumentException(
-            with_setup_hint(
+            with_base_image_hint(
                 f"la imagen base {base!r} no existe en esta cuenta y región: publícala con "
                 "`rayito image publish --os-capabilities ALL --artifact <zip> "
                 "--base-image-version latest` (ver la guía de instalación) o pasa "
-                "base_publisher= a deploy_agent()"
+                "base_publisher= a deploy_agent()",
+                base,
             )
         )
     publisher()

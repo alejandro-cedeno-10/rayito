@@ -20,6 +20,7 @@ import {
   BUCKET_ENV_VAR,
   CDK_BOOTSTRAP_QUALIFIER,
   cdkBucketName,
+  withBaseImageHint,
   withSetupHint,
 } from "../account-setup/domain.js";
 import { clientConfig } from "../aws/control-plane.js";
@@ -478,11 +479,12 @@ export async function ensureBaseImage(
   }
   if (!options.ensure || publisher === undefined) {
     throw new InvalidArgumentError(
-      withSetupHint(
+      withBaseImageHint(
         `la imagen base '${base}' no existe en esta cuenta y región: publícala con ` +
           "`rayito image publish --os-capabilities ALL --artifact <zip> " +
           "--base-image-version latest` (ver la guía de instalación) o pasa " +
           "basePublisher a deployAgent()",
+        base,
       ),
     );
   }

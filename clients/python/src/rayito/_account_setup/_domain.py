@@ -154,7 +154,7 @@ COST_TEXTS: Final[Mapping[str, str]] = MappingProxyType(
         "artifact": "zip de la imagen en el bucket: céntimos",
         "capsImage": (
             "imagen con capacidades: ≈ $0,04 por semana por versión publicada ($0,08 por "
-            "GB-mes, mínimo una semana); --no-caps-image la omite"
+            "GB-mes, mínimo una semana); sólo con --caps-image"
         ),
     }
 )
@@ -247,6 +247,12 @@ DOWNLOAD_REASONS: Final[Mapping[str, str]] = MappingProxyType(
 ACCOUNT_SETUP_HINT: Final = (
     "si la cuenta o la región aún no están preparadas, ejecuta `rayito setup`"
 )
+#: La pista cuando falta `rayito-base-caps`: `rayito setup` sólo la publica
+#: con `--caps-image` (otra versión de imagen que cuesta, ADR-034 D9).
+CAPS_IMAGE_SETUP_HINT: Final = (
+    "rayito setup no publica rayito-base-caps por defecto porque cuesta: ejecuta "
+    "`rayito setup --caps-image`"
+)
 HINT_TEMPLATE: Final = "{message} ({hint})"
 
 
@@ -267,15 +273,17 @@ class AccountSetupException(Exception):
 
 @dataclass(frozen=True)
 class SetupRequest:
-    """Lo que pide `rayito setup`. `caps_image` (por defecto `True`) añade el
+    """Lo que pide `rayito setup`. `caps_image` (por defecto `False`) añade el
     paso `capsImage`: publicar `rayito-base-caps`, la base del agente en
-    MicroVM, desde el mismo zip que `rayito-base`. Con `False`
-    (`--no-caps-image`) el paso es `skip` y no hace ninguna llamada.
+    MicroVM, desde el mismo zip que `rayito-base`. Sin él (sin
+    `--caps-image`) el paso es `skip` y no hace ninguna llamada: publicar
+    otra imagen cuesta, así que es opcional.
 
     Coste y activación
     -------------------
-    Activa: `rayito setup` (y `--dry-run`, que sólo lee); `caps_image=False`
-        quita el paso de la imagen con capacidades.
+    Activa: `caps_image=True` / `rayito setup --caps-image` (con `--dry-run`
+        sólo lee). Apagada por defecto: sin ella no se lee ni se publica
+        `rayito-base-caps`.
     Recursos y llamadas AWS: con `caps_image`, `GetMicrovmImage` y
         `ListMicrovmImageVersions` de `rayito-base-caps` en el plan y, si
         falta, `CreateMicrovmImage`/`UpdateMicrovmImage` con
@@ -284,10 +292,10 @@ class SetupRequest:
         ($0,08 por GB-mes de snapshot, mínimo una semana; us-east-1,
         consultado 2026-10-22, https://aws.amazon.com/lambda/pricing/).
     IAM: las mismas de publicar `rayito-base` (`infra/iam.yaml`).
-    Cómo apagarla: `caps_image=False` / `rayito setup --no-caps-image`.
+    Cómo apagarla: no pases `caps_image` (por defecto `False`) ni `--caps-image`.
     Ejemplo:
         SetupRequest(region="us-east-1", bucket=None, environment_bucket=None,
-                     artifact=None, sdk_version="0.17.0", caps_image=False)
+                     artifact=None, sdk_version="0.17.0", caps_image=True)
     """
 
     region: str
@@ -295,7 +303,7 @@ class SetupRequest:
     environment_bucket: str | None
     artifact: Path | None
     sdk_version: str
-    caps_image: bool = True
+    caps_image: bool = False
 
 
 @dataclass(frozen=True)
@@ -404,7 +412,7 @@ class SetupPlan:
 @dataclass(frozen=True)
 class SetupResult:
     """Lo que dejó `apply`. `caps_image_arn`/`caps_image_version` son los de
-    `rayito-base-caps`, o `None` con `--no-caps-image`."""
+    `rayito-base-caps`, o `None` sin `--caps-image`."""
 
     bucket: str
     image_arn: str
@@ -467,6 +475,14 @@ def cdk_bucket_name(account: str, region: str) -> str:
 
 def with_setup_hint(message: str) -> str:
     return HINT_TEMPLATE.format(message=message, hint=ACCOUNT_SETUP_HINT)
+
+
+def with_base_image_hint(message: str, base: str) -> str:
+    """`message` con la pista de la imagen base que falta: para
+    `rayito-base-caps`, `rayito setup --caps-image`; para cualquier otra, la de
+    `rayito setup`."""
+    hint = CAPS_IMAGE_SETUP_HINT if base == CAPS_IMAGE_NAME else ACCOUNT_SETUP_HINT
+    return HINT_TEMPLATE.format(message=message, hint=hint)
 
 
 def default_artifact_bucket_name(account: str, region: str) -> str:

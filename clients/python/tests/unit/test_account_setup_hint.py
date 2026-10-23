@@ -6,6 +6,7 @@ from __future__ import annotations
 import pytest
 from botocore.exceptions import ClientError
 
+from rayito._account_setup._domain import CAPS_IMAGE_SETUP_HINT
 from rayito._agent._aws_resolve import ensure_base_image, resolve_bucket
 from rayito._aws import LaunchRequest
 from rayito.exceptions import InvalidArgumentException, SandboxNotFoundException
@@ -85,9 +86,18 @@ class NoImage:
         return False
 
 
-def test_the_missing_base_image_error_keeps_its_text_and_adds_the_hint() -> None:
+def test_a_missing_caps_base_image_points_to_setup_caps_image() -> None:
     with pytest.raises(InvalidArgumentException) as caught:
         ensure_base_image(NoImage(), "rayito-base-caps", None, ensure=True)  # type: ignore[arg-type]
+    message = str(caught.value)
+    assert "no existe en esta cuenta y región" in message
+    assert CAPS_IMAGE_SETUP_HINT in message
+    assert "`rayito setup --caps-image`" in message
+
+
+def test_any_other_missing_base_image_keeps_the_setup_hint() -> None:
+    with pytest.raises(InvalidArgumentException) as caught:
+        ensure_base_image(NoImage(), "my-base", None, ensure=True)  # type: ignore[arg-type]
     message = str(caught.value)
     assert "no existe en esta cuenta y región" in message
     assert HINT in message

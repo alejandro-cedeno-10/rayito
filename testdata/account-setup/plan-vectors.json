@@ -1,5 +1,5 @@
 {
-  "description": "Vectores del plan de `rayito setup` (ADR-030): lo observado en la cuenta y lo que el plan decide, o el código de error. Cada SDK los evalúa con `AccountSetup.plan` sobre los dobles en memoria construidos desde `input`, así que `bucketReads` (las lecturas para resolver el bucket, en orden: `head:<bucket>` es un `HeadBucket` y `artifactStack` un `DescribeStacks` de rayito-m0-artifacts) se comprueba también en los casos de error. Marcadores que el test sustituye antes de comparar: `{sdkVersion}`, la versión del SDK que corre el test; `{cdkBucket}`, `cdk_bucket_name(account, region)`/`cdkBucketName(account, region)`; y `{defaultBucket}`, `default_artifact_bucket_name(account, region)`/`defaultArtifactBucketName(account, region)` (los nombres reales llevan cuenta y región, y check_hygiene.py no los admite en el repositorio). `buckets` lista los buckets que `HeadBucket` encuentra, con su región; `forbiddenBuckets`, los que responden 403; cualquier otro no existe (404). `stack` es rayito-m0-iam y `artifactStack` rayito-m0-artifacts (null: no existe). `capsImage` es rayito-base-caps con la misma forma que `image`; `noCapsImage: true` es `--no-caps-image` (`caps_image=False`/`capsImage: false`).",
+  "description": "Vectores del plan de `rayito setup` (ADR-030): lo observado en la cuenta y lo que el plan decide, o el código de error. Cada SDK los evalúa con `AccountSetup.plan` sobre los dobles en memoria construidos desde `input`, así que `bucketReads` (las lecturas para resolver el bucket, en orden: `head:<bucket>` es un `HeadBucket` y `artifactStack` un `DescribeStacks` de rayito-m0-artifacts) se comprueba también en los casos de error. Marcadores que el test sustituye antes de comparar: `{sdkVersion}`, la versión del SDK que corre el test; `{cdkBucket}`, `cdk_bucket_name(account, region)`/`cdkBucketName(account, region)`; y `{defaultBucket}`, `default_artifact_bucket_name(account, region)`/`defaultArtifactBucketName(account, region)` (los nombres reales llevan cuenta y región, y check_hygiene.py no los admite en el repositorio). `buckets` lista los buckets que `HeadBucket` encuentra, con su región; `forbiddenBuckets`, los que responden 403; cualquier otro no existe (404). `stack` es rayito-m0-iam y `artifactStack` rayito-m0-artifacts (null: no existe). `capsImage` es rayito-base-caps con la misma forma que `image`; `capsImageRequested: true` es `--caps-image` (`caps_image=True`/`capsImage: true`); sin él, el paso `capsImage` es `skip` y no se lee rayito-base-caps.",
   "cases": [
     {
       "name": "cuenta nueva con el bucket del bootstrap de CDK",
@@ -16,7 +16,8 @@
         "forbiddenBuckets": [],
         "artifactStack": null,
         "image": null,
-        "capsImage": null
+        "capsImage": null,
+        "capsImageRequested": true
       },
       "expected": {
         "steps": [
@@ -67,7 +68,7 @@
           "pila de IAM: gratis",
           "imagen: ≈ $0,04 por semana por versión publicada (mínimo una semana)",
           "zip de la imagen en el bucket: céntimos",
-          "imagen con capacidades: ≈ $0,04 por semana por versión publicada ($0,08 por GB-mes, mínimo una semana); --no-caps-image la omite"
+          "imagen con capacidades: ≈ $0,04 por semana por versión publicada ($0,08 por GB-mes, mínimo una semana); sólo con --caps-image"
         ],
         "bucketReads": [
           "head:{cdkBucket}"
@@ -117,7 +118,8 @@
               "createdAt": "2026-10-01T00:00:00Z"
             }
           ]
-        }
+        },
+        "capsImageRequested": true
       },
       "expected": {
         "steps": [
@@ -186,7 +188,8 @@
         "forbiddenBuckets": [],
         "artifactStack": null,
         "image": null,
-        "capsImage": null
+        "capsImage": null,
+        "capsImageRequested": true
       },
       "expected": {
         "steps": [
@@ -237,7 +240,7 @@
           "pila de IAM: gratis",
           "imagen: ≈ $0,04 por semana por versión publicada (mínimo una semana)",
           "zip de la imagen en el bucket: céntimos",
-          "imagen con capacidades: ≈ $0,04 por semana por versión publicada ($0,08 por GB-mes, mínimo una semana); --no-caps-image la omite"
+          "imagen con capacidades: ≈ $0,04 por semana por versión publicada ($0,08 por GB-mes, mínimo una semana); sólo con --caps-image"
         ],
         "bucketReads": [
           "head:amzn-s3-demo-bucket"
@@ -288,7 +291,8 @@
               "createdAt": "2026-10-01T00:00:00Z"
             }
           ]
-        }
+        },
+        "capsImageRequested": true
       },
       "expected": {
         "steps": [
@@ -386,7 +390,8 @@
               "createdAt": "2026-10-01T00:00:00Z"
             }
           ]
-        }
+        },
+        "capsImageRequested": true
       },
       "expected": {
         "steps": [
@@ -460,7 +465,8 @@
         "forbiddenBuckets": [],
         "artifactStack": null,
         "image": null,
-        "capsImage": null
+        "capsImage": null,
+        "capsImageRequested": true
       },
       "expected": {
         "steps": [
@@ -510,7 +516,7 @@
         "cost": [
           "imagen: ≈ $0,04 por semana por versión publicada (mínimo una semana)",
           "zip de la imagen en el bucket: céntimos",
-          "imagen con capacidades: ≈ $0,04 por semana por versión publicada ($0,08 por GB-mes, mínimo una semana); --no-caps-image la omite"
+          "imagen con capacidades: ≈ $0,04 por semana por versión publicada ($0,08 por GB-mes, mínimo una semana); sólo con --caps-image"
         ],
         "bucketReads": [
           "head:amzn-s3-demo-bucket"
@@ -538,7 +544,8 @@
         "forbiddenBuckets": [],
         "artifactStack": null,
         "image": null,
-        "capsImage": null
+        "capsImage": null,
+        "capsImageRequested": true
       },
       "expected": {
         "error": "stack_blocked",
@@ -568,7 +575,8 @@
         "forbiddenBuckets": [],
         "artifactStack": null,
         "image": null,
-        "capsImage": null
+        "capsImage": null,
+        "capsImageRequested": true
       },
       "expected": {
         "error": "stack_blocked",
@@ -598,7 +606,8 @@
         "forbiddenBuckets": [],
         "artifactStack": null,
         "image": null,
-        "capsImage": null
+        "capsImage": null,
+        "capsImageRequested": true
       },
       "expected": {
         "error": "stack_incomplete",
@@ -662,7 +671,8 @@
               "createdAt": "2026-10-02T00:00:00Z"
             }
           ]
-        }
+        },
+        "capsImageRequested": true
       },
       "expected": {
         "steps": [
@@ -758,7 +768,8 @@
               "createdAt": "2026-10-01T00:00:00Z"
             }
           ]
-        }
+        },
+        "capsImageRequested": true
       },
       "expected": {
         "steps": [
@@ -808,7 +819,7 @@
         "cost": [
           "imagen: ≈ $0,04 por semana por versión publicada (mínimo una semana)",
           "zip de la imagen en el bucket: céntimos",
-          "imagen con capacidades: ≈ $0,04 por semana por versión publicada ($0,08 por GB-mes, mínimo una semana); --no-caps-image la omite"
+          "imagen con capacidades: ≈ $0,04 por semana por versión publicada ($0,08 por GB-mes, mínimo una semana); sólo con --caps-image"
         ],
         "bucketReads": [
           "head:amzn-s3-demo-bucket"
@@ -830,7 +841,8 @@
         "forbiddenBuckets": [],
         "artifactStack": null,
         "image": null,
-        "capsImage": null
+        "capsImage": null,
+        "capsImageRequested": true
       },
       "expected": {
         "steps": [
@@ -881,7 +893,7 @@
           "pila de IAM: gratis",
           "imagen: ≈ $0,04 por semana por versión publicada (mínimo una semana)",
           "zip de la imagen en el bucket: céntimos",
-          "imagen con capacidades: ≈ $0,04 por semana por versión publicada ($0,08 por GB-mes, mínimo una semana); --no-caps-image la omite"
+          "imagen con capacidades: ≈ $0,04 por semana por versión publicada ($0,08 por GB-mes, mínimo una semana); sólo con --caps-image"
         ],
         "bucketReads": [
           "head:{cdkBucket}"
@@ -901,7 +913,8 @@
         "forbiddenBuckets": [],
         "artifactStack": null,
         "image": null,
-        "capsImage": null
+        "capsImage": null,
+        "capsImageRequested": true
       },
       "expected": {
         "steps": [
@@ -953,7 +966,7 @@
           "pila de IAM: gratis",
           "imagen: ≈ $0,04 por semana por versión publicada (mínimo una semana)",
           "zip de la imagen en el bucket: céntimos",
-          "imagen con capacidades: ≈ $0,04 por semana por versión publicada ($0,08 por GB-mes, mínimo una semana); --no-caps-image la omite"
+          "imagen con capacidades: ≈ $0,04 por semana por versión publicada ($0,08 por GB-mes, mínimo una semana); sólo con --caps-image"
         ],
         "bucketReads": [
           "head:{cdkBucket}",
@@ -977,7 +990,8 @@
         "forbiddenBuckets": [],
         "artifactStack": null,
         "image": null,
-        "capsImage": null
+        "capsImage": null,
+        "capsImageRequested": true
       },
       "expected": {
         "steps": [
@@ -1029,7 +1043,7 @@
           "pila de IAM: gratis",
           "imagen: ≈ $0,04 por semana por versión publicada (mínimo una semana)",
           "zip de la imagen en el bucket: céntimos",
-          "imagen con capacidades: ≈ $0,04 por semana por versión publicada ($0,08 por GB-mes, mínimo una semana); --no-caps-image la omite"
+          "imagen con capacidades: ≈ $0,04 por semana por versión publicada ($0,08 por GB-mes, mínimo una semana); sólo con --caps-image"
         ],
         "bucketReads": [
           "head:amzn-s3-demo-bucket1",
@@ -1052,7 +1066,8 @@
         "forbiddenBuckets": [],
         "artifactStack": null,
         "image": null,
-        "capsImage": null
+        "capsImage": null,
+        "capsImageRequested": true
       },
       "expected": {
         "error": "bucket_region",
@@ -1074,7 +1089,8 @@
         "forbiddenBuckets": [],
         "artifactStack": null,
         "image": null,
-        "capsImage": null
+        "capsImage": null,
+        "capsImageRequested": true
       },
       "expected": {
         "error": "unsupported_region",
@@ -1094,7 +1110,8 @@
         "forbiddenBuckets": [],
         "artifactStack": null,
         "image": null,
-        "capsImage": null
+        "capsImage": null,
+        "capsImageRequested": true
       },
       "expected": {
         "steps": [
@@ -1146,7 +1163,7 @@
           "pila de IAM: gratis",
           "imagen: ≈ $0,04 por semana por versión publicada (mínimo una semana)",
           "zip de la imagen en el bucket: céntimos",
-          "imagen con capacidades: ≈ $0,04 por semana por versión publicada ($0,08 por GB-mes, mínimo una semana); --no-caps-image la omite"
+          "imagen con capacidades: ≈ $0,04 por semana por versión publicada ($0,08 por GB-mes, mínimo una semana); sólo con --caps-image"
         ],
         "bucketReads": [
           "head:amzn-s3-demo-bucket",
@@ -1177,7 +1194,8 @@
           }
         },
         "image": null,
-        "capsImage": null
+        "capsImage": null,
+        "capsImageRequested": true
       },
       "expected": {
         "steps": [
@@ -1228,7 +1246,7 @@
           "pila de IAM: gratis",
           "imagen: ≈ $0,04 por semana por versión publicada (mínimo una semana)",
           "zip de la imagen en el bucket: céntimos",
-          "imagen con capacidades: ≈ $0,04 por semana por versión publicada ($0,08 por GB-mes, mínimo una semana); --no-caps-image la omite"
+          "imagen con capacidades: ≈ $0,04 por semana por versión publicada ($0,08 por GB-mes, mínimo una semana); sólo con --caps-image"
         ],
         "bucketReads": [
           "head:{cdkBucket}",
@@ -1255,7 +1273,8 @@
           }
         },
         "image": null,
-        "capsImage": null
+        "capsImage": null,
+        "capsImageRequested": true
       },
       "expected": {
         "steps": [
@@ -1306,7 +1325,7 @@
           "pila de IAM: gratis",
           "imagen: ≈ $0,04 por semana por versión publicada (mínimo una semana)",
           "zip de la imagen en el bucket: céntimos",
-          "imagen con capacidades: ≈ $0,04 por semana por versión publicada ($0,08 por GB-mes, mínimo una semana); --no-caps-image la omite"
+          "imagen con capacidades: ≈ $0,04 por semana por versión publicada ($0,08 por GB-mes, mínimo una semana); sólo con --caps-image"
         ],
         "bucketReads": [
           "head:{cdkBucket}",
@@ -1333,7 +1352,8 @@
           }
         },
         "image": null,
-        "capsImage": null
+        "capsImage": null,
+        "capsImageRequested": true
       },
       "expected": {
         "error": "stack_blocked",
@@ -1362,7 +1382,8 @@
           }
         },
         "image": null,
-        "capsImage": null
+        "capsImage": null,
+        "capsImageRequested": true
       },
       "expected": {
         "error": "stack_incomplete",
@@ -1395,7 +1416,8 @@
           }
         },
         "image": null,
-        "capsImage": null
+        "capsImage": null,
+        "capsImageRequested": true
       },
       "expected": {
         "error": "artifact_stack_conflict",
@@ -1420,7 +1442,8 @@
         "forbiddenBuckets": [],
         "artifactStack": null,
         "image": null,
-        "capsImage": null
+        "capsImage": null,
+        "capsImageRequested": true
       },
       "expected": {
         "error": "bucket_taken",
@@ -1446,7 +1469,8 @@
         ],
         "artifactStack": null,
         "image": null,
-        "capsImage": null
+        "capsImage": null,
+        "capsImageRequested": true
       },
       "expected": {
         "error": "bucket_taken",
@@ -1474,7 +1498,8 @@
         ],
         "artifactStack": null,
         "image": null,
-        "capsImage": null
+        "capsImage": null,
+        "capsImageRequested": true
       },
       "expected": {
         "error": "bucket_unavailable",
@@ -1526,7 +1551,8 @@
               "createdAt": "2026-10-01T00:00:00Z"
             }
           ]
-        }
+        },
+        "capsImageRequested": true
       },
       "expected": {
         "steps": [
@@ -1625,7 +1651,8 @@
               "createdAt": "2026-10-01T00:00:00Z"
             }
           ]
-        }
+        },
+        "capsImageRequested": true
       },
       "expected": {
         "error": "bucket_unavailable",
@@ -1649,7 +1676,8 @@
         ],
         "artifactStack": null,
         "image": null,
-        "capsImage": null
+        "capsImage": null,
+        "capsImageRequested": true
       },
       "expected": {
         "steps": [
@@ -1701,7 +1729,7 @@
           "pila de IAM: gratis",
           "imagen: ≈ $0,04 por semana por versión publicada (mínimo una semana)",
           "zip de la imagen en el bucket: céntimos",
-          "imagen con capacidades: ≈ $0,04 por semana por versión publicada ($0,08 por GB-mes, mínimo una semana); --no-caps-image la omite"
+          "imagen con capacidades: ≈ $0,04 por semana por versión publicada ($0,08 por GB-mes, mínimo una semana); sólo con --caps-image"
         ],
         "bucketReads": [
           "head:{cdkBucket}",
@@ -1761,7 +1789,8 @@
               "createdAt": "2026-10-01T00:00:00Z"
             }
           ]
-        }
+        },
+        "capsImageRequested": true
       },
       "expected": {
         "steps": [
@@ -1815,7 +1844,7 @@
       }
     },
     {
-      "name": "--no-caps-image: el paso capsImage se omite sin leer rayito-base-caps",
+      "name": "sin --caps-image: el paso capsImage se omite sin leer rayito-base-caps",
       "input": {
         "region": "us-east-1",
         "account": "123456789012",
@@ -1829,8 +1858,7 @@
         "forbiddenBuckets": [],
         "artifactStack": null,
         "image": null,
-        "capsImage": null,
-        "noCapsImage": true
+        "capsImage": null
       },
       "expected": {
         "steps": [
@@ -1920,7 +1948,8 @@
             }
           ]
         },
-        "capsImage": null
+        "capsImage": null,
+        "capsImageRequested": true
       },
       "expected": {
         "steps": [
@@ -1968,7 +1997,7 @@
         "ready": false,
         "needsConfirmation": true,
         "cost": [
-          "imagen con capacidades: ≈ $0,04 por semana por versión publicada ($0,08 por GB-mes, mínimo una semana); --no-caps-image la omite",
+          "imagen con capacidades: ≈ $0,04 por semana por versión publicada ($0,08 por GB-mes, mínimo una semana); sólo con --caps-image",
           "zip de la imagen en el bucket: céntimos"
         ],
         "bucketReads": [
@@ -2025,7 +2054,8 @@
               "createdAt": "2026-10-02T00:00:00Z"
             }
           ]
-        }
+        },
+        "capsImageRequested": true
       },
       "expected": {
         "steps": [
