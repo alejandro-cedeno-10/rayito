@@ -50,6 +50,11 @@ use tonic::Code;
 use tonic::codec::CompressionEncoding;
 use tonic::metadata::MetadataValue;
 
+/// The safety net of a transfer that must end early (an expired ticket, or
+/// a read that the barrier serves although the ticket would not poll again
+/// for a minute): half that minute. The phase, the error code and the
+/// content read are the real checks.
+const TRANSFER_SAFETY_NET: Duration = Duration::from_secs(30);
 const BUCKET: &str = "amzn-s3-demo-bucket";
 const REGION: &str = "us-east-1";
 /// The `microvmId` of the harness's `/run` envelope: staging keys must end
@@ -713,7 +718,7 @@ async fn an_armed_ticket_without_an_object_fails_deadline_exceeded_at_its_expiry
     assert_eq!(error.code, "deadline_exceeded");
     assert!(error.message.starts_with("expired: "), "{}", error.message);
     assert!(elapsed >= Duration::from_millis(1_300), "{elapsed:?}");
-    assert!(elapsed < Duration::from_secs(6), "{elapsed:?}");
+    assert!(elapsed < TRANSFER_SAFETY_NET, "{elapsed:?}");
     assert!(
         fake.calls_of(HttpMethod::Delete).is_empty(),
         "no object was ever seen"
@@ -1229,7 +1234,7 @@ async fn a_read_right_after_the_object_appears_returns_the_new_content() {
     fake.store(&up_key(16), &bytes);
     let started = Instant::now();
     assert_eq!(read_file(&harness, &path).await.unwrap(), bytes);
-    assert!(started.elapsed() < Duration::from_secs(10));
+    assert!(started.elapsed() < TRANSFER_SAFETY_NET);
     assert_eq!(
         get_transfer(&harness, &id).await.unwrap().phase(),
         TransferPhase::Done

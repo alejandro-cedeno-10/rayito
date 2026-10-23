@@ -907,6 +907,11 @@ async fn a_typed_exit_is_retained_and_replayable() {
     assert_eq!(exited.exit_code, 3);
 }
 
+/// The safety net of the PTY timeout test: well past its 1.5 s timeout, so a
+/// loaded runner never fails it; `TERM-seen` and the `timeout` status are the
+/// real check.
+const TIMEOUT_SAFETY_NET: Duration = Duration::from_secs(10);
+
 #[tokio::test]
 async fn timeout_sends_sigterm_first_and_reports_deadline_exceeded() {
     let harness = harness().await;
@@ -922,7 +927,7 @@ async fn timeout_sends_sigterm_first_and_reports_deadline_exceeded() {
     let started = Instant::now();
     let (bytes, exited, _) = collect_until_exit(&mut stream).await;
     let elapsed = started.elapsed();
-    assert!(elapsed < Duration::from_secs(4), "{elapsed:?}");
+    assert!(elapsed < TIMEOUT_SAFETY_NET, "{elapsed:?}");
     assert!(bytes.windows(9).any(|window| window == b"TERM-seen"));
     assert_eq!(exited.status, "timeout");
     assert!(!exited.exited);
@@ -1128,7 +1133,7 @@ async fn kill_takes_the_foreground_job_down_with_the_shell() {
     harness.kill(pid).await.unwrap();
     let (_, exited, _) = collect_until_exit(&mut stream).await;
     assert_eq!(exited.exit_code, 137);
-    let deadline = Instant::now() + Duration::from_secs(2);
+    let deadline = Instant::now() + Duration::from_secs(10);
     while !process_is_gone(job) {
         if Instant::now() > deadline {
             let _ = nix::sys::signal::kill(

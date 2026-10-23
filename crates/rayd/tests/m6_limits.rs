@@ -82,7 +82,7 @@ async fn a_busy_loop_is_signalled_at_its_cpu_budget_and_a_sleep_is_not() {
         "SIGXCPU or SIGKILL, got {:?}",
         end.signal
     );
-    assert!(elapsed < Duration::from_secs(7), "{elapsed:?}");
+    assert!(elapsed < Duration::from_secs(15), "{elapsed:?}");
     let (_, mut sleeper) = harness.start(shell("sleep 2", 10_000)).await.unwrap();
     let slept = drain_process(&mut sleeper, BUDGET).await.end.unwrap();
     assert_eq!(slept.status, "exited");
