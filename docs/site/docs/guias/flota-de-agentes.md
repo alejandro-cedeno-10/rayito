@@ -312,11 +312,13 @@ pasado el plazo, lanza `CapacityException` (`code = "agent_capacity"`;
       terminan VMs que son de un agente: un `Health` sin token lee las etiquetas
       de los `RUNNING`, y si la imagen tiene alguno que no las lleva, no se
       termina ninguno de los suspendidos (no se pueden sondear sin reanudarlos).
-      Si la sonda de algún `RUNNING` falla, tampoco: ese VM podría ser ajeno,
-      así que los suspendidos cuentan para el cupo pero ni `stop()` ni la
-      reducción los terminan; se avisa con su id y se dejan a su propio plazo
-      y a su política de `idle`. Los VMs que creó el propio proceso siempre se
-      terminan.
+      Si la sonda de algún `RUNNING` falla, o ese VM deja de estar `RUNNING`
+      al sondearlo, tampoco: podría ser ajeno, así que los suspendidos de ese
+      listado cuentan para el cupo pero ni `stop()` ni la reducción los
+      terminan; se avisa con su id y se dejan a su propio plazo y a su
+      política de `idle`. `stop()` termina igual sin error y devuelve cuántos
+      VMs terminó (`rayito agent stop <nombre>` imprime ese número). Los VMs
+      que creó el propio proceso siempre se terminan.
     - **Ejemplo:** `deploy_agent("./mi-agente", options=AgentDeployOptions(scaling=ScalingOptions(max_vms=3)))`.
 
 !!! info "Medido en AWS real"

@@ -623,18 +623,20 @@ class AgentFleet:
         pool persistente (`pool_backend`)."""
         self._close_pool(drain=self._pool_backend is None)
 
-    def stop(self, *, keep_recipe: bool = False) -> None:
+    def stop(self, *, keep_recipe: bool = False) -> int:
         """Termina todos los VMs de la flota y las plazas del pool y, si este
         proceso guardó o leyó su receta, la borra (`keep_recipe=True` la
         conserva). Sigue aunque uno falle y, al final, lanza el primer
-        error."""
+        error. Devuelve cuántos VMs terminó: uno sin probar
+        (`Member.proven`) no se termina y no cuenta."""
         errors: list[Exception] = []
         self._close_pool(drain=True, errors=errors)
         with self._lock:
             members, self._members = list(self._members), []
+        stopped = 0
         for member in members:
             try:
-                self._terminate(member)
+                stopped += int(self._terminate(member))
             except Exception as exc:
                 logger.warning("no se pudo terminar un VM de la flota", exc_info=True)
                 errors.append(exc)
@@ -646,6 +648,7 @@ class AgentFleet:
                 errors.append(exc)
         if errors:
             raise errors[0]
+        return stopped
 
     def status(self) -> FleetStatus:
         """Estado de la flota: pregunta a los VMs que este proceso ya abrió
@@ -1208,18 +1211,20 @@ class AgentFleet:
             except Exception:
                 logger.warning("no se pudo terminar un VM sobrante", exc_info=True)
 
-    def _terminate(self, member: Member) -> None:
+    def _terminate(self, member: Member) -> bool:
         """Termina el VM sin abrirlo: abrir uno suspendido lo reanudaría sólo
         para matarlo. Un miembro sin probar (`Member.proven`) no se termina:
         podría ser un sandbox ajeno de la misma imagen, y se deja a su
-        propio plazo y a su política de idle con un aviso."""
+        propio plazo y a su política de idle con un aviso. Devuelve si lo
+        terminó."""
         if not member.proven:
             logger.warning(UNPROVEN_MEMBER_MESSAGE, member.sandbox_id)
-            return
+            return False
         if member.deployment is not None:
             member.deployment.stop()
         else:
             self._directory.kill(member.sandbox_id)
+        return True
 
     def _discard(self, members: Sequence[Member]) -> None:
         for member in members:

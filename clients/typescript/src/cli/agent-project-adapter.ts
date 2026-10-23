@@ -215,11 +215,7 @@ export class SdkAgentProjectTools implements AgentProjectTools {
           members: status.members.map(({ sandboxId, state }) => ({ sandboxId, state })),
         };
       },
-      stop: async (options = {}) => {
-        const count = fleet.sandboxIds.length;
-        await fleet.stop(options);
-        return count;
-      },
+      stop: (options = {}) => fleet.stop(options),
     };
   }
 

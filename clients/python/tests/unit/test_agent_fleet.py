@@ -883,8 +883,9 @@ def test_stop_never_terminates_a_vm_it_could_not_prove_is_a_member(
         )
     )
 
-    flavor.call(fleet.stop())
+    stopped = flavor.call(fleet.stop())
 
+    assert stopped == 1
     assert mine.state == "TERMINATED"
     assert parked.kills == 0 and parked.state == "SUSPENDED"
     assert dying.kills == 0
@@ -908,6 +909,22 @@ def test_reconcile_never_trims_a_vm_it_could_not_prove_is_a_member(flavor: Fleet
     flavor.call(fleet.reconcile())
 
     assert parked.kills == 0
+
+
+def test_a_control_plane_error_stops_the_remaining_probes(flavor: FleetFlavor) -> None:
+    vms = [flavor.classes.add() for _ in range(AGENT_FLEET_PROBE_CONCURRENCY * 3)]
+    flavor.classes.probe_errors[vms[0].sandbox_id] = RateLimitException("limitado")
+    for vm in vms[1:]:
+        flavor.classes.probe_delays[vm.sandbox_id] = 0.05
+
+    with pytest.raises(RateLimitException):
+        flavor.call(
+            (AsyncAgentFleet if flavor.asynchronous else AgentFleet).connect(
+                "support-bot", access_token=TOKEN, directory=flavor.classes_directory()
+            )
+        )
+
+    assert len(flavor.classes.probed) < len(vms)
 
 
 def test_members_are_probed_concurrently_and_reported_in_listing_order(
