@@ -18,6 +18,22 @@ Rejected: comparing `GetTemplate` bodies (a new AWS call that is not in
 `AWS_API_NOTES.md`) and a version string in the template (it would drift
 from the content).
 
+A hash has no direction, so a different fingerprint alone could also mean
+the stack is *newer*: a CI job on 0.17.1 would then roll back the template
+a later SDK deployed. The plan therefore also reads the stack's
+`rayito:sdk-version` tag (`DescribeStacks` `Tags`, verified against the
+botocore model and added to `AWS_API_NOTES.md` §21), which every deploy
+already sets to the deploying SDK's version. When its three release
+numbers are greater than the running SDK's, the stack is never updated:
+with the same bucket the step is `reuse` with `stackSdkVersion`, and with a
+different bucket the plan fails with `stack_newer` (exit 2). A missing or
+unparsable tag (a hand-deployed stack) is not newer.
+
+`UpdateStack` with `Tags` replaces the whole list, and every template
+update now goes through it. So on an update `setup` sends the stack's
+current tags (without the fixed `rayito:` ones and the reserved `aws:` ones)
+with the `--tag` ones on top; the fixed tags still win.
+
 ### D2. Only the token file this run created is removed
 
 `deploy_token` already refuses an existing `--token-file`, so a file that
@@ -35,13 +51,17 @@ with the `imageVersion` of each `publish` image step taken from
 
 ### D4. botocore bodies are dropped at the logger, not silenced globally
 
-A `logging.Filter` on `botocore.endpoint`, `botocore.parsers` and
-`botocore.auth` lets through only records at INFO and above. Measured with
-boto3 against a local HTTP server: the first two are the only loggers that
-carry bodies; `botocore.auth` is added because its canonical request lists
-the signed headers. `import rayito` installs it once. The agent host,
-which cannot import the SDK, installs its own copy and adds `botocore` and
-`urllib3` to `QUIET_HTTP_LOGGERS`. The TypeScript SDK sets no logger on its
+A `logging.Filter` on `botocore.endpoint`, `botocore.parsers`, `botocore.auth`, `botocore.regions`, `boto3.resources.action`, `boto3.resources.collection`, `boto3.dynamodb.table`, `s3transfer.tasks` and `s3transfer.futures` lets through only records at INFO
+and above. Measured with boto3 1.43.102, botocore 1.43.103 and s3transfer
+0.19.2 against a local HTTP server, with client, resource, collection,
+`batch_writer` and `upload_fileobj` calls and a canary in bodies, items,
+metadata, keys and prefixes: those are the loggers whose DEBUG carries
+parameters or bodies, plus `botocore.auth`, whose canonical request lists
+the signed headers. `urllib3.connectionpool` is left alone: it is not part
+of the AWS SDK and its DEBUG only has the request line. `import rayito`
+installs it once. The agent host, which cannot import the SDK, installs its
+own copy and adds `botocore`, `boto3`, `s3transfer` and `urllib3` to
+`QUIET_HTTP_LOGGERS`. The TypeScript SDK sets no logger on its
 AWS SDK v3 clients, so nothing changes there besides the host assets.
 
 ### D5. One turn per VM orders its deadline changes

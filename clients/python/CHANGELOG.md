@@ -19,6 +19,14 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   `previousBucket: null` en `--json` cuando el bucket no cambia. Una pila
   desplegada a mano (sin el parámetro) se actualiza una vez; los demás
   parámetros conservan su valor (`UsePreviousValue`).
+  Una pila que desplegó un Rayito más nuevo (su etiqueta
+  `rayito:sdk-version`) nunca vuelve a la plantilla de este SDK: con el mismo
+  bucket se reutiliza («… más nuevo que este SDK: se conserva»,
+  `stackSdkVersion` en `--json`) y, si el plan le cambia el bucket, falla con
+  el error nuevo `stack_newer` (salida 2). Al actualizar la pila, `setup`
+  vuelve a mandar las etiquetas que ya tenía, con las de `--tag` por encima,
+  porque `UpdateStack` sustituye la lista entera. `StackStatus` gana `tags`
+  (las de `DescribeStacks`).
 - **Un `--token-file` que dejó un `rayito agent deploy` fallido ya no bloquea
   el reintento.** El fichero se escribe antes del build; si el despliegue falla
   antes de que exista la flota (build, arranque del host, una confirmación
@@ -30,16 +38,21 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   llevan en `imageVersion` la versión recién publicada (antes `null`, aunque
   `result` sí la tenía). En `--dry-run` y si la preparación falla, siguen en
   `null`.
-- **El DEBUG de botocore ya no escribe cuerpos de AWS.** Con el logger raíz a
-  DEBUG o `boto3.set_stream_logger()`, `botocore.endpoint` y `botocore.parsers`
-  escribían el cuerpo de cada petición y respuesta: el valor de
-  `PutSecretValue`/`GetSecretValue`, el token de `runHookPayload` o el entorno
-  de `CreateMicrovm`. `import rayito` descarta ahora los registros por debajo
-  de INFO de `botocore.endpoint`, `botocore.parsers` y `botocore.auth` (los
-  avisos y errores siguen saliendo, y el resto de botocore no cambia). El host
-  del agente sube además `botocore` y `urllib3` a WARNING, como `httpx` y
-  `httpcore` en 0.17.0, y descarta ese mismo DEBUG aunque el código del agente
-  vuelva a bajar el nivel.
+- **El DEBUG del SDK de AWS para Python ya no escribe parámetros ni cuerpos de
+  AWS.** Con el logger raíz a DEBUG o `boto3.set_stream_logger()`, botocore,
+  boto3 y s3transfer escribían los parámetros y el cuerpo de cada petición y
+  respuesta: el valor de `PutSecretValue`/`GetSecretValue`, el token de
+  `runHookPayload`, el entorno de `CreateMicrovm` o el `Item` de un
+  `Table.put_item` (la URL de un webhook de eventos de ciclo de vida y el
+  nombre de su secreto). `import rayito` descarta ahora los registros por
+  debajo de INFO de `botocore.endpoint`, `botocore.parsers`, `botocore.auth`,
+  `botocore.regions`, `boto3.resources.action`, `boto3.resources.collection`,
+  `boto3.dynamodb.table`, `s3transfer.tasks` y `s3transfer.futures`, la lista
+  medida con boto3 1.43.102 (los avisos y errores siguen saliendo, y el resto
+  de loggers no cambia). El host del agente sube además `botocore`, `boto3`,
+  `s3transfer` y `urllib3` a WARNING, como `httpx` y `httpcore` en 0.17.0, y
+  descarta ese mismo DEBUG aunque el código del agente vuelva a bajar el
+  nivel.
 - **El plazo de los VMs sobrantes de una flota** (las tres limitaciones
   conocidas de 0.17.0):
   - Una invocación que se suelta ya no acorta el plazo de otra que empezó
@@ -58,8 +71,10 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
 ### Seguridad
 
 - `opentelemetry-api` y `opentelemetry-sdk` 1.45.1 en `uv.lock`
-  (GHSA-xcq7-p3pf-p88h, afectaba a 1.45.0 y anteriores). El rango del extra
-  `otel` no cambia.
+  (GHSA-xcq7-p3pf-p88h, afectaba a 1.45.0 y anteriores), y el extra `otel`
+  pide ahora `opentelemetry-api>=1.45.1,<2` (antes `>=1.27`), así que ya no
+  resuelve a una versión afectada. Rayito sólo inyecta contexto y nunca lee
+  un `tracestate` ajeno.
 
 ## [0.17.0] - 2026-10-23
 

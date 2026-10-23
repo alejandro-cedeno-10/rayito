@@ -19,6 +19,14 @@ versionado [SemVer](https://semver.org/lang/es/).
   `previousBucket: null` en `--json` cuando el bucket no cambia. Una pila
   desplegada a mano (sin el parámetro) se actualiza una vez; los demás
   parámetros conservan su valor (`UsePreviousValue`).
+  Una pila que desplegó un Rayito más nuevo (su etiqueta
+  `rayito:sdk-version`) nunca vuelve a la plantilla de este SDK: con el mismo
+  bucket se reutiliza («… más nuevo que este SDK: se conserva»,
+  `stackSdkVersion` en `--json`) y, si el plan le cambia el bucket, falla con
+  el error nuevo `stack_newer` (salida 2). Al actualizar la pila, `setup`
+  vuelve a mandar las etiquetas que ya tenía, con las de `--tag` por encima,
+  porque `UpdateStack` sustituye la lista entera. `StackStatus` gana `tags`
+  (las de `DescribeStacks`).
 - **Un `--token-file` que dejó un `rayito agent deploy` fallido ya no bloquea
   el reintento.** El fichero se escribe antes del build; si el despliegue falla
   antes de que exista la flota (build, arranque del host, una confirmación
@@ -30,11 +38,14 @@ versionado [SemVer](https://semver.org/lang/es/).
   llevan en `imageVersion` la versión recién publicada (antes `null`, aunque
   `result` sí la tenía). En `--dry-run` y si la preparación falla, siguen en
   `null`.
-- **El host del agente ya no deja salir el DEBUG de botocore con cuerpos de
-  AWS** (los assets del host se generan desde el SDK Python): sube `botocore`
-  y `urllib3` a WARNING, como `httpx` y `httpcore` en 0.17.0, y descarta los
-  registros por debajo de INFO de `botocore.endpoint`, `botocore.parsers` y
-  `botocore.auth` aunque el código del agente vuelva a bajar el nivel. El SDK
+- **El host del agente ya no deja salir el DEBUG del SDK de AWS para Python
+  con parámetros y cuerpos de AWS** (los assets del host se generan desde el
+  SDK Python): sube `botocore`, `boto3`, `s3transfer` y `urllib3` a WARNING,
+  como `httpx` y `httpcore` en 0.17.0, y descarta los registros por debajo de
+  INFO de `botocore.endpoint`, `botocore.parsers`, `botocore.auth`,
+  `botocore.regions`, `boto3.resources.action`, `boto3.resources.collection`,
+  `boto3.dynamodb.table`, `s3transfer.tasks` y `s3transfer.futures` aunque el
+  código del agente vuelva a bajar el nivel. El SDK
   TypeScript no pone ningún `logger` en sus clientes del AWS SDK v3.
 - **El plazo de los VMs sobrantes de una flota** (las tres limitaciones
   conocidas de 0.17.0):

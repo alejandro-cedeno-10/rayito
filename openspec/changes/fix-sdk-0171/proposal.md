@@ -28,13 +28,18 @@ with it:
 
 - `infra/iam.yaml` gains the parameter and output `TemplateFingerprint`.
   `rayito setup` sends the sha256 of the packaged template and plans
-  `update` when the stack lacks it or has another value.
+  `update` when the stack lacks it or has another value, unless the
+  stack's `rayito:sdk-version` tag is newer than the SDK: then it is kept
+  (`stackSdkVersion`) or, with another bucket, the plan fails with
+  `stack_newer`. An update sends the stack's own tags again under `--tag`.
 - `rayito agent deploy` deletes the `--token-file` it created when the
   deploy fails before the fleet exists, except with `--keep-on-failure`.
 - After `apply`, the `--json` steps of a published image carry its version.
-- `import rayito` drops DEBUG records of `botocore.endpoint`,
-  `botocore.parsers` and `botocore.auth`; the agent host also quiets
-  `botocore` and `urllib3` and drops the same records.
+- `import rayito` drops DEBUG records of the botocore, boto3 and
+  s3transfer loggers that carry parameters, bodies or signed headers; the
+  agent host also quiets `botocore`, `boto3`, `s3transfer` and `urllib3`
+  and drops the same records.
+- The `otel` extra requires `opentelemetry-api>=1.45.1`.
 - Fleet deadline changes are serialised per VM, failed invocations restore
   the scale-in deadline, and restoring a promoted VM with an unknown cap
   asks for the platform maximum and retries with the cap `rayd` reports.

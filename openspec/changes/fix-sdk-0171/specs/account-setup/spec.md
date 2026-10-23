@@ -6,7 +6,7 @@
 ## MODIFIED Requirements
 
 ### Requirement: The IAM stack is created, updated for its bucket or its template, or waited for
-When `rayito-m0-iam` does not exist, `apply` SHALL create it through `OptionalStacks.deploy` with the packaged `infra/iam.yaml`, `Capabilities=["CAPABILITY_NAMED_IAM"]`, `ArtifactBucket=<bucket>` (the reused bucket or the `BucketName` output of `rayito-m0-artifacts`) and `TemplateFingerprint=<sha256 of the packaged template>`, and no other parameter, and SHALL wait for it, always after the bucket step. When it exists in a usable state with a different `ArtifactBucket`, or without the `TemplateFingerprint` of the running SDK (a stack deployed by an earlier SDK or by hand), `apply` SHALL update it with the packaged template, sending only `ArtifactBucket` and `TemplateFingerprint` and keeping every other parameter with `UsePreviousValue`; the plan step SHALL carry `previousBucket` only when the bucket changes. When it is in progress (other than `DELETE_IN_PROGRESS`), `apply` SHALL wait for it and SHALL NOT call `CreateStack` or `UpdateStack`, unless the waited stack has another bucket or another template, which it SHALL then update. A stack in `ROLLBACK_COMPLETE`, `DELETE_IN_PROGRESS` or a `*_FAILED` state SHALL raise `stack_blocked`, and a usable stack without `BuildRoleArn` SHALL raise `stack_incomplete`. Both SDKs SHALL compute the same fingerprint. The `iam` component SHALL NOT appear in the `rayito stack` catalog.
+When `rayito-m0-iam` does not exist, `apply` SHALL create it through `OptionalStacks.deploy` with the packaged `infra/iam.yaml`, `Capabilities=["CAPABILITY_NAMED_IAM"]`, `ArtifactBucket=<bucket>` (the reused bucket or the `BucketName` output of `rayito-m0-artifacts`) and `TemplateFingerprint=<sha256 of the packaged template>`, and no other parameter, and SHALL wait for it, always after the bucket step. When it exists in a usable state with a different `ArtifactBucket`, or without the `TemplateFingerprint` of the running SDK (a stack deployed by an earlier SDK or by hand), `apply` SHALL update it with the packaged template, sending only `ArtifactBucket` and `TemplateFingerprint` and keeping every other parameter with `UsePreviousValue`; the plan step SHALL carry `previousBucket` only when the bucket changes. When it is in progress (other than `DELETE_IN_PROGRESS`), `apply` SHALL wait for it and SHALL NOT call `CreateStack` or `UpdateStack`, unless the waited stack has another bucket or another template, which it SHALL then update. A usable stack whose `rayito:sdk-version` tag has greater release numbers than the running SDK SHALL NOT be updated: with the plan's bucket the step SHALL be `reuse` with `stackSdkVersion` set to that tag, and with another bucket the plan SHALL raise `stack_newer` (exit 2); a missing or unparsable tag SHALL count as not newer. On every update `apply` SHALL send the stack's current tags, except the fixed `rayito:` ones and the reserved `aws:` ones, with the `--tag` ones on top. A stack in `ROLLBACK_COMPLETE`, `DELETE_IN_PROGRESS` or a `*_FAILED` state SHALL raise `stack_blocked`, and a usable stack without `BuildRoleArn` SHALL raise `stack_incomplete`. Both SDKs SHALL compute the same fingerprint. The `iam` component SHALL NOT appear in the `rayito stack` catalog.
 
 #### Scenario: create on a fresh account
 - **WHEN** `rayito setup --yes` runs on a fake account with a CDK bootstrap bucket and no stack
@@ -19,6 +19,18 @@ When `rayito-m0-iam` does not exist, `apply` SHALL create it through `OptionalSt
 #### Scenario: a stack of an earlier SDK is updated with the same bucket
 - **WHEN** the plan observes a usable stack whose `ArtifactBucket` is the plan's bucket and that has no `TemplateFingerprint` parameter
 - **THEN** the step is `update` with `previousBucket` null, the plan line reads `actualizar a la plantilla infra/iam.yaml de este SDK`, and `apply` sends one update with the same bucket
+
+#### Scenario: a stack of a newer SDK is kept
+- **WHEN** the plan observes a usable stack with the plan's bucket, another `TemplateFingerprint` and the tag `rayito:sdk-version=999.0.0`
+- **THEN** the step is `reuse` with `stackSdkVersion` `999.0.0`, the plan line reads `ya existe (CREATE_COMPLETE) con la plantilla de Rayito 999.0.0, más nuevo que este SDK: se conserva`, and the account is ready
+
+#### Scenario: a stack of a newer SDK is not moved to another bucket
+- **WHEN** `--bucket amzn-s3-demo-bucket1` is passed and the stack with `ArtifactBucket=amzn-s3-demo-bucket` carries `rayito:sdk-version=999.0.0`
+- **THEN** the plan fails with `stack_newer` and nothing is written
+
+#### Scenario: an update keeps the stack's own tags
+- **WHEN** `apply` updates a stack tagged `team=x` and `owner=platform` with `--tag team=y`
+- **THEN** the update sends `team=y`, `owner=platform` and the fixed tags with this SDK's version, and no `aws:` tag
 
 #### Scenario: both SDKs fingerprint the same template
 - **WHEN** each SDK computes the fingerprint of its packaged `iam` template

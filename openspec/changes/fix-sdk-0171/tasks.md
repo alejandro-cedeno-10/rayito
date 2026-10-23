@@ -5,6 +5,8 @@
 - [x] 1.3 `plan_stack` / `planStack` plan `update` on a missing or different fingerprint, also after `wait`
 - [x] 1.4 Shared vectors (`{iamTemplateFingerprint}`), the `stackTemplate` text and a CLI case
 - [x] 1.5 Docs (es/en) and changelogs
+- [x] 1.6 Keep a stack of a newer SDK (`rayito:sdk-version` tag, `stackSdkVersion`, `stack_newer`) with shared vectors and a CLI case
+- [x] 1.7 An update sends the stack's own tags under `--tag`; `DescribeStacks` `Tags` in `AWS_API_NOTES.md` §21
 
 ## 2. Token file of a failed deploy
 
@@ -21,6 +23,7 @@
 - [x] 4.1 `rayito._botocore_logs` installed by `import rayito`
 - [x] 4.2 Agent host: quiet `botocore`/`urllib3`, drop body records; regenerate host assets
 - [x] 4.3 Tests (real boto3 against a local HTTP server), docs, `SECURITY.md`, changelogs
+- [x] 4.4 boto3 resource, collection, `batch_writer` and s3transfer loggers (measured), with tests
 
 ## 5. Extra-VM deadline
 
@@ -32,6 +35,7 @@
 ## 6. Dependencies
 
 - [x] 6.1 `opentelemetry-*` 1.45.1 (`uv lock`), `vitest` 4.1.12 (pnpm), `ctutils` 0.4.4
+- [x] 6.2 `otel` extra floor `>=1.45.1` and `check_wheel.py`
 
 ## 7. Flaky tests
 
