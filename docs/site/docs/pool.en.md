@@ -241,7 +241,9 @@ thread-safe.
 
 `close(drain=False)` leaves the slots parked and their records for another
 pool and is **only supported with a persistent backend**. In `start()` the
-pool loads the backend: a `warming` record is an orphan of an interrupted
+pool loads the backend and adopts only the slots of its own image (those of
+another image, such as another fleet deployed from the same directory, stay
+in the backend untouched): a `warming` record is an orphan of an interrupted
 warm-up (it is terminated, `lost += 1`) and every `ready` one goes through
 a sweep before it can be taken (`launched` does not change). `stats()`
 returns `PoolStats` (`size, ready, warming, takes, hits, misses, launched,

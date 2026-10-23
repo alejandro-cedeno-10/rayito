@@ -236,7 +236,9 @@ thread-safe.
 
 `close(drain=False)` deja las plazas aparcadas y sus registros para otro pool
 y **sólo se admite con un backend persistente**. En `start()` el pool carga el
-backend: un registro `warming` es un huérfano de un calentamiento
+backend y sólo adopta las plazas de su imagen (las de otra imagen, como las de
+otra flota desplegada desde el mismo directorio, se quedan en el backend sin
+tocar): un registro `warming` es un huérfano de un calentamiento
 interrumpido (se termina, `lost += 1`) y cada `ready` pasa por un barrido
 antes de poder tomarse (`launched` no cambia). `stats()` devuelve `PoolStats`
 (`size, ready, warming, takes, hits, misses, launched, recycled, lost,

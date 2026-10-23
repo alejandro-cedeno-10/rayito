@@ -40,6 +40,7 @@ from rayito._pool_base import (
     drain_requires_persistence_error,
     gateway_sections,
     launch_kwargs,
+    owns_slot,
     pick_ready_slot,
     pool_closed_error,
     pool_not_started_error,
@@ -696,6 +697,8 @@ class AsyncSandboxPool:
 
     async def _recover(self) -> None:
         for record in await self._backend_call(self._backend.load):
+            if not owns_slot(record, self._image_arn):
+                continue
             if record.state == "warming":
                 await self._backend_call(self._backend.delete, record.sandbox_id)
                 self._count(lost=1)

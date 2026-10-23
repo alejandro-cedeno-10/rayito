@@ -233,6 +233,16 @@ export function slotIsStale(record: SlotRecord, now: Date, minRemainingMs: numbe
 }
 
 /**
+ * Si una plaza del backend es de este pool: la de otra imagen (otra flota
+ * desplegada desde el mismo directorio con el mismo fichero de estado) no se
+ * adopta, ni se recicla, ni se termina, ni se entrega; se queda en el backend
+ * para el pool de su imagen.
+ */
+export function ownsSlot(record: SlotRecord, imageArn: string | undefined): boolean {
+  return record.template === imageArn;
+}
+
+/**
  * Qué hacer con una plaza `ready` según `list-microvms`: `keep` (suspendida
  * o arrancando), `repark` (alguien la reanudó), `check` (ausente: leer
  * `get-microvm`) o `drop` (listada terminal).

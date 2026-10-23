@@ -50,6 +50,9 @@ POOL_TIMEOUT = 7200
 POOL_MIN_REMAINING = 3600
 TOKEN_LENGTH = 43
 
+#: Otra imagen de la misma cuenta: la de otra flota con el mismo fichero de estado.
+OTHER_IMAGE_ARN = IMAGE_ARN.rsplit(":", 1)[0] + ":other-fleet"
+
 
 class TickingNow:
     """Un reloj de pared manual: cada lectura avanza `step` s y `advance`
@@ -691,6 +694,42 @@ def test_recovery_after_a_simulated_crash(
         assert sandbox.run_code("1+1").text == "2"
     finally:
         sandbox.kill()
+
+
+def test_recovery_leaves_slots_of_another_image_alone(
+    make_pool: PoolFactory, plane: FakeControlPlane, tmp_path: Path
+) -> None:
+    """Dos flotas desplegadas desde el mismo directorio comparten el fichero
+    de estado: el pool de una imagen no adopta, recicla, termina ni entrega
+    las plazas de otra, y su `close()` las deja en el fichero."""
+    path = tmp_path / "pool.json"
+    first = make_pool(size=2, backend=JsonFilePoolBackend(path)).start()
+    wait_idle(first, 2)
+    first.close(drain=False)
+    parked_id, warming_id = sorted(ready_ids(first))
+    document = json.loads(path.read_text(encoding="utf-8"))
+    for slot in document["slots"]:
+        slot["template"] = OTHER_IMAGE_ARN
+        if slot["sandbox_id"] == warming_id:
+            slot["state"] = "warming"
+            slot["parked_at"] = None
+    path.write_text(json.dumps(document), encoding="utf-8")
+    terminates = len(plane.calls_to("TerminateMicrovm"))
+
+    second = make_pool(size=1, backend=JsonFilePoolBackend(path)).start()
+    wait_idle(second, 1)
+
+    own_id = ready_ids(second)[0]
+    assert own_id not in (parked_id, warming_id)
+    stats = second.stats()
+    assert (stats.lost, stats.recycled, stats.launched) == (0, 0, 1)
+    second.close()
+    assert [call.sandbox_id for call in plane.calls_to("TerminateMicrovm")[terminates:]] == [own_id]
+    assert plane.microvms[parked_id].state == "SUSPENDED"
+    assert {record.sandbox_id for record in JsonFilePoolBackend(path).load()} == {
+        parked_id,
+        warming_id,
+    }
 
 
 # ------------------------------------------------------------ create(pool=)

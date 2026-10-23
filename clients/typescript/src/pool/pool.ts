@@ -71,6 +71,7 @@ import {
 import {
   FillBackoff,
   newCounters,
+  ownsSlot,
   type PoolCounters,
   type PoolStats,
   pickReadySlot,
@@ -974,6 +975,9 @@ export class SandboxPool implements AsyncDisposable {
 
   async #recover(): Promise<void> {
     for (const record of await this.#backendCall(() => this.#backend.load())) {
+      if (!ownsSlot(record, this.#imageArn)) {
+        continue;
+      }
       if (record.state === "warming") {
         await this.#backendCall(() => this.#backend.delete(record.sandboxId));
         this.#counters.lost += 1;

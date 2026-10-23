@@ -73,6 +73,13 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
 
 ### Corregido
 
+- **Un pool sólo recupera las plazas de su imagen**: `SandboxPool`/`AsyncSandboxPool` adoptaba al
+  arrancar todas las plazas del backend. Con el fichero de estado por defecto
+  de `rayito agent deploy --warm` (`.rayito/agent-pool.json`), desplegar una
+  segunda flota desde el mismo directorio reciclaba (terminaba) las plazas
+  aparcadas de la primera, o las contaba como suyas. Ahora una plaza de otra
+  imagen no se adopta, recicla, termina ni entrega, y se queda en el backend
+  para el pool de su imagen. Visto en la regresión en AWS real.
 - **La reducción de la flota (`scale_in_after_seconds`) por fin ocurre**:
   desde 0.14 los VMs se creaban sin `max_lifetime`/`on_timeout`, así que
   `rayd` rechazaba el `set_timeout` que termina un VM sobrante y la flota

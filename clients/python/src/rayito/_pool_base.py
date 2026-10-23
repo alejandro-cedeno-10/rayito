@@ -513,6 +513,14 @@ def slot_is_stale(record: SlotRecord, now: datetime, min_remaining_seconds: int)
     return record.remaining_seconds(now) < min_remaining_seconds
 
 
+def owns_slot(record: SlotRecord, image_arn: str | None) -> bool:
+    """Si una plaza del backend es de este pool: la de otra imagen (otra flota
+    desplegada desde el mismo directorio con el mismo fichero de estado) no
+    se adopta, ni se recicla, ni se termina, ni se entrega; se queda en el
+    backend para el pool de su imagen."""
+    return record.template == image_arn
+
+
 def reconcile_action(record: SlotRecord, listed_state: str | None) -> ReconcileAction:
     """Qué hacer con una plaza `ready` según lo que dijo `list-microvms`:
     `keep` (suspendida o arrancando), `repark` (alguien la reanudó), `check`
@@ -730,6 +738,7 @@ __all__ = [
     "TakePoll",
     "drain_requires_persistence_error",
     "launch_kwargs",
+    "owns_slot",
     "pick_ready_slot",
     "pool_closed_error",
     "pool_not_started_error",
