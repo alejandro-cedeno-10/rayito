@@ -11,11 +11,15 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 import {
+  ENV_FLAG_AUTH_COMPANIONS,
+  ENV_FLAG_AUTH_SEGMENTS,
   ENV_FLAG_SECRET_SEGMENTS,
   ENV_LOOKS_SECRET_MESSAGE,
   envFlagLooksSecret,
+  INVOKE_RENEW_GATEWAY_KEYS_HELP,
   KEEP_RECIPE_HELP,
   RENEW_GATEWAY_KEYS_HELP,
+  RENEW_NEEDS_FLEET_MESSAGE,
   SAVE_RECIPE_HELP,
   SCALE_IN_AFTER_HELP,
   STATUS_UNKNOWN_SCALING,
@@ -91,13 +95,17 @@ describe("rayito agent with the fleet recipe", () => {
     expect(helps.get("agent deploy --scale-in-after")).toBe(SCALE_IN_AFTER_HELP);
     expect(helps.get("agent deploy --no-save-recipe")).toBe(SAVE_RECIPE_HELP);
     expect(helps.get("agent deploy --renew-gateway-keys")).toBe(RENEW_GATEWAY_KEYS_HELP);
+    expect(helps.get("agent invoke --renew-gateway-keys")).toBe(INVOKE_RENEW_GATEWAY_KEYS_HELP);
     expect(helps.get("agent stop --keep-recipe")).toBe(KEEP_RECIPE_HELP);
     expect(CONTRACT.messages.envLooksSecret).toBe(ENV_LOOKS_SECRET_MESSAGE);
     expect(CONTRACT.messages.statusUnknownScaling).toBe(STATUS_UNKNOWN_SCALING);
+    expect(CONTRACT.messages.renewNeedsFleet).toBe(RENEW_NEEDS_FLEET_MESSAGE);
   });
 
   test("the secret segments are the shared ones", () => {
     expect([...ENV_FLAG_SECRET_SEGMENTS]).toEqual(ENV_VECTORS.segments);
+    expect([...ENV_FLAG_AUTH_SEGMENTS]).toEqual(ENV_VECTORS.authSegments);
+    expect([...ENV_FLAG_AUTH_COMPANIONS]).toEqual(ENV_VECTORS.authCompanions);
   });
 
   test.each(ENV_VECTORS.rejected as string[])("--env %s looks like a secret", (name) => {

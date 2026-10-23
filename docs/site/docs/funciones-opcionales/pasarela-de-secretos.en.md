@@ -178,7 +178,8 @@ life with `scale_in_after_seconds`.
   (`renew_gateway_keys=True` / `renewGatewayKeys: true`), because the key is
   signed with the caller's credentials. If the recipe asked for it and you do
   not pass it, the fleet does not renew and warns `recipe_renewal_ignored`
-  (only the code, no path or values); an explicit `False` does not warn. With
+  (only the code, no path or values); an explicit `False` does not warn. From
+  the CLI, `rayito agent invoke <fleet> --renew-gateway-keys` asks for it. With
   the option, an error (the missing `bedrock-keys` extra, `permission_denied`
   when writing the secret) propagates.
 - **A Bedrock-only secret.** If the `bedrock` gateway's secret is also read by

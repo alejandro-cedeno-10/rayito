@@ -149,6 +149,10 @@ Hard rules:
       non-Bedrock gateway, strict region in `gateway_region`, more
       secret-looking `--env` segments, no recipe for `.`/`..`, and
       `rayito setup --caps-image` opt-in with an actionable deploy error.
+- [x] G5.17 `AUTH`/`BEARER` only as the last segment or next to
+      `TOKEN`/`KEY`/`HEADER` in the `--env` rule (no false positives on
+      `AUTH_MODE`, `AUTH_URL`), and `rayito agent invoke
+      --renew-gateway-keys` in both CLIs.
 
 ## Z. Integration on `feat/sdk-017`
 

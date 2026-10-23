@@ -36,16 +36,22 @@ const PAIR_SEPARATOR = "=";
 export const ENV_FLAG_SECRET_LIKE_KEYS: readonly string[] = [...SECRET_LIKE_KEYS, "secret"];
 /** Palabras que, como segmento del nombre de una `--env` (partes separadas
  * por `_`, sin distinguir mayúsculas), también lo marcan como secreto:
- * `DB_PASS`, `GITHUB_PAT`, `AUTH_HEADER`. */
+ * `DB_PASS`, `GITHUB_PAT`, `SERVICE_CREDENTIAL`. */
 export const ENV_FLAG_SECRET_SEGMENTS: readonly string[] = [
   "pass",
   "passwd",
   "pat",
   "credential",
   "credentials",
-  "auth",
-  "bearer",
 ];
+/** Palabras que marcan un secreto sólo como último segmento (`AUTH`,
+ * `X_AUTH`, `BEARER`) o junto a un segmento de `ENV_FLAG_AUTH_COMPANIONS`
+ * (`AUTH_HEADER`): `AUTH_MODE`, `AUTH_URL` o `AUTHOR_NAME` son nombres
+ * corrientes que no llevan un secreto. */
+export const ENV_FLAG_AUTH_SEGMENTS: readonly string[] = ["auth", "bearer"];
+/** Los segmentos que, junto a uno de `ENV_FLAG_AUTH_SEGMENTS`, marcan un
+ * secreto: `AUTH_TOKEN`, `BEARER_KEY`, `PROXY_AUTH_HEADER`. */
+export const ENV_FLAG_AUTH_COMPANIONS: readonly string[] = ["token", "key", "header"];
 const ENV_NAME_SEGMENT_SEPARATOR = "_";
 export const ENV_LOOKS_SECRET_MESSAGE =
   "--env no admite secretos ({name} parece uno): usa --secret-env {name}=<secreto> " +
@@ -59,6 +65,11 @@ export const SAVE_RECIPE_HELP =
 export const RENEW_GATEWAY_KEYS_HELP =
   "Renueva la clave de corta duración de Bedrock de las pasarelas antes de crear cada VM " +
   "(apagado por defecto).";
+export const INVOKE_RENEW_GATEWAY_KEYS_HELP =
+  "Con el nombre de una flota, renueva la clave de corta duración de Bedrock de las " +
+  "pasarelas antes de crear cada VM nuevo, firmada con tus credenciales (apagado por defecto).";
+export const RENEW_NEEDS_FLEET_MESSAGE =
+  "--renew-gateway-keys sólo vale con el nombre de una flota: un sandbox suelto no crea VMs";
 export const KEEP_RECIPE_HELP = "Conserva la receta de la flota al pararla.";
 /** La línea de `rayito agent status` de una flota sin proyecto ni receta: su
  * escalado real no se conoce, así que no se imprime `min`/`max`. */
@@ -66,15 +77,32 @@ export const STATUS_UNKNOWN_SCALING =
   "members: {count} (escalado desconocido: sin proyecto ni receta)";
 
 /** Si el nombre de una `--env` parece un secreto, sin distinguir mayúsculas:
- * una de `ENV_FLAG_SECRET_LIKE_KEYS` entera o como sufijo `_<palabra>`, o una
- * de `ENV_FLAG_SECRET_SEGMENTS` como segmento. */
+ * una de `ENV_FLAG_SECRET_LIKE_KEYS` entera o como sufijo `_<palabra>`, una
+ * de `ENV_FLAG_SECRET_SEGMENTS` como segmento, o una de
+ * `ENV_FLAG_AUTH_SEGMENTS` como último segmento o junto a una de
+ * `ENV_FLAG_AUTH_COMPANIONS`. */
 export function envFlagLooksSecret(name: string): boolean {
   const lowered = name.toLowerCase();
   if (ENV_FLAG_SECRET_LIKE_KEYS.some((word) => lowered === word || lowered.endsWith(`_${word}`))) {
     return true;
   }
   const segments = lowered.split(ENV_NAME_SEGMENT_SEPARATOR);
-  return ENV_FLAG_SECRET_SEGMENTS.some((word) => segments.includes(word));
+  if (ENV_FLAG_SECRET_SEGMENTS.some((word) => segments.includes(word))) {
+    return true;
+  }
+  return hasAuthSegment(segments);
+}
+
+/** Si una de `ENV_FLAG_AUTH_SEGMENTS` es el último segmento, o está junto a
+ * un segmento de `ENV_FLAG_AUTH_COMPANIONS`. */
+function hasAuthSegment(segments: readonly string[]): boolean {
+  if (ENV_FLAG_AUTH_SEGMENTS.includes(segments.at(-1) ?? "")) {
+    return true;
+  }
+  if (!ENV_FLAG_AUTH_SEGMENTS.some((word) => segments.includes(word))) {
+    return false;
+  }
+  return ENV_FLAG_AUTH_COMPANIONS.some((word) => segments.includes(word));
 }
 
 /** El mensaje de la primera `--env` que parece un secreto, o `undefined`.

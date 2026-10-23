@@ -200,8 +200,10 @@ An explicit `scaling=` or `project=` wins over the recipe, and
   deleted.
 - **`--env` and secrets.** `rayito agent deploy` rejects an `--env` whose name
   looks like a secret (`*_TOKEN`, `*_KEY`, `*_SECRET`, `*_PASSWORD`..., or
-  with a `PASS`, `PASSWD`, `PAT`, `CREDENTIAL`, `CREDENTIALS`, `AUTH` or
-  `BEARER` segment, such as `DB_PASS` or `GITHUB_PAT`): use
+  with a `PASS`, `PASSWD`, `PAT`, `CREDENTIAL` or `CREDENTIALS` segment, such
+  as `DB_PASS` or `GITHUB_PAT`, or with `AUTH` or `BEARER` as the last segment
+  or next to `TOKEN`, `KEY` or `HEADER`, such as `X_AUTH` or `AUTH_HEADER`;
+  `AUTH_MODE` or `AUTHOR_NAME` are accepted): use
   `--secret-env NAME=<secret>` or `--secret-env-from <secret>`, so the recipe
   only keeps the name. This breaks 0.16 command lines for `*_SECRET`. Note:
   the rule belongs to the `--env` flag; the project's `env` values

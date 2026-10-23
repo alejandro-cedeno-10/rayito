@@ -19,6 +19,7 @@ import type {
   DeployPlanView,
   DetectedProject,
   FleetClient,
+  FleetConnectFlags,
   FleetStatusView,
   HiddenAppRoutes,
 } from "../../../src/cli/ops-ports.js";
@@ -207,8 +208,16 @@ export class FakeAgentProjects implements AgentProjectTools {
     };
   }
 
-  async connectFleet(name: string, accessToken: string | undefined): Promise<FleetClient> {
-    this.calls.push(["connectFleet", name, accessToken]);
+  async connectFleet(
+    name: string,
+    accessToken: string | undefined,
+    options: FleetConnectFlags = {},
+  ): Promise<FleetClient> {
+    this.calls.push(
+      options.renewGatewayKeys === true
+        ? ["connectFleet", name, accessToken, options]
+        : ["connectFleet", name, accessToken],
+    );
     return this.fleet;
   }
 

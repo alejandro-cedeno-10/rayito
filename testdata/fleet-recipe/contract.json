@@ -191,6 +191,13 @@
       "owner": "G5"
     },
     {
+      "command": "agent invoke",
+      "flag": "--renew-gateway-keys",
+      "help": "Con el nombre de una flota, renueva la clave de corta duración de Bedrock de las pasarelas antes de crear cada VM nuevo, firmada con tus credenciales (apagado por defecto).",
+      "microvmOnly": true,
+      "owner": "G5"
+    },
+    {
       "command": "agent stop",
       "flag": "--keep-recipe",
       "help": "Conserva la receta de la flota al pararla.",
@@ -207,7 +214,8 @@
     "envLooksSecret": "--env no admite secretos ({name} parece uno): usa --secret-env {name}=<secreto> o --secret-env-from <secreto>",
     "statusUnknownScaling": "members: {count} (escalado desconocido: sin proyecto ni receta)",
     "renewNeedsBedrock": "renew_gateway_keys necesita una pasarela con preset bedrock",
-    "renewSharedSecret": "renew_gateway_keys no renueva la pasarela '{gateway}': su secreto lo usa también la pasarela '{other}', que no es de Bedrock"
+    "renewSharedSecret": "renew_gateway_keys no renueva la pasarela '{gateway}': su secreto lo usa también la pasarela '{other}', que no es de Bedrock",
+    "renewNeedsFleet": "--renew-gateway-keys sólo vale con el nombre de una flota: un sandbox suelto no crea VMs"
   },
   "awsOperations": {
     "ssm": {

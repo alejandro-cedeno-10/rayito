@@ -53,16 +53,22 @@ SECRET_FLAG_SEPARATOR: Final = "="
 ENV_FLAG_SECRET_LIKE_KEYS: Final[tuple[str, ...]] = (*SECRET_LIKE_KEYS, "secret")
 #: Palabras que, como segmento del nombre de una `--env` (partes separadas
 #: por `_`, sin distinguir mayúsculas), también lo marcan como secreto:
-#: `DB_PASS`, `GITHUB_PAT`, `AUTH_HEADER`.
+#: `DB_PASS`, `GITHUB_PAT`, `SERVICE_CREDENTIAL`.
 ENV_FLAG_SECRET_SEGMENTS: Final[tuple[str, ...]] = (
     "pass",
     "passwd",
     "pat",
     "credential",
     "credentials",
-    "auth",
-    "bearer",
 )
+#: Palabras que marcan un secreto sólo como último segmento (`AUTH`,
+#: `X_AUTH`, `BEARER`) o junto a un segmento de `ENV_FLAG_AUTH_COMPANIONS`
+#: (`AUTH_HEADER`): `AUTH_MODE`, `AUTH_URL` o `AUTHOR_NAME` son nombres
+#: corrientes que no llevan un secreto.
+ENV_FLAG_AUTH_SEGMENTS: Final[tuple[str, ...]] = ("auth", "bearer")
+#: Los segmentos que, junto a uno de `ENV_FLAG_AUTH_SEGMENTS`, marcan un
+#: secreto: `AUTH_TOKEN`, `BEARER_KEY`, `PROXY_AUTH_HEADER`.
+ENV_FLAG_AUTH_COMPANIONS: Final[tuple[str, ...]] = ("token", "key", "header")
 ENV_NAME_SEGMENT_SEPARATOR: Final = "_"
 ENV_LOOKS_SECRET_MESSAGE: Final = (
     "--env no admite secretos ({name} parece uno): usa --secret-env {name}=<secreto> "
@@ -79,6 +85,13 @@ SAVE_RECIPE_HELP: Final = (
 RENEW_GATEWAY_KEYS_HELP: Final = (
     "Renueva la clave de corta duración de Bedrock de las pasarelas antes de crear cada VM "
     "(apagado por defecto)."
+)
+INVOKE_RENEW_GATEWAY_KEYS_HELP: Final = (
+    "Con el nombre de una flota, renueva la clave de corta duración de Bedrock de las "
+    "pasarelas antes de crear cada VM nuevo, firmada con tus credenciales (apagado por defecto)."
+)
+RENEW_NEEDS_FLEET_MESSAGE: Final = (
+    "--renew-gateway-keys sólo vale con el nombre de una flota: un sandbox suelto no crea VMs"
 )
 KEEP_RECIPE_HELP: Final = "Conserva la receta de la flota al pararla."
 #: La línea de `rayito agent status` de una flota sin proyecto ni receta: su
@@ -112,12 +125,26 @@ class CompactBuildLog:
 def env_flag_looks_secret(name: str) -> bool:
     """Si el nombre de una `--env` parece un secreto, sin distinguir
     mayúsculas: una de `ENV_FLAG_SECRET_LIKE_KEYS` entera o como sufijo
-    `_<palabra>`, o una de `ENV_FLAG_SECRET_SEGMENTS` como segmento."""
+    `_<palabra>`, una de `ENV_FLAG_SECRET_SEGMENTS` como segmento, o una de
+    `ENV_FLAG_AUTH_SEGMENTS` como último segmento o junto a una de
+    `ENV_FLAG_AUTH_COMPANIONS`."""
     lowered = name.lower()
     if any(lowered == word or lowered.endswith(f"_{word}") for word in ENV_FLAG_SECRET_LIKE_KEYS):
         return True
     segments = lowered.split(ENV_NAME_SEGMENT_SEPARATOR)
-    return any(word in segments for word in ENV_FLAG_SECRET_SEGMENTS)
+    if any(word in segments for word in ENV_FLAG_SECRET_SEGMENTS):
+        return True
+    return _has_auth_segment(segments)
+
+
+def _has_auth_segment(segments: list[str]) -> bool:
+    """Si una de `ENV_FLAG_AUTH_SEGMENTS` es el último segmento, o está junto
+    a un segmento de `ENV_FLAG_AUTH_COMPANIONS`."""
+    if segments[-1] in ENV_FLAG_AUTH_SEGMENTS:
+        return True
+    if not any(word in segments for word in ENV_FLAG_AUTH_SEGMENTS):
+        return False
+    return any(word in segments for word in ENV_FLAG_AUTH_COMPANIONS)
 
 
 def reject_secret_env_flags(env: Mapping[str, str]) -> None:

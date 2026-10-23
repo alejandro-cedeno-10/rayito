@@ -181,7 +181,8 @@ su vida con `scale_in_after_seconds`.
   (`renew_gateway_keys=True` / `renewGatewayKeys: true`), porque la clave
   se firma con sus credenciales. Si la receta lo pedía y no lo pasas, la
   flota no renueva y avisa `recipe_renewal_ignored` (sólo el código, sin la
-  ruta ni valores); un `False` explícito no avisa. Con la opción, un
+  ruta ni valores); un `False` explícito no avisa. Desde la CLI, la pide
+  `rayito agent invoke <flota> --renew-gateway-keys`. Con la opción, un
   error (el extra `bedrock-keys` que falta, `permission_denied` al escribir
   el secreto) se propaga.
 - **Un secreto sólo de Bedrock.** Si el secreto de la pasarela `bedrock` lo

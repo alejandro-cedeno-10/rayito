@@ -513,6 +513,7 @@ rayito agent deploy [PATH] [--file PATH] [--timeout S] [--port N] [--token-file 
 rayito agent export --target docker|agentcore --out DIR [--file PATH] [--overwrite]
 rayito agent invoke SANDBOX_ID [PROMPT] [--session-id ID] [--input JSON | --input-file F]
                     [--stream] [--token-file F] [--target microvm|agentcore]
+                    [--renew-gateway-keys]
 rayito agent status SANDBOX_ID [--token-file F] [--target microvm|agentcore]
 rayito agent stop SANDBOX_ID [--target microvm|agentcore] [--session-id ID] [--keep-recipe]
 rayito agent list --target agentcore
@@ -582,10 +583,19 @@ pasarelas `bedrock` antes de crear cada VM
 ([Pasarela de secretos](funciones-opcionales/pasarela-de-secretos.md#renovar-la-clave-de-bedrock)).
 Con `--target agentcore`, esas tres banderas salen con 2
 (`option_not_supported`). `--env` rechaza, antes de llamar a nadie, un nombre
-que parece un secreto (`*_TOKEN`, `*_KEY`, `*_SECRET`, `*_PASSWORD`..., o
-con un segmento `PASS`, `PASSWD`, `PAT`, `CREDENTIAL`, `CREDENTIALS`, `AUTH` o
-`BEARER`, como `DB_PASS` o `AUTH_HEADER`, sin distinguir mayúsculas): usa
-`--secret-env` o `--secret-env-from`.
+que parece un secreto (`*_TOKEN`, `*_KEY`, `*_SECRET`, `*_PASSWORD`..., con
+un segmento `PASS`, `PASSWD`, `PAT`, `CREDENTIAL` o `CREDENTIALS`, como
+`DB_PASS`, o con `AUTH` o `BEARER` como último segmento o junto a `TOKEN`,
+`KEY` o `HEADER`, como `X_AUTH` o `AUTH_HEADER`; sin distinguir mayúsculas):
+usa `--secret-env` o `--secret-env-from`. `AUTH_MODE`, `AUTH_URL` o
+`AUTHOR_NAME` pasan.
+
+`invoke` con el nombre de una flota acepta `--renew-gateway-keys`: renueva la
+clave de Bedrock de las pasarelas antes de cada VM nuevo que cree la flota,
+firmada con tus credenciales, porque la receta no la activa por su cuenta
+(sin la bandera avisa `recipe_renewal_ignored` si la receta la pedía). Con el
+id de un sandbox sale con 2 sin llamar a nadie, y con `--target agentcore`,
+con 2 (`option_not_supported`).
 
 Con varios grafos en `langgraph.json`, `detect` y `deploy` aceptan
 `--graph NOMBRE` (excluyente con `--entry`). `invoke` acepta, en lugar de

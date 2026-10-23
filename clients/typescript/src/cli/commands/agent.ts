@@ -40,10 +40,12 @@ import {
   deployToken,
   detectionLines,
   fleetToken,
+  INVOKE_RENEW_GATEWAY_KEYS_HELP,
   KEEP_RECIPE_HELP,
   PairFlagError,
   parseFlagPairs,
   RENEW_GATEWAY_KEYS_HELP,
+  RENEW_NEEDS_FLEET_MESSAGE,
   SAVE_RECIPE_HELP,
   SCALE_IN_AFTER_HELP,
   STATUS_UNKNOWN_SCALING,
@@ -1014,7 +1016,9 @@ export const agentInvokeCommand = defineCommand({
     "con ese VM; con el nombre de la flota reparte la sesión entre sus VMs (el `session_id` " +
     "que devuelve identifica el VM: pásalo con --session-id para seguir la conversación). Con " +
     "--target agentcore el argumento es el nombre del agente desplegado en AgentCore y la " +
-    "sesión es la que devuelve el resultado.",
+    "sesión es la que devuelve el resultado. Con el nombre de una flota, " +
+    "--renew-gateway-keys renueva la clave de Bedrock de las pasarelas antes de cada VM " +
+    "nuevo (la receta no la activa por su cuenta).",
   parameters: [
     argument("sandbox_id", { required: true, help: TARGET_HELP }),
     argument("prompt", { help: INVOKE_PROMPT_HELP }),
@@ -1024,6 +1028,7 @@ export const agentInvokeCommand = defineCommand({
     flag(["--stream"], { help: STREAM_HELP }),
     tokenFileOption,
     targetOption,
+    flag(["--renew-gateway-keys"], { help: INVOKE_RENEW_GATEWAY_KEYS_HELP }),
   ],
   run: (context) =>
     guarded(context, async () => {
@@ -1032,13 +1037,25 @@ export const agentInvokeCommand = defineCommand({
       if (chosen === undefined) {
         return badChoice(context, "--target", AGENT_TARGETS);
       }
+      const renewGatewayKeys = values.flag("renew_gateway_keys");
       if (chosen === TARGET_AGENTCORE) {
+        const microvmOnly = await microvmOnlyFlagError(context);
+        if (microvmOnly !== undefined) {
+          return reportFailure(context, microvmOnly);
+        }
         return guardedAgentCore(context, () => runAgentCoreInvoke(context));
       }
-      const request = invokeRequestOf(context);
       const target = values.string("sandbox_id") ?? "";
+      if (renewGatewayKeys && !isFleetName(target)) {
+        throw new UsageError(RENEW_NEEDS_FLEET_MESSAGE);
+      }
+      const request = invokeRequestOf(context);
       const client = isFleetName(target)
-        ? await context.agentProjects.connectFleet(target, fleetTokenOrUsage(context))
+        ? await context.agentProjects.connectFleet(
+            target,
+            fleetTokenOrUsage(context),
+            renewGatewayKeys ? { renewGatewayKeys: true } : {},
+          )
         : await context.agentProjects.connect(target, tokenOrUsage(context));
       const options = { sessionId: values.string("session_id") };
       try {

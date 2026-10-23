@@ -4000,7 +4000,12 @@ opción existente cambia de valor por defecto.
    `rayito setup --caps-image` cuando falta `rayito-base-caps`.
    `optional-features.md` tiene su fila. (e) Los
    valores de `env` del proyecto se guardan en la receta: sólo la bandera
-   `--env` rechaza nombres de secreto, y la guía lo dice.
+   `--env` rechaza nombres de secreto, y la guía lo dice. `AUTH` y `BEARER`
+   sólo cuentan como último segmento o junto a `TOKEN`, `KEY` o `HEADER`,
+   para no rechazar nombres corrientes como `AUTH_MODE` o `AUTH_URL`. (f)
+   `rayito agent invoke <flota> --renew-gateway-keys` es la forma de pedir
+   la renovación desde la CLI al reconectar por nombre; con el id de un
+   sandbox (que no crea VMs) es un error de uso.
 
 **Consecuencias.** Un agente desplegado se puede invocar, escalar y parar
 desde cualquier proceso con sólo su nombre y su access token. `agent status`

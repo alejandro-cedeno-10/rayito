@@ -525,6 +525,7 @@ rayito agent deploy [PATH] [--file PATH] [--timeout S] [--port N] [--token-file 
 rayito agent export --target docker|agentcore --out DIR [--file PATH] [--overwrite]
 rayito agent invoke SANDBOX_ID [PROMPT] [--session-id ID] [--input JSON | --input-file F]
                     [--stream] [--token-file F] [--target microvm|agentcore]
+                    [--renew-gateway-keys]
 rayito agent status SANDBOX_ID [--token-file F] [--target microvm|agentcore]
 rayito agent stop SANDBOX_ID [--target microvm|agentcore] [--session-id ID] [--keep-recipe]
 rayito agent list --target agentcore
@@ -592,10 +593,19 @@ the short-term Bedrock key of the `bedrock` gateways before creating each VM
 ([Secret gateway](funciones-opcionales/pasarela-de-secretos.md#renovar-la-clave-de-bedrock)).
 With `--target agentcore`, those three flags exit with 2
 (`option_not_supported`). `--env` rejects, before calling anyone, a name that
-looks like a secret (`*_TOKEN`, `*_KEY`, `*_SECRET`, `*_PASSWORD`..., or with a
-`PASS`, `PASSWD`, `PAT`, `CREDENTIAL`, `CREDENTIALS`, `AUTH` or `BEARER`
-segment, such as `DB_PASS` or `AUTH_HEADER`, case-insensitive): use
-`--secret-env` or `--secret-env-from`.
+looks like a secret (`*_TOKEN`, `*_KEY`, `*_SECRET`, `*_PASSWORD`..., with a
+`PASS`, `PASSWD`, `PAT`, `CREDENTIAL` or `CREDENTIALS` segment, such as
+`DB_PASS`, or with `AUTH` or `BEARER` as the last segment or next to `TOKEN`,
+`KEY` or `HEADER`, such as `X_AUTH` or `AUTH_HEADER`; case-insensitive): use
+`--secret-env` or `--secret-env-from`. `AUTH_MODE`, `AUTH_URL` or
+`AUTHOR_NAME` are accepted.
+
+`invoke` with a fleet name accepts `--renew-gateway-keys`: it renews the
+gateways' Bedrock key before each new VM the fleet creates, signed with your
+credentials, because the recipe does not turn it on by itself (without the
+flag it warns `recipe_renewal_ignored` if the recipe asked for it). With a
+sandbox id it exits with 2 without calling anyone, and with
+`--target agentcore`, with 2 (`option_not_supported`).
 
 With several graphs in `langgraph.json`, `detect` and `deploy` accept
 `--graph NAME` (exclusive with `--entry`). Instead of `PROMPT`, `invoke`

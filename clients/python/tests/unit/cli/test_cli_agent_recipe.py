@@ -18,10 +18,14 @@ from rayito._agent._fleet_base import FleetMemberStatus, FleetStatus
 from rayito._payload import generate_access_token
 from rayito.cli import agent as agent_cli
 from rayito.cli._agent_deploy import (
+    ENV_FLAG_AUTH_COMPANIONS,
+    ENV_FLAG_AUTH_SEGMENTS,
     ENV_FLAG_SECRET_SEGMENTS,
     ENV_LOOKS_SECRET_MESSAGE,
+    INVOKE_RENEW_GATEWAY_KEYS_HELP,
     KEEP_RECIPE_HELP,
     RENEW_GATEWAY_KEYS_HELP,
+    RENEW_NEEDS_FLEET_MESSAGE,
     SAVE_RECIPE_HELP,
     SCALE_IN_AFTER_HELP,
     STATUS_UNKNOWN_SCALING,
@@ -131,13 +135,17 @@ def test_the_help_texts_are_the_contract_ones() -> None:
     assert helps[("agent deploy", "--scale-in-after")] == SCALE_IN_AFTER_HELP
     assert helps[("agent deploy", "--no-save-recipe")] == SAVE_RECIPE_HELP
     assert helps[("agent deploy", "--renew-gateway-keys")] == RENEW_GATEWAY_KEYS_HELP
+    assert helps[("agent invoke", "--renew-gateway-keys")] == INVOKE_RENEW_GATEWAY_KEYS_HELP
     assert helps[("agent stop", "--keep-recipe")] == KEEP_RECIPE_HELP
     assert CONTRACT["messages"]["envLooksSecret"] == ENV_LOOKS_SECRET_MESSAGE
     assert CONTRACT["messages"]["statusUnknownScaling"] == STATUS_UNKNOWN_SCALING
+    assert CONTRACT["messages"]["renewNeedsFleet"] == RENEW_NEEDS_FLEET_MESSAGE
 
 
 def test_the_secret_segments_are_the_shared_ones() -> None:
     assert list(ENV_FLAG_SECRET_SEGMENTS) == ENV_VECTORS["segments"]
+    assert list(ENV_FLAG_AUTH_SEGMENTS) == ENV_VECTORS["authSegments"]
+    assert list(ENV_FLAG_AUTH_COMPANIONS) == ENV_VECTORS["authCompanions"]
 
 
 @pytest.mark.parametrize("name", ENV_VECTORS["rejected"])

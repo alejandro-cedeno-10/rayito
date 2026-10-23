@@ -78,7 +78,11 @@ five parallel work groups.
   parameter path and value are never logged.
 - The CLI rejects `--env NAME=...` when `NAME` looks like a secret, using
   `SECRET_LIKE_KEYS` plus `secret` (constant `ENV_FLAG_SECRET_LIKE_KEYS`,
-  so `*_SECRET` is caught too). `AgentProject.env` keeps its 0.16 rule
+  so `*_SECRET` is caught too), the segments `ENV_FLAG_SECRET_SEGMENTS`
+  (`pass`, `passwd`, `pat`, `credential`, `credentials`), and
+  `ENV_FLAG_AUTH_SEGMENTS` (`auth`, `bearer`) only as the last segment or
+  next to one of `ENV_FLAG_AUTH_COMPANIONS` (`token`, `key`, `header`), so
+  `AUTH_MODE` or `AUTH_URL` pass. `AgentProject.env` keeps its 0.16 rule
   unchanged for backward compatibility. The error is `InvalidArgumentException` with the message
   `--env no admite secretos (NAME parece uno): usa --secret-env NAME=<secreto> o --secret-env-from <secreto>`.
   It is raised before any AWS call.
@@ -164,6 +168,9 @@ five parallel work groups.
   - CLI: `--renew-gateway-keys` on `rayito agent deploy` (MicroVM only;
     `option_requires_microvm` with `--target agentcore`), help
     `Renueva la clave de corta duración de Bedrock de las pasarelas antes de crear cada VM (apagado por defecto).`
+    Also `--renew-gateway-keys` on `rayito agent invoke` (fleet name only;
+    a sandbox id is a usage error, `--target agentcore` is
+    `option_not_supported`), so a CLI reconnect can opt in.
 - Eligible gateways are those whose preset is `bedrock` (from
   `AgentProject.gateway_presets`, see contract §2). With the option on and
   no `bedrock` gateway, construction raises `InvalidArgumentException`

@@ -65,8 +65,10 @@ from rayito._images import DEFAULT_BUILD_TIMEOUT_SECONDS
 from rayito._limits import AGENT_MIN_MEMORY_MIB
 from rayito.cli._agent_deploy import (
     AGENT_TOKEN_FILE_DEFAULT,
+    INVOKE_RENEW_GATEWAY_KEYS_HELP,
     KEEP_RECIPE_HELP,
     RENEW_GATEWAY_KEYS_HELP,
+    RENEW_NEEDS_FLEET_MESSAGE,
     SAVE_RECIPE_HELP,
     SCALE_IN_AFTER_HELP,
     STATUS_UNKNOWN_SCALING,
@@ -1363,13 +1365,19 @@ def fleet_token(token_file: Path | None) -> str:
     return token_or_exit(token_file)
 
 
-def connect_fleet(ctx: typer.Context, name: str, token_file: Path | None) -> AgentFleet:
+def connect_fleet(
+    ctx: typer.Context, name: str, token_file: Path | None, *, renew_gateway_keys: bool = False
+) -> AgentFleet:
+    """`AgentFleet.connect(nombre)`. La renovación de claves sólo se pide con
+    `--renew-gateway-keys`; sin ella se deja como en 0.16 (`None`: la receta
+    no la activa y, si la pedía, avisa `recipe_renewal_ignored`)."""
     clients = clients_of(ctx)
     return AgentFleet.connect(
         name,
         access_token=fleet_token(token_file),
         region=clients.region,
         session=clients.session,
+        renew_gateway_keys=True if renew_gateway_keys else None,
     )
 
 
@@ -1390,6 +1398,9 @@ def invoke_command(
     target: Annotated[
         str, typer.Option("--target", help=TARGET_HELP, callback=DEPLOY_TARGET_CHECK)
     ] = TARGET_MICROVM,
+    renew_gateway_keys: Annotated[
+        bool, typer.Option("--renew-gateway-keys", help=INVOKE_RENEW_GATEWAY_KEYS_HELP)
+    ] = False,
 ) -> None:
     """Llama a un agente desplegado con `rayito agent deploy`.
 
@@ -1399,17 +1410,24 @@ def invoke_command(
     agentcore, `sandbox_id` es el nombre del agente: se invoca con SigV4 y el
     `session_id` que devuelve continúa la conversación. Un grafo con esquema
     de entrada propio se llama con --input (un objeto JSON) o --input-file en
-    lugar de PROMPT, y su salida se imprime como JSON."""
+    lugar de PROMPT, y su salida se imprime como JSON. Con el nombre de una
+    flota, --renew-gateway-keys renueva la clave de Bedrock de las pasarelas
+    antes de cada VM nuevo (la receta no la activa por su cuenta)."""
     as_json = json_mode(ctx)
     data = invoke_input(prompt, input_json, input_file)
+    if renew_gateway_keys and target != TARGET_AGENTCORE and not is_fleet_name(sandbox_id):
+        fail(RENEW_NEEDS_FLEET_MESSAGE, code=EXIT_USAGE)
     with agentcore_errors(json_output=as_json):
+        check_microvm_only_flags(
+            target, scale_in_after=None, save_recipe=True, renew_gateway_keys=renew_gateway_keys
+        )
         fleet: AgentDeployment | AgentFleet | AgentCoreFleet
         if target == TARGET_AGENTCORE:
             reject_token_file(token_file)
             fleet = connect_agentcore_fleet(ctx, sandbox_id)
         else:
             fleet = (
-                connect_fleet(ctx, sandbox_id, token_file)
+                connect_fleet(ctx, sandbox_id, token_file, renew_gateway_keys=renew_gateway_keys)
                 if is_fleet_name(sandbox_id)
                 else connect_deployment(ctx, sandbox_id, token_file)
             )

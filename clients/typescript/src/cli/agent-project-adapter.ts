@@ -29,6 +29,7 @@ import type {
   DeployPlanView,
   DetectedProject,
   FleetClient,
+  FleetConnectFlags,
   HiddenAppRoutes,
 } from "./ops-ports.js";
 import type { CliServices } from "./services.js";
@@ -178,11 +179,16 @@ export class SdkAgentProjectTools implements AgentProjectTools {
     };
   }
 
-  async connectFleet(name: string, accessToken: string | undefined): Promise<FleetClient> {
+  async connectFleet(
+    name: string,
+    accessToken: string | undefined,
+    options: FleetConnectFlags = {},
+  ): Promise<FleetClient> {
     const { AgentFleet } = await import("../agent/fleet.js");
     const aws = await this.#aws();
     const fleet = await AgentFleet.connect(name, {
       ...(accessToken === undefined ? {} : { accessToken }),
+      ...(options.renewGatewayKeys === true ? { renewGatewayKeys: true } : {}),
       connection: { region: aws.region },
     });
     return {

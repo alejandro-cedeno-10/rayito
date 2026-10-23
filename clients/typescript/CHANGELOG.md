@@ -48,14 +48,21 @@ versionado [SemVer](https://semver.org/lang/es/).
   `AgentDeployOptions`; `--renew-gateway-keys`), apagada por defecto, con los
   peers opcionales `@aws/bedrock-token-generator` 1.1.0 y
   `@aws-sdk/client-secrets-manager`.
+- **`rayito agent invoke <flota> --renew-gateway-keys`**: la CLI pide la
+  renovación al reconectar la flota por su nombre (la receta no la activa).
+  Con el id de un sandbox sale con 2, y con `--target agentcore`,
+  `option_not_supported`.
 - **`AgentDeployment.refreshGateways()`** y `applyGateways` en el pool.
 
 ### Cambiado
 
 - **Incompatible con 0.16: `rayito agent deploy --env` rechaza un nombre que
-  parece un secreto**, también `*_SECRET` y `SECRET` y los que tienen un
-  segmento `PASS`, `PASSWD`, `PAT`, `CREDENTIAL`, `CREDENTIALS`, `AUTH` o
-  `BEARER` (sin distinguir mayúsculas; antes pasaban), antes de
+  parece un secreto**, también `*_SECRET` y `SECRET`, los que tienen un
+  segmento `PASS`, `PASSWD`, `PAT`, `CREDENTIAL` o `CREDENTIALS`, y los que
+  llevan `AUTH` o `BEARER` como último segmento o junto a `TOKEN`, `KEY` o
+  `HEADER` (`AUTH`, `X_AUTH`, `AUTH_HEADER`; sin distinguir mayúsculas; antes
+  pasaban). `AUTH_MODE`, `AUTH_URL` o `AUTHOR_NAME` siguen pasando. Se
+  rechaza antes de
   cualquier llamada a AWS y con los dos destinos. Migración: pasa el valor por
   `--secret-env NOMBRE=<secreto>` o `--secret-env-from <secreto>`. La regla es
   sólo de la bandera: los valores de `env` del proyecto (`[env]` de

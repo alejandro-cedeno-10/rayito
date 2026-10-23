@@ -1,6 +1,6 @@
 {
   "schema": "rayito.fleet-recipe-env-vectors/1",
-  "_comment": "Nombres de --env que la CLI rechaza y los que acepta, sin valores. Se rechaza un nombre que es, o termina en `_<palabra>`, una de SECRET_LIKE_KEYS de AgentProject.env más `secret` (constante ENV_FLAG_SECRET_LIKE_KEYS), o que tiene como segmento (partes separadas por `_`, sin distinguir mayúsculas) una de `segments` (constante ENV_FLAG_SECRET_SEGMENTS). AgentProject.env no cambia.",
+  "_comment": "Nombres de --env que la CLI rechaza y los que acepta, sin valores. Se rechaza un nombre que es, o termina en `_<palabra>`, una de SECRET_LIKE_KEYS de AgentProject.env más `secret` (constante ENV_FLAG_SECRET_LIKE_KEYS); que tiene como segmento (partes separadas por `_`, sin distinguir mayúsculas) una de `segments` (constante ENV_FLAG_SECRET_SEGMENTS); o que tiene una de `authSegments` (constante ENV_FLAG_AUTH_SEGMENTS) como último segmento o junto a un segmento de `authCompanions` (constante ENV_FLAG_AUTH_COMPANIONS). AgentProject.env no cambia.",
   "rejected": [
     "API_TOKEN",
     "OPENAI_API_KEY",
@@ -17,7 +17,12 @@
     "AUTH_HEADER",
     "Proxy_Auth",
     "BEARER",
-    "BEARER_VALUE"
+    "AUTH",
+    "AUTH_TOKEN",
+    "X_AUTH",
+    "BEARER_TOKEN",
+    "BEARER_KEY",
+    "AUTH_KEY_ID"
   ],
   "accepted": [
     "LOG_LEVEL",
@@ -29,15 +34,26 @@
     "PASSAGE_COUNT",
     "COMPASS_MODE",
     "PATTERN",
-    "OAUTH_SCOPE_LIST"
+    "OAUTH_SCOPE_LIST",
+    "AUTH_MODE",
+    "AUTH_URL",
+    "AUTH_ENABLED",
+    "BEARER_PREFIX"
   ],
   "segments": [
     "pass",
     "passwd",
     "pat",
     "credential",
-    "credentials",
+    "credentials"
+  ],
+  "authSegments": [
     "auth",
     "bearer"
+  ],
+  "authCompanions": [
+    "token",
+    "key",
+    "header"
   ]
 }

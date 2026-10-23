@@ -199,8 +199,10 @@ escalado real. Un `scaling=` o `project=` explícitos ganan a la receta, y
   aviso es `recipe_too_large` y se borra la anterior.
 - **`--env` y los secretos.** `rayito agent deploy` rechaza un `--env` cuyo
   nombre parece un secreto (`*_TOKEN`, `*_KEY`, `*_SECRET`, `*_PASSWORD`...,
-  o con un segmento `PASS`, `PASSWD`, `PAT`, `CREDENTIAL`, `CREDENTIALS`,
-  `AUTH` o `BEARER`, como `DB_PASS` o `GITHUB_PAT`):
+  con un segmento `PASS`, `PASSWD`, `PAT`, `CREDENTIAL` o `CREDENTIALS`, como
+  `DB_PASS` o `GITHUB_PAT`, o con `AUTH` o `BEARER` como último segmento o
+  junto a `TOKEN`, `KEY` o `HEADER`, como `X_AUTH` o `AUTH_HEADER`; `AUTH_MODE`
+  o `AUTHOR_NAME` pasan):
   usa `--secret-env NOMBRE=<secreto>` o `--secret-env-from <secreto>`, así la
   receta sólo guarda el nombre. Es un cambio incompatible con 0.16 para
   `*_SECRET`. Ojo: la regla es de la bandera `--env`; los valores de `env`

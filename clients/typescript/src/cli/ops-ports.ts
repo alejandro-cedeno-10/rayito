@@ -257,6 +257,11 @@ export interface FleetClient {
 }
 
 /** `rayito agent ...` sobre `AgentProject` y `AgentDeployment`; `init` no los usa. */
+/** Lo que `rayito agent invoke` pide al reconectar una flota. */
+export interface FleetConnectFlags {
+  readonly renewGatewayKeys?: boolean;
+}
+
 export interface AgentProjectTools {
   /** Lee el fichero de proyecto de `file` (un fichero o un directorio); no llama a AWS. */
   load(file: string): Promise<AgentProjectTool>;
@@ -269,8 +274,13 @@ export interface AgentProjectTools {
   planDeploy(request: AgentDeployRequest): Promise<DeployPlanView>;
   /** Detecta, resuelve y despliega la flota (`deployAgent`); la deja viva al volver. */
   deployFleet(request: AgentDeployRequest): Promise<DeployedFleetView>;
-  /** Reconecta la flota de la imagen `name`; sin token sólo puede listarse o terminarse. */
-  connectFleet(name: string, accessToken: string | undefined): Promise<FleetClient>;
+  /** Reconecta la flota de la imagen `name`; sin token sólo puede listarse o terminarse.
+   * `renewGatewayKeys` sólo se pasa con `--renew-gateway-keys`. */
+  connectFleet(
+    name: string,
+    accessToken: string | undefined,
+    options?: FleetConnectFlags,
+  ): Promise<FleetClient>;
   /** `terminate-microvm`: no necesita el access token. `false` si el sandbox ya no existe. */
   stop(sandboxId: string): Promise<boolean>;
 }
