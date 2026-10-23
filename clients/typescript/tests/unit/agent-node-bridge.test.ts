@@ -67,6 +67,8 @@ interface Bridge {
     preferred: string[],
     importModule: (name: string) => Promise<unknown>,
   ): Promise<unknown>;
+  checkEntry(config: Json, importModule: (name: string) => Promise<unknown>): Promise<void>;
+  CHECK_ENTRY_FLAG: string;
   GraphTranslator: new () => { feed(chunk: unknown): Json[]; answer: string };
   AiStreamTranslator: new (options: {
     reasoning: boolean;
