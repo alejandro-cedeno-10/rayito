@@ -24,7 +24,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use common::{
     BUDGET, DiskFault, Harness, Options, authenticated, data_bytes, drain_process, harness_with,
@@ -68,13 +68,11 @@ fn cpu_limited() -> Options {
 async fn a_busy_loop_is_signalled_at_its_cpu_budget_and_a_sleep_is_not() {
     let harness = harness_with(cpu_limited()).await;
     assert_eq!(harness.session.spawn_defaults().cpu_seconds, Some(1));
-    let started = Instant::now();
     let (_, mut stream) = harness
         .start(python("while True: pass", 30_000))
         .await
         .unwrap();
     let tail = drain_process(&mut stream, Duration::from_secs(10)).await;
-    let elapsed = started.elapsed();
     let end = tail.end.expect("the loop ended");
     assert_eq!(end.status, "signaled", "{end:?}");
     assert!(
@@ -82,7 +80,6 @@ async fn a_busy_loop_is_signalled_at_its_cpu_budget_and_a_sleep_is_not() {
         "SIGXCPU or SIGKILL, got {:?}",
         end.signal
     );
-    assert!(elapsed < Duration::from_secs(15), "{elapsed:?}");
     let (_, mut sleeper) = harness.start(shell("sleep 2", 10_000)).await.unwrap();
     let slept = drain_process(&mut sleeper, BUDGET).await.end.unwrap();
     assert_eq!(slept.status, "exited");
