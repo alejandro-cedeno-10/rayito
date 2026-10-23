@@ -191,8 +191,8 @@ class InfoAndAbove(logging.Filter):
 
 
 def drop_debug_records(names: Sequence[str]) -> None:
-    """Instala `InfoAndAbove` en cada logger de `names` (los de botocore que
-    escriben cuerpos de AWS a nivel DEBUG): aunque el código del agente baje
+    """Instala `InfoAndAbove` en cada logger de `names` (los del SDK de AWS que
+    escriben parámetros y cuerpos a nivel DEBUG): aunque el código del agente baje
     su nivel, sus cuerpos con secretos no salen. Llamarla otra vez no añade
     otro filtro."""
     for name in names:

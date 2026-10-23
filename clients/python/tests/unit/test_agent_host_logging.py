@@ -46,7 +46,14 @@ def _start_serve_with_invalid_config(tmp_path: Path) -> int:
 
 
 def test_the_quiet_loggers_are_the_http_clients() -> None:
-    assert serve.QUIET_HTTP_LOGGERS == ("httpx", "httpcore", "botocore", "urllib3")
+    assert serve.QUIET_HTTP_LOGGERS == (
+        "httpx",
+        "httpcore",
+        "botocore",
+        "boto3",
+        "s3transfer",
+        "urllib3",
+    )
 
 
 def test_the_body_loggers_match_the_sdk() -> None:

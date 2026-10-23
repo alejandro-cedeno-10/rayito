@@ -53,6 +53,7 @@ setup` observes the account again and resumes whatever was left half done.
 | `artifact_missing` | 2 | the `--artifact` file does not exist | fix the path |
 | `artifact_variant` | 2 | `--artifact` is not the `full` variant zip without EFS | use the release's `rayito-image.zip`; the other variants are published with `rayito image publish` |
 | `needs_confirmation` | 2 | there is something to create and there is no terminal (or you use `--json`) | confirm with `--yes`, or run it from a terminal |
+| `stack_newer` | 2 | a Rayito newer than yours deployed the `rayito-m0-iam` stack and the plan changes its bucket: updating it would go back to your older template | run `rayito setup` with that version or a later one (for example, upgrade the SDK in CI), or pass the bucket the stack already has |
 | `stack_blocked` | 1 | the `rayito-m0-iam` or `rayito-m0-artifacts` stack (the message names it) is in a state that cannot be reused or waited for (`ROLLBACK_COMPLETE`, `*_FAILED`, `DELETE_IN_PROGRESS`) | `aws cloudformation delete-stack --stack-name <the stack>`, wait for it to disappear and run `rayito setup` again; if it is the bucket's and it failed on creation, first look at `aws cloudformation describe-stack-events` (usually an S3 permission or an SCP) |
 | `stack_incomplete` | 1 | the stack has no output Rayito reads: `BuildRoleArn` in `rayito-m0-iam` (`infra/iam.yaml` template) or `BucketName` in `rayito-m0-artifacts` (`infra/artifact-bucket.yaml` template) | deploy Rayito's template (or delete the stack and let `rayito setup` create it) |
 | `release_download` | 1 | `rayito-image.zip` or `SHA256SUMS` could not be downloaded from the release (`HTTP <status>`, `tiempo agotado` (timeout) or `error de red` (network error)) | check the network or proxy (`HTTPS_PROXY`); or download the zip, verify it and pass `--artifact` |
@@ -264,10 +265,10 @@ traceback, which was noise and not a failure.
 
 !!! danger "An AWS SDK v3 logger prints the secrets"
     Rayito never writes a secret's value or name to its logs. In Python,
-    since 0.17.1 `import rayito` drops the DEBUG records of
-    `botocore.endpoint`, `botocore.parsers` and `botocore.auth`, which
-    carried the Secrets Manager bodies: the rest of botocore's DEBUG still
-    comes through, without the `SecretString`. In TypeScript, a `logger` on
+    since 0.17.1 `import rayito` drops the DEBUG records of the botocore,
+    boto3 and s3transfer loggers that carried AWS parameters and bodies
+    ([the list](../secrets.md#que-activa-y-que-cuesta)): the rest of the
+    DEBUG output still comes through, without the `SecretString`. In TypeScript, a `logger` on
     the AWS SDK v3 client **does** include those bodies with the
     `SecretString` in the clear: do not set one with secrets.
 

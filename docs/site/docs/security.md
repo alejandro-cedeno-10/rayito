@@ -165,9 +165,10 @@ sólo lo enciende la propia opción. Cuando se usa:
   confiable, inyecta sólo tokens de vida corta y mínimo privilegio, nunca
   credenciales de larga duración.
 - **Logs**: Rayito nunca escribe el valor ni el nombre en sus logs. En
-  Python, `import rayito` descarta el DEBUG de los loggers de botocore que
-  escriben cuerpos (`botocore.endpoint`, `botocore.parsers`,
-  `botocore.auth`), y el host del agente lo hace dentro del MicroVM. En
+  Python, `import rayito` descarta el DEBUG de los loggers de botocore,
+  boto3 y s3transfer que escriben parámetros y cuerpos (la lista medida
+  está en [Secretos](secrets.md#que-activa-y-que-cuesta)), y el host del
+  agente lo hace dentro del MicroVM. En
   TypeScript, un `logger` que pongas en el `SecretsManagerClient` **sí**
   imprime los cuerpos de Secrets Manager con el valor en claro: no lo
   pongas en procesos que manejan secretos

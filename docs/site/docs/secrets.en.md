@@ -65,15 +65,22 @@ fetching the secret on every call (`SecretCache`).
     (`rayito.*` loggers in Python, the options' `logger` in
     TypeScript), to `repr`/`toJSON` or to errors.
 
-    In Python, since 0.17.1 `import rayito` drops the DEBUG records of
-    `botocore.endpoint`, `botocore.parsers` and `botocore.auth`, the
-    botocore loggers that write request and response bodies: with
-    `logging.DEBUG` on the root logger or on `botocore`, or with
+    In Python, since 0.17.1 `import rayito` drops the DEBUG records of the
+    botocore, boto3 and s3transfer loggers that write request parameters
+    and request and response bodies (`botocore.endpoint`,
+    `botocore.parsers`, `botocore.auth`, `botocore.regions`,
+    `boto3.resources.action`, `boto3.resources.collection`,
+    `boto3.dynamodb.table`, `s3transfer.tasks` and `s3transfer.futures`):
+    with `logging.DEBUG` on the root logger or on `botocore`, or with
     `boto3.set_stream_logger()`, the `SecretString` no longer shows up
     (before, it was printed in the clear for `CreateSecret`,
-    `PutSecretValue` and `GetSecretValue`). Their warnings and errors, and
-    the rest of botocore's DEBUG, still come through. The agent host does
-    the same inside the MicroVM.
+    `PutSecretValue` and `GetSecretValue`), and neither does the `Item` of
+    a resource `put_item`. This is the list measured with boto3 1.43.102
+    against a local HTTP server; a logger added by a later version is not
+    covered. Their warnings and errors, and the rest of the DEBUG output,
+    still come through; `urllib3` writes each request line (method, path
+    and query), never a body. The agent host does the same inside the
+    MicroVM.
 
     In TypeScript, a `logger` you pass yourself to the SDK v3
     `SecretsManagerClient` **does** receive those bodies: do not set one in

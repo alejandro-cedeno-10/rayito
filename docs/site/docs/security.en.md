@@ -163,9 +163,10 @@ itself turns it on. When it is used:
   sandbox code can read an injected secret.** With untrusted code, inject
   only short-lived, least-privilege tokens, never long-lived credentials.
 - **Logs**: Rayito never writes the value or the name to its logs. In
-  Python, `import rayito` drops the DEBUG records of the botocore loggers
-  that write bodies (`botocore.endpoint`, `botocore.parsers`,
-  `botocore.auth`), and the agent host does the same inside the MicroVM. In
+  Python, `import rayito` drops the DEBUG records of the botocore, boto3
+  and s3transfer loggers that write parameters and bodies (the measured
+  list is in [Secrets](secrets.md#que-activa-y-que-cuesta)), and the agent
+  host does the same inside the MicroVM. In
   TypeScript, a `logger` you set on the `SecretsManagerClient` **does**
   print the Secrets Manager bodies with the value in clear: do not set one
   in processes that handle secrets

@@ -47,6 +47,7 @@ setup` observa la cuenta de nuevo y retoma lo que quedó a medias.
 | `artifact_missing` | 2 | el fichero de `--artifact` no existe | corrige la ruta |
 | `artifact_variant` | 2 | `--artifact` no es el zip de la variante `full` sin EFS | usa el `rayito-image.zip` de la release; las otras variantes se publican con `rayito image publish` |
 | `needs_confirmation` | 2 | hay algo que crear y no hay terminal (o usas `--json`) | confírmalo con `--yes`, o ejecútalo desde una terminal |
+| `stack_newer` | 2 | la pila `rayito-m0-iam` la desplegó un Rayito más nuevo que el tuyo y el plan le cambia el bucket: actualizarla volvería a tu plantilla, más antigua | ejecuta `rayito setup` con esa versión o una posterior (por ejemplo, actualiza el SDK del CI), o pasa el bucket que ya tiene la pila |
 | `stack_blocked` | 1 | la pila `rayito-m0-iam` o `rayito-m0-artifacts` (el mensaje la nombra) está en un estado que no se puede reutilizar ni esperar (`ROLLBACK_COMPLETE`, `*_FAILED`, `DELETE_IN_PROGRESS`) | `aws cloudformation delete-stack --stack-name <la pila>`, espera a que desaparezca y vuelve a ejecutar `rayito setup`; si es la del bucket y falló al crearlo, mira antes `aws cloudformation describe-stack-events` (suele ser un permiso de S3 o una SCP) |
 | `stack_incomplete` | 1 | la pila no tiene la salida que Rayito lee: `BuildRoleArn` en `rayito-m0-iam` (plantilla `infra/iam.yaml`) o `BucketName` en `rayito-m0-artifacts` (plantilla `infra/artifact-bucket.yaml`) | despliega la plantilla de Rayito (o bórrala y deja que `rayito setup` la cree) |
 | `release_download` | 1 | no se pudo descargar `rayito-image.zip` o `SHA256SUMS` de la release (`HTTP <estado>`, `tiempo agotado` o `error de red`) | revisa la red o el proxy (`HTTPS_PROXY`); o descarga el zip, verifícalo y pasa `--artifact` |
@@ -253,10 +254,10 @@ no se ven afectadas. Antes de 0.17 esa línea iba seguida de un
 
 !!! danger "Un logger del AWS SDK v3 imprime los secretos"
     Rayito nunca escribe el valor ni el nombre de un secreto en sus logs. En
-    Python, desde 0.17.1 `import rayito` descarta el DEBUG de
-    `botocore.endpoint`, `botocore.parsers` y `botocore.auth`, que llevaban
-    los cuerpos de Secrets Manager: el resto del DEBUG de botocore sigue
-    saliendo, sin el `SecretString`. En TypeScript, un `logger` en el
+    Python, desde 0.17.1 `import rayito` descarta el DEBUG de los loggers
+    de botocore, boto3 y s3transfer que llevaban los parámetros y cuerpos
+    de AWS ([la lista](../secrets.md#que-activa-y-que-cuesta)): el resto
+    del DEBUG sigue saliendo, sin el `SecretString`. En TypeScript, un `logger` en el
     cliente del AWS SDK v3 **sí** incluye esos cuerpos con el `SecretString`
     en claro: no lo pongas con secretos.
 
