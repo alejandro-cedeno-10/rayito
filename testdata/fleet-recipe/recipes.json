@@ -123,6 +123,21 @@
       "fleet": "bad name",
       "parameter": null,
       "warning": "recipe_not_saved"
+    },
+    {
+      "fleet": ".",
+      "parameter": null,
+      "warning": "recipe_not_saved"
+    },
+    {
+      "fleet": "..",
+      "parameter": null,
+      "warning": "recipe_not_saved"
+    },
+    {
+      "fleet": "",
+      "parameter": null,
+      "warning": "recipe_not_saved"
     }
   ],
   "loadFailures": [

@@ -27,6 +27,7 @@ from rayito._agent._fleet_recipe import (
     encode_recipe,
     recipe_document,
     recipe_of,
+    renewal_on_connect,
 )
 from rayito._agent._project_domain import AgentProject
 from rayito._agent._scaling_domain import ScalingOptions
@@ -45,6 +46,11 @@ NAME = "support-bot"
 PARAMETER = f"/rayito/agents/{NAME}/recipe"
 RECIPE_VECTORS: dict[str, Any] = json.loads(
     (Path(__file__).resolve().parents[4] / "testdata" / "fleet-recipe" / "recipes.json").read_text(
+        encoding="utf-8"
+    )
+)
+RENEWAL_VECTORS: dict[str, Any] = json.loads(
+    (Path(__file__).resolve().parents[4] / "testdata" / "fleet-recipe" / "renewal.json").read_text(
         encoding="utf-8"
     )
 )
@@ -266,35 +272,32 @@ def test_the_renewal_option_of_the_recipe_needs_its_extra_only_when_on(
     assert not fleet._key_renewal.enabled
 
 
-def test_a_renewing_recipe_without_the_extra_still_lists_stops_and_creates(
+@pytest.mark.parametrize("case", RENEWAL_VECTORS["connect"], ids=lambda case: case["id"])
+def test_only_the_caller_turns_renewal_on(case: dict[str, Any]) -> None:
+    recipe = None if case["recipe"] is None else saved_recipe(renew_gateway_keys=case["recipe"])
+
+    assert renewal_on_connect(recipe, case["requested"]) == (case["renew"], case["warning"])
+
+
+def test_a_renewing_recipe_never_renews_by_itself(
     flavor: FleetFlavor, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     monkeypatch.setitem(sys.modules, "aws_bedrock_token_generator", None)
+    keys = DeniedRenewer()
     store = store_with(saved_recipe(renew_gateway_keys=True))
 
-    fleet = connect(flavor, recipe_store=store)
+    fleet = connect(flavor, recipe_store=store, key_renewer=keys)
     flavor.call(fleet.status())
     result = flavor.call(fleet.invoke("hola"))
+    flavor.call(fleet.scale(min_vms=2, max_vms=2))
     flavor.call(fleet.stop())
 
     assert result.text == "respuesta a hola"
-    assert caplog.text.count("missing_extra") == 1
+    assert not fleet._key_renewal.enabled
+    assert keys.calls == 0
+    assert caplog.text.count("recipe_renewal_ignored") == 1
+    assert PARAMETER not in caplog.text
     assert not flavor.classes.live
-
-
-def test_a_renewal_inherited_from_the_recipe_without_permission_only_warns(
-    flavor: FleetFlavor, caplog: pytest.LogCaptureFixture
-) -> None:
-    keys = DeniedRenewer()
-    fleet = connect(
-        flavor, recipe_store=store_with(saved_recipe(renew_gateway_keys=True)), key_renewer=keys
-    )
-
-    flavor.call(fleet.invoke("hola"))
-    flavor.call(fleet.scale(min_vms=2, max_vms=2))
-
-    assert keys.calls == 1
-    assert "permission_denied" in caplog.text
 
 
 def test_an_explicit_renewal_without_permission_fails(flavor: FleetFlavor) -> None:

@@ -59,7 +59,7 @@ from rayito._agent._fleet_base import (
     vm_lost_message,
     with_handle,
 )
-from rayito._agent._fleet_recipe import FleetRecipe, recipe_of
+from rayito._agent._fleet_recipe import FleetRecipe, recipe_of, renewal_on_connect
 from rayito._agent._fleet_recipe_aws import (
     RECIPE_SAVED,
     FleetRecipeStore,
@@ -331,8 +331,9 @@ class AsyncAgentFleet:
     ) -> Self:
         """Como `AgentFleet.connect()`: sin `project` y con `use_recipe` lee
         la receta de la flota (un `GetParameter`, en un hilo) y con ella crea
-        VMs iguales a los del despliegue; `scaling=` y `renew_gateway_keys=`
-        explícitos ganan a la receta."""
+        VMs iguales a los del despliegue; `scaling=` explícito gana a la
+        receta y las claves sólo se renuevan con `renew_gateway_keys=True`
+        (la receta nunca lo activa: `recipe_renewal_ignored`)."""
         recipe: FleetRecipe | None = None
         if project is None and use_recipe:
             store = dependencies.pop("recipe_store", None) or recipe_aws.default_recipe_store(
@@ -342,7 +343,9 @@ class AsyncAgentFleet:
             if loaded is not None:
                 recipe, project = loaded
             dependencies["recipe_store"] = store
-        renew = recipe.renew_gateway_keys if recipe is not None else False
+        renew, warning = renewal_on_connect(recipe, renew_gateway_keys)
+        if warning is not None:
+            recipe_aws.warn_recipe(warning)
         fleet = cls(
             project,
             name=name,
@@ -350,11 +353,10 @@ class AsyncAgentFleet:
             scaling=scaling,
             region=region,
             session=session,
-            renew_gateway_keys=renew if renew_gateway_keys is None else renew_gateway_keys,
+            renew_gateway_keys=renew,
             recipe=recipe,
             **dependencies,
         )
-        fleet._key_renewal.inherited = renew_gateway_keys is None
         await fleet.refresh_members()
         return fleet
 
