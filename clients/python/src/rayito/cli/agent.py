@@ -78,9 +78,11 @@ from rayito.cli._agent_deploy import (
     deploy_token,
     describe_plan,
     detection_lines,
+    discarded_on_failure,
     parse_pairs,
     pool_backend_for,
     reject_secret_env_flags,
+    token_file_to_discard,
 )
 from rayito.cli._agent_scaffold import (
     DEFAULT_PROVIDER,
@@ -1097,34 +1099,36 @@ def deploy_command(
     # código del agente, se excluye para que no acabe en la imagen ni cambie
     # su hash (que un nuevo despliegue la reutilice).
     project = with_excluded_file(project, written_to)
-    clients = clients_of(ctx)
-    publisher = base_publisher_of(clients, base_artifact, bucket, yes=yes)
-    for line in detection_lines(report):
-        echo(line, err=True)
-    try:
-        fleet = deploy_agent(
-            project=project,
-            options=options_with(
-                token,
-                publisher,
-                pool_backend_for(fleet_settings_of(project, scaling).scaling.warm_vms),
-            ),
-            region=clients.region,
-            session=clients.session,
-        )
-    except InvalidArgumentException as exc:
-        fail(_with_notes(exc), code=EXIT_USAGE)
-    except BuildException as exc:
-        fail(f"build fallido: {exc}")
-    except SandboxException as exc:
-        fail(_with_notes(exc))
-    except Exception as exc:
-        for note in getattr(exc, "__notes__", []):
-            echo(note, err=True)
-        raise
-    finally:
-        if compact is not None:
-            compact.finish()
+    created = token_file_to_discard(token_file, written_to, keep_on_failure=keep_on_failure)
+    with discarded_on_failure(created):
+        clients = clients_of(ctx)
+        publisher = base_publisher_of(clients, base_artifact, bucket, yes=yes)
+        for line in detection_lines(report):
+            echo(line, err=True)
+        try:
+            fleet = deploy_agent(
+                project=project,
+                options=options_with(
+                    token,
+                    publisher,
+                    pool_backend_for(fleet_settings_of(project, scaling).scaling.warm_vms),
+                ),
+                region=clients.region,
+                session=clients.session,
+            )
+        except InvalidArgumentException as exc:
+            fail(_with_notes(exc), code=EXIT_USAGE)
+        except BuildException as exc:
+            fail(f"build fallido: {exc}")
+        except SandboxException as exc:
+            fail(_with_notes(exc))
+        except Exception as exc:
+            for note in getattr(exc, "__notes__", []):
+                echo(note, err=True)
+            raise
+        finally:
+            if compact is not None:
+                compact.finish()
     fleet.detach()
     hidden = app_hiding_own_routes(project)
     if hidden is not None:
