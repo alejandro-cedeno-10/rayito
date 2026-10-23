@@ -396,6 +396,24 @@ points to `dnf_install`/`dnfInstall`.
     rayito template logs my-template
     ```
 
+## Template environment variables { #variables-del-template }
+
+The variables of `set_envs()`/`setEnvs()` are visible to the sandbox's
+commands, terminals and `run_code`, as in E2B: `Template.build()` writes them
+to `/etc/rayito/template-env.json` and `rayd` reads them at boot. A variable
+of `Sandbox.create(envs=...)` wins over the template's one with the same
+name, and a command's variable wins over both. They are still in the
+Dockerfile `ENV`, so the build's own `RUN` steps see them.
+
+This needs a base image published with the `rayd` of 0.17.1 or later: an
+older `rayd` ignores the file and only the build's `RUN` steps see the
+variables. A template that already used `set_envs()` creates a new version on
+its next `build()`, because the artifact carries that file.
+
+!!! warning "Do not store secrets with `set_envs()`"
+    The variables stay in the image and in every snapshot. For a secret use
+    [Secrets](../secrets.md).
+
 ## `Template.build()` options { #opciones-de-templatebuild }
 
 | Python | TypeScript | Default | What it does |

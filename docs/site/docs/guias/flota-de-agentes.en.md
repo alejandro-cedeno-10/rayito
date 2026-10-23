@@ -276,7 +276,12 @@ after the deadline, raises `CapacityException` (`code = "agent_capacity"`;
   to 0.16 scale-in did not happen: VMs were created without a logical
   deadline and `rayd` rejected the `set_timeout`. A VM created that way (by
   0.16) is not scaled in: the fleet warns once; end it with `stop()` or
-  redeploy.
+  redeploy. While a VM is being terminated, the platform still lists it as
+  `RUNNING` although its `rayd` no longer answers: when the fleet is listed
+  (`AgentFleet.connect()`, `status()`, `refresh_members()`), a VM whose
+  `Health` fails or that stops being `RUNNING` when probed is treated as a
+  terminating VM (not a member, not counted for capacity, and a warning names
+  its id) instead of failing the call; since 0.17.1.
 - **Suspending:** `idle` suspends an unused VM and resumes it when called; a
   suspended VM bills no compute, only its snapshot storage.
 - **Restarting:** if the user's app dies, the host relaunches it with growing

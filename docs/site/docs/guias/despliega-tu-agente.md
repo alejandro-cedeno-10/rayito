@@ -153,6 +153,11 @@ adivina: `ambiguous` (hay dos frameworks o dos puntos de entrada posibles: usa
 el id del modelo: escríbelo como literal o en `[model]`) y `unsupported` (una
 combinación que no llega a la pasarela sin cambiar el código).
 
+Un `--entry` que no existe (un módulo, un fichero o un atributo que no está)
+hace fallar el despliegue, no la primera invocación: el host del agente
+importa el punto de entrada al arrancar y `deploy` termina con «el host del
+agente no pudo arrancar (entrypoint_not_found)».
+
 ### Modelo elegido por tu código { #modelo-desde-tu-codigo }
 
 Si tu código elige el modelo por configuración, por ejemplo
@@ -224,8 +229,11 @@ variable de entorno y del descubrimiento; ninguno crea nada en silencio:
 
 - La **región** es `--region`, `[deploy] region`, `AWS_REGION` o la de tu perfil.
 - La **imagen base** es la versión más reciente de `rayito-base-caps`, que
-  publica `rayito setup` desde 0.17. Si no existe, se publica sólo con
-  `--base-artifact` y `--yes`.
+  publica `rayito setup --caps-image` desde 0.17. Si no existe, se publica sólo
+  con `--base-artifact` y `--yes`. Sólo se necesita si el despliegue construye:
+  con `--no-build`, o sin bucket y con la imagen del proyecto ya construida
+  (`[image] template`), no se lee, y si falta mientras la imagen del proyecto
+  existe, el error dice cómo reutilizarla.
 - El **bucket** del artefacto es, por este orden, `--bucket`, `[deploy] bucket`,
   `RAYITO_BUCKET`, el del bootstrap de CDK de la cuenta si existe (`HeadBucket`)
   y, si no, el que creó `rayito setup`: la salida `BucketName` de la pila

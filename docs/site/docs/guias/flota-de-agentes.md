@@ -275,7 +275,12 @@ pasado el plazo, lanza `CapacityException` (`code = "agent_capacity"`;
   siempre. Hasta 0.16 la reducción no ocurría: los VMs se creaban sin plazo
   lógico y `rayd` rechazaba el `set_timeout`. Un VM creado así (por 0.16)
   no se reduce: la flota avisa una vez; termínalo con `stop()` o vuelve a
-  desplegar.
+  desplegar. Mientras un VM se termina, la plataforma aún lo lista como
+  `RUNNING` aunque su `rayd` ya no responda: al listar la flota
+  (`AgentFleet.connect()`, `status()`, `refresh_members()`), un VM cuyo
+  `Health` falla o que deja de estar `RUNNING` al sondearlo se trata como un
+  VM que termina (no es miembro ni cuenta para el cupo, y se avisa con su id)
+  en vez de hacer fallar la llamada; desde 0.17.1.
 - **Suspender:** `idle` suspende un VM sin uso y lo reanuda al llamarlo; un VM
   suspendido no cobra cómputo, sólo el almacenamiento de su snapshot.
 - **Reiniciar:** si la app del usuario se cae, el host la relanza con espera

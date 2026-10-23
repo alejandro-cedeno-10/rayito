@@ -22,6 +22,13 @@ imagen `rayito-base` y como asset de la GitHub Release del tag `rayd-v*`.
 
 ### Fixed
 
+- Las variables de `Template.set_envs()` / `setEnvs()` llegan a los
+  procesos, las PTY y los kernels del sandbox (ADR-035). `rayd` lee al
+  arrancar `/etc/rayito/template-env.json` (`rayito.template-env/1`, que
+  hornea `Template.build()`) y las pone debajo de las `envs` del `/run`
+  (`SandboxSession::spawn_defaults`), el orden de E2B: template, sandbox y
+  comando. Un fichero ausente, ilegible, mal formado o de otra versión es un
+  entorno vacío, con un aviso que sólo nombra la ruta y la clase del error.
 - `m5_pty`: los tests ya no escriben en la terminal antes de que bash
   interactivo la tenga (`ready_bash` teclea un marcador hasta que bash lo
   ejecuta; en aarch64 una línea tecleada en esa ventana se perdía), y el fin

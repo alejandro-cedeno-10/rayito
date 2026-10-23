@@ -87,7 +87,9 @@ rayito [--profile P] [--region R] [--json] [--verbose] [--version] <grupo> <coma
   desconocido, lo mismo.
 - `--json`: cada comando escribe **un único documento JSON** por stdout y el
   progreso por stderr, así `rayito --json sandbox list | jq` funciona.
-- `--verbose`: logs `INFO` del SDK (reconexiones, sondas) y de la CLI.
+- `--verbose`: logs `INFO` del SDK (reconexiones, sondas) y de la CLI. Sin
+  él, los avisos y errores del SDK salen igual por stderr (por ejemplo
+  `receta de la flota: recipe_renewal_ignored`), en las dos CLI.
 - `--version`: imprime `rayito <versión> (python)`. El runtime entre paréntesis
   dice cuál de las dos CLI responde cuando conviven la de Python y la del
   paquete npm (`rayito <versión> (node)`): manda la primera del `PATH`.
@@ -96,6 +98,8 @@ Códigos de salida: `0` éxito; `1` la operación falló (build no lanzable, una
 versión que `prune` no pudo borrar, un id desconocido en `kill`, un `FAIL`
 del `doctor`, un error de AWS impreso como `AWS error <Code>: <Message>`);
 `2` uso o entorno (argumentos, sin región, sin credenciales, sin extra).
+Si el lector cierra la salida (`rayito sandbox list | head`), la CLI sale con
+`1` sin escribir ninguna traza.
 
 ## `rayito image`
 
