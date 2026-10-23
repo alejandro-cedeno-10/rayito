@@ -21,3 +21,10 @@ When a VM this process shortened becomes a base VM, the fleet SHALL ask for ever
 #### Scenario: shared restore vectors
 - **WHEN** every case of `restoreSeconds` is evaluated by each SDK
 - **THEN** the result equals `expected` (seconds in Python, milliseconds in TypeScript)
+
+### Requirement: A dedicated fleet of one VM brings a host session back to its VM
+With `sessions="dedicated"` a fleet SHALL remember, for the rest of the process, the session id the host assigned to a new session together with its VM, in both SDKs, sync and async. With `max_vms == 1` that id carries no handle, so a later call with it SHALL go to that VM (bound to the session) instead of waiting for a free VM until `CapacityException`.
+
+#### Scenario: one VM, host-assigned session
+- **WHEN** a dedicated fleet with `max_vms=1` answers a first invocation without `session_id` and the caller invokes again with the returned `session_id`
+- **THEN** the second invocation runs on the same VM with the same session id and the fleet still has one VM

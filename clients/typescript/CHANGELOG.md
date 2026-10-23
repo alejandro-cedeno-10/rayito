@@ -53,6 +53,12 @@ versionado [SemVer](https://semver.org/lang/es/).
   `boto3.dynamodb.table`, `s3transfer.tasks` y `s3transfer.futures` aunque el
   código del agente vuelva a bajar el nivel. El SDK
   TypeScript no pone ningún `logger` en sus clientes del AWS SDK v3.
+- **Una flota dedicada de un solo VM vuelve a su sesión.** Con
+  `sessions: "dedicated"` y `maxVms: 1`, el id de sesión no lleva asa y la
+  flota no recordaba la sesión que asignó el host: la segunda llamada con ese
+  id esperaba un VM libre y acababa en `CapacityError`
+  tras el plazo de la cola. Ahora cada sesión asignada por el host se recuerda
+  con su VM dentro del proceso, como un id elegido por el llamante.
 - **El plazo de los VMs sobrantes de una flota** (las tres limitaciones
   conocidas de 0.17.0):
   - Una invocación que se suelta ya no acorta el plazo de otra que empezó

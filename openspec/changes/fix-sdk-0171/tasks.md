@@ -32,6 +32,7 @@
 - [x] 5.2 Failed invocations restore the scale-in deadline
 - [x] 5.3 `restore_seconds` / `restoreMs` with shared vectors; reset `limited`
 - [x] 5.4 Race, failure and promotion tests in both SDKs, docs and changelogs
+- [x] 5.5 A dedicated fleet remembers the host-assigned session of each VM, so one VM (`max_vms == 1`, no handle) resumes it; tests in both SDKs and changelogs
 
 ## 6. Dependencies
 

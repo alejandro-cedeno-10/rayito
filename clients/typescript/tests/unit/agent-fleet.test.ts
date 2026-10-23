@@ -398,6 +398,20 @@ describe("dedicated mode", () => {
     expect(fleet.sandboxIds).toHaveLength(1);
   });
 
+  // Con maxVms 1 el id de sesión no lleva asa: la flota recuerda la sesión
+  // que asignó el host para volver a su VM, que ya está reservado.
+  test("with one VM brings the host's session back to its VM", async () => {
+    const h = new FleetHarness();
+    const fleet = await h.started(
+      new ScalingOptions({ minVms: 1, maxVms: 1, sessions: "dedicated" }),
+    );
+    const first = await fleet.invoke("uno");
+    const again = await fleet.invoke("dos", { sessionId: first.sessionId });
+    expect(decodeHandle(first.sessionId)).toBeUndefined();
+    expect(again.sessionId).toBe(first.sessionId);
+    expect(fleet.sandboxIds).toHaveLength(1);
+  });
+
   test("with an index labels the VM and finds it again", async () => {
     const h = new FleetHarness();
     const index = {} as never;

@@ -528,6 +528,22 @@ def test_dedicated_keeps_a_caller_chosen_session_on_its_vm_within_the_process(
     assert len(fleet.sandbox_ids) == 1
 
 
+def test_dedicated_with_one_vm_brings_the_host_session_back_to_its_vm(
+    flavor: FleetFlavor,
+) -> None:
+    """Con `max_vms == 1` el id de sesión no lleva asa: la flota recuerda la
+    sesión que asignó el host para volver a su VM, que ya está reservado."""
+    fleet = flavor.started(ScalingOptions(min_vms=1, max_vms=1, sessions="dedicated"))
+
+    first = flavor.call(fleet.invoke("uno"))
+    again = flavor.call(fleet.invoke("dos", session_id=first.session_id))
+
+    assert decode_handle(first.session_id) is None
+    assert again.session_id == first.session_id
+    assert len(fleet.sandbox_ids) == 1
+    assert len(host_of(flavor, 1).invocations) == 2
+
+
 def test_dedicated_with_an_index_labels_the_vm_and_finds_it_again(flavor: FleetFlavor) -> None:
     index = object()
     fleet = flavor.started(

@@ -1008,16 +1008,20 @@ class AsyncAgentFleet:
         if self._unlease(lease, keep=inner_session):
             await self._limit_lifetime(lease.member)
 
-    @staticmethod
-    def _unlease(lease: Lease, *, keep: str | None = None) -> bool:
+    def _unlease(self, lease: Lease, *, keep: str | None = None) -> bool:
         """Quita la invocación en curso del VM; devuelve si el VM se quedó
-        sin ninguna."""
+        sin ninguna. La sesión real de una reserva dedicada (`keep`) se
+        recuerda para su VM: con `max_vms == 1` el id de sesión no lleva asa,
+        y sin recordarlo la siguiente llamada de esa sesión no encontraría su
+        VM y esperaría a un VM libre hasta `CapacityException`."""
         member = lease.member
         member.inflight = max(0, member.inflight - 1)
         if lease.reservation is not None:
             member.bound.discard(lease.reservation)
             if keep is not None:
                 member.bound.add(keep)
+                if self.scaling.sessions == SESSIONS_DEDICATED:
+                    self._sessions[keep] = member.sandbox_id
         return member.inflight == 0
 
     def _drop(self, member: Member) -> None:

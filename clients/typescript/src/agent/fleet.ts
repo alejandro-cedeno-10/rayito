@@ -1329,7 +1329,10 @@ export class AgentFleet {
   }
 
   /** Quita la invocación en curso del VM; devuelve si el VM se quedó sin
-   * ninguna. */
+   * ninguna. La sesión real de una reserva dedicada (`keep`) se recuerda para
+   * su VM: con `maxVms === 1` el id de sesión no lleva asa, y sin recordarlo
+   * la siguiente llamada de esa sesión no encontraría su VM y esperaría a uno
+   * libre hasta `CapacityError`. */
   #unlease(lease: Lease, keep?: string): boolean {
     const member = lease.member;
     member.inflight = Math.max(0, member.inflight - 1);
@@ -1337,6 +1340,7 @@ export class AgentFleet {
       member.bound.delete(lease.reservation);
       if (keep !== undefined) {
         member.bound.add(keep);
+        this.#remember(keep, member);
       }
     }
     return member.inflight === 0;

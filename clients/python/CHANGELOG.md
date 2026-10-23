@@ -59,6 +59,12 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   `s3transfer` y `urllib3` a WARNING, como `httpx` y `httpcore` en 0.17.0, y
   descarta ese mismo DEBUG aunque el código del agente vuelva a bajar el
   nivel.
+- **Una flota dedicada de un solo VM vuelve a su sesión.** Con
+  `sessions="dedicated"` y `max_vms=1`, el id de sesión no lleva asa y la
+  flota no recordaba la sesión que asignó el host: la segunda llamada con ese
+  id esperaba un VM libre y acababa en `CapacityException`
+  tras el plazo de la cola. Ahora cada sesión asignada por el host se recuerda
+  con su VM dentro del proceso, como un id elegido por el llamante.
 - **El plazo de los VMs sobrantes de una flota** (las tres limitaciones
   conocidas de 0.17.0):
   - Una invocación que se suelta ya no acorta el plazo de otra que empezó
