@@ -1,0 +1,5 @@
+minimumReleaseAgeExclude:
+  - rayito@0.15.0
+# tsx funciona con el binario de esbuild de su paquete opcional; no hace falta su script
+allowBuilds:
+  esbuild: false
