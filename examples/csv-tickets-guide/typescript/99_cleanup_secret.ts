@@ -13,12 +13,12 @@ const REGION = process.env.AWS_REGION ?? "us-east-1";
 const FORCE_FLAG = "--force";
 const RECOVERY_WINDOW_DAYS = 7;
 const TOLERATED_ERRORS = new Set(["ResourceNotFoundException", "InvalidRequestException"]);
-const SECRET_LABEL = "rayito/<MODEL_SECRET> (por defecto rayito/bedrock-key)";
+const ENTRY_LABEL = "rayito/<MODEL_SECRET> (por defecto rayito/bedrock-key)";
 
 /** Borra el secreto sin ventana de recuperación. */
 async function forceDelete(): Promise<void> {
   const deleted = await new SecretStore({ region: REGION }).destroy(NAME);
-  console.log(deleted ? `${SECRET_LABEL}: borrado sin recuperación` : `${SECRET_LABEL}: no existía`);
+  console.log(deleted ? `${ENTRY_LABEL}: borrado sin recuperación` : `${ENTRY_LABEL}: no existía`);
 }
 
 /** Programa el borrado con la ventana de recuperación. */
@@ -30,10 +30,10 @@ async function scheduleDelete(): Promise<void> {
     );
   } catch (err) {
     if (!(err instanceof Error) || !TOLERATED_ERRORS.has(err.name)) throw err;
-    console.log(`${SECRET_LABEL}: no existía o ya tenía el borrado programado`);
+    console.log(`${ENTRY_LABEL}: no existía o ya tenía el borrado programado`);
     return;
   }
-  console.log(`${SECRET_LABEL}: borrado programado en ${RECOVERY_WINDOW_DAYS} días (recuperable con restore-secret)`);
+  console.log(`${ENTRY_LABEL}: borrado programado en ${RECOVERY_WINDOW_DAYS} días (recuperable con restore-secret)`);
 }
 
 await (process.argv.includes(FORCE_FLAG) ? forceDelete() : scheduleDelete());

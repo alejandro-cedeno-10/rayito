@@ -17,13 +17,13 @@ REGION = os.environ.get("AWS_REGION", "us-east-1")
 FORCE_FLAG = "--force"
 RECOVERY_WINDOW_DAYS = 7
 TOLERATED_ERRORS = ("ResourceNotFoundException", "InvalidRequestException")
-SECRET_LABEL = "rayito/<MODEL_SECRET> (por defecto rayito/bedrock-key)"
+ENTRY_LABEL = "rayito/<MODEL_SECRET> (por defecto rayito/bedrock-key)"
 
 
 def force_delete() -> None:
     """Borra el secreto sin ventana de recuperación."""
     deleted = SecretStore(region=REGION).destroy(NAME)
-    print(f"{SECRET_LABEL}: borrado sin recuperación" if deleted else f"{SECRET_LABEL}: no existía")
+    print(f"{ENTRY_LABEL}: borrado sin recuperación" if deleted else f"{ENTRY_LABEL}: no existía")
 
 
 def schedule_delete() -> None:
@@ -34,9 +34,9 @@ def schedule_delete() -> None:
     except ClientError as exc:
         if exc.response.get("Error", {}).get("Code") not in TOLERATED_ERRORS:
             raise
-        print(f"{SECRET_LABEL}: no existía o ya tenía el borrado programado")
+        print(f"{ENTRY_LABEL}: no existía o ya tenía el borrado programado")
         return
-    print(f"{SECRET_LABEL}: borrado programado en {RECOVERY_WINDOW_DAYS} días (recuperable con restore-secret)")
+    print(f"{ENTRY_LABEL}: borrado programado en {RECOVERY_WINDOW_DAYS} días (recuperable con restore-secret)")
 
 
 def main() -> None:
