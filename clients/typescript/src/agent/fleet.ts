@@ -1365,7 +1365,10 @@ export class AgentFleet {
    * sigue `unknown`). Sólo anota el estado que se muestra, no un ping
    * (`recordPing`), así que no cuenta para sustituir el VM. Si no se puede
    * conectar, el miembro sigue `unknown`; un `/ping` sin respuesta es
-   * `unavailable`. Ningún error al preguntarle tumba `status()`. */
+   * `unavailable`. Ningún error al preguntarle tumba `status()`. A
+   * diferencia de Python (`PEEK_ERRORS`), aquí se atrapa todo: `fetch` da un
+   * corte de red o un cuerpo truncado como `TypeError`, sin clase propia que
+   * lo separe de un error de programación. */
   async #peek(member: Member<AgentDeployment>): Promise<void> {
     if (this.#token === undefined) {
       return;

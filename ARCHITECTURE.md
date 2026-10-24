@@ -2010,8 +2010,8 @@ any sandbox with that role's credentials can mount any access point the
 role is scoped to. Threat T21 (`SECURITY.md`) covers the mount path.
 
 **Existing VPC (`EfsVolumes`).** The stack deploys into an existing VPC:
-`SubnetIds` (1–3, one mount target per AZ) and only new resources — never the VPC, its subnets, routes, NACLs or
-rules on existing security groups. `EfsVolumes.check()` is a pure
+`SubnetIds` (1–3, one mount target per AZ) and only new resources — never
+the VPC, its subnets, routes, NACLs or rules on existing security groups. `EfsVolumes.check()` is a pure
 evaluation over read-only `ec2:Describe*` facts (a `NetworkInspector` port,
 also behind `rayito doctor --efs-vpc-id`), and `deploy()` refuses on any
 `FAIL`. The file system stays `DeletionPolicy: Retain`;

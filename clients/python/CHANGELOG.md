@@ -17,7 +17,9 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   sigue como `unknown` (sin comprobar), porque preguntarle lo reanudaría; uno
   cuyo `/ping` no responde sale `unavailable` sin contar para sustituirlo, y
   ningún error del sandbox, de credenciales o de red al preguntar a un VM sin
-  abrir hace fallar `status()` (un error de programación sí se propaga).
+  abrir hace fallar `status()` (un error de programación sí se propaga). En
+  `AgentDeployment` síncrono, un cuerpo cortado o mal delimitado es ahora
+  `SandboxException`, como en el asíncrono.
 - **Sin aviso de «plazo lógico» en una flota de tamaño fijo.** Al conectar
   con `project=` y sin `scaling` (los límites por defecto), o con
   `max_vms == min_vms`, un VM sin plazo lógico ya no imprime «un VM de la
@@ -178,11 +180,11 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   nombre (lo que borra su receta); `test_m15_templates.py` se salta sin
   `RAYITO_E2E_TEMPLATE_BUCKET`; `test_m15_custom_domain.py` y
   `test_dashboard_readonly_e2e.py` ya no dependen del orden de la propagación
-  del edge ni de los sandboxes de otras corridas en paralelo; el de EFS en una VPC deja fuera de su
-  comparación los grupos de otras corridas del mismo e2e; y el del pool juzga
-  la latencia de `take()` frente al `create()` de la misma corrida (la mediana
-  al menos tres veces más rápida y un tope de 3 s), e informa el presupuesto
-  de 1,5 s de D17 sin fallar por él.
+  del edge ni de los sandboxes de otras corridas en paralelo; el de EFS en una
+  VPC deja fuera de su comparación los grupos de otras corridas del mismo e2e;
+  y el del pool juzga la latencia de `take()` frente al `create()` de la misma
+  corrida (la mediana al menos tres veces más rápida y un tope de 3 s), e
+  informa el presupuesto de 1,5 s de D17 sin fallar por él.
 
 ### Seguridad
 

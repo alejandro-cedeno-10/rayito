@@ -208,6 +208,38 @@ def test_async_client_truncated_body_is_a_sandbox_error() -> None:
     asyncio.run(scenario())
 
 
+def _serve_raw_once(payload: bytes) -> tuple[socket.socket, threading.Thread]:
+    """Un servidor de bloqueo que lee la cabecera y el cuerpo de una petición
+    y contesta `payload` tal cual, para el cliente síncrono."""
+    listener = socket.create_server((LOOPBACK, 0))
+
+    def serve() -> None:
+        connection, _ = listener.accept()
+        with connection:
+            head = b""
+            while b"\r\n\r\n" not in head:
+                head += connection.recv(4096)
+            connection.sendall(payload)
+
+    thread = threading.Thread(target=serve, daemon=True)
+    thread.start()
+    return listener, thread
+
+
+@pytest.mark.parametrize("operation", ["status", "invoke"])
+def test_sync_client_truncated_body_is_a_sandbox_error(operation: str) -> None:
+    payload = HEAD + b"Content-Length: 500\r\nConnection: close\r\n\r\n" + RESULT
+    listener, thread = _serve_raw_once(payload)
+    with listener:
+        deployment = _sync_deployment(int(listener.getsockname()[1]))
+        with pytest.raises(SandboxException):
+            if operation == "status":
+                deployment.status()
+            else:
+                deployment.invoke("hola")
+        thread.join(5)
+
+
 def test_async_client_garbage_head_is_a_sandbox_error() -> None:
     async def scenario() -> None:
         server, port = await _serve_raw(b"esto no es http\r\n\r\n", [])
