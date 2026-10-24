@@ -118,7 +118,8 @@ export interface SessionSettings {
   readonly profile: string | undefined;
   readonly region: string | undefined;
   readonly env: Readonly<Record<string, string | undefined>>;
-  /** El logger de `--verbose`; sin él, el SDK calla. */
+  /** El logger de la CLI: con `--verbose`, INFO y más; sin él, sólo avisos y
+   * errores (`warningsLogger`). Sin ninguno, el SDK calla. */
   readonly logger: Logger | undefined;
 }
 

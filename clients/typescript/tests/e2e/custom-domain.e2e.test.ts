@@ -26,6 +26,17 @@
  * el hostname propio como SNI y `Host` (como `curl --connect-to`); un
  * usuario real apunta un `CNAME`/alias de su DNS al `DistributionDomainName`.
  *
+ * **Determinista frente a la propagación.** El KVS llega a cada servidor del
+ * edge por separado y cada petición abre una conexión nueva, que puede caer
+ * en otro: la visibilidad exige `STABLE_OBSERVATIONS` respuestas seguidas,
+ * cada respuesta esperada se sondea con su plazo, el servidor del sandbox se
+ * espera hasta que escucha y el eco de WebSocket atiende varias conexiones,
+ * así que un upgrade que cae en un servidor sin la ruta se reintenta.
+ *
+ * **Requisito: `cloudfront:CreateDistribution`.** Ante cualquier error de
+ * permisos al crear el recurso `Distribution` (`DescribeStackEvents`), cada
+ * test se salta nombrando ese requisito en vez de fallar.
+ *
  * **Limpieza.** `afterAll` desregistra cada ruta, borra la pila (aunque el
  * `deploy()` fallara a medias) y comprueba que `status()` ya no la ve.
  *
@@ -37,14 +48,15 @@
 import { createHash, randomBytes } from "node:crypto";
 import * as https from "node:https";
 import type { TLSSocket } from "node:tls";
-import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { CloudFormationClient, DescribeStackEventsCommand } from "@aws-sdk/client-cloudformation";
+import { afterAll, beforeAll, beforeEach, describe, expect, test } from "vitest";
 import {
   CUSTOM_DOMAIN_WAIT_TIMEOUT_MS,
   CustomDomain,
   type CustomDomainRoute,
   DISTRIBUTION_DOMAIN_NAME_OUTPUT_KEY,
 } from "../../src/custom-domain/service.js";
-import { CustomDomainError } from "../../src/errors.js";
+import { CustomDomainError, StackError } from "../../src/errors.js";
 import type { Sandbox } from "../../src/sandbox/sandbox.js";
 import { createTestSandbox, e2eEnabled, useE2E } from "./helpers.js";
 
@@ -66,8 +78,9 @@ const ROUTE_PORT = 8000;
 // Suficiente para que la suite entera corra sin que la ruta caduque sola
 // (T25); muy por debajo de MAX_TEST_SANDBOX_TIMEOUT_MS.
 const ROUTE_TTL_SECONDS = 1800;
-// TTL corto del test de caducidad: lo justo para verla servir antes.
-const SHORT_ROUTE_TTL_SECONDS = 30;
+// TTL corto del test de caducidad: deja ver la ruta (STABLE_OBSERVATIONS
+// respuestas seguidas más la propagación) y servir antes de que venza.
+const SHORT_ROUTE_TTL_SECONDS = 90;
 const HTTPS_PORT = 443;
 const HTTP_REQUEST_TIMEOUT_MS = 20_000;
 const WEBSOCKET_HANDSHAKE_TIMEOUT_MS = 20_000;
@@ -84,11 +97,46 @@ const RESUME_IDLE = { maxIdleSeconds: 300, autoResume: true };
 const STACK_HOOK_TIMEOUT_MS = CUSTOM_DOMAIN_WAIT_TIMEOUT_MS + 60_000;
 // GUID fijo de RFC 6455 §1.3, para calcular Sec-WebSocket-Accept.
 const WEBSOCKET_ACCEPT_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
-const HTTP_SERVER_BOOT_GRACE_MS = 2_000;
+// Cuánto esperar, dentro del sandbox, a que algo escuche en ROUTE_PORT, y
+// cada cuánto mirarlo (`/dev/tcp` de bash, el shell de commands.run).
+const SERVER_LISTEN_TIMEOUT_SECONDS = 30;
+const SERVER_LISTEN_POLL_SECONDS = 0.2;
+// Respuestas seguidas que cuentan como "la ruta ya está en el edge".
+const STABLE_OBSERVATIONS = 5;
 const TRAFFIC_TOKEN_HEADER = "e2b-traffic-access-token";
 const HTTP_OK = 200;
 const HTTP_FORBIDDEN = 403;
 const HTTP_NOT_FOUND = 404;
+
+/** El recurso de `infra/custom-domain.yaml` que crea la distribución, y lo que
+ * deja CloudFormation en `ResourceStatusReason` cuando la pila no puede llamar
+ * a `cloudfront:CreateDistribution`. */
+const DISTRIBUTION_LOGICAL_ID = "Distribution";
+const CREATE_FAILED = "CREATE_FAILED";
+const ACCESS_DENIED_MARKERS = ["AccessDenied", "not authorized"];
+const DISTRIBUTION_DENIED_REASON =
+  "distribution permission error (needs cloudfront:CreateDistribution)";
+
+/** Si la pila falló por un error de permisos al crear la distribución
+ * (`DescribeStackEvents`, `AWS_API_NOTES.md` §21). */
+async function distributionDenied(region: string | undefined, stackName: string): Promise<boolean> {
+  const client = new CloudFormationClient(region === undefined ? {} : { region });
+  try {
+    const { StackEvents } = await client.send(
+      new DescribeStackEventsCommand({ StackName: stackName }),
+    );
+    return (StackEvents ?? []).some(
+      (event) =>
+        event.LogicalResourceId === DISTRIBUTION_LOGICAL_ID &&
+        event.ResourceStatus === CREATE_FAILED &&
+        ACCESS_DENIED_MARKERS.some((marker) => (event.ResourceStatusReason ?? "").includes(marker)),
+    );
+  } catch {
+    return false;
+  } finally {
+    client.destroy();
+  }
+}
 
 function customDomainEnvReady(): boolean {
   return Boolean(process.env[DOMAIN_VAR] && process.env[CERT_ARN_VAR]);
@@ -151,24 +199,29 @@ function httpsStatus(
   });
 }
 
-/** Sondea hasta que `host` responde `expected`; devuelve los segundos que
- * tardó. Un 5xx o un error de red mientras tanto cuenta como "todavía no". */
+/** Sondea hasta que `host` responde `expected` `consecutive` veces seguidas;
+ * devuelve los segundos que tardó. Un 5xx, otro estado o un error de red
+ * mientras tanto (el origen despertando, DOM-8, o un servidor del edge al que
+ * aún no llegó el KVS) cuenta como "todavía no" y reinicia la cuenta. */
 async function waitForStatus(
   target: DomainUnderTest,
   host: string,
   headers: Record<string, string>,
   expected: number,
   timeoutMs: number,
+  consecutive = 1,
 ): Promise<number> {
   const started = performance.now();
   let last: unknown;
+  let seen = 0;
   while (performance.now() - started < timeoutMs) {
     try {
       last = await httpsStatus(target, host, headers);
     } catch (error) {
       last = String(error);
     }
-    if (last === expected) {
+    seen = last === expected ? seen + 1 : 0;
+    if (seen >= consecutive) {
       return (performance.now() - started) / 1000;
     }
     await sleep(PROPAGATION_POLL_MS);
@@ -179,10 +232,31 @@ async function waitForStatus(
 }
 
 /** DOM-5 (escritura): una ruta con `trafficToken` ya en el edge responde
- * 403 sin el token, sin contactar el origen (antes, 404). */
+ * 403 sin el token, sin contactar el origen (antes, 404). Hacen falta
+ * `STABLE_OBSERVATIONS` 403 seguidos: cada conexión puede caer en otro
+ * servidor del edge. */
 function waitUntilRouteVisible(target: DomainUnderTest, host: string): Promise<number> {
-  return waitForStatus(target, host, {}, HTTP_FORBIDDEN, PROPAGATION_TIMEOUT_MS);
+  return waitForStatus(
+    target,
+    host,
+    {},
+    HTTP_FORBIDDEN,
+    PROPAGATION_TIMEOUT_MS,
+    STABLE_OBSERVATIONS,
+  );
 }
+
+function waitForOk(
+  target: DomainUnderTest,
+  host: string,
+  headers: Record<string, string>,
+): Promise<number> {
+  return waitForStatus(target, host, headers, HTTP_OK, PROPAGATION_TIMEOUT_MS);
+}
+
+/** Un upgrade que no devolvió 101: se puede reintentar (el servidor del edge
+ * quizá aún no tenía la ruta). */
+class WebSocketRejected extends Error {}
 
 /**
  * Apertura de WebSocket mínima (RFC 6455) con un único frame de texto de
@@ -252,51 +326,108 @@ function websocketHandshakeAndEcho(
       socket.on("data", onData);
     });
     request.on("response", (response) => {
-      reject(new Error(`el upgrade de WebSocket no se aceptó: HTTP ${response.statusCode}`));
+      response.resume();
+      reject(
+        new WebSocketRejected(`el upgrade de WebSocket no se aceptó: HTTP ${response.statusCode}`),
+      );
     });
     request.end();
   });
 }
 
+/** `websocketHandshakeAndEcho` hasta que un servidor del edge con la ruta
+ * acepta el upgrade, dentro de `PROPAGATION_TIMEOUT_MS`. */
+async function echoWithRetries(
+  target: DomainUnderTest,
+  host: string,
+  headers: Record<string, string>,
+  message: Buffer,
+): Promise<Buffer> {
+  const deadline = performance.now() + PROPAGATION_TIMEOUT_MS;
+  for (;;) {
+    try {
+      return await websocketHandshakeAndEcho(target, host, headers, message);
+    } catch (error) {
+      if (performance.now() >= deadline || !retriableUpgrade(error)) {
+        throw error;
+      }
+    }
+    await sleep(PROPAGATION_POLL_MS);
+  }
+}
+
+function retriableUpgrade(error: unknown): boolean {
+  return error instanceof WebSocketRejected || (error as { code?: unknown })?.code !== undefined;
+}
+
 /** Servidor de eco de WebSocket mínimo (sólo `socket`, sin instalar nada).
- * Acepta UNA conexión: por eso la propagación se mide sin tocar el origen. */
+ * Atiende una conexión tras otra (un upgrade que llegó por un servidor del
+ * edge sin la ruta se reintenta) y lee cabeceras y trama hasta tenerlas
+ * enteras. El mismo que el de `test_m15_custom_domain.py`. */
 const WEBSOCKET_ECHO_SERVER_PYTHON = (port: number): string => `
 import hashlib, base64, socket
 GUID = "${WEBSOCKET_ACCEPT_GUID}"
+def read_until(conn, done):
+    data = b""
+    while not done(data):
+        chunk = conn.recv(4096)
+        if not chunk:
+            break
+        data += chunk
+    return data
+def frame_done(data):
+    return len(data) >= 6 and len(data) >= 6 + (data[1] & 0x7F)
+def serve(conn):
+    data = read_until(conn, lambda d: b"\\r\\n\\r\\n" in d)
+    head, _, rest = data.partition(b"\\r\\n\\r\\n")
+    key = None
+    for line in head.decode("latin1").split("\\r\\n"):
+        if line.lower().startswith("sec-websocket-key:"):
+            key = line.split(":", 1)[1].strip()
+    if key is None:
+        return
+    accept = base64.b64encode(hashlib.sha1((key + GUID).encode()).digest()).decode()
+    conn.sendall((
+        "HTTP/1.1 101 Switching Protocols\\r\\n"
+        "Upgrade: websocket\\r\\n"
+        "Connection: Upgrade\\r\\n"
+        f"Sec-WebSocket-Accept: {accept}\\r\\n\\r\\n"
+    ).encode())
+    frame = rest + read_until(conn, lambda d: frame_done(rest + d))
+    length = frame[1] & 0x7F
+    mask = frame[2:6]
+    payload = bytes(b ^ mask[i % 4] for i, b in enumerate(frame[6:6 + length]))
+    conn.sendall(bytes([0x81, len(payload)]) + payload)
 srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 srv.bind(("0.0.0.0", ${port}))
-srv.listen(1)
-conn, _ = srv.accept()
-data = b""
-while b"\\r\\n\\r\\n" not in data:
-    data += conn.recv(4096)
-key = None
-for line in data.decode("latin1").split("\\r\\n"):
-    if line.lower().startswith("sec-websocket-key:"):
-        key = line.split(":", 1)[1].strip()
-accept = base64.b64encode(hashlib.sha1((key + GUID).encode()).digest()).decode()
-conn.sendall((
-    "HTTP/1.1 101 Switching Protocols\\r\\n"
-    "Upgrade: websocket\\r\\n"
-    "Connection: Upgrade\\r\\n"
-    f"Sec-WebSocket-Accept: {accept}\\r\\n\\r\\n"
-).encode())
-frame = conn.recv(4096)
-length = frame[1] & 0x7F
-mask = frame[2:6]
-payload = bytes(b ^ mask[i % 4] for i, b in enumerate(frame[6:6 + length]))
-conn.sendall(bytes([0x81, len(payload)]) + payload)
-conn.close()
+srv.listen(8)
+while True:
+    conn, _ = srv.accept()
+    try:
+        serve(conn)
+    except OSError:
+        pass
+    finally:
+        conn.close()
 `;
 
 async function jweOf(sandbox: Sandbox): Promise<string> {
   return (await sandbox.getHost(ROUTE_PORT)).headers["x-aws-proxy-auth"] ?? "";
 }
 
+/** Arranca `command` en segundo plano y espera, dentro del sandbox, a que
+ * algo escuche en `ROUTE_PORT`: un servidor lento no se confunde con una ruta
+ * rota. */
 async function startInBackground(sandbox: Sandbox, command: string): Promise<void> {
   await sandbox.commands.run(command, { background: true, timeoutMs: 0 });
-  await sleep(HTTP_SERVER_BOOT_GRACE_MS);
+  const attempts = Math.ceil(SERVER_LISTEN_TIMEOUT_SECONDS / SERVER_LISTEN_POLL_SECONDS);
+  await sandbox.commands.run(
+    `for _ in $(seq ${attempts}); do ` +
+      `(exec 3<>/dev/tcp/127.0.0.1/${ROUTE_PORT}) 2>/dev/null && exit 0; ` +
+      `sleep ${SERVER_LISTEN_POLL_SECONDS}; done; exit 1`,
+    { timeoutMs: SERVER_LISTEN_TIMEOUT_SECONDS * 2000 },
+  );
 }
 
 describe.runIf(e2eEnabled() && customDomainEnvReady())("dominio propio (AWS real)", () => {
@@ -307,6 +438,11 @@ describe.runIf(e2eEnabled() && customDomainEnvReady())("dominio propio (AWS real
   ) as Record<RoutePurpose, string>;
   let domain: CustomDomain;
   let target: DomainUnderTest;
+  let denied = false;
+
+  beforeEach((context) => {
+    context.skip(denied, DISTRIBUTION_DENIED_REASON);
+  });
 
   /** Registra la ruta de `purpose` con un token nuevo; devuelve la ruta y
    * las cabeceras que la autorizan. */
@@ -332,13 +468,25 @@ describe.runIf(e2eEnabled() && customDomainEnvReady())("dominio propio (AWS real
       region: e2e.settings.region,
     });
     const started = performance.now();
-    const status = await domain.deploy({
-      certificateArn: process.env[CERT_ARN_VAR] as string,
-      alternateDomainNames: Object.values(aliases).map((alias) =>
-        domain.hostFor(alias, ROUTE_PORT),
-      ),
-      tags: { [ACCEPTANCE_RUN_TAG_KEY]: process.env[ACCEPTANCE_RUN_TAG_VAR] || runId },
-    });
+    let status: Awaited<ReturnType<CustomDomain["deploy"]>>;
+    try {
+      status = await domain.deploy({
+        certificateArn: process.env[CERT_ARN_VAR] as string,
+        alternateDomainNames: Object.values(aliases).map((alias) =>
+          domain.hostFor(alias, ROUTE_PORT),
+        ),
+        tags: { [ACCEPTANCE_RUN_TAG_KEY]: process.env[ACCEPTANCE_RUN_TAG_VAR] || runId },
+      });
+    } catch (error) {
+      if (
+        error instanceof StackError &&
+        (await distributionDenied(e2e.settings.region, `${STACK_NAME_PREFIX}${runId}`))
+      ) {
+        denied = true;
+        return;
+      }
+      throw error;
+    }
     reportDomain("deploy() (s)", ((performance.now() - started) / 1000).toFixed(0));
     target = {
       domain,
@@ -374,9 +522,9 @@ describe.runIf(e2eEnabled() && customDomainEnvReady())("dominio propio (AWS real
     reportDomain("DOM-5 register() -> visible en el edge (s)", visible.toFixed(1));
 
     // DOM-2: HTTP/1.1 real a través de cf.updateRequestOrigin, con el token.
-    expect(await httpsStatus(target, route.host, authorized)).toBe(HTTP_OK);
+    await waitForOk(target, route.host, authorized);
     // SEC-T25: sin el token, 403 — nunca una ruta pública por omisión.
-    expect(await httpsStatus(target, route.host, {})).toBe(HTTP_FORBIDDEN);
+    await waitForStatus(target, route.host, {}, HTTP_FORBIDDEN, PROPAGATION_TIMEOUT_MS);
 
     // DOM-7 (parcial): refresh() reescribe j:/m: sin cortar la ruta.
     const refreshed = await domain.refresh(route, {
@@ -384,7 +532,7 @@ describe.runIf(e2eEnabled() && customDomainEnvReady())("dominio propio (AWS real
       ttlSeconds: ROUTE_TTL_SECONDS,
     });
     expect(refreshed.host).toBe(route.host);
-    expect(await httpsStatus(target, route.host, authorized)).toBe(HTTP_OK);
+    await waitForOk(target, route.host, authorized);
 
     await domain.unregister(route.alias, ROUTE_PORT);
     // Tras unregister(), 404 — indistinguible de una ruta que nunca existió.
@@ -403,7 +551,7 @@ describe.runIf(e2eEnabled() && customDomainEnvReady())("dominio propio (AWS real
     await startInBackground(sandbox, `python3 -m http.server ${ROUTE_PORT}`);
     const [route, authorized] = await register("ttl", sandbox, SHORT_ROUTE_TTL_SECONDS);
     await waitUntilRouteVisible(target, route.host);
-    expect(await httpsStatus(target, route.host, authorized)).toBe(HTTP_OK);
+    await waitForStatus(target, route.host, authorized, HTTP_OK, SHORT_ROUTE_TTL_SECONDS * 1000);
     const expired = await waitForStatus(
       target,
       route.host,
@@ -424,12 +572,7 @@ describe.runIf(e2eEnabled() && customDomainEnvReady())("dominio propio (AWS real
     await waitUntilRouteVisible(target, route.host);
     // DOM-3: ¿corre la Function en la petición de upgrade, y acepta el
     // proxy de AWS la cabecera de token ahí también?
-    const echoed = await websocketHandshakeAndEcho(
-      target,
-      route.host,
-      authorized,
-      Buffer.from("ping"),
-    );
+    const echoed = await echoWithRetries(target, route.host, authorized, Buffer.from("ping"));
     expect(echoed.toString("utf8")).toBe("ping");
   });
 
@@ -440,7 +583,7 @@ describe.runIf(e2eEnabled() && customDomainEnvReady())("dominio propio (AWS real
     await startInBackground(sandbox, `python3 -m http.server ${ROUTE_PORT}`);
     const [route, authorized] = await register("resume", sandbox);
     await waitUntilRouteVisible(target, route.host);
-    expect(await httpsStatus(target, route.host, authorized)).toBe(HTTP_OK);
+    await waitForOk(target, route.host, authorized);
     expect(await sandbox.pause()).toBe(true);
     const resumed = await waitForStatus(
       target,

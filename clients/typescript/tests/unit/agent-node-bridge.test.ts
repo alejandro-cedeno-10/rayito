@@ -67,6 +67,8 @@ interface Bridge {
     preferred: string[],
     importModule: (name: string) => Promise<unknown>,
   ): Promise<unknown>;
+  checkEntry(config: Json, importModule: (name: string) => Promise<unknown>): Promise<void>;
+  CHECK_ENTRY_FLAG: string;
   GraphTranslator: new () => { feed(chunk: unknown): Json[]; answer: string };
   AiStreamTranslator: new (options: {
     reasoning: boolean;
@@ -457,6 +459,27 @@ describe("entrypoint resolution", () => {
     await expect(
       bridge.loadTarget({ app_dir: "/a", entrypoint: "x.ts#no" }, [], () => Promise.resolve({})),
     ).rejects.toMatchObject({ code: "entrypoint_not_found" });
+  });
+
+  test("checkEntry finds a missing file or export before any request", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "rayito-check-entry-"));
+    writeFileSync(join(dir, "agent.mjs"), "export const agent = {};\n");
+    const importModule = () => Promise.resolve({ agent: {} });
+    try {
+      await expect(
+        bridge.checkEntry({ app_dir: dir, entrypoint: "agent.mjs#agent" }, importModule),
+      ).resolves.toBeUndefined();
+      await expect(
+        bridge.checkEntry({ app_dir: dir, entrypoint: "agent.mjs#otro" }, importModule),
+      ).rejects.toMatchObject({ code: "entrypoint_not_found" });
+      await expect(
+        bridge.checkEntry({ app_dir: dir, entrypoint: "falta.mjs" }, importModule),
+      ).rejects.toMatchObject({ code: "entrypoint_not_found" });
+      await expect(bridge.checkEntry({ app_dir: dir }, importModule)).resolves.toBeUndefined();
+      expect(bridge.CHECK_ENTRY_FLAG).toBe("--check-entry");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

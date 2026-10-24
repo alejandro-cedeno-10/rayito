@@ -181,6 +181,14 @@ misma tabla en Python y en TypeScript.
 | `output_truncated` | — | `SandboxException` con `output_truncated` en el mensaje |
 | cualquier otro | `SandboxException` | `SandboxException` con el código delante |
 
+Un `UNAVAILABLE` porque la conexión con el proxy no llegó a abrirse
+(`timed out before receiving SETTINGS frame` en Python, un `connect` fallido
+en TypeScript; pasa a veces en el primer RPC tras `create()` o `resume()`)
+no llega a tu código: el SDK repite la petición hasta cinco veces, con 0,25,
+0,5, 1, 2 y 4 s de espera, porque nunca salió del cliente; también el intento
+que sigue a una reconexión o a reacuñar el token. Vale para cualquier RPC,
+también `run_code`, que tras otros cortes no se repite (desde 0.17.1).
+
 ### Errores de la API de AWS
 
 | `Code` de AWS | Excepción |

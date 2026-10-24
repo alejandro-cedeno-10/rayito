@@ -12,6 +12,7 @@ import type { AgentProject } from "../agent/project.js";
 import { resolveRuntime } from "../agent/runtimes.js";
 import { type AwsClientSettings, awsClientSettingsOf } from "../aws/control-plane.js";
 import { InvalidArgumentError, SandboxNotFoundError } from "../errors.js";
+import type { Logger } from "../logger.js";
 import type { BuildInfo } from "../templates/build.js";
 import { describePlan, poolBackendFileFor } from "./agent-deploy.js";
 import { envWarningLine } from "./agent-secret-env.js";
@@ -102,10 +103,18 @@ class SdkAgentProjectTool implements AgentProjectTool {
 export class SdkAgentProjectTools implements AgentProjectTools {
   readonly #aws: () => Promise<AwsOptions>;
   readonly #region: () => string | undefined;
+  readonly #logger: Logger | undefined;
 
-  constructor(services: () => Promise<CliServices>, region?: () => string | undefined) {
+  /** `logger` es el de la CLI (`warningsLogger` o el de `--verbose`): la
+   * flota escribe en él sus avisos, como `recipe_renewal_ignored`. */
+  constructor(
+    services: () => Promise<CliServices>,
+    region?: () => string | undefined,
+    logger?: Logger | undefined,
+  ) {
     this.#aws = () => awsOptionsOf(services);
     this.#region = region ?? (() => undefined);
+    this.#logger = logger;
   }
 
   async load(file: string): Promise<AgentProjectTool> {
@@ -186,9 +195,13 @@ export class SdkAgentProjectTools implements AgentProjectTools {
   ): Promise<FleetClient> {
     const { AgentFleet } = await import("../agent/fleet.js");
     const aws = await this.#aws();
+    const logger = this.#logger;
     const fleet = await AgentFleet.connect(name, {
       ...(accessToken === undefined ? {} : { accessToken }),
-      ...(options.renewGatewayKeys === true ? { renewGatewayKeys: true } : {}),
+      ...(options.renewGatewayKeys === undefined
+        ? {}
+        : { renewGatewayKeys: options.renewGatewayKeys }),
+      ...(logger === undefined ? {} : { logger }),
       connection: { region: aws.region },
     });
     return {
@@ -204,11 +217,7 @@ export class SdkAgentProjectTools implements AgentProjectTools {
           members: status.members.map(({ sandboxId, state }) => ({ sandboxId, state })),
         };
       },
-      stop: async (options = {}) => {
-        const count = fleet.sandboxIds.length;
-        await fleet.stop(options);
-        return count;
-      },
+      stop: (options = {}) => fleet.stop(options),
     };
   }
 

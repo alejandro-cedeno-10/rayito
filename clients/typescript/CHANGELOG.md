@@ -8,6 +8,20 @@ versionado [SemVer](https://semver.org/lang/es/).
 
 ### Corregido
 
+- **`AgentFleet.status()` da el estado real justo después de `connect()`.**
+  Antes, un miembro que este proceso aún no había abierto salía como
+  `unknown`, también en `rayito agent status` y en su `--json`. Ahora
+  `status()` vuelve a leer el listado y pregunta (`GET /ping`)
+  a cada VM `RUNNING`, hasta `AGENT_FLEET_PROBE_CONCURRENCY` (8) a la vez, sin
+  quedarse el VM, acotarle la vida ni arrancar su servicio. Un VM suspendido
+  sigue como `unknown` (sin comprobar), porque preguntarle lo reanudaría; uno
+  cuyo `/ping` no responde sale `unavailable` sin contar para sustituirlo, y
+  ningún error al preguntar a un VM sin abrir hace fallar `status()`.
+- **Sin aviso de «plazo lógico» en una flota de tamaño fijo.** Al conectar
+  con `project` y sin `scaling` (los límites por defecto), o con
+  `maxVms === minVms`, un VM sin plazo lógico ya no imprime «un VM de la
+  flota no tiene plazo lógico…»: sólo se avisa si la flota puede crecer
+  (`maxVms > minVms`), que es cuando ese VM no se reduciría.
 - **`rayito setup` pone al día la pila de IAM de una versión anterior.** Antes
   reutilizaba `rayito-m0-iam` si su `ArtifactBucket` coincidía, aunque se
   hubiera desplegado con un `infra/iam.yaml` más antiguo (en 0.17.0 la pila de
@@ -73,6 +87,99 @@ versionado [SemVer](https://semver.org/lang/es/).
     mandaba nada y el VM base podía terminar por el plazo corto. Si no queda
     nada que devolverle, deja de contar como acortado (`restoreMs`, vectores
     `restoreSeconds` en `testdata/agent-fleet/lifetime.json`).
+- **Un VM que se está terminando ya no hace fallar el listado de la flota.**
+  Al reducir una flota, la plataforma sigue listando un VM como `RUNNING`
+  mientras su `rayd` ya salió, y `AgentFleet.connect()`, `status()` y
+  `refreshMembers()` fallaban con `SandboxError` («Health no respondió»).
+  Ahora cada VM `RUNNING` se sondea por separado y uno cuya sonda falla con un
+  `SandboxError`, o que dejó de estar `RUNNING` al sondearlo, se trata como un
+  VM que termina: no es miembro, no cuenta para el cupo y no prueba que la
+  imagen sea compartida. Se avisa por el `logger` de la flota con su id
+  (`UNREADABLE_MEMBER_MESSAGE`). Vector nuevo en
+  `testdata/agent-fleet/members.json`.
+- **Una flota nunca termina un VM que no pudo probar que es suyo.** Si la
+  sonda de un VM `RUNNING` falla, ese VM podría ser un sandbox ajeno de la
+  misma imagen, así que los VMs suspendidos de esa lectura cuentan para el
+  cupo pero `stop()` y la reducción no los terminan: se avisa con su id y se
+  dejan a su propio plazo y a su política de `idle` (también si el VM deja de
+  estar `RUNNING` al sondearlo). Los VMs que creó el propio proceso siempre se
+  terminan. `stop()` devuelve ahora cuántos VMs terminó (antes no devolvía
+  nada), y `rayito agent stop <nombre>` imprime ese número en vez del de
+  miembros. Los VMs `RUNNING` se sondean hasta 8 a la vez
+  (`AGENT_FLEET_PROBE_CONCURRENCY`), con los resultados y los avisos en el
+  orden del listado; si un error del plano de control hace fallar el
+  listado, no empieza ninguna sonda más.
+- **`--renew-gateway-keys` escribe la clave al desplegar aunque el secreto
+  sea nuevo.** La renovación sólo escribía sobre un secreto que cambió hace
+  más de 900 s, así que un secreto creado justo antes del despliegue se
+  quedaba con su valor marcador y la primera invocación recibía 403 de
+  Bedrock. El despliegue que pide la renovación escribe ahora siempre una
+  clave nueva una vez, antes del primer VM; la ventana sólo limita las
+  renovaciones de cada VM nuevo (ADR-034 D9 g). El e2e de Q193 vuelve a
+  desplegar sobre un secreto recién creado, sin trucos de reloj.
+- **Una flota reconectada sin receta crea VMs con la versión de sus
+  miembros.** El despliegue ya fijaba la versión que el build creó o
+  reutilizó, pero una flota reconectada con `project=` y sin receta creaba los
+  VMs nuevos con la versión más reciente de la imagen, que puede ser otro
+  build (por ejemplo, uno con otros runtimes). Ahora adopta la versión del
+  miembro más reciente; una versión ya fijada (build, receta) no cambia. El
+  e2e de la CLI de agente despliega con `--no-build` para no construir una
+  versión nueva sobre la imagen compartida de las demás pruebas.
+- **Un RPC cuya conexión no llegó a abrirse se repite.** Justo tras
+  `create()` o `resume()`, el primer RPC por una conexión nueva fallaba a
+  veces con `UNAVAILABLE` porque el proxy no llegó a mandar su `SETTINGS`
+  (o, en TypeScript, el `connect` falló). Como la petición nunca salió del
+  cliente, los unarios y la apertura de cada stream (también `run_code`, que
+  tras otros cortes no se repite) se reintentan hasta cinco veces con 0,25,
+  0,5, 1, 2 y 4 s de espera, también en el intento que sigue a una
+  reconexión o a reacuñar el token (en AWS, `agent deploy` cortaba el stream
+  del arranque del host con `Handshake read failed (Endpoint closing)` más de
+  2 s); cualquier otro error sale al primer intento.
+- **`rayito agent stop <flota>` y `rayito agent status <flota>` ya no avisan
+  `recipe_renewal_ignored`.** No crean VMs, así que conectan con la
+  renovación apagada de forma explícita y la receta no tiene nada que
+  avisar; `invoke` sigue avisando si la receta pedía renovar y no pasas
+  `--renew-gateway-keys`.
+- **Las variables de `Template.setEnvs()` se ven en los comandos.** `rayd`
+  arranca cada proceso con un entorno limpio, así que el `ENV` del template
+  sólo llegaba al propio `rayd`: `commands.run`, las PTY y `runCode` no las
+  veían. `Template.build()` hornea además `/etc/rayito/template-env.json`
+  (`rayito.template-env/1`) cuando el template tiene `setEnvs()`, y un `rayd`
+  de esta versión las pone debajo de las `envs` de `Sandbox.create()`, el
+  orden de E2B (template, sandbox, comando). ADR-035. Un template que ya usaba
+  `setEnvs()` (y los proyectos de agente, que fijan las variables de
+  OpenCode) crea una versión nueva en su próximo `build()`; una imagen
+  anterior o un `rayd` anterior se comportan como antes.
+- **Un despliegue que reutiliza la imagen del proyecto ya no exige la imagen
+  base.** Con `buildImage: false`, o sin bucket y con la imagen del proyecto
+  ya construida (`[image] template`), `deployAgent()` ya no comprueba
+  `rayito-base-caps`: sólo la pide si va a construir. Si la base falta y la
+  imagen del proyecto existe, el error dice cómo reutilizarla
+  (`--no-build`).
+- **`rayito agent deploy --entry` con un punto de entrada que no existe falla
+  al desplegar.** Antes el despliegue terminaba bien y el error
+  (`entrypoint_not_found`) salía en la primera invocación. El host del agente
+  (el mismo en los dos SDK) importa el punto de entrada al arrancar, y el
+  puente de Node gana el modo `--check-entry`: el despliegue falla con
+  «el host del agente no pudo arrancar (entrypoint_not_found)».
+- **La CLI ya no se cae con `EPIPE` si el lector cierra la salida**
+  (`rayito ... | head`): sale con 1 y sin traza, como la de Python.
+- **La CLI escribe los avisos del SDK sin `--verbose`**, como la de Python:
+  `receta de la flota: recipe_renewal_ignored` (la receta pedía renovar
+  claves y `--renew-gateway-keys` no se pasó) y el resto de avisos y errores
+  salen por stderr; INFO sigue pidiendo `--verbose`. La flota que reconecta
+  `rayito agent invoke|status|stop <nombre>` recibe ese logger.
+- **e2e.** `account-setup.e2e.test.ts` espera el paso `capsImage` (`skip`) de
+  0.17.0; `agent-project-cli.e2e.test.ts` escribe `[image] base` de
+  `RAYITO_E2E_AGENT_PROJECT_BASE` y para la flota por su nombre (lo que borra
+  su receta); `m15-templates.e2e.test.ts` se salta con el motivo sin
+  `RAYITO_E2E_TEMPLATE_BUCKET`; `custom-domain.e2e.test.ts` y
+  `dashboard-readonly.e2e.test.ts` ya no dependen del orden de la propagación
+  del edge ni de los sandboxes de otras corridas en paralelo; el de EFS en una
+  VPC deja fuera de su comparación los grupos de otras corridas del mismo e2e;
+  y el del pool juzga la latencia de `take()` frente al `create()` de la misma
+  corrida (la mediana al menos tres veces más rápida y un tope de 3 s), e
+  informa el presupuesto de 1,5 s de D17 sin fallar por él.
 
 ### Seguridad
 
@@ -1273,10 +1380,10 @@ versionado [SemVer](https://semver.org/lang/es/).
   lanzando `UnimplementedError`: la integración con `getHost()`/`expose()`
   llega en un cambio posterior. **Experimental** porque no se ha verificado
   de punta a punta en AWS real: la Function compila y enruta en el runtime
-  real (`TestFunction`), y la pila crea el KeyValueStore y la Function, pero
-  la cuenta de pruebas deniega `cloudfront:CreateDistribution` por una SCP,
-  así que nunca se ha servido tráfico por una distribución desplegada con
-  esta plantilla (`AWS_API_NOTES.md` Q121, Q140, Q141). La API puede cambiar
+  real (`TestFunction`), y la pila crea el KeyValueStore y la Function; la
+  distribución y el tráfico por ella no están verificados de extremo a
+  extremo (requieren `cloudfront:CreateDistribution`; `AWS_API_NOTES.md`
+  Q121, Q140, Q141). La API puede cambiar
   en una minor.
 - `rayito-base-caps-efs` (y sus sufijos de tamaño) cuenta como variante caps
   para `mounts`, `volumes` y `telemetry` (`requireCapsFor`, `CAPS_VARIANTS`,

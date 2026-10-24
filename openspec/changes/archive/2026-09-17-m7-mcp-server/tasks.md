@@ -111,7 +111,7 @@
   "rayito[mcp]"` **si se ejecuta fuera de `clients/python`** (dentro, el entorno
   efímero de uv ve el `.venv` del proyecto, que ya tiene `mcp`); `import rayito`
   sin el extra funciona y `mcp` no está en `sys.modules`.
-- **5.2 e2e** (`rayito-base` **17.0**, cuenta de pruebas, us-east-1).
+- **5.2 e2e** (`rayito-base` **17.0**, us-east-1).
   Aislado, 2026-09-16 23:35 UTC: `RAYITO_E2E=1 RAYITO_TEMPLATE=<arn> uv run pytest
   tests/e2e/test_m7_mcp.py -m e2e -v -s` -> **1 passed in 19.55 s**; `mcp first call
   (create) 15.9 s`; `microvm-<id>: al cerrar el cliente -> TERMINATING a los

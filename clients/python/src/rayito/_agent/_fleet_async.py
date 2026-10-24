@@ -11,10 +11,11 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine, Mapping, Sequence
 from datetime import UTC, datetime
+from functools import partial
 from types import TracebackType
-from typing import TYPE_CHECKING, Any, Self
+from typing import TYPE_CHECKING, Any, Self, TypeVar
 
 from rayito._agent import _fleet_recipe_aws as recipe_aws
 from rayito._agent._deployment_async import AsyncAgentDeployment, default_async_transport
@@ -31,17 +32,23 @@ from rayito._agent._fleet_base import (
     AGENT_CAPACITY_CODE,
     AGENT_FLEET_BUSY_RETRY_SECONDS,
     AGENT_FLEET_LIVE_STATES,
+    AGENT_FLEET_PROBE_CONCURRENCY,
     AGENT_FLEET_PROBE_STATE,
     AGENT_FLEET_SESSION_LABEL,
     AGENT_FLEET_START_CONCURRENCY,
     AGENT_VM_LOST_CODE,
+    LISTING_CONTROL_PLANE_ERRORS,
+    PEEK_ERRORS,
     UNMANAGED_LIFETIME_MESSAGE,
+    UNPROVEN_MEMBER_MESSAGE,
+    UNREADABLE_MEMBER_MESSAGE,
     FleetLifetime,
     FleetMemberStatus,
     FleetSettings,
     FleetStatus,
     Member,
     MemberListing,
+    MemberProbe,
     ParkedSlotException,
     capacity_message,
     corrected_cap,
@@ -52,21 +59,24 @@ from rayito._agent._fleet_base import (
     is_lost,
     lifetime_seconds,
     listed_cap,
+    listed_image_version,
     mark_extras,
+    member_of,
     new_reservation,
-    owned_ids,
     ping_is_fresh,
     plan_placement,
     pool_config_for,
+    probed_running,
     record_busy,
     record_ping,
     restore_seconds,
     route_of,
     sandbox_cap,
-    select_members,
+    select_probed,
     session_label,
     surplus,
     vm_lost_message,
+    warns_unmanaged_lifetime,
     with_handle,
 )
 from rayito._agent._fleet_recipe import FleetRecipe, recipe_of, renewal_on_connect
@@ -109,6 +119,23 @@ if TYPE_CHECKING:
 logger = logging.getLogger("rayito.agent")
 
 
+T = TypeVar("T")
+
+
+async def gather_or_cancel(calls: Sequence[Coroutine[Any, Any, T]]) -> list[T]:
+    """`asyncio.gather` en orden que, si una llamada falla, cancela las demás
+    (las que esperan turno y las que van por la mitad) y relanza ese error
+    tal cual, sin envolverlo como haría un `TaskGroup`."""
+    tasks = [asyncio.ensure_future(call) for call in calls]
+    try:
+        return list(await asyncio.gather(*tasks))
+    except BaseException:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        raise
+
+
 class AsyncSandboxDirectory:
     """El adaptador de producción de la flota asíncrona: lista los VMs de la
     imagen (`list-microvms` con el filtro de imagen) sin contar los que no son
@@ -124,17 +151,48 @@ class AsyncSandboxDirectory:
         self._sandbox_class = sandbox_class
 
     async def list_members(self, template: str) -> list[MemberListing]:
+        """Los miembros de la imagen `template`: los VMs `RUNNING` se sondean
+        hasta `AGENT_FLEET_PROBE_CONCURRENCY` a la vez, y los resultados y
+        los avisos salen en el orden de `list-microvms`."""
         sandbox_class = self._sandbox()
         listed = [
-            MemberListing(item.sandbox_id, item.state, item.started_at)
+            MemberListing(
+                item.sandbox_id,
+                item.state,
+                item.started_at,
+                template_version=item.template_version,
+            )
             for item in await sandbox_class.list(
                 template=template, states=AGENT_FLEET_LIVE_STATES, **self._options()
             )
         ]
-        probed = await sandbox_class.list(
-            template=template, states=(AGENT_FLEET_PROBE_STATE,), metadata={}, **self._options()
-        )
-        return select_members(listed, owned_ids(probed))
+        running = [item.sandbox_id for item in listed if item.state == AGENT_FLEET_PROBE_STATE]
+        turns = asyncio.Semaphore(AGENT_FLEET_PROBE_CONCURRENCY)
+
+        async def probe(sandbox_id: str) -> MemberProbe:
+            async with turns:
+                return await self._probe(sandbox_class, sandbox_id)
+
+        probes = await gather_or_cancel([probe(sandbox_id) for sandbox_id in running])
+        for item in probes:
+            if item.error is not None:
+                logger.warning(UNREADABLE_MEMBER_MESSAGE, item.sandbox_id, item.error)
+        return select_probed(listed, probes)
+
+    async def _probe(self, sandbox_class: Any, sandbox_id: str) -> MemberProbe:
+        """La sonda de un VM `RUNNING` (`get_info(sandbox_id)`: `get-microvm`
+        más un `Health` sin token): su `SandboxInfo` con metadatos, o sin
+        ella si su `Health` falla (con la clase del error), ya no existe o ya
+        no está `RUNNING`. Un VM que la plataforma aún lista pero cuyo `rayd`
+        ya salió no tumba el listado de toda la flota; una limitación o un
+        plazo de `get-microvm` sí."""
+        try:
+            info = await sandbox_class.get_info(sandbox_id, **self._options())
+        except LISTING_CONTROL_PLANE_ERRORS:
+            raise
+        except SandboxException as exc:
+            return MemberProbe(sandbox_id, None, type(exc).__name__)
+        return MemberProbe(sandbox_id, probed_running(info))
 
     async def connect(self, sandbox_id: str, access_token: str) -> Any:
         return await self._sandbox().connect(
@@ -442,14 +500,23 @@ class AsyncAgentFleet:
             await self._directory.list_members(self._name), key=lambda item: item.started_at
         )
         live = [item for item in listing if item.sandbox_id not in parked]
+        self._adopt_image_version(live)
         known = {member.sandbox_id: member for member in self._members}
         lifetime = self._lifetime()
         self._members = [
-            known.get(item.sandbox_id)
-            or Member(item.sandbox_id, cap=listed_cap(item.started_at, lifetime))
+            member_of(known.get(item.sandbox_id), item, listed_cap(item.started_at, lifetime))
             for item in live
         ]
         mark_extras(self._members, self.scaling)
+
+    def _adopt_image_version(self, live: Sequence[MemberListing]) -> None:
+        """Sin versión fijada (ni build en este proceso ni receta), los VMs
+        nuevos se crean con la de los miembros que ya hay
+        (`listed_image_version`)."""
+        version = listed_image_version(live)
+        adopt = getattr(self._service, "adopt_image_version", None)
+        if version is not None and adopt is not None:
+            adopt(version)
 
     async def reconcile(self) -> None:
         """Deja la flota dentro de `ScalingOptions`: olvida los VMs perdidos,
@@ -494,17 +561,19 @@ class AsyncAgentFleet:
         pool persistente (`pool_backend`)."""
         await self._close_pool(drain=self._pool_backend is None)
 
-    async def stop(self, *, keep_recipe: bool = False) -> None:
+    async def stop(self, *, keep_recipe: bool = False) -> int:
         """Termina todos los VMs de la flota y las plazas del pool y, si este
         proceso guardó o leyó su receta, la borra (`keep_recipe=True` la
         conserva). Sigue aunque uno falle y, al final, lanza el primer
-        error."""
+        error. Devuelve cuántos VMs terminó: uno sin probar
+        (`Member.proven`) no se termina y no cuenta."""
         errors: list[Exception] = []
         await self._close_pool(drain=True, errors=errors)
         members, self._members = list(self._members), []
+        stopped = 0
         for member in members:
             try:
-                await self._terminate(member)
+                stopped += int(await self._terminate(member))
             except Exception as exc:
                 logger.warning("no se pudo terminar un VM de la flota", exc_info=True)
                 errors.append(exc)
@@ -516,17 +585,30 @@ class AsyncAgentFleet:
                 errors.append(exc)
         if errors:
             raise errors[0]
+        return stopped
 
     async def status(self) -> FleetStatus:
-        """Estado de la flota: pregunta a los VMs que este proceso ya abrió
-        (`GET /ping`) y deja como `unknown` los demás."""
-        statuses = []
-        for member in list(self._members):
+        """Como `AgentFleet.status`: vuelve a leer el listado, pregunta a los
+        VMs que este proceso ya abrió y, hasta `AGENT_FLEET_PROBE_CONCURRENCY`
+        a la vez, a los `RUNNING` que aún no abrió (`_peek`). Sólo deja como
+        `unknown` los suspendidos."""
+        await self.refresh_members()
+        members = list(self._members)
+        for member in members:
             if member.deployment is not None:
                 await self._probe(member, force=True)
-            statuses.append(
-                FleetMemberStatus(member.sandbox_id, member.health, member.extra, member.inflight)
-            )
+        turns = asyncio.Semaphore(AGENT_FLEET_PROBE_CONCURRENCY)
+
+        async def peek(member: Member) -> None:
+            async with turns:
+                await self._peek(member)
+
+        unopened = [m for m in members if m.deployment is None and m.running]
+        await asyncio.gather(*(peek(member) for member in unopened))
+        statuses = [
+            FleetMemberStatus(member.sandbox_id, member.health, member.extra, member.inflight)
+            for member in members
+        ]
         warm_ready = self._pool.stats().ready if self._pool is not None else 0
         scaling = self.scaling
         return FleetStatus(
@@ -906,7 +988,8 @@ class AsyncAgentFleet:
             return
         except InvalidArgumentException:
             member.lifetime_rejected = True
-            logger.warning(UNMANAGED_LIFETIME_MESSAGE)
+            if warns_unmanaged_lifetime(self.scaling):
+                logger.warning(UNMANAGED_LIFETIME_MESSAGE)
             return
         except SandboxException:
             logger.warning("no se pudo acotar la vida de un VM sobrante", exc_info=True)
@@ -966,6 +1049,24 @@ class AsyncAgentFleet:
             transport_factory=self._transport_factory,
             **options,
         )
+
+    async def _peek(self, member: Member) -> None:
+        """Como `AgentFleet._peek`: el `GET /ping` de un VM `RUNNING` que este
+        proceso aún no abrió, sin quedárselo ni acotarle la vida; sólo anota
+        el estado que se muestra y ningún error de `PEEK_ERRORS` al preguntarle
+        tumba `status()`."""
+        if self._token is None:
+            return
+        try:
+            sandbox = await self._directory.connect(member.sandbox_id, self._token)
+            if not await sandbox.files.exists(AGENT_SERVICE_READY_MARKER_PATH):
+                return
+            deployment = await self._deployment_of(sandbox)
+            state = (await deployment.status()).state
+        except PEEK_ERRORS as exc:
+            logger.debug("no se pudo preguntar a un VM de la flota: %s", type(exc).__name__)
+            return
+        member.health = state
 
     async def _probe(self, member: Member, *, force: bool = False) -> bool:
         """Si el VM puede atender una sesión: lo abre si hace falta y, si su
@@ -1052,7 +1153,7 @@ class AsyncAgentFleet:
         excess = [
             member
             for member in surplus(self._members, self.scaling)
-            if member.inflight == 0 and not member.bound
+            if member.inflight == 0 and not member.bound and member.proven
         ]
         for member in excess:
             self._drop(member)
@@ -1061,13 +1162,20 @@ class AsyncAgentFleet:
             except Exception:
                 logger.warning("no se pudo terminar un VM sobrante", exc_info=True)
 
-    async def _terminate(self, member: Member) -> None:
+    async def _terminate(self, member: Member) -> bool:
         """Termina el VM sin abrirlo: abrir uno suspendido lo reanudaría sólo
-        para matarlo."""
+        para matarlo. Un miembro sin probar (`Member.proven`) no se termina:
+        podría ser un sandbox ajeno de la misma imagen, y se deja a su
+        propio plazo y a su política de idle con un aviso. Devuelve si lo
+        terminó."""
+        if not member.proven:
+            logger.warning(UNPROVEN_MEMBER_MESSAGE, member.sandbox_id)
+            return False
         if member.deployment is not None:
             await member.deployment.stop()
         else:
             await self._directory.kill(member.sandbox_id)
+        return True
 
     async def _discard(self, members: Sequence[Member]) -> None:
         for member in members:
@@ -1098,10 +1206,12 @@ class AsyncAgentFleet:
             self._recipe_known = True
         return outcome
 
-    async def _renew_keys(self) -> None:
+    async def _renew_keys(self, *, force: bool = False) -> None:
         """Como `AgentFleet._renew_keys`: la renovación (síncrona) corre en
         un hilo y los VMs abiertos refrescan su pasarela."""
-        if not self._key_renewal.enabled or not await asyncio.to_thread(self._key_renewal.renew):
+        if not self._key_renewal.enabled or not await asyncio.to_thread(
+            partial(self._key_renewal.renew, force=force)
+        ):
             return
         for deployment in self.deployments:
             try:

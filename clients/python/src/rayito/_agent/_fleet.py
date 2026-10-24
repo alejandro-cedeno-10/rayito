@@ -17,6 +17,7 @@ from collections.abc import Callable, Iterator, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from functools import partial
 from typing import TYPE_CHECKING, Any, Self
 
 from rayito._agent import _fleet_recipe_aws as recipe_aws
@@ -27,17 +28,23 @@ from rayito._agent._fleet_base import (
     AGENT_CAPACITY_CODE,
     AGENT_FLEET_BUSY_RETRY_SECONDS,
     AGENT_FLEET_LIVE_STATES,
+    AGENT_FLEET_PROBE_CONCURRENCY,
     AGENT_FLEET_PROBE_STATE,
     AGENT_FLEET_SESSION_LABEL,
     AGENT_FLEET_START_CONCURRENCY,
     AGENT_VM_LOST_CODE,
+    LISTING_CONTROL_PLANE_ERRORS,
+    PEEK_ERRORS,
     UNMANAGED_LIFETIME_MESSAGE,
+    UNPROVEN_MEMBER_MESSAGE,
+    UNREADABLE_MEMBER_MESSAGE,
     FleetLifetime,
     FleetMemberStatus,
     FleetSettings,
     FleetStatus,
     Member,
     MemberListing,
+    MemberProbe,
     ParkedSlotException,
     capacity_message,
     corrected_cap,
@@ -48,21 +55,24 @@ from rayito._agent._fleet_base import (
     is_lost,
     lifetime_seconds,
     listed_cap,
+    listed_image_version,
     mark_extras,
+    member_of,
     new_reservation,
-    owned_ids,
     ping_is_fresh,
     plan_placement,
     pool_config_for,
+    probed_running,
     record_busy,
     record_ping,
     restore_seconds,
     route_of,
     sandbox_cap,
-    select_members,
+    select_probed,
     session_label,
     surplus,
     vm_lost_message,
+    warns_unmanaged_lifetime,
     with_handle,
 )
 from rayito._agent._fleet_recipe import FleetRecipe, recipe_of, renewal_on_connect
@@ -156,8 +166,9 @@ class FleetKeyRenewal:
     def enabled(self) -> bool:
         return self._enabled
 
-    def renew(self) -> bool:
-        """Renueva las claves que lo necesitan; `True` si escribió alguna."""
+    def renew(self, *, force: bool = False) -> bool:
+        """Renueva las claves que lo necesitan; `True` si escribió alguna.
+        `force` es la renovación del despliegue (`GatewayKeyRenewer.renew`)."""
         with self._lock:
             if not self._enabled or self._project is None:
                 return False
@@ -165,7 +176,7 @@ class FleetKeyRenewal:
                 self._renewer = gateway_key_renewer(
                     self._project, region=self._region, session=self._session
                 )
-            return self._renewer.renew()
+            return self._renewer.renew(force=True) if force else self._renewer.renew()
 
 
 class SandboxDirectory:
@@ -183,17 +194,43 @@ class SandboxDirectory:
         self._sandbox_class = sandbox_class
 
     def list_members(self, template: str) -> list[MemberListing]:
+        """Los miembros de la imagen `template`: los VMs `RUNNING` se sondean
+        hasta `AGENT_FLEET_PROBE_CONCURRENCY` a la vez, y los resultados y
+        los avisos salen en el orden de `list-microvms`."""
         sandbox_class = self._sandbox()
         listed = [
-            MemberListing(item.sandbox_id, item.state, item.started_at)
+            MemberListing(
+                item.sandbox_id,
+                item.state,
+                item.started_at,
+                template_version=item.template_version,
+            )
             for item in sandbox_class.list(
                 template=template, states=AGENT_FLEET_LIVE_STATES, **self._options()
             )
         ]
-        probed = sandbox_class.list(
-            template=template, states=(AGENT_FLEET_PROBE_STATE,), metadata={}, **self._options()
-        )
-        return select_members(listed, owned_ids(probed))
+        running = [item.sandbox_id for item in listed if item.state == AGENT_FLEET_PROBE_STATE]
+        with ThreadPoolExecutor(max_workers=AGENT_FLEET_PROBE_CONCURRENCY) as pool:
+            probes = list(pool.map(partial(self._probe, sandbox_class), running))
+        for item in probes:
+            if item.error is not None:
+                logger.warning(UNREADABLE_MEMBER_MESSAGE, item.sandbox_id, item.error)
+        return select_probed(listed, probes)
+
+    def _probe(self, sandbox_class: Any, sandbox_id: str) -> MemberProbe:
+        """La sonda de un VM `RUNNING` (`get_info(sandbox_id)`: `get-microvm`
+        más un `Health` sin token): su `SandboxInfo` con metadatos, o sin
+        ella si su `Health` falla (con la clase del error), ya no existe o ya
+        no está `RUNNING`. Un VM que la plataforma aún lista pero cuyo `rayd`
+        ya salió no tumba el listado de toda la flota; una limitación o un
+        plazo de `get-microvm` sí."""
+        try:
+            info = sandbox_class.get_info(sandbox_id, **self._options())
+        except LISTING_CONTROL_PLANE_ERRORS:
+            raise
+        except SandboxException as exc:
+            return MemberProbe(sandbox_id, None, type(exc).__name__)
+        return MemberProbe(sandbox_id, probed_running(info))
 
     def connect(self, sandbox_id: str, access_token: str) -> Any:
         return self._sandbox().connect(sandbox_id, access_token=access_token, **self._options())
@@ -541,15 +578,24 @@ class AgentFleet:
             key=lambda item: item.started_at,
         )
         live = [item for item in listing if item.sandbox_id not in parked]
+        self._adopt_image_version(live)
         with self._lock:
             known = {member.sandbox_id: member for member in self._members}
             lifetime = self._lifetime()
             self._members = [
-                known.get(item.sandbox_id)
-                or Member(item.sandbox_id, cap=listed_cap(item.started_at, lifetime))
+                member_of(known.get(item.sandbox_id), item, listed_cap(item.started_at, lifetime))
                 for item in live
             ]
             mark_extras(self._members, self.scaling)
+
+    def _adopt_image_version(self, live: Sequence[MemberListing]) -> None:
+        """Sin versión fijada (ni build en este proceso ni receta), los VMs
+        nuevos se crean con la de los miembros que ya hay
+        (`listed_image_version`)."""
+        version = listed_image_version(live)
+        adopt = getattr(self._service, "adopt_image_version", None)
+        if version is not None and adopt is not None:
+            adopt(version)
 
     def reconcile(self) -> None:
         """Deja la flota dentro de `ScalingOptions`: olvida los VMs perdidos,
@@ -596,18 +642,20 @@ class AgentFleet:
         pool persistente (`pool_backend`)."""
         self._close_pool(drain=self._pool_backend is None)
 
-    def stop(self, *, keep_recipe: bool = False) -> None:
+    def stop(self, *, keep_recipe: bool = False) -> int:
         """Termina todos los VMs de la flota y las plazas del pool y, si este
         proceso guardó o leyó su receta, la borra (`keep_recipe=True` la
         conserva). Sigue aunque uno falle y, al final, lanza el primer
-        error."""
+        error. Devuelve cuántos VMs terminó: uno sin probar
+        (`Member.proven`) no se termina y no cuenta."""
         errors: list[Exception] = []
         self._close_pool(drain=True, errors=errors)
         with self._lock:
             members, self._members = list(self._members), []
+        stopped = 0
         for member in members:
             try:
-                self._terminate(member)
+                stopped += int(self._terminate(member))
             except Exception as exc:
                 logger.warning("no se pudo terminar un VM de la flota", exc_info=True)
                 errors.append(exc)
@@ -619,19 +667,28 @@ class AgentFleet:
                 errors.append(exc)
         if errors:
             raise errors[0]
+        return stopped
 
     def status(self) -> FleetStatus:
-        """Estado de la flota: pregunta a los VMs que este proceso ya abrió
-        (`GET /ping`) y deja como `unknown` los demás."""
+        """Estado de la flota: vuelve a leer el listado (`refresh_members`),
+        pregunta a los VMs que este proceso ya abrió (`GET /ping`) y, hasta
+        `AGENT_FLEET_PROBE_CONCURRENCY` a la vez, a los `RUNNING` que aún no
+        abrió (`_peek`). Sólo deja como `unknown` los suspendidos:
+        preguntarles los reanudaría."""
+        self.refresh_members()
         with self._lock:
             members = list(self._members)
-        statuses = []
         for member in members:
             if member.deployment is not None:
                 self._probe(member, force=True)
-            statuses.append(
-                FleetMemberStatus(member.sandbox_id, member.health, member.extra, member.inflight)
-            )
+        unopened = [m for m in members if m.deployment is None and m.running]
+        if unopened:
+            with ThreadPoolExecutor(max_workers=AGENT_FLEET_PROBE_CONCURRENCY) as pool:
+                list(pool.map(self._peek, unopened))
+        statuses = [
+            FleetMemberStatus(member.sandbox_id, member.health, member.extra, member.inflight)
+            for member in members
+        ]
         warm_ready = self._pool.stats().ready if self._pool is not None else 0
         scaling = self.scaling
         return FleetStatus(
@@ -1017,7 +1074,8 @@ class AgentFleet:
             return
         except InvalidArgumentException:
             member.lifetime_rejected = True
-            logger.warning(UNMANAGED_LIFETIME_MESSAGE)
+            if warns_unmanaged_lifetime(self.scaling):
+                logger.warning(UNMANAGED_LIFETIME_MESSAGE)
             return
         except SandboxException:
             logger.warning("no se pudo acotar la vida de un VM sobrante", exc_info=True)
@@ -1079,6 +1137,28 @@ class AgentFleet:
             transport_factory=self._transport_factory,
             **options,
         )
+
+    def _peek(self, member: Member) -> None:
+        """El `GET /ping` de un VM `RUNNING` que este proceso aún no abrió,
+        sin quedárselo: no le acota la vida ni arranca su servicio (uno sin
+        servicio sigue `unknown`). Sólo anota el estado que se muestra, no un
+        ping (`record_ping`), así que no cuenta para sustituir el VM. Si no se
+        puede conectar, el miembro sigue `unknown`; un `/ping` sin respuesta
+        es `unavailable`. Ningún error del sandbox, de credenciales o de red al
+        preguntarle tumba `status()` (`PEEK_ERRORS`); uno de programación se
+        propaga."""
+        if self._token is None:
+            return
+        try:
+            sandbox = self._directory.connect(member.sandbox_id, self._token)
+            if not sandbox.files.exists(AGENT_SERVICE_READY_MARKER_PATH):
+                return
+            state = self._deployment_of(sandbox).status().state
+        except PEEK_ERRORS as exc:
+            logger.debug("no se pudo preguntar a un VM de la flota: %s", type(exc).__name__)
+            return
+        with self._lock:
+            member.health = state
 
     def _probe(self, member: Member, *, force: bool = False) -> bool:
         """Si el VM puede atender una sesión: lo abre si hace falta y, si su
@@ -1172,7 +1252,7 @@ class AgentFleet:
             excess = [
                 member
                 for member in surplus(self._members, self.scaling)
-                if member.inflight == 0 and not member.bound
+                if member.inflight == 0 and not member.bound and member.proven
             ]
         for member in excess:
             self._drop(member)
@@ -1181,13 +1261,20 @@ class AgentFleet:
             except Exception:
                 logger.warning("no se pudo terminar un VM sobrante", exc_info=True)
 
-    def _terminate(self, member: Member) -> None:
+    def _terminate(self, member: Member) -> bool:
         """Termina el VM sin abrirlo: abrir uno suspendido lo reanudaría sólo
-        para matarlo."""
+        para matarlo. Un miembro sin probar (`Member.proven`) no se termina:
+        podría ser un sandbox ajeno de la misma imagen, y se deja a su
+        propio plazo y a su política de idle con un aviso. Devuelve si lo
+        terminó."""
+        if not member.proven:
+            logger.warning(UNPROVEN_MEMBER_MESSAGE, member.sandbox_id)
+            return False
         if member.deployment is not None:
             member.deployment.stop()
         else:
             self._directory.kill(member.sandbox_id)
+        return True
 
     def _discard(self, members: Sequence[Member]) -> None:
         for member in members:
@@ -1219,10 +1306,13 @@ class AgentFleet:
             self._recipe_known = True
         return outcome
 
-    def _renew_keys(self) -> None:
+    def _renew_keys(self, *, force: bool = False) -> None:
         """Con `renew_gateway_keys`, renueva las claves que lo necesiten y,
-        si escribió alguna, refresca las pasarelas de los VMs abiertos."""
-        if not self._key_renewal.renew():
+        si escribió alguna, refresca las pasarelas de los VMs abiertos.
+        `deploy_agent()` la llama una vez con `force` antes de `start()`: el
+        despliegue que pidió la renovación siempre escribe una clave
+        nueva."""
+        if not self._key_renewal.renew(force=force):
             return
         for deployment in self.deployments:
             try:

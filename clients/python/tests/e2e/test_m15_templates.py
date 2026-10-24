@@ -57,7 +57,7 @@ READY_FAIL_BUDGET_SECONDS = 600.0
 def _bucket() -> str:
     bucket = os.environ.get(BUCKET_VAR)
     if not bucket:
-        pytest.fail(f"este e2e necesita {BUCKET_VAR}=<bucket-s3-del-artefacto-de-build>")
+        pytest.skip(f"este e2e necesita {BUCKET_VAR}=<bucket-s3-del-artefacto-de-build>")
     return bucket
 
 

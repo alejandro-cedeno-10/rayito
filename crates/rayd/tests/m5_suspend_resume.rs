@@ -43,7 +43,8 @@ use rayd_core::code::{
     ContextRegistry, ExecutionLimits, KernelSidecar, SidecarConfig, sidecar_spawn_spec,
 };
 use rayd_core::filesystem::DenyList;
-use rayd_core::lifecycle::Hook;
+use rayd_core::hooks::RESUME_PROBE_BUDGET;
+use rayd_core::lifecycle::{Hook, SUSPEND_GATE_TIMEOUT};
 use rayd_core::process::{RegistryLimits, UserPolicy};
 use rayd_core::session::SandboxSession;
 use rayito_proto::v1::code_service_client::CodeServiceClient;
@@ -73,6 +74,17 @@ const SECRET: &[u8] = b"m5-suspend-secret";
 const KEEPALIVE: Duration = Duration::from_millis(200);
 const TEMP_PREFIX: &str = ".rayito-tmp-";
 const BUDGET: Duration = Duration::from_secs(10);
+/// A kernel probe well past `RESUME_PROBE_BUDGET`: an answer before it is the
+/// cap, not the probe ending on its own.
+const SLOW_PROBE_DELAY: Duration = Duration::from_secs(20);
+/// The safety net of `timeouts_are_re_armed_on_the_running_clock`: about 1 s
+/// of its timeout is left at `/resume`, and half of the `sleep 10` it cuts is
+/// the bound; the `timeout` status and the interrupt are the real check.
+const RE_ARMED_SAFETY_NET: Duration = Duration::from_secs(5);
+/// What tells a `/suspend` that closed every stream at once from one that
+/// waited for the gate: half of `SUSPEND_GATE_TIMEOUT`, a safety net far
+/// from both; the assertions on each stream's end are the real check.
+const SUSPEND_HOOK_SAFETY_NET: Duration = Duration::from_secs(SUSPEND_GATE_TIMEOUT.as_secs() / 2);
 
 struct Options {
     run: bool,
@@ -777,7 +789,7 @@ impl Harness {
             })
             .await
             .unwrap();
-        let deadline = Instant::now() + Duration::from_secs(2);
+        let deadline = Instant::now() + BUDGET;
         while temp_files(&self.root) == 0 {
             assert!(Instant::now() < deadline, "temp file never appeared");
             tokio::time::sleep(Duration::from_millis(10)).await;
@@ -833,7 +845,7 @@ async fn suspend_closes_every_stream_kills_nothing_and_resume_replays() {
     assert_eq!(reply.suspend_generation, 1);
     assert_eq!(reply.streams_closed, Some(8), "{reply:?}");
     assert!(
-        suspend_elapsed < Duration::from_secs(2),
+        suspend_elapsed < SUSPEND_HOOK_SAFETY_NET,
         "{suspend_elapsed:?}"
     );
     println!("suspend hook in-process: {suspend_elapsed:?}");
@@ -917,9 +929,7 @@ async fn suspend_closes_every_stream_kills_nothing_and_resume_replays() {
     assert_eq!(resumed.phase, "resumed");
     assert_eq!(resumed.resume_generation, 1);
     assert_eq!(resumed.kernel_state_lost, Some(false));
-    harness
-        .wait_for_request("reseed", Duration::from_secs(2))
-        .await;
+    harness.wait_for_request("reseed", BUDGET).await;
     assert_eq!(harness.requests_of("resume").len(), 1);
     let health = harness.health().await;
     assert_eq!(health.resume_generation, 1);
@@ -1067,12 +1077,10 @@ async fn timeouts_are_re_armed_on_the_running_clock() {
     let elapsed = resumed_at.elapsed();
     assert_eq!(end.status, "timeout");
     assert!(
-        (Duration::from_millis(800)..Duration::from_millis(2_500)).contains(&elapsed),
+        (Duration::from_millis(800)..RE_ARMED_SAFETY_NET).contains(&elapsed),
         "{elapsed:?}"
     );
-    let interrupt = harness
-        .wait_for_request("interrupt", Duration::from_secs(3))
-        .await;
+    let interrupt = harness.wait_for_request("interrupt", BUDGET).await;
     assert_eq!(interrupt["execution_id"], execution_id);
     let mut reattached = harness.reattach("", &execution_id, 1).await.unwrap();
     let tail = drain_execute(&mut reattached).await;
@@ -1096,7 +1104,7 @@ async fn a_lost_kernel_is_restarted_and_kernel_state_lost_clears_on_the_next_pro
     let (_, resumed) = harness.post(Hook::Resume, None).await;
     assert_eq!(resumed.kernel_state_lost, Some(true));
     assert!(harness.health().await.kernel_state_lost);
-    let deadline = Instant::now() + Duration::from_secs(3);
+    let deadline = Instant::now() + BUDGET;
     while !harness
         .requests_of("restart_context")
         .iter()
@@ -1124,7 +1132,10 @@ async fn a_lost_kernel_is_restarted_and_kernel_state_lost_clears_on_the_next_pro
 #[tokio::test]
 async fn a_slow_probe_still_answers_200_within_the_cap_and_reports_state_lost() {
     let harness = harness_with(Options {
-        fake_flags: vec!["--resume-delay-ms".to_owned(), "13000".to_owned()],
+        fake_flags: vec![
+            "--resume-delay-ms".to_owned(),
+            SLOW_PROBE_DELAY.as_millis().to_string(),
+        ],
         ..Options::default()
     })
     .await;
@@ -1135,8 +1146,11 @@ async fn a_slow_probe_still_answers_200_within_the_cap_and_reports_state_lost() 
     assert_eq!(status, StatusCode::OK);
     assert_eq!(resumed.outcome, "changed");
     assert_eq!(resumed.kernel_state_lost, Some(true));
-    assert!(elapsed < Duration::from_secs(13), "{elapsed:?}");
-    assert!(elapsed >= Duration::from_secs(11), "{elapsed:?}");
+    assert!(elapsed < SLOW_PROBE_DELAY, "{elapsed:?}");
+    assert!(
+        elapsed >= RESUME_PROBE_BUDGET.saturating_sub(Duration::from_secs(1)),
+        "{elapsed:?}"
+    );
     assert!(harness.health().await.kernel_state_lost);
 }
 

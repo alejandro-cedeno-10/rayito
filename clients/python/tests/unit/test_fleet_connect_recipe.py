@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -298,6 +299,22 @@ def test_a_renewing_recipe_never_renews_by_itself(
     assert caplog.text.count("recipe_renewal_ignored") == 1
     assert PARAMETER not in caplog.text
     assert not flavor.classes.live
+
+
+def test_the_cli_line_of_the_ignored_renewal_is_the_shared_one() -> None:
+    """Sin manejadores (la CLI sin `--verbose`), `logging` escribe en stderr
+    sólo el mensaje del aviso: la misma línea que la CLI de TypeScript
+    (`cli-warnings.test.ts`)."""
+    program = (
+        "from rayito._agent._fleet_recipe import RECIPE_RENEWAL_IGNORED\n"
+        "from rayito._agent._fleet_recipe_aws import warn_recipe\n"
+        "warn_recipe(RECIPE_RENEWAL_IGNORED)\n"
+    )
+    outcome = subprocess.run(
+        [sys.executable, "-c", program], capture_output=True, text=True, check=True, timeout=60
+    )
+
+    assert outcome.stderr == f"{RENEWAL_VECTORS['cliWarningLine']}\n"
 
 
 def test_an_explicit_renewal_without_permission_fails(flavor: FleetFlavor) -> None:

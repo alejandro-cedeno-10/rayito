@@ -491,7 +491,7 @@ para y se reescribe este documento.
 |---|---|---|---|
 | EFS-1 ✅ | ¿`nfs4` (y `nfs`) en `/proc/filesystems` del guest, en `rayito-base` y en `rayito-base-caps`? ¿`fuse`? | **Respondida** (campaña M15 conjunta con VOL-1 de `docs/research/2026-10-e2b-out-of-scope.md`, "Resultados de la primera campaña de mediciones"): `fuse`, `fuseblk`, `fusectl`, `nfs` y `nfs4` están los cinco en `/proc/filesystems` en **ambas** imágenes. `rayito-base` no tiene `/dev/fuse` y root pierde `CAP_SYS_ADMIN` (`EPERM` incluso en un `tmpfs`); `rayito-base-caps` sí monta. El criterio de parada pasa: la opción A sigue viva, sólo en `rayito-base-caps` | $0 (ya medida, sin coste adicional) |
 | EFS-2 ★ ✅ | ¿`mount -t nfs4` como root funciona dentro del contenedor de la app en caps? ¿`EPERM` en la imagen por defecto? | **Respondida 2026-10-02** (`AWS_API_NOTES.md` §16 Q123): en caps `tmpfs` monta y `nfs4` a TEST-NET agota el timeout (ni `EPERM` ni `ENODEV`); el `EPERM` por defecto ya estaba en Q79. Pasa | < $0,01 |
-| EFS-3 ★ ✅ | **Respondida 2026-10-04** (`AWS_API_NOTES.md` §16 Q126–Q127, VPC existente prestada con permiso): pasa; conector `ACTIVE`, TCP 2049 en 133–466 ms. Cierra Q46. ¿Un conector VPC propio llega a `ACTIVE`, cuánto tarda, y un VM lanzado con él alcanza un puerto TCP de la VPC? ¿Con qué IP de origen (ENI del conector)? | desplegar `efs-volumes.yaml` en una VPC propia; `nc -z <ip-mount-target> 2049` desde el VM | VPC y SG gratis; EFS vacío ≈ $0; ≈ $0,02 |
+| EFS-3 ★ ✅ | **Respondida 2026-10-04** (`AWS_API_NOTES.md` §16 Q126–Q127, VPC existente): pasa; conector `ACTIVE`, TCP 2049 en 133–466 ms. Cierra Q46. ¿Un conector VPC propio llega a `ACTIVE`, cuánto tarda, y un VM lanzado con él alcanza un puerto TCP de la VPC? ¿Con qué IP de origen (ENI del conector)? | desplegar `efs-volumes.yaml` en una VPC existente; `nc -z <ip-mount-target> 2049` desde el VM | VPC y SG gratis; EFS vacío ≈ $0; ≈ $0,02 |
 | EFS-4 ✅ | **Respondida 2026-10-04** (Q131): **no**, sólo un conector de egress por VM. ¿Se acepta `egressNetworkConnectors=[INTERNET_EGRESS, <conector VPC>]`? ¿Cómo se enruta (CIDR de la VPC por la VPC y el resto por internet, o sólo uno)? ¿`ValidationException`? | tres lanzamientos: sólo VPC, sólo internet, ambos; `curl https://example.com` y `nc` al mount target | < $0,02 |
 | EFS-5 ✅ | **Respondida 2026-10-04** (Q131): sí, como root y uid 1000. ¿Resuelve el guest `<fs-id>.efs.<región>.amazonaws.com` con el conector? ¿Qué resolvedor contesta? | `getent hosts` como root y como uid 1000 | < $0,01 |
 | EFS-6 ✅ | **Respondida 2026-10-04** (Q128): sí, sin `placement/*`. ¿`efs-utils` obtiene las credenciales del rol del IMDSv2 del MicroVM (rol `execution_role`) como root, y necesita región/AZ del IMDS (`placement/*`)? | `mount -t efs -o tls,iam` con log de efs-utils en `debug` | incluido en EFS-8 |
@@ -506,24 +506,22 @@ para y se reescribe este documento.
 | EFS-15 ✅ | **Respondida 2026-10-04** (Q133): ≈ 0,12 s. Dos sandboxes sobre el mismo AP: visibilidad de una escritura en el otro (close-to-open), latencia | dos VMs | < $0,03 |
 | EFS-16 ✅ | **Respondida 2026-10-04** (Q134). Política del sistema de ficheros: montaje sin AP, sin TLS, con rol sin `ClientWrite` (¿`EROFS`/`EACCES` al escribir?), con el AP de otro "inquilino" | 4 montajes con 2 roles | < $0,02 |
 | EFS-17 | Cold start con el conector VPC frente a `INTERNET_EGRESS` (`agent_ready` p50 de 10); `take()` del pool de suspendidos lanzado con conector | SDK | 20 lanzamientos ≈ $0,03 |
-| EFS-18 | En parte (Q127, Q133): el VM alcanza mount targets de las dos AZs; no se midió en qué AZ sale. ¿En qué AZ sale el VM (ENI del conector)? ¿Latencia a un mount target de otra AZ? | `ip`, `nc` con tiempos | incluido en EFS-3 |
+| EFS-18 | En parte (Q127, Q133): el VM alcanza mount targets de al menos dos AZs; no se midió en qué AZ sale. ¿En qué AZ sale el VM (ENI del conector)? ¿Latencia a un mount target de otra AZ? | `ip`, `nc` con tiempos | incluido en EFS-3 |
 | EFS-19 | (opción B) El mismo flujo con S3 Files | sólo si A funciona y hay demanda | ≈ $0,10 |
 | EFS-20 | Escala del conector: IPs de subnet consumidas por VM, 20 VMs simultáneos con conector en una subnet /28 | 20 lanzamientos | ≈ $0,05 |
 
 **Resultados de la aceptación del 2026-10-02** (`AWS_API_NOTES.md` §16
 Q122–Q125): EFS-7 y EFS-2 pasan; EFS-3 y todos los ★ que necesitan red
-(EFS-8, EFS-11, EFS-13) quedan **bloqueados** porque una SCP de la
-organización deniega `ec2:CreateVpc` en la cuenta de pruebas (no se usó la
-VPC compartida de otro equipo ni una VPC por defecto para saltarse la
-SCP). Ningún criterio de parada falló: la opción A sigue viva, pendiente de
-una VPC prestada con permiso. De paso, el e2e del CRUD encontró que
+(EFS-8, EFS-11, EFS-13) requieren una VPC existente y se midieron después
+(Q126–Q134). Ningún criterio de parada falló. De paso, el e2e del CRUD encontró que
 `DescribeAccessPoints` es eventualmente consistente (Q125), corregido en
-`VolumeStore` de ambos SDK. Coste de la aceptación ≈ $0,20 (dos builds de
-imagen, cuatro VMs cortos, un sistema de ficheros vacío).
+`VolumeStore` de ambos SDK. Los precios unitarios de la aceptación (builds
+de imagen, VMs cortos, un sistema de ficheros vacío) están en
+`AWS_API_NOTES.md` §12.
 
 **Resultados de la aceptación del 2026-10-04** (`AWS_API_NOTES.md` §16
-Q126–Q134), sobre una VPC existente de la cuenta de pruebas, usada con
-permiso del mantenedor y pasada sólo por variables de entorno: **todos los
+Q126–Q134), sobre una VPC existente pasada sólo
+por variables de entorno: **todos los
 criterios de parada pasan** (EFS-3, EFS-8, EFS-11 y EFS-13; EFS-2 y EFS-7 ya
 pasaban). La opción A es viable. Lo que cambia el diseño del adaptador real
 (§4.3, §4.7, §12):
@@ -548,8 +546,8 @@ pasaban). La opción A es viable. Lo que cambia el diseño del adaptador real
   secuencial, ≈ 17 ms por fichero pequeño: bueno para datos grandes, lento
   para árboles de muchos ficheros.
 
-Coste de esta aceptación ≈ $0,50 (una imagen desechable, ≈ 25 VMs cortos
-y uno suspendido 70 min, 1 GiB escrito y leído, tres pilas de vida corta).
+Coste: precios unitarios de `AWS_API_NOTES.md` §12 (una imagen desechable,
+VMs cortos y uno suspendido, escritura y lectura de EFS, pilas de vida corta).
 
 **Respuesta del adaptador real** (`m15-efs-volumes` §10, sin AWS; la
 revisión de EFS-12 y EFS-16 en AWS queda pendiente): `rayd` trae
@@ -573,7 +571,7 @@ cada desmontaje (5 ciclos); un punto de montaje con enlace simbólico es
 
 **Total estimado de la campaña: ≈ $1–2 de uso AWS** (más el NAT gateway sólo
 si EFS-4 obliga a probar internet por la VPC: ≈ $0,10 por 2 h). La VPC tiene
-que ser **propia o prestada con permiso** (la puerta de despliegue de Q46
+que ser **una VPC existente** (la puerta de despliegue de Q46
 sigue en pie) y todo se borra al terminar (stack, access points, datos).
 
 ## 10. Plan de aceptación e2e (AWS real)
@@ -608,7 +606,7 @@ van a `AWS_API_NOTES.md` §16, ADR-014 y `MILESTONES.md` M11.
 
 | Hito | Contenido | Esfuerzo |
 |---|---|---|
-| M11.0 Spike de medición | VPC propia, `efs-volumes.yaml` mínimo, imagen caps con `efs-utils`, EFS-1–EFS-20, filas en §16 y §19 nueva de `AWS_API_NOTES.md` (contrato EFS desde el modelo) | 3–4 días |
+| M11.0 Spike de medición | VPC existente, `efs-volumes.yaml` mínimo, imagen caps con `efs-utils`, EFS-1–EFS-20, filas en §16 y §19 nueva de `AWS_API_NOTES.md` (contrato EFS desde el modelo) | 3–4 días |
 | M11.1 Contrato y dominio | `volume.proto`, `Health` 16/17, `rayd-core::volume`, puerto `VolumeMounter`, tests puros | 3 días |
 | M11.2 Adaptador `rayd` | `EfsUtilsMounter`, supervisión del watchdog, hooks (`/run`, `/suspend` con `syncfs` acotado, `/resume`, `/terminate`), reglas de egress, `VolumeService`, tests de adaptador en Lima con un servidor NFS local | 5 días |
 | M11.3 Imagen e infra | `rayito-base-caps` con `efs-utils`, `efs-volumes.yaml`, `iam.yaml`, `make infra-lint` | 2 días |

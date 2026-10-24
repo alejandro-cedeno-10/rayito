@@ -1,6 +1,6 @@
 {
   "schema": "rayito.gateway-key-renewal-vectors/1",
-  "_comment": "Decisión de renovar la clave de una pasarela bedrock (design.md D6), pura: `processRenewedAgoSeconds` es lo que recuerda este proceso (null: nunca), `secretChangedAgoSeconds` sale de DescribeSecret.LastChangedDate (null: no se pregunta). `calls` son las llamadas esperadas, en orden. Ventana: gatewayKeyRenewAfterSeconds = 900. `regions`: sólo una región de AWS (patrón [a-z]{2}(-[a-z]+)+-[0-9]+) entre `bedrock-runtime.` y `.amazonaws.com` es Bedrock; cualquier otro host (por ejemplo `bedrock-runtime.evil.s3.amazonaws.com`) da null. `connect`: si AgentFleet.connect(nombre) renueva: `recipe` es renewGatewayKeys de la receta (null: sin receta) y `requested` la opción del llamante (null: no la pasó). Sólo renueva un `requested` true; si la receta la pedía y `requested` es null, el aviso es `recipe_renewal_ignored`.",
+  "_comment": "Decisión de renovar la clave de una pasarela bedrock (design.md D6), pura: `processRenewedAgoSeconds` es lo que recuerda este proceso (null: nunca), `secretChangedAgoSeconds` sale de DescribeSecret.LastChangedDate (null: no se pregunta). `calls` son las llamadas esperadas, en orden. Ventana: gatewayKeyRenewAfterSeconds = 900. `regions`: sólo una región de AWS (patrón [a-z]{2}(-[a-z]+)+-[0-9]+) entre `bedrock-runtime.` y `.amazonaws.com` es Bedrock; cualquier otro host (por ejemplo `bedrock-runtime.evil.s3.amazonaws.com`) da null. `connect`: si AgentFleet.connect(nombre) renueva: `recipe` es renewGatewayKeys de la receta (null: sin receta) y `requested` la opción del llamante (null: no la pasó). Sólo renueva un `requested` true; si la receta la pedía y `requested` es null, el aviso es `recipe_renewal_ignored`. `cliWarningLine`: la línea que las dos CLI escriben en stderr con ese aviso, sin `--verbose`.",
   "cases": [
     {
       "id": "fresh-in-process",
@@ -91,6 +91,7 @@
     "token": "bedrock-api-key-EXAMPLE",
     "value": "Bearer bedrock-api-key-EXAMPLE"
   },
+  "cliWarningLine": "receta de la flota: recipe_renewal_ignored",
   "connect": [
     {
       "id": "recipe-on-caller-silent",

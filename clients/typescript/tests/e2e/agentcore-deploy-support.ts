@@ -1,7 +1,7 @@
 /**
  * Lo común a `agentcore-deploy.e2e.test.ts`: los agentes de ejemplo
  * (`testdata/agent-samples/`) preparados para desplegarlos en AgentCore con un
- * nombre propio de la ejecución, las etiquetas de las SCP y la simulación de
+ * nombre propio de la ejecución, las etiquetas opcionales y la simulación de
  * IAM del rol del runtime. Variables (ninguna con un valor por defecto de un
  * entorno concreto; todas llegan en tiempo de ejecución):
  *

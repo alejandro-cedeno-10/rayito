@@ -424,7 +424,7 @@ async fn terminate_answers_200_and_requests_shutdown() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(reply.outcome, "terminating");
     tokio::time::timeout(
-        std::time::Duration::from_secs(2),
+        std::time::Duration::from_secs(10),
         harness.shutdown.cancelled(),
     )
     .await

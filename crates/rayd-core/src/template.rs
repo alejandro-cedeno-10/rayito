@@ -26,6 +26,48 @@ pub const TEMPLATE_SPEC_VERSION: &str = "rayito.template/1";
 /// (`_dockerfile.py`/`dockerfile.ts` `TEMPLATE_JSON_IMAGE_PATH`).
 pub const TEMPLATE_SPEC_PATH: &str = "/etc/rayito/template.json";
 
+/// Marca de versión del `/etc/rayito/template-env.json` que escribe el SDK
+/// (`rayito._templates._instructions.TEMPLATE_ENV_VERSION` /
+/// `templates/instructions.ts` `TEMPLATE_ENV_VERSION`): mismo valor en los
+/// tres lenguajes.
+pub const TEMPLATE_ENV_VERSION: &str = "rayito.template-env/1";
+
+/// Ruta fija en la que `rayd` busca, al arrancar, las variables de
+/// `set_envs()`/`setEnvs()` del template (`_dockerfile.py`/`dockerfile.ts`
+/// `TEMPLATE_ENV_IMAGE_PATH`).
+pub const TEMPLATE_ENV_PATH: &str = "/etc/rayito/template-env.json";
+
+/// El `/etc/rayito/template-env.json` que `rayd` lee una sola vez, al
+/// arrancar: las variables que el template declaró con `set_envs()`. El
+/// `ENV` del Dockerfile sólo llega al entorno de `rayd`, y `rayd` arranca
+/// a sus hijos con un entorno limpio (`process::env`), así que este fichero
+/// es lo que las hace visibles a los comandos, las PTY y los kernels, como
+/// en E2B (ADR-035).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TemplateEnv {
+    pub version: String,
+    #[serde(default)]
+    pub envs: BTreeMap<String, String>,
+}
+
+/// Las variables del template debajo de las `envs` del `/run` (el
+/// `Sandbox.create(envs=...)`), que ganan en una clave repetida: el mismo
+/// orden que E2B (template, sandbox, comando). Las `envs` de cada petición
+/// siguen encima, en `process::env::build_child_env`.
+#[must_use]
+pub fn layer_template_envs(
+    template: &BTreeMap<String, String>,
+    sandbox: &BTreeMap<String, String>,
+) -> BTreeMap<String, String> {
+    let mut layered = template.clone();
+    layered.extend(
+        sandbox
+            .iter()
+            .map(|(key, value)| (key.clone(), value.clone())),
+    );
+    layered
+}
+
 /// Cuánto y con qué cadencia sondear `ready_cmd` antes de darlo por
 /// fallido; mismos campos que `ReadyPoll` del SDK.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -115,6 +157,37 @@ mod tests {
             interval_seconds: 0.5,
             timeout_seconds,
         }
+    }
+
+    fn envs(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
+        pairs
+            .iter()
+            .map(|(key, value)| ((*key).to_owned(), (*value).to_owned()))
+            .collect()
+    }
+
+    #[test]
+    fn the_sandbox_envs_override_the_template_envs() {
+        let layered = layer_template_envs(
+            &envs(&[("MODE", "template"), ("ONLY_TEMPLATE", "1")]),
+            &envs(&[("MODE", "sandbox"), ("ONLY_SANDBOX", "2")]),
+        );
+        assert_eq!(
+            layered,
+            envs(&[
+                ("MODE", "sandbox"),
+                ("ONLY_SANDBOX", "2"),
+                ("ONLY_TEMPLATE", "1")
+            ])
+        );
+    }
+
+    #[test]
+    fn a_template_env_file_without_envs_is_empty() {
+        let parsed: TemplateEnv =
+            serde_json::from_str(r#"{"version":"rayito.template-env/1"}"#).expect("parse");
+        assert_eq!(parsed.version, TEMPLATE_ENV_VERSION);
+        assert!(parsed.envs.is_empty());
     }
 
     #[test]

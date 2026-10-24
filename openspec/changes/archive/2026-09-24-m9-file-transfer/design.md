@@ -149,8 +149,8 @@ pure helpers; TypeScript strict; the acceptance runs on real AWS).
   for parity: E2B's URLs exist to avoid headers, and ours already do).
 - Reusable upload URLs (tickets are single-use, D9), live-file downloads
   (download is a snapshot, D10), URLs without expiry (S3 caps at 7 days).
-- A bucket created by the SDK or by `iam.yaml` (the account's SCP denies
-  `s3:CreateBucket`; the operator owns the bucket, D20).
+- A bucket created by the SDK or by `iam.yaml` (the operator owns the
+  bucket, D20).
 - `get_signature`, E2B's client-side envd signature (impossible: the proxy
   never reads it; mapped to `UnimplementedError` by `m9-e2b-v2-surface`).
 - The TypeScript `rayito/e2b` entry point, `write_files` in the shim,

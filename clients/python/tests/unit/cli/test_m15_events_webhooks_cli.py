@@ -98,9 +98,8 @@ def test_deploy_forwards_its_arguments(runner: CliRunner, fake_events: FakeLifec
 
 
 def test_deploy_forwards_repeated_tags(runner: CliRunner, fake_events: FakeLifecycleEvents) -> None:
-    # Measured in acceptance (AWS_API_NOTES.md §25, Q108): an organization
-    # tag policy can deny `sqs:CreateQueue`/`lambda:CreateFunction` without
-    # them, so the stack's own tags must be settable from the CLI too.
+    # An organization may require tags to create resources (AWS_API_NOTES.md
+    # Q108), so the stack's own tags must be settable from the CLI too.
     result = runner.invoke(
         app,
         [

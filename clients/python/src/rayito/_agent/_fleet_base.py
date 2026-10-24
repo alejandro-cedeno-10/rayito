@@ -49,7 +49,13 @@ from rayito._pool_base import (
     MIN_REMAINING_FLOOR_SECONDS,
     PoolConfig,
 )
-from rayito.exceptions import InvalidArgumentException, SandboxException
+from rayito.exceptions import (
+    AuthenticationException,
+    InvalidArgumentException,
+    RateLimitException,
+    SandboxException,
+    TimeoutException,
+)
 
 if TYPE_CHECKING:
     from rayito._agent._deployment_base import DeploymentState
@@ -64,6 +70,10 @@ SESSION_LABEL_HEX_CHARS: Final = 32
 AGENT_FLEET_BUSY_RETRY_SECONDS: Final = 1.0
 #: Cuántos VMs crea a la vez `start()` (y `scale()`).
 AGENT_FLEET_START_CONCURRENCY: Final = 4
+#: Cuántos VMs `RUNNING` sondea a la vez el listado de la flota (un
+#: `get-microvm` más un `Health` sin token cada uno). Los resultados y los
+#: avisos salen en el orden de `list-microvms`.
+AGENT_FLEET_PROBE_CONCURRENCY: Final = 8
 #: Plazo para que las plazas calientes de un `deploy_agent` queden aparcadas:
 #: un `create()` más su `pause()` son decenas de segundos
 #: (`AWS_API_NOTES.md`, Q155), con holgura para varias a la vez.
@@ -92,10 +102,22 @@ AGENT_FLEET_ON_TIMEOUT: Final[TimeoutActionName] = "kill"
 #: (`CONNECT_CAP_SAFETY_MS`).
 AGENT_FLEET_CAP_SAFETY_SECONDS: Final = CONNECT_CAP_SAFETY_MS // 1000
 
-#: Lo que se loguea una vez por VM cuando `rayd` rechaza acotar su vida.
+#: Lo que se loguea una vez por VM cuando `rayd` rechaza acotar su vida y
+#: la flota puede crecer (`warns_unmanaged_lifetime`).
 UNMANAGED_LIFETIME_MESSAGE: Final = (
     "un VM de la flota no tiene plazo lógico (se creó antes de 0.17 o con max_vms igual a "
     "min_vms): no se reducirá solo; termínalo con stop() o vuelve a desplegar"
+)
+
+#: Lo que se loguea (sólo el id y la clase del error) cuando la sonda de un
+#: VM `RUNNING` falla al listar la flota: se trata como un VM que termina.
+UNREADABLE_MEMBER_MESSAGE: Final = (
+    "el VM %s de la flota no respondió a Health al listarla (%s): se trata como un VM que termina"
+)
+#: Lo que se loguea (sólo el id) cuando la flota no termina un VM porque no
+#: pudo probar que es suyo: lo deja a su propio plazo y a su política de idle.
+UNPROVEN_MEMBER_MESSAGE: Final = (
+    "no se termina el VM %s: no se pudo probar que sea de la flota; se deja a su propio plazo"
 )
 
 MemberHealth = Literal["healthy", "busy", "unavailable", "unknown"]
@@ -122,20 +144,91 @@ def owned_ids(items: Iterable[Any]) -> set[str]:
     return owned
 
 
-def select_members(items: Sequence[MemberListing], owned: Collection[str]) -> list[MemberListing]:
+#: Los errores de la sonda de un VM que no dicen nada del VM sino del plano de
+#: control (una limitación o un plazo de `get-microvm`): hacen fallar el
+#: listado en vez de dejar fuera a un miembro sano.
+LISTING_CONTROL_PLANE_ERRORS: Final = (RateLimitException, TimeoutException)
+
+#: Los errores de preguntar a un miembro que este proceso no abrió (`_peek`):
+#: los del sandbox o del agente, los de credenciales y los de red. Dejan el
+#: miembro `unknown`; cualquier otro, un error de programación, se propaga.
+PEEK_ERRORS: Final = (SandboxException, AuthenticationException, OSError)
+
+
+def probed_running(info: Any) -> Any | None:
+    """La `SandboxInfo` sondeada de un VM si sigue `RUNNING`; `None` si dejó
+    de estarlo entre `list-microvms` y la sonda (lo que pasa con un VM que se
+    termina al reducir la flota)."""
+    return info if info.state == AGENT_FLEET_PROBE_STATE else None
+
+
+def select_members(
+    items: Sequence[MemberListing],
+    owned: Collection[str],
+    unreadable: Collection[str] = frozenset(),
+) -> list[MemberListing]:
     """Los VMs de una imagen que cuentan como miembros de la flota. Un VM
     `RUNNING` lo es sólo si sus etiquetas lo prueban (`owned`); los que no
     están `RUNNING` no se pueden sondear sin despertarlos, así que cuentan
     salvo que la imagen ya haya demostrado tener VMs que no son de un agente:
-    entonces ninguno se da por miembro, para no terminar sandboxes ajenos."""
+    entonces ninguno se da por miembro, para no terminar sandboxes ajenos.
+
+    `unreadable` son los VMs `RUNNING` cuya sonda falló o que dejaron de
+    estar `RUNNING` al sondearlos: la plataforma aún los lista, pero su
+    `rayd` ya no responde (un VM que se está terminando al reducir la
+    flota). No cuentan como miembros ni prueban que la imagen sea
+    compartida: se tratan como VMs que terminan. Como tampoco prueban lo
+    contrario (uno podría ser un sandbox ajeno), con alguno los miembros que
+    no están `RUNNING` salen con `proven=False`: cuentan para el cupo, pero
+    la flota nunca los termina."""
     shared_image = any(
-        item.state == AGENT_FLEET_PROBE_STATE and item.sandbox_id not in owned for item in items
-    )
-    return [
-        item
+        item.state == AGENT_FLEET_PROBE_STATE
+        and item.sandbox_id not in owned
+        and item.sandbox_id not in unreadable
         for item in items
-        if (item.sandbox_id in owned if item.state == AGENT_FLEET_PROBE_STATE else not shared_image)
-    ]
+    )
+    unproven = bool(unreadable)
+    selected: list[MemberListing] = []
+    for item in items:
+        if item.state == AGENT_FLEET_PROBE_STATE:
+            if item.sandbox_id in owned:
+                selected.append(item)
+        elif not shared_image:
+            selected.append(dataclasses.replace(item, proven=not unproven))
+    return selected
+
+
+@dataclass(frozen=True)
+class MemberProbe:
+    """La sonda de un VM `RUNNING` del listado: su `SandboxInfo` si sigue
+    `RUNNING` (`None` si no) y, si la sonda falló, la clase del error."""
+
+    sandbox_id: str
+    info: Any | None
+    error: str | None = None
+
+
+def select_probed(
+    items: Sequence[MemberListing], probes: Sequence[MemberProbe]
+) -> list[MemberListing]:
+    """`select_members` con las sondas de los VMs `RUNNING`: las que trajeron
+    una `SandboxInfo` prueban (o no) las etiquetas; las demás son
+    `unreadable`."""
+    readable = [probe.info for probe in probes if probe.info is not None]
+    unreadable = {probe.sandbox_id for probe in probes if probe.info is None}
+    return select_members(items, owned_ids(readable), unreadable)
+
+
+def member_of(known: Member | None, item: MemberListing, cap: datetime | None) -> Member:
+    """El miembro de un VM listado: el que este proceso ya conocía (que pasa
+    a probado si el listado lo prueba) o uno nuevo con la prueba del
+    listado. En los dos, `running` sale del estado del listado."""
+    running = item.state == AGENT_FLEET_PROBE_STATE
+    if known is None:
+        return Member(item.sandbox_id, cap=cap, proven=item.proven, running=running)
+    known.proven = known.proven or item.proven
+    known.running = running
+    return known
 
 
 def route_of(session_id: str | None) -> SessionHandle | None:
@@ -176,7 +269,11 @@ class Member:
     sin uso. `cap` es el tope de `rayd` del VM (`rayd_cap`; `None` si no se
     conoce), `limited` dice si este proceso le acortó el plazo y
     `lifetime_rejected` que su `set_timeout` se rechazó por un argumento (un
-    VM sin plazo lógico: no se reintenta)."""
+    VM sin plazo lógico: no se reintenta). `proven` dice si se sabe que el VM
+    es de la flota (lo creó este proceso, sus etiquetas lo prueban o la
+    imagen sólo tiene agentes); uno sin probar nunca se termina. `running`
+    dice si el último listado lo vio `RUNNING`: `status()` sólo pregunta a
+    uno así, porque abrir uno suspendido lo reanudaría."""
 
     sandbox_id: str
     deployment: Any | None = None
@@ -190,6 +287,8 @@ class Member:
     cap: datetime | None = None
     limited: bool = False
     lifetime_rejected: bool = False
+    proven: bool = True
+    running: bool = True
 
 
 @dataclass(frozen=True)
@@ -199,6 +298,18 @@ class MemberListing:
     sandbox_id: str
     state: str
     started_at: datetime
+    proven: bool = True
+    template_version: str | None = None
+
+
+def listed_image_version(items: Sequence[MemberListing]) -> str | None:
+    """La versión de imagen del miembro probado más reciente que la lleva: con la
+    que una flota reconectada sin receta crea sus VMs nuevos, en vez de la
+    más reciente de la imagen."""
+    versioned = [item for item in items if item.template_version and item.proven]
+    if not versioned:
+        return None
+    return max(versioned, key=lambda item: item.started_at).template_version
 
 
 @dataclass(frozen=True)
@@ -212,8 +323,8 @@ class FleetMemberStatus:
 @dataclass(frozen=True)
 class FleetStatus:
     """El estado de una flota: sus miembros, cuántos están sanos u ocupados y
-    los límites de `ScalingOptions`. Un miembro que este proceso aún no abrió
-    figura como `unknown`: preguntarle lo reanudaría. `scaling_source` dice
+    los límites de `ScalingOptions`. Un miembro suspendido figura como
+    `unknown` (sin comprobar): preguntarle lo reanudaría. `scaling_source` dice
     de dónde salen los límites: con `default` (sin proyecto ni receta) no
     describen la flota real."""
 
@@ -352,6 +463,14 @@ class FleetLifetime:
 def scales_in(scaling: ScalingOptions) -> bool:
     """Si la flota puede tener VMs por encima de `min_vms`."""
     return scaling.max_vms > scaling.min_vms
+
+
+def warns_unmanaged_lifetime(scaling: ScalingOptions) -> bool:
+    """Si un VM sin plazo lógico merece el aviso `UNMANAGED_LIFETIME_MESSAGE`:
+    sólo si la flota puede crecer (`scales_in`). En una de tamaño fijo (o
+    con los límites por defecto, `min_vms == max_vms`) ningún VM se reduce,
+    así que da igual que no tenga plazo."""
+    return scales_in(scaling)
 
 
 def fleet_lifetime(project: AgentProject, scaling: ScalingOptions) -> FleetLifetime | None:

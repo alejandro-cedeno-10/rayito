@@ -9,8 +9,10 @@ openspec `fleet-recipe`) contra AWS real, para Q191, Q194 y Q193 de
   segunda cae en la plaza aparcada y necesita la pasarela del modelo),
   `status()` da el escalado de la receta y `stop()` borra la receta.
 - **Q193** (sólo con `RAYITO_E2E_RENEWAL=1`): un despliegue con
-  `renew_gateway_keys=True` sobre un secreto propio de la prueba, que empieza
-  con un valor marcador: la renovación escribe una clave de corta duración y la
+  `renew_gateway_keys=True` sobre un secreto propio de la prueba, recién
+  creado con un valor marcador: el despliegue escribe siempre una clave de
+  corta duración (aunque el secreto sea más nuevo que
+  `gatewayKeyRenewAfterSeconds`), el secreto deja de tener el marcador y la
   invocación funciona a través de la pasarela.
 
 Variables de entorno, además de las de `agent_zero_config_support.py`
@@ -157,6 +159,8 @@ def test_the_renewed_short_term_key_reaches_the_gateway(tmp_path: Path) -> None:
             ),
             region=region(),
         )
+        renewed = secrets.get_secret_value(SecretId=secret_name)["SecretString"]
+        assert renewed != PLACEHOLDER_KEY and renewed.startswith("Bearer ")
         assert fleet.invoke("Responde sólo: hola").text
     finally:
         if fleet is not None:

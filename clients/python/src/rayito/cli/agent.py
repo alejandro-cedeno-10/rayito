@@ -1370,18 +1370,23 @@ def fleet_token(token_file: Path | None) -> str:
 
 
 def connect_fleet(
-    ctx: typer.Context, name: str, token_file: Path | None, *, renew_gateway_keys: bool = False
+    ctx: typer.Context,
+    name: str,
+    token_file: Path | None,
+    *,
+    renew_gateway_keys: bool | None = None,
 ) -> AgentFleet:
-    """`AgentFleet.connect(nombre)`. La renovación de claves sólo se pide con
-    `--renew-gateway-keys`; sin ella se deja como en 0.16 (`None`: la receta
-    no la activa y, si la pedía, avisa `recipe_renewal_ignored`)."""
+    """`AgentFleet.connect(nombre)`. `renew_gateway_keys`: `True` con
+    `--renew-gateway-keys` en `invoke`; `False` en `status`, que nunca crea
+    VMs (ni renueva ni avisa); `None` deja que la receta avise
+    `recipe_renewal_ignored` si pedía renovar."""
     clients = clients_of(ctx)
     return AgentFleet.connect(
         name,
         access_token=fleet_token(token_file),
         region=clients.region,
         session=clients.session,
-        renew_gateway_keys=True if renew_gateway_keys else None,
+        renew_gateway_keys=renew_gateway_keys,
     )
 
 
@@ -1431,7 +1436,12 @@ def invoke_command(
             fleet = connect_agentcore_fleet(ctx, sandbox_id)
         else:
             fleet = (
-                connect_fleet(ctx, sandbox_id, token_file, renew_gateway_keys=renew_gateway_keys)
+                connect_fleet(
+                    ctx,
+                    sandbox_id,
+                    token_file,
+                    renew_gateway_keys=True if renew_gateway_keys else None,
+                )
                 if is_fleet_name(sandbox_id)
                 else connect_deployment(ctx, sandbox_id, token_file)
             )
@@ -1520,7 +1530,10 @@ def status_command(
         show_status(ctx, sandbox_id, token_file)
         return
     if is_fleet_name(sandbox_id):
-        print_fleet_status(connect_fleet(ctx, sandbox_id, token_file), as_json=json_mode(ctx))
+        print_fleet_status(
+            connect_fleet(ctx, sandbox_id, token_file, renew_gateway_keys=False),
+            as_json=json_mode(ctx),
+        )
         return
     status = connect_deployment(ctx, sandbox_id, token_file).status()
     document = {
@@ -1579,12 +1592,13 @@ def stop_command(
         return
     clients = clients_of(ctx)
     if is_fleet_name(sandbox_id):
-        fleet = AgentFleet.connect(sandbox_id, region=clients.region, session=clients.session)
-        count = len(fleet.sandbox_ids)
-        if keep_recipe:
-            fleet.stop(keep_recipe=True)
-        else:
-            fleet.stop()
+        fleet = AgentFleet.connect(
+            sandbox_id,
+            region=clients.region,
+            session=clients.session,
+            renew_gateway_keys=False,
+        )
+        count = fleet.stop(keep_recipe=True) if keep_recipe else fleet.stop()
         if json_mode(ctx):
             emit_json({"name": sandbox_id, "stopped": count})
         else:

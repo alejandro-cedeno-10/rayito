@@ -94,6 +94,8 @@ rayito [--profile P] [--region R] [--json] [--verbose] [--version] <group> <comm
 - `--json`: each command writes **a single JSON document** to stdout and
   progress to stderr, so `rayito --json sandbox list | jq` works.
 - `--verbose`: `INFO` logs from the SDK (reconnections, probes) and the CLI.
+  Without it, the SDK's warnings and errors still go to stderr (for example
+  `receta de la flota: recipe_renewal_ignored`), in both CLIs.
 - `--version`: prints `rayito <version> (python)`. The runtime in parentheses
   says which of the two CLIs answers when the Python one and the npm
   package's coexist (`rayito <version> (node)`): the first on the `PATH` wins.
@@ -101,7 +103,9 @@ rayito [--profile P] [--region R] [--json] [--verbose] [--version] <group> <comm
 Exit codes: `0` success; `1` the operation failed (non-launchable build, a
 version that `prune` could not delete, an unknown id in `kill`, a `doctor`
 `FAIL`, an AWS error printed as `AWS error <Code>: <Message>`); `2` usage or
-environment (arguments, no region, no credentials, no extra).
+environment (arguments, no region, no credentials, no extra). If the reader
+closes the output (`rayito sandbox list | head`), the CLI exits with `1`
+without writing any traceback.
 
 ## `rayito image` { #rayito-image }
 

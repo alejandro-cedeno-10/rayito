@@ -10,14 +10,23 @@ import { describe, expect, test, vi } from "vitest";
 import { AgentFleet, SandboxDirectory } from "../../src/agent/fleet.js";
 import {
   AGENT_FLEET_BUSY_RETRY_MS,
+  AGENT_FLEET_PROBE_CONCURRENCY,
   AGENT_FLEET_SESSION_LABEL,
   sessionLabel,
   UNMANAGED_LIFETIME_MESSAGE,
+  UNPROVEN_MEMBER_MESSAGE,
+  UNREADABLE_MEMBER_MESSAGE,
 } from "../../src/agent/fleet-base.js";
 import { DEFAULT_QUEUE_TIMEOUT_MS, ServeOptions } from "../../src/agent/project.js";
 import { requestTimeoutMs } from "../../src/agent/project-service.js";
 import { decodeHandle, encodeHandle, ScalingOptions } from "../../src/agent/scaling-domain.js";
-import { CapacityError, InvalidArgumentError, SandboxError } from "../../src/errors.js";
+import {
+  CapacityError,
+  InvalidArgumentError,
+  RateLimitError,
+  SandboxError,
+  TimeoutError,
+} from "../../src/errors.js";
 import { AGENT_FLEET_UNHEALTHY_PINGS } from "../../src/limits.js";
 import type { SandboxListItem } from "../../src/models.js";
 import { Sandbox } from "../../src/sandbox/sandbox.js";
@@ -235,6 +244,23 @@ describe("shared mode", () => {
     }
   });
 
+  test("a fixed-size fleet never warns about a VM without a logical lifetime", async () => {
+    const h = new FleetHarness();
+    const warn = vi.fn();
+    const fleet = await h.started(new ScalingOptions({ minVms: 1, maxVms: 1 }), {
+      logger: { warn },
+    });
+    const old = h.world.add({ managed: false });
+    await fleet.refreshMembers();
+    const held = await fleet.stream("primera");
+    await fleet.invoke("segunda");
+    await held.close();
+    expect(old.timeouts).toEqual([]);
+    expect(warn.mock.calls.filter(([message]) => message === UNMANAGED_LIFETIME_MESSAGE)).toEqual(
+      [],
+    );
+  });
+
   test("a late cap estimate is corrected from rayd and never marks the VM", async () => {
     const h = new FleetHarness();
     const warn = vi.fn();
@@ -447,18 +473,63 @@ describe("health", () => {
     expect(h.world.sandboxes.get(original)?.state).toBe("TERMINATED");
   });
 
-  test("status reports members without opening the unknown ones", async () => {
+  test("status never opens a suspended member", async () => {
     const h = new FleetHarness();
-    h.world.add();
-    h.world.add();
+    h.world.add({ state: "SUSPENDED" });
+    h.world.add({ state: "SUSPENDED" });
     const fleet = await AgentFleet.connect("support-bot", {
       accessToken: FLEET_TOKEN,
       directory: h.world,
+      fetch: h.backend.fetch,
     });
     const status = await fleet.status();
     expect(status.members.map((member) => member.state)).toEqual(["unknown", "unknown"]);
     expect(h.world.connected).toEqual([]);
     expect([status.healthy, status.busy]).toEqual([0, 0]);
+  });
+
+  test("status right after connect reports the real state of running members", async () => {
+    const h = new FleetHarness();
+    h.world.add();
+    h.world.add();
+    h.world.add({ state: "SUSPENDED" });
+    const fleet = await AgentFleet.connect("support-bot", {
+      accessToken: FLEET_TOKEN,
+      scaling: SHARED_TWO,
+      directory: h.world,
+      fetch: h.backend.fetch,
+    });
+    const status = await fleet.status();
+    expect(status.members.map((member) => member.state)).toEqual(["healthy", "healthy", "unknown"]);
+    expect(status.healthy).toBe(2);
+    expect([...h.world.connected].sort()).toEqual([sandboxIdOf(1), sandboxIdOf(2)]);
+    expect(fleet.deployments).toEqual([]);
+    expect([...h.world.sandboxes.values()].every((sandbox) => sandbox.timeouts.length === 0)).toBe(
+      true,
+    );
+  });
+
+  test("status never replaces an unopened member it only asked", async () => {
+    const h = new FleetHarness();
+    h.world.add({ served: false });
+    h.world.add();
+    h.host(2).pingStatus = 503;
+    const fleet = await AgentFleet.connect("support-bot", {
+      accessToken: FLEET_TOKEN,
+      scaling: SHARED_TWO,
+      directory: h.world,
+      fetch: h.backend.fetch,
+    });
+    let states: string[] = [];
+    for (let count = 0; count < AGENT_FLEET_UNHEALTHY_PINGS; count += 1) {
+      states = (await fleet.status()).members.map((member) => member.state);
+    }
+    expect(states).toEqual(["unknown", "unavailable"]);
+    expect(fleet.sandboxIds).toEqual([sandboxIdOf(1), sandboxIdOf(2)]);
+    expect([...h.world.sandboxes.values()].every((sandbox) => sandbox.state === "RUNNING")).toBe(
+      true,
+    );
+    expect(fleet.deployments).toEqual([]);
   });
 
   test("a transport failure is not enough to drop the VM", async () => {
@@ -580,6 +651,42 @@ describe("reconnect", () => {
     expect(h.world.sandboxes.get(sandboxIdOf(1))?.served).toBe(true);
   });
 
+  test("a reconnected fleet creates new VMs with the version of its members", async () => {
+    const h = new FleetHarness();
+    const older = h.world.add();
+    const newer = h.world.add();
+    h.world.versions.set(older.sandboxId, "1");
+    h.world.versions.set(newer.sandboxId, "2");
+    const the = project();
+    const fleet = await AgentFleet.connect("support-bot", {
+      accessToken: FLEET_TOKEN,
+      project: the,
+      directory: h.world,
+      service: h.service(the),
+      fetch: h.backend.fetch,
+    });
+    await fleet.scale({ minVms: 3, maxVms: 3 });
+    expect(h.world.created.map(({ options }) => options.templateVersion)).toEqual(["2"]);
+  });
+
+  test("a version the fleet already has is never replaced by the members", async () => {
+    const h = new FleetHarness();
+    const member = h.world.add();
+    h.world.versions.set(member.sandboxId, "1");
+    const the = project();
+    const service = h.service(the);
+    service.adoptImageVersion("7");
+    const fleet = await AgentFleet.connect("support-bot", {
+      accessToken: FLEET_TOKEN,
+      project: the,
+      directory: h.world,
+      service,
+      fetch: h.backend.fetch,
+    });
+    await fleet.scale({ minVms: 2, maxVms: 2 });
+    expect(h.world.created.map(({ options }) => options.templateVersion)).toEqual(["7"]);
+  });
+
   test("a reconnected fleet without a project cannot start a VM", async () => {
     const h = new FleetHarness();
     h.world.add({ served: false, state: "SUSPENDED" });
@@ -619,19 +726,30 @@ describe("SandboxDirectory", () => {
     yield* items;
   }
 
+  function probeFrom(
+    metadata: Record<string, Record<string, string> | undefined>,
+    failing: readonly string[] = [],
+    states: Record<string, string> = {},
+  ) {
+    const probed: string[] = [];
+    const probe = async (sandboxId: string) => {
+      probed.push(sandboxId);
+      if (failing.includes(sandboxId)) {
+        throw new SandboxError("Health no respondió");
+      }
+      return { sandboxId, state: states[sandboxId] ?? "RUNNING", metadata: metadata[sandboxId] };
+    };
+    return { probe, probed };
+  }
+
   test("never counts a running VM that is not an agent", async () => {
     const spy = vi
       .spyOn(Sandbox, "list")
-      .mockImplementation((options) =>
-        options?.metadata === undefined
-          ? iterate([
-              item("mine", "RUNNING"),
-              item("other", "RUNNING"),
-              item("parked", "SUSPENDED"),
-            ])
-          : iterate([item("mine", "RUNNING", AgentLabels), item("other", "RUNNING", {})]),
+      .mockImplementation(() =>
+        iterate([item("mine", "RUNNING"), item("other", "RUNNING"), item("parked", "SUSPENDED")]),
       );
-    const members = await new SandboxDirectory().listMembers("support-bot");
+    const { probe } = probeFrom({ mine: AgentLabels, other: {} });
+    const members = await new SandboxDirectory({}, { probeInfo: probe }).listMembers("support-bot");
     spy.mockRestore();
     expect(members.map((member) => member.sandboxId)).toEqual(["mine"]);
   });
@@ -639,14 +757,198 @@ describe("SandboxDirectory", () => {
   test("keeps a suspended VM while the image only has agents", async () => {
     const spy = vi
       .spyOn(Sandbox, "list")
-      .mockImplementation((options) =>
-        options?.metadata === undefined
-          ? iterate([item("mine", "RUNNING"), item("parked", "SUSPENDED")])
-          : iterate([item("mine", "RUNNING", AgentLabels)]),
-      );
-    const members = await new SandboxDirectory().listMembers("support-bot");
+      .mockImplementation(() => iterate([item("mine", "RUNNING"), item("parked", "SUSPENDED")]));
+    const { probe, probed } = probeFrom({ mine: AgentLabels });
+    const members = await new SandboxDirectory({}, { probeInfo: probe }).listMembers("support-bot");
     spy.mockRestore();
     expect(members.map((member) => member.sandboxId)).toEqual(["mine", "parked"]);
+    expect(probed).toEqual(["mine"]);
+  });
+
+  test("leaves out a VM whose Health fails while listing, as terminating", async () => {
+    const spy = vi
+      .spyOn(Sandbox, "list")
+      .mockImplementation(() =>
+        iterate([item("alive", "RUNNING"), item("dying", "RUNNING"), item("parked", "SUSPENDED")]),
+      );
+    const { probe } = probeFrom({ alive: AgentLabels, dying: AgentLabels }, ["dying"]);
+    const warnings: { message: string; fields?: Readonly<Record<string, unknown>> }[] = [];
+    const logger = {
+      warn: (message: string, fields?: Readonly<Record<string, unknown>>) =>
+        warnings.push({ message, ...(fields === undefined ? {} : { fields }) }),
+    };
+    const members = await new SandboxDirectory({}, { probeInfo: probe, logger }).listMembers(
+      "support-bot",
+    );
+    spy.mockRestore();
+    expect(members.map((member) => member.sandboxId)).toEqual(["alive", "parked"]);
+    expect(warnings).toEqual([
+      { message: UNREADABLE_MEMBER_MESSAGE, fields: { sandboxId: "dying", error: "SandboxError" } },
+    ]);
+  });
+
+  test("a VM that left RUNNING before its probe is not a member", async () => {
+    const spy = vi
+      .spyOn(Sandbox, "list")
+      .mockImplementation(() => iterate([item("alive", "RUNNING"), item("leaving", "RUNNING")]));
+    const { probe } = probeFrom({ alive: AgentLabels, leaving: AgentLabels }, [], {
+      leaving: "TERMINATING",
+    });
+    const members = await new SandboxDirectory({}, { probeInfo: probe }).listMembers("support-bot");
+    spy.mockRestore();
+    expect(members.map((member) => member.sandboxId)).toEqual(["alive"]);
+  });
+
+  test.each([new RateLimitError("limitado"), new TimeoutError("plazo")])(
+    "a control-plane error while probing still fails the listing: %s",
+    async (error) => {
+      const spy = vi
+        .spyOn(Sandbox, "list")
+        .mockImplementation(() => iterate([item("a", "RUNNING")]));
+      const probe = async () => {
+        throw error;
+      };
+      const failure = await failureOf(
+        new SandboxDirectory({}, { probeInfo: probe }).listMembers("support-bot"),
+      );
+      spy.mockRestore();
+      expect(failure).toBe(error);
+    },
+  );
+
+  test("an error that is not a sandbox error still fails the listing", async () => {
+    const spy = vi.spyOn(Sandbox, "list").mockImplementation(() => iterate([item("a", "RUNNING")]));
+    const probe = async () => {
+      throw new TypeError("sin credenciales");
+    };
+    const failure = await failureOf(
+      new SandboxDirectory({}, { probeInfo: probe }).listMembers("support-bot"),
+    );
+    spy.mockRestore();
+    expect(failure).toBeInstanceOf(TypeError);
+  });
+});
+
+describe("SandboxDirectory concurrency", () => {
+  test("probes at most AGENT_FLEET_PROBE_CONCURRENCY VMs at a time, in listing order", async () => {
+    const ids = Array.from(
+      { length: AGENT_FLEET_PROBE_CONCURRENCY + 2 },
+      (_, index) => `vm-${index}`,
+    );
+    const spy = vi.spyOn(Sandbox, "list").mockImplementation(async function* () {
+      for (const sandboxId of ids) {
+        yield {
+          sandboxId,
+          state: "RUNNING",
+          template: "arn:aws:lambda:us-east-1:123456789012:microvm-image:support-bot",
+          templateVersion: "1",
+          startedAt: new Date(0),
+          templateName: "support-bot",
+        } satisfies SandboxListItem;
+      }
+    });
+    let probing = 0;
+    let mostProbing = 0;
+    const probe = async (sandboxId: string) => {
+      probing += 1;
+      mostProbing = Math.max(mostProbing, probing);
+      await new Promise((resolve) =>
+        setTimeout(resolve, 5 * (ids.length - ids.indexOf(sandboxId))),
+      );
+      probing -= 1;
+      if (sandboxId !== "vm-0") {
+        throw new SandboxError("Health no respondió");
+      }
+      return {
+        sandboxId,
+        state: "RUNNING",
+        metadata: { "rayito.agent.deployment": "support-bot", "rayito.agent.port": "8088" },
+      };
+    };
+    const warned: unknown[] = [];
+    const logger = {
+      warn: (_: string, fields?: Readonly<Record<string, unknown>>) =>
+        warned.push(fields?.sandboxId),
+    };
+    const members = await new SandboxDirectory({}, { probeInfo: probe, logger }).listMembers(
+      "support-bot",
+    );
+    spy.mockRestore();
+    expect(members.map((member) => member.sandboxId)).toEqual(["vm-0"]);
+    expect(mostProbing).toBe(AGENT_FLEET_PROBE_CONCURRENCY);
+    expect(warned).toEqual(ids.slice(1));
+  });
+});
+
+describe("unproven members", () => {
+  test("stop never terminates a VM it could not prove is a member", async () => {
+    const h = new FleetHarness();
+    const mine = h.world.add();
+    const parked = h.world.add({ state: "SUSPENDED" });
+    h.world.unproven.add(parked.sandboxId);
+    const warnings: unknown[] = [];
+    const fleet = await AgentFleet.connect("support-bot", {
+      accessToken: FLEET_TOKEN,
+      directory: h.world,
+      logger: { warn: (message, fields) => warnings.push({ message, fields }) },
+    });
+    expect(await fleet.stop()).toBe(1);
+    expect(mine.state).toBe("TERMINATED");
+    expect(parked.kills).toBe(0);
+    expect(parked.state).toBe("SUSPENDED");
+    expect(warnings).toContainEqual({
+      message: UNPROVEN_MEMBER_MESSAGE,
+      fields: { sandboxId: parked.sandboxId },
+    });
+  });
+
+  test("reconcile never trims a VM it could not prove is a member", async () => {
+    const h = new FleetHarness();
+    h.world.add();
+    const parked = h.world.add({ state: "SUSPENDED" });
+    h.world.unproven.add(parked.sandboxId);
+    const fleet = await AgentFleet.connect("support-bot", {
+      accessToken: FLEET_TOKEN,
+      directory: h.world,
+      scaling: new ScalingOptions({ minVms: 1, maxVms: 1 }),
+    });
+    await fleet.reconcile();
+    expect(parked.kills).toBe(0);
+  });
+
+  test("an unreadable VM leaves the suspended ones unproven", async () => {
+    const spy = vi.spyOn(Sandbox, "list").mockImplementation(async function* () {
+      for (const [sandboxId, state] of [
+        ["mine", "RUNNING"],
+        ["dying", "RUNNING"],
+        ["parked", "SUSPENDED"],
+      ] as const) {
+        yield {
+          sandboxId,
+          state,
+          template: "arn:aws:lambda:us-east-1:123456789012:microvm-image:support-bot",
+          templateVersion: "1",
+          startedAt: new Date(0),
+          templateName: "support-bot",
+        } satisfies SandboxListItem;
+      }
+    });
+    const probe = async (sandboxId: string) => {
+      if (sandboxId === "dying") {
+        throw new SandboxError("Health no respondió");
+      }
+      return {
+        sandboxId,
+        state: "RUNNING",
+        metadata: { "rayito.agent.deployment": "support-bot", "rayito.agent.port": "8088" },
+      };
+    };
+    const members = await new SandboxDirectory({}, { probeInfo: probe }).listMembers("support-bot");
+    spy.mockRestore();
+    expect(members.map(({ sandboxId, proven }) => [sandboxId, proven !== false])).toEqual([
+      ["mine", true],
+      ["parked", false],
+    ]);
   });
 });
 

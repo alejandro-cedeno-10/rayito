@@ -17,12 +17,15 @@ import {
   AgentError,
   CapacityError,
   InvalidArgumentError,
+  RateLimitError,
   SandboxError,
   SandboxNotFoundError,
+  TimeoutError,
 } from "../errors.js";
 import type { DynamoDbIndex } from "../index/dynamodb.js";
 import { AGENT_SERVICE_READY_MARKER_PATH } from "../limits.js";
 import type { Logger } from "../logger.js";
+import type { SandboxInfo } from "../models.js";
 import type { PoolBackend } from "../pool/backend.js";
 import type { PoolConfig } from "../pool/config.js";
 import type { PoolStats } from "../pool/core.js";
@@ -48,6 +51,7 @@ import {
   AGENT_CAPACITY_CODE,
   AGENT_FLEET_BUSY_RETRY_MS,
   AGENT_FLEET_LIVE_STATES,
+  AGENT_FLEET_PROBE_CONCURRENCY,
   AGENT_FLEET_PROBE_STATE,
   AGENT_FLEET_SESSION_LABEL,
   AGENT_FLEET_START_CONCURRENCY,
@@ -66,12 +70,16 @@ import {
   isLost,
   lifetimeMs,
   listedCap,
+  listedImageVersion,
   type Member,
+  type MemberHealth,
   type MemberListing,
+  type MemberProbe,
+  mapBounded,
   markExtras,
+  memberOf,
   newMember,
   newReservation,
-  ownedIds,
   pingIsFresh,
   planPlacement,
   poolConfigFor,
@@ -80,11 +88,14 @@ import {
   restoreMs,
   routeOf,
   sandboxCap,
-  selectMembers,
+  selectProbed,
   sessionLabel,
   surplus,
   UNMANAGED_LIFETIME_MESSAGE,
+  UNPROVEN_MEMBER_MESSAGE,
+  UNREADABLE_MEMBER_MESSAGE,
   vmLostMessage,
+  warnsUnmanagedLifetime,
   withHandle,
 } from "./fleet-base.js";
 import { type FleetRecipe, recipeOf, renewalOnConnect } from "./fleet-recipe.js";
@@ -148,16 +159,51 @@ export interface FleetDirectory {
   ): Promise<void>;
 }
 
+/** La sonda de un VM `RUNNING` que usa `SandboxDirectory`: `get-microvm` más
+ * un `Health` sin token, con los metadatos del agente si está listo. */
+export type MemberInfoProbe = (
+  sandboxId: string,
+  connection: ControlPlaneOptions,
+) => Promise<Pick<SandboxInfo, "sandboxId" | "state" | "metadata">>;
+
+/** Opciones de `SandboxDirectory`: el logger de la flota y, en tests, la
+ * sonda de cada VM. */
+export interface SandboxDirectoryOptions {
+  readonly logger?: Logger | undefined;
+  readonly probeInfo?: MemberInfoProbe | undefined;
+}
+
+/** Los errores de la sonda que no dicen nada del VM sino del plano de control
+ * (una limitación o un plazo de `get-microvm`): hacen fallar el listado en vez
+ * de dejar fuera a un miembro sano. */
+function isControlPlaneListingError(error: SandboxError): boolean {
+  return error instanceof RateLimitError || error instanceof TimeoutError;
+}
+
+async function probeMemberInfo(
+  sandboxId: string,
+  connection: ControlPlaneOptions,
+): Promise<SandboxInfo> {
+  const { probeSandboxInfo } = await import("../sandbox/info-probe.js");
+  return probeSandboxInfo(sandboxId, connection);
+}
+
 /** El adaptador de producción de la flota: lista los VMs de la imagen
  * (`list-microvms` con el filtro de imagen) sin contar los que no son de un
- * agente (`selectMembers`: los `RUNNING` se sondean con un `Health`, sin token
- * ni despertar a nadie), conecta uno con el token de la flota y busca por
- * sesión en el índice opcional. */
+ * agente (`selectMembers`: los `RUNNING` se sondean uno a uno con un `Health`,
+ * sin token ni despertar a nadie), conecta uno con el token de la flota y busca
+ * por sesión en el índice opcional. Un VM cuya sonda falla (la plataforma aún
+ * lo lista `RUNNING` pero su `rayd` ya salió) queda fuera como un VM que
+ * termina, sin tumbar el listado. */
 export class SandboxDirectory implements FleetDirectory {
   readonly #connection: ControlPlaneOptions;
+  readonly #logger: Logger | undefined;
+  readonly #probeInfo: MemberInfoProbe;
 
-  constructor(connection: ControlPlaneOptions = {}) {
+  constructor(connection: ControlPlaneOptions = {}, options: SandboxDirectoryOptions = {}) {
     this.#connection = connection;
+    this.#logger = options.logger;
+    this.#probeInfo = options.probeInfo ?? probeMemberInfo;
   }
 
   async listMembers(template: string): Promise<readonly MemberListing[]> {
@@ -168,18 +214,43 @@ export class SandboxDirectory implements FleetDirectory {
       template,
       states: AGENT_FLEET_LIVE_STATES,
     })) {
-      listed.push({ sandboxId: item.sandboxId, state: item.state, startedAt: item.startedAt });
+      listed.push({
+        sandboxId: item.sandboxId,
+        state: item.state,
+        startedAt: item.startedAt,
+        templateVersion: item.templateVersion,
+      });
     }
-    const probed = [];
-    for await (const item of Sandbox.list({
-      ...this.#connection,
-      template,
-      states: [AGENT_FLEET_PROBE_STATE],
-      metadata: {},
-    })) {
-      probed.push(item);
+    const running = listed.filter((item) => item.state === AGENT_FLEET_PROBE_STATE);
+    const probes = await mapBounded(running, AGENT_FLEET_PROBE_CONCURRENCY, (item) =>
+      this.#probe(item.sandboxId),
+    );
+    for (const probe of probes) {
+      if (probe.error !== undefined) {
+        this.#logger?.warn?.(UNREADABLE_MEMBER_MESSAGE, {
+          sandboxId: probe.sandboxId,
+          error: probe.error,
+        });
+      }
     }
-    return selectMembers(listed, ownedIds(probed));
+    return selectProbed(listed, probes);
+  }
+
+  /** La sonda de un VM `RUNNING`: su información con metadatos, o sin ella si
+   * su `Health` falla (con la clase del error), ya no existe o ya no está
+   * `RUNNING`. Una limitación o un plazo de `get-microvm` sí hacen fallar el
+   * listado. */
+  async #probe(sandboxId: string): Promise<MemberProbe> {
+    let info: Pick<SandboxInfo, "sandboxId" | "state" | "metadata">;
+    try {
+      info = await this.#probeInfo(sandboxId, this.#connection);
+    } catch (error) {
+      if (!(error instanceof SandboxError) || isControlPlaneListingError(error)) {
+        throw error;
+      }
+      return { sandboxId, info: undefined, error: error.name };
+    }
+    return { sandboxId, info: info.state === AGENT_FLEET_PROBE_STATE ? info : undefined };
   }
 
   async connect(sandboxId: string, accessToken: string): Promise<FleetSandbox> {
@@ -512,7 +583,8 @@ export class AgentFleet {
     this.#renewer = this.#renewKeys ? options.keyRenewer : undefined;
     this.#recipeStore = options.recipeStore;
     this.#recipeKnown = options.recipe !== undefined;
-    this.#directory = options.directory ?? new SandboxDirectory(this.#connection);
+    this.#directory =
+      options.directory ?? new SandboxDirectory(this.#connection, { logger: options.logger });
     this.#poolFactory = options.poolFactory;
     this.#poolBackend = options.poolBackend;
     this.#index = options.sessionIndex;
@@ -638,19 +710,20 @@ export class AgentFleet {
     const listing = [...(await this.#directory.listMembers(this.#name))].sort(
       (a, b) => a.startedAt.getTime() - b.startedAt.getTime(),
     );
+    const version = listedImageVersion(listing.filter((item) => !parked.has(item.sandboxId)));
+    if (version !== undefined) {
+      this.#service?.adoptImageVersion(version);
+    }
     const known = new Map(this.#members.map((member) => [member.sandboxId, member]));
     const lifetime = this.#lifetime();
     this.#members = listing
       .filter((item) => !parked.has(item.sandboxId))
-      .map(
-        (item) =>
-          known.get(item.sandboxId) ??
-          newMember<AgentDeployment>(
-            item.sandboxId,
-            undefined,
-            false,
-            listedCap(item.startedAt, lifetime),
-          ),
+      .map((item) =>
+        memberOf<AgentDeployment>(
+          known.get(item.sandboxId),
+          item,
+          listedCap(item.startedAt, lifetime),
+        ),
       );
     markExtras(this.#members, this.scaling);
   }
@@ -704,15 +777,18 @@ export class AgentFleet {
 
   /** Termina todos los VMs de la flota y las plazas del pool y, si este
    * proceso guardó o leyó su receta, la borra (`keepRecipe: true` la
-   * conserva). Sigue aunque uno falle y, al final, lanza el primer error. */
-  async stop(options: AgentFleetStopOptions = {}): Promise<void> {
+   * conserva). Sigue aunque uno falle y, al final, lanza el primer error.
+   * Devuelve cuántos VMs terminó: uno sin probar (`Member.proven`) no se
+   * termina y no cuenta. */
+  async stop(options: AgentFleetStopOptions = {}): Promise<number> {
     const errors: unknown[] = [];
     await this.#closePool(true, errors);
     const members = this.#members;
     this.#members = [];
+    let stopped = 0;
     for (const member of members) {
       try {
-        await this.#terminate(member);
+        stopped += (await this.#terminate(member)) ? 1 : 0;
       } catch (error) {
         errors.push(error);
       }
@@ -728,23 +804,30 @@ export class AgentFleet {
     if (errors.length > 0) {
       throw errors[0];
     }
+    return stopped;
   }
 
-  /** Estado de la flota: pregunta a los VMs que este proceso ya abrió
-   * (`GET /ping`) y deja como `unknown` los demás. */
+  /** Estado de la flota: vuelve a leer el listado (`refreshMembers`), pregunta
+   * a los VMs que este proceso ya abrió (`GET /ping`) y, hasta
+   * `AGENT_FLEET_PROBE_CONCURRENCY` a la vez, a los `RUNNING` que aún no abrió
+   * (`#peek`). Sólo deja como `unknown` los suspendidos: preguntarles los
+   * reanudaría. */
   async status(): Promise<FleetStatus> {
-    const statuses: FleetMemberStatus[] = [];
-    for (const member of [...this.#members]) {
+    await this.refreshMembers();
+    const members = [...this.#members];
+    for (const member of members) {
       if (member.deployment !== undefined) {
         await this.#probe(member, true);
       }
-      statuses.push({
-        sandboxId: member.sandboxId,
-        state: member.health,
-        extra: member.extra,
-        inflight: member.inflight,
-      });
     }
+    const unopened = members.filter((member) => member.deployment === undefined && member.running);
+    await mapBounded(unopened, AGENT_FLEET_PROBE_CONCURRENCY, (member) => this.#peek(member));
+    const statuses: FleetMemberStatus[] = members.map((member) => ({
+      sandboxId: member.sandboxId,
+      state: member.health,
+      extra: member.extra,
+      inflight: member.inflight,
+    }));
     const warmReady = this.#pool?.stats().ready ?? 0;
     return fleetStatusOf(
       this.#name,
@@ -1203,7 +1286,9 @@ export class AgentFleet {
       }
       if (error instanceof InvalidArgumentError) {
         member.lifetimeRejected = true;
-        this.#logger?.warn?.(UNMANAGED_LIFETIME_MESSAGE);
+        if (warnsUnmanagedLifetime(this.scaling)) {
+          this.#logger?.warn?.(UNMANAGED_LIFETIME_MESSAGE);
+        }
         return;
       }
       if (error instanceof SandboxError) {
@@ -1273,6 +1358,34 @@ export class AgentFleet {
       ...(this.#project === undefined ? {} : { requestTimeoutMs: requestTimeoutMs(this.#project) }),
       ...(this.#fetch === undefined ? {} : { fetch: this.#fetch }),
     });
+  }
+
+  /** El `GET /ping` de un VM `RUNNING` que este proceso aún no abrió, sin
+   * quedárselo: no le acota la vida ni arranca su servicio (uno sin servicio
+   * sigue `unknown`). Sólo anota el estado que se muestra, no un ping
+   * (`recordPing`), así que no cuenta para sustituir el VM. Si no se puede
+   * conectar, el miembro sigue `unknown`; un `/ping` sin respuesta es
+   * `unavailable`. Ningún error al preguntarle tumba `status()`. A
+   * diferencia de Python (`PEEK_ERRORS`), aquí se atrapa todo: `fetch` da un
+   * corte de red o un cuerpo truncado como `TypeError`, sin clase propia que
+   * lo separe de un error de programación. */
+  async #peek(member: Member<AgentDeployment>): Promise<void> {
+    if (this.#token === undefined) {
+      return;
+    }
+    let state: MemberHealth;
+    try {
+      const sandbox = await this.#directory.connect(member.sandboxId, this.#token);
+      if (!(await sandbox.files.exists(AGENT_SERVICE_READY_MARKER_PATH))) {
+        return;
+      }
+      state = (await (await this.#deploymentOf(sandbox)).status()).state;
+    } catch (error) {
+      const kind = error instanceof Error ? error.name : typeof error;
+      this.#logger?.debug?.(`no se pudo preguntar a un VM de la flota: ${kind}`);
+      return;
+    }
+    member.health = state;
   }
 
   /** Si el VM puede atender una sesión: lo abre si hace falta y, si su último
@@ -1379,7 +1492,7 @@ export class AgentFleet {
 
   async #trim(): Promise<void> {
     const excess = surplus(this.#members, this.scaling).filter(
-      (member) => member.inflight === 0 && member.bound.size === 0,
+      (member) => member.inflight === 0 && member.bound.size === 0 && member.proven,
     ) as Member<AgentDeployment>[];
     for (const member of excess) {
       this.#drop(member);
@@ -1392,13 +1505,20 @@ export class AgentFleet {
   }
 
   /** Termina el VM sin abrirlo: abrir uno suspendido lo reanudaría sólo para
-   * matarlo. */
-  async #terminate(member: Member<AgentDeployment>): Promise<void> {
+   * matarlo. Un miembro sin probar (`Member.proven`) no se termina: podría ser
+   * un sandbox ajeno de la misma imagen, y se deja a su propio plazo y a su
+   * política de idle con un aviso. Devuelve si lo terminó. */
+  async #terminate(member: Member<AgentDeployment>): Promise<boolean> {
+    if (!member.proven) {
+      this.#logger?.warn?.(UNPROVEN_MEMBER_MESSAGE, { sandboxId: member.sandboxId });
+      return false;
+    }
     if (member.deployment !== undefined) {
       await member.deployment.stop();
     } else {
       await this.#directory.kill(member.sandboxId);
     }
+    return true;
   }
 
   async #discard(members: readonly Member<AgentDeployment>[]): Promise<void> {
@@ -1453,14 +1573,27 @@ export class AgentFleet {
     await this.#renewing;
   }
 
+  /** La renovación del despliegue (sólo la llama `deployAgent()`, antes de
+   * `start()`): con `renewGatewayKeys`, escribe siempre una clave nueva en
+   * cada pasarela `bedrock`, aunque el secreto acabe de cambiar. */
+  async renewGatewayKeysForDeploy(): Promise<void> {
+    if (!this.#renewKeys) {
+      return;
+    }
+    await this.#renewing;
+    await this.#renewOnce(true);
+  }
+
   /** Sólo se activa con la opción explícita de quien llama (nunca desde la
    * receta), así que un error de la renovación se propaga. */
-  async #renewOnce(): Promise<void> {
+  async #renewOnce(force = false): Promise<void> {
     this.#renewer ??= await gatewayKeyRenewer(this.#requireProject(), {
       region: this.#connection.region,
       credentials: this.#credentials,
     });
-    const renewed = await this.#renewer.renew();
+    const renewed = force
+      ? await this.#renewer.renew({ force: true })
+      : await this.#renewer.renew();
     if (!renewed) {
       return;
     }

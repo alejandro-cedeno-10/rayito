@@ -757,13 +757,13 @@ async fn write_connection_drop_mid_stream_removes_the_temp_file() {
         .send(write_request(Some(&path), None, &[1; 1024]))
         .await
         .unwrap();
-    let deadline = Instant::now() + Duration::from_secs(2);
+    let deadline = Instant::now() + EVENT_BUDGET;
     while temp_files(&harness.root) == 0 {
         assert!(Instant::now() < deadline, "temp file never appeared");
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
     call.abort();
-    let deadline = Instant::now() + Duration::from_secs(3);
+    let deadline = Instant::now() + EVENT_BUDGET;
     while temp_files(&harness.root) > 0 {
         assert!(
             Instant::now() < deadline,
@@ -1249,7 +1249,7 @@ async fn watch_rejections_caps_and_release_on_drop() {
     );
     drop(first);
     drop(second);
-    let deadline = Instant::now() + Duration::from_secs(1);
+    let deadline = Instant::now() + EVENT_BUDGET;
     while harness.manager.live_watches() > 0 {
         assert!(Instant::now() < deadline, "watches never released");
         tokio::time::sleep(Duration::from_millis(10)).await;
@@ -1262,10 +1262,10 @@ async fn silent_watch_sends_keepalives() {
     let harness = harness().await;
     fs::create_dir(harness.path("watch")).unwrap();
     let mut stream = harness.watch_started(&harness.path("watch"), false).await;
-    let deadline = Instant::now() + Duration::from_secs(1);
+    let deadline = Instant::now() + EVENT_BUDGET;
     let mut keepalives = 0;
     while Instant::now() < deadline && keepalives < 3 {
-        let message = tokio::time::timeout(Duration::from_secs(1), stream.message())
+        let message = tokio::time::timeout(EVENT_BUDGET, stream.message())
             .await
             .unwrap()
             .unwrap()
@@ -1274,7 +1274,10 @@ async fn silent_watch_sends_keepalives() {
             keepalives += 1;
         }
     }
-    assert!(keepalives >= 3, "only {keepalives} keepalives in 1 s");
+    assert!(
+        keepalives >= 3,
+        "only {keepalives} keepalives in {EVENT_BUDGET:?}"
+    );
 }
 
 #[tokio::test]

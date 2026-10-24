@@ -101,7 +101,7 @@ informe ni log del spike contiene el valor.
 
 ## Números en AWS real
 
-Cuenta de pruebas, us-east-1, 2026-10-05. Template `rayito-acc071spk-agent`
+us-east-1, 2026-10-05. Template `rayito-acc071spk-agent`
 compuesto con el DSL de `Template` sobre una `rayito-base-caps` desechable
 (el `rayito-image.zip` firmado de la release `rayd-v0.7.0`), tamaño por
 defecto (2048 MB). Modelo: perfil de inferencia de sistema
@@ -145,10 +145,9 @@ documenta que el guest ve más memoria de la configurada), así que los
 
 ## Bloqueos y avisos
 
-- **Ninguno bloquea la fase 1.** La cuenta de pruebas ya tenía acceso a los
-  modelos de Anthropic en Bedrock (`ListFoundationModels` y un `Converse`
-  firmado con SigV4 respondieron); en otra cuenta, el mantenedor tiene que
-  habilitar el acceso al modelo antes, y Rayito no debe hacerlo por él.
+- **Ninguno bloquea la fase 1.** Requisito: acceso al modelo habilitado en
+  Bedrock en tu cuenta (compruébalo con un `Converse` firmado con SigV4);
+  Rayito no lo habilita.
 - **Primer `exec` de OpenCode** (Q142): la fase 1 tiene que medir un
   OpenCode residente (`opencode serve` arrancado por `set_start_cmd`, con
   `opencode run --attach`) antes de fijar el diseño; si no baja, el
@@ -164,12 +163,7 @@ documenta que el guest ve más memoria de la configurada), así que los
 - **Permisos de los agentes**: `opencode run --auto` y `LocalShellBackend`
   ejecutan lo que el modelo pida sin preguntar. No son una frontera de
   seguridad; la frontera es el MicroVM más el deny-all.
-- En la cuenta compartida desaparecieron a mitad de la corrida dos objetos
-  que el spike había subido a S3 (el zip de la base y el del primer
-  template), ninguno de ellos borrado por el spike; se volvió a subir el de
-  la base para el segundo build. El ciclo de vida del bucket sólo expira
-  versiones no actuales: todo apunta a la limpieza de otra corrida
-  concurrente.
+- Cada corrida debe usar su propio prefijo de S3.
 
 ## Go/no-go para la fase 1
 

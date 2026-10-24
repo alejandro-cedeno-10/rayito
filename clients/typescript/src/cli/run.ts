@@ -50,6 +50,25 @@ function stderrLogger(console: CliConsole): Logger {
   return { info: write("INFO"), warn: write("WARNING"), error: write("ERROR") };
 }
 
+/** Los campos de un aviso que `warningsLogger` escribe sin `--verbose`: un
+ * código, un id de sandbox o la clase de un error. Ninguno lleva texto libre,
+ * rutas ni mensajes de AWS. */
+export const WARNING_LINE_FIELDS = ["code", "sandboxId", "error"] as const;
+
+/** El logger sin `--verbose`: sólo avisos y errores, a stderr, con el mensaje
+ * y los valores de `WARNING_LINE_FIELDS` (`receta de la flota:
+ * recipe_renewal_ignored`), como el manejador de último recurso de `logging`
+ * en la CLI de Python. */
+export function warningsLogger(console: CliConsole): Logger {
+  const write = (message: string, fields?: Readonly<Record<string, unknown>>): void => {
+    const values = WARNING_LINE_FIELDS.flatMap((name) =>
+      typeof fields?.[name] === "string" ? [fields[name] as string] : [],
+    );
+    console.echo(values.length === 0 ? message : `${message}: ${values.join(" ")}`, { err: true });
+  };
+  return { warn: write, error: write };
+}
+
 export function versionLine(): string {
   return `${PROGRAM} ${VERSION} (${RUNTIME_NAME})`;
 }
@@ -74,12 +93,13 @@ export async function runCli(
     const { command, values, globals } = invocation;
     verbose = globals.verbose;
     let services: Promise<CliServices> | undefined;
+    const logger = globals.verbose ? stderrLogger(console) : warningsLogger(console);
     const servicesOf = (): Promise<CliServices> => {
       services ??= runtime.createServices({
         profile: globals.profile,
         region: globals.region,
         env: runtime.env,
-        logger: globals.verbose ? stderrLogger(console) : undefined,
+        logger,
       });
       return services;
     };
@@ -93,7 +113,8 @@ export async function runCli(
       signal: runtime.signal,
       openUrl: runtime.openUrl ?? (async () => undefined),
       services: servicesOf,
-      agentProjects: runtime.agentProjects ?? new SdkAgentProjectTools(servicesOf),
+      agentProjects:
+        runtime.agentProjects ?? new SdkAgentProjectTools(servicesOf, undefined, logger),
       agentcore: runtime.agentcore ?? new SdkAgentCoreTools(servicesOf),
     };
     return (await command.run(context)) ?? EXIT_OK;

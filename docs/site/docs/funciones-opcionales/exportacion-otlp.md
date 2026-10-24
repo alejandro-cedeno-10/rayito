@@ -116,8 +116,7 @@ divide por ese factor antes de enviarla; ver `limits.md`).
     `cloudwatch:CallWithBearerToken` y `cloudwatch:PutMetricData`. No se
     acota a un log group ni a un namespace: sólo sirve para el endpoint de
     ingesta OTLP de métricas, de toda la cuenta. Pon siempre
-    `--credential-age-days`. Una SCP de la organización que deniegue
-    `iam:CreateUser` impide crearla (Q111). El nombre se resuelve igual que en `secrets=` y
+    `--credential-age-days`. El nombre se resuelve igual que en `secrets=` y
     `SecretStore`: bajo el prefijo `rayito/`, así que
     `OtlpAuth.bearer("otlp-key")` lee `rayito/otlp-key` (un ARN completo se
     usa tal cual). El SDK lo lee por la misma caché de secretos que
@@ -294,4 +293,4 @@ explícita y opt-in. El shim de E2B no añade ningún kwarg nuevo para esto;
       cabecera `Date` de la que `rayd` corrige su reloj (Q112); el
       `traceparent` de cada llamada llega a los logs de `rayd` (Q113). La
       autenticación por API key está verificada hasta el rechazo de una
-      clave inválida: emitir una real exige crear un usuario IAM (Q111).
+      clave inválida (Q111).

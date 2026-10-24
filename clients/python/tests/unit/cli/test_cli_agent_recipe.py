@@ -59,6 +59,7 @@ class FakeFleet:
     deployments: tuple[FakeDeployment, ...] = field(default_factory=lambda: (FakeDeployment(),))
     stops: list[dict[str, Any]] = field(default_factory=list)
     scaling_source: str = "default"
+    terminated: int = 1
 
     @property
     def sandbox_ids(self) -> tuple[str, ...]:
@@ -67,8 +68,9 @@ class FakeFleet:
     def detach(self) -> None:
         return None
 
-    def stop(self, **kwargs: Any) -> None:
+    def stop(self, **kwargs: Any) -> int:
         self.stops.append(kwargs)
+        return self.terminated
 
     def status(self) -> FleetStatus:
         return FleetStatus(
@@ -278,6 +280,20 @@ def test_stop_keeps_the_recipe_only_on_request(
     assert fleet.stops == [expected]
 
 
+def test_stop_reports_only_the_vms_it_terminated(
+    monkeypatch: pytest.MonkeyPatch, runner: CliRunner, clients: Clients
+) -> None:
+    """Un VM que la flota no pudo probar que sea suyo no se termina y no
+    cuenta como parado."""
+    fleet = FakeFleet(terminated=0)
+    connected_fleet(monkeypatch, fleet)
+
+    result = runner.invoke(app, ["--json", "agent", "stop", "support-bot"], obj=clients)
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output) == {"name": "support-bot", "stopped": 0}
+
+
 def test_a_fleet_without_members_prints_without_a_first_vm(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -291,3 +307,21 @@ def test_a_fleet_without_members_prints_without_a_first_vm(
     text = capsys.readouterr().out
     assert "sandbox_id=" not in text and "url=" not in text
     assert "members=0" in text
+
+
+@pytest.mark.parametrize(
+    "command", [["agent", "stop", "support-bot"], ["agent", "status", "support-bot"]]
+)
+def test_stop_and_status_never_ask_for_the_renewal_warning(
+    monkeypatch: pytest.MonkeyPatch, runner: CliRunner, clients: Clients, command: list[str]
+) -> None:
+    """`stop` y `status` nunca crean VMs: conectan con
+    `renew_gateway_keys=False`, así una receta que pedía renovar no avisa
+    `recipe_renewal_ignored` (la misma regla que la CLI de TypeScript)."""
+    monkeypatch.setenv("RAYITO_ACCESS_TOKEN", "token-de-prueba-0123456789abcdefghijklmn")
+    connected = connected_fleet(monkeypatch, FakeFleet())
+
+    result = runner.invoke(app, command, obj=clients)
+
+    assert result.exit_code == 0, result.output
+    assert connected[0]["renew_gateway_keys"] is False

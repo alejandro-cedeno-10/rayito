@@ -21,6 +21,7 @@ from rayito._agent._fleet import AgentFleet
 from rayito._agent._fleet_async import AsyncAgentFleet
 from rayito._agent._fleet_base import (
     AGENT_FLEET_BUSY_RETRY_SECONDS,
+    AGENT_FLEET_PROBE_CONCURRENCY,
     AGENT_FLEET_SESSION_LABEL,
     UNMANAGED_LIFETIME_MESSAGE,
     session_label,
@@ -33,9 +34,12 @@ from rayito._limits import (
     MAX_DURATION_SECONDS,
 )
 from rayito.exceptions import (
+    AuthenticationException,
     CapacityException,
     InvalidArgumentException,
+    RateLimitException,
     SandboxException,
+    TimeoutException,
 )
 from tests.unit.fake_agent_fleet import FLEET_TOKEN as TOKEN
 from tests.unit.fake_agent_fleet import FleetFlavor, sandbox_id_of
@@ -253,6 +257,22 @@ def test_an_extra_vm_keeps_its_hold_while_another_invocation_is_in_flight(
     assert extra.timeouts == [120, hold, hold, 120]
     for stream in base_streams:
         flavor.close_stream(stream)
+
+
+def test_a_fixed_size_fleet_never_warns_about_a_vm_without_a_logical_lifetime(
+    flavor: FleetFlavor, caplog: pytest.LogCaptureFixture
+) -> None:
+    fleet = flavor.started(ScalingOptions(min_vms=1, max_vms=1))
+    old = flavor.classes.add(managed=False)
+    flavor.call(fleet.refresh_members())
+    held = flavor.open_stream(fleet, "primera")
+
+    with caplog.at_level(logging.WARNING, logger="rayito"):
+        flavor.call(fleet.invoke("segunda"))
+    flavor.close_stream(held)
+
+    assert old.timeouts == []
+    assert UNMANAGED_LIFETIME_MESSAGE not in [r.getMessage() for r in caplog.records]
 
 
 def test_a_late_cap_estimate_is_corrected_from_rayd_and_never_marks_the_vm(
@@ -583,22 +603,95 @@ def test_a_vm_that_stops_answering_is_replaced_to_keep_min_vms(flavor: FleetFlav
     assert flavor.classes.sandboxes[original].state == "TERMINATED"
 
 
-def test_status_reports_members_without_opening_the_unknown_ones(flavor: FleetFlavor) -> None:
-    flavor.classes.add()
-    flavor.classes.add()
-    fleet = flavor.call(
+def connected_fleet(flavor: FleetFlavor, **options: Any) -> Any:
+    return flavor.call(
         (AsyncAgentFleet if flavor.asynchronous else AgentFleet).connect(
             "support-bot",
             access_token=TOKEN,
             directory=flavor.classes_directory(),
+            transport_factory=flavor.backend.async_factory
+            if flavor.asynchronous
+            else flavor.backend.factory,
+            **options,
         )
     )
+
+
+def test_status_never_opens_a_suspended_member(flavor: FleetFlavor) -> None:
+    flavor.classes.add(state="SUSPENDED")
+    flavor.classes.add(state="SUSPENDED")
+    fleet = connected_fleet(flavor)
 
     status = flavor.call(fleet.status())
 
     assert [member.state for member in status.members] == ["unknown", "unknown"]
     assert flavor.classes.connected == []
     assert (status.healthy, status.busy) == (0, 0)
+
+
+def test_status_right_after_connect_reports_the_real_state_of_running_members(
+    flavor: FleetFlavor,
+) -> None:
+    flavor.classes.add()
+    flavor.classes.add()
+    flavor.classes.add(state="SUSPENDED")
+    fleet = connected_fleet(flavor, scaling=SHARED_TWO)
+
+    status = flavor.call(fleet.status())
+
+    assert [member.state for member in status.members] == ["healthy", "healthy", "unknown"]
+    assert status.healthy == 2
+    assert sorted(flavor.classes.connected) == [sandbox_id_of(1), sandbox_id_of(2)]
+    assert fleet.deployments == ()
+    assert all(sbx.timeouts == [] for sbx in flavor.classes.sandboxes.values())
+
+
+def test_status_never_replaces_an_unopened_member_it_only_asked(flavor: FleetFlavor) -> None:
+    flavor.classes.add(served=False)
+    flavor.classes.add()
+    host_of(flavor, 2).ping_status = 503
+    fleet = connected_fleet(flavor, scaling=SHARED_TWO)
+
+    for _ in range(AGENT_FLEET_UNHEALTHY_PINGS):
+        status = flavor.call(fleet.status())
+
+    assert [member.state for member in status.members] == ["unknown", "unavailable"]
+    assert fleet.sandbox_ids == (sandbox_id_of(1), sandbox_id_of(2))
+    assert all(sbx.state == "RUNNING" for sbx in flavor.classes.sandboxes.values())
+    assert fleet.deployments == ()
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        SandboxException("sin respuesta"),
+        AuthenticationException("token caducado"),
+        OSError("conexión cerrada"),
+    ],
+    ids=["sandbox", "credentials", "network"],
+)
+def test_status_leaves_unknown_an_unopened_member_it_could_not_ask(
+    flavor: FleetFlavor, error: Exception
+) -> None:
+    flavor.classes.add()
+    flavor.classes.add()
+    flavor.classes.sandboxes[sandbox_id_of(1)].ready_error = error
+    fleet = connected_fleet(flavor, scaling=SHARED_TWO)
+
+    status = flavor.call(fleet.status())
+
+    assert [member.state for member in status.members] == ["unknown", "healthy"]
+
+
+def test_status_propagates_a_programming_error_while_asking_an_unopened_member(
+    flavor: FleetFlavor,
+) -> None:
+    flavor.classes.add()
+    flavor.classes.sandboxes[sandbox_id_of(1)].ready_error = TypeError("fallo del código")
+    fleet = connected_fleet(flavor)
+
+    with pytest.raises(TypeError):
+        flavor.call(fleet.status())
 
 
 def test_a_transport_failure_is_not_enough_to_drop_the_vm(flavor: FleetFlavor) -> None:
@@ -722,6 +815,59 @@ def test_connect_lists_the_image_and_opens_a_vm_only_when_it_is_used(flavor: Fle
     assert decode_handle(result.session_id).sandbox_id == sandbox_id_of(1)  # type: ignore[union-attr]
 
 
+def test_a_reconnected_fleet_creates_new_vms_with_the_version_of_its_members(
+    flavor: FleetFlavor,
+) -> None:
+    """Sin receta ni build en este proceso, un VM nuevo usa la versión de
+    los miembros, no la más reciente de la imagen (que puede ser otro
+    build)."""
+    older = flavor.classes.add()
+    newer = flavor.classes.add()
+    flavor.classes.versions[older.sandbox_id] = "1"
+    flavor.classes.versions[newer.sandbox_id] = "2"
+    fleet = flavor.call(
+        (AsyncAgentFleet if flavor.asynchronous else AgentFleet).connect(
+            "support-bot",
+            access_token=TOKEN,
+            project=project(),
+            directory=flavor.classes_directory(),
+            transport_factory=flavor.backend.async_factory
+            if flavor.asynchronous
+            else flavor.backend.factory,
+            service=flavor.service(project()),
+        )
+    )
+
+    flavor.call(fleet.scale(min_vms=3, max_vms=3))
+
+    assert [args.get("template_version") for _, args in flavor.classes.created] == ["2"]
+
+
+def test_a_version_the_fleet_already_has_is_never_replaced_by_the_members(
+    flavor: FleetFlavor,
+) -> None:
+    member = flavor.classes.add()
+    flavor.classes.versions[member.sandbox_id] = "1"
+    service = flavor.service(project())
+    service.adopt_image_version("7")
+    fleet = flavor.call(
+        (AsyncAgentFleet if flavor.asynchronous else AgentFleet).connect(
+            "support-bot",
+            access_token=TOKEN,
+            project=project(),
+            directory=flavor.classes_directory(),
+            transport_factory=flavor.backend.async_factory
+            if flavor.asynchronous
+            else flavor.backend.factory,
+            service=service,
+        )
+    )
+
+    flavor.call(fleet.scale(min_vms=2, max_vms=2))
+
+    assert [args.get("template_version") for _, args in flavor.classes.created] == ["7"]
+
+
 def test_a_reconnected_fleet_starts_a_parked_vm_that_has_no_service(flavor: FleetFlavor) -> None:
     flavor.classes.add(served=False, state="SUSPENDED")
     fleet = flavor.call(
@@ -824,6 +970,154 @@ def test_a_suspended_vm_counts_while_the_image_only_has_agents(flavor: FleetFlav
 
     assert parked.sandbox_id in fleet.sandbox_ids
     assert flavor.classes.connected == []
+
+
+def test_a_vm_whose_health_fails_while_listing_is_left_out_as_terminating(
+    flavor: FleetFlavor, caplog: pytest.LogCaptureFixture
+) -> None:
+    alive = flavor.classes.add()
+    dying = flavor.classes.add()
+    parked = flavor.classes.add(state="SUSPENDED")
+    flavor.classes.probe_errors[dying.sandbox_id] = SandboxException("Health no respondió")
+    fleet = flavor.call(
+        (AsyncAgentFleet if flavor.asynchronous else AgentFleet).connect(
+            "support-bot", access_token=TOKEN, directory=flavor.classes_directory()
+        )
+    )
+
+    assert fleet.sandbox_ids == (alive.sandbox_id, parked.sandbox_id)
+    status = flavor.call(fleet.status())
+    assert all(member.sandbox_id != dying.sandbox_id for member in status.members)
+    assert dying.sandbox_id in caplog.text
+    assert "Health no respondió" not in caplog.text
+    flavor.call(fleet.refresh_members())
+    assert fleet.sandbox_ids == (alive.sandbox_id, parked.sandbox_id)
+
+
+@pytest.mark.parametrize("error", [RateLimitException("limitado"), TimeoutException("plazo")])
+def test_a_control_plane_error_while_probing_still_fails_the_listing(
+    flavor: FleetFlavor, error: SandboxException
+) -> None:
+    sick = flavor.classes.add()
+    flavor.classes.probe_errors[sick.sandbox_id] = error
+
+    with pytest.raises(type(error)):
+        flavor.call(
+            (AsyncAgentFleet if flavor.asynchronous else AgentFleet).connect(
+                "support-bot", access_token=TOKEN, directory=flavor.classes_directory()
+            )
+        )
+
+
+def test_stop_never_terminates_a_vm_it_could_not_prove_is_a_member(
+    flavor: FleetFlavor, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Una imagen compartida con un sandbox ajeno cuya sonda falla (no prueba
+    que la imagen sea compartida) y otro ajeno suspendido (no se puede
+    sondear sin reanudarlo): `stop()` no termina ninguno de los dos y avisa
+    con el id del que dejó."""
+    mine = flavor.classes.add()
+    dying = flavor.classes.add(foreign=True)
+    parked = flavor.classes.add(state="SUSPENDED", foreign=True)
+    flavor.classes.probe_errors[dying.sandbox_id] = SandboxException("Health no respondió")
+    fleet = flavor.call(
+        (AsyncAgentFleet if flavor.asynchronous else AgentFleet).connect(
+            "support-bot", access_token=TOKEN, directory=flavor.classes_directory()
+        )
+    )
+
+    stopped = flavor.call(fleet.stop())
+
+    assert stopped == 1
+    assert mine.state == "TERMINATED"
+    assert parked.kills == 0 and parked.state == "SUSPENDED"
+    assert dying.kills == 0
+    assert f"no se termina el VM {parked.sandbox_id}" in caplog.text
+
+
+def test_reconcile_never_trims_a_vm_it_could_not_prove_is_a_member(flavor: FleetFlavor) -> None:
+    flavor.classes.add()
+    dying = flavor.classes.add()
+    parked = flavor.classes.add(state="SUSPENDED", foreign=True)
+    flavor.classes.probe_errors[dying.sandbox_id] = SandboxException("Health no respondió")
+    fleet = flavor.call(
+        (AsyncAgentFleet if flavor.asynchronous else AgentFleet).connect(
+            "support-bot",
+            access_token=TOKEN,
+            scaling=ScalingOptions(min_vms=1, max_vms=1),
+            directory=flavor.classes_directory(),
+        )
+    )
+
+    flavor.call(fleet.reconcile())
+
+    assert parked.kills == 0
+
+
+def test_a_control_plane_error_stops_the_remaining_probes(flavor: FleetFlavor) -> None:
+    vms = [flavor.classes.add() for _ in range(AGENT_FLEET_PROBE_CONCURRENCY * 3)]
+    flavor.classes.probe_errors[vms[0].sandbox_id] = RateLimitException("limitado")
+    for vm in vms[1:]:
+        flavor.classes.probe_delays[vm.sandbox_id] = 0.05
+
+    with pytest.raises(RateLimitException):
+        flavor.call(
+            (AsyncAgentFleet if flavor.asynchronous else AgentFleet).connect(
+                "support-bot", access_token=TOKEN, directory=flavor.classes_directory()
+            )
+        )
+
+    assert len(flavor.classes.probed) <= 2 * AGENT_FLEET_PROBE_CONCURRENCY
+
+
+def test_members_are_probed_concurrently_and_reported_in_listing_order(
+    flavor: FleetFlavor, caplog: pytest.LogCaptureFixture
+) -> None:
+    vms = [flavor.classes.add() for _ in range(AGENT_FLEET_PROBE_CONCURRENCY + 2)]
+    for position, vm in enumerate(vms):
+        flavor.classes.probe_delays[vm.sandbox_id] = 0.05 * (len(vms) - position)
+        flavor.classes.probe_errors[vm.sandbox_id] = SandboxException("Health no respondió")
+    flavor.classes.probe_errors.pop(vms[0].sandbox_id)
+
+    fleet = flavor.call(
+        (AsyncAgentFleet if flavor.asynchronous else AgentFleet).connect(
+            "support-bot", access_token=TOKEN, directory=flavor.classes_directory()
+        )
+    )
+
+    assert fleet.sandbox_ids == (vms[0].sandbox_id,)
+    assert flavor.classes.most_probing == AGENT_FLEET_PROBE_CONCURRENCY
+    warned = [
+        record.args[0]
+        for record in caplog.records
+        if isinstance(record.args, tuple) and record.args
+    ]
+    assert warned == [vm.sandbox_id for vm in vms[1:]]
+
+
+def test_a_vm_that_left_running_before_its_probe_is_not_a_member(flavor: FleetFlavor) -> None:
+    alive = flavor.classes.add()
+    leaving = flavor.classes.add()
+    flavor.classes.probe_states[leaving.sandbox_id] = "TERMINATING"
+    fleet = flavor.call(
+        (AsyncAgentFleet if flavor.asynchronous else AgentFleet).connect(
+            "support-bot", access_token=TOKEN, directory=flavor.classes_directory()
+        )
+    )
+
+    assert fleet.sandbox_ids == (alive.sandbox_id,)
+
+
+def test_listing_never_probes_a_vm_that_is_not_running(flavor: FleetFlavor) -> None:
+    running = flavor.classes.add()
+    flavor.classes.add(state="SUSPENDED")
+    flavor.call(
+        (AsyncAgentFleet if flavor.asynchronous else AgentFleet).connect(
+            "support-bot", access_token=TOKEN, directory=flavor.classes_directory()
+        )
+    )
+
+    assert flavor.classes.probed == [running.sandbox_id]
 
 
 # --------------------------------------------------------------------- stream

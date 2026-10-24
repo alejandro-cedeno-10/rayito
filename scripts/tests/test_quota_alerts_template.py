@@ -35,7 +35,7 @@ def resources() -> dict[str, Any]:
     return dict(load_template(NAME)["Resources"])
 
 
-def test_it_creates_nothing_the_test_account_scp_denies() -> None:
+def test_it_creates_no_cloudfront_distribution_or_bucket() -> None:
     assert not {r["Type"] for r in resources().values()} & FORBIDDEN_TYPES
     code = resources()["CheckFunction"]["Properties"]["Code"]
     assert "S3Key" in code and "ZipFile" not in code

@@ -35,6 +35,20 @@ propio como SNI y como `Host` (lo mismo que `curl --connect-to`), validando
 el certificado contra ese hostname. Un usuario real, en cambio, apunta un
 `CNAME`/alias de su DNS al `DistributionDomainName`.
 
+**Determinista frente a la propagación.** El KeyValueStore llega a cada
+servidor del edge por separado y cada petición del test abre una conexión
+nueva, que puede caer en otro servidor: un 403 visto una vez no dice que
+todos tengan ya la ruta. Por eso la visibilidad exige
+`STABLE_OBSERVATIONS` respuestas seguidas, cada respuesta esperada (200,
+403, 404) se sondea con su plazo en vez de pedirse una sola vez, el servidor
+del sandbox se espera hasta que escucha (no un tiempo fijo) y el eco de
+WebSocket acepta varias conexiones, así que un apretón de manos que cae en un
+servidor aún sin la ruta se reintenta.
+
+**Requisito: `cloudfront:CreateDistribution`.** Ante cualquier error de
+permisos al crear el recurso `Distribution` (`DescribeStackEvents`), el
+módulo se salta nombrando ese requisito en vez de fallar.
+
 **Limpieza.** El teardown desregistra cada ruta (idempotente), borra la pila
 (distribución, Function y KeyValueStore; las rutas viven en el KVS y se van
 con él) aunque el `deploy()` haya fallado a medias, y comprueba que
@@ -55,10 +69,12 @@ import secrets
 import socket
 import ssl
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 
+import boto3
 import pytest
+from botocore.exceptions import ClientError
 
 from rayito import CustomDomain, IdlePolicy
 from rayito._aws import LambdaMicrovmsControlPlane
@@ -66,7 +82,7 @@ from rayito._custom_domain._service import (
     DISTRIBUTION_DOMAIN_NAME_OUTPUT_KEY,
     CustomDomainRoute,
 )
-from rayito.exceptions import CustomDomainException, SandboxNotFoundException
+from rayito.exceptions import CustomDomainException, SandboxNotFoundException, StackException
 from rayito.sandbox_sync.main import Sandbox
 
 from .conftest import BootTimings, E2ESettings, create_test_sandbox
@@ -104,8 +120,9 @@ ROUTE_PORT = 8000
 #: Suficiente para que el test entero corra sin que la ruta caduque sola
 #: (T25); muy por debajo de `MAX_TEST_SANDBOX_TIMEOUT_SECONDS`.
 ROUTE_TTL_SECONDS = 1800
-#: TTL corto del test de caducidad: lo justo para verla servir antes.
-SHORT_ROUTE_TTL_SECONDS = 30
+#: TTL corto del test de caducidad: deja ver la ruta (`STABLE_OBSERVATIONS`
+#: respuestas seguidas más la propagación) y servir antes de que venza.
+SHORT_ROUTE_TTL_SECONDS = 90
 HTTPS_PORT = 443
 HTTP_REQUEST_TIMEOUT_SECONDS = 20.0
 WEBSOCKET_HANDSHAKE_TIMEOUT_SECONDS = 20.0
@@ -120,11 +137,41 @@ AUTO_RESUME_TIMEOUT_SECONDS = 120.0
 RESUME_IDLE = IdlePolicy(max_idle_seconds=300, auto_resume=True)
 #: GUID fijo de RFC 6455 §1.3, para calcular `Sec-WebSocket-Accept`.
 WEBSOCKET_ACCEPT_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
-HTTP_SERVER_BOOT_GRACE_SECONDS = 2.0
+#: Cuánto esperar a que el servidor del sandbox escuche en `ROUTE_PORT`, y
+#: cada cuánto mirarlo (dentro del sandbox, con `/dev/tcp` de bash).
+SERVER_LISTEN_TIMEOUT_SECONDS = 30
+SERVER_LISTEN_POLL_SECONDS = 0.2
+#: Respuestas seguidas que cuentan como "la ruta ya está en el edge".
+STABLE_OBSERVATIONS = 5
 TRAFFIC_TOKEN_HEADER = "e2b-traffic-access-token"
 HTTP_OK = 200
 HTTP_FORBIDDEN = 403
 HTTP_NOT_FOUND = 404
+
+
+#: El recurso de `infra/custom-domain.yaml` que crea la distribución, y lo
+#: que deja CloudFormation en `ResourceStatusReason` cuando la pila no puede
+#: llamar a `cloudfront:CreateDistribution`.
+DISTRIBUTION_LOGICAL_ID = "Distribution"
+CREATE_FAILED = "CREATE_FAILED"
+ACCESS_DENIED_MARKERS = ("AccessDenied", "not authorized")
+DISTRIBUTION_DENIED_REASON = "distribution permission error (needs cloudfront:CreateDistribution)"
+
+
+def distribution_denied(region: str | None, stack_name: str) -> bool:
+    """Si la pila falló por un error de permisos al crear la distribución
+    (`DescribeStackEvents`, `AWS_API_NOTES.md` §21)."""
+    cloudformation = boto3.session.Session(region_name=region).client("cloudformation")
+    try:
+        events = cloudformation.describe_stack_events(StackName=stack_name)["StackEvents"]
+    except ClientError:
+        return False
+    return any(
+        event.get("LogicalResourceId") == DISTRIBUTION_LOGICAL_ID
+        and event.get("ResourceStatus") == CREATE_FAILED
+        and any(marker in event.get("ResourceStatusReason", "") for marker in ACCESS_DENIED_MARKERS)
+        for event in events
+    )
 
 
 def report(label: str, value: object) -> None:
@@ -184,19 +231,29 @@ def _https_status(target: DomainUnderTest, host: str, headers: dict[str, str]) -
 
 
 def _wait_for_status(
-    target: DomainUnderTest, host: str, headers: dict[str, str], expected: int, timeout: float
+    target: DomainUnderTest,
+    host: str,
+    headers: dict[str, str],
+    expected: int,
+    timeout: float,
+    *,
+    consecutive: int = 1,
 ) -> float:
-    """Sondea hasta que `host` responde `expected`; devuelve los segundos
-    que tardó. Un 5xx o un error de red mientras tanto (el origen aún
-    despertando, DOM-8) cuenta como "todavía no"."""
+    """Sondea hasta que `host` responde `expected` `consecutive` veces
+    seguidas; devuelve los segundos que tardó. Un 5xx, otro estado o un
+    error de red mientras tanto (el origen aún despertando, DOM-8, o un
+    servidor del edge al que aún no llegó el KVS) cuenta como "todavía no" y
+    reinicia la cuenta."""
     started = time.monotonic()
     last: object = None
+    seen = 0
     while time.monotonic() - started < timeout:
         try:
             last = _https_status(target, host, headers)
         except OSError as exc:
             last = repr(exc)
-        if last == expected:
+        seen = seen + 1 if last == expected else 0
+        if seen >= consecutive:
             return time.monotonic() - started
         time.sleep(PROPAGATION_POLL_SECONDS)
     raise AssertionError(f"{host} no respondió {expected} en {timeout:.0f} s (último: {last!r})")
@@ -205,9 +262,21 @@ def _wait_for_status(
 def _wait_until_route_visible(target: DomainUnderTest, host: str) -> float:
     """DOM-5 (escritura): una ruta con `traffic_token` que ya llegó al edge
     responde 403 a una petición sin el token, sin contactar el origen (antes
-    de llegar, 404); así se mide sin consumir la única conexión que acepta
-    el eco de WebSocket."""
-    return _wait_for_status(target, host, {}, HTTP_FORBIDDEN, PROPAGATION_TIMEOUT_SECONDS)
+    de llegar, 404); así se mide sin consumir el origen. Hacen falta
+    `STABLE_OBSERVATIONS` 403 seguidos: cada conexión puede caer en otro
+    servidor del edge."""
+    return _wait_for_status(
+        target,
+        host,
+        {},
+        HTTP_FORBIDDEN,
+        PROPAGATION_TIMEOUT_SECONDS,
+        consecutive=STABLE_OBSERVATIONS,
+    )
+
+
+def _wait_for_ok(target: DomainUnderTest, host: str, headers: dict[str, str]) -> float:
+    return _wait_for_status(target, host, headers, HTTP_OK, PROPAGATION_TIMEOUT_SECONDS)
 
 
 @pytest.fixture(scope="module")
@@ -220,20 +289,26 @@ def custom_domain(e2e_settings: E2ESettings) -> Iterator[DomainUnderTest]:
     public_domain, certificate_arn = os.environ[DOMAIN_VAR], os.environ[CERT_ARN_VAR]
     run_id = secrets.token_hex(RUN_ID_BYTES)
     run_tag = os.environ.get(ACCEPTANCE_RUN_TAG_VAR) or run_id
+    stack_name = f"{STACK_NAME_PREFIX}{run_id}"
     domain = CustomDomain(
         public_domain=public_domain,
-        stack_name=f"{STACK_NAME_PREFIX}{run_id}",
+        stack_name=stack_name,
         region=e2e_settings.region,
     )
     aliases = {purpose: f"{ROUTE_ALIAS_PREFIX}-{run_id}-{purpose}" for purpose in ROUTE_PURPOSES}
     try:
         started = time.monotonic()
         hosts = [domain.host_for(alias, ROUTE_PORT) for alias in aliases.values()]
-        status = domain.deploy(
-            certificate_arn=certificate_arn,
-            alternate_domain_names=hosts,
-            tags={ACCEPTANCE_RUN_TAG_KEY: run_tag},
-        )
+        try:
+            status = domain.deploy(
+                certificate_arn=certificate_arn,
+                alternate_domain_names=hosts,
+                tags={ACCEPTANCE_RUN_TAG_KEY: run_tag},
+            )
+        except StackException:
+            if distribution_denied(e2e_settings.region, stack_name):
+                pytest.skip(DISTRIBUTION_DENIED_REASON)
+            raise
         report("deploy() (s)", f"{time.monotonic() - started:.0f}")
         yield DomainUnderTest(
             domain=domain,
@@ -272,9 +347,22 @@ def _jwe(sandbox: Sandbox) -> str:
     return sandbox.get_host(ROUTE_PORT).headers["x-aws-proxy-auth"]
 
 
+def _wait_until_listening(sandbox: Sandbox) -> None:
+    """Espera, dentro del sandbox, a que algo escuche en `ROUTE_PORT`
+    (`/dev/tcp` de bash, el shell de `commands.run`): un servidor que tarda
+    en arrancar no se confunde con una ruta rota."""
+    attempts = int(SERVER_LISTEN_TIMEOUT_SECONDS / SERVER_LISTEN_POLL_SECONDS)
+    sandbox.commands.run(
+        f"for _ in $(seq {attempts}); do "
+        f"(exec 3<>/dev/tcp/127.0.0.1/{ROUTE_PORT}) 2>/dev/null && exit 0; "
+        f"sleep {SERVER_LISTEN_POLL_SECONDS}; done; exit 1",
+        timeout=SERVER_LISTEN_TIMEOUT_SECONDS * 2,
+    )
+
+
 def _start_http_server(sandbox: Sandbox) -> None:
     sandbox.commands.run(f"python3 -m http.server {ROUTE_PORT}", background=True)
-    time.sleep(HTTP_SERVER_BOOT_GRACE_SECONDS)
+    _wait_until_listening(sandbox)
 
 
 def test_custom_domain_routes_a_registered_sandbox(
@@ -286,16 +374,16 @@ def test_custom_domain_routes_a_registered_sandbox(
     report("DOM-5 register() -> visible en el edge (s)", f"{visible:.1f}")
 
     # DOM-2: HTTP/1.1 real a través de `cf.updateRequestOrigin`, con el token.
-    assert _https_status(custom_domain, route.host, authorized) == HTTP_OK
+    _wait_for_ok(custom_domain, route.host, authorized)
     # SEC-T25: sin el token, 403 — nunca una ruta pública por omisión.
-    assert _https_status(custom_domain, route.host, {}) == HTTP_FORBIDDEN
+    _wait_for_status(custom_domain, route.host, {}, HTTP_FORBIDDEN, PROPAGATION_TIMEOUT_SECONDS)
 
     # DOM-7 (parcial): `refresh()` reescribe `j:`/`m:` sin cortar la ruta.
     refreshed = custom_domain.domain.refresh(
         route, jwe=_jwe(sandbox), ttl_seconds=ROUTE_TTL_SECONDS
     )
     assert refreshed.host == route.host
-    assert _https_status(custom_domain, route.host, authorized) == HTTP_OK
+    _wait_for_ok(custom_domain, route.host, authorized)
 
     custom_domain.domain.unregister(route.alias, ROUTE_PORT)
     # Tras `unregister()`, 404 — indistinguible de una ruta que nunca existió.
@@ -313,7 +401,7 @@ def test_a_route_past_its_ttl_answers_404(custom_domain: DomainUnderTest, sandbo
         custom_domain, "ttl", sandbox, ttl_seconds=SHORT_ROUTE_TTL_SECONDS
     )
     _wait_until_route_visible(custom_domain, route.host)
-    assert _https_status(custom_domain, route.host, authorized) == HTTP_OK
+    _wait_for_status(custom_domain, route.host, authorized, HTTP_OK, SHORT_ROUTE_TTL_SECONDS)
     expired = _wait_for_status(
         custom_domain,
         route.host,
@@ -324,6 +412,22 @@ def test_a_route_past_its_ttl_answers_404(custom_domain: DomainUnderTest, sandbo
     report("TTL vencido -> 404 (s desde visible)", f"{expired:.1f}")
 
 
+def _recv_until(tls_socket: ssl.SSLSocket, done: Callable[[bytes], bool]) -> bytes:
+    """Lee del socket hasta que `done(lo_leído)` o hasta que el otro extremo
+    cierre: un `recv` puede traer sólo parte de las cabeceras o de la trama."""
+    data = b""
+    while not done(data):
+        chunk = tls_socket.recv(4096)
+        if not chunk:
+            break
+        data += chunk
+    return data
+
+
+def _frame_complete(data: bytes) -> bool:
+    return len(data) >= 2 and len(data) >= 2 + (data[1] & 0x7F)
+
+
 def _websocket_handshake_and_echo(
     target: DomainUnderTest, host: str, headers: dict[str, str], message: bytes
 ) -> bytes:
@@ -331,7 +435,9 @@ def _websocket_handshake_and_echo(
     ida y vuelta, sin más dependencia que la librería estándar: suficiente
     para DOM-3 (¿corre la Function en el upgrade? ¿el proxy de AWS acepta
     la cabecera de token en la petición de upgrade?), no un cliente de
-    WebSocket de propósito general."""
+    WebSocket de propósito general. Un upgrade rechazado es
+    `WebSocketRejected` (se puede reintentar: el servidor del edge quizá aún
+    no tenía la ruta)."""
     tls_socket = _tls_connect(host, target.connect_host, WEBSOCKET_HANDSHAKE_TIMEOUT_SECONDS)
     try:
         websocket_key = base64.b64encode(secrets.token_bytes(16)).decode("ascii")
@@ -346,70 +452,111 @@ def _websocket_handshake_and_echo(
             f"{extra_headers}\r\n"
         )
         tls_socket.sendall(request.encode("ascii"))
-        response = tls_socket.recv(4096)
-        status_line = response.split(b"\r\n", 1)[0].decode("ascii", "replace")
+        response = _recv_until(tls_socket, lambda data: b"\r\n\r\n" in data)
+        head, _, rest = response.partition(b"\r\n\r\n")
+        status_line = head.split(b"\r\n", 1)[0].decode("ascii", "replace")
         if " 101 " not in status_line:
-            raise AssertionError(f"el upgrade de WebSocket no se aceptó: {status_line!r}")
+            raise WebSocketRejected(status_line)
         expected_accept = base64.b64encode(
             hashlib.sha1((websocket_key + WEBSOCKET_ACCEPT_GUID).encode("ascii")).digest()
         ).decode("ascii")
-        if f"Sec-WebSocket-Accept: {expected_accept}".lower() not in response.lower().decode(
+        if f"Sec-WebSocket-Accept: {expected_accept}".lower() not in head.lower().decode(
             "ascii", "replace"
         ):
             raise AssertionError("Sec-WebSocket-Accept no coincide con la clave enviada")
-        # Un único frame de texto cliente->servidor (enmascarado, como exige
-        # RFC 6455 §5.1 para toda trama que sale de un cliente) de menos de
-        # 126 bytes, así que la longitud cabe en el segundo byte sin
-        # extensión.
-        mask = secrets.token_bytes(4)
-        masked_payload = bytes(byte ^ mask[index % 4] for index, byte in enumerate(message))
-        frame = bytes([0x81, 0x80 | len(message)]) + mask + masked_payload
-        tls_socket.sendall(frame)
-        reply = tls_socket.recv(4096)
+        tls_socket.sendall(_masked_text_frame(message))
+        reply = rest + _recv_until(tls_socket, lambda data: _frame_complete(rest + data))
         payload_length = reply[1] & 0x7F
         return reply[2 : 2 + payload_length]
     finally:
         tls_socket.close()
 
 
+class WebSocketRejected(AssertionError):
+    """El upgrade no devolvió 101: la línea de estado que llegó."""
+
+
+def _masked_text_frame(message: bytes) -> bytes:
+    """Un único frame de texto cliente->servidor, enmascarado como exige RFC
+    6455 §5.1 para toda trama que sale de un cliente, de menos de 126 bytes:
+    la longitud cabe en el segundo byte sin extensión."""
+    mask = secrets.token_bytes(4)
+    masked_payload = bytes(byte ^ mask[index % 4] for index, byte in enumerate(message))
+    return bytes([0x81, 0x80 | len(message)]) + mask + masked_payload
+
+
+def _echo_with_retries(
+    target: DomainUnderTest, host: str, headers: dict[str, str], message: bytes
+) -> bytes:
+    """`_websocket_handshake_and_echo` hasta que un servidor del edge con la
+    ruta acepta el upgrade, dentro de `PROPAGATION_TIMEOUT_SECONDS`."""
+    deadline = time.monotonic() + PROPAGATION_TIMEOUT_SECONDS
+    while True:
+        try:
+            return _websocket_handshake_and_echo(target, host, headers, message)
+        except (WebSocketRejected, OSError):
+            if time.monotonic() >= deadline:
+                raise
+        time.sleep(PROPAGATION_POLL_SECONDS)
+
+
 @pytest.fixture
 def websocket_echo_sandbox(sandbox: Sandbox) -> Iterator[Sandbox]:
     """Un sandbox con un eco de WebSocket mínimo (sólo `socket`, sin
     instalar nada) escuchando en `ROUTE_PORT`: lo justo para comprobar
-    DOM-3 de punta a punta, no un servidor de WebSocket real. Acepta UNA
-    conexión: por eso la propagación se mide sin tocar el origen
-    (`_wait_until_route_visible`)."""
+    DOM-3 de punta a punta, no un servidor de WebSocket real. Atiende una
+    conexión tras otra (un apretón de manos que llegó por un servidor del
+    edge sin la ruta se reintenta) y lee cabeceras y trama hasta tenerlas
+    enteras."""
     echo_server_script = f"""
 import hashlib, base64, socket
 GUID = "{WEBSOCKET_ACCEPT_GUID}"
+def read_until(conn, done):
+    data = b""
+    while not done(data):
+        chunk = conn.recv(4096)
+        if not chunk:
+            break
+        data += chunk
+    return data
+def frame_done(data):
+    return len(data) >= 6 and len(data) >= 6 + (data[1] & 0x7F)
+def serve(conn):
+    data = read_until(conn, lambda d: b"\\r\\n\\r\\n" in d)
+    head, _, rest = data.partition(b"\\r\\n\\r\\n")
+    key = None
+    for line in head.decode("latin1").split("\\r\\n"):
+        if line.lower().startswith("sec-websocket-key:"):
+            key = line.split(":", 1)[1].strip()
+    if key is None:
+        return
+    accept = base64.b64encode(hashlib.sha1((key + GUID).encode()).digest()).decode()
+    conn.sendall((
+        "HTTP/1.1 101 Switching Protocols\\r\\n"
+        "Upgrade: websocket\\r\\n"
+        "Connection: Upgrade\\r\\n"
+        f"Sec-WebSocket-Accept: {{accept}}\\r\\n\\r\\n"
+    ).encode())
+    frame = rest + read_until(conn, lambda d: frame_done(rest + d))
+    length = frame[1] & 0x7F
+    mask = frame[2:6]
+    payload = bytes(b ^ mask[i % 4] for i, b in enumerate(frame[6:6 + length]))
+    conn.sendall(bytes([0x81, len(payload)]) + payload)
 srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 srv.bind(("0.0.0.0", {ROUTE_PORT}))
-srv.listen(1)
-conn, _ = srv.accept()
-data = b""
-while b"\\r\\n\\r\\n" not in data:
-    data += conn.recv(4096)
-key = None
-for line in data.decode("latin1").split("\\r\\n"):
-    if line.lower().startswith("sec-websocket-key:"):
-        key = line.split(":", 1)[1].strip()
-accept = base64.b64encode(hashlib.sha1((key + GUID).encode()).digest()).decode()
-conn.sendall((
-    "HTTP/1.1 101 Switching Protocols\\r\\n"
-    "Upgrade: websocket\\r\\n"
-    "Connection: Upgrade\\r\\n"
-    f"Sec-WebSocket-Accept: {{accept}}\\r\\n\\r\\n"
-).encode())
-frame = conn.recv(4096)
-length = frame[1] & 0x7F
-mask = frame[2:6]
-payload = bytes(b ^ mask[i % 4] for i, b in enumerate(frame[6:6 + length]))
-conn.sendall(bytes([0x81, len(payload)]) + payload)
-conn.close()
+srv.listen(8)
+while True:
+    conn, _ = srv.accept()
+    try:
+        serve(conn)
+    except OSError:
+        pass
+    finally:
+        conn.close()
 """
     sandbox.commands.run(f"python3 -c {echo_server_script!r}", background=True)
-    time.sleep(HTTP_SERVER_BOOT_GRACE_SECONDS)
+    _wait_until_listening(sandbox)
     yield sandbox
 
 
@@ -420,7 +567,7 @@ def test_custom_domain_passes_a_websocket_upgrade(
     _wait_until_route_visible(custom_domain, route.host)
     # DOM-3: ¿corre la Function en la petición de upgrade, y acepta el proxy
     # de AWS la cabecera de token ahí también?
-    echoed = _websocket_handshake_and_echo(custom_domain, route.host, authorized, b"ping")
+    echoed = _echo_with_retries(custom_domain, route.host, authorized, b"ping")
     assert echoed == b"ping"
 
 
@@ -450,7 +597,7 @@ def test_traffic_through_the_domain_resumes_a_paused_sandbox(
     _start_http_server(auto_resume_sandbox)
     route, authorized = _register(custom_domain, "resume", auto_resume_sandbox)
     _wait_until_route_visible(custom_domain, route.host)
-    assert _https_status(custom_domain, route.host, authorized) == HTTP_OK
+    _wait_for_ok(custom_domain, route.host, authorized)
     assert auto_resume_sandbox.pause()
     resumed = _wait_for_status(
         custom_domain, route.host, authorized, HTTP_OK, AUTO_RESUME_TIMEOUT_SECONDS

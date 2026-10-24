@@ -213,9 +213,8 @@ Se resuelven midiendo, no diseñando. Ver `MILESTONES.md` M0 y
   activa sin cuota de plan. Con `rayito-base` 10.0 (snapshot de memoria de
   0,919 GB) un lanzamiento lee ≈ $0.0014 de snapshot y un ciclo suspend/resume
   cuesta ≈ **$0.0049** (escritura + lectura de 0,919 GB, no de 2 GB) ≈ 140 s de
-  compute ⇒ `max_idle_seconds` por debajo de ≈ 2,5 min no ahorra. El
-  benchmark de M6 (142 lanzamientos, 24 ciclos) costó ≈ $0.35 de uso
-  (`docs/benchmarks/2026-09-cold-start.md` §7–§8); la lectura de snapshot es
+  compute ⇒ `max_idle_seconds` por debajo de ≈ 2,5 min no ahorra. El coste
+  por lanzamiento está en `AWS_API_NOTES.md` §12; la lectura de snapshot es
   el 80 % del coste de una VM corta. Pendiente: la línea de Cost Explorer del
   día del bench (GB reales por lanzamiento y por suspend, Q8, Q22).
 - **Cold start.** Medido el 2026-09-16 con `rayito-base` 10.0 (0,919 GB de
