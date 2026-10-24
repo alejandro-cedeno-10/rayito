@@ -608,19 +608,26 @@ def preflight(
     region: str | None,
     session: Any,
 ) -> Preflight:
-    """Lo que se resuelve antes de crear nada: la imagen base, el secreto del
-    modelo, el bucket y el token. Todo lo que lee AWS ocurre aquí, y lo único
+    """Lo que se resuelve antes de crear nada: el bucket, la imagen base, el
+    secreto del modelo y el token. Todo lo que lee AWS ocurre aquí, y lo único
     que puede crear es un secreto (con `create_secret_from_env`) o la imagen
-    base (con `base_publisher`)."""
+    base (con `base_publisher`). La imagen base sólo se exige si el despliegue
+    va a construir (hay bucket): reutilizar la imagen del proyecto
+    (`build_image=False`, o sin bucket y con la imagen ya creada) no la lee."""
     if options.renew_gateway_keys:
         renewable_gateways(project)
     environ = os.environ if ports.environ is None else ports.environ
     effective_region = resolved_region(region, project, session, environ)
     aws = ports.aws or AwsResolver(region=effective_region, session=session)
     steps: list[AgentDeployStep] = []
-    building = options.build_image is not False
-    if building and ensure_base_image(
-        aws, project.base, options.base_publisher, ensure=options.ensure_base_image
+    bucket_steps: list[AgentDeployStep] = []
+    bucket = _bucket_for(project, options, aws, environ, bucket_steps)
+    if bucket is not None and ensure_base_image(
+        aws,
+        project.base,
+        options.base_publisher,
+        ensure=options.ensure_base_image,
+        template=template_name(project),
     ):
         steps.append(AgentDeployStep(STEP_BASE_IMAGE, "published"))
     store = ports.store or SecretStore(
@@ -635,7 +642,7 @@ def preflight(
     )
     steps.extend(AgentDeployStep(STEP_SECRET_CREATED, gateway) for gateway in secrets.created)
     resolved = with_default_excludes(dataclasses.replace(project, gateways=secrets.gateways))
-    bucket = _bucket_for(resolved, options, aws, environ, steps)
+    steps.extend(bucket_steps)
     token = resolve_token(options.access_token, environ)
     return Preflight(resolved, bucket, token, effective_region, tuple(steps))
 
