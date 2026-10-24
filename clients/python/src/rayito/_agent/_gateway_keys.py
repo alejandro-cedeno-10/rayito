@@ -248,15 +248,23 @@ class GatewayKeyRenewer:
         names = [gateway.name for gateway in self._gateways]
         return f"GatewayKeyRenewer(gateways={names!r})"
 
-    def renew(self) -> bool:
+    def renew(self, *, force: bool = False) -> bool:
         """Renueva las pasarelas que lo necesitan; `True` si escribió alguna
-        clave (quien llama refresca las pasarelas de los VMs abiertos)."""
+        clave (quien llama refresca las pasarelas de los VMs abiertos). Con
+        `force` (el despliegue que pidió la renovación) escribe una clave
+        nueva en cada pasarela sin mirar cuándo cambió el secreto: un
+        secreto recién creado con un valor marcador también la recibe. Sin
+        `force` (las renovaciones de cada VM nuevo) se respeta la ventana de
+        `gatewayKeyRenewAfterSeconds`."""
         renewed = False
         for gateway in self._gateways:
-            renewed = self._renew_one(gateway) or renewed
+            renewed = self._renew_one(gateway, force=force) or renewed
         return renewed
 
-    def _renew_one(self, gateway: RenewableGateway) -> bool:
+    def _renew_one(self, gateway: RenewableGateway, *, force: bool) -> bool:
+        if force:
+            self._write(gateway)
+            return True
         last = self._renewed_at.get(gateway.name)
         if not should_describe(None if last is None else self._clock() - last):
             return False
@@ -267,6 +275,10 @@ class GatewayKeyRenewer:
         ):
             self._renewed_at[gateway.name] = self._clock()
             return False
+        self._write(gateway)
+        return True
+
+    def _write(self, gateway: RenewableGateway) -> None:
         token = self._token_provider(gateway.region)
         self._call(
             gateway,
@@ -276,7 +288,6 @@ class GatewayKeyRenewer:
             ClientRequestToken=str(uuid.uuid4()),
         )
         self._renewed_at[gateway.name] = self._clock()
-        return True
 
     def _call(self, gateway: RenewableGateway, operation: str, **params: Any) -> Mapping[str, Any]:
         try:

@@ -8,14 +8,12 @@ openspec `fleet-recipe`) contra AWS real, para Q191, Q194 y Q193 de
   sesiones nuevas, sin id propio porque el host sólo acepta los suyos (la
   segunda cae en la plaza aparcada y necesita la pasarela del modelo),
   `status()` da el escalado de la receta y `stop()` borra la receta.
-- **Q193** (sólo con `RAYITO_E2E_RENEWAL=1`): un secreto propio de la prueba
-  que empieza con un valor marcador. La renovación sólo escribe sobre un
-  secreto que cambió hace al menos `gatewayKeyRenewAfterSeconds`, y el de la
-  prueba se acaba de crear: el renovador de producción corre una vez con un
-  reloj adelantado esa ventana (su `now` inyectable), escribe la clave de
-  corta duración y lo comprueba; después, un despliegue con
-  `renew_gateway_keys=True` ve el secreto recién cambiado, no lo reescribe, y
-  la invocación funciona a través de la pasarela con esa clave.
+- **Q193** (sólo con `RAYITO_E2E_RENEWAL=1`): un despliegue con
+  `renew_gateway_keys=True` sobre un secreto propio de la prueba, recién
+  creado con un valor marcador: el despliegue escribe siempre una clave de
+  corta duración (aunque el secreto sea más nuevo que
+  `gatewayKeyRenewAfterSeconds`), el secreto deja de tener el marcador y la
+  invocación funciona a través de la pasarela.
 
 Variables de entorno, además de las de `agent_zero_config_support.py`
 (`RAYITO_E2E=1`, `RAYITO_E2E_RUN_ID`, `RAYITO_E2E_ZC_BUCKET`,
@@ -33,22 +31,14 @@ import subprocess
 import sys
 import textwrap
 import uuid
-from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, Final
+from typing import Final
 
 import boto3
 import pytest
 from botocore.exceptions import ClientError
 
 from rayito import AgentDeployOptions, AgentFleet, ScalingOptions, deploy_agent
-from rayito._agent._gateway_keys import (
-    GatewayKeyRenewer,
-    LazySecretsWriter,
-    RenewableGateway,
-    default_token_provider,
-)
-from rayito._limits import GATEWAY_KEY_RENEW_AFTER_SECONDS
 from rayito._pool_backends import JsonFilePoolBackend
 
 from .agent_project_support import new_access_token
@@ -147,27 +137,6 @@ def test_a_reconnected_fleet_uses_the_recipe_and_the_warm_slot(tmp_path: Path) -
         AgentFleet.connect(name, region=region(), use_recipe=False).stop()
 
 
-def renew_now(secret_arn: str) -> bool:
-    """Una pasada del renovador de producción sobre el secreto recién creado,
-    con su reloj adelantado `GATEWAY_KEY_RENEW_AFTER_SECONDS`: la prueba no
-    espera la ventana real y el umbral del producto no cambia."""
-    session = boto3.session.Session(region_name=region())
-    renewer = GatewayKeyRenewer(
-        (RenewableGateway(GATEWAY_NAME, secret_arn, region()),),
-        token_provider=default_token_provider(session, region()),
-        secrets=LazySecretsWriter(region=region(), session=session),
-        now=lambda: datetime.now(UTC) + timedelta(seconds=GATEWAY_KEY_RENEW_AFTER_SECONDS),
-    )
-    return renewer.renew()
-
-
-def current_version(secrets: Any, secret_name: str) -> str:
-    """El `VersionId` que lleva `AWSCURRENT` en `DescribeSecret`
-    (`VersionIdsToStages`): una escritura nueva lo cambia."""
-    stages = secrets.describe_secret(SecretId=secret_name)["VersionIdsToStages"]
-    return str(next(version for version, labels in stages.items() if "AWSCURRENT" in labels))
-
-
 def test_the_renewed_short_term_key_reaches_the_gateway(tmp_path: Path) -> None:
     require_recipe()
     if os.environ.get(RENEWAL_FLAG_VAR) != "1":
@@ -179,10 +148,6 @@ def test_the_renewed_short_term_key_reaches_the_gateway(tmp_path: Path) -> None:
     path = staged_sample(MANIFEST["samples"][0], tmp_path, variant=RENEWAL_VARIANT)
     fleet = None
     try:
-        assert renew_now(secret_arn)
-        renewed = secrets.get_secret_value(SecretId=secret_name)["SecretString"]
-        assert renewed != PLACEHOLDER_KEY and renewed.startswith("Bearer ")
-        version = current_version(secrets, secret_name)
         fleet = deploy_agent(
             path,
             options=AgentDeployOptions(
@@ -194,8 +159,9 @@ def test_the_renewed_short_term_key_reaches_the_gateway(tmp_path: Path) -> None:
             ),
             region=region(),
         )
+        renewed = secrets.get_secret_value(SecretId=secret_name)["SecretString"]
+        assert renewed != PLACEHOLDER_KEY and renewed.startswith("Bearer ")
         assert fleet.invoke("Responde sólo: hola").text
-        assert current_version(secrets, secret_name) == version
     finally:
         if fleet is not None:
             fleet.stop()

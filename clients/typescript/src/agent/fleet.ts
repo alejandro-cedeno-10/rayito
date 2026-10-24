@@ -1525,14 +1525,27 @@ export class AgentFleet {
     await this.#renewing;
   }
 
+  /** La renovación del despliegue (sólo la llama `deployAgent()`, antes de
+   * `start()`): con `renewGatewayKeys`, escribe siempre una clave nueva en
+   * cada pasarela `bedrock`, aunque el secreto acabe de cambiar. */
+  async renewGatewayKeysForDeploy(): Promise<void> {
+    if (!this.#renewKeys) {
+      return;
+    }
+    await this.#renewing;
+    await this.#renewOnce(true);
+  }
+
   /** Sólo se activa con la opción explícita de quien llama (nunca desde la
    * receta), así que un error de la renovación se propaga. */
-  async #renewOnce(): Promise<void> {
+  async #renewOnce(force = false): Promise<void> {
     this.#renewer ??= await gatewayKeyRenewer(this.#requireProject(), {
       region: this.#connection.region,
       credentials: this.#credentials,
     });
-    const renewed = await this.#renewer.renew();
+    const renewed = force
+      ? await this.#renewer.renew({ force: true })
+      : await this.#renewer.renew();
     if (!renewed) {
       return;
     }

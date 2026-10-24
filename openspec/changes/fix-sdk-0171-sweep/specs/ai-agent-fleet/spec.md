@@ -21,3 +21,10 @@ When the probe of a `RUNNING` MicroVM fails while listing, the MicroVMs of that 
 #### Scenario: bounded concurrent probes
 - **WHEN** a fleet lists ten `RUNNING` VMs whose probes finish in reverse order
 - **THEN** at most eight probes run at once and the warnings follow the listing order
+
+### Requirement: The deploy that asks for key renewal always writes a fresh key
+With `renew_gateway_keys=True` / `renewGatewayKeys: true` / `--renew-gateway-keys`, `deploy_agent()` / `deployAgent()` SHALL write a fresh short-term key to the secret of every `bedrock` gateway once, before the first VM, without reading `LastChangedDate`. The renewals before each later VM, and those of `AgentFleet.connect(name, renew_gateway_keys=True)`, SHALL keep the `gatewayKeyRenewAfterSeconds` window.
+
+#### Scenario: a secret created just before the deploy
+- **WHEN** a secret changed 10 seconds ago and a deploy with renewal starts
+- **THEN** one `PutSecretValue` writes the key before any VM is created and the renewals of the VMs that follow write nothing

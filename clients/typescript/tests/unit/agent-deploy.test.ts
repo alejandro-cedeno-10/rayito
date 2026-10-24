@@ -36,7 +36,7 @@ import {
   withExcludedFile,
 } from "../../src/agent/deploy-plan.js";
 import type { DetectOverrides } from "../../src/agent/detect-report.js";
-import { AgentFleet } from "../../src/agent/fleet.js";
+import { AgentFleet, type AgentFleetOptions } from "../../src/agent/fleet.js";
 import { AgentProject } from "../../src/agent/project.js";
 import { ScalingOptions } from "../../src/agent/scaling-domain.js";
 import { AgentTemplate, appFiles } from "../../src/agent/template.js";
@@ -103,6 +103,7 @@ interface CostCase {
   imageStorageUsdPerWeek: number;
 }
 const BUCKET = "amzn-s3-demo-bucket";
+const BEDROCK_MODEL = "us.anthropic.claude-haiku-4-5-20251001-v1:0";
 const INFO = { templateId: "arn", buildId: "3.0/abc", alias: "support-bot" };
 
 class FakeAws implements DeployAws {
@@ -180,7 +181,11 @@ class Harness {
     const builds = this.builds;
   }
 
-  async deploy(options: ConstructorParameters<typeof AgentDeployOptions>[0] = {}, the = project()) {
+  async deploy(
+    options: ConstructorParameters<typeof AgentDeployOptions>[0] = {},
+    the = project(),
+    fleetExtras: Partial<AgentFleetOptions> = {},
+  ) {
     return deployWith(
       {
         aws: this.aws,
@@ -202,6 +207,7 @@ class Harness {
             this.fleet.pools.push(pool);
             return pool;
           },
+          ...fleetExtras,
         },
       },
       ".",
@@ -656,6 +662,39 @@ describe("deployAgent", () => {
     h.aws.images.clear();
     const error = await failureOf(h.deploy({ basePublisher: async () => undefined }));
     expect(error.message).toContain("sigue sin existir");
+  });
+
+  test("a deploy with renewal writes a fresh key before the first VM", async () => {
+    const h = new Harness();
+    const calls: [boolean, number][] = [];
+    h.store.existing.add("agents/support-bot/bedrock");
+    const bedrock = AgentProject.fromObject(
+      {
+        schema: "rayito.agent-project/1",
+        name: "support-bot",
+        runtime: { kind: "deepagents" },
+        model: { provider: "bedrock", id: BEDROCK_MODEL, gateway: "bedrock", region: "us-east-1" },
+        gateways: {
+          bedrock: {
+            preset: "bedrock",
+            secret: "agents/support-bot/bedrock",
+            region: "us-east-1",
+            models: [BEDROCK_MODEL],
+          },
+        },
+      },
+      { baseDir: "." },
+    );
+    await h.deploy({ renewGatewayKeys: true }, bedrock, {
+      keyRenewer: {
+        renew: async (options: { readonly force?: boolean | undefined } = {}) => {
+          calls.push([options.force === true, h.createdVms]);
+          return options.force === true;
+        },
+      },
+    });
+    expect(calls[0]).toEqual([true, 0]);
+    expect(calls.slice(1).every(([forced]) => !forced)).toBe(true);
   });
 
   test("ensureBaseImage false never publishes", async () => {

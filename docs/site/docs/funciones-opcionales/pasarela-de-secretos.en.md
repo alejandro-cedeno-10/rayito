@@ -161,6 +161,12 @@ or opening each slot, for every gateway with the `bedrock` preset:
    signing, no AWS call), writes it as `Bearer <key>` (`PutSecretValue`) and
    refreshes the gateways of the VMs this process holds open.
 
+`deploy_agent()` / `deployAgent()` (and `rayito agent deploy
+--renew-gateway-keys`) also write a fresh key once, before the first VM,
+without looking at the 900 s: a secret just created with a placeholder value
+gets the key and the first invocation does not get a 403. The window only
+limits the renewals of each new VM (since 0.17.1).
+
 The key and the secret name never appear in logs, errors or the
 [fleet recipe](../guias/flota-de-agentes.md#la-receta-de-la-flota). Without a
 `bedrock` gateway, the option is `InvalidArgumentException`
