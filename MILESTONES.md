@@ -810,7 +810,7 @@ memoria 931 258 368 B, code 1 299 968 000 B, disco 36 933 632 B) y
 byte el de 16.0, así que `publish_image.py` reutilizó la versión en vez de
 publicar una 17.0. `clients/python/tests/e2e` completo (M1–M5, `test_m6_e2b_compat`
 y `test_m6_hardening`) **14 passed, 1 skipped en 564,73 s** en una sesión
-(13 MicroVMs; el skip es `test_egress_allowlist`, sin VPC propia, Q46):
+(13 MicroVMs; el skip es `test_egress_allowlist`, sin una VPC existente, Q46):
 `kernel_ready_s` 1,95–10,60 s; forjados: `/run` -> `already_ran` 0,32 s, primer
 tick tras el `/suspend` forjado 25,96 s, par forjado + `/suspend` a +1 s ->
 `changed`/`changed`, `pause()`/`resume()` real 0,37 s; `cpu_time_limit=2` ->
