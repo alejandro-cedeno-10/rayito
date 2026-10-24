@@ -177,9 +177,7 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   nombre (lo que borra su receta); `test_m15_templates.py` se salta sin
   `RAYITO_E2E_TEMPLATE_BUCKET`; `test_m15_custom_domain.py` y
   `test_dashboard_readonly_e2e.py` ya no dependen del orden de la propagación
-  del edge ni de los sandboxes de otras corridas en paralelo. El de custom-domain se
-  salta («CreateDistribution denied (AccessDenied)») si la pila
-  no puede crear la distribución; el de EFS en una VPC deja fuera de su
+  del edge ni de los sandboxes de otras corridas en paralelo; el de EFS en una VPC deja fuera de su
   comparación los grupos de otras corridas del mismo e2e; y el del pool juzga
   la latencia de `take()` frente al `create()` de la misma corrida (la mediana
   al menos tres veces más rápida y un tope de 3 s), e informa el presupuesto

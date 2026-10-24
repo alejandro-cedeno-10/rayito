@@ -627,8 +627,8 @@ Sólo después de que M5 esté verde.
     933 363 712 B; 1.0–4.0 podadas, `rayito-diag-caps` borrada). e2e sobre
     15.0 + caps 5.0: M1–M5 verdes (regresión) y
     `tests/e2e/test_m6_hardening.py` **12 passed, 1 skipped**
-    (`test_egress_allowlist`, sin conector desplegable: la puerta exige una
-    VPC existente y no se dispuso de ninguna, Q46)
+    (`test_egress_allowlist`, sin conector desplegado: la puerta requiere
+    una VPC existente, Q46)
     en 9 min: `/run` forjado → `already_ran` 0,30 s;
     `/suspend` forjado sin checkpoint → primer tick tras el corte **19,6 /
     24,4 s** (`reconnects == 1`, fichero, PTY, proceso y kernel intactos,
@@ -938,11 +938,7 @@ exclusión se evalúa primero (test de regresión). Poda: `image_prune.py --keep
 (`delete-microvm-image`; el README del spike de M0, en el historial de git, la reconstruye). Quedan
 **`rayito-base` 19.0 + 20.0, `rayito-base-caps` 7.0 + 8.0 y `rayito-base-poly`
 3.0 + 4.0**; `list-microvms`: **0 vivos** al terminar; S3 `rayito-e2e/` vacío.
-Coste (estimaciones de Rayito, no datos de la cuenta): la aceptación de hoy son ≈ 180 lanzamientos cortos + 3 versiones de
-imagen ≈ $0,6–0,9, y M7 entero (implementación y aceptación, a partir de
-las líneas `Lambda-MicroVM-*` de sus propias ejecuciones) queda en ≈ $4,5–5, muy por
-debajo del presupuesto de $15. Se recomprueba el
-2026-09-18 por el retardo de facturación.
+El coste por lanzamiento está en `AWS_API_NOTES.md` §12.
 Versiones en lockstep a **0.2.0** (Python, TypeScript desde 0.0.5, `rayd` y
 `agent_version`, manifest de release-please, fila 0.2 de la tabla de
 compatibilidad). Cambios OpenSpec `m7-oss-hygiene`, `m7-supply-chain`,

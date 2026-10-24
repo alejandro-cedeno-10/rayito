@@ -101,7 +101,7 @@ informe ni log del spike contiene el valor.
 
 ## Números en AWS real
 
-Una cuenta con acceso al modelo en Bedrock habilitado, us-east-1, 2026-10-05. Template `rayito-acc071spk-agent`
+us-east-1, 2026-10-05. Requisitos: habilitar el acceso al modelo en Bedrock. Template `rayito-acc071spk-agent`
 compuesto con el DSL de `Template` sobre una `rayito-base-caps` desechable
 (el `rayito-image.zip` firmado de la release `rayd-v0.7.0`), tamaño por
 defecto (2048 MB). Modelo: perfil de inferencia de sistema
@@ -166,8 +166,8 @@ documenta que el guest ve más memoria de la configurada), así que los
   seguridad; la frontera es el MicroVM más el deny-all.
 - A mitad de la corrida desaparecieron dos objetos que el spike había subido
   a S3 (el zip de la base y el del primer template), ninguno de ellos borrado
-  por el spike; se volvió a subir el de la base para el segundo build. Con un
-  bucket compartido entre corridas, cada una debe usar su propio prefijo.
+  por el spike; se volvió a subir el de la base para el segundo build. Cada
+  corrida debe usar su propio prefijo de S3.
 
 ## Go/no-go para la fase 1
 
