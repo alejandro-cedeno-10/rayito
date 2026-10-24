@@ -12,14 +12,16 @@ See "Versions" at the end. Code is in English; comments, docstrings and the
 messages the scripts print are in Spanish, as in the guide. The CSV columns
 (`categoria`, `horas`) and categories are data and stay in Spanish.
 
-To get exactly what the guide uses, clone the repository and check out the
-commit its link points to:
+To follow the guide, clone the repository and enter the lab folder on `main`:
 
 ```bash
 git clone https://github.com/alejandro-cedeno-10/rayito.git
-cd rayito && git checkout <commit-from-the-link>
-cd examples/csv-tickets-guide
+cd rayito/examples/csv-tickets-guide
 ```
+
+The lab was tested with Rayito 0.15.0, and its lockfiles (`uv.lock`,
+`pnpm-lock.yaml`) pin those versions, so `uv sync` and
+`pnpm install --frozen-lockfile` reproduce them.
 
 Everything these scripts create is a resource in your AWS account and shows
 up on your bill. Read "Costs and cleanup" before running steps 06 to 10.
