@@ -125,8 +125,8 @@ no un pool de VMs corriendo. Se implementa como el cambio
 
 - **Allowlist de egress medida**: la plantilla `infra/egress-connector.yaml`
   está validada (`validate-template` + `cfn-lint`) pero no desplegada — la
-  puerta exige una VPC propia o prestada y la única VPC de la cuenta es de
-  otra carga de trabajo (`AWS_API_NOTES.md` Q46, `SECURITY.md` T8).
+  puerta exige una VPC propia o prestada y no se dispuso de ninguna
+  (`AWS_API_NOTES.md` Q46, `SECURITY.md` T8).
 - **Slices cgroup2 por proceso** (sólo posible en la variante caps).
 - **Pool de suspendidos** (`m7-suspended-pool`, ADR-008): punto abierto el
   traspaso del access token fijado en `/run`.

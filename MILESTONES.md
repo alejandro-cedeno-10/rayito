@@ -628,7 +628,7 @@ Sólo después de que M5 esté verde.
     15.0 + caps 5.0: M1–M5 verdes (regresión) y
     `tests/e2e/test_m6_hardening.py` **12 passed, 1 skipped**
     (`test_egress_allowlist`, sin conector desplegable: la puerta exige una
-    VPC propia o prestada y la única VPC es de otra carga de trabajo, Q46)
+    VPC propia o prestada y no se dispuso de ninguna, Q46)
     en 9 min: `/run` forjado → `already_ran` 0,30 s;
     `/suspend` forjado sin checkpoint → primer tick tras el corte **19,6 /
     24,4 s** (`reconnects == 1`, fichero, PTY, proceso y kernel intactos,
@@ -839,7 +839,7 @@ primeras horas)**, 2026-09-17 $0; el día de la aceptación (≈ 21 MicroVMs
 cortos + 1 versión de imagen + 2 consultas CE) se estima en ≈ $0,25 de uso.
 Cambios OpenSpec `m6-hardening`, `m6-typescript-sdk`, `m6-e2b-compat` y
 `m6-benchmark-pool` archivados. Diferido con razón: allowlist de egress sin
-medir (VPC ajena, T8/Q46), slices cgroup2 (variante caps), pool de
+medir (sin VPC propia ni prestada, T8/Q46), slices cgroup2 (variante caps), pool de
 suspendidos (`m7-suspended-pool`), Cost Explorer del día del bench
 (2026-09-17), publicación en PyPI/npm (manual).
 
