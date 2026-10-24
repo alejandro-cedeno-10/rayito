@@ -540,5 +540,17 @@ describe("listedImageVersion", () => {
       ]),
     ).toBe("2");
     expect(listedImageVersion([])).toBeUndefined();
+    expect(
+      listedImageVersion([
+        { sandboxId: "a", state: "RUNNING", startedAt: new Date(1), templateVersion: "1" },
+        {
+          sandboxId: "d",
+          state: "SUSPENDED",
+          startedAt: new Date(9),
+          templateVersion: "9",
+          proven: false,
+        },
+      ]),
+    ).toBe("1");
   });
 });

@@ -400,4 +400,8 @@ def test_the_newest_member_with_a_version_decides_the_listed_version() -> None:
     ]
 
     assert listed_image_version(listed) == "2"
+    unproven = MemberListing(
+        "d", "SUSPENDED", datetime(2026, 10, 16, 7, tzinfo=UTC), proven=False, template_version="9"
+    )
+    assert listed_image_version([*listed, unproven]) == "2"
     assert listed_image_version([]) is None

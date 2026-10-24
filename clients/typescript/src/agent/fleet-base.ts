@@ -316,13 +316,17 @@ export interface MemberListing {
   readonly templateVersion?: string | undefined;
 }
 
-/** La versión de imagen del miembro más reciente que la lleva: con la que una
+/** La versión de imagen del miembro probado más reciente que la lleva: con la que una
  * flota reconectada sin receta crea sus VMs nuevos, en vez de la más reciente
  * de la imagen. */
 export function listedImageVersion(items: readonly MemberListing[]): string | undefined {
   let newest: MemberListing | undefined;
   for (const item of items) {
-    if (item.templateVersion && (newest === undefined || item.startedAt > newest.startedAt)) {
+    if (
+      item.templateVersion &&
+      item.proven !== false &&
+      (newest === undefined || item.startedAt > newest.startedAt)
+    ) {
       newest = item;
     }
   }
