@@ -45,6 +45,11 @@ del sandbox se espera hasta que escucha (no un tiempo fijo) y el eco de
 WebSocket acepta varias conexiones, así que un apretón de manos que cae en un
 servidor aún sin la ruta se reintenta.
 
+**Sin permiso para crear la distribución.** Si la pila no puede crear la
+distribución, falla en el recurso `Distribution` con un `AccessDenied` sobre
+`cloudfront:CreateDistribution` (`DescribeStackEvents`): el módulo se salta
+con «CreateDistribution denied (AccessDenied)» en vez de fallar.
+
 **Limpieza.** El teardown desregistra cada ruta (idempotente), borra la pila
 (distribución, Function y KeyValueStore; las rutas viven en el KVS y se van
 con él) aunque el `deploy()` haya fallado a medias, y comprueba que
@@ -68,7 +73,9 @@ import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 
+import boto3
 import pytest
+from botocore.exceptions import ClientError
 
 from rayito import CustomDomain, IdlePolicy
 from rayito._aws import LambdaMicrovmsControlPlane
@@ -76,7 +83,7 @@ from rayito._custom_domain._service import (
     DISTRIBUTION_DOMAIN_NAME_OUTPUT_KEY,
     CustomDomainRoute,
 )
-from rayito.exceptions import CustomDomainException, SandboxNotFoundException
+from rayito.exceptions import CustomDomainException, SandboxNotFoundException, StackException
 from rayito.sandbox_sync.main import Sandbox
 
 from .conftest import BootTimings, E2ESettings, create_test_sandbox
@@ -141,6 +148,31 @@ TRAFFIC_TOKEN_HEADER = "e2b-traffic-access-token"
 HTTP_OK = 200
 HTTP_FORBIDDEN = 403
 HTTP_NOT_FOUND = 404
+
+
+#: El recurso de `infra/custom-domain.yaml` que crea la distribución, y lo
+#: que deja CloudFormation en `ResourceStatusReason` cuando la pila no puede
+#: llamar a `cloudfront:CreateDistribution`.
+DISTRIBUTION_LOGICAL_ID = "Distribution"
+CREATE_FAILED = "CREATE_FAILED"
+ACCESS_DENIED_MARKERS = ("AccessDenied", "not authorized")
+DISTRIBUTION_DENIED_REASON = "CreateDistribution denied (AccessDenied)"
+
+
+def distribution_denied(region: str | None, stack_name: str) -> bool:
+    """Si la pila falló porque no pudo crear la distribución (`AccessDenied`)
+    (`DescribeStackEvents`, `AWS_API_NOTES.md` §21)."""
+    cloudformation = boto3.session.Session(region_name=region).client("cloudformation")
+    try:
+        events = cloudformation.describe_stack_events(StackName=stack_name)["StackEvents"]
+    except ClientError:
+        return False
+    return any(
+        event.get("LogicalResourceId") == DISTRIBUTION_LOGICAL_ID
+        and event.get("ResourceStatus") == CREATE_FAILED
+        and any(marker in event.get("ResourceStatusReason", "") for marker in ACCESS_DENIED_MARKERS)
+        for event in events
+    )
 
 
 def report(label: str, value: object) -> None:
@@ -258,20 +290,26 @@ def custom_domain(e2e_settings: E2ESettings) -> Iterator[DomainUnderTest]:
     public_domain, certificate_arn = os.environ[DOMAIN_VAR], os.environ[CERT_ARN_VAR]
     run_id = secrets.token_hex(RUN_ID_BYTES)
     run_tag = os.environ.get(ACCEPTANCE_RUN_TAG_VAR) or run_id
+    stack_name = f"{STACK_NAME_PREFIX}{run_id}"
     domain = CustomDomain(
         public_domain=public_domain,
-        stack_name=f"{STACK_NAME_PREFIX}{run_id}",
+        stack_name=stack_name,
         region=e2e_settings.region,
     )
     aliases = {purpose: f"{ROUTE_ALIAS_PREFIX}-{run_id}-{purpose}" for purpose in ROUTE_PURPOSES}
     try:
         started = time.monotonic()
         hosts = [domain.host_for(alias, ROUTE_PORT) for alias in aliases.values()]
-        status = domain.deploy(
-            certificate_arn=certificate_arn,
-            alternate_domain_names=hosts,
-            tags={ACCEPTANCE_RUN_TAG_KEY: run_tag},
-        )
+        try:
+            status = domain.deploy(
+                certificate_arn=certificate_arn,
+                alternate_domain_names=hosts,
+                tags={ACCEPTANCE_RUN_TAG_KEY: run_tag},
+            )
+        except StackException:
+            if distribution_denied(e2e_settings.region, stack_name):
+                pytest.skip(DISTRIBUTION_DENIED_REASON)
+            raise
         report("deploy() (s)", f"{time.monotonic() - started:.0f}")
         yield DomainUnderTest(
             domain=domain,
