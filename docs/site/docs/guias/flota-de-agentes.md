@@ -124,8 +124,34 @@ crear VMs y arrancar plazas calientes: lee la [receta](#la-receta-de-la-flota)
 que guardó `deploy_agent()`. Sin receta (una flota de 0.16, o desplegada con
 `--no-save-recipe`) y sin `project=`, la flota enruta y consulta pero no puede
 crear un VM: la primera sesión que necesite uno lanza
-`InvalidArgumentException`; pasa entonces el proyecto
-(`AgentProject.detect(carpeta)` o `AgentProject.load(...)`).
+`InvalidArgumentException`; pasa entonces el proyecto. `AgentProject.detect()`
+devuelve el proyecto y su informe de detección, así que hay que separarlos
+(`AgentProject.load(...)` devuelve sólo el proyecto):
+
+=== "Python"
+
+    ```python
+    import os
+
+    from rayito import AgentFleet, AgentProject
+
+    project, _report = AgentProject.detect("./mi-agente")
+    fleet = AgentFleet.connect(
+        "mi-agente", access_token=os.environ["RAYITO_ACCESS_TOKEN"], project=project
+    )
+    ```
+
+=== "TypeScript"
+
+    ```ts
+    import { AgentFleet, AgentProject } from "rayito";
+
+    const [project] = await AgentProject.detect("./mi-agente");
+    const fleet = await AgentFleet.connect("mi-agente", {
+      accessToken: process.env.RAYITO_ACCESS_TOKEN ?? "",
+      project,
+    });
+    ```
 
 Un id de sesión que elijas tú (el hilo de un chat) sólo se recuerda dentro del
 proceso que desplegó la flota. Para encontrarlo desde otro proceso en modo
