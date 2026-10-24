@@ -89,7 +89,9 @@ class DeploymentTransport(Protocol):
 class HttpsResponse:
     """El cuerpo de una respuesta de `HttpsTransport`. Un cuerpo cortado o
     mal delimitado (`OSError`, `http.client.HTTPException`) es un
-    `SandboxException`, como en `AsyncHttpsResponse`."""
+    `SandboxException`, como en `AsyncHttpsResponse`. `read1` no avisa de un
+    cuerpo con `Content-Length` que acaba antes de tiempo, así que `chunks()`
+    comprueba al final que no falten bytes."""
 
     def __init__(self, response: http.client.HTTPResponse, connection: http.client.HTTPConnection):
         self._response = response
@@ -111,6 +113,8 @@ class HttpsResponse:
                 yield chunk
         except (OSError, http.client.HTTPException):
             raise SandboxException("el agente desplegado cortó la respuesta") from None
+        if self._response.length:
+            raise SandboxException("el agente desplegado cortó la respuesta")
 
     def close(self) -> None:
         self._connection.close()

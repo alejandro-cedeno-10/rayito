@@ -218,7 +218,10 @@ def _serve_raw_once(payload: bytes) -> tuple[socket.socket, threading.Thread]:
         with connection:
             head = b""
             while b"\r\n\r\n" not in head:
-                head += connection.recv(4096)
+                received = connection.recv(4096)
+                if not received:
+                    return
+                head += received
             connection.sendall(payload)
 
     thread = threading.Thread(target=serve, daemon=True)
@@ -226,17 +229,34 @@ def _serve_raw_once(payload: bytes) -> tuple[socket.socket, threading.Thread]:
     return listener, thread
 
 
-@pytest.mark.parametrize("operation", ["status", "invoke"])
+SSE_HEAD = b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n"
+#: Un evento sin el `done` final: el cuerpo se corta a mitad del stream.
+SSE_TEXT = b'event: text\ndata: {"v":1,"type":"text","text":"x"}\n\n'
+TRUNCATED: dict[str, bytes] = {
+    "status": HEAD + b"Content-Length: 500\r\nConnection: close\r\n\r\n" + RESULT,
+    "invoke": HEAD + b"Content-Length: 500\r\nConnection: close\r\n\r\n" + RESULT,
+    "stream-length": SSE_HEAD + b"Content-Length: 500\r\nConnection: close\r\n\r\n" + SSE_TEXT,
+    "stream-chunked": SSE_HEAD + b"Transfer-Encoding: chunked\r\n\r\n" + _chunked(SSE_TEXT, 5)[:-5],
+}
+
+
+def _exercise(deployment: AgentDeployment, operation: str) -> None:
+    if operation == "status":
+        deployment.status()
+    elif operation == "invoke":
+        deployment.invoke("hola")
+    else:
+        with deployment.stream("hola") as events:
+            list(events)
+
+
+@pytest.mark.parametrize("operation", list(TRUNCATED))
 def test_sync_client_truncated_body_is_a_sandbox_error(operation: str) -> None:
-    payload = HEAD + b"Content-Length: 500\r\nConnection: close\r\n\r\n" + RESULT
-    listener, thread = _serve_raw_once(payload)
-    with listener:
-        deployment = _sync_deployment(int(listener.getsockname()[1]))
-        with pytest.raises(SandboxException):
-            if operation == "status":
-                deployment.status()
-            else:
-                deployment.invoke("hola")
+    listener, thread = _serve_raw_once(TRUNCATED[operation])
+    try:
+        with listener, pytest.raises(SandboxException):
+            _exercise(_sync_deployment(int(listener.getsockname()[1])), operation)
+    finally:
         thread.join(5)
 
 
