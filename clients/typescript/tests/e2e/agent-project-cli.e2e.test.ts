@@ -8,8 +8,10 @@
  * Cada runtime hace un `run --stream --json` (los eventos, una línea por evento,
  * terminan en `done` con el uso de tokens) y un ciclo `deploy` / `status` /
  * `invoke` / `stop`, con el access token en un `--token-file` como lo haría
- * otro proceso. Las cabeceras de acceso del despliegue no salen por ninguna
- * salida.
+ * otro proceso. `stop` va por el nombre de la flota, así que también borra su
+ * receta de Parameter Store (`/rayito/agents/<nombre>/recipe`), y la prueba
+ * comprueba que no queda. Las cabeceras de acceso del despliegue no salen por
+ * ninguna salida.
  *
  * Variables y coste: cabeceras de `agent-project.e2e.test.ts` y del espejo de
  * Python.
@@ -19,6 +21,8 @@ import { cpSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { recipeParameterName } from "../../src/agent/fleet-recipe.js";
+import { defaultRecipeStore } from "../../src/agent/fleet-recipe-aws.js";
 import { type Outcome, rayito } from "../shared/cli-scenarios.js";
 import {
   agentImage,
@@ -36,6 +40,14 @@ import { e2eEnabled, e2eSettings } from "./helpers.js";
 
 const PROJECT_FILE_NAME = "rayito-agent.toml";
 
+/** Si la receta de la flota `name` sigue en Parameter Store (la misma lectura
+ * que hace `AgentFleet.connect`). */
+async function recipeLeft(name: string, region: string): Promise<boolean> {
+  const parameter = recipeParameterName(name);
+  expect(parameter).toBeDefined();
+  return (await defaultRecipeStore({ region }).load(parameter ?? "")) !== undefined;
+}
+
 function jsonOf(outcome: Outcome): Record<string, unknown> {
   expect(outcome.exitCode, outcome.stderr.slice(-400)).toBe(0);
   return JSON.parse(outcome.stdout) as Record<string, unknown>;
@@ -49,8 +61,8 @@ describe.runIf(e2eEnabled() && Boolean(BEDROCK_SECRET))(
     const deployed: string[] = [];
 
     afterEach(async () => {
-      for (const sandboxId of deployed.splice(0)) {
-        await rayito(world, ["agent", "stop", sandboxId]);
+      for (const name of deployed.splice(0)) {
+        await rayito(world, ["agent", "stop", name]);
       }
     });
 
@@ -129,8 +141,9 @@ describe.runIf(e2eEnabled() && Boolean(BEDROCK_SECRET))(
             tokenFile,
           ]),
         );
+        const name = String(deploy.name);
+        deployed.push(name);
         const sandboxId = String(deploy.sandboxId);
-        deployed.push(sandboxId);
         expect(String(deploy.url).startsWith("https://")).toBe(true);
         const status = jsonOf(
           await rayito(world, ["--json", "agent", "status", sandboxId, "--token-file", tokenFile]),
@@ -151,9 +164,10 @@ describe.runIf(e2eEnabled() && Boolean(BEDROCK_SECRET))(
         for (const output of [deploy, status, reply]) {
           expect(JSON.stringify(output).toLowerCase()).not.toContain("authorization");
         }
-        const stopped = jsonOf(await rayito(world, ["--json", "agent", "stop", sandboxId]));
-        expect(stopped.stopped).toBe(true);
+        const stopped = jsonOf(await rayito(world, ["--json", "agent", "stop", name]));
+        expect(stopped).toEqual({ name, stopped: (deploy.sandboxIds as unknown[]).length });
         deployed.pop();
+        expect(await recipeLeft(name, region)).toBe(false);
       },
     );
   },
