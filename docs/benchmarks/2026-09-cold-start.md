@@ -180,7 +180,7 @@ Bloque `cost` de los dos ficheros (cantidades; los precios unitarios están en
 | lectura esperada (GB) | 117,96 | 13,88 | ≈ 12 |
 | escritura esperada (GB) | 18,38 | 0 | ≈ 3,7 |
 
-A precios unitarios de §12, en una VM que vive 5–12 s la lectura de snapshot
+A precios unitarios de `AWS_API_NOTES.md` §12, en una VM que vive 5–12 s la lectura de snapshot
 es ≈ el 80 % del coste y el cómputo ≈ el 10 %: un lanzamiento de 10.0 cuesta
 ≈ $0,0014 de lectura, una versión de imagen slim (≈ 2,05 GB) ≈ $0,04 por su
 semana mínima de storage y una consulta a Cost Explorer $0,01.
@@ -225,7 +225,8 @@ referencia:
    variante) frente a `memorySnapshotSizeInBytes` (GB o GiB, páginas extra) →
    $ real por lanzamiento de 10.0 y de las slim.
 2. GB escritos por suspend (`Snapshot-Write-GB` ÷ suspends); la escritura
-   esperada por suspend es ≈ 0,95 × la memoria (1,01 × si AWS cuenta GiB). El coste de un ciclo a
+   esperada por suspend es ≈ 0,95 × la memoria (1,01 × si AWS cuenta GiB).
+   El coste de un ciclo a
    10.0 sería ≈ 0,919 × (0,0038 + 0,00155) = **$0,0049**, no los $0,0107 de §12
    (que suponían 2 GB); break-even de `max_idle_seconds` ≈ 0,0049 / 0,000 035
    ≈ **140 s**, no 5 min.

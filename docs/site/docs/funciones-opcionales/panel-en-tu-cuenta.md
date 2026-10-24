@@ -538,7 +538,7 @@ Las etiquetas que exija tu organización se pasan con `--tag K=V` (o
 - **CloudFront + S3 para la página estática y la Function URL sólo para la
   API**: encaja si tu organización permite CloudFront y buckets de S3, y añade
   caché y un dominio propio con certificado. **No se incluye plantilla y no está
-  probada**: necesita permisos para crear distribuciones de CloudFront y
+  probada**; necesita permisos para crear distribuciones de CloudFront y
   buckets, y la variante por defecto los evita para no exigirlos. Si la montas tú, conserva las mismas cabeceras y la validación del
   token en la función.
 - **Un dominio propio** delante de la Function URL exige CloudFront (ver
