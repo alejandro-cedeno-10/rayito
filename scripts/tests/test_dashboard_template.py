@@ -1,7 +1,7 @@
 """`infra/dashboard.yaml` (ADR-026, fase 2), leída como datos: la política no
 la valida `cfn-lint` (ver `make infra-lint`), así que se fija aquí. Dos roles
-separados, tabla de auditoría sólo de añadir, nada que el SCP de la cuenta de
-pruebas deniegue (sin CloudFront ni bucket) y los números de la plantilla
+separados, tabla de auditoría sólo de añadir, sin CloudFront ni bucket
+(hay organizaciones que no los permiten) y los números de la plantilla
 iguales a los de `limits.json`."""
 
 from __future__ import annotations
@@ -69,7 +69,7 @@ def allowed_actions(role: str) -> set[str]:
     }
 
 
-def test_it_creates_nothing_the_test_account_scp_denies() -> None:
+def test_it_creates_no_cloudfront_distribution_or_bucket() -> None:
     types = {resource["Type"] for resource in resources().values()}
     assert not types & FORBIDDEN_RESOURCE_TYPES
     function = resources()["DashboardFunction"]["Properties"]

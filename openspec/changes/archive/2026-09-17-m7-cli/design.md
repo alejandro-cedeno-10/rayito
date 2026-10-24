@@ -27,8 +27,8 @@ botocore 1.43.94):
   `release.yml` (`python3 scripts/copy_sidecar.py`, `python3
   scripts/image_zip.py`). Both workflow jobs are Rust jobs with **no `uv`**:
   the zip logic must keep running on a bare `python3`.
-- `publish_image.py` hard-codes `DEFAULT_BUCKET` to the maintainer's artifact bucket (the
-  org SCP denies `s3:CreateBucket` in that account) and `DEFAULT_STACK_NAME =
+- `publish_image.py` hard-codes `DEFAULT_BUCKET` to the maintainer's artifact bucket and
+  `DEFAULT_STACK_NAME =
   "rayito-m0-iam"` with output `BuildRoleArn`.
 - `rayito/__init__.py` imports the sync and async sandbox trees, so any
   `import rayito.cli.<x>` needs `grpcio` and `protobuf` installed.
@@ -227,8 +227,7 @@ line naming `--artifact` / listing options).
   becomes `$(PY) python scripts/image_prune.py --image-name rayito-base
   $(PRUNE_ARGS)`.
 - `BUCKET ?= <the maintainer's artifact bucket>` with a comment:
-  the maintainer's artifact bucket (SCP denies `CreateBucket` there);
-  adopters set `BUCKET=` or `RAYITO_BUCKET`. The library has **no** bucket
+  the maintainer's artifact bucket; adopters set `BUCKET=` or `RAYITO_BUCKET`. The library has **no** bucket
   default (D6).
 - `image-zip`, `image-zip-slim` unchanged (`python scripts/copy_sidecar.py`,
   `python scripts/image_zip.py`): stdlib shims.
@@ -652,8 +651,8 @@ D14 green on the account, zero live MicroVMs afterwards.
   the first runtime line? The fallback scan of D7 handles both; the answer
   decides whether the exact-name lookup alone suffices later.
 - Whether `iam:SimulatePrincipalPolicy` returns `OrganizationsDecisionDetail`
-  for the maintainer's SSO role (the SCP denying `s3:CreateBucket` is a
-  good probe: the acceptance adds `s3:CreateBucket` on the bucket ARN as a
-  temporary extra action, expects `AllowedByOrganizations == false`, and
+  for an SSO role (`s3:CreateBucket` is the probe: the
+  acceptance adds `s3:CreateBucket` on the bucket ARN as a
+  temporary extra action, reads `AllowedByOrganizations`, and
   records the result in the task notes; the action is not part of the
   shipped table).

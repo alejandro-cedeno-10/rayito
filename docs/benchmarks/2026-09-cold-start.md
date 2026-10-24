@@ -10,7 +10,7 @@ reproducibles con `--report <json>`.
 
 | | |
 |---|---|
-| Fecha / región / cuenta | 2026-09-16 (17:14–17:34 UTC), `us-east-1`, cuenta de pruebas |
+| Fecha / región / cuenta | 2026-09-16 (17:14–17:34 UTC), `us-east-1`, una cuenta de AWS |
 | Cliente | el puesto habitual del desarrollador (Windows 11, Python 3.12.10, `rayito` 0.0.5, boto3 1.43.94, grpcio del SDK); `client_rtt_ms` = **85.5 ms** (run principal) / 97.4 ms (run e-2.0): mediana de cinco `Health` sobre la primera VM lista |
 | Agente | `rayd` 0.1.0 (`Health.agent_version`) dentro de `rayito-base` **10.0** (rayd 4 533 432 B, artefacto `rayd-fc0df3c41a28.zip`) |
 | Sujeto full | `rayito-base` 10.0: memoria **919 146 496 B**, code install 1 290 379 264 B, disco 37 462 016 B, `chipsetGeneration` 3, build 215,8 s (M5) |
@@ -192,8 +192,8 @@ vivieron 5–12 s cada una es $0,03.
 
 ## 8. Verificación de `AWS_API_NOTES.md` §12 en Cost Explorer
 
-Consulta (`raw/2026-09-cost-explorer-2026-09-16.json`, 16:56 UTC, repetida a
-las 17:34 UTC con el mismo resultado):
+Valores **derivados de Cost Explorer** (16:56 UTC, repetida a las 17:34 UTC
+con el mismo resultado) con esta consulta:
 
 ```
 aws ce get-cost-and-usage --time-period Start=2026-09-14,End=2026-09-17 \
@@ -202,29 +202,27 @@ aws ce get-cost-and-usage --time-period Start=2026-09-14,End=2026-09-17 \
   --filter '{"Dimensions":{"Key":"SERVICE","Values":["AWS Lambda"]}}'
 ```
 
-Los ficheros crudos se versionan filtrados a los usage types
-`Lambda-MicroVM-*`: el resto de `AWS Lambda` en la cuenta de medida no es de
-Rayito.
+Método: de la respuesta sólo se usan los usage types `Lambda-MicroVM-*` y,
+de cada uno, el precio implícito (USD ÷ cantidad). El export crudo no se
+versiona; aquí sólo quedan los valores derivados.
 
-Los tres días siguen marcados `Estimated`; el 2026-09-16 sólo contiene las
-primeras horas (761 GB-s, 16,49 GB leídos, sin línea de escritura), anteriores
-al bench. Recomprobado en la aceptación de M6 (21:10 UTC, `End=2026-09-18`,
-`raw/2026-09-cost-explorer-2026-09-16T2115Z.json`): la línea del 2026-09-16
-sigue idéntica ($0,0487 en cuatro usage types) y el 2026-09-17 está vacío, así
-que las tareas 5.1 y 5.3–5.5 quedan **diferidas al 2026-09-17** con esta
-consulta como plantilla; la DECISIÓN de §9 no depende de ellas. **Precios unitarios implícitos** (USD ÷ cantidad, 2026-09-15):
+Cost Explorer tarda en cerrar las líneas de un día, así que las tareas 5.1 y
+5.3–5.5 quedan **diferidas** con esta consulta como plantilla; la DECISIÓN de §9
+no depende de ellas. **Precios unitarios implícitos** (USD ÷ cantidad,
+2026-09-15):
 
-| Usage type | cantidad | USD | implícito | §12 | Δ |
-|---|---|---|---|---|---|
-| `Lambda-MicroVM-Memory-GB-Second-ARM` | 6 177,505 GB-s | 0,022651 | $0,000 003 667 | $0,000 003 6667 | 0,00 % |
-| `Lambda-MicroVM-vCPU-Second-ARM` | 3 262,989 vCPU-s | 0,090367 | $0,000 027 694 | $0,000 027 6944 | 0,00 % |
-| `Lambda-MicroVM-Snapshot-Read-GB` | 113,489 GB | 0,175541 | $0,001 546 8 | $0,001 55 | −0,21 % |
-| `Lambda-MicroVM-Snapshot-Write-GB` | 2,540 GB | 0,009647 | $0,003 797 7 | $0,003 8 | −0,06 % |
-| `Lambda-MicroVM-Snapshot-Storage-GB-Hour` | 115,845 GB-h | 0,012872 | $0,000 111 11/GB-h = $0,08/GB-mes a 720 h | $0,08/GB-mes | 0,00 % |
+| Usage type | implícito | §12 | Δ |
+|---|---|---|---|
+| `Lambda-MicroVM-Memory-GB-Second-ARM` | $0,000 003 667 | $0,000 003 6667 | 0,00 % |
+| `Lambda-MicroVM-vCPU-Second-ARM` | $0,000 027 694 | $0,000 027 6944 | 0,00 % |
+| `Lambda-MicroVM-Snapshot-Read-GB` | $0,001 546 8 | $0,001 55 | −0,21 % |
+| `Lambda-MicroVM-Snapshot-Write-GB` | $0,003 797 7 | $0,003 8 | −0,06 % |
+| `Lambda-MicroVM-Snapshot-Storage-GB-Hour` | $0,000 111 11/GB-h = $0,08/GB-mes a 720 h | $0,08/GB-mes | 0,00 % |
 
 Los cinco precios de §12 son correctos (AWS usa un mes de 720 h para el
-storage). Ratio memoria-GB-s ÷ vCPU-s: 1,893 (09-15) y 1,874 (09-16 parcial),
-no 2,0. Lo que queda para la pasada del día siguiente (tareas 5.x), con las
+storage). Ratio memoria-GB-s ÷ vCPU-s (estimación de Rayito sobre sus
+propias ejecuciones, no un dato de la cuenta): 1,893 (09-15) y 1,874 (09-16
+parcial), no 2,0. Lo que queda para la pasada del día siguiente (tareas 5.x), con las
 cantidades del 2026-09-16 completas y este run como referencia (142
 lanzamientos, 24 suspends, 24 resumes, tamaños de la tabla de §6, ≈ 1 120
 VM-s; el e2e de M5 de la mañana aporta además ≈ 7 lanzamientos y 4 ciclos de
@@ -233,21 +231,19 @@ VM-s; el e2e de M5 de la mañana aporta además ≈ 7 lanzamientos y 4 ciclos de
 1. GB leídos por lanzamiento (`Snapshot-Read-GB / (L + R)` ponderado por
    variante) frente a `memorySnapshotSizeInBytes` (GB o GiB, páginas extra) →
    $ real por lanzamiento de 10.0 y de las slim.
-2. GB escritos por suspend (`Snapshot-Write-GB / 24`); los 2,54 GB del
-   2026-09-15 son los cuatro ciclos de M0 sobre 672 MB (0,635 GB por suspend
-   ≈ 0,95 × la memoria, o 1,01 × si AWS cuenta GiB). El coste de un ciclo a
+2. GB escritos por suspend (`Snapshot-Write-GB / 24`); los cuatro ciclos de
+   M0 sobre 672 MB escribieron 0,635 GB por suspend (≈ 0,95 × la memoria, o
+   1,01 × si AWS cuenta GiB). El coste de un ciclo a
    10.0 sería ≈ 0,919 × (0,0038 + 0,00155) = **$0,0049**, no los $0,0107 de §12
    (que suponían 2 GB); break-even de `max_idle_seconds` ≈ 0,0049 / 0,000 035
    ≈ **140 s**, no 5 min.
 3. Ratio memoria/vCPU y VM-segundos facturados frente a los ≈ 1 120 del JSON.
 4. Si los dos builds de `rayito-base-slim` aparecen en alguna línea MicroVM
    y cuánto sube la línea de storage el 2026-09-17 (≈ 2 × 2,05 GB × 24 h ≈
-   98 GB-h más) y el 2026-09-23 (mínimo de una semana).
-5. El baseline de storage del 2026-09-14 (67,5 GB-h antes de la primera
-   imagen Rayito): `list-microvm-images` sólo devuelve `rayito-base`,
-   `rayito-m0-probe` y ahora `rayito-base-slim`, así que se registra como uso
-   compartido de la cuenta no atribuible y el storage Rayito se calcula como
-   delta sobre él.
+   98 GB-h más, como delta) y el 2026-09-23 (mínimo de una semana).
+5. Cost Explorer agrupa el storage por cuenta, no por imagen: el storage
+   Rayito se calcula como delta sobre el día anterior a la primera imagen
+   Rayito.
 6. Q8 (1 h activa + 7 h suspendida, 2 GB) derivada de los precios
    verificados y los tamaños medidos: 3600 × (0,000 027 6944 + 2 ×
    0,000 003 6667) + 0,919 × 0,00155 (lectura al lanzar) + 0,919 × 0,0038

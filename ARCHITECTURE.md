@@ -2009,11 +2009,9 @@ execution role, not by sandbox (same limitation as S3 persistence's T15):
 any sandbox with that role's credentials can mount any access point the
 role is scoped to. Threat T21 (`SECURITY.md`) covers the mount path.
 
-**Existing VPC (`EfsVolumes`).** Most accounts cannot create a VPC (an
-organization SCP denied `ec2:CreateVpc` in the test account, Q124), so the
-stack deploys into an existing one: `SubnetIds` (1–3, one mount target per
-AZ) and only new resources — never the VPC, its subnets, routes, NACLs or
-rules on existing security groups. `EfsVolumes.check()` is a pure
+**Existing VPC (`EfsVolumes`).** The stack deploys into an existing VPC:
+`SubnetIds` (1–3, one mount target per AZ) and only new resources — never
+the VPC, its subnets, routes, NACLs or rules on existing security groups. `EfsVolumes.check()` is a pure
 evaluation over read-only `ec2:Describe*` facts (a `NetworkInspector` port,
 also behind `rayito doctor --efs-vpc-id`), and `deploy()` refuses on any
 `FAIL`. The file system stays `DeletionPolicy: Retain`;
@@ -2508,7 +2506,7 @@ utilizable de forma independiente: desplegar la pila y llamar a
 código llamante ya tiene. DOM-2 (HTTP/1.1 por `updateRequestOrigin`),
 DOM-3 (WebSocket), DOM-5 (latencia de propagación del KVS), DOM-7
 (keep-alive tras caducar el JWE) y DOM-8 (auto-resume por el dominio)
-quedan sin medir hasta D3 (dominio y certificado ACM del mantenedor) y la
+quedan sin medir hasta D3 (un dominio y un certificado ACM reales) y la
 etapa de aceptación AWS.
 
 **Alternativas descartadas.** Lambda@Edge en vez de una CloudFront
@@ -2670,7 +2668,7 @@ para el estado y las pilas opcionales; este ADR lo extiende a una interfaz.
    con identity pool y SigV4 es la variante opcional (`AuthMode=aws-iam`: dos
    Function URL, la de la API con `AWS_IAM` y la de la página sin permisos,
    con el token de Cognito en `X-Rayito-Token`; implementada y probada con
-   dobles, a verificar en la cuenta de pruebas). Una función tiene un solo rol: corre con un rol de
+   dobles, a verificar en AWS real). Una función tiene un solo rol: corre con un rol de
    sólo lectura y asume por `sts:AssumeRole` el rol de acciones tras
    comprobar el grupo del llamante. Sin CORS (la SPA se sirve desde el mismo
    origen, así que la Function URL no lo habilita), `Origin` propio en cada
@@ -3244,7 +3242,7 @@ nunca cambia una cuenta preparada a mano que funciona ni sube `rayito-base` a un
 publish`). Quien prefiere artefactos verificados con cosign conserva ese camino
 con `--artifact`. El SDK distribuye ahora `infra/iam.yaml`; un cambio en
 `infra/` llega a los usuarios por `gen_stack_assets.py --check`, que ya es una
-puerta. Riesgos: una SCP de la organización puede denegar `iam:CreateRole` con
+puerta. Riesgos: una SCP puede denegar `iam:CreateRole` con
 nombres fijos o `cloudformation:CreateStack` con `CAPABILITY_NAMED_IAM` (la
 aceptación lo comprueba antes, sólo lectura, con la simulación IAM de `rayito
 doctor`); detrás de un proxy corporativo `urllib` respeta `HTTPS_PROXY` pero el
@@ -3312,13 +3310,13 @@ prohibía crear un bucket) y a la alternativa descartada «crear el bucket si fa
   `setup` sigue ahí al borrar la pila: se vacía y se borra a mano. Errores
   nuevos: `bucket_taken` y `artifact_stack_conflict` (código de salida 2);
   `no_bucket` desaparece y `bucket_unavailable` queda sólo para el 403.
-- *Riesgo.* Una SCP de la organización puede denegar `s3:CreateBucket` o
+- *Riesgo.* Una SCP puede denegar `s3:CreateBucket` o
   `s3:PutBucketPolicy`; la aceptación lo simula antes de escribir nada.
 - *Etiquetas de pila.* `rayito setup --tag K=V` (repetible) pasa las etiquetas
   como `Tags` de `CreateStack`/`UpdateStack` de `rayito-m0-artifacts` y
   `rayito-m0-iam`; CloudFormation las propaga a los recursos. Una pila
-  reutilizada no se reetiqueta y la imagen no las recibe. Existe porque una SCP
-  que exige etiquetas deniega `s3:CreateBucket` sin ellas (D11).
+  reutilizada no se reetiqueta y la imagen no las recibe. Existe para las
+  organizaciones que exigen etiquetas al crear recursos (D11).
 - Detalle (D2, D4, D10, D11) en `openspec/changes/archive/2026-10-21-account-setup/design.md`.
 
 ## ADR-031 — agentcore-deploy: despliega en Amazon Bedrock AgentCore Runtime

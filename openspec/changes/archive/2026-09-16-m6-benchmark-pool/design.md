@@ -32,7 +32,7 @@ repo knows about cold start and cost, and why it is not enough:
 - **Cost**: `AWS_API_NOTES.md` §12 is arithmetic from the pricing page. Q8
   and Q22 are "pendiente (revisar el 2026-09-16)". A first `ce
   get-cost-and-usage` on 2026-09-16 (daily, `SERVICE = AWS Lambda`, grouped
-  by `USAGE_TYPE`, all three days still `Estimated`) already shows the
+  by `USAGE_TYPE`) already shows the
   MicroVM usage types and lets the unit prices be checked (table in D12):
   memory and vCPU seconds, snapshot read/write GB and storage GB-hours
   reconcile with §12 to within 0.3 %; snapshot **read** was the largest
@@ -41,9 +41,9 @@ repo knows about cold start and cost, and why it is not enough:
   cycles of a 672 MB snapshot (so a suspend writes ≈ the memory snapshot,
   not 2 GB, and a cycle at 10.0 costs ≈ $0.005, not the $0.0107 of §12);
   image builds do not appear as snapshot writes; the memory-GB-s / vCPU-s
-  ratio is 1.87–1.89, below the nominal 2.0; and 67.5 GB-h of snapshot
-  storage were billed on 2026-09-14, before the first Rayito image (the
-  account is shared). All of this needs the final (non-estimated) numbers
+  ratio is 1.87–1.89 (a Rayito estimate from its own runs, not account
+  data), below the nominal 2.0; and the snapshot storage line is
+  read as a delta over the day before the first Rayito image. All of this needs the final (non-estimated) numbers
   and a day with a known launch count to turn into a per-launch cost.
 
 Measured facts this design relies on (`AWS_API_NOTES.md`): `RunMicrovm`
@@ -522,8 +522,7 @@ is; the rule itself is not adjusted after the fact.
 
 ### D12. Cost Explorer verification of §12
 
-Query (already run once on 2026-09-16 while all three days were
-`Estimated`):
+Query (already run once on 2026-09-16):
 
 ```
 aws ce get-cost-and-usage --time-period Start=2026-09-14,End=<bench day + 1> \
@@ -566,7 +565,8 @@ numbers of 2026-09-15/16 and of the bench day:
    and the `max_idle_seconds` break-even (≈ 2.5 min at 10.0 sizes instead
    of 5).
 4. **Compute ratio**: memory GB-s ÷ vCPU-s was 1.89 (09-15) and 1.87
-   (09-16) instead of 2.0; with the bench day's known VM-seconds the
+   (09-16) instead of 2.0 (Rayito estimates from its own runs, not account
+   data); with the bench day's known VM-seconds the
    implementer states which of the two is rounded and how many VM-seconds
    were billed against the ≈ 112 × `vm_alive_s` the JSON sums.
 5. **Builds** (Q22): whether the bench-day build of `rayito-base-slim`
@@ -577,10 +577,9 @@ numbers of 2026-09-15/16 and of the bench day:
    week: check storage GB-h on the day after and seven days after
    publishing, the latter as a note in `AWS_API_NOTES.md` to be closed
    later).
-6. **The 2026-09-14 storage baseline** (67.5 GB-h before any Rayito image):
-   `list-microvm-images` in the account; if only Rayito images exist,
-   the line is recorded as unexplained shared-account usage and the
-   Rayito storage is computed as the delta over that baseline.
+6. **The storage baseline**: Cost Explorer groups by account, not by
+   image, so the Rayito storage is computed as the delta over the day
+   before the first Rayito image.
 7. **Q8** (1 h active + 7 h suspended, 2 GB): computed from the verified
    unit prices and the measured write/read sizes rather than run (an 8 h
    VM would break the 5-minute rule); recorded as "derivado de precios
@@ -653,15 +652,14 @@ Q42/Q43 new) and to the report's section 8.
 - **Two data points for the size correlation** (full 919 MB, slim ≈ 570
   MB): enough to price the warm-up, not to fit a curve; the report states
   the Δ per 100 MB as an interpolation between two points.
-- **Cost Explorer lag** (~24 h, `Estimated` for two days): tasks 5.x are
+- **Cost Explorer lag** (recent days are `Estimated`): tasks 5.x are
   scheduled the day after the run; the report is published with the
   estimate and amended with the actual lines (the JSON keeps the
   expectation to compare against).
-- **Shared account noise** in Cost Explorer: only the five `Lambda-MicroVM-*`
-  usage types are attributed; other MicroVM users in the account during
-  the bench day would inflate them — the implementer checks
-  `list-microvm-images` and `list-microvms` for foreign images (task 5.1)
-  and notes any.
+- **Account-level aggregation** in Cost Explorer: only the five
+  `Lambda-MicroVM-*` usage types are attributed; Cost Explorer reports per
+  account, not per tool, so the implementer checks `list-microvm-images`
+  and `list-microvms` for images the bench did not create (task 5.1).
 - **`for_type_by_name` in `0001_charts.py`** changes how the chart
   formatter attaches (lazy instead of a class attribute) for the full
   image too: covered by the existing `test_startup_scripts_produce_chart_
@@ -748,8 +746,8 @@ Recorded before the run, per `CLAUDE.md` ("no improvisar en silencio"):
    the snapshot carries over from the build VM (≈ 25 s at the first `Health`
    of the smoke VM): it is "snapshot age + restore-to-first-request", not
    restore latency; kept as data, interpreted as such.
-7. **Cost Explorer timing.** All three days were still `Estimated` on the
-   bench day; the D12 pass runs the day after (task 5) and the report ships
+7. **Cost Explorer timing.** Recent days are `Estimated`; the D12 pass
+   runs the day after (task 5) and the report ships
    with the run-day estimate next to the lines available at write time.
 8. **Lazy formatters by lookup, not `for_type_by_name`** (D7). On the real
    kernel the deferred registration of `0001_charts.py` was gone by the time

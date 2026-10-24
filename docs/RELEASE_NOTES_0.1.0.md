@@ -67,7 +67,7 @@ lanzamientos, `rayito-base` 10.0, cliente a ≈ 90 ms de RTT):
   defecto IMDS sigue abierto (fail-open, el SDK avisa una vez si hay rol).
 - Aceptación final (2026-09-16, `rayito-base` 16.0 + `rayito-base-caps`
   6.0): suite Python M1–M6 **14 passed, 1 skipped en 565 s** (el skip es la
-  allowlist de egress, sin VPC propia); suite TypeScript **2 passed en
+  allowlist de egress, no medida: requiere una VPC existente, Q46); suite TypeScript **2 passed en
   196 s**; `imds_blocked` 0,10 s tras readiness y `PUT /latest/api/token`
   como uid 1000 exit 1 en 0,44 s sobre caps 6.0. Detalle en el bloque
   "Estado de aceptación" de M6 en `MILESTONES.md`.
@@ -125,8 +125,8 @@ no un pool de VMs corriendo. Se implementa como el cambio
 
 - **Allowlist de egress medida**: la plantilla `infra/egress-connector.yaml`
   está validada (`validate-template` + `cfn-lint`) pero no desplegada — la
-  puerta exige una VPC propia o prestada y la única VPC de la cuenta es de
-  otra carga de trabajo (`AWS_API_NOTES.md` Q46, `SECURITY.md` T8).
+  puerta requiere una VPC existente
+  (`AWS_API_NOTES.md` Q46, `SECURITY.md` T8).
 - **Slices cgroup2 por proceso** (sólo posible en la variante caps).
 - **Pool de suspendidos** (`m7-suspended-pool`, ADR-008): punto abierto el
   traspaso del access token fijado en `/run`.

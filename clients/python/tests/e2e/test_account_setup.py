@@ -13,8 +13,8 @@ Variables (todas genéricas, nada de la cuenta va en el repositorio):
   (`--artifact`); sin él se descarga la release `rayd-v<versión>`, que no
   existe todavía durante la aceptación de una release.
 - `RAYITO_E2E_SETUP_TAGS` (opcional): etiquetas `K=V` separadas por comas
-  (`--tag`, una por cada una) para las pilas que crea `setup`; útil si una SCP
-  de la organización exige etiquetas al crear recursos. Nunca van en el código.
+  (`--tag`, una por cada una) para las pilas que crea `setup`; útil si la
+  organización exige etiquetas al crear recursos. Nunca van en el código.
 - `RAYITO_E2E_SETUP_CREATE_BUCKET=1` (opcional): activa el test que crea el
   bucket con la pila `rayito-m0-artifacts` (`--bucket rayito-e2e-setup-<hex>`,
   un nombre sin cuenta); se salta si esa pila ya existe en la región.

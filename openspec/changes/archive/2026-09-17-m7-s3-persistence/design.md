@@ -57,11 +57,10 @@ TypeScript `rayito` 0.0.5; no git repository yet):
   and assembly sources with the `cc` crate, which `cargo-zigbuild` points
   at `zig cc`; whether that link succeeds on this toolchain (zig 0.16,
   Rust 1.98) is the first thing the implementation measures (D6).
-- **Account facts.** Test account, `us-east-1`; the org SCP denies
-  `s3:CreateBucket`, so every S3 test uses the account's existing
-  artifact bucket under a prefix; the IAM
-  stack `rayito-m0-iam` (`spike/m0/iam.yaml`) owns the execution role
-  `rayito-m0-execution-us-east-1` (logs only today).
+- **Test setup.** `us-east-1`; the change creates no bucket, so the S3
+  tests use an operator bucket under a prefix; the IAM stack
+  `rayito-m0-iam` (`spike/m0/iam.yaml`) owns the execution role (logs only
+  today).
 - **SDK shape.** Python `Sandbox.create(...)` takes `execution_role_arn`,
   `ingress`, `egress`, `logging`, `metadata`, `cpu_time_limit`, …;
   sync and async trees share pure helpers (`_filesystem_base.py`,

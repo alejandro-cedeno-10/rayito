@@ -539,8 +539,8 @@ Tags your organization requires are passed with `--tag K=V` (or
 - **CloudFront + S3 for the static page and the Function URL only for the
   API**: it fits if your organization allows CloudFront and S3 buckets, and adds
   caching and a custom domain with a certificate. **No template is included and it is not
-  tested**: this project's test account denies creating CloudFront
-  distributions and buckets, and that is why the default variant
+  tested**: some organizations do not allow creating CloudFront
+  distributions or buckets, and that is why the default variant
   avoids them. If you build it yourself, keep the same headers and the
   token validation in the function.
 - **A custom domain** in front of the Function URL requires CloudFront (see
