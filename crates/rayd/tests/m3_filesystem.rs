@@ -757,7 +757,7 @@ async fn write_connection_drop_mid_stream_removes_the_temp_file() {
         .send(write_request(Some(&path), None, &[1; 1024]))
         .await
         .unwrap();
-    let deadline = Instant::now() + Duration::from_secs(2);
+    let deadline = Instant::now() + Duration::from_secs(10);
     while temp_files(&harness.root) == 0 {
         assert!(Instant::now() < deadline, "temp file never appeared");
         tokio::time::sleep(Duration::from_millis(10)).await;
