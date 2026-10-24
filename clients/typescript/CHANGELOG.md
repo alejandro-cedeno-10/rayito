@@ -6,6 +6,8 @@ versionado [SemVer](https://semver.org/lang/es/).
 
 ## [Unreleased]
 
+## [0.17.1] - 2026-10-24
+
 ### Corregido
 
 - **`AgentFleet.status()` da el estado real justo después de `connect()`.**
@@ -2336,7 +2338,8 @@ AWS real en M6 (`MILESTONES.md`), en camelCase y milisegundos, sólo async.
 
 Builds internos de los hitos M1-M5, nunca publicados.
 
-[Unreleased]: https://github.com/alejandro-cedeno-10/rayito/compare/typescript-v0.17.0...HEAD
+[Unreleased]: https://github.com/alejandro-cedeno-10/rayito/compare/typescript-v0.17.1...HEAD
+[0.17.1]: https://github.com/alejandro-cedeno-10/rayito/compare/typescript-v0.17.0...typescript-v0.17.1
 [0.17.0]: https://github.com/alejandro-cedeno-10/rayito/compare/typescript-v0.16.0...typescript-v0.17.0
 [0.16.0]: https://github.com/alejandro-cedeno-10/rayito/compare/typescript-v0.15.0...typescript-v0.16.0
 [0.15.0]: https://github.com/alejandro-cedeno-10/rayito/compare/typescript-v0.14.0...typescript-v0.15.0
