@@ -17,7 +17,9 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   sigue como `unknown` (sin comprobar), porque preguntarle lo reanudaría; uno
   cuyo `/ping` no responde sale `unavailable` sin contar para sustituirlo, y
   ningún error del sandbox, de credenciales o de red al preguntar a un VM sin
-  abrir hace fallar `status()` (un error de programación sí se propaga).
+  abrir hace fallar `status()` (un error de programación sí se propaga). En
+  `AgentDeployment` síncrono, un cuerpo cortado o mal delimitado es ahora
+  `SandboxException`, como en el asíncrono.
 - **Sin aviso de «plazo lógico» en una flota de tamaño fijo.** Al conectar
   con `project=` y sin `scaling` (los límites por defecto), o con
   `max_vms == min_vms`, un VM sin plazo lógico ya no imprime «un VM de la
