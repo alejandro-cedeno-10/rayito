@@ -94,4 +94,22 @@ describe("connection retry", () => {
     await expect(retryUnestablished(call, async () => undefined)).rejects.toBe(PROXY_502);
     expect(calls).toHaveLength(1);
   });
+
+  test("an aborted signal stops the retries", async () => {
+    const controller = new AbortController();
+    const { call, calls } = flaky(
+      Array.from({ length: 10 }, () => refused()),
+      "ok",
+    );
+    await expect(
+      retryUnestablished(
+        call,
+        async () => {
+          controller.abort();
+        },
+        controller.signal,
+      ),
+    ).rejects.toBeDefined();
+    expect(calls).toHaveLength(1);
+  });
 });
