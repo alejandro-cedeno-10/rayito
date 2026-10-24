@@ -41,7 +41,8 @@ repo knows about cold start and cost, and why it is not enough:
   cycles of a 672 MB snapshot (so a suspend writes ≈ the memory snapshot,
   not 2 GB, and a cycle at 10.0 costs ≈ $0.005, not the $0.0107 of §12);
   image builds do not appear as snapshot writes; the memory-GB-s / vCPU-s
-  ratio is 1.87–1.89, below the nominal 2.0; and the snapshot storage line is
+  ratio is 1.87–1.89 (a Rayito estimate from its own runs, not account
+  data), below the nominal 2.0; and the snapshot storage line is
   read as a delta over the day before the first Rayito image. All of this needs the final (non-estimated) numbers
   and a day with a known launch count to turn into a per-launch cost.
 
@@ -565,7 +566,8 @@ numbers of 2026-09-15/16 and of the bench day:
    and the `max_idle_seconds` break-even (≈ 2.5 min at 10.0 sizes instead
    of 5).
 4. **Compute ratio**: memory GB-s ÷ vCPU-s was 1.89 (09-15) and 1.87
-   (09-16) instead of 2.0; with the bench day's known VM-seconds the
+   (09-16) instead of 2.0 (Rayito estimates from its own runs, not account
+   data); with the bench day's known VM-seconds the
    implementer states which of the two is rounded and how many VM-seconds
    were billed against the ≈ 112 × `vm_alive_s` the JSON sums.
 5. **Builds** (Q22): whether the bench-day build of `rayito-base-slim`
