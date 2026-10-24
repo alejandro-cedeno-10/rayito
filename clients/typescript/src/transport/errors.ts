@@ -79,20 +79,23 @@ export function isConnectionNotEstablished(error: unknown): boolean {
 /** `call()` con hasta `CONNECT_RETRY_DELAYS_MS.length` reintentos sólo cuando
  * la conexión no llegó a abrirse (`isConnectionNotEstablished`). Vale para
  * cualquier RPC, también los que no son idempotentes, porque la petición nunca
- * salió del cliente; cualquier otro error se propaga al primer intento. */
+ * salió del cliente; cualquier otro error se propaga al primer intento. Con
+ * `signal` abortado no hay más reintentos. */
 export async function retryUnestablished<T>(
   call: () => Promise<T>,
   sleep: (ms: number) => Promise<void> = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  signal?: AbortSignal,
 ): Promise<T> {
   for (const delay of CONNECT_RETRY_DELAYS_MS) {
     try {
       return await call();
     } catch (error) {
-      if (!isConnectionNotEstablished(error)) {
+      if (!isConnectionNotEstablished(error) || signal?.aborted) {
         throw error;
       }
     }
     await sleep(delay);
+    signal?.throwIfAborted();
   }
   return call();
 }

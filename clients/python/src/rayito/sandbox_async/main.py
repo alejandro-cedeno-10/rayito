@@ -2163,15 +2163,19 @@ class AsyncSandbox:
             )
         return jwe
 
-    async def _call_unary_once(self, call: Callable[[], Awaitable[T]]) -> T:
+    async def _call_unary_once(
+        self, call: Callable[[], Awaitable[T]], *, retry_connect: bool = True
+    ) -> T:
+        """Como `Sandbox._call_unary_once`: la sonda de `Health` pasa
+        `retry_connect=False`."""
         try:
-            return await retry_unestablished_async(call)
+            return await (retry_unestablished_async(call) if retry_connect else call())
         except grpc.RpcError as exc:
             if not is_proxy_forbidden(exc):
                 raise
         self._logger.info("el proxy rechazó el token del sandbox %s; reacuñando", self.sandbox_id)
         await self._refresher.refresh_all()
-        return await retry_unestablished_async(call)
+        return await (retry_unestablished_async(call) if retry_connect else call())
 
     async def _call_unary(self, call: Callable[[], Awaitable[T]], *, reopen: bool = True) -> T:
         """Misma política que `Sandbox._call_unary`: reintento del 403 y, tras
@@ -2335,7 +2339,8 @@ class AsyncSandbox:
     async def _probe_health(self, timeout: float) -> health_pb2.HealthResponse | None:
         try:
             response = await self._call_unary_once(
-                lambda: self._health.Health(health_pb2.HealthRequest(), timeout=timeout)
+                lambda: self._health.Health(health_pb2.HealthRequest(), timeout=timeout),
+                retry_connect=False,
             )
             return cast("health_pb2.HealthResponse", response)
         except grpc.RpcError as exc:

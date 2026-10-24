@@ -2611,17 +2611,19 @@ class Sandbox:
     def _current_jwe(self, port: int) -> str:
         return self._refresher.store.jwe_for(port) or self._refresher.ensure(port).jwe
 
-    def _call_unary_once(self, call: Callable[[], T]) -> T:
+    def _call_unary_once(self, call: Callable[[], T], *, retry_connect: bool = True) -> T:
         """Reintenta una vez tras un 403 del proxy (JWE caducado). Es lo que
-        usa la propia sonda de `Health`, que nunca debe reconectar."""
+        usa la propia sonda de `Health`, que nunca debe reconectar ni esperar
+        a una conexión que no se abre (`retry_connect=False`): su bucle de
+        sondeo ya reintenta con su propio plazo."""
         try:
-            return retry_unestablished(call)
+            return retry_unestablished(call) if retry_connect else call()
         except grpc.RpcError as exc:
             if not is_proxy_forbidden(exc):
                 raise
         self._logger.info("el proxy rechazó el token del sandbox %s; reacuñando", self.sandbox_id)
         self._refresher.refresh_all()
-        return retry_unestablished(call)
+        return retry_unestablished(call) if retry_connect else call()
 
     def _call_unary(self, call: Callable[[], T], *, reopen: bool = True) -> T:
         """Un unario con el reintento del 403 y, tras un corte reconectable
@@ -2806,7 +2808,8 @@ class Sandbox:
         """None significa "aún no alcanzable" (UNAVAILABLE / 502 / timeout)."""
         try:
             response = self._call_unary_once(
-                lambda: self._health.Health(health_pb2.HealthRequest(), timeout=timeout)
+                lambda: self._health.Health(health_pb2.HealthRequest(), timeout=timeout),
+                retry_connect=False,
             )
             return cast("health_pb2.HealthResponse", response)
         except grpc.RpcError as exc:

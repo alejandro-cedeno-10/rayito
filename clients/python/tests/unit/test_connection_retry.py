@@ -141,3 +141,14 @@ def test_an_async_unary_retries_a_connection_that_never_opened(
     fake = SimpleNamespace(_logger=None, _refresher=None, sandbox_id="mvm-1")
     assert asyncio.run(AsyncSandbox._call_unary_once(fake, call)) == "ok"  # type: ignore[arg-type]
     assert len(attempts) == 2
+
+
+def test_the_health_probe_never_waits_for_a_connection_that_does_not_open() -> None:
+    """La sonda de `Health` de la readiness tiene su propio bucle y plazo:
+    `retry_connect=False` la deja intentar una sola vez."""
+    call, calls = flaky([SETTINGS_TIMEOUT], "ok")
+    fake = SimpleNamespace(_logger=None, _refresher=None, sandbox_id="mvm-1")
+
+    with pytest.raises(FakeRpcError):
+        Sandbox._call_unary_once(fake, call, retry_connect=False)  # type: ignore[arg-type]
+    assert len(calls) == 1
