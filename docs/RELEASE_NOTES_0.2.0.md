@@ -95,7 +95,7 @@ primera celda `bash` 4,19 s, segunda 0,19 s; `imds_blocked` a los 0,10 s en
 caps. Poda posterior: quedan `rayito-base` 19.0 + 20.0, `rayito-base-caps`
 7.0 + 8.0 y `rayito-base-poly` 3.0 + 4.0; `rayito-m0-probe` borrada; cero
 MicroVMs vivos y el prefijo S3 del e2e vacío al terminar. Coste (estimaciones de Rayito, no datos de la cuenta): la aceptación ≈ $0,6–0,9 y M7
-entero ≈ $4,5–5 (estimado por Rayito a partir de las líneas `Lambda-MicroVM-*`
+entero ≈ $4,5–5 (a partir de las líneas `Lambda-MicroVM-*`
 de sus propias ejecuciones). Corregido durante la aceptación: `copy_sidecar.py` fallaba en
 Windows con un symlink de Linux dentro del `.venv` excluido (la exclusión se
 evalúa ahora antes de tocar el sistema de ficheros).
