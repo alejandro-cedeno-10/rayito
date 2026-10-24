@@ -294,8 +294,10 @@ class FakeFleetClient:
     def status(self) -> FakeFleetStatus:
         return FakeFleetStatus(members=(FakeMember(), FakeMember("microvm-b", "healthy")))
 
-    def stop(self) -> None:
+    def stop(self) -> int:
+        """Como `AgentFleet.stop()`: devuelve cuántos VMs terminó."""
         self.calls.append(("stop", None))
+        return len(self.sandbox_ids)
 
 
 def install_fleet(monkeypatch: pytest.MonkeyPatch, fleet: FakeFleetClient) -> list[dict[str, Any]]:
