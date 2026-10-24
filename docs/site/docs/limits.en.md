@@ -1,7 +1,7 @@
 # Limits
 
 Lambda MicroVMs quotas and limits as the SDK sees them. Source:
-`AWS_API_NOTES.md` §2, §6 and §11 (measured in the development account on
+`AWS_API_NOTES.md` §2, §6 and §11 (measured against real AWS on
 2026-09-15) and `limits.json`, from which `_limits.py` (Python) and
 `limits.ts` (TypeScript) are generated, where the SDK validates them on the
 client.

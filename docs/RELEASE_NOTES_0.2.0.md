@@ -1,7 +1,7 @@
 # Rayito 0.2.0 — notas de la release (2026-09-17)
 
 Segunda release: M7 ("preparación open source") aceptado contra AWS real
-(cuenta de desarrollo, `us-east-1`) sobre `rayito-base` con `rayd` 0.2.0.
+(`us-east-1`) sobre `rayito-base` con `rayd` 0.2.0.
 Todo número de este documento está medido; la fuente de cada uno es
 `MILESTONES.md` (fila M7 y bloque "Estado de aceptación") o
 `AWS_API_NOTES.md` §16 (Q52–Q57).

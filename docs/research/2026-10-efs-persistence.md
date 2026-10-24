@@ -515,8 +515,9 @@ Q122–Q125): EFS-7 y EFS-2 pasan; EFS-3 y todos los ★ que necesitan red
 (EFS-8, EFS-11, EFS-13) requieren una VPC existente y se midieron después
 (Q126–Q134). Ningún criterio de parada falló. De paso, el e2e del CRUD encontró que
 `DescribeAccessPoints` es eventualmente consistente (Q125), corregido en
-`VolumeStore` de ambos SDK. Coste de la aceptación ≈ $0,20 (dos builds de
-imagen, cuatro VMs cortos, un sistema de ficheros vacío).
+`VolumeStore` de ambos SDK. Los precios unitarios de la aceptación (builds
+de imagen, VMs cortos, un sistema de ficheros vacío) están en
+`AWS_API_NOTES.md` §12.
 
 **Resultados de la aceptación del 2026-10-04** (`AWS_API_NOTES.md` §16
 Q126–Q134), sobre una VPC existente pasada sólo
@@ -545,8 +546,8 @@ pasaban). La opción A es viable. Lo que cambia el diseño del adaptador real
   secuencial, ≈ 17 ms por fichero pequeño: bueno para datos grandes, lento
   para árboles de muchos ficheros.
 
-Coste de esta aceptación ≈ $0,50 (una imagen desechable, ≈ 25 VMs cortos
-y uno suspendido 70 min, 1 GiB escrito y leído, tres pilas de vida corta).
+Coste: precios unitarios de `AWS_API_NOTES.md` §12 (una imagen desechable,
+VMs cortos y uno suspendido, escritura y lectura de EFS, pilas de vida corta).
 
 **Respuesta del adaptador real** (`m15-efs-volumes` §10, sin AWS; la
 revisión de EFS-12 y EFS-16 en AWS queda pendiente): `rayd` trae

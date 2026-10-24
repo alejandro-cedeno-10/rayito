@@ -33,10 +33,9 @@
  * espera hasta que escucha y el eco de WebSocket atiende varias conexiones,
  * así que un upgrade que cae en un servidor sin la ruta se reintenta.
  *
- * **Sin permiso para crear la distribución.** Si la pila no puede crear la
- * distribución, falla en el recurso `Distribution` con un `AccessDenied` sobre
- * `cloudfront:CreateDistribution` (`DescribeStackEvents`): cada test se salta
- * con «CreateDistribution denied (AccessDenied)» en vez de fallar.
+ * **Requisito: `cloudfront:CreateDistribution`.** Ante cualquier error de
+ * permisos al crear el recurso `Distribution` (`DescribeStackEvents`), cada
+ * test se salta con el requisito que falta en vez de fallar.
  *
  * **Limpieza.** `afterAll` desregistra cada ruta, borra la pila (aunque el
  * `deploy()` fallara a medias) y comprueba que `status()` ya no la ve.
@@ -115,9 +114,9 @@ const HTTP_NOT_FOUND = 404;
 const DISTRIBUTION_LOGICAL_ID = "Distribution";
 const CREATE_FAILED = "CREATE_FAILED";
 const ACCESS_DENIED_MARKERS = ["AccessDenied", "not authorized"];
-const DISTRIBUTION_DENIED_REASON = "CreateDistribution denied (AccessDenied)";
+const DISTRIBUTION_DENIED_REASON = "missing permission: cloudfront:CreateDistribution";
 
-/** Si la pila falló porque no pudo crear la distribución (`AccessDenied`)
+/** Si la pila falló por un error de permisos al crear la distribución
  * (`DescribeStackEvents`, `AWS_API_NOTES.md` §21). */
 async function distributionDenied(region: string | undefined, stackName: string): Promise<boolean> {
   const client = new CloudFormationClient(region === undefined ? {} : { region });

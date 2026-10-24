@@ -784,11 +784,10 @@ Sólo después de que M5 esté verde.
   cambio `m7-suspended-pool`; sin pool de VMs corriendo. Precios de §12
   verificados en Cost Explorer (±0,21 %); ciclo suspend/resume ≈ $0,0049.
   Track D — implementado y medido el 2026-09-16 y **aceptado ese mismo día**
-  (cambio OpenSpec `m6-benchmark-pool`; run ≈ $0,35 de uso + dos versiones
-  slim ≈ $0,08). Queda explícitamente diferida al 2026-09-17 la línea de
+  (cambio OpenSpec `m6-benchmark-pool`; el coste por lanzamiento está en
+  `AWS_API_NOTES.md` §12). Queda explícitamente diferida la línea de
   Cost Explorer del día del bench (GB reales por lanzamiento y por suspend,
-  VM-segundos, salto de storage: tareas 5.1 y 5.3–5.5 del cambio; la
-  recomprobación de las 21:10 UTC del 2026-09-16 seguía sin el bench); la
+  VM-segundos, salto de storage: tareas 5.1 y 5.3–5.5 del cambio); la
   DECISIÓN no depende de ella. `rayito-base-slim` (1.0 y 2.0) se borró tras
   la medida: los números viven en el informe y `make image-publish-slim` la
   reconstruye.
@@ -1138,7 +1137,7 @@ E2B 21/21 Python y 11/11 TypeScript; git, CLI y `doctor --launch` sin FAIL) y
 dirigida sobre 28.0 / 17.0 / 12.0 tras #35 (deno/tamaños 8/8, egress 14/14 y
 6/6, corpus 21/21 y 11/11, poly y compat de E2B verdes). DNS bajo deny-all
 verificado en caps: `getaddrinfo` falla para uid 1000 y vuelve al relajar la
-política. Coste de ambas < $1,5; sólo se terminaron las VMs de la prueba.
+política. Sólo se terminaron las VMs de la prueba.
 
 ### Oleadas 2 y 3 (Rayito 0.3.3)
 
@@ -1703,9 +1702,9 @@ desechables propias y Claude Haiku 4.5 por la pasarela
   `create()` (9,2 s frente a 8,8 s sin él en la misma tanda) y sigue
   encendido por defecto; su ganancia de extremo a extremo de hoy cae
   dentro del ruido.
-- Coste de la nueva medida ≈ $0,35 a precios de lista (tres versiones de
-  imagen con su semana mínima de almacenamiento, ≈ 50 lanzamientos, los
-  aparcamientos de dos pools y el modelo). Limpieza: sólo se borró lo
+- Coste: el coste por lanzamiento, por aparcamiento y por versión de imagen
+  (con su semana mínima de almacenamiento) está en `AWS_API_NOTES.md` §12.
+  Limpieza: sólo se borró lo
   creado por la ejecución; el inventario de después no tiene nada del
   prefijo de la ejecución, y lo que difiere es de otras sesiones en curso.
 - Regresión completa sobre `main` con todo lo anterior (2026-10-06/07):

@@ -45,10 +45,9 @@ del sandbox se espera hasta que escucha (no un tiempo fijo) y el eco de
 WebSocket acepta varias conexiones, así que un apretón de manos que cae en un
 servidor aún sin la ruta se reintenta.
 
-**Sin permiso para crear la distribución.** Si la pila no puede crear la
-distribución, falla en el recurso `Distribution` con un `AccessDenied` sobre
-`cloudfront:CreateDistribution` (`DescribeStackEvents`): el módulo se salta
-con «CreateDistribution denied (AccessDenied)» en vez de fallar.
+**Requisito: `cloudfront:CreateDistribution`.** Ante cualquier error de
+permisos al crear el recurso `Distribution` (`DescribeStackEvents`), el
+módulo se salta con el requisito que falta en vez de fallar.
 
 **Limpieza.** El teardown desregistra cada ruta (idempotente), borra la pila
 (distribución, Function y KeyValueStore; las rutas viven en el KVS y se van
@@ -156,11 +155,11 @@ HTTP_NOT_FOUND = 404
 DISTRIBUTION_LOGICAL_ID = "Distribution"
 CREATE_FAILED = "CREATE_FAILED"
 ACCESS_DENIED_MARKERS = ("AccessDenied", "not authorized")
-DISTRIBUTION_DENIED_REASON = "CreateDistribution denied (AccessDenied)"
+DISTRIBUTION_DENIED_REASON = "missing permission: cloudfront:CreateDistribution"
 
 
 def distribution_denied(region: str | None, stack_name: str) -> bool:
-    """Si la pila falló porque no pudo crear la distribución (`AccessDenied`)
+    """Si la pila falló por un error de permisos al crear la distribución
     (`DescribeStackEvents`, `AWS_API_NOTES.md` §21)."""
     cloudformation = boto3.session.Session(region_name=region).client("cloudformation")
     try:

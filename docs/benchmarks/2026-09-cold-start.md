@@ -10,7 +10,7 @@ reproducibles con `--report <json>`.
 
 | | |
 |---|---|
-| Fecha / región / cuenta | 2026-09-16 (17:14–17:34 UTC), `us-east-1`, una cuenta de AWS |
+| Fecha / región | 2026-09-16, `us-east-1` |
 | Cliente | cliente de referencia (Python 3.12.10, `rayito` 0.0.5, boto3 1.43.94, grpcio del SDK); `client_rtt_ms` = **85.5 ms** (run principal) / 97.4 ms (run e-2.0): mediana de cinco `Health` sobre la primera VM lista |
 | Agente | `rayd` 0.1.0 (`Health.agent_version`) dentro de `rayito-base` **10.0** (rayd 4 533 432 B, artefacto `rayd-fc0df3c41a28.zip`) |
 | Sujeto full | `rayito-base` 10.0: memoria **919 146 496 B**, code install 1 290 379 264 B, disco 37 462 016 B, `chipsetGeneration` 3, build 215,8 s (M5) |
@@ -167,10 +167,10 @@ el warm-up entero (numpy, pandas, matplotlib, scipy, sklearn, un PNG, un
 de storage por versión. En la ráfaga de 20 el ahorro sería del mismo orden
 (no medido: la fase (b) sólo corrió contra la full).
 
-## 7. Coste del run
+## 7. Volumen del run
 
-Bloque `cost` de los dos ficheros (a precios de `AWS_API_NOTES.md` §12, sin
-storage de imagen):
+Bloque `cost` de los dos ficheros (cantidades; los precios unitarios están en
+`AWS_API_NOTES.md` §12):
 
 | | run 171432Z | run 173200Z | smoke + comprobaciones manuales |
 |---|---|---|---|
@@ -179,21 +179,16 @@ storage de imagen):
 | `vm_seconds` | 823,7 | 92,5 | ≈ 200 |
 | lectura esperada (GB) | 117,96 | 13,88 | ≈ 12 |
 | escritura esperada (GB) | 18,38 | 0 | ≈ 3,7 |
-| estimación ($) | 0,2815 | 0,0247 | ≈ 0,04 |
 
-Total del día para Track D: **142 lanzamientos, 24 suspends, 24 resumes,
-≈ 1 120 VM-segundos, ≈ 144 GB leídos, ≈ 22 GB escritos → ≈ $0,35** de uso,
-más dos versiones de imagen (`rayito-base-slim` 1.0 y 2.0: ≈ 2,05 GB cada una
-× $0,08/GB-mes × 7 días mínimos ≈ $0,04 cada una) y dos consultas a Cost
-Explorer ($0,01 cada una): **≈ $0,45**, frente a la estimación pesimista del
-`--dry-run` ($1,47) y al presupuesto de $5. La lectura de snapshot es el 80 %
-del coste (0,22 de 0,28 $ en el run principal); el cómputo de 112 VMs que
-vivieron 5–12 s cada una es $0,03.
+A precios unitarios de §12, en una VM que vive 5–12 s la lectura de snapshot
+es ≈ el 80 % del coste y el cómputo ≈ el 10 %: un lanzamiento de 10.0 cuesta
+≈ $0,0014 de lectura, una versión de imagen slim (≈ 2,05 GB) ≈ $0,04 por su
+semana mínima de storage y una consulta a Cost Explorer $0,01.
 
 ## 8. Verificación de `AWS_API_NOTES.md` §12 en Cost Explorer
 
-Valores **derivados de Cost Explorer** (16:56 UTC, repetida a las 17:34 UTC
-con el mismo resultado) con esta consulta:
+Valores **derivados de Cost Explorer** (consulta repetida dos veces con el
+mismo resultado) con esta consulta:
 
 ```
 aws ce get-cost-and-usage --time-period Start=2026-09-14,End=2026-09-17 \
@@ -222,28 +217,24 @@ no depende de ellas. **Precios unitarios implícitos** (USD ÷ cantidad,
 Los cinco precios de §12 son correctos (AWS usa un mes de 720 h para el
 storage). Ratio memoria-GB-s ÷ vCPU-s (estimación de Rayito sobre sus
 propias ejecuciones, no un dato de la cuenta): 1,893 (09-15) y 1,874 (09-16
-parcial), no 2,0. Lo que queda para la pasada del día siguiente (tareas 5.x), con las
-cantidades del 2026-09-16 completas y este run como referencia (142
-lanzamientos, 24 suspends, 24 resumes, tamaños de la tabla de §6, ≈ 1 120
-VM-s; el e2e de M5 de la mañana aporta además ≈ 7 lanzamientos y 4 ciclos de
-10.0):
+parcial), no 2,0. Lo que queda para la pasada del día siguiente (tareas 5.x),
+con las cantidades del bloque `cost` de §7 y los tamaños de §6 como
+referencia:
 
 1. GB leídos por lanzamiento (`Snapshot-Read-GB / (L + R)` ponderado por
    variante) frente a `memorySnapshotSizeInBytes` (GB o GiB, páginas extra) →
    $ real por lanzamiento de 10.0 y de las slim.
-2. GB escritos por suspend (`Snapshot-Write-GB / 24`); los cuatro ciclos de
-   M0 sobre 672 MB escribieron 0,635 GB por suspend (≈ 0,95 × la memoria, o
-   1,01 × si AWS cuenta GiB). El coste de un ciclo a
+2. GB escritos por suspend (`Snapshot-Write-GB` ÷ suspends); la escritura
+   esperada por suspend es ≈ 0,95 × la memoria (1,01 × si AWS cuenta GiB). El coste de un ciclo a
    10.0 sería ≈ 0,919 × (0,0038 + 0,00155) = **$0,0049**, no los $0,0107 de §12
    (que suponían 2 GB); break-even de `max_idle_seconds` ≈ 0,0049 / 0,000 035
    ≈ **140 s**, no 5 min.
-3. Ratio memoria/vCPU y VM-segundos facturados frente a los ≈ 1 120 del JSON.
-4. Si los dos builds de `rayito-base-slim` aparecen en alguna línea MicroVM
-   y cuánto sube la línea de storage el 2026-09-17 (≈ 2 × 2,05 GB × 24 h ≈
-   98 GB-h más, como delta) y el 2026-09-23 (mínimo de una semana).
-5. Cost Explorer agrupa el storage por cuenta, no por imagen: el storage
-   Rayito se calcula como delta sobre el día anterior a la primera imagen
-   Rayito.
+3. Ratio memoria/vCPU y VM-segundos facturados frente a los `vm_seconds` del JSON.
+4. Si un build de imagen aparece en alguna línea MicroVM y cuánto sube la
+   línea de storage por versión (≈ 2,05 GB × 24 h ≈ 49 GB-h por día y
+   versión slim, con el mínimo de una semana).
+5. Cost Explorer agrupa el storage por cuenta, no por imagen: el storage de
+   una imagen se lee como delta entre días.
 6. Q8 (1 h activa + 7 h suspendida, 2 GB) derivada de los precios
    verificados y los tamaños medidos: 3600 × (0,000 027 6944 + 2 ×
    0,000 003 6667) + 0,919 × 0,00155 (lectura al lanzar) + 0,919 × 0,0038
@@ -324,15 +315,15 @@ uv run python ../../scripts/bench_cold_start.py \
   --template-slim arn:aws:lambda:us-east-1:123456789012:microvm-image:rayito-base-slim \
   --dry-run
 # phases=a,b,c,e sequential=20 batches=[sdk 5, raw 5, sdk 10, raw 10, sdk 20, raw 20] resume_cycles=10 slim=True
-# launches=112 cycles=20 estimate=$1.47 budget=$5.00
+# launches=112 cycles=20 estimate=$<usd> budget=$<usd>
 
 uv run python ../../scripts/bench_cold_start.py --template <full arn> --template-slim <slim arn> \
-  --out ../../docs/benchmarks/raw                # run 171432Z (slim 1.0), 17:14:32–17:22:52 UTC
+  --out ../../docs/benchmarks/raw                # run 171432Z (slim 1.0)
 uv run python ../../scripts/bench_cold_start.py --template <full arn> --template-slim <slim arn> \
-  --phases e --out ../../docs/benchmarks/raw     # run 173200Z (slim 2.0), 17:32:00–17:33:35 UTC
+  --phases e --out ../../docs/benchmarks/raw     # run 173200Z (slim 2.0)
 uv run python ../../scripts/bench_cold_start.py --report ../../docs/benchmarks/raw/<file>.json
 
-# run de validación de la sonda corregida (amendment 10), 20:18:41–20:19:46 UTC
+# run de validación de la sonda corregida (amendment 10)
 uv run python ../../scripts/bench_cold_start.py --template <full arn> --template-slim <slim arn> \
   --phases a,e --sequential 5 --out ../../docs/benchmarks/raw   # run 201841Z
 ```
@@ -387,5 +378,4 @@ la duración de la llamada; campos extra `resume_api_s`, `state`,
 `for_type_by_name`; dos versiones slim; tests unitarios en `scripts/tests/`,
 `kernel-sidecar/tests/test_variant.py` y `kernel-sidecar/tests/test_formatters.py`;
 la sonda corregida y los campos `*_gap_s` (amendment 10) no existían en los
-dos runs principales. Números tomados el 2026-09-16 entre las 17:10 y las
-17:35 UTC; validación de la sonda a las 20:18 UTC.
+dos runs principales. Números tomados el 2026-09-16 en `us-east-1`.

@@ -840,7 +840,7 @@ Un proceso por MicroVM, como root, estático musl, con gRPC h2c (`tonic`) en
 ## [0.0.1] - [0.0.5]
 
 Builds internos de los hitos M1-M5, publicados sólo como versiones de imagen
-de la cuenta de desarrollo.
+de prueba.
 
 [Unreleased]: https://github.com/alejandro-cedeno-10/rayito/compare/rayd-v0.17.0...HEAD
 [0.17.0]: https://github.com/alejandro-cedeno-10/rayito/compare/rayd-v0.16.0...rayd-v0.17.0
