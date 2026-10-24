@@ -38,7 +38,7 @@ proxy de AWS.
     **Sin verificar en AWS real**: crear la distribución y servir tráfico
     por ella (HTTP/1.1, WebSocket, latencia de propagación del
     `KeyValueStore`, renovación del JWE). La distribución no se llegó a
-    crear en el entorno de aceptación (Q141), así que nadie ha abierto todavía una URL de dominio propio
+    crear en la corrida de aceptación (Q141), así que nadie ha abierto todavía una URL de dominio propio
     desplegada con esta plantilla. El e2e del repositorio
     (`tests/e2e/test_m15_custom_domain.py`, `custom-domain.e2e.test.ts`)
     automatiza esa prueba para una cuenta donde se pueda crear la distribución.

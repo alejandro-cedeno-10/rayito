@@ -1418,7 +1418,7 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   **Experimental** porque no se ha verificado de punta a punta en AWS real:
   la Function compila y enruta en el runtime real (`TestFunction`), y la
   pila crea el KeyValueStore y la Function, pero la distribución no se llegó
-  a crear en el entorno de aceptación, así que nunca se ha servido tráfico por una distribución desplegada con esta plantilla
+  a crear en la corrida de aceptación, así que nunca se ha servido tráfico por una distribución desplegada con esta plantilla
   (`AWS_API_NOTES.md` Q121, Q140, Q141). La API puede cambiar en una minor.
 - `rayito image zip --with-efs` y `rayito image publish --with-efs`
   (`m15-efs-volumes`): publican `rayito-base-caps-efs`, la imagen caps con

@@ -169,7 +169,7 @@ function resolveKvsArn(
  * Function de enrutado y la creación de su `KeyValueStore` se comprobaron
  * en AWS real (`AWS_API_NOTES.md` Q121, Q140), pero crear la distribución
  * y servir tráfico por ella no (Q141: la distribución no se llegó a crear en
- * el entorno de aceptación). Si lo pruebas, cuéntalo en un issue de GitHub.
+ * la corrida de aceptación). Si lo pruebas, cuéntalo en un issue de GitHub.
  *
  * Coste y activación
  * -------------------
