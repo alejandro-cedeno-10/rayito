@@ -17,6 +17,7 @@ from collections.abc import Callable, Iterator, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from functools import partial
 from typing import TYPE_CHECKING, Any, Self
 
 from rayito._agent import _fleet_recipe_aws as recipe_aws
@@ -27,12 +28,14 @@ from rayito._agent._fleet_base import (
     AGENT_CAPACITY_CODE,
     AGENT_FLEET_BUSY_RETRY_SECONDS,
     AGENT_FLEET_LIVE_STATES,
+    AGENT_FLEET_PROBE_CONCURRENCY,
     AGENT_FLEET_PROBE_STATE,
     AGENT_FLEET_SESSION_LABEL,
     AGENT_FLEET_START_CONCURRENCY,
     AGENT_VM_LOST_CODE,
     LISTING_CONTROL_PLANE_ERRORS,
     UNMANAGED_LIFETIME_MESSAGE,
+    UNPROVEN_MEMBER_MESSAGE,
     UNREADABLE_MEMBER_MESSAGE,
     FleetLifetime,
     FleetMemberStatus,
@@ -40,6 +43,7 @@ from rayito._agent._fleet_base import (
     FleetStatus,
     Member,
     MemberListing,
+    MemberProbe,
     ParkedSlotException,
     capacity_message,
     corrected_cap,
@@ -51,8 +55,8 @@ from rayito._agent._fleet_base import (
     lifetime_seconds,
     listed_cap,
     mark_extras,
+    member_of,
     new_reservation,
-    owned_ids,
     ping_is_fresh,
     plan_placement,
     pool_config_for,
@@ -62,7 +66,7 @@ from rayito._agent._fleet_base import (
     restore_seconds,
     route_of,
     sandbox_cap,
-    select_members,
+    select_probed,
     session_label,
     surplus,
     vm_lost_message,
@@ -186,6 +190,9 @@ class SandboxDirectory:
         self._sandbox_class = sandbox_class
 
     def list_members(self, template: str) -> list[MemberListing]:
+        """Los miembros de la imagen `template`: los VMs `RUNNING` se sondean
+        hasta `AGENT_FLEET_PROBE_CONCURRENCY` a la vez, y los resultados y
+        los avisos salen en el orden de `list-microvms`."""
         sandbox_class = self._sandbox()
         listed = [
             MemberListing(item.sandbox_id, item.state, item.started_at)
@@ -193,34 +200,28 @@ class SandboxDirectory:
                 template=template, states=AGENT_FLEET_LIVE_STATES, **self._options()
             )
         ]
-        probed: list[Any] = []
-        unreadable: set[str] = set()
-        for item in listed:
-            if item.state != AGENT_FLEET_PROBE_STATE:
-                continue
-            info = self._probe(sandbox_class, item.sandbox_id)
-            if info is None:
-                unreadable.add(item.sandbox_id)
-            else:
-                probed.append(info)
-        return select_members(listed, owned_ids(probed), unreadable)
+        running = [item.sandbox_id for item in listed if item.state == AGENT_FLEET_PROBE_STATE]
+        with ThreadPoolExecutor(max_workers=AGENT_FLEET_PROBE_CONCURRENCY) as pool:
+            probes = list(pool.map(partial(self._probe, sandbox_class), running))
+        for item in probes:
+            if item.error is not None:
+                logger.warning(UNREADABLE_MEMBER_MESSAGE, item.sandbox_id, item.error)
+        return select_probed(listed, probes)
 
-    def _probe(self, sandbox_class: Any, sandbox_id: str) -> Any | None:
-        """La `SandboxInfo` con metadatos de un VM `RUNNING`
-        (`get_info(sandbox_id)`: `get-microvm` más un `Health` sin token), o
-        `None` si su `Health` falla, ya no existe o ya no está `RUNNING`
-        (una limitación o un plazo de `get-microvm` sí hacen fallar el
-        listado): un VM que la
-        plataforma aún lista pero cuyo `rayd` ya salió no tumba el listado
-        de toda la flota."""
+    def _probe(self, sandbox_class: Any, sandbox_id: str) -> MemberProbe:
+        """La sonda de un VM `RUNNING` (`get_info(sandbox_id)`: `get-microvm`
+        más un `Health` sin token): su `SandboxInfo` con metadatos, o sin
+        ella si su `Health` falla (con la clase del error), ya no existe o ya
+        no está `RUNNING`. Un VM que la plataforma aún lista pero cuyo `rayd`
+        ya salió no tumba el listado de toda la flota; una limitación o un
+        plazo de `get-microvm` sí."""
         try:
             info = sandbox_class.get_info(sandbox_id, **self._options())
         except LISTING_CONTROL_PLANE_ERRORS:
             raise
         except SandboxException as exc:
-            logger.warning(UNREADABLE_MEMBER_MESSAGE, sandbox_id, type(exc).__name__)
-            return None
-        return probed_running(info)
+            return MemberProbe(sandbox_id, None, type(exc).__name__)
+        return MemberProbe(sandbox_id, probed_running(info))
 
     def connect(self, sandbox_id: str, access_token: str) -> Any:
         return self._sandbox().connect(sandbox_id, access_token=access_token, **self._options())
@@ -572,8 +573,7 @@ class AgentFleet:
             known = {member.sandbox_id: member for member in self._members}
             lifetime = self._lifetime()
             self._members = [
-                known.get(item.sandbox_id)
-                or Member(item.sandbox_id, cap=listed_cap(item.started_at, lifetime))
+                member_of(known.get(item.sandbox_id), item, listed_cap(item.started_at, lifetime))
                 for item in live
             ]
             mark_extras(self._members, self.scaling)
@@ -1199,7 +1199,7 @@ class AgentFleet:
             excess = [
                 member
                 for member in surplus(self._members, self.scaling)
-                if member.inflight == 0 and not member.bound
+                if member.inflight == 0 and not member.bound and member.proven
             ]
         for member in excess:
             self._drop(member)
@@ -1210,7 +1210,12 @@ class AgentFleet:
 
     def _terminate(self, member: Member) -> None:
         """Termina el VM sin abrirlo: abrir uno suspendido lo reanudaría sólo
-        para matarlo."""
+        para matarlo. Un miembro sin probar (`Member.proven`) no se termina:
+        podría ser un sandbox ajeno de la misma imagen, y se deja a su
+        propio plazo y a su política de idle con un aviso."""
+        if not member.proven:
+            logger.warning(UNPROVEN_MEMBER_MESSAGE, member.sandbox_id)
+            return
         if member.deployment is not None:
             member.deployment.stop()
         else:

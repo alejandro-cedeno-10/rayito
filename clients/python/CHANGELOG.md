@@ -89,6 +89,14 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   no es miembro, no cuenta para el cupo y no prueba que la imagen sea
   compartida. Se loguea un aviso con su id. Vector nuevo en
   `testdata/agent-fleet/members.json`.
+- **Una flota nunca termina un VM que no pudo probar que es suyo.** Si la
+  sonda de un VM `RUNNING` falla, ese VM podría ser un sandbox ajeno de la
+  misma imagen, así que los VMs suspendidos de esa lectura cuentan para el
+  cupo pero `stop()` y la reducción no los terminan: se avisa con su id y se
+  dejan a su propio plazo y a su política de `idle`. Los VMs que creó el
+  propio proceso siempre se terminan. Los VMs `RUNNING` se sondean hasta 8 a
+  la vez (`AGENT_FLEET_PROBE_CONCURRENCY`), con los resultados y los avisos en
+  el orden del listado.
 - **Las variables de `Template.set_envs()` se ven en los comandos.** `rayd`
   arranca cada proceso con un entorno limpio, así que el `ENV` del template
   sólo llegaba al propio `rayd`: `commands.run`, las PTY y `run_code` no las

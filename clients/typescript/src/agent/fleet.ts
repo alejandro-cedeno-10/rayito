@@ -51,6 +51,7 @@ import {
   AGENT_CAPACITY_CODE,
   AGENT_FLEET_BUSY_RETRY_MS,
   AGENT_FLEET_LIVE_STATES,
+  AGENT_FLEET_PROBE_CONCURRENCY,
   AGENT_FLEET_PROBE_STATE,
   AGENT_FLEET_SESSION_LABEL,
   AGENT_FLEET_START_CONCURRENCY,
@@ -71,10 +72,12 @@ import {
   listedCap,
   type Member,
   type MemberListing,
+  type MemberProbe,
+  mapBounded,
   markExtras,
+  memberOf,
   newMember,
   newReservation,
-  ownedIds,
   pingIsFresh,
   planPlacement,
   poolConfigFor,
@@ -83,10 +86,11 @@ import {
   restoreMs,
   routeOf,
   sandboxCap,
-  selectMembers,
+  selectProbed,
   sessionLabel,
   surplus,
   UNMANAGED_LIFETIME_MESSAGE,
+  UNPROVEN_MEMBER_MESSAGE,
   UNREADABLE_MEMBER_MESSAGE,
   vmLostMessage,
   withHandle,
@@ -209,25 +213,26 @@ export class SandboxDirectory implements FleetDirectory {
     })) {
       listed.push({ sandboxId: item.sandboxId, state: item.state, startedAt: item.startedAt });
     }
-    const probed: Pick<SandboxInfo, "sandboxId" | "metadata">[] = [];
-    const unreadable = new Set<string>();
-    for (const item of listed) {
-      if (item.state !== AGENT_FLEET_PROBE_STATE) {
-        continue;
-      }
-      const info = await this.#probe(item.sandboxId);
-      if (info === undefined) {
-        unreadable.add(item.sandboxId);
-      } else {
-        probed.push(info);
+    const running = listed.filter((item) => item.state === AGENT_FLEET_PROBE_STATE);
+    const probes = await mapBounded(running, AGENT_FLEET_PROBE_CONCURRENCY, (item) =>
+      this.#probe(item.sandboxId),
+    );
+    for (const probe of probes) {
+      if (probe.error !== undefined) {
+        this.#logger?.warn?.(UNREADABLE_MEMBER_MESSAGE, {
+          sandboxId: probe.sandboxId,
+          error: probe.error,
+        });
       }
     }
-    return selectMembers(listed, ownedIds(probed), unreadable);
+    return selectProbed(listed, probes);
   }
 
-  async #probe(
-    sandboxId: string,
-  ): Promise<Pick<SandboxInfo, "sandboxId" | "state" | "metadata"> | undefined> {
+  /** La sonda de un VM `RUNNING`: su información con metadatos, o sin ella si
+   * su `Health` falla (con la clase del error), ya no existe o ya no está
+   * `RUNNING`. Una limitación o un plazo de `get-microvm` sí hacen fallar el
+   * listado. */
+  async #probe(sandboxId: string): Promise<MemberProbe> {
     let info: Pick<SandboxInfo, "sandboxId" | "state" | "metadata">;
     try {
       info = await this.#probeInfo(sandboxId, this.#connection);
@@ -235,10 +240,9 @@ export class SandboxDirectory implements FleetDirectory {
       if (!(error instanceof SandboxError) || isControlPlaneListingError(error)) {
         throw error;
       }
-      this.#logger?.warn?.(UNREADABLE_MEMBER_MESSAGE, { sandboxId, error: error.name });
-      return undefined;
+      return { sandboxId, info: undefined, error: error.name };
     }
-    return info.state === AGENT_FLEET_PROBE_STATE ? info : undefined;
+    return { sandboxId, info: info.state === AGENT_FLEET_PROBE_STATE ? info : undefined };
   }
 
   async connect(sandboxId: string, accessToken: string): Promise<FleetSandbox> {
@@ -702,15 +706,12 @@ export class AgentFleet {
     const lifetime = this.#lifetime();
     this.#members = listing
       .filter((item) => !parked.has(item.sandboxId))
-      .map(
-        (item) =>
-          known.get(item.sandboxId) ??
-          newMember<AgentDeployment>(
-            item.sandboxId,
-            undefined,
-            false,
-            listedCap(item.startedAt, lifetime),
-          ),
+      .map((item) =>
+        memberOf<AgentDeployment>(
+          known.get(item.sandboxId),
+          item,
+          listedCap(item.startedAt, lifetime),
+        ),
       );
     markExtras(this.#members, this.scaling);
   }
@@ -1439,7 +1440,7 @@ export class AgentFleet {
 
   async #trim(): Promise<void> {
     const excess = surplus(this.#members, this.scaling).filter(
-      (member) => member.inflight === 0 && member.bound.size === 0,
+      (member) => member.inflight === 0 && member.bound.size === 0 && member.proven,
     ) as Member<AgentDeployment>[];
     for (const member of excess) {
       this.#drop(member);
@@ -1452,8 +1453,14 @@ export class AgentFleet {
   }
 
   /** Termina el VM sin abrirlo: abrir uno suspendido lo reanudaría sólo para
-   * matarlo. */
+   * matarlo. Un miembro sin probar (`Member.proven`) no se termina: podría ser
+   * un sandbox ajeno de la misma imagen, y se deja a su propio plazo y a su
+   * política de idle con un aviso. */
   async #terminate(member: Member<AgentDeployment>): Promise<void> {
+    if (!member.proven) {
+      this.#logger?.warn?.(UNPROVEN_MEMBER_MESSAGE, { sandboxId: member.sandboxId });
+      return;
+    }
     if (member.deployment !== undefined) {
       await member.deployment.stop();
     } else {
