@@ -788,8 +788,7 @@ Sólo después de que M5 esté verde.
   slim ≈ $0,08). Queda explícitamente diferida al 2026-09-17 la línea de
   Cost Explorer del día del bench (GB reales por lanzamiento y por suspend,
   VM-segundos, salto de storage: tareas 5.1 y 5.3–5.5 del cambio; la
-  recomprobación de las 21:10 UTC del 2026-09-16 seguía sin el bench,
-  `docs/benchmarks/raw/2026-09-cost-explorer-2026-09-16T2115Z.json`); la
+  recomprobación de las 21:10 UTC del 2026-09-16 seguía sin el bench); la
   DECISIÓN no depende de ella. `rayito-base-slim` (1.0 y 2.0) se borró tras
   la medida: los números viven en el informe y `make image-publish-slim` la
   reconstruye.
@@ -832,11 +831,9 @@ borrados serializados, 0 conflictos) y `--keep 1` sobre `rayito-base-caps`
 (5.0 borrada); `rayito-base-e2b` y `rayito-base-slim` borradas enteras
 (`delete-microvm-image`). Quedan **`rayito-base` 15.0 + 16.0**,
 **`rayito-base-caps` 6.0** y `rayito-m0-probe` 3.0 (M0, ≈ $0,04/semana,
-candidata a borrar); `list-microvms`: 266 en total, **0 vivos**. Cost
-Explorer (21:10 UTC, usage types `Lambda-MicroVM-*`): 2026-09-14 $0,0075,
-2026-09-15 $0,3111, 2026-09-16 **$0,0487 (parcial, `Estimated`, sólo las
-primeras horas)**, 2026-09-17 $0; el día de la aceptación (≈ 21 MicroVMs
-cortos + 1 versión de imagen + 2 consultas CE) se estima en ≈ $0,25 de uso.
+candidata a borrar); **0 VMs vivos**. El día de la aceptación (≈ 21
+MicroVMs cortos + 1 versión de imagen + 2 consultas CE) se estima en ≈ $0,25
+de uso de Rayito; Cost Explorer aún no tenía la línea completa de ese día.
 Cambios OpenSpec `m6-hardening`, `m6-typescript-sdk`, `m6-e2b-compat` y
 `m6-benchmark-pool` archivados. Diferido con razón: allowlist de egress sin
 medir (sin VPC propia ni prestada, T8/Q46), slices cgroup2 (variante caps), pool de
@@ -941,14 +938,10 @@ exclusión se evalúa primero (test de regresión). Poda: `image_prune.py --keep
 (`delete-microvm-image`; el README del spike de M0, en el historial de git, la reconstruye). Quedan
 **`rayito-base` 19.0 + 20.0, `rayito-base-caps` 7.0 + 8.0 y `rayito-base-poly`
 3.0 + 4.0**; `list-microvms`: **0 vivos** al terminar; S3 `rayito-e2e/` vacío.
-Coste: Cost Explorer (16:15 UTC, `SERVICE = AWS Lambda` por `USAGE_TYPE`,
-líneas `Lambda-MicroVM-*`, ambos días `Estimated`) da **$2,93 el 2026-09-16**
-(todas las pistas de implementación de M7: 1 117 GB de lectura de snapshot,
-172 GB de escritura, 14 312 vCPU-s) y **$1,43 parcial el 2026-09-17** (568 GB
-de lectura, 97 GB de escritura, 4 888 vCPU-s; incluye los e2e de madrugada
-UTC de las pistas de persistencia y poly); la aceptación de hoy son ≈ 180
-lanzamientos cortos + 3 versiones de imagen ≈ $0,6–0,9, y M7 entero queda
-en ≈ $4,5–5, muy por debajo del presupuesto de $15. Se recomprueba el
+Coste: la aceptación de hoy son ≈ 180 lanzamientos cortos + 3 versiones de
+imagen ≈ $0,6–0,9, y M7 entero (implementación y aceptación, derivado de las
+líneas `Lambda-MicroVM-*` de Cost Explorer) queda en ≈ $4,5–5, muy por
+debajo del presupuesto de $15. Se recomprueba el
 2026-09-18 por el retardo de facturación.
 Versiones en lockstep a **0.2.0** (Python, TypeScript desde 0.0.5, `rayd` y
 `agent_version`, manifest de release-please, fila 0.2 de la tabla de

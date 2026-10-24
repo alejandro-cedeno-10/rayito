@@ -94,10 +94,9 @@ en caliente (38,9 MB/s), restore 0,87 s (60,6 MB/s), `reincarnate()` 8,9 s;
 primera celda `bash` 4,19 s, segunda 0,19 s; `imds_blocked` a los 0,10 s en
 caps. Poda posterior: quedan `rayito-base` 19.0 + 20.0, `rayito-base-caps`
 7.0 + 8.0 y `rayito-base-poly` 3.0 + 4.0; `rayito-m0-probe` borrada; cero
-MicroVMs vivos y el prefijo S3 del e2e vacío al terminar. Coste: Cost Explorer
-(`Estimated`) da $2,93 para el 2026-09-16 (implementación de M7) y $1,43
-parcial para el 2026-09-17; la aceptación de hoy ≈ $0,6–0,9 y M7 entero
-≈ $4,5–5. Corregido durante la aceptación: `copy_sidecar.py` fallaba en
+MicroVMs vivos y el prefijo S3 del e2e vacío al terminar. Coste: la aceptación ≈ $0,6–0,9 y M7
+entero ≈ $4,5–5 (derivado de las líneas `Lambda-MicroVM-*` de Cost
+Explorer). Corregido durante la aceptación: `copy_sidecar.py` fallaba en
 Windows con un symlink de Linux dentro del `.venv` excluido (la exclusión se
 evalúa ahora antes de tocar el sistema de ficheros).
 
