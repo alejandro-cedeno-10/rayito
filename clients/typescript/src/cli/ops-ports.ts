@@ -257,15 +257,15 @@ export interface FleetClient {
   stop(options?: { readonly keepRecipe?: boolean | undefined }): Promise<number>;
 }
 
-/** `rayito agent ...` sobre `AgentProject` y `AgentDeployment`; `init` no los usa. */
-/** Lo que `rayito agent invoke` pide al reconectar una flota. */
-/** `renewGatewayKeys`: `true` con `--renew-gateway-keys`; `false` en `status`
- * y `stop`, que nunca crean VMs (ni renuevan ni avisan
- * `recipe_renewal_ignored`); sin la clave, la receta decide si avisar. */
+/** Lo que la CLI pide al reconectar una flota. `renewGatewayKeys`: `true` con
+ * `--renew-gateway-keys` en `invoke`; `false` en `status` y `stop`, que nunca
+ * crean VMs (ni renuevan ni avisan `recipe_renewal_ignored`); sin la clave,
+ * la receta decide si avisar. */
 export interface FleetConnectFlags {
   readonly renewGatewayKeys?: boolean;
 }
 
+/** `rayito agent ...` sobre `AgentProject` y `AgentDeployment`; `init` no los usa. */
 export interface AgentProjectTools {
   /** Lee el fichero de proyecto de `file` (un fichero o un directorio); no llama a AWS. */
   load(file: string): Promise<AgentProjectTool>;
