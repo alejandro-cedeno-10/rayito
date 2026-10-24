@@ -432,7 +432,7 @@ Respuesta "desde docs" ≠ medida. Medido el 2026-09-15 en el spike de M0 (histo
 | 19 | Reloj de pared tras resume: ¿lo corrige AWS? Δ `time.time()` vs `time.monotonic()` | Firecracker: el guest debe corregirlo; AWS no lo documenta | **AWS lo corrige** (−1 s vs real) y **el monotónico también avanza**: Δwall 313.15 s, Δmono 313.14 s |
 | 20 | Dentro de la VM: usuario por defecto, `CapEff`, `/sys/fs/cgroup` escribible, `setpriv`/`iptables`/`useradd` presentes, IMDS alcanzable como uid 1000, IP de origen de los hooks | aws-samples corren como root; docs no dicen nada | root con caps capadas (sin sys_admin/net_admin/sys_ptrace); cgroup no montado; setpriv/runuser/su/useradd/iptables sí (iptables inutilizable), sudo/nft no; IMDS como uid 1000 sí; hooks desde 127.0.0.1 HTTP/1.1 |
 | 21 | Tamaños reales de snapshot (`memorySnapshotSizeInBytes`, `diskSnapshotSizeInBytes`) de la imagen probe y de una con pandas/matplotlib; tiempo de build | tercero: build 3–6 min | Build **135–145 s**; memoria 672–678 MB, code install 644 MB, disco 33–35 MB; pandas/matplotlib no medido |
-| 22 | ¿Se factura el build? ¿El storage de suspend tiene mínimo de 1 semana? | pricing page no lo dice | **Parcial (Cost Explorer 2026-09-16, §12)**: el build **no** genera línea de escritura de snapshot (la escritura de ese día corresponde a los 4 suspends de M0) ni una línea MicroVM propia; la única huella es storage, leída como delta sobre el día anterior a la primera imagen (§12). Precio de storage $0,08/GB-mes a 720 h/mes (verificado). Por lanzamiento: ≈ el snapshot de memoria en GB × $0,00155 ($0,0014 en 10.0). Pendiente el 2026-09-17: GB reales por lanzamiento y por suspend del día del bench y el salto de storage de las dos versiones de `rayito-base-slim`; el 2026-09-23, si el mínimo de una semana se ve en la línea de storage |
+| 22 | ¿Se factura el build? ¿El storage de suspend tiene mínimo de 1 semana? | pricing page no lo dice | **Parcial (Cost Explorer 2026-09-16, §12)**: el build **no** genera línea de escritura de snapshot (la escritura de ese día corresponde a los 4 suspends de M0) ni una línea MicroVM propia; la única huella es storage, leída como delta sobre el día anterior a la primera imagen (`docs/benchmarks/2026-09-cold-start.md` §8). Precio de storage $0,08/GB-mes a 720 h/mes (verificado). Por lanzamiento: ≈ el snapshot de memoria en GB × $0,00155 ($0,0014 en 10.0). Pendiente el 2026-09-17: GB reales por lanzamiento y por suspend del día del bench y el salto de storage de las dos versiones de `rayito-base-slim`; el 2026-09-23, si el mínimo de una semana se ve en la línea de storage |
 | 23 | ¿`endpoint` viene con `https://` o hostname pelado? | aws-samples antepone `https://` | **Pelado** |
 | 24 | ¿Los hooks (puerto 9000) son alcanzables desde fuera con un token `allPorts`? | no documentado | **Sí** (`POST …/ready` → 200); nunca cubrir ese puerto con un token |
 | 25 | Dos MicroVMs de la misma imagen: ¿`random.random()` devuelve la misma secuencia? | docs: el estado de build se clona | **Sí**, idéntico al importar; distinto tras `random.seed()` en `/run` |
@@ -1636,10 +1636,10 @@ referencia a un registro de contenedores.
 salida completa de BuildKit (`#N [k/n] RUN …`, stdout y stderr de cada
 `RUN`) en un stream propio, de golpe al terminar el build (no en vivo),
 tanto si el build termina bien como si falla; en el fallido aparece el
-comando, su salida y una línea `exit code: N`. Cuota observada: 10 builds
-concurrentes por cuenta (`ServiceQuotaExceededException` en el undécimo),
-de ahí el guardia local `MAX_CONCURRENT_BUILDS = 10` antes de llamar a
-AWS.
+comando, su salida y una línea `exit code: N`. Cuota por defecto de builds
+concurrentes en las regiones grandes: 10, y 5 en el resto (§11); de ahí el
+guardia local `MAX_CONCURRENT_BUILDS = 10` antes de llamar a AWS. Pasar la
+cuota de la región da `ServiceQuotaExceededException`.
 
 **`ready_cmd`/CMD con 4xx o 5xx** (TPL-5/Q85): si el proceso que atiende
 `/ready` responde con un código de error HTTP, el build falla **en la
@@ -1884,8 +1884,8 @@ Notas de contrato:
   `SUSPENDED` (§11) con el `minimumMemoryInMiB` de su versión de imagen
   (`GetMicrovmImageVersion`, §24, una llamada gratuita por versión y
   proceso). Medido el 2026-10-14 (Q163 y Q164): Service Quotas **no publica la
-  utilización** de ninguna cuota de MicroVMs (`UsageMetric` viene vacío en las
-  26 cuotas), así que el uso se calcula siempre sumando sandboxes; y
+  utilización** de ninguna cuota de MicroVMs (`UsageMetric` viene vacío), así
+  que el uso se calcula siempre sumando sandboxes; y
   `ListMicrovms` y `ListMicrovmImages` aceptan unas 5 llamadas por segundo y
   no figuran en la tabla de cuotas. **Sigue pendiente de medir**: si la cuota
   de memoria cuenta `minimumMemoryInMiB` o la memoria que ve el guest.
@@ -1959,11 +1959,10 @@ una sola región (us-east-1).
   llamadas. Con los reintentos por defecto de boto3 el rechazo no se ve: la
   primera ejecución ocultó el límite y devolvió una tasa lograda falsa de ~4/s.
 - **Q164 — Cuotas de MicroVMs en Service Quotas.** `ListServiceQuotas` de
-  `lambda` devuelve 26 cuotas de MicroVMs (tasas y ráfagas por operación,
+  `lambda` devuelve las cuotas de MicroVMs (tasas y ráfagas por operación,
   memoria asignada, imágenes, versiones por imagen, builds concurrentes y
-  conexiones por tamaño). Ninguna publica métrica de utilización
-  (`UsageMetric` vacío), ni siquiera la de memoria asignada (1024 GB en
-  ARM_64).
+  conexiones por tamaño; valores por defecto en §11). Ninguna publica métrica
+  de utilización (`UsageMetric` vacío), ni siquiera la de memoria asignada.
 - **Q165 — Retraso de Cost Explorer.** Una lectura de 7 días de `AWS Lambda`
   ($0,01 por petición, una sola página) devolvió los cinco usage types de
   MicroVMs de §12 y datos del **día en curso** marcados `Estimated: true`: el
@@ -2077,9 +2076,9 @@ una sola región (us-east-1).
   `CREATING` a `READY` en unos 13 s en todos (incluido el `UpdateAgentRuntime`
   que fija `requireMMDSV2`). Ninguna imagen fue rechazada por tamaño: la cuota
   de 2 048 MB no se alcanzó con ningún ejemplo (no se midió el tamaño de ECR por
-  ejemplo: el repositorio se borra con la pila). La cuota de builds
-  simultáneos `ARM/Small` de la cuenta es de 300 y la de sesiones activas de
-  AgentCore, de 5 000; se corrieron tres builds a la vez sin esperas.
+  ejemplo: el repositorio se borra con la pila). Se corrieron tres builds a la
+  vez sin esperas; las cuotas de CodeBuild y de AgentCore de cada cuenta se
+  consultan en Service Quotas.
 - **Q176 — La primera llamada de una sesión nueva llega antes de que el agente
   esté caliente (2026-10-19).** Con el host de 0.14, la primera `invoke` de un
   runtime recién creado devolvió `RuntimeClientError` (HTTP 424, «Received error

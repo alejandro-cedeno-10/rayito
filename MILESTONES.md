@@ -1612,7 +1612,7 @@ publicación de 0.7.0 (`m15-efs-volumes`, `local-e2e-floci`,
 - **Dominio propio** (`m15-custom-domain`, experimental, apagado por
   defecto): `CustomDomain` despliega CloudFront, una Function de enrutado y
   un KeyValueStore. Sale como experimental para que se pueda probar: la
-  distribución no se llegó a crear en el entorno de aceptación, así
+  distribución no se llegó a crear en la corrida de aceptación, así
   que el tráfico de punta a punta por una distribución real sigue sin
   verificar y el cambio queda abierto (tareas 3.6 y 9.4).
 - **Endurecimiento de seguridad**: el agente frente a rutas de confused
