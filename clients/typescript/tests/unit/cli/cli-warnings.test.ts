@@ -57,6 +57,20 @@ describe("CLI warnings", () => {
     expect(terminal.stderrText).toBe("aviso: mvm-1\nfallo\n");
   });
 
+  test("status and stop never ask the fleet to warn about renewal", async () => {
+    const connect = vi
+      .spyOn(AgentFleet, "connect")
+      .mockRejectedValue(new Error("detenido en la prueba"));
+    const services = async () =>
+      ({ region: "us-east-1", controlPlane: {} }) as unknown as CliServices;
+    const tools = new SdkAgentProjectTools(services);
+    await expect(
+      tools.connectFleet("support-bot", "token", { renewGatewayKeys: false }),
+    ).rejects.toThrow("detenido");
+    expect(connect.mock.calls[0]?.[1]?.renewGatewayKeys).toBe(false);
+    connect.mockRestore();
+  });
+
   test("a fleet the CLI reconnects gets the CLI logger", async () => {
     const logger = warningsLogger(new CliConsole(new FakeTerminal()));
     const connect = vi

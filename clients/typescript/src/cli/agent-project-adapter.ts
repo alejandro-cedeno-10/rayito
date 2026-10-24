@@ -198,7 +198,9 @@ export class SdkAgentProjectTools implements AgentProjectTools {
     const logger = this.#logger;
     const fleet = await AgentFleet.connect(name, {
       ...(accessToken === undefined ? {} : { accessToken }),
-      ...(options.renewGatewayKeys === true ? { renewGatewayKeys: true } : {}),
+      ...(options.renewGatewayKeys === undefined
+        ? {}
+        : { renewGatewayKeys: options.renewGatewayKeys }),
       ...(logger === undefined ? {} : { logger }),
       connection: { region: aws.region },
     });

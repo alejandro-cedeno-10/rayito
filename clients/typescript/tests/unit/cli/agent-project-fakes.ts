@@ -214,7 +214,7 @@ export class FakeAgentProjects implements AgentProjectTools {
     options: FleetConnectFlags = {},
   ): Promise<FleetClient> {
     this.calls.push(
-      options.renewGatewayKeys === true
+      options.renewGatewayKeys !== undefined
         ? ["connectFleet", name, accessToken, options]
         : ["connectFleet", name, accessToken],
     );

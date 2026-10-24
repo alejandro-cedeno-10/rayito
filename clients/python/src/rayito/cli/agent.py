@@ -1370,18 +1370,25 @@ def fleet_token(token_file: Path | None) -> str:
 
 
 def connect_fleet(
-    ctx: typer.Context, name: str, token_file: Path | None, *, renew_gateway_keys: bool = False
+    ctx: typer.Context,
+    name: str,
+    token_file: Path | None,
+    *,
+    renew_gateway_keys: bool = False,
+    creates_vms: bool = True,
 ) -> AgentFleet:
     """`AgentFleet.connect(nombre)`. La renovación de claves sólo se pide con
     `--renew-gateway-keys`; sin ella se deja como en 0.16 (`None`: la receta
-    no la activa y, si la pedía, avisa `recipe_renewal_ignored`)."""
+    no la activa y, si la pedía, avisa `recipe_renewal_ignored`). Con
+    `creates_vms=False` (`status`, que nunca crea VMs) se pasa `False`: no
+    hay nada que renovar ni nada que avisar."""
     clients = clients_of(ctx)
     return AgentFleet.connect(
         name,
         access_token=fleet_token(token_file),
         region=clients.region,
         session=clients.session,
-        renew_gateway_keys=True if renew_gateway_keys else None,
+        renew_gateway_keys=True if renew_gateway_keys else (None if creates_vms else False),
     )
 
 
@@ -1520,7 +1527,9 @@ def status_command(
         show_status(ctx, sandbox_id, token_file)
         return
     if is_fleet_name(sandbox_id):
-        print_fleet_status(connect_fleet(ctx, sandbox_id, token_file), as_json=json_mode(ctx))
+        print_fleet_status(
+            connect_fleet(ctx, sandbox_id, token_file, creates_vms=False), as_json=json_mode(ctx)
+        )
         return
     status = connect_deployment(ctx, sandbox_id, token_file).status()
     document = {
@@ -1579,7 +1588,12 @@ def stop_command(
         return
     clients = clients_of(ctx)
     if is_fleet_name(sandbox_id):
-        fleet = AgentFleet.connect(sandbox_id, region=clients.region, session=clients.session)
+        fleet = AgentFleet.connect(
+            sandbox_id,
+            region=clients.region,
+            session=clients.session,
+            renew_gateway_keys=False,
+        )
         count = fleet.stop(keep_recipe=True) if keep_recipe else fleet.stop()
         if json_mode(ctx):
             emit_json({"name": sandbox_id, "stopped": count})
