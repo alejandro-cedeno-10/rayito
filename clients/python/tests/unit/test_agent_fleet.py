@@ -258,6 +258,22 @@ def test_an_extra_vm_keeps_its_hold_while_another_invocation_is_in_flight(
         flavor.close_stream(stream)
 
 
+def test_a_fixed_size_fleet_never_warns_about_a_vm_without_a_logical_lifetime(
+    flavor: FleetFlavor, caplog: pytest.LogCaptureFixture
+) -> None:
+    fleet = flavor.started(ScalingOptions(min_vms=1, max_vms=1))
+    old = flavor.classes.add(managed=False)
+    flavor.call(fleet.refresh_members())
+    held = flavor.open_stream(fleet, "primera")
+
+    with caplog.at_level(logging.WARNING, logger="rayito"):
+        flavor.call(fleet.invoke("segunda"))
+    flavor.close_stream(held)
+
+    assert old.timeouts == []
+    assert UNMANAGED_LIFETIME_MESSAGE not in [r.getMessage() for r in caplog.records]
+
+
 def test_a_late_cap_estimate_is_corrected_from_rayd_and_never_marks_the_vm(
     flavor: FleetFlavor, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -586,22 +602,47 @@ def test_a_vm_that_stops_answering_is_replaced_to_keep_min_vms(flavor: FleetFlav
     assert flavor.classes.sandboxes[original].state == "TERMINATED"
 
 
-def test_status_reports_members_without_opening_the_unknown_ones(flavor: FleetFlavor) -> None:
-    flavor.classes.add()
-    flavor.classes.add()
-    fleet = flavor.call(
+def connected_fleet(flavor: FleetFlavor, **options: Any) -> Any:
+    return flavor.call(
         (AsyncAgentFleet if flavor.asynchronous else AgentFleet).connect(
             "support-bot",
             access_token=TOKEN,
             directory=flavor.classes_directory(),
+            transport_factory=flavor.backend.async_factory
+            if flavor.asynchronous
+            else flavor.backend.factory,
+            **options,
         )
     )
+
+
+def test_status_never_opens_a_suspended_member(flavor: FleetFlavor) -> None:
+    flavor.classes.add(state="SUSPENDED")
+    flavor.classes.add(state="SUSPENDED")
+    fleet = connected_fleet(flavor)
 
     status = flavor.call(fleet.status())
 
     assert [member.state for member in status.members] == ["unknown", "unknown"]
     assert flavor.classes.connected == []
     assert (status.healthy, status.busy) == (0, 0)
+
+
+def test_status_right_after_connect_reports_the_real_state_of_running_members(
+    flavor: FleetFlavor,
+) -> None:
+    flavor.classes.add()
+    flavor.classes.add()
+    flavor.classes.add(state="SUSPENDED")
+    fleet = connected_fleet(flavor, scaling=SHARED_TWO)
+
+    status = flavor.call(fleet.status())
+
+    assert [member.state for member in status.members] == ["healthy", "healthy", "unknown"]
+    assert status.healthy == 2
+    assert sorted(flavor.classes.connected) == [sandbox_id_of(1), sandbox_id_of(2)]
+    assert fleet.deployments == ()
+    assert all(sbx.timeouts == [] for sbx in flavor.classes.sandboxes.values())
 
 
 def test_a_transport_failure_is_not_enough_to_drop_the_vm(flavor: FleetFlavor) -> None:

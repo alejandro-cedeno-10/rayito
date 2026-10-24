@@ -72,6 +72,7 @@ import {
   listedCap,
   listedImageVersion,
   type Member,
+  type MemberHealth,
   type MemberListing,
   type MemberProbe,
   mapBounded,
@@ -94,6 +95,7 @@ import {
   UNPROVEN_MEMBER_MESSAGE,
   UNREADABLE_MEMBER_MESSAGE,
   vmLostMessage,
+  warnsUnmanagedLifetime,
   withHandle,
 } from "./fleet-base.js";
 import { type FleetRecipe, recipeOf, renewalOnConnect } from "./fleet-recipe.js";
@@ -805,21 +807,27 @@ export class AgentFleet {
     return stopped;
   }
 
-  /** Estado de la flota: pregunta a los VMs que este proceso ya abrió
-   * (`GET /ping`) y deja como `unknown` los demás. */
+  /** Estado de la flota: vuelve a leer el listado (`refreshMembers`), pregunta
+   * a los VMs que este proceso ya abrió (`GET /ping`) y, hasta
+   * `AGENT_FLEET_PROBE_CONCURRENCY` a la vez, a los `RUNNING` que aún no abrió
+   * (`#peek`). Sólo deja como `unknown` los suspendidos: preguntarles los
+   * reanudaría. */
   async status(): Promise<FleetStatus> {
-    const statuses: FleetMemberStatus[] = [];
-    for (const member of [...this.#members]) {
+    await this.refreshMembers();
+    const members = [...this.#members];
+    for (const member of members) {
       if (member.deployment !== undefined) {
         await this.#probe(member, true);
       }
-      statuses.push({
-        sandboxId: member.sandboxId,
-        state: member.health,
-        extra: member.extra,
-        inflight: member.inflight,
-      });
     }
+    const unopened = members.filter((member) => member.deployment === undefined && member.running);
+    await mapBounded(unopened, AGENT_FLEET_PROBE_CONCURRENCY, (member) => this.#peek(member));
+    const statuses: FleetMemberStatus[] = members.map((member) => ({
+      sandboxId: member.sandboxId,
+      state: member.health,
+      extra: member.extra,
+      inflight: member.inflight,
+    }));
     const warmReady = this.#pool?.stats().ready ?? 0;
     return fleetStatusOf(
       this.#name,
@@ -1278,7 +1286,9 @@ export class AgentFleet {
       }
       if (error instanceof InvalidArgumentError) {
         member.lifetimeRejected = true;
-        this.#logger?.warn?.(UNMANAGED_LIFETIME_MESSAGE);
+        if (warnsUnmanagedLifetime(this.scaling)) {
+          this.#logger?.warn?.(UNMANAGED_LIFETIME_MESSAGE);
+        }
         return;
       }
       if (error instanceof SandboxError) {
@@ -1348,6 +1358,30 @@ export class AgentFleet {
       ...(this.#project === undefined ? {} : { requestTimeoutMs: requestTimeoutMs(this.#project) }),
       ...(this.#fetch === undefined ? {} : { fetch: this.#fetch }),
     });
+  }
+
+  /** El `GET /ping` de un VM `RUNNING` que este proceso aún no abrió, sin
+   * quedárselo: no le acota la vida ni arranca su servicio (uno sin servicio
+   * sigue `unknown`). Si falla, el miembro sigue `unknown`. */
+  async #peek(member: Member<AgentDeployment>): Promise<void> {
+    if (this.#token === undefined) {
+      return;
+    }
+    let state: MemberHealth;
+    try {
+      const sandbox = await this.#directory.connect(member.sandboxId, this.#token);
+      if (!(await sandbox.files.exists(AGENT_SERVICE_READY_MARKER_PATH))) {
+        return;
+      }
+      state = (await (await this.#deploymentOf(sandbox)).status()).state;
+    } catch (error) {
+      if (!(error instanceof SandboxError)) {
+        throw error;
+      }
+      this.#logger?.debug?.(`no se pudo preguntar a un VM de la flota: ${error.name}`);
+      return;
+    }
+    recordPing(member, state, this.#now());
   }
 
   /** Si el VM puede atender una sesión: lo abre si hace falta y, si su último

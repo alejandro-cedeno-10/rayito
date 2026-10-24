@@ -8,6 +8,19 @@ versionado [SemVer](https://semver.org/lang/es/).
 
 ### Corregido
 
+- **`AgentFleet.status()` da el estado real justo después de `connect()`.**
+  Antes, un miembro que este proceso aún no había abierto salía como
+  `unknown`, también en `rayito agent status` y en su `--json`. Ahora
+  `status()` vuelve a leer el listado y pregunta (`GET /ping`)
+  a cada VM `RUNNING`, hasta `AGENT_FLEET_PROBE_CONCURRENCY` (8) a la vez, sin
+  quedarse el VM, acotarle la vida ni arrancar su servicio. Sólo un VM
+  suspendido sigue como `unknown` (sin comprobar), porque preguntarle lo
+  reanudaría.
+- **Sin aviso de «plazo lógico» en una flota de tamaño fijo.** Al conectar
+  con `project` y sin `scaling` (los límites por defecto), o con
+  `maxVms === minVms`, un VM sin plazo lógico ya no imprime «un VM de la
+  flota no tiene plazo lógico…»: sólo se avisa si la flota puede crecer
+  (`maxVms > minVms`), que es cuando ese VM no se reduciría.
 - **`rayito setup` pone al día la pila de IAM de una versión anterior.** Antes
   reutilizaba `rayito-m0-iam` si su `ArtifactBucket` coincidía, aunque se
   hubiera desplegado con un `infra/iam.yaml` más antiguo (en 0.17.0 la pila de
