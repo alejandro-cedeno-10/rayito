@@ -37,6 +37,20 @@ function flaky<T>(failures: unknown[], answer: T) {
 }
 
 describe("connection retry", () => {
+  test("the budget outlasts a handshake closed for several seconds", () => {
+    expect(CONNECT_RETRY_DELAYS_MS.reduce((total, ms) => total + ms, 0)).toBeGreaterThan(5000);
+    expect(CONNECT_RETRY_DELAYS_MS.length).toBeGreaterThanOrEqual(5);
+  });
+
+  test("five closed handshakes in a row still succeed", async () => {
+    const { call, calls } = flaky(
+      Array.from({ length: 5 }, () => refused()),
+      "ok",
+    );
+    expect(await retryUnestablished(call, async () => undefined)).toBe("ok");
+    expect(calls).toHaveLength(6);
+  });
+
   test("only a connection that never opened counts", () => {
     expect(isConnectionNotEstablished(refused())).toBe(true);
     expect(isConnectionNotEstablished(PROXY_502)).toBe(false);

@@ -52,9 +52,10 @@ const RESET_NODE_CODES: ReadonlySet<string> = new Set(["ECONNRESET", "EPIPE"]);
  * llegó a abrirse (`ECONNREFUSED`, `ETIMEDOUT`... con `syscall: "connect"`). */
 const CONNECT_SYSCALL = "connect";
 /** Las esperas entre los reintentos de una petición cuya conexión no llegó a
- * abrirse: tres reintentos, menos de 2 s en total. Las mismas que
+ * abrirse: cinco reintentos, menos de 8 s en total (en AWS real un VM recién
+ * arrancado cerró el handshake TLS durante más de 2 s). Las mismas que
  * `CONNECT_RETRY_DELAYS_SECONDS` de Python. */
-export const CONNECT_RETRY_DELAYS_MS: readonly number[] = [250, 500, 1000];
+export const CONNECT_RETRY_DELAYS_MS: readonly number[] = [250, 500, 1000, 2000, 4000];
 
 /** `Unavailable` porque la conexión con el proxy nunca se abrió (un error de
  * Node con `syscall: "connect"` en la cadena de causas): la petición no llegó

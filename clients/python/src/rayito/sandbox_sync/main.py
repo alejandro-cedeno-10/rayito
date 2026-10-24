@@ -2621,7 +2621,7 @@ class Sandbox:
                 raise
         self._logger.info("el proxy rechazó el token del sandbox %s; reacuñando", self.sandbox_id)
         self._refresher.refresh_all()
-        return call()
+        return retry_unestablished(call)
 
     def _call_unary(self, call: Callable[[], T], *, reopen: bool = True) -> T:
         """Un unario con el reintento del 403 y, tras un corte reconectable
@@ -2645,7 +2645,7 @@ class Sandbox:
         outcome = self._reconnect(reason, seen_generation)
         if not outcome.resumed:
             raise self._reconnect_error(outcome, reason) from reason
-        return call()
+        return retry_unestablished(call)
 
     def _translated_unary(self, call: Callable[[], T], *, filesystem: bool = False) -> T:
         try:
@@ -2740,7 +2740,9 @@ class Sandbox:
             if not outcome.resumed:
                 raise self._reconnect_error(outcome, reason) from reason
         try:
-            return first_stream_message(start(stub), allow_empty=allow_empty)
+            return retry_unestablished(
+                lambda: first_stream_message(start(stub), allow_empty=allow_empty)
+            )
         except grpc.RpcError as exc:
             raise self._open_failure(exc, filesystem, translate) from exc
 
@@ -2769,7 +2771,9 @@ class Sandbox:
             self.sandbox_id,
         )
         self._refresher.refresh_all()
-        return first_stream_message(start(stub), allow_empty=allow_empty)
+        return retry_unestablished(
+            lambda: first_stream_message(start(stub), allow_empty=allow_empty)
+        )
 
     def _stream_failure(self, exc: grpc.RpcError, *, filesystem: bool = False) -> Exception:
         """Clasificación de M2 para los cortes que no reconectan (`Read` a
