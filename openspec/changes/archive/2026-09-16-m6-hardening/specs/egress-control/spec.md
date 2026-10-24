@@ -26,5 +26,5 @@ The acceptance SHALL deploy the template (stack `rayito-egress-e2e`, deny-all de
 - **THEN** the sandbox with the connector cannot open `https://example.com`, the default sandbox can, `get_info().egress` holds the connector ARN, and the stack is gone after the session
 
 #### Scenario: gate fails
-- **WHEN** no VPC with a subnet exists, no existing VPC is designated for the run, or the pricing page lists a connector charge
+- **WHEN** no existing VPC with a subnet is designated for the run, or the pricing page lists a connector charge
 - **THEN** `test_egress_allowlist` is skipped, no CloudFormation stack is created, `AWS_API_NOTES.md` Q46 (the design's Q42) says "not measured" with the reason, and `SECURITY.md` T8 states that the allowlist is validated (`make infra-lint`) but not measured
