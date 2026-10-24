@@ -4074,3 +4074,57 @@ integración y tareas en `openspec/changes/fleet-recipe/`; vectores en
 [`aws-bedrock-token-generator` (Python)](https://github.com/aws/aws-bedrock-token-generator-python),
 [`@aws/bedrock-token-generator` (JavaScript)](https://github.com/aws/aws-bedrock-token-generator-js),
 [`PutSecretValue`](https://docs.aws.amazon.com/secretsmanager/latest/apireference/API_PutSecretValue.html).
+
+## ADR-035 — Las variables de `set_envs()` de un template llegan a los comandos
+
+**Contexto.** `Template.set_envs()` / `setEnvs()` hornea `ENV` en el
+Dockerfile del template. Ese `ENV` sólo llega al entorno de `rayd` (PID 1),
+y `rayd` arranca a cada hijo con un entorno construido desde cero
+(`rayd_core::process::env`): así nada de la plataforma
+(`AWS_LAMBDA_MICROVM_*`, `AWS_REGION`, `RAYD_LOG`, `RAYITO_ALLOW_ROOT`)
+llega al código del sandbox. La consecuencia es que una variable del
+template no se ve en `commands.run`, en una PTY ni en `run_code`, aunque sí
+en los `RUN` del build. En E2B las variables del template se ven en los
+comandos del sandbox, con las de `Sandbox.create(envs=...)` encima y las de
+cada comando encima de ésas; el shim de compatibilidad promete el mismo
+DSL. Heredar el entorno de `rayd` no es una opción: no distingue lo del
+template de lo de la plataforma o de la imagen base.
+
+**Decisión.**
+
+1. `Template.build()` escribe, sólo si el template tiene `set_envs()`, el
+   fichero `/etc/rayito/template-env.json`
+   (`{"envs": {...}, "version": "rayito.template-env/1"}`, claves ordenadas,
+   los mismos bytes en los dos SDK; vectores en
+   `testdata/templates/template-env.json`) y una `COPY` que lo deja en la
+   imagen, junto a la del `template.json` de ADR-022. La última
+   `set_envs()` gana en una clave repetida, como el `ENV` del Dockerfile, que
+   se sigue escribiendo igual.
+2. `rayd` lee ese fichero una vez, al arrancar y antes de que nada se lance
+   (también el `start_cmd` de ADR-022). Cualquier fallo (no existe, no se
+   lee, JSON mal formado, otra versión) es un entorno vacío, con un aviso que
+   nombra la ruta y la clase del error, nunca una variable ni su valor.
+3. Las variables del template quedan debajo de las `envs` del `/run`
+   (`Sandbox.create(envs=...)`) en `SandboxSession::spawn_defaults`, así que
+   llegan a los procesos, a las PTY y a los kernels con el orden de E2B:
+   template, sandbox y comando. Quedan encima de `PATH`/`HOME`/`USER` y de
+   las variables del proxy local de ADR-012 (reescribirlas no abre ninguna
+   ruta: las reglas de red siguen decidiendo).
+
+**Consecuencias.** Una imagen construida antes no tiene el fichero y arranca
+igual que hoy; un `rayd` anterior ignora el fichero. Construir con este SDK
+un template que ya usaba `set_envs()` cambia los bytes del artefacto, así
+que el siguiente `build()` crea una versión nueva (los proyectos de agente
+también, porque su template fija las variables de OpenCode). No hay ninguna
+llamada nueva a AWS ni cambio del `.proto`.
+
+**Alternativas descartadas.** Heredar el entorno de `rayd` (filtra lo de la
+plataforma). Una lista de nombres que `rayd` copie de su propio entorno (la
+imagen base también fija variables, y el valor efectivo dependería de la
+plataforma). Meter las variables en el `template.json` de ADR-022 (ese
+fichero sólo existe con `set_start_cmd()` y su `start_cmd` es obligatorio).
+Pasarlas en cada `Sandbox.create()` desde el SDK (el SDK no conoce el
+template de una imagen que no construyó, y el shim de E2B crea por nombre).
+
+**Reversible.** Un template sin `set_envs()` no escribe nada; borrar el
+fichero de la imagen devuelve el comportamiento anterior.

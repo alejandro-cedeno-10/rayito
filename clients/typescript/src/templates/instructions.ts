@@ -9,6 +9,11 @@
 /** Marca de versión del `/etc/rayito/template.json` que lee `rayd`. */
 export const TEMPLATE_SPEC_VERSION = "rayito.template/1";
 
+/** Marca de versión de `/etc/rayito/template-env.json`: las variables de
+ * `setEnvs()` que `rayd` da a los comandos, las PTY y los kernels
+ * (`rayd_core::template::TEMPLATE_ENV_VERSION`, ADR-035). */
+export const TEMPLATE_ENV_VERSION = "rayito.template-env/1";
+
 /** Usuario por defecto del start/ready cmd (investigación §3.5). */
 export const DEFAULT_TEMPLATE_USER = "1000";
 
@@ -81,3 +86,15 @@ export interface TemplateSpec {
 }
 
 export const EMPTY_TEMPLATE_SPEC: TemplateSpec = { steps: [], skipCache: false };
+
+/** Las variables de `setEnvs()` en el orden del DSL: la última gana en una
+ * clave repetida, como el `ENV` del Dockerfile. */
+export function templateEnvs(spec: TemplateSpec): Record<string, string> {
+  const envs: Record<string, string> = {};
+  for (const step of spec.steps) {
+    if (step.kind === "env") {
+      envs[step.key] = step.value;
+    }
+  }
+  return envs;
+}

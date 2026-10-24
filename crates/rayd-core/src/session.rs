@@ -32,6 +32,7 @@ use crate::sandbox_timeout::{
     DeadlineAction, LifecycleSpec, LifecycleView, SandboxTimeout, SandboxTimeoutError, TimeoutMode,
     TimeoutSettings,
 };
+use crate::template::layer_template_envs;
 
 /// Knobs the integration tests shrink; production uses the constants.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -87,6 +88,7 @@ pub struct SandboxSession {
     network_enforce: AtomicBool,
     egress_settling: AtomicBool,
     egress_env: RwLock<BTreeMap<String, String>>,
+    template_envs: RwLock<BTreeMap<String, String>>,
     egress_enforcement: AtomicU8,
     gate: AccessTokenGate,
     clock: Arc<dyn Clock>,
@@ -116,6 +118,7 @@ impl SandboxSession {
             network_enforce: AtomicBool::new(false),
             egress_settling: AtomicBool::new(false),
             egress_env: RwLock::new(BTreeMap::new()),
+            template_envs: RwLock::new(BTreeMap::new()),
             egress_enforcement: AtomicU8::new(EgressEnforcement::None.to_code()),
             gate: AccessTokenGate::new(),
             clock,
@@ -281,10 +284,29 @@ impl SandboxSession {
             .clone()
     }
 
-    /// Spawn defaults of this boot: empty when `/run` delivered none.
+    /// Spawn defaults of this boot: empty when `/run` delivered none. The
+    /// template's `set_envs` variables (`set_template_envs`) sit under the
+    /// payload `envs`, which win on a repeated key.
     #[must_use]
     pub fn spawn_defaults(&self) -> RunDefaults {
-        self.defaults().unwrap_or_default()
+        let mut defaults = self.defaults().unwrap_or_default();
+        let template = self
+            .template_envs
+            .read()
+            .unwrap_or_else(PoisonError::into_inner);
+        if !template.is_empty() {
+            defaults.envs = layer_template_envs(&template, &defaults.envs);
+        }
+        defaults
+    }
+
+    /// The template's `set_envs` variables, read once at boot from
+    /// `/etc/rayito/template-env.json` (ADR-035), before anything spawns.
+    pub fn set_template_envs(&self, envs: BTreeMap<String, String>) {
+        *self
+            .template_envs
+            .write()
+            .unwrap_or_else(PoisonError::into_inner) = envs;
     }
 
     /// Whether the accepted `/run` payload asked for deny-all before the
@@ -762,6 +784,36 @@ mod tests {
             payload: Some(&payload),
         });
         assert_eq!(session.spawn_defaults().workdir.as_deref(), Some("/srv"));
+    }
+
+    #[test]
+    fn template_envs_reach_every_spawn_under_the_payload_envs() {
+        let (_, session) = session();
+        session.set_template_envs(
+            [
+                ("MODE".to_owned(), "template".to_owned()),
+                ("ONLY_TEMPLATE".to_owned(), "1".to_owned()),
+            ]
+            .into(),
+        );
+        assert_eq!(
+            session
+                .spawn_defaults()
+                .envs
+                .get("MODE")
+                .map(String::as_str),
+            Some("template")
+        );
+        let payload = format!(
+            "{{\"v\":1,\"token_sha256\":\"{DIGEST_HEX}\",\"envs\":{{\"MODE\":\"sandbox\"}}}}"
+        );
+        session.run(RunHookInput {
+            sandbox_id: Some("mvm-1"),
+            payload: Some(&payload),
+        });
+        let envs = session.spawn_defaults().envs;
+        assert_eq!(envs.get("MODE").map(String::as_str), Some("sandbox"));
+        assert_eq!(envs.get("ONLY_TEMPLATE").map(String::as_str), Some("1"));
     }
 
     #[test]

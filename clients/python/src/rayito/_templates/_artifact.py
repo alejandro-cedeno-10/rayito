@@ -1,6 +1,7 @@
 """`ArtifactAssembler` (dominio puro salvo la E/S local ya resuelta por
-`_context.py`): junta el Dockerfile compuesto, los ficheros de contexto y
-`/etc/rayito/template.json` en un zip determinista — mismas entradas, mismos
+`_context.py`): junta el Dockerfile compuesto, los ficheros de contexto,
+`/etc/rayito/template-env.json` y `/etc/rayito/template.json` en un zip
+determinista — mismas entradas, mismos
 bytes, siempre (fechas fijas, orden estable), para que la clave S3 por
 sha256 (`_build.py`, igual que `cli/_publish.py` `artifact_key`) detecte de
 verdad cuándo el contenido no cambió.
@@ -11,15 +12,21 @@ from __future__ import annotations
 import io
 import json
 import zipfile
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Final
 
 from rayito._templates._dockerfile import (
+    TEMPLATE_ENV_CONTEXT_PATH,
     TEMPLATE_JSON_CONTEXT_PATH,
     compose_dockerfile,
     context_entry_path,
 )
-from rayito._templates._instructions import TEMPLATE_SPEC_VERSION, StartSpec, TemplateSpec
+from rayito._templates._instructions import (
+    TEMPLATE_ENV_VERSION,
+    TEMPLATE_SPEC_VERSION,
+    StartSpec,
+    TemplateSpec,
+)
 
 #: Zip determinista: toda entrada usa esta fecha fija (igual que
 #: `scripts/gen_stack_assets.py` `build_artifact`), así que dos builds del
@@ -51,6 +58,17 @@ def start_spec_to_json(start: StartSpec) -> bytes:
     return (json.dumps(payload, indent=2, sort_keys=True) + "\n").encode("utf-8")
 
 
+def template_env_to_json(envs: Mapping[str, str]) -> bytes:
+    """El `/etc/rayito/template-env.json` que lee `rayd`
+    (`rayito.template-env/1`, `rayd_core::template::TemplateEnv`): claves
+    ordenadas, sangría de 2 y salto de línea final, los mismos bytes que
+    escribe TypeScript (`testdata/templates/template-env.json`)."""
+    payload = {"envs": dict(sorted(envs.items())), "version": TEMPLATE_ENV_VERSION}
+    return (json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=False) + "\n").encode(
+        "utf-8"
+    )
+
+
 def read_zip_entries(zip_bytes: bytes) -> dict[str, bytes]:
     """Cada entrada de un zip ya existente (el `codeArtifact` de la imagen
     base), como `{ruta: contenido}`; ignora los directorios (entradas que
@@ -73,13 +91,16 @@ def assemble_artifact(
     (ya ordenado y filtrado, `_context.collect_context_files`) bajo
     `CONTEXT_ENTRY_PREFIX` — nunca en el espacio de nombres de la imagen
     base, así que un fichero del usuario no puede sustituir el Dockerfile
-    compuesto ni el binario de `rayd` — y `template.json` si `spec.start`
-    está puesto. Determinista: mismas
+    compuesto ni el binario de `rayd` —, `template-env.json` si hay
+    `set_envs()` y `template.json` si `spec.start` está puesto. Determinista: mismas
     entradas, mismos bytes, siempre el mismo zip."""
     entries = read_zip_entries(base_zip)
     base_dockerfile = entries.get(DOCKERFILE_NAME, b"").decode("utf-8")
     entries[DOCKERFILE_NAME] = compose_dockerfile(base_dockerfile, spec).encode("utf-8")
     entries.update((context_entry_path(relpath), content) for relpath, content in context_files)
+    envs = spec.template_envs()
+    if envs:
+        entries[TEMPLATE_ENV_CONTEXT_PATH] = template_env_to_json(envs)
     if spec.start is not None:
         entries[TEMPLATE_JSON_CONTEXT_PATH] = start_spec_to_json(spec.start)
     buffer = io.BytesIO()
