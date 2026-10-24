@@ -50,6 +50,7 @@ from rayito._pool_base import (
     PoolConfig,
 )
 from rayito.exceptions import (
+    AuthenticationException,
     InvalidArgumentException,
     RateLimitException,
     SandboxException,
@@ -147,6 +148,11 @@ def owned_ids(items: Iterable[Any]) -> set[str]:
 #: control (una limitación o un plazo de `get-microvm`): hacen fallar el
 #: listado en vez de dejar fuera a un miembro sano.
 LISTING_CONTROL_PLANE_ERRORS: Final = (RateLimitException, TimeoutException)
+
+#: Los errores de preguntar a un miembro que este proceso no abrió (`_peek`):
+#: los del sandbox o del agente, los de credenciales y los de red. Dejan el
+#: miembro `unknown`; cualquier otro, un error de programación, se propaga.
+PEEK_ERRORS: Final = (SandboxException, AuthenticationException, OSError)
 
 
 def probed_running(info: Any) -> Any | None:

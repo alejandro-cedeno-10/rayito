@@ -34,6 +34,7 @@ from rayito._agent._fleet_base import (
     AGENT_FLEET_START_CONCURRENCY,
     AGENT_VM_LOST_CODE,
     LISTING_CONTROL_PLANE_ERRORS,
+    PEEK_ERRORS,
     UNMANAGED_LIFETIME_MESSAGE,
     UNPROVEN_MEMBER_MESSAGE,
     UNREADABLE_MEMBER_MESSAGE,
@@ -1143,7 +1144,9 @@ class AgentFleet:
         servicio sigue `unknown`). Sólo anota el estado que se muestra, no un
         ping (`record_ping`), así que no cuenta para sustituir el VM. Si no se
         puede conectar, el miembro sigue `unknown`; un `/ping` sin respuesta
-        es `unavailable`. Ningún error al preguntarle tumba `status()`."""
+        es `unavailable`. Ningún error del sandbox, de credenciales o de red al
+        preguntarle tumba `status()` (`PEEK_ERRORS`); uno de programación se
+        propaga."""
         if self._token is None:
             return
         try:
@@ -1151,7 +1154,7 @@ class AgentFleet:
             if not sandbox.files.exists(AGENT_SERVICE_READY_MARKER_PATH):
                 return
             state = self._deployment_of(sandbox).status().state
-        except Exception as exc:
+        except PEEK_ERRORS as exc:
             logger.debug("no se pudo preguntar a un VM de la flota: %s", type(exc).__name__)
             return
         with self._lock:

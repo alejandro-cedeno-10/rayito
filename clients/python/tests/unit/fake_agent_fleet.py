@@ -162,7 +162,7 @@ class FleetFiles(FakeFiles):
 
     def exists(self, path: str) -> bool:
         if path == AGENT_SERVICE_READY_MARKER_PATH:
-            return self.owner.served
+            return self.owner.ready()
         return super().exists(path)
 
 
@@ -173,7 +173,7 @@ class AsyncFleetFiles(AsyncFakeFiles):
 
     async def exists(self, path: str) -> bool:  # type: ignore[override]
         if path == AGENT_SERVICE_READY_MARKER_PATH:
-            return self.owner.served
+            return self.owner.ready()
         return FakeFiles.exists(self, path)
 
 
@@ -207,7 +207,8 @@ class FleetSandbox:
     `max_lifetime` fija, como en `rayd`, un tope en `arranque + max_lifetime
     - 60 s`: un `set_timeout` que pase de él se rechaza con el tope
     (`timeout beyond cap`). `info` expone el tope de la plataforma como
-    `SandboxInfo.platform_expires_at`."""
+    `SandboxInfo.platform_expires_at`. `ready_error`, si se fija, es lo que
+    lanza leer el marcador de listo."""
 
     def __init__(
         self,
@@ -229,6 +230,7 @@ class FleetSandbox:
         self.access_token = ACCESS_TOKEN
         self.metadata = dict(metadata or {})
         self.served = served
+        self.ready_error: Exception | None = None
         self.state = state
         self.gateways = {"bedrock": GatewayStatus(port=GATEWAY_PORT)}
         self.token = FakeToken()
@@ -248,6 +250,11 @@ class FleetSandbox:
         return HostAccess(
             f"{self.sandbox_id}.{ENDPOINT}", port=port, token_provider=lambda: self.token.jwe
         )
+
+    def ready(self) -> bool:
+        if self.ready_error is not None:
+            raise self.ready_error
+        return self.served
 
     def _kill(self) -> bool:
         self.kills += 1
