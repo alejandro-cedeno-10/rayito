@@ -49,7 +49,12 @@ from rayito._pool_base import (
     MIN_REMAINING_FLOOR_SECONDS,
     PoolConfig,
 )
-from rayito.exceptions import InvalidArgumentException, SandboxException
+from rayito.exceptions import (
+    InvalidArgumentException,
+    RateLimitException,
+    SandboxException,
+    TimeoutException,
+)
 
 if TYPE_CHECKING:
     from rayito._agent._deployment_base import DeploymentState
@@ -126,6 +131,12 @@ def owned_ids(items: Iterable[Any]) -> set[str]:
             continue
         owned.add(item.sandbox_id)
     return owned
+
+
+#: Los errores de la sonda de un VM que no dicen nada del VM sino del plano de
+#: control (una limitación o un plazo de `get-microvm`): hacen fallar el
+#: listado en vez de dejar fuera a un miembro sano.
+LISTING_CONTROL_PLANE_ERRORS: Final = (RateLimitException, TimeoutException)
 
 
 def probed_running(info: Any) -> Any | None:

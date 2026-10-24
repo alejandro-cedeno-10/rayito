@@ -114,8 +114,9 @@ ROUTE_PORT = 8000
 #: Suficiente para que el test entero corra sin que la ruta caduque sola
 #: (T25); muy por debajo de `MAX_TEST_SANDBOX_TIMEOUT_SECONDS`.
 ROUTE_TTL_SECONDS = 1800
-#: TTL corto del test de caducidad: lo justo para verla servir antes.
-SHORT_ROUTE_TTL_SECONDS = 30
+#: TTL corto del test de caducidad: deja ver la ruta (`STABLE_OBSERVATIONS`
+#: respuestas seguidas más la propagación) y servir antes de que venza.
+SHORT_ROUTE_TTL_SECONDS = 90
 HTTPS_PORT = 443
 HTTP_REQUEST_TIMEOUT_SECONDS = 20.0
 WEBSOCKET_HANDSHAKE_TIMEOUT_SECONDS = 20.0

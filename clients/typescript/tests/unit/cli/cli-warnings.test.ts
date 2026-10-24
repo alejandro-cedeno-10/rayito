@@ -49,6 +49,14 @@ describe("CLI warnings", () => {
     expect(logger.warn).toBeDefined();
   });
 
+  test("only codes, ids and error classes reach the line", () => {
+    const terminal = new FakeTerminal();
+    const logger = warningsLogger(new CliConsole(terminal));
+    logger.warn?.("aviso", { sandboxId: "mvm-1", path: "/home/x/secreto", message: "texto" });
+    logger.error?.("fallo");
+    expect(terminal.stderrText).toBe("aviso: mvm-1\nfallo\n");
+  });
+
   test("a fleet the CLI reconnects gets the CLI logger", async () => {
     const logger = warningsLogger(new CliConsole(new FakeTerminal()));
     const connect = vi

@@ -50,12 +50,20 @@ function stderrLogger(console: CliConsole): Logger {
   return { info: write("INFO"), warn: write("WARNING"), error: write("ERROR") };
 }
 
+/** Los campos de un aviso que `warningsLogger` escribe sin `--verbose`: un
+ * código, un id de sandbox o la clase de un error. Ninguno lleva texto libre,
+ * rutas ni mensajes de AWS. */
+export const WARNING_LINE_FIELDS = ["code", "sandboxId", "error"] as const;
+
 /** El logger sin `--verbose`: sólo avisos y errores, a stderr, con el mensaje
- * y los valores de sus campos (`receta de la flota: recipe_renewal_ignored`),
- * como el manejador de último recurso de `logging` en la CLI de Python. */
+ * y los valores de `WARNING_LINE_FIELDS` (`receta de la flota:
+ * recipe_renewal_ignored`), como el manejador de último recurso de `logging`
+ * en la CLI de Python. */
 export function warningsLogger(console: CliConsole): Logger {
   const write = (message: string, fields?: Readonly<Record<string, unknown>>): void => {
-    const values = fields === undefined ? [] : Object.values(fields).map(String);
+    const values = WARNING_LINE_FIELDS.flatMap((name) =>
+      typeof fields?.[name] === "string" ? [fields[name] as string] : [],
+    );
     console.echo(values.length === 0 ? message : `${message}: ${values.join(" ")}`, { err: true });
   };
   return { warn: write, error: write };

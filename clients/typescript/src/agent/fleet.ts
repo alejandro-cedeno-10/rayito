@@ -17,8 +17,10 @@ import {
   AgentError,
   CapacityError,
   InvalidArgumentError,
+  RateLimitError,
   SandboxError,
   SandboxNotFoundError,
+  TimeoutError,
 } from "../errors.js";
 import type { DynamoDbIndex } from "../index/dynamodb.js";
 import { AGENT_SERVICE_READY_MARKER_PATH } from "../limits.js";
@@ -164,6 +166,13 @@ export interface SandboxDirectoryOptions {
   readonly probeInfo?: MemberInfoProbe | undefined;
 }
 
+/** Los errores de la sonda que no dicen nada del VM sino del plano de control
+ * (una limitación o un plazo de `get-microvm`): hacen fallar el listado en vez
+ * de dejar fuera a un miembro sano. */
+function isControlPlaneListingError(error: SandboxError): boolean {
+  return error instanceof RateLimitError || error instanceof TimeoutError;
+}
+
 async function probeMemberInfo(
   sandboxId: string,
   connection: ControlPlaneOptions,
@@ -223,7 +232,7 @@ export class SandboxDirectory implements FleetDirectory {
     try {
       info = await this.#probeInfo(sandboxId, this.#connection);
     } catch (error) {
-      if (!(error instanceof SandboxError)) {
+      if (!(error instanceof SandboxError) || isControlPlaneListingError(error)) {
         throw error;
       }
       this.#logger?.warn?.(UNREADABLE_MEMBER_MESSAGE, { sandboxId, error: error.name });
