@@ -1,7 +1,7 @@
 ## 0. [pre-flight] Account, budget and baseline
 
 - [x] 0.1 `aws sts get-caller-identity` with `AWS_PROFILE=<tu-perfil> AWS_REGION=us-east-1`; `aws lambda-microvms list-microvm-images` and `list-microvms --image-identifier <rayito-base arn>`: no `RUNNING|SUSPENDED|PENDING` MicroVM of `rayito-base` left over from M5; note every image in the account that is not `rayito-base` / `rayito-m0-probe` (design D12 item 6)
-- [x] 0.2 Run the design D12 Cost Explorer query for `Start=2026-09-14,End=2026-09-17`; save the raw JSON as `docs/benchmarks/raw/2026-09-cost-explorer-<date>.json`; confirm which days are still `Estimated` (re-query in task 5.1)
+- [x] 0.2 Run the design D12 Cost Explorer query for `Start=2026-09-14,End=2026-09-17`; record the derived values in the report (the raw export is not versioned); confirm which days are still `Estimated` (re-query in task 5.1)
 
 ## 1. [image-variant] Sidecar warm-up flag and `--variant` in the scripts
 
@@ -42,7 +42,7 @@
 
 ## 5. [cost] Cost Explorer verification (the day after 4.2)
 
-- [ ] 5.1 (pending 2026-09-17: all days still `Estimated` on the bench day, report §8) **Deferred at acceptance (2026-09-16 21:10 UTC, `raw/2026-09-cost-explorer-2026-09-16T2115Z.json`): the 2026-09-16 line is still `Estimated` and identical to the 16:56 UTC query (761 GB-s, 16,49 GB read, no write line: only the hours before the bench), 2026-09-17 empty; nothing to attribute yet. Owner: whoever re-runs the D12 query on 2026-09-17 (and 2026-09-23 for the storage minimum); the target sections are `AWS_API_NOTES.md` §12 "Pendiente (2026-09-17)", report §8 and Q22.** Re-run the design D12 query with `End=<bench day + 2>`; confirm 2026-09-15/16 are no longer `Estimated`; attribute only the five `Lambda-MicroVM-*` usage types; check `list-microvm-images` / `list-microvms` for foreign images active on the bench day and note them
+- [ ] 5.1 (pending 2026-09-17: all days still `Estimated` on the bench day, report §8) **Deferred at acceptance (2026-09-16 21:10 UTC): the 2026-09-16 line is still `Estimated` and identical to the 16:56 UTC query (only the hours before the bench), 2026-09-17 empty; nothing to attribute yet. Owner: whoever re-runs the D12 query on 2026-09-17 (and 2026-09-23 for the storage minimum); the target sections are `AWS_API_NOTES.md` §12 "Pendiente (2026-09-17)", report §8 and Q22.** Re-run the design D12 query with `End=<bench day + 2>`; confirm 2026-09-15/16 are no longer `Estimated`; attribute only the five `Lambda-MicroVM-*` usage types
 - [x] 5.2 (from the 2026-09-15 lines, all five within 0.21 %, §12 updated) Unit prices: recompute the implied price of each usage type from the final numbers; record the five usage-type names and the verified prices in `AWS_API_NOTES.md` §12
 - [ ] 5.3 (pending 2026-09-17; the expected GB per launch/resume and the run's counts are in the report §7; same deferral as 5.1) Per-launch read: `Snapshot-Read-GB(bench day) / (launches + resumes)` weighted by variant vs `memorySnapshotSizeInBytes` (GB vs GiB, extra pages?); real $ per launch for 11.0 and slim 1.0 → §12, report §7/§8, Q22 "Medida"
 - [ ] 5.4 (same deferral as 5.1; partial: M0's four suspends of 2026-09-15 give 0.635 GB per suspend ≈ the memory snapshot; §12 rewritten with the 0.919 GB cycle at $0.0049 and the ≈ 140 s break-even; bench-day confirmation pending 2026-09-17) Per-suspend write: `Snapshot-Write-GB(bench day) / suspends`; $ per pause/resume cycle at 2 GB with the measured sizes; the `max_idle_seconds` break-even recomputed → §12 (replaces the 2 GB / $0.0107 assumption)

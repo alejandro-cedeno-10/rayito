@@ -164,12 +164,10 @@ documenta que el guest ve más memoria de la configurada), así que los
 - **Permisos de los agentes**: `opencode run --auto` y `LocalShellBackend`
   ejecutan lo que el modelo pida sin preguntar. No son una frontera de
   seguridad; la frontera es el MicroVM más el deny-all.
-- En la cuenta compartida desaparecieron a mitad de la corrida dos objetos
-  que el spike había subido a S3 (el zip de la base y el del primer
-  template), ninguno de ellos borrado por el spike; se volvió a subir el de
-  la base para el segundo build. El ciclo de vida del bucket sólo expira
-  versiones no actuales: todo apunta a la limpieza de otra corrida
-  concurrente.
+- A mitad de la corrida desaparecieron dos objetos que el spike había subido
+  a S3 (el zip de la base y el del primer template), ninguno de ellos borrado
+  por el spike; se volvió a subir el de la base para el segundo build. Con un
+  bucket compartido entre corridas, cada una debe usar su propio prefijo.
 
 ## Go/no-go para la fase 1
 
