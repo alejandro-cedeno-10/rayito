@@ -641,7 +641,7 @@ async fn a_validate_after_run_never_touches_the_default_kernel() {
     let (_, reply) = harness.post(Hook::Run, Some(run_envelope())).await;
     assert_eq!(reply.outcome, "installed");
     harness
-        .wait_for_request("restart_context", Duration::from_secs(5))
+        .wait_for_request("restart_context", CONDITION_BUDGET)
         .await;
     harness.wait_kernel_ready(Duration::from_secs(10)).await;
 
@@ -709,7 +709,7 @@ async fn run_rotates_the_default_kernel_with_the_payload_envs() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(reply.outcome, "installed");
     let restart = harness
-        .wait_for_request("restart_context", Duration::from_secs(5))
+        .wait_for_request("restart_context", CONDITION_BUDGET)
         .await;
     assert_eq!(restart["context_id"], "default");
     assert_eq!(restart["envs"], serde_json::json!({"M4": "1"}));

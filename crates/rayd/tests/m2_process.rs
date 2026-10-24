@@ -356,10 +356,11 @@ impl Harness {
             .map(tonic::Response::into_inner)
     }
 
-    /// Retries `RESOURCE_EXHAUSTED` for up to one second: dead slots are
-    /// reclaimed as soon as the server has processed the client's reset.
+    /// Retries `RESOURCE_EXHAUSTED` for up to `MEMBER_GONE_BUDGET`: dead
+    /// slots are reclaimed as soon as the server has processed the client's
+    /// reset.
     async fn connect_once_a_slot_frees(&self, pid: u32) -> Streaming<ProcessEvent> {
-        let deadline = Instant::now() + Duration::from_secs(1);
+        let deadline = Instant::now() + MEMBER_GONE_BUDGET;
         loop {
             match self.connect(pid, 0).await {
                 Ok(stream) => return stream,
@@ -1160,7 +1161,7 @@ async fn kill_tree_timeout_reaches_a_daemon_outside_the_group() {
     // Every member died on SIGTERM, so the grace ended early: before the
     // point where the escalation to SIGKILL would have come.
     assert!(
-        started.elapsed() < Duration::from_millis(300) + KILL_GRACE,
+        started.elapsed() < Duration::from_millis(300) + KILL_GRACE / 2,
         "{:?}",
         started.elapsed()
     );

@@ -35,8 +35,6 @@ use rayito_proto::v1::ListRequest;
 use tonic::Code;
 use tonic::metadata::MetadataValue;
 
-/// Watchdog settings the tests can wait for: a 1 s gate, a freeze at
-/// 400 ms, ticks every 100 ms.
 /// The suspend gate of the burst test: long enough that ten `/suspend` posts
 /// always land before the watchdog recovers the stale suspend, so the
 /// outcomes, not a wall-clock bound, decide the test.
@@ -47,9 +45,9 @@ const FROZEN_SPAN: Duration = Duration::from_secs(30);
 /// The pause between the forged pair and the real `/suspend`: well inside
 /// the 2 s interval of the first M6 draft, with room for a loaded runner.
 const FORGED_PAIR_PAUSE: Duration = Duration::from_millis(300);
-/// What used to be the transition interval of the first M6 draft.
-const OLD_TRANSITION_INTERVAL: Duration = Duration::from_secs(2);
 
+/// Watchdog settings the tests can wait for: a 1 s gate, a freeze at
+/// 400 ms, ticks every 100 ms.
 fn scaled_session() -> SessionSettings {
     SessionSettings {
         suspend_gate_timeout: Duration::from_secs(1),
@@ -150,7 +148,6 @@ async fn repeated_suspends_are_idempotent_and_the_stale_one_is_recovered() {
     })
     .await;
     let (_, mut background) = harness.start(shell("sleep 60", 0)).await.unwrap();
-    let started = Instant::now();
     let mut outcomes = Vec::new();
     for _ in 0..10 {
         let (status, reply) = harness.post(Hook::Suspend, None).await;
@@ -158,10 +155,6 @@ async fn repeated_suspends_are_idempotent_and_the_stale_one_is_recovered() {
         assert_eq!(reply.suspend_generation, 1);
         outcomes.push((reply.outcome, reply.streams_closed));
     }
-    assert!(
-        started.elapsed() < BURST_GATE_TIMEOUT,
-        "the burst must fit inside the suspend gate"
-    );
     assert_eq!(outcomes[0].0, "changed");
     assert_eq!(outcomes[0].1, Some(1));
     for (outcome, streams_closed) in &outcomes[1..] {
@@ -211,7 +204,6 @@ async fn repeated_suspends_are_idempotent_and_the_stale_one_is_recovered() {
 async fn a_forged_pair_never_makes_rayd_skip_the_real_suspend() {
     let harness = harness().await;
     let (_, mut background) = harness.start(shell("sleep 60", 0)).await.unwrap();
-    let started = Instant::now();
     let (_, forged_suspend) = harness.post(Hook::Suspend, None).await;
     assert_eq!(forged_suspend.outcome, "changed");
     assert_eq!(forged_suspend.streams_closed, Some(1));
@@ -224,10 +216,6 @@ async fn a_forged_pair_never_makes_rayd_skip_the_real_suspend() {
     let running_before = harness.session.running_now();
     tokio::time::sleep(FORGED_PAIR_PAUSE).await;
     let (status, real_suspend) = harness.post(Hook::Suspend, None).await;
-    assert!(
-        started.elapsed() < OLD_TRANSITION_INTERVAL,
-        "the real /suspend must land inside the old interval"
-    );
     assert_eq!(status, StatusCode::OK);
     assert_eq!(real_suspend.outcome, "changed", "{real_suspend:?}");
     assert_eq!(real_suspend.phase, "suspending");
