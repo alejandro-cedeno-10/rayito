@@ -11,7 +11,7 @@ reproducibles con `--report <json>`.
 | | |
 |---|---|
 | Fecha / región / cuenta | 2026-09-16 (17:14–17:34 UTC), `us-east-1`, una cuenta de AWS |
-| Cliente | el puesto habitual del desarrollador (Windows 11, Python 3.12.10, `rayito` 0.0.5, boto3 1.43.94, grpcio del SDK); `client_rtt_ms` = **85.5 ms** (run principal) / 97.4 ms (run e-2.0): mediana de cinco `Health` sobre la primera VM lista |
+| Cliente | cliente de referencia (Python 3.12.10, `rayito` 0.0.5, boto3 1.43.94, grpcio del SDK); `client_rtt_ms` = **85.5 ms** (run principal) / 97.4 ms (run e-2.0): mediana de cinco `Health` sobre la primera VM lista |
 | Agente | `rayd` 0.1.0 (`Health.agent_version`) dentro de `rayito-base` **10.0** (rayd 4 533 432 B, artefacto `rayd-fc0df3c41a28.zip`) |
 | Sujeto full | `rayito-base` 10.0: memoria **919 146 496 B**, code install 1 290 379 264 B, disco 37 462 016 B, `chipsetGeneration` 3, build 215,8 s (M5) |
 | Sujeto slim 1.0 | `rayito-base-slim` 1.0: el artefacto de 10.0 + marcador `warmup_variant=slim` + `0004_warmup.py` (lee el marcador) + `0001_charts.py` (registro diferido por `for_type_by_name`, que resultó no funcionar en el kernel real, §10). `0002_data.py` seguía importando pandas al arrancar. Memoria **750 694 400 B**, code install 1 291 976 704 B, disco 35 332 096 B, `chipsetGeneration` 4, build 195,4 s, artefacto `rayd-68b9bb092c3e.zip` |

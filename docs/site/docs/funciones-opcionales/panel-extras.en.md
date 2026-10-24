@@ -398,9 +398,8 @@ SNS topic is not encrypted: the message carries no sensitive data.
 | `dashboard-read-role` role | `lambda:ListMicrovms`, `ListMicrovmImages`, `ListMicrovmImageVersions`, `GetMicrovmImageVersion`, `servicequotas:ListServiceQuotas`; no writes | `infra/dashboard-read-role.yaml` |
 | Local dashboard identity with `--account` | `sts:AssumeRole` on those roles | your policy |
 
-None of the three stacks creates CloudFront or buckets, and the alerts one works
-even if the organization does not allow creating Lambdas directly (the Lambda is created by
-CloudFormation).
+None of the three stacks creates CloudFront or buckets, and the alerts stack's
+Lambda is created by CloudFormation.
 
 ## See also { #ver-tambien }
 

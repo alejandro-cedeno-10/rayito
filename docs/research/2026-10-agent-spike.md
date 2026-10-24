@@ -101,7 +101,7 @@ informe ni log del spike contiene el valor.
 
 ## Números en AWS real
 
-us-east-1, 2026-10-05. Requisitos: habilitar el acceso al modelo en Bedrock. Template `rayito-acc071spk-agent`
+us-east-1, 2026-10-05. Template `rayito-acc071spk-agent`
 compuesto con el DSL de `Template` sobre una `rayito-base-caps` desechable
 (el `rayito-image.zip` firmado de la release `rayd-v0.7.0`), tamaño por
 defecto (2048 MB). Modelo: perfil de inferencia de sistema

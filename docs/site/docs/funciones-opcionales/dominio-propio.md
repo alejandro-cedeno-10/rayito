@@ -37,8 +37,8 @@ proxy de AWS.
 
     **Sin verificar en AWS real**: crear la distribución y servir tráfico
     por ella (HTTP/1.1, WebSocket, latencia de propagación del
-    `KeyValueStore`, renovación del JWE): no verificado de extremo a
-    extremo; requiere `cloudfront:CreateDistribution` (Q141). El e2e del
+    `KeyValueStore`, renovación del JWE). Requiere
+    `cloudfront:CreateDistribution` (Q141). El e2e del
     repositorio (`tests/e2e/test_m15_custom_domain.py`,
     `custom-domain.e2e.test.ts`) automatiza esa prueba.
 

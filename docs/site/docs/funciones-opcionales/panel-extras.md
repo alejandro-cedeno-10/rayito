@@ -399,9 +399,8 @@ tema SNS no se cifra: el mensaje no lleva datos sensibles.
 | Rol `dashboard-read-role` | `lambda:ListMicrovms`, `ListMicrovmImages`, `ListMicrovmImageVersions`, `GetMicrovmImageVersion`, `servicequotas:ListServiceQuotas`; ninguna escritura | `infra/dashboard-read-role.yaml` |
 | Identidad del panel local con `--account` | `sts:AssumeRole` sobre esos roles | tu política |
 
-Ninguna de las tres pilas crea CloudFront ni buckets, y la de avisos funciona
-aunque la organización no permita crear Lambdas directamente (la Lambda la crea
-CloudFormation).
+Ninguna de las tres pilas crea CloudFront ni buckets, y la Lambda de la pila
+de avisos la crea CloudFormation.
 
 ## Ver también
 
