@@ -12,14 +12,17 @@ final. El código está en inglés; los comentarios, los docstrings y los
 mensajes que imprimen los scripts, en español. Las columnas del CSV
 (`categoria`, `horas`) y las categorías son datos y siguen en español.
 
-Para tener exactamente lo que usa la guía, clona el repositorio y sitúate en
-el commit al que apunta su enlace:
+Para seguir la guía, clona el repositorio y entra en la carpeta del
+laboratorio en `main`:
 
 ```bash
 git clone https://github.com/alejandro-cedeno-10/rayito.git
-cd rayito && git checkout <commit-del-enlace>
-cd examples/csv-tickets-guide
+cd rayito/examples/csv-tickets-guide
 ```
+
+El laboratorio se probó con Rayito 0.15.0 y sus lockfiles (`uv.lock`,
+`pnpm-lock.yaml`) fijan esas versiones, así que `uv sync` y
+`pnpm install --frozen-lockfile` las reproducen.
 
 Todo lo que crean estos scripts son recursos de tu cuenta de AWS y aparecen
 en tu factura. Lee la sección «Costes y limpieza» antes de ejecutar los
