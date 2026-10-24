@@ -260,16 +260,16 @@ tipo).
 
 La aceptación de M6 despliega la pila (`rayito-egress-e2e`, allowlist vacía)
 y ejecuta `test_egress_allowlist` **sólo** si la cuenta tiene, en la región,
-una VPC **propia de este proyecto o prestada por su dueño** con al menos una
+una **VPC existente** con al menos una
 subnet (la pila crea un security group y las ENIs del conector dentro de esa
-VPC, y eso no se hace en la red de otra carga de trabajo sin pedirlo) y la
+VPC) y la
 página de precios de Lambda MicroVMs no lista cargo por conector. La
 allowlist vacía **no necesita NAT** (el security group descarta antes del
 enrutado), así que la falta de NAT nunca es motivo para saltarse la medida.
 Si la puerta no se cumple, el test se salta (falta
 `RAYITO_EGRESS_CONNECTOR_ARN`) y la evidencia es esta validación. Resultado
-2026-09-16: **no desplegado** — no había una VPC propia ni prestada para
-la medición. Cuando haya una VPC propia: `aws cloudformation deploy
+2026-09-16: **no desplegado** — no había una VPC existente para
+la medición. Cuando haya una VPC existente: `aws cloudformation deploy
 --stack-name rayito-egress-e2e --template-file infra/egress-connector.yaml
 --capabilities CAPABILITY_IAM --parameter-overrides VpcId=… SubnetIds=…`,
 exportar `RAYITO_EGRESS_CONNECTOR_ARN` con el output `ConnectorArn`, correr

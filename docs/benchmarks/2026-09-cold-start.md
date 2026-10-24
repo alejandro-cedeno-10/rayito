@@ -223,8 +223,9 @@ no depende de ellas. **Precios unitarios implícitos** (USD ÷ cantidad,
 | `Lambda-MicroVM-Snapshot-Storage-GB-Hour` | $0,000 111 11/GB-h = $0,08/GB-mes a 720 h | $0,08/GB-mes | 0,00 % |
 
 Los cinco precios de §12 son correctos (AWS usa un mes de 720 h para el
-storage). Ratio memoria-GB-s ÷ vCPU-s: 1,893 (09-15) y 1,874 (09-16 parcial),
-no 2,0. Lo que queda para la pasada del día siguiente (tareas 5.x), con las
+storage). Ratio memoria-GB-s ÷ vCPU-s (estimación de Rayito sobre sus
+propias ejecuciones, no un dato de la cuenta): 1,893 (09-15) y 1,874 (09-16
+parcial), no 2,0. Lo que queda para la pasada del día siguiente (tareas 5.x), con las
 cantidades del 2026-09-16 completas y este run como referencia (142
 lanzamientos, 24 suspends, 24 resumes, tamaños de la tabla de §6, ≈ 1 120
 VM-s; el e2e de M5 de la mañana aporta además ≈ 7 lanzamientos y 4 ciclos de

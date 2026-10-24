@@ -577,12 +577,10 @@ egress-connector.yaml`; if cfn-lint's bundled spec predates
 `AWS::Lambda::NetworkConnector` the E3006 for that one type is ignored
 with `--ignore-checks E3006` and the cfn-lint version is recorded. The
 acceptance deploys the stack **only** when all three hold: (a)
-`ec2:DescribeVpcs` in `us-east-1` returns a VPC with at least one subnet
-**that belongs to this project or was explicitly lent by its owner**
-(the account is the shared testing account: the stack creates a security
-group and the connector's ENIs *inside* that VPC, which is not something
-to do in another workload's network without asking; nothing is created
-outside the stack), (b) the Lambda pricing page section for MicroVMs
+`ec2:DescribeVpcs` in `us-east-1` returns an existing VPC with at least one subnet
+**designated for the run** (the stack creates a
+security group and the connector's ENIs *inside* that VPC; nothing is
+created outside the stack), (b) the Lambda pricing page section for MicroVMs
 lists no charge for network connectors (checked at acceptance time; ENIs
 themselves are free), and (c) nothing else: the deny-all default needs
 **no NAT gateway** (the security group drops the traffic before routing

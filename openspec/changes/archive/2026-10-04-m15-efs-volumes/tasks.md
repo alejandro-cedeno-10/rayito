@@ -190,7 +190,7 @@ itself; re-run `cleanup` until it exits 0 anyway).
 - [x] EFS-2 ★ passes (Q123), measured with `measure_efs2` without a VPC.
 - [x] Step 3 **blocked** (Q124; done in §7.7): no VPC could be created
       for the run; `run` stopped before creating anything. EFS-3, 8, 11
-      and 13 (★) and steps 4-5 wait for a VPC borrowed with permission
+      and 13 (★) and steps 4-5 wait for an existing VPC
       (`--vpc-id`/`--subnet-ids`, or `RAYITO_E2E_VPC_ID`/
       `RAYITO_E2E_SUBNET_IDS`; see §9).
 - [x] Python + TypeScript e2e of the CRUD, the E2B shim and the
@@ -204,7 +204,7 @@ itself; re-run `cleanup` until it exits 0 anyway).
 
 ### 7.7 Acceptance run 2026-10-04 (results in `AWS_API_NOTES.md` §16 Q126–Q134)
 
-An existing VPC borrowed with permission, passed only through
+An existing VPC, passed only through
 `RAYITO_E2E_VPC_ID`/`RAYITO_E2E_SUBNET_IDS`.
 
 - [x] Python e2e `test_m15_efs_volumes_vpc.py`: 2 passed after two test

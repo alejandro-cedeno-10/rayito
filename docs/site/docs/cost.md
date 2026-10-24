@@ -75,8 +75,9 @@ Los precios de cómputo y de almacenamiento coinciden exactos con lo
 facturado (Cost Explorer); lectura y escritura de snapshot difieren del
 precio de lista en menos de un 0,25 % — dentro del redondeo de la
 cantidad facturada, no un precio distinto. La relación entre GB-s y vCPU-s
-facturados, medida en us-east-1, fue **1,87–1,89**, no exactamente 2,0
-(pendiente de contrastar con los VM-segundos del banco de pruebas).
+es una estimación de Rayito sobre sus propias ejecuciones, no un dato de
+la cuenta: **1,87–1,89**, no exactamente 2,0 (pendiente de contrastar con
+los VM-segundos del banco de pruebas).
 
 !!! info "Referencias oficiales (consultadas 2026-10-06)"
     - [aws.amazon.com/lambda/pricing](https://aws.amazon.com/lambda/pricing/)

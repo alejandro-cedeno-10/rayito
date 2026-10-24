@@ -70,8 +70,9 @@ others, and it is easy to mix them up when adding up a scenario:
 Compute and storage prices match exactly what was billed (Cost Explorer);
 snapshot read and write differ from the list price by less than 0.25 % —
 within the rounding of the billed quantity, not a different price. The ratio
-of billed GB-s to vCPU-s, measured in us-east-1, was **1.87–1.89**, not exactly
-2.0 (pending comparison with the benchmark's VM-seconds).
+of GB-s to vCPU-s is a Rayito estimate from its own runs, not account data:
+**1.87–1.89**, not exactly 2.0 (pending comparison with the benchmark's
+VM-seconds).
 
 !!! info "Official references (queried 2026-10-06)"
     - [aws.amazon.com/lambda/pricing](https://aws.amazon.com/lambda/pricing/)

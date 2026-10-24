@@ -13,7 +13,7 @@ environment it was developed in:
 - an SSO profile name built from the account ID and an SSO role suffix;
 - real MicroVM IDs and endpoints (unit-test fixtures, raw benchmark JSON,
   task logs);
-- the ID and CIDR of a VPC that belongs to another workload;
+- the ID and CIDR of an existing VPC;
 - local machine paths and names (toolchain directories, the repo's absolute
   path, the user profile) in `CONTRIBUTING.md`, the docs and task logs;
 - the raw M0 spike output (`spike/m0/out/`), versioned on purpose until now,

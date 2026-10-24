@@ -628,7 +628,7 @@ Sólo después de que M5 esté verde.
     15.0 + caps 5.0: M1–M5 verdes (regresión) y
     `tests/e2e/test_m6_hardening.py` **12 passed, 1 skipped**
     (`test_egress_allowlist`, sin conector desplegable: la puerta exige una
-    VPC propia o prestada y no se dispuso de ninguna, Q46)
+    VPC existente y no se dispuso de ninguna, Q46)
     en 9 min: `/run` forjado → `already_ran` 0,30 s;
     `/suspend` forjado sin checkpoint → primer tick tras el corte **19,6 /
     24,4 s** (`reconnects == 1`, fichero, PTY, proceso y kernel intactos,
@@ -674,7 +674,7 @@ Sólo después de que M5 esté verde.
     `Reattach` reintentan un `UNAVAILABLE suspending` con el mismo backoff
     que `Connect`/`Pty.Connect` (`GateRetry` compartido, sync y async, 4
     unitarios nuevos: 616 en total); (4) la puerta de despliegue del egress
-    (D11, spec) incorpora el criterio real — VPC propia o prestada — y
+    (D11, spec) incorpora el criterio real — una VPC existente — y
     deja claro que el deny-all no necesita NAT; T8 queda "validada, no
     medida".
 - Cliente TypeScript con paridad de API (Connect-ES v2, mismo JSON de límites).
@@ -836,7 +836,7 @@ MicroVMs cortos + 1 versión de imagen + 2 consultas CE) se estima en ≈ $0,25
 de uso de Rayito; Cost Explorer aún no tenía la línea completa de ese día.
 Cambios OpenSpec `m6-hardening`, `m6-typescript-sdk`, `m6-e2b-compat` y
 `m6-benchmark-pool` archivados. Diferido con razón: allowlist de egress sin
-medir (sin VPC propia ni prestada, T8/Q46), slices cgroup2 (variante caps), pool de
+medir (sin una VPC existente, T8/Q46), slices cgroup2 (variante caps), pool de
 suspendidos (`m7-suspended-pool`), Cost Explorer del día del bench
 (2026-09-17), publicación en PyPI/npm (manual).
 
@@ -938,9 +938,9 @@ exclusión se evalúa primero (test de regresión). Poda: `image_prune.py --keep
 (`delete-microvm-image`; el README del spike de M0, en el historial de git, la reconstruye). Quedan
 **`rayito-base` 19.0 + 20.0, `rayito-base-caps` 7.0 + 8.0 y `rayito-base-poly`
 3.0 + 4.0**; `list-microvms`: **0 vivos** al terminar; S3 `rayito-e2e/` vacío.
-Coste: la aceptación de hoy son ≈ 180 lanzamientos cortos + 3 versiones de
-imagen ≈ $0,6–0,9, y M7 entero (implementación y aceptación, derivado de las
-líneas `Lambda-MicroVM-*` de Cost Explorer) queda en ≈ $4,5–5, muy por
+Coste (estimaciones de Rayito, no datos de la cuenta): la aceptación de hoy son ≈ 180 lanzamientos cortos + 3 versiones de
+imagen ≈ $0,6–0,9, y M7 entero (implementación y aceptación, estimado por Rayito a partir de
+las líneas `Lambda-MicroVM-*` de sus propias ejecuciones) queda en ≈ $4,5–5, muy por
 debajo del presupuesto de $15. Se recomprueba el
 2026-09-18 por el retardo de facturación.
 Versiones en lockstep a **0.2.0** (Python, TypeScript desde 0.0.5, `rayd` y
