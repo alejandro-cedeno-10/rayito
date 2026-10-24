@@ -41,9 +41,8 @@ repo knows about cold start and cost, and why it is not enough:
   cycles of a 672 MB snapshot (so a suspend writes ≈ the memory snapshot,
   not 2 GB, and a cycle at 10.0 costs ≈ $0.005, not the $0.0107 of §12);
   image builds do not appear as snapshot writes; the memory-GB-s / vCPU-s
-  ratio is 1.87–1.89, below the nominal 2.0; and 67.5 GB-h of snapshot
-  storage were billed on 2026-09-14, before the first Rayito image (the
-  account is shared). All of this needs the final (non-estimated) numbers
+  ratio is 1.87–1.89, below the nominal 2.0; and the snapshot storage line is
+  read as a delta over the day before the first Rayito image. All of this needs the final (non-estimated) numbers
   and a day with a known launch count to turn into a per-launch cost.
 
 Measured facts this design relies on (`AWS_API_NOTES.md`): `RunMicrovm`
@@ -577,10 +576,9 @@ numbers of 2026-09-15/16 and of the bench day:
    week: check storage GB-h on the day after and seven days after
    publishing, the latter as a note in `AWS_API_NOTES.md` to be closed
    later).
-6. **The 2026-09-14 storage baseline** (67.5 GB-h before any Rayito image):
-   `list-microvm-images` in the account; if only Rayito images exist,
-   the line is recorded as unexplained shared-account usage and the
-   Rayito storage is computed as the delta over that baseline.
+6. **The storage baseline**: Cost Explorer groups by account, not by
+   image, so the Rayito storage is computed as the delta over the day
+   before the first Rayito image.
 7. **Q8** (1 h active + 7 h suspended, 2 GB): computed from the verified
    unit prices and the measured write/read sizes rather than run (an 8 h
    VM would break the 5-minute rule); recorded as "derivado de precios

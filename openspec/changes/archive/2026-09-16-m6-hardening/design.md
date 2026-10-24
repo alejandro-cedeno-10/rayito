@@ -807,8 +807,8 @@ can land in any order:
   with a warning, and 128 MiB is far above any e2e output.
 - **`free_bytes` reflects the whole root filesystem**, not a per-user
   quota; a sandbox shell can still fill the disk. Stated in T7.
-- **`image_prune.py` in the shared account** could delete a version a
-  colleague launched a MicroVM from a second ago: the live-MicroVM pin
+- **`image_prune.py` in an account with other users** could delete a version
+  someone else launched a MicroVM from a second ago: the live-MicroVM pin
   reads `list-microvms` right before deleting, and `--dry-run` is the
   documented first step.
 - **cfn-lint may not know the resource type** yet; the server-side

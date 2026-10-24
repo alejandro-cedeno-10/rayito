@@ -226,8 +226,8 @@
       kept; `AWS_API_NOTES.md` Q121 was left free by main, Q140/Q141 are
       the next free rows after main's Q139).
 - [x] 9.2 Maintainer decision: merge as **experimental** without the
-      end-to-end AWS run, because the distribution could not be created
-      in the acceptance environment (Q141). Verified on real AWS: the
+      end-to-end AWS run, because the distribution was not created
+      in the acceptance run (Q141). Verified on real AWS: the
       Function in `cloudfront-js-2.0` (Q121) and the KVS + Function of the
       stack (Q140). Not verified: the distribution and DOM-2/3/5/7/8.
 - [x] 9.3 Marked experimental in the feature page (admonition with what

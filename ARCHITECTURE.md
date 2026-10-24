@@ -3244,7 +3244,7 @@ nunca cambia una cuenta preparada a mano que funciona ni sube `rayito-base` a un
 publish`). Quien prefiere artefactos verificados con cosign conserva ese camino
 con `--artifact`. El SDK distribuye ahora `infra/iam.yaml`; un cambio en
 `infra/` llega a los usuarios por `gen_stack_assets.py --check`, que ya es una
-puerta. Riesgos: una SCP de la organización puede denegar `iam:CreateRole` con
+puerta. Riesgos: una SCP puede denegar `iam:CreateRole` con
 nombres fijos o `cloudformation:CreateStack` con `CAPABILITY_NAMED_IAM` (la
 aceptación lo comprueba antes, sólo lectura, con la simulación IAM de `rayito
 doctor`); detrás de un proxy corporativo `urllib` respeta `HTTPS_PROXY` pero el
@@ -3312,13 +3312,13 @@ prohibía crear un bucket) y a la alternativa descartada «crear el bucket si fa
   `setup` sigue ahí al borrar la pila: se vacía y se borra a mano. Errores
   nuevos: `bucket_taken` y `artifact_stack_conflict` (código de salida 2);
   `no_bucket` desaparece y `bucket_unavailable` queda sólo para el 403.
-- *Riesgo.* Una SCP de la organización puede denegar `s3:CreateBucket` o
+- *Riesgo.* Una SCP puede denegar `s3:CreateBucket` o
   `s3:PutBucketPolicy`; la aceptación lo simula antes de escribir nada.
 - *Etiquetas de pila.* `rayito setup --tag K=V` (repetible) pasa las etiquetas
   como `Tags` de `CreateStack`/`UpdateStack` de `rayito-m0-artifacts` y
   `rayito-m0-iam`; CloudFormation las propaga a los recursos. Una pila
-  reutilizada no se reetiqueta y la imagen no las recibe. Existe porque una SCP
-  que exige etiquetas deniega `s3:CreateBucket` sin ellas (D11).
+  reutilizada no se reetiqueta y la imagen no las recibe. Existe para las cuentas
+  cuya SCP exige etiquetas y deniega `s3:CreateBucket` sin ellas (D11).
 - Detalle (D2, D4, D10, D11) en `openspec/changes/archive/2026-10-21-account-setup/design.md`.
 
 ## ADR-031 — agentcore-deploy: despliega en Amazon Bedrock AgentCore Runtime
