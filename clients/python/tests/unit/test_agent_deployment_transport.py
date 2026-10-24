@@ -208,13 +208,22 @@ def test_async_client_truncated_body_is_a_sandbox_error() -> None:
     asyncio.run(scenario())
 
 
+#: Cuánto espera el servidor de bloqueo a su único cliente: si el cliente
+#: falla antes de conectar, `accept()` no se queda colgado.
+RAW_SERVER_TIMEOUT_SECONDS = 5.0
+
+
 def _serve_raw_once(payload: bytes) -> tuple[socket.socket, threading.Thread]:
     """Un servidor de bloqueo que lee la cabecera y el cuerpo de una petición
     y contesta `payload` tal cual, para el cliente síncrono."""
     listener = socket.create_server((LOOPBACK, 0))
+    listener.settimeout(RAW_SERVER_TIMEOUT_SECONDS)
 
     def serve() -> None:
-        connection, _ = listener.accept()
+        try:
+            connection, _ = listener.accept()
+        except OSError:
+            return
         with connection:
             head = b""
             while b"\r\n\r\n" not in head:
@@ -256,6 +265,17 @@ def test_sync_client_truncated_body_is_a_sandbox_error(operation: str) -> None:
     try:
         with listener, pytest.raises(SandboxException):
             _exercise(_sync_deployment(int(listener.getsockname()[1])), operation)
+    finally:
+        thread.join(5)
+
+
+def test_sync_client_streams_a_complete_length_delimited_body() -> None:
+    payload = SSE_HEAD + f"Content-Length: {len(SSE_BODY)}\r\n\r\n".encode() + SSE_BODY
+    listener, thread = _serve_raw_once(payload)
+    try:
+        with listener, _sync_deployment(int(listener.getsockname()[1])).stream("hola") as events:
+            final = list(events)[-1]
+        assert isinstance(final, Done) and final.session_id == "ses_a"
     finally:
         thread.join(5)
 

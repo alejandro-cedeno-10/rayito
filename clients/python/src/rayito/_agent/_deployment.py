@@ -21,6 +21,7 @@ from rayito._agent._deployment_base import (
     HTTP_FORBIDDEN,
     HTTP_OK,
     JSON_CONTENT_TYPE,
+    RESPONSE_CUT_MESSAGE,
     DeploymentStatus,
     EventDecoder,
     ResultBuilder,
@@ -105,16 +106,16 @@ class HttpsResponse:
         try:
             return self._response.read()
         except (OSError, http.client.HTTPException):
-            raise SandboxException("el agente desplegado cortó la respuesta") from None
+            raise SandboxException(RESPONSE_CUT_MESSAGE) from None
 
     def chunks(self) -> Iterator[bytes]:
         try:
             while chunk := self._response.read1(STREAM_CHUNK_BYTES):
                 yield chunk
         except (OSError, http.client.HTTPException):
-            raise SandboxException("el agente desplegado cortó la respuesta") from None
+            raise SandboxException(RESPONSE_CUT_MESSAGE) from None
         if self._response.length:
-            raise SandboxException("el agente desplegado cortó la respuesta")
+            raise SandboxException(RESPONSE_CUT_MESSAGE)
 
     def close(self) -> None:
         self._connection.close()
