@@ -48,7 +48,7 @@ servidor aún sin la ruta se reintenta.
 **Sin permiso para crear la distribución.** Si la pila no puede crear la
 distribución, falla en el recurso `Distribution` con un `AccessDenied` sobre
 `cloudfront:CreateDistribution` (`DescribeStackEvents`): el módulo se salta
-con «CreateDistribution not permitted in this environment» en vez de fallar.
+con «CreateDistribution denied (AccessDenied)» en vez de fallar.
 
 **Limpieza.** El teardown desregistra cada ruta (idempotente), borra la pila
 (distribución, Function y KeyValueStore; las rutas viven en el KVS y se van
@@ -156,7 +156,7 @@ HTTP_NOT_FOUND = 404
 DISTRIBUTION_LOGICAL_ID = "Distribution"
 CREATE_FAILED = "CREATE_FAILED"
 ACCESS_DENIED_MARKERS = ("AccessDenied", "not authorized")
-DISTRIBUTION_DENIED_REASON = "CreateDistribution not permitted in this environment"
+DISTRIBUTION_DENIED_REASON = "CreateDistribution denied (AccessDenied)"
 
 
 def distribution_denied(region: str | None, stack_name: str) -> bool:

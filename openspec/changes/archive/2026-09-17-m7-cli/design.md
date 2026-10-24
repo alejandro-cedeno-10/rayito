@@ -651,7 +651,7 @@ D14 green on the account, zero live MicroVMs afterwards.
   the first runtime line? The fallback scan of D7 handles both; the answer
   decides whether the exact-name lookup alone suffices later.
 - Whether `iam:SimulatePrincipalPolicy` returns `OrganizationsDecisionDetail`
-  for the maintainer's SSO role (`s3:CreateBucket` is the probe: the
+  for an SSO role (`s3:CreateBucket` is the probe: the
   acceptance adds `s3:CreateBucket` on the bucket ARN as a
   temporary extra action, reads `AllowedByOrganizations`, and
   records the result in the task notes; the action is not part of the

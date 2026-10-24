@@ -26,7 +26,7 @@ fija por versiones y por las tres imágenes publicadas desde ese árbol.
 | Imagen `rayito-base-poly` | **4.0** | capa condicional `kernels_variant=poly` |
 | Infraestructura y CI | del mismo árbol | `infra/iam.yaml`, `infra/egress-connector.yaml`, `infra/ci-oidc-role.yaml`, `.github/workflows/*`, `Makefile`, `scripts/` |
 
-Las tres imágenes son las publicadas en la cuenta de pruebas (us-east-1)
+Las tres imágenes son las publicadas en una cuenta de AWS (us-east-1)
 durante la aceptación de M7 el 2026-09-17 (`MILESTONES.md`, bloque de aceptación
 de M7).
 

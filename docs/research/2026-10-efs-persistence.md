@@ -506,7 +506,7 @@ para y se reescribe este documento.
 | EFS-15 ✅ | **Respondida 2026-10-04** (Q133): ≈ 0,12 s. Dos sandboxes sobre el mismo AP: visibilidad de una escritura en el otro (close-to-open), latencia | dos VMs | < $0,03 |
 | EFS-16 ✅ | **Respondida 2026-10-04** (Q134). Política del sistema de ficheros: montaje sin AP, sin TLS, con rol sin `ClientWrite` (¿`EROFS`/`EACCES` al escribir?), con el AP de otro "inquilino" | 4 montajes con 2 roles | < $0,02 |
 | EFS-17 | Cold start con el conector VPC frente a `INTERNET_EGRESS` (`agent_ready` p50 de 10); `take()` del pool de suspendidos lanzado con conector | SDK | 20 lanzamientos ≈ $0,03 |
-| EFS-18 | En parte (Q127, Q133): el VM alcanza mount targets de las dos AZs; no se midió en qué AZ sale. ¿En qué AZ sale el VM (ENI del conector)? ¿Latencia a un mount target de otra AZ? | `ip`, `nc` con tiempos | incluido en EFS-3 |
+| EFS-18 | En parte (Q127, Q133): el VM alcanza mount targets de al menos dos AZs; no se midió en qué AZ sale. ¿En qué AZ sale el VM (ENI del conector)? ¿Latencia a un mount target de otra AZ? | `ip`, `nc` con tiempos | incluido en EFS-3 |
 | EFS-19 | (opción B) El mismo flujo con S3 Files | sólo si A funciona y hay demanda | ≈ $0,10 |
 | EFS-20 | Escala del conector: IPs de subnet consumidas por VM, 20 VMs simultáneos con conector en una subnet /28 | 20 lanzamientos | ≈ $0,05 |
 

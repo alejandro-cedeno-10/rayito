@@ -1617,7 +1617,7 @@ vivo.
 
 ## Resultados de la primera campaña de mediciones (2026-10)
 
-Medido el 2026-09-30 en la cuenta de pruebas (us-east-1, ARM64), con
+Medido el 2026-09-30 en una cuenta de AWS en us-east-1 (ARM64), con
 imágenes sonda desechables construidas fuera del repo y borradas al terminar:
 una imagen mínima (al2023-minimal + un servidor de hooks en Python con un
 endpoint de ejecución, sin `rayd`), la imagen de producto con

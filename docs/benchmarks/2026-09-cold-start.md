@@ -10,7 +10,7 @@ reproducibles con `--report <json>`.
 
 | | |
 |---|---|
-| Fecha / región / cuenta | 2026-09-16 (17:14–17:34 UTC), `us-east-1`, cuenta de pruebas |
+| Fecha / región / cuenta | 2026-09-16 (17:14–17:34 UTC), `us-east-1`, una cuenta de AWS |
 | Cliente | el puesto habitual del desarrollador (Windows 11, Python 3.12.10, `rayito` 0.0.5, boto3 1.43.94, grpcio del SDK); `client_rtt_ms` = **85.5 ms** (run principal) / 97.4 ms (run e-2.0): mediana de cinco `Health` sobre la primera VM lista |
 | Agente | `rayd` 0.1.0 (`Health.agent_version`) dentro de `rayito-base` **10.0** (rayd 4 533 432 B, artefacto `rayd-fc0df3c41a28.zip`) |
 | Sujeto full | `rayito-base` 10.0: memoria **919 146 496 B**, code install 1 290 379 264 B, disco 37 462 016 B, `chipsetGeneration` 3, build 215,8 s (M5) |

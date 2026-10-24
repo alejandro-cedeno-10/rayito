@@ -146,7 +146,7 @@ Implementer (2026-09-16, box: Windows, `uv` 0.7.21, Python 3.12.10, botocore 1.4
   exists; nav is Inicio, Quickstart, **CLI**, Conceptos, … (the `mcp.md`
   entry of `m7-mcp-server` sits after Compatibilidad con E2B).
 
-Acceptance (2026-09-16, 19:20-19:30 -05:00, test account, us-east-1,
+Acceptance (2026-09-16, 19:20-19:30 -05:00, us-east-1,
 `rayito-base` 17.0, execution role `rayito-m0-execution-us-east-1`,
 `RAYITO_BUCKET=<bucket>`):
 

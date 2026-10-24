@@ -82,7 +82,7 @@ and $0.01 per request. The Python CLI is the only CLI.
     `X-Rayito-Token` (the `Authorization` header carries the signature), and
     is validated as in (a), so groups, the live check and the audit are
     unchanged.
-  Which one works in the test account is verified in task 5.1b; variant (a) is
+  Which one works on real AWS is verified in task 5.1b; variant (a) is
   the default and the working assumption, not a given.
   *Roles.* One function has exactly one execution role, so the function runs
   with a read-only role and an actions role is reached with `sts:AssumeRole`
@@ -129,6 +129,6 @@ and $0.01 per request. The Python CLI is the only CLI.
 
 ## Open Questions
 
-- Function URL with IAM auth versus Cognito JWT in the test account.
+- Function URL with IAM auth versus Cognito JWT on real AWS.
 - Whether Service Quotas exposes MicroVM utilization.
 - Multi-region view: one region at a time versus bounded concurrency.

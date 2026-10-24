@@ -204,9 +204,8 @@ itself; re-run `cleanup` until it exits 0 anyway).
 
 ### 7.7 Acceptance run 2026-10-04 (results in `AWS_API_NOTES.md` §16 Q126–Q134)
 
-An existing VPC borrowed with permission and passed only through
-`RAYITO_E2E_VPC_ID`/`RAYITO_E2E_SUBNET_IDS` (two private subnets in two
-AZs).
+An existing VPC borrowed with permission, passed only through
+`RAYITO_E2E_VPC_ID`/`RAYITO_E2E_SUBNET_IDS`.
 
 - [x] Python e2e `test_m15_efs_volumes_vpc.py`: 2 passed after two test
       fixes (EC2 returns route-table associations in any order; a security

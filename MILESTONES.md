@@ -150,7 +150,7 @@ token, los demás ACK 200.
    Con esto queda respondida Q17 (trailers + h2c a través del proxy).
 5. CI verde (lint + test + build).
 
-**Estado de aceptación (medido 2026-09-15, cuenta de pruebas, us-east-1):**
+**Estado de aceptación (medido 2026-09-15, us-east-1):**
 1–4 en verde contra AWS real; 5 pendiente del primer push (el repo aún no está
 en git). `cargo zigbuild` → `rayd` 3 162 040 B, `ELF 64-bit ARM aarch64,
 statically linked, stripped`; `cargo test --workspace` 60 tests, clippy
@@ -242,7 +242,7 @@ with Sandbox.create() as sbx:
 Y `Sandbox.connect(sbx.sandbox_id, access_token=sbx.access_token)` desde otro
 proceso ejecuta un comando; sin token → `AuthenticationException`.
 
-**Estado de aceptación (medido 2026-09-15, cuenta de pruebas, us-east-1):**
+**Estado de aceptación (medido 2026-09-15, us-east-1):**
 verde contra AWS real: `clients/python/tests/e2e` (`test_m1_hello.py` +
 `test_m2_processes.py`, las 20 aserciones de
 `openspec/changes/archive/2026-09-15-m2-processes-lifecycle/design.md`) **2 passed en
@@ -327,7 +327,7 @@ with Sandbox.create() as sbx:
   antes de `WatchStarted` no se pierde; `timeout=` termina el handle con
   `TimeoutException`; paridad sync/async.
 
-**Estado de aceptación (medido 2026-09-15, cuenta de pruebas, us-east-1):**
+**Estado de aceptación (medido 2026-09-15, us-east-1):**
 verde contra AWS real: `clients/python/tests/e2e` (`test_m1_hello.py` +
 `test_m2_processes.py` + `test_m3_filesystem.py`, los 18 bloques de
 `openspec/changes/archive/2026-09-15-m3-filesystem/design.md`) **3 passed en
@@ -425,7 +425,7 @@ Y dos sandboxes de la misma imagen devuelven secuencias distintas para
 completos: `openspec/changes/archive/2026-09-16-m4-code-execution/design.md`
 "Acceptance test list".
 
-**Estado de aceptación (medido 2026-09-15, cuenta de pruebas, us-east-1):**
+**Estado de aceptación (medido 2026-09-15, us-east-1):**
 verde contra AWS real: `clients/python/tests/e2e` (`test_m1_hello.py` +
 `test_m2_processes.py` + `test_m3_filesystem.py` + `test_m4_code.py`, los 19
 bloques del diseño) **4 passed en 157.15 s** a la primera pasada. Host:
@@ -510,7 +510,7 @@ Además: `pause()` sobre un sandbox ya suspendido devuelve `False`
 (`ConflictException`), y `SuspendMicrovm` a 2 TPS se respeta con el token
 bucket.
 
-**Imagen publicada por el implementador (2026-09-16, cuenta de pruebas,
+**Imagen publicada por el implementador (2026-09-16,
 us-east-1):** `rayito-base` versión **`9.0`** (`rayd-e7fce213dd14.zip`,
 4 632 912 B; `rayd` ARM64 estático **4 536 248 B**, M4: 4 329 272 B;
 `update-microvm-image` → `UPDATED` + `SUCCESSFUL` + `ACTIVE` en **195.4 s**,
@@ -528,7 +528,7 @@ clippy pedantic y `cargo fmt --check` limpios en ambos; bucle local 6.3
 aceptación" con los 15 bloques de `SPEC.md` §6 y el test de auto-resume lo
 escribe la aceptación (tarea 7.1).
 
-**Estado de aceptación (medido 2026-09-16, cuenta de pruebas, us-east-1):**
+**Estado de aceptación (medido 2026-09-16, us-east-1):**
 verde contra AWS real: `clients/python/tests/e2e` completo (`test_m1_hello.py`
 + `test_m2_processes.py` + `test_m3_filesystem.py` + `test_m4_code.py` +
 `test_m5_pty_suspend_resume.py`, los 15 bloques de
@@ -801,7 +801,7 @@ Sólo después de que M5 esté verde.
   - Notas de la release 0.1.0 en `docs/RELEASE_NOTES_0.1.0.md`; PyPI y npm
     quedan como paso manual (Trusted Publisher + tag `python-v0.1.0`).
 
-**Estado de aceptación (medido 2026-09-16, cuenta de pruebas, us-east-1):**
+**Estado de aceptación (medido 2026-09-16, us-east-1):**
 verde contra AWS real sobre **`rayito-base` 16.0** (`rayd-0b6ebe73cb60.zip`,
 memoria 931 258 368 B, code 1 299 968 000 B, disco 36 933 632 B) y
 **`rayito-base-caps` 6.0** (mismo artefacto con `additionalOsCapabilities:
@@ -863,7 +863,7 @@ apalancamiento de producto, 6–7 si queda capacidad.
 | 7 | `m7-poly-kernels` | `language` en `CreateContextRequest` **y en `ExecuteRequest`** (campo 5, contexto por defecto por lenguaje creado perezosamente por `rayd`); kernelspec `bash` (`bash_kernel` 0.10.0) en la variante `rayito-base-poly` (marcador `kernels_variant` + capa condicional del mismo `Dockerfile`); `javascript` reservado como nombre (`UNIMPLEMENTED`: `ijavascript` necesita compilador en al2023 ARM64, Q57); SDKs `run_code(language=)`/`runCode({ language })` + shim E2B | `run_code("echo hi", language="bash")` devuelve `hi` en la variante; `javascript` es `UNIMPLEMENTED` nombrando la variante; el snapshot de `rayito-base` queda en la banda de D5 | M | **aceptado 2026-09-17** (ver el bloque de aceptación de M7; evidencia de la implementación: `rayito-base-poly` 3.0 y `rayito-base` 18.0 publicadas, `test_m7_poly_kernels.py` 6 passed y `poly.e2e.test.ts` 1 passed contra AWS real, `m7_poly.rs` 9/9 + `m4_code` 19/19 bajo Docker, sidecar 80 host + 13 kernel (bash 2,88 s), clientes Python/TS y gates locales verdes; Q57 con tamaños y latencias; e2e Python completo sobre 18.0: 26 passed, 4 skipped, 1 obsoleto corregido —`test_e2b_shim_cookbook` esperaba `UnimplementedError` para `language="js"`, ahora `UNIMPLEMENTED` del agente— y verde al repetirlo; cero VMs vivos) |
 | — | Diferido | SDKs cliente Rust/Go (sólo publicar `rayito-proto` en crates.io), kernels R/Java, URLs firmadas, EFS | — | — | — |
 
-**Estado de aceptación (M7, medido 2026-09-17, cuenta de pruebas, us-east-1;
+**Estado de aceptación (M7, medido 2026-09-17, us-east-1;
 release 0.2.0, `docs/RELEASE_NOTES_0.2.0.md`):** verde contra AWS real sobre las
 tres imágenes publicadas desde el árbol 0.2.0 (`rayd` 0.2.0 auditable,
 **12 525 664 B**, `.dep-v0` con 256 crates, sha256 `97eee1a9…`, build ARM64
@@ -1036,7 +1036,7 @@ medidos van a `AWS_API_NOTES.md` §16 con marcadores de posición
 | 5 | `m9-egress-policy` | política de egress en el guest de `rayito-base-caps` (ADR-012, T17) | QE1 (Q66) con su regla de parada, resuelta con la adenda de ADR-012 (opción C: bajo deny-all el DNS puede resolver, la conexión falla); QE2 (Q67): el proxy **no** reenvía TLS a un puerto del guest, `https_ports` sigue `UnimplementedError`; `test_m9_egress.py` **14/14**, `m9-egress.e2e.test.ts` verde | cerrado; archivado 2026-09-24 (motivo de `https_ports` citando Q67 en los dos SDK; el job `arm` de CI va al PR) |
 | 6 | `m9-e2b-v2-surface` | shims de E2B 2.x en Python y TypeScript (`rayito/e2b`), `git`, CLI `sandbox create\|connect\|exec\|metrics` | corpus E2B **18/18** en Python (9 sync + 9 async) y **8** programas de TS (`m9-e2b.e2e.test.ts` **11/11**), `fork()` vivo → `UnimplementedError`; `test_m9_git.py` **1/1** (`git` 2.50.1), `test_m9_cli_sandbox.py` **4/4** (PTY real), cookbook de M6 **2/2**; fila Q76 (`git-core`) | cerrado; archivado 2026-09-24 |
 
-**Estado de aceptación (M9, 2026-09-24, cuenta de pruebas, us-east-1):**
+**Estado de aceptación (M9, 2026-09-24, us-east-1):**
 verde contra AWS real. Regresión e2e de Python sobre **`rayito-base` 23.0,
 `rayito-base-caps` 12.0 y `rayito-base-poly` 7.0**: **62 passed de 62**
 (server-timeout 12, observability 4, deno 8, egress 14, transfer 14, M4 1, M5
@@ -1145,7 +1145,7 @@ ausentes (`None`/`NaN`/`NaT`/`pd.NA`) en `null` (un `NaT` tumbaba la celda,
 bug previo); los e2e de egress exigen el DNS bloqueado; banda asimétrica del
 tamaño de snapshot (el bump de pines encogió `rayito-base` 28 MB).
 
-**Estado de aceptación (2026-09-29, cuenta de pruebas, us-east-1):** completa
+**Estado de aceptación (2026-09-29, us-east-1):** completa
 sobre `rayito-base` 27.0 / `-caps` 16.0 / `-poly` 11.0 (Python e2e 109/1/2, con
 el único fallo en la banda de tamaños, ya corregida; TypeScript 25/25; corpus
 E2B 21/21 Python y 11/11 TypeScript; git, CLI y `doctor --launch` sin FAIL) y
@@ -1157,7 +1157,7 @@ política. Coste de ambas < $1,5; sólo se terminaron las VMs de la prueba.
 ### Oleadas 2 y 3 (Rayito 0.3.3)
 
 Siete cambios OpenSpec, archivados el 2026-09-29 tras la aceptación contra
-AWS real (plan de Opus por hallazgo, implementación por grupo, revisión
+AWS real (plan por hallazgo, implementación por grupo, revisión
 adversarial de cada PR):
 
 | Cambio | Alcance |
@@ -1176,7 +1176,7 @@ refactors sin cambio de comportamiento; 14 quedan documentados como
 arreglarlos cambiaría comportamiento. C-06 de `docs/SECURITY_AUDIT.md` sigue
 aceptado con su razón.
 
-**Estado de aceptación (2026-09-29, cuenta de pruebas, us-east-1):** completa
+**Estado de aceptación (2026-09-29, us-east-1):** completa
 a la primera sobre `rayito-base` 29.0 / `-caps` 18.0 / `-poly` 13.0, las tres
 con la instalación con hashes: Python e2e 110/0/2 (los dos skips de siempre),
 TypeScript 36/36, corpus E2B 21/21 y 11/11, `doctor --launch` sin FAIL,
@@ -1209,7 +1209,7 @@ migración en los CHANGELOG ("Cambios que rompen"):
 - `rayito doctor` con la fila `0.4` de compatibilidad; `make release-pr`
   aborta si falta la fila de la serie que se publica.
 
-**Aceptación (2026-09-30, cuenta de pruebas, us-east-1):** completa sobre
+**Aceptación (2026-09-30, us-east-1):** completa sobre
 `rayito-base` 30.0 / `-caps` 1.0 / `-poly` 1.0 (Python 107/3/2 — dos fallos
 por carga que pasan solos y `doctor` sin fila 0.4 —, TypeScript 36/36, corpus
 E2B 21/21 y 11/11) y re-check sobre 31.0 tras la fila de compatibilidad
@@ -1351,7 +1351,7 @@ sólo con una opción explícita del SDK (ADR-014):
 - **`rayito sandbox proxy`**: un puerto del sandbox en `localhost`, coste $0.
 - **`/suspend` acotado**: `syncfs` por sistema de ficheros con presupuesto.
 
-**Aceptación (2026-10-01, cuenta de pruebas, us-east-1):** TypeScript 38/38,
+**Aceptación (2026-10-01, us-east-1):** TypeScript 38/38,
 corpus E2B y `doctor` en verde; sin opciones no hay ninguna llamada a Secrets
 Manager, DynamoDB ni OpenTelemetry. Limpieza: sólo se borró lo creado por la
 prueba.
@@ -1521,7 +1521,7 @@ Q100–Q104; la aceptación arregló la instalación de `mount-s3` con
   tampoco se construyó — **DOM-14, pendiente**, mismo motivo que el resto:
   sin D3 no se puede medir contra AWS real, y `OptionalStacks` no soporta
   todavía un artefacto condicional. DOM-2/3/5/7/8/14 sin medir: necesitan
-  D3 (dominio y certificado ACM del mantenedor) y la etapa de aceptación
+  D3 (un dominio y un certificado ACM reales) y la etapa de aceptación
   AWS.
 
 ---
@@ -1553,7 +1553,7 @@ de oro de llamadas AWS y gRPC, sin cambios):
 - **Exportación OTLP de `rayd`** (`telemetry=`): métricas de CPU, memoria y
   disco a CloudWatch por OTLP/HTTP.
 
-**Aceptación (2026-10-02/03, cuenta de pruebas, us-east-1):** cada función
+**Aceptación (2026-10-02/03, us-east-1):** cada función
 pasó su etapa serializada (e2e Python y TypeScript sobre imágenes
 desechables con el `rayd` de su rama; los hallazgos se arreglaron en la
 misma rama y están en `AWS_API_NOTES.md` §23–§28) y después la suite e2e
@@ -1592,7 +1592,7 @@ aceptación contra AWS real y la publicación de 0.6.1:
 - Guardián SSRF de los webhooks: una IPv6 que mapea una IPv4 se clasifica
   como esa IPv4.
 
-**Aceptación (2026-10-03/04, cuenta de pruebas, us-east-1):** cero
+**Aceptación (2026-10-03/04, us-east-1):** cero
 `<defunct>` tras un montaje S3, tras salir un daemon de doble fork y tras
 40 comandos concurrentes, todos con su código de salida; `reincarnate()`
 con montaje, telemetría y eventos reaplica las tres secciones en un único
@@ -1632,7 +1632,7 @@ publicación de 0.7.0 (`m15-efs-volumes`, `local-e2e-floci`,
   privilegios, `uv` fijado y herramientas con hash).
 - **Pruebas en local** con Docker y Floci, sin cuenta de AWS.
 
-**Aceptación (2026-10-04/05, cuenta de pruebas, us-east-1):** sobre el
+**Aceptación (2026-10-04/05, us-east-1):** sobre el
 árbol del PR de release y con imágenes desechables propias de la
 ejecución, en paralelo con imágenes distintas para que ningún sweeper
 tocara los sandboxes de otra sesión. Python: 122 pasados, 0 fallos y 10
@@ -1703,7 +1703,7 @@ abierto `m15-custom-domain` (ver 0.7.0).
   la rotación de la pasarela en el e2e y el aviso del allowlist de montajes
   S3. `rayd` no cambia: versión en paso con los SDK.
 
-**Aceptación (2026-10-07, cuenta de pruebas, us-east-1)**, con imágenes
+**Aceptación (2026-10-07, us-east-1)**, con imágenes
 desechables propias y Claude Haiku 4.5 por la pasarela
 (`AWS_API_NOTES.md` Q146–Q154):
 
@@ -1762,7 +1762,7 @@ Sigue abierto `m15-custom-domain` (ver 0.7.0).
 - Fila 0.9 de compatibilidad en `rayito doctor` y 0.9.x como línea con
   soporte (#163). `rayd` no cambia: versión en paso con los SDK.
 
-**Aceptación de la release (2026-10-07, cuenta de pruebas, us-east-1)**,
+**Aceptación de la release (2026-10-07, us-east-1)**,
 sobre `main` con #157–#161 y con imágenes desechables propias de cada
 ejecución:
 
@@ -1792,7 +1792,7 @@ Un cambio OpenSpec archivado (2026-10-07): `default-idle-fits-timeout`.
 - Los e2e de `s3-mounts` y `rayd-otlp` documentan que la política
   gestionada de su pila debe estar adjunta al rol de ejecución.
 
-**Aceptación de la release (2026-10-07, cuenta de pruebas, us-east-1)**,
+**Aceptación de la release (2026-10-07, us-east-1)**,
 sobre el árbol del PR de release, con `rayd` compilado en la VM Linux y una
 imagen desechable propia:
 
@@ -1831,7 +1831,7 @@ Dos cambios OpenSpec archivados (2026-10-08): `ai-agent-providers` y
   DeepSeek y xAI no se han probado con una clave real.
 - Fila 0.10 de compatibilidad en `rayito doctor` (#178).
 
-**Aceptación de la release (2026-10-08, cuenta de pruebas, us-east-1)**,
+**Aceptación de la release (2026-10-08, us-east-1)**,
 sobre `main` en `049f69e` (el árbol de la release salvo la fila de
 compatibilidad y las versiones), con `rayd` compilado en la VM Linux e
 imágenes desechables propias de cada ejecución:
@@ -1868,7 +1868,7 @@ Los dos cambios OpenSpec del ciclo ya estaban archivados al fusionarse
   0.11 de compatibilidad en `rayito doctor` (#193) y fuera los borradores
   del patrón de Serverless Land (#187, #190). `rayd` no cambia.
 
-**Aceptación de la release (2026-10-13, cuenta de pruebas, us-east-1)**,
+**Aceptación de la release (2026-10-13, us-east-1)**,
 sobre el árbol del PR de release, con `rayd` 0.11.0 compilado en la VM
 Linux e imágenes desechables propias de cada carril (Python, TypeScript y
 agente), publicadas con `--artifact-run-id` en paralelo:
@@ -1925,7 +1925,7 @@ Publicada el 2026-10-15 en PyPI, npm y la GitHub Release `rayd-v0.12.0`
 - **Seguridad**: `rustls` 0.23.46 por RUSTSEC-2026-0346 a 0349 (#208).
   Fila 0.12 de compatibilidad en `rayito doctor` y en `limits.md` (#223).
 
-**Aceptación de la release (2026-10-15, cuenta de pruebas, us-east-1)**,
+**Aceptación de la release (2026-10-15, us-east-1)**,
 sobre el árbol del PR de release, con `rayd` 0.12.0 compilado en la VM Linux
 e imágenes desechables propias de cada carril (base, caps, poly y caps con
 EFS):
@@ -1984,7 +1984,7 @@ archivó tras esta aceptación. Sigue abierto `m15-custom-domain` (ver 0.7.0).
   antes de reenviarlo (ADR-027), con los mismos vectores en las dos CLI.
 - **Fila 0.13 de compatibilidad** en `rayito doctor` y en `limits.md`.
 
-**Aceptación de la release (2026-10-16, cuenta de pruebas, us-east-1)**,
+**Aceptación de la release (2026-10-16, us-east-1)**,
 sobre el árbol del PR de release, con `rayd` 0.13.0 compilado en la VM Linux
 e imágenes desechables propias de cada carril (base, caps, poly y caps con
 EFS, en Python y en TypeScript):
@@ -2059,7 +2059,7 @@ rayito[cli]==0.14.0 rayito --version` responden 0.14.0). Los cambios OpenSpec
   `venv`, `node_modules`, `__pycache__`, `*.pyc` y `.rayito`. Fila 0.14 de compatibilidad en
   `rayito doctor` y en `limits.md`.
 
-**Aceptación de la release (2026-10-17, cuenta de pruebas, us-east-1)**:
+**Aceptación de la release (2026-10-17, us-east-1)**:
 
 - **Matriz de 36 celdas, 36 de 36** (18 en el carril Python y 18 en el de
   TypeScript): cada framework en variante zero-config y custom, más una celda
@@ -2148,7 +2148,7 @@ abierto `m15-custom-domain` (ver 0.7.0).
   construye una versión nueva. Fila 0.15 de compatibilidad en `rayito doctor`
   y en `limits.md`: el SDK 0.15 exige `agent_version` ≥ 0.15.0.
 
-**Aceptación de la release (2026-10-19 a 2026-10-21, cuenta de pruebas)**:
+**Aceptación de la release (2026-10-19 a 2026-10-21, us-east-1)**:
 
 - **`rayito setup`**: preparación de cero en dos regiones sin bucket, una por
   SDK en paralelo (bucket, pila de IAM, descarga y verificación de la release,
