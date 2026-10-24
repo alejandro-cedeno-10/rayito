@@ -725,6 +725,59 @@ def test_connect_lists_the_image_and_opens_a_vm_only_when_it_is_used(flavor: Fle
     assert decode_handle(result.session_id).sandbox_id == sandbox_id_of(1)  # type: ignore[union-attr]
 
 
+def test_a_reconnected_fleet_creates_new_vms_with_the_version_of_its_members(
+    flavor: FleetFlavor,
+) -> None:
+    """Sin receta ni build en este proceso, un VM nuevo usa la versión de
+    los miembros, no la más reciente de la imagen (que puede ser otro
+    build)."""
+    older = flavor.classes.add()
+    newer = flavor.classes.add()
+    flavor.classes.versions[older.sandbox_id] = "1"
+    flavor.classes.versions[newer.sandbox_id] = "2"
+    fleet = flavor.call(
+        (AsyncAgentFleet if flavor.asynchronous else AgentFleet).connect(
+            "support-bot",
+            access_token=TOKEN,
+            project=project(),
+            directory=flavor.classes_directory(),
+            transport_factory=flavor.backend.async_factory
+            if flavor.asynchronous
+            else flavor.backend.factory,
+            service=flavor.service(project()),
+        )
+    )
+
+    flavor.call(fleet.scale(min_vms=3, max_vms=3))
+
+    assert [args.get("template_version") for _, args in flavor.classes.created] == ["2"]
+
+
+def test_a_version_the_fleet_already_has_is_never_replaced_by_the_members(
+    flavor: FleetFlavor,
+) -> None:
+    member = flavor.classes.add()
+    flavor.classes.versions[member.sandbox_id] = "1"
+    service = flavor.service(project())
+    service.adopt_image_version("7")
+    fleet = flavor.call(
+        (AsyncAgentFleet if flavor.asynchronous else AgentFleet).connect(
+            "support-bot",
+            access_token=TOKEN,
+            project=project(),
+            directory=flavor.classes_directory(),
+            transport_factory=flavor.backend.async_factory
+            if flavor.asynchronous
+            else flavor.backend.factory,
+            service=service,
+        )
+    )
+
+    flavor.call(fleet.scale(min_vms=2, max_vms=2))
+
+    assert [args.get("template_version") for _, args in flavor.classes.created] == ["7"]
+
+
 def test_a_reconnected_fleet_starts_a_parked_vm_that_has_no_service(flavor: FleetFlavor) -> None:
     flavor.classes.add(served=False, state="SUSPENDED")
     fleet = flavor.call(

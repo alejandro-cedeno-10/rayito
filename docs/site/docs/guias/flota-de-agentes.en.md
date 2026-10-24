@@ -284,6 +284,10 @@ after the deadline, raises `CapacityException` (`code = "agent_capacity"`;
   its id) instead of failing the call; since 0.17.1. `RUNNING` VMs are probed
   up to 8 at a time (`AGENT_FLEET_PROBE_CONCURRENCY`), with results and
   warnings in listing order.
+- **Image version:** the VMs a fleet creates use the version the deploy built
+  or reused, or the recipe's. A fleet reconnected without a recipe
+  (`AgentFleet.connect(name, project=...)`) uses the newest member's, never
+  the image's newest version, which may be another build; since 0.17.1.
 - **Suspending:** `idle` suspends an unused VM and resumes it when called; a
   suspended VM bills no compute, only its snapshot storage.
 - **Restarting:** if the user's app dies, the host relaunches it with growing

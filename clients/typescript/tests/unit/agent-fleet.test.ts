@@ -589,6 +589,42 @@ describe("reconnect", () => {
     expect(h.world.sandboxes.get(sandboxIdOf(1))?.served).toBe(true);
   });
 
+  test("a reconnected fleet creates new VMs with the version of its members", async () => {
+    const h = new FleetHarness();
+    const older = h.world.add();
+    const newer = h.world.add();
+    h.world.versions.set(older.sandboxId, "1");
+    h.world.versions.set(newer.sandboxId, "2");
+    const the = project();
+    const fleet = await AgentFleet.connect("support-bot", {
+      accessToken: FLEET_TOKEN,
+      project: the,
+      directory: h.world,
+      service: h.service(the),
+      fetch: h.backend.fetch,
+    });
+    await fleet.scale({ minVms: 3, maxVms: 3 });
+    expect(h.world.created.map(({ options }) => options.templateVersion)).toEqual(["2"]);
+  });
+
+  test("a version the fleet already has is never replaced by the members", async () => {
+    const h = new FleetHarness();
+    const member = h.world.add();
+    h.world.versions.set(member.sandboxId, "1");
+    const the = project();
+    const service = h.service(the);
+    service.adoptImageVersion("7");
+    const fleet = await AgentFleet.connect("support-bot", {
+      accessToken: FLEET_TOKEN,
+      project: the,
+      directory: h.world,
+      service,
+      fetch: h.backend.fetch,
+    });
+    await fleet.scale({ minVms: 2, maxVms: 2 });
+    expect(h.world.created.map(({ options }) => options.templateVersion)).toEqual(["7"]);
+  });
+
   test("a reconnected fleet without a project cannot start a VM", async () => {
     const h = new FleetHarness();
     h.world.add({ served: false, state: "SUSPENDED" });
