@@ -35,7 +35,7 @@
  *
  * **Requisito: `cloudfront:CreateDistribution`.** Ante cualquier error de
  * permisos al crear el recurso `Distribution` (`DescribeStackEvents`), cada
- * test se salta con el requisito que falta en vez de fallar.
+ * test se salta nombrando ese requisito en vez de fallar.
  *
  * **Limpieza.** `afterAll` desregistra cada ruta, borra la pila (aunque el
  * `deploy()` fallara a medias) y comprueba que `status()` ya no la ve.
@@ -114,7 +114,8 @@ const HTTP_NOT_FOUND = 404;
 const DISTRIBUTION_LOGICAL_ID = "Distribution";
 const CREATE_FAILED = "CREATE_FAILED";
 const ACCESS_DENIED_MARKERS = ["AccessDenied", "not authorized"];
-const DISTRIBUTION_DENIED_REASON = "missing permission: cloudfront:CreateDistribution";
+const DISTRIBUTION_DENIED_REASON =
+  "distribution permission error (needs cloudfront:CreateDistribution)";
 
 /** Si la pila falló por un error de permisos al crear la distribución
  * (`DescribeStackEvents`, `AWS_API_NOTES.md` §21). */

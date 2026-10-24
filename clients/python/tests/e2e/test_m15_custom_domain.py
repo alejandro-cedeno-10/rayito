@@ -47,7 +47,7 @@ servidor aún sin la ruta se reintenta.
 
 **Requisito: `cloudfront:CreateDistribution`.** Ante cualquier error de
 permisos al crear el recurso `Distribution` (`DescribeStackEvents`), el
-módulo se salta con el requisito que falta en vez de fallar.
+módulo se salta nombrando ese requisito en vez de fallar.
 
 **Limpieza.** El teardown desregistra cada ruta (idempotente), borra la pila
 (distribución, Function y KeyValueStore; las rutas viven en el KVS y se van
@@ -155,7 +155,7 @@ HTTP_NOT_FOUND = 404
 DISTRIBUTION_LOGICAL_ID = "Distribution"
 CREATE_FAILED = "CREATE_FAILED"
 ACCESS_DENIED_MARKERS = ("AccessDenied", "not authorized")
-DISTRIBUTION_DENIED_REASON = "missing permission: cloudfront:CreateDistribution"
+DISTRIBUTION_DENIED_REASON = "distribution permission error (needs cloudfront:CreateDistribution)"
 
 
 def distribution_denied(region: str | None, stack_name: str) -> bool:

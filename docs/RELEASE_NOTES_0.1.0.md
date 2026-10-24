@@ -1,6 +1,7 @@
 # Rayito 0.1.0 — notas de la release (2026-09-16)
 
-Primera release: M0–M6 aceptados contra AWS real (`us-east-1`). Todo número de este documento está medido; la fuente de cada
+Primera release: M0–M6 aceptados contra AWS real (`us-east-1`). Todo
+número de este documento está medido; la fuente de cada
 uno es `MILESTONES.md`, `docs/benchmarks/2026-09-cold-start.md` o
 `AWS_API_NOTES.md` §16.
 
