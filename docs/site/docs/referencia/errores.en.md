@@ -184,10 +184,10 @@ table in Python and TypeScript.
 An `UNAVAILABLE` because the connection to the proxy never opened (`timed
 out before receiving SETTINGS frame` in Python, a failed `connect` in
 TypeScript; it sometimes happens on the first RPC after `create()` or
-`resume()`) never reaches your code: the SDK repeats the request up to three
-times, waiting 0.25, 0.5 and 1 s, because it never left the client. This
-covers any RPC, also `run_code`, which is not repeated after other cuts
-(since 0.17.1).
+`resume()`) never reaches your code: the SDK repeats the request up to five
+times, waiting 0.25, 0.5, 1, 2 and 4 s, because it never left the client; also
+the attempt that follows a reconnection or a re-minted token. This covers any
+RPC, also `run_code`, which is not repeated after other cuts (since 0.17.1).
 
 ### AWS API errors { #errores-de-la-api-de-aws }
 

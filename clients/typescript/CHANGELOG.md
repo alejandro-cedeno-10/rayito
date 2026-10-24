@@ -116,8 +116,16 @@ versionado [SemVer](https://semver.org/lang/es/).
   veces con `UNAVAILABLE` porque el proxy no llegó a mandar su `SETTINGS`
   (o, en TypeScript, el `connect` falló). Como la petición nunca salió del
   cliente, los unarios y la apertura de cada stream (también `run_code`, que
-  tras otros cortes no se repite) se reintentan hasta tres veces con 0,25,
-  0,5 y 1 s de espera; cualquier otro error sale al primer intento.
+  tras otros cortes no se repite) se reintentan hasta cinco veces con 0,25,
+  0,5, 1, 2 y 4 s de espera, también en el intento que sigue a una
+  reconexión o a reacuñar el token (en AWS, `agent deploy` cortaba el stream
+  del arranque del host con `Handshake read failed (Endpoint closing)` más de
+  2 s); cualquier otro error sale al primer intento.
+- **`rayito agent stop <flota>` y `rayito agent status <flota>` ya no avisan
+  `recipe_renewal_ignored`.** No crean VMs, así que conectan con la
+  renovación apagada de forma explícita y la receta no tiene nada que
+  avisar; `invoke` sigue avisando si la receta pedía renovar y no pasas
+  `--renew-gateway-keys`.
 - **Las variables de `Template.setEnvs()` se ven en los comandos.** `rayd`
   arranca cada proceso con un entorno limpio, así que el `ENV` del template
   sólo llegaba al propio `rayd`: `commands.run`, las PTY y `runCode` no las

@@ -411,7 +411,7 @@ export class SandboxCore {
       sandboxId: this.sandboxId,
     });
     await this.refresher.refreshAll();
-    return call();
+    return retryUnestablished(call);
   }
 
   /** Un 403 del proxy se reintenta tras reacuñar; un corte reconectable espera la reconexión y reintenta una vez. */
@@ -443,7 +443,7 @@ export class SandboxCore {
     if (!outcome.resumed) {
       throw this.reconnectError(outcome, reason);
     }
-    return call();
+    return retryUnestablished(call);
   }
 
   /**
@@ -583,7 +583,9 @@ export class SandboxCore {
       }
     }
     try {
-      return await this.#firstMessage(start, client, allowEmpty, options.signal);
+      return await retryUnestablished(() =>
+        this.#firstMessage(start, client, allowEmpty, options.signal),
+      );
     } catch (error) {
       throw await this.#openFailure(error, options);
     }
@@ -616,7 +618,7 @@ export class SandboxCore {
       sandboxId: this.sandboxId,
     });
     await this.refresher.refreshAll();
-    return this.#firstMessage(start, client, allowEmpty, signal);
+    return retryUnestablished(() => this.#firstMessage(start, client, allowEmpty, signal));
   }
 
   async #firstMessage<S extends DescService, T>(

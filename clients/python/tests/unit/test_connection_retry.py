@@ -46,6 +46,14 @@ def flaky(failures: list[Exception], answer: Any) -> tuple[Any, list[int]]:
     return call, calls
 
 
+def test_the_budget_outlasts_a_handshake_closed_for_several_seconds() -> None:
+    """En AWS real un VM recién arrancado cerró el handshake TLS
+    (`Endpoint closing`) durante más de 2 s: el presupuesto cubre más que
+    eso."""
+    assert sum(CONNECT_RETRY_DELAYS_SECONDS) > 5.0
+    assert len(CONNECT_RETRY_DELAYS_SECONDS) >= 5
+
+
 def test_only_a_connection_that_never_opened_counts() -> None:
     assert is_connection_not_established(SETTINGS_TIMEOUT)
     assert not is_connection_not_established(PROXY_502)
@@ -102,7 +110,7 @@ def test_a_stream_open_retries_a_connection_that_never_opened(
     """También `Execute` (`reconnect=False`): su primer mensaje pasa por
     `_first_message_reminting`."""
     monkeypatch.setattr("rayito._transport.time.sleep", lambda _: None)
-    failures = [SETTINGS_TIMEOUT]
+    failures: list[Exception] = [SETTINGS_TIMEOUT] * len(CONNECT_RETRY_DELAYS_SECONDS)
 
     def start(_: Any) -> Any:
         if failures:
