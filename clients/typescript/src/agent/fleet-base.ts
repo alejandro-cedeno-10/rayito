@@ -445,7 +445,12 @@ export async function mapBounded<T, R>(
       }
     }
   };
-  await Promise.all(Array.from({ length: Math.min(Math.max(limit, 1), items.length) }, lane));
+  await Promise.all(
+    Array.from(
+      { length: Math.min(Number.isFinite(limit) ? Math.max(limit, 1) : 1, items.length) },
+      lane,
+    ),
+  );
   return results;
 }
 

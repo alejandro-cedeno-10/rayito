@@ -511,6 +511,7 @@ describe("mapBounded", () => {
 
   test("a limit below one still runs one at a time, in order", async () => {
     expect(await mapBounded([3, 1, 2], 0, async (item) => item * 2)).toEqual([6, 2, 4]);
+    expect(await mapBounded([3, 1, 2], Number.NaN, async (item) => item * 2)).toEqual([6, 2, 4]);
   });
 });
 

@@ -252,7 +252,8 @@ export interface FleetClient {
   ): Promise<AsyncIterable<AgentEvent>>;
   status(): Promise<FleetStatusView>;
   /** Termina todos los VMs de la flota (y borra su receta salvo con
-   * `keepRecipe`); devuelve cuántos eran. */
+   * `keepRecipe`); devuelve cuántos terminó (un VM que no se pudo probar que
+   * sea de la flota no se termina ni cuenta). */
   stop(options?: { readonly keepRecipe?: boolean | undefined }): Promise<number>;
 }
 

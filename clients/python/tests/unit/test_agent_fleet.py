@@ -924,7 +924,7 @@ def test_a_control_plane_error_stops_the_remaining_probes(flavor: FleetFlavor) -
             )
         )
 
-    assert len(flavor.classes.probed) < len(vms)
+    assert len(flavor.classes.probed) <= 2 * AGENT_FLEET_PROBE_CONCURRENCY
 
 
 def test_members_are_probed_concurrently_and_reported_in_listing_order(
