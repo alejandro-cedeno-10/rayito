@@ -203,7 +203,12 @@ escalado real. Un `scaling=` o `project=` explícitos ganan a la receta, y
   sale el escalado: `explicit`, `project`, `recipe` o `default`. Con `default`
   (sin proyecto ni receta) `rayito agent status` imprime
   `members: N (escalado desconocido: sin proyecto ni receta)` en vez de un
-  `min 1, max 1` que no describe la flota.
+  `min 1, max 1` que no describe la flota. `status()` (y `rayito agent
+  status`, también con `--json`) vuelve a leer el listado y pregunta
+  (`GET /ping`) a cada VM `RUNNING`, también justo después de `connect()`,
+  hasta 8 a la vez, sin acotarle la vida ni arrancar su servicio. Sólo un VM
+  suspendido sale como `unknown` (sin comprobar), porque preguntarle lo
+  reanudaría; desde 0.17.1.
 - **Borrado.** `fleet.stop()` y `rayito agent stop <nombre>` borran la receta
   si este proceso la guardó o la leyó; `stop(keep_recipe=True)`
   (`--keep-recipe`) la conserva.
@@ -300,8 +305,9 @@ pasado el plazo, lanza `CapacityException` (`code = "agent_capacity"`;
   `serve.timeout_seconds`. Una flota de tamaño fijo crea sus VMs como
   siempre. Hasta 0.16 la reducción no ocurría: los VMs se creaban sin plazo
   lógico y `rayd` rechazaba el `set_timeout`. Un VM creado así (por 0.16)
-  no se reduce: la flota avisa una vez; termínalo con `stop()` o vuelve a
-  desplegar. Mientras un VM se termina, la plataforma aún lo lista como
+  no se reduce: si la flota puede crecer, avisa una vez; termínalo con
+  `stop()` o vuelve a desplegar. En una flota de tamaño fijo (o con los
+  límites por defecto) no se avisa, porque ningún VM se reduce; desde 0.17.1. Mientras un VM se termina, la plataforma aún lo lista como
   `RUNNING` aunque su `rayd` ya no responda: al listar la flota
   (`AgentFleet.connect()`, `status()`, `refresh_members()`), un VM cuyo
   `Health` falla o que deja de estar `RUNNING` al sondearlo se trata como un

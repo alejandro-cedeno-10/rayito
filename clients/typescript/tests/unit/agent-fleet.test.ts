@@ -244,6 +244,23 @@ describe("shared mode", () => {
     }
   });
 
+  test("a fixed-size fleet never warns about a VM without a logical lifetime", async () => {
+    const h = new FleetHarness();
+    const warn = vi.fn();
+    const fleet = await h.started(new ScalingOptions({ minVms: 1, maxVms: 1 }), {
+      logger: { warn },
+    });
+    const old = h.world.add({ managed: false });
+    await fleet.refreshMembers();
+    const held = await fleet.stream("primera");
+    await fleet.invoke("segunda");
+    await held.close();
+    expect(old.timeouts).toEqual([]);
+    expect(warn.mock.calls.filter(([message]) => message === UNMANAGED_LIFETIME_MESSAGE)).toEqual(
+      [],
+    );
+  });
+
   test("a late cap estimate is corrected from rayd and never marks the VM", async () => {
     const h = new FleetHarness();
     const warn = vi.fn();
@@ -456,18 +473,40 @@ describe("health", () => {
     expect(h.world.sandboxes.get(original)?.state).toBe("TERMINATED");
   });
 
-  test("status reports members without opening the unknown ones", async () => {
+  test("status never opens a suspended member", async () => {
     const h = new FleetHarness();
-    h.world.add();
-    h.world.add();
+    h.world.add({ state: "SUSPENDED" });
+    h.world.add({ state: "SUSPENDED" });
     const fleet = await AgentFleet.connect("support-bot", {
       accessToken: FLEET_TOKEN,
       directory: h.world,
+      fetch: h.backend.fetch,
     });
     const status = await fleet.status();
     expect(status.members.map((member) => member.state)).toEqual(["unknown", "unknown"]);
     expect(h.world.connected).toEqual([]);
     expect([status.healthy, status.busy]).toEqual([0, 0]);
+  });
+
+  test("status right after connect reports the real state of running members", async () => {
+    const h = new FleetHarness();
+    h.world.add();
+    h.world.add();
+    h.world.add({ state: "SUSPENDED" });
+    const fleet = await AgentFleet.connect("support-bot", {
+      accessToken: FLEET_TOKEN,
+      scaling: SHARED_TWO,
+      directory: h.world,
+      fetch: h.backend.fetch,
+    });
+    const status = await fleet.status();
+    expect(status.members.map((member) => member.state)).toEqual(["healthy", "healthy", "unknown"]);
+    expect(status.healthy).toBe(2);
+    expect([...h.world.connected].sort()).toEqual([sandboxIdOf(1), sandboxIdOf(2)]);
+    expect(fleet.deployments).toEqual([]);
+    expect([...h.world.sandboxes.values()].every((sandbox) => sandbox.timeouts.length === 0)).toBe(
+      true,
+    );
   });
 
   test("a transport failure is not enough to drop the VM", async () => {

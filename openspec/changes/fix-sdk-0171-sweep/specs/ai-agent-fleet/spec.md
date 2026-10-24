@@ -35,3 +35,17 @@ When a fleet has no pinned image version (no build in this process and no recipe
 #### Scenario: the newest version of the image is another build
 - **WHEN** a fleet reconnected with `project=` and no recipe has members on versions 1 and 2 and the image's newest version is 3, and it grows by one VM
 - **THEN** the new VM is created with version 2
+
+### Requirement: Fleet status reports the real state of running members
+`AgentFleet.status()` (sync, async and TypeScript) and `rayito agent status <name>` (text and `--json`, both CLIs) SHALL re-read the listing and SHALL ask `GET /ping` of every `RUNNING` member, including right after `connect()`, with at most `AGENT_FLEET_PROBE_CONCURRENCY` (8) at a time. A member this process has not opened SHALL be asked without being kept: its lifetime SHALL NOT be set and its service SHALL NOT be started. Only a member that is not `RUNNING` (suspended) SHALL be reported as `unknown`, because asking it would resume it; a failed ask SHALL leave the member `unknown`.
+
+#### Scenario: status right after connect
+- **WHEN** a fleet connects to two `RUNNING` members and a suspended one and calls `status()`
+- **THEN** the two running members are `healthy`, the suspended one is `unknown` and was not connected, and no `set_timeout` was sent
+
+### Requirement: The missing-lifetime warning only when the fleet can grow
+When `rayd` rejects the `set_timeout` of a member because it has no logical lifetime, the fleet SHALL mark the member and SHALL NOT retry, and SHALL log `UNMANAGED_LIFETIME_MESSAGE` only when the fleet can grow (`max_vms > min_vms`). A fixed-size fleet, including one connected with `project=` and no `scaling` (the default limits), SHALL NOT log it, in both SDKs.
+
+#### Scenario: a fixed-size fleet finds a VM without a deadline
+- **WHEN** a fleet with `min_vms == max_vms` opens a VM created without a logical lifetime
+- **THEN** no warning is logged and the VM's lifetime is not set again

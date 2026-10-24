@@ -101,7 +101,8 @@ AGENT_FLEET_ON_TIMEOUT: Final[TimeoutActionName] = "kill"
 #: (`CONNECT_CAP_SAFETY_MS`).
 AGENT_FLEET_CAP_SAFETY_SECONDS: Final = CONNECT_CAP_SAFETY_MS // 1000
 
-#: Lo que se loguea una vez por VM cuando `rayd` rechaza acotar su vida.
+#: Lo que se loguea una vez por VM cuando `rayd` rechaza acotar su vida y
+#: la flota puede crecer (`warns_unmanaged_lifetime`).
 UNMANAGED_LIFETIME_MESSAGE: Final = (
     "un VM de la flota no tiene plazo lógico (se creó antes de 0.17 o con max_vms igual a "
     "min_vms): no se reducirá solo; termínalo con stop() o vuelve a desplegar"
@@ -215,10 +216,12 @@ def select_probed(
 def member_of(known: Member | None, item: MemberListing, cap: datetime | None) -> Member:
     """El miembro de un VM listado: el que este proceso ya conocía (que pasa
     a probado si el listado lo prueba) o uno nuevo con la prueba del
-    listado."""
+    listado. En los dos, `running` sale del estado del listado."""
+    running = item.state == AGENT_FLEET_PROBE_STATE
     if known is None:
-        return Member(item.sandbox_id, cap=cap, proven=item.proven)
+        return Member(item.sandbox_id, cap=cap, proven=item.proven, running=running)
     known.proven = known.proven or item.proven
+    known.running = running
     return known
 
 
@@ -262,7 +265,9 @@ class Member:
     `lifetime_rejected` que su `set_timeout` se rechazó por un argumento (un
     VM sin plazo lógico: no se reintenta). `proven` dice si se sabe que el VM
     es de la flota (lo creó este proceso, sus etiquetas lo prueban o la
-    imagen sólo tiene agentes); uno sin probar nunca se termina."""
+    imagen sólo tiene agentes); uno sin probar nunca se termina. `running`
+    dice si el último listado lo vio `RUNNING`: `status()` sólo pregunta a
+    uno así, porque abrir uno suspendido lo reanudaría."""
 
     sandbox_id: str
     deployment: Any | None = None
@@ -277,6 +282,7 @@ class Member:
     limited: bool = False
     lifetime_rejected: bool = False
     proven: bool = True
+    running: bool = True
 
 
 @dataclass(frozen=True)
@@ -311,8 +317,8 @@ class FleetMemberStatus:
 @dataclass(frozen=True)
 class FleetStatus:
     """El estado de una flota: sus miembros, cuántos están sanos u ocupados y
-    los límites de `ScalingOptions`. Un miembro que este proceso aún no abrió
-    figura como `unknown`: preguntarle lo reanudaría. `scaling_source` dice
+    los límites de `ScalingOptions`. Un miembro suspendido figura como
+    `unknown` (sin comprobar): preguntarle lo reanudaría. `scaling_source` dice
     de dónde salen los límites: con `default` (sin proyecto ni receta) no
     describen la flota real."""
 
@@ -451,6 +457,14 @@ class FleetLifetime:
 def scales_in(scaling: ScalingOptions) -> bool:
     """Si la flota puede tener VMs por encima de `min_vms`."""
     return scaling.max_vms > scaling.min_vms
+
+
+def warns_unmanaged_lifetime(scaling: ScalingOptions) -> bool:
+    """Si un VM sin plazo lógico merece el aviso `UNMANAGED_LIFETIME_MESSAGE`:
+    sólo si la flota puede crecer (`scales_in`). En una de tamaño fijo (o
+    con los límites por defecto, `min_vms == max_vms`) ningún VM se reduce,
+    así que da igual que no tenga plazo."""
+    return scales_in(scaling)
 
 
 def fleet_lifetime(project: AgentProject, scaling: ScalingOptions) -> FleetLifetime | None:

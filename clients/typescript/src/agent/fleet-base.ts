@@ -136,6 +136,9 @@ export interface Member<D = unknown> {
    * lo prueban o la imagen sólo tiene agentes); uno sin probar nunca se
    * termina. */
   proven: boolean;
+  /** Si el último listado lo vio `RUNNING`: `status()` sólo pregunta a uno
+   * así, porque abrir uno suspendido lo reanudaría. */
+  running: boolean;
 }
 
 export function newMember<D>(
@@ -158,6 +161,7 @@ export function newMember<D>(
     limited: false,
     lifetimeRejected: false,
     proven: true,
+    running: true,
   };
 }
 
@@ -169,7 +173,8 @@ export const AGENT_FLEET_ON_TIMEOUT = "kill" satisfies OnTimeout;
  * relojes): el mismo que deja `connect()` al reabrir un sandbox
  * (`REOPEN_CAP_SLACK_MS`). */
 export const AGENT_FLEET_CAP_SAFETY_MS = REOPEN_CAP_SLACK_MS;
-/** Lo que se loguea una vez por VM cuando `rayd` rechaza acotar su vida. */
+/** Lo que se loguea una vez por VM cuando `rayd` rechaza acotar su vida y la
+ * flota puede crecer (`warnsUnmanagedLifetime`). */
 export const UNMANAGED_LIFETIME_MESSAGE =
   "un VM de la flota no tiene plazo lógico (se creó antes de 0.17 o con maxVms igual a " +
   "minVms): no se reducirá solo; termínalo con stop() o vuelve a desplegar";
@@ -185,6 +190,14 @@ export interface FleetLifetime {
 /** Si la flota puede tener VMs por encima de `minVms`. */
 export function scalesIn(scaling: ScalingOptions): boolean {
   return scaling.maxVms > scaling.minVms;
+}
+
+/** Si un VM sin plazo lógico merece el aviso `UNMANAGED_LIFETIME_MESSAGE`:
+ * sólo si la flota puede crecer (`scalesIn`). En una de tamaño fijo (o con los
+ * límites por defecto, `minVms === maxVms`) ningún VM se reduce, así que da
+ * igual que no tenga plazo. */
+export function warnsUnmanagedLifetime(scaling: ScalingOptions): boolean {
+  return scalesIn(scaling);
 }
 
 /** La vida de los VMs de la flota: `undefined` si nunca puede haber un VM
@@ -429,10 +442,12 @@ export function memberOf<D>(
   cap: Date | undefined,
 ): Member<D> {
   const proven = item.proven !== false;
+  const running = item.state === AGENT_FLEET_PROBE_STATE;
   if (known === undefined) {
-    return { ...newMember<D>(item.sandboxId, undefined, false, cap), proven };
+    return { ...newMember<D>(item.sandboxId, undefined, false, cap), proven, running };
   }
   known.proven = known.proven || proven;
+  known.running = running;
   return known;
 }
 
@@ -486,8 +501,8 @@ export interface FleetMemberStatus {
 }
 
 /** El estado de una flota: sus miembros, cuántos están sanos u ocupados y los
- * límites de `ScalingOptions`. Un miembro que este proceso aún no abrió figura
- * como `unknown`: preguntarle lo reanudaría. `scalingSource` dice de dónde
+ * límites de `ScalingOptions`. Un miembro suspendido figura como `unknown`
+ * (sin comprobar): preguntarle lo reanudaría. `scalingSource` dice de dónde
  * salen los límites: con `default` (sin proyecto ni receta) no describen la
  * flota real. */
 export interface FleetStatus {

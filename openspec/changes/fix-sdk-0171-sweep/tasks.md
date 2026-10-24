@@ -34,3 +34,9 @@
 - [x] 6.3 Agent-project CLI stops by fleet name and checks the recipe is gone
 - [x] 6.4 Template e2e skips without its bucket
 - [x] 6.5 Custom-domain and dashboard read-only determinism
+
+## 7. Fleet status and the lifetime warning
+
+- [x] 7.1 `status()` re-reads the listing and asks every `RUNNING` member (bounded, without keeping it); only suspended members stay `unknown`; sync, async and TypeScript, with tests that fail before the fix
+- [x] 7.2 `UNMANAGED_LIFETIME_MESSAGE` only when the fleet can grow (`warns_unmanaged_lifetime` / `warnsUnmanagedLifetime`), both SDKs, with tests
+- [x] 7.3 Fleet guide (es/en) and both changelogs
