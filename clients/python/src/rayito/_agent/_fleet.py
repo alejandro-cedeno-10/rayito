@@ -71,6 +71,7 @@ from rayito._agent._fleet_base import (
     session_label,
     surplus,
     vm_lost_message,
+    warns_unmanaged_lifetime,
     with_handle,
 )
 from rayito._agent._fleet_recipe import FleetRecipe, recipe_of, renewal_on_connect
@@ -668,17 +669,25 @@ class AgentFleet:
         return stopped
 
     def status(self) -> FleetStatus:
-        """Estado de la flota: pregunta a los VMs que este proceso ya abrió
-        (`GET /ping`) y deja como `unknown` los demás."""
+        """Estado de la flota: vuelve a leer el listado (`refresh_members`),
+        pregunta a los VMs que este proceso ya abrió (`GET /ping`) y, hasta
+        `AGENT_FLEET_PROBE_CONCURRENCY` a la vez, a los `RUNNING` que aún no
+        abrió (`_peek`). Sólo deja como `unknown` los suspendidos:
+        preguntarles los reanudaría."""
+        self.refresh_members()
         with self._lock:
             members = list(self._members)
-        statuses = []
         for member in members:
             if member.deployment is not None:
                 self._probe(member, force=True)
-            statuses.append(
-                FleetMemberStatus(member.sandbox_id, member.health, member.extra, member.inflight)
-            )
+        unopened = [m for m in members if m.deployment is None and m.running]
+        if unopened:
+            with ThreadPoolExecutor(max_workers=AGENT_FLEET_PROBE_CONCURRENCY) as pool:
+                list(pool.map(self._peek, unopened))
+        statuses = [
+            FleetMemberStatus(member.sandbox_id, member.health, member.extra, member.inflight)
+            for member in members
+        ]
         warm_ready = self._pool.stats().ready if self._pool is not None else 0
         scaling = self.scaling
         return FleetStatus(
@@ -1064,7 +1073,8 @@ class AgentFleet:
             return
         except InvalidArgumentException:
             member.lifetime_rejected = True
-            logger.warning(UNMANAGED_LIFETIME_MESSAGE)
+            if warns_unmanaged_lifetime(self.scaling):
+                logger.warning(UNMANAGED_LIFETIME_MESSAGE)
             return
         except SandboxException:
             logger.warning("no se pudo acotar la vida de un VM sobrante", exc_info=True)
@@ -1126,6 +1136,23 @@ class AgentFleet:
             transport_factory=self._transport_factory,
             **options,
         )
+
+    def _peek(self, member: Member) -> None:
+        """El `GET /ping` de un VM `RUNNING` que este proceso aún no abrió,
+        sin quedárselo: no le acota la vida ni arranca su servicio (uno sin
+        servicio sigue `unknown`). Si falla, el miembro sigue `unknown`."""
+        if self._token is None:
+            return
+        try:
+            sandbox = self._directory.connect(member.sandbox_id, self._token)
+            if not sandbox.files.exists(AGENT_SERVICE_READY_MARKER_PATH):
+                return
+            state = self._deployment_of(sandbox).status().state
+        except SandboxException as exc:
+            logger.debug("no se pudo preguntar a un VM de la flota: %s", type(exc).__name__)
+            return
+        with self._lock:
+            record_ping(member, state, self._clock())
 
     def _probe(self, member: Member, *, force: bool = False) -> bool:
         """Si el VM puede atender una sesión: lo abre si hace falta y, si su
