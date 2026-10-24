@@ -19,6 +19,8 @@ import pytest
 
 from rayito._agent._domain import MODEL_PROVIDERS
 from rayito._agent._runner import deepagents_runner as runner
+from rayito._agent._runner.agent_host.drivers import deepagents as deepagents_driver
+from rayito._agent._runner.agent_host.protocol import AgentFailure
 from rayito._limits import AGENT_PROTOCOL_VERSION, MAX_TOOL_OUTPUT_PREVIEW_BYTES
 
 SESSION_PATTERN = r"rda_[0-9a-f]{32}"
@@ -380,6 +382,22 @@ def test_entrypoint_receives_the_context(
     assert ctx.instructions == "Sé breve."
     assert stubs["deep_agent"] is None
     monkeypatch.delitem(sys.modules, "equipo_agentes")
+
+
+def test_the_host_driver_warm_fails_on_an_entrypoint_that_does_not_exist(
+    stubs: dict[str, Any], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Un `--entry` roto falla al arrancar el servicio (y el despliegue con
+    él), no en la primera invocación."""
+    (tmp_path / "equipo_warm.py").write_text("def build(ctx):\n    return None\n")
+
+    deepagents_driver.Driver(_config(tmp_path, entrypoint="equipo_warm:build")).warm()
+    with pytest.raises(AgentFailure, match="entrypoint_not_found"):
+        deepagents_driver.Driver(_config(tmp_path, entrypoint="equipo_warm:otro")).warm()
+    with pytest.raises(AgentFailure, match="entrypoint_not_found"):
+        deepagents_driver.Driver(_config(tmp_path, entrypoint="no_existe_warm:build")).warm()
+    deepagents_driver.Driver(_config(tmp_path)).warm()
+    monkeypatch.delitem(sys.modules, "equipo_warm")
 
 
 @pytest.mark.parametrize(
