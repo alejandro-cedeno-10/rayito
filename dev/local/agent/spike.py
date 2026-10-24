@@ -48,9 +48,9 @@ from tests.local.guest import (
 )
 
 REGION: Final = os.environ.get("AWS_REGION", "us-east-1")
-#: Perfil de inferencia de sistema de Claude Haiku 4.5 (el más barato de los
-#: Claude activos en la cuenta de pruebas; `bedrock list-inference-profiles`,
-#: 2026-10-05).
+#: Perfil de inferencia de sistema de Claude Haiku 4.5, el Claude más barato
+#: del catálogo de Bedrock (`bedrock list-inference-profiles`, 2026-10-05).
+#: Requiere una cuenta con acceso al modelo en Bedrock habilitado.
 BEDROCK_MODEL: Final = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
 BEDROCK_UPSTREAM: Final = f"https://bedrock-runtime.{REGION}.amazonaws.com"
 #: Converse, ConverseStream, InvokeModel e InvokeModelWithResponseStream

@@ -243,11 +243,9 @@ VM-s; el e2e de M5 de la mañana aporta además ≈ 7 lanzamientos y 4 ciclos de
 4. Si los dos builds de `rayito-base-slim` aparecen en alguna línea MicroVM
    y cuánto sube la línea de storage el 2026-09-17 (≈ 2 × 2,05 GB × 24 h ≈
    98 GB-h más) y el 2026-09-23 (mínimo de una semana).
-5. El baseline de storage del 2026-09-14 (67,5 GB-h antes de la primera
-   imagen Rayito): `list-microvm-images` sólo devuelve `rayito-base`,
-   `rayito-m0-probe` y ahora `rayito-base-slim`, así que se registra como uso
-   compartido de la cuenta no atribuible y el storage Rayito se calcula como
-   delta sobre él.
+5. Cost Explorer agrupa el storage por cuenta, no por imagen: el storage
+   Rayito se calcula como delta sobre el día anterior a la primera imagen
+   Rayito.
 6. Q8 (1 h activa + 7 h suspendida, 2 GB) derivada de los precios
    verificados y los tamaños medidos: 3600 × (0,000 027 6944 + 2 ×
    0,000 003 6667) + 0,919 × 0,00155 (lectura al lanzar) + 0,919 × 0,0038

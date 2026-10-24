@@ -101,7 +101,7 @@ informe ni log del spike contiene el valor.
 
 ## Números en AWS real
 
-Cuenta de pruebas, us-east-1, 2026-10-05. Template `rayito-acc071spk-agent`
+Una cuenta con acceso al modelo en Bedrock habilitado, us-east-1, 2026-10-05. Template `rayito-acc071spk-agent`
 compuesto con el DSL de `Template` sobre una `rayito-base-caps` desechable
 (el `rayito-image.zip` firmado de la release `rayd-v0.7.0`), tamaño por
 defecto (2048 MB). Modelo: perfil de inferencia de sistema
@@ -145,10 +145,10 @@ documenta que el guest ve más memoria de la configurada), así que los
 
 ## Bloqueos y avisos
 
-- **Ninguno bloquea la fase 1.** La cuenta de pruebas ya tenía acceso a los
-  modelos de Anthropic en Bedrock (`ListFoundationModels` y un `Converse`
-  firmado con SigV4 respondieron); en otra cuenta, el mantenedor tiene que
-  habilitar el acceso al modelo antes, y Rayito no debe hacerlo por él.
+- **Ninguno bloquea la fase 1.** El spike corrió con acceso al modelo en
+  Bedrock habilitado; quien lo reproduzca tiene que habilitar antes el acceso
+  al modelo en su cuenta (lo confirma un `Converse` firmado con SigV4), y
+  Rayito no debe hacerlo por él.
 - **Primer `exec` de OpenCode** (Q142): la fase 1 tiene que medir un
   OpenCode residente (`opencode serve` arrancado por `set_start_cmd`, con
   `opencode run --attach`) antes de fijar el diseño; si no baja, el
