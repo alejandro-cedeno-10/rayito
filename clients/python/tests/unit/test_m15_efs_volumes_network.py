@@ -142,7 +142,7 @@ def test_internet_egress_counts_subnets_routed_to_a_nat() -> None:
 
 
 def test_internet_egress_also_counts_other_default_routes() -> None:
-    # Subredes privadas con salida por un transit gateway, no por un NAT.
+    # Una ruta por defecto a otra puerta (transit gateway, peering o appliance).
     api = FakeEc2Api(
         route_tables=[
             {

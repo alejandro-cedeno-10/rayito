@@ -268,9 +268,8 @@ def _default_route_count(
 
 
 def _egress_finding(subnet_ids: Sequence[str], tables: Sequence[RouteTableFacts]) -> NetworkFinding:
-    # "other" cuenta también: una ruta por defecto a un transit gateway, un
-    # peering o un appliance: una VPC cuyas subredes privadas salen por un
-    # transit gateway, y no por un NAT, no debe quedarse en "0 con NAT".
+    # "other" cuenta también: una ruta por defecto que no va a un NAT ni a un
+    # internet gateway (transit gateway, peering o appliance) es otra salida.
     with_nat = _default_route_count(subnet_ids, tables, "nat")
     with_other = _default_route_count(subnet_ids, tables, "other")
     return NetworkFinding(

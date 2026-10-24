@@ -12,8 +12,8 @@ página lleva una de dos etiquetas:
 - **List** (precio de lista): sale de la lista de precios pública de AWS
   (`us-east-1`, ARM), consultada el **2026-10-06**, o es aritmética sobre
   ella.
-- **Measured** (medido): contrastado contra AWS real o Cost Explorer en la
-  cuenta de pruebas (imagen `rayito-base` de 2 GB / 1 vCPU, septiembre de
+- **Measured** (medido): contrastado contra AWS real o Cost Explorer en una
+  cuenta de AWS en us-east-1 (imagen `rayito-base` de 2 GB / 1 vCPU, septiembre de
   2026).
 
 ## Cuánto cuesta, con ejemplos
@@ -75,7 +75,7 @@ Los precios de cómputo y de almacenamiento coinciden exactos con lo
 facturado (Cost Explorer); lectura y escritura de snapshot difieren del
 precio de lista en menos de un 0,25 % — dentro del redondeo de la
 cantidad facturada, no un precio distinto. La relación entre GB-s y vCPU-s
-facturados en la cuenta de pruebas fue **1,87–1,89**, no exactamente 2,0
+facturados, medida en us-east-1, fue **1,87–1,89**, no exactamente 2,0
 (pendiente de contrastar con los VM-segundos del banco de pruebas).
 
 !!! info "Referencias oficiales (consultadas 2026-10-06)"

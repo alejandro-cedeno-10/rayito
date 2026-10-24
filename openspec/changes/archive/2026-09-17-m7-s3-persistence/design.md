@@ -57,7 +57,7 @@ TypeScript `rayito` 0.0.5; no git repository yet):
   and assembly sources with the `cc` crate, which `cargo-zigbuild` points
   at `zig cc`; whether that link succeeds on this toolchain (zig 0.16,
   Rust 1.98) is the first thing the implementation measures (D6).
-- **Account facts.** Test account, `us-east-1`; the change creates no
+- **Account facts.** `us-east-1`; the change creates no
   bucket, so every S3 test uses the account's existing
   artifact bucket under a prefix; the IAM
   stack `rayito-m0-iam` (`spike/m0/iam.yaml`) owns the execution role

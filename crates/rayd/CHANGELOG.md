@@ -833,7 +833,7 @@ Un proceso por MicroVM, como root, estático musl, con gRPC h2c (`tonic`) en
   aceptación corrió sobre `rayito-base` 16.0 y `rayito-base-caps` 6.0).
 - Sin cambio de imagen `agent_version` no cambia: las versiones de imagen
   son números de build opacos de AWS, anotados en `MILESTONES.md`. Esos
-  números (10.0, 16.0, 6.0) son los de la cuenta del mantenedor: el contador
+  números (10.0, 16.0, 6.0) son de una cuenta concreta: el contador
   es por imagen y por cuenta, y el criterio de compatibilidad que aplica
   `rayito doctor` es sólo `agent_version`.
 

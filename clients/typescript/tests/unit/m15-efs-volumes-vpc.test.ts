@@ -199,7 +199,7 @@ describe("EfsVolumes.check", () => {
   });
 
   test("counts NAT and other default routes (e.g. a transit gateway)", async () => {
-    // Subredes privadas con salida por un transit gateway, no por un NAT.
+    // Una ruta por defecto a otra puerta (transit gateway, peering o appliance).
     const ec2 = new FakeEc2();
     ec2.routeTables = [
       {
