@@ -512,8 +512,8 @@ para y se reescribe este documento.
 
 **Resultados de la aceptación del 2026-10-02** (`AWS_API_NOTES.md` §16
 Q122–Q125): EFS-7 y EFS-2 pasan; EFS-3 y todos los ★ que necesitan red
-(EFS-8, EFS-11, EFS-13) quedan **bloqueados**: el entorno de aceptación no
-permitía crear una VPC para la medición. Ningún criterio de parada falló: la opción A sigue viva, pendiente de
+(EFS-8, EFS-11, EFS-13) quedan **bloqueados**: no se dispuso de una VPC para
+la medición. Ningún criterio de parada falló: la opción A sigue viva, pendiente de
 una VPC prestada con permiso. De paso, el e2e del CRUD encontró que
 `DescribeAccessPoints` es eventualmente consistente (Q125), corregido en
 `VolumeStore` de ambos SDK. Coste de la aceptación ≈ $0,20 (dos builds de

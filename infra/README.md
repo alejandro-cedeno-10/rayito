@@ -268,8 +268,8 @@ allowlist vacía **no necesita NAT** (el security group descarta antes del
 enrutado), así que la falta de NAT nunca es motivo para saltarse la medida.
 Si la puerta no se cumple, el test se salta (falta
 `RAYITO_EGRESS_CONNECTOR_ARN`) y la evidencia es esta validación. Resultado
-2026-09-16: **no desplegado** — la única VPC de la cuenta
-(12 subnets) pertenece a otra carga de trabajo. Cuando haya una VPC propia: `aws cloudformation deploy
+2026-09-16: **no desplegado** — no había una VPC propia ni prestada para
+la medición. Cuando haya una VPC propia: `aws cloudformation deploy
 --stack-name rayito-egress-e2e --template-file infra/egress-connector.yaml
 --capabilities CAPABILITY_IAM --parameter-overrides VpcId=… SubnetIds=…`,
 exportar `RAYITO_EGRESS_CONNECTOR_ARN` con el output `ConnectorArn`, correr
