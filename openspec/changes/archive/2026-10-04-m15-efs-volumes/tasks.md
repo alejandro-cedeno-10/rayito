@@ -161,7 +161,7 @@ itself; re-run `cleanup` until it exits 0 anyway).
    --execution-role-arn <infra/iam.yaml role> [--default-template
    <rayito-base>]` — the existing VPC comes only from those variables (or
    `--vpc-id`/`--subnet-ids`) and is never created, modified, recorded or
-   deleted (needed where an SCP denies `ec2:CreateVpc`, Q124); `run` first
+   deleted (needed where the account cannot create a VPC, Q124); `run` first
    runs `EfsVolumes.check` and stops before creating anything on a `FAIL`
    — then measures EFS-2, 3, 8, 11, 13 and stops + cleans up on the first
    ★ failure. `--efs11-pauses 60` only for
@@ -188,8 +188,8 @@ itself; re-run `cleanup` until it exits 0 anyway).
       AL2023 repo, code install +197.6 MB, memory unchanged, build +10 s;
       the real image layer must re-link `/usr/bin/python3` to 3.12.
 - [x] EFS-2 ★ passes (Q123), measured with `measure_efs2` without a VPC.
-- [x] Step 3 **blocked** (Q124; done in §7.7): the test account's organization SCP denies
-      `ec2:CreateVpc`; `run` stopped before creating anything. EFS-3, 8, 11
+- [x] Step 3 **blocked** (Q124; done in §7.7): no VPC could be created
+      for the run; `run` stopped before creating anything. EFS-3, 8, 11
       and 13 (★) and steps 4-5 wait for a VPC borrowed with permission
       (`--vpc-id`/`--subnet-ids`, or `RAYITO_E2E_VPC_ID`/
       `RAYITO_E2E_SUBNET_IDS`; see §9).
@@ -204,9 +204,9 @@ itself; re-run `cleanup` until it exits 0 anyway).
 
 ### 7.7 Acceptance run 2026-10-04 (results in `AWS_API_NOTES.md` §16 Q126–Q134)
 
-An existing VPC of the test account, used with the maintainer's permission
-and passed only through `RAYITO_E2E_VPC_ID`/`RAYITO_E2E_SUBNET_IDS` (two
-private subnets in two AZs, default route to a transit gateway, no NAT).
+An existing VPC borrowed with permission and passed only through
+`RAYITO_E2E_VPC_ID`/`RAYITO_E2E_SUBNET_IDS` (two private subnets in two
+AZs).
 
 - [x] Python e2e `test_m15_efs_volumes_vpc.py`: 2 passed after two test
       fixes (EC2 returns route-table associations in any order; a security

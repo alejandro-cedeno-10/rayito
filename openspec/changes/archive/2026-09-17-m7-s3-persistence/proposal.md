@@ -164,5 +164,4 @@ Every decision is closed in `design.md`; the summary:
   probe (`RAYITO_E2E_SLOW=1`) ≈ $0.13. An incomplete multipart upload
   left by a killed VM costs storage until aborted: the docs tell
   operators to add an `AbortIncompleteMultipartUpload` lifecycle rule to
-  the bucket (this change creates no bucket: the account's SCP denies
-  `s3:CreateBucket`).
+  the bucket (this change creates no bucket: the operator owns it).

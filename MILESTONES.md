@@ -1619,7 +1619,7 @@ publicación de 0.7.0 (`m15-efs-volumes`, `local-e2e-floci`,
 - **Dominio propio** (`m15-custom-domain`, experimental, apagado por
   defecto): `CustomDomain` despliega CloudFront, una Function de enrutado y
   un KeyValueStore. Sale como experimental para que se pueda probar: la
-  cuenta de pruebas deniega `cloudfront:CreateDistribution` por una SCP, así
+  distribución no se llegó a crear en el entorno de aceptación, así
   que el tráfico de punta a punta por una distribución real sigue sin
   verificar y el cambio queda abierto (tareas 3.6 y 9.4).
 - **Endurecimiento de seguridad**: el agente frente a rutas de confused
@@ -1637,8 +1637,8 @@ publicación de 0.7.0 (`m15-efs-volumes`, `local-e2e-floci`,
 ejecución, en paralelo con imágenes distintas para que ningún sweeper
 tocara los sandboxes de otra sesión. Python: 122 pasados, 0 fallos y 10
 saltados de 132, con el corpus E2B completo. TypeScript: 49 de 57, con el
-corpus E2B (11/11); los 8 que no corrieron son los 5 de dominio propio (la
-SCP de CloudFront) y 3 de EFS/poly sin imagen en ese juego. Funciones y
+corpus E2B (11/11); los 8 que no corrieron son los 5 de dominio propio (sin
+distribución CloudFront) y 3 de EFS/poly sin imagen en ese juego. Funciones y
 seguridad: 26 e2e (14 Python, 12 TypeScript) y 18 comprobaciones dirigidas,
 incluido el montaje EFS real. Los pocos fallos de la primera pasada
 (saturación del ancho de banda local o shards que se pisaban) pasaron al
@@ -1670,7 +1670,7 @@ después sin diferencias propias):
   cargo que pasó a verde sin más commits que el suyo.
 
 Sigue abierto `m15-custom-domain` (3.6 y 9.4), a la espera de una cuenta
-que permita `cloudfront:CreateDistribution` (Q141).
+donde se pueda crear la distribución (Q141).
 
 ---
 
@@ -1874,13 +1874,13 @@ Linux e imágenes desechables propias de cada carril (Python, TypeScript y
 agente), publicadas con `--artifact-run-id` en paralelo:
 
 - Python: la regresión completa, corpus de E2B incluido, en verde (124
-  passed; los saltos son dominio propio, que la SCP de la cuenta impide, y
+  passed; los saltos son dominio propio, sin distribución CloudFront, y
   mediciones opcionales). TypeScript: en verde (17 ficheros, corpus de E2B
   incluido). `rayito doctor --launch` 9 OK / 1 WARN / 0 FAIL.
 - Funciones opcionales en verde en los dos SDK: montajes S3 y exportación
   OTLP (con un rol de ejecución propio que lleva las políticas de sus
   pilas), índice de metadatos, pasarela de secretos, templates y volúmenes
-  EFS en la VPC compartida de la cuenta (sin tocarla). Eventos y webhooks:
+  EFS en una VPC existente (sin tocarla). Eventos y webhooks:
   las cuatro transiciones entregadas y firmadas a un receptor propio (Q157).
   Sin opciones, un `create()` sólo llama a `lambda-microvms` y STS.
 - Agente: OpenCode y deepagents desde Python y TypeScript sobre una imagen
@@ -1931,14 +1931,14 @@ e imágenes desechables propias de cada carril (base, caps, poly y caps con
 EFS):
 
 - Python: la regresión completa, corpus de E2B incluido, en verde (129
-  passed o más; los saltos son dominio propio, que la SCP de la cuenta
-  impide, y mediciones opcionales). TypeScript: en verde (109 passed o más).
+  passed o más; los saltos son dominio propio, sin distribución CloudFront,
+  y mediciones opcionales). TypeScript: en verde (109 passed o más).
   Los casos de agente de los dos SDK sobre una imagen de `AgentTemplate`
   propia, en verde.
 - El presupuesto de la negativa de egress, que falló en la regresión, se
   ensanchó y se repitió en AWS (#222).
 - Panel: la variante `aws-iam` de la pila `dashboard` verificada en AWS real
-  (2026-10-14), sin tocar la VPC compartida de la cuenta.
+  (2026-10-14), sin tocar ninguna VPC existente.
 - Sobre el árbol etiquetado (`rayd-v0.12.0`): el `rayito-image.zip` firmado
   de la release, publicado como imagen `rayito-base` (ver abajo), lanza y `rayito doctor --launch` termina 8 OK /
   1 WARN / 0 FAIL / 1 SKIP (el WARN es la simulación IAM orientativa y el

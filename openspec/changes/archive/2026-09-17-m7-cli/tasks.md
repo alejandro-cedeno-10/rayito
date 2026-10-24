@@ -39,7 +39,7 @@
 - [x] 4.3 `src/rayito/cli/sandbox.py`: `list` (`--template`, `--template-version`, `--all-states`), `info` (`ID`, `--no-metadata`), `kill` (`ID…` or `--all --template --yes`, mutually exclusive, `typer.confirm` without `--yes`, exit 1 on any `not found`), `logs` (`ID`, `--log-group`, `--limit`, `--since`); all through `clients.control_plane` and the `Sandbox` classmethods with `control_plane=` injected
 - [x] 4.4 Shims: rewrite `scripts/publish_image.py` and `scripts/image_prune.py` as `run_shim` delegates (docstring: what they are, the `uv run --project clients/python` invocation, the `make` target); rewrite `scripts/image_zip.py` and `scripts/copy_sidecar.py` with the by-path loader of `_artifact.py` (docstring explains the bare-`python3` requirement of the CI `build` and `release.yml` jobs), `image_zip.py` re-exporting `marker_variant`, `VARIANTS`, `write_zip`, `is_excluded`; `uvx ruff check scripts` clean
 - [x] 4.5 `scripts/tests/test_shims.py`: subprocess runs with `[sys.executable, "-I", …]` of `copy_sidecar.py` and `image_zip.py --variant slim` on a `tmp_path` image tree (Dockerfile, `requirements.txt`, a `tests/` dir, a `.pyc`, a `uv.lock` to be excluded), asserting exit 0, the marker entry, the exclusions, and `marker_variant` through the re-export; `publish_image.py` and `image_prune.py` with no arguments via `sys.executable` (client env) asserting exit 2 and the usage text naming `--artifact` / `--image-name`
-- [x] 4.6 `Makefile`: `PY := uv run --project $(PYTHON_CLIENT)`, `BUCKET ?= <the maintainer's artifact bucket>` (comment: maintainer's bucket, SCP denies CreateBucket, adopters override), `BOTO3_SPEC` removed, `image-publish`/`-slim`/`-caps` and `image-prune` rewritten per D4 with `--bucket $(BUCKET)`, `test-scripts` comment updated; `.github/workflows/ci.yml` line "scripts/ unit tests (…)" renamed to "scripts/ unit tests (bench, check_auditable, check_license, shims)"; `build` job and `release.yml` untouched (diff shows no change there)
+- [x] 4.6 `Makefile`: `PY := uv run --project $(PYTHON_CLIENT)`, `BUCKET ?= <the maintainer's artifact bucket>` (comment: maintainer's bucket, adopters override), `BOTO3_SPEC` removed, `image-publish`/`-slim`/`-caps` and `image-prune` rewritten per D4 with `--bucket $(BUCKET)`, `test-scripts` comment updated; `.github/workflows/ci.yml` line "scripts/ unit tests (…)" renamed to "scripts/ unit tests (bench, check_auditable, check_license, shims)"; `build` job and `release.yml` untouched (diff shows no change there)
 - [x] 4.7 `tests/unit/cli/test_image_list.py` (images table and JSON; versions of one image newest first with the six keys; `--name-filter` forwarded as `nameFilter`), `test_sandbox.py` (list hides terminal states / `--all-states`; info prints metadata and `--no-metadata` skips the probe; kill per id with `not found` → exit 1; `--all` requires confirmation and `--yes` skips it; `--all` with ids is a usage error), `test_app.py` additions (`--json` single document for every command via `json.loads`; `sin región` exit 2; `AWS error` mapping exit 1; `run_shim` exit codes)
 
 ## 5. [doctor] Checks and command (design D8–D10)
@@ -172,13 +172,11 @@ Acceptance (2026-09-16, 19:20-19:30 -05:00, test account, us-east-1,
   version count unchanged (3). `sandbox kill` of fixture
   `microvm-<id>` → `terminated`, `TERMINATING`,
   `rayito sandbox list --template rayito-base` shows zero `RUNNING`.
-- Organizations detail (design "Facts to measure"): `s3:CreateBucket` on the
-  bucket ARN → `EvalDecision: explicitDeny` **with**
-  `OrganizationsDecisionDetail.AllowedByOrganizations: false` for the SSO
-  role `AWSReservedSSO_AdministratorAccess_<suffix>` (resolved through
-  `iam:GetRole` to the `/aws-reserved/sso.amazonaws.com/` ARN): the SCP is
-  visible to the simulator, so the doctor's `FAIL` on an Organizations deny is
-  reachable in practice.
+- Organizations detail (design "Facts to measure"): the simulation of
+  `s3:CreateBucket` on the bucket ARN for an SSO role (resolved through
+  `iam:GetRole` to the `/aws-reserved/sso.amazonaws.com/` ARN) returns
+  `OrganizationsDecisionDetail`, so the doctor's `FAIL` on an Organizations
+  deny is reachable in practice.
 - Environment finding fixed during acceptance: the `rayito-m0-iam` stack had
   been updated at 23:18Z with `LogGroupPrefix=C:/Program Files/Git/rayito`
   (MSYS path conversion of `/rayito` in a Git Bash deploy by the

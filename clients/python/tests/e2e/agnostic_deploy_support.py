@@ -9,8 +9,8 @@ Variables de entorno, además de `RAYITO_E2E=1` y `RAYITO_TEMPLATE`:
   y cuesta dinero).
 - `RAYITO_E2E_RUN_ID`: 8 minúsculas o dígitos; va en el nombre de cada agente,
   imagen y secreto, y la limpieza borra sólo lo que lo lleva.
-- AgentCore: `RAYITO_E2E_AGENTCORE=1`, `AWS_REGION`, `RAYITO_BUCKET` y, si una
-  SCP de la organización las exige, `RAYITO_E2E_TAGS` (cabecera de
+- AgentCore: `RAYITO_E2E_AGENTCORE=1`, `AWS_REGION`, `RAYITO_BUCKET` y, si la
+  organización exige etiquetas, `RAYITO_E2E_TAGS` (cabecera de
   `agentcore_deploy_support.py`).
 - MicroVM: `RAYITO_E2E_ZC_BUCKET`, `RAYITO_E2E_ZC_BASE` (imagen base con
   capabilities desechable) y `RAYITO_E2E_BEDROCK_SECRET` (cabecera de

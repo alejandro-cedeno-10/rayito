@@ -116,8 +116,8 @@ divides by that factor before sending it; see `limits.md`).
     `cloudwatch:CallWithBearerToken` and `cloudwatch:PutMetricData`. It is not
     scoped to a log group or a namespace: it only works for the metrics OTLP
     ingestion endpoint, account-wide. Always set
-    `--credential-age-days`. An organization SCP that denies
-    `iam:CreateUser` keeps you from creating it (Q111). The name is resolved the same way as in `secrets=` and
+    `--credential-age-days`. If your organization does not allow
+    `iam:CreateUser`, you cannot create it (Q111). The name is resolved the same way as in `secrets=` and
     `SecretStore`: under the `rayito/` prefix, so
     `OtlpAuth.bearer("otlp-key")` reads `rayito/otlp-key` (a full ARN is
     used as is). The SDK reads it through the same secret cache as

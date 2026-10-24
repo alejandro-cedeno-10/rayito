@@ -45,10 +45,10 @@ del sandbox se espera hasta que escucha (no un tiempo fijo) y el eco de
 WebSocket acepta varias conexiones, así que un apretón de manos que cae en un
 servidor aún sin la ruta se reintenta.
 
-**Sin permiso para crear la distribución.** Si una política de la cuenta
-deniega `cloudfront:CreateDistribution`, la pila falla en el recurso
-`Distribution` con un `AccessDenied` (`DescribeStackEvents`): el módulo se
-salta con «CreateDistribution denied by policy» en vez de fallar.
+**Sin permiso para crear la distribución.** Si la pila no puede crear la
+distribución, falla en el recurso `Distribution` con un `AccessDenied` sobre
+`cloudfront:CreateDistribution` (`DescribeStackEvents`): el módulo se salta
+con «CreateDistribution not permitted in this environment» en vez de fallar.
 
 **Limpieza.** El teardown desregistra cada ruta (idempotente), borra la pila
 (distribución, Function y KeyValueStore; las rutas viven en el KVS y se van
@@ -151,16 +151,16 @@ HTTP_NOT_FOUND = 404
 
 
 #: El recurso de `infra/custom-domain.yaml` que crea la distribución, y lo
-#: que deja CloudFormation en `ResourceStatusReason` cuando una política
-#: deniega `cloudfront:CreateDistribution`.
+#: que deja CloudFormation en `ResourceStatusReason` cuando la pila no puede
+#: llamar a `cloudfront:CreateDistribution`.
 DISTRIBUTION_LOGICAL_ID = "Distribution"
 CREATE_FAILED = "CREATE_FAILED"
 ACCESS_DENIED_MARKERS = ("AccessDenied", "not authorized")
-DISTRIBUTION_DENIED_REASON = "CreateDistribution denied by policy"
+DISTRIBUTION_DENIED_REASON = "CreateDistribution not permitted in this environment"
 
 
 def distribution_denied(region: str | None, stack_name: str) -> bool:
-    """Si la pila falló porque una política deniega crear la distribución
+    """Si la pila falló porque no pudo crear la distribución (`AccessDenied`)
     (`DescribeStackEvents`, `AWS_API_NOTES.md` §21)."""
     cloudformation = boto3.session.Session(region_name=region).client("cloudformation")
     try:

@@ -512,18 +512,16 @@ para y se reescribe este documento.
 
 **Resultados de la aceptación del 2026-10-02** (`AWS_API_NOTES.md` §16
 Q122–Q125): EFS-7 y EFS-2 pasan; EFS-3 y todos los ★ que necesitan red
-(EFS-8, EFS-11, EFS-13) quedan **bloqueados** porque una SCP de la
-organización deniega `ec2:CreateVpc` en la cuenta de pruebas (no se usó la
-VPC compartida de otro equipo ni una VPC por defecto para saltarse la
-SCP). Ningún criterio de parada falló: la opción A sigue viva, pendiente de
+(EFS-8, EFS-11, EFS-13) quedan **bloqueados**: el entorno de aceptación no
+permitía crear una VPC para la medición. Ningún criterio de parada falló: la opción A sigue viva, pendiente de
 una VPC prestada con permiso. De paso, el e2e del CRUD encontró que
 `DescribeAccessPoints` es eventualmente consistente (Q125), corregido en
 `VolumeStore` de ambos SDK. Coste de la aceptación ≈ $0,20 (dos builds de
 imagen, cuatro VMs cortos, un sistema de ficheros vacío).
 
 **Resultados de la aceptación del 2026-10-04** (`AWS_API_NOTES.md` §16
-Q126–Q134), sobre una VPC existente de la cuenta de pruebas, usada con
-permiso del mantenedor y pasada sólo por variables de entorno: **todos los
+Q126–Q134), sobre una VPC existente prestada con permiso y pasada sólo
+por variables de entorno: **todos los
 criterios de parada pasan** (EFS-3, EFS-8, EFS-11 y EFS-13; EFS-2 y EFS-7 ya
 pasaban). La opción A es viable. Lo que cambia el diseño del adaptador real
 (§4.3, §4.7, §12):

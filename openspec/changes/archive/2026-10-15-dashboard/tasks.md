@@ -45,7 +45,7 @@
 - [x] 5.3 `OptionalStacks` component and `rayito stack deploy|status|destroy dashboard`; the theme (JSON text) enters as a stack or SSM parameter and goes through `parse_theme`/`parse_logo` (3.3b)
 - [x] 5.4 Lambda handler over the same services; shared contract tests
 - [x] 5.5 Audit rows per action; security review
-- [x] 5.6 Optional CloudFront plus S3 variant, documented untested (no template: the test account denies both)
+- [x] 5.6 Optional CloudFront plus S3 variant, documented untested (no template: some organizations allow neither)
 - [x] 5.7a Docs: guide, security page and `SECURITY.md` T32, `optional-features.md` rows, `infra/README.md`
 - [x] 5.7c Review fixes: bounded billed-cost windows, regions and daily budget; docs and T32 on token revocation plus a live Cognito check before actions; SPA keeps the refresh token and does not loop on 401; SPA client found by name and `/config.json` 5xx surfaced; pinned `limits.json` values
 - [x] 5.7d Cost clarity and review fixes: Lambda price and worked example, public Function URL warning and `ReservedConcurrency`, Cost Explorer worst case in dollars, SSM Advanced parameter cost, jobs longer than the function timeout refused before the audit, a single owner for the read-cache invalidation, and a Python and TypeScript parity test of the stack cost text

@@ -37,12 +37,11 @@ itself.
 
     **Not verified on real AWS**: creating the distribution and serving traffic
     through it (HTTP/1.1, WebSocket, `KeyValueStore` propagation
-    latency, JWE renewal). The project's test account
-    denies `cloudfront:CreateDistribution` with an organization SCP
-    (Q141), so nobody has yet opened a custom domain URL
+    latency, JWE renewal). The distribution was not created in the
+    acceptance environment (Q141), so nobody has yet opened a custom domain URL
     deployed with this template. The repository's e2e
     (`tests/e2e/test_m15_custom_domain.py`, `custom-domain.e2e.test.ts`)
-    automates that test for an account that does allow it.
+    automates that test for an account where the distribution can be created.
 
     `Sandbox.create(domain=...)`/`get_host()` also do not return that URL
     on their own yet: `domain=` still raises `UnimplementedError`

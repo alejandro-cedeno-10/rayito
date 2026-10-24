@@ -261,8 +261,8 @@ explicitly deferred further (noted).
       zero-cost default `create()` (`AWS_API_NOTES.md` Q120, Q109).
 - [x] 15.3 OT5: suspend flush, resume after 10 min and after > 55 min
       (Q110).
-- [x] 15.4 Bearer: a real CloudWatch Metrics API key cannot be minted in
-      the acceptance account (SCP denies `iam:CreateUser`); SDK resolution
+- [x] 15.4 Bearer: a real CloudWatch Metrics API key was not minted
+      during acceptance (it needs an IAM user); SDK resolution
       (`rayito/otlp-key`, one `GetSecretValue`) and the bearer request path
       verified with an invalid key, which CloudWatch rejects (Q111). Docs
       corrected: the key is an IAM user's service-specific credential, not
