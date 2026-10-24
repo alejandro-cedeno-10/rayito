@@ -840,7 +840,8 @@ def test_a_vm_whose_health_fails_while_listing_is_left_out_as_terminating(
     )
 
     assert fleet.sandbox_ids == (alive.sandbox_id, parked.sandbox_id)
-    assert all(member.sandbox_id != dying.sandbox_id for member in flavor.call(fleet.status()).members)
+    status = flavor.call(fleet.status())
+    assert all(member.sandbox_id != dying.sandbox_id for member in status.members)
     assert dying.sandbox_id in caplog.text
     assert "Health no respondió" not in caplog.text
     flavor.call(fleet.refresh_members())

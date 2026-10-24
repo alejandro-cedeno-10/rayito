@@ -59,8 +59,7 @@ BEARER_PREFIX: Final = "Bearer "
 #: Lo que se añade al error de una imagen base que falta cuando la imagen del
 #: proyecto ya existe: reutilizarla no necesita la base.
 REUSE_TEMPLATE_HINT: Final = (
-    "; o reutiliza la imagen '{template}' ya construida sin build: "
-    "--no-build (build_image=False)"
+    "; o reutiliza la imagen '{template}' ya construida sin build: --no-build (build_image=False)"
 )
 AUTHORIZATION_HEADER: Final = "authorization"
 #: Códigos de `HeadBucket` que dan el bucket por inexistente o ajeno: sin
