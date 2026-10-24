@@ -307,3 +307,21 @@ def test_a_fleet_without_members_prints_without_a_first_vm(
     text = capsys.readouterr().out
     assert "sandbox_id=" not in text and "url=" not in text
     assert "members=0" in text
+
+
+@pytest.mark.parametrize(
+    "command", [["agent", "stop", "support-bot"], ["agent", "status", "support-bot"]]
+)
+def test_stop_and_status_never_ask_for_the_renewal_warning(
+    monkeypatch: pytest.MonkeyPatch, runner: CliRunner, clients: Clients, command: list[str]
+) -> None:
+    """`stop` y `status` nunca crean VMs: conectan con
+    `renew_gateway_keys=False`, así una receta que pedía renovar no avisa
+    `recipe_renewal_ignored` (la misma regla que la CLI de TypeScript)."""
+    monkeypatch.setenv("RAYITO_ACCESS_TOKEN", "token-de-prueba-0123456789abcdefghijklmn")
+    connected = connected_fleet(monkeypatch, FakeFleet())
+
+    result = runner.invoke(app, command, obj=clients)
+
+    assert result.exit_code == 0, result.output
+    assert connected[0]["renew_gateway_keys"] is False
