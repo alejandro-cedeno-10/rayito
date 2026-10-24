@@ -1,0 +1,9 @@
+{
+  "total": 7,
+  "categories": {
+    "acceso": {"tickets": 2, "mean_hours": 1.5},
+    "facturacion": {"tickets": 3, "mean_hours": 4.3333},
+    "rendimiento": {"tickets": 2, "mean_hours": 8.0}
+  },
+  "mean_tolerance": 0.001
+}
