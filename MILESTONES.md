@@ -2206,6 +2206,32 @@ archiva.
 Pendiente: aceptación en AWS (Z.4), PR único a `main` (Z.5) y archivo del
 cambio (Z.6).
 
+## 0.17.1 — Correcciones de la flota, de los templates y del despliegue (2026-10-24)
+
+Publicada el 2026-10-24 en PyPI, npm y las GitHub Releases `python-v0.17.1`,
+`typescript-v0.17.1` y `rayd-v0.17.1` (firmas de cosign de `rayd`,
+`rayito-image.zip` y `SHA256SUMS` contra la identidad de `rayd-v0.17.1`,
+`shasum -c` limpio, attestations de PyPI de la wheel y del sdist verificadas con
+`pypi-attestations` y proveniencia SLSA v1 de npm desde `release.yml` en
+`typescript-v0.17.1`, como en `docs/site/docs/verify.md`).
+
+Release de correcciones (cambio OpenSpec `fix-sdk-0171-sweep`, ADR-035): el
+listado y el estado de la flota con miembros que terminan, caídos o
+suspendidos, `stop()` sin terminar VMs ajenos ni sin probar, las variables de
+`Template.set_envs()` en `commands.run`, las PTY y `run_code`, la imagen base
+sólo cuando el despliegue construye y el `--entry` comprobado al desplegar.
+Aceptada en AWS real (`us-east-1`) con los dos SDK y las dos CLI antes de
+fusionar. La fila de compatibilidad `0.17` no cambia: un `rayd` anterior se
+comporta como antes.
+
+**Imagen publicada (2026-10-24)**: `rayito-base` **40.0** desde el
+`rayito-image.zip` firmado de la release `rayd-v0.17.1`, cuyo sha256 consta en
+el `SHA256SUMS` firmado (`rayito image publish --base-image-version 1` con la
+CLI 0.17.1), `SUCCESSFUL` y `ACTIVE`, construida en unos 206 s. Con los SDK
+0.17.1 instalados desde PyPI y npm, `Sandbox.create()` sobre ella
+informa `rayd` 0.17.1 y `commands.run` responde; los sandboxes de la prueba se
+terminaron. La 39.0 se queda como estaba.
+
 ---
 
 ## Orden de trabajo dentro de cada hito
