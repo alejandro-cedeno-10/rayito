@@ -48,6 +48,9 @@ AGENT_DEPLOYMENT_PORT_LABEL: Final = "rayito.agent.port"
 #: Sólo con una app `raw` (MCP u otro protocolo expuesto sin traducir).
 AGENT_DEPLOYMENT_PROTOCOL_LABEL: Final = "rayito.agent.protocol"
 RAW_PROTOCOL: Final = "raw"
+#: El mensaje de un cuerpo de respuesta del agente cortado o mal delimitado,
+#: igual en el transporte síncrono y en el asíncrono.
+RESPONSE_CUT_MESSAGE: Final = "el agente desplegado cortó la respuesta"
 JSON_CONTENT_TYPE: Final = "application/json"
 EVENT_STREAM_CONTENT_TYPE: Final = "text/event-stream"
 _USAGE_KEYS: Final = ("input", "output", "reasoning", "cache_read", "cache_write")
