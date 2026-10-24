@@ -260,7 +260,7 @@ tipo).
 
 La aceptación de M6 despliega la pila (`rayito-egress-e2e`, allowlist vacía)
 y ejecuta `test_egress_allowlist` **sólo** si la cuenta tiene, en la región,
-una **VPC existente** con al menos una
+una **VPC existente designada para la ejecución** con al menos una
 subnet (la pila crea un security group y las ENIs del conector dentro de esa
 VPC) y la
 página de precios de Lambda MicroVMs no lista cargo por conector. La

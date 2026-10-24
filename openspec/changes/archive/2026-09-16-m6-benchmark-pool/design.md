@@ -657,11 +657,11 @@ Q42/Q43 new) and to the report's section 8.
   scheduled the day after the run; the report is published with the
   estimate and amended with the actual lines (the JSON keeps the
   expectation to compare against).
-- **Shared account noise** in Cost Explorer: only the five `Lambda-MicroVM-*`
-  usage types are attributed; other MicroVM users in the account during
-  the bench day would inflate them — the implementer checks
-  `list-microvm-images` and `list-microvms` for foreign images (task 5.1)
-  and notes any.
+- **Account-level aggregation** in Cost Explorer: only the five
+  `Lambda-MicroVM-*` usage types are attributed, and Cost Explorer groups
+  by account, so any MicroVM not launched by the bench would inflate them —
+  the implementer checks `list-microvm-images` and `list-microvms` for
+  images the bench did not create (task 5.1) and notes any.
 - **`for_type_by_name` in `0001_charts.py`** changes how the chart
   formatter attaches (lazy instead of a class attribute) for the full
   image too: covered by the existing `test_startup_scripts_produce_chart_
