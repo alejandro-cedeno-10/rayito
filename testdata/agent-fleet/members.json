@@ -71,6 +71,17 @@
       "expected": ["a", "b"]
     },
     {
+      "name": "a running vm whose probe failed is terminating, not proof of a shared image",
+      "items": [
+        {"id": "a", "state": "RUNNING"},
+        {"id": "b", "state": "RUNNING"},
+        {"id": "c", "state": "SUSPENDED"}
+      ],
+      "owned": ["a"],
+      "unreadable": ["b"],
+      "expected": ["a", "c"]
+    },
+    {
       "name": "nothing listed",
       "items": [],
       "owned": [],

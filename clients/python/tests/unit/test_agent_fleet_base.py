@@ -263,7 +263,7 @@ def test_a_vm_is_a_member_only_when_the_image_is_not_shared(case: dict[str, Any]
         for item in case["items"]
     ]
 
-    selected = select_members(listing, set(case["owned"]))
+    selected = select_members(listing, set(case["owned"]), set(case.get("unreadable", [])))
 
     assert [item.sandbox_id for item in selected] == case["expected"]
 

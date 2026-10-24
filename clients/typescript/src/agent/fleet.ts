@@ -23,6 +23,7 @@ import {
 import type { DynamoDbIndex } from "../index/dynamodb.js";
 import { AGENT_SERVICE_READY_MARKER_PATH } from "../limits.js";
 import type { Logger } from "../logger.js";
+import type { SandboxInfo } from "../models.js";
 import type { PoolBackend } from "../pool/backend.js";
 import type { PoolConfig } from "../pool/config.js";
 import type { PoolStats } from "../pool/core.js";
@@ -84,6 +85,7 @@ import {
   sessionLabel,
   surplus,
   UNMANAGED_LIFETIME_MESSAGE,
+  UNREADABLE_MEMBER_MESSAGE,
   vmLostMessage,
   withHandle,
 } from "./fleet-base.js";
@@ -148,16 +150,44 @@ export interface FleetDirectory {
   ): Promise<void>;
 }
 
+/** La sonda de un VM `RUNNING` que usa `SandboxDirectory`: `get-microvm` más
+ * un `Health` sin token, con los metadatos del agente si está listo. */
+export type MemberInfoProbe = (
+  sandboxId: string,
+  connection: ControlPlaneOptions,
+) => Promise<Pick<SandboxInfo, "sandboxId" | "state" | "metadata">>;
+
+/** Opciones de `SandboxDirectory`: el logger de la flota y, en tests, la
+ * sonda de cada VM. */
+export interface SandboxDirectoryOptions {
+  readonly logger?: Logger | undefined;
+  readonly probeInfo?: MemberInfoProbe | undefined;
+}
+
+async function probeMemberInfo(
+  sandboxId: string,
+  connection: ControlPlaneOptions,
+): Promise<SandboxInfo> {
+  const { probeSandboxInfo } = await import("../sandbox/info-probe.js");
+  return probeSandboxInfo(sandboxId, connection);
+}
+
 /** El adaptador de producción de la flota: lista los VMs de la imagen
  * (`list-microvms` con el filtro de imagen) sin contar los que no son de un
- * agente (`selectMembers`: los `RUNNING` se sondean con un `Health`, sin token
- * ni despertar a nadie), conecta uno con el token de la flota y busca por
- * sesión en el índice opcional. */
+ * agente (`selectMembers`: los `RUNNING` se sondean uno a uno con un `Health`,
+ * sin token ni despertar a nadie), conecta uno con el token de la flota y busca
+ * por sesión en el índice opcional. Un VM cuya sonda falla (la plataforma aún
+ * lo lista `RUNNING` pero su `rayd` ya salió) queda fuera como un VM que
+ * termina, sin tumbar el listado. */
 export class SandboxDirectory implements FleetDirectory {
   readonly #connection: ControlPlaneOptions;
+  readonly #logger: Logger | undefined;
+  readonly #probeInfo: MemberInfoProbe;
 
-  constructor(connection: ControlPlaneOptions = {}) {
+  constructor(connection: ControlPlaneOptions = {}, options: SandboxDirectoryOptions = {}) {
     this.#connection = connection;
+    this.#logger = options.logger;
+    this.#probeInfo = options.probeInfo ?? probeMemberInfo;
   }
 
   async listMembers(template: string): Promise<readonly MemberListing[]> {
@@ -170,16 +200,36 @@ export class SandboxDirectory implements FleetDirectory {
     })) {
       listed.push({ sandboxId: item.sandboxId, state: item.state, startedAt: item.startedAt });
     }
-    const probed = [];
-    for await (const item of Sandbox.list({
-      ...this.#connection,
-      template,
-      states: [AGENT_FLEET_PROBE_STATE],
-      metadata: {},
-    })) {
-      probed.push(item);
+    const probed: Pick<SandboxInfo, "sandboxId" | "metadata">[] = [];
+    const unreadable = new Set<string>();
+    for (const item of listed) {
+      if (item.state !== AGENT_FLEET_PROBE_STATE) {
+        continue;
+      }
+      const info = await this.#probe(item.sandboxId);
+      if (info === undefined) {
+        unreadable.add(item.sandboxId);
+      } else {
+        probed.push(info);
+      }
     }
-    return selectMembers(listed, ownedIds(probed));
+    return selectMembers(listed, ownedIds(probed), unreadable);
+  }
+
+  async #probe(
+    sandboxId: string,
+  ): Promise<Pick<SandboxInfo, "sandboxId" | "state" | "metadata"> | undefined> {
+    let info: Pick<SandboxInfo, "sandboxId" | "state" | "metadata">;
+    try {
+      info = await this.#probeInfo(sandboxId, this.#connection);
+    } catch (error) {
+      if (!(error instanceof SandboxError)) {
+        throw error;
+      }
+      this.#logger?.warn?.(UNREADABLE_MEMBER_MESSAGE, { sandboxId, error: error.name });
+      return undefined;
+    }
+    return info.state === AGENT_FLEET_PROBE_STATE ? info : undefined;
   }
 
   async connect(sandboxId: string, accessToken: string): Promise<FleetSandbox> {
@@ -512,7 +562,8 @@ export class AgentFleet {
     this.#renewer = this.#renewKeys ? options.keyRenewer : undefined;
     this.#recipeStore = options.recipeStore;
     this.#recipeKnown = options.recipe !== undefined;
-    this.#directory = options.directory ?? new SandboxDirectory(this.#connection);
+    this.#directory =
+      options.directory ?? new SandboxDirectory(this.#connection, { logger: options.logger });
     this.#poolFactory = options.poolFactory;
     this.#poolBackend = options.poolBackend;
     this.#index = options.sessionIndex;
