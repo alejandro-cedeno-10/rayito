@@ -34,6 +34,7 @@ from rayito._limits import (
     MAX_DURATION_SECONDS,
 )
 from rayito.exceptions import (
+    AuthenticationException,
     CapacityException,
     InvalidArgumentException,
     RateLimitException,
@@ -658,6 +659,39 @@ def test_status_never_replaces_an_unopened_member_it_only_asked(flavor: FleetFla
     assert fleet.sandbox_ids == (sandbox_id_of(1), sandbox_id_of(2))
     assert all(sbx.state == "RUNNING" for sbx in flavor.classes.sandboxes.values())
     assert fleet.deployments == ()
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        SandboxException("sin respuesta"),
+        AuthenticationException("token caducado"),
+        OSError("conexión cerrada"),
+    ],
+    ids=["sandbox", "credentials", "network"],
+)
+def test_status_leaves_unknown_an_unopened_member_it_could_not_ask(
+    flavor: FleetFlavor, error: Exception
+) -> None:
+    flavor.classes.add()
+    flavor.classes.add()
+    flavor.classes.sandboxes[sandbox_id_of(1)].ready_error = error
+    fleet = connected_fleet(flavor, scaling=SHARED_TWO)
+
+    status = flavor.call(fleet.status())
+
+    assert [member.state for member in status.members] == ["unknown", "healthy"]
+
+
+def test_status_propagates_a_programming_error_while_asking_an_unopened_member(
+    flavor: FleetFlavor,
+) -> None:
+    flavor.classes.add()
+    flavor.classes.sandboxes[sandbox_id_of(1)].ready_error = TypeError("fallo del código")
+    fleet = connected_fleet(flavor)
+
+    with pytest.raises(TypeError):
+        flavor.call(fleet.status())
 
 
 def test_a_transport_failure_is_not_enough_to_drop_the_vm(flavor: FleetFlavor) -> None:

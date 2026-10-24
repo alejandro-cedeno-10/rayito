@@ -38,6 +38,7 @@ from rayito._agent._fleet_base import (
     AGENT_FLEET_START_CONCURRENCY,
     AGENT_VM_LOST_CODE,
     LISTING_CONTROL_PLANE_ERRORS,
+    PEEK_ERRORS,
     UNMANAGED_LIFETIME_MESSAGE,
     UNPROVEN_MEMBER_MESSAGE,
     UNREADABLE_MEMBER_MESSAGE,
@@ -1052,7 +1053,8 @@ class AsyncAgentFleet:
     async def _peek(self, member: Member) -> None:
         """Como `AgentFleet._peek`: el `GET /ping` de un VM `RUNNING` que este
         proceso aún no abrió, sin quedárselo ni acotarle la vida; sólo anota
-        el estado que se muestra y ningún error al preguntarle tumba `status()`."""
+        el estado que se muestra y ningún error de `PEEK_ERRORS` al preguntarle
+        tumba `status()`."""
         if self._token is None:
             return
         try:
@@ -1061,7 +1063,7 @@ class AsyncAgentFleet:
                 return
             deployment = await self._deployment_of(sandbox)
             state = (await deployment.status()).state
-        except Exception as exc:
+        except PEEK_ERRORS as exc:
             logger.debug("no se pudo preguntar a un VM de la flota: %s", type(exc).__name__)
             return
         member.health = state
