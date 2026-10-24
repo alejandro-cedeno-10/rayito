@@ -206,9 +206,11 @@ An explicit `scaling=` or `project=` wins over the recipe, and
   `min 1, max 1` that does not describe the fleet. `status()` (and `rayito
   agent status`, also with `--json`) re-reads the listing and asks
   (`GET /ping`) every `RUNNING` VM, also right after `connect()`, up to 8 at a
-  time, without limiting its lifetime or starting its service. Only a
-  suspended VM shows as `unknown` (not checked), because asking it would
-  resume it; since 0.17.1.
+  time, without limiting its lifetime or starting its service. A suspended
+  VM shows as `unknown` (not checked), because asking it would resume it; so
+  does one that could not be reached or has no service yet. One whose
+  `/ping` does not answer shows as `unavailable`, but that question does not
+  count towards replacing it; since 0.17.1.
 - **Deletion.** `fleet.stop()` and `rayito agent stop <name>` delete the recipe
   if this process saved or read it; `stop(keep_recipe=True)` (`--keep-recipe`)
   keeps it.
@@ -308,7 +310,8 @@ after the deadline, raises `CapacityException` (`code = "agent_capacity"`;
   deadline and `rayd` rejected the `set_timeout`. A VM created that way (by
   0.16) is not scaled in: if the fleet can grow, it warns once; end it with
   `stop()` or redeploy. A fixed-size fleet (or one with the default limits)
-  does not warn, because no VM is scaled in; since 0.17.1. While a VM is being terminated, the platform still lists it as
+  does not warn, because no VM is scaled in; since 0.17.1.
+  While a VM is being terminated, the platform still lists it as
   `RUNNING` although its `rayd` no longer answers: when the fleet is listed
   (`AgentFleet.connect()`, `status()`, `refresh_members()`), a VM whose
   `Health` fails or that stops being `RUNNING` when probed is treated as a

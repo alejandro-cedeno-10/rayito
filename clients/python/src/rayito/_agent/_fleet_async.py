@@ -1051,7 +1051,8 @@ class AsyncAgentFleet:
 
     async def _peek(self, member: Member) -> None:
         """Como `AgentFleet._peek`: el `GET /ping` de un VM `RUNNING` que este
-        proceso aún no abrió, sin quedárselo ni acotarle la vida."""
+        proceso aún no abrió, sin quedárselo ni acotarle la vida; sólo anota
+        el estado que se muestra y ningún error al preguntarle tumba `status()`."""
         if self._token is None:
             return
         try:
@@ -1060,10 +1061,10 @@ class AsyncAgentFleet:
                 return
             deployment = await self._deployment_of(sandbox)
             state = (await deployment.status()).state
-        except SandboxException as exc:
+        except Exception as exc:
             logger.debug("no se pudo preguntar a un VM de la flota: %s", type(exc).__name__)
             return
-        record_ping(member, state, self._clock())
+        member.health = state
 
     async def _probe(self, member: Member, *, force: bool = False) -> bool:
         """Si el VM puede atender una sesión: lo abre si hace falta y, si su

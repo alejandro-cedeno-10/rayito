@@ -509,6 +509,29 @@ describe("health", () => {
     );
   });
 
+  test("status never replaces an unopened member it only asked", async () => {
+    const h = new FleetHarness();
+    h.world.add({ served: false });
+    h.world.add();
+    h.host(2).pingStatus = 503;
+    const fleet = await AgentFleet.connect("support-bot", {
+      accessToken: FLEET_TOKEN,
+      scaling: SHARED_TWO,
+      directory: h.world,
+      fetch: h.backend.fetch,
+    });
+    let states: string[] = [];
+    for (let count = 0; count < AGENT_FLEET_UNHEALTHY_PINGS; count += 1) {
+      states = (await fleet.status()).members.map((member) => member.state);
+    }
+    expect(states).toEqual(["unknown", "unavailable"]);
+    expect(fleet.sandboxIds).toEqual([sandboxIdOf(1), sandboxIdOf(2)]);
+    expect([...h.world.sandboxes.values()].every((sandbox) => sandbox.state === "RUNNING")).toBe(
+      true,
+    );
+    expect(fleet.deployments).toEqual([]);
+  });
+
   test("a transport failure is not enough to drop the VM", async () => {
     const h = new FleetHarness();
     const fleet = await h.started();
