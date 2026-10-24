@@ -2171,7 +2171,7 @@ class AsyncSandbox:
                 raise
         self._logger.info("el proxy rechazó el token del sandbox %s; reacuñando", self.sandbox_id)
         await self._refresher.refresh_all()
-        return await call()
+        return await retry_unestablished_async(call)
 
     async def _call_unary(self, call: Callable[[], Awaitable[T]], *, reopen: bool = True) -> T:
         """Misma política que `Sandbox._call_unary`: reintento del 403 y, tras
@@ -2190,7 +2190,7 @@ class AsyncSandbox:
         outcome = await self._reconnect(reason, seen_generation)
         if not outcome.resumed:
             raise self._reconnect_error(outcome, reason) from reason
-        return await call()
+        return await retry_unestablished_async(call)
 
     async def _translated_unary(
         self, call: Callable[[], Awaitable[T]], *, filesystem: bool = False
@@ -2274,7 +2274,9 @@ class AsyncSandbox:
             if not outcome.resumed:
                 raise self._reconnect_error(outcome, reason) from reason
         try:
-            return await first_stream_message_async(start(stub), allow_empty=allow_empty)
+            return await retry_unestablished_async(
+                lambda: first_stream_message_async(start(stub), allow_empty=allow_empty)
+            )
         except grpc.RpcError as exc:
             raise await self._open_failure(exc, filesystem, translate) from exc
 
@@ -2303,7 +2305,9 @@ class AsyncSandbox:
             self.sandbox_id,
         )
         await self._refresher.refresh_all()
-        return await first_stream_message_async(start(stub), allow_empty=allow_empty)
+        return await retry_unestablished_async(
+            lambda: first_stream_message_async(start(stub), allow_empty=allow_empty)
+        )
 
     async def _stream_failure(self, exc: grpc.RpcError, *, filesystem: bool = False) -> Exception:
         if not is_stream_reset(exc):

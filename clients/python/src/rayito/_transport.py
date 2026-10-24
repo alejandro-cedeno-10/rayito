@@ -75,8 +75,9 @@ CONNECTION_NOT_ESTABLISHED_MARKERS: Final = (
     "failed to connect to all addresses",
 )
 #: Las esperas entre los reintentos de una petición cuya conexión no llegó a
-#: abrirse: tres reintentos, menos de 2 s en total.
-CONNECT_RETRY_DELAYS_SECONDS: Final = (0.25, 0.5, 1.0)
+#: abrirse: cinco reintentos, menos de 8 s en total. En AWS real un VM recién
+#: arrancado cerró el handshake TLS (`Endpoint closing`) durante más de 2 s.
+CONNECT_RETRY_DELAYS_SECONDS: Final = (0.25, 0.5, 1.0, 2.0, 4.0)
 PHASE_GATE_DETAILS: Final = ("suspending", "terminating")
 DISK_FULL_DETAILS: Final = ("disk_reserve", "disk_full")
 KERNEL_GATE_PREFIX: Final = "kernel not ready"
@@ -581,7 +582,7 @@ def is_connection_not_established(exc: grpc.RpcError) -> bool:
     return any(marker in text for marker in CONNECTION_NOT_ESTABLISHED_MARKERS)
 
 
-def retry_unestablished(call: Callable[[], T], sleep: Callable[[float], None] = time.sleep) -> T:
+def retry_unestablished(call: Callable[[], T], sleep: Callable[[float], None] | None = None) -> T:
     """`call()` con hasta `len(CONNECT_RETRY_DELAYS_SECONDS)` reintentos sólo
     cuando la conexión no llegó a abrirse (`is_connection_not_established`).
     Vale para cualquier RPC, también los que no son idempotentes, porque la
@@ -594,13 +595,13 @@ def retry_unestablished(call: Callable[[], T], sleep: Callable[[float], None] = 
             if not is_connection_not_established(exc):
                 raise
         module_logger.info("la conexión del sandbox no llegó a abrirse; reintento en %.2f s", delay)
-        sleep(delay)
+        (sleep or time.sleep)(delay)
     return call()
 
 
 async def retry_unestablished_async(
     call: Callable[[], Awaitable[T]],
-    sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+    sleep: Callable[[float], Awaitable[None]] | None = None,
 ) -> T:
     """`retry_unestablished` para el canal asíncrono."""
     for delay in CONNECT_RETRY_DELAYS_SECONDS:
@@ -610,7 +611,7 @@ async def retry_unestablished_async(
             if not is_connection_not_established(exc):
                 raise
         module_logger.info("la conexión del sandbox no llegó a abrirse; reintento en %.2f s", delay)
-        await sleep(delay)
+        await (sleep or asyncio.sleep)(delay)
     return await call()
 
 
