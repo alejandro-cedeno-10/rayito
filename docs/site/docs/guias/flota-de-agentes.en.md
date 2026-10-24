@@ -124,8 +124,34 @@ VMs and start warm slots: it reads the [recipe](#la-receta-de-la-flota) that
 `deploy_agent()` saved. Without a recipe (a 0.16 fleet, or one deployed with
 `--no-save-recipe`) and without `project=`, the fleet routes and queries but
 cannot create a VM: the first session that needs one raises
-`InvalidArgumentException`; pass the project then
-(`AgentProject.detect(folder)` or `AgentProject.load(...)`).
+`InvalidArgumentException`; pass the project then. `AgentProject.detect()`
+returns the project and its detection report, so split them
+(`AgentProject.load(...)` returns only the project):
+
+=== "Python"
+
+    ```python
+    import os
+
+    from rayito import AgentFleet, AgentProject
+
+    project, _report = AgentProject.detect("./my-agent")
+    fleet = AgentFleet.connect(
+        "my-agent", access_token=os.environ["RAYITO_ACCESS_TOKEN"], project=project
+    )
+    ```
+
+=== "TypeScript"
+
+    ```ts
+    import { AgentFleet, AgentProject } from "rayito";
+
+    const [project] = await AgentProject.detect("./my-agent");
+    const fleet = await AgentFleet.connect("my-agent", {
+      accessToken: process.env.RAYITO_ACCESS_TOKEN ?? "",
+      project,
+    });
+    ```
 
 A session id you choose yourself (a chat thread) is only remembered inside the
 process that deployed the fleet. To find it from another process in `dedicated`
