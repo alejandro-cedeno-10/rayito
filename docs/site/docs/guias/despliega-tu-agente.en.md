@@ -151,6 +151,11 @@ or `--entry`), `not_detected` (the framework is not recognized, or the model id
 is missing: write it as a literal or in `[model]`) and `unsupported` (a
 combination that cannot reach the gateway without changing the code).
 
+An `--entry` that does not exist (a module, a file or an attribute that is not
+there) fails the deploy, not the first invocation: the agent host imports the
+entrypoint at boot and `deploy` ends with «el host del agente no pudo arrancar
+(entrypoint_not_found)».
+
 ### Model chosen by your code { #modelo-desde-tu-codigo }
 
 If your code picks the model from its configuration, for example
@@ -221,8 +226,11 @@ environment variable and discovery; none of them creates anything silently:
 
 - The **region** is `--region`, `[deploy] region`, `AWS_REGION` or your profile's.
 - The **base image** is the newest version of `rayito-base-caps`, which
-  `rayito setup` publishes since 0.17. If it does not exist it is published only
-  with `--base-artifact` and `--yes`.
+  `rayito setup --caps-image` publishes since 0.17. If it does not exist it is
+  published only with `--base-artifact` and `--yes`. It is needed only when the
+  deploy builds: with `--no-build`, or without a bucket and with the project
+  image already built (`[image] template`), it is not read, and if it is
+  missing while the project image exists, the error says how to reuse it.
 - The artifact **bucket** is, in this order, `--bucket`, `[deploy] bucket`,
   `RAYITO_BUCKET`, the account's CDK bootstrap bucket if it exists (`HeadBucket`)
   and, otherwise, the one `rayito setup` created: the `BucketName` output of the
