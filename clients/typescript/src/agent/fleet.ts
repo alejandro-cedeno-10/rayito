@@ -1362,7 +1362,10 @@ export class AgentFleet {
 
   /** El `GET /ping` de un VM `RUNNING` que este proceso aún no abrió, sin
    * quedárselo: no le acota la vida ni arranca su servicio (uno sin servicio
-   * sigue `unknown`). Si falla, el miembro sigue `unknown`. */
+   * sigue `unknown`). Sólo anota el estado que se muestra, no un ping
+   * (`recordPing`), así que no cuenta para sustituir el VM. Si no se puede
+   * conectar, el miembro sigue `unknown`; un `/ping` sin respuesta es
+   * `unavailable`. Ningún error al preguntarle tumba `status()`. */
   async #peek(member: Member<AgentDeployment>): Promise<void> {
     if (this.#token === undefined) {
       return;
@@ -1375,13 +1378,11 @@ export class AgentFleet {
       }
       state = (await (await this.#deploymentOf(sandbox)).status()).state;
     } catch (error) {
-      if (!(error instanceof SandboxError)) {
-        throw error;
-      }
-      this.#logger?.debug?.(`no se pudo preguntar a un VM de la flota: ${error.name}`);
+      const kind = error instanceof Error ? error.name : typeof error;
+      this.#logger?.debug?.(`no se pudo preguntar a un VM de la flota: ${kind}`);
       return;
     }
-    recordPing(member, state, this.#now());
+    member.health = state;
   }
 
   /** Si el VM puede atender una sesión: lo abre si hace falta y, si su último

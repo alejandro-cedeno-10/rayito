@@ -13,9 +13,10 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   `unknown`, también en `rayito agent status` y en su `--json`. Ahora
   `status()` (sync y async) vuelve a leer el listado y pregunta (`GET /ping`)
   a cada VM `RUNNING`, hasta `AGENT_FLEET_PROBE_CONCURRENCY` (8) a la vez, sin
-  quedarse el VM, acotarle la vida ni arrancar su servicio. Sólo un VM
-  suspendido sigue como `unknown` (sin comprobar), porque preguntarle lo
-  reanudaría.
+  quedarse el VM, acotarle la vida ni arrancar su servicio. Un VM suspendido
+  sigue como `unknown` (sin comprobar), porque preguntarle lo reanudaría; uno
+  cuyo `/ping` no responde sale `unavailable` sin contar para sustituirlo, y
+  ningún error al preguntar a un VM sin abrir hace fallar `status()`.
 - **Sin aviso de «plazo lógico» en una flota de tamaño fijo.** Al conectar
   con `project=` y sin `scaling` (los límites por defecto), o con
   `max_vms == min_vms`, un VM sin plazo lógico ya no imprime «un VM de la

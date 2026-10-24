@@ -1140,7 +1140,10 @@ class AgentFleet:
     def _peek(self, member: Member) -> None:
         """El `GET /ping` de un VM `RUNNING` que este proceso aún no abrió,
         sin quedárselo: no le acota la vida ni arranca su servicio (uno sin
-        servicio sigue `unknown`). Si falla, el miembro sigue `unknown`."""
+        servicio sigue `unknown`). Sólo anota el estado que se muestra, no un
+        ping (`record_ping`), así que no cuenta para sustituir el VM. Si no se
+        puede conectar, el miembro sigue `unknown`; un `/ping` sin respuesta
+        es `unavailable`. Ningún error al preguntarle tumba `status()`."""
         if self._token is None:
             return
         try:
@@ -1148,11 +1151,11 @@ class AgentFleet:
             if not sandbox.files.exists(AGENT_SERVICE_READY_MARKER_PATH):
                 return
             state = self._deployment_of(sandbox).status().state
-        except SandboxException as exc:
+        except Exception as exc:
             logger.debug("no se pudo preguntar a un VM de la flota: %s", type(exc).__name__)
             return
         with self._lock:
-            record_ping(member, state, self._clock())
+            member.health = state
 
     def _probe(self, member: Member, *, force: bool = False) -> bool:
         """Si el VM puede atender una sesión: lo abre si hace falta y, si su

@@ -645,6 +645,21 @@ def test_status_right_after_connect_reports_the_real_state_of_running_members(
     assert all(sbx.timeouts == [] for sbx in flavor.classes.sandboxes.values())
 
 
+def test_status_never_replaces_an_unopened_member_it_only_asked(flavor: FleetFlavor) -> None:
+    flavor.classes.add(served=False)
+    flavor.classes.add()
+    host_of(flavor, 2).ping_status = 503
+    fleet = connected_fleet(flavor, scaling=SHARED_TWO)
+
+    for _ in range(AGENT_FLEET_UNHEALTHY_PINGS):
+        status = flavor.call(fleet.status())
+
+    assert [member.state for member in status.members] == ["unknown", "unavailable"]
+    assert fleet.sandbox_ids == (sandbox_id_of(1), sandbox_id_of(2))
+    assert all(sbx.state == "RUNNING" for sbx in flavor.classes.sandboxes.values())
+    assert fleet.deployments == ()
+
+
 def test_a_transport_failure_is_not_enough_to_drop_the_vm(flavor: FleetFlavor) -> None:
     fleet = flavor.started()
     host_of(flavor, 1).invoke_status = 500

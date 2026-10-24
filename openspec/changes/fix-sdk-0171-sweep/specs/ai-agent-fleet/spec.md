@@ -37,7 +37,7 @@ When a fleet has no pinned image version (no build in this process and no recipe
 - **THEN** the new VM is created with version 2
 
 ### Requirement: Fleet status reports the real state of running members
-`AgentFleet.status()` (sync, async and TypeScript) and `rayito agent status <name>` (text and `--json`, both CLIs) SHALL re-read the listing and SHALL ask `GET /ping` of every `RUNNING` member, including right after `connect()`, with at most `AGENT_FLEET_PROBE_CONCURRENCY` (8) at a time. A member this process has not opened SHALL be asked without being kept: its lifetime SHALL NOT be set and its service SHALL NOT be started. Only a member that is not `RUNNING` (suspended) SHALL be reported as `unknown`, because asking it would resume it; a failed ask SHALL leave the member `unknown`.
+`AgentFleet.status()` (sync, async and TypeScript) and `rayito agent status <name>` (text and `--json`, both CLIs) SHALL re-read the listing and SHALL ask `GET /ping` of every `RUNNING` member, including right after `connect()`, with at most `AGENT_FLEET_PROBE_CONCURRENCY` (8) at a time. A member this process has not opened SHALL be asked without being kept: its lifetime SHALL NOT be set and its service SHALL NOT be started. A member that is not `RUNNING` (suspended) SHALL be reported as `unknown`, because asking it would resume it; so SHALL a member that cannot be connected or has no service yet. A member whose `/ping` does not answer SHALL be reported as `unavailable`, and that ask SHALL NOT count towards replacing it. No error while asking a member this process has not opened SHALL fail `status()`.
 
 #### Scenario: status right after connect
 - **WHEN** a fleet connects to two `RUNNING` members and a suspended one and calls `status()`
