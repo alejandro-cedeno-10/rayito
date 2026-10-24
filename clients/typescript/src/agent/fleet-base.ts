@@ -422,8 +422,9 @@ export function memberOf<D>(
 export const UNPROVEN_MEMBER_MESSAGE =
   "no se termina un VM: no se pudo probar que sea de la flota; se deja a su propio plazo";
 
-/** Ejecuta `work` sobre cada elemento con como mucho `limit` a la vez y
- * devuelve los resultados en el orden de `items`. */
+/** Ejecuta `work` sobre cada elemento con como mucho `limit` (al menos uno)
+ * a la vez y devuelve los resultados en el orden de `items`. Si uno falla, no
+ * empieza ninguno más y rechaza con ese error. */
 export async function mapBounded<T, R>(
   items: readonly T[],
   limit: number,
@@ -431,14 +432,20 @@ export async function mapBounded<T, R>(
 ): Promise<R[]> {
   const results: R[] = new Array(items.length);
   let next = 0;
+  let failed = false;
   const lane = async (): Promise<void> => {
-    while (next < items.length) {
+    while (!failed && next < items.length) {
       const position = next;
       next += 1;
-      results[position] = await work(items[position] as T);
+      try {
+        results[position] = await work(items[position] as T);
+      } catch (error) {
+        failed = true;
+        throw error;
+      }
     }
   };
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, lane));
+  await Promise.all(Array.from({ length: Math.min(Math.max(limit, 1), items.length) }, lane));
   return results;
 }
 

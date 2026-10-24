@@ -29,6 +29,7 @@ from rayito._agent._fleet_base import (
     lifetime_seconds,
     listed_cap,
     mark_extras,
+    member_of,
     owned_ids,
     plan_placement,
     pool_config_for,
@@ -373,3 +374,18 @@ def test_the_warm_pool_of_a_fleet_that_can_grow_carries_the_lifetime() -> None:
 
     assert config.max_lifetime == 3660
     assert config.on_timeout == "kill"
+
+
+def test_a_known_member_becomes_proven_when_a_listing_proves_it() -> None:
+    listed = datetime(2026, 10, 16, tzinfo=UTC)
+    known = Member("a", proven=False)
+
+    assert member_of(known, MemberListing("a", "SUSPENDED", listed, proven=False), None) is known
+    assert [known.proven] == [False]
+    member_of(known, MemberListing("a", "SUSPENDED", listed), None)
+    assert [known.proven] == [True]
+    member_of(known, MemberListing("a", "SUSPENDED", listed, proven=False), None)
+    assert [known.proven] == [True]
+    assert (
+        member_of(None, MemberListing("b", "SUSPENDED", listed, proven=False), None).proven is False
+    )

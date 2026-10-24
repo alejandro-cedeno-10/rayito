@@ -1580,11 +1580,7 @@ def stop_command(
     clients = clients_of(ctx)
     if is_fleet_name(sandbox_id):
         fleet = AgentFleet.connect(sandbox_id, region=clients.region, session=clients.session)
-        count = len(fleet.sandbox_ids)
-        if keep_recipe:
-            fleet.stop(keep_recipe=True)
-        else:
-            fleet.stop()
+        count = fleet.stop(keep_recipe=True) if keep_recipe else fleet.stop()
         if json_mode(ctx):
             emit_json({"name": sandbox_id, "stopped": count})
         else:

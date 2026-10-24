@@ -312,11 +312,14 @@ after the deadline, raises `CapacityException` (`code = "agent_capacity"`;
       that belong to an agent are terminated: a tokenless `Health` reads the
       labels of the `RUNNING` ones, and if the image has one without them, none
       of the suspended ones is terminated (they cannot be probed without
-      resuming them). Neither are they when the probe of a `RUNNING` one fails:
-      that VM might not be an agent, so the suspended ones count for capacity
-      but neither `stop()` nor scale-in terminates them; a warning names each
-      id and they are left to their own deadline and `idle` policy. The VMs
-      this process created are always terminated.
+      resuming them). Neither are they when the probe of a `RUNNING` one fails,
+      or that VM stops being `RUNNING` when probed: it might not be an agent,
+      so the suspended ones of that listing count for capacity but neither
+      `stop()` nor scale-in terminates them; a warning names each id and they
+      are left to their own deadline and `idle` policy. `stop()` still ends
+      without an error and returns how many VMs it terminated (`rayito agent
+      stop <name>` prints that number). The VMs this process created are
+      always terminated.
     - **Example:** `deploy_agent("./mi-agente", options=AgentDeployOptions(scaling=ScalingOptions(max_vms=3)))`.
 
 !!! info "Measured on real AWS"

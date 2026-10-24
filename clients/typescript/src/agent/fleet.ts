@@ -765,15 +765,18 @@ export class AgentFleet {
 
   /** Termina todos los VMs de la flota y las plazas del pool y, si este
    * proceso guardó o leyó su receta, la borra (`keepRecipe: true` la
-   * conserva). Sigue aunque uno falle y, al final, lanza el primer error. */
-  async stop(options: AgentFleetStopOptions = {}): Promise<void> {
+   * conserva). Sigue aunque uno falle y, al final, lanza el primer error.
+   * Devuelve cuántos VMs terminó: uno sin probar (`Member.proven`) no se
+   * termina y no cuenta. */
+  async stop(options: AgentFleetStopOptions = {}): Promise<number> {
     const errors: unknown[] = [];
     await this.#closePool(true, errors);
     const members = this.#members;
     this.#members = [];
+    let stopped = 0;
     for (const member of members) {
       try {
-        await this.#terminate(member);
+        stopped += (await this.#terminate(member)) ? 1 : 0;
       } catch (error) {
         errors.push(error);
       }
@@ -789,6 +792,7 @@ export class AgentFleet {
     if (errors.length > 0) {
       throw errors[0];
     }
+    return stopped;
   }
 
   /** Estado de la flota: pregunta a los VMs que este proceso ya abrió
@@ -1455,17 +1459,18 @@ export class AgentFleet {
   /** Termina el VM sin abrirlo: abrir uno suspendido lo reanudaría sólo para
    * matarlo. Un miembro sin probar (`Member.proven`) no se termina: podría ser
    * un sandbox ajeno de la misma imagen, y se deja a su propio plazo y a su
-   * política de idle con un aviso. */
-  async #terminate(member: Member<AgentDeployment>): Promise<void> {
+   * política de idle con un aviso. Devuelve si lo terminó. */
+  async #terminate(member: Member<AgentDeployment>): Promise<boolean> {
     if (!member.proven) {
       this.#logger?.warn?.(UNPROVEN_MEMBER_MESSAGE, { sandboxId: member.sandboxId });
-      return;
+      return false;
     }
     if (member.deployment !== undefined) {
       await member.deployment.stop();
     } else {
       await this.#directory.kill(member.sandboxId);
     }
+    return true;
   }
 
   async #discard(members: readonly Member<AgentDeployment>[]): Promise<void> {
