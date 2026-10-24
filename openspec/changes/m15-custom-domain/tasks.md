@@ -92,12 +92,11 @@
       `Comment` was longer than CloudFront's 128 characters; fixed, the
       distribution's `Comment` now names the stack instead of the domain,
       and `test_every_cloudfront_comment_fits_in_128_characters` guards all
-      three). With the fix, KVS and Function create fine, but the test
-      account's organisation SCP denies `cloudfront:CreateDistribution`, so
-      the stack rolls back at `Distribution` and DOM-2/3/5/7/8 stay
-      **unmeasured**. Teardown verified in both SDKs (stack gone, no KVS or
-      Function left, inventory diff empty). Pending: rerun the two e2e in an
-      account where `CreateDistribution` is allowed.
+      three). With the fix, KVS and Function create fine; the distribution
+      was not created, so DOM-2/3/5/7/8 stay **unmeasured** (they need the
+      `cloudfront:CreateDistribution` permission, Q141). Teardown verified
+      in both SDKs (stack gone, no KVS or Function left, inventory diff
+      empty).
 
 ## 4. Stack `infra/custom-domain.yaml`
 
@@ -226,8 +225,8 @@
       kept; `AWS_API_NOTES.md` Q121 was left free by main, Q140/Q141 are
       the next free rows after main's Q139).
 - [x] 9.2 Maintainer decision: merge as **experimental** without the
-      end-to-end AWS run, because the test account's SCP denies
-      `cloudfront:CreateDistribution` (Q141). Verified on real AWS: the
+      end-to-end AWS run; DOM-2/3/5/7/8 are unmeasured and need the
+      `cloudfront:CreateDistribution` permission (Q141). Verified on real AWS: the
       Function in `cloudfront-js-2.0` (Q121) and the KVS + Function of the
       stack (Q140). Not verified: the distribution and DOM-2/3/5/7/8.
 - [x] 9.3 Marked experimental in the feature page (admonition with what
@@ -236,6 +235,6 @@
       Novedades ("Disponible como experimental"), `optional-features.md`,
       the stacks catalog, the CLI reference and `SECURITY.md` T25;
       `rayito domain` is no longer hidden.
-- [ ] 9.4 Run the e2e (`RAYITO_E2E_DOMAIN`/`RAYITO_E2E_CERT_ARN`) in an
-      account that allows `CreateDistribution`, then drop the experimental
+- [ ] 9.4 Run the e2e (`RAYITO_E2E_DOMAIN`/`RAYITO_E2E_CERT_ARN`) with the
+      `cloudfront:CreateDistribution` permission, then drop the experimental
       label and archive this change.

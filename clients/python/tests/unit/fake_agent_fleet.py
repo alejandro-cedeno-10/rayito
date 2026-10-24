@@ -11,6 +11,8 @@ from __future__ import annotations
 import asyncio
 import builtins
 import json
+import threading
+import time
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -160,7 +162,7 @@ class FleetFiles(FakeFiles):
 
     def exists(self, path: str) -> bool:
         if path == AGENT_SERVICE_READY_MARKER_PATH:
-            return self.owner.served
+            return self.owner.ready()
         return super().exists(path)
 
 
@@ -171,7 +173,7 @@ class AsyncFleetFiles(AsyncFakeFiles):
 
     async def exists(self, path: str) -> bool:  # type: ignore[override]
         if path == AGENT_SERVICE_READY_MARKER_PATH:
-            return self.owner.served
+            return self.owner.ready()
         return FakeFiles.exists(self, path)
 
 
@@ -205,7 +207,8 @@ class FleetSandbox:
     `max_lifetime` fija, como en `rayd`, un tope en `arranque + max_lifetime
     - 60 s`: un `set_timeout` que pase de él se rechaza con el tope
     (`timeout beyond cap`). `info` expone el tope de la plataforma como
-    `SandboxInfo.platform_expires_at`."""
+    `SandboxInfo.platform_expires_at`. `ready_error`, si se fija, es lo que
+    lanza leer el marcador de listo."""
 
     def __init__(
         self,
@@ -227,6 +230,7 @@ class FleetSandbox:
         self.access_token = ACCESS_TOKEN
         self.metadata = dict(metadata or {})
         self.served = served
+        self.ready_error: Exception | None = None
         self.state = state
         self.gateways = {"bedrock": GatewayStatus(port=GATEWAY_PORT)}
         self.token = FakeToken()
@@ -246,6 +250,11 @@ class FleetSandbox:
         return HostAccess(
             f"{self.sandbox_id}.{ENDPOINT}", port=port, token_provider=lambda: self.token.jwe
         )
+
+    def ready(self) -> bool:
+        if self.ready_error is not None:
+            raise self.ready_error
+        return self.served
 
     def _kill(self) -> bool:
         self.kills += 1
@@ -344,6 +353,7 @@ class ListedItem:
     state: str
     started_at: datetime
     metadata: Mapping[str, str] | None = None
+    template_version: str | None = None
 
 
 class FleetSandboxClass:
@@ -360,6 +370,14 @@ class FleetSandboxClass:
         self.listed: list[dict[str, Any]] = []
         self.session_hits: dict[str, str] = {}
         self.create_error: Exception | None = None
+        self.probe_errors: dict[str, Exception] = {}
+        self.probe_states: dict[str, str] = {}
+        self.probed: list[str] = []
+        self.probe_delays: dict[str, float] = {}
+        self.versions: dict[str, str] = {}
+        self.probing = 0
+        self.most_probing = 0
+        self._probe_lock = threading.Lock()
         self._next = 1
 
     def add(
@@ -412,10 +430,27 @@ class FleetSandboxClass:
                 sbx.state,
                 START + timedelta(seconds=sbx.number),
                 dict(sbx.metadata) if probing else None,
+                self.versions.get(sbx.sandbox_id),
             )
             for sbx in self.sandboxes.values()
             if wanted is None or sbx.state in wanted
         ]
+
+    def _get_info(self, sandbox_id: str) -> ListedItem:
+        """`Sandbox.get_info(sandbox_id)` de doble: `probe_errors` simula un
+        `Health` que falla y `probe_states` un VM que cambió de estado entre
+        el listado y la sonda."""
+        self.probed.append(sandbox_id)
+        error = self.probe_errors.get(sandbox_id)
+        if error is not None:
+            raise error
+        sbx = self.sandboxes[sandbox_id]
+        return ListedItem(
+            sbx.sandbox_id,
+            self.probe_states.get(sandbox_id, sbx.state),
+            START + timedelta(seconds=sbx.number),
+            dict(sbx.metadata),
+        )
 
     def _connect(self, sandbox_id: str) -> FleetSandbox:
         self.connected.append(sandbox_id)
@@ -439,6 +474,37 @@ class FleetSandboxClass:
         if self.asynchronous:
             return FleetSandbox._async_call(lambda: self._connect(sandbox_id))
         return self._connect(sandbox_id)
+
+    def get_info(self, sandbox_id: str, **kwargs: Any) -> Any:
+        """`probe_delays` alarga una sonda (en un hilo o en el bucle) para
+        medir cuántas van a la vez (`most_probing`) y que el orden del
+        resultado no dependa de cuál acaba antes."""
+        delay = self.probe_delays.get(sandbox_id, 0.0)
+        if self.asynchronous:
+            return self._async_probe(sandbox_id, delay)
+        self._enter_probe()
+        try:
+            time.sleep(delay)
+            return self._get_info(sandbox_id)
+        finally:
+            self._leave_probe()
+
+    async def _async_probe(self, sandbox_id: str, delay: float) -> ListedItem:
+        self._enter_probe()
+        try:
+            await asyncio.sleep(delay)
+            return self._get_info(sandbox_id)
+        finally:
+            self._leave_probe()
+
+    def _enter_probe(self) -> None:
+        with self._probe_lock:
+            self.probing += 1
+            self.most_probing = max(self.most_probing, self.probing)
+
+    def _leave_probe(self) -> None:
+        with self._probe_lock:
+            self.probing -= 1
 
     def list(self, **kwargs: Any) -> Any:
         if self.asynchronous:

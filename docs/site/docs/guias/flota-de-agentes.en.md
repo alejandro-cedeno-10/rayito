@@ -124,8 +124,34 @@ VMs and start warm slots: it reads the [recipe](#la-receta-de-la-flota) that
 `deploy_agent()` saved. Without a recipe (a 0.16 fleet, or one deployed with
 `--no-save-recipe`) and without `project=`, the fleet routes and queries but
 cannot create a VM: the first session that needs one raises
-`InvalidArgumentException`; pass the project then
-(`AgentProject.detect(folder)` or `AgentProject.load(...)`).
+`InvalidArgumentException`; pass the project then. `AgentProject.detect()`
+returns the project and its detection report, so split them
+(`AgentProject.load(...)` returns only the project):
+
+=== "Python"
+
+    ```python
+    import os
+
+    from rayito import AgentFleet, AgentProject
+
+    project, _report = AgentProject.detect("./my-agent")
+    fleet = AgentFleet.connect(
+        "my-agent", access_token=os.environ["RAYITO_ACCESS_TOKEN"], project=project
+    )
+    ```
+
+=== "TypeScript"
+
+    ```ts
+    import { AgentFleet, AgentProject } from "rayito";
+
+    const [project] = await AgentProject.detect("./my-agent");
+    const fleet = await AgentFleet.connect("my-agent", {
+      accessToken: process.env.RAYITO_ACCESS_TOKEN ?? "",
+      project,
+    });
+    ```
 
 A session id you choose yourself (a chat thread) is only remembered inside the
 process that deployed the fleet. To find it from another process in `dedicated`
@@ -177,7 +203,14 @@ An explicit `scaling=` or `project=` wins over the recipe, and
   scaling comes from: `explicit`, `project`, `recipe` or `default`. With
   `default` (no project and no recipe) `rayito agent status` prints
   `members: N (escalado desconocido: sin proyecto ni receta)` instead of a
-  `min 1, max 1` that does not describe the fleet.
+  `min 1, max 1` that does not describe the fleet. `status()` (and `rayito
+  agent status`, also with `--json`) re-reads the listing and asks
+  (`GET /ping`) every `RUNNING` VM, also right after `connect()`, up to 8 at a
+  time, without limiting its lifetime or starting its service. A suspended
+  VM shows as `unknown` (not checked), because asking it would resume it; so
+  does one that could not be reached or has no service yet. One whose
+  `/ping` does not answer shows as `unavailable`, but that question does not
+  count towards replacing it; since 0.17.1.
 - **Deletion.** `fleet.stop()` and `rayito agent stop <name>` delete the recipe
   if this process saved or read it; `stop(keep_recipe=True)` (`--keep-recipe`)
   keeps it.
@@ -275,8 +308,21 @@ after the deadline, raises `CapacityException` (`code = "agent_capacity"`;
   `serve.timeout_seconds`. A fixed-size fleet creates its VMs as before. Up
   to 0.16 scale-in did not happen: VMs were created without a logical
   deadline and `rayd` rejected the `set_timeout`. A VM created that way (by
-  0.16) is not scaled in: the fleet warns once; end it with `stop()` or
-  redeploy.
+  0.16) is not scaled in: if the fleet can grow, it warns once; end it with
+  `stop()` or redeploy. A fixed-size fleet (or one with the default limits)
+  does not warn, because no VM is scaled in; since 0.17.1.
+  While a VM is being terminated, the platform still lists it as
+  `RUNNING` although its `rayd` no longer answers: when the fleet is listed
+  (`AgentFleet.connect()`, `status()`, `refresh_members()`), a VM whose
+  `Health` fails or that stops being `RUNNING` when probed is treated as a
+  terminating VM (not a member, not counted for capacity, and a warning names
+  its id) instead of failing the call; since 0.17.1. `RUNNING` VMs are probed
+  up to 8 at a time (`AGENT_FLEET_PROBE_CONCURRENCY`), with results and
+  warnings in listing order.
+- **Image version:** the VMs a fleet creates use the version the deploy built
+  or reused, or the recipe's. A fleet reconnected without a recipe
+  (`AgentFleet.connect(name, project=...)`) uses the newest member's, never
+  the image's newest version, which may be another build; since 0.17.1.
 - **Suspending:** `idle` suspends an unused VM and resumes it when called; a
   suspended VM bills no compute, only its snapshot storage.
 - **Restarting:** if the user's app dies, the host relaunches it with growing
@@ -305,7 +351,14 @@ after the deadline, raises `CapacityException` (`code = "agent_capacity"`;
       that belong to an agent are terminated: a tokenless `Health` reads the
       labels of the `RUNNING` ones, and if the image has one without them, none
       of the suspended ones is terminated (they cannot be probed without
-      resuming them).
+      resuming them). Neither are they when the probe of a `RUNNING` one fails,
+      or that VM stops being `RUNNING` when probed: it might not be an agent,
+      so the suspended ones of that listing count for capacity but neither
+      `stop()` nor scale-in terminates them; a warning names each id and they
+      are left to their own deadline and `idle` policy. `stop()` still ends
+      without an error and returns how many VMs it terminated (`rayito agent
+      stop <name>` prints that number). The VMs this process created are
+      always terminated.
     - **Example:** `deploy_agent("./mi-agente", options=AgentDeployOptions(scaling=ScalingOptions(max_vms=3)))`.
 
 !!! info "Measured on real AWS"

@@ -2009,11 +2009,9 @@ execution role, not by sandbox (same limitation as S3 persistence's T15):
 any sandbox with that role's credentials can mount any access point the
 role is scoped to. Threat T21 (`SECURITY.md`) covers the mount path.
 
-**Existing VPC (`EfsVolumes`).** Most accounts cannot create a VPC (an
-organization SCP denied `ec2:CreateVpc` in the test account, Q124), so the
-stack deploys into an existing one: `SubnetIds` (1–3, one mount target per
-AZ) and only new resources — never the VPC, its subnets, routes, NACLs or
-rules on existing security groups. `EfsVolumes.check()` is a pure
+**Existing VPC (`EfsVolumes`).** The stack deploys into an existing VPC:
+`SubnetIds` (1–3, one mount target per AZ) and only new resources — never
+the VPC, its subnets, routes, NACLs or rules on existing security groups. `EfsVolumes.check()` is a pure
 evaluation over read-only `ec2:Describe*` facts (a `NetworkInspector` port,
 also behind `rayito doctor --efs-vpc-id`), and `deploy()` refuses on any
 `FAIL`. The file system stays `DeletionPolicy: Retain`;
@@ -2508,7 +2506,7 @@ utilizable de forma independiente: desplegar la pila y llamar a
 código llamante ya tiene. DOM-2 (HTTP/1.1 por `updateRequestOrigin`),
 DOM-3 (WebSocket), DOM-5 (latencia de propagación del KVS), DOM-7
 (keep-alive tras caducar el JWE) y DOM-8 (auto-resume por el dominio)
-quedan sin medir hasta D3 (dominio y certificado ACM del mantenedor) y la
+quedan sin medir hasta D3 (un dominio y un certificado ACM reales) y la
 etapa de aceptación AWS.
 
 **Alternativas descartadas.** Lambda@Edge en vez de una CloudFront
@@ -2670,7 +2668,7 @@ para el estado y las pilas opcionales; este ADR lo extiende a una interfaz.
    con identity pool y SigV4 es la variante opcional (`AuthMode=aws-iam`: dos
    Function URL, la de la API con `AWS_IAM` y la de la página sin permisos,
    con el token de Cognito en `X-Rayito-Token`; implementada y probada con
-   dobles, a verificar en la cuenta de pruebas). Una función tiene un solo rol: corre con un rol de
+   dobles, a verificar en AWS real). Una función tiene un solo rol: corre con un rol de
    sólo lectura y asume por `sts:AssumeRole` el rol de acciones tras
    comprobar el grupo del llamante. Sin CORS (la SPA se sirve desde el mismo
    origen, así que la Function URL no lo habilita), `Origin` propio en cada
@@ -3244,7 +3242,7 @@ nunca cambia una cuenta preparada a mano que funciona ni sube `rayito-base` a un
 publish`). Quien prefiere artefactos verificados con cosign conserva ese camino
 con `--artifact`. El SDK distribuye ahora `infra/iam.yaml`; un cambio en
 `infra/` llega a los usuarios por `gen_stack_assets.py --check`, que ya es una
-puerta. Riesgos: una SCP de la organización puede denegar `iam:CreateRole` con
+puerta. Riesgos: una SCP puede denegar `iam:CreateRole` con
 nombres fijos o `cloudformation:CreateStack` con `CAPABILITY_NAMED_IAM` (la
 aceptación lo comprueba antes, sólo lectura, con la simulación IAM de `rayito
 doctor`); detrás de un proxy corporativo `urllib` respeta `HTTPS_PROXY` pero el
@@ -3312,13 +3310,13 @@ prohibía crear un bucket) y a la alternativa descartada «crear el bucket si fa
   `setup` sigue ahí al borrar la pila: se vacía y se borra a mano. Errores
   nuevos: `bucket_taken` y `artifact_stack_conflict` (código de salida 2);
   `no_bucket` desaparece y `bucket_unavailable` queda sólo para el 403.
-- *Riesgo.* Una SCP de la organización puede denegar `s3:CreateBucket` o
+- *Riesgo.* Una SCP puede denegar `s3:CreateBucket` o
   `s3:PutBucketPolicy`; la aceptación lo simula antes de escribir nada.
 - *Etiquetas de pila.* `rayito setup --tag K=V` (repetible) pasa las etiquetas
   como `Tags` de `CreateStack`/`UpdateStack` de `rayito-m0-artifacts` y
   `rayito-m0-iam`; CloudFormation las propaga a los recursos. Una pila
-  reutilizada no se reetiqueta y la imagen no las recibe. Existe porque una SCP
-  que exige etiquetas deniega `s3:CreateBucket` sin ellas (D11).
+  reutilizada no se reetiqueta y la imagen no las recibe. Existe para las
+  organizaciones que exigen etiquetas al crear recursos (D11).
 - Detalle (D2, D4, D10, D11) en `openspec/changes/archive/2026-10-21-account-setup/design.md`.
 
 ## ADR-031 — agentcore-deploy: despliega en Amazon Bedrock AgentCore Runtime
@@ -4005,7 +4003,16 @@ opción existente cambia de valor por defecto.
    para no rechazar nombres corrientes como `AUTH_MODE` o `AUTH_URL`. (f)
    `rayito agent invoke <flota> --renew-gateway-keys` es la forma de pedir
    la renovación desde la CLI al reconectar por nombre; con el id de un
-   sandbox (que no crea VMs) es un error de uso.
+   sandbox (que no crea VMs) es un error de uso. (g) Desde 0.17.1, el
+   despliegue que pide la renovación (`deploy_agent(renew_gateway_keys=True)`,
+   `--renew-gateway-keys`) escribe siempre una clave nueva una vez, antes del
+   primer VM, sin mirar `gatewayKeyRenewAfterSeconds`: un secreto recién
+   creado con un valor marcador es más nuevo que la ventana, la renovación lo
+   saltaba y la primera invocación recibía 403 de Bedrock. El despliegue es
+   raro y quien lo lanza pidió la renovación, así que esa escritura no
+   contradice la recomendación de `PutSecretValue`. La ventana sigue
+   limitando las renovaciones de cada VM nuevo y las de
+   `AgentFleet.connect(nombre, renew_gateway_keys=True)`.
 10. **La reducción se cumple (D10).** Desde 0.14 la flota pedía
    `set_timeout(scale_in_after_seconds)` a los VMs por encima de `min_vms`,
    pero los creaba sólo con `timeout`: sin `max_lifetime` ni `on_timeout` no
@@ -4074,3 +4081,57 @@ integración y tareas en `openspec/changes/fleet-recipe/`; vectores en
 [`aws-bedrock-token-generator` (Python)](https://github.com/aws/aws-bedrock-token-generator-python),
 [`@aws/bedrock-token-generator` (JavaScript)](https://github.com/aws/aws-bedrock-token-generator-js),
 [`PutSecretValue`](https://docs.aws.amazon.com/secretsmanager/latest/apireference/API_PutSecretValue.html).
+
+## ADR-035 — Las variables de `set_envs()` de un template llegan a los comandos
+
+**Contexto.** `Template.set_envs()` / `setEnvs()` hornea `ENV` en el
+Dockerfile del template. Ese `ENV` sólo llega al entorno de `rayd` (PID 1),
+y `rayd` arranca a cada hijo con un entorno construido desde cero
+(`rayd_core::process::env`): así nada de la plataforma
+(`AWS_LAMBDA_MICROVM_*`, `AWS_REGION`, `RAYD_LOG`, `RAYITO_ALLOW_ROOT`)
+llega al código del sandbox. La consecuencia es que una variable del
+template no se ve en `commands.run`, en una PTY ni en `run_code`, aunque sí
+en los `RUN` del build. En E2B las variables del template se ven en los
+comandos del sandbox, con las de `Sandbox.create(envs=...)` encima y las de
+cada comando encima de ésas; el shim de compatibilidad promete el mismo
+DSL. Heredar el entorno de `rayd` no es una opción: no distingue lo del
+template de lo de la plataforma o de la imagen base.
+
+**Decisión.**
+
+1. `Template.build()` escribe, sólo si el template tiene `set_envs()`, el
+   fichero `/etc/rayito/template-env.json`
+   (`{"envs": {...}, "version": "rayito.template-env/1"}`, claves ordenadas,
+   los mismos bytes en los dos SDK; vectores en
+   `testdata/templates/template-env.json`) y una `COPY` que lo deja en la
+   imagen, junto a la del `template.json` de ADR-022. La última
+   `set_envs()` gana en una clave repetida, como el `ENV` del Dockerfile, que
+   se sigue escribiendo igual.
+2. `rayd` lee ese fichero una vez, al arrancar y antes de que nada se lance
+   (también el `start_cmd` de ADR-022). Cualquier fallo (no existe, no se
+   lee, JSON mal formado, otra versión) es un entorno vacío, con un aviso que
+   nombra la ruta y la clase del error, nunca una variable ni su valor.
+3. Las variables del template quedan debajo de las `envs` del `/run`
+   (`Sandbox.create(envs=...)`) en `SandboxSession::spawn_defaults`, así que
+   llegan a los procesos, a las PTY y a los kernels con el orden de E2B:
+   template, sandbox y comando. Quedan encima de `PATH`/`HOME`/`USER` y de
+   las variables del proxy local de ADR-012 (reescribirlas no abre ninguna
+   ruta: las reglas de red siguen decidiendo).
+
+**Consecuencias.** Una imagen construida antes no tiene el fichero y arranca
+igual que hoy; un `rayd` anterior ignora el fichero. Construir con este SDK
+un template que ya usaba `set_envs()` cambia los bytes del artefacto, así
+que el siguiente `build()` crea una versión nueva (los proyectos de agente
+también, porque su template fija las variables de OpenCode). No hay ninguna
+llamada nueva a AWS ni cambio del `.proto`.
+
+**Alternativas descartadas.** Heredar el entorno de `rayd` (filtra lo de la
+plataforma). Una lista de nombres que `rayd` copie de su propio entorno (la
+imagen base también fija variables, y el valor efectivo dependería de la
+plataforma). Meter las variables en el `template.json` de ADR-022 (ese
+fichero sólo existe con `set_start_cmd()` y su `start_cmd` es obligatorio).
+Pasarlas en cada `Sandbox.create()` desde el SDK (el SDK no conoce el
+template de una imagen que no construyó, y el shim de E2B crea por nombre).
+
+**Reversible.** Un template sin `set_envs()` no escribe nada; borrar el
+fichero de la imagen devuelve el comportamiento anterior.

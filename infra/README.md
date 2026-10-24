@@ -260,16 +260,16 @@ tipo).
 
 La aceptación de M6 despliega la pila (`rayito-egress-e2e`, allowlist vacía)
 y ejecuta `test_egress_allowlist` **sólo** si la cuenta tiene, en la región,
-una VPC **propia de este proyecto o prestada por su dueño** con al menos una
+una **VPC existente designada para la ejecución** con al menos una
 subnet (la pila crea un security group y las ENIs del conector dentro de esa
-VPC, y eso no se hace en la red de otra carga de trabajo sin pedirlo) y la
+VPC) y la
 página de precios de Lambda MicroVMs no lista cargo por conector. La
 allowlist vacía **no necesita NAT** (el security group descarta antes del
 enrutado), así que la falta de NAT nunca es motivo para saltarse la medida.
 Si la puerta no se cumple, el test se salta (falta
 `RAYITO_EGRESS_CONNECTOR_ARN`) y la evidencia es esta validación. Resultado
-2026-09-16: **no desplegado** — la única VPC de la cuenta
-(12 subnets) pertenece a otra carga de trabajo. Cuando haya una VPC propia: `aws cloudformation deploy
+2026-09-16: **no medido** — requiere una VPC existente (Q46). Con una VPC
+existente: `aws cloudformation deploy
 --stack-name rayito-egress-e2e --template-file infra/egress-connector.yaml
 --capabilities CAPABILITY_IAM --parameter-overrides VpcId=… SubnetIds=…`,
 exportar `RAYITO_EGRESS_CONNECTOR_ARN` con el output `ConnectorArn`, correr
@@ -745,8 +745,8 @@ del SDK que importa y la página, copiados tal cual por
 `scripts/gen_stack_assets.py` (cada `__init__.py` del SDK se sustituye por un
 resguardo, para no arrastrar gRPC ni la CLI) y el modelo de `lambda-microvms`
 bajo `models/`, igual que `events-webhooks`. No usa CloudFront ni crea buckets
-(la cuenta de pruebas lo deniega); las etiquetas obligatorias de la
-organización se pasan con `--tag`. Tests: `infra/lambdas/dashboard/tests/` y
+(hay organizaciones que no los permiten); si tu organización exige
+etiquetas, se pasan con `--tag`. Tests: `infra/lambdas/dashboard/tests/` y
 `scripts/tests/test_dashboard_template.py`; `make infra-lint` la incluye.
 
 ## Panel de gestión, fase 3 (`dashboard-cloudwatch.yaml`, `dashboard-read-role.yaml`, `quota-alerts.yaml`, ADR-026)

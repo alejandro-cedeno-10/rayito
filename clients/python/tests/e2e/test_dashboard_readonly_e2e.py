@@ -5,6 +5,13 @@ de los e2e; el coste facturado, que Cost Explorer cobra por petición, sólo se
 lee con `RAYITO_E2E_BILLED_COST=1` (cada fallo de caché cuesta $0,01 en
 us-east-1: una petición con la ventana por defecto).
 
+La cuenta puede tener otros sandboxes que nacen y mueren mientras corre el
+módulo (otros e2e en paralelo), así que nada compara dos listados tomados en
+momentos distintos como si fueran el mismo: el listado de control incluye
+`TERMINATING|TERMINATED` (un sandbox que el estimado vio vivo sigue en
+`list-microvms` unos 20 min) y el filtro por imagen se comprueba sobre las
+propias vistas que devuelve.
+
 Coste: $0 sin `RAYITO_E2E_BILLED_COST`; con ella, una petición de Cost Explorer
 (~$0,01). Las lecturas de Service Quotas, `ListMicrovms`, `ListMicrovmImages`,
 `ListMicrovmImageVersions` y `GetMicrovmImageVersion` no se facturan.
@@ -18,6 +25,7 @@ import pytest
 
 from rayito import Fleet, Quotas, UsageCost
 from rayito._aws import LambdaMicrovmsControlPlane
+from rayito._limits import MICROVM_STATES, TERMINAL_STATES
 from rayito.exceptions import InvalidArgumentException
 
 from .conftest import E2ESettings
@@ -50,8 +58,8 @@ def test_usage_cost_estimates_for_free(
     estimate = cost.estimate()
     assert estimate.label == "estimated"
     assert estimate.total_usd >= 0
-    live = {item.sandbox_id for item in control_plane.list_microvms()}
-    assert {item.sandbox_id for item in estimate.items} <= live
+    listed = {item.sandbox_id for item in control_plane.list_microvms(states=MICROVM_STATES)}
+    assert {item.sandbox_id for item in estimate.items} <= listed
 
 
 @pytest.mark.skipif(
@@ -81,7 +89,8 @@ def test_fleet_lists_sandboxes_images_and_versions_and_refuses_actions_by_defaul
     sandboxes = fleet.sandboxes()
     assert all(view.state != TERMINAL_STATE for view in sandboxes)
     of_template = fleet.sandboxes(image=template_arn)
-    assert {view.sandbox_id for view in of_template} <= {view.sandbox_id for view in sandboxes}
+    assert all(view.template == template_arn for view in of_template)
+    assert all(view.state not in TERMINAL_STATES for view in of_template)
 
     images = fleet.images()
     assert template_arn in {image.image_arn for image in images}

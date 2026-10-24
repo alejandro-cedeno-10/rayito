@@ -22,6 +22,26 @@ imagen `rayito-base` y como asset de la GitHub Release del tag `rayd-v*`.
 
 ### Fixed
 
+- Las variables de `Template.set_envs()` / `setEnvs()` llegan a los
+  procesos, las PTY y los kernels del sandbox (ADR-035). `rayd` lee al
+  arrancar `/etc/rayito/template-env.json` (`rayito.template-env/1`, que
+  hornea `Template.build()`) y las pone debajo de las `envs` del `/run`
+  (`SandboxSession::spawn_defaults`), el orden de E2B: template, sandbox y
+  comando. Un fichero ausente, ilegible, mal formado o de otra versión es un
+  entorno vacío, con un aviso que sólo nombra la ruta y la clase del error.
+- Tests con plazos de reloj demasiado justos: `m5_suspend_resume`
+  (`suspend_closes_every_stream_kills_nothing_and_resume_replays` pedía que
+  `/suspend` respondiera en menos de 2 s y en aarch64 tardó 2,03 s), `m2_process`,
+  `m4_code`, `m5_pty`, `m6_hooks`, `m6_limits`, `m9_transfer`, `m1_hello`,
+  `m3_filesystem` y `bounded_sync`. Cada uno comprueba el evento (el fin de
+  cada stream, el estado y la señal, la petición al sidecar, el contenido
+  leído) y deja el reloj sólo como red de seguridad lejos de los dos
+  desenlaces: la mitad del plazo que la separa del fallo (`SUSPEND_GATE_TIMEOUT`,
+  un comando o una celda de 30 s, `KILL_GRACE`, una sonda de 20 s frente a
+  `RESUME_PROBE_BUDGET`); donde las aserciones ya deciden (la ráfaga de
+  `/suspend` y el par falsificado de `m6_hooks`), el límite de reloj se
+  quita. Las esperas por sondeo tienen 5 o 10 s y los keepalives de una PTY
+  callada se esperan durante diez intervalos.
 - `m5_pty`: los tests ya no escriben en la terminal antes de que bash
   interactivo la tenga (`ready_bash` teclea un marcador hasta que bash lo
   ejecuta; en aarch64 una línea tecleada en esa ventana se perdía), y el fin
@@ -813,14 +833,14 @@ Un proceso por MicroVM, como root, estático musl, con gRPC h2c (`tonic`) en
   aceptación corrió sobre `rayito-base` 16.0 y `rayito-base-caps` 6.0).
 - Sin cambio de imagen `agent_version` no cambia: las versiones de imagen
   son números de build opacos de AWS, anotados en `MILESTONES.md`. Esos
-  números (10.0, 16.0, 6.0) son los de la cuenta del mantenedor: el contador
+  números (10.0, 16.0, 6.0) son de una cuenta concreta: el contador
   es por imagen y por cuenta, y el criterio de compatibilidad que aplica
   `rayito doctor` es sólo `agent_version`.
 
 ## [0.0.1] - [0.0.5]
 
 Builds internos de los hitos M1-M5, publicados sólo como versiones de imagen
-de la cuenta de desarrollo.
+de prueba.
 
 [Unreleased]: https://github.com/alejandro-cedeno-10/rayito/compare/rayd-v0.17.0...HEAD
 [0.17.0]: https://github.com/alejandro-cedeno-10/rayito/compare/rayd-v0.16.0...rayd-v0.17.0

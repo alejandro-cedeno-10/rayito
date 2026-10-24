@@ -98,7 +98,9 @@ const KILL_SETTLE_MS = 2_000;
 const NOT_FOUND_CODES: ReadonlySet<string> = new Set(["404", "NotFound", "NoSuchKey"]);
 
 const FOUND_STATE = "found";
-const ALL_REUSE = ["reuse", "reuse", "reuse"];
+/** Lo que planea una región ya preparada: los tres pasos se reutilizan y
+ * `capsImage` es `skip` sin `--caps-image` (desde 0.17.0). */
+const ALL_REUSE = ["reuse", "reuse", "reuse", "skip"];
 
 interface Outcome {
   readonly exitCode: number;
@@ -286,7 +288,7 @@ describe.runIf(setupEnabled())("rayito setup en una región nueva (AWS real)", (
     expect(outcome.exitCode).toBe(0);
     // `reuse` si la región tiene el bucket de `cdk bootstrap`, `create` si no tiene ninguno.
     expect(["reuse", "create"]).toContain(actionsOf(document)[0]);
-    expect(actionsOf(document).slice(1)).toEqual(["create", "publish"]);
+    expect(actionsOf(document).slice(1)).toEqual(["create", "publish", "skip"]);
     const after = await observe(services);
     expect(after.stack.status).toBeUndefined();
     expect(after.image.state).toBeUndefined();
@@ -325,12 +327,12 @@ describe.runIf(setupEnabled())("rayito setup en una región nueva (AWS real)", (
     }
   });
 
-  test("una segunda ejecución planea tres reuse y no crea otra versión", async (context) => {
+  test("una segunda ejecución lo reutiliza todo y no crea otra versión", async (context) => {
     if (!fresh) {
       context.skip();
     }
     const dry = documentOf(await runSetup(setupArguments(region, "--dry-run")));
-    expect(actionsOf(dry)).toEqual(["reuse", "reuse", "reuse"]);
+    expect(actionsOf(dry)).toEqual(ALL_REUSE);
     const before = (await observe(services)).image.versions.length;
     const outcome = await runSetup(setupArguments(region, "--yes"));
     expect(outcome.exitCode).toBe(0);
@@ -340,7 +342,7 @@ describe.runIf(setupEnabled())("rayito setup en una región nueva (AWS real)", (
 });
 
 describe.runIf(e2eEnabled())("rayito setup en la región e2e ya preparada (AWS real)", () => {
-  test("--dry-run --json planea tres reuse y no escribe nada", async () => {
+  test("--dry-run --json lo reutiliza todo y no escribe nada", async () => {
     const { region } = e2eSettings();
     const services = await servicesIn(region);
     const before = await observe(services);
@@ -352,7 +354,7 @@ describe.runIf(e2eEnabled())("rayito setup en la región e2e ya preparada (AWS r
     ]);
     const document = documentOf(outcome);
     expect(outcome.exitCode).toBe(0);
-    expect(actionsOf(document)).toEqual(["reuse", "reuse", "reuse"]);
+    expect(actionsOf(document)).toEqual(ALL_REUSE);
     expect(document.ready).toBe(true);
     const after = await observe(services);
     expect(after.image.versions).toHaveLength(before.image.versions.length);
@@ -449,7 +451,7 @@ describe.runIf(createBucketEnabled())("rayito setup crea el bucket (AWS real)", 
     CREATE_TEST_TIMEOUT_MS,
   );
 
-  test("un segundo --dry-run planea tres reuse", async (context) => {
+  test("un segundo --dry-run lo reutiliza todo", async (context) => {
     if (!fresh) {
       context.skip();
     }

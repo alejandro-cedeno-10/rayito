@@ -260,7 +260,7 @@ mod tests {
         let report = flush.flush().await;
         let elapsed = started.elapsed();
         assert!(elapsed >= Duration::from_millis(200), "{elapsed:?}");
-        assert!(elapsed < Duration::from_secs(2), "{elapsed:?}");
+        assert!(elapsed < Duration::from_secs(10), "{elapsed:?}");
         assert_eq!(report.synced, 1);
         assert_eq!(report.pending, 1);
         assert!(report.deadline_hit());

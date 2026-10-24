@@ -14,7 +14,7 @@ Variables de entorno, además de `RAYITO_E2E=1`:
 - `RAYITO_E2E_RUN_ID`: id de la ejecución, 8 minúsculas o dígitos; va en el
   nombre de cada agente y la limpieza borra sólo lo que lo lleva.
 - `RAYITO_E2E_TAGS` (opcional): etiquetas `K=V` separadas por comas para la
-  pila y el runtime, si una SCP de la organización las exige al crear recursos.
+  pila y el runtime, si la organización exige etiquetas al crear recursos.
   Nunca van en el código.
 - `RAYITO_E2E_AGENTCORE_SAMPLES` (opcional): ids del manifiesto separados por
   comas.

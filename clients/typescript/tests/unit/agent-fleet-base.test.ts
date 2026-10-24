@@ -22,7 +22,10 @@ import {
   isLost,
   lifetimeMs,
   listedCap,
+  listedImageVersion,
+  mapBounded,
   markExtras,
+  memberOf,
   newMember,
   ownedIds,
   planPlacement,
@@ -314,6 +317,8 @@ describe("settings", () => {
       name: string;
       items: { id: string; state: string }[];
       owned: string[];
+      unreadable?: string[];
+      unproven?: string[];
       expected: string[];
     }[],
   )("a vm is a member only when the image is not shared: $name", (item) => {
@@ -322,9 +327,13 @@ describe("settings", () => {
       state: entry.state,
       startedAt: new Date(0),
     }));
-    expect(selectMembers(listing, new Set(item.owned)).map((entry) => entry.sandboxId)).toEqual(
-      item.expected,
-    );
+    const selected = selectMembers(listing, new Set(item.owned), new Set(item.unreadable ?? []));
+    expect(selected.map((entry) => entry.sandboxId)).toEqual(item.expected);
+    if (item.unproven !== undefined) {
+      expect(
+        selected.filter((entry) => entry.proven === false).map((entry) => entry.sandboxId),
+      ).toEqual(item.unproven);
+    }
   });
 });
 
@@ -473,5 +482,75 @@ describe("fleet lifetime", () => {
     );
     expect(config.maxLifetimeMs).toBe(3_660_000);
     expect(config.onTimeout).toBe("kill");
+  });
+});
+
+describe("mapBounded", () => {
+  test("an empty input does no work", async () => {
+    let calls = 0;
+    expect(await mapBounded([], 8, async () => (calls += 1))).toEqual([]);
+    expect(calls).toBe(0);
+  });
+
+  test("a failure starts no more work and rejects with that error", async () => {
+    const started: number[] = [];
+    const failure = new Error("limitado");
+    const items = Array.from({ length: 20 }, (_, index) => index);
+    await expect(
+      mapBounded(items, 2, async (item) => {
+        started.push(item);
+        if (item === 0) {
+          throw failure;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        return item;
+      }),
+    ).rejects.toBe(failure);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(started.length).toBeLessThan(items.length);
+  });
+
+  test("a limit below one still runs one at a time, in order", async () => {
+    expect(await mapBounded([3, 1, 2], 0, async (item) => item * 2)).toEqual([6, 2, 4]);
+    expect(await mapBounded([3, 1, 2], Number.NaN, async (item) => item * 2)).toEqual([6, 2, 4]);
+  });
+});
+
+describe("memberOf", () => {
+  test("a known member becomes proven when a listing proves it", () => {
+    const listed = { sandboxId: "a", state: "SUSPENDED", startedAt: new Date(0) };
+    const known = { ...newMember("a"), proven: false };
+    expect(memberOf(known, { ...listed, proven: false }, undefined)).toBe(known);
+    expect(known.proven).toBe(false);
+    memberOf(known, listed, undefined);
+    expect(known.proven).toBe(true);
+    memberOf(known, { ...listed, proven: false }, undefined);
+    expect(known.proven).toBe(true);
+    expect(memberOf(undefined, { ...listed, proven: false }, undefined).proven).toBe(false);
+  });
+});
+
+describe("listedImageVersion", () => {
+  test("the newest member with a version decides", () => {
+    expect(
+      listedImageVersion([
+        { sandboxId: "a", state: "RUNNING", startedAt: new Date(1), templateVersion: "1" },
+        { sandboxId: "b", state: "RUNNING", startedAt: new Date(3), templateVersion: "2" },
+        { sandboxId: "c", state: "RUNNING", startedAt: new Date(5) },
+      ]),
+    ).toBe("2");
+    expect(listedImageVersion([])).toBeUndefined();
+    expect(
+      listedImageVersion([
+        { sandboxId: "a", state: "RUNNING", startedAt: new Date(1), templateVersion: "1" },
+        {
+          sandboxId: "d",
+          state: "SUSPENDED",
+          startedAt: new Date(9),
+          templateVersion: "9",
+          proven: false,
+        },
+      ]),
+    ).toBe("1");
   });
 });

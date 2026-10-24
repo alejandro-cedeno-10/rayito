@@ -139,13 +139,21 @@ describe("agent con una flota", () => {
     expect(text.stdout).toContain("members: 2 (min 1, max 2)");
     expect(text.stdout).toContain(`sandbox_id=${SANDBOX_ID} state=unknown`);
     expect(JSON.parse(json.stdout).members[1].state).toBe("healthy");
+    expect(projects.calls[0]).toEqual([
+      "connectFleet",
+      FLEET_NAME,
+      env.RAYITO_ACCESS_TOKEN,
+      { renewGatewayKeys: false },
+    ]);
   });
 
   it("stop de una flota no necesita token y termina cada VM", async () => {
     const projects = new FakeAgentProjects();
     const outcome = await invoke(projects, ["agent", "stop", FLEET_NAME]);
     expect(outcome.exitCode).toBe(0);
-    expect(projects.calls).toEqual([["connectFleet", FLEET_NAME, undefined]]);
+    expect(projects.calls).toEqual([
+      ["connectFleet", FLEET_NAME, undefined, { renewGatewayKeys: false }],
+    ]);
     expect(projects.fleet.calls).toEqual([["stop"]]);
     expect(outcome.stdout).toContain("parados 2 VM(s)");
   });

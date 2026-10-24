@@ -163,6 +163,12 @@ antes de crear cada VM o abrir cada plaza, por cada pasarela con preset
    (`PutSecretValue`) y refresca las pasarelas de los VMs que este proceso
    tiene abiertos.
 
+`deploy_agent()` / `deployAgent()` (y `rayito agent deploy
+--renew-gateway-keys`) escriben además una clave nueva una vez, antes del
+primer VM, sin mirar los 900 s: un secreto recién creado con un valor
+marcador recibe la clave y la primera invocación no da 403. La ventana sólo
+limita las renovaciones de cada VM nuevo (desde 0.17.1).
+
 La clave y el nombre del secreto nunca salen en logs, errores ni en la
 [receta de la flota](../guias/flota-de-agentes.md#la-receta-de-la-flota).
 Sin una pasarela `bedrock`, la opción es `InvalidArgumentException`

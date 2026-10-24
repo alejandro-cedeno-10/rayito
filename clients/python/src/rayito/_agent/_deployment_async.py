@@ -29,6 +29,7 @@ from rayito._agent._deployment_base import (
     HTTP_FORBIDDEN,
     HTTP_OK,
     JSON_CONTENT_TYPE,
+    RESPONSE_CUT_MESSAGE,
     DeploymentStatus,
     EventDecoder,
     ResultBuilder,
@@ -133,7 +134,7 @@ class AsyncHttpsResponse:
                 while remaining:
                     data = await self._reader.read(min(READ_CHUNK_BYTES, remaining))
                     if not data:
-                        raise SandboxException("el agente desplegado cortó la respuesta")
+                        raise SandboxException(RESPONSE_CUT_MESSAGE)
                     remaining -= len(data)
                     yield data
             elif kind is BodyKind.CHUNKED:
@@ -143,7 +144,7 @@ class AsyncHttpsResponse:
                 while data := await self._reader.read(READ_CHUNK_BYTES):
                     yield data
         except (OSError, asyncio.IncompleteReadError, MalformedFramingError):
-            raise SandboxException("el agente desplegado cortó la respuesta") from None
+            raise SandboxException(RESPONSE_CUT_MESSAGE) from None
 
     async def _chunked(self) -> AsyncIterator[bytes]:
         while True:

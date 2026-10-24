@@ -89,8 +89,7 @@ reaching `UnimplementedError`, so those rows now use a well-formed
 
 ### D5. Existing VPC first: `EfsVolumes` (check, deploy, destroy)
 
-Most accounts cannot create a VPC (the test account's organization SCP
-denies `ec2:CreateVpc`, Q124), so the quick path is an existing VPC:
+The quick path is an existing VPC:
 
 - **Template**: `SubnetIds` is one `List<AWS::EC2::Subnet::Id>` (typed, so
   CloudFormation rejects a foreign id before creating anything) instead of

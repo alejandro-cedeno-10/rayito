@@ -238,10 +238,8 @@ function egressFinding(
   subnetIds: readonly string[],
   tables: readonly RouteTableFacts[],
 ): NetworkFinding {
-  // "other" cuenta también: una ruta por defecto a un transit gateway, un
-  // peering o un appliance (medido en la aceptación del 2026-10-04: las
-  // subredes privadas de la VPC salían por un transit gateway, no por un NAT,
-  // y el mensaje sólo decía "0 con NAT").
+  // "other" cuenta también: una ruta por defecto que no va a un NAT ni a un
+  // internet gateway (transit gateway, peering o appliance) es otra salida.
   const withNat = defaultRouteCount(subnetIds, tables, "nat");
   const withOther = defaultRouteCount(subnetIds, tables, "other");
   return {

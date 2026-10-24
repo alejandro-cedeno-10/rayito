@@ -45,6 +45,7 @@ import {
   isReconnectable,
   isSandboxTimeout,
   isStreamReset,
+  retryUnestablished,
   translateRpcError,
 } from "../transport/errors.js";
 import { type CallMetadataProvider, proxyAuthInterceptor } from "../transport/headers.js";
@@ -398,9 +399,17 @@ export class SandboxCore {
 
   // ------------------------------------------------------------------ unary
 
-  async callUnaryOnce<T>(call: () => Promise<T>): Promise<T> {
+  /** Reintenta una vez tras un 403 del proxy. La sonda de `Health` pasa
+   * `retryConnect: false`: su bucle de sondeo ya reintenta con su propio plazo
+   * y no debe esperar a una conexión que no se abre. */
+  async callUnaryOnce<T>(
+    call: () => Promise<T>,
+    options: { readonly retryConnect?: boolean; readonly signal?: AbortSignal | undefined } = {},
+  ): Promise<T> {
+    const attempt = (): Promise<T> =>
+      options.retryConnect === false ? call() : retryUnestablished(call, undefined, options.signal);
     try {
-      return await call();
+      return await attempt();
     } catch (error) {
       if (!isProxyForbidden(error)) {
         throw error;
@@ -410,7 +419,7 @@ export class SandboxCore {
       sandboxId: this.sandboxId,
     });
     await this.refresher.refreshAll();
-    return call();
+    return attempt();
   }
 
   /** Un 403 del proxy se reintenta tras reacuñar; un corte reconectable espera la reconexión y reintenta una vez. */
@@ -442,7 +451,7 @@ export class SandboxCore {
     if (!outcome.resumed) {
       throw this.reconnectError(outcome, reason);
     }
-    return call();
+    return retryUnestablished(call);
   }
 
   /**
@@ -582,7 +591,11 @@ export class SandboxCore {
       }
     }
     try {
-      return await this.#firstMessage(start, client, allowEmpty, options.signal);
+      return await retryUnestablished(
+        () => this.#firstMessage(start, client, allowEmpty, options.signal),
+        undefined,
+        options.signal,
+      );
     } catch (error) {
       throw await this.#openFailure(error, options);
     }
@@ -605,7 +618,11 @@ export class SandboxCore {
     signal: AbortSignal | undefined,
   ): Promise<OpenedStream<T>> {
     try {
-      return await this.#firstMessage(start, client, allowEmpty, signal);
+      return await retryUnestablished(
+        () => this.#firstMessage(start, client, allowEmpty, signal),
+        undefined,
+        signal,
+      );
     } catch (error) {
       if (!isProxyForbidden(error)) {
         throw error;
@@ -615,7 +632,11 @@ export class SandboxCore {
       sandboxId: this.sandboxId,
     });
     await this.refresher.refreshAll();
-    return this.#firstMessage(start, client, allowEmpty, signal);
+    return retryUnestablished(
+      () => this.#firstMessage(start, client, allowEmpty, signal),
+      undefined,
+      signal,
+    );
   }
 
   async #firstMessage<S extends DescService, T>(
@@ -689,11 +710,13 @@ export class SandboxCore {
   async probeHealth(timeoutMs: number, signal?: AbortSignal): Promise<HealthResponse | undefined> {
     signal?.throwIfAborted();
     try {
-      return await this.callUnaryOnce(() =>
-        this.clients.health.health(
-          create(HealthRequestSchema, {}),
-          withTimeout(signal === undefined ? {} : { signal }, timeoutMs),
-        ),
+      return await this.callUnaryOnce(
+        () =>
+          this.clients.health.health(
+            create(HealthRequestSchema, {}),
+            withTimeout(signal === undefined ? {} : { signal }, timeoutMs),
+          ),
+        { retryConnect: false },
       );
     } catch (error) {
       if (!signal?.aborted && isNotYetReachable(error)) {

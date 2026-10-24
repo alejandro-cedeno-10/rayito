@@ -1,7 +1,7 @@
 # Límites
 
 Cuotas y límites de Lambda MicroVMs tal como los ve el SDK. Fuente:
-`AWS_API_NOTES.md` §2, §6 y §11 (medidos en la cuenta de desarrollo el
+`AWS_API_NOTES.md` §2, §6 y §11 (medidos contra AWS real el
 2026-09-15) y `limits.json`, del que se generan `_limits.py` (Python) y
 `limits.ts` (TypeScript), donde el SDK los valida en cliente.
 

@@ -232,6 +232,7 @@ from rayito._transport import (
     is_reconnectable,
     is_sandbox_timeout,
     is_stream_reset,
+    retry_unestablished,
     rpc_status,
     translate_rpc_error,
 )
@@ -2610,17 +2611,19 @@ class Sandbox:
     def _current_jwe(self, port: int) -> str:
         return self._refresher.store.jwe_for(port) or self._refresher.ensure(port).jwe
 
-    def _call_unary_once(self, call: Callable[[], T]) -> T:
+    def _call_unary_once(self, call: Callable[[], T], *, retry_connect: bool = True) -> T:
         """Reintenta una vez tras un 403 del proxy (JWE caducado). Es lo que
-        usa la propia sonda de `Health`, que nunca debe reconectar."""
+        usa la propia sonda de `Health`, que nunca debe reconectar ni esperar
+        a una conexión que no se abre (`retry_connect=False`): su bucle de
+        sondeo ya reintenta con su propio plazo."""
         try:
-            return call()
+            return retry_unestablished(call) if retry_connect else call()
         except grpc.RpcError as exc:
             if not is_proxy_forbidden(exc):
                 raise
         self._logger.info("el proxy rechazó el token del sandbox %s; reacuñando", self.sandbox_id)
         self._refresher.refresh_all()
-        return call()
+        return retry_unestablished(call) if retry_connect else call()
 
     def _call_unary(self, call: Callable[[], T], *, reopen: bool = True) -> T:
         """Un unario con el reintento del 403 y, tras un corte reconectable
@@ -2644,7 +2647,7 @@ class Sandbox:
         outcome = self._reconnect(reason, seen_generation)
         if not outcome.resumed:
             raise self._reconnect_error(outcome, reason) from reason
-        return call()
+        return retry_unestablished(call)
 
     def _translated_unary(self, call: Callable[[], T], *, filesystem: bool = False) -> T:
         try:
@@ -2739,7 +2742,9 @@ class Sandbox:
             if not outcome.resumed:
                 raise self._reconnect_error(outcome, reason) from reason
         try:
-            return first_stream_message(start(stub), allow_empty=allow_empty)
+            return retry_unestablished(
+                lambda: first_stream_message(start(stub), allow_empty=allow_empty)
+            )
         except grpc.RpcError as exc:
             raise self._open_failure(exc, filesystem, translate) from exc
 
@@ -2757,7 +2762,9 @@ class Sandbox:
         self, start: StreamStarter, stub: Any, allow_empty: bool
     ) -> tuple[Any, Any]:
         try:
-            return first_stream_message(start(stub), allow_empty=allow_empty)
+            return retry_unestablished(
+                lambda: first_stream_message(start(stub), allow_empty=allow_empty)
+            )
         except grpc.RpcError as exc:
             if not is_proxy_forbidden(exc):
                 raise
@@ -2766,7 +2773,9 @@ class Sandbox:
             self.sandbox_id,
         )
         self._refresher.refresh_all()
-        return first_stream_message(start(stub), allow_empty=allow_empty)
+        return retry_unestablished(
+            lambda: first_stream_message(start(stub), allow_empty=allow_empty)
+        )
 
     def _stream_failure(self, exc: grpc.RpcError, *, filesystem: bool = False) -> Exception:
         """Clasificación de M2 para los cortes que no reconectan (`Read` a
@@ -2799,7 +2808,8 @@ class Sandbox:
         """None significa "aún no alcanzable" (UNAVAILABLE / 502 / timeout)."""
         try:
             response = self._call_unary_once(
-                lambda: self._health.Health(health_pb2.HealthRequest(), timeout=timeout)
+                lambda: self._health.Health(health_pb2.HealthRequest(), timeout=timeout),
+                retry_connect=False,
             )
             return cast("health_pb2.HealthResponse", response)
         except grpc.RpcError as exc:

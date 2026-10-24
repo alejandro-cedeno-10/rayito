@@ -124,8 +124,34 @@ crear VMs y arrancar plazas calientes: lee la [receta](#la-receta-de-la-flota)
 que guardó `deploy_agent()`. Sin receta (una flota de 0.16, o desplegada con
 `--no-save-recipe`) y sin `project=`, la flota enruta y consulta pero no puede
 crear un VM: la primera sesión que necesite uno lanza
-`InvalidArgumentException`; pasa entonces el proyecto
-(`AgentProject.detect(carpeta)` o `AgentProject.load(...)`).
+`InvalidArgumentException`; pasa entonces el proyecto. `AgentProject.detect()`
+devuelve el proyecto y su informe de detección, así que hay que separarlos
+(`AgentProject.load(...)` devuelve sólo el proyecto):
+
+=== "Python"
+
+    ```python
+    import os
+
+    from rayito import AgentFleet, AgentProject
+
+    project, _report = AgentProject.detect("./mi-agente")
+    fleet = AgentFleet.connect(
+        "mi-agente", access_token=os.environ["RAYITO_ACCESS_TOKEN"], project=project
+    )
+    ```
+
+=== "TypeScript"
+
+    ```ts
+    import { AgentFleet, AgentProject } from "rayito";
+
+    const [project] = await AgentProject.detect("./mi-agente");
+    const fleet = await AgentFleet.connect("mi-agente", {
+      accessToken: process.env.RAYITO_ACCESS_TOKEN ?? "",
+      project,
+    });
+    ```
 
 Un id de sesión que elijas tú (el hilo de un chat) sólo se recuerda dentro del
 proceso que desplegó la flota. Para encontrarlo desde otro proceso en modo
@@ -177,7 +203,14 @@ escalado real. Un `scaling=` o `project=` explícitos ganan a la receta, y
   sale el escalado: `explicit`, `project`, `recipe` o `default`. Con `default`
   (sin proyecto ni receta) `rayito agent status` imprime
   `members: N (escalado desconocido: sin proyecto ni receta)` en vez de un
-  `min 1, max 1` que no describe la flota.
+  `min 1, max 1` que no describe la flota. `status()` (y `rayito agent
+  status`, también con `--json`) vuelve a leer el listado y pregunta
+  (`GET /ping`) a cada VM `RUNNING`, también justo después de `connect()`,
+  hasta 8 a la vez, sin acotarle la vida ni arrancar su servicio. Un VM
+  suspendido sale como `unknown` (sin comprobar), porque preguntarle lo
+  reanudaría; también uno al que no se pudo conectar o que aún no tiene
+  servicio. Uno cuyo `/ping` no responde sale `unavailable`, pero esa
+  pregunta no cuenta para sustituirlo; desde 0.17.1.
 - **Borrado.** `fleet.stop()` y `rayito agent stop <nombre>` borran la receta
   si este proceso la guardó o la leyó; `stop(keep_recipe=True)`
   (`--keep-recipe`) la conserva.
@@ -274,8 +307,22 @@ pasado el plazo, lanza `CapacityException` (`code = "agent_capacity"`;
   `serve.timeout_seconds`. Una flota de tamaño fijo crea sus VMs como
   siempre. Hasta 0.16 la reducción no ocurría: los VMs se creaban sin plazo
   lógico y `rayd` rechazaba el `set_timeout`. Un VM creado así (por 0.16)
-  no se reduce: la flota avisa una vez; termínalo con `stop()` o vuelve a
-  desplegar.
+  no se reduce: si la flota puede crecer, avisa una vez; termínalo con
+  `stop()` o vuelve a desplegar. En una flota de tamaño fijo (o con los
+  límites por defecto) no se avisa, porque ningún VM se reduce; desde 0.17.1.
+  Mientras un VM se termina, la plataforma aún lo lista como
+  `RUNNING` aunque su `rayd` ya no responda: al listar la flota
+  (`AgentFleet.connect()`, `status()`, `refresh_members()`), un VM cuyo
+  `Health` falla o que deja de estar `RUNNING` al sondearlo se trata como un
+  VM que termina (no es miembro ni cuenta para el cupo, y se avisa con su id)
+  en vez de hacer fallar la llamada; desde 0.17.1. Los VMs `RUNNING` se
+  sondean hasta 8 a la vez (`AGENT_FLEET_PROBE_CONCURRENCY`), con los
+  resultados y los avisos en el orden del listado.
+- **Versión de la imagen:** los VMs que crea una flota usan la versión que
+  construyó o reutilizó el despliegue, o la de la receta. Una flota
+  reconectada sin receta (`AgentFleet.connect(nombre, project=...)`) usa la
+  del miembro más reciente, nunca la más reciente de la imagen, que puede
+  ser otro build; desde 0.17.1.
 - **Suspender:** `idle` suspende un VM sin uso y lo reanuda al llamarlo; un VM
   suspendido no cobra cómputo, sólo el almacenamiento de su snapshot.
 - **Reiniciar:** si la app del usuario se cae, el host la relanza con espera
@@ -305,6 +352,13 @@ pasado el plazo, lanza `CapacityException` (`code = "agent_capacity"`;
       terminan VMs que son de un agente: un `Health` sin token lee las etiquetas
       de los `RUNNING`, y si la imagen tiene alguno que no las lleva, no se
       termina ninguno de los suspendidos (no se pueden sondear sin reanudarlos).
+      Si la sonda de algún `RUNNING` falla, o ese VM deja de estar `RUNNING`
+      al sondearlo, tampoco: podría ser ajeno, así que los suspendidos de ese
+      listado cuentan para el cupo pero ni `stop()` ni la reducción los
+      terminan; se avisa con su id y se dejan a su propio plazo y a su
+      política de `idle`. `stop()` termina igual sin error y devuelve cuántos
+      VMs terminó (`rayito agent stop <nombre>` imprime ese número). Los VMs
+      que creó el propio proceso siempre se terminan.
     - **Ejemplo:** `deploy_agent("./mi-agente", options=AgentDeployOptions(scaling=ScalingOptions(max_vms=3)))`.
 
 !!! info "Medido en AWS real"

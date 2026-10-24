@@ -297,8 +297,12 @@ def project_file_text(case: RuntimeCase, template: str) -> str:
     (Hermes sin Bedrock se salta antes, con `unsupported`). `[source]` apunta
     al propio directorio, que lleva el código del caso (`app_fixture`):
     `deploy` reconstruye la imagen desde ahí y, sin código, el punto de
-    entrada no existiría."""
+    entrada no existiría. Con `RAYITO_E2E_AGENT_PROJECT_BASE`, `[image]`
+    lleva también esa `base`, la misma con la que `project_for` construyó la
+    imagen: sin ella, el build de `deploy` pediría `rayito-base-caps`."""
     _, model, secret = provider_for(case)
+    base = os.environ.get(BASE_VAR)
+    base_line = f'base = "{base}"\n' if base else ""
     return (
         'schema = "rayito.agent-project/1"\n'
         f'name = "e2e-{case.id}"\n\n'
@@ -311,7 +315,7 @@ def project_file_text(case: RuntimeCase, template: str) -> str:
         '[agent]\ninstructions = "Answer with one short sentence."\n\n'
         f"[limits]\nmax_steps = {MAX_STEPS}\ntimeout_seconds = {RUN_TIMEOUT_SECONDS}\n\n"
         f"[serve]\ntimeout_seconds = {DEPLOY_TIMEOUT_SECONDS}\nidle_seconds = 0\n\n"
-        f'[image]\ntemplate = "{template}"\n'
+        f'[image]\ntemplate = "{template}"\n{base_line}'
     )
 
 

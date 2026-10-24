@@ -21,6 +21,7 @@ from rayito._agent._deployment_base import (
     HTTP_FORBIDDEN,
     HTTP_OK,
     JSON_CONTENT_TYPE,
+    RESPONSE_CUT_MESSAGE,
     DeploymentStatus,
     EventDecoder,
     ResultBuilder,
@@ -87,6 +88,12 @@ class DeploymentTransport(Protocol):
 
 
 class HttpsResponse:
+    """El cuerpo de una respuesta de `HttpsTransport`. Un cuerpo cortado o
+    mal delimitado (`OSError`, `http.client.HTTPException`) es un
+    `SandboxException`, como en `AsyncHttpsResponse`. `read1` no avisa de un
+    cuerpo con `Content-Length` que acaba antes de tiempo, así que `chunks()`
+    comprueba al final que no falten bytes."""
+
     def __init__(self, response: http.client.HTTPResponse, connection: http.client.HTTPConnection):
         self._response = response
         self._connection = connection
@@ -96,11 +103,19 @@ class HttpsResponse:
         return self._response.status
 
     def read(self) -> bytes:
-        return self._response.read()
+        try:
+            return self._response.read()
+        except (OSError, http.client.HTTPException):
+            raise SandboxException(RESPONSE_CUT_MESSAGE) from None
 
     def chunks(self) -> Iterator[bytes]:
-        while chunk := self._response.read1(STREAM_CHUNK_BYTES):
-            yield chunk
+        try:
+            while chunk := self._response.read1(STREAM_CHUNK_BYTES):
+                yield chunk
+        except (OSError, http.client.HTTPException):
+            raise SandboxException(RESPONSE_CUT_MESSAGE) from None
+        if self._response.length:
+            raise SandboxException(RESPONSE_CUT_MESSAGE)
 
     def close(self) -> None:
         self._connection.close()

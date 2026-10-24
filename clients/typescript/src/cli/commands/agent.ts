@@ -1132,6 +1132,7 @@ export const agentStatusCommand = defineCommand({
         const fleet = await context.agentProjects.connectFleet(
           sandboxId,
           fleetTokenOrUsage(context),
+          { renewGatewayKeys: false },
         );
         const status = await fleet.status();
         if (context.globals.json) {
@@ -1200,7 +1201,9 @@ export const agentStopCommand = defineCommand({
       }
       const sandboxId = context.values.string("sandbox_id") ?? "";
       if (isFleetName(sandboxId)) {
-        const fleet = await context.agentProjects.connectFleet(sandboxId, undefined);
+        const fleet = await context.agentProjects.connectFleet(sandboxId, undefined, {
+          renewGatewayKeys: false,
+        });
         const count = await fleet.stop(
           context.values.flag("keep_recipe") ? { keepRecipe: true } : undefined,
         );

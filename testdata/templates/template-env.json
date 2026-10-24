@@ -1,0 +1,53 @@
+{
+  "description": "El `/etc/rayito/template-env.json` que `Template.build()` hornea con las variables de `set_envs()`/`setEnvs()` (ADR-035): `steps` son los pares en el orden del DSL, `file` los bytes exactos que escriben los dos SDK (JSON con claves ordenadas, sangría de 2 y salto de línea final) y `envs` lo que `rayd` lee de ese fichero. Un template sin `set_envs()` no escribe el fichero.",
+  "cases": [
+    {
+      "name": "a later set_envs wins on a repeated key",
+      "steps": [
+        [
+          "MODE",
+          "dev"
+        ],
+        [
+          "A",
+          "1"
+        ],
+        [
+          "MODE",
+          "prod"
+        ]
+      ],
+      "file": "{\n  \"envs\": {\n    \"A\": \"1\",\n    \"MODE\": \"prod\"\n  },\n  \"version\": \"rayito.template-env/1\"\n}\n",
+      "envs": {
+        "A": "1",
+        "MODE": "prod"
+      }
+    },
+    {
+      "name": "quotes, dollars and non-ascii text stay literal",
+      "steps": [
+        [
+          "GREETING",
+          "hola \"señor\" $HOME \\ fin"
+        ]
+      ],
+      "file": "{\n  \"envs\": {\n    \"GREETING\": \"hola \\\"señor\\\" $HOME \\\\ fin\"\n  },\n  \"version\": \"rayito.template-env/1\"\n}\n",
+      "envs": {
+        "GREETING": "hola \"señor\" $HOME \\ fin"
+      }
+    },
+    {
+      "name": "a template PATH reaches the commands",
+      "steps": [
+        [
+          "PATH",
+          "/opt/tool/bin:/usr/local/bin:/usr/bin:/bin"
+        ]
+      ],
+      "file": "{\n  \"envs\": {\n    \"PATH\": \"/opt/tool/bin:/usr/local/bin:/usr/bin:/bin\"\n  },\n  \"version\": \"rayito.template-env/1\"\n}\n",
+      "envs": {
+        "PATH": "/opt/tool/bin:/usr/local/bin:/usr/bin:/bin"
+      }
+    }
+  ]
+}

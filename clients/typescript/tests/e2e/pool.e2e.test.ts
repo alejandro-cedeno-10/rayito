@@ -2,7 +2,10 @@
  * M7 Track 3 (`m7-suspended-pool`) a través del SDK TypeScript contra AWS
  * real: un pool de `size: 2`, cinco `take()` con plaza lista, cada uno con
  * su primera celda `1+1`, y el drenado. El número de aceptación es el del
- * e2e Python (design D17); este test prueba la paridad del camino.
+ * e2e Python (design D17); este test prueba la paridad del camino con la
+ * misma regla dura que Python: la mediana de `take()` es al menos
+ * `TAKE_TO_CREATE_RATIO` veces más rápida que la de `create()` de la misma
+ * corrida, y ninguna toma pasa de `TAKE_HARD_CAP_S`.
  */
 
 import { mkdtemp, rm } from "node:fs/promises";
@@ -16,9 +19,15 @@ import {
   SandboxNotFoundError,
   SandboxPool,
 } from "../../src/index.js";
-import { e2eEnabled, seconds, useE2E, waitUntil } from "./helpers.js";
+import { createTestSandbox, e2eEnabled, seconds, useE2E, waitUntil } from "./helpers.js";
 
 const TAKES = 5;
+/** Los `create()` de referencia, medidos en la misma corrida y con la misma red. */
+const CREATES = 3;
+/** Q56: 0,77 s frente a 5-6 s, un factor de ≈ 7; la regla deja margen. */
+const TAKE_TO_CREATE_RATIO = 3;
+/** El doble del presupuesto de D17 (1,5 s): una regresión real lo cruza. */
+const TAKE_HARD_CAP_S = 3;
 const POOL_MAX_IDLE_SECONDS = 120;
 const POOL_TIMEOUT_MS = 900_000;
 const READY_BUDGET_MS = 90_000;
@@ -30,6 +39,11 @@ const RECYCLE_BUDGET_MS = 240_000;
 const REPLACEMENT_BUDGET_MS = 60_000;
 const TERMINAL_BUDGET_MS = 60_000;
 const LIVE_STATES = new Set(["PENDING", "RUNNING", "SUSPENDING", "SUSPENDED"]);
+
+function median(values: readonly number[]): number {
+  const sorted = [...values].sort((a, b) => a - b);
+  return sorted[Math.floor(sorted.length / 2)] ?? 0;
+}
 
 describe.skipIf(!e2eEnabled())("m7 pool typescript sdk", () => {
   const context = useE2E();
@@ -119,6 +133,22 @@ describe.skipIf(!e2eEnabled())("m7 pool typescript sdk", () => {
     console.log(
       `\n[m7-pool-ts] take -> primera celda: ${samples.map((s) => s.toFixed(3)).join(", ")} s`,
     );
+    const creates: number[] = [];
+    for (let index = 0; index < CREATES; index += 1) {
+      const started = performance.now();
+      const sandbox = await createTestSandbox(context);
+      try {
+        await sandbox.runCode("1+1", { timeoutMs: CELL_TIMEOUT_MS });
+        creates.push(seconds(started));
+      } finally {
+        await sandbox.kill();
+      }
+    }
+    console.log(
+      `\n[m7-pool-ts] create -> primera celda: ${creates.map((s) => s.toFixed(3)).join(", ")} s`,
+    );
+    expect(median(samples) * TAKE_TO_CREATE_RATIO).toBeLessThan(median(creates));
+    expect(Math.max(...samples)).toBeLessThan(TAKE_HARD_CAP_S);
   });
   test("recycles a slot before the wall", async () => {
     const pool = new SandboxPool(

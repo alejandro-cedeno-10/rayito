@@ -15,10 +15,13 @@
 
 import { describe, expect, test } from "vitest";
 import { Fleet, InvalidArgumentError, Quotas, UsageCost } from "../../src/index.js";
+import { MICROVM_STATES } from "../../src/limits.js";
 import { e2eEnabled, useE2E } from "./helpers.js";
 
 const BILLED_COST_VAR = "RAYITO_E2E_BILLED_COST";
 const TERMINAL_STATE = "TERMINATED";
+/** `TERMINATING|TERMINATED`: un sandbox del filtro por imagen nunca está así. */
+const TERMINAL_STATES = ["TERMINATING", "TERMINATED"];
 const PLANNED_COUNT = 3;
 const LEVELS = ["ok", "warning", "critical"];
 
@@ -50,11 +53,11 @@ describe.runIf(e2eEnabled())("Dashboard read-only services (AWS real)", () => {
     const estimate = await cost.estimate();
     expect(estimate.label).toBe("estimated");
     expect(estimate.totalUsd).toBeGreaterThanOrEqual(0);
-    const live = new Set<string>();
-    for await (const item of e2e.controlPlane.listMicrovms()) {
-      live.add(item.sandboxId);
+    const listed = new Set<string>();
+    for await (const item of e2e.controlPlane.listMicrovms({ states: MICROVM_STATES })) {
+      listed.add(item.sandboxId);
     }
-    expect(estimate.items.every((item) => live.has(item.sandboxId))).toBe(true);
+    expect(estimate.items.every((item) => listed.has(item.sandboxId))).toBe(true);
   });
 
   // Queda como omitido sin RAYITO_E2E_BILLED_COST=1: Cost Explorer cobra por petición.
@@ -84,8 +87,8 @@ describe.runIf(e2eEnabled())("Dashboard read-only services (AWS real)", () => {
     const sandboxes = await fleet.sandboxes();
     expect(sandboxes.every((view) => view.state !== TERMINAL_STATE)).toBe(true);
     const ofTemplate = await fleet.sandboxes({ image: e2e.templateArn });
-    const all = new Set(sandboxes.map((view) => view.sandboxId));
-    expect(ofTemplate.every((view) => all.has(view.sandboxId))).toBe(true);
+    expect(ofTemplate.every((view) => view.template === e2e.templateArn)).toBe(true);
+    expect(ofTemplate.every((view) => !TERMINAL_STATES.includes(view.state))).toBe(true);
 
     const images = await fleet.images();
     expect(images.map((image) => image.imageArn)).toContain(e2e.templateArn);

@@ -172,8 +172,9 @@ def test_doctor_with_launch_and_against_the_fixture(
 
 
 def test_iam_simulation_sees_the_organizations_decision() -> None:
-    """Hecho a medir (design.md): `s3:CreateBucket` sobre el bucket es la sonda
-    de la SCP que lo deniega; la acción no forma parte de la tabla de la CLI."""
+    """Hecho a medir (design.md): la simulación de `s3:CreateBucket` sobre el
+    bucket devuelve la decisión de Organizations; la acción no forma parte de
+    la tabla de la CLI."""
     clients = resolve_session(None, None)
     identity = clients.sts.get_caller_identity()
     source_arn = _checks.policy_source_arn(clients, str(identity["Arn"]))

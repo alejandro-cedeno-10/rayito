@@ -37,12 +37,10 @@ proxy de AWS.
 
     **Sin verificar en AWS real**: crear la distribución y servir tráfico
     por ella (HTTP/1.1, WebSocket, latencia de propagación del
-    `KeyValueStore`, renovación del JWE). La cuenta de pruebas del proyecto
-    deniega `cloudfront:CreateDistribution` con una SCP de la organización
-    (Q141), así que nadie ha abierto todavía una URL de dominio propio
-    desplegada con esta plantilla. El e2e del repositorio
-    (`tests/e2e/test_m15_custom_domain.py`, `custom-domain.e2e.test.ts`)
-    automatiza esa prueba para una cuenta que sí lo permita.
+    `KeyValueStore`, renovación del JWE). Requiere
+    `cloudfront:CreateDistribution` (Q141). El e2e del
+    repositorio (`tests/e2e/test_m15_custom_domain.py`,
+    `custom-domain.e2e.test.ts`) automatiza esa prueba.
 
     Tampoco existe todavía que `Sandbox.create(domain=...)`/`get_host()`
     devuelvan esa URL solos: `domain=` sigue lanzando `UnimplementedError`

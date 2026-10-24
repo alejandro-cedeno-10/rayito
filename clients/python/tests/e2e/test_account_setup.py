@@ -13,8 +13,8 @@ Variables (todas genéricas, nada de la cuenta va en el repositorio):
   (`--artifact`); sin él se descarga la release `rayd-v<versión>`, que no
   existe todavía durante la aceptación de una release.
 - `RAYITO_E2E_SETUP_TAGS` (opcional): etiquetas `K=V` separadas por comas
-  (`--tag`, una por cada una) para las pilas que crea `setup`; útil si una SCP
-  de la organización exige etiquetas al crear recursos. Nunca van en el código.
+  (`--tag`, una por cada una) para las pilas que crea `setup`; útil si la
+  organización exige etiquetas al crear recursos. Nunca van en el código.
 - `RAYITO_E2E_SETUP_CREATE_BUCKET=1` (opcional): activa el test que crea el
   bucket con la pila `rayito-m0-artifacts` (`--bucket rayito-e2e-setup-<hex>`,
   un nombre sin cuenta); se salta si esa pila ya existe en la región.
@@ -72,6 +72,9 @@ BUILD_POLL_SECONDS = 15.0
 STACK_NOT_FOUND_MARKER = "does not exist"
 CREATE_BUCKET_VAR = "RAYITO_E2E_SETUP_CREATE_BUCKET"
 RANDOM_NAME_BYTES = 6
+#: Lo que planea una región ya preparada: los tres pasos se reutilizan y
+#: `capsImage` es `skip` sin `--caps-image` (desde 0.17.0).
+PREPARED_ACTIONS = ["reuse", "reuse", "reuse", "skip"]
 
 
 def setup_region() -> str:
@@ -216,7 +219,7 @@ def test_dry_run_plans_the_creation_and_writes_nothing() -> None:
     assert code == 0, stderr
     # `reuse` si la región tiene el bucket de `cdk bootstrap`, `create` si no tiene ninguno.
     assert actions(document)[0] in {"reuse", "create"}
-    assert actions(document)[1:] == ["create", "publish"]
+    assert actions(document)[1:] == ["create", "publish", "skip"]
     assert document["dryRun"] is True
     assert document["ready"] is False
     assert document["doctor"] is None
@@ -241,7 +244,7 @@ def test_setup_prepares_the_account_and_a_second_run_changes_nothing(
 
     code, document, stderr = run_setup(account.region, budget=SETUP_BUDGET_SECONDS)
     assert code == 0, stderr
-    assert actions(document) == ["reuse", "reuse", "reuse"]
+    assert actions(document) == PREPARED_ACTIONS
     assert document["ready"] is True
     assert document["result"]["artifactUploaded"] is None
     assert len(account.versions()) == versions_after_first_run
@@ -272,7 +275,7 @@ def test_an_interrupted_setup_resumes_without_a_second_build(clean_account: Crea
     assert len(account.versions()) == 1
 
 
-def test_a_prepared_default_region_is_three_reuse_and_no_write(e2e_settings: E2ESettings) -> None:
+def test_a_prepared_default_region_is_reuse_and_no_write(e2e_settings: E2ESettings) -> None:
     if not e2e_settings.region:
         pytest.skip("este e2e necesita AWS_REGION: la región de la cuenta ya preparada")
     account = Account(e2e_settings.region)
@@ -281,7 +284,7 @@ def test_a_prepared_default_region_is_three_reuse_and_no_write(e2e_settings: E2E
         e2e_settings.region, "--dry-run", budget=DRY_RUN_BUDGET_SECONDS
     )
     assert code == 0, stderr
-    assert actions(document) == ["reuse", "reuse", "reuse"]
+    assert actions(document) == PREPARED_ACTIONS
     assert document["ready"] is True
     assert len(account.versions()) == versions_before
 
@@ -319,7 +322,7 @@ def test_setup_creates_the_artifact_bucket_and_a_second_run_reuses_it(
             account.region, "--dry-run", budget=DRY_RUN_BUDGET_SECONDS
         )
         assert code == 0, stderr
-        assert actions(document) == ["reuse", "reuse", "reuse"]
+        assert actions(document) == PREPARED_ACTIONS
     finally:
         provisioner = CloudFormationProvisioner(region=account.region)
         provisioner.delete(ARTIFACT_STACK_NAME)

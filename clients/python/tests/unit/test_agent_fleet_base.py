@@ -28,7 +28,9 @@ from rayito._agent._fleet_base import (
     is_lost,
     lifetime_seconds,
     listed_cap,
+    listed_image_version,
     mark_extras,
+    member_of,
     owned_ids,
     plan_placement,
     pool_config_for,
@@ -263,9 +265,11 @@ def test_a_vm_is_a_member_only_when_the_image_is_not_shared(case: dict[str, Any]
         for item in case["items"]
     ]
 
-    selected = select_members(listing, set(case["owned"]))
+    selected = select_members(listing, set(case["owned"]), set(case.get("unreadable", [])))
 
     assert [item.sandbox_id for item in selected] == case["expected"]
+    if "unproven" in case:
+        assert [item.sandbox_id for item in selected if not item.proven] == case["unproven"]
 
 
 # ---------------------------------------------------------------- lifetime
@@ -371,3 +375,33 @@ def test_the_warm_pool_of_a_fleet_that_can_grow_carries_the_lifetime() -> None:
 
     assert config.max_lifetime == 3660
     assert config.on_timeout == "kill"
+
+
+def test_a_known_member_becomes_proven_when_a_listing_proves_it() -> None:
+    listed = datetime(2026, 10, 16, tzinfo=UTC)
+    known = Member("a", proven=False)
+
+    assert member_of(known, MemberListing("a", "SUSPENDED", listed, proven=False), None) is known
+    assert [known.proven] == [False]
+    member_of(known, MemberListing("a", "SUSPENDED", listed), None)
+    assert [known.proven] == [True]
+    member_of(known, MemberListing("a", "SUSPENDED", listed, proven=False), None)
+    assert [known.proven] == [True]
+    assert (
+        member_of(None, MemberListing("b", "SUSPENDED", listed, proven=False), None).proven is False
+    )
+
+
+def test_the_newest_member_with_a_version_decides_the_listed_version() -> None:
+    listed = [
+        MemberListing("a", "RUNNING", datetime(2026, 10, 16, 1, tzinfo=UTC), template_version="1"),
+        MemberListing("b", "RUNNING", datetime(2026, 10, 16, 3, tzinfo=UTC), template_version="2"),
+        MemberListing("c", "RUNNING", datetime(2026, 10, 16, 5, tzinfo=UTC)),
+    ]
+
+    assert listed_image_version(listed) == "2"
+    unproven = MemberListing(
+        "d", "SUSPENDED", datetime(2026, 10, 16, 7, tzinfo=UTC), proven=False, template_version="9"
+    )
+    assert listed_image_version([*listed, unproven]) == "2"
+    assert listed_image_version([]) is None

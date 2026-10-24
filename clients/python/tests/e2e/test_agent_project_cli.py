@@ -5,8 +5,13 @@ escrito para la imagen ya construida del caso.
 
 Cada runtime hace un `run --stream --json` (los eventos, una línea por evento,
 terminan en `done` con el uso de tokens) y un ciclo `deploy` / `status` /
-`invoke` / `stop`, con el access token en un `--token-file`. Las cabeceras de
-acceso del despliegue no salen por ninguna salida. El espejo en TypeScript está en
+`invoke` / `stop`, con el access token en un `--token-file`. `deploy` va con
+`--no-build`: reutiliza la imagen compartida del caso, ya construida con
+todos sus runtimes, en vez de construir encima una versión con uno solo (que
+sería la más reciente para las demás pruebas). `stop` va por el
+nombre de la flota, así que también borra su receta de Parameter Store
+(`/rayito/agents/<nombre>/recipe`), y la prueba comprueba que no queda. Las
+cabeceras de acceso del despliegue no salen por ninguna salida. El espejo en TypeScript está en
 `clients/typescript/tests/e2e/agent-project-cli.e2e.test.ts`.
 
 Variables y coste: cabecera de `agent_project_support.py`. Un MicroVM de 2 GB
@@ -28,6 +33,8 @@ from typing import Any, Final
 
 import pytest
 
+from rayito._agent._fleet_recipe import recipe_parameter_name
+from rayito._agent._fleet_recipe_aws import default_recipe_store
 from rayito._aws import LambdaMicrovmsControlPlane
 
 from .agent_project_support import (
@@ -101,12 +108,21 @@ def project_dir(case: RuntimeCase, images: dict[str, str], tmp_path: Path) -> Pa
 
 @pytest.fixture
 def deployed() -> Iterator[list[str]]:
-    """Los ids que un test despliega; se paran al terminar, pase lo que pase."""
-    ids: list[str] = []
-    yield ids
-    for sandbox_id in ids:
+    """Las flotas que un test despliega; se paran por su nombre al terminar,
+    pase lo que pase, y eso borra también su receta."""
+    names: list[str] = []
+    yield names
+    for name in names:
         with contextlib.suppress(Exception):
-            rayito("agent", "stop", sandbox_id)
+            rayito("agent", "stop", name)
+
+
+def recipe_left(name: str, region: str) -> bool:
+    """Si la receta de la flota `name` sigue en Parameter Store (la misma
+    lectura que hace `AgentFleet.connect`)."""
+    parameter = recipe_parameter_name(name)
+    assert parameter is not None
+    return default_recipe_store(region, None).load(parameter) is not None
 
 
 @pytest.fixture(params=CASES, ids=lambda case: case.id)
@@ -129,13 +145,20 @@ def test_cli_run_streams_events(case: RuntimeCase, project_dir: Path) -> None:
 
 
 def test_cli_deploy_status_invoke_stop(
-    case: RuntimeCase, project_dir: Path, deployed: list[str]
+    case: RuntimeCase,
+    project_dir: Path,
+    deployed: list[str],
+    e2e_settings: E2ESettings,
+    control_plane: LambdaMicrovmsControlPlane,
 ) -> None:
     token_file = project_dir.parent / TOKEN_FILE_NAME
     token = ("--token-file", str(token_file))
-    deploy = json_of(rayito("--json", "agent", "deploy", "--file", str(project_dir), *token))
+    deploy = json_of(
+        rayito("--json", "agent", "deploy", "--file", str(project_dir), "--no-build", *token)
+    )
+    name = str(deploy["name"])
+    deployed.append(name)
     sandbox_id = str(deploy["sandboxId"])
-    deployed.append(sandbox_id)
     assert str(deploy["url"]).startswith("https://")
     status = json_of(rayito("--json", "agent", "status", sandbox_id, *token))
     assert status["ready"] is True
@@ -143,6 +166,7 @@ def test_cli_deploy_status_invoke_stop(
     assert str(reply["text"]).strip()
     for output in (json.dumps(deploy), json.dumps(status), json.dumps(reply)):
         assert "authorization" not in output.lower()
-    stopped = json_of(rayito("--json", "agent", "stop", sandbox_id))
-    assert stopped["stopped"] is True
-    deployed.remove(sandbox_id)
+    stopped = json_of(rayito("--json", "agent", "stop", name))
+    assert stopped == {"name": name, "stopped": len(deploy["sandboxIds"])}
+    deployed.remove(name)
+    assert not recipe_left(name, e2e_settings.region or control_plane.region)

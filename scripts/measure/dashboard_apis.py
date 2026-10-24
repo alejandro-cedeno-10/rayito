@@ -76,7 +76,7 @@ RATE_STEPS: Final = (1, 2, 5, 10, 20, 50)
 STEP_SECONDS: Final = 5
 #: Parte de las llamadas de un paso que debe salir throttleada para dar el paso
 #: por saturado. Medido en AWS real (AWS_API_NOTES.md §30): a ritmos bajos
-#: aparece algún throttling suelto (cuenta compartida, cubo de fichas) que no
+#: aparece algún throttling suelto (otros llamantes, cubo de fichas) que no
 #: es el límite sostenido; el límite se ve cuando se rechaza una fracción
 #: apreciable de las llamadas.
 SATURATED_SHARE: Final = 0.1

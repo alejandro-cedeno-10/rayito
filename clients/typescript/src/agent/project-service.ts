@@ -420,6 +420,14 @@ export class ProjectService {
     return this.#imageVersion;
   }
 
+  /** Fija `version` si el servicio no tenía ninguna: una flota reconectada
+   * sin receta crea sus VMs nuevos con la versión de los que ya tiene, nunca
+   * con la más reciente de la imagen (que puede ser otro build). Una versión
+   * ya fijada no cambia. */
+  adoptImageVersion(version: string): void {
+    this.#imageVersion ??= version;
+  }
+
   /** Construye la imagen del proyecto con `AgentTemplate.build()`;
    * `baseVersion` fija la versión de la base (`undefined`: la más reciente).
    * La versión que el build crea o reutiliza queda fijada para los sandboxes

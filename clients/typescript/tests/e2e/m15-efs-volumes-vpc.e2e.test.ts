@@ -36,6 +36,21 @@ const SUBNET_IDS_VAR = "RAYITO_E2E_SUBNET_IDS";
 const NFS_PORT = 2049;
 const E2E_TAG_KEY = "rayito:e2e";
 const STACK_NAME_PREFIX = "rayito-efs-e2e-";
+/** La etiqueta que CloudFormation pone a cada recurso que crea una pila con el
+ * nombre de la pila: así se reconocen los grupos de otras corridas de este e2e
+ * en la misma VPC, que nacen y se borran mientras corre ésta. */
+const STACK_NAME_TAG_KEY = "aws:cloudformation:stack-name";
+
+/** Un grupo de una pila de este e2e (de esta corrida o de otra en paralelo):
+ * sus altas y bajas no son cambios de la VPC del llamante. */
+function e2eRunGroup(group: {
+  readonly Tags?: readonly { Key?: string | undefined; Value?: string | undefined }[] | undefined;
+}): boolean {
+  const tags = new Map((group.Tags ?? []).map((tag) => [tag.Key ?? "", tag.Value ?? ""]));
+  return (
+    tags.has(E2E_TAG_KEY) || (tags.get(STACK_NAME_TAG_KEY) ?? "").startsWith(STACK_NAME_PREFIX)
+  );
+}
 const NAME_SUFFIX_LENGTH = 8;
 const FILE_SYSTEM_GONE_BUDGET_MS = 120_000;
 const FILE_SYSTEM_GONE_POLL_MS = 2_000;
@@ -73,9 +88,10 @@ interface NetworkSnapshot {
 
 /**
  * Lo que la pila no debe tocar nunca: las tablas de rutas, las NACLs y los
- * grupos de seguridad de la VPC. Con `groupsIn`, sólo esos grupos (los que ya
- * existían antes del despliegue): uno creado entretanto por la pila, o por otro
- * despliegue en la misma VPC, no cuenta como cambio.
+ * grupos de seguridad de la VPC, sin los grupos de las pilas de este e2e
+ * (`e2eRunGroup`), que otra corrida puede crear o borrar mientras tanto. Con
+ * `groupsIn`, sólo esos grupos (los que ya existían antes del despliegue): uno
+ * creado entretanto no cuenta como cambio.
  */
 async function networkSnapshot(
   ec2: EC2Client,
@@ -112,7 +128,10 @@ async function networkSnapshot(
     ),
     groups: byId(
       (groups ?? [])
-        .filter((group) => groupsIn === undefined || groupsIn.has(group.GroupId ?? ""))
+        .filter(
+          (group) =>
+            !e2eRunGroup(group) && (groupsIn === undefined || groupsIn.has(group.GroupId ?? "")),
+        )
         .map(
           (group) =>
             [
