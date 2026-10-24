@@ -19,7 +19,7 @@ import threading
 import time
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Final, Protocol
+from typing import TYPE_CHECKING, Any, Final, Protocol, TypeVar
 
 import grpc
 import grpc.aio
@@ -46,6 +46,8 @@ from rayito.exceptions import (
 
 module_logger = logging.getLogger("rayito.transport")
 
+T = TypeVar("T")
+
 GENERIC_RPC_FEATURE: Final = "esta llamada"
 UNIMPLEMENTED_IMAGE_HINT: Final = "publica una imagen con una versión actual de rayd"
 
@@ -63,6 +65,18 @@ STREAM_RESET_MARKERS: Final = (
     "Connection reset",
     "Stream removed",
 )
+#: Lo que grpc-core deja en `details`/`debug_error_string` cuando la conexión
+#: HTTP/2 no llegó a abrirse (el proxy no mandó su `SETTINGS`, o no hubo
+#: conexión): la petición no salió del cliente, así que repetirla no puede
+#: ejecutar nada dos veces. Visto en AWS real justo tras `create()` y
+#: `resume()`, en el primer RPC por un canal nuevo.
+CONNECTION_NOT_ESTABLISHED_MARKERS: Final = (
+    "before receiving SETTINGS frame",
+    "failed to connect to all addresses",
+)
+#: Las esperas entre los reintentos de una petición cuya conexión no llegó a
+#: abrirse: tres reintentos, menos de 2 s en total.
+CONNECT_RETRY_DELAYS_SECONDS: Final = (0.25, 0.5, 1.0)
 PHASE_GATE_DETAILS: Final = ("suspending", "terminating")
 DISK_FULL_DETAILS: Final = ("disk_reserve", "disk_full")
 KERNEL_GATE_PREFIX: Final = "kernel not ready"
@@ -555,6 +569,49 @@ def is_proxy_forbidden(exc: grpc.RpcError) -> bool:
 def is_not_yet_reachable(exc: grpc.RpcError) -> bool:
     """502/503 del proxy y timeouts del propio sondeo cuentan como "aún no"."""
     return rpc_status(exc) in (grpc.StatusCode.UNAVAILABLE, grpc.StatusCode.DEADLINE_EXCEEDED)
+
+
+def is_connection_not_established(exc: grpc.RpcError) -> bool:
+    """`UNAVAILABLE` porque la conexión HTTP/2 nunca se abrió
+    (`CONNECTION_NOT_ESTABLISHED_MARKERS`): la petición no llegó a
+    enviarse."""
+    if rpc_status(exc) is not grpc.StatusCode.UNAVAILABLE:
+        return False
+    text = rpc_details(exc) + rpc_debug_string(exc)
+    return any(marker in text for marker in CONNECTION_NOT_ESTABLISHED_MARKERS)
+
+
+def retry_unestablished(call: Callable[[], T], sleep: Callable[[float], None] = time.sleep) -> T:
+    """`call()` con hasta `len(CONNECT_RETRY_DELAYS_SECONDS)` reintentos sólo
+    cuando la conexión no llegó a abrirse (`is_connection_not_established`).
+    Vale para cualquier RPC, también los que no son idempotentes, porque la
+    petición nunca salió del cliente; cualquier otro error se propaga tal
+    cual al primer intento."""
+    for delay in CONNECT_RETRY_DELAYS_SECONDS:
+        try:
+            return call()
+        except grpc.RpcError as exc:
+            if not is_connection_not_established(exc):
+                raise
+        module_logger.info("la conexión del sandbox no llegó a abrirse; reintento en %.2f s", delay)
+        sleep(delay)
+    return call()
+
+
+async def retry_unestablished_async(
+    call: Callable[[], Awaitable[T]],
+    sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+) -> T:
+    """`retry_unestablished` para el canal asíncrono."""
+    for delay in CONNECT_RETRY_DELAYS_SECONDS:
+        try:
+            return await call()
+        except grpc.RpcError as exc:
+            if not is_connection_not_established(exc):
+                raise
+        module_logger.info("la conexión del sandbox no llegó a abrirse; reintento en %.2f s", delay)
+        await sleep(delay)
+    return await call()
 
 
 def is_phase_gate(exc: grpc.RpcError) -> bool:

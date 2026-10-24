@@ -48,6 +48,53 @@ export const H2_CLOSED_PREFIX = "http/2 stream closed";
 export const MISSING_STATUS_MESSAGE = "protocol error: missing status";
 export const DISK_FULL_DETAILS: ReadonlySet<string> = new Set(["disk_reserve", "disk_full"]);
 const RESET_NODE_CODES: ReadonlySet<string> = new Set(["ECONNRESET", "EPIPE"]);
+/** La llamada de sistema de Node que falla cuando la conexión con el proxy no
+ * llegó a abrirse (`ECONNREFUSED`, `ETIMEDOUT`... con `syscall: "connect"`). */
+const CONNECT_SYSCALL = "connect";
+/** Las esperas entre los reintentos de una petición cuya conexión no llegó a
+ * abrirse: tres reintentos, menos de 2 s en total. Las mismas que
+ * `CONNECT_RETRY_DELAYS_SECONDS` de Python. */
+export const CONNECT_RETRY_DELAYS_MS: readonly number[] = [250, 500, 1000];
+
+/** `Unavailable` porque la conexión con el proxy nunca se abrió (un error de
+ * Node con `syscall: "connect"` en la cadena de causas): la petición no llegó
+ * a enviarse. Visto en AWS real justo tras `create()` y `resume()`, en el
+ * primer RPC por una conexión nueva. */
+export function isConnectionNotEstablished(error: unknown): boolean {
+  const connect = asConnectError(error);
+  if (connect === undefined || connect.code !== Code.Unavailable) {
+    return false;
+  }
+  let current: unknown = connect.cause;
+  for (let depth = 0; depth < 8 && typeof current === "object" && current !== null; depth += 1) {
+    if ((current as { syscall?: unknown }).syscall === CONNECT_SYSCALL) {
+      return true;
+    }
+    current = (current as { cause?: unknown }).cause;
+  }
+  return false;
+}
+
+/** `call()` con hasta `CONNECT_RETRY_DELAYS_MS.length` reintentos sólo cuando
+ * la conexión no llegó a abrirse (`isConnectionNotEstablished`). Vale para
+ * cualquier RPC, también los que no son idempotentes, porque la petición nunca
+ * salió del cliente; cualquier otro error se propaga al primer intento. */
+export async function retryUnestablished<T>(
+  call: () => Promise<T>,
+  sleep: (ms: number) => Promise<void> = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+): Promise<T> {
+  for (const delay of CONNECT_RETRY_DELAYS_MS) {
+    try {
+      return await call();
+    } catch (error) {
+      if (!isConnectionNotEstablished(error)) {
+        throw error;
+      }
+    }
+    await sleep(delay);
+  }
+  return call();
+}
 
 export function asConnectError(error: unknown): ConnectError | undefined {
   return error instanceof ConnectError ? error : undefined;
