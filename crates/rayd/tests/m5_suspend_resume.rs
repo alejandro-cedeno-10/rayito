@@ -77,13 +77,13 @@ const BUDGET: Duration = Duration::from_secs(10);
 /// A kernel probe well past `RESUME_PROBE_BUDGET`: an answer before it is the
 /// cap, not the probe ending on its own.
 const SLOW_PROBE_DELAY: Duration = Duration::from_secs(20);
-/// What tells a `/suspend` that closed every stream at once from one that
-/// waited for the gate: half of `SUSPEND_GATE_TIMEOUT`, a safety net far
-/// from both; the assertions on each stream's end are the real check.
 /// The safety net of `timeouts_are_re_armed_on_the_running_clock`: about 1 s
 /// of its timeout is left at `/resume`, and half of the `sleep 10` it cuts is
 /// the bound; the `timeout` status and the interrupt are the real check.
 const RE_ARMED_SAFETY_NET: Duration = Duration::from_secs(5);
+/// What tells a `/suspend` that closed every stream at once from one that
+/// waited for the gate: half of `SUSPEND_GATE_TIMEOUT`, a safety net far
+/// from both; the assertions on each stream's end are the real check.
 const SUSPEND_HOOK_SAFETY_NET: Duration = Duration::from_secs(SUSPEND_GATE_TIMEOUT.as_secs() / 2);
 
 struct Options {
