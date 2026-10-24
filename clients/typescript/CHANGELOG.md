@@ -162,8 +162,8 @@ versionado [SemVer](https://semver.org/lang/es/).
   `RAYITO_E2E_TEMPLATE_BUCKET`; `custom-domain.e2e.test.ts` y
   `dashboard-readonly.e2e.test.ts` ya no dependen del orden de la propagación
   del edge ni de los sandboxes de otras corridas en paralelo. El de custom-domain se
-  salta («CreateDistribution denied by policy») si una política de la cuenta
-  deniega crear la distribución; el de EFS en una VPC deja fuera de su
+  salta («CreateDistribution not permitted in this environment») si la pila
+  no puede crear la distribución; el de EFS en una VPC deja fuera de su
   comparación los grupos de otras corridas del mismo e2e; y el del pool juzga
   la latencia de `take()` frente al `create()` de la misma corrida (la mediana
   al menos tres veces más rápida y un tope de 3 s), e informa el presupuesto
@@ -1369,8 +1369,8 @@ versionado [SemVer](https://semver.org/lang/es/).
   llega en un cambio posterior. **Experimental** porque no se ha verificado
   de punta a punta en AWS real: la Function compila y enruta en el runtime
   real (`TestFunction`), y la pila crea el KeyValueStore y la Function, pero
-  la cuenta de pruebas deniega `cloudfront:CreateDistribution` por una SCP,
-  así que nunca se ha servido tráfico por una distribución desplegada con
+  la distribución no se llegó a crear en el entorno de aceptación, así que
+  nunca se ha servido tráfico por una distribución desplegada con
   esta plantilla (`AWS_API_NOTES.md` Q121, Q140, Q141). La API puede cambiar
   en una minor.
 - `rayito-base-caps-efs` (y sus sufijos de tamaño) cuenta como variante caps

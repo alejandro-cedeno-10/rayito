@@ -745,8 +745,8 @@ del SDK que importa y la página, copiados tal cual por
 `scripts/gen_stack_assets.py` (cada `__init__.py` del SDK se sustituye por un
 resguardo, para no arrastrar gRPC ni la CLI) y el modelo de `lambda-microvms`
 bajo `models/`, igual que `events-webhooks`. No usa CloudFront ni crea buckets
-(la cuenta de pruebas lo deniega); las etiquetas obligatorias de la
-organización se pasan con `--tag`. Tests: `infra/lambdas/dashboard/tests/` y
+(hay organizaciones que no los permiten); si tu organización exige
+etiquetas, se pasan con `--tag`. Tests: `infra/lambdas/dashboard/tests/` y
 `scripts/tests/test_dashboard_template.py`; `make infra-lint` la incluye.
 
 ## Panel de gestión, fase 3 (`dashboard-cloudwatch.yaml`, `dashboard-read-role.yaml`, `quota-alerts.yaml`, ADR-026)

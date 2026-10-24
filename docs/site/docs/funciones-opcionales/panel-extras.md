@@ -400,7 +400,7 @@ tema SNS no se cifra: el mensaje no lleva datos sensibles.
 | Identidad del panel local con `--account` | `sts:AssumeRole` sobre esos roles | tu política |
 
 Ninguna de las tres pilas crea CloudFront ni buckets, y la de avisos funciona
-con las restricciones de una cuenta de pruebas (la Lambda la crea
+aunque la organización no permita crear Lambdas directamente (la Lambda la crea
 CloudFormation).
 
 ## Ver también

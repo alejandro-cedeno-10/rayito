@@ -33,10 +33,10 @@
  * espera hasta que escucha y el eco de WebSocket atiende varias conexiones,
  * así que un upgrade que cae en un servidor sin la ruta se reintenta.
  *
- * **Sin permiso para crear la distribución.** Si una política de la cuenta
- * deniega `cloudfront:CreateDistribution`, la pila falla en el recurso
- * `Distribution` con un `AccessDenied` (`DescribeStackEvents`): cada test se
- * salta con «CreateDistribution denied by policy» en vez de fallar.
+ * **Sin permiso para crear la distribución.** Si la pila no puede crear la
+ * distribución, falla en el recurso `Distribution` con un `AccessDenied` sobre
+ * `cloudfront:CreateDistribution` (`DescribeStackEvents`): cada test se salta
+ * con «CreateDistribution not permitted in this environment» en vez de fallar.
  *
  * **Limpieza.** `afterAll` desregistra cada ruta, borra la pila (aunque el
  * `deploy()` fallara a medias) y comprueba que `status()` ya no la ve.
@@ -110,14 +110,14 @@ const HTTP_FORBIDDEN = 403;
 const HTTP_NOT_FOUND = 404;
 
 /** El recurso de `infra/custom-domain.yaml` que crea la distribución, y lo que
- * deja CloudFormation en `ResourceStatusReason` cuando una política deniega
- * `cloudfront:CreateDistribution`. */
+ * deja CloudFormation en `ResourceStatusReason` cuando la pila no puede llamar
+ * a `cloudfront:CreateDistribution`. */
 const DISTRIBUTION_LOGICAL_ID = "Distribution";
 const CREATE_FAILED = "CREATE_FAILED";
 const ACCESS_DENIED_MARKERS = ["AccessDenied", "not authorized"];
-const DISTRIBUTION_DENIED_REASON = "CreateDistribution denied by policy";
+const DISTRIBUTION_DENIED_REASON = "CreateDistribution not permitted in this environment";
 
-/** Si la pila falló porque una política deniega crear la distribución
+/** Si la pila falló porque no pudo crear la distribución (`AccessDenied`)
  * (`DescribeStackEvents`, `AWS_API_NOTES.md` §21). */
 async function distributionDenied(region: string | undefined, stackName: string): Promise<boolean> {
   const client = new CloudFormationClient(region === undefined ? {} : { region });

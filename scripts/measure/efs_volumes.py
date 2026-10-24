@@ -23,7 +23,7 @@ Subcommands:
 to use, given only by `--vpc-id`/`--subnet-ids` or the environment
 (`RAYITO_E2E_VPC_ID`, `RAYITO_E2E_SUBNET_IDS`, comma-separated): it never
 creates, modifies, records or deletes that VPC or its subnets (many
-accounts cannot create VPCs at all — an organization SCP can deny
+accounts cannot create VPCs at all — an organization policy can deny
 `ec2:CreateVpc`: AWS_API_NOTES.md §16 Q124). It goes through the public
 `rayito.EfsVolumes` facade: `check()` first (read-only; a `FAIL` stops
 before anything is created), then `deploy()` of the already-reviewed

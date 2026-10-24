@@ -399,7 +399,7 @@ SNS topic is not encrypted: the message carries no sensitive data.
 | Local dashboard identity with `--account` | `sts:AssumeRole` on those roles | your policy |
 
 None of the three stacks creates CloudFront or buckets, and the alerts one works
-under a test account's restrictions (the Lambda is created by
+even if the organization does not allow creating Lambdas directly (the Lambda is created by
 CloudFormation).
 
 ## See also { #ver-tambien }

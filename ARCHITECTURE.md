@@ -2009,8 +2009,8 @@ execution role, not by sandbox (same limitation as S3 persistence's T15):
 any sandbox with that role's credentials can mount any access point the
 role is scoped to. Threat T21 (`SECURITY.md`) covers the mount path.
 
-**Existing VPC (`EfsVolumes`).** Most accounts cannot create a VPC (an
-organization SCP denied `ec2:CreateVpc` in the test account, Q124), so the
+**Existing VPC (`EfsVolumes`).** Many accounts cannot create a VPC (an
+organization policy may deny `ec2:CreateVpc`, Q124), so the
 stack deploys into an existing one: `SubnetIds` (1–3, one mount target per
 AZ) and only new resources — never the VPC, its subnets, routes, NACLs or
 rules on existing security groups. `EfsVolumes.check()` is a pure
