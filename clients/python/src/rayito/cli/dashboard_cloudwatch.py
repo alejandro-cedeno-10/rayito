@@ -77,8 +77,8 @@ def cloudwatch_command(
         typer.Option(
             "--otlp",
             help="Añade CPU, memoria y disco de las métricas OTLP de rayd (telemetry=), con "
-            "PromQL (las consultas desde la consola no se facturan). No verificado en AWS "
-            "real todavía.",
+            "PromQL (las consultas desde la consola no se facturan). Consultas PromQL "
+            "verificadas en AWS real.",
         ),
     ] = False,
     quota: Annotated[
