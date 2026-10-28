@@ -206,3 +206,4 @@ diverjan, y una release que suba un mínimo añade la fila en los dos sitios.
 | `0.15` | `0.15.0` | 0.15: rayito setup (preparar una cuenta en un comando) y el despliegue de agentes en Amazon Bedrock AgentCore Runtime (--target agentcore) se validan con el rayd del tag rayd-v0.15.0 |
 | `0.16` | `0.16.0` | 0.16: el despliegue agnóstico de agentes (modelo externo opcional, entrada estructurada y --graph, secretos como variables de entorno y el protocolo langgraph-api) se valida con el rayd del tag rayd-v0.16.0 |
 | `0.17` | `0.17.0` | 0.17: la receta de flota (connect por nombre), el scale-in real de las VMs extra y la renovación de claves sólo a petición explícita se validan con el rayd del tag rayd-v0.17.0 |
+| `0.18` | `0.17.0` | 0.18: domain deploy --tag y el motivo de un despliegue que termina en rollback son de la CLI; el rayd no cambia y basta el del tag rayd-v0.17.0 |
