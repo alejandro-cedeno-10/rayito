@@ -26,6 +26,8 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
   salida no cambian. Un `CreateStack`/`UpdateStack` rechazado, o una espera que
   termina en otro estado, no imprimen motivo. Sin el permiso opcional
   `cloudformation:DescribeStackEvents` no se imprime nada.
+- La ayuda de `rayito dashboard cloudwatch --otlp` ya no dice que no está
+  verificado en AWS real: sus consultas PromQL lo están (Q167).
 
 ### Pruebas
 
