@@ -6,6 +6,11 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
 
 ## [Unreleased]
 
+### Corregido
+
+- La ayuda de `rayito dashboard cloudwatch --otlp` ya no dice que no está
+  verificado en AWS real: sus consultas PromQL lo están (Q167).
+
 ## [0.17.1] - 2026-10-24
 
 ### Corregido

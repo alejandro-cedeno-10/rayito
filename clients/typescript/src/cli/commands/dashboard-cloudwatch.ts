@@ -53,7 +53,7 @@ export const cloudwatchCommand = defineCommand({
     flag(["--otlp"], {
       help:
         "Añade CPU, memoria y disco de las métricas OTLP de rayd (telemetry=), con PromQL " +
-        "(las consultas desde la consola no se facturan). No verificado en AWS real todavía.",
+        "(las consultas desde la consola no se facturan). Consultas PromQL verificadas en AWS real.",
     }),
     flag(["--quota"], {
       help:
