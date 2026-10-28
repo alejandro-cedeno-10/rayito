@@ -59,8 +59,23 @@ export interface CaseWorld {
   readonly logs?: { streams?: string[]; events?: Record<string, JsonList> };
   readonly stacks?: Record<
     string,
-    { state: string; outputs?: Record<string, string>; parameters?: Record<string, string> }
+    {
+      state: string;
+      outputs?: Record<string, string>;
+      parameters?: Record<string, string>;
+      /** Los eventos de `DescribeStackEvents`, del más nuevo al más antiguo. */
+      events?: Array<{
+        logicalResourceId: string;
+        resourceStatus: string;
+        resourceStatusReason?: string;
+      }>;
+    }
   >;
+  /**
+   * Cómo falla el despliegue: `state` deja la espera de la pila en ese estado
+   * terminal; `call` rechaza `CreateStack`/`UpdateStack` (sin estado).
+   */
+  readonly deployFailure?: { state?: string; call?: boolean };
 }
 
 export function imageArn(name: string): string {
@@ -271,7 +286,17 @@ export function buildWorld(world: CaseWorld): BuiltWorld {
       outputs: stack.outputs ?? {},
       parameters: stack.parameters ?? {},
     });
+    provisioner.events.set(
+      name,
+      (stack.events ?? []).map((event) => ({
+        logicalResourceId: event.logicalResourceId,
+        resourceStatus: event.resourceStatus,
+        resourceStatusReason: event.resourceStatusReason,
+      })),
+    );
   }
+  provisioner.failWaitState = world.deployFailure?.state;
+  provisioner.failCall = world.deployFailure?.call ?? false;
   const images = new CaseImages(world);
   const services: CliServices = {
     region: REGION,

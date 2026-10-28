@@ -11,10 +11,12 @@ from typing import Any
 import pytest
 from typer.testing import CliRunner
 
+from rayito._stacks._model import StackEvent
 from rayito._stacks._service import OptionalStacks
 from rayito.cli import stack as stack_cli
 from rayito.cli._session import Clients
 from rayito.cli.app import app
+from rayito.exceptions import StackException
 
 from ..fake_stacks import FakeStackProvisioner
 
@@ -140,3 +142,45 @@ def test_events_subapp_left_the_pending_stub_in_m15_events_webhooks(runner: CliR
     assert result.exit_code == 0, result.output
     assert "m15-events-webhooks" not in result.output
     assert "webhook" in result.output
+
+
+def test_stack_deploy_rollback_prints_the_reason_and_still_fails(
+    runner: CliRunner, clients: Clients, fake_provisioner: FakeStackProvisioner
+) -> None:
+    fake_provisioner.fail_wait_state = "ROLLBACK_COMPLETE"
+    fake_provisioner.events["rayito-metadata-index"] = [
+        StackEvent("Table", "CREATE_FAILED", "synthetic reason"),
+    ]
+    result = runner.invoke(app, ["stack", "deploy", "metadata-index", "--yes"], obj=clients)
+    assert result.exit_code == 1
+    assert "  motivo: Table (CREATE_FAILED): synthetic reason" in result.stderr
+    assert "motivo" not in result.stdout
+
+
+def test_stack_deploy_reading_the_reason_never_hides_the_original_error(
+    runner: CliRunner,
+    clients: Clients,
+    fake_provisioner: FakeStackProvisioner,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_provisioner.fail_wait_state = "ROLLBACK_COMPLETE"
+
+    def denied(stack_name: str) -> str | None:
+        raise StackException("lectura rechazada", code="failed")
+
+    monkeypatch.setattr(fake_provisioner, "failure_reason", denied)
+    result = runner.invoke(app, ["stack", "deploy", "metadata-index", "--yes"], obj=clients)
+    assert result.exit_code == 1
+    assert "terminó en ROLLBACK_COMPLETE" in result.stderr
+    assert "lectura rechazada" not in result.stderr
+    assert "motivo" not in result.stderr
+
+
+def test_stack_deploy_rejected_call_prints_no_reason(
+    runner: CliRunner, clients: Clients, fake_provisioner: FakeStackProvisioner
+) -> None:
+    fake_provisioner.fail_call = True
+    result = runner.invoke(app, ["stack", "deploy", "metadata-index", "--yes"], obj=clients)
+    assert result.exit_code == 1
+    assert "motivo" not in result.stderr
+    assert all(call[0] != "failure_reason" for call in fake_provisioner.calls)

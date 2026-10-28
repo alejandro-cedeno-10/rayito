@@ -55,6 +55,8 @@ SANDBOX_TIMEOUT_SECONDS = 1800
 CREDENTIAL_PROBE_UPTIME_SECONDS = 3600
 #: Margen sobre la sonda de uptime: el sandbox debe vivir más que ella.
 CREDENTIAL_PROBE_MARGIN_SECONDS = 600
+#: Cada cuánto se mira el `uptime_ms` mientras se espera la hora de uptime de la sonda.
+HEALTH_POLL_SECONDS = 60
 SEED_SCRIPT = (
     "mkdir -p /home/user/data /home/user/proj/src /home/user/.cache/pip /home/user/skipme "
     f"&& head -c {BLOB_BYTES} /dev/urandom > /home/user/data/blob.bin "
@@ -359,7 +361,7 @@ def test_credentials_after_55_minutes(
     )
     try:
         while sandbox.get_health().uptime_ms < CREDENTIAL_PROBE_UPTIME_SECONDS * 1000:
-            time.sleep(60)
+            time.sleep(HEALTH_POLL_SECONDS)
         try:
             result = sandbox.checkpoint_files()
             report(

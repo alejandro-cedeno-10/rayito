@@ -1,0 +1,74 @@
+{
+  "description": "Vectores compartidos por Python y TypeScript de first_failed_resource / describe_failed_resource (eventos de DescribeStackEvents, del más nuevo al más antiguo; motivos sintéticos).",
+  "cases": [
+    {
+      "name": "returns the earliest failed resource, not the cancellations after it",
+      "stackName": "rayito-demo",
+      "events": [
+        {"logicalResourceId": "rayito-demo", "resourceStatus": "ROLLBACK_COMPLETE", "resourceStatusReason": null},
+        {"logicalResourceId": "Table", "resourceStatus": "CREATE_FAILED", "resourceStatusReason": "Resource creation cancelled"},
+        {"logicalResourceId": "Distribution", "resourceStatus": "CREATE_FAILED", "resourceStatusReason": "Resource handler returned message: \"denied\" (arn:aws:iam::123456789012:role/demo)"},
+        {"logicalResourceId": "Distribution", "resourceStatus": "CREATE_IN_PROGRESS", "resourceStatusReason": null},
+        {"logicalResourceId": "rayito-demo", "resourceStatus": "CREATE_IN_PROGRESS", "resourceStatusReason": "User Initiated"}
+      ],
+      "expected": {
+        "logicalResourceId": "Distribution",
+        "resourceStatus": "CREATE_FAILED",
+        "resourceStatusReason": "Resource handler returned message: \"denied\" (arn:aws:iam::123456789012:role/demo)"
+      },
+      "expectedText": "Distribution (CREATE_FAILED): Resource handler returned message: \"denied\" (arn:aws:iam::123456789012:role/demo)"
+    },
+    {
+      "name": "ignores failures of an earlier operation",
+      "stackName": "rayito-demo",
+      "events": [
+        {"logicalResourceId": "rayito-demo", "resourceStatus": "UPDATE_ROLLBACK_COMPLETE", "resourceStatusReason": null},
+        {"logicalResourceId": "Queue", "resourceStatus": "UPDATE_FAILED", "resourceStatusReason": "Invalid parameter"},
+        {"logicalResourceId": "rayito-demo", "resourceStatus": "UPDATE_IN_PROGRESS", "resourceStatusReason": "User Initiated"},
+        {"logicalResourceId": "Table", "resourceStatus": "CREATE_FAILED", "resourceStatusReason": "Old failure"},
+        {"logicalResourceId": "rayito-demo", "resourceStatus": "CREATE_IN_PROGRESS", "resourceStatusReason": "User Initiated"}
+      ],
+      "expected": {
+        "logicalResourceId": "Queue",
+        "resourceStatus": "UPDATE_FAILED",
+        "resourceStatusReason": "Invalid parameter"
+      },
+      "expectedText": "Queue (UPDATE_FAILED): Invalid parameter"
+    },
+    {
+      "name": "returns nothing when only the stack's own events exist",
+      "stackName": "rayito-demo",
+      "events": [
+        {"logicalResourceId": "rayito-demo", "resourceStatus": "ROLLBACK_COMPLETE", "resourceStatusReason": null},
+        {"logicalResourceId": "rayito-demo", "resourceStatus": "CREATE_IN_PROGRESS", "resourceStatusReason": "User Initiated"}
+      ],
+      "expected": null,
+      "expectedText": null
+    },
+    {
+      "name": "returns nothing when the latest operation has no failed resource",
+      "stackName": "rayito-demo",
+      "events": [
+        {"logicalResourceId": "rayito-demo", "resourceStatus": "UPDATE_COMPLETE", "resourceStatusReason": null},
+        {"logicalResourceId": "rayito-demo", "resourceStatus": "UPDATE_IN_PROGRESS", "resourceStatusReason": "User Initiated"},
+        {"logicalResourceId": "Table", "resourceStatus": "CREATE_FAILED", "resourceStatusReason": "Old failure"}
+      ],
+      "expected": null,
+      "expectedText": null
+    },
+    {
+      "name": "handles missing fields",
+      "stackName": "rayito-demo",
+      "events": [
+        {"logicalResourceId": "Bucket", "resourceStatus": "CREATE_FAILED", "resourceStatusReason": null},
+        {"logicalResourceId": null, "resourceStatus": null, "resourceStatusReason": null}
+      ],
+      "expected": {
+        "logicalResourceId": "Bucket",
+        "resourceStatus": "CREATE_FAILED",
+        "resourceStatusReason": null
+      },
+      "expectedText": "Bucket (CREATE_FAILED): "
+    }
+  ]
+}

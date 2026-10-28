@@ -21,6 +21,35 @@ export const FIXED_TAG_KEYS: readonly string[] = [
 ];
 export const ROLLBACK_COMPLETE = "ROLLBACK_COMPLETE";
 
+/**
+ * Los estados terminales en los que un `deploy` fallido tiene un recurso
+ * causante que explicar (`failureReason`). Otros fallos terminales
+ * (`UPDATE_ROLLBACK_FAILED`, `DELETE_FAILED`) no se explican: el motivo podría
+ * venir de una operación anterior. Fuente: los valores de `StackStatus` de
+ * https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_Stack.html
+ * (consultada 2026-10-27).
+ */
+export const EXPLAINABLE_ROLLBACK_STATES: ReadonlySet<string> = new Set([
+  "ROLLBACK_COMPLETE",
+  "ROLLBACK_FAILED",
+  "UPDATE_ROLLBACK_COMPLETE",
+]);
+/**
+ * Estados de un recurso que marcan su fallo. Fuente: el `enum`
+ * `ResourceStatus` de
+ * https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_StackEvent.html
+ * (consultada 2026-10-27).
+ */
+export const FAILED_RESOURCE_STATUSES: ReadonlySet<string> = new Set([
+  "CREATE_FAILED",
+  "UPDATE_FAILED",
+]);
+/** Estados del evento de la propia pila con el que empieza una operación (misma fuente). */
+export const OPERATION_START_STATUSES: ReadonlySet<string> = new Set([
+  "CREATE_IN_PROGRESS",
+  "UPDATE_IN_PROGRESS",
+]);
+
 export type DeployAction = "create" | "update" | "blocked";
 
 export interface StackParameter {
@@ -215,4 +244,47 @@ export function stackTags(
     [MANAGED_BY_TAG_KEY]: MANAGED_BY_TAG,
     [SDK_VERSION_TAG_KEY]: VERSION,
   };
+}
+
+/**
+ * Un evento de `DescribeStackEvents` (`AWS_API_NOTES.md` §21): sólo los tres
+ * campos que usa `firstFailedResource`. Espejo de `StackEvent`.
+ */
+export interface StackEvent {
+  readonly logicalResourceId: string | undefined;
+  readonly resourceStatus: string | undefined;
+  readonly resourceStatusReason: string | undefined;
+}
+
+/**
+ * El recurso que causó el fallo de la última operación de la pila. `events`
+ * viene del más nuevo al más antiguo, el orden de la API. Se recorre hasta el
+ * evento de inicio de operación de la propia pila (`logicalResourceId ===
+ * stackName`), para no mezclar el fallo de un despliegue anterior. De los
+ * recursos con estado fallido se devuelve el más antiguo: los posteriores
+ * suelen ser cancelaciones por esa causa.
+ */
+export function firstFailedResource(
+  events: readonly StackEvent[],
+  stackName: string,
+): StackEvent | undefined {
+  let earliest: StackEvent | undefined;
+  for (const event of events) {
+    const status = event.resourceStatus ?? "";
+    if (event.logicalResourceId === stackName) {
+      if (OPERATION_START_STATUSES.has(status)) {
+        break;
+      }
+      continue;
+    }
+    if (FAILED_RESOURCE_STATUSES.has(status)) {
+      earliest = event;
+    }
+  }
+  return earliest;
+}
+
+/** `<LogicalResourceId> (<ResourceStatus>): <ResourceStatusReason>`. */
+export function describeFailedResource(event: StackEvent): string {
+  return `${event.logicalResourceId ?? ""} (${event.resourceStatus ?? ""}): ${event.resourceStatusReason ?? ""}`;
 }

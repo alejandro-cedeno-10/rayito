@@ -28,6 +28,10 @@ The optional templates are deployed with `rayito stack deploy <component>`
 `cloudformation:CreateStack/UpdateStack/DescribeStacks/DeleteStack` and the
 permissions of whatever the template creates
 ([Optional stacks](../funciones-opcionales/pilas-opcionales.md)).
+`cloudformation:DescribeStackEvents` is optional: with it, the CLI prints the
+reason of the first resource that failed when a `deploy` ends in
+`ROLLBACK_*` (`OptionalStacks.failure_reason`); without it, the CLI does not
+print the reason and the original error does not change.
 
 !!! warning "A production service only launches sandboxes"
     Attach `SandboxLauncherPolicy` (output `SandboxLauncherPolicyArn`) to the

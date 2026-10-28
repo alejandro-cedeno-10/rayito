@@ -136,6 +136,24 @@ class OptionalStacks:
         name = stack_name or resolved.default_stack_name
         return self._provisioner.describe(name)
 
+    def failure_reason(
+        self, component: str | StackComponent, *, stack_name: str | None = None
+    ) -> str | None:
+        """El motivo, ya redactado, del primer recurso que falló en la última
+        operación de la pila (o su `StackStatusReason`); `None` si la pila no
+        existe o no trae motivo. Pensado para después de un `deploy` que
+        terminó en `ROLLBACK_*`: `rayito stack deploy` y `rayito domain
+        deploy` lo imprimen solos.
+
+        Coste: ninguno. Es un `DescribeStackEvents` de solo lectura
+        (CloudFormation no cobra por recursos `AWS::*`,
+        https://aws.amazon.com/cloudformation/pricing/, consultada
+        2026-10-27). IAM: `cloudformation:DescribeStackEvents` sobre la pila.
+        Nunca se llama solo."""
+        resolved = _resolve_component(component)
+        name = stack_name or resolved.default_stack_name
+        return self._provisioner.failure_reason(name)
+
     def parameter_changes(
         self,
         component: str | StackComponent,

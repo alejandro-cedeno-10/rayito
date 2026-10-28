@@ -21,7 +21,7 @@ from typer.testing import CliRunner
 from rayito._cloudwatch_logs import parse_since
 from rayito._custom_domain._service import CustomDomain
 from rayito._lifecycle_events._service import LifecycleEvents
-from rayito._stacks._model import StackStatus
+from rayito._stacks._model import StackEvent, StackStatus
 from rayito._stacks._service import OptionalStacks
 from rayito.cli import domain as domain_cli
 from rayito.cli import events as events_cli
@@ -205,6 +205,17 @@ def build_provisioner(world: dict[str, Any]) -> FakeStackProvisioner:
             outputs=dict(stack.get("outputs", {})),
             parameters=dict(stack.get("parameters", {})),
         )
+        provisioner.events[name] = [
+            StackEvent(
+                logical_resource_id=event["logicalResourceId"],
+                resource_status=event["resourceStatus"],
+                resource_status_reason=event.get("resourceStatusReason"),
+            )
+            for event in stack.get("events", [])
+        ]
+    failure = world.get("deployFailure", {})
+    provisioner.fail_wait_state = failure.get("state")
+    provisioner.fail_call = failure.get("call", False)
     return provisioner
 
 

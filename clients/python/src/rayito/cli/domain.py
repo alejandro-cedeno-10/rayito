@@ -3,7 +3,8 @@ una fachada fina sobre `rayito stack {deploy,status,destroy} custom-domain`
 (`cli/stack.py`) con los nombres de parámetro propios de `CustomDomain`
 (`--public-domain`, `--certificate-arn`). Para parámetros avanzados o un
 nombre de pila distinto usa `rayito stack` directamente; esta CLI no repite
-ninguna opción que ya ofrezca esa.
+ninguna opción que ya ofrezca esa, salvo `--tag`, que una organización que
+exige etiquetas en los recursos creados necesita también aquí.
 
 `status`/`destroy` sólo necesitan el nombre de la pila: van directas a
 `OptionalStacks` (como `cli/stack.py`), nunca pasan por `CustomDomain`, así
@@ -30,6 +31,7 @@ from rayito._stacks._registry import component_by_name
 from rayito._stacks._service import OptionalStacks
 from rayito.cli._console import echo, emit_json
 from rayito.cli._session import clients_of, json_mode
+from rayito.cli.stack import deploy_explaining_failure, parse_pairs
 
 domain_app = typer.Typer(
     no_args_is_help=True,
@@ -72,9 +74,25 @@ def deploy_command(
             ),
         ),
     ] = None,
+    tag: Annotated[
+        list[str],
+        typer.Option(
+            "--tag",
+            help=(
+                "Etiqueta K=V; repetible (organizaciones que exigen etiquetas en los "
+                "recursos creados)."
+            ),
+        ),
+    ] = [],  # noqa: B006
     yes: Annotated[bool, typer.Option("--yes", help="No pedir confirmación.")] = False,
 ) -> None:
-    """Despliega (o actualiza) la pila custom-domain; imprime su coste y el CNAME."""
+    """Despliega (o actualiza) la pila custom-domain; imprime su coste y el CNAME.
+
+    `--tag` no cambia el coste (CloudFormation no cobra por etiquetar); el de
+    la pila es el del bloque "Coste y activación". Si la pila termina en
+    `ROLLBACK_*`, imprime en stderr el motivo del primer recurso que falló
+    (necesita `cloudformation:DescribeStackEvents`)."""
+    tags = parse_pairs(tag, option="--tag")
     domain = _domain(ctx, public_domain, stack_name)
     if not json_mode(ctx):
         component = component_by_name(STACK_COMPONENT)
@@ -87,8 +105,15 @@ def deploy_command(
         echo(f"  Cómo apagarla: rayito domain destroy ({component.cost.removal})")
     if not yes and not json_mode(ctx) and not typer.confirm("¿Desplegar esta pila?"):
         raise typer.Exit(1)
-    status = domain.deploy(
-        certificate_arn=certificate_arn, alternate_domain_names=alternate_domain_names or None
+    status = deploy_explaining_failure(
+        _stacks(ctx),
+        STACK_COMPONENT,
+        stack_name=stack_name,
+        deploy=lambda: domain.deploy(
+            certificate_arn=certificate_arn,
+            alternate_domain_names=alternate_domain_names or None,
+            tags=tags,
+        ),
     )
     if json_mode(ctx):
         emit_json({"name": status.name, "state": status.state, "outputs": status.outputs})

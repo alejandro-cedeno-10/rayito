@@ -59,3 +59,5 @@ e41ea19019c01c1196a22c65dfe6b1547cad1e24:clients/typescript/tests/unit/agentcore
 f2da82b651fd9eb823b99b6b89dbf04a274927b1:limits.json:generic-api-key:426
 acefd108013e69cd3917da4166413be36fadcf9b:testdata/agentcore-deploy/plan-vectors.json:generic-api-key:1214
 41b7fb3a3bacb5ee25abd4a59f0a0ba1ce262aca:clients/typescript/tests/unit/cli/agentcore-cli.test.ts:generic-api-key:232
+c3195fd8298df5392c627e12201cb5a4c178f0e0:clients/python/tests/unit/test_m15_cloudformation.py:generic-api-key:347
+c3195fd8298df5392c627e12201cb5a4c178f0e0:clients/typescript/tests/unit/m15-cloudformation-events.test.ts:generic-api-key:14

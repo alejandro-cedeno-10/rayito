@@ -6,15 +6,21 @@ dice qué se conserva; `list` no hace ninguna llamada a AWS.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Annotated, Final
 
 import typer
 
-from rayito._stacks._model import ParameterChange, StackComponent
+from rayito._stacks._model import (
+    EXPLAINABLE_ROLLBACK_STATES,
+    ParameterChange,
+    StackComponent,
+    StackStatus,
+)
 from rayito._stacks._service import OptionalStacks
 from rayito.cli._console import echo, emit_json, table
 from rayito.cli._session import clients_of, json_mode
-from rayito.exceptions import UnimplementedError
+from rayito.exceptions import StackException, UnimplementedError
 
 stack_app = typer.Typer(
     no_args_is_help=True,
@@ -58,6 +64,8 @@ def _print_cost(component: StackComponent) -> None:
         echo(f"  Fuente: {component.cost.source}")
 
 
+#: La línea de stderr con el motivo del primer recurso que falló.
+FAILURE_REASON_LINE: Final = "  motivo: {reason}"
 #: Lo que se imprime en lugar del valor de un parámetro `NoEcho`.
 HIDDEN_VALUE: Final = "(oculto)"
 #: Cómo se imprime "la pila todavía no tiene este parámetro".
@@ -95,6 +103,40 @@ def confirm_deploy(
             _print_changes(component, changes)
     if not yes and not json_mode(ctx) and not typer.confirm("¿Desplegar esta pila?"):
         raise typer.Exit(1)
+
+
+def deploy_explaining_failure(
+    stacks: OptionalStacks,
+    component: str,
+    *,
+    stack_name: str | None,
+    deploy: Callable[[], StackStatus],
+) -> StackStatus:
+    """Ejecuta `deploy`; si espera a una pila que termina en `ROLLBACK_COMPLETE`,
+    `ROLLBACK_FAILED` o `UPDATE_ROLLBACK_COMPLETE`, imprime en stderr el motivo
+    del primer recurso que falló y vuelve a lanzar el error original, sin
+    cambiar su salida ni su código. Un fallo al crear o actualizar la pila
+    (`state` ausente) no imprime nada: el motivo sería de una operación
+    anterior. Leer el motivo es de mejor esfuerzo (necesita
+    `cloudformation:DescribeStackEvents`): si falla, se ignora.
+
+    Coste: ninguno; un `DescribeStackEvents` de solo lectura, solo tras el
+    fallo. Compartido por `rayito stack deploy` y `rayito domain deploy`."""
+    try:
+        return deploy()
+    except StackException as exc:
+        if exc.code == "failed" and exc.state in EXPLAINABLE_ROLLBACK_STATES:
+            _echo_failure_reason(stacks, component, stack_name)
+        raise
+
+
+def _echo_failure_reason(stacks: OptionalStacks, component: str, stack_name: str | None) -> None:
+    try:
+        reason = stacks.failure_reason(component, stack_name=stack_name)
+    except StackException:
+        return
+    if reason:
+        echo(FAILURE_REASON_LINE.format(reason=reason), err=True)
 
 
 def confirm_destroy(ctx: typer.Context, component: StackComponent, *, yes: bool) -> None:
@@ -180,6 +222,7 @@ def deploy_command(
             _print_cost(resolved)
         raise UnimplementedError(f"rayito stack deploy {component}", resolved.description)
     parameters = parse_pairs(param, option="--param")
+    tags = parse_pairs(tag, option="--tag")
     changes = None
     if not json_mode(ctx):
         changes = stacks.parameter_changes(
@@ -189,12 +232,17 @@ def deploy_command(
             artifact_bucket=artifact_bucket,
         )
     confirm_deploy(ctx, resolved, yes=yes, changes=changes)
-    status = stacks.deploy(
+    status = deploy_explaining_failure(
+        stacks,
         component,
         stack_name=stack_name,
-        parameters=parameters,
-        artifact_bucket=artifact_bucket,
-        tags=parse_pairs(tag, option="--tag"),
+        deploy=lambda: stacks.deploy(
+            component,
+            stack_name=stack_name,
+            parameters=parameters,
+            artifact_bucket=artifact_bucket,
+            tags=tags,
+        ),
     )
     if json_mode(ctx):
         emit_json({"name": status.name, "state": status.state, "outputs": status.outputs})

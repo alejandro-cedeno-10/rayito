@@ -7,6 +7,11 @@
  * `RAYITO_PERSIST_PREFIX`). La limpieza de S3 usa la CLI del desarrollador
  * (`aws s3 rm --recursive` + abort de multipart uploads huérfanos): el SDK no
  * depende de `@aws-sdk/client-s3` y el execution role no tiene `s3:DeleteObject`.
+ *
+ * Con `RAYITO_E2E_SLOW=1`, una prueba de unos 62 min de las credenciales tras
+ * 60 min de uptime (espejo de `test_credentials_after_55_minutes` de Python):
+ * cubre el camino del SDK TypeScript de `checkpointFiles` en una VM de más de
+ * 1 h. Sin esa variable se omite.
  */
 
 import { execFile } from "node:child_process";
@@ -20,7 +25,15 @@ import {
   Sandbox,
   SandboxNotFoundError,
 } from "../../src/index.js";
-import { e2eEnabled, report, seconds, secondsToMs, TEMPLATE_VAR, useE2E } from "./helpers.js";
+import {
+  e2eEnabled,
+  report,
+  seconds,
+  secondsToMs,
+  sleep,
+  TEMPLATE_VAR,
+  useE2E,
+} from "./helpers.js";
 
 const CAPS_TEMPLATE_VAR = "RAYITO_TEMPLATE_CAPS";
 const DEFAULT_TEMPLATE_VAR = "RAYITO_TEMPLATE_DEFAULT";
@@ -33,6 +46,13 @@ const BUCKET_VAR = "RAYITO_PERSIST_BUCKET";
 const PREFIX_VAR = "RAYITO_PERSIST_PREFIX";
 const BLOB_BYTES = 20 * 1024 * 1024;
 const SANDBOX_TIMEOUT_MS = 1_800_000;
+const SLOW_VAR = "RAYITO_E2E_SLOW";
+/** Uptime que la sonda espera antes de comprobar la rotación; igual que `CREDENTIAL_PROBE_UPTIME_SECONDS` de Python. */
+const CREDENTIAL_PROBE_UPTIME_MS = 3_600_000;
+/** Margen sobre la sonda de uptime: el sandbox debe vivir más que ella. */
+const CREDENTIAL_PROBE_MARGIN_MS = 600_000;
+/** Cada cuánto se mira el `uptimeMs` mientras se espera. */
+const HEALTH_POLL_MS = 60_000;
 const PERSIST_TIMEOUT_MS = 300_000;
 const SEED_SCRIPT =
   "mkdir -p /home/user/data /home/user/skipme " +
@@ -99,11 +119,14 @@ describe.skipIf(!enabled)("M7 persistence (TypeScript)", () => {
     return new S3Prefix({ bucket, prefix, name });
   }
 
-  async function createPersisted(persist: S3Prefix): Promise<Sandbox> {
+  async function createPersisted(
+    persist: S3Prefix,
+    timeoutMs: number = SANDBOX_TIMEOUT_MS,
+  ): Promise<Sandbox> {
     const started = performance.now();
     const sandbox = await Sandbox.create({
       template: context.templateArn,
-      timeoutMs: SANDBOX_TIMEOUT_MS,
+      timeoutMs,
       idle: null,
       executionRoleArn: context.settings.executionRoleArn,
       ingress: ["ALL_INGRESS"],
@@ -221,4 +244,36 @@ describe.skipIf(!enabled)("M7 persistence (TypeScript)", () => {
       await killQuietly(sandbox);
     }
   });
+
+  test.skipIf(process.env[SLOW_VAR] !== "1")(
+    "credentials after 55 minutes",
+    async () => {
+      const sandbox = await createPersisted(
+        fresh(),
+        CREDENTIAL_PROBE_UPTIME_MS + CREDENTIAL_PROBE_MARGIN_MS,
+      );
+      try {
+        while ((await sandbox.getHealth()).uptimeMs < CREDENTIAL_PROBE_UPTIME_MS) {
+          await sleep(HEALTH_POLL_MS);
+        }
+        try {
+          const result = await sandbox.checkpointFiles();
+          console.log(
+            `\n[m7-persist] checkpoint after 60 min of uptime: ok: ${result.files} files (credentials rotated)`,
+          );
+        } catch (error) {
+          if (!(error instanceof PersistenceError)) {
+            throw error;
+          }
+          console.log(
+            `\n[m7-persist] checkpoint after 60 min of uptime: PersistenceError(code=${error.code}): ${error.message} (credentials NOT rotated)`,
+          );
+          expect(error.code).toBe("permission_denied");
+        }
+      } finally {
+        await killQuietly(sandbox);
+      }
+    },
+    CREDENTIAL_PROBE_UPTIME_MS + CREDENTIAL_PROBE_MARGIN_MS + PERSIST_TIMEOUT_MS,
+  );
 });

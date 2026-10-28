@@ -452,13 +452,18 @@ in your account, and nothing is deployed unless you ask for it.
   (`events-webhooks`): that is where the code is uploaded, at
   `rayito/stacks/<component>/<sha256>.zip`, only if the bucket belongs to
   your account and comparing the content of an object that already exists.
+  If the stack ends in `ROLLBACK_COMPLETE`, `ROLLBACK_FAILED` or
+  `UPDATE_ROLLBACK_COMPLETE`, `deploy` adds a
+  `  motivo: <resource> (<status>): <reason>` line on stderr with the first
+  resource that failed (it needs `cloudformation:DescribeStackEvents`; without
+  that permission nothing is printed and the original error does not change).
 - `status` is a `DescribeStacks`: the stack's state and outputs.
 - `destroy` says what is kept and asks for confirmation unless `--yes`.
 
 ## `rayito domain` { #rayito-domain }
 
 ```bash
-rayito domain deploy --public-domain D --certificate-arn ARN [--alternate-domain-name H]... [--stack-name N] [--yes]
+rayito domain deploy --public-domain D --certificate-arn ARN [--alternate-domain-name H]... [--tag K=V]... [--stack-name N] [--yes]
 rayito domain status | destroy [--stack-name N] [--yes]
 ```
 
@@ -468,7 +473,10 @@ yet verified end to end on real AWS): a facade over
 `CustomDomain`'s names. `deploy` validates `--public-domain` and each
 `--alternate-domain-name` before calling AWS, asks for confirmation unless
 `--yes` and prints what to point the `CNAME` at. The ACM certificate has to be
-in `us-east-1`.
+in `us-east-1`. `--tag K=V` (repeatable) tags the stack and its resources, as
+in `rayito stack deploy`, for organizations that enforce tags on created
+resources; it does not change the cost. If the stack ends in `ROLLBACK_*`, it
+prints the reason the same way `rayito stack deploy` does.
 
 ## `rayito events` { #rayito-events }
 

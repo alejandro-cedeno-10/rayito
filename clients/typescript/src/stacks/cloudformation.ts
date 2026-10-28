@@ -3,7 +3,10 @@
  * Espejo de `rayito._stacks._cloudformation`. Parámetros y formas
  * verificados contra `AWS_API_NOTES.md` §21: `CreateStack`, `UpdateStack`
  * (con `UsePreviousValue` para los parámetros que se conservan),
- * `DescribeStacks` (incluidos sus `Parameters` y `Tags`), `DeleteStack`. `putArtifact` nunca se fía de que
+ * `DescribeStacks` (incluidos sus `Parameters` y `Tags`), `DeleteStack` y
+ * `DescribeStackEvents` (`StackName` ->
+ * `StackEvents[].{LogicalResourceId, ResourceStatus, ResourceStatusReason}`, más
+ * nuevo primero; sólo lo usa `failureReason`, sólo la primera página). `putArtifact` nunca se fía de que
  * exista un objeto con la clave esperada: con `ExpectedBucketOwner` (la cuenta de
  * `sts:GetCallerIdentity`) hace `GetObject` y compara el sha256 del contenido; sólo si coincide no
  * lo vuelve a subir, y si falta o no coincide, `PutObject` con `ChecksumSHA256`.
@@ -17,10 +20,16 @@
 import { createHash } from "node:crypto";
 import type { AwsClientSettings } from "../aws/control-plane.js";
 import { awsCode, loadOptionalSdkClient } from "../aws/optional-client.js";
-import { sanitizeAwsError } from "../aws/sanitize.js";
+import { redactAwsText, sanitizeAwsError } from "../aws/sanitize.js";
 import { StackError } from "../errors.js";
 import type { Logger } from "../logger.js";
-import type { StackComponent, StackStatus } from "./model.js";
+import {
+  describeFailedResource,
+  firstFailedResource,
+  type StackComponent,
+  type StackEvent,
+  type StackStatus,
+} from "./model.js";
 import type { DeployTarget, StackProvisioner, UpdateOutcome } from "./port.js";
 
 const CLOUDFORMATION_PEER = "@aws-sdk/client-cloudformation";
@@ -79,6 +88,13 @@ interface CloudFormationApi {
     Capabilities?: string[] | undefined;
   }): Promise<unknown>;
   deleteStack(input: { StackName: string }): Promise<unknown>;
+  describeStackEvents(input: { StackName: string }): Promise<{
+    StackEvents?: Array<{
+      LogicalResourceId?: string;
+      ResourceStatus?: string;
+      ResourceStatusReason?: string;
+    }>;
+  }>;
 }
 
 interface LocatedObject {
@@ -106,6 +122,7 @@ interface CloudFormationModule {
   readonly UpdateStackCommand: new (input: object) => unknown;
   readonly DescribeStacksCommand: new (input: object) => unknown;
   readonly DeleteStackCommand: new (input: object) => unknown;
+  readonly DescribeStackEventsCommand: new (input: object) => unknown;
 }
 
 interface S3Module {
@@ -135,6 +152,7 @@ async function cloudformationApi(
     createStack: (input) => send(new sdk.CreateStackCommand(input)),
     updateStack: (input) => send(new sdk.UpdateStackCommand(input)),
     deleteStack: (input) => send(new sdk.DeleteStackCommand(input)),
+    describeStackEvents: (input) => send(new sdk.DescribeStackEventsCommand(input)),
   };
 }
 
@@ -374,6 +392,7 @@ export class CloudFormationProvisioner implements StackProvisioner {
       if (status !== undefined && TERMINAL_FAILURE_STATES.has(status.state ?? "")) {
         throw new StackError(`la pila ${JSON.stringify(stackName)} terminó en ${status.state}`, {
           code: "failed",
+          state: status.state,
         });
       }
       if (Date.now() >= deadline) {
@@ -428,9 +447,34 @@ export class CloudFormationProvisioner implements StackProvisioner {
     return account;
   }
 
+  /**
+   * El motivo del recurso que causó el fallo de la última operación
+   * (`DescribeStackEvents`, sólo la primera página) o, sin ninguno, el
+   * `StackStatusReason` de la pila; ambos redactados. `undefined` si la pila no
+   * existe o no trae motivo.
+   */
   async failureReason(stackName: string): Promise<string | undefined> {
-    const status = await this.describe(stackName);
-    return status?.reasonCode;
+    const api = await this.#cfn();
+    let response: Awaited<ReturnType<CloudFormationApi["describeStackEvents"]>>;
+    try {
+      response = await api.describeStackEvents({ StackName: stackName });
+    } catch (error) {
+      if (isMissingStack(error)) {
+        return undefined;
+      }
+      throw wrap(error);
+    }
+    const events: StackEvent[] = (response.StackEvents ?? []).map((event) => ({
+      logicalResourceId: event.LogicalResourceId,
+      resourceStatus: event.ResourceStatus,
+      resourceStatusReason: event.ResourceStatusReason,
+    }));
+    const failed = firstFailedResource(events, stackName);
+    if (failed !== undefined) {
+      return redactAwsText(describeFailedResource(failed));
+    }
+    const reason = (await this.describe(stackName))?.reasonCode;
+    return reason === undefined ? undefined : redactAwsText(reason);
   }
 }
 

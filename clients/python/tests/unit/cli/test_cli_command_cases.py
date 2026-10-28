@@ -29,6 +29,8 @@ def test_command_case(case: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> 
     assert got["effects"] == expected["effects"]
     for needle in case.get("stderrIncludes", []):
         assert needle in got["stderr"] + got["stdout"]
+    for needle in case.get("stderrExcludes", []):
+        assert needle not in got["stderr"] + got["stdout"]
 
 
 def test_cases_cover_every_phase_one_command() -> None:

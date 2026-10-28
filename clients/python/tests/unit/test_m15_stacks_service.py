@@ -5,11 +5,12 @@ plantilla lanza antes de tocar el provisioner, create/update/blocked siguen
 
 from __future__ import annotations
 
+import inspect
 from dataclasses import replace
 
 import pytest
 
-from rayito._stacks._model import StackComponent, StackStatus
+from rayito._stacks._model import StackComponent, StackEvent, StackStatus
 from rayito._stacks._packaging import load_template
 from rayito._stacks._registry import COMPONENTS, component_by_name
 from rayito._stacks._service import OptionalStacks
@@ -487,3 +488,43 @@ def test_dashboard_cloudwatch_has_no_code_and_its_extra_widgets_are_off_by_defau
     assert deployed["LogGroupPrefix"] == "/rayito/"
     component = component_by_name("dashboard-cloudwatch")
     assert component is not None and component.artifacts == ()
+
+
+def test_failure_reason_resolves_the_default_and_the_given_stack_name() -> None:
+    fake = FakeStackProvisioner()
+    fake.events["rayito-metadata-index"] = [
+        StackEvent("Table", "CREATE_FAILED", "denied"),
+    ]
+    fake.events["mine"] = [StackEvent("Queue", "UPDATE_FAILED", "invalid")]
+    stacks = OptionalStacks(provisioner=fake)
+    assert stacks.failure_reason("metadata-index") == "Table (CREATE_FAILED): denied"
+    assert (
+        stacks.failure_reason("metadata-index", stack_name="mine")
+        == "Queue (UPDATE_FAILED): invalid"
+    )
+    assert fake.calls == [
+        ("failure_reason", "rayito-metadata-index"),
+        ("failure_reason", "mine"),
+    ]
+
+
+def test_failure_reason_of_an_unknown_component_is_rejected_before_the_provisioner() -> None:
+    fake = FakeStackProvisioner()
+    with pytest.raises(InvalidArgumentException):
+        OptionalStacks(provisioner=fake).failure_reason("no-such-component")
+    assert fake.calls == []
+
+
+@pytest.mark.asyncio
+async def test_async_failure_reason_delegates_and_matches_the_sync_signature() -> None:
+    fake = FakeStackProvisioner()
+    fake.events["mine"] = [StackEvent("Queue", "UPDATE_FAILED", "invalid")]
+    assert (
+        await AsyncOptionalStacks(provisioner=fake).failure_reason(
+            "metadata-index", stack_name="mine"
+        )
+        == "Queue (UPDATE_FAILED): invalid"
+    )
+    assert inspect.signature(OptionalStacks.failure_reason).parameters.keys() == (
+        inspect.signature(AsyncOptionalStacks.failure_reason).parameters.keys()
+    )

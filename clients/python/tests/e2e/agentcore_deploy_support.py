@@ -13,9 +13,9 @@ Variables de entorno, además de `RAYITO_E2E=1`:
 - `RAYITO_BUCKET`: el bucket de artefactos de esa región (el de `rayito setup`).
 - `RAYITO_E2E_RUN_ID`: id de la ejecución, 8 minúsculas o dígitos; va en el
   nombre de cada agente y la limpieza borra sólo lo que lo lleva.
-- `RAYITO_E2E_TAGS` (opcional): etiquetas `K=V` separadas por comas para la
-  pila y el runtime, si la organización exige etiquetas al crear recursos.
-  Nunca van en el código.
+- `RAYITO_E2E_TAGS` (opcional, `conftest.e2e_tags`): etiquetas `K=V` separadas
+  por comas para la pila y el runtime, para organizaciones que exigen etiquetas
+  en los recursos creados. Nunca van en el código.
 - `RAYITO_E2E_AGENTCORE_SAMPLES` (opcional): ids del manifiesto separados por
   comas.
 
@@ -56,7 +56,6 @@ MANIFEST: Final[dict[str, Any]] = json.loads((SAMPLES_DIR / "manifest.json").rea
 AGENTCORE_FLAG_VAR: Final = "RAYITO_E2E_AGENTCORE"
 RUN_ID_VAR: Final = "RAYITO_E2E_RUN_ID"
 BUCKET_VAR: Final = "RAYITO_BUCKET"
-TAGS_VAR: Final = "RAYITO_E2E_TAGS"
 SAMPLES_VAR: Final = "RAYITO_E2E_AGENTCORE_SAMPLES"
 REGION_VAR: Final = "AWS_REGION"
 RUN_ID_PATTERN: Final = re.compile(r"[a-z0-9]{8}")
@@ -99,11 +98,6 @@ def run_id() -> str:
 
 def region() -> str:
     return require(REGION_VAR)
-
-
-def tags() -> dict[str, str]:
-    pairs = (pair.partition("=") for pair in os.environ.get(TAGS_VAR, "").split(",") if pair)
-    return {key.strip(): value.strip() for key, _, value in pairs}
 
 
 def selected_samples() -> list[str]:

@@ -39,7 +39,6 @@ import {
   runtimeRoleOf,
   simulatedDecision,
   TEST_TIMEOUT_MS,
-  tagsFromEnvironment,
 } from "./agentcore-deploy-support.js";
 import {
   AGNOSTIC_ENABLED,
@@ -64,7 +63,7 @@ import {
   URGENT_TICKET,
   withRunSecrets,
 } from "./agnostic-deploy-support.js";
-import { e2eEnabled } from "./helpers.js";
+import { e2eEnabled, tagsFromEnvironment } from "./helpers.js";
 
 const AGENTCORE_READY = AGNOSTIC_ENABLED && agentcoreE2eReady();
 const MICROVM_READY =

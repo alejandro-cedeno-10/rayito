@@ -136,6 +136,8 @@ Necesitas tres cosas:
     ```bash
     rayito domain deploy --public-domain sbx.example.com \
       --certificate-arn arn:aws:acm:us-east-1:<cuenta>:certificate/<id>
+    # opcional: --tag K=V (repetible), para organizaciones que exigen etiquetas
+    # en los recursos creados
     # ... DNS: apunta un CNAME/alias de *.sbx.example.com a dxxxxxxxxxxxx.cloudfront.net
     rayito domain status
     ```
@@ -349,7 +351,9 @@ el dominio y el certificado sólo de `RAYITO_E2E_DOMAIN` (un dominio cuyo
 comodín cubre el certificado) y `RAYITO_E2E_CERT_ARN`, despliega una pila
 propia por corrida (`rayito-cd-e2e-<id>`) con nombres explícitos aleatorios
 para no chocar con ningún alias existente, no crea ningún registro DNS y lo
-borra todo al terminar. Sin esas variables se salta.
+borra todo al terminar. Sin esas variables se salta. `RAYITO_E2E_TAGS`
+(opcional, etiquetas `K=V` separadas por comas) etiqueta la pila, para
+organizaciones que exigen etiquetas en los recursos creados.
 
 ## Cómo funciona
 
@@ -386,8 +390,9 @@ borra todo al terminar. Sin esas variables se salta.
   `cloudfront:CreateDistribution` aunque tu rol sea administrador. Entonces
   `deploy()` falla con `StackException` (la pila termina en
   `ROLLBACK_COMPLETE`; el motivo, `AccessDenied ... explicit deny in a
-  service control policy`, sale en los eventos de la pila,
-  `aws cloudformation describe-stack-events`). No queda nada creado: el
+  service control policy`, lo imprime `rayito domain deploy` en stderr
+  (`  motivo: ...`) y, desde código, lo da
+  `OptionalStacks().failure_reason("custom-domain", stack_name=...)`). No queda nada creado: el
   rollback borra la Function y el KeyValueStore, y `destroy()` quita la pila
   fallida. Pide al administrador de la organización que permita esa acción
   (Q141 de `AWS_API_NOTES.md`).

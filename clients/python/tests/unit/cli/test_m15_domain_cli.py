@@ -11,7 +11,7 @@ import pytest
 from typer.testing import CliRunner
 
 from rayito._custom_domain._service import CUSTOM_DOMAIN_WAIT_TIMEOUT_SECONDS
-from rayito._stacks._model import StackStatus
+from rayito._stacks._model import StackEvent, StackStatus
 from rayito._stacks._service import OptionalStacks
 from rayito.cli import domain as domain_cli
 from rayito.cli._session import Clients
@@ -187,3 +187,112 @@ def test_destroy_with_yes_deletes_the_stack_and_prints_what_is_retained(
     # (sin pasar por `CustomDomain.destroy()`), así que la CLI es quien debe
     # pasar explícitamente el timeout propio de esta función.
     assert fake_provisioner.wait_timeouts == [CUSTOM_DOMAIN_WAIT_TIMEOUT_SECONDS]
+
+
+def _deploy_arguments(*extra: str) -> list[str]:
+    return [
+        "domain",
+        "deploy",
+        "--public-domain",
+        PUBLIC_DOMAIN,
+        "--certificate-arn",
+        CERTIFICATE_ARN,
+        "--yes",
+        *extra,
+    ]
+
+
+def test_deploy_sends_the_repeatable_tags_next_to_the_fixed_ones(
+    runner: CliRunner, clients: Clients, fake_provisioner: FakeStackProvisioner
+) -> None:
+    result = runner.invoke(app, _deploy_arguments("--tag", "team=a", "--tag", "env=b"), obj=clients)
+    assert result.exit_code == 0, result.output
+    assert fake_provisioner.sent_tags["team"] == "a"
+    assert fake_provisioner.sent_tags["env"] == "b"
+    assert {"rayito:component", "rayito:managed-by", "rayito:sdk-version"} <= set(
+        fake_provisioner.sent_tags
+    )
+
+
+def test_deploy_rejects_a_malformed_tag_before_any_call(
+    runner: CliRunner, clients: Clients, fake_provisioner: FakeStackProvisioner
+) -> None:
+    result = runner.invoke(app, _deploy_arguments("--tag", "no-equals"), obj=clients)
+    assert result.exit_code == 2
+    assert fake_provisioner.calls == []
+
+
+def test_a_rollback_prints_the_first_failed_resource_on_stderr_and_still_fails(
+    runner: CliRunner, clients: Clients, fake_provisioner: FakeStackProvisioner
+) -> None:
+    fake_provisioner.fail_wait_state = "ROLLBACK_COMPLETE"
+    fake_provisioner.events["rayito-custom-domain"] = [
+        StackEvent("Distribution", "CREATE_FAILED", "synthetic reason"),
+        StackEvent("rayito-custom-domain", "CREATE_IN_PROGRESS", "User Initiated"),
+    ]
+    result = runner.invoke(app, _deploy_arguments(), obj=clients)
+    assert result.exit_code == 1
+    assert "  motivo: Distribution (CREATE_FAILED): synthetic reason" in result.stderr
+    assert "terminó en ROLLBACK_COMPLETE" in result.stderr
+    assert "motivo" not in result.stdout
+    assert ("failure_reason", "rayito-custom-domain") in fake_provisioner.calls
+
+
+def test_a_rollback_with_json_keeps_stdout_empty(
+    runner: CliRunner, clients: Clients, fake_provisioner: FakeStackProvisioner
+) -> None:
+    fake_provisioner.fail_wait_state = "ROLLBACK_COMPLETE"
+    fake_provisioner.events["rayito-custom-domain"] = [
+        StackEvent("Distribution", "CREATE_FAILED", "synthetic reason"),
+    ]
+    result = runner.invoke(app, ["--json", *_deploy_arguments()], obj=clients)
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert "  motivo: Distribution" in result.stderr
+
+
+def test_a_rejected_create_call_prints_no_reason_and_never_reads_it(
+    runner: CliRunner, clients: Clients, fake_provisioner: FakeStackProvisioner
+) -> None:
+    fake_provisioner.fail_call = True
+    fake_provisioner.events["rayito-custom-domain"] = [
+        StackEvent("Distribution", "CREATE_FAILED", "reason of an older operation"),
+    ]
+    result = runner.invoke(app, _deploy_arguments(), obj=clients)
+    assert result.exit_code == 1
+    assert "motivo" not in result.stderr
+    assert all(call[0] != "failure_reason" for call in fake_provisioner.calls)
+
+
+def test_a_rejected_update_call_on_a_rolled_back_stack_prints_no_old_reason(
+    runner: CliRunner, clients: Clients, fake_provisioner: FakeStackProvisioner
+) -> None:
+    fake_provisioner.stacks["rayito-custom-domain"] = StackStatus(
+        name="rayito-custom-domain", state="UPDATE_ROLLBACK_COMPLETE"
+    )
+    fake_provisioner.events["rayito-custom-domain"] = [
+        StackEvent("Distribution", "UPDATE_FAILED", "reason of an older operation"),
+    ]
+    fake_provisioner.fail_call = True
+    result = runner.invoke(app, _deploy_arguments(), obj=clients)
+    assert result.exit_code == 1
+    assert "motivo" not in result.stderr
+    assert all(call[0] != "failure_reason" for call in fake_provisioner.calls)
+
+
+@pytest.mark.parametrize("state", ["UPDATE_ROLLBACK_FAILED", "DELETE_FAILED"])
+def test_a_wait_ending_in_a_non_explainable_failure_prints_no_reason(
+    state: str,
+    runner: CliRunner,
+    clients: Clients,
+    fake_provisioner: FakeStackProvisioner,
+) -> None:
+    fake_provisioner.fail_wait_state = state
+    fake_provisioner.events["rayito-custom-domain"] = [
+        StackEvent("Distribution", "UPDATE_FAILED", "reason that may be older"),
+    ]
+    result = runner.invoke(app, _deploy_arguments(), obj=clients)
+    assert result.exit_code == 1
+    assert f"terminó en {state}" in result.stderr
+    assert "motivo" not in result.stderr
+    assert all(call[0] != "failure_reason" for call in fake_provisioner.calls)

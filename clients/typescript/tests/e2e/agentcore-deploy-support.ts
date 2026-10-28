@@ -10,7 +10,8 @@
  * - `RAYITO_BUCKET`: el bucket de artefactos de `rayito setup`.
  * - `RAYITO_E2E_RUN_ID`: 8 minúsculas o dígitos que identifican la ejecución; todo
  *   lo que crea la prueba los lleva y sólo eso se borra.
- * - `RAYITO_E2E_TAGS`: `K=V,K=V` para las organizaciones que exigen etiquetas.
+ * - `RAYITO_E2E_TAGS` (`tagsFromEnvironment`, en `helpers.ts`): `K=V,K=V` para
+ *   organizaciones que exigen etiquetas en los recursos creados.
  * - `RAYITO_E2E_ZC_SAMPLES`: ids de ejemplo separados por comas (por defecto, los
  *   de TypeScript más `python-strands`).
  *
@@ -79,16 +80,6 @@ export function selectedSamples(): Sample[] {
 /** `<id>-<ejecución>`: único por ejecución y válido como nombre de agente (hasta 41 caracteres). */
 export function agentNameOf(sample: Sample): string {
   return `${sample.id.replace(/^(typescript|python)-/, (_all, language: string) => `${language.slice(0, 2)}-`)}-${RUN_ID}`;
-}
-
-/** Las etiquetas de `RAYITO_E2E_TAGS` (`K=V,K=V`). */
-export function tagsFromEnvironment(): Record<string, string> {
-  const tags: Record<string, string> = {};
-  for (const pair of (process.env.RAYITO_E2E_TAGS ?? "").split(",").filter(Boolean)) {
-    const separator = pair.indexOf("=");
-    tags[pair.slice(0, separator)] = pair.slice(separator + 1);
-  }
-  return tags;
 }
 
 /** Una copia del ejemplo (sin entornos instalados) con su `rayito-agent.toml`, que fija el nombre del agente y, opcionalmente, su entorno. */

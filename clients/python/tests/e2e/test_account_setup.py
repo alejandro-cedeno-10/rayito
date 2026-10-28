@@ -18,15 +18,22 @@ Variables (todas genéricas, nada de la cuenta va en el repositorio):
 - `RAYITO_E2E_SETUP_CREATE_BUCKET=1` (opcional): activa el test que crea el
   bucket con la pila `rayito-m0-artifacts` (`--bucket rayito-e2e-setup-<hex>`,
   un nombre sin cuenta); se salta si esa pila ya existe en la región.
-- `RAYITO_TEMPLATE` y `AWS_REGION`: los del resto de los e2e; sólo para el test
-  de la región por defecto, que no escribe nada.
+- `RAYITO_TEMPLATE` y `AWS_REGION`: los del resto de los e2e. `conftest.py` exige
+  `RAYITO_TEMPLATE` en todo e2e (pre-flight y sweeper); `AWS_REGION` es la región
+  ya preparada del test que no escribe nada y que no recibe `--bucket`,
+  `--artifact` ni `--tag`, que son de la región de prueba.
 
 La CLI corre como la usaría cualquiera, `sys.executable -m rayito.cli` en un
 subproceso. El teardown borra sólo lo que esta corrida creó: la imagen (con su
 grupo de logs, `image_cleanup.BuiltImages`), la pila y la clave del artefacto
-únicamente si `artifactUploaded` fue verdadero; en el test del bucket, además
-la pila `rayito-m0-artifacts` y el bucket retenido (vaciado antes, con el zip
-dentro).
+únicamente si consta que la subió esta corrida: la ejecución dijo
+`artifactUploaded` verdadero o, en el test interrumpido (el zip lo sube la
+ejecución que se mata, y la reanudada lo encuentra ya subido y dice falso), un
+`HeadObject` previo demostró que la clave no existía (hace falta
+`RAYITO_E2E_SETUP_ARTIFACT` y `RAYITO_E2E_SETUP_BUCKET`, para conocer la clave de
+antemano). Si no consta, el zip se queda y el teardown deja una nota. En el test
+del bucket, además la pila `rayito-m0-artifacts` y el bucket retenido (vaciado
+antes, con el zip dentro).
 
 Cada test que crea construye `rayito-base` (≈ 10 min y ≈ $0,04 por semana de
 almacenamiento de la versión, borrada al terminar).
@@ -42,6 +49,7 @@ import sys
 import time
 from collections.abc import Iterator
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
@@ -53,6 +61,7 @@ from rayito._account_setup._domain import ARTIFACT_STACK_NAME, BASE_IMAGE_NAME, 
 from rayito._images import BUILDING_VERSION_STATES, DEFAULT_BUILD_TIMEOUT_SECONDS, account_image_arn
 from rayito._stacks._cloudformation import CloudFormationProvisioner
 from rayito._stacks._service import DEFAULT_WAIT_TIMEOUT_SECONDS
+from rayito.cli._publish import artifact_key
 
 from .conftest import E2ESettings
 from .image_cleanup import BuiltImages
@@ -75,6 +84,11 @@ RANDOM_NAME_BYTES = 6
 #: Lo que planea una región ya preparada: los tres pasos se reutilizan y
 #: `capsImage` es `skip` sin `--caps-image` (desde 0.17.0).
 PREPARED_ACTIONS = ["reuse", "reuse", "reuse", "skip"]
+#: `HeadObject` sobre una clave que no existe (los mismos tres códigos que el
+#: espejo de TypeScript).
+NOT_FOUND_CODES: frozenset[str] = frozenset({"404", "NotFound", "NoSuchKey"})
+#: La nota del teardown cuando un zip se deja en su sitio.
+ARTIFACT_KEPT_NOTE = "zip del artefacto no borrado: no consta que lo subiera esta corrida"
 
 
 def setup_region() -> str:
@@ -85,6 +99,13 @@ def setup_region() -> str:
 
 
 def cli_arguments(region: str, *arguments: str) -> list[str]:
+    """La CLI en la región `region`, sin nada de la región de prueba."""
+    return [*CLI, "--region", region, "--json", "setup", *arguments]
+
+
+def setup_region_arguments(region: str, *arguments: str) -> list[str]:
+    """`cli_arguments` más el bucket, el zip y las etiquetas de la región de
+    prueba: sólo para los tests que crean en ella."""
     extra = []
     if bucket := os.environ.get(BUCKET_VAR):
         extra += ["--bucket", bucket]
@@ -92,12 +113,12 @@ def cli_arguments(region: str, *arguments: str) -> list[str]:
         extra += ["--artifact", artifact]
     for tag in filter(None, os.environ.get(TAGS_VAR, "").split(",")):
         extra += ["--tag", tag.strip()]
-    return [*CLI, "--region", region, "--json", "setup", *arguments, *extra]
+    return cli_arguments(region, *arguments, *extra)
 
 
-def run_setup(region: str, *arguments: str, budget: float) -> tuple[int, dict[str, Any], str]:
+def run_setup(arguments: list[str], *, budget: float) -> tuple[int, dict[str, Any], str]:
     completed = subprocess.run(
-        cli_arguments(region, *arguments),
+        arguments,
         capture_output=True,
         text=True,
         timeout=budget,
@@ -170,11 +191,40 @@ class Created:
 
     account: Account
     artifact_uploaded: bool = False
+    #: Si la clave del zip ya existía antes de la corrida: `False` es que un
+    #: `HeadObject` previo demostró que no; `None`, que no se pudo saber.
+    artifact_preexisting: bool | None = None
     artifact: tuple[str, str] | None = None
     notes: list[str] = field(default_factory=list)
 
     def remember_artifact(self) -> None:
         self.artifact = self.account.artifact_location()
+
+    def probe_artifact_preexisting(self) -> None:
+        """Antes de lanzar el subproceso que se va a matar: si el zip dado
+        (`RAYITO_E2E_SETUP_ARTIFACT`) ya está en el bucket dado
+        (`RAYITO_E2E_SETUP_BUCKET`). Sin las dos variables la clave no se
+        conoce de antemano y queda `None`."""
+        artifact, bucket = os.environ.get(ARTIFACT_VAR), os.environ.get(BUCKET_VAR)
+        if not (artifact and bucket):
+            return
+        key = artifact_key(Path(artifact).read_bytes())
+        try:
+            self.account.s3.head_object(Bucket=bucket, Key=key)
+        except ClientError as exc:
+            if str(exc.response.get("Error", {}).get("Code")) not in NOT_FOUND_CODES:
+                raise
+            self.artifact_preexisting = False
+            return
+        self.artifact_preexisting = True
+
+    def owns_artifact(self) -> bool:
+        """El zip es de la corrida si se conoce su clave y consta que lo subió
+        ella: la ejecución dijo `artifactUploaded` verdadero, o el sondeo previo
+        demostró que no existía."""
+        return self.artifact is not None and (
+            self.artifact_uploaded or self.artifact_preexisting is False
+        )
 
     def teardown(self) -> list[str]:
         account = self.account
@@ -188,9 +238,11 @@ class Created:
         provisioner = CloudFormationProvisioner(region=account.region)
         provisioner.delete(IAM_STACK_NAME)
         provisioner.wait(IAM_STACK_NAME, "deleted", DEFAULT_WAIT_TIMEOUT_SECONDS)
-        if self.artifact_uploaded and self.artifact is not None:
+        if self.artifact is not None and self.owns_artifact():
             bucket, key = self.artifact
             account.s3.delete_object(Bucket=bucket, Key=key)
+        elif self.artifact is not None:
+            self.notes.append(ARTIFACT_KEPT_NOTE)
         return failures
 
 
@@ -204,6 +256,8 @@ def clean_account() -> Iterator[Created]:
     created = Created(account)
     yield created
     failures = created.teardown()
+    for note in created.notes:
+        print(f"\n[setup e2e] {note}", flush=True)
     assert not failures, f"no se pudo borrar, hazlo a mano: {failures}"
 
 
@@ -215,7 +269,9 @@ def test_dry_run_plans_the_creation_and_writes_nothing() -> None:
     account = Account(setup_region())
     if account.stack_exists() or account.image_exists():
         pytest.skip(f"{IAM_STACK_NAME} o {BASE_IMAGE_NAME} ya existen: no se toca lo que había")
-    code, document, stderr = run_setup(account.region, "--dry-run", budget=DRY_RUN_BUDGET_SECONDS)
+    code, document, stderr = run_setup(
+        setup_region_arguments(account.region, "--dry-run"), budget=DRY_RUN_BUDGET_SECONDS
+    )
     assert code == 0, stderr
     # `reuse` si la región tiene el bucket de `cdk bootstrap`, `create` si no tiene ninguno.
     assert actions(document)[0] in {"reuse", "create"}
@@ -231,7 +287,9 @@ def test_setup_prepares_the_account_and_a_second_run_changes_nothing(
     clean_account: Created,
 ) -> None:
     account = clean_account.account
-    code, document, stderr = run_setup(account.region, "--yes", budget=SETUP_BUDGET_SECONDS)
+    code, document, stderr = run_setup(
+        setup_region_arguments(account.region, "--yes"), budget=SETUP_BUDGET_SECONDS
+    )
     clean_account.remember_artifact()
     assert code == 0, stderr
     assert document["ready"] is True
@@ -242,7 +300,9 @@ def test_setup_prepares_the_account_and_a_second_run_changes_nothing(
     versions_after_first_run = len(account.versions())
     assert versions_after_first_run == 1
 
-    code, document, stderr = run_setup(account.region, budget=SETUP_BUDGET_SECONDS)
+    code, document, stderr = run_setup(
+        setup_region_arguments(account.region), budget=SETUP_BUDGET_SECONDS
+    )
     assert code == 0, stderr
     assert actions(document) == PREPARED_ACTIONS
     assert document["ready"] is True
@@ -252,8 +312,9 @@ def test_setup_prepares_the_account_and_a_second_run_changes_nothing(
 
 def test_an_interrupted_setup_resumes_without_a_second_build(clean_account: Created) -> None:
     account = clean_account.account
+    clean_account.probe_artifact_preexisting()
     process = subprocess.Popen(
-        cli_arguments(account.region, "--yes"),
+        setup_region_arguments(account.region, "--yes"),
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
@@ -269,9 +330,13 @@ def test_an_interrupted_setup_resumes_without_a_second_build(clean_account: Crea
         process.kill()
         process.wait()
 
-    code, document, stderr = run_setup(account.region, "--yes", budget=SETUP_BUDGET_SECONDS)
+    code, document, stderr = run_setup(
+        setup_region_arguments(account.region, "--yes"), budget=SETUP_BUDGET_SECONDS
+    )
+    clean_account.remember_artifact()
     assert code == 0, stderr
     assert document["ready"] is True
+    clean_account.artifact_uploaded = document["result"]["artifactUploaded"] is True
     assert len(account.versions()) == 1
 
 
@@ -280,9 +345,9 @@ def test_a_prepared_default_region_is_reuse_and_no_write(e2e_settings: E2ESettin
         pytest.skip("este e2e necesita AWS_REGION: la región de la cuenta ya preparada")
     account = Account(e2e_settings.region)
     versions_before = len(account.versions())
-    code, document, stderr = run_setup(
-        e2e_settings.region, "--dry-run", budget=DRY_RUN_BUDGET_SECONDS
-    )
+    arguments = cli_arguments(e2e_settings.region, "--dry-run")
+    code, document, stderr = run_setup(arguments, budget=DRY_RUN_BUDGET_SECONDS)
+    assert "--bucket" not in arguments
     assert code == 0, stderr
     assert actions(document) == PREPARED_ACTIONS
     assert document["ready"] is True
@@ -308,7 +373,9 @@ def test_setup_creates_the_artifact_bucket_and_a_second_run_reuses_it(
     bucket = f"rayito-e2e-setup-{secrets.token_hex(RANDOM_NAME_BYTES)}"
     monkeypatch.setenv(BUCKET_VAR, bucket)
     try:
-        code, document, stderr = run_setup(account.region, "--yes", budget=SETUP_BUDGET_SECONDS)
+        code, document, stderr = run_setup(
+            setup_region_arguments(account.region, "--yes"), budget=SETUP_BUDGET_SECONDS
+        )
         assert code == 0, stderr
         assert actions(document)[0] == "create"
         assert document["result"]["bucket"] == bucket
@@ -319,7 +386,7 @@ def test_setup_creates_the_artifact_bucket_and_a_second_run_reuses_it(
         assert account.s3.head_bucket(Bucket=bucket)["BucketRegion"] == account.region
 
         code, document, stderr = run_setup(
-            account.region, "--dry-run", budget=DRY_RUN_BUDGET_SECONDS
+            setup_region_arguments(account.region, "--dry-run"), budget=DRY_RUN_BUDGET_SECONDS
         )
         assert code == 0, stderr
         assert actions(document) == PREPARED_ACTIONS

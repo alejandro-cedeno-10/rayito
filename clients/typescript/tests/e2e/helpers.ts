@@ -27,6 +27,12 @@ export const EXECUTION_ROLE_VAR = "RAYITO_EXECUTION_ROLE_ARN";
 export const TEST_SANDBOX_TIMEOUT_MS = 900_000;
 export const MAX_TEST_SANDBOX_TIMEOUT_MS = 1_800_000;
 export const MAX_LIVE_TEST_SANDBOXES = 10;
+/**
+ * Etiquetas `K=V` separadas por comas que todo e2e que crea pilas o recursos
+ * etiquetables manda (para organizaciones que exigen etiquetas en los recursos
+ * creados). Opcional; nunca van valores en el código.
+ */
+export const TAGS_VAR = "RAYITO_E2E_TAGS";
 export const POLL_MS = 200;
 export const HOME = "/home/user";
 export const TERMINATE_VISIBLE_MS = 30_000;
@@ -34,6 +40,27 @@ export const TERMINATE_POLL_MS = 500;
 
 export function e2eEnabled(): boolean {
   return process.env[E2E_FLAG_VAR] === "1" && Boolean(process.env[TEMPLATE_VAR]);
+}
+
+/**
+ * Las etiquetas de `RAYITO_E2E_TAGS`: pares `K=V` separados por comas, sin
+ * entradas vacías y con clave y valor sin espacios sobrantes. Un par sin `=`
+ * falla nombrando la variable, nunca el valor.
+ */
+export function tagsFromEnvironment(): Record<string, string> {
+  const tags: Record<string, string> = {};
+  for (const pair of (process.env[TAGS_VAR] ?? "").split(",")) {
+    if (pair.trim() === "") {
+      continue;
+    }
+    const separator = pair.indexOf("=");
+    const key = pair.slice(0, Math.max(separator, 0)).trim();
+    if (separator < 0 || key === "") {
+      throw new Error(`${TAGS_VAR} tiene un par que no es K=V`);
+    }
+    tags[key] = pair.slice(separator + 1).trim();
+  }
+  return tags;
 }
 
 export interface E2ESettings {

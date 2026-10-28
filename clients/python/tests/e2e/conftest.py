@@ -8,7 +8,12 @@
   imprime `run-microvm -> Health agent_ready y kernel_ready` en segundos (el
   `kernel_ready_s` de M4), que `boot_timings` conserva por `sandbox_id`.
 - Un pre-flight falla si hay más de 10 MicroVMs vivos de la imagen de test y un
-  sweeper de fin de sesión termina lo que quede vivo, a <= 10/s (token bucket).
+  sweeper de fin de sesión termina sólo lo que la sesión creó: el `control_plane`
+  de sesión apunta cada id que devuelve `run_microvm` y se terminan esos, si
+  siguen vivos, a <= 10/s (token bucket). Los demás MicroVMs vivos de la imagen
+  (los previos y los que nazcan por otro camino) no se tocan y se informan por
+  número (`session_sweep.py`). Lo que nace sin pasar por ese `control_plane` (el
+  corpus E2B y la CLI en subprocesos) lo acota el `maximumDurationInSeconds=900`.
 
 Variables opcionales: `AWS_REGION`/`AWS_PROFILE` (boto3), `RAYITO_EXECUTION_ROLE_ARN`
 (activa `logging="cloudwatch"`; sin rol no hay logs de runtime), `RAYITO_TEMPLATE_POLY`
@@ -22,19 +27,27 @@ import os
 import time
 from collections.abc import Iterator
 from dataclasses import dataclass
+from typing import Any
 
 import pytest
 
 from rayito import IdlePolicy, Sandbox, TelemetryExport
-from rayito._aws import LambdaMicrovmsControlPlane
+from rayito._aws import LambdaMicrovmsControlPlane, LaunchRequest
+from rayito._models import SandboxInfo
 from rayito._sandbox_base import LoggingOption
 from rayito.exceptions import SandboxNotFoundException
+
+from .session_sweep import plan_session_sweep
 
 E2E_FLAG_VAR = "RAYITO_E2E"
 TEMPLATE_VAR = "RAYITO_TEMPLATE"
 TEMPLATE_VERSION_VAR = "RAYITO_TEMPLATE_VERSION"
 EXECUTION_ROLE_VAR = "RAYITO_EXECUTION_ROLE_ARN"
 POLY_TEMPLATE_VAR = "RAYITO_TEMPLATE_POLY"
+#: Etiquetas `K=V` separadas por comas que todo e2e que crea pilas o recursos
+#: etiquetables manda (para organizaciones que exigen etiquetas en los recursos
+#: creados). Opcional; nunca van valores en el código.
+TAGS_VAR = "RAYITO_E2E_TAGS"
 TEST_SANDBOX_TIMEOUT_SECONDS = 900
 MAX_TEST_SANDBOX_TIMEOUT_SECONDS = 1800
 MAX_LIVE_TEST_SANDBOXES = 10
@@ -50,6 +63,21 @@ class E2ESettings:
     @property
     def logging(self) -> LoggingOption:
         return "cloudwatch" if self.execution_role_arn else "disabled"
+
+
+def e2e_tags() -> dict[str, str]:
+    """Las etiquetas de `RAYITO_E2E_TAGS`: pares `K=V` separados por comas, sin
+    entradas vacías y con clave y valor sin espacios sobrantes. Un par sin `=`
+    falla nombrando la variable, nunca el valor."""
+    tags: dict[str, str] = {}
+    for pair in os.environ.get(TAGS_VAR, "").split(","):
+        if not pair.strip():
+            continue
+        key, separator, value = pair.partition("=")
+        if not separator or not key.strip():
+            pytest.fail(f"{TAGS_VAR} tiene un par que no es K=V")
+        tags[key.strip()] = value.strip()
+    return tags
 
 
 def e2e_enabled() -> bool:
@@ -78,9 +106,26 @@ def e2e_settings() -> E2ESettings:
     )
 
 
+class RecordingControlPlane(LambdaMicrovmsControlPlane):
+    """El plano de control de la sesión: apunta el id de cada MicroVM que
+    `run_microvm` devuelve, que es lo único que el sweeper de fin de sesión
+    termina (`session_sweep.py`)."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.created_ids: list[str] = []
+
+    def run_microvm(self, request: LaunchRequest) -> SandboxInfo:
+        info = super().run_microvm(request)
+        self.created_ids.append(info.sandbox_id)
+        return info
+
+
 @pytest.fixture(scope="session")
-def control_plane(e2e_settings: E2ESettings) -> LambdaMicrovmsControlPlane:
-    return LambdaMicrovmsControlPlane.from_session(region=e2e_settings.region)
+def control_plane(e2e_settings: E2ESettings) -> RecordingControlPlane:
+    plane = RecordingControlPlane.from_session(region=e2e_settings.region)
+    assert isinstance(plane, RecordingControlPlane)
+    return plane
 
 
 @pytest.fixture(scope="session")
@@ -93,16 +138,23 @@ def live_sandbox_ids(control_plane: LambdaMicrovmsControlPlane, template_arn: st
 
 
 @pytest.fixture(scope="session", autouse=True)
-def sandbox_sweeper(control_plane: LambdaMicrovmsControlPlane, template_arn: str) -> Iterator[None]:
-    live = live_sandbox_ids(control_plane, template_arn)
-    if len(live) > MAX_LIVE_TEST_SANDBOXES:
+def sandbox_sweeper(control_plane: RecordingControlPlane, template_arn: str) -> Iterator[None]:
+    baseline = live_sandbox_ids(control_plane, template_arn)
+    if len(baseline) > MAX_LIVE_TEST_SANDBOXES:
         pytest.fail(
-            f"pre-flight: hay {len(live)} MicroVMs vivos de {template_arn}; limpia antes de correr"
+            f"pre-flight: hay {len(baseline)} MicroVMs vivos de {template_arn}; "
+            "limpia antes de correr"
         )
     yield
-    for sandbox_id in live_sandbox_ids(control_plane, template_arn):
+    plan = plan_session_sweep(
+        baseline, control_plane.created_ids, live_sandbox_ids(control_plane, template_arn)
+    )
+    for sandbox_id in plan.terminate:
         with contextlib.suppress(SandboxNotFoundException):
             control_plane.terminate_microvm(sandbox_id)
+    note = plan.report()
+    if note is not None:
+        print(f"\n{note}", flush=True)
 
 
 BootTimings = dict[str, float]

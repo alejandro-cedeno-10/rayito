@@ -30,7 +30,13 @@
  *
  * Limpieza: borra sólo lo que creó la ejecución (la imagen con sus versiones y
  * su grupo de logs por `image-cleanup.ts`, la pila de IAM y la clave del zip
- * sólo cuando `artifactUploaded` fue `true` o el zip dado no existía antes).
+ * sólo si consta que la subió esta corrida: la ejecución reanudada dijo
+ * `artifactUploaded: true` o un `HeadObject` previo al subproceso que se mata
+ * demostró que el zip dado no existía; el zip lo sube la ejecución
+ * interrumpida, y la reanudada lo encuentra ya subido y dice `false`). Hace
+ * falta conocer la clave: con `RAYITO_E2E_SETUP_ARTIFACT` por su sha256 y, sin
+ * él, por el de la descarga verificada. Sin la propiedad demostrada el zip se
+ * queda y la limpieza deja una nota.
  * Necesita `lambda:DeleteMicrovmImage`, `logs:DeleteLogGroup`,
  * `cloudformation:DeleteStack` y `s3:DeleteObject` sobre `rayito/images/*`.
  *
@@ -96,6 +102,9 @@ const BUILD_START_BUDGET_MS = 600_000;
 const BUILD_START_POLL_MS = 5_000;
 const KILL_SETTLE_MS = 2_000;
 const NOT_FOUND_CODES: ReadonlySet<string> = new Set(["404", "NotFound", "NoSuchKey"]);
+
+/** La nota de la limpieza cuando un zip se deja en su sitio. */
+const ARTIFACT_KEPT_NOTE = "zip del artefacto no borrado: no consta que lo subiera esta corrida";
 
 const FOUND_STATE = "found";
 /** Lo que planea una región ya preparada: los tres pasos se reutilizan y
@@ -234,8 +243,12 @@ describe.runIf(setupEnabled())("rayito setup en una región nueva (AWS real)", (
   let services: CliServices;
   let fresh = false;
   let imageCreated = false;
-  let artifactOwned: { readonly bucket: string; readonly key: string } | undefined;
-  let artifactAlreadyThere = false;
+  let artifactSha: string | undefined;
+  /** `false`: un `HeadObject` previo demostró que la clave no existía; `undefined`: no se pudo saber. */
+  let artifactPreexisting: boolean | undefined;
+  let artifactCandidate:
+    | { readonly bucket: string; readonly key: string; readonly uploadedByResume: boolean }
+    | undefined;
 
   beforeAll(async () => {
     services = await servicesIn(region);
@@ -243,12 +256,14 @@ describe.runIf(setupEnabled())("rayito setup en una región nueva (AWS real)", (
     fresh = existing.stack.status === undefined && existing.image.state === undefined;
     const artifact = process.env[ARTIFACT_VAR];
     const bucket = process.env[BUCKET_VAR];
-    if (fresh && artifact && bucket) {
-      const sha = createHash("sha256").update(readFileSync(artifact)).digest("hex");
-      artifactAlreadyThere = await headObjectExists(
+    if (artifact) {
+      artifactSha = createHash("sha256").update(readFileSync(artifact)).digest("hex");
+    }
+    if (fresh && artifactSha !== undefined && bucket) {
+      artifactPreexisting = await headObjectExists(
         new S3Client(clientConfig(region)),
         bucket,
-        artifactKey(sha, undefined),
+        artifactKey(artifactSha, undefined),
       );
     }
   }, STACK_HOOK_TIMEOUT_MS);
@@ -269,10 +284,14 @@ describe.runIf(setupEnabled())("rayito setup en una región nueva (AWS real)", (
       failures.push(...(await images.deleteAll()));
     }
     await services.stacks.destroy(IAM_STACK_COMPONENT, { stackName: IAM_STACK_NAME });
-    if (artifactOwned !== undefined && !artifactAlreadyThere) {
-      await new S3Client(clientConfig(region)).send(
-        new DeleteObjectCommand({ Bucket: artifactOwned.bucket, Key: artifactOwned.key }),
-      );
+    if (artifactCandidate !== undefined) {
+      if (artifactCandidate.uploadedByResume || artifactPreexisting === false) {
+        await new S3Client(clientConfig(region)).send(
+          new DeleteObjectCommand({ Bucket: artifactCandidate.bucket, Key: artifactCandidate.key }),
+        );
+      } else {
+        console.log(`\n[setup e2e] ${ARTIFACT_KEPT_NOTE}`);
+      }
     }
     if (failures.length > 0) {
       throw new Error(`sin borrar (bórralo a mano): ${failures.join("; ")}`);
@@ -317,13 +336,13 @@ describe.runIf(setupEnabled())("rayito setup en una región nueva (AWS real)", (
     expect(outcome.exitCode).toBe(0);
     expect(document.ready).toBe(true);
     expect((await observe(services)).image.versions).toHaveLength(1);
-    const sha = VERIFIED_PATTERN.exec(`${childStderr}${outcome.stderr}`)?.[1];
-    if (
-      document.result !== null &&
-      sha !== undefined &&
-      document.result.artifactUploaded === true
-    ) {
-      artifactOwned = { bucket: document.result.bucket, key: artifactKey(sha, undefined) };
+    const sha = artifactSha ?? VERIFIED_PATTERN.exec(`${childStderr}${outcome.stderr}`)?.[1];
+    if (document.result !== null && sha !== undefined) {
+      artifactCandidate = {
+        bucket: document.result.bucket,
+        key: artifactKey(sha, undefined),
+        uploadedByResume: document.result.artifactUploaded === true,
+      };
     }
   });
 

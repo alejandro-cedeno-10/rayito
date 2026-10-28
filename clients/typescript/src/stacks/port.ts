@@ -47,7 +47,8 @@ export interface StackProvisioner {
   /** Sube `data` a `bucket/key` sólo si no está ya (idempotente). */
   putArtifact(bucket: string, key: string, data: Uint8Array): Promise<void>;
 
-  /** El motivo más reciente del fallo, o `undefined` si la pila no existe o
-   * no falló. */
+  /** El motivo del primer recurso que falló en la última operación o, sin
+   * ninguno, el `StackStatusReason` de la pila; ya redactado. `undefined` si
+   * la pila no existe o no trae motivo. */
   failureReason(stackName: string): Promise<string | undefined>;
 }

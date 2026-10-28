@@ -18,6 +18,7 @@ interface CommandCase {
   readonly now: string;
   readonly world?: CaseWorld;
   readonly stderrIncludes?: string[];
+  readonly stderrExcludes?: string[];
   readonly expected: {
     readonly exitCode: number;
     readonly stdout: string;
@@ -64,6 +65,9 @@ describe("comandos de la CLI frente a los casos de Python", () => {
     }
     for (const needle of testCase.stderrIncludes ?? []) {
       expect(outcome.stderr + outcome.stdout).toContain(needle);
+    }
+    for (const needle of testCase.stderrExcludes ?? []) {
+      expect(outcome.stderr + outcome.stdout).not.toContain(needle);
     }
     expect({
       terminated: world.plane.terminated,
