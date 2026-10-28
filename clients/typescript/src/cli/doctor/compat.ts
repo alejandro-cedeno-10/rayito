@@ -141,6 +141,13 @@ export const COMPATIBILITY: readonly CompatibilityRow[] = [
       "y la renovación de claves sólo a petición explícita se validan con el rayd del tag " +
       "rayd-v0.17.0",
   },
+  {
+    sdkSeries: "0.18",
+    minAgentVersion: "0.17.0",
+    note:
+      "0.18: domain deploy --tag y el motivo de un despliegue que termina en rollback son " +
+      "de la CLI; el rayd no cambia y basta el del tag rayd-v0.17.0",
+  },
 ];
 
 export interface Assessment {
