@@ -154,6 +154,9 @@ WEBSOCKET_ECHO_SERVER_SOURCE = (
     Path(__file__).resolve().parents[4] / "testdata" / "custom-domain" / "websocket_echo_server.py"
 )
 WEBSOCKET_ECHO_SERVER_PATH = "/home/user/websocket_echo_server.py"
+#: Dirección de escucha del eco: todas las interfaces, como `python3 -m http.server`,
+#: porque el proxy del sandbox llega por la interfaz de red de la VM.
+WEBSOCKET_ECHO_BIND_ADDRESS = "0.0.0.0"
 #: Cuánto esperar a que el servidor del sandbox escuche en `ROUTE_PORT`, y
 #: cada cuánto mirarlo (dentro del sandbox, con `/dev/tcp` de bash).
 SERVER_LISTEN_TIMEOUT_SECONDS = 30
@@ -545,7 +548,10 @@ def websocket_echo_sandbox(sandbox: Sandbox) -> Iterator[Sandbox]:
     sandbox.files.write(
         WEBSOCKET_ECHO_SERVER_PATH, WEBSOCKET_ECHO_SERVER_SOURCE.read_text(encoding="utf-8")
     )
-    _start_in_background(sandbox, f"python3 {WEBSOCKET_ECHO_SERVER_PATH} {ROUTE_PORT}")
+    _start_in_background(
+        sandbox,
+        f"python3 {WEBSOCKET_ECHO_SERVER_PATH} {ROUTE_PORT} {WEBSOCKET_ECHO_BIND_ADDRESS}",
+    )
     yield sandbox
 
 

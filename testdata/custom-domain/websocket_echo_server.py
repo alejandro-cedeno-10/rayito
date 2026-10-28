@@ -2,7 +2,9 @@
 
 Sólo usa `socket` (no instala nada en el sandbox): lo justo para comprobar de
 punta a punta que la distribución deja pasar un upgrade, no un servidor de
-WebSocket real. Uso: `python3 websocket_echo_server.py <puerto>`.
+WebSocket real. Uso: `python3 websocket_echo_server.py <puerto> <dirección>`;
+la dirección de escucha la decide quien lo lanza (los e2e, la de
+`python3 -m http.server`; el test unitario, loopback).
 
 Atiende una conexión tras otra (un apretón de manos que llegó por un servidor
 del edge sin la ruta se reintenta) y lee cabeceras y trama hasta tenerlas
@@ -70,10 +72,10 @@ def serve(conn):
     conn.sendall(bytes([FINAL_TEXT_FRAME, len(payload)]) + payload)
 
 
-def main(port):
+def main(port, address):
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    server.bind(("0.0.0.0", port))
+    server.bind((address, port))
     server.listen(LISTEN_BACKLOG)
     while True:
         conn, _ = server.accept()
@@ -86,4 +88,4 @@ def main(port):
 
 
 if __name__ == "__main__":
-    main(int(sys.argv[1]))
+    main(int(sys.argv[1]), sys.argv[2])

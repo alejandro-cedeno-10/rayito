@@ -133,6 +133,8 @@ const WEBSOCKET_ECHO_SERVER_SOURCE = join(
   "websocket_echo_server.py",
 );
 const WEBSOCKET_ECHO_SERVER_PATH = `${HOME}/websocket_echo_server.py`;
+/** Dirección de escucha del eco: todas las interfaces, como `python3 -m http.server`, porque el proxy del sandbox llega por la interfaz de red de la VM. */
+const WEBSOCKET_ECHO_BIND_ADDRESS = "0.0.0.0";
 // Cuánto esperar, dentro del sandbox, a que algo escuche en ROUTE_PORT, y
 // cada cuánto mirarlo (`/dev/tcp` de bash, el shell de commands.run).
 const SERVER_LISTEN_TIMEOUT_SECONDS = 30;
@@ -563,7 +565,10 @@ describe.runIf(e2eEnabled() && customDomainEnvReady())("dominio propio (AWS real
       WEBSOCKET_ECHO_SERVER_PATH,
       readFileSync(WEBSOCKET_ECHO_SERVER_SOURCE, "utf8"),
     );
-    await startInBackground(sandbox, `python3 ${WEBSOCKET_ECHO_SERVER_PATH} ${ROUTE_PORT}`);
+    await startInBackground(
+      sandbox,
+      `python3 ${WEBSOCKET_ECHO_SERVER_PATH} ${ROUTE_PORT} ${WEBSOCKET_ECHO_BIND_ADDRESS}`,
+    );
     const [route, authorized] = await register("ws", sandbox);
     await waitUntilRouteVisible(target, route.host);
     // DOM-3: ¿corre la Function en la petición de upgrade, y acepta el

@@ -46,7 +46,7 @@ def _connect(port: int) -> socket.socket:
 @pytest.fixture
 def port() -> Iterator[int]:
     chosen = _free_port()
-    server = subprocess.Popen([sys.executable, "-I", str(SCRIPT), str(chosen)])
+    server = subprocess.Popen([sys.executable, "-I", str(SCRIPT), str(chosen), "127.0.0.1"])
     try:
         _connect(chosen).close()
         yield chosen
