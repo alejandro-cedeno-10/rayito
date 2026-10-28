@@ -346,7 +346,6 @@ def test_a_prepared_default_region_is_reuse_and_no_write(e2e_settings: E2ESettin
     account = Account(e2e_settings.region)
     versions_before = len(account.versions())
     arguments = cli_arguments(e2e_settings.region, "--dry-run")
-    print(f"\n[setup e2e] argv con --bucket: {'--bucket' in arguments}", flush=True)
     code, document, stderr = run_setup(arguments, budget=DRY_RUN_BUDGET_SECONDS)
     assert "--bucket" not in arguments
     assert code == 0, stderr
