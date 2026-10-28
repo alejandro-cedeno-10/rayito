@@ -114,6 +114,41 @@ repeating a parameter reset it to its default value.</small>
     await stacks.deploy("s3-mounts", { parameters: { ReadOnly: "false" } });
     ```
 
+If a deployment ends in `ROLLBACK_COMPLETE`, `ROLLBACK_FAILED` or
+`UPDATE_ROLLBACK_COMPLETE`, `rayito stack deploy` prints the reason of the
+first resource that failed on stderr. From code, `OptionalStacks.failure_reason()`
+(TypeScript: `failureReason()`) returns that text, already redacted. It needs
+`cloudformation:DescribeStackEvents` and costs nothing (one read).
+
+=== "Python"
+
+    ```python
+    from rayito import OptionalStacks, StackException
+
+    stacks = OptionalStacks(region="us-east-1")
+    try:
+        stacks.deploy("s3-mounts", parameters={"BucketName": "amzn-s3-demo-bucket"})
+    except StackException:
+        print(stacks.failure_reason("s3-mounts"))  # "<resource> (CREATE_FAILED): <reason>"
+        raise
+    ```
+
+=== "TypeScript"
+
+    ```ts
+    import { OptionalStacks, StackError } from "rayito";
+
+    const stacks = new OptionalStacks({ region: "us-east-1" });
+    try {
+      await stacks.deploy("s3-mounts", { parameters: { BucketName: "amzn-s3-demo-bucket" } });
+    } catch (error) {
+      if (error instanceof StackError) {
+        console.log(await stacks.failureReason("s3-mounts")); // "<resource> (CREATE_FAILED): <reason>"
+      }
+      throw error;
+    }
+    ```
+
 ## CLI { #cli }
 
 ```bash
@@ -176,7 +211,8 @@ says what is kept.
 - **A failed stack** (`ROLLBACK_COMPLETE`) cannot be updated:
   `deploy()` raises `StackException(code="blocked")`
   (TypeScript: `StackError`) without calling `UpdateStack`. Delete it with
-  `destroy()` and deploy it again.
+  `destroy()` and deploy it again. To learn why it failed, use
+  `failure_reason()` (above) or the `motivo:` line the CLI prints.
 - **Lambda code**: a component with code (`events-webhooks`) uploads it
   to `rayito/stacks/<component>/<sha256>.zip` of
   `artifact_bucket=`/`--artifact-bucket`, which must be in your account (each

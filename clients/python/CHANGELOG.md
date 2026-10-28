@@ -6,6 +6,38 @@ Todos los cambios notables del paquete `rayito` (SDK Python). El formato sigue
 
 ## [Unreleased]
 
+### Añadido
+
+- **`rayito domain deploy --tag K=V` (repetible).** Como `rayito stack deploy
+  --tag`, etiqueta la pila y sus recursos; sirve a las organizaciones que
+  exigen etiquetas en los recursos creados. No cambia el coste.
+- **`OptionalStacks.failure_reason()`.** Devuelve, ya redactado, el motivo del primer
+  recurso que falló en la última operación de la pila (`DescribeStackEvents`,
+  solo lectura, sin coste; necesita `cloudformation:DescribeStackEvents`) o, sin
+  ninguno, el `StackStatusReason`. `StackException`/`StackError` gana el
+  atributo `state` (el estado terminal de la pila), que solo pone la espera.
+
+### Corregido
+
+- **Un `deploy` que termina en `ROLLBACK_COMPLETE`, `ROLLBACK_FAILED` o
+  `UPDATE_ROLLBACK_COMPLETE` imprime el motivo.** `rayito stack deploy` y
+  `rayito domain deploy` añaden en stderr `  motivo: <recurso> (<estado>):
+  <motivo>` con el primer recurso que falló; el error, su salida y el código de
+  salida no cambian. Un `CreateStack`/`UpdateStack` rechazado, o una espera que
+  termina en otro estado, no imprimen motivo. Sin el permiso opcional
+  `cloudformation:DescribeStackEvents` no se imprime nada.
+
+### Pruebas
+
+- Los e2e de Python terminan al acabar la sesión solo los MicroVMs que la propia
+  sesión creó; las etiquetas `RAYITO_E2E_TAGS` llegan también a los e2e de
+  dominio propio; el eco de WebSocket se sube como fichero compartido; el 404
+  por caducidad exige varias respuestas seguidas y que haya pasado el TTL; los
+  servidores en segundo plano no mueren a los 60 s; el zip de un setup
+  interrumpido solo se borra si consta que lo subió la corrida; la región por
+  defecto no recibe los argumentos de la región de prueba; y TypeScript gana la
+  e2e lenta de rotación de credenciales (`RAYITO_E2E_SLOW=1`).
+
 ## [0.17.1] - 2026-10-24
 
 ### Corregido

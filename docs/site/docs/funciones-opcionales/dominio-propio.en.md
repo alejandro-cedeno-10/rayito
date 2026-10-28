@@ -136,6 +136,8 @@ You need three things:
     ```bash
     rayito domain deploy --public-domain sbx.example.com \
       --certificate-arn arn:aws:acm:us-east-1:<account>:certificate/<id>
+    # optional: --tag K=V (repeatable), for organizations that enforce tags
+    # on created resources
     # ... DNS: point a CNAME/alias of *.sbx.example.com to dxxxxxxxxxxxx.cloudfront.net
     rayito domain status
     ```
@@ -350,6 +352,8 @@ wildcard the certificate covers) and `RAYITO_E2E_CERT_ARN`, deploys its own
 stack per run (`rayito-cd-e2e-<id>`) with random explicit names
 so as not to clash with any existing alias, creates no DNS record and
 deletes everything when it finishes. Without those variables it is skipped.
+`RAYITO_E2E_TAGS` (optional, `K=V` tags separated by commas) tags the stack,
+for organizations that enforce tags on created resources.
 
 ## How it works { #como-funciona }
 
@@ -386,8 +390,9 @@ deletes everything when it finishes. Without those variables it is skipped.
   `cloudfront:CreateDistribution` even if your role is an administrator. Then
   `deploy()` fails with `StackException` (the stack ends up in
   `ROLLBACK_COMPLETE`; the reason, `AccessDenied ... explicit deny in a
-  service control policy`, shows up in the stack events,
-  `aws cloudformation describe-stack-events`). Nothing is left created: the
+  service control policy`, is printed by `rayito domain deploy` on stderr
+  (`  motivo: ...`) and, from code, returned by
+  `OptionalStacks().failure_reason("custom-domain", stack_name=...)`). Nothing is left created: the
   rollback deletes the Function and the KeyValueStore, and `destroy()` removes the failed
   stack. Ask the organization's administrator to allow that action
   (Q141 of `AWS_API_NOTES.md`).

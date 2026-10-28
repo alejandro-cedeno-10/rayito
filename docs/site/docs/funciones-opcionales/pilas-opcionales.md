@@ -116,6 +116,41 @@ parámetro lo devolvía a su valor por defecto.</small>
     await stacks.deploy("s3-mounts", { parameters: { ReadOnly: "false" } });
     ```
 
+Si un despliegue termina en `ROLLBACK_COMPLETE`, `ROLLBACK_FAILED` o
+`UPDATE_ROLLBACK_COMPLETE`, `rayito stack deploy` imprime en stderr el motivo
+del primer recurso que falló. Desde código, `OptionalStacks.failure_reason()`
+(TypeScript: `failureReason()`) devuelve ese texto, ya redactado. Necesita
+`cloudformation:DescribeStackEvents` y no cuesta nada (una lectura).
+
+=== "Python"
+
+    ```python
+    from rayito import OptionalStacks, StackException
+
+    stacks = OptionalStacks(region="us-east-1")
+    try:
+        stacks.deploy("s3-mounts", parameters={"BucketName": "amzn-s3-demo-bucket"})
+    except StackException:
+        print(stacks.failure_reason("s3-mounts"))  # "<recurso> (CREATE_FAILED): <motivo>"
+        raise
+    ```
+
+=== "TypeScript"
+
+    ```ts
+    import { OptionalStacks, StackError } from "rayito";
+
+    const stacks = new OptionalStacks({ region: "us-east-1" });
+    try {
+      await stacks.deploy("s3-mounts", { parameters: { BucketName: "amzn-s3-demo-bucket" } });
+    } catch (error) {
+      if (error instanceof StackError) {
+        console.log(await stacks.failureReason("s3-mounts")); // "<recurso> (CREATE_FAILED): <motivo>"
+      }
+      throw error;
+    }
+    ```
+
 ## CLI
 
 ```bash
@@ -178,7 +213,8 @@ dice qué se conserva.
 - **Una pila fallida** (`ROLLBACK_COMPLETE`) no se puede actualizar:
   `deploy()` lanza `StackException(code="blocked")`
   (TypeScript: `StackError`) sin llamar a `UpdateStack`. Bórrala con
-  `destroy()` y vuelve a desplegarla.
+  `destroy()` y vuelve a desplegarla. Para saber por qué falló, mira
+  `failure_reason()` (arriba) o el `motivo:` que imprime la CLI.
 - **Código Lambda**: un componente con código (`events-webhooks`) lo sube
   a `rayito/stacks/<componente>/<sha256>.zip` de
   `artifact_bucket=`/`--artifact-bucket`, que debe ser de tu cuenta (cada

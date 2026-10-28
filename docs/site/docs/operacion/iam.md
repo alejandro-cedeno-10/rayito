@@ -28,6 +28,10 @@ Las plantillas opcionales se despliegan con `rayito stack deploy <componente>`
 `cloudformation:CreateStack/UpdateStack/DescribeStacks/DeleteStack` y los
 permisos de lo que crea la plantilla
 ([Pilas opcionales](../funciones-opcionales/pilas-opcionales.md)).
+`cloudformation:DescribeStackEvents` es opcional: con él, la CLI imprime el
+motivo del primer recurso que falló cuando un `deploy` termina en
+`ROLLBACK_*` (`OptionalStacks.failure_reason`); sin él, la CLI no imprime el
+motivo y el error original no cambia.
 
 !!! warning "Un servicio en producción sólo lanza sandboxes"
     Vincula `SandboxLauncherPolicy` (output `SandboxLauncherPolicyArn`) al

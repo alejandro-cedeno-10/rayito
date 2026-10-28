@@ -441,13 +441,18 @@ CloudFormation en tu cuenta, y nada se despliega sin que lo pidas.
   (`events-webhooks`): ahí se sube el código, en
   `rayito/stacks/<componente>/<sha256>.zip`, sólo si el bucket es de tu
   cuenta y comparando el contenido de un objeto que ya exista.
+  Si la pila termina en `ROLLBACK_COMPLETE`, `ROLLBACK_FAILED` o
+  `UPDATE_ROLLBACK_COMPLETE`, `deploy` añade en stderr una línea
+  `  motivo: <recurso> (<estado>): <motivo>` con el primer recurso que falló
+  (necesita `cloudformation:DescribeStackEvents`; sin ese permiso no se
+  imprime y el error original no cambia).
 - `status` es un `DescribeStacks`: estado y salidas de la pila.
 - `destroy` dice qué se conserva y pide confirmación salvo `--yes`.
 
 ## `rayito domain`
 
 ```bash
-rayito domain deploy --public-domain D --certificate-arn ARN [--alternate-domain-name H]... [--stack-name N] [--yes]
+rayito domain deploy --public-domain D --certificate-arn ARN [--alternate-domain-name H]... [--tag K=V]... [--stack-name N] [--yes]
 rayito domain status | destroy [--stack-name N] [--yes]
 ```
 
@@ -457,7 +462,10 @@ sin verificar aún de punta a punta en AWS real): una fachada de
 `CustomDomain`. `deploy` valida `--public-domain` y cada
 `--alternate-domain-name` antes de llamar a AWS, pide confirmación salvo
 `--yes` e imprime a qué apuntar el `CNAME`. El certificado ACM tiene que
-estar en `us-east-1`.
+estar en `us-east-1`. `--tag K=V` (repetible) etiqueta la pila y sus recursos,
+como en `rayito stack deploy`, para organizaciones que exigen etiquetas en los
+recursos creados; no cambia el coste. Si la pila termina en `ROLLBACK_*`,
+imprime el motivo igual que `rayito stack deploy`.
 
 ## `rayito events`
 
