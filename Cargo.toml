@@ -26,12 +26,12 @@ protox = "=0.9.1"
 glob = "=0.3.4"
 tokio = { version = "=1.53.3", features = ["rt-multi-thread", "macros", "net", "signal", "sync", "time", "process", "io-util", "fs"] }
 tokio-stream = { version = "=0.1.19", default-features = false, features = ["net"] }
-tokio-util = { version = "=0.7.19", default-features = false, features = ["codec"] }
+tokio-util = { version = "=0.7.20", default-features = false, features = ["codec"] }
 axum = { version = "=0.8.9", default-features = false, features = ["tokio", "http1", "json"] }
 # `server`: the hooks listener serves HTTP/1.1 with hyper directly
 # (`rayd::hooks::serve`, a request-head deadline axum::serve cannot set);
 # axum already pulls the same feature in.
-hyper = { version = "=1.11.1", features = ["client", "http1", "server"] }
+hyper = { version = "=1.12.0", features = ["client", "http1", "server"] }
 tower = { version = "=0.5.3", default-features = false, features = ["util"] }
 http = "=1.5.0"
 http-body = "=1.1.0"
@@ -39,16 +39,16 @@ http-body-util = "=0.1.5"
 bytes = "=1.12.1"
 futures = { version = "=0.3.34", default-features = false, features = ["std"] }
 nix = { version = "=0.31.3", default-features = false, features = ["signal", "process", "user", "term", "fs", "dir", "ioctl", "resource"] }
-libc = "=0.2.189"
+libc = "=0.2.191"
 thiserror = "=2.0.21"
 anyhow = "=1.0.104"
 tracing = "=0.1.44"
 tracing-subscriber = { version = "=0.3.23", default-features = false, features = ["env-filter", "fmt", "json", "std"] }
 serde = { version = "=1.0.229", features = ["derive"] }
-serde_json = "=1.0.151"
-sha2 = "=0.11.0"
+serde_json = "=1.0.154"
+sha2 = "=0.11.1"
 subtle = { version = "=2.6.1", default-features = false }
-zeroize = { version = "=1.9.0", features = ["derive"] }
+zeroize = { version = "=1.9.1", features = ["derive"] }
 base64 = "=0.23.1"
 # Event-line MAC (m15-events-webhooks, ADR-020): `k_sbx` is already derived
 # by the SDK, so `rayd-core` only needs the HMAC primitive, not a KDF.
@@ -60,7 +60,7 @@ getrandom = "=0.4.3"
 # S3 persistence (ADR-009): the only TLS client in the binary. `sigv4a`,
 # `sso` and `credentials-process` stay out; the trust store is the OS bundle.
 aws-config = { version = "=1.12.0", default-features = false, features = ["rt-tokio", "default-https-client"] }
-aws-sdk-s3 = { version = "=1.150.0", default-features = false, features = ["rt-tokio", "default-https-client", "http-1x"] }
+aws-sdk-s3 = { version = "=1.152.0", default-features = false, features = ["rt-tokio", "default-https-client", "http-1x"] }
 # m15-rayd-otlp (ADR-021) rule for direct dependencies: only crates
 # `aws-config`/`aws-sdk-s3`/`hyper` already pull in transitively, pinned to
 # the exact version `Cargo.lock` already resolves, so none of these adds a
@@ -70,8 +70,8 @@ aws-sdk-s3 = { version = "=1.150.0", default-features = false, features = ["rt-t
 # SigV4 signer `aws-sdk-s3` itself uses, so `cloudwatch_otlp_sink` never
 # hand-rolls HMAC/SigV4. `httpdate`: parses the `Date` header the sink
 # measures clock skew from.
-aws-credential-types = { version = "=1.3.0", default-features = false }
-aws-sigv4 = { version = "=1.6.0", default-features = false, features = ["sign-http", "http1"] }
+aws-credential-types = { version = "=1.3.1", default-features = false }
+aws-sigv4 = { version = "=1.6.2", default-features = false, features = ["sign-http", "http1"] }
 httpdate = "=1.0.3"
 tar = "=0.4.46"
 flate2 = { version = "=1.1.10", default-features = false, features = ["rust_backend"] }
