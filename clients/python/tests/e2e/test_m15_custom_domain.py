@@ -17,6 +17,9 @@ Además de `RAYITO_E2E=1`/`RAYITO_TEMPLATE` (`conftest.py`):
 - `RAYITO_E2E_CERT_ARN`: ese certificado ACM, en `us-east-1`.
 - `RAYITO_ACCEPTANCE_RUN_TAG` (opcional): etiqueta de la corrida; por
   defecto, el identificador aleatorio de la corrida.
+- `RAYITO_E2E_TAGS` (opcional, `conftest.e2e_tags`): etiquetas `K=V` separadas
+  por comas para la pila, para organizaciones que exigen etiquetas en los
+  recursos creados. La etiqueta de la corrida gana si coincide una clave.
 
 Sin las dos primeras el módulo entero se salta. Elige un dominio SIN un
 registro DNS comodín que apunte a otra distribución CloudFront: CloudFront
@@ -71,6 +74,7 @@ import ssl
 import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
+from pathlib import Path
 
 import boto3
 import pytest
@@ -85,7 +89,7 @@ from rayito._custom_domain._service import (
 from rayito.exceptions import CustomDomainException, SandboxNotFoundException, StackException
 from rayito.sandbox_sync.main import Sandbox
 
-from .conftest import BootTimings, E2ESettings, create_test_sandbox
+from .conftest import BootTimings, E2ESettings, create_test_sandbox, e2e_tags
 
 DOMAIN_VAR = "RAYITO_E2E_DOMAIN"
 CERT_ARN_VAR = "RAYITO_E2E_CERT_ARN"
@@ -123,6 +127,14 @@ ROUTE_TTL_SECONDS = 1800
 #: TTL corto del test de caducidad: deja ver la ruta (`STABLE_OBSERVATIONS`
 #: respuestas seguidas más la propagación) y servir antes de que venza.
 SHORT_ROUTE_TTL_SECONDS = 90
+#: Cuánto antes de `SHORT_ROUTE_TTL_SECONDS` desde `_register` puede verse el
+#: 404 por caducidad y aún ser una caducidad de verdad: `register()` guarda
+#: `expires_at = int(clock()) + ttl` (trunca hasta 1 s) y la Function lo
+#: compara con el reloj del edge. Criterio fijado antes de medir (no es una
+#: medida de AWS): 5 s cubren el truncado más un desfase de reloj entre la
+#: máquina de la prueba y el edge; un 404 más temprano es de un servidor sin
+#: la ruta, no de su TTL.
+EDGE_CLOCK_SKEW_TOLERANCE_SECONDS = 5.0
 HTTPS_PORT = 443
 HTTP_REQUEST_TIMEOUT_SECONDS = 20.0
 WEBSOCKET_HANDSHAKE_TIMEOUT_SECONDS = 20.0
@@ -137,6 +149,11 @@ AUTO_RESUME_TIMEOUT_SECONDS = 120.0
 RESUME_IDLE = IdlePolicy(max_idle_seconds=300, auto_resume=True)
 #: GUID fijo de RFC 6455 §1.3, para calcular `Sec-WebSocket-Accept`.
 WEBSOCKET_ACCEPT_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+#: El eco de WebSocket compartido con TypeScript y dónde se sube en el sandbox.
+WEBSOCKET_ECHO_SERVER_SOURCE = (
+    Path(__file__).resolve().parents[4] / "testdata" / "custom-domain" / "websocket_echo_server.py"
+)
+WEBSOCKET_ECHO_SERVER_PATH = "/home/user/websocket_echo_server.py"
 #: Cuánto esperar a que el servidor del sandbox escuche en `ROUTE_PORT`, y
 #: cada cuánto mirarlo (dentro del sandbox, con `/dev/tcp` de bash).
 SERVER_LISTEN_TIMEOUT_SECONDS = 30
@@ -303,7 +320,7 @@ def custom_domain(e2e_settings: E2ESettings) -> Iterator[DomainUnderTest]:
             status = domain.deploy(
                 certificate_arn=certificate_arn,
                 alternate_domain_names=hosts,
-                tags={ACCEPTANCE_RUN_TAG_KEY: run_tag},
+                tags={**e2e_tags(), ACCEPTANCE_RUN_TAG_KEY: run_tag},
             )
         except StackException:
             if distribution_denied(e2e_settings.region, stack_name):
@@ -360,9 +377,16 @@ def _wait_until_listening(sandbox: Sandbox) -> None:
     )
 
 
-def _start_http_server(sandbox: Sandbox) -> None:
-    sandbox.commands.run(f"python3 -m http.server {ROUTE_PORT}", background=True)
+def _start_in_background(sandbox: Sandbox, command: str) -> None:
+    """`command` en segundo plano y sin timeout (`None`: el de 60 s por
+    defecto de `commands.run` mataría el servidor a mitad de test), y espera a
+    que escuche en `ROUTE_PORT`."""
+    sandbox.commands.run(command, background=True, timeout=None)
     _wait_until_listening(sandbox)
+
+
+def _start_http_server(sandbox: Sandbox) -> None:
+    _start_in_background(sandbox, f"python3 -m http.server {ROUTE_PORT}")
 
 
 def test_custom_domain_routes_a_registered_sandbox(
@@ -395,8 +419,13 @@ def test_custom_domain_routes_a_registered_sandbox(
 
 def test_a_route_past_its_ttl_answers_404(custom_domain: DomainUnderTest, sandbox: Sandbox) -> None:
     """T25 en el runtime real: la Function trata una ruta con `m.x` vencido
-    como inexistente, aunque nadie la haya borrado del KVS."""
+    como inexistente, aunque nadie la haya borrado del KVS. Los
+    `STABLE_OBSERVATIONS` 404 seguidos tienen que llegar al menos
+    `SHORT_ROUTE_TTL_SECONDS` (menos `EDGE_CLOCK_SKEW_TOLERANCE_SECONDS`)
+    después de registrar la ruta: si no, es un servidor del edge sin la ruta,
+    no su caducidad."""
     _start_http_server(sandbox)
+    registered_at = time.monotonic()
     route, authorized = _register(
         custom_domain, "ttl", sandbox, ttl_seconds=SHORT_ROUTE_TTL_SECONDS
     )
@@ -408,8 +437,15 @@ def test_a_route_past_its_ttl_answers_404(custom_domain: DomainUnderTest, sandbo
         authorized,
         HTTP_NOT_FOUND,
         SHORT_ROUTE_TTL_SECONDS + PROPAGATION_TIMEOUT_SECONDS,
+        consecutive=STABLE_OBSERVATIONS,
     )
+    since_registered = time.monotonic() - registered_at
     report("TTL vencido -> 404 (s desde visible)", f"{expired:.1f}")
+    report("TTL vencido -> 404 (s desde register)", f"{since_registered:.1f}")
+    assert since_registered >= SHORT_ROUTE_TTL_SECONDS - EDGE_CLOCK_SKEW_TOLERANCE_SECONDS, (
+        f"{STABLE_OBSERVATIONS} 404 seguidos a los {since_registered:.1f} s de registrar la ruta, "
+        f"antes de su TTL de {SHORT_ROUTE_TTL_SECONDS} s: no es una caducidad"
+    )
 
 
 def _recv_until(tls_socket: ssl.SSLSocket, done: Callable[[bytes], bool]) -> bytes:
@@ -502,61 +538,14 @@ def _echo_with_retries(
 
 @pytest.fixture
 def websocket_echo_sandbox(sandbox: Sandbox) -> Iterator[Sandbox]:
-    """Un sandbox con un eco de WebSocket mínimo (sólo `socket`, sin
-    instalar nada) escuchando en `ROUTE_PORT`: lo justo para comprobar
-    DOM-3 de punta a punta, no un servidor de WebSocket real. Atiende una
-    conexión tras otra (un apretón de manos que llegó por un servidor del
-    edge sin la ruta se reintenta) y lee cabeceras y trama hasta tenerlas
-    enteras."""
-    echo_server_script = f"""
-import hashlib, base64, socket
-GUID = "{WEBSOCKET_ACCEPT_GUID}"
-def read_until(conn, done):
-    data = b""
-    while not done(data):
-        chunk = conn.recv(4096)
-        if not chunk:
-            break
-        data += chunk
-    return data
-def frame_done(data):
-    return len(data) >= 6 and len(data) >= 6 + (data[1] & 0x7F)
-def serve(conn):
-    data = read_until(conn, lambda d: b"\\r\\n\\r\\n" in d)
-    head, _, rest = data.partition(b"\\r\\n\\r\\n")
-    key = None
-    for line in head.decode("latin1").split("\\r\\n"):
-        if line.lower().startswith("sec-websocket-key:"):
-            key = line.split(":", 1)[1].strip()
-    if key is None:
-        return
-    accept = base64.b64encode(hashlib.sha1((key + GUID).encode()).digest()).decode()
-    conn.sendall((
-        "HTTP/1.1 101 Switching Protocols\\r\\n"
-        "Upgrade: websocket\\r\\n"
-        "Connection: Upgrade\\r\\n"
-        f"Sec-WebSocket-Accept: {{accept}}\\r\\n\\r\\n"
-    ).encode())
-    frame = rest + read_until(conn, lambda d: frame_done(rest + d))
-    length = frame[1] & 0x7F
-    mask = frame[2:6]
-    payload = bytes(b ^ mask[i % 4] for i, b in enumerate(frame[6:6 + length]))
-    conn.sendall(bytes([0x81, len(payload)]) + payload)
-srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-srv.bind(("0.0.0.0", {ROUTE_PORT}))
-srv.listen(8)
-while True:
-    conn, _ = srv.accept()
-    try:
-        serve(conn)
-    except OSError:
-        pass
-    finally:
-        conn.close()
-"""
-    sandbox.commands.run(f"python3 -c {echo_server_script!r}", background=True)
-    _wait_until_listening(sandbox)
+    """Un sandbox con el eco de WebSocket mínimo de
+    `testdata/custom-domain/websocket_echo_server.py` (sólo `socket`, sin
+    instalar nada) escuchando en `ROUTE_PORT`: lo justo para comprobar DOM-3
+    de punta a punta, no un servidor de WebSocket real."""
+    sandbox.files.write(
+        WEBSOCKET_ECHO_SERVER_PATH, WEBSOCKET_ECHO_SERVER_SOURCE.read_text(encoding="utf-8")
+    )
+    _start_in_background(sandbox, f"python3 {WEBSOCKET_ECHO_SERVER_PATH} {ROUTE_PORT}")
     yield sandbox
 
 

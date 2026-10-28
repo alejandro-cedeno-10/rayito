@@ -60,9 +60,18 @@ No publiques en PyPI ni en npm a mano, y no saltes el paso 4.
 - El e2e nunca corre sin `RAYITO_E2E=1` y `RAYITO_TEMPLATE`. Los datos del
   entorno (VPC, subredes, dominio, certificado, buckets) llegan solo por
   variables `RAYITO_E2E_*` o `RAYITO_*` en tiempo de ejecución.
-- **Serializado**: nunca dos sesiones de e2e contra la misma imagen a la vez,
-  porque el sweeper del `conftest` termina todos los MicroVMs vivos de la
-  imagen. Usa imágenes con un nombre propio para la ejecución.
+- **Serializado**: nunca dos sesiones de e2e contra la misma imagen a la vez.
+  El sweeper de Python solo termina los MicroVMs que creó su sesión (el
+  `control_plane` de sesión apunta cada id que devuelve `run_microvm`); los
+  demás vivos de la imagen se informan por número y no se tocan, y lo que nace
+  fuera de ese `control_plane` (el corpus E2B, la CLI en subprocesos) lo acota
+  el `maximumDurationInSeconds=900`. El de TypeScript termina solo `created`.
+  Aun así, usa imágenes con un nombre propio para la ejecución.
+- Un e2e nuevo etiqueta lo que crea con `RAYITO_E2E_TAGS` (helper
+  `e2e_tags()` / `tagsFromEnvironment()`), registra para la limpieza solo lo
+  que demostró crear, arranca los servidores en segundo plano sin timeout
+  (`timeout=None` / `timeoutMs: 0`) y sube los scripts con la API de ficheros,
+  nunca citados en la shell.
 - Nada de mocks para aceptar. Si algo falla en AWS y pasa en local, se
   investiga y se anota en `AWS_API_NOTES.md` (pregunta Q-n con fecha y
   medida), no se ignora.

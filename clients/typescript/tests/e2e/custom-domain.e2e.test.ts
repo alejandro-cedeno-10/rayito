@@ -14,7 +14,11 @@
  * certificado: con `*.sbx.example.com`, `sbx.example.com`),
  * `RAYITO_E2E_CERT_ARN` (ese certificado ACM, en `us-east-1`) y, opcional,
  * `RAYITO_ACCEPTANCE_RUN_TAG` (por defecto, el identificador aleatorio de la
- * corrida). Sin las dos primeras la suite entera se salta sin tocar AWS.
+ * corrida) y, opcional, `RAYITO_E2E_TAGS` (`tagsFromEnvironment`: etiquetas
+ * `K=V` separadas por comas para la pila, para organizaciones que exigen
+ * etiquetas en los recursos creados; la etiqueta de la corrida gana si
+ * coincide una clave). Sin las dos primeras la suite entera se salta sin tocar
+ * AWS.
  * El dominio no debe tener un registro DNS comodín hacia otra distribución
  * CloudFront (CloudFront rechazaría el nombre más específico,
  * `AWS_API_NOTES.md` §29).
@@ -31,7 +35,17 @@
  * en otro: la visibilidad exige `STABLE_OBSERVATIONS` respuestas seguidas,
  * cada respuesta esperada se sondea con su plazo, el servidor del sandbox se
  * espera hasta que escucha y el eco de WebSocket atiende varias conexiones,
- * así que un upgrade que cae en un servidor sin la ruta se reintenta.
+ * así que un upgrade que cae en un servidor sin la ruta se reintenta. El 404
+ * por caducidad exige también `STABLE_OBSERVATIONS` respuestas seguidas y,
+ * además, que hayan pasado al menos `SHORT_ROUTE_TTL_SECONDS` (menos
+ * `EDGE_CLOCK_SKEW_TOLERANCE_SECONDS`) desde que se registró la ruta: un 404 de
+ * un servidor del edge que aún no tiene la ruta hace fallar el test en lugar
+ * de pasarlo.
+ *
+ * **Servidores en el sandbox.** Se arrancan en segundo plano sin timeout
+ * (`timeoutMs: 0`) y el eco de WebSocket se sube como fichero
+ * (`testdata/custom-domain/websocket_echo_server.py`, compartido con Python),
+ * nunca citado en la shell.
  *
  * **Requisito: `cloudfront:CreateDistribution`.** Ante cualquier error de
  * permisos al crear el recurso `Distribution` (`DescribeStackEvents`), cada
@@ -46,7 +60,9 @@
  */
 
 import { createHash, randomBytes } from "node:crypto";
+import { readFileSync } from "node:fs";
 import * as https from "node:https";
+import { join } from "node:path";
 import type { TLSSocket } from "node:tls";
 import { CloudFormationClient, DescribeStackEventsCommand } from "@aws-sdk/client-cloudformation";
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "vitest";
@@ -58,7 +74,7 @@ import {
 } from "../../src/custom-domain/service.js";
 import { CustomDomainError, StackError } from "../../src/errors.js";
 import type { Sandbox } from "../../src/sandbox/sandbox.js";
-import { createTestSandbox, e2eEnabled, useE2E } from "./helpers.js";
+import { createTestSandbox, e2eEnabled, HOME, tagsFromEnvironment, useE2E } from "./helpers.js";
 
 const DOMAIN_VAR = "RAYITO_E2E_DOMAIN";
 const CERT_ARN_VAR = "RAYITO_E2E_CERT_ARN";
@@ -81,6 +97,14 @@ const ROUTE_TTL_SECONDS = 1800;
 // TTL corto del test de caducidad: deja ver la ruta (STABLE_OBSERVATIONS
 // respuestas seguidas más la propagación) y servir antes de que venza.
 const SHORT_ROUTE_TTL_SECONDS = 90;
+// Cuánto antes de SHORT_ROUTE_TTL_SECONDS desde register() puede verse el 404
+// por caducidad y aún ser una caducidad de verdad: register() guarda
+// `expires_at = floor(now) + ttl` (trunca hasta 1 s) y la Function lo compara
+// con el reloj del edge. Criterio fijado antes de medir (no es una medida de
+// AWS): 5 s cubren el truncado más un desfase de reloj entre la máquina de la
+// prueba y el edge; un 404 más temprano es de un servidor sin la ruta, no de
+// su TTL. Espejo de EDGE_CLOCK_SKEW_TOLERANCE_SECONDS de Python.
+const EDGE_CLOCK_SKEW_TOLERANCE_SECONDS = 5;
 const HTTPS_PORT = 443;
 const HTTP_REQUEST_TIMEOUT_MS = 20_000;
 const WEBSOCKET_HANDSHAKE_TIMEOUT_MS = 20_000;
@@ -97,6 +121,18 @@ const RESUME_IDLE = { maxIdleSeconds: 300, autoResume: true };
 const STACK_HOOK_TIMEOUT_MS = CUSTOM_DOMAIN_WAIT_TIMEOUT_MS + 60_000;
 // GUID fijo de RFC 6455 §1.3, para calcular Sec-WebSocket-Accept.
 const WEBSOCKET_ACCEPT_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+// El eco de WebSocket compartido con Python y dónde se sube en el sandbox.
+const WEBSOCKET_ECHO_SERVER_SOURCE = join(
+  import.meta.dirname,
+  "..",
+  "..",
+  "..",
+  "..",
+  "testdata",
+  "custom-domain",
+  "websocket_echo_server.py",
+);
+const WEBSOCKET_ECHO_SERVER_PATH = `${HOME}/websocket_echo_server.py`;
 // Cuánto esperar, dentro del sandbox, a que algo escuche en ROUTE_PORT, y
 // cada cuánto mirarlo (`/dev/tcp` de bash, el shell de commands.run).
 const SERVER_LISTEN_TIMEOUT_SECONDS = 30;
@@ -360,58 +396,6 @@ function retriableUpgrade(error: unknown): boolean {
   return error instanceof WebSocketRejected || (error as { code?: unknown })?.code !== undefined;
 }
 
-/** Servidor de eco de WebSocket mínimo (sólo `socket`, sin instalar nada).
- * Atiende una conexión tras otra (un upgrade que llegó por un servidor del
- * edge sin la ruta se reintenta) y lee cabeceras y trama hasta tenerlas
- * enteras. El mismo que el de `test_m15_custom_domain.py`. */
-const WEBSOCKET_ECHO_SERVER_PYTHON = (port: number): string => `
-import hashlib, base64, socket
-GUID = "${WEBSOCKET_ACCEPT_GUID}"
-def read_until(conn, done):
-    data = b""
-    while not done(data):
-        chunk = conn.recv(4096)
-        if not chunk:
-            break
-        data += chunk
-    return data
-def frame_done(data):
-    return len(data) >= 6 and len(data) >= 6 + (data[1] & 0x7F)
-def serve(conn):
-    data = read_until(conn, lambda d: b"\\r\\n\\r\\n" in d)
-    head, _, rest = data.partition(b"\\r\\n\\r\\n")
-    key = None
-    for line in head.decode("latin1").split("\\r\\n"):
-        if line.lower().startswith("sec-websocket-key:"):
-            key = line.split(":", 1)[1].strip()
-    if key is None:
-        return
-    accept = base64.b64encode(hashlib.sha1((key + GUID).encode()).digest()).decode()
-    conn.sendall((
-        "HTTP/1.1 101 Switching Protocols\\r\\n"
-        "Upgrade: websocket\\r\\n"
-        "Connection: Upgrade\\r\\n"
-        f"Sec-WebSocket-Accept: {accept}\\r\\n\\r\\n"
-    ).encode())
-    frame = rest + read_until(conn, lambda d: frame_done(rest + d))
-    length = frame[1] & 0x7F
-    mask = frame[2:6]
-    payload = bytes(b ^ mask[i % 4] for i, b in enumerate(frame[6:6 + length]))
-    conn.sendall(bytes([0x81, len(payload)]) + payload)
-srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-srv.bind(("0.0.0.0", ${port}))
-srv.listen(8)
-while True:
-    conn, _ = srv.accept()
-    try:
-        serve(conn)
-    except OSError:
-        pass
-    finally:
-        conn.close()
-`;
-
 async function jweOf(sandbox: Sandbox): Promise<string> {
   return (await sandbox.getHost(ROUTE_PORT)).headers["x-aws-proxy-auth"] ?? "";
 }
@@ -475,7 +459,10 @@ describe.runIf(e2eEnabled() && customDomainEnvReady())("dominio propio (AWS real
         alternateDomainNames: Object.values(aliases).map((alias) =>
           domain.hostFor(alias, ROUTE_PORT),
         ),
-        tags: { [ACCEPTANCE_RUN_TAG_KEY]: process.env[ACCEPTANCE_RUN_TAG_VAR] || runId },
+        tags: {
+          ...tagsFromEnvironment(),
+          [ACCEPTANCE_RUN_TAG_KEY]: process.env[ACCEPTANCE_RUN_TAG_VAR] || runId,
+        },
       });
     } catch (error) {
       if (
@@ -549,6 +536,7 @@ describe.runIf(e2eEnabled() && customDomainEnvReady())("dominio propio (AWS real
   test("una ruta con el TTL vencido responde 404", async () => {
     const sandbox = await createTestSandbox(e2e);
     await startInBackground(sandbox, `python3 -m http.server ${ROUTE_PORT}`);
+    const registeredAt = performance.now();
     const [route, authorized] = await register("ttl", sandbox, SHORT_ROUTE_TTL_SECONDS);
     await waitUntilRouteVisible(target, route.host);
     await waitForStatus(target, route.host, authorized, HTTP_OK, SHORT_ROUTE_TTL_SECONDS * 1000);
@@ -558,16 +546,24 @@ describe.runIf(e2eEnabled() && customDomainEnvReady())("dominio propio (AWS real
       authorized,
       HTTP_NOT_FOUND,
       SHORT_ROUTE_TTL_SECONDS * 1000 + PROPAGATION_TIMEOUT_MS,
+      STABLE_OBSERVATIONS,
     );
+    const sinceRegistered = (performance.now() - registeredAt) / 1000;
     reportDomain("TTL vencido -> 404 (s desde visible)", expired.toFixed(1));
+    reportDomain("TTL vencido -> 404 (s desde register)", sinceRegistered.toFixed(1));
+    // Un 404 más temprano que el TTL es de un servidor del edge sin la ruta.
+    expect(sinceRegistered).toBeGreaterThanOrEqual(
+      SHORT_ROUTE_TTL_SECONDS - EDGE_CLOCK_SKEW_TOLERANCE_SECONDS,
+    );
   });
 
   test("deja pasar un upgrade de WebSocket", async () => {
     const sandbox = await createTestSandbox(e2e);
-    await startInBackground(
-      sandbox,
-      `python3 -c ${JSON.stringify(WEBSOCKET_ECHO_SERVER_PYTHON(ROUTE_PORT))}`,
+    await sandbox.files.write(
+      WEBSOCKET_ECHO_SERVER_PATH,
+      readFileSync(WEBSOCKET_ECHO_SERVER_SOURCE, "utf8"),
     );
+    await startInBackground(sandbox, `python3 ${WEBSOCKET_ECHO_SERVER_PATH} ${ROUTE_PORT}`);
     const [route, authorized] = await register("ws", sandbox);
     await waitUntilRouteVisible(target, route.host);
     // DOM-3: ¿corre la Function en la petición de upgrade, y acepta el

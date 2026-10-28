@@ -82,6 +82,9 @@ Va primero: si algo se filtró, la revisión para ahí y avisa al mantenedor
 - Pasan los gates de [gates.md](gates.md) del lenguaje tocado, y el CI está
   en verde.
 - Hay entrada en el CHANGELOG del paquete tocado.
+- Un e2e nuevo cumple la viñeta de e2e de «Reglas para cualquier ejecución en
+  AWS» de [release-and-aws.md](release-and-aws.md) (etiquetas, limpieza solo de
+  lo propio, servidores sin timeout, scripts por la API de ficheros).
 - Las docs están en español e inglés (`pagina.md` y `pagina.en.md`, mismos
   ejemplos), con pestañas Python/TypeScript, `check_docs_i18n.py` y
   `mkdocs --strict` pasan.

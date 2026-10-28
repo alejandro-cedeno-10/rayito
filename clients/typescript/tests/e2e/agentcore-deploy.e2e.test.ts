@@ -36,9 +36,9 @@ import {
   simulatedDecision,
   stagedAgent,
   TEST_TIMEOUT_MS,
-  tagsFromEnvironment,
   touchSource,
 } from "./agentcore-deploy-support.js";
+import { tagsFromEnvironment } from "./helpers.js";
 
 const READY = agentcoreE2eReady();
 const SAMPLES = selectedSamples();

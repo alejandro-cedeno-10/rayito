@@ -500,8 +500,12 @@ make test-e2e-typescript
 
 Los módulos de `clients/python/tests/e2e/` y `clients/typescript/tests/e2e/`
 documentan en su cabecera las variables propias de cada uno. Nunca dos
-sesiones e2e contra la misma imagen a la vez (el sweeper del `conftest`
-termina todos los MicroVMs vivos de la imagen).
+sesiones e2e contra la misma imagen a la vez. El sweeper del `conftest` de
+Python termina solo los MicroVMs que creó su sesión (el `control_plane` de
+sesión apunta cada id que devuelve `run_microvm`); los demás vivos de la imagen
+se informan por número y no se tocan. Lo que nace por caminos que no pasan por
+ese `control_plane` (el corpus E2B, la CLI en subprocesos) lo acota el
+`maximumDurationInSeconds=900` de todo sandbox de test.
 
 Si publicas imágenes desechables para una ejecución (aceptación, o dos e2e
 en paralelo sobre el mismo commit), exporta antes un id propio,

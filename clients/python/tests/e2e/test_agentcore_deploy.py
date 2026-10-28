@@ -60,8 +60,8 @@ from .agentcore_deploy_support import (
     sample_of,
     selected_samples,
     staged_sample,
-    tags,
 )
+from .conftest import e2e_tags
 
 pytestmark = pytest.mark.e2e
 
@@ -93,7 +93,7 @@ def options(steps: list[AgentDeployStep] | None = None) -> AgentDeployOptions:
 
 
 def agentcore_options() -> AgentCoreOptions:
-    return AgentCoreOptions(tags=tags())
+    return AgentCoreOptions(tags=e2e_tags())
 
 
 def deploy(directory: Path, steps: list[AgentDeployStep] | None = None) -> AgentCoreFleet:
@@ -194,7 +194,7 @@ def test_the_cli_runs_the_whole_cycle_with_json(account: Account, tmp_path: Path
     sample_id = CONFLICT_SAMPLE
     name = agent_name(sample_id, "-cli")
     directory = staged_sample(sample_id, tmp_path, name=name)
-    tag_flags = [flag for key, value in tags().items() for flag in ("--tag", f"{key}={value}")]
+    tag_flags = [flag for key, value in e2e_tags().items() for flag in ("--tag", f"{key}={value}")]
     base = [*CLI, "--region", region(), "--json"]
 
     def run(*arguments: str, budget: float) -> dict[str, Any]:
@@ -278,7 +278,7 @@ def test_a_runtime_without_the_marker_is_name_conflict_and_is_never_touched(
         networkConfiguration={"networkMode": "PUBLIC"},
         protocolConfiguration={"serverProtocol": "HTTP"},
         description="creado a mano por el e2e",
-        tags=tags(),
+        tags=e2e_tags(),
     )
     try:
         with pytest.raises(AgentCoreException) as raised:

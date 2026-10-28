@@ -68,7 +68,6 @@ from .agentcore_deploy_support import (
     require,
     require_enabled,
     run_id,
-    tags,
 )
 from .agnostic_deploy_support import (
     EXAMPLE_MODEL,
@@ -94,6 +93,7 @@ from .agnostic_deploy_support import (
     staged_project,
     wait_for_log_line,
 )
+from .conftest import e2e_tags
 
 pytestmark = pytest.mark.e2e
 
@@ -154,7 +154,7 @@ def account() -> Iterator[Account]:
 @pytest.fixture(scope="module")
 def run_secrets() -> Iterator[RunSecrets]:
     require_agnostic()
-    created = RunSecrets(region(), tags())
+    created = RunSecrets(region(), e2e_tags())
     try:
         yield created
     finally:
@@ -213,7 +213,7 @@ def deploy_agentcore(
             bucket=require(BUCKET_VAR), on_step=None if steps is None else steps.append
         ),
         overrides=overrides,
-        agentcore=AgentCoreOptions(tags=tags(), external_model=external_model),
+        agentcore=AgentCoreOptions(tags=e2e_tags(), external_model=external_model),
         region=region(),
     )
 
@@ -312,7 +312,7 @@ def cli_events(*arguments: str, budget: float) -> list[dict[str, Any]]:
 
 
 def tag_flags() -> list[str]:
-    return [flag for key, value in tags().items() for flag in ("--tag", f"{key}={value}")]
+    return [flag for key, value in e2e_tags().items() for flag in ("--tag", f"{key}={value}")]
 
 
 @dataclass(frozen=True)
