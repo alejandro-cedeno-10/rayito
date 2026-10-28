@@ -5,8 +5,13 @@
  * conserva; `list` no hace ninguna llamada a AWS.
  */
 
-import { UnimplementedError } from "../../errors.js";
-import type { ParameterChange, StackComponent } from "../../stacks/model.js";
+import { StackError, UnimplementedError } from "../../errors.js";
+import {
+  EXPLAINABLE_ROLLBACK_STATES,
+  type ParameterChange,
+  type StackComponent,
+  type StackStatus,
+} from "../../stacks/model.js";
 import { COMPONENTS } from "../../stacks/registry.js";
 import type { OptionalStacks } from "../../stacks/service.js";
 import { pythonStringRepr } from "../../strings.js";
@@ -29,6 +34,8 @@ export const ABSENT_VALUE = "(sin valor)";
 /** El `removal` de un componente que no lo declara (`CostStatement.removal` de Python). */
 export const DEFAULT_REMOVAL = "destroy() borra todo lo que esta pila creó";
 const NO_RESOURCES = "(ninguno)";
+/** La línea de stderr con el motivo del primer recurso que falló. */
+export const FAILURE_REASON_LINE_PREFIX = "  motivo: ";
 
 export const stackGroup = defineGroup({
   path: ["stack"],
@@ -108,6 +115,64 @@ export async function confirmDeploy(
     return true;
   }
   return context.console.confirm("¿Desplegar esta pila?");
+}
+
+export interface DeployExplainingFailureOptions {
+  readonly stacks: OptionalStacks;
+  readonly component: string;
+  readonly stackName: string | undefined;
+  readonly deploy: () => Promise<StackStatus>;
+}
+
+/**
+ * Ejecuta `deploy`; si espera a una pila que termina en `ROLLBACK_COMPLETE`,
+ * `ROLLBACK_FAILED` o `UPDATE_ROLLBACK_COMPLETE`, imprime en stderr el motivo
+ * del primer recurso que falló y vuelve a lanzar el error original, sin
+ * cambiar su salida ni su código. Un fallo al crear o actualizar la pila
+ * (`state` ausente) no imprime nada: el motivo sería de una operación
+ * anterior. Leer el motivo es de mejor esfuerzo (necesita
+ * `cloudformation:DescribeStackEvents`): si falla, se ignora.
+ *
+ * Coste: ninguno; un `DescribeStackEvents` de solo lectura, solo tras el
+ * fallo. Compartido por `rayito stack deploy` y `rayito domain deploy`.
+ */
+export async function deployExplainingFailure(
+  context: CommandContext,
+  options: DeployExplainingFailureOptions,
+): Promise<StackStatus> {
+  try {
+    return await options.deploy();
+  } catch (error) {
+    if (
+      error instanceof StackError &&
+      error.code === "failed" &&
+      EXPLAINABLE_ROLLBACK_STATES.has(error.state ?? "")
+    ) {
+      await echoFailureReason(context, options);
+    }
+    throw error;
+  }
+}
+
+async function echoFailureReason(
+  context: CommandContext,
+  options: DeployExplainingFailureOptions,
+): Promise<void> {
+  let reason: string | undefined;
+  try {
+    reason = await options.stacks.failureReason(
+      options.component,
+      options.stackName === undefined ? {} : { stackName: options.stackName },
+    );
+  } catch (error) {
+    if (error instanceof StackError) {
+      return;
+    }
+    throw error;
+  }
+  if (reason) {
+    context.console.echo(`${FAILURE_REASON_LINE_PREFIX}${reason}`, { err: true });
+  }
 }
 
 export async function confirmDestroy(
@@ -223,7 +288,12 @@ export const deployCommand = defineCommand({
     if (!(await confirmDeploy(context, resolved, changes))) {
       return EXIT_FAILURE;
     }
-    const status = await stacks.deploy(name, { ...target, parameters, tags });
+    const status = await deployExplainingFailure(context, {
+      stacks,
+      component: name,
+      stackName,
+      deploy: () => stacks.deploy(name, { ...target, parameters, tags }),
+    });
     if (context.globals.json) {
       context.console.emitJson({ name: status.name, state: status.state, outputs: status.outputs });
       return undefined;

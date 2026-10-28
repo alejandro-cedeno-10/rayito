@@ -5,7 +5,13 @@
  */
 
 import { StackError } from "../../src/errors.js";
-import type { StackComponent, StackStatus } from "../../src/stacks/model.js";
+import {
+  describeFailedResource,
+  firstFailedResource,
+  type StackComponent,
+  type StackEvent,
+  type StackStatus,
+} from "../../src/stacks/model.js";
 import type { DeployTarget, StackProvisioner, UpdateOutcome } from "../../src/stacks/port.js";
 
 export class FakeStackProvisioner implements StackProvisioner {
@@ -19,6 +25,14 @@ export class FakeStackProvisioner implements StackProvisioner {
   /** Las `tags` de la última `create`/`update`. */
   sentTags: Readonly<Record<string, string>> = {};
   failWait = false;
+  /** Si se pone, `wait()` deja la pila en ese estado y lanza el `StackError`
+   * (`code: "failed"`, `state`) del adaptador real. */
+  failWaitState: string | undefined;
+  /** `create()`/`update()` rechazan la llamada, como un `AccessDenied`:
+   * `StackError` con `code: "failed"` y sin `state`. */
+  failCall = false;
+  /** `stackName -> eventos` (del más nuevo al más antiguo) que lee `failureReason`. */
+  readonly events = new Map<string, StackEvent[]>();
   /** Cada `timeoutMs` que `wait()` recibió, en orden; espejo de
    * `fake_stacks.FakeStackProvisioner.wait_timeouts`. */
   readonly waitTimeoutsMs: number[] = [];
@@ -37,6 +51,9 @@ export class FakeStackProvisioner implements StackProvisioner {
     },
   ): Promise<void> {
     this.calls.push(["create", options.stackName]);
+    if (this.failCall) {
+      throw new StackError("llamada rechazada", { code: "failed" });
+    }
     this.sentTags = { ...options.tags };
     this.sentParameters = { ...options.parameters };
     this.sentKeepPrevious = [];
@@ -59,6 +76,9 @@ export class FakeStackProvisioner implements StackProvisioner {
     },
   ): Promise<UpdateOutcome> {
     this.calls.push(["update", options.stackName]);
+    if (this.failCall) {
+      throw new StackError("llamada rechazada", { code: "failed" });
+    }
     this.sentTags = { ...options.tags };
     const keepPrevious = options.keepPrevious ?? [];
     this.sentParameters = { ...options.parameters };
@@ -97,6 +117,19 @@ export class FakeStackProvisioner implements StackProvisioner {
         code: "in_progress",
       });
     }
+    if (this.failWaitState !== undefined) {
+      const existing = this.stacks.get(stackName);
+      this.stacks.set(stackName, {
+        name: stackName,
+        outputs: {},
+        ...existing,
+        state: this.failWaitState,
+      });
+      throw new StackError(
+        `la pila ${JSON.stringify(stackName)} terminó en ${this.failWaitState}`,
+        { code: "failed", state: this.failWaitState },
+      );
+    }
   }
 
   async putArtifact(bucket: string, key: string, data: Uint8Array): Promise<void> {
@@ -106,6 +139,9 @@ export class FakeStackProvisioner implements StackProvisioner {
 
   async failureReason(stackName: string): Promise<string | undefined> {
     this.calls.push(["failureReason", stackName]);
-    return this.stacks.get(stackName)?.reasonCode;
+    const failed = firstFailedResource(this.events.get(stackName) ?? [], stackName);
+    return failed === undefined
+      ? this.stacks.get(stackName)?.reasonCode
+      : describeFailedResource(failed);
   }
 }

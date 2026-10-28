@@ -483,19 +483,27 @@ export class TemplateError extends SandboxError {}
 
 export interface StackErrorOptions extends SandboxErrorOptions {
   readonly code: string;
+  /** El estado terminal de la pila; sólo lo pone `wait()`. */
+  readonly state?: string | undefined;
 }
 
 /**
  * Un `OptionalStacks.deploy/status/destroy` (M15 foundations) falló. `code`
  * es `blocked` (pila en ROLLBACK_COMPLETE), `not_found`, `in_progress` o
- * `failed`; el mensaje nunca repite el de CloudFormation.
+ * `failed`; el mensaje nunca repite el de CloudFormation. `state` es el estado
+ * terminal de la pila cuando el fallo sale de esperar a que termine
+ * (`wait()`), y `undefined` en cualquier otro caso (una llamada rechazada, por
+ * ejemplo): así quien quiera explicar el fallo sabe que lo causó la operación
+ * que acaba de esperar.
  */
 export class StackError extends SandboxError {
   override readonly code: string;
+  readonly state: string | undefined;
 
   constructor(message: string, options: StackErrorOptions) {
     super(message, options);
     this.code = options.code;
+    this.state = options.state;
   }
 }
 

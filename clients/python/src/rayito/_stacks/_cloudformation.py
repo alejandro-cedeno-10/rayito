@@ -8,7 +8,9 @@ Parámetros y formas verificados offline contra botocore 1.43.103
 are to be performed" cuando no hay cambios), `DescribeStacks` (`StackName`
 -> `Stacks[0].{StackStatus, StackStatusReason, Outputs, Parameters, Tags}`, o `ValidationError`
 "does not exist" si no hay pila), `DeleteStack` (idempotente: no falla sobre
-una pila que no existe) y `DescribeStackEvents` (no usado todavía: `wait`
+una pila que no existe) y `DescribeStackEvents` (`StackName` ->
+`StackEvents[].{LogicalResourceId, ResourceStatus, ResourceStatusReason}`, más
+nuevo primero; sólo lo usa `failure_reason`, sólo la primera página: `wait`
 sondea `DescribeStacks`, más simple y suficiente para pilas sin recursos
 anidados). `put_artifact` nunca se fía de que exista un objeto con la clave
 esperada: con `ExpectedBucketOwner` (la cuenta de `sts:GetCallerIdentity`)
@@ -31,8 +33,14 @@ from botocore.exceptions import BotoCoreError, ClientError
 
 from rayito._aws import LazyClient
 from rayito._aws import aws_code as _aws_code
-from rayito._aws_sanitize import sanitize_aws_error
-from rayito._stacks._model import StackComponent, StackStatus
+from rayito._aws_sanitize import redact_aws_text, sanitize_aws_error
+from rayito._stacks._model import (
+    StackComponent,
+    StackEvent,
+    StackStatus,
+    describe_failed_resource,
+    first_failed_resource,
+)
 from rayito._stacks._port import DeployTarget, UpdateOutcome
 from rayito.exceptions import StackException
 
@@ -208,7 +216,9 @@ class CloudFormationProvisioner:
                 return
             if status is not None and status.state in TERMINAL_FAILURE_STATES:
                 raise StackException(
-                    f"la pila {stack_name!r} terminó en {status.state}", code="failed"
+                    f"la pila {stack_name!r} terminó en {status.state}",
+                    code="failed",
+                    state=status.state,
                 )
             if self._clock() >= deadline:
                 raise StackException(
@@ -260,8 +270,31 @@ class CloudFormationProvisioner:
             raise _wrap(exc) from sanitize_aws_error(exc)
 
     def failure_reason(self, stack_name: str) -> str | None:
+        """El motivo del recurso que causó el fallo de la última operación
+        (`DescribeStackEvents`, sólo la primera página) o, sin ninguno, el
+        `StackStatusReason` de la pila; ambos redactados. `None` si la pila no
+        existe o no trae motivo."""
+        try:
+            response = self._cloudformation.get().describe_stack_events(StackName=stack_name)
+        except (BotoCoreError, ClientError) as exc:
+            if _is_missing_stack(exc):
+                return None
+            raise _wrap(exc) from sanitize_aws_error(exc)
+        events = [
+            StackEvent(
+                logical_resource_id=event.get("LogicalResourceId"),
+                resource_status=event.get("ResourceStatus"),
+                resource_status_reason=event.get("ResourceStatusReason"),
+            )
+            for event in response.get("StackEvents") or []
+        ]
+        failed = first_failed_resource(events, stack_name)
+        if failed is not None:
+            return redact_aws_text(describe_failed_resource(failed))
         status = self.describe(stack_name)
-        return None if status is None else status.reason_code
+        if status is None or status.reason_code is None:
+            return None
+        return redact_aws_text(status.reason_code)
 
 
 def _proto_parameters(

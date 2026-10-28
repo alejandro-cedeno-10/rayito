@@ -63,6 +63,7 @@ class StackProvisioner(Protocol):
         ...
 
     def failure_reason(self, stack_name: str) -> str | None:
-        """El `StackStatusReason` más reciente, o `None` si la pila no
-        existe o no falló."""
+        """El motivo del primer recurso que falló en la última operación o, sin
+        ninguno, el `StackStatusReason` de la pila; ya redactado. `None` si la
+        pila no existe o no trae motivo."""
         ...

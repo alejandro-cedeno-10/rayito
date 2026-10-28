@@ -421,6 +421,7 @@ describe("CloudFormationProvisioner parameters", () => {
       createStack: async () => ({}),
       updateStack: async () => ({}),
       deleteStack: async () => ({}),
+      describeStackEvents: async () => ({}),
     };
     const adapter = new CloudFormationProvisioner({
       region: "us-east-1",
@@ -448,6 +449,7 @@ describe("CloudFormationProvisioner parameters", () => {
         return {};
       },
       deleteStack: async () => ({}),
+      describeStackEvents: async () => ({}),
     };
     const adapter = new CloudFormationProvisioner({
       region: "us-east-1",

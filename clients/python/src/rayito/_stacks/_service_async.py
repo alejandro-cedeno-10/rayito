@@ -34,6 +34,12 @@ class AsyncOptionalStacks:
     ) -> StackStatus | None:
         return await asyncio.to_thread(self._inner.status, component, stack_name=stack_name)
 
+    async def failure_reason(
+        self, component: str | StackComponent, *, stack_name: str | None = None
+    ) -> str | None:
+        """Como `OptionalStacks.failure_reason`; mismo coste (ninguno) e IAM."""
+        return await asyncio.to_thread(self._inner.failure_reason, component, stack_name=stack_name)
+
     async def parameter_changes(
         self,
         component: str | StackComponent,

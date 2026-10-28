@@ -8,7 +8,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from rayito._stacks._model import StackComponent, StackStatus
+from rayito._stacks._model import (
+    StackComponent,
+    StackEvent,
+    StackStatus,
+    describe_failed_resource,
+    first_failed_resource,
+)
 from rayito._stacks._port import DeployTarget, UpdateOutcome
 from rayito.exceptions import StackException
 
@@ -26,6 +32,14 @@ class FakeStackProvisioner:
     sent_tags: dict[str, str] = field(default_factory=dict)
     next_update_outcome: UpdateOutcome = "changed"
     fail_wait: bool = False
+    #: Si se pone, `wait()` deja la pila en ese estado y lanza el
+    #: `StackException(code="failed", state=...)` del adaptador real.
+    fail_wait_state: str | None = None
+    #: `create()`/`update()` rechazan la llamada, como un `AccessDenied`:
+    #: `StackException(code="failed")` sin `state`.
+    fail_call: bool = False
+    #: `stack_name -> eventos` (del más nuevo al más antiguo) que lee `failure_reason`.
+    events: dict[str, list[StackEvent]] = field(default_factory=dict)
     #: Cada `timeout` que `wait()` recibió, en orden; permite a un test de
     #: una función concreta comprobar que le llegó el `wait_timeout` que
     #: esperaba (p. ej. `CUSTOM_DOMAIN_WAIT_TIMEOUT_SECONDS`) sin tener que
@@ -46,6 +60,8 @@ class FakeStackProvisioner:
         tags: dict[str, str],
     ) -> None:
         self.calls.append(("create", stack_name))
+        if self.fail_call:
+            raise StackException("llamada rechazada", code="failed")
         self.sent_parameters = dict(parameters)
         self.sent_tags = dict(tags)
         self.sent_keep_previous = ()
@@ -68,6 +84,8 @@ class FakeStackProvisioner:
         keep_previous: tuple[str, ...] = (),
     ) -> UpdateOutcome:
         self.calls.append(("update", stack_name))
+        if self.fail_call:
+            raise StackException("llamada rechazada", code="failed")
         self.sent_parameters = dict(parameters)
         self.sent_tags = dict(tags)
         self.sent_keep_previous = keep_previous
@@ -95,6 +113,21 @@ class FakeStackProvisioner:
         self.wait_timeouts.append(timeout)
         if self.fail_wait:
             raise StackException(f"tiempo agotado esperando {stack_name!r}", code="in_progress")
+        if self.fail_wait_state is not None:
+            existing = self.stacks[stack_name]
+            self.stacks[stack_name] = StackStatus(
+                name=stack_name,
+                state=self.fail_wait_state,
+                outputs=existing.outputs,
+                parameters=existing.parameters,
+                tags=existing.tags,
+                reason_code=existing.reason_code,
+            )
+            raise StackException(
+                f"la pila {stack_name!r} terminó en {self.fail_wait_state}",
+                code="failed",
+                state=self.fail_wait_state,
+            )
 
     def put_artifact(self, bucket: str, key: str, data: bytes) -> None:
         self.calls.append(("put_artifact", bucket, key))
@@ -102,5 +135,8 @@ class FakeStackProvisioner:
 
     def failure_reason(self, stack_name: str) -> str | None:
         self.calls.append(("failure_reason", stack_name))
+        failed = first_failed_resource(self.events.get(stack_name, []), stack_name)
+        if failed is not None:
+            return describe_failed_resource(failed)
         status = self.stacks.get(stack_name)
         return None if status is None else status.reason_code

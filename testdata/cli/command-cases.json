@@ -4381,6 +4381,413 @@
           "stackParameters": {}
         }
       }
+    },
+    {
+      "name": "stack deploy termina en UPDATE_ROLLBACK_COMPLETE y dice el motivo",
+      "args": [
+        "stack",
+        "deploy",
+        "s3-mounts",
+        "--param",
+        "BucketName=amzn-s3-demo-bucket",
+        "--yes"
+      ],
+      "now": "2026-09-15T16:02:07Z",
+      "world": {
+        "stacks": {
+          "rayito-s3-mounts": {
+            "state": "UPDATE_COMPLETE",
+            "outputs": {},
+            "parameters": {},
+            "events": [
+              {
+                "logicalResourceId": "Distribution",
+                "resourceStatus": "UPDATE_FAILED",
+                "resourceStatusReason": "synthetic reason"
+              },
+              {
+                "logicalResourceId": "rayito-s3-mounts",
+                "resourceStatus": "UPDATE_IN_PROGRESS",
+                "resourceStatusReason": "User Initiated"
+              },
+              {
+                "logicalResourceId": "Distribution",
+                "resourceStatus": "CREATE_FAILED",
+                "resourceStatusReason": "reason of an older operation"
+              }
+            ]
+          }
+        },
+        "deployFailure": {
+          "state": "UPDATE_ROLLBACK_COMPLETE"
+        }
+      },
+      "expected": {
+        "exitCode": 1,
+        "stdout": "Coste y activación de s3-mounts\n  Activa: rayito stack deploy s3-mounts\n  Recursos y llamadas AWS: AWS::IAM::ManagedPolicy\n  Coste aproximado (reposo): $0 (sólo IAM)\n  Cómo apagarla: rayito stack destroy s3-mounts (destroy() borra la política; no borra ningún objeto ni el bucket)\n  Fuente: AWS_API_NOTES.md §23\n  Parámetros que cambian (los no pasados conservan su valor actual):\n    BucketName: '(sin valor)' -> 'amzn-s3-demo-bucket'\n    Prefixes: '(sin valor)' -> '*'\n    ReadOnly: '(sin valor)' -> 'true'\n",
+        "effects": {
+          "terminated": [],
+          "stackCalls": [
+            "describe",
+            "describe",
+            "update",
+            "wait",
+            "failure_reason"
+          ],
+          "stackParameters": {
+            "BucketName": "amzn-s3-demo-bucket",
+            "Prefixes": "*",
+            "ReadOnly": "true"
+          }
+        }
+      },
+      "stderrIncludes": [
+        "  motivo: Distribution (UPDATE_FAILED): synthetic reason",
+        "terminó en UPDATE_ROLLBACK_COMPLETE"
+      ]
+    },
+    {
+      "name": "domain deploy termina en UPDATE_ROLLBACK_COMPLETE y dice el motivo",
+      "args": [
+        "domain",
+        "deploy",
+        "--public-domain",
+        "sbx.example.com",
+        "--certificate-arn",
+        "arn:aws:acm:us-east-1:123456789012:certificate/abc",
+        "--yes"
+      ],
+      "now": "2026-09-15T16:02:07Z",
+      "world": {
+        "stacks": {
+          "rayito-custom-domain": {
+            "state": "UPDATE_COMPLETE",
+            "outputs": {},
+            "parameters": {},
+            "events": [
+              {
+                "logicalResourceId": "Distribution",
+                "resourceStatus": "UPDATE_FAILED",
+                "resourceStatusReason": "synthetic reason"
+              },
+              {
+                "logicalResourceId": "rayito-custom-domain",
+                "resourceStatus": "UPDATE_IN_PROGRESS",
+                "resourceStatusReason": "User Initiated"
+              },
+              {
+                "logicalResourceId": "Distribution",
+                "resourceStatus": "CREATE_FAILED",
+                "resourceStatusReason": "reason of an older operation"
+              }
+            ]
+          }
+        },
+        "deployFailure": {
+          "state": "UPDATE_ROLLBACK_COMPLETE"
+        }
+      },
+      "expected": {
+        "exitCode": 1,
+        "stdout": "Coste y activación de custom-domain\n  Recursos y llamadas AWS: AWS::CloudFront::Distribution, AWS::CloudFront::Function, AWS::CloudFront::KeyValueStore, AWS::CloudFront::KeyValueStoreAssociation (en la Function)\n  Coste aproximado (reposo): ~$0 en reposo (CloudFront sin tráfico no factura; el KVS tampoco)\n  Coste por uso: CloudFront: ~$0,085/GB + $0,0075/10 000 peticiones HTTPS (salida, us-east-1); CloudFront Functions: ~$0,10 por 1 000 000 de invocaciones (una por petición, cifra de lista desde su lanzamiento, no reconfirmada en vivo esta sesión); KeyValueStore, lectura (la que hace la Function en cada petición): ~$0,50 por 1 000 000 de lecturas; KeyValueStore, llamada de gestión (PutKey/DeleteKey de register()/unregister()/refresh()): ~$5 por 1 000 000 de llamadas\n  Cómo apagarla: rayito domain destroy (destroy() borra la distribución (tarda ~15 min en deshabilitarse primero), la Function y el KVS; ninguna ruta sobrevive)\n",
+        "effects": {
+          "terminated": [],
+          "stackCalls": [
+            "describe",
+            "update",
+            "wait",
+            "failure_reason"
+          ],
+          "stackParameters": {
+            "PublicDomain": "sbx.example.com",
+            "CertificateArn": "arn:aws:acm:us-east-1:123456789012:certificate/abc"
+          }
+        }
+      },
+      "stderrIncludes": [
+        "  motivo: Distribution (UPDATE_FAILED): synthetic reason",
+        "terminó en UPDATE_ROLLBACK_COMPLETE"
+      ]
+    },
+    {
+      "name": "domain deploy con la llamada rechazada no dice motivo",
+      "args": [
+        "domain",
+        "deploy",
+        "--public-domain",
+        "sbx.example.com",
+        "--certificate-arn",
+        "arn:aws:acm:us-east-1:123456789012:certificate/abc",
+        "--yes"
+      ],
+      "now": "2026-09-15T16:02:07Z",
+      "world": {
+        "stacks": {
+          "rayito-custom-domain": {
+            "state": "UPDATE_ROLLBACK_COMPLETE",
+            "outputs": {},
+            "parameters": {},
+            "events": [
+              {
+                "logicalResourceId": "Distribution",
+                "resourceStatus": "UPDATE_FAILED",
+                "resourceStatusReason": "synthetic reason"
+              },
+              {
+                "logicalResourceId": "rayito-custom-domain",
+                "resourceStatus": "UPDATE_IN_PROGRESS",
+                "resourceStatusReason": "User Initiated"
+              },
+              {
+                "logicalResourceId": "Distribution",
+                "resourceStatus": "CREATE_FAILED",
+                "resourceStatusReason": "reason of an older operation"
+              }
+            ]
+          }
+        },
+        "deployFailure": {
+          "call": true
+        }
+      },
+      "expected": {
+        "exitCode": 1,
+        "stdout": "Coste y activación de custom-domain\n  Recursos y llamadas AWS: AWS::CloudFront::Distribution, AWS::CloudFront::Function, AWS::CloudFront::KeyValueStore, AWS::CloudFront::KeyValueStoreAssociation (en la Function)\n  Coste aproximado (reposo): ~$0 en reposo (CloudFront sin tráfico no factura; el KVS tampoco)\n  Coste por uso: CloudFront: ~$0,085/GB + $0,0075/10 000 peticiones HTTPS (salida, us-east-1); CloudFront Functions: ~$0,10 por 1 000 000 de invocaciones (una por petición, cifra de lista desde su lanzamiento, no reconfirmada en vivo esta sesión); KeyValueStore, lectura (la que hace la Function en cada petición): ~$0,50 por 1 000 000 de lecturas; KeyValueStore, llamada de gestión (PutKey/DeleteKey de register()/unregister()/refresh()): ~$5 por 1 000 000 de llamadas\n  Cómo apagarla: rayito domain destroy (destroy() borra la distribución (tarda ~15 min en deshabilitarse primero), la Function y el KVS; ninguna ruta sobrevive)\n",
+        "effects": {
+          "terminated": [],
+          "stackCalls": [
+            "describe",
+            "update"
+          ],
+          "stackParameters": {}
+        }
+      },
+      "stderrIncludes": [
+        "llamada rechazada"
+      ],
+      "stderrExcludes": [
+        "motivo:",
+        "synthetic reason"
+      ]
+    },
+    {
+      "name": "stack deploy con la llamada rechazada no dice motivo",
+      "args": [
+        "stack",
+        "deploy",
+        "s3-mounts",
+        "--param",
+        "BucketName=amzn-s3-demo-bucket",
+        "--yes"
+      ],
+      "now": "2026-09-15T16:02:07Z",
+      "world": {
+        "stacks": {
+          "rayito-s3-mounts": {
+            "state": "UPDATE_ROLLBACK_COMPLETE",
+            "outputs": {},
+            "parameters": {},
+            "events": [
+              {
+                "logicalResourceId": "Distribution",
+                "resourceStatus": "UPDATE_FAILED",
+                "resourceStatusReason": "synthetic reason"
+              },
+              {
+                "logicalResourceId": "rayito-s3-mounts",
+                "resourceStatus": "UPDATE_IN_PROGRESS",
+                "resourceStatusReason": "User Initiated"
+              },
+              {
+                "logicalResourceId": "Distribution",
+                "resourceStatus": "CREATE_FAILED",
+                "resourceStatusReason": "reason of an older operation"
+              }
+            ]
+          }
+        },
+        "deployFailure": {
+          "call": true
+        }
+      },
+      "expected": {
+        "exitCode": 1,
+        "stdout": "Coste y activación de s3-mounts\n  Activa: rayito stack deploy s3-mounts\n  Recursos y llamadas AWS: AWS::IAM::ManagedPolicy\n  Coste aproximado (reposo): $0 (sólo IAM)\n  Cómo apagarla: rayito stack destroy s3-mounts (destroy() borra la política; no borra ningún objeto ni el bucket)\n  Fuente: AWS_API_NOTES.md §23\n  Parámetros que cambian (los no pasados conservan su valor actual):\n    BucketName: '(sin valor)' -> 'amzn-s3-demo-bucket'\n    Prefixes: '(sin valor)' -> '*'\n    ReadOnly: '(sin valor)' -> 'true'\n",
+        "effects": {
+          "terminated": [],
+          "stackCalls": [
+            "describe",
+            "describe",
+            "update"
+          ],
+          "stackParameters": {}
+        }
+      },
+      "stderrIncludes": [
+        "llamada rechazada"
+      ],
+      "stderrExcludes": [
+        "motivo:",
+        "synthetic reason"
+      ]
+    },
+    {
+      "name": "stack deploy termina en UPDATE_ROLLBACK_FAILED y no dice motivo",
+      "args": [
+        "stack",
+        "deploy",
+        "s3-mounts",
+        "--param",
+        "BucketName=amzn-s3-demo-bucket",
+        "--yes"
+      ],
+      "now": "2026-09-15T16:02:07Z",
+      "world": {
+        "stacks": {
+          "rayito-s3-mounts": {
+            "state": "UPDATE_COMPLETE",
+            "outputs": {},
+            "parameters": {},
+            "events": [
+              {
+                "logicalResourceId": "Distribution",
+                "resourceStatus": "UPDATE_FAILED",
+                "resourceStatusReason": "synthetic reason"
+              },
+              {
+                "logicalResourceId": "rayito-s3-mounts",
+                "resourceStatus": "UPDATE_IN_PROGRESS",
+                "resourceStatusReason": "User Initiated"
+              },
+              {
+                "logicalResourceId": "Distribution",
+                "resourceStatus": "CREATE_FAILED",
+                "resourceStatusReason": "reason of an older operation"
+              }
+            ]
+          }
+        },
+        "deployFailure": {
+          "state": "UPDATE_ROLLBACK_FAILED"
+        }
+      },
+      "expected": {
+        "exitCode": 1,
+        "stdout": "Coste y activación de s3-mounts\n  Activa: rayito stack deploy s3-mounts\n  Recursos y llamadas AWS: AWS::IAM::ManagedPolicy\n  Coste aproximado (reposo): $0 (sólo IAM)\n  Cómo apagarla: rayito stack destroy s3-mounts (destroy() borra la política; no borra ningún objeto ni el bucket)\n  Fuente: AWS_API_NOTES.md §23\n  Parámetros que cambian (los no pasados conservan su valor actual):\n    BucketName: '(sin valor)' -> 'amzn-s3-demo-bucket'\n    Prefixes: '(sin valor)' -> '*'\n    ReadOnly: '(sin valor)' -> 'true'\n",
+        "effects": {
+          "terminated": [],
+          "stackCalls": [
+            "describe",
+            "describe",
+            "update",
+            "wait"
+          ],
+          "stackParameters": {
+            "BucketName": "amzn-s3-demo-bucket",
+            "Prefixes": "*",
+            "ReadOnly": "true"
+          }
+        }
+      },
+      "stderrIncludes": [
+        "terminó en UPDATE_ROLLBACK_FAILED"
+      ],
+      "stderrExcludes": [
+        "motivo:",
+        "synthetic reason"
+      ]
+    },
+    {
+      "name": "domain deploy termina en DELETE_FAILED y no dice motivo",
+      "args": [
+        "domain",
+        "deploy",
+        "--public-domain",
+        "sbx.example.com",
+        "--certificate-arn",
+        "arn:aws:acm:us-east-1:123456789012:certificate/abc",
+        "--yes"
+      ],
+      "now": "2026-09-15T16:02:07Z",
+      "world": {
+        "stacks": {
+          "rayito-custom-domain": {
+            "state": "UPDATE_COMPLETE",
+            "outputs": {},
+            "parameters": {},
+            "events": [
+              {
+                "logicalResourceId": "Distribution",
+                "resourceStatus": "UPDATE_FAILED",
+                "resourceStatusReason": "synthetic reason"
+              },
+              {
+                "logicalResourceId": "rayito-custom-domain",
+                "resourceStatus": "UPDATE_IN_PROGRESS",
+                "resourceStatusReason": "User Initiated"
+              },
+              {
+                "logicalResourceId": "Distribution",
+                "resourceStatus": "CREATE_FAILED",
+                "resourceStatusReason": "reason of an older operation"
+              }
+            ]
+          }
+        },
+        "deployFailure": {
+          "state": "DELETE_FAILED"
+        }
+      },
+      "expected": {
+        "exitCode": 1,
+        "stdout": "Coste y activación de custom-domain\n  Recursos y llamadas AWS: AWS::CloudFront::Distribution, AWS::CloudFront::Function, AWS::CloudFront::KeyValueStore, AWS::CloudFront::KeyValueStoreAssociation (en la Function)\n  Coste aproximado (reposo): ~$0 en reposo (CloudFront sin tráfico no factura; el KVS tampoco)\n  Coste por uso: CloudFront: ~$0,085/GB + $0,0075/10 000 peticiones HTTPS (salida, us-east-1); CloudFront Functions: ~$0,10 por 1 000 000 de invocaciones (una por petición, cifra de lista desde su lanzamiento, no reconfirmada en vivo esta sesión); KeyValueStore, lectura (la que hace la Function en cada petición): ~$0,50 por 1 000 000 de lecturas; KeyValueStore, llamada de gestión (PutKey/DeleteKey de register()/unregister()/refresh()): ~$5 por 1 000 000 de llamadas\n  Cómo apagarla: rayito domain destroy (destroy() borra la distribución (tarda ~15 min en deshabilitarse primero), la Function y el KVS; ninguna ruta sobrevive)\n",
+        "effects": {
+          "terminated": [],
+          "stackCalls": [
+            "describe",
+            "update",
+            "wait"
+          ],
+          "stackParameters": {
+            "PublicDomain": "sbx.example.com",
+            "CertificateArn": "arn:aws:acm:us-east-1:123456789012:certificate/abc"
+          }
+        }
+      },
+      "stderrIncludes": [
+        "terminó en DELETE_FAILED"
+      ],
+      "stderrExcludes": [
+        "motivo:",
+        "synthetic reason"
+      ]
+    },
+    {
+      "name": "domain deploy con una etiqueta mal formada",
+      "args": [
+        "domain",
+        "deploy",
+        "--public-domain",
+        "sbx.example.com",
+        "--certificate-arn",
+        "arn:aws:acm:us-east-1:123456789012:certificate/abc",
+        "--yes",
+        "--tag",
+        "sin-igual"
+      ],
+      "now": "2026-09-15T16:02:07Z",
+      "expected": {
+        "exitCode": 2,
+        "stdout": "",
+        "effects": {
+          "terminated": [],
+          "stackCalls": [],
+          "stackParameters": {}
+        }
+      },
+      "stderrIncludes": [
+        "K=V"
+      ]
     }
   ]
 }

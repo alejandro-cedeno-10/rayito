@@ -3,7 +3,9 @@
  * fachada fina sobre `rayito stack {deploy,status,destroy} custom-domain` con
  * los nombres de parámetro propios de `CustomDomain` (`--public-domain`,
  * `--certificate-arn`). Para parámetros avanzados o un nombre de pila distinto
- * usa `rayito stack` directamente.
+ * usa `rayito stack` directamente; esta CLI no repite ninguna opción que ya
+ * ofrezca esa, salvo `--tag`, que una organización que exige etiquetas en los
+ * recursos creados necesita también aquí.
  *
  * `status` y `destroy` sólo necesitan el nombre de la pila: van directas a
  * `OptionalStacks`, nunca pasan por `CustomDomain`, así que no piden
@@ -20,6 +22,8 @@ import {
 import { COMPONENT } from "../../stacks/components/custom-domain.js";
 import { type CommandContext, defineCommand, defineGroup, flag, option } from "../command.js";
 import { EXIT_FAILURE } from "../exit-codes.js";
+import { pairsOrUsage } from "./sandbox.js";
+import { deployExplainingFailure } from "./stack.js";
 
 export const domainGroup = defineGroup({
   path: ["domain"],
@@ -41,6 +45,12 @@ function printCost(context: CommandContext): void {
   echo(`  Cómo apagarla: rayito domain destroy (${cost.removal})`);
 }
 
+/**
+ * `rayito domain deploy`. `--tag` no cambia el coste (CloudFormation no cobra
+ * por etiquetar); el de la pila es el del bloque "Coste y activación". Si la
+ * pila termina en `ROLLBACK_*`, imprime en stderr el motivo del primer
+ * recurso que falló (necesita `cloudformation:DescribeStackEvents`).
+ */
 export const deployCommand = defineCommand({
   path: ["domain", "deploy"],
   help: "Despliega (o actualiza) la pila custom-domain; imprime su coste y el CNAME.",
@@ -58,15 +68,24 @@ export const deployCommand = defineCommand({
         "Nombre alternativo explícito (repetible) en lugar del comodín *.<public-domain>; " +
         "p. ej. 8000-<alias>.<public-domain>.",
     }),
+    option(["--tag"], {
+      multiple: true,
+      default: [],
+      help:
+        "Etiqueta K=V; repetible (organizaciones que exigen etiquetas en los recursos " +
+        "creados).",
+    }),
     yesFlag,
   ],
   run: async (context) => {
     const { values } = context;
     const services = await context.services();
     const alternateNames = values.strings("alternate_domain_names");
+    const tags = pairsOrUsage(values.strings("tag"), "--tag");
+    const stackName = values.string("stack_name");
     const domain = services.customDomain({
       publicDomain: values.string("public_domain") ?? "",
-      stackName: values.string("stack_name"),
+      stackName,
     });
     if (!context.globals.json) {
       printCost(context);
@@ -78,9 +97,16 @@ export const deployCommand = defineCommand({
     ) {
       return EXIT_FAILURE;
     }
-    const status = await domain.deploy({
-      certificateArn: values.string("certificate_arn") ?? "",
-      alternateDomainNames: alternateNames.length === 0 ? undefined : alternateNames,
+    const status = await deployExplainingFailure(context, {
+      stacks: services.stacks,
+      component: STACK_COMPONENT,
+      stackName,
+      deploy: () =>
+        domain.deploy({
+          certificateArn: values.string("certificate_arn") ?? "",
+          alternateDomainNames: alternateNames.length === 0 ? undefined : alternateNames,
+          tags,
+        }),
     });
     if (context.globals.json) {
       context.console.emitJson({ name: status.name, state: status.state, outputs: status.outputs });

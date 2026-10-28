@@ -13,7 +13,7 @@ llamada explícita del SDK o de `rayito stack deploy`.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Final, Literal
 
@@ -30,6 +30,25 @@ FIXED_TAG_KEYS: Final = ("rayito:component", "rayito:managed-by", SDK_VERSION_TA
 #: Estado de una pila en `ROLLBACK_COMPLETE`: CloudFormation no permite
 #: `UpdateStack` sobre ella, hay que borrarla primero.
 ROLLBACK_COMPLETE: Final = "ROLLBACK_COMPLETE"
+
+#: Los estados terminales en los que un `deploy` fallido tiene un recurso
+#: causante que explicar (`failure_reason`). Otros fallos terminales
+#: (`UPDATE_ROLLBACK_FAILED`, `DELETE_FAILED`) no se explican: el motivo
+#: podría venir de una operación anterior. Fuente: los valores de
+#: `StackStatus` de
+#: https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_Stack.html
+#: (consultada 2026-10-27).
+EXPLAINABLE_ROLLBACK_STATES: Final = frozenset(
+    {"ROLLBACK_COMPLETE", "ROLLBACK_FAILED", "UPDATE_ROLLBACK_COMPLETE"}
+)
+#: Estados de un recurso que marcan su fallo. Fuente: el `enum`
+#: `ResourceStatus` de
+#: https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_StackEvent.html
+#: (consultada 2026-10-27).
+FAILED_RESOURCE_STATUSES: Final = frozenset({"CREATE_FAILED", "UPDATE_FAILED"})
+#: Estados del evento de la propia pila con el que empieza una operación
+#: (misma fuente que `FAILED_RESOURCE_STATUSES`).
+OPERATION_START_STATUSES: Final = frozenset({"CREATE_IN_PROGRESS", "UPDATE_IN_PROGRESS"})
 
 DeployAction = Literal["create", "update", "blocked"]
 
@@ -231,3 +250,40 @@ def stack_tags(component: StackComponent, user_tags: dict[str, str]) -> dict[str
     merged = dict(user_tags)
     merged.update(fixed)
     return merged
+
+
+@dataclass(frozen=True)
+class StackEvent:
+    """Un evento de `DescribeStackEvents` (`AWS_API_NOTES.md` §21): sólo los
+    tres campos que usa `first_failed_resource`."""
+
+    logical_resource_id: str | None
+    resource_status: str | None
+    resource_status_reason: str | None
+
+
+def first_failed_resource(events: Sequence[StackEvent], stack_name: str) -> StackEvent | None:
+    """El recurso que causó el fallo de la última operación de la pila.
+
+    `events` viene del más nuevo al más antiguo, el orden de la API. Se
+    recorre hasta el evento de inicio de operación de la propia pila
+    (`logical_resource_id == stack_name`), para no mezclar el fallo de un
+    despliegue anterior. De los recursos con estado fallido se devuelve el
+    más antiguo: los posteriores suelen ser cancelaciones por esa causa."""
+    earliest: StackEvent | None = None
+    for event in events:
+        if event.logical_resource_id == stack_name:
+            if event.resource_status in OPERATION_START_STATUSES:
+                break
+            continue
+        if event.resource_status in FAILED_RESOURCE_STATUSES:
+            earliest = event
+    return earliest
+
+
+def describe_failed_resource(event: StackEvent) -> str:
+    """`<LogicalResourceId> (<ResourceStatus>): <ResourceStatusReason>`."""
+    return (
+        f"{event.logical_resource_id or ''} ({event.resource_status or ''}): "
+        f"{event.resource_status_reason or ''}"
+    )

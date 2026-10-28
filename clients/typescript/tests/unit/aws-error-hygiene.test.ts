@@ -68,6 +68,7 @@ describe("AWS error hygiene", () => {
       createStack: async () => ({}),
       updateStack: async () => ({}),
       deleteStack: async () => ({}),
+      describeStackEvents: async () => ({}),
     };
     const adapter = new CloudFormationProvisioner({
       region: "us-east-1",

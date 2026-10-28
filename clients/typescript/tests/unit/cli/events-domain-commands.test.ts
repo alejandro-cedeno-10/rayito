@@ -6,8 +6,10 @@
  */
 
 import { describe, expect, it } from "vitest";
+import { StackError } from "../../../src/errors.js";
 import type { EventRecord } from "../../../src/lifecycle-events/domain.js";
 import { COMPONENT as CUSTOM_DOMAIN } from "../../../src/stacks/components/custom-domain.js";
+import type { FakeStackProvisioner } from "../m15-fake-stacks.js";
 import { buildWorld, type CaseWorld } from "./case-world.js";
 import { FakeDomain, FakeEvents } from "./ops-fakes.js";
 import { runWithServices } from "./run-case.js";
@@ -308,6 +310,7 @@ describe("domain", () => {
         {
           certificateArn: "arn:aws:acm:us-east-1:123456789012:certificate/abc",
           alternateDomainNames: undefined,
+          tags: {},
         },
       ],
     ]);
@@ -341,6 +344,22 @@ describe("domain", () => {
       alternateDomainNames: ["8000-a.sbx.example.com", "8000-b.sbx.example.com"],
     });
     expect(outcome.requested[0]?.stackName).toBe("mi-dominio");
+  });
+
+  it("--tag repetible llega al despliegue", async () => {
+    const domain = new FakeDomain("sbx.example.com");
+    const outcome = await invokeDomain([...Deploy, "--tag", "team=a", "--tag", "env=b", "--yes"], {
+      domain,
+    });
+    expect(outcome.exitCode).toBe(0);
+    expect(domain.calls[0]?.[1]).toMatchObject({ tags: { team: "a", env: "b" } });
+  });
+
+  it("una etiqueta mal formada sale con 2 sin desplegar", async () => {
+    const domain = new FakeDomain("sbx.example.com");
+    const outcome = await invokeDomain([...Deploy, "--tag", "sin-igual", "--yes"], { domain });
+    expect(outcome.exitCode).toBe(2);
+    expect(domain.calls).toEqual([]);
   });
 
   it("pide confirmación; declinar sale con 1 sin desplegar", async () => {
@@ -389,5 +408,81 @@ describe("domain", () => {
     expect(declined.exitCode).toBe(1);
     const json = await invokeDomain(["--json", "domain", "destroy"], { world });
     expect(JSON.parse(json.stdout)).toEqual({ name: "custom-domain", state: "destroyed" });
+  });
+});
+
+describe("domain deploy que falla", () => {
+  const Deploy = [
+    "domain",
+    "deploy",
+    "--public-domain",
+    "sbx.example.com",
+    "--certificate-arn",
+    "arn:aws:acm:us-east-1:123456789012:certificate/abc",
+    "--yes",
+  ];
+  const Stack = "rayito-custom-domain";
+  const world: CaseWorld = { stacks: { [Stack]: { state: "UPDATE_COMPLETE" } } };
+
+  async function failing(configure: (provisioner: FakeStackProvisioner) => void) {
+    const built = buildWorld(world);
+    built.provisioner.events.set(Stack, [
+      {
+        logicalResourceId: "Distribution",
+        resourceStatus: "UPDATE_FAILED",
+        resourceStatusReason: "synthetic reason",
+      },
+    ]);
+    configure(built.provisioner);
+    const outcome = await runWithServices({ args: Deploy, services: built.services });
+    return { ...built, ...outcome };
+  }
+
+  const reasonRead = (provisioner: FakeStackProvisioner) =>
+    provisioner.calls.some((call) => call[0] === "failureReason");
+
+  it("un rollback imprime el motivo por stderr y sigue fallando", async () => {
+    const outcome = await failing((provisioner) => {
+      provisioner.failWaitState = "UPDATE_ROLLBACK_COMPLETE";
+    });
+    expect(outcome.exitCode).toBe(1);
+    expect(outcome.stderr).toContain("  motivo: Distribution (UPDATE_FAILED): synthetic reason");
+    expect(outcome.stderr).toContain("terminó en UPDATE_ROLLBACK_COMPLETE");
+    expect(outcome.stdout).not.toContain("motivo");
+  });
+
+  it("una llamada rechazada no imprime motivo ni lo lee", async () => {
+    const outcome = await failing((provisioner) => {
+      provisioner.failCall = true;
+    });
+    expect(outcome.exitCode).toBe(1);
+    expect(outcome.stderr).not.toContain("motivo");
+    expect(reasonRead(outcome.provisioner)).toBe(false);
+  });
+
+  it.each(["UPDATE_ROLLBACK_FAILED", "DELETE_FAILED"])(
+    "una espera que termina en %s no imprime motivo ni lo lee",
+    async (state) => {
+      const outcome = await failing((provisioner) => {
+        provisioner.failWaitState = state;
+      });
+      expect(outcome.exitCode).toBe(1);
+      expect(outcome.stderr).toContain(`terminó en ${state}`);
+      expect(outcome.stderr).not.toContain("motivo");
+      expect(reasonRead(outcome.provisioner)).toBe(false);
+    },
+  );
+
+  it("si leer el motivo falla, el error original no se tapa", async () => {
+    const outcome = await failing((provisioner) => {
+      provisioner.failWaitState = "ROLLBACK_COMPLETE";
+      provisioner.failureReason = async () => {
+        throw new StackError("lectura rechazada", { code: "failed" });
+      };
+    });
+    expect(outcome.exitCode).toBe(1);
+    expect(outcome.stderr).toContain("terminó en ROLLBACK_COMPLETE");
+    expect(outcome.stderr).not.toContain("lectura rechazada");
+    expect(outcome.stderr).not.toContain("motivo");
   });
 });

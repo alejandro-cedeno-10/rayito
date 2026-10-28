@@ -153,6 +153,27 @@ export class OptionalStacks {
   }
 
   /**
+   * El motivo, ya redactado, del primer recurso que falló en la última
+   * operación de la pila (o su `StackStatusReason`); `undefined` si la pila no
+   * existe o no trae motivo. Pensado para después de un `deploy` que terminó
+   * en `ROLLBACK_*`: `rayito stack deploy` y `rayito domain deploy` lo imprimen
+   * solos. Espejo de `OptionalStacks.failure_reason`.
+   *
+   * Coste: ninguno. Es un `DescribeStackEvents` de solo lectura (CloudFormation
+   * no cobra por recursos `AWS::*`, https://aws.amazon.com/cloudformation/pricing/,
+   * consultada 2026-10-27). IAM: `cloudformation:DescribeStackEvents` sobre la
+   * pila. Nunca se llama solo.
+   */
+  async failureReason(
+    component: string | StackComponent,
+    options: { readonly stackName?: string } = {},
+  ): Promise<string | undefined> {
+    const resolved = resolveComponent(component);
+    const name = options.stackName ?? `rayito-${resolved.name}`;
+    return this.#provisioner.failureReason(name);
+  }
+
+  /**
    * Qué parámetros cambiaría `deploy()` con estos mismos argumentos, sin
    * desplegar nada (sólo un `DescribeStacks`). Los que no se pasan y la pila
    * ya tiene no aparecen: `deploy()` los conserva. Espejo de

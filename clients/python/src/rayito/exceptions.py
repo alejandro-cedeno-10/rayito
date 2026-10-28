@@ -407,11 +407,15 @@ class StackException(SandboxException):
     """Un `OptionalStacks.deploy/status/destroy` (M15 foundations) falló.
     `code` es `blocked` (pila en `ROLLBACK_COMPLETE`, hay que borrarla
     antes), `not_found`, `in_progress` o `failed`; el mensaje nunca repite
-    el de CloudFormation."""
+    el de CloudFormation. `state` es el estado terminal de la pila cuando el
+    fallo sale de esperar a que termine (`wait()`), y `None` en cualquier otro
+    caso (una llamada rechazada, por ejemplo): así quien quiera explicar el
+    fallo sabe que lo causó la operación que acaba de esperar."""
 
-    def __init__(self, message: str, *, code: str) -> None:
+    def __init__(self, message: str, *, code: str, state: str | None = None) -> None:
         super().__init__(message)
         self.code = code
+        self.state = state
 
 
 class WebhookException(SandboxException):

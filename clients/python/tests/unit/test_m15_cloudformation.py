@@ -344,7 +344,113 @@ def test_wait_for_deleted_accepts_a_missing_stack() -> None:
         adapter.wait("x", "deleted", timeout=10.0)
 
 
-def test_failure_reason_forwards_the_stacks_own_reason() -> None:
+SECRET_SIGNATURE = "0123456789abcdef"
+
+
+def _stack_events(*events: dict[str, str]) -> dict[str, list[dict[str, object]]]:
+    return {
+        "StackEvents": [
+            {
+                "StackId": "x",
+                "EventId": f"event-{index}",
+                "StackName": "x",
+                "Timestamp": FIXED_TIME,
+                **event,
+            }
+            for index, event in enumerate(events)
+        ]
+    }
+
+
+def test_failure_reason_names_the_earliest_failed_resource_and_redacts_it() -> None:
+    adapter, cfn_stub, _s3_stub = provisioner()
+    with cfn_stub:
+        cfn_stub.add_response(
+            "describe_stack_events",
+            _stack_events(
+                {
+                    "LogicalResourceId": "Queue",
+                    "ResourceStatus": "CREATE_FAILED",
+                    "ResourceStatusReason": "Resource creation cancelled",
+                },
+                {
+                    "LogicalResourceId": "Distribution",
+                    "ResourceStatus": "CREATE_FAILED",
+                    "ResourceStatusReason": f"denied X-Amz-Signature={SECRET_SIGNATURE}",
+                },
+                {
+                    "LogicalResourceId": "x",
+                    "ResourceStatus": "CREATE_IN_PROGRESS",
+                    "ResourceStatusReason": "User Initiated",
+                },
+            ),
+            expected_params={"StackName": "x"},
+        )
+        reason = adapter.failure_reason("x")
+    assert reason is not None
+    assert reason.startswith("Distribution (CREATE_FAILED): denied")
+    assert SECRET_SIGNATURE not in reason
+    assert "<redacted>" in reason
+
+
+def test_failure_reason_falls_back_to_the_stacks_own_reason_redacted() -> None:
+    adapter, cfn_stub, _s3_stub = provisioner()
+    with cfn_stub:
+        cfn_stub.add_response(
+            "describe_stack_events",
+            _stack_events(
+                {
+                    "LogicalResourceId": "x",
+                    "ResourceStatus": "ROLLBACK_COMPLETE",
+                },
+            ),
+            expected_params={"StackName": "x"},
+        )
+        cfn_stub.add_response(
+            "describe_stacks",
+            {
+                "Stacks": [
+                    {
+                        "StackName": "x",
+                        "CreationTime": FIXED_TIME,
+                        "StackStatus": "ROLLBACK_COMPLETE",
+                        "StackStatusReason": f"boom X-Amz-Signature={SECRET_SIGNATURE}",
+                    }
+                ]
+            },
+        )
+        reason = adapter.failure_reason("x")
+    assert reason is not None
+    assert reason.startswith("boom")
+    assert SECRET_SIGNATURE not in reason
+
+
+def test_failure_reason_of_a_missing_stack_is_none() -> None:
+    adapter, cfn_stub, _s3_stub = provisioner()
+    with cfn_stub:
+        cfn_stub.add_client_error(
+            "describe_stack_events",
+            service_error_code="ValidationError",
+            service_message="Stack [x] does not exist",
+        )
+        assert adapter.failure_reason("x") is None
+
+
+def test_failure_reason_wraps_a_rejected_read_without_the_aws_message() -> None:
+    adapter, cfn_stub, _s3_stub = provisioner()
+    with cfn_stub:
+        cfn_stub.add_client_error(
+            "describe_stack_events",
+            service_error_code="AccessDenied",
+            service_message="not allowed",
+        )
+        with pytest.raises(StackException) as raised:
+            adapter.failure_reason("x")
+    assert raised.value.code == "failed"
+    assert raised.value.state is None
+
+
+def test_wait_stamps_the_terminal_state_on_the_failure() -> None:
     adapter, cfn_stub, _s3_stub = provisioner()
     with cfn_stub:
         cfn_stub.add_response(
@@ -354,13 +460,15 @@ def test_failure_reason_forwards_the_stacks_own_reason() -> None:
                     {
                         "StackName": "x",
                         "CreationTime": FIXED_TIME,
-                        "StackStatus": "ROLLBACK_COMPLETE",
-                        "StackStatusReason": "boom",
+                        "StackStatus": "UPDATE_ROLLBACK_COMPLETE",
                     }
                 ]
             },
         )
-        assert adapter.failure_reason("x") == "boom"
+        with pytest.raises(StackException) as raised:
+            adapter.wait("x", "deployed", timeout=2.0)
+    assert raised.value.code == "failed"
+    assert raised.value.state == "UPDATE_ROLLBACK_COMPLETE"
 
 
 def test_update_sends_kept_parameters_with_use_previous_value() -> None:
